@@ -1,0 +1,15 @@
+# Wyniki budowania — CMakePresets kieruje je do out/, ręczne konfiguracje zwykle do build/.
+out/
+build/
+
+# Stan edytorów i narzędzi. CMakeUserPresets.json jest z założenia osobisty.
+.vs/
+.vscode/
+.idea/
+.cache/
+CMakeUserPresets.json
+*.user
+*.suo
+
+# Pliki odłożone do ręcznego usunięcia.
+_to_delete/
