@@ -2,11 +2,10 @@
 #include <iostream>
 #include <string>
 
-#include "talcite/exchange.hpp"
-#include "talcite/gate.hpp"
-#include "talcite/post.hpp"
+#include "talcite/address.hpp"
+#include "talcite/listener.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/stream.hpp"
-#include "talcite/trouble.hpp"
 
 #include "speaking.hpp"
 
@@ -42,7 +41,7 @@ int main() {
     const net::Patience soon{5000};
 
     try {
-        const net::Gate gate{net::Address::loopback(net::Family::four, 0)};
+        const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
         std::cout << "brama stoi na " << gate.mine().spelled() << "\n";
 
@@ -70,8 +69,8 @@ int main() {
         std::cout << "po zamknięciu serwer czyta: " << server.read(1024, soon).await().size()
                   << " bajtów\n";
 
-        const net::Post here{net::Address::loopback(net::Family::four, 0)};
-        const net::Post there{net::Address::loopback(net::Family::four, 0)};
+        const net::Udp here{net::Address::loopback(net::Family::four, 0)};
+        const net::Udp there{net::Address::loopback(net::Family::four, 0)};
 
         std::cout << "poczta stoi na " << here.mine().spelled() << "\n";
 
@@ -79,7 +78,7 @@ int main() {
 
         there.send(here.mine(), spelt("kartka bez połączenia"), soon).await();
 
-        const net::Parcel came = waiting.await();
+        const net::Datagram came = waiting.await();
 
         std::cout << "poczta dostała od " << came.from.spelled() << ": " << read(came.bytes)
                   << "\n";

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "talcite/promise.hpp"
+#include "talcite/trouble.hpp"
 
 namespace talcite::net {
 
@@ -47,6 +48,8 @@ public:
 
     [[nodiscard]] std::string spelled() const;
 
+    [[nodiscard]] Address unmapped() const;
+
     friend bool operator==(const Address&, const Address&) = default;
 
 private:
@@ -61,5 +64,18 @@ private:
                                                     Family family = Family::none);
 
 [[nodiscard]] Promise<std::vector<Address>> mine(Family family = Family::none);
+
+
+class Trouble : public talcite::Trouble {
+public:
+    explicit Trouble(const std::string& said, int code = 0, Address where = {});
+
+    [[nodiscard]] const Address& where() const { return where_; }
+
+private:
+    Address where_;
+};
+
+[[nodiscard]] std::string spoken(int code);
 
 }

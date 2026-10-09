@@ -1,8 +1,10 @@
 #include <cstddef>
-#include <fstream>
+#include <cstdint>
+#include <exception>
+#include <filesystem>
 #include <functional>
-#include <ios>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -11,13 +13,15 @@
 #include "talcite/column.hpp"
 #include "talcite/comb.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/editor.hpp"
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
+#include "talcite/fs.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/line.hpp"
+#include "talcite/promise.hpp"
 #include "talcite/row.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
@@ -36,13 +40,13 @@ public:
     std::function<void()> sized;
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
     }
 
-    bool react(talcite::ui::SizeEvent&) override {
+    bool handle(talcite::ui::SizeEvent&) override {
         if (sized) sized();
 
         return false;
@@ -136,7 +140,7 @@ hunting(const std::string& title, bool swapping,
     const auto made = std::make_shared<talcite::ui::Dialog>();
 
     const auto frame =
-        std::make_shared<talcite::ui::Frame>(title, talcite::ui::FrameStyle{talcite::ui::LineStyle::twin});
+        std::make_shared<talcite::ui::Frame>(title, talcite::ui::FrameShape{talcite::ui::Border::twin});
 
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -219,12 +223,12 @@ int main(int argc, char** argv) {
 
     sheet.skin(talcite::ui::Skin{{{"demo.bar", turned()}}});
 
-    const auto dialogs = std::make_shared<talcite::ui::VeilWindow>();
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
+    const auto dialogs = std::make_shared<talcite::ui::Modals>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto column = std::make_shared<talcite::ui::Column>();
 
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
-    const auto shown = std::make_shared<talcite::ui::Editor>(talcite::ui::ScrollStyle{true});
+    const auto shown = std::make_shared<talcite::ui::Editor>(talcite::ui::ScrollShape{true});
 
     // **Ctrl+C, Ctrl+X i Ctrl+V dokłada aplikacja**, bo edytor ich sobie nie przypisuje: w trybie
     // surowym Ctrl+C nie jest przerwaniem, tylko zwykłym klawiszem, i widżet połykający go
@@ -250,13 +254,13 @@ int main(int argc, char** argv) {
     }
 
     bar->role("demo.bar");
-    bar->wrapping(false);
+    bar->wrapped(false);
 
     column->children().add(bar);
     column->children().add(shown);
 
-    legend->body()->children().add(column);
-    dialogs->body()->children().add(legend);
+    legend->content(column);
+    dialogs->content(legend);
 
     sheet.children().add(dialogs);
 
@@ -275,7 +279,8 @@ int main(int argc, char** argv) {
         const std::string right = "wiersz " + std::to_string(shown->line() + 1) + " kolumna " +
                                   std::to_string(shown->column() + 1) + "  UTF-8";
 
-        const int room = term.wide() - talcite::measured(left).wide - talcite::measured(right).wide;
+        const int room =
+            term.size().wide - talcite::measured(left).wide - talcite::measured(right).wide;
 
         bar->text(left + std::string(room > 1 ? static_cast<std::size_t>(room) : 1, ' ') + right);
     };
@@ -298,31 +303,56 @@ int main(int argc, char** argv) {
 
     const auto where = std::make_shared<std::string>();
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zapisz"), [shown, where, saying] {
+    // Zapis idzie przez pulę: plik otwiera `fs::open`, kawałki pisze `File::write`, a edytor
+    // pierze dziennik dopiero po spełnieniu całości. Obietnicę trzeba trzymać — inaczej zginie
+    // z tym domknięciem.
+    const auto saving = std::make_shared<std::optional<talcite::Promise<void>>>();
+
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zapisz"), [shown, where, saying, saving] {
         if (where->empty()) {
             saying("nie ma dokąd zapisać");
 
             return;
         }
 
-        const auto file = std::make_shared<std::ofstream>(*where, std::ios::binary);
-
-        if (!file->good()) {
-            saying("nie udało się otworzyć do zapisu");
+        if (shown->busy()) {
+            saying("zapis trwa");
 
             return;
         }
 
-        const bool went = shown->save([file](talcite::Bytes got) {
-            file->write(reinterpret_cast<const char*>(got.data()),
-                        static_cast<std::streamsize>(got.size()));
+        saying("zapisuję…");
 
-            return file->good();
-        });
+        const std::filesystem::path onto = talcite::fs::from_string(*where);
 
-        file->close();
+        saving->emplace(
+            talcite::fs::open(onto, talcite::fs::Mode::truncate)
+                .here()
+                .then([shown](talcite::fs::File file) {
+                    const auto at = std::make_shared<std::uintmax_t>(0);
 
-        saying(went ? "zapisano do " + *where : std::string{"zapis się nie udał"});
+                    return shown->save([file, at](talcite::Bytes got) mutable {
+                        // Pusty kawałek to koniec: nie ma co pisać, jest co domknąć.
+                        if (got.empty()) {
+                            file.close();
+
+                            return talcite::Promise<void>{[](auto resolve, auto) { resolve(); }};
+                        }
+
+                        const std::uintmax_t from = *at;
+
+                        *at += got.size();
+
+                        return file.write(from, std::move(got)).then([](std::size_t) {});
+                    });
+                })
+                .here()
+                .then([where, saying] { saying("zapisano do " + *where); })
+                .fail([saying](const std::exception& why) {
+                    saying(std::string{"zapis się nie udał: "} + why.what());
+                }));
+
+        (*saving)->start();
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f3, "Szukaj"), [dialogs, shown, saying] {
@@ -360,7 +390,7 @@ int main(int argc, char** argv) {
 
                 shown->focus();
 
-                const std::size_t much = shown->replace(comb, with, true);
+                const std::size_t much = shown->replace_all(comb, with);
 
                 saying(much > 0 ? "zamieniono: " + std::to_string(much)
                                 : std::string{"nie znaleziono"});
@@ -368,7 +398,7 @@ int main(int argc, char** argv) {
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f5, "Zawijaj"), [shown, naming] {
-        shown->wrapping(!shown->wrapping());
+        shown->wrapped(!shown->wrapped());
 
         naming();
     });
@@ -388,45 +418,36 @@ int main(int argc, char** argv) {
     (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjście"),
                       [&term] { term.stop(); });
 
+    // Plik wchodzi w całości, bo edytor jest rezydentny — ale czyta go pula (`fs::read`), a edytor
+    // dostaje bajty przy obrocie pętli; do tej pory jest pusty.
+    std::optional<talcite::Promise<void>> opening;
+
     if (argc > 1) {
-        // **Plik czytany strumieniowo.** Uchwyt żyje w domknięciu, więc nikt go nie zamknie
-        // wcześniej niż edytor, a każde wołanie sięga tylko po ten kawałek, o który proszono.
-        const auto file = std::make_shared<std::ifstream>(argv[1], std::ios::binary);
+        const std::filesystem::path from = talcite::fs::from_string(argv[1]);
 
-        if (file->good()) {
-            file->seekg(0, std::ios::end);
+        *where = std::string{argv[1]} + ".new";
 
-            const auto much = static_cast<std::size_t>(file->tellg());
+        opening.emplace(talcite::fs::read(from)
+                            .here()
+                            .then([shown, source, from](talcite::Bytes got) {
+                                *source = talcite::fs::to_string(from);
 
-            *source = argv[1];
-            *where = std::string{argv[1]} + ".new";
+                                shown->hold(std::move(got));
+                            })
+                            .fail([shown, source, from](const std::exception&) {
+                                *source = "nie udało się otworzyć: " + talcite::fs::to_string(from);
 
-            shown->hold(
-                [file](std::size_t at, std::size_t most) {
-                    talcite::Bytes made(most);
+                                shown->hold(lump(sample));
+                            }));
 
-                    file->clear();
-                    file->seekg(static_cast<std::streamoff>(at));
-                    file->read(reinterpret_cast<char*>(made.data()),
-                               static_cast<std::streamsize>(most));
-
-                    made.resize(static_cast<std::size_t>(file->gcount()));
-
-                    return made;
-                },
-                much);
-        } else {
-            *source = std::string{"nie udało się otworzyć: "} + argv[1];
-
-            shown->hold(lump(sample));
-        }
+        opening->start();
     } else {
         shown->hold(lump(sample));
 
         *where = "editor.new";
     }
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — edytor tekstu");
 
     shown->focus();

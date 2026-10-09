@@ -39,7 +39,7 @@ public:
     [[nodiscard]] walk end() const { return inside_.end(); }
 
 private:
-    template <std::derived_from<Node> Above>
+    template <std::derived_from<Node> Base>
     friend class MarkedNode;
 
     Marks() = default;
@@ -49,8 +49,8 @@ private:
     std::vector<Mark> inside_;
 };
 
-template <std::derived_from<Node> Above>
-class MarkedNode : public Above {
+template <std::derived_from<Node> Base>
+class MarkedNode : public Base {
 public:
     [[nodiscard]] Marks& marks() { return marks_; }
 
@@ -91,15 +91,13 @@ public:
     }
 
 protected:
-    using Above::Above;
+    using Base::Base;
 
     void which(std::size_t given) {
         settle();
 
         which_ = given;
     }
-
-    void unwhich() { which_.reset(); }
 
     void settle() const {
         if (seen_ == marks_.many()) return;

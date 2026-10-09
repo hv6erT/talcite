@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "talcite/button.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/message.hpp"
 #include "talcite/root.hpp"
@@ -22,7 +22,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -42,13 +42,13 @@ bool shown(const View& one, const std::string& what) {
 void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
     ui::KeyEvent one{ui::Key{code, mods}};
 
-    (void)top.deal(one);
+    (void)top.dispatch(one);
 }
 
 void typed(ui::Root& top, char32_t letter) {
     ui::KeyEvent one{ui::Key{letter}};
 
-    (void)top.deal(one);
+    (void)top.dispatch(one);
 }
 
 // Jedna odpowiedź w próbie: napis i jej klawisz aktywny. W bibliotece takiej struktury nie ma —
@@ -63,7 +63,7 @@ struct Said {
 // ognisko stawia się w chwili otwarcia i tego, co przyjdzie potem, samo nie dogoni.
 struct Opened {
     ui::Root top;
-    std::shared_ptr<ui::VeilWindow> window = std::make_shared<ui::VeilWindow>();
+    std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Message> one;
 
     // Która odpowiedź padła i ile razy okno się zamknęło — jedno i drugie tak, jak dowiaduje się
@@ -72,13 +72,14 @@ struct Opened {
     int closed = 0;
 
     Opened(std::string title, std::string text, std::vector<Said> answers = {},
-          ui::MessageStyle style = {}) {
+          ui::MessageShape style = {}) {
         top.children().add(window);
 
         one = std::make_shared<ui::Message>(std::move(title), std::move(text), style);
 
         for (std::size_t at = 0; at < answers.size(); ++at) {
-            const std::shared_ptr<ui::Button> made = one->add(std::move(answers[at].text));
+            const std::shared_ptr<ui::Button> made =
+                one->buttons().add(std::move(answers[at].text));
 
             if (answers[at].key != 0) made->keys().add(answers[at].key);
 
@@ -133,7 +134,7 @@ TRIAL("Message: tytuł nad pudełkiem treści, przyciski w drugim pudełku") {
 TRIAL("Message: pojedyncza odpowiedź nie jest podstawowa") {
     Opened made{"Uwaga", "Coś.", {{"OK", U'O'}}};
 
-    ought(!made.one->buttons().front()->primary());
+    ought(!made.one->buttons()[0]->primary());
 }
 
 TRIAL("Message: bez tytułu nie ma wiersza tytułu") {
@@ -158,14 +159,82 @@ TRIAL("Message: bez odpowiedzi nie ma drugiego pudełka") {
     same(read(seen, 6), std::string{"      ╚═════════════╝"});
 }
 
-TRIAL("Message: zgaszone pudełka dają samą treść w ramce") {
-    Opened made{"Bez", "Goła treść.", {{"OK", U'O'}}, ui::MessageStyle{ui::LineStyle::twin, false}};
+// Bez pudełek komunikat wygląda jak formularz: tytuł na krawędzi ramki, treść z kratką oddechu po
+// obu stronach, przyciski pośrodku pod pustym wierszem.
+TRIAL("Message: zgaszone pudełka dają tytuł na ramce i treść z oddechem") {
+    Opened made{"Bez", "Goła treść.", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
     const View seen = made.drawn({30, 10});
 
-    same(read(seen, 2), std::string{"       ║    Bez    ║"});
-    same(read(seen, 3), std::string{"       ║Goła treść.║"});
-    same(read(seen, 5), std::string{"       ║  [ OK ]   ║"});
+    same(read(seen, 2), std::string{"      ╔════ Bez ════╗"});
+    same(read(seen, 3), std::string{"      ║ Goła treść. ║"});
+    same(read(seen, 4), std::string{"      ║             ║"});
+    same(read(seen, 5), std::string{"      ║   [ OK ]    ║"});
+    same(read(seen, 6), std::string{"      ╚═════════════╝"});
+    same(made.one->role(), std::string{"talcite.message"});
+}
+
+// Długa treść bez pudełek zawija się w pokoju węższym o oddech — żadne słowo nie ginie za ramką —
+// a okno nie chce więcej niż pokój, także bardzo wąski.
+TRIAL("Message: bez pudełek długa treść zawija się z oddechem, okno mieści się w pokoju") {
+    Opened made{"T", "jeden dwa trzy cztery pięć sześć siedem osiem", {{"OK", U'O'}},
+                ui::MessageShape{ui::Border::twin, false}};
+
+    // Na każdej szerokości widać pierwsze i ostatnie słowo — zawijanie liczy się w tym samym pokoju,
+    // w którym napis potem stoi.
+    for (const int wide : {20, 21, 22, 23, 24, 25, 26}) {
+        const View seen = made.drawn({wide, 14});
+
+        bool first = false;
+        bool last = false;
+
+        for (int y = 0; y < 14; ++y) {
+            first = first || read(seen, y).find("jeden") != std::string::npos;
+            last = last || read(seen, y).find("osiem") != std::string::npos;
+        }
+
+        ought(first && last);
+    }
+
+    ought(made.one->wants({3, 10}).wide <= 3);
+}
+
+// Tytuł zmieniony po zbudowaniu idzie na ramkę, a długi tytuł poszerza okno, zamiast się uciąć.
+TRIAL("Message: bez pudełek nowy tytuł stoi na ramce i poszerza okno") {
+    Opened made{"A", "b", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
+
+    made.one->title("Bardzo długi tytuł");
+
+    same(made.one->title(), std::string{"Bardzo długi tytuł"});
+
+    const View seen = made.drawn({40, 10});
+
+    ought(read(seen, 2).find("═ Bardzo długi tytuł ═") != std::string::npos);
+}
+
+// Bez treści nie ma wiersza treści ani odstępu; bez przycisków — odstępu ani rzędu.
+TRIAL("Message: bez pudełek pusta treść i brak przycisków nie zostawiają dziur") {
+    Opened bare{"Tytuł", "", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
+
+    const View one = bare.drawn({30, 10});
+
+    int rows = 0;
+
+    for (int y = 0; y < 10; ++y)
+        if (!read(one, y).empty()) ++rows;
+
+    same(rows, 3);
+
+    Opened mute{"Tytuł", "Czekam.", {}, ui::MessageShape{ui::Border::twin, false}};
+
+    const View two = mute.drawn({30, 10});
+
+    rows = 0;
+
+    for (int y = 0; y < 10; ++y)
+        if (!read(two, y).empty()) ++rows;
+
+    same(rows, 3);
 }
 
 TRIAL("Message: przyciski stoją pośrodku i mają odstęp") {
@@ -218,7 +287,7 @@ TRIAL("Message: odpowiedź robi to, co dopiął wołający") {
     made.one->buttons()[1]->pick();
 
     same(made.said, 1);
-    ought(made.window->veils().empty());
+    ought(made.window->empty());
 }
 
 // **Escape sam z siebie nie zamyka**, bo zasłona przestała go brać — okno wykonujące czynność,
@@ -233,7 +302,7 @@ TRIAL("Message: Esc zamyka dopiero z uchwytem, a zamknięcie się ogłasza") {
     pressed(made.top, ui::Code::escape);
 
     same(made.closed, 0);
-    ought(!made.window->veils().empty());
+    ought(!made.window->empty());
 
     const std::weak_ptr<ui::Message> weak = made.one;
 
@@ -249,7 +318,7 @@ TRIAL("Message: Esc zamyka dopiero z uchwytem, a zamknięcie się ogłasza") {
 
     same(made.said, -99);
     same(made.closed, 1);
-    ought(made.window->veils().empty());
+    ought(made.window->empty());
 }
 
 // Zamknięcie ogłasza się **przy każdym** zamknięciu, nie tylko przy Escu — także wtedy, gdy woła
@@ -296,7 +365,7 @@ TRIAL("Message: bez ogniska na przycisku Enter nic nie naciska") {
 
     same(made.said, -99);
     same(made.closed, 0);
-    ought(!made.window->veils().empty());
+    ought(!made.window->empty());
 }
 
 TRIAL("Message: klawisz aktywny działa z całego okna") {
@@ -352,11 +421,11 @@ TRIAL("Message: rdzeń roli rozdaje się na wszystkie części") {
     Style box{};
     Style button{};
 
-    window.paper = Color{false, 1, 1, 1};
-    title.ink = Color{false, 2, 2, 2};
-    text.ink = Color{false, 3, 3, 3};
-    box.ink = Color{false, 4, 4, 4};
-    button.ink = Color{false, 5, 5, 5};
+    window.background = Color{false, 1, 1, 1};
+    title.foreground = Color{false, 2, 2, 2};
+    text.foreground = Color{false, 3, 3, 3};
+    box.foreground = Color{false, 4, 4, 4};
+    button.foreground = Color{false, 5, 5, 5};
 
     these["moj.blad"] = window;
     these["moj.blad.title"] = title;
@@ -374,11 +443,11 @@ TRIAL("Message: rdzeń roli rozdaje się na wszystkie części") {
     const View seen = made.drawn({30, 12});
 
     // Krawędź okna, tytuł, kreska pudełka, treść i przycisk — każde ze swojej roli.
-    same(seen.at({6, 0}).style.paper, (Color{false, 1, 1, 1}));
-    same(seen.at({11, 1}).style.ink, (Color{false, 2, 2, 2}));
-    same(seen.at({7, 2}).style.ink, (Color{false, 4, 4, 4}));
-    same(seen.at({8, 3}).style.ink, (Color{false, 3, 3, 3}));
-    same(seen.at({10, 7}).style.ink, (Color{false, 5, 5, 5}));
+    same(seen.at({6, 0}).style.background, (Color{false, 1, 1, 1}));
+    same(seen.at({11, 1}).style.foreground, (Color{false, 2, 2, 2}));
+    same(seen.at({7, 2}).style.foreground, (Color{false, 4, 4, 4}));
+    same(seen.at({8, 3}).style.foreground, (Color{false, 3, 3, 3}));
+    same(seen.at({10, 7}).style.foreground, (Color{false, 5, 5, 5}));
 }
 
 TRIAL("Message: przycisk pod ogniskiem bierze końcówkę swojego rdzenia") {
@@ -388,22 +457,22 @@ TRIAL("Message: przycisk pod ogniskiem bierze końcówkę swojego rdzenia") {
 
     Style hot{};
 
-    hot.ink = Color{false, 9, 9, 9};
+    hot.foreground = Color{false, 9, 9, 9};
 
     these["moj.blad.button.focus"] = hot;
 
     made.top.skin(ui::Skin{these});
     made.one->role("moj.blad");
 
-    made.one->buttons().front()->focus();
+    made.one->buttons()[0]->focus();
 
-    same(made.drawn({30, 12}).at({10, 7}).style.ink, (Color{false, 9, 9, 9}));
+    same(made.drawn({30, 12}).at({10, 7}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
 // --- Budowa -----------------------------------------------------------------------------------
 
 // Komunikat składa się sam i nie ma drugiej drogi, którą dałoby się go złożyć źle — dokładnie tak,
-// jak pasek menu nie przyjmuje treści inaczej niż przez `body()`.
+// jak pasek menu nie przyjmuje treści inaczej niż przez `content()`.
 TRIAL("Message: nie przyjmuje dziecka z zewnątrz") {
     ui::Message one{"Tytuł", "Treść"};
 
@@ -472,7 +541,7 @@ TRIAL("Message: odpowiedź dołożona po zbudowaniu działa jak każda inna") {
 
     int seen = 0;
 
-    const std::shared_ptr<ui::Button> more = made.one->add("Nie");
+    const std::shared_ptr<ui::Button> more = made.one->buttons().add("Nie");
 
     more->keys().add(U'n');
 
@@ -494,7 +563,7 @@ TRIAL("Message: pierwsza odpowiedź dołożona po zbudowaniu pokazuje drugie pud
 
     ought(!shown(made.drawn({30, 12}), "[ Stop ]"));
 
-    made.one->add("Stop");
+    made.one->buttons().add("Stop");
 
     ought(shown(made.drawn({30, 12}), "[ Stop ]"));
 }
@@ -504,9 +573,9 @@ TRIAL("Message: clear() zabiera odpowiedzi razem z pudełkiem") {
 
     (void)made.drawn({44, 14});
 
-    made.one->clear();
+    made.one->buttons().clear();
 
-    same(made.one->buttons().size(), std::size_t{0});
+    same(made.one->buttons().many(), std::size_t{0});
 
     const View seen = made.drawn({44, 14});
 
@@ -520,9 +589,9 @@ TRIAL("Message: clear() zabiera odpowiedzi razem z pudełkiem") {
 TRIAL("Message: odpowiedź bez uchwytu niczego nie robi") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
-    made.one->clear();
+    made.one->buttons().clear();
 
-    const std::shared_ptr<ui::Button> only = made.one->add("Przerwij");
+    const std::shared_ptr<ui::Button> only = made.one->buttons().add("Przerwij");
 
     (void)made.drawn({44, 14});
 
@@ -530,7 +599,7 @@ TRIAL("Message: odpowiedź bez uchwytu niczego nie robi") {
 
     same(made.said, -99);
     same(made.closed, 0);
-    ought(!made.window->veils().empty());
+    ought(!made.window->empty());
 }
 
 // Przycisk zdjęty z okna **dalej ma swoją czynność** — należy ona do wołającego i nikt mu jej nie
@@ -539,9 +608,9 @@ TRIAL("Message: odpowiedź bez uchwytu niczego nie robi") {
 TRIAL("Message: przycisk zdjęty przez clear() dalej robi swoje") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
-    const std::shared_ptr<ui::Button> was = made.one->buttons().front();
+    const std::shared_ptr<ui::Button> was = made.one->buttons()[0];
 
-    made.one->clear();
+    made.one->buttons().clear();
 
     (void)made.drawn({44, 14});
 
@@ -558,12 +627,12 @@ TRIAL("Message: odpowiedź dołożona po zmianie rdzenia bierze jego końcówkę
 
     made.one->role("moj.blad");
 
-    const std::shared_ptr<ui::Button> more = made.one->add("Anuluj");
+    const std::shared_ptr<ui::Button> more = made.one->buttons().add("Anuluj");
 
     same(more->role(), std::string{"moj.blad.button"});
 
     made.one->role("inny.blad");
 
     same(more->role(), std::string{"inny.blad.button"});
-    same(made.one->buttons().front()->role(), std::string{"inny.blad.button"});
+    same(made.one->buttons()[0]->role(), std::string{"inny.blad.button"});
 }

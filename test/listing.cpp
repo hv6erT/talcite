@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -23,7 +24,7 @@ public:
     int keys = 0;
 
 protected:
-    bool react(ui::KeyEvent&) override {
+    bool handle(ui::KeyEvent&) override {
         ++keys;
 
         return true;
@@ -36,7 +37,7 @@ class Nest : public ui::Node {
 public:
     [[nodiscard]] bool focusable() const override { return true; }
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
@@ -50,7 +51,7 @@ protected:
             const ui::Area where{{0, y}, {given.wide, 1}};
             const ui::Area part = ui::Area::crossed(seen, where);
 
-            made.within(one->render(where, part - where.at), part.at - seen.at);
+            made.draw(one->render(where, part - where.at), part.at - seen.at);
 
             ++y;
         }
@@ -82,7 +83,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -167,14 +168,14 @@ TRIAL("ListItem: wyłączona gaśnie i ogniska nie bierze") {
 
     ought(one->focusable());
 
-    one->able(false);
+    one->enabled(false);
 
     ought(!one->focusable());
 
     // Wołanie na węźle, który ogniska nie bierze, nic nie robi — po cichu, jak w korzeniu.
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     const View made = top.render({{0, 0}, {8, 1}});
 
@@ -194,11 +195,11 @@ TRIAL("ListItem: wyłączenie z ogniskiem oddaje je przodkowi") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
-    one->able(false);
+    one->enabled(false);
 
-    same(top.focus(), static_cast<ui::Node*>(nest.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(nest.get()));
 }
 
 TRIAL("ListItem: Enter woła zadanie") {
@@ -217,7 +218,7 @@ TRIAL("ListItem: Enter woła zadanie") {
 
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(done, 1);
     same(top.keys, 0);
@@ -240,7 +241,7 @@ TRIAL("ListItem: Enter ze sterującym idzie wyżej") {
 
     ui::KeyEvent what{ui::Key{ui::Code::enter, ui::Mods{true, false, false}}};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(done, 0);
     same(top.keys, 1);
@@ -260,7 +261,7 @@ TRIAL("ListItem: strzałka idzie wyżej") {
 
     ui::KeyEvent what{ui::Code::down};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(top.keys, 1);
 }
@@ -269,7 +270,7 @@ TRIAL("ListItem: strzałka idzie wyżej") {
 // uchwyt widzi go przed kimkolwiek wyżej — i przed wędrówką po wierszach, gdy dojdzie lista.
 //
 // „Przed" znaczy tu **wcześniej**, a nie „zamiast": prawda z uchwytu zamyka drogę uchwytów, ale
-// `react` przodka biegnie swoją. Widać to na liczniku korzenia: w chwili, gdy uchwyt się odzywa,
+// `handle` przodka biegnie swoją. Widać to na liczniku korzenia: w chwili, gdy uchwyt się odzywa,
 // jest jeszcze zerowy, a po wszystkim wynosi jeden.
 TRIAL("ListItem: dopięty uchwyt widzi klawisz przed przodkiem") {
     Sheet top;
@@ -294,7 +295,7 @@ TRIAL("ListItem: dopięty uchwyt widzi klawisz przed przodkiem") {
 
     ui::KeyEvent what{ui::Code::down};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(seen, 1);
     same(meanwhile, 0);
@@ -316,9 +317,9 @@ TRIAL("ListItem: klik bierze ognisko") {
 
     ui::ClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    same(top.focus(), static_cast<ui::Node*>(other.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 TRIAL("ListItem: dwuklik bierze ognisko i woła zadanie") {
@@ -341,9 +342,9 @@ TRIAL("ListItem: dwuklik bierze ognisko i woła zadanie") {
 
     ui::DoubleClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    same(top.focus(), static_cast<ui::Node*>(other.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
     same(done, 1);
 }
 
@@ -358,7 +359,7 @@ TRIAL("ListItem: wyłączona przepuszcza klik i ogniska nie bierze") {
 
     const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
 
-    one->able(false);
+    one->enabled(false);
 
     nest->children().add(one);
     top.children().add(nest);
@@ -367,13 +368,13 @@ TRIAL("ListItem: wyłączona przepuszcza klik i ogniska nie bierze") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
 
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     ui::DoubleClickEvent twice{{2, 0}, ui::Mouse::left};
 
-    ought(!top.deal(twice));
+    ought(!top.dispatch(twice));
 
     same(done, 0);
 }
@@ -387,7 +388,7 @@ TRIAL("ListItem: pick na wyłączonej nic nie robi") {
 
     same(done, 1);
 
-    one->able(false);
+    one->enabled(false);
     one->pick();
 
     same(done, 1);
@@ -425,7 +426,7 @@ TRIAL("ListItem: napis i zadanie da się podmienić po drodze") {
 TRIAL("ListItem: nie przyjmuje dzieci") {
     const auto one = std::make_shared<ui::ListItem>("plik");
 
-    same(one->takes(), 0);
+    same(one->capacity(), 0);
 
     threw(one->children().add(std::make_shared<ui::ListItem>("inne")));
 }
@@ -439,8 +440,8 @@ TRIAL("List: ognisko idzie na pozycję, nie na listę") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one->children().front().get()));
-    same(one->which(), 0);
+    same(top.focused_node(), static_cast<ui::Node*>(one->children().front().get()));
+    same(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: pusta bierze ognisko sama") {
@@ -452,8 +453,8 @@ TRIAL("List: pusta bierze ognisko sama") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
-    same(one->which(), -1);
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    ought(one->current() == nullptr);
 }
 
 TRIAL("List: strzałki chodzą po wierszach i nie zawijają") {
@@ -467,24 +468,24 @@ TRIAL("List: strzałki chodzą po wierszach i nie zawijają") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.deal(down));
-    same(one->which(), 1);
+    ought(top.dispatch(down));
+    same(one->which(), std::optional<std::size_t>{1});
 
     ui::KeyEvent again{ui::Code::down};
 
-    ought(top.deal(again));
-    same(one->which(), 2);
+    ought(top.dispatch(again));
+    same(one->which(), std::optional<std::size_t>{2});
 
     // Na ostatnim wierszu w dół nic nie robi — i **nie wraca na pierwszy**.
     ui::KeyEvent past{ui::Code::down};
 
-    ought(top.deal(past));
-    same(one->which(), 2);
+    ought(top.dispatch(past));
+    same(one->which(), std::optional<std::size_t>{2});
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.deal(up));
-    same(one->which(), 1);
+    ought(top.dispatch(up));
+    same(one->which(), std::optional<std::size_t>{1});
 }
 
 TRIAL("List: Home i End stają na pierwszym i ostatnim") {
@@ -498,13 +499,13 @@ TRIAL("List: Home i End stają na pierwszym i ostatnim") {
 
     ui::KeyEvent last{ui::Code::end};
 
-    ought(top.deal(last));
-    same(one->which(), 4);
+    ought(top.dispatch(last));
+    same(one->which(), std::optional<std::size_t>{4});
 
     ui::KeyEvent first{ui::Code::home};
 
-    ought(top.deal(first));
-    same(one->which(), 0);
+    ought(top.dispatch(first));
+    same(one->which(), std::optional<std::size_t>{0});
 }
 
 // Strona liczy się z **prawdziwej wysokości**, którą lista dostała w poprzedniej klatce.
@@ -521,23 +522,23 @@ TRIAL("List: strona to tyle wierszy, ile widać") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(top.deal(down));
-    same(one->which(), 5);
+    ought(top.dispatch(down));
+    same(one->which(), std::optional<std::size_t>{5});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(top.deal(up));
-    same(one->which(), 0);
+    ought(top.dispatch(up));
+    same(one->which(), std::optional<std::size_t>{0});
 
     // Strona przy końcu zatrzymuje się na ostatnim wierszu, zamiast wyjść poza.
     ui::KeyEvent last{ui::Code::end};
 
-    (void)top.deal(last);
+    (void)top.dispatch(last);
 
     ui::KeyEvent over{ui::Code::pagedown};
 
-    ought(top.deal(over));
-    same(one->which(), 19);
+    ought(top.dispatch(over));
+    same(one->which(), std::optional<std::size_t>{19});
 }
 
 TRIAL("List: wędrówka omija pozycje niedostępne") {
@@ -547,22 +548,22 @@ TRIAL("List: wędrówka omija pozycje niedostępne") {
 
     top.children().add(one);
 
-    dynamic_cast<ui::ListItem*>(one->children()[1].get())->able(false);
-    dynamic_cast<ui::ListItem*>(one->children()[2].get())->able(false);
+    dynamic_cast<ui::ListItem*>(one->children()[1].get())->enabled(false);
+    dynamic_cast<ui::ListItem*>(one->children()[2].get())->enabled(false);
 
     one->focus();
 
-    same(one->which(), 0);
+    same(one->which(), std::optional<std::size_t>{0});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.deal(down));
-    same(one->which(), 3);
+    ought(top.dispatch(down));
+    same(one->which(), std::optional<std::size_t>{3});
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.deal(up));
-    same(one->which(), 0);
+    ought(top.dispatch(up));
+    same(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: same niedostępne pozycje — ognisko zostaje na liście") {
@@ -572,12 +573,12 @@ TRIAL("List: same niedostępne pozycje — ognisko zostaje na liście") {
 
     top.children().add(one);
 
-    dynamic_cast<ui::ListItem*>(one->children()[0].get())->able(false);
-    dynamic_cast<ui::ListItem*>(one->children()[1].get())->able(false);
+    dynamic_cast<ui::ListItem*>(one->children()[0].get())->enabled(false);
+    dynamic_cast<ui::ListItem*>(one->children()[1].get())->enabled(false);
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // **Przewinięcie liczy malowanie**, bo dopiero tam znana jest wysokość — ta sama reguła co w polu.
@@ -596,16 +597,16 @@ TRIAL("List: widok dogania bieżący wiersz") {
 
     ui::KeyEvent last{ui::Code::end};
 
-    (void)top.deal(last);
+    (void)top.dispatch(last);
     (void)top.render({{0, 0}, {12, 3}});
 
     // Dziesięć wierszy, widać trzy, stoimy na dziewiątym — więc widok zaczyna się od siódmego.
-    same(one->which(), 9);
+    same(one->which(), std::optional<std::size_t>{9});
     same(one->first(), 7);
 
     ui::KeyEvent first{ui::Code::home};
 
-    (void)top.deal(first);
+    (void)top.dispatch(first);
     (void)top.render({{0, 0}, {12, 3}});
 
     same(one->first(), 0);
@@ -635,13 +636,13 @@ TRIAL("List: kółko przewija widok, a wiersza nie rusza") {
 
     ui::WheelEvent what{{2, 1}, -1};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     (void)top.render({{0, 0}, {12, 3}});
 
     // Widok się przesunął, więc zdarzenie idzie — ale bieżący wiersz został tam, gdzie stał.
     same(one->first(), 3);
-    same(one->which(), 0);
+    same(one->which(), std::optional<std::size_t>{0});
     same(moves, 2);
 }
 
@@ -657,11 +658,11 @@ TRIAL("List: kółko na końcu przewijania oddaje zdarzenie wyżej") {
     // W górę z zera nie ma dokąd — zdarzenie idzie dalej, żeby dostał je przewijak nad listą.
     ui::WheelEvent up{{2, 1}, 1};
 
-    ought(!top.deal(up));
+    ought(!top.dispatch(up));
 
     ui::WheelEvent down{{2, 1}, -1};
 
-    ought(top.deal(down));
+    ought(top.dispatch(down));
 }
 
 TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
@@ -670,7 +671,7 @@ TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
     const auto one = listed(4);
 
     int moves = 0;
-    int last = -1;
+    std::optional<std::size_t> last;
 
     // Zdarzenie nie niesie numeru wiersza — słuchacz czyta go z `which()`. Jedna droga
     // zawiadamiania zamiast dwóch: `on` i `off` jak wszędzie indziej.
@@ -689,25 +690,25 @@ TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
     one->focus();
 
     same(moves, 1);
-    same(last, 0);
+    same(last, std::optional<std::size_t>{0});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.deal(down));
+    ought(top.dispatch(down));
 
     same(moves, 2);
-    same(last, 1);
+    same(last, std::optional<std::size_t>{1});
 
     // Ruch w dół z ostatniego wiersza nie jest zmianą.
     ui::KeyEvent end{ui::Code::end};
 
-    (void)top.deal(end);
+    (void)top.dispatch(end);
 
     same(moves, 3);
 
     ui::KeyEvent past{ui::Code::down};
 
-    ought(top.deal(past));
+    ought(top.dispatch(past));
 
     same(moves, 3);
 }
@@ -727,20 +728,20 @@ TRIAL("List: wyjście z listy i powrót wracają na ten sam wiersz") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    (void)top.deal(down);
-    (void)top.deal(down);
+    (void)top.dispatch(down);
+    (void)top.dispatch(down);
 
-    same(one->which(), 2);
+    same(one->which(), std::optional<std::size_t>{2});
 
     perch->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(perch.get()));
-    same(one->which(), 2);
+    same(top.focused_node(), static_cast<ui::Node*>(perch.get()));
+    same(one->which(), std::optional<std::size_t>{2});
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one->children()[2].get()));
-    same(one->which(), 2);
+    same(top.focused_node(), static_cast<ui::Node*>(one->children()[2].get()));
+    same(one->which(), std::optional<std::size_t>{2});
 }
 
 TRIAL("List: litera, Tab i Esc idą wyżej") {
@@ -754,25 +755,25 @@ TRIAL("List: litera, Tab i Esc idą wyżej") {
 
     ui::KeyEvent letter{U'a'};
 
-    ought(top.deal(letter));
+    ought(top.dispatch(letter));
     same(top.keys, 1);
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
+    ought(top.dispatch(tab));
     same(top.keys, 2);
 
     ui::KeyEvent away{ui::Code::escape};
 
-    ought(top.deal(away));
+    ought(top.dispatch(away));
     same(top.keys, 3);
 
     // Strzałka ze sterującym też nie należy do listy.
     ui::KeyEvent held{ui::Key{ui::Code::down, ui::Mods{true, false, false}}};
 
-    ought(top.deal(held));
+    ought(top.dispatch(held));
     same(top.keys, 4);
-    same(one->which(), 0);
+    same(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: Enter woła zadanie bieżącego wiersza") {
@@ -794,11 +795,11 @@ TRIAL("List: Enter woła zadanie bieżącego wiersza") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    (void)top.deal(down);
+    (void)top.dispatch(down);
 
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(done, 1);
     same(top.keys, 0);
@@ -814,23 +815,70 @@ TRIAL("List: which ustawia wiersz z programu i przestawia ognisko") {
     // Bez ogniska numer jest tylko zapamiętany.
     one->which(4);
 
-    same(one->which(), 4);
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(one->which(), std::optional<std::size_t>{4});
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one->children()[4].get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one->children()[4].get()));
 
     // Z ogniskiem przestawia je od razu, a numer poza zakresem przycina.
     one->which(99);
 
-    same(one->which(), 5);
-    same(top.focus(), static_cast<ui::Node*>(one->children()[5].get()));
+    same(one->which(), std::optional<std::size_t>{5});
+    same(top.focused_node(), static_cast<ui::Node*>(one->children()[5].get()));
 
-    one->which(dynamic_cast<ui::ListItem*>(one->children()[1].get()));
+    one->current(*dynamic_cast<ui::ListItem*>(one->children()[1].get()));
 
-    same(one->which(), 1);
-    same(top.focus(), static_cast<ui::Node*>(one->children()[1].get()));
+    same(one->which(), std::optional<std::size_t>{1});
+    same(top.focused_node(), static_cast<ui::Node*>(one->children()[1].get()));
+}
+
+// **`which()` to numer, `current()` to węzeł** — ten sam wiersz pod dwiema nazwami. Kto pyta
+// o węzeł, dostaje wiersz do naciśnięcia albo przeczytania; kto o numer — liczbę do własnej tablicy
+// obok. Pusta lista oddaje pustkę w obu; obcy wiersz w ustawiaczu nic nie robi.
+TRIAL("List: which to numer, current to węzeł, a obcy wiersz nie ustawia niczego") {
+    Sheet top;
+
+    const auto one = listed(3);
+    const auto other = listed(2);
+
+    top.children().add(one);
+
+    ought(one->current() == nullptr);
+
+    ought(!one->which().has_value());
+
+    one->which(2);
+
+    same(one->which(), std::optional<std::size_t>{2});
+    same(static_cast<ui::Node*>(one->current()), one->children()[2].get());
+    same(one->current()->text(), std::string{"wiersz 2"});
+
+    one->current(*dynamic_cast<ui::ListItem*>(other->children()[0].get()));
+
+    same(one->which(), std::optional<std::size_t>{2});
+    same(static_cast<ui::Node*>(one->current()), one->children()[2].get());
+
+    one->current(*dynamic_cast<ui::ListItem*>(one->children()[0].get()));
+
+    same(one->which(), std::optional<std::size_t>{0});
+
+    const auto empty = std::make_shared<ui::List>();
+
+    ought(empty->current() == nullptr);
+    ought(!empty->which().has_value());
+
+    empty->which(0);
+
+    ought(empty->current() == nullptr);
+    ought(!empty->which().has_value());
+
+    // Wiersz zdjęty spod numeru: numer nie wskazuje na nic, więc go nie ma — zgodnie z węzłem.
+    one->which(2);
+    (void)one->children().remove(one->children()[2].get());
+
+    same(one->which().has_value(), one->current() != nullptr);
 }
 
 TRIAL("List: pasek przewijania zabiera kolumnę z prawej") {
@@ -844,7 +892,28 @@ TRIAL("List: pasek przewijania zabiera kolumnę z prawej") {
 
     same(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
 
-    one->progress(true);
+    one->scrollbar(true);
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
+}
+
+// Pasek „gdy trzeba": lista krótsza niż okno oddaje jego kolumnę wierszom.
+TRIAL("List: pasek gdy trzeba tylko przy liście dłuższej niż okno") {
+    Sheet top;
+
+    const auto one = std::make_shared<ui::List>(12, 3, ui::ScrollShape{true, true});
+
+    for (int at = 0; at < 3; ++at) one->children().add(std::make_shared<ui::ListItem>("pozycja " + std::to_string(at)));
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    same(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
+
+    one->children().add(std::make_shared<ui::ListItem>("pozycja 3"));
 
     (void)top.render({{0, 0}, {12, 3}});
 
@@ -871,10 +940,10 @@ TRIAL("List: wiersz poza widokiem nie łapie myszy") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    same(top.focus(), static_cast<ui::Node*>(one->children()[3].get()));
-    same(one->which(), 3);
+    same(top.focused_node(), static_cast<ui::Node*>(one->children()[3].get()));
+    same(one->which(), std::optional<std::size_t>{3});
 }
 
 TRIAL("List: klik w wiersz czyni go bieżącym") {
@@ -896,9 +965,9 @@ TRIAL("List: klik w wiersz czyni go bieżącym") {
 
     ui::ClickEvent what{{3, 2}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    same(one->which(), 2);
+    same(one->which(), std::optional<std::size_t>{2});
     same(moves, 1);
 }
 

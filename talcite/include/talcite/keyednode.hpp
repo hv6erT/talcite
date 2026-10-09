@@ -44,7 +44,7 @@ public:
     [[nodiscard]] walk end() const { return inside_.end(); }
 
 private:
-    template <std::derived_from<Node> Above>
+    template <std::derived_from<Node> Base>
     friend class KeyedNode;
 
     Keys() = default;
@@ -54,30 +54,32 @@ private:
     std::vector<Key> inside_;
 };
 
-[[nodiscard]] int marking(const Keys& these, const std::string& shown);
+[[nodiscard]] int shortcut_column(const Keys& these, const std::string& shown);
 
-template <std::derived_from<Node> Above>
-class KeyedNode : public Above {
+template <std::derived_from<Node> Base>
+class KeyedNode : public Base {
 public:
     [[nodiscard]] Keys& keys() { return keys_; }
 
     [[nodiscard]] const Keys& keys() const { return keys_; }
 
-    [[nodiscard]] virtual bool able() const { return true; }
-
 protected:
-    using Above::Above;
+    using Base::Base;
+    using Base::handle;
 
-    [[nodiscard]] int marking(const std::string& shown) const {
-        return talcite::ui::marking(keys_, shown);
+    [[nodiscard]] int shortcut_column(const std::string& shown) const {
+        return talcite::ui::shortcut_column(keys_, shown);
     }
 
-    virtual void act() = 0;
+    virtual void activate() = 0;
 
-    bool react(HotEvent<KeyEvent>& what) override {
-        if (!able() || !keys_.contains(what.held().key())) return false;
+    bool handle(ShortcutEvent& what) override {
+        if constexpr (requires(const Base& one) { one.enabled(); })
+            if (!this->enabled()) return false;
 
-        act();
+        if (!keys_.contains(what.key())) return false;
+
+        activate();
 
         return true;
     }

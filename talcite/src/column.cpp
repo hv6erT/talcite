@@ -8,11 +8,11 @@ Column::Column(int gap) : gap_(std::max(gap, 0)) {}
 
 void Column::gap(int given) { gap_ = std::max(given, 0); }
 
-int Column::takes() const { return plenty; }
+int Column::capacity() const { return plenty; }
 
 // Wysokości dzieci sumujemy, szerokość bierzemy z najszerszego — ale oddajemy **co najwyżej
 // tyle, ile dostaliśmy**. Kolumna nie ma prawa powiedzieć rodzicowi, że potrzebuje stu wierszy,
-// bo rodzic i tak nie ma ich skąd wziąć; od pokazywania tego, co się nie mieści, będzie VScroll.
+// bo rodzic i tak nie ma ich skąd wziąć; od pokazywania tego, co się nie mieści, będzie `Scroll`.
 //
 // Odstęp należy się między dziećmi, które coś zajmują — reguła i powód opisane przy wierszu.
 Size Column::wants(Size room) const {
@@ -40,7 +40,7 @@ View Column::paint(Size given, Area seen) {
 
     // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     int y = 0;
 
@@ -55,7 +55,7 @@ View Column::paint(Size given, Area seen) {
         const Area where{{0, from}, gets};
         const Area part = Area::crossed(seen, where);
 
-        made.within(one->render(where, part - where.at), part.at - seen.at);
+        made.draw(one->render(where, part - where.at), part.at - seen.at);
 
         y = from + gets.high;
     }

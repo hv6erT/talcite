@@ -1,11 +1,12 @@
 #include "proving.hpp"
 
+#include <chrono>
 #include <memory>
 #include <string>
 
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/pane.hpp"
 #include "talcite/root.hpp"
 #include "talcite/span.hpp"
@@ -23,9 +24,9 @@ public:
 protected:
     // Korzeń pochłania każdy klawisz — tak jak w każdym demie i tak jak zrobi to aplikacja.
     // Dzięki temu widać, że legenda dostaje swoje **od dołu**, a nie stąd.
-    bool react(ui::KeyEvent&) override { return true; }
+    bool handle(ui::KeyEvent&) override { return true; }
 
-    bool react(ui::ClickEvent&) override {
+    bool handle(ui::ClickEvent&) override {
         ++clicks;
 
         return true;
@@ -44,7 +45,7 @@ public:
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
-    bool react(ui::ClickEvent&) override {
+    bool handle(ui::ClickEvent&) override {
         ++clicks;
 
         return takes_;
@@ -54,14 +55,18 @@ private:
     bool takes_ = true;
 };
 
+// Każde kliknięcie o sekundę po poprzednim, więc dwa z rzędu w tę samą kratkę nie składają się
+// w dwuklik — próby pytają o pojedyncze.
 void clicked(ui::Root& onto, ui::Spot where) {
-    ui::MouseEvent down{where, ui::Press::down, ui::Mouse::left};
-    ui::MouseEvent up{where, ui::Press::up, ui::Mouse::left};
+    static std::chrono::steady_clock::time_point moment{};
 
-    (void)onto.deal(down);
-    (void)onto.deal(up);
+    moment += std::chrono::seconds{1};
 
-    onto.settle();
+    ui::MouseEvent down{where, ui::Press::down, ui::Mouse::left, {}, moment};
+    ui::MouseEvent up{where, ui::Press::up, ui::Mouse::left, {}, moment};
+
+    (void)onto.dispatch(down);
+    (void)onto.dispatch(up);
 }
 
 }
@@ -80,7 +85,7 @@ TRIAL("Pane: domyślnie bierze ognisko, bo po to jest") {
 
     clicked(top, {5, 5});
 
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(one.get()));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
     ought(one->focused());
 }
 
@@ -89,7 +94,7 @@ TRIAL("Pane: wyłączony ogniska nie bierze") {
 
     const auto one = std::make_shared<ui::Pane>();
 
-    one->able(false);
+    one->enabled(false);
 
     ought(!one->focusable());
 
@@ -98,7 +103,7 @@ TRIAL("Pane: wyłączony ogniska nie bierze") {
 
     clicked(top, {5, 5});
 
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(nullptr));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
 // **Pojemnik nie zabiera kliknięć swoim dzieciom.** Mysz wędruje od najgłębszego węzła pod kursorem
@@ -117,7 +122,7 @@ TRIAL("Pane: kliknięcie wzięte przez dziecko do pojemnika nie dochodzi") {
     clicked(top, {5, 5});
 
     same(said->clicks, 1);
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(nullptr));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
     same(top.clicks, 0);
 }
 
@@ -134,7 +139,7 @@ TRIAL("Pane: kliknięcie odrzucone przez dziecko zabiera ognisko pojemnikowi") {
     clicked(top, {5, 5});
 
     same(said->clicks, 1);
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(one.get()));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
     same(top.clicks, 0);
 }
 
@@ -146,7 +151,7 @@ TRIAL("Pane: wyłączony oddaje kliknięcie dalej w górę") {
     const auto one = std::make_shared<ui::Pane>();
     const auto said = std::make_shared<Noted>(false);
 
-    one->able(false);
+    one->enabled(false);
     one->children().add(said);
     top.children().add(one);
     (void)top.render({{0, 0}, {20, 10}});
@@ -155,23 +160,23 @@ TRIAL("Pane: wyłączony oddaje kliknięcie dalej w górę") {
 
     same(said->clicks, 1);
     same(top.clicks, 1);
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(nullptr));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
 // **To jest prawdziwy powód, dla którego ten element istnieje.** Klawisz idzie bąbelkiem od ogniska
-// w górę, a legenda jest przodkiem treści — więc bez czegoś, co potrzyma ognisko, `Root::deal`
+// w górę, a legenda jest przodkiem treści — więc bez czegoś, co potrzyma ognisko, `Root::dispatch`
 // podaje klawisz korzeniowi i tam wędrówka się kończy. Okno bez przycisku i bez pola tekstowego nie
 // ma wtedy działających F-klawiszy.
 TRIAL("Pane: dopiero z ogniskiem legenda dostaje klawisze") {
     Sheet top;
 
-    const auto legend = std::make_shared<ui::LegendWindow>();
+    const auto legend = std::make_shared<ui::Legend>();
     const auto one = std::make_shared<ui::Pane>();
 
     int hits = 0;
 
     one->children().add(std::make_shared<ui::Frame>("treść"));
-    legend->body()->children().add(one);
+    legend->content(one);
 
     (void)proving::doing(legend->add(ui::Code::f5, "Coś"), [&hits] { ++hits; });
 
@@ -180,7 +185,7 @@ TRIAL("Pane: dopiero z ogniskiem legenda dostaje klawisze") {
 
     ui::KeyEvent before{ui::Code::f5};
 
-    (void)top.deal(before);
+    (void)top.dispatch(before);
 
     same(hits, 0);
 
@@ -188,43 +193,34 @@ TRIAL("Pane: dopiero z ogniskiem legenda dostaje klawisze") {
 
     ui::KeyEvent after{ui::Code::f5};
 
-    (void)top.deal(after);
+    (void)top.dispatch(after);
 
     same(hits, 1);
 }
 
 // --- Miejsce ------------------------------------------------------------------------------------
 
-TRIAL("Pane: domyślnie prosi o całe miejsce") {
+// **Cały pokój, także gdy dziecko chce mniej** — i to jest cały rozmiarowy udział pojemnika.
+// Stała, nie ustawienie: pole `full_` z parą ustawiaczy nie miało ani jednego wołającego poza
+// próbami, które sprawdzały je same. Od zadawania rozmiaru jest `Box`.
+TRIAL("Pane: prosi o całe miejsce, choćby dziecko chciało mniej") {
     const auto one = std::make_shared<ui::Pane>();
+    const auto said = std::make_shared<ui::Span>(std::string{"trzy"});
 
-    ought(one->full());
+    one->children().add(said);
 
-    one->children().add(std::make_shared<ui::Span>(std::string{"trzy"}));
+    ought(said->wants({20, 10}).wide < 20);
 
     same(one->wants({20, 10}).wide, 20);
     same(one->wants({20, 10}).high, 10);
 }
 
-TRIAL("Pane: bez wypełniania schodzi do życzenia dziecka") {
-    const auto one = std::make_shared<ui::Pane>();
-    const auto said = std::make_shared<ui::Span>(std::string{"trzy"});
-
-    one->full(false);
-    one->children().add(said);
-
-    ought(!one->full());
-    same(one->wants({20, 10}).wide, said->wants({20, 10}).wide);
-    same(one->wants({20, 10}).high, said->wants({20, 10}).high);
-}
-
-TRIAL("Pane: pusty i bez wypełniania nie prosi o nic") {
+// Pusty też bierze wszystko — inaczej niż `Node`, który bez dziecka nie prosi o nic.
+TRIAL("Pane: pusty prosi o całe miejsce") {
     const auto one = std::make_shared<ui::Pane>();
 
-    one->full(false);
-
-    same(one->wants({20, 10}).wide, 0);
-    same(one->wants({20, 10}).high, 0);
+    same(one->wants({20, 10}).wide, 20);
+    same(one->wants({20, 10}).high, 10);
 }
 
 // --- Malowanie ----------------------------------------------------------------------------------
@@ -280,7 +276,7 @@ TRIAL("Pane: wyłączony pod ogniskiem oddaje je przodkowi") {
 
     ought(one->focused());
 
-    one->able(false);
+    one->enabled(false);
 
     ought(!one->focused());
     ought(up->focused());
@@ -297,7 +293,7 @@ TRIAL("Pane: wyłączony bez chętnego przodka gasi ognisko") {
 
     one->focus();
 
-    one->able(false);
+    one->enabled(false);
 
-    same(static_cast<const void*>(top.focus()), static_cast<const void*>(nullptr));
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }

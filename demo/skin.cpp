@@ -7,14 +7,14 @@
 #include "talcite/frame.hpp"
 #include "talcite/gauge.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/line.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
-#include "talcite/menuline.hpp"
-#include "talcite/menuwindow.hpp"
+#include "talcite/menuseparator.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/row.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
@@ -29,7 +29,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -39,11 +39,11 @@ private:
     talcite::Term& term_;
 };
 
-talcite::Style painted(talcite::Color ink, talcite::Color paper) {
+talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -55,7 +55,7 @@ talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 // Skórka barwna: te same role, inne wartości. Żaden widżet o niej nie wie — pyta o rolę i dostaje
 // to, co ta skórka mówi.
 talcite::ui::Skin coloured() {
-    const talcite::Color paper = tinted(0, 0, 140);
+    const talcite::Color background = tinted(0, 0, 140);
     const talcite::Color light = tinted(200, 200, 200);
     const talcite::Color white = tinted(255, 255, 255);
     const talcite::Color cyan = tinted(0, 160, 160);
@@ -63,11 +63,11 @@ talcite::ui::Skin coloured() {
     const talcite::Color yellow = tinted(255, 230, 80);
 
     return talcite::ui::Skin{{
-        {"talcite.normal", painted(light, paper)},      {"talcite.frame", painted(light, paper)},
-        {"talcite.title", painted(yellow, paper)},
+        {"talcite.normal", painted(light, background)},      {"talcite.frame", painted(light, background)},
+        {"talcite.title", painted(yellow, background)},
 
-        {"talcite.list", painted(light, paper)},        {"talcite.list.focus", painted(black, cyan)},
-        {"talcite.list.mark", painted(white, paper)},
+        {"talcite.list", painted(light, background)},        {"talcite.list.focus", painted(black, cyan)},
+        {"talcite.list.mark", painted(white, background)},
 
         {"talcite.menubar", painted(black, light)},     {"talcite.menubar.focus", painted(black, cyan)},
         {"talcite.menu", painted(black, light)},        {"talcite.menu.focus", painted(black, cyan)},
@@ -78,10 +78,10 @@ talcite::ui::Skin coloured() {
         {"talcite.input", painted(black, cyan)},        {"talcite.button", painted(black, light)},
         {"talcite.button.focus", painted(black, cyan)}, {"talcite.button.key", painted(yellow, light)},
 
-        {"talcite.scroll", painted(light, paper)},      {"talcite.scroll.thumb", painted(cyan, paper)},
+        {"talcite.scroll", painted(light, background)},      {"talcite.scroll.thumb", painted(cyan, background)},
 
-        {"talcite.gauge", painted(light, paper)},       {"talcite.gauge.done", painted(cyan, paper)},
-        {"talcite.gauge.text", painted(yellow, paper)},
+        {"talcite.gauge", painted(light, background)},       {"talcite.gauge.done", painted(cyan, background)},
+        {"talcite.gauge.text", painted(yellow, background)},
     }};
 }
 
@@ -120,8 +120,8 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
-    const auto menus = std::make_shared<talcite::ui::MenuWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
@@ -133,7 +133,7 @@ int main() {
     const auto told = std::make_shared<talcite::ui::Span>("skórka wbudowana");
 
     const auto list =
-        std::make_shared<talcite::ui::List>(talcite::ui::plenty, 6, talcite::ui::ListStyle{true});
+        std::make_shared<talcite::ui::List>(talcite::ui::plenty, 6, talcite::ui::ScrollShape{true});
 
     for (int which = 0; which < 30; ++which)
         list->children().add(std::make_shared<talcite::ui::ListItem>("bardzo długa nazwa pliku numer " +
@@ -166,13 +166,13 @@ int main() {
     column->children().add(row);
 
     frame->children().add(column);
-    menus->body()->children().add(frame);
-    legend->body()->children().add(menus);
+    menus->content(frame);
+    legend->content(menus);
 
     const auto file = menus->add("Plik");
 
     file->children().add(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"));
-    file->children().add(std::make_shared<talcite::ui::MenuLine>());
+    file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
     file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
                           [&term] { term.stop(); }));
 
@@ -203,7 +203,7 @@ int main() {
 
     list->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — skórki");
 
     term.run();

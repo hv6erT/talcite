@@ -10,31 +10,13 @@
 
 namespace talcite::ui {
 
-namespace {
-
-bool alike(Key mine, Key one) {
-    const Mods here = mine.mods();
-    const Mods there = one.mods();
-
-    if (here.ctrl != there.ctrl || here.alt != there.alt) return false;
-
-    if (mine.code() != Code::none || one.code() != Code::none) return mine.code() == one.code();
-
-    const char32_t first = mine.letter();
-    const char32_t second = one.letter();
-
-    return first != 0 && second != 0 && folded(first) == folded(second);
-}
-
-}
-
 // **Pusty klawisz nie wchodzi**, tak samo jak pusty węzeł nie wchodzi do dzieci: zbiór, w którym
 // leży „nic", odpowiadałby na nic.
 //
 // Dokładanie tego samego dwa razy **nie jest błędem, tylko brakiem skutku** — drugi egzemplarz
 // i tak nigdy by nie wygrał, bo pierwszy kończy szukanie. Dlatego cicho pomijamy, zamiast rzucać.
 void Keys::add(Key one) {
-    if (!one.held() || contains(one)) return;
+    if (one.empty() || contains(one)) return;
 
     inside_.push_back(one);
 }
@@ -52,23 +34,10 @@ void Keys::remove(Key one) {
 
 void Keys::clear() { inside_.clear(); }
 
-// **Cała reguła dopasowania skrótu stoi tutaj**, i nigdzie indziej. Składa się z trzech części,
-// z których każda ma osobny powód.
-//
-// **Wielkość liter składamy.** `Key::operator==` zostaje dokładne, bo pole tekstowe stoi na
-// różnicy między „T" a „t" — ale skrót zgłoszony jako `U'T'` ma odpowiadać na jedno i drugie.
-// Klawisze nazwane porównujemy na równość, bo F10 wielkości nie ma.
-//
-// **Ctrl i Alt porównujemy dokładnie.** To jest cała zdobycz z przeniesienia modyfikatorów do
-// klawisza: zbiór trzymający zwykłe `F5` sam z siebie nie odpowie na Ctrl+F5, więc widżet nie musi
-// tego odsiewać ręcznie, a zbiór trzymający `Alt+H` odpowie wyłącznie na `Alt+H`.
-//
-// **Shift przymykamy.** Przy literze jest już zakodowany w samej literze — „H" to Shift+h i pytanie
-// o jedno i drugie naraz byłoby pytaniem o to samo dwa razy. Przy klawiszach funkcyjnych terminale
-// meldują go niezgodnie i odsianie zabierałoby czasem zwykłe naciśnięcie; legenda robiła ten
-// wyjątek u siebie od początku, a teraz stoi on w jednym miejscu dla wszystkich.
+// Dopasowanie to `alike` — reguła stoi przy klawiszu, w `key.cpp`, bo tę samą potrzebują programy,
+// które porównują skróty same, na przykład wczytane z pliku.
 bool Keys::contains(Key one) const {
-    if (!one.held()) return false;
+    if (one.empty()) return false;
 
     return std::any_of(inside_.begin(), inside_.end(),
                        [one](Key mine) { return alike(mine, one); });
@@ -78,19 +47,19 @@ bool Keys::contains(Key one) const {
 // w zbiorze opcji. Klawisz oddajemy **przez wartość**, bo to jedna liczba: referencja na niego
 // niosłaby tyle samo, a wiązałaby wołającego z układem zbioru w środku.
 Key Keys::operator[](std::size_t which) const {
-    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Keys: nie ma takiego klawisza");
+    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Keys: no such key");
 
     return inside_[which];
 }
 
 Key Keys::front() const {
-    if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: nie ma żadnego klawisza");
+    if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: no keys");
 
     return inside_.front();
 }
 
 Key Keys::back() const {
-    if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: nie ma żadnego klawisza");
+    if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: no keys");
 
     return inside_.back();
 }
@@ -109,7 +78,7 @@ Key Keys::back() const {
 // Stoi tu jako wolna funkcja, a nie w ciele szablonu, żeby składanie wielkości liter zostało
 // w `src/`: `KeyedNode` jest szablonem, więc jego składowe muszą siedzieć w nagłówku, a ten
 // nagłówek jest publiczny.
-int marking(const Keys& these, const std::string& shown) {
+int shortcut_column(const Keys& these, const std::string& shown) {
     for (const Key one : these) {
         const char32_t which = one.letter();
 
@@ -120,13 +89,13 @@ int marking(const Keys& these, const std::string& shown) {
 
         while (at < shown.size()) {
             const std::size_t began = at;
-            const char32_t sign = letter(shown, at);
+            const char32_t sign = utf8::decode(shown, at);
 
             if (began == at) break;
 
             if (folded(sign) == folded(which)) return wide;
 
-            wide += widely(sign);
+            wide += width(sign);
         }
     }
 

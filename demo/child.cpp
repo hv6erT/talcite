@@ -9,7 +9,7 @@
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
@@ -25,7 +25,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -39,11 +39,11 @@ talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
-talcite::Style painted(talcite::Color ink, talcite::Color paper) {
+talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -70,8 +70,8 @@ talcite::ui::Skin coloured() {
 // Powłoka jest **tym, co uruchamiamy**, a nie tym, co talcite o czymkolwiek zakłada: to demonstracja
 // wpisuje `sh -c`, bo chce podać całe zdanie, i to ona wie, jak się ta powłoka nazywa na jej
 // systemie. Biblioteka dostaje zwykły przepis z programem i argumentami.
-talcite::Recipe spoken(const std::string& said) {
-    talcite::Recipe made;
+talcite::Command spoken(const std::string& said) {
+    talcite::Command made;
 
 #ifdef _WIN32
 
@@ -107,7 +107,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto frame = std::make_shared<talcite::ui::Frame>("wyjście");
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -121,15 +121,15 @@ int main() {
     column->children().add(frame);
     column->children().add(field);
 
-    legend->body()->children().add(column);
+    legend->content(column);
 
-    const auto showing = [told, viewer](const talcite::Done& made) {
-        viewer->hold(joined(made.read, made.errors));
+    const auto showing = [told, viewer](const talcite::Output& made) {
+        viewer->hold(joined(made.out, made.err));
 
-        told->text("kod wyjścia: " + std::to_string(made.leave.code));
+        told->text("kod wyjścia: " + std::to_string(made.exit.code));
     };
 
-    // **Zbieranie biegnie obok.** `main()` przenosi ciąg dalszy na pętlę rysującą, więc dotykanie
+    // **Zbieranie biegnie obok.** `here()` przenosi ciąg dalszy na pętlę rysującą, więc dotykanie
     // drzewa węzłów odbywa się na tym samym wątku, co rysowanie — a przez ten czas okno reaguje.
     //
     // Obietnicę trzymamy, bo ogniwo wisi na niej słabym wskazaniem: porzucona nigdy by nie
@@ -139,14 +139,14 @@ int main() {
     const auto gathering = [field, told, showing, kept] {
         told->text("biegnie…");
 
-        kept->emplace(talcite::taken(spoken(field->text()))
-                          .main()
-                          .then([showing](const talcite::Done& made) { showing(made); })
-                          .amiss([told](const std::exception& why) {
+        kept->emplace(talcite::Child::run(spoken(field->text()))
+                          .here()
+                          .then([showing](const talcite::Output& made) { showing(made); })
+                          .fail([told](const std::exception& why) {
                               told->text(std::string{"nie poszło: "} + why.what());
                           }));
 
-        (*kept)->go();
+        (*kept)->start();
     };
 
     (void)field->on<talcite::ui::KeyEvent>([gathering](talcite::ui::KeyEvent& what) {
@@ -162,7 +162,7 @@ int main() {
     // Oddanie ekranu jest **zwykłym wywołaniem, które trwa**: pętla rysująca stoi, bo terminal
     // należy teraz do kogoś innego. Wątki puli — zegar, sieć, czytanie plików — biegną dalej.
     (void)demo::doing(legend->add(talcite::ui::Code::f4, "Oddaj"), [&term, field, told] {
-        const talcite::Leave made = talcite::handed(term, spoken(field->text()));
+        const talcite::Exit made = term.execute(spoken(field->text()));
 
         told->text("wrócił z kodem " + std::to_string(made.code));
     });
@@ -174,7 +174,7 @@ int main() {
 
     field->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — cudze programy");
 
     term.run();

@@ -11,7 +11,7 @@ namespace {
 // **Po dodaniu napis jest w zbiorze dokładnie raz i stoi tam, gdzie kazano.** Powtórka nie mnoży
 // wpisu, tylko go przenosi — ta sama reguła, co w zbiorze klawiszy, i z tego samego powodu: dwa
 // identyczne wpisy są nie do odróżnienia, więc drugi nie miałby jak wygrać. W wyborze i w grupie
-// opcji dwie takie same pozycje czynią `which()` dwuznacznym, a w historii przeniesienie na
+// opcji dwie takie same pozycje czynią `value(…)` dwuznacznym, a w historii przeniesienie na
 // początek **jest** całą regułą „najświeższe u góry".
 void without(std::vector<std::string>& these, const std::string& one) {
     const auto at = std::find(these.begin(), these.end(), one);
@@ -57,31 +57,32 @@ bool Options::contains(const std::string& one) const {
     return std::find(inside_.begin(), inside_.end(), one) != inside_.end();
 }
 
-// −1, a nie pustka: numer służy do liczenia w środku widżetu, a nie do oddawania na zewnątrz.
-int Options::which(const std::string& one) const {
+// Wyszukiwanie ma w bibliotece jedną nazwę: `find` oddaje numer tego, czego szukamy, albo pustkę
+// — tak samo jak `Children::find` dla węzła.
+std::optional<std::size_t> Options::find(const std::string& one) const {
     const auto at = std::find(inside_.begin(), inside_.end(), one);
 
-    if (at == inside_.end()) return -1;
+    if (at == inside_.end()) return std::nullopt;
 
-    return static_cast<int>(at - inside_.begin());
+    return static_cast<std::size_t>(at - inside_.begin());
 }
 
 // Sięgnięcie poza koniec jest błędem wołającego, a nie stanem do przemilczenia — tak samo jak
 // w dzieciach węzła.
 const std::string& Options::operator[](std::size_t which) const {
-    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Options: nie ma takiej opcji");
+    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Options: no such option");
 
     return inside_[which];
 }
 
 const std::string& Options::front() const {
-    if (inside_.empty()) throw std::out_of_range("talcite::ui::Options: nie ma żadnej opcji");
+    if (inside_.empty()) throw std::out_of_range("talcite::ui::Options: no options");
 
     return inside_.front();
 }
 
 const std::string& Options::back() const {
-    if (inside_.empty()) throw std::out_of_range("talcite::ui::Options: nie ma żadnej opcji");
+    if (inside_.empty()) throw std::out_of_range("talcite::ui::Options: no options");
 
     return inside_.back();
 }

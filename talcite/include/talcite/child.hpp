@@ -13,28 +13,32 @@
 
 namespace talcite {
 
-class Term;
-
 enum class Ended : std::uint8_t { normal, killed, lost };
 
-struct Leave {
+struct Exit {
     Ended ended = Ended::normal;
     int code = 0;
     int signal = 0;
 };
 
-struct Around {
+struct Variable {
     std::string name;
     std::string value;
 };
 
-struct Recipe {
+struct Command {
     fs::path program;
     std::vector<std::string> arguments;
     fs::path where;
-    std::vector<Around> around;
+    std::vector<Variable> environment;
     bool inherit = true;
     bool merge = false;
+};
+
+struct Output {
+    Exit exit;
+    Bytes out;
+    Bytes err;
 };
 
 class Child {
@@ -43,7 +47,11 @@ public:
 
     Child() = default;
 
-    [[nodiscard]] static Promise<Child> start(Recipe what);
+    [[nodiscard]] static Promise<Child> start(Command what);
+
+    [[nodiscard]] static Promise<Output> run(Command what, Bytes input = {});
+
+    [[nodiscard]] static Promise<std::int64_t> detached(Command what);
 
     [[nodiscard]] bool held() const { return held_ != nullptr; }
 
@@ -51,13 +59,13 @@ public:
 
     [[nodiscard]] Promise<std::size_t> write(Bytes what) const;
 
-    void seal() const;
+    void close_input() const;
 
     [[nodiscard]] Promise<Bytes> read(std::size_t most) const;
 
     [[nodiscard]] Promise<Bytes> read_errors(std::size_t most) const;
 
-    [[nodiscard]] Promise<Leave> leave() const;
+    [[nodiscard]] Promise<Exit> wait() const;
 
     void stop() const;
 
@@ -72,15 +80,5 @@ private:
 
     std::shared_ptr<Held> held_;
 };
-
-struct Done {
-    Leave leave;
-    Bytes read;
-    Bytes errors;
-};
-
-[[nodiscard]] Promise<Done> taken(Recipe what, Bytes fed = {});
-
-[[nodiscard]] Leave handed(Term& given, Recipe what);
 
 }

@@ -9,7 +9,7 @@ using namespace talcite;
 TRIAL("Key: pusty klawisz niczego nie niesie") {
     constexpr ui::Key one;
 
-    ought(!one.held());
+    ought(one.empty());
     same(static_cast<int>(one.letter()), 0);
     same(static_cast<int>(one.code()), static_cast<int>(ui::Code::none));
 }
@@ -17,7 +17,7 @@ TRIAL("Key: pusty klawisz niczego nie niesie") {
 TRIAL("Key: znak porównuje się wprost ze znakiem") {
     constexpr ui::Key one{U'q'};
 
-    ought(one.held());
+    ought(!one.empty());
     ought(one == U'q');
     ought(!(one == U'w'));
     same(static_cast<int>(one.letter()), static_cast<int>(U'q'));
@@ -27,7 +27,7 @@ TRIAL("Key: znak porównuje się wprost ze znakiem") {
 TRIAL("Key: kod porównuje się wprost z kodem") {
     constexpr ui::Key one{ui::Code::f10};
 
-    ought(one.held());
+    ought(!one.empty());
     ought(one == ui::Code::f10);
     ought(!(one == ui::Code::f11));
     same(static_cast<int>(one.code()), static_cast<int>(ui::Code::f10));
@@ -58,7 +58,7 @@ TRIAL("Key: żaden kod nie wpada w zakres Unicode") {
 TRIAL("Key: kod none znaczy pustkę, a nie klawisz") {
     constexpr ui::Key one{ui::Code::none};
 
-    ought(!one.held());
+    ought(one.empty());
     ought(one == ui::Key{});
 }
 
@@ -72,7 +72,7 @@ TRIAL("Key: znak spoza łaciny też przechodzi") {
 TRIAL("Key: klawisz działa w czasie kompilacji") {
     static_assert(ui::Key{U'x'} == U'x');
     static_assert(ui::Key{ui::Code::enter} == ui::Code::enter);
-    static_assert(!ui::Key{}.held());
+    static_assert(ui::Key{}.empty());
     static_assert(ui::Key{ui::Code::tab}.letter() == 0);
 
     ought(true);
@@ -90,7 +90,7 @@ TRIAL("Event: zdarzenie klawisza niesie klawisz razem z modyfikatorami") {
     ought(what.mods().ctrl);
     ought(!what.mods().alt);
     ought(!what.mods().shift);
-    ought(what.at() == nullptr);
+    ought(what.target() == nullptr);
 }
 
 TRIAL("Event: modyfikatory domyślnie milczą") {
@@ -137,7 +137,7 @@ TRIAL("Event: rozmiar niesie szerokość i wysokość") {
 TRIAL("Event: wklejenie niesie treść") {
     const ui::PasteEvent what{"treść z schowka"};
 
-    same(what.said(), std::string{"treść z schowka"});
+    same(what.text(), std::string{"treść z schowka"});
 }
 
 TRIAL("Event: ognisko niesie drugą stronę zmiany") {

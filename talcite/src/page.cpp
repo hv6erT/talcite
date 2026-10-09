@@ -1,15 +1,17 @@
 #include "talcite/page.hpp"
 
 #include <algorithm>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "talcite/bar.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
 #include "eliding.hpp"
+#include "scrollbar.hpp"
+#include "spool.hpp"
 
 namespace talcite::ui {
 
@@ -35,44 +37,51 @@ struct Cut {
     std::size_t upto = 0;
 };
 
-// Wiersz dokumentu pocięty na wiersze ekranu. Bez zawijania oddaje jeden kawałek — to, co się
-// mieści — a reszta po prostu nie istnieje dla widoku.
+// **Cięcie wiersza dokumentu na wiersze ekranu, bez tego, co z kawałków powstaje.** Chodzik mówi
+// odbiorcy tylko trzy rzeczy: znak zajmuje tyle kolumn, tabulator rozwija się w tyle spacji,
+// kawałek kończy się przed tym bajtem. Z tych samych wywołań `parted` buduje kawałki do rysowania,
+// a `counted` tylko je liczy. Dawniej liczenie budowało pełne kawałki — napis i mapę kolumn — żeby
+// z nich wziąć samą długość wektora, a przewijanie liczy kawałki przy każdym kroku.
+//
+// Bez zawijania wychodzi jeden kawałek — to, co się mieści — a reszta po prostu nie istnieje dla
+// widoku.
 //
 // Tniemy po **kolumnach**, nie po bajtach ani znakach: znak chiński zajmuje dwie kratki, a znak
 // łączący zero. Inaczej wiersz z jednym takim znakiem wyjeżdżałby poza kartkę albo urywał się
 // o kratkę za wcześnie.
-std::vector<Cut> parted(const std::string& what, int wide, bool wrap) {
-    std::vector<Cut> made;
-
-    Cut one;
+template <typename Taker>
+void walked(const std::string& what, int wide, bool wrap, Taker& taker) {
     int much = 0;
+
+    // Czy w bieżącym kawałku coś stoi — także znak zerowej szerokości, który kolumny nie zajmuje.
+    bool any = false;
+    bool cut = false;
 
     // Dokąd doszło cięcie. Bez zawijania wiersz urywa się na krawędzi i reszty bajtów po prostu
     // nie widać, więc ogon nie może się przyznawać do całej długości wiersza.
     std::size_t ended = what.size();
 
-    const auto flushed = [&made, &one, &much](std::size_t upto) {
-        one.upto = upto;
+    const auto flushed = [&taker, &much, &any, &cut](std::size_t upto) {
+        taker.flushed(upto);
 
-        made.push_back(std::move(one));
-        one = Cut{};
         much = 0;
+        any = false;
+        cut = true;
     };
 
     for (std::size_t at = 0; at < what.size();) {
         const std::size_t was = at;
-        const char32_t sign = letter(what, at);
+        const char32_t sign = utf8::decode(what, at);
 
         if (sign == U'\t') {
             const int upto = std::min(((much / tabbing) + 1) * tabbing, wide);
 
-            while (much < upto) {
-                one.text.push_back(' ');
-                one.bytes.push_back(was);
-                ++much;
-            }
+            taker.spaced(was, upto - much);
+
+            much = upto;
+            any = true;
         } else {
-            const int room = std::max(widely(sign), 0);
+            const int room = std::max(width(sign), 0);
 
             if (much + room > wide) {
                 if (!wrap) {
@@ -85,14 +94,10 @@ std::vector<Cut> parted(const std::string& what, int wide, bool wrap) {
                 flushed(was);
             }
 
-            spelled(sign, one.text);
-
-            // Każda zajęta kolumna wskazuje **bajt znaku, który ją zajął** — także druga kolumna
-            // znaku podwójnego i każda kolumna rozwiniętego tabulatora. Bez tego nie dałoby się
-            // powiedzieć, czy kratka mieści się w zakresie zaznaczenia.
-            for (int step = 0; step < room; ++step) one.bytes.push_back(was);
+            taker.lettered(sign, was, room);
 
             much += room;
+            any = true;
         }
 
         if (much < wide) continue;
@@ -110,13 +115,61 @@ std::vector<Cut> parted(const std::string& what, int wide, bool wrap) {
     // wielokrotności szerokości kończy się na granicy kawałka i pusty ogon po nim byłby pustym
     // wierszem na ekranie, którego w dokumencie nie ma. Pusty wiersz dokumentu to co innego —
     // on musi dać jeden kawałek, i stąd drugi warunek.
-    if (!one.text.empty() || made.empty()) {
-        one.upto = ended;
+    if (any || !cut) taker.flushed(ended);
+}
 
-        made.push_back(std::move(one));
+struct Builder {
+    std::vector<Cut> made;
+    Cut one;
+
+    void spaced(std::size_t was, int much) {
+        for (int step = 0; step < much; ++step) {
+            one.text.push_back(' ');
+            one.bytes.push_back(was);
+        }
     }
 
-    return made;
+    // Każda zajęta kolumna wskazuje **bajt znaku, który ją zajął** — także druga kolumna znaku
+    // podwójnego i każda kolumna rozwiniętego tabulatora. Bez tego nie dałoby się powiedzieć, czy
+    // kratka mieści się w zakresie zaznaczenia.
+    void lettered(char32_t sign, std::size_t was, int room) {
+        utf8::encode(sign, one.text);
+
+        for (int step = 0; step < room; ++step) one.bytes.push_back(was);
+    }
+
+    void flushed(std::size_t upto) {
+        one.upto = upto;
+
+        made.push_back(std::move(one));
+        one = Cut{};
+    }
+};
+
+struct Counter {
+    int made = 0;
+
+    void spaced(std::size_t, int) {}
+
+    void lettered(char32_t, std::size_t, int) {}
+
+    void flushed(std::size_t) { ++made; }
+};
+
+std::vector<Cut> parted(const std::string& what, int wide, bool wrap) {
+    Builder builder;
+
+    walked(what, wide, wrap, builder);
+
+    return std::move(builder.made);
+}
+
+int counted(const std::string& what, int wide) {
+    Counter counter;
+
+    walked(what, wide, true, counter);
+
+    return counter.made;
 }
 
 }
@@ -125,11 +178,23 @@ struct Page::Kept {
     Roll roll;
     std::optional<std::size_t> told;
 
+    // Dokument bajtowy. Pusty przy źródle wierszowym — wtedy bajtów nie znamy wcale.
+    std::shared_ptr<Spool> spool;
+
+    // Zamiary czekające na okno szpuli: „dojdź do końca" i „stań na wierszu z tym bajtem". Żyją do
+    // skutku albo do nowego dokumentu.
+    bool ending = false;
+    std::optional<std::size_t> sought;
+
     std::size_t top = 0;
     int part = 0;
 
     std::vector<Cut> shown;
     std::size_t walked = 0;
+
+    // Czy za ostatnim pokazanym kawałkiem jest jeszcze treść — reszta wiersza albo następny wiersz;
+    // wiersz, którego źródło jeszcze nie ma, liczy się jako treść.
+    bool more = false;
 
     std::optional<std::size_t> which;
 
@@ -140,40 +205,78 @@ struct Page::Kept {
     bool wrapped = true;
     bool fresh = true;
 
-    ScrollStyle style;
+    ScrollShape shape;
 
-    std::string bar = "talcite.scroll";
+    std::string scrollbar_role = "talcite.scroll";
     std::string chosen = "talcite.viewer.mark.focus";
+
+    // Pasek z ostatniej klatki i jego jednostka: wiersze albo bajty (`gauged`).
+    Grip grip;
+    bool bytes = false;
 };
 
 Page::Page() : kept_(std::make_unique<Kept>()) { role("talcite.viewer"); }
 
-Page::Page(ScrollStyle style) : kept_(std::make_unique<Kept>()) {
+Page::Page(ScrollShape shape) : kept_(std::make_unique<Kept>()) {
     role("talcite.viewer");
 
-    kept_->style = style;
+    kept_->shape = shape;
 }
 
 Page::~Page() = default;
 
-// **Szwy dla podklasy.** Strona rysuje, a o dokument pyta — i zadowala się tym, co dostanie.
-// `Viewer` odpowiada ze szpuli, `Editor` z tablicy kawałków, a źródło czysto wierszowe nie
-// odpowiada wcale i wtedy pusto znaczy „nie ma o czym mówić", a nie „zepsute".
-std::optional<std::size_t> Page::at() const { return {}; }
+// **Dokument trzyma strona, nie podklasa.** Są dwa rodzaje: bajtowy — szpula, z której strona zna
+// wiersze, bajty i długość — i czysto wierszowy, który bajtów nie zna wcale i wtedy `at()`
+// i `whole()` są puste, bo „nie ma o czym mówić", a nie „zepsute". Podklasa tylko podaje dokument:
+// `Viewer` bajty albo źródło bajtowe, `Editor` szpulę nad kołdrą.
+//
+// Dawniej strona pytała o dokument przez pięć haków wirtualnych, a każda podklasa trzymała własną
+// szpulę. Wyszły z tego dwa błędy: `Editor` przez `using Page::hold` przyjmował zwój, którego nie
+// umiał edytować — ekran pokazywał nowy dokument, a pisanie zmieniało stary — a `Viewer` po
+// przejściu z bajtów na zwój odpowiadał liczbą wierszy starej szpuli. Dziś nowy dokument zastępuje
+// poprzedni w całości, bo jest tylko jedno miejsce, w którym dokument stoi.
+//
+// Szpula budzi stronę po każdym oknie: klatka się unieważnia, bo strona pamięta, co pokazała,
+// a zamiary czekające na okno — koniec i skok po bajcie — dokańczają się same. Uchwyt trzyma stronę
+// gołym wskaźnikiem, bo szpulę trzyma strona; dla szpuli edytora nie woła się nigdy, bo ta czyta
+// z pamięci i na nic nie czeka.
+void Page::hold(std::shared_ptr<Spool> given) {
+    Kept& kept = *kept_;
 
-std::optional<std::size_t> Page::below() const { return {}; }
+    hold([given](std::size_t which, std::size_t most) { return given->lines(which, most); }, 0);
 
-std::optional<std::size_t> Page::whole() const { return {}; }
+    kept.spool = std::move(given);
 
-void Page::counting() {}
+    kept.spool->awoken([this] {
+        Kept& now = *kept_;
 
-void Page::screen(int) {}
+        invalidate();
 
-// **Zwój to wszystko, czego strona potrzebuje.** Skąd się bierze — z pamięci, z pliku czytanego
-// kawałkami, z tablicy kawałków w edytorze — jej nie obchodzi; o bajtach i o liczbie wierszy pyta
-// przez szwy, a podklasa odpowiada tyle, ile wie.
+        if (now.sought.has_value()) {
+            const std::size_t want = *now.sought;
+
+            now.sought.reset();
+
+            at(want);
+        }
+
+        if (now.ending && now.spool->counted().has_value()) {
+            now.ending = false;
+
+            end();
+        }
+    });
+}
+
+// **Zwój to wszystko, czego strona potrzebuje do rysowania.** Skąd się bierze, jej nie obchodzi.
+// Podany wprost jest dokumentem czysto wierszowym, więc szpulę poprzedniego dokumentu i jej
+// zamiary zdejmujemy; `hold` ze szpulą woła to samo i dopiero potem kładzie swoją.
 void Page::hold(Roll given, std::size_t lines) {
     Kept& kept = *kept_;
+
+    kept.spool.reset();
+    kept.ending = false;
+    kept.sought.reset();
 
     kept.roll = std::move(given);
     kept.told = lines;
@@ -182,8 +285,10 @@ void Page::hold(Roll given, std::size_t lines) {
     kept.part = 0;
     kept.fresh = true;
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 }
+
+const std::shared_ptr<Spool>& Page::spool() const { return kept_->spool; }
 
 bool Page::held() const { return static_cast<bool>(kept_->roll); }
 
@@ -193,7 +298,52 @@ std::optional<std::size_t> Page::first() const {
     return kept_->top;
 }
 
-std::optional<std::size_t> Page::lines() const { return kept_->told; }
+// Liczba wierszy: szpula wie ją dopiero po dojściu do końca, zwój mówi ją od razu.
+std::optional<std::size_t> Page::lines() const {
+    const Kept& kept = *kept_;
+
+    if (kept.spool) return kept.spool->counted();
+
+    return kept.told;
+}
+
+// Bajt, od którego zaczyna się pierwszy widoczny wiersz — to, co Midnight Commander pokazuje
+// w podglądzie jako położenie w pliku.
+std::optional<std::size_t> Page::at() const {
+    const Kept& kept = *kept_;
+
+    const std::optional<std::size_t> which = first();
+
+    if (!kept.spool || !which.has_value()) return {};
+
+    return kept.spool->at(*which);
+}
+
+std::optional<std::size_t> Page::whole() const {
+    const Kept& kept = *kept_;
+
+    if (!kept.spool) return {};
+
+    return kept.spool->whole();
+}
+
+// Skok po bajcie. Bez szpuli nie ma o czym mówić, bo zwój bajtów nie zna. Gdy szpula nie doszła do
+// bajtu, bo czeka na okno, skok zostaje zamiarem i dokańcza się, kiedy okno dojdzie.
+void Page::at(std::size_t given) {
+    Kept& kept = *kept_;
+
+    if (!kept.spool) return;
+
+    const std::size_t which = kept.spool->found(given);
+
+    if (kept.spool->stalled()) {
+        kept.sought = given;
+
+        return;
+    }
+
+    first(which);
+}
 
 void Page::first(std::size_t given) {
     Kept& kept = *kept_;
@@ -209,17 +359,24 @@ void Page::first(std::size_t given) {
     kept.part = 0;
     kept.fresh = true;
 
-    stirred();
+    (void)move_by(0);
+
+    (void)trigger(ScrollEvent{});
 }
 
 // Bez indeksu koniec znajduje się tylko jedną drogą: przechodząc dokument. Szpula policzy wiersze
-// przy okazji i od tej chwili `lines()` przestaje być puste.
+// przy okazji i od tej chwili `lines()` przestaje być puste. Przy źródle asynchronicznym przejście
+// idzie okno po oknie i koniec dokańcza się sam, gdy liczba jest już znana.
 void Page::end() {
     Kept& kept = *kept_;
 
     if (!held()) return;
 
-    counting();
+    if (kept.spool && !kept.spool->counted().has_value()) {
+        kept.spool->counting();
+
+        if (!kept.spool->counted().has_value()) kept.ending = true;
+    }
 
     const std::optional<std::size_t> many = lines();
 
@@ -231,7 +388,7 @@ void Page::end() {
 
     slide(-std::max(kept.sized.high - 1, 0));
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 }
 
 // Ile wierszy ekranu zajmuje ten wiersz dokumentu. Bez zawijania zawsze jeden; przy zawijaniu tyle,
@@ -241,33 +398,75 @@ int Page::pieces(std::size_t which) const {
 
     if (!kept.wrapped || kept.sized.wide <= 0 || !kept.roll) return 1;
 
-    const std::vector<std::string> got = kept.roll(which, 1);
+    const std::optional<std::vector<std::string>> got = kept.roll(which, 1);
 
-    if (got.empty()) return 1;
+    if (!got.has_value() || got->empty()) return 1;
 
-    return static_cast<int>(parted(got.front(), kept.sized.wide, true).size());
+    return counted(got->front(), kept.sized.wide);
 }
 
 // Krok liczy się w wierszach **ekranu**, nie dokumentu — bo tyle przesuwa się obraz. Przy zawijaniu
 // jeden wiersz dokumentu to kilka kroków.
 // Przesunięcie **bez zawiadamiania**. Skok do zaznaczenia przewija i zmienia bieżący znacznik
 // jednym ruchem, więc musi wysłać jedno zdarzenie, a nie dwa.
-bool Page::moved(int lines) {
+//
+// **Ekran nie wychodzi poza koniec.** Krok w dół zatrzymuje się, gdy ostatni wiersz dokumentu
+// stoi na dole ekranu — a nie, jak przedtem, gdy stoi na górze, z pustką pod nim. Tamto pozwalało
+// przewinąć pomoc pod F1 „grubo ponad jej rozmiar": trzydzieści kilka wierszy w oknie na
+// czterdzieści dało się zsunąć do jednego. Przycięcie idzie po wierszach **ekranu** (z zawijaniem
+// wiersz dokumentu to kilka), liczy do przodu tylko tyle, ile ekran ma wysokości, i działa też dla
+// zera kroków — tak wraca do porządku skok `first()` w ostatnią stronę. Przed układem wysokości
+// nie ma i nie ma czego przycinać.
+//
+// **Zwój, który jeszcze nie ma wiersza, nie jest końcem.** Pustka zamiast wektora znaczy „czekam
+// na okno": krok w dół zatrzymuje się na tym, co jest, a przycięcie do końca nie rusza — bo nie
+// wiadomo, gdzie koniec jest. Gdy okno dojdzie, strona maluje się od nowa i następny krok idzie.
+//
+// **Każdy wiersz dokumentu oglądamy raz na ruch.** `looked` pamięta, co o wierszu wiadomo: `-1`
+// — czeka na okno, `0` — za końcem, więcej — tyle kawałków. Dawniej krok w obrębie jednego wiersza
+// ciął go od nowa, a przycięcie do końca przechodziło cały ekran od nowa po każdym cofnięciu
+// o wiersz ekranu: strona w dół przy końcu dokumentu to było wysokość do kwadratu wierszy
+// pobranych i pociętych. Przycięcie liczy teraz ekran raz: cofnięcie o wiersz ekranu, gdy
+// przejście doszło do końca dokumentu, dokłada dokładnie jeden wiersz.
+bool Page::move_by(int lines) {
     Kept& kept = *kept_;
 
-    if (!held() || lines == 0) return false;
+    if (!held()) return false;
 
     const std::size_t was = kept.top;
     const int part = kept.part;
 
+    std::unordered_map<std::size_t, int> seen;
+
+    const auto looked = [&kept, &seen](std::size_t which) {
+        if (const auto known = seen.find(which); known != seen.end()) return known->second;
+
+        const std::optional<std::vector<std::string>> got = kept.roll(which, 1);
+
+        int made = 1;
+
+        if (!got.has_value())
+            made = -1;
+        else if (got->empty())
+            made = 0;
+        else if (kept.wrapped && kept.sized.wide > 0)
+            made = counted(got->front(), kept.sized.wide);
+
+        seen.emplace(which, made);
+
+        return made;
+    };
+
+    const auto pieced = [&looked](std::size_t which) { return std::max(looked(which), 1); };
+
     for (int one = 0; one < lines; ++one) {
-        if (kept.part + 1 < pieces(kept.top)) {
+        if (kept.part + 1 < pieced(kept.top)) {
             ++kept.part;
 
             continue;
         }
 
-        if (kept.roll(kept.top + 1, 1).empty()) break;
+        if (looked(kept.top + 1) <= 0) break;
 
         ++kept.top;
         kept.part = 0;
@@ -283,7 +482,35 @@ bool Page::moved(int lines) {
         if (kept.top == 0) break;
 
         --kept.top;
-        kept.part = std::max(pieces(kept.top) - 1, 0);
+        kept.part = pieced(kept.top) - 1;
+    }
+
+    if (const int high = kept.sized.high; high > 0) {
+        int rows = -kept.part;
+
+        for (std::size_t which = kept.top; rows <= high; ++which) {
+            const int got = looked(which);
+
+            if (got < 0) rows = high;
+
+            if (got <= 0) break;
+
+            rows += got;
+        }
+
+        while ((kept.top > 0 || kept.part > 0) && rows < high) {
+            if (kept.part > 0) {
+                --kept.part;
+            } else {
+                --kept.top;
+
+                if (looked(kept.top) < 0) break;
+
+                kept.part = pieced(kept.top) - 1;
+            }
+
+            ++rows;
+        }
     }
 
     if (kept.top == was && kept.part == part) return false;
@@ -293,17 +520,24 @@ bool Page::moved(int lines) {
     return true;
 }
 
-void Page::slide(int lines) {
-    if (moved(lines)) stirred();
+// Zawiadomienie (`ScrollEvent`) idzie zwykłą drogą zdarzeń, więc bąbelkuje w górę do przodków.
+// Górny pasek jest **rodzeństwem**, nie przodkiem, więc nasłuch trzeba zawiesić wyżej — na
+// pojemniku albo korzeniu.
+bool Page::slide(int lines) {
+    if (!move_by(lines)) return false;
+
+    (void)trigger(ScrollEvent{});
+
+    return true;
 }
 
 void Page::page(int pages) { slide(pages * std::max(kept_->sized.high, 1)); }
 
-bool Page::wrapping() const { return kept_->wrapped; }
+bool Page::wrapped() const { return kept_->wrapped; }
 
 // Ten sam bajt znaczy co innego w obu trybach, więc wracamy na początek wiersza, w którym stoimy.
 // Bez tego przełączenie przerzucałoby ekran w miejsce, którego nikt nie prosił.
-void Page::wrapping(bool given) {
+void Page::wrapped(bool given) {
     Kept& kept = *kept_;
 
     if (kept.wrapped == given) return;
@@ -312,15 +546,15 @@ void Page::wrapping(bool given) {
     kept.part = 0;
     kept.fresh = true;
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 }
 
-bool Page::progress() const { return kept_->style.progress; }
+bool Page::scrollbar() const { return kept_->shape.scrollbar; }
 
-void Page::progress(bool given) {
-    if (kept_->style.progress == given) return;
+void Page::scrollbar(bool given) {
+    if (kept_->shape.scrollbar == given) return;
 
-    kept_->style.progress = given;
+    kept_->shape.scrollbar = given;
     kept_->fresh = true;
 }
 
@@ -347,16 +581,16 @@ std::size_t Page::shown() const { return kept_->walked; }
 bool Page::reach(std::size_t which) {
     MarkedNode::which(which);
 
-    (void)show(marks()[which].line);
+    (void)reveal(marks()[which].line);
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 
     return true;
 }
 
 // **Przewija najmniej, jak się da**: wiersz już widoczny nie rusza obrazu, wyżej ląduje na górze,
 // niżej na dole. Nie zawiadamia — robi to wołający, żeby złożony ruch dał jedno zdarzenie.
-bool Page::show(std::size_t line) {
+bool Page::reveal(std::size_t line) {
     Kept& kept = *kept_;
 
     // Zanim strona dostanie przydział, **nie ma po czym poznać**, czy wiersz i tak widać: wysokość
@@ -381,19 +615,21 @@ bool Page::show(std::size_t line) {
     kept.part = 0;
     kept.fresh = true;
 
-    if (!above) (void)moved(-std::max(kept.sized.high - 1, 0));
+    if (!above) (void)move_by(-std::max(kept.sized.high - 1, 0));
 
     return true;
 }
 
-void Page::afresh() { kept_->fresh = true; }
+void Page::invalidate() { kept_->fresh = true; }
 
 std::size_t Page::topmost() const { return kept_->top; }
 
 // Kratka, na której stoi ten bajt tego wiersza — albo pusto, gdy wiersz jest poza ekranem albo
 // bajt wypadł poza to, co się zmieściło. Stąd bierze się miejsce kursora w edytorze.
-std::optional<Spot> Page::spotted(std::size_t line, std::size_t byte) const {
+std::optional<Spot> Page::spot_of(Place where) const {
     const Kept& kept = *kept_;
+    const std::size_t line = where.line;
+    const std::size_t byte = where.byte;
 
     for (std::size_t one = 0; one < kept.shown.size(); ++one) {
         const Cut& piece = kept.shown[one];
@@ -414,11 +650,11 @@ std::optional<Spot> Page::spotted(std::size_t line, std::size_t byte) const {
     return {};
 }
 
-// Odwrotność `spotted`: z kratki na wiersz dokumentu i bajt w nim. Rząd ekranu **nie jest** numerem
+// Odwrotność `spot_of`: z kratki na wiersz dokumentu i bajt w nim. Rząd ekranu **nie jest** numerem
 // wiersza — przy zawijaniu jeden wiersz zajmuje ich kilka — a kolumna nie jest bajtem, bo tabulator
 // zajmuje osiem kratek, a znak chiński dwie. Obie mapy policzyło już cięcie na kawałki, więc tutaj
 // zostaje samo odczytanie.
-std::optional<Place> Page::struck(Spot where) const {
+std::optional<Place> Page::place_of(Spot where) const {
     const Kept& kept = *kept_;
 
     if (where.y < 0 || static_cast<std::size_t>(where.y) >= kept.shown.size()) return {};
@@ -441,24 +677,16 @@ const std::string& Page::chosen() const { return kept_->chosen; }
 
 void Page::chosen(std::string given) { kept_->chosen = std::move(given); }
 
-const std::string& Page::bar() const { return kept_->bar; }
+const std::string& Page::scrollbar_role() const { return kept_->scrollbar_role; }
 
-void Page::bar(std::string given) { kept_->bar = std::move(given); }
+void Page::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
 
 bool Page::focusable() const { return true; }
 
 // Podgląd nie bierze dzieci — sam jest treścią.
-int Page::takes() const { return 0; }
+int Page::capacity() const { return 0; }
 
 Size Page::wants(Size room) const { return room; }
-
-// Zawiadomienie idzie zwykłą drogą zdarzeń, więc bąbelkuje w górę do przodków. Górny pasek jest
-// **rodzeństwem**, nie przodkiem, więc nasłuch trzeba zawiesić wyżej — na pojemniku albo korzeniu.
-void Page::stirred() {
-    ScrollEvent moved;
-
-    (void)trigger(moved);
-}
 
 // Przeliczamy **tylko wtedy, gdy zmienił się przydział albo położenie**. Bez tego każde odświeżenie
 // klatki przechodziłoby dokument od nowa, a przy animowanym sąsiedztwie dzieje się to dziesięć razy
@@ -471,16 +699,18 @@ void Page::spread(Size given) {
     kept.sized = given;
     kept.fresh = false;
     kept.shown.clear();
+    kept.more = false;
 
     if (!kept.roll || given.wide <= 0 || given.high <= 0) return;
 
     if (kept.wish.has_value()) {
-        (void)show(*kept.wish);
+        (void)reveal(*kept.wish);
 
         kept.fresh = false;
     }
 
-    screen(given.high);
+    // Odstęp kotwic szpuli bierze się z wysokości okna — szpula o widoku nic nie wie.
+    if (kept.spool) kept.spool->screen(given.high);
 
     const std::size_t want = static_cast<std::size_t>(given.high);
 
@@ -490,11 +720,11 @@ void Page::spread(Size given) {
     kept.walked = 0;
 
     while (kept.shown.size() < want) {
-        const std::vector<std::string> got = kept.roll(which, batch);
+        const std::optional<std::vector<std::string>> got = kept.roll(which, batch);
 
-        if (got.empty()) break;
+        if (!got.has_value() || got->empty()) break;
 
-        for (const std::string& one : got) {
+        for (const std::string& one : *got) {
             for (Cut& piece : parted(one, given.wide, kept.wrapped)) {
                 if (skip > 0) {
                     --skip;
@@ -502,7 +732,11 @@ void Page::spread(Size given) {
                     continue;
                 }
 
-                if (kept.shown.size() >= want) break;
+                if (kept.shown.size() >= want) {
+                    kept.more = true;
+
+                    break;
+                }
 
                 piece.line = which;
 
@@ -516,6 +750,12 @@ void Page::spread(Size given) {
     }
 
     kept.walked = which - kept.top;
+
+    if (!kept.more && kept.shown.size() >= want) {
+        const std::optional<std::vector<std::string>> next = kept.roll(which, 1);
+
+        kept.more = !next.has_value() || !next->empty();
+    }
 }
 
 // Czym mierzyć pasek: **wierszami, gdy znamy ich liczbę, a bajtami, gdy nie**. Przy dokumencie
@@ -543,9 +783,10 @@ bool Page::gauged(std::size_t& shift, std::size_t& whole, std::size_t& window) c
 
     if (!from.has_value() || !much.has_value() || *much == 0) return false;
 
-    // Okno w bajtach to rozpiętość tego, co właśnie stoi na ekranie. Podklasa wie, gdzie zaczyna
-    // się wiersz **za** ostatnim widocznym; gdy nie wie, bierzemy resztę dokumentu.
-    const std::optional<std::size_t> upto = below();
+    // Okno w bajtach to rozpiętość tego, co właśnie stoi na ekranie: od początku pierwszego
+    // widocznego wiersza do początku wiersza **za** ostatnim. Gdy tego drugiego szpula jeszcze nie
+    // zna, bierzemy resztę dokumentu.
+    const std::optional<std::size_t> upto = kept.spool->at(kept.top + shown());
 
     shift = *from;
     whole = *much;
@@ -574,7 +815,7 @@ void painted(View& into, const Cut& piece, Spot at, const Style& look,
 
         const bool here = which.has_value() && *which == nth;
 
-        const Style over = Style::merge(look, how.get<Style>(here ? chosen : one.role));
+        const Style over = Style::merge(look, how.style(here ? chosen : one.role));
 
         for (std::size_t col = 0; col < piece.bytes.size(); ++col) {
             const std::size_t byte = piece.bytes[col];
@@ -586,7 +827,7 @@ void painted(View& into, const Cut& piece, Spot at, const Style& look,
 
             if (said.letter == 0) continue;
 
-            into.letter(spot, said.letter, over);
+            into.put(spot, said.letter, over);
         }
     }
 }
@@ -598,17 +839,26 @@ View Page::paint(Size given, Area seen) {
 
     View made{seen.size};
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     // Pasek zabiera jedną kolumnę z prawej, więc treść dostaje o tyle mniej miejsca — tak samo,
     // jak w przewijakach.
-    const int aside = kept_->style.progress && given.wide > 0 ? 1 : 0;
+    int aside = kept_->shape.scrollbar && given.wide > 0 ? 1 : 0;
 
     spread({given.wide - aside, given.high});
 
+    // Pasek „gdy trzeba" (`needed`): strona, która mieści się cała od pierwszego wiersza, oddaje
+    // jego kolumnę treści i układa się jeszcze raz — szerzej zawinięty tekst zajmie wtedy tyle samo
+    // wierszy albo mniej, więc dalej się zmieści.
+    if (aside != 0 && kept_->shape.needed && kept_->top == 0 && kept_->part == 0 && !kept_->more) {
+        aside = 0;
+
+        spread({given.wide, given.high});
+    }
+
     if (kept_->shown.empty() && aside == 0) return made;
 
-    const Style look = skin().get<Style>(role());
+    const Style look = skin().style(role());
 
     made.fill({{0, 0}, seen.size}, look);
 
@@ -616,7 +866,7 @@ View Page::paint(Size given, Area seen) {
         const Cut& piece = kept_->shown[one];
         const int y = static_cast<int>(one) - seen.at.y;
 
-        made.string({-seen.at.x, y}, piece.text, look);
+        made.put({-seen.at.x, y}, piece.text, look);
 
         if (!marks().empty())
             painted(made, piece, {-seen.at.x, y}, look, marks().all(), which(),
@@ -627,15 +877,33 @@ View Page::paint(Size given, Area seen) {
     std::size_t whole = 0;
     std::size_t window = 0;
 
-    if (aside != 0 && gauged(shift, whole, window))
-        edged(made, given, seen, true, given.high, shift, whole, window, skin(), kept_->bar);
+    if (aside != 0 && gauged(shift, whole, window)) {
+        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
+                            .much = given.high,
+                            .shift = shift,
+                            .whole = whole,
+                            .window = window,
+                            .skin = skin(),
+                            .role = kept_->scrollbar_role};
+
+        bar.draw(made);
+
+        Track mine = bar.track();
+
+        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
+
+        kept_->grip.laid(mine);
+        kept_->bytes = !lines().has_value();
+    } else {
+        kept_->grip.laid(std::nullopt);
+    }
 
     return made;
 }
 
 // **Oddajemy fałsz dla wszystkiego, czego nie zużyliśmy.** F-klawisze mają dojść do legendy, która
 // jest przodkiem, a wędrówka kończy się na pierwszej prawdzie.
-bool Page::react(KeyEvent& what) {
+bool Page::handle(KeyEvent& what) {
     // Ze sterującym nie bierzemy niczego — Ctrl+Home i Alt+PageDown to z założenia inne skróty niż
     // Home i PageDown. Strona była jedynym widżetem bez tego odsiewu, więc przewijała dokument
     // zamiast przepuścić kombinację do aplikacji.
@@ -652,7 +920,7 @@ bool Page::react(KeyEvent& what) {
     }
 }
 
-bool Page::react(WheelEvent& what) {
+bool Page::handle(WheelEvent& what) {
     const std::size_t was = kept_->top;
     const int part = kept_->part;
 
@@ -661,8 +929,30 @@ bool Page::react(WheelEvent& what) {
     return kept_->top != was || kept_->part != part;
 }
 
-bool Page::react(ClickEvent&) {
+bool Page::handle(ClickEvent&) {
     if (root() != nullptr) focus();
+
+    return true;
+}
+
+// **Mysz na pasku** (U6 w twa): strzałka — wiersz, tor — strona, suwak — skok tam, gdzie go
+// postawiono: na wiersz, gdy pasek liczy wiersze, na bajt, gdy liczy bajty.
+bool Page::handle(MouseEvent& what) {
+    const Asked asked = kept_->grip.mouse(what, local(what.where()), *this);
+
+    switch (asked.part) {
+        case Part::none: return false;
+        case Part::back: slide(-1); break;
+        case Part::forth: slide(1); break;
+        case Part::before: page(-1); break;
+        case Part::after: page(1); break;
+        case Part::thumb:
+            if (asked.to.has_value()) {
+                if (kept_->bytes) at(*asked.to);
+                else first(*asked.to);
+            }
+            break;
+    }
 
     return true;
 }

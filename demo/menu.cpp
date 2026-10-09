@@ -5,12 +5,12 @@
 #include "talcite/frame.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
-#include "talcite/menuline.hpp"
-#include "talcite/menuwindow.hpp"
+#include "talcite/menuseparator.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/pane.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/vscroll.hpp"
+#include "talcite/scroll.hpp"
 
 #include "doing.hpp"
 
@@ -23,7 +23,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -42,7 +42,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto window = std::make_shared<talcite::ui::MenuWindow>();
+    const auto window = std::make_shared<talcite::ui::Menubar>();
 
     // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
     window->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
@@ -50,7 +50,7 @@ int main() {
 
     const auto pane = std::make_shared<talcite::ui::Pane>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — menu");
-    const auto scroll = std::make_shared<talcite::ui::VScroll>(talcite::ui::ScrollStyle{true});
+    const auto scroll = std::make_shared<talcite::ui::Scroll>(talcite::ui::Axis::vertical, talcite::ui::ScrollShape{true});
     const auto column = std::make_shared<talcite::ui::Column>();
     const auto said = std::make_shared<talcite::ui::Span>("F9 otwiera menu, F10 kończy");
 
@@ -62,7 +62,7 @@ int main() {
     scroll->children().add(column);
     frame->children().add(scroll);
     pane->children().add(frame);
-    window->body()->children().add(pane);
+    window->content(pane);
 
     // **Litera aktywna w pozycji menu**, jak w Midnight Commanderze: przy otwartym „Plik"
     // wciśnięcie „p" podejrzy, „k" skopiuje. Litery podaje się osobno — napis zostaje czysty,
@@ -92,7 +92,7 @@ int main() {
         lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"),
                              [said] { said->text("wybrano: Kopiuj"); }),
                  U'k'));
-    file->children().add(std::make_shared<talcite::ui::MenuLine>());
+    file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
     file->children().add(
         lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
                              [&term] { term.stop(); }),
@@ -111,7 +111,7 @@ int main() {
 
     // Wyszarzona pozycja **nie odpowiada na swoją literę** — tak samo jak wyłączony przycisk.
     niedostepna->keys().add(U'w');
-    niedostepna->able(false);
+    niedostepna->enabled(false);
     view->children().add(niedostepna);
 
     const auto help = window->add("Pomoc");
@@ -128,7 +128,7 @@ int main() {
 
     pane->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — menu");
 
     term.run();

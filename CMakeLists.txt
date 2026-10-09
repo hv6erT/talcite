@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.10)
+# 3.21: `PROJECT_IS_TOP_LEVEL` i polityki do tej wersji włącznie — w tym CMP0091, czyli wybór
+# biblioteki uruchomieniowej MSVC przez CMAKE_MSVC_RUNTIME_LIBRARY. Visual Studio 2022 ma nowszy.
+cmake_minimum_required(VERSION 3.21)
 
 if(POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
@@ -7,11 +9,16 @@ if(POLICY CMP0141)
       "$<$<CONFIG:Debug>:EditAndContinue>$<$<CONFIG:RelWithDebInfo>:ProgramDatabase>")
 endif()
 
-if(POLICY CMP0091)
-  cmake_policy(SET CMP0091 NEW)
-endif()
-
 project(talcite CXX)
+
+# Generator jednokonfiguracyjny (Make, Ninja) bez podanego typu budował bez optymalizacji i bez
+# symboli — ani wydanie, ani próba. Domyślnie Release; tylko gdy projekt buduje się sam, bo jako
+# podkatalog bierze typ od tego, kto go włącza.
+get_property(multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if(PROJECT_IS_TOP_LEVEL AND NOT multi AND NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Typ budowania" FORCE)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,18 +41,16 @@ endforeach()
 
 option(TALCITE_TESTS "Buduj przypadki testowe" OFF)
 option(TALCITE_DEMOS "Buduj programy pokazowe" ON)
-option(TALCITE_OPENSSL "Buduj przejściówkę do OpenSSL" OFF)
 
+# Konsola Windows tłumaczona tak, jakby VT nie przyjmowała (Windows 7, 8.1, „starsza konsola") —
+# żeby tę drogę dało się sprawdzić na Windows 10 i 11. Poza Windows nic nie zmienia.
+option(TALCITE_LEGACY_CONSOLE "Tłumacz konsolę Windows także wtedy, gdy przyjmuje VT" OFF)
 add_subdirectory(talcite)
 
-# Przejściówka **nie należy do biblioteki**. talcite kompiluje się i linkuje bez OpenSSL, a bez
-# wstrzykniętego Guard nie da się zbudować połączenia szyfrowanego — dzięki temu „nie piszemy
-# kryptografii" jest faktem, a nie obietnicą.
-if(TALCITE_OPENSSL)
-  find_package(OpenSSL REQUIRED)
-
-  add_subdirectory(extra/openssl)
-endif()
+# Przejściówek tu **nie ma** — ani w bibliotece, ani obok niej. talcite kompiluje się i linkuje bez
+# OpenSSL, a bez wstrzykniętego Seam<TlsProvider> nie da się zbudować połączenia szyfrowanego —
+# dzięki temu „nie piszemy kryptografii" jest faktem, a nie obietnicą. Przejściówki mieszkają
+# w osobnym projekcie talcite-adapters (dawniej extra/openssl tutaj).
 
 if(TALCITE_DEMOS)
   add_subdirectory(demo)

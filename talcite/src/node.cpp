@@ -32,9 +32,9 @@ Children::~Children() {
 // Ile dzieci węzeł przyjmuje, wie tylko on sam. Domyślnie jedno: zwykły węzeł jest opakowaniem,
 // a nie układem — układanie kilkorga obok siebie należy do Row i Column, i tylko one oddają tu
 // plenty. Napis oddaje zero, bo nie ma czego trzymać w środku.
-int Node::takes() const { return 1; }
+int Node::capacity() const { return 1; }
 
-// **`takes()` mówi ile, `accepts()` mówi czego.** Zwykły węzeł nie zna się na rodzajach i bierze,
+// **`capacity()` mówi ile, `accepts()` mówi czego.** Zwykły węzeł nie zna się na rodzajach i bierze,
 // co dadzą — układ, ramka i zasłona układają wszystko tak samo. Przesłania to ten, kto ma wśród
 // dzieci **rolę do obsadzenia**: menu ma pozycje, lista ma wiersze, i obie potem po tych dzieciach
 // chodzą, zakładając, czym są.
@@ -66,32 +66,25 @@ void Node::unfocus() {
             return;
         }
 
-    top->focus(nullptr);
+    top->move_focus(nullptr);
 }
 
-// Numer warstwy mówi sam węzeł. Wyżej niż zero znaczy „leżę na rodzeństwie", ale nigdy
-// „wychodzę poza rodzica": tej granicy nie przekracza nic. Kolejność malowania rozstrzyga
-// pojemnik, który i tak decyduje, gdzie dzieci stoją — maluje najpierw niższe warstwy, potem
-// wyższe. Kolumna i wiersz kładą dzieci obok siebie, więc nie mają czego porządkować; robią to
-// pojemniki, które kładą dzieci **na sobie**.
-int Node::layer() const { return 0; }
-
 void Children::add(std::shared_ptr<Node> given) {
-    if (!given) throw std::logic_error("talcite::ui::Node: nie ma czego dopiąć");
+    if (!given) throw std::logic_error("talcite::ui::Node: nothing to attach");
 
-    if (given->up_ != nullptr) throw std::logic_error("talcite::ui::Node: węzeł ma już rodzica");
+    if (given->up_ != nullptr) throw std::logic_error("talcite::ui::Node: the node already has a parent");
 
-    if (static_cast<int>(inside_.size()) >= whose_->takes())
-        throw std::logic_error("talcite::ui::Node: węzeł nie przyjmuje więcej dzieci");
+    if (static_cast<int>(inside_.size()) >= whose_->capacity())
+        throw std::logic_error("talcite::ui::Node: the node takes no more children");
 
     if (!whose_->accepts(*given))
-        throw std::logic_error("talcite::ui::Node: węzeł nie tego rodzaju");
+        throw std::logic_error("talcite::ui::Node: a node of the wrong kind");
 
     // Cykl w tym drzewie znaczy, że wędrówka zdarzenia kręci się w kółko bez końca. Sprawdzenie
     // kosztuje przejście o głębokość drzewa, czyli nic, a łapie też dopięcie węzła do siebie.
     for (const Node* at = whose_; at != nullptr; at = at->up_)
         if (at == given.get())
-            throw std::logic_error("talcite::ui::Node: węzeł nie może być własnym przodkiem");
+            throw std::logic_error("talcite::ui::Node: a node cannot be its own ancestor");
 
     given->up_ = whose_;
 
@@ -163,6 +156,16 @@ bool Children::contains(const Node* one) const {
                        [one](const std::shared_ptr<Node>& mine) { return mine.get() == one; });
 }
 
+// Numer węzła wśród dzieci — pustka, gdy to nie jest dziecko. Lista, menu i pasek menu liczyły to
+// każde własną pętlą; kto ma wskaźnik na wiersz, a potrzebuje numeru (żeby sięgnąć do własnej
+// tablicy obok), pyta tutaj.
+std::optional<std::size_t> Children::find(const Node& one) const {
+    for (std::size_t at = 0; at < inside_.size(); ++at)
+        if (inside_[at].get() == &one) return at;
+
+    return std::nullopt;
+}
+
 // Korzeń liczymy przejściem w górę, a nie zapamiętujemy. Głębokość drzewa jest rzędu pięciu,
 // a zapamiętane pole trzeba by pilnować przy każdym dopięciu i odpięciu — i wisiałoby po
 // śmierci korzenia. Przejście jest przy okazji bardziej prawdomówne: węzeł odpięty od drzewa
@@ -196,7 +199,7 @@ const Skin& Node::skin() const {
 bool Node::focused() const {
     const Root* top = root();
 
-    return top != nullptr && top->focus() == this;
+    return top != nullptr && top->focused_node() == this;
 }
 
 // Wirtualne, bo są widżety, które ogniska nie biorą **same**, tylko oddają je swojemu wnętrzu:
@@ -207,9 +210,9 @@ void Node::focus() {
     Root* top = root();
 
     if (top == nullptr)
-        throw std::logic_error("talcite::ui::Node: węzeł poza drzewem nie może wziąć ogniska");
+        throw std::logic_error("talcite::ui::Node: a node outside the tree cannot take focus");
 
-    top->focus(this);
+    top->move_focus(this);
 }
 
 // Niewirtualne z tego samego powodu, dla którego niewirtualny jest trigger: zapisanie
@@ -225,6 +228,7 @@ View Node::render(const Area& where) { return render(where, {{0, 0}, where.size}
 // klatce nie może pamiętać, gdzie stał w poprzedniej.
 View Node::render(const Area& where, const Area& seen) {
     area_ = where;
+    seen_ = seen;
 
     if (seen.size.wide <= 0 || seen.size.high <= 0) return View{{0, 0}};
 
@@ -233,7 +237,7 @@ View Node::render(const Area& where, const Area& seen) {
 
 // **Kursor nie jest własnością kartki.** Jest jeden na całą klatkę i należy do korzenia, tak samo
 // jak skórka — a w `View` siedział tylko dlatego, że dziecko robi własny odklejony bufor i kursor
-// musiał przyjechać w górę razem z wklejeniem. To kosztowało przenoszenie go w każdym `within`,
+// musiał przyjechać w górę razem z wklejeniem. To kosztowało przenoszenie go w każdym `draw`,
 // pole w każdej kartce i przeliczanie współrzędnych w miejscu, które o współrzędnych nie wie nic.
 //
 // Widżet nie stawia więc kursora nigdzie — **mówi, gdzie go chce**, we własnych współrzędnych.
@@ -258,6 +262,84 @@ Size Node::wants(Size room) const {
     return inside_.front()->wants(room);
 }
 
+// **Gdzie stoję u rodzica, który kładzie dzieci na sobie.** Pyta o to wyłącznie `Stack`; `Row`,
+// `Column` i `Frame` układają po swojemu i tej odpowiedzi nie czytają. Domyślnie cały pokój — tyle
+// bierze zasłona, bo ma łapać mysz wszędzie, i tyle bierze treść aplikacji. Mniej bierze to, co
+// leży **na** treści w jednym miejscu: rozwinięta lista pod tytułem.
+//
+// Wynik jest we współrzędnych rodzica i nie ma prawa wyjść poza pokój — tego pilnuje `Stack`,
+// nie każdy węzeł z osobna.
+Area Node::placement(Size room) const { return {{0, 0}, room}; }
+
+// Miejsce węzła na ekranie, złożone przejściem w górę po prostokątach — tym samym, którym korzeń
+// składa położenie kursora w zagnieżdżonym polu i którym mysz schodzi w dół.
+//
+// **Liczone przy każdym pytaniu**, nie zapamiętywane: współrzędna zapisana przy rozwinięciu
+// zestarzałaby się przy pierwszej zmianie rozmiaru okna, przy przewinięciu i przy urośnięciu
+// czegokolwiek powyżej — a wtedy pudełko zostawałoby tam, gdzie widżet *był*. Pusto, gdy węzeł
+// nie ma jeszcze prostokąta, bo nikt go nie rozstawił.
+//
+// Potrzebuje tego każdy, kto staje **pod** innym węzłem — rozwinięta lista wyboru, rozwinięte menu,
+// okno przesuwane po ekranie. Było wolną funkcją standing obok klasy; teraz jest pytaniem do węzła,
+// jak `area()`, i mówi, o jaki układ chodzi (przegląd, krok 5e).
+std::optional<Area> Node::screen_area() const {
+    Area made = area_;
+
+    if (made.size.wide <= 0 || made.size.high <= 0) return {};
+
+    for (const Node* at = up_; at != nullptr; at = at->up_) {
+        made.at.x += at->area_.at.x;
+        made.at.y += at->area_.at.y;
+    }
+
+    return made;
+}
+
+// **Prostokąt węzła w układzie przodka `top`** — sumą `area().at` od węzła w górę, aż do dziecka
+// `top` (bez niego: w przewijaku jego własne `at` to przewinięcie, a chcemy współrzędnych treści,
+// które od przewinięcia nie zależą). Węzeł bez prostokąta — nikt go nie rozstawił, bo cały jego
+// pojemnik leżał poza oknem i `render` nie doszedł do dzieci — zastępuje **najbliższy rozstawiony
+// przodek**: dosunięcie do niego wciąga pojemnik w okno, następna klatka rozstawia dzieci
+// i wołający pyta drugi raz, głębiej. Pustka, gdy węzeł nie leży pod `top` wcale.
+//
+// Trzy przewijaki liczyły to wewnętrzną funkcją located; to jest to samo pytanie co
+// `screen_area()`, tylko o inny układ odniesienia, więc stoi obok niego.
+std::optional<Area> Node::area_in(const Node& top) const {
+    const Node* from = this;
+
+    while (from != nullptr && from != &top &&
+           (from->area_.size.wide <= 0 || from->area_.size.high <= 0))
+        from = from->up_;
+
+    if (from == nullptr || from == &top) return std::nullopt;
+
+    Area made = from->area_;
+
+    for (const Node* at = from->up_; at != nullptr; at = at->up_) {
+        if (at == &top) return made;
+
+        made.at.x += at->area_.at.x;
+        made.at.y += at->area_.at.y;
+    }
+
+    return std::nullopt;
+}
+
+// **Zdarzenie myszy niesie kratkę ekranu, a `area().at` mówi tylko o jednym piętrze.** Odjęcie
+// samego `area().at` daje dobry wynik wyłącznie wtedy, gdy suma przesunięć wszystkich przodków
+// jest zerowa — czyli w próbie, gdzie widżet stoi wprost pod korzeniem. W dialogu, w ramce albo
+// w wierszu klik trafiał o tyle kratek obok, ile wynosiło przesunięcie przodków.
+//
+// Przejście w górę to ta sama arytmetyka, którą robi `Root::under` schodząc w dół. Głębokość drzewa
+// jest rzędu kilku, więc kosztuje to tyle, co nic — a liczyć trzeba przy zdarzeniu, nie przy
+// klatce, bo drzewo mogło się w międzyczasie przesunąć. Dawniej wewnętrzna funkcja own; teraz
+// odwrotność `screen_area()` dla jednej kratki.
+Spot Node::local(Spot where) const {
+    for (const Node* at = this; at != nullptr; at = at->up_) where = where - at->area_.at;
+
+    return where;
+}
+
 View Node::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -267,14 +349,14 @@ View Node::paint(Size given, Area seen) {
     // czym jesteś, a nie prostokąt, który dostałeś.** `Dialog` i `Menu` robiły tak od zawsze; tu
     // jest reszta biblioteki doprowadzona do tej samej zasady.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     if (inside_.empty()) return made;
 
     const Area where{{0, 0}, given};
     const Area part = Area::crossed(seen, where);
 
-    made.within(inside_.front()->render(where, part - where.at), part.at - seen.at);
+    made.draw(inside_.front()->render(where, part - where.at), part.at - seen.at);
 
     return made;
 }

@@ -4,11 +4,12 @@
 #include <utility>
 
 #include "talcite/event.hpp"
+#include "talcite/enablednode.hpp"
 #include "talcite/keyednode.hpp"
 
 namespace talcite::ui {
 
-class Tick : public KeyedNode<Node> {
+class Tick : public KeyedNode<EnabledNode<Node>> {
 public:
     explicit Tick(std::string text, bool on = false);
 
@@ -22,29 +23,24 @@ public:
 
     void pick();
 
-    [[nodiscard]] bool able() const override { return able_; }
-
-    void able(bool given);
-
-    [[nodiscard]] bool focusable() const override;
-
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    void act() override;
+    void activate() override;
 
-    bool react(KeyEvent& what) override;
+    using KeyedNode::handle;
 
-    bool react(ClickEvent& what) override;
+    bool handle(KeyEvent& what) override;
+
+    bool handle(ClickEvent& what) override;
 
 private:
     std::string text_;
     bool on_ = false;
-    bool able_ = true;
 };
 
 }

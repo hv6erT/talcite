@@ -4,13 +4,14 @@
 #include <utility>
 
 #include "talcite/event.hpp"
+#include "talcite/enablednode.hpp"
 #include "talcite/keyednode.hpp"
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class LegendItem : public KeyedNode<Node> {
+class LegendItem : public KeyedNode<EnabledNode<Node>> {
 public:
     LegendItem(Key key, std::string text);
 
@@ -18,28 +19,27 @@ public:
 
     void text(std::string given) { text_ = std::move(given); }
 
-    [[nodiscard]] bool able() const override { return able_; }
-
-    void able(bool given) { able_ = given; }
-
     [[nodiscard]] std::string tag() const;
 
     void pick();
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
 protected:
+    [[nodiscard]] bool takes_focus() const override;
+
     View paint(Size given, Area seen) override;
 
-    void act() override;
+    void activate() override;
 
-    bool react(ClickEvent& what) override;
+    using KeyedNode::handle;
+
+    bool handle(ClickEvent& what) override;
 
 private:
     std::string text_;
-    bool able_ = true;
 };
 
 }

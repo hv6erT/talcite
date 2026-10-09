@@ -6,17 +6,17 @@
 
 #include "talcite/encoding.hpp"
 #include "talcite/line.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
 
 // Nazwa kompletu znaków w skórce. Grubość dalej wybiera widżet — to jest wybór kształtu, a nie
 // wyglądu; skórka mówi tylko, **jakimi znakami** ta grubość jest rysowana.
-[[nodiscard]] inline std::string_view named(LineStyle how) {
+[[nodiscard]] inline std::string_view named(Border how) {
     switch (how) {
-        case LineStyle::twin: return "talcite.line.twin";
-        case LineStyle::thick: return "talcite.line.thick";
+        case Border::twin: return "talcite.line.twin";
+        case Border::thick: return "talcite.line.thick";
         default: return "talcite.line.thin";
     }
 }
@@ -24,11 +24,11 @@ namespace talcite::ui {
 // Trzy komplety znaków ramki w jednym miejscu, bo dwie kopie tej samej tablicy prędzej czy później
 // zaczęłyby się różnić. **To już nie jest nagłówek publiczny**: od chwili, gdy znaki przychodzą ze
 // skórki, jedynym czytelnikiem tej tablicy jest ona sama — to z niej bierze wartości wbudowane.
-// `LineStyle::none` nie ma tu wpisu: kto nie rysuje linii, nie pyta o znaki.
-[[nodiscard]] inline Lines drawn(LineStyle how) {
+// `Border::none` nie ma tu wpisu: kto nie rysuje linii, nie pyta o znaki.
+[[nodiscard]] inline Lines drawn(Border how) {
     switch (how) {
-        case LineStyle::twin: return {U'╔', U'╗', U'╚', U'╝', U'═', U'║', U'╠', U'╣'};
-        case LineStyle::thick: return {U'┏', U'┓', U'┗', U'┛', U'━', U'┃', U'┣', U'┫'};
+        case Border::twin: return {U'╔', U'╗', U'╚', U'╝', U'═', U'║', U'╠', U'╣'};
+        case Border::thick: return {U'┏', U'┓', U'┗', U'┛', U'━', U'┃', U'┣', U'┫'};
         default: return {U'┌', U'┐', U'└', U'┘', U'─', U'│', U'├', U'┤'};
     }
 }
@@ -37,7 +37,7 @@ namespace talcite::ui {
 [[nodiscard]] inline int widest(std::initializer_list<char32_t> ones) {
     int made = 1;
 
-    for (const char32_t one : ones) made = std::max(made, widely(one));
+    for (const char32_t one : ones) made = std::max(made, width(one));
 
     return made;
 }
@@ -61,16 +61,16 @@ struct Sides {
 // dwukolumnowy postawiony w każdej kolumnie nadpisywałby własnego sąsiada. Reszta, w którą cały
 // znak już się nie mieści, zostaje tym, co tam było — tłem, nie połówką znaku.
 inline void across(View& into, Spot from, int much, char32_t glyph, const Style& look) {
-    const int step = widely(glyph);
+    const int step = width(glyph);
 
-    for (int x = 0; x + step <= much; x += step) into.letter({from.x + x, from.y}, glyph, look);
+    for (int x = 0; x + step <= much; x += step) into.put({from.x + x, from.y}, glyph, look);
 }
 
 // Czy kreska pozioma dochodzi do prawej kratki `last`. Dla znaku jednokolumnowego to pytanie
 // o samą tę kratkę. Dla dwukolumnowego kreska mogła skończyć się o kratkę wcześniej, bo w nieparzystą
 // szerokość ostatni znak się nie mieścił — i to też jest „dochodzi", bo dalej dojść nie mogła.
 [[nodiscard]] inline bool reaching(const View& seen, Spot last, char32_t glyph) {
-    const int step = widely(glyph);
+    const int step = width(glyph);
 
     for (int x = step == 1 ? last.x : last.x - step; x <= last.x; ++x)
         if (seen.at({x, last.y}).letter == glyph) return true;

@@ -1,8 +1,11 @@
 #pragma once
 
+#include <chrono>
 #include <concepts>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "talcite/area.hpp"
@@ -65,7 +68,7 @@ public:
 
     constexpr Key(Key one, Mods with) : held_(one.held_), with_(with) {}
 
-    [[nodiscard]] constexpr bool held() const { return held_ != 0; }
+    [[nodiscard]] constexpr bool empty() const { return held_ == 0; }
 
     [[nodiscard]] constexpr char32_t letter() const { return held_ < apart ? held_ : 0; }
 
@@ -75,6 +78,8 @@ public:
 
     [[nodiscard]] constexpr Mods mods() const { return with_; }
 
+    [[nodiscard]] static std::optional<Key> from_string(std::string_view written);
+
     friend constexpr bool operator==(Key, Key) = default;
 
 private:
@@ -83,6 +88,10 @@ private:
     char32_t held_ = 0;
     Mods with_;
 };
+
+[[nodiscard]] std::string to_string(Key one);
+
+[[nodiscard]] bool alike(Key one, Key two);
 
 class Event {
 public:
@@ -95,12 +104,12 @@ public:
     Event(Event&&) = delete;
     Event& operator=(Event&&) = delete;
 
-    [[nodiscard]] Handler* at() const { return at_; }
+    [[nodiscard]] Handler* target() const { return target_; }
 
 private:
     friend class Handler;
 
-    Handler* at_ = nullptr;
+    Handler* target_ = nullptr;
 };
 
 class KeyEvent : public Event {
@@ -117,8 +126,9 @@ private:
 
 class MouseEvent : public Event {
 public:
-    MouseEvent(Spot where, Press press, Mouse button, Mods mods = {})
-        : where_(where), press_(press), button_(button), mods_(mods) {}
+    MouseEvent(Spot where, Press press, Mouse button, Mods mods = {},
+               std::chrono::steady_clock::time_point when = std::chrono::steady_clock::now())
+        : where_(where), press_(press), button_(button), mods_(mods), when_(when) {}
 
     [[nodiscard]] Spot where() const { return where_; }
 
@@ -128,11 +138,14 @@ public:
 
     [[nodiscard]] Mods mods() const { return mods_; }
 
+    [[nodiscard]] std::chrono::steady_clock::time_point when() const { return when_; }
+
 private:
     Spot where_;
     Press press_ = Press::move;
     Mouse button_ = Mouse::none;
     Mods mods_;
+    std::chrono::steady_clock::time_point when_;
 };
 
 class ClickEvent : public Event {
@@ -219,6 +232,16 @@ private:
     Node* other_ = nullptr;
 };
 
+class EnableEvent : public Event {
+public:
+    EnableEvent() = default;
+};
+
+class DisableEvent : public Event {
+public:
+    DisableEvent() = default;
+};
+
 class ScrollEvent : public Event {
 public:
     ScrollEvent() = default;
@@ -229,6 +252,11 @@ public:
     PickEvent() = default;
 };
 
+class SubmitEvent : public Event {
+public:
+    SubmitEvent() = default;
+};
+
 class CloseEvent : public Event {
 public:
     CloseEvent() = default;
@@ -236,25 +264,24 @@ public:
 
 class AimedEvent : public Event {};
 
-template <std::derived_from<Event> One>
-class HotEvent : public AimedEvent {
+class ShortcutEvent : public AimedEvent {
 public:
-    explicit HotEvent(One& held) : held_(held) {}
+    explicit ShortcutEvent(Key key) : key_(key) {}
 
-    [[nodiscard]] One& held() const { return held_; }
+    [[nodiscard]] Key key() const { return key_; }
 
 private:
-    One& held_;
+    Key key_;
 };
 
 class PasteEvent : public Event {
 public:
-    explicit PasteEvent(std::string said) : said_(std::move(said)) {}
+    explicit PasteEvent(std::string text) : text_(std::move(text)) {}
 
-    [[nodiscard]] const std::string& said() const { return said_; }
+    [[nodiscard]] const std::string& text() const { return text_; }
 
 private:
-    std::string said_;
+    std::string text_;
 };
 
 }

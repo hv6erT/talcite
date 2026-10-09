@@ -4,12 +4,11 @@
 #include <utility>
 
 #include "talcite/encoding.hpp"
-#include "talcite/list.hpp"
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
 #include "eliding.hpp"
-#include "rolling.hpp"
+#include "popup.hpp"
 
 namespace talcite::ui {
 
@@ -21,83 +20,35 @@ constexpr int aside = 2;
 
 }
 
-Select::Select() : OptionsNode("talcite.select") {}
+Select::Select() : OptionsNode("talcite.select"), popup_(std::make_unique<Popup>(*this)) {}
 
 Select::Select(std::vector<std::string> options, std::size_t which) : Select() {
     this->options().all(std::move(options));
 
-    at(which);
+    this->which(which);
 }
 
-void Select::most(int given) { most_ = std::max(given, 1); }
+Select::~Select() = default;
 
-// **Rozwinięta lista należy do okna, nie do nas.** Ono ją trzyma, ono ją zamyka Escapem, ono zwraca
-// ognisko. Trzymając ją mocno, zostawalibyśmy z martwym uchwytem po każdym zamknięciu nie naszą
-// ręką; słabe wskazanie mówi dokładnie tyle, ile jest prawdą — „ta jest moja, dopóki istnieje".
-bool Select::opened() const { return !rolled_.expired(); }
+// Rozwinięta lista mieszka w `Popup` — tam jest i liczba wierszy, i to, czyja jest zasłona.
+int Select::rows() const { return popup_->rows(); }
 
-void Select::close() {
-    if (const std::shared_ptr<Veil> one = rolled_.lock()) one->close();
+void Select::rows(int given) { popup_->rows(given); }
 
-    rolled_.reset();
-}
+bool Select::opened() const { return popup_->opened(); }
+
+void Select::close() { popup_->close(); }
 
 void Select::open() {
-    if (!able() || options().empty() || opened()) return;
-
-    const Rolls made = rolling(*this, options().all(), at(), most_);
-
-    if (!made.list) return;
-
-    // **Wybór wraca zwykłym zdarzeniem, nie wywołaniem zwrotnym.** `ListItem::pick()` ogłasza
-    // `PickEvent`, a my słuchamy go na liście, którą sami zamówiliśmy — bo tylko my wiemy, co z nim
-    // zrobić. `Rolled` nie bierze w tym udziału i nie musi wiedzieć, po co ją niesie.
-    //
-    // Uchwyt trzyma **słabe** wskazanie na nas: rozwinięta lista może przeżyć widżet, jeśli ktoś
-    // zdejmie go z drzewa przy otwartej liście.
-    const std::weak_ptr<Node> mine = weak_from_this();
-    const std::weak_ptr<List> theirs = made.list;
+    if (!enabled() || options().empty()) return;
 
     // **Wybór wraca wartością, a nie numerem wiersza.** Lista powstała przy otwarciu, a numer
     // rozwiązałby się dopiero przy naciśnięciu — więc gdyby ktoś w międzyczasie zmienił opcje,
     // do pola trafiłby inny napis, niż widać było. Migawka napisów siedzi w domknięciu, a napisy
     // są jednoznaczne, bo zbiór nie dopuszcza powtórek.
-    (void)made.list->on<PickEvent>([mine, theirs, these = options().all()](PickEvent&) {
-        const std::shared_ptr<Node> kept = mine.lock();
-        const std::shared_ptr<List> from = theirs.lock();
-
-        if (!kept || !from) return true;
-
-        auto& me = static_cast<Select&>(*kept);
-
-        const int at = from->which();
-
-        me.close();
-
-        if (at >= 0 && static_cast<std::size_t>(at) < these.size())
-            me.chose(these[static_cast<std::size_t>(at)]);
-
-        return true;
-    });
-
-    rolled_ = made.veil;
+    popup_->open(options().all(), *which(),
+                 [this, these = options().all()](std::size_t at) { chose(these[at]); });
 }
-
-// Wyłączony wybór nie może zostać z ogniskiem: Tab przestaje go widzieć, więc ognisko utknęłoby na
-// czymś, z czego nie da się wyjść. Rozwiniętą listę przy okazji zamykamy — wyłączone nie wybiera.
-// Gasnący wybór najpierw zwija listę, a dopiero potem oddaje ognisko — reszta jest wspólna
-// z grupą opcji i mieszka w `OptionsNode`.
-void Select::able(bool given) {
-    if (!given) close();
-
-    OptionsNode::able(given);
-}
-
-// Pusty wybór **dalej bierze ognisko**, choć pusta grupa opcji go nie bierze. Różnica nie jest
-// kaprysem: pusta grupa zajmuje zero wierszy i nie widać jej wcale, a pusty wybór zajmuje wiersz
-// i widać go razem ze znakiem rozwinięcia. Wędrówka, która omija coś widocznego, wygląda na
-// zepsutą.
-bool Select::focusable() const { return able(); }
 
 Size Select::wants(Size room) const {
     int wide = 0;
@@ -108,29 +59,27 @@ Size Select::wants(Size room) const {
 }
 
 void Select::chose(const std::string& given) {
-    const int made = options().which(given);
+    const std::optional<std::size_t> made = options().find(given);
 
-    if (made < 0 || static_cast<std::size_t>(made) == at()) return;
+    if (!made || made == which()) return;
 
-    at(static_cast<std::size_t>(made));
+    which(*made);
 
-    PickEvent one;
-
-    (void)trigger(one);
+    (void)trigger(PickEvent{});
 }
 
 View Select::paint(Size given, Area seen) {
     View made{seen.size};
 
     // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
     // Rodzina ról na stan, złożona z rdzenia i końcówki — ta sama umowa co w przycisku i w polu
-    // wyboru, żeby autor skórki opisywał `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.off` i niczego nie
-    // zgadywał.
-    const Style look = how.get<Style>(!able() ? role() + ".off" : focused() ? role() + ".focus" : role());
+    // wyboru, żeby autor skórki opisywał `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.disabled` i niczego
+    // nie zgadywał.
+    const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
 
@@ -138,15 +87,15 @@ View Select::paint(Size given, Area seen) {
 
     // Znak rozwinięcia stoi przy **prawej krawędzi**, cokolwiek by nam dano — tak jak w oknie
     // ustawień, gdzie wybór ciągnie się przez całą szerokość kolumny.
-    made.letter({given.wide - 1 - seen.at.x, -seen.at.y}, how.get<char32_t>(role() + ".mark"), look);
+    made.put({given.wide - 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".mark"), look);
 
     const int room = std::max(given.wide - aside, 0);
 
     if (room <= 0) return made;
 
-    made.string({-seen.at.x, -seen.at.y},
-                elided(which().value_or(std::string{}), room, ElideStyle::right,
-                       how.get<char32_t>("talcite.elide")),
+    made.put({-seen.at.x, -seen.at.y},
+                elided(value().value_or(std::string{}), room, Elide::right,
+                       how.glyph("talcite.elide")),
                 look);
 
     return made;
@@ -158,8 +107,8 @@ View Select::paint(Size given, Area seen) {
 // Na krańcu strzałka **idzie wyżej**, żeby w oknie przeszła do następnego widżetu zamiast utknąć.
 // Litery, Tab i F-klawisze oddajemy zawsze: gdyby wybór je łykał, przycisk „Anuluj" przestałby
 // odpowiadać na swoją literę, ilekroć ognisko stoi tutaj.
-bool Select::react(KeyEvent& what) {
-    if (!able() || options().empty()) return false;
+bool Select::handle(KeyEvent& what) {
+    if (!enabled() || options().empty()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -173,31 +122,32 @@ bool Select::react(KeyEvent& what) {
     }
 
     const std::size_t last = options().many() - 1;
+    const std::size_t at = *which();
 
     switch (code) {
         case Code::up:
-            if (at() == 0) return false;
+            if (at == 0) return false;
 
-            chose(options()[at() - 1]);
+            chose(options()[at - 1]);
 
             return true;
 
         case Code::down:
-            if (at() == last) return false;
+            if (at == last) return false;
 
-            chose(options()[at() + 1]);
+            chose(options()[at + 1]);
 
             return true;
 
         case Code::home:
-            if (at() == 0) return false;
+            if (at == 0) return false;
 
             chose(options()[0]);
 
             return true;
 
         case Code::end:
-            if (at() == last) return false;
+            if (at == last) return false;
 
             chose(options()[last]);
 
@@ -207,14 +157,32 @@ bool Select::react(KeyEvent& what) {
     }
 }
 
-bool Select::react(ClickEvent&) {
-    if (!able()) return true;
+bool Select::handle(ClickEvent&) {
+    if (!enabled()) return true;
 
     if (root() != nullptr) focus();
 
     open();
 
     return true;
+}
+
+// **Gasnący wybór zwija swoją listę.** Wyłączone nie wybiera, a rozwinięta lista wisiałaby nad
+// polem, które już nie odpowiada. Ognisko siedzi wtedy w liście, a zamknięcie zasłony oddaje je
+// wyborowi przez `focus()` — który wyłączonego nie weźmie, więc ognisko idzie dalej samo.
+//
+// Pusty wybór **dalej bierze ognisko**, choć pusta grupa opcji go nie bierze, więc `takes_focus` nie
+// jest przesłonięte. Pusta grupa zajmuje zero wierszy i nie widać jej wcale, a pusty wybór zajmuje
+// wiersz i widać go razem ze znakiem rozwinięcia. Wędrówka, która omija coś widocznego, wygląda na
+// zepsutą.
+//
+// Zdarzenie bąbelkuje, ale wybór nie ma dzieci, więc każde, które tu dochodzi, jest jego własne.
+// Zwinięcie listy to porządek po sobie, a nie odpowiedź na zdarzenie, więc wybór go nie bierze:
+// przodek, który słucha wyłączeń w swoim poddrzewie, dostaje i to.
+bool Select::handle(DisableEvent&) {
+    close();
+
+    return false;
 }
 
 }

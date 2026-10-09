@@ -1,25 +1,26 @@
 #pragma once
 
 #include <chrono>
-#include <stdexcept>
-#include <utility>
 
 #include "talcite/promise.hpp"
 
 namespace talcite {
 
-class Overdue : public std::runtime_error {
+class Stopwatch {
 public:
-    Overdue();
-};
-
-class Time {
-public:
-    Time();
+    Stopwatch();
 
     [[nodiscard]] std::chrono::milliseconds spent() const;
 
     void reset();
+
+private:
+    std::chrono::steady_clock::time_point began_;
+};
+
+class Time {
+public:
+    Time() = delete;
 
     [[nodiscard]] static std::chrono::steady_clock::time_point now();
 
@@ -28,14 +29,6 @@ public:
     [[nodiscard]] static Promise<void> later(std::chrono::milliseconds patience);
 
     [[nodiscard]] static Promise<void> limit(std::chrono::milliseconds patience);
-
-    template <Promised One>
-    [[nodiscard]] static Promise<void> within(One one, std::chrono::milliseconds patience) {
-        return Promise<void>::race(std::move(one), limit(patience));
-    }
-
-private:
-    std::chrono::steady_clock::time_point began_;
 };
 
 }

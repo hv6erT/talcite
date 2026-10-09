@@ -5,26 +5,27 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/enablednode.hpp"
 #include "talcite/optionsnode.hpp"
 
 namespace talcite::ui {
 
-class Choice : public OptionsNode<Node> {
+class Choice : public OptionsNode<EnabledNode<Node>> {
 public:
     Choice();
 
     explicit Choice(std::vector<std::string> options, std::size_t which = 0);
 
-    [[nodiscard]] bool focusable() const override;
-
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
+    [[nodiscard]] bool takes_focus() const override;
+
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(ClickEvent& what) override;
+    bool handle(ClickEvent& what) override;
 };
 
 }

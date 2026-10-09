@@ -8,10 +8,10 @@
 #include <utility>
 #include <vector>
 
-#include "talcite/post.hpp"
-#include "talcite/scout.hpp"
+#include "talcite/address.hpp"
+#include "talcite/udp.hpp"
+#include "talcite/stunclient.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 using namespace talcite;
 
@@ -142,7 +142,7 @@ Bytes numbered(const Bytes& what) {
     return Bytes{what.begin() + 8, what.begin() + 20};
 }
 
-net::Post standing() { return net::Post{net::Address::loopback(net::Family::four, 0)}; }
+net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 using Server = std::pair<std::string, std::uint16_t>;
 
@@ -160,16 +160,16 @@ std::vector<Server> known() {
 }
 
 TRIAL("Zwiad: odbity adres z przekłamanego atrybutu") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true),
                 soon)
@@ -183,16 +183,16 @@ TRIAL("Zwiad: odbity adres z przekłamanego atrybutu") {
 }
 
 TRIAL("Zwiad: stary atrybut bez przekłamania też jest rozumiany") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, addressed(0x0001, "198.51.100.9", 1234, numbered(came.bytes), false),
                 soon)
@@ -202,16 +202,16 @@ TRIAL("Zwiad: stary atrybut bez przekłamania też jest rozumiany") {
 }
 
 TRIAL("Zwiad: adres szóstej rodziny") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, sixed(numbered(came.bytes), 9999), soon).await();
 
@@ -223,16 +223,16 @@ TRIAL("Zwiad: adres szóstej rodziny") {
 }
 
 TRIAL("Zwiad: cudza odpowiedź nie jest przyjmowana") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes other = numbered(came.bytes);
 
@@ -248,16 +248,16 @@ TRIAL("Zwiad: cudza odpowiedź nie jest przyjmowana") {
 }
 
 TRIAL("Zwiad: śmieć na gnieździe nie przeszkadza") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes trash(40, std::byte{0xFF});
 
@@ -270,16 +270,16 @@ TRIAL("Zwiad: śmieć na gnieździe nie przeszkadza") {
 }
 
 TRIAL("Zwiad: odmowa serwera wychodzi jako kłopot") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, refused(numbered(came.bytes)), soon).await();
 
@@ -297,10 +297,10 @@ TRIAL("Zwiad: odmowa serwera wychodzi jako kłopot") {
 }
 
 TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, net::Patience{5000}};
+    net::StunClient scout{mine, net::Patience{5000}};
 
     scout.add(server.mine());
 
@@ -309,7 +309,7 @@ TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
     // Pierwsze zapytanie przepada — odpowiadamy dopiero na drugie.
     (void)server.receive(1024, soon).await();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true),
                 soon)
@@ -319,10 +319,10 @@ TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
 }
 
 TRIAL("Zwiad: cisza kończy się terminem") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, net::Patience{300}};
+    net::StunClient scout{mine, net::Patience{300}};
 
     scout.add(server.mine());
 
@@ -338,9 +338,9 @@ TRIAL("Zwiad: cisza kończy się terminem") {
 }
 
 TRIAL("Zwiad: bez serwerów nie ma czego pytać") {
-    net::Post mine = standing();
+    net::Udp mine = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     bool amiss = false;
 
@@ -354,10 +354,10 @@ TRIAL("Zwiad: bez serwerów nie ma czego pytać") {
 }
 
 TRIAL("Zwiad: dwa pytania naraz dostają odmowę") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, net::Patience{400}};
+    net::StunClient scout{mine, net::Patience{400}};
 
     scout.add(server.mine());
 
@@ -380,69 +380,69 @@ TRIAL("Zwiad: dwa pytania naraz dostają odmowę") {
 }
 
 TRIAL("Zwiad: zgodne odbicia znaczą, że przebijanie ma sens") {
-    net::Post mine = standing();
-    net::Post one = standing();
-    net::Post two = standing();
+    net::Udp mine = standing();
+    net::Udp one = standing();
+    net::Udp two = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(one.mine());
     scout.add(two.mine());
 
     auto asking = scout.mapping();
 
-    const net::Parcel first = one.receive(1024, soon).await();
+    const net::Datagram first = one.receive(1024, soon).await();
 
     one.send(first.from, addressed(0x0020, "203.0.113.7", 40404, numbered(first.bytes), true),
              soon)
         .await();
 
-    const net::Parcel second = two.receive(1024, soon).await();
+    const net::Datagram second = two.receive(1024, soon).await();
 
     two.send(second.from, addressed(0x0020, "203.0.113.7", 40404, numbered(second.bytes), true),
              soon)
         .await();
 
-    same(asking.await(), net::Scout::Mapping::alike);
-    same(scout.known(), net::Scout::Mapping::alike);
+    same(asking.await(), net::StunClient::Mapping::alike);
+    same(scout.known(), net::StunClient::Mapping::alike);
 }
 
 TRIAL("Zwiad: różne odbicia znaczą NAT symetryczny") {
-    net::Post mine = standing();
-    net::Post one = standing();
-    net::Post two = standing();
+    net::Udp mine = standing();
+    net::Udp one = standing();
+    net::Udp two = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(one.mine());
     scout.add(two.mine());
 
     auto asking = scout.mapping();
 
-    const net::Parcel first = one.receive(1024, soon).await();
+    const net::Datagram first = one.receive(1024, soon).await();
 
     one.send(first.from, addressed(0x0020, "203.0.113.7", 40404, numbered(first.bytes), true),
              soon)
         .await();
 
-    const net::Parcel second = two.receive(1024, soon).await();
+    const net::Datagram second = two.receive(1024, soon).await();
 
     two.send(second.from, addressed(0x0020, "203.0.113.7", 51515, numbered(second.bytes), true),
              soon)
         .await();
 
-    same(asking.await(), net::Scout::Mapping::symmetric);
+    same(asking.await(), net::StunClient::Mapping::symmetric);
 }
 
 TRIAL("Zwiad: przy jednym serwerze werdyktu nie ma") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
-    same(scout.mapping().await(), net::Scout::Mapping::unknown);
+    same(scout.mapping().await(), net::StunClient::Mapping::unknown);
 }
 
 // Jedyna próba w całym zestawie, która wychodzi w internet. **Brak sieci nie jest tu porażką** —
@@ -453,9 +453,9 @@ TRIAL("Zwiad: przy jednym serwerze werdyktu nie ma") {
 //
 //     talcite-test --only "Zwiad: prawdziwe serwery w internecie"
 TRIAL("Zwiad: prawdziwe serwery w internecie") {
-    net::Post mine{net::Address::any(net::Family::four, 0)};
+    net::Udp mine{net::Address::any(net::Family::four, 0)};
 
-    net::Scout scout{mine, net::Patience{4000}};
+    net::StunClient scout{mine, net::Patience{4000}};
 
     for (const Server& one : known()) {
         try {
@@ -488,12 +488,12 @@ TRIAL("Zwiad: prawdziwe serwery w internecie") {
     ought(seen.held());
     ought(seen.port() != 0);
 
-    const net::Scout::Mapping what = scout.mapping().await();
+    const net::StunClient::Mapping what = scout.mapping().await();
 
     std::cout << "        odwzorowanie: "
-              << (what == net::Scout::Mapping::alike
+              << (what == net::StunClient::Mapping::alike
                       ? "zgodne"
-                      : what == net::Scout::Mapping::symmetric ? "symetryczne" : "nieznane")
+                      : what == net::StunClient::Mapping::symmetric ? "symetryczne" : "nieznane")
               << "\n";
 
     // Werdykt jest **wypisany, nie sprawdzany**. „Nieznane" znaczy tu, że któryś z dwóch pierwszych
@@ -507,10 +507,10 @@ TRIAL("Zwiad: prawdziwe serwery w internecie") {
 // Anulowanie nie zatrzymuje pytania, które już biegnie — to jest umowa całego talcite — więc
 // zwiadowca odzyskuje głos dopiero, gdy tamto się skończy.
 TRIAL("Zwiad: anulowane pytanie nie unieruchamia zwiadowcy na zawsze") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, net::Patience{300}};
+    net::StunClient scout{mine, net::Patience{300}};
 
     scout.add(server.mine());
 
@@ -542,16 +542,16 @@ TRIAL("Zwiad: anulowane pytanie nie unieruchamia zwiadowcy na zawsze") {
 
 // To samo gniazdo niesie potem ruch rozmówcy, więc jeden zwykły duży pakiet nie może kończyć zwiadu.
 TRIAL("Zwiad: za duży datagram nie wywraca pytania") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     server.send(came.from, Bytes(4000, std::byte{0x41}), soon).await();
 
@@ -564,22 +564,22 @@ TRIAL("Zwiad: za duży datagram nie wywraca pytania") {
 
 // Jeden źle ustawiony serwer na początku listy wykluczał wszystkie następne.
 TRIAL("Zwiad: odmowa jednego serwera nie kończy obchodu") {
-    net::Post mine = standing();
-    net::Post bad = standing();
-    net::Post good = standing();
+    net::Udp mine = standing();
+    net::Udp bad = standing();
+    net::Udp good = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(bad.mine());
     scout.add(good.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel first = bad.receive(1024, soon).await();
+    const net::Datagram first = bad.receive(1024, soon).await();
 
     bad.send(first.from, refused(numbered(first.bytes)), soon).await();
 
-    const net::Parcel second = good.receive(1024, soon).await();
+    const net::Datagram second = good.receive(1024, soon).await();
 
     good.send(second.from, addressed(0x0020, "198.51.100.9", 1234, numbered(second.bytes), true),
               soon)
@@ -591,29 +591,29 @@ TRIAL("Zwiad: odmowa jednego serwera nie kończy obchodu") {
 // Ten sam adres dodany dwa razy dawał dwie identyczne odpowiedzi, a z nich werdykt „zgodne" —
 // czyli kłamstwo w stronę niebezpieczną.
 TRIAL("Zwiad: ten sam serwer dwa razy nie daje werdyktu") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, net::Patience{600}};
+    net::StunClient scout{mine, net::Patience{600}};
 
     scout.add(server.mine());
     scout.add(server.mine());
 
-    same(scout.mapping().await(), net::Scout::Mapping::unknown);
+    same(scout.mapping().await(), net::StunClient::Mapping::unknown);
 }
 
 // Popsuty atrybut przekłamany nie ma prawa skasować poprawnie odczytanego starego.
 TRIAL("Zwiad: zły atrybut nie kasuje dobrego") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes made = addressed(0x0001, "198.51.100.9", 1234, numbered(came.bytes), false);
 
@@ -643,16 +643,16 @@ TRIAL("Zwiad: zły atrybut nie kasuje dobrego") {
 
 // Powód odmowy pisze obcy, a zdanie idzie na terminal.
 TRIAL("Zwiad: powód odmowy nie niesie znaków sterujących") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
-    net::Scout scout{mine, soon};
+    net::StunClient scout{mine, soon};
 
     scout.add(server.mine());
 
     auto asking = scout.seen();
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes value;
 

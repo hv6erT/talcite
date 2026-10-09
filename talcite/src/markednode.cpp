@@ -37,7 +37,7 @@ void Marks::clear() { inside_.clear(); }
 // Sięgnięcie poza koniec jest błędem wołającego, a nie stanem do przemilczenia — tak samo jak
 // w dzieciach węzła, w zbiorze klawiszy i w zbiorze opcji.
 const Mark& Marks::operator[](std::size_t which) const {
-    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Marks: nie ma takiego znacznika");
+    if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Marks: no such mark");
 
     return inside_[which];
 }

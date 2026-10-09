@@ -15,7 +15,7 @@ thread_local Loop* standing = nullptr;
 
 Loop::Loop() {
     if (standing != nullptr)
-        throw std::logic_error("talcite::Loop: na tym wątku pętla już stoi");
+        throw std::logic_error("talcite::Loop: a loop already stands on this thread");
 
     standing = this;
 }
@@ -26,7 +26,12 @@ Loop::~Loop() {
 
 Loop* Loop::current() { return standing; }
 
-void Loop::post(std::function<void()> what) {
+// **Kolejka i dzwonek mieszkają w drzwiach (`detail::Door`), nie w samej pętli.** Pętla trzyma
+// je mocno, ciąg dalszy obietnicy (`here`, `on`) — słabo. Dawniej ogniwo trzymało gołe wskazanie
+// na pętlę, a praca puli, która kończyła się po jej zniszczeniu, wołała `post` na martwym obiekcie;
+// gdy w tym samym miejscu pamięci stanęła nowa pętla, ciąg dalszy wykonywał się na cudzej. Dziś
+// drzwi giną razem z pętlą, a wszystko, co po nich przyjdzie, przepada — i nie ma gdzie trafić.
+void detail::Door::post(std::function<void()> what) {
     {
         const std::lock_guard<std::mutex> held{guard_};
         queued_.push_back(std::move(what));
@@ -35,11 +40,25 @@ void Loop::post(std::function<void()> what) {
     bell_.ring();
 }
 
-std::size_t Loop::waiting() const {
+std::vector<std::function<void()>> detail::Door::taken() {
+    std::vector<std::function<void()>> made;
+
+    const std::lock_guard<std::mutex> held{guard_};
+
+    made.swap(queued_);
+
+    return made;
+}
+
+std::size_t detail::Door::waiting() const {
     const std::lock_guard<std::mutex> held{guard_};
 
     return queued_.size();
 }
+
+void Loop::post(std::function<void()> what) { door_->post(std::move(what)); }
+
+std::size_t Loop::waiting() const { return door_->waiting(); }
 
 // Kolejkę zabieramy w całości i oddajemy zamek przed wykonaniem. Inaczej wywołanie, które samo
 // czegoś dopisze, zakleszczyłoby się na własnej pętli — a to najzwyklejszy przypadek, jaki jest.
@@ -50,14 +69,9 @@ std::size_t Loop::waiting() const {
 // `poll` bez terminu, aż do najbliższego klawisza. Przy tej kolejności najgorsze, co się zdarzy,
 // to jeden jałowy obrót.
 std::size_t Loop::turn() {
-    std::vector<std::function<void()>> taken;
+    door_->bell().clear();
 
-    bell_.clear();
-
-    {
-        const std::lock_guard<std::mutex> held{guard_};
-        taken.swap(queued_);
-    }
+    const std::vector<std::function<void()>> taken = door_->taken();
 
     for (const std::function<void()>& one : taken) one();
 

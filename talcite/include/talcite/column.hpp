@@ -12,7 +12,7 @@ public:
 
     void gap(int given);
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
 

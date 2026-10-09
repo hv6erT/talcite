@@ -9,13 +9,13 @@
 #include "talcite/encoding.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/row.hpp"
 #include "talcite/select.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 
 #include "doing.hpp"
 
@@ -26,7 +26,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -40,11 +40,11 @@ talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
-talcite::Style painted(talcite::Color ink, talcite::Color paper) {
+talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -66,7 +66,7 @@ talcite::ui::Skin coloured() {
 
         {"talcite.select", painted(black, cyan)},
         {"talcite.select.focus", painted(black, light)},
-        {"talcite.select.off", painted(blue, cyan)},
+        {"talcite.select.disabled", painted(blue, cyan)},
 
         {"talcite.list", painted(black, cyan)},
         {"talcite.list.focus", painted(black, light)},
@@ -114,8 +114,8 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
-    const auto veils = std::make_shared<talcite::ui::VeilWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto modals = std::make_shared<talcite::ui::Modals>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>("Ustawienia");
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -140,15 +140,15 @@ int main() {
     column->children().add(said);
 
     frame->children().add(column);
-    veils->body()->children().add(frame);
-    legend->body()->children().add(veils);
+    modals->content(frame);
+    legend->content(modals);
 
     // Każdy wybór ogłasza **to samo zdarzenie**, niezależnie od tego, czy wybrano myszą, Enterem
     // czy strzałką w zamkniętym wierszu.
     const auto watching = [said](const std::shared_ptr<talcite::ui::Select>& one,
                                  const std::string& named) {
         (void)one->on<talcite::ui::PickEvent>([said, one, named](talcite::ui::PickEvent&) {
-            said->text(named + ": " + one->which().value_or(std::string{}));
+            said->text(named + ": " + one->value().value_or(std::string{}));
 
             return true;
         });
@@ -161,16 +161,14 @@ int main() {
     (void)demo::doing(legend->add(talcite::ui::Code::f2, "Podaj"), [coding, said] {
         // **Ustawienie z programu milczy**: wypełnienie okna wartościami
         // początkowymi nie jest wybieraniem.
-        // Numer opcji podaje sam zbiór — na zewnątrz wybór mówi wyłącznie napisami.
-        const int at = coding->options().which(coding->which().value_or(std::string{}));
-
+        // Numer i napis to ta sama wybrana opcja: numerem łatwiej iść dalej, napis się pokazuje.
         const std::size_t next =
-            static_cast<std::size_t>(at + 1) % std::max(coding->options().many(), std::size_t{1});
+            (coding->which().value_or(0) + 1) % std::max(coding->options().many(), std::size_t{1});
 
-        coding->which(coding->options()[next]);
+        coding->which(next);
 
         said->text("podano z programu (bez zdarzenia): " +
-                   coding->which().value_or(std::string{}));
+                   coding->value().value_or(std::string{}));
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
@@ -180,7 +178,7 @@ int main() {
 
     coding->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — lista rozwijana");
 
     term.run();

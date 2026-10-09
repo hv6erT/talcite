@@ -15,17 +15,14 @@ namespace {
 // Czy to jest bieżący wiersz swojej listy. Pytamy listę, bo to ona prowadzi numer — pozycja nie
 // trzyma drugiego znacznika obok ogniska i obok tego numeru.
 //
-// **Nie jest to metoda publiczna i nie ma być.** Kto pyta o bieżący wiersz, pyta listy: `which()`.
+// **Nie jest to metoda publiczna i nie ma być.** Kto pyta o bieżący wiersz, pyta listy: `current()`.
 // Pozycji do tego nie potrzeba, a druga droga do jednej prawdy to zawsze druga droga do rozjazdu.
 bool current(const ListItem& one) {
     const List* up = dynamic_cast<const List*>(one.parent());
 
     if (up == nullptr) return false;
 
-    const int at = up->which();
-
-    return at >= 0 && at < static_cast<int>(up->children().many()) &&
-           up->children()[static_cast<std::size_t>(at)].get() == &one;
+    return up->current() == &one;
 }
 
 }
@@ -33,13 +30,7 @@ bool current(const ListItem& one) {
 ListItem::ListItem(std::string text) : text_(std::move(text)) { role("talcite.list"); }
 
 // Pozycja nie ma czego trzymać w środku — tak samo jak napis i jak pozycja menu.
-int ListItem::takes() const { return 0; }
-
-// **Bieżąca pozycja to ta z ogniskiem.** Nie ma osobnego znacznika „podświetlona", bo dwa źródła
-// tej samej prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola
-// „otwarte", tylko pyta o ognisko. Dzięki temu skórka będzie miała rolę „pozycja z ogniskiem",
-// a nie „pozycja z jakimś znacznikiem, który akurat znaczy to samo".
-bool ListItem::focusable() const { return able_; }
+int ListItem::capacity() const { return 0; }
 
 // Bez odstępów po bokach, inaczej niż w pozycji menu: w liście plików nazwa zaczyna się od pierwszej
 // kratki i nie ma jej od czego odsuwać. Szerokość to sam napis — rozciąga ją lista, dając wierszowi
@@ -48,28 +39,21 @@ Size ListItem::wants(Size room) const {
     return {std::min(measured(text_).wide, room.wide), std::min(1, room.high)};
 }
 
-// Wyłączenie oddaje ognisko najbliższemu chętnemu przodkowi — tak samo i z tego samego powodu, co
-// w przycisku i w polu: ognisko puszczone na pustkę psuje modalność dialogu.
-void ListItem::able(bool given) {
-    able_ = given;
-
-    if (given) return;
-
-    unfocus();
-}
-
 // Sam wybór to wywołanie tego, co powierzył budujący. O tym, że pozycja leży w czymś, co się
 // przewija, nie wie i wiedzieć nie musi.
 // Zdarzenie **bąbelkuje przez listę**, więc aplikacja może słuchać na niej jednym uchwytem
 // zamiast wieszać wywołanie zwrotne na każdym wierszu z osobna. `Event::at()` mówi który.
 void ListItem::pick() {
-    if (!able_) return;
+    if (!enabled()) return;
 
-    PickEvent one;
-
-    (void)trigger(one);
+    (void)trigger(PickEvent{});
 }
 
+// **Bieżąca pozycja to ta z ogniskiem.** Nie ma osobnego znacznika „podświetlona", bo dwa źródła
+// tej samej prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola
+// „otwarte", tylko pyta o ognisko. Dzięki temu skórka będzie miała rolę „pozycja z ogniskiem",
+// a nie „pozycja z jakimś znacznikiem, który akurat znaczy to samo".
+//
 // **Bieżący wiersz bez ogniska ma własną rolę.** Panel Midnight Commandera nie pokazuje kursora,
 // gdy jest nieaktywny, ale listbox w oknie dialogowym pokazuje go innym kolorem — i to jest
 // `talcite.list.mark`. Wbudowana skórka zostawia tę rolę pustą, więc dziś nie widać nic, dokładnie jak
@@ -82,14 +66,14 @@ View ListItem::paint(Size given, Area seen) {
 
     const Skin& how = skin();
 
-    const Style look = how.get<Style>(!able_           ? role() + ".off"
+    const Style look = how.style(!enabled()           ? role() + ".disabled"
                                       : focused()      ? role() + ".focus"
                                       : current(*this) ? role() + ".mark"
                                                        : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, given}, look);
-    made.string({-seen.at.x, -seen.at.y},
-                elided(text_, given.wide, ElideStyle::right, how.get<char32_t>("talcite.elide")),
+    made.put({-seen.at.x, -seen.at.y},
+                elided(text_, given.wide, Elide::right, how.glyph("talcite.elide")),
                 look);
 
     return made;
@@ -99,11 +83,11 @@ View ListItem::paint(Size given, Area seen) {
 // bierze menu, bo pozycja ogniska nie ma. Wszystko inne oddajemy dalej: strzałki i klawisze stron
 // należą do listy, litery i Tab do okna.
 //
-// `react` biegnie **przed** uchwytami z `on<KeyEvent>`, ale ich nie zasłania: kanały są dwa
-// i prawda z `react` zamyka tylko drogę widżetów. Dopięty uchwyt zobaczy więc każdy klawisz,
+// `handle` biegnie **przed** uchwytami z `on<KeyEvent>`, ale ich nie zasłania: kanały są dwa
+// i prawda z `handle` zamyka tylko drogę widżetów. Dopięty uchwyt zobaczy więc każdy klawisz,
 // łącznie z Enterem — a Enter ogłasza się dodatkowo jako `PickEvent`.
-bool ListItem::react(KeyEvent& what) {
-    if (!able_) return false;
+bool ListItem::handle(KeyEvent& what) {
+    if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -116,11 +100,11 @@ bool ListItem::react(KeyEvent& what) {
 
 // Klik bierze ognisko i tym samym czyni pozycję bieżącą. Reszta — numer wiersza, dociągnięcie
 // widoku, powiadomienie aplikacji — dzieje się w liście, do której `FocusEvent` i tak zabąbelkuje.
-bool ListItem::react(ClickEvent&) {
+bool ListItem::handle(ClickEvent&) {
     // Pozycja niedostępna **przepuszcza klik wyżej**, zamiast go połykać: skoro nie odpowiada na
     // swój klawisz, to nie ma powodu, żeby odpowiadała na mysz — a lista pod spodem ma prawo
     // zrobić z tym kliknięciem, co uważa.
-    if (!able_) return false;
+    if (!enabled()) return false;
 
     if (root() != nullptr) focus();
 
@@ -129,8 +113,8 @@ bool ListItem::react(ClickEvent&) {
 
 // Dwuklik w wiersz robi to, co Enter — i po drodze też stawia na nim ognisko, bo dwuklik może
 // paść na wiersz, który bieżącym jeszcze nie jest.
-bool ListItem::react(DoubleClickEvent&) {
-    if (!able_) return false;
+bool ListItem::handle(DoubleClickEvent&) {
+    if (!enabled()) return false;
 
     if (root() != nullptr) focus();
 

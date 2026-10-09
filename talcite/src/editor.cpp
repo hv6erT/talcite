@@ -2,17 +2,22 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "talcite/clipboard.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/root.hpp"
 
 #include "eliding.hpp"
 #include "quilt.hpp"
 #include "spool.hpp"
 
-#include "placing.hpp"
 
 namespace talcite::ui {
 
@@ -26,48 +31,65 @@ std::size_t counted(std::string_view what) {
     return static_cast<std::size_t>(std::count(what.begin(), what.end(), '\n'));
 }
 
-std::string said(const Bytes& what) {
-    std::string made;
-
-    made.reserve(what.size());
-
-    for (const std::byte one : what) made.push_back(static_cast<char>(one));
-
-    return made;
-}
 
 // Kończy grupę cofania. Spacja, tabulator i enter zamykają wyraz — dzięki temu jedno cofnięcie
 // zabiera cały wyraz, a nie literę, i nie przeskakuje przy tym przez koniec wiersza.
-bool sealed(const std::string& what) {
-    if (what.empty()) return true;
-
-    const char last = what.back();
-
-    return last == '\n' || last == ' ' || last == '\t';
-}
+bool sealed(char last) { return last == '\n' || last == ' ' || last == '\t'; }
 
 }
 
 struct Editor::Kept {
     // Jedna zmiana dokumentu: **co zniknęło, co przyszło i gdzie stał wtedy kursor**. Kołdra sama
-    // się nie cofnie — jej dopiski nigdy nie znikają — więc odwrotność każdej zmiany trzeba
-    // zapamiętać osobno. Pamięć rośnie z sumą długości zmian, nie z rozmiarem pliku.
-    struct Change {
+    // się nie cofnie, więc odwrotność każdej zmiany trzeba zapamiętać osobno — ale jako skrawki
+    // kołdry, nie bajty. Dawniej wpis trzymał kopię skasowanego tekstu, a cofnięcie wstawiało ją do
+    // dopisków, które nigdy się nie kurczą: skasowanie gigabajtowego bloku z logu to był gigabajt
+    // w dzienniku i kolejny przy każdej parze cofnij–ponów. Skrawek to kilka odcinków, więc pamięć
+    // rośnie z liczbą zmian, nie z ich długością, a cofnięcie zszywa dokument z tych samych odcinków.
+    // Jedno cięcie „zamień wszystkie": miejsce w dokumencie **sprzed** całej zmiany.
+    struct Splice {
         std::size_t at = 0;
         std::string gone;
-        std::string came;
+    };
+
+    struct Change {
+        std::size_t at = 0;
+        Quilt::Scrap gone;
+        Quilt::Scrap came;
         std::size_t was = 0;
+
+        // „Zamień wszystkie" jednym wpisem: cięcia rosnąco, każde z tym, co zniknęło, a na każdym
+        // miejscu przychodzi `with`. Pusty wektor znaczy zwykłą zmianę w jednym miejscu.
+        std::vector<Splice> many;
+        std::string with;
 
         // Cofa się razem z poprzednim wpisem. Stąd „zamień wszystkie" wraca jednym ruchem, choć
         // zmian było sto — bez trzymania w pamięci całego dokumentu sprzed zamiany.
         bool tied = false;
+
+        // Blok mcedit sprzed zmiany i po niej: cofnięcie przywraca blok tam, gdzie był — także
+        // po `erase()`, po którym bloku nie ma — a ponowienie tam, gdzie zmiana go zostawiła.
+        std::optional<std::pair<std::size_t, std::size_t>> before;
+        std::optional<std::pair<std::size_t, std::size_t>> after;
     };
 
+    using Block = std::optional<std::pair<std::size_t, std::size_t>>;
+
+    // Schowek podany z zewnątrz, żeby próby nie sięgały do systemowego, a program z kilkoma
+    // edytorami dawał im jeden wspólny.
+    Seam<Clipboard> clipboard;
+
     std::shared_ptr<Quilt> quilt;
-    std::shared_ptr<Spool> spool;
 
     std::size_t cursor = 0;
     std::size_t anchor = 0;
+
+    // **Blok mcedit** — trwały odcinek dokumentu obok zaznaczenia i schowka. W trakcie
+    // rozciągania (`marking`) drugi koniec jest kursorem, więc `block->second` nie znaczy wtedy nic;
+    // po zakończeniu oba końce stoją i idą tylko za zmianami dokumentu (`apply`). `held` to stan
+    // sprzed bieżącej zmiany, przechwycony w `apply` dla `note`.
+    Block block;
+    bool marking = false;
+    Block held;
 
     // Zapamiętane miejsce w wierszu dla strzałek w pionie. Trzymamy **bajt**, nie kolumnę: kolumna
     // wymagałaby powtórzenia tu reguły tabulatorów, którą zna już cięcie na kawałki. Skutek jest
@@ -76,6 +98,11 @@ struct Editor::Kept {
     std::size_t offset = 0;
 
     bool readonly = false;
+
+    // Czy trwa zapis. Treść nie ma prawa zmienić się pod kawałkami, które właśnie płyną do ujścia,
+    // więc do końca zapisu edytor jest tylko do czytania — ale bez ruszania `readonly`, które
+    // należy do wołającego.
+    bool saving = false;
 
     // Czy trwa ciągnięcie myszą. Ruch bez wciśniętego przycisku przychodzi tylko przy `?1003`,
     // którego nie włączamy, ale flaga i tak jest potrzebna: ruch po puszczeniu nad edytorem
@@ -89,7 +116,11 @@ struct Editor::Kept {
     std::size_t done = 0;
 
     // Ile ich było przy ostatnim zapisie. Stąd `dirty()`: cofnięcie wszystkiego z powrotem daje
-    // dokument czysty, bo wraca do tego samego miejsca w dzienniku.
+    // dokument czysty, bo wraca do tego samego miejsca w dzienniku. Dwie pułapki tego rachunku:
+    // wyraz pisany dalej po zapisie przedłużałby ten sam wpis, nie zmieniając numeru — dlatego
+    // zapis pieczętuje wpis (`joining` gaśnie); a nowa zmiana po cofnięciu poniżej zapisanego
+    // miejsca ucina gałąź, na której to miejsce leżało — wtedy numer idzie na `SIZE_MAX`, bo
+    // zapisany stan nie jest już osiągalny żadnym cofaniem.
     std::size_t washed = 0;
 
     // Czy kolejny znak może przedłużyć ostatni wpis. Gaśnie przy każdym ruchu kursora, przy
@@ -102,28 +133,81 @@ struct Editor::Kept {
 
     [[nodiscard]] std::string text(std::size_t from, std::size_t upto) const;
 
-    void apply(std::size_t at, const std::string& gone, const std::string& came);
+    void apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone, const Quilt::Scrap& came);
 
-    void note(std::size_t at, std::string gone, std::string came, std::size_t was);
+    void splice(Spool& spool, const std::vector<Splice>& many, const std::string& came, bool back);
+
+    [[nodiscard]] static std::size_t ended(const std::vector<Splice>& many, const std::string& came);
+
+    void note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, std::size_t was);
+
+    void blocked();
 };
+
+// Zakończenie rozciągania bloku: końce w porządku, blok zerowej długości znika — pusty blok
+// byłby tylko śmieciem na ekranie. Wołane przez drugie F3 i przez każdą z trzech czynności.
+void Editor::Kept::blocked() {
+    if (!marking) return;
+
+    marking = false;
+
+    if (!block.has_value()) return;
+
+    const std::size_t from = std::min(block->first, cursor);
+    const std::size_t upto = std::max(block->first, cursor);
+
+    if (upto <= from) block.reset();
+    else block = std::pair{from, upto};
+}
 
 std::string Editor::Kept::text(std::size_t from, std::size_t upto) const {
     if (!quilt || upto <= from) return {};
 
-    return said(quilt->bytes(from, upto - from));
+    return talcite::text(quilt->bytes(from, upto - from));
+}
+
+namespace {
+
+// Koniec bloku po zmianie [at, at + gone) → came. Początek: zmiana przed nim albo dokładnie
+// w nim przesuwa go (tekst wstawiony na początku bloku idzie **przed** blok), zmiana w środku
+// stawia go za wstawionym. Koniec: zmiana za nim albo dokładnie w nim nic (tekst wstawiony na
+// końcu bloku nie wchodzi do bloku), zmiana przed nim przesuwa, w środku przycina do `at`.
+[[nodiscard]] std::size_t shifted(std::size_t bound, bool start, std::size_t at, std::size_t gone,
+                                  std::size_t came) {
+    if (start ? bound < at : bound <= at) return bound;
+
+    if (bound >= at + gone) return bound - gone + came;
+
+    return start ? at + came : at;
+}
+
 }
 
 // **Jedyne miejsce, w którym dokument naprawdę się zmienia.** Wpisanie, kasowanie, cofnięcie
 // i ponowienie sprowadzają się tutaj, więc poprawka dla szpuli jest napisana raz — a to ona
 // decyduje, czy ekran po zmianie pokaże nową treść.
-void Editor::Kept::apply(std::size_t at, const std::string& gone, const std::string& came) {
+void Editor::Kept::apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone, const Quilt::Scrap& came) {
+    // Blok idzie za dokumentem: oba końce według `shifted`, a gdy nic z niego nie zostało —
+    // znika. W trakcie rozciągania przesuwa się tylko początek, koniec jest kursorem.
+    held = block;
+
+    if (block.has_value()) {
+        block->first = shifted(block->first, true, at, gone.much, came.much);
+
+        if (!marking) {
+            block->second = shifted(block->second, false, at, gone.much, came.much);
+
+            if (block->second <= block->first) block.reset();
+        }
+    }
+
     // Ostatni bajt dokumentu rozstrzyga, czy ostatni wiersz w ogóle istnieje: „abc" to jeden
     // wiersz, „abc\n" **też jeden**, a pusty dokument nie ma żadnego. Sama liczba enterów tego
     // nie powie, więc trzeba zajrzeć na koniec przed zmianą i po niej.
     const auto ending = [this](std::size_t much) {
         if (much == 0) return '\0';
 
-        const std::string one = said(quilt->bytes(much - 1, 1));
+        const std::string one = talcite::text(quilt->bytes(much - 1, 1));
 
         return one.empty() ? '\0' : one.front();
     };
@@ -131,77 +215,176 @@ void Editor::Kept::apply(std::size_t at, const std::string& gone, const std::str
     const std::size_t was = quilt->whole();
     const char before = ending(was);
 
-    if (!gone.empty()) quilt->erase(at, gone.size());
-
-    if (!came.empty()) quilt->insert(at, came);
+    quilt->erase(at, gone.much);
+    quilt->put(at, came);
 
     const std::size_t now = quilt->whole();
     const char after = ending(now);
 
-    std::ptrdiff_t lines = static_cast<std::ptrdiff_t>(counted(came)) -
-                           static_cast<std::ptrdiff_t>(counted(gone));
+    std::ptrdiff_t lines = static_cast<std::ptrdiff_t>(quilt->lines(came)) -
+                           static_cast<std::ptrdiff_t>(quilt->lines(gone));
 
     if (now > 0 && after != '\n') ++lines;
 
     if (was > 0 && before != '\n') --lines;
 
-    spool->changed(at, static_cast<std::ptrdiff_t>(now) - static_cast<std::ptrdiff_t>(was), lines);
+    spool.changed(at, gone.much, came.much, lines);
+}
+
+// Koniec ostatniej wstawki po całej zmianie: jej miejsce sprzed zmiany przesunięte o wszystkie
+// wcześniejsze cięcia.
+std::size_t Editor::Kept::ended(const std::vector<Splice>& many, const std::string& came) {
+    std::ptrdiff_t moved = 0;
+
+    for (std::size_t one = 0; one + 1 < many.size(); ++one)
+        moved += static_cast<std::ptrdiff_t>(came.size()) - static_cast<std::ptrdiff_t>(many[one].gone.size());
+
+    return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(many.back().at) + moved) + came.size();
+}
+
+// **Wiele miejsc naraz** — „zamień wszystkie" i jego cofnięcie w jednym przejściu po dokumencie.
+// W przód: na miejscu każdego `gone` staje `came`; wstecz: na miejscu każdego `came` (już
+// przesuniętego o zmiany przed nim) wraca jego `gone`. W przód blok idzie za wszystkimi cięciami po
+// kolei, od lewej, każde w miejscu już przesuniętym przez poprzednie — tak, jakby szły jedno po
+// drugim; wstecz bloku nie liczymy, bo cofnięcie i tak stawia go z wpisu tam, gdzie był. Szpula
+// dostaje jedno zawiadomienie od pierwszego cięcia, bo dalej każde przesuwa inaczej.
+void Editor::Kept::splice(Spool& spool, const std::vector<Splice>& many, const std::string& came, bool back) {
+    if (many.empty()) return;
+
+    held = block;
+
+    std::vector<Quilt::Cut> cuts;
+    cuts.reserve(many.size());
+
+    std::ptrdiff_t moved = 0;
+    std::ptrdiff_t lines = 0;
+
+    const std::ptrdiff_t newlines = static_cast<std::ptrdiff_t>(counted(came));
+
+    for (const Splice& one : many) {
+        const std::size_t now = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(one.at) + (back ? moved : 0));
+        const std::size_t gone = back ? came.size() : one.gone.size();
+        const std::size_t comes = back ? one.gone.size() : came.size();
+
+        cuts.push_back(Quilt::Cut{now, gone, back ? std::string_view{one.gone} : std::string_view{came}});
+
+        // Cięcia po kolei od lewej, w dokumencie zmienianym na bieżąco: każde stoi o sumę
+        // wcześniejszych różnic dalej niż przed zmianą.
+        if (block.has_value() && !back) {
+            const std::size_t here = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(one.at) + moved);
+
+            block->first = shifted(block->first, true, here, gone, comes);
+
+            if (!marking) block->second = shifted(block->second, false, here, gone, comes);
+        }
+
+        const std::ptrdiff_t step = static_cast<std::ptrdiff_t>(came.size()) - static_cast<std::ptrdiff_t>(one.gone.size());
+
+        moved += step;
+
+        const std::ptrdiff_t away = static_cast<std::ptrdiff_t>(counted(one.gone));
+
+        lines += back ? away - newlines : newlines - away;
+    }
+
+    if (block.has_value() && !marking && block->second <= block->first) block.reset();
+
+    const auto ending = [this](std::size_t much) {
+        if (much == 0) return '\0';
+
+        const std::string one = talcite::text(quilt->bytes(much - 1, 1));
+
+        return one.empty() ? '\0' : one.front();
+    };
+
+    const std::size_t was = quilt->whole();
+    const char before = ending(was);
+
+    quilt->spliced(cuts);
+
+    const std::size_t now = quilt->whole();
+    const char after = ending(now);
+
+    if (now > 0 && after != '\n') ++lines;
+
+    if (was > 0 && before != '\n') --lines;
+
+    spool.rewritten(cuts.front().at, static_cast<std::ptrdiff_t>(now) - static_cast<std::ptrdiff_t>(was), lines);
 }
 
 // Nowa zmiana ucina gałąź ponowienia — po cofnięciu i wpisaniu czegoś innego nie ma już dokąd
 // ponawiać. Poza tym **pisany wyraz zbiera się w jeden wpis**: znak dopisany dokładnie tam, gdzie
 // skończył się poprzedni, przedłuża ostatni zamiast robić nowy. Bez tego cofanie chodziłoby po
 // literze i pięć tysięcy znaków dałoby pięć tysięcy kroków.
-void Editor::Kept::note(std::size_t at, std::string gone, std::string came, std::size_t was) {
+void Editor::Kept::note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, std::size_t was) {
+    if (washed > done) washed = SIZE_MAX;
+
     log.resize(done);
 
     if (joining && !log.empty()) {
         Change& last = log.back();
 
-        const bool typing = gone.empty() && !came.empty() && last.gone.empty() &&
-                            !sealed(last.came) && came.find('\n') == std::string::npos &&
-                            last.at + last.came.size() == at;
+        const bool typing = gone.much == 0 && came.much > 0 && last.gone.much == 0 &&
+                            last.at + last.came.much == at && !sealed(quilt->last(last.came)) &&
+                            quilt->lines(came) == 0;
 
         if (typing) {
-            last.came += came;
+            Quilt::joined(last.came, came, false);
+            last.after = block;
 
             return;
         }
 
-        // Trzymany Backspace zbiera się tak samo, tyle że od tyłu: każdy kolejny znak znika
-        // **przed** poprzednim, więc początek wpisu się cofa.
-        const bool erasing = came.empty() && !gone.empty() && last.came.empty() &&
-                             !last.gone.empty() && gone.find('\n') == std::string::npos &&
-                             at + gone.size() == last.at;
+        const bool erasing = came.much == 0 && gone.much > 0 && last.came.much == 0 && last.gone.much > 0;
 
-        if (erasing) {
-            last.gone = gone + last.gone;
+        // Trzymany Backspace zbiera się tak samo, tyle że od tyłu: każdy kolejny znak znika
+        // **przed** poprzednim, więc początek wpisu się cofa, a skrawek rośnie z przodu — w źródle
+        // znak leży tuż przed poprzednim, więc odcinek się wydłuża. Dawniej wpis trzymał bajty
+        // i trzeba było je dopisywać odwrócone, żeby nie przepisywać wpisu przy każdym znaku.
+        if (erasing && at + gone.much == last.at && quilt->lines(gone) == 0) {
+            Quilt::joined(last.gone, gone, true);
             last.at = at;
+            last.after = block;
 
             return;
         }
 
         // Trzymany Delete zbiera od przodu: kasowany bajt jest wciąż ten sam.
-        const bool ahead = came.empty() && !gone.empty() && last.came.empty() &&
-                           !last.gone.empty() && gone.find('\n') == std::string::npos &&
-                           at == last.at;
-
-        if (ahead) {
-            last.gone += gone;
+        if (erasing && at == last.at && quilt->lines(gone) == 0) {
+            Quilt::joined(last.gone, gone, false);
+            last.after = block;
 
             return;
         }
     }
 
-    log.push_back(Change{at, std::move(gone), std::move(came), was, tying});
+    Change made;
+    made.at = at;
+    made.gone = std::move(gone);
+    made.came = std::move(came);
+    made.was = was;
+    made.tied = tying;
+    made.before = held;
+    made.after = block;
+
+    log.push_back(std::move(made));
 
     done = log.size();
     joining = true;
 }
 
-Editor::Editor() : kept_(std::make_unique<Kept>()) { role("talcite.editor"); }
+Editor::Editor() : Editor(clipboard()) {}
 
-Editor::Editor(ScrollStyle style) : Page(style), kept_(std::make_unique<Kept>()) {
+Editor::Editor(Seam<Clipboard> with) : kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
+    kept_->clipboard = std::move(with);
+
+    role("talcite.editor");
+}
+
+Editor::Editor(ScrollShape shape, Seam<Clipboard> with)
+    : Page(shape), kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
+    kept_->clipboard = std::move(with);
+
     role("talcite.editor");
 }
 
@@ -209,11 +392,10 @@ Editor::~Editor() = default;
 
 namespace {
 
-Roll rolled(const std::shared_ptr<Spool>& spool) {
-    return [spool](std::size_t which, std::size_t most) { return spool->lines(which, most); };
-}
-
-Feed fed(const std::shared_ptr<Quilt>& quilt) {
+// Kołdra jest w pamięci i odpowiada od ręki, więc szpula edytora dostaje jej wewnętrzny szew
+// `Spool::Peek`, nie `Feed`: edytor czyta bajty przy każdym ruchu kursora i nie ma jak czekać
+// na okno. Dlatego też edytor przyjmuje dokument tylko bajtami.
+Spool::Peek fed(const std::shared_ptr<Quilt>& quilt) {
     return [quilt](std::size_t at, std::size_t most) { return quilt->bytes(at, most); };
 }
 
@@ -223,11 +405,12 @@ Feed fed(const std::shared_ptr<Quilt>& quilt) {
 // ze zmianami, a oryginału nikt nie wczytuje.
 void Editor::hold(Bytes given) {
     kept_->quilt = std::make_shared<Quilt>(std::move(given));
-    kept_->spool = std::make_shared<Spool>(fed(kept_->quilt), kept_->quilt->whole());
 
     kept_->cursor = 0;
     kept_->anchor = 0;
     kept_->offset = 0;
+    kept_->block.reset();
+    kept_->marking = false;
 
     // Nowy dokument to nowy dziennik: cofnięcie do stanu poprzedniego pliku nie miałoby sensu,
     // a `dirty()` musi zacząć od czystego.
@@ -236,28 +419,12 @@ void Editor::hold(Bytes given) {
     kept_->washed = 0;
     kept_->joining = false;
     kept_->tying = false;
+    kept_->saving = false;
 
-    hold(rolled(kept_->spool), 0);
+    Page::hold(std::make_shared<Spool>(fed(kept_->quilt), kept_->quilt->whole()));
 
     // Dokument w pamięci liczymy od razu — to przejście po tym, co i tak trzymamy.
-    counting();
-}
-
-void Editor::hold(Feed given, std::size_t whole) {
-    kept_->quilt = std::make_shared<Quilt>(std::move(given), whole);
-    kept_->spool = std::make_shared<Spool>(fed(kept_->quilt), kept_->quilt->whole());
-
-    kept_->cursor = 0;
-    kept_->anchor = 0;
-    kept_->offset = 0;
-
-    kept_->log.clear();
-    kept_->done = 0;
-    kept_->washed = 0;
-    kept_->joining = false;
-    kept_->tying = false;
-
-    hold(rolled(kept_->spool), 0);
+    spool()->counting();
 }
 
 bool Editor::readonly() const { return kept_->readonly; }
@@ -266,74 +433,96 @@ void Editor::readonly(bool given) { kept_->readonly = given; }
 
 std::size_t Editor::cursor() const { return kept_->cursor; }
 
-std::size_t Editor::anchor() const { return kept_->anchor; }
-
-bool Editor::selected() const { return kept_->cursor != kept_->anchor; }
-
-std::optional<std::size_t> Editor::at() const {
-    if (!kept_->spool) return {};
-
-    const std::optional<std::size_t> which = line();
-
-    if (!which.has_value()) return {};
-
-    return kept_->spool->at(*which);
-}
-
-std::optional<std::size_t> Editor::below() const {
-    if (!kept_->spool) return {};
-
-    const std::optional<std::size_t> which = line();
-
-    if (!which.has_value()) return {};
-
-    return kept_->spool->at(*which + shown());
-}
-
-std::optional<std::size_t> Editor::whole() const {
-    if (!kept_->spool) return {};
-
-    return kept_->spool->whole();
-}
-
-std::optional<std::size_t> Editor::lines() const {
-    if (!kept_->spool) return Page::lines();
-
-    return kept_->spool->counted();
-}
-
-void Editor::counting() {
-    if (!kept_->spool || kept_->spool->counted().has_value()) return;
-
-    (void)kept_->spool->at(SIZE_MAX);
-}
-
-void Editor::screen(int high) {
-    if (kept_->spool) kept_->spool->screen(high);
-}
-
 // Kursor jako bajt dokumentu, a wiersz i przesunięcie w nim wylicza szpula. Odwrotnie byłoby
 // gorzej: zmiany adresuje się bajtem, a wiersze zmieniają numerację przy każdym enterze.
 //
 // Postawienie kursora **zabiera ze sobą kotwicę** — czyli gasi zaznaczenie. Ruch z klawiszem
-// Shift kotwicy nie rusza i dlatego idzie przez `stretch`; poza tym jednym obie drogi są tą samą
-// robotą, więc jedna woła drugą.
+// Shift kotwicy nie rusza i dlatego idzie przez `Selection::extend`; poza tym jednym obie drogi są
+// tą samą robotą, więc jedna woła drugą.
 void Editor::cursor(std::size_t given) {
     Kept& kept = *kept_;
 
-    if (!kept.spool) return;
+    if (!spool()) return;
 
-    kept.anchor = std::min(given, kept.spool->whole());
+    kept.anchor = std::min(given, spool()->whole());
 
-    stretch(given);
+    selection_.extend(given);
 }
 
-void Editor::stretch(std::size_t given) {
-    Kept& kept = *kept_;
+// --- Zaznaczenie ---------------------------------------------------------------------------------
+//
+// **Zaznaczenie to odcinek od kotwicy do kursora**, i nic więcej: kursor jest jego końcem, więc
+// ruch kursora rusza zaznaczenie, a postawienie kursora (`Editor::cursor`) je gasi. Podobiekt nic
+// nie trzyma — patrzy w `Kept` edytora przez właściciela, tak samo jak blok. Dawniej było to siedem
+// metod edytora (`anchor`, `selected`, `select`, `stretch`, `unselect`, `selection`) i kasowanie
+// ukryte w `back_erase(0)`, którego zero po cichu znaczyło „zaznaczenie".
+Editor::Selection::Selection(Editor& owner) : owner_(owner) {}
 
-    if (!kept.spool) return;
+std::size_t Editor::Selection::anchor() const { return owner_.kept_->anchor; }
 
-    const std::size_t want = std::min(given, kept.spool->whole());
+std::size_t Editor::Selection::from() const { return std::min(owner_.kept_->anchor, owner_.kept_->cursor); }
+
+std::size_t Editor::Selection::upto() const { return std::max(owner_.kept_->anchor, owner_.kept_->cursor); }
+
+bool Editor::Selection::empty() const { return owner_.kept_->cursor == owner_.kept_->anchor; }
+
+std::string Editor::Selection::text() const {
+    const Kept& kept = *owner_.kept_;
+
+    if (!kept.quilt || empty()) return {};
+
+    return talcite::text(kept.quilt->bytes(from(), upto() - from()));
+}
+
+// Parametry nazwane tym, czym są: `set(5, 2)` zaznacza wstecz, kursor staje na dwójce, a `from()`
+// i `upto()` i tak oddają 2 i 5.
+void Editor::Selection::set(std::size_t anchor, std::size_t cursor) {
+    Kept& kept = *owner_.kept_;
+
+    if (!owner_.spool()) return;
+
+    const std::size_t much = owner_.spool()->whole();
+
+    kept.anchor = std::min(anchor, much);
+    kept.cursor = std::min(cursor, much);
+    kept.joining = false;
+
+    owner_.invalidate();
+    (void)owner_.trigger(ScrollEvent{});
+}
+
+void Editor::Selection::clear() {
+    owner_.kept_->anchor = owner_.kept_->cursor;
+
+    owner_.invalidate();
+}
+
+// Kasowanie zaznaczenia jako **jedna zmiana w dzienniku**, i tak samo dla Backspace, Delete, wycięcia
+// i zamiany na nic. Fałsz, gdy nie ma czego kasować albo nie wolno.
+bool Editor::Selection::erase() {
+    Kept& kept = *owner_.kept_;
+
+    if (kept.readonly || kept.saving || !kept.quilt || empty()) return false;
+
+    const std::size_t at = from();
+    const Quilt::Scrap gone = kept.quilt->taken(at, upto() - at);
+
+    kept.apply(*owner_.spool(), at, gone, {});
+    kept.note(at, gone, {}, kept.cursor);
+
+    owner_.settled(at);
+
+    return true;
+}
+
+// Kursor idzie, kotwica stoi — ruch z klawiszem Shift i ciągnięcie myszą.
+void Editor::Selection::extend(std::size_t to) {
+    Editor& owner = owner_;
+    Kept& kept = *owner.kept_;
+
+    if (!owner.spool()) return;
+
+    const std::size_t want = std::min(to, owner.spool()->whole());
 
     kept.cursor = want;
 
@@ -341,22 +530,38 @@ void Editor::stretch(std::size_t given) {
     // wspólnego z wyrazem sprzed przeskoku.
     kept.joining = false;
 
-    const std::size_t which = kept.spool->found(want);
+    const std::size_t which = owner.spool()->found(want);
 
-    kept.offset = want - kept.spool->at(which).value_or(want);
+    kept.offset = want - owner.spool()->at(which).value_or(want);
 
-    (void)show(which);
+    (void)owner.reveal(which);
 
     // Zaznaczenie rysuje się znacznikami składanymi przy każdym malowaniu, ale sam obraz trzeba
     // złożyć od nowa — inaczej przesunięty kursor nie zmieniłby nic na ekranie.
-    afresh();
-    stirred();
+    owner.invalidate();
+    (void)owner.trigger(ScrollEvent{});
 }
 
 std::size_t Editor::line() const {
-    if (!kept_->spool) return 0;
+    if (!spool()) return 0;
 
-    return kept_->spool->found(kept_->cursor);
+    return spool()->found(kept_->cursor);
+}
+
+// Skok do wiersza — para do `line()`: kursor na początek wiersza `which` (od zera), zaznaczenie
+// gaśnie, widok go pokazuje. Za ostatnim wierszem staje na ostatnim, bo „idź do 9999" w pliku
+// na sto wierszy ma dojść do końca, a nie odmówić. Kursor liczy się w bajtach, a bajt początku
+// wiersza zna tylko szpula — stąd metoda tutaj, nie w wołającym.
+void Editor::line(std::size_t which) {
+    Kept& kept = *kept_;
+
+    if (!spool()) return;
+
+    const std::size_t many = spool()->counted().value_or(0);
+
+    which = many == 0 ? 0 : std::min(which, many - 1);
+
+    cursor(spool()->at(which).value_or(spool()->whole()));
 }
 
 // Kolumna liczona w **kratkach**, nie w bajtach: pasek stanu pokazuje to, co widać, a tabulator
@@ -365,80 +570,56 @@ std::size_t Editor::line() const {
 std::size_t Editor::column() const {
     Kept& kept = *kept_;
 
-    if (!kept.spool) return 0;
+    if (!spool()) return 0;
 
-    const std::size_t which = kept.spool->found(kept.cursor);
-    const std::optional<std::size_t> began = kept.spool->at(which);
+    const std::size_t which = spool()->found(kept.cursor);
+    const std::optional<std::size_t> began = spool()->at(which);
 
     if (!began.has_value() || kept.cursor < *began) return 0;
 
-    const std::vector<std::string> got = kept.spool->lines(which, 1);
+    const std::optional<std::vector<std::string>> got = spool()->lines(which, 1);
 
-    if (got.empty()) return 0;
+    if (!got.has_value() || got->empty()) return 0;
 
-    return static_cast<std::size_t>(columns(got.front(), kept.cursor - *began));
+    return static_cast<std::size_t>(columns(got->front(), kept.cursor - *began));
 }
 
-void Editor::select(std::size_t from, std::size_t upto) {
-    Kept& kept = *kept_;
+// **Cały dokument wprost.** Dawniej wołający zaznaczał wszystko, czytał zaznaczenie i przywracał
+// kursor — trzy miejsca, dwa z nich w twa.
+std::string Editor::text() const {
+    const Kept& kept = *kept_;
 
-    if (!kept.spool) return;
+    if (!kept.quilt) return {};
 
-    const std::size_t much = kept.spool->whole();
-
-    kept.anchor = std::min(from, much);
-    kept.cursor = std::min(upto, much);
-    kept.joining = false;
-
-    afresh();
-    stirred();
-}
-
-void Editor::unselect() {
-    kept_->anchor = kept_->cursor;
-
-    afresh();
-}
-
-std::string Editor::selection() const {
-    Kept& kept = *kept_;
-
-    if (!kept.quilt || kept.cursor == kept.anchor) return {};
-
-    const std::size_t from = std::min(kept.cursor, kept.anchor);
-    const std::size_t upto = std::max(kept.cursor, kept.anchor);
-
-    return said(kept.quilt->bytes(from, upto - from));
+    return kept.text(0, kept.quilt->whole());
 }
 
 // --- Schowek -------------------------------------------------------------------------------------
 
-// **Schowek jest systemowy, nie nasz.** Biblioteka nie trzyma tu żadnej treści — `copied`
-// i `pasted` to drzwi do schowka systemu, a na POSIX-ie do schowka maszyny, przy której siedzi
-// użytkownik, przez terminal.
+// **Schowek nie jest edytora.** Edytor nie trzyma tu żadnej treści — dostaje `Clipboard` przy
+// budowie, a domyślny `clipboard()` to drzwi do schowka systemu, na POSIX-ie do schowka maszyny,
+// przy której siedzi użytkownik, przez terminal.
 //
 // Kopiowanie wolno także w dokumencie tylko do odczytu: niczego nie zmienia.
 bool Editor::copy() {
-    if (!selected()) return false;
+    if (selection_.empty()) return false;
 
-    return copied(selection());
+    return kept_->clipboard.provider().copy(selection_.text());
 }
 
 // Wycięcie idzie przez to samo kasowanie zaznaczenia, co Backspace, więc jest **jedną zmianą
 // w dzienniku** i wraca jednym cofnięciem. Gdy skopiowanie się nie uda, nie kasujemy: dokument
 // zostałby bez tekstu, którego nie ma dokąd wkleić.
 bool Editor::cut() {
-    if (kept_->readonly || !selected() || !copy()) return false;
+    if (kept_->readonly || kept_->saving || selection_.empty() || !copy()) return false;
 
-    back_erase(0);
-
-    return true;
+    return selection_.erase();
 }
 
 bool Editor::paste() {
-    if (kept_->readonly) return false;
+    if (kept_->readonly || kept_->saving) return false;
 
-    const std::optional<std::string> what = pasted();
+    const std::optional<std::string> what = kept_->clipboard.provider().paste();
 
     if (!what.has_value() || what->empty()) return false;
 
@@ -486,15 +667,29 @@ std::vector<Mark> spanned(Spool& spool, std::size_t from, std::size_t upto, std:
 View Editor::paint(Size given, Area seen) {
     Kept& kept = *kept_;
 
-    if (kept.spool && kept.cursor != kept.anchor) {
-        const std::size_t from = std::min(kept.cursor, kept.anchor);
-        const std::size_t upto = std::max(kept.cursor, kept.anchor);
+    std::vector<Mark> made;
 
-        marks().all(spanned(*kept.spool, from, upto, topmost(),
-                            static_cast<std::size_t>(std::max(given.high, 1))));
-    } else if (!marks().empty()) {
-        marks().clear();
+    if (spool()) {
+        const std::size_t many = static_cast<std::size_t>(std::max(given.high, 1));
+
+        // Blok tą samą rolą, co zaznaczenie — w trakcie rozciągania widać go rosnącego z kursorem.
+        if (!block_.empty()) {
+            const std::size_t from = std::min(block_.from(), block_.upto());
+            const std::size_t upto = std::max(block_.from(), block_.upto());
+
+            made = spanned(*spool(), from, upto, topmost(), many);
+        }
+
+        if (kept.cursor != kept.anchor) {
+            const std::size_t from = std::min(kept.cursor, kept.anchor);
+            const std::size_t upto = std::max(kept.cursor, kept.anchor);
+
+            for (Mark& one : spanned(*spool(), from, upto, topmost(), many)) made.push_back(std::move(one));
+        }
     }
+
+    if (!made.empty()) marks().all(std::move(made));
+    else if (!marks().empty()) marks().clear();
 
     return Page::paint(given, seen);
 }
@@ -502,14 +697,14 @@ View Editor::paint(Size given, Area seen) {
 std::optional<Spot> Editor::caret() const {
     Kept& kept = *kept_;
 
-    if (!kept.spool) return {};
+    if (!spool()) return {};
 
-    const std::size_t which = kept.spool->found(kept.cursor);
-    const std::optional<std::size_t> began = kept.spool->at(which);
+    const std::size_t which = spool()->found(kept.cursor);
+    const std::optional<std::size_t> began = spool()->at(which);
 
     if (!began.has_value()) return {};
 
-    return spotted(which, kept.cursor - *began);
+    return spot_of(Place{which, kept.cursor - *began});
 }
 
 // Kursor po zmianie: wiersz przelicza szpula, a obraz i tak trzeba złożyć od nowa. Osobno, bo
@@ -517,17 +712,17 @@ std::optional<Spot> Editor::caret() const {
 void Editor::settled(std::size_t where) {
     Kept& kept = *kept_;
 
-    kept.cursor = std::min(where, kept.spool->whole());
+    kept.cursor = std::min(where, spool()->whole());
     kept.anchor = kept.cursor;
 
-    const std::size_t which = kept.spool->found(kept.cursor);
+    const std::size_t which = spool()->found(kept.cursor);
 
-    kept.offset = kept.cursor - kept.spool->at(which).value_or(kept.cursor);
+    kept.offset = kept.cursor - spool()->at(which).value_or(kept.cursor);
 
-    (void)show(which);
+    (void)reveal(which);
 
-    afresh();
-    stirred();
+    invalidate();
+    (void)trigger(ScrollEvent{});
 }
 
 // Wpisanie **na zaznaczeniu jest jedną zmianą**, nie kasowaniem i wpisaniem po nim: inaczej jedno
@@ -535,16 +730,17 @@ void Editor::settled(std::size_t where) {
 void Editor::insert(std::string what) {
     Kept& kept = *kept_;
 
-    if (kept.readonly || !kept.quilt || what.empty()) return;
+    if (kept.readonly || kept.saving || !kept.quilt || what.empty()) return;
 
     const std::size_t from = std::min(kept.cursor, kept.anchor);
     const std::size_t upto = std::max(kept.cursor, kept.anchor);
 
-    const std::string gone = kept.text(from, upto);
+    const Quilt::Scrap gone = kept.quilt->taken(from, upto - from);
+    const Quilt::Scrap came = kept.quilt->stored(what);
     const std::size_t was = kept.cursor;
 
-    kept.apply(from, gone, what);
-    kept.note(from, gone, what, was);
+    kept.apply(*spool(), from, gone, came);
+    kept.note(from, gone, came, was);
 
     settled(from + what.size());
 }
@@ -552,24 +748,19 @@ void Editor::insert(std::string what) {
 void Editor::back_erase(std::size_t much) {
     Kept& kept = *kept_;
 
-    if (kept.readonly || !kept.quilt) return;
+    if (kept.readonly || kept.saving || !kept.quilt) return;
 
-    std::size_t from = 0;
-    std::size_t upto = 0;
+    // Przy zaznaczeniu Backspace kasuje zaznaczenie, ile by nie kazano.
+    if (selection_.erase()) return;
 
-    if (kept.cursor != kept.anchor) {
-        from = std::min(kept.cursor, kept.anchor);
-        upto = std::max(kept.cursor, kept.anchor);
-    } else {
-        upto = kept.cursor;
-        from = much >= kept.cursor ? 0 : kept.cursor - much;
-    }
+    const std::size_t upto = kept.cursor;
+    const std::size_t from = much >= kept.cursor ? 0 : kept.cursor - much;
 
     if (upto <= from) return;
 
-    const std::string gone = kept.text(from, upto);
+    const Quilt::Scrap gone = kept.quilt->taken(from, upto - from);
 
-    kept.apply(from, gone, {});
+    kept.apply(*spool(), from, gone, {});
     kept.note(from, gone, {}, kept.cursor);
 
     settled(from);
@@ -578,13 +769,9 @@ void Editor::back_erase(std::size_t much) {
 void Editor::front_erase(std::size_t much) {
     Kept& kept = *kept_;
 
-    if (kept.readonly || !kept.quilt) return;
+    if (kept.readonly || kept.saving || !kept.quilt) return;
 
-    if (kept.cursor != kept.anchor) {
-        back_erase(0);
-
-        return;
-    }
+    if (selection_.erase()) return;
 
     const std::size_t whole = kept.quilt->whole();
 
@@ -595,9 +782,9 @@ void Editor::front_erase(std::size_t much) {
     if (took == 0) return;
 
     const std::size_t at = kept.cursor;
-    const std::string gone = kept.text(at, at + took);
+    const Quilt::Scrap gone = kept.quilt->taken(at, took);
 
-    kept.apply(at, gone, {});
+    kept.apply(*spool(), at, gone, {});
     kept.note(at, gone, {}, at);
 
     settled(at);
@@ -621,22 +808,22 @@ constexpr std::size_t combing = 64;
 std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     Kept& kept = *kept_;
 
-    if (!kept.spool || !how.ready()) return {};
+    if (!spool() || !how.ready()) return {};
 
-    const std::size_t at = std::min(from, kept.spool->whole());
-    const std::size_t which = kept.spool->found(at);
+    const std::size_t at = std::min(from, spool()->whole());
+    const std::size_t which = spool()->found(at);
 
     // Wiersze od podanego numeru razem z bajtem, na którym każdy się zaczyna.
-    const auto batch = [&kept](std::size_t first, std::size_t most) {
+    const auto batch = [this](std::size_t first, std::size_t most) {
         std::vector<std::pair<std::size_t, std::string>> made;
 
-        const std::optional<std::size_t> began = kept.spool->at(first);
+        const std::optional<std::size_t> began = spool()->at(first);
 
         if (!began.has_value()) return made;
 
         std::size_t where = *began;
 
-        for (std::string& one : kept.spool->lines(first, most)) {
+        for (std::string& one : spool()->lines(first, most).value_or(std::vector<std::string>{})) {
             const std::size_t size = one.size();
 
             made.emplace_back(where, std::move(one));
@@ -648,7 +835,7 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     };
 
     const auto picked = [this](std::size_t began, Hit one) {
-        select(began + one.from, began + one.upto);
+        selection_.set(began + one.from, began + one.upto);
 
         return std::optional<Hit>{Hit{began + one.from, began + one.upto}};
     };
@@ -708,74 +895,133 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     return {};
 }
 
-// Bez `all` zamieniamy **bieżące zaznaczenie, jeśli samo jest dopasowaniem**, i pokazujemy
-// następne — tak, jak robi to każdy edytor: raz naciśnięty klawisz zamienia to, co świeci,
-// i przechodzi dalej. Z `all` chodzimy od początku dokumentu i wiążemy wszystkie zmiany w jedną,
-// żeby cofnięcie zabrało je razem.
-std::size_t Editor::replace(const Comb& how, const std::string& with, bool all) {
+namespace {
+
+// Wpisanie pustki nie jest zmianą, więc zamiana na nic idzie przez kasowanie zaznaczenia.
+void put(Editor& one, const std::string& with) {
+    if (with.empty())
+        (void)one.selection().erase();
+    else
+        one.insert(with);
+}
+
+}
+
+// **Zamiana jednego trafienia**: bieżące zaznaczenie, jeśli samo jest dopasowaniem, i pokazanie
+// następnego — tak, jak robi to każdy edytor: raz naciśnięty klawisz zamienia to, co świeci,
+// i przechodzi dalej. Gdy zaznaczenie nie jest trafieniem, tylko szuka następnego. Prawda, gdy
+// coś zamieniło. Dawniej był to jeden `replace(…, bool all)` z dwoma algorytmami za przełącznikiem.
+bool Editor::replace(const Comb& how, const std::string& with) {
     Kept& kept = *kept_;
 
-    if (kept.readonly || !kept.quilt || !how.ready()) return 0;
+    if (kept.readonly || kept.saving || !kept.quilt || !how.ready()) return false;
 
-    // Wpisanie pustki nie jest zmianą, więc zamiana na nic idzie przez kasowanie zaznaczenia.
-    const auto put = [this, &with] {
-        if (with.empty())
-            back_erase(0);
-        else
-            insert(with);
-    };
+    if (!selection_.empty()) {
+        const std::string got = selection_.text();
+        const std::optional<Hit> one = how.forth(got, 0);
 
-    if (!all) {
-        if (selected()) {
-            const std::string got = selection();
-            const std::optional<Hit> one = how.forth(got, 0);
+        if (one.has_value() && one->from == 0 && one->upto == got.size()) {
+            const std::size_t began = selection_.from();
 
-            if (one.has_value() && one->from == 0 && one->upto == got.size()) {
-                const std::size_t began = std::min(kept.cursor, kept.anchor);
+            put(*this, with);
 
-                put();
+            (void)find(how, began + with.size(), false);
 
-                (void)find(how, began + with.size(), false);
+            return true;
+        }
+    }
 
-                return 1;
+    (void)find(how, kept.cursor, false);
+
+    return false;
+}
+
+// **Zamiana wszystkich**: trafienia zbiera jedno przejście po dokumencie sprzed zamiany — bez
+// zaznaczania i bez zdarzeń — a potem jedna zmiana stawia `with` na miejscu każdego z nich, jednym
+// wpisem, który cofa się jednym ruchem. Dawniej każde trafienie szło osobno przez szukanie,
+// zaznaczenie, wstawienie i zawiadomienie szpuli, a kołdra przebudowywała się przy każdym — przy stu
+// tysiącach trafień był to kwadrat, i tak samo przy cofnięciu. Szuka się w tekście sprzed zamiany,
+// więc wstawka nigdy nie jest przeszukiwana: wzorzec ukryty w niej nie zapętli zamiany. Oddaje, ile
+// zamieniło.
+std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
+    Kept& kept = *kept_;
+
+    if (kept.readonly || kept.saving || !kept.quilt || !how.ready() || !spool()) return 0;
+
+    std::vector<Kept::Splice> many;
+
+    for (std::size_t line = 0;;) {
+        const std::optional<std::size_t> began = spool()->at(line);
+
+        if (!began.has_value()) break;
+
+        const std::vector<std::string> got = spool()->lines(line, combing).value_or(std::vector<std::string>{});
+
+        if (got.empty()) break;
+
+        std::size_t where = *began;
+
+        // Grzebień pustych trafień nie oddaje nigdy (pomija je sam), więc każde trafienie przesuwa
+        // szukanie naprzód.
+        for (const std::string& text : got) {
+            for (std::size_t start = 0; start <= text.size();) {
+                const std::optional<Hit> one = how.forth(text, start);
+
+                if (!one.has_value()) break;
+
+                many.push_back(Kept::Splice{where + one->from, text.substr(one->from, one->upto - one->from)});
+
+                start = one->upto;
             }
+
+            where += text.size() + 1;
         }
 
-        (void)find(how, kept.cursor, false);
-
-        return 0;
+        line += got.size();
     }
 
-    std::size_t made = 0;
-    std::size_t at = 0;
+    if (many.empty()) return 0;
 
-    while (true) {
-        const std::optional<Hit> one = find(how, at, false);
+    const std::size_t was = kept.cursor;
 
-        if (!one.has_value()) break;
+    kept.marking = false;
+    kept.splice(*spool(), many, with, false);
 
-        kept.tying = made > 0;
+    if (kept.washed > kept.done) kept.washed = SIZE_MAX;
 
-        put();
+    kept.log.resize(kept.done);
 
-        kept.tying = false;
+    Kept::Change made;
+    made.at = many.front().at;
+    made.with = with;
+    made.was = was;
+    made.many = std::move(many);
+    made.before = kept.held;
+    made.after = kept.block;
 
-        ++made;
+    const std::size_t count = made.many.size();
+    const std::size_t last = Kept::ended(made.many, with);
 
-        // Za zamienionym tekstem, żeby wzorzec ukryty we wstawce nie zapętlił zamiany.
-        at = one->from + with.size();
+    kept.log.push_back(std::move(made));
+    kept.done = kept.log.size();
+    kept.joining = false;
 
-        if (at <= one->from) at = one->from;
-    }
+    settled(last);
 
-    return made;
+    return count;
 }
 
 // --- Cofanie -------------------------------------------------------------------------------------
 
 bool Editor::dirty() const { return kept_->done != kept_->washed; }
 
-void Editor::clean() { kept_->washed = kept_->done; }
+// Czysty od teraz — i zapieczętowany: znak wpisany po zapisie zaczyna nowy wpis, inaczej
+// dokładałby się do ostatniego, nie zmieniając numeru, i `dirty()` mówiłoby „czysty" o tekście,
+// który jest inny niż na dysku.
+void Editor::clean() {
+    kept_->washed = kept_->done;
+    kept_->joining = false;
+}
 
 namespace {
 
@@ -785,47 +1031,102 @@ constexpr std::size_t pouring = 64 * 1024;
 
 }
 
-// **Biblioteka nie dotyka plików.** Źródło daje aplikacja i ujście daje aplikacja — tędy przepływa
-// sama treść. Ujście, które odda `false`, przerywa zapis; dokument zostaje wtedy brudny, bo
-// niedokończony zapis nie jest zapisem.
+// **Biblioteka nie dotyka plików.** Ujście daje aplikacja, a edytor daje treść — kawałkami przez
+// pulę. Każdy kawałek czyta się z kołdry na wątku głównym (to pamięć, mikrosekundy) i idzie do
+// ujścia obietnicą; następny czyta się dopiero po jej spełnieniu, więc przez cały zapis biegnie
+// jedno pisanie, w kolejności. **Koniec dokumentu ujście widzi jako pusty kawałek** — ostatnie
+// wołanie, po którym nic już nie przyjdzie; pusty dokument to samo jedno wołanie. Ujście domyka
+// wtedy to, co ma domknąć — plik, przemianowanie — a dziennik pierze się dopiero po spełnieniu
+// **tej** obietnicy: „czysty" znaczy wtedy „naprawdę na dysku", a nie „oddane ujściu". Dawny
+// zapis prał dziennik przy oddaniu treści, a gdy ujście obiecywało zamiast pisać, edytor mówił
+// „czysty" o pliku, którego jeszcze nie było. Odmowa ujścia w dowolnym miejscu zostawia dziennik
+// brudny, `busy()` gaśnie, a wołający dostaje odrzucenie ze zdaniem ujścia — niedokończony
+// zapis nie jest zapisem.
 //
-// **Pisanie po tym samym pliku, z którego czyta źródło, zniszczy dokument**: oryginał nigdy nie
-// został wczytany, odcinki wskazują w plik, więc nadpisanie go podstawia nowe bajty pod stare
-// wskazania. Aplikacja pisze obok i przemianowuje — albo woła wcześniej `settle`.
-bool Editor::save(const Drain& into) {
+// W trakcie edytor jest zajęty: klawisze zmieniające treść odbijają się, żeby kawałki, które już
+// popłynęły, i te, które dopiero pójdą, były jednym dokumentem. Drugi zapis w trakcie pierwszego
+// i zapis bez ujścia są odrzucane od razu — to pomyłka wołającego, nie kłopot z dyskiem.
+// Aplikacja pisze obok i przemianowuje, jak zawsze.
+//
+// Łańcuch trzyma edytor słabo: gdy edytor zginie w trakcie, kawałek, który właśnie wrócił, nie
+// ma już skąd czytać następnego i zapis kończy się odrzuceniem, a nie dotknięciem zwolnionej
+// pamięci.
+Promise<void> Editor::save(Drain into) {
     Kept& kept = *kept_;
 
-    if (!kept.quilt || !into) return false;
+    if (!kept.quilt || !into || kept.saving)
+        return Promise<void>{[](auto, auto reject) {
+            reject(std::make_exception_ptr(std::logic_error{"The editor cannot save now."}));
+        }};
+
+    kept.saving = true;
 
     const std::size_t whole = kept.quilt->whole();
+    const std::weak_ptr<Node> weak = weak_from_this();
 
-    std::size_t at = 0;
+    // Ogniwo wołające samo siebie: `then` spłaszcza obietnicę oddaną z ciągu dalszego, więc
+    // każde ogniwo oddaje obietnicę reszty zapisu, a pierwsze — obietnicę całości. **Ogniwo trzyma
+    // siebie słabo**; mocno trzyma je tylko ciąg dalszy czekającego kawałka. Mocne wskazanie na
+    // samego siebie byłoby cyklem, który nie pęka — i każdy zapis zostawiałby w pamięci ujście
+    // razem ze wszystkim, co ono trzyma.
+    const auto step = std::make_shared<std::function<Promise<void>(std::size_t)>>();
+    const std::weak_ptr<std::function<Promise<void>(std::size_t)>> self = step;
 
-    while (at < whole) {
-        Bytes got = kept.quilt->bytes(at, pouring);
+    *step = [weak, into, whole, self](std::size_t at) -> Promise<void> {
+        const std::shared_ptr<Node> held = weak.lock();
+        auto* mine = dynamic_cast<Editor*>(held.get());
 
-        // Źródło obiecało więcej, niż oddaje. Lepiej powiedzieć „nie zapisano" niż zapisać ogryzek.
-        if (got.empty()) return false;
+        if (mine == nullptr || !mine->kept_->quilt)
+            return Promise<void>{[](auto, auto reject) {
+                reject(std::make_exception_ptr(std::runtime_error{"The editor is gone."}));
+            }};
 
-        at += got.size();
+        if (at >= whole) return into(Bytes{});
 
-        if (!into(std::move(got))) return false;
+        Bytes got = mine->kept_->quilt->bytes(at, pouring);
+
+        // Kołdra obiecała więcej, niż oddaje. Lepiej powiedzieć „nie zapisano" niż zapisać ogryzek.
+        if (got.empty())
+            return Promise<void>{[](auto, auto reject) {
+                reject(std::make_exception_ptr(std::runtime_error{"The document ended early."}));
+            }};
+
+        const std::size_t next = at + got.size();
+
+        return into(std::move(got)).here().then([step = self.lock(), next] { return (*step)(next); });
+    };
+
+    // Pierwszy kawałek idzie na wątku wołającego: kołdra albo ujście, które rzuci, zanim odda
+    // obietnicę, nie może zostawić edytora zajętym na zawsze — wyjątek staje się odrzuceniem.
+    std::optional<Promise<void>> first;
+
+    try {
+        first.emplace((*step)(0));
+    } catch (...) {
+        kept.saving = false;
+
+        return Promise<void>{[why = std::current_exception()](auto, auto reject) { reject(why); }};
     }
 
-    clean();
-
-    return true;
+    return std::move(*first)
+        .here()
+        .then([weak] {
+            if (auto* mine = dynamic_cast<Editor*>(weak.lock().get()); mine != nullptr) {
+                mine->kept_->saving = false;
+                mine->clean();
+            }
+        })
+        .fail([weak](const std::exception&) {
+            if (auto* mine = dynamic_cast<Editor*>(weak.lock().get()); mine != nullptr)
+                mine->kept_->saving = false;
+        });
 }
 
-// Odcięcie od źródła: po nim wolno nadpisać plik, z którego dokument był czytany. Dziennik zostaje
-// ważny, bo zmiany adresuje się przesunięciem w dokumencie, a te się nie ruszają.
-void Editor::settle() {
-    if (kept_->quilt) (void)kept_->quilt->settle();
-}
+bool Editor::busy() const { return kept_->saving; }
 
-bool Editor::undoable() const { return !kept_->readonly && kept_->done > 0; }
+bool Editor::undoable() const { return !kept_->readonly && !kept_->saving && kept_->done > 0; }
 
-bool Editor::redoable() const { return !kept_->readonly && kept_->done < kept_->log.size(); }
+bool Editor::redoable() const { return !kept_->readonly && !kept_->saving && kept_->done < kept_->log.size(); }
 
 // Cofnięcie to ta sama zmiana czytana od tyłu: wraca to, co zniknęło, znika to, co przyszło.
 // Kursor staje tam, gdzie stał **przed** zmianą — bo to miejsce, do którego wraca dokument.
@@ -837,10 +1138,14 @@ void Editor::undo() {
     std::size_t where = kept.cursor;
 
     // Wpisy przywiązane cofają się razem — „zamień wszystkie" ma wracać jednym ruchem.
-    while (kept.done > 0) {
-        const Kept::Change& one = kept.log[kept.done - 1];
+    kept.marking = false;
 
-        kept.apply(one.at, one.came, one.gone);
+    while (kept.done > 0) {
+        Kept::Change& one = kept.log[kept.done - 1];
+
+        if (one.many.empty()) kept.apply(*spool(), one.at, one.came, one.gone);
+        else kept.splice(*spool(), one.many, one.with, true);
+        kept.block = one.before;
 
         --kept.done;
         where = one.was;
@@ -860,13 +1165,18 @@ void Editor::redo() {
 
     std::size_t where = kept.cursor;
 
-    while (kept.done < kept.log.size()) {
-        const Kept::Change& one = kept.log[kept.done];
+    kept.marking = false;
 
-        kept.apply(one.at, one.gone, one.came);
+    while (kept.done < kept.log.size()) {
+        Kept::Change& one = kept.log[kept.done];
+
+        if (one.many.empty()) kept.apply(*spool(), one.at, one.gone, one.came);
+        else kept.splice(*spool(), one.many, one.with, false);
+
+        kept.block = one.after;
 
         ++kept.done;
-        where = one.at + one.came.size();
+        where = one.many.empty() ? one.at + one.came.much : Kept::ended(one.many, one.with);
 
         if (kept.done >= kept.log.size() || !kept.log[kept.done].tied) break;
     }
@@ -884,7 +1194,7 @@ std::size_t behind(Quilt& quilt, std::size_t at) {
     if (at == 0) return 0;
 
     const std::size_t look = at < 4 ? at : 4;
-    const std::string what = said(quilt.bytes(at - look, look));
+    const std::string what = talcite::text(quilt.bytes(at - look, look));
 
     std::size_t much = 1;
 
@@ -896,11 +1206,11 @@ std::size_t behind(Quilt& quilt, std::size_t at) {
 }
 
 std::size_t ahead(Quilt& quilt, std::size_t at) {
-    const std::string what = said(quilt.bytes(at, 4));
+    const std::string what = talcite::text(quilt.bytes(at, 4));
 
     if (what.empty()) return 0;
 
-    const std::size_t much = following(static_cast<unsigned char>(what.front())) + 1;
+    const std::size_t much = utf8::trailing(static_cast<unsigned char>(what.front())) + 1;
 
     return std::min(much, what.size());
 }
@@ -918,13 +1228,13 @@ std::size_t worded(Spool& spool, std::size_t at, bool forth) {
 
     if (!began.has_value() || at < *began) return at;
 
-    const std::vector<std::string> got = spool.lines(which, 1);
+    const std::vector<std::string> got = spool.lines(which, 1).value_or(std::vector<std::string>{});
     const std::string text = got.empty() ? std::string{} : got.front();
 
     std::size_t off = std::min(at - *began, text.size());
 
     const auto lettered = [&text](std::size_t one) {
-        return wordly(static_cast<char32_t>(static_cast<unsigned char>(text[one])));
+        return in_word(static_cast<char32_t>(static_cast<unsigned char>(text[one])));
     };
 
     if (forth) {
@@ -946,7 +1256,7 @@ std::size_t worded(Spool& spool, std::size_t at, bool forth) {
 
         if (!prev.has_value()) return at;
 
-        const std::vector<std::string> before = spool.lines(which - 1, 1);
+        const std::vector<std::string> before = spool.lines(which - 1, 1).value_or(std::vector<std::string>{});
 
         return *prev + (before.empty() ? 0 : before.front().size());
     }
@@ -960,7 +1270,7 @@ std::size_t worded(Spool& spool, std::size_t at, bool forth) {
 
 }
 
-bool Editor::react(KeyEvent& what) {
+bool Editor::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 
     if (!kept.quilt) return false;
@@ -974,7 +1284,7 @@ bool Editor::react(KeyEvent& what) {
     // Po usunięciu tamtego kompletu Ctrl+C przechodzi wyżej jak każdy inny klawisz.
     //
     // Kto woli odruch z reszty świata, wiesza `on<KeyEvent>` i woła `copy`, `cut` i `paste` sam —
-    // uchwyt widzi klawisz niezależnie od tego, co robi `react`.
+    // uchwyt widzi klawisz niezależnie od tego, co robi `handle`.
     if (what.key().code() == Code::insert && !mods.alt) {
         if (mods.ctrl) {
             (void)copy();
@@ -996,7 +1306,7 @@ bool Editor::react(KeyEvent& what) {
     }
 
     if (what.key().letter() != 0 && !mods.ctrl && !mods.alt) {
-        insert(spelled(what.key().letter()));
+        insert(utf8::encode(what.key().letter()));
 
         return true;
     }
@@ -1005,19 +1315,19 @@ bool Editor::react(KeyEvent& what) {
     // bo docelowy bajt każdy ruch liczy sam, a różnica między nimi jest tylko taka jedna.
     const auto went = [this, &mods](std::size_t where) {
         if (mods.shift)
-            stretch(where);
+            selection_.extend(where);
         else
             cursor(where);
     };
 
     // Wiersz o zadanym numerze i jego początek — potrzebne i pionowym strzałkom, i klawiszom
     // stronicowym, i Home z End.
-    const auto along = [&kept](std::size_t which, std::size_t offset) {
-        const std::optional<std::size_t> began = kept.spool->at(which);
+    const auto along = [this](std::size_t which, std::size_t offset) {
+        const std::optional<std::size_t> began = spool()->at(which);
 
         if (!began.has_value()) return std::optional<std::size_t>{};
 
-        const std::vector<std::string> got = kept.spool->lines(which, 1);
+        const std::vector<std::string> got = spool()->lines(which, 1).value_or(std::vector<std::string>{});
         const std::size_t much = got.empty() ? 0 : got.front().size();
 
         return std::optional<std::size_t>{*began + std::min(offset, much)};
@@ -1033,12 +1343,12 @@ bool Editor::react(KeyEvent& what) {
         // Z klawiszem Ctrl strzałka idzie wyrazami, bez niego znakami. Znak, nie bajt: inaczej
         // strzałka stawałaby w środku ogonka.
         case Code::left:
-            went(mods.ctrl ? worded(*kept.spool, kept.cursor, false)
+            went(mods.ctrl ? worded(*spool(), kept.cursor, false)
                            : kept.cursor - behind(*kept.quilt, kept.cursor));
             return true;
 
         case Code::right:
-            went(mods.ctrl ? worded(*kept.spool, kept.cursor, true)
+            went(mods.ctrl ? worded(*spool(), kept.cursor, true)
                            : kept.cursor + ahead(*kept.quilt, kept.cursor));
             return true;
 
@@ -1054,7 +1364,7 @@ bool Editor::react(KeyEvent& what) {
                     ? 1
                     : static_cast<std::size_t>(std::max(shown(), std::size_t{1}));
 
-            const std::size_t which = kept.spool->found(kept.cursor);
+            const std::size_t which = spool()->found(kept.cursor);
 
             // Wyżej niż pierwszy wiersz i niżej niż ostatni nie ma dokąd iść. **Oddajemy wtedy
             // klawisz przodkowi** zamiast go zjadać: karta albo lista wyżej ma prawo go użyć.
@@ -1086,16 +1396,16 @@ bool Editor::react(KeyEvent& what) {
         }
 
         case Code::home: {
-            const std::size_t which = kept.spool->found(kept.cursor);
+            const std::size_t which = spool()->found(kept.cursor);
 
-            went(kept.spool->at(which).value_or(kept.cursor));
+            went(spool()->at(which).value_or(kept.cursor));
 
             return true;
         }
 
         case Code::end: {
             const std::optional<std::size_t> where =
-                along(kept.spool->found(kept.cursor), SIZE_MAX);
+                along(spool()->found(kept.cursor), SIZE_MAX);
 
             if (!where.has_value()) return false;
 
@@ -1107,25 +1417,25 @@ bool Editor::react(KeyEvent& what) {
         default: break;
     }
 
-    return Page::react(what);
+    return Page::handle(what);
 }
 
 // Kliknięcie stawia kursor tam, gdzie się kliknęło — a nie tylko bierze ognisko, jak w podglądzie.
 // Rząd i kolumnę na wiersz i bajt przelicza kartka: rząd ekranu nie jest numerem wiersza, bo przy
 // zawijaniu jeden wiersz zajmuje ich kilka, a kolumna nie jest bajtem, bo tabulator zajmuje osiem
 // kratek. Liczone tu na piechotę dawało kursor w zupełnie innym miejscu.
-bool Editor::react(ClickEvent& what) {
+bool Editor::handle(ClickEvent& what) {
     Kept& kept = *kept_;
 
     if (root() != nullptr) focus();
 
-    if (!kept.spool) return true;
+    if (!spool()) return true;
 
-    const std::optional<Place> where = struck(own(*this, what.where()));
+    const std::optional<Place> where = place_of(local(what.where()));
 
     if (!where.has_value()) return true;
 
-    const std::optional<std::size_t> began = kept.spool->at(where->line);
+    const std::optional<std::size_t> began = spool()->at(where->line);
 
     if (!began.has_value()) return true;
 
@@ -1146,12 +1456,18 @@ bool Editor::react(ClickEvent& what) {
 // **Samoprzewijanie chodzi zdarzeniami, nie zegarem.** Ruch w skrajnym rzędzie przewija o wiersz,
 // więc szybkość schodzenia bierze się z tego, ile użytkownik naprawdę rusza myszą — kiedy stanie,
 // przewijanie staje razem z nim. Zegar dałby szybkość zależną od czasu i przewijałby dalej mimo
-// nieruchomej myszy. Poza edytor i tak nie wyjdziemy: korzeń rozsyła po położeniu i to jest
-// zamierzone, więc skrajny rząd jest ostatnim miejscem, w którym cokolwiek do nas dochodzi.
-bool Editor::react(MouseEvent& what) {
+// nieruchomej myszy.
+//
+// **Ciągnięcie wychodzi poza edytor.** Wciśnięcie prosi korzeń o przytrzymanie, więc ruch
+// i puszczenie wracają tu także spoza edytora. Ruch nad nim albo pod nim przewija o wiersz jak na
+// skrajnym rzędzie, a zaznaczenie sięga do pierwszego albo ostatniego widocznego wiersza — rząd
+// przycinamy tutaj, bo `place_of` poza obszarem oddaje pustkę; w bok przycina już ono samo. Dawniej
+// korzeń rozsyłał ruch po położeniu, skrajny rząd był ostatnim miejscem, do którego cokolwiek
+// dochodziło, a puszczenie poza edytorem zostawiało ciągnięcie zapalone do następnego wciśnięcia.
+bool Editor::handle(MouseEvent& what) {
     Kept& kept = *kept_;
 
-    if (!kept.spool) return true;
+    if (!spool()) return true;
 
     if (what.press() == Press::up) {
         kept.dragging = false;
@@ -1159,29 +1475,32 @@ bool Editor::react(MouseEvent& what) {
         return true;
     }
 
-    const Spot where = own(*this, what.where());
+    const Spot where = local(what.where());
 
-    const auto reached = [this, &kept, &where](bool anchored) {
-        const std::optional<Place> place = struck(where);
+    const auto reached = [this, &kept](Spot aim, bool anchored) {
+        const std::optional<Place> place = place_of(aim);
 
         if (!place.has_value()) return;
 
-        const std::optional<std::size_t> began = kept.spool->at(place->line);
+        const std::optional<std::size_t> began = spool()->at(place->line);
 
         if (!began.has_value()) return;
 
         if (anchored)
             cursor(*began + place->byte);
         else
-            stretch(*began + place->byte);
+            selection_.extend(*began + place->byte);
     };
 
     if (what.press() == Press::down) {
         if (what.button() != Mouse::left) return true;
 
-        if (root() != nullptr) focus();
+        if (Root* top = root(); top != nullptr) {
+            focus();
+            top->capture(*this);
+        }
 
-        reached(true);
+        reached(where, true);
 
         kept.dragging = true;
 
@@ -1201,7 +1520,7 @@ bool Editor::react(MouseEvent& what) {
             slide(-1);
     }
 
-    reached(false);
+    reached({where.x, std::clamp(where.y, 0, std::max(high - 1, 0))}, false);
 
     return true;
 }
@@ -1211,22 +1530,22 @@ bool Editor::react(MouseEvent& what) {
 //
 // Klik w miejsce, które wyrazem nie jest, bierze ciąg takich samych: same spacje albo same znaki
 // przestankowe. Zawsze coś zaznacza, więc dwuklik nigdy nie wygląda na zignorowany.
-bool Editor::react(DoubleClickEvent& what) {
+bool Editor::handle(DoubleClickEvent& what) {
     Kept& kept = *kept_;
 
     if (root() != nullptr) focus();
 
-    if (!kept.spool) return true;
+    if (!spool()) return true;
 
-    const std::optional<Place> where = struck(own(*this, what.where()));
+    const std::optional<Place> where = place_of(local(what.where()));
 
     if (!where.has_value()) return true;
 
-    const std::optional<std::size_t> began = kept.spool->at(where->line);
+    const std::optional<std::size_t> began = spool()->at(where->line);
 
     if (!began.has_value()) return true;
 
-    const std::vector<std::string> got = kept.spool->lines(where->line, 1);
+    const std::vector<std::string> got = spool()->lines(where->line, 1).value_or(std::vector<std::string>{});
 
     if (got.empty() || got.front().empty()) return true;
 
@@ -1235,7 +1554,7 @@ bool Editor::react(DoubleClickEvent& what) {
     const std::size_t at = std::min(where->byte, text.size() - 1);
 
     const auto lettered = [](char one) {
-        return wordly(static_cast<char32_t>(static_cast<unsigned char>(one)));
+        return in_word(static_cast<char32_t>(static_cast<unsigned char>(one)));
     };
 
     const bool kind = lettered(text[at]);
@@ -1247,13 +1566,169 @@ bool Editor::react(DoubleClickEvent& what) {
 
     while (upto < text.size() && lettered(text[upto]) == kind) ++upto;
 
-    select(*began + from, *began + upto);
+    selection_.set(*began + from, *began + upto);
 
     return true;
 }
 
-bool Editor::react(PasteEvent& what) {
-    insert(what.said());
+bool Editor::handle(PasteEvent& what) {
+    insert(what.text());
+
+    return true;
+}
+
+// --- Blok mcedit -------------------------------------------------------------------------------------
+//
+// Trwały odcinek dokumentu, niezależny od zaznaczenia (`anchor..cursor`) i od schowka — jak
+// w mcedit, gdzie blok i schowek też są osobno. F3 zaczyna go w kursorze, ruch rozciąga, drugie
+// F3 kończy i blok zostaje podświetlony, choć kursor pójdzie dalej; dopiero wtedy F5 wstawia go
+// przy kursorze, F6 przenosi, F8 usuwa. Blok jest trzecią pozycją, nie zaznaczeniem, bo `insert`
+// zastępuje zaznaczenie, a kursor **jest** jego końcem — „skopiuj blok do kursora" nie miałoby
+// w tym modelu sensu. Nic własnego nie trzyma: patrzy w `Kept` edytora przez właściciela.
+
+Editor::Block::Block(Editor& owner) : owner_(owner) {}
+
+bool Editor::Block::empty() const { return !owner_.kept_->block.has_value(); }
+
+bool Editor::Block::pending() const { return owner_.kept_->marking; }
+
+std::size_t Editor::Block::from() const {
+    const Kept& kept = *owner_.kept_;
+
+    return kept.block.has_value() ? kept.block->first : 0;
+}
+
+// W trakcie rozciągania koniec jest kursorem — może stać przed początkiem, gdy blok idzie w tył;
+// `text()` i malowanie porządkują min/max.
+std::size_t Editor::Block::upto() const {
+    const Kept& kept = *owner_.kept_;
+
+    if (!kept.block.has_value()) return 0;
+
+    return kept.marking ? kept.cursor : kept.block->second;
+}
+
+std::string Editor::Block::text() const {
+    if (empty()) return {};
+
+    return owner_.kept_->text(std::min(from(), upto()), std::max(from(), upto()));
+}
+
+
+// F3, trzy stany: bez bloku zaczyna go w kursorze; w trakcie kończy; przy bloku gotowym zdejmuje
+// stary i zaczyna nowy w kursorze.
+void Editor::Block::mark() {
+    Kept& kept = *owner_.kept_;
+
+    if (!kept.quilt) return;
+
+    if (kept.marking) {
+        kept.blocked();
+    } else {
+        kept.block = std::pair{kept.cursor, kept.cursor};
+        kept.marking = true;
+    }
+
+    owner_.invalidate();
+}
+
+// Zdjęcie bloku bez śladu w dokumencie — nie idzie do dziennika, bo treść się nie zmienia.
+void Editor::Block::clear() {
+    Kept& kept = *owner_.kept_;
+
+    kept.block.reset();
+    kept.marking = false;
+
+    owner_.invalidate();
+}
+
+// F5: treść bloku wchodzi w kursorze, blok zostaje, gdzie był — a gdy leżał za kursorem,
+// przesuwa się o swoją długość zwykłą regułą „zmiana przed blokiem". Jedna zmiana w dzienniku,
+// zapieczętowana: znak wpisany zaraz potem nie ma prawa się do niej dokleić.
+bool Editor::Block::copy() {
+    Kept& kept = *owner_.kept_;
+
+    if (kept.readonly || kept.saving || !kept.quilt) return false;
+
+    kept.blocked();
+
+    if (!kept.block.has_value()) return false;
+
+    const auto [from, upto] = *kept.block;
+    const Quilt::Scrap what = kept.quilt->taken(from, upto - from);
+    const std::size_t at = kept.cursor;
+
+    kept.joining = false;
+    kept.apply(*owner_.spool(), at, {}, what);
+    kept.note(at, {}, what, at);
+    kept.joining = false;
+
+    owner_.settled(at + what.much);
+
+    return true;
+}
+
+// F6: blok wychodzi ze swojego miejsca i wchodzi tam, gdzie stał kursor **po** wycięciu — gdy
+// leżał przed kursorem, cel cofa się o jego długość. Kursor w bloku albo na jego brzegu to
+// „przenieś do siebie": nic. Dwa wpisy dziennika związane w jeden — cofnięcie przywraca i tekst,
+// i blok tam, skąd wyszedł. Po przeniesieniu blok obejmuje wstawiony tekst, żeby dało się
+// przenosić dalej.
+bool Editor::Block::move() {
+    Kept& kept = *owner_.kept_;
+
+    if (kept.readonly || kept.saving || !kept.quilt) return false;
+
+    kept.blocked();
+
+    if (!kept.block.has_value()) return false;
+
+    const auto [from, upto] = *kept.block;
+    const std::size_t at = kept.cursor;
+
+    if (at >= from && at <= upto) return false;
+
+    const Quilt::Scrap what = kept.quilt->taken(from, upto - from);
+    const std::size_t target = at > upto ? at - what.much : at;
+
+    kept.joining = false;
+    kept.apply(*owner_.spool(), from, what, {});
+    kept.note(from, what, {}, at);
+
+    kept.tying = true;
+    kept.apply(*owner_.spool(), target, {}, what);
+    kept.block = std::pair{target, target + what.much};
+    kept.note(target, {}, what, at);
+    kept.tying = false;
+    kept.joining = false;
+
+    owner_.settled(target + what.much);
+
+    return true;
+}
+
+// F8: blok znika z dokumentu razem ze sobą. Kursor za blokiem cofa się o jego długość, w bloku
+// staje na jego początku, przed — zostaje. Jedna zmiana; cofnięcie przywraca tekst i blok.
+bool Editor::Block::erase() {
+    Kept& kept = *owner_.kept_;
+
+    if (kept.readonly || kept.saving || !kept.quilt) return false;
+
+    kept.blocked();
+
+    if (!kept.block.has_value()) return false;
+
+    const auto [from, upto] = *kept.block;
+    const std::size_t at = kept.cursor;
+
+    const Quilt::Scrap what = kept.quilt->taken(from, upto - from);
+
+    kept.joining = false;
+    kept.apply(*owner_.spool(), from, what, {});
+    kept.block.reset();
+    kept.note(from, what, {}, at);
+    kept.joining = false;
+
+    owner_.settled(at >= upto ? at - what.much : (at > from ? from : at));
 
     return true;
 }

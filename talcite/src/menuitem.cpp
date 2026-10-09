@@ -21,22 +21,7 @@ MenuItem::MenuItem(std::string text, std::string hint)
 }
 
 // Pozycja nie ma czego trzymać w środku — tak samo jak napis.
-int MenuItem::takes() const { return 0; }
-
-// **Podświetlona pozycja to ta z ogniskiem.** Nie ma osobnego znacznika, bo dwa źródła tej samej
-// prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola „otwarte".
-// Kreska jest niedostępna, więc sama z siebie ogniska nie weźmie i nic o niej wiedzieć nie trzeba.
-bool MenuItem::focusable() const { return able_; }
-
-// Wyszarzenie oddaje ognisko najbliższemu chętnemu przodkowi, czyli menu — otwarte zostaje otwarte,
-// tylko nic w nim nie jest podświetlone. Ta sama reguła co w przycisku, w polu i w wierszu listy.
-void MenuItem::able(bool given) {
-    able_ = given;
-
-    if (given) return;
-
-    unfocus();
-}
+int MenuItem::capacity() const { return 0; }
 
 // Po spacji z każdej strony i dwie między napisem a podpisem skrótu, żeby „Kopiuj" nie kleiło
 // się do „F5". Wysokość zawsze jeden wiersz: pozycja menu, która się zawija, to nie pozycja.
@@ -48,6 +33,10 @@ Size MenuItem::wants(Size room) const {
     return {std::min(wide, room.wide), std::min(1, room.high)};
 }
 
+// **Podświetlona pozycja to ta z ogniskiem.** Nie ma osobnego znacznika, bo dwa źródła tej samej
+// prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola „otwarte".
+// Kreska jest niedostępna, więc sama z siebie ogniska nie weźmie i nic o niej wiedzieć nie trzeba.
+//
 // Podświetlenie robimy odwróceniem, a nie kolorem: działa na każdym terminalu i nie wymaga
 // wymyślania barw, o które nikt nie prosił. Niedostępna pozycja gaśnie.
 //
@@ -58,32 +47,32 @@ View MenuItem::paint(Size given, Area seen) {
 
     const Skin& how = skin();
 
-    const Style look = how.get<Style>(!able_      ? role() + ".off"
+    const Style look = how.style(!enabled()      ? role() + ".disabled"
                                       : focused() ? role() + ".focus"
                                                   : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, given}, look);
-    made.string({1 - seen.at.x, -seen.at.y}, text_, look);
+    made.put({1 - seen.at.x, -seen.at.y}, text_, look);
 
     if (!hint_.empty()) {
         const int wide = measured(hint_).wide;
 
-        made.string({given.wide - 1 - wide - seen.at.x, -seen.at.y}, hint_, look);
+        made.put({given.wide - 1 - wide - seen.at.x, -seen.at.y}, hint_, look);
     }
 
     // Litera aktywna ma własną rolę, nakładaną na wygląd pozycji — jak w przycisku i w ptaszku.
     // Napis stoi o jedną kratkę od lewej, więc i litera jest o tę kratkę przesunięta.
-    talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, marking(text_),
-                      Style::merge(look, how.get<Style>(role() + ".key")));
+    talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, shortcut_column(text_),
+                      look, how.style(role() + ".key"));
 
     return made;
 }
 
 // Klawisz aktywny przychodzi z bazy. Pozycja robi to samo, co przy kliknięciu: najpierw staje się
 // bieżącą, potem idzie wybór — bo inaczej menu wybrałoby tę, po której ostatnio chodziły strzałki.
-void MenuItem::act() {
+void MenuItem::activate() {
     if (Menu* one = dynamic_cast<Menu*>(parent())) {
-        one->which(this);
+        one->current(*this);
         one->pick();
 
         return;
@@ -95,20 +84,18 @@ void MenuItem::act() {
 // Sam wybór to wywołanie tego, co powierzył budujący. Zamykaniem menu zajmuje się Menu, bo
 // pozycja nie wie, że leży w czymś, co się otwiera.
 void MenuItem::pick() {
-    if (!able_) return;
+    if (!enabled()) return;
 
-    PickEvent one;
-
-    (void)trigger(one);
+    (void)trigger(PickEvent{});
 }
 
-bool MenuItem::react(ClickEvent&) {
-    if (!able_) return true;
+bool MenuItem::handle(ClickEvent&) {
+    if (!enabled()) return true;
 
     // Kliknięta pozycja najpierw staje się podświetloną. Inaczej Menu wybrałoby tę, po której
     // ostatnio chodziły strzałki, a nie tę pod kursorem.
     if (Menu* one = dynamic_cast<Menu*>(parent())) {
-        one->which(this);
+        one->current(*this);
         one->pick();
 
         return true;
@@ -121,10 +108,10 @@ bool MenuItem::react(ClickEvent&) {
 
 // Najechanie myszą przestawia podświetlenie, jak w Midnight Commanderze. Zdarzenie puszczamy
 // dalej, bo ruch myszy nie należy do nikogo na wyłączność.
-bool MenuItem::react(MouseEvent& what) {
-    if (what.press() != Press::move || !able_) return false;
+bool MenuItem::handle(MouseEvent& what) {
+    if (what.press() != Press::move || !enabled()) return false;
 
-    if (Menu* one = dynamic_cast<Menu*>(parent())) one->which(this);
+    if (Menu* one = dynamic_cast<Menu*>(parent())) one->current(*this);
 
     return false;
 }

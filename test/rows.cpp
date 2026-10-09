@@ -19,13 +19,15 @@ public:
 
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
+    void wanting(ui::Size given) { wants_ = given; }
+
 protected:
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.letter({x - seen.at.x, y - seen.at.y}, what_, Style{});
+                made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
 
         return made;
     }
@@ -41,7 +43,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -58,7 +60,7 @@ std::shared_ptr<Box> box(ui::Size wants, char32_t what) {
 TRIAL("Dzieci: zwykły węzeł bierze jedno i przy drugim rzuca") {
     ui::Node one;
 
-    same(one.takes(), 1);
+    same(one.capacity(), 1);
 
     one.children().add(box({2, 1}, U'a'));
 
@@ -68,7 +70,7 @@ TRIAL("Dzieci: zwykły węzeł bierze jedno i przy drugim rzuca") {
 TRIAL("Dzieci: napis nie bierze żadnego") {
     ui::Span one{"kot"};
 
-    same(one.takes(), 0);
+    same(one.capacity(), 0);
 
     threw(one.children().add(box({2, 1}, U'a')));
 }
@@ -76,7 +78,7 @@ TRIAL("Dzieci: napis nie bierze żadnego") {
 TRIAL("Dzieci: korzeń jest opakowaniem, nie układem") {
     ui::Root top;
 
-    same(top.takes(), 1);
+    same(top.capacity(), 1);
 
     top.children().add(box({2, 1}, U'a'));
 
@@ -87,8 +89,8 @@ TRIAL("Dzieci: wiersz i kolumna biorą, ile trzeba") {
     ui::Row row;
     ui::Column column;
 
-    same(row.takes(), ui::plenty);
-    same(column.takes(), ui::plenty);
+    same(row.capacity(), ui::plenty);
+    same(column.capacity(), ui::plenty);
 
     for (int which = 0; which < 5; ++which) {
         row.children().add(box({1, 1}, U'a'));
@@ -163,6 +165,57 @@ TRIAL("Wiersz: dzieci stoją obok siebie") {
     same(first->area().at.x, 0);
     same(second->area().at.x, 2);
     same(read(made, 0), std::string{"aabbb"});
+}
+
+// Wiersz, który się łamie: dziecko, które nie mieści się w reszcie linii, zaczyna następną, a każda
+// linia stoi pośrodku. Dziecko o zerowej szerokości nie otwiera odstępu ani linii; szersze niż cały
+// wiersz stoi samo, przycięte.
+TRIAL("Wiersz: łamany przenosi to, co się nie mieści, i stawia linie pośrodku") {
+    ui::Row one{ui::RowShape{1, true}};
+
+    const auto first = box({5, 1}, U'a');
+    const auto empty = box({0, 1}, U'x');
+    const auto second = box({5, 1}, U'b');
+    const auto third = box({5, 1}, U'c');
+    const auto wide = box({20, 1}, U'd');
+
+    one.children().add(first);
+    one.children().add(empty);
+    one.children().add(second);
+    one.children().add(third);
+    one.children().add(wide);
+
+    ought(one.wrapping());
+    same(one.wants({12, 10}), (ui::Size{12, 3}));
+    same(one.wants({12, 2}), (ui::Size{12, 2}));
+
+    const View made = one.render({{0, 0}, {12, 3}});
+
+    same(read(made, 0), std::string{"aaaaa bbbbb"});
+    same(read(made, 1), std::string{"   ccccc"});
+    same(read(made, 2), std::string{"dddddddddddd"});
+    same(third->area().at.y, 1);
+    same(empty->area().size.wide, 0);
+    same(wide->area().size.wide, 12);
+
+    // Odstęp liczy się przy łamaniu: dwie piątki w dziesięciu kolumnach to dwie linie, nie jedna.
+    same(one.wants({10, 10}), (ui::Size{10, 4}));
+
+    // Dziecko, które przestało cokolwiek zajmować, dostaje prostokąt zerowy, a nie stary.
+    first->wanting({0, 1});
+
+    (void)one.render({{0, 0}, {12, 3}});
+
+    same(first->area().size.wide, 0);
+
+    first->wanting({5, 1});
+
+    // Dość miejsca: jedna linia, jak bez łamania.
+    same(one.wants({60, 10}), (ui::Size{38, 1}));
+
+    one.wrapping(false);
+
+    same(one.wants({12, 10}).high, 1);
 }
 
 TRIAL("Wiersz: dziecko dostaje pełną wysokość") {

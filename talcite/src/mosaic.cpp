@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 #include "lighting.hpp"
@@ -153,11 +154,11 @@ struct Heap {
     return made;
 }
 
-[[nodiscard]] Style dressed(Color ink, Color paper) {
+[[nodiscard]] Style dressed(Color foreground, Color background) {
     Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -327,16 +328,53 @@ struct Split {
     return made;
 }
 
+// Znaki ASCII od najrzadszego do najgęstszego — ile z ośmiu podkratek pokrywa tusz.
+constexpr std::string_view ramp = ".:-=+*%#";
+
+// Tusz w czarno-białym: terminal nie ma barw, więc zostaje sama sylwetka. Obraz z przezroczystością
+// (logo, ikona) ma ją w kanale alfa — tuszem jest to, co widać. Obraz pełny (zdjęcie) sylwetki nie
+// ma, więc tuszem jest to, co jaśniejsze od średniej jasności obrazu.
+struct Ink {
+    bool clear = false;
+    double middle = 0.0;
+};
+
+[[nodiscard]] double lightness(const std::byte* at) {
+    const std::array<double, 256>& tone = straight();
+
+    return weights[0] * tone[sample(at[0])] + weights[1] * tone[sample(at[1])] + weights[2] * tone[sample(at[2])];
+}
+
+[[nodiscard]] Ink inked(const Bytes& bytes) {
+    Ink made;
+
+    double sum = 0.0;
+    std::size_t much = 0;
+
+    for (std::size_t at = 0; at + bands <= bytes.size(); at += bands) {
+        if (sample(bytes[at + 3]) < 255) made.clear = true;
+
+        sum += lightness(bytes.data() + at);
+        ++much;
+    }
+
+    made.middle = much == 0 ? 0.0 : sum / static_cast<double>(much);
+
+    return made;
+}
+
 }
 
 // Ile podkratek przypada na kratkę. Znaki blokowe potrzebują ośmiu na osiem, bo tyle miejsc tnie
-// ósemka; sekstanty dwóch na trzy.
+// ósemka; sekstanty dwóch na trzy; bez Unicode dwóch na cztery — tyle, ile liczy drabina znaków ASCII.
 //
 // **Oktanty ścinamy do sekstantów i to jest świadome.** Znaków jest dwieście trzydzieści, a nie
 // dwieście pięćdziesiąt sześć — dwadzieścia sześć wzorów mieszka w Block Elements i w `U+1FB00` —
 // więc odwzorowanie jest tablicą, a nie wzorem. Tablicy nie wolno zgadywać: pomyłka to śmieci na
 // ekranie, a nie gorszy obraz. Wejdą osobno, gdy dojdziemy do właściwego wykazu.
-ui::Size grain(ui::Blocks kind) {
+ui::Size grain(ui::Blocks kind, bool unicode) {
+    if (!unicode) return {2, 4};
+
     return kind >= ui::Blocks::sextants ? ui::Size{2, 3} : ui::Size{8, 8};
 }
 
@@ -345,12 +383,20 @@ ui::Size grain(ui::Blocks kind) {
 //
 // Przezroczystość wpada tu wprost w model biblioteki: kratka bez ani jednej pokrytej podkratki
 // wychodzi jako `bare()`, czyli **widać przez nią tło rodzica**. Kratka pokryta częściowo dostaje
-// papier od wołającego — bo tylko on wie, co ma pod sobą ze skórki — a domyślnie przezroczysty.
+// papier od wołającego, gdy ten go poda (tło roli obrazu w skórce); bez niego idzie **samym pierwszym
+// planem** (`View::foreground`) — tło weźmie przy wklejaniu z tego, co leży pod spodem. Dawniej zostawało
+// przezroczyste aż do terminala, który malował tam swoje tło: czarne kratki wokół logo w oknie.
+//
+// **Najlepiej, jak się da.** W pełnych kolorach i w palecie kratka niesie dwie barwy, a do palety
+// terminala sprowadza je dopiero wypisanie. W czarno-białym barw nie ma, więc kratka dwubarwna
+// straciłaby tło i zrobiłaby dziurę — rysujemy samą sylwetkę tuszu (`Ink`). Bez Unicode nie ma znaków
+// blokowych: kratka to znak z drabiny ASCII według pokrycia, a w kolorze kratka pełna to tło w barwie
+// obrazu.
 void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Blocks kind,
-           const Style& under) {
+           const Style& under, Colors colors, bool unicode) {
     if (!one.held() || still >= one.stills().size()) return;
 
-    const ui::Size step = grain(kind);
+    const ui::Size step = grain(kind, unicode);
     const ui::Size size = one.size();
 
     const int columns = size.wide / step.wide;
@@ -362,6 +408,9 @@ void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Bl
 
     const std::size_t much = static_cast<std::size_t>(step.wide) *
                              static_cast<std::size_t>(step.high);
+
+    const bool mono = colors == Colors::mono;
+    const Ink ink = mono ? inked(bytes) : Ink{};
 
     for (int row = 0; row < rows; ++row) {
         for (int column = 0; column < columns; ++column) {
@@ -385,6 +434,8 @@ void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Bl
 
                     if (sample(bytes[where + 3]) < solid) continue;
 
+                    if (mono && !ink.clear && lightness(bytes.data() + where) < ink.middle) continue;
+
                     parts[which] = gathered(bytes.data() + where);
                     covered[which] = true;
                     whole += parts[which];
@@ -396,14 +447,26 @@ void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Bl
             const ui::Spot spot{at.x + column, at.y + row};
 
             if (filled == 0) {
-                into.bare({spot, {1, 1}});
+                into.clear({spot, {1, 1}});
 
                 continue;
             }
 
-            if (static_cast<std::size_t>(filled) < much) {
-                into.letter(spot, shaped(covered, filled, kind),
-                            dressed(whole.tone(), under.paper));
+            if (!unicode) {
+                const bool full = static_cast<std::size_t>(filled) == much;
+
+                if (full && !mono)
+                    into.foreground(spot, U' ', dressed(under.foreground, whole.tone()));
+                else
+                    into.foreground(spot, static_cast<char32_t>(ramp[static_cast<std::size_t>(filled) - 1]),
+                             dressed(whole.tone(), under.background));
+
+                continue;
+            }
+
+            if (mono || static_cast<std::size_t>(filled) < much) {
+                into.foreground(spot, shaped(covered, filled, kind),
+                            dressed(whole.tone(), under.background));
 
                 continue;
             }
@@ -411,9 +474,9 @@ void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Bl
             const Split split = kind >= ui::Blocks::sextants ? sexted(parts, whole)
                                                          : blocked(parts, whole);
 
-            into.letter(spot, split.glyph,
+            into.foreground(spot, split.glyph,
                         dressed(split.kept.tone(),
-                                split.rest.taken > 0 ? split.rest.tone() : under.paper));
+                                split.rest.taken > 0 ? split.rest.tone() : under.background));
         }
     }
 }

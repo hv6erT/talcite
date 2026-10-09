@@ -7,9 +7,9 @@
 #include <string>
 #include <string_view>
 
-#include "talcite/compatibilities.hpp"
+#include "talcite/capabilities.hpp"
 #include "talcite/line.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
@@ -50,15 +50,11 @@ public:
 
     [[nodiscard]] static const Skin& plain();
 
-    template <typename Value>
-    [[nodiscard]] Value get(std::string_view key) const {
-        return taken<Value>(key);
-    }
+    [[nodiscard]] Style style(std::string_view key) const;
 
-    template <typename Value>
-    [[nodiscard]] Value plain(std::string_view key) const {
-        return spared<Value>(key);
-    }
+    [[nodiscard]] char32_t glyph(std::string_view key) const;
+
+    [[nodiscard]] Lines lines(Border border) const;
 
     [[nodiscard]] Colors colors() const { return colors_; }
 
@@ -69,12 +65,6 @@ public:
     void unicode(bool given);
 
 private:
-    template <typename Value>
-    [[nodiscard]] Value taken(std::string_view key) const;
-
-    template <typename Value>
-    [[nodiscard]] Value spared(std::string_view key) const;
-
     void framed();
 
     Styles styles_;

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "talcite/gate.hpp"
+#include "talcite/listener.hpp"
 #include "talcite/stream.hpp"
 
 #include "speaking.hpp"
@@ -30,7 +30,7 @@ int main(int count, char** args) {
     const net::Patience soon{30000};
 
     try {
-        net::Gate gate{net::Address::loopback(net::Family::four, 0)};
+        net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
         std::vector<net::Stream> clients;
         std::vector<net::Stream> servers;

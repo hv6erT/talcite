@@ -5,7 +5,7 @@
 
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/root.hpp"
 #include "talcite/tick.hpp"
@@ -17,7 +17,7 @@ namespace {
 std::string read(const View& one, int y) {
     std::string made;
 
-    for (int x = 0; x < one.size().wide; ++x) spelled(one.at({x, y}).letter, made);
+    for (int x = 0; x < one.size().wide; ++x) utf8::encode(one.at({x, y}).letter, made);
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
 
@@ -42,9 +42,9 @@ TRIAL("Tick: świeże jest puste i chętne na ognisko") {
     const ui::Tick one{"Zawijaj"};
 
     ought(!one.ticked());
-    ought(one.able());
+    ought(one.enabled());
     ought(one.focusable());
-    same(one.takes(), 0);
+    same(one.capacity(), 0);
     same(one.text(), std::string{"Zawijaj"});
 }
 
@@ -146,13 +146,13 @@ TRIAL("Tick: spacja odwraca, a enter idzie wyżej") {
 
     ui::KeyEvent space{U' '};
 
-    ought(top.deal(space));
+    ought(top.dispatch(space));
     ought(one->ticked());
     same(done, 1);
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(!top.deal(enter));
+    ought(!top.dispatch(enter));
     ought(one->ticked());
     same(done, 1);
 }
@@ -172,10 +172,10 @@ TRIAL("Tick: kliknięcie bierze ognisko i odwraca") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
     ought(one->ticked());
     same(done, 1);
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // --- Wyłączone -----------------------------------------------------------------------------------
@@ -187,7 +187,7 @@ TRIAL("Tick: wyłączone nie odwraca się i nie bierze ogniska") {
 
     top.children().add(one);
 
-    one->able(false);
+    one->enabled(false);
 
     ought(!one->focusable());
 
@@ -212,11 +212,11 @@ TRIAL("Tick: wyłączenie oddaje ognisko") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
-    one->able(false);
+    one->enabled(false);
 
-    ought(top.focus() != static_cast<ui::Node*>(one.get()));
+    ought(top.focused_node() != static_cast<ui::Node*>(one.get()));
 }
 
 // --- Klawisz aktywny -----------------------------------------------------------------------------
@@ -226,7 +226,7 @@ TRIAL("Tick: wyłączenie oddaje ognisko") {
 TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -243,11 +243,11 @@ TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
     window->open(dialog);
 
     // Ognisko stoi na pierwszym polu, a naciskamy literę drugiego.
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     ui::KeyEvent what{U'w'};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     ought(!one->ticked());
     ought(other->ticked());
@@ -256,7 +256,7 @@ TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
 TRIAL("Tick: wyłączone nie odpowiada na swój klawisz") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -269,11 +269,11 @@ TRIAL("Tick: wyłączone nie odpowiada na swój klawisz") {
     top.children().add(window);
     window->open(dialog);
 
-    one->able(false);
+    one->enabled(false);
 
     ui::KeyEvent what{U'z'};
 
-    (void)top.deal(what);
+    (void)top.dispatch(what);
 
     ought(!one->ticked());
 }

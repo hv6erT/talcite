@@ -14,7 +14,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -39,14 +39,14 @@ int main() {
     column->children().add(std::make_shared<talcite::ui::Span>(
         "Ten napis się zawija, więc przy wąskim oknie rozłoży się na kilka wierszy, "
         "a przy szerokim zmieści się w jednym.",
-        talcite::ui::SpanStyle{true}));
+        talcite::ui::SpanShape{true}));
 
     column->children().add(std::make_shared<talcite::ui::Span>(
         "Ten napis się nie zawija i po prostu zniknie pod krawędzią, gdy zabraknie miejsca."));
 
     column->children().add(std::make_shared<talcite::ui::Span>("F10 kończy."));
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — tekst");
 
     term.run();

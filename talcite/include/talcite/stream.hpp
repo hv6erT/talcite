@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "talcite/address.hpp"
@@ -32,6 +33,8 @@ public:
     [[nodiscard]] Promise<void> write(Bytes what, Patience patience) const;
 
     void nagle(bool given) const;
+
+    [[nodiscard]] std::optional<bool> kindred() const;
 
     void close();
 

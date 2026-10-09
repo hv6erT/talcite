@@ -31,7 +31,7 @@ constexpr std::size_t bands = 4;
 Pixels::Pixels(ui::Size given, std::vector<Still> stills)
     : size_{std::max(given.wide, 0), std::max(given.high, 0)}, stills_(std::move(stills)) {
     if (size_.wide == 0 || size_.high == 0) {
-        if (!stills_.empty()) throw std::logic_error("talcite::Pixels: klatki bez wymiarów");
+        if (!stills_.empty()) throw std::logic_error("talcite::Pixels: frames without dimensions");
 
         return;
     }
@@ -41,7 +41,7 @@ Pixels::Pixels(ui::Size given, std::vector<Still> stills)
 
     for (const Still& one : stills_)
         if (one.bytes.size() != much)
-            throw std::logic_error("talcite::Pixels: klatka nie zgadza się z wymiarami");
+            throw std::logic_error("talcite::Pixels: the frame does not match the dimensions");
 }
 
 bool Pixels::held() const { return size_.wide > 0 && size_.high > 0 && !stills_.empty(); }

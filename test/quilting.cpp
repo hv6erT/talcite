@@ -1,7 +1,10 @@
 #include "proving.hpp"
 
+#include <algorithm>
 #include <random>
 #include <string>
+#include <tuple>
+#include <vector>
 
 #include "talcite/bytes.hpp"
 
@@ -11,63 +14,30 @@ using namespace talcite;
 
 namespace {
 
-Bytes lump(const std::string& what) {
-    Bytes made;
 
-    made.reserve(what.size());
 
-    for (const char sign : what) made.push_back(static_cast<std::byte>(sign));
-
-    return made;
-}
-
-std::string said(const Bytes& what) {
-    std::string made;
-
-    made.reserve(what.size());
-
-    for (const std::byte one : what) made.push_back(static_cast<char>(one));
-
-    return made;
-}
-
-std::string whole(Quilt& one) { return said(one.bytes(0, one.whole())); }
-
-// Źródło oddające **po trzy bajty na wołanie** — bo tyle mu wolno. Na nim widać, czy dobieranie
-// w pętli działa; pierwsza wersja szpuli na tym poległa.
-Feed stingy(const Bytes& raw) {
-    return [raw](std::size_t at, std::size_t most) {
-        Bytes made;
-
-        const std::size_t give = most < 3 ? most : 3;
-
-        for (std::size_t one = at; one < raw.size() && one < at + give; ++one)
-            made.push_back(raw[one]);
-
-        return made;
-    };
-}
+std::string whole(Quilt& one) { return text(one.bytes(0, one.whole())); }
 
 }
 
 TRIAL("Quilt: pusty nic nie niesie") {
-    Quilt one{lump("")};
+    Quilt one{bytes("")};
 
     same(one.whole(), std::size_t{0});
     same(whole(one), std::string{});
 }
 
 TRIAL("Quilt: nietknięty oddaje oryginał") {
-    Quilt one{lump("abcdef")};
+    Quilt one{bytes("abcdef")};
 
     same(one.whole(), std::size_t{6});
     same(whole(one), std::string{"abcdef"});
-    same(said(one.bytes(2, 3)), std::string{"cde"});
-    same(said(one.bytes(4, 100)), std::string{"ef"});
+    same(text(one.bytes(2, 3)), std::string{"cde"});
+    same(text(one.bytes(4, 100)), std::string{"ef"});
 }
 
 TRIAL("Quilt: wstawianie na początku, w środku i na końcu") {
-    Quilt one{lump("abc")};
+    Quilt one{bytes("abc")};
 
     one.insert(0, "X");
     same(whole(one), std::string{"Xabc"});
@@ -81,7 +51,7 @@ TRIAL("Quilt: wstawianie na początku, w środku i na końcu") {
 }
 
 TRIAL("Quilt: kasowanie na początku, w środku i na końcu") {
-    Quilt one{lump("abcdef")};
+    Quilt one{bytes("abcdef")};
 
     one.erase(0, 1);
     same(whole(one), std::string{"bcdef"});
@@ -94,7 +64,7 @@ TRIAL("Quilt: kasowanie na początku, w środku i na końcu") {
 }
 
 TRIAL("Quilt: wstawienie i skasowanie wraca do oryginału") {
-    Quilt one{lump("abcdef")};
+    Quilt one{bytes("abcdef")};
 
     one.insert(3, "XYZ");
     same(whole(one), std::string{"abcXYZdef"});
@@ -103,86 +73,10 @@ TRIAL("Quilt: wstawienie i skasowanie wraca do oryginału") {
     same(whole(one), std::string{"abcdef"});
 }
 
-// Oryginał zostaje za źródłem, więc wszystko musi działać także wtedy, gdy źródło oddaje po
-// kawałku i nigdy nie daje całości naraz.
-TRIAL("Quilt: źródło strumieniowe daje to samo, co pamięć") {
-    const std::string full = "pierwszy wiersz\ndrugi wiersz\ntrzeci wiersz\n";
-
-    Quilt one{stingy(lump(full)), full.size()};
-
-    same(whole(one), full);
-
-    one.insert(16, "nowy ");
-
-    same(whole(one), std::string{"pierwszy wiersz\nnowy drugi wiersz\ntrzeci wiersz\n"});
-
-    one.erase(0, 9);
-
-    same(whole(one), std::string{"wiersz\nnowy drugi wiersz\ntrzeci wiersz\n"});
-}
-
-// Zszycie zbiera dokument do pamięci i odcina źródło. Po nim odpowiedzi mają być co do bajtu te
-// same, a zmiany dalej mają działać — tylko oryginał leży już gdzie indziej.
-TRIAL("Quilt: zszycie oddaje to samo, co źródło") {
-    const std::string full = "pierwszy wiersz\ndrugi wiersz\ntrzeci wiersz\n";
-
-    Quilt one{stingy(lump(full)), full.size()};
-
-    one.insert(16, "nowy ");
-
-    const std::string want = "pierwszy wiersz\nnowy drugi wiersz\ntrzeci wiersz\n";
-
-    same(whole(one), want);
-
-    ought(one.settle());
-
-    same(one.whole(), want.size());
-    same(whole(one), want);
-    same(said(one.bytes(16, 5)), std::string{"nowy "});
-
-    one.insert(0, "Z");
-
-    same(whole(one), "Z" + want);
-
-    // Drugie zszycie nie ma czego zszywać, ale nie ma prawa niczego zepsuć.
-    ought(one.settle());
-
-    same(whole(one), "Z" + want);
-}
-
-TRIAL("Quilt: zszycie dokumentu w pamięci nic nie zmienia") {
-    Quilt one{lump("abcdef")};
-
-    ought(one.settle());
-
-    same(whole(one), std::string{"abcdef"});
-}
-
-// Źródło, które obiecało więcej, niż oddaje: zszycie ma się nie udać i **niczego nie ruszyć**,
-// bo skrócenie dokumentu za plecami szpuli byłoby gorsze niż niezrobienie niczego.
-TRIAL("Quilt: zszycie ze skąpego źródła nie dochodzi do skutku") {
-    const Bytes raw = lump("abcdef");
-
-    Quilt one{[raw](std::size_t at, std::size_t most) {
-                  Bytes made;
-
-                  for (std::size_t which = at; which < 4 && which < at + most; ++which)
-                      made.push_back(raw[which]);
-
-                  return made;
-              },
-              raw.size()};
-
-    ought(!one.settle());
-
-    same(one.whole(), std::size_t{6});
-    same(said(one.bytes(0, 4)), std::string{"abcd"});
-}
-
 // Pisanie w ciągu przedłuża ostatni odcinek zamiast robić nowy. Gdyby tego nie robiło, pięć tysięcy
 // znaków dałoby pięć tysięcy odcinków — i to jest ta próba, która by to złapała czasem.
 TRIAL("Quilt: pięć tysięcy znaków po jednym") {
-    Quilt one{lump("")};
+    Quilt one{bytes("")};
 
     std::string want;
 
@@ -208,9 +102,7 @@ TRIAL("Quilt: losowe zmiany zgadzają się ze wzorcem") {
         for (int one = 0; one < much; ++one)
             want.push_back(static_cast<char>('a' + gen() % 26));
 
-        const Bytes raw = lump(want);
-
-        Quilt one = round % 2 ? Quilt{stingy(raw), raw.size()} : Quilt{lump(want)};
+        Quilt one{bytes(want)};
 
         for (int step = 0; step < 30; ++step) {
             if (gen() % 2 || want.empty()) {
@@ -237,4 +129,251 @@ TRIAL("Quilt: losowe zmiany zgadzają się ze wzorcem") {
             same(whole(one), want);
         }
     }
+}
+
+// **Wiele cięć naraz** zgadza się z tym samym zrobionym na napisie — cięcia na początku, na końcu,
+// tuż obok siebie, samo wstawienie (nic nie znika), samo skasowanie (nic nie przychodzi), ten sam
+// tekst w wielu miejscach. Kołdra jest przed tym pocięta zwykłymi zmianami, żeby cięcia trafiały
+// w środki odcinków obu rodzajów.
+TRIAL("Quilt: wiele cięć naraz zgadza się ze wzorcem") {
+    std::mt19937 gen{7};
+
+    for (int round = 0; round < 200; ++round) {
+        std::string want;
+
+        for (int at = 0; at < 40; ++at) want.push_back(static_cast<char>('a' + gen() % 26));
+
+        Quilt one{bytes(want)};
+
+        for (int step = 0; step < 5; ++step) {
+            const std::size_t at = gen() % (want.size() + 1);
+
+            want.insert(at, "XY");
+            one.insert(at, "XY");
+        }
+
+        std::vector<std::string> texts;
+        std::vector<Quilt::Cut> cuts;
+        std::vector<std::tuple<std::size_t, std::size_t, std::size_t>> plan;
+
+        for (std::size_t at = gen() % 3; at <= want.size();) {
+            const std::size_t much = std::min<std::size_t>(gen() % 4, want.size() - at);
+
+            plan.emplace_back(at, much, gen() % 3);
+
+            at += much + gen() % 5;
+
+            if (much == 0) ++at;
+        }
+
+        texts.reserve(plan.size());
+
+        for (const auto& [at, much, kind] : plan) {
+            texts.push_back(kind == 0 ? std::string{} : kind == 1 ? std::string{"++"} : std::string(1 + gen() % 3, '#'));
+            cuts.push_back(Quilt::Cut{at, much, texts.back()});
+        }
+
+        std::string made;
+        std::size_t from = 0;
+
+        for (const Quilt::Cut& cut : cuts) {
+            made += want.substr(from, cut.at - from);
+            made += std::string{cut.text};
+            from = cut.at + cut.much;
+        }
+
+        made += want.substr(from);
+
+        one.spliced(cuts);
+
+        same(one.whole(), made.size());
+        same(whole(one), made);
+
+        for (std::size_t at = 0; at < made.size(); at += 3) same(text(one.bytes(at, 5)), made.substr(at, 5));
+    }
+}
+
+// Ten sam tekst w wielu cięciach z rzędu ląduje w dopiskach raz: pisanie dalej za ostatnim z nich
+// przedłuża tylko jego odcinek, a pozostałe miejsca zostają, jakie były.
+TRIAL("Quilt: wspólny tekst cięć nie przecieka do sąsiadów przy dalszym pisaniu") {
+    Quilt one{bytes("a-b-c")};
+
+    const std::string with = "XX";
+
+    one.spliced({Quilt::Cut{1, 1, with}, Quilt::Cut{3, 1, with}});
+
+    same(whole(one), std::string{"aXXbXXc"});
+
+    one.insert(6, "!");
+    one.insert(3, "?");
+
+    same(whole(one), std::string{"aXX?bXX!c"});
+}
+
+// **Skrawki zgadzają się ze wzorcem.** Losowe wstawienia, skasowania i przeniesienia skrawkami:
+// wyjęty skrawek ma tekst zakresu, ten sam skrawek wstawiony gdzie indziej (także dwa razy) daje to,
+// co wstawienie jego tekstu, a sklejanie z przodu i z tyłu daje sklejony tekst. Końce wierszy
+// i ostatni bajt liczą się w źródłach. Wszystko na kołdrze pociętej zwykłymi zmianami, żeby skrawki
+// łapały odcinki obu rodzajów.
+TRIAL("Quilt: skrawki zgadzają się ze wzorcem") {
+    std::mt19937 gen(11);
+
+    const auto drawn = [&gen](int most) {
+        std::string made;
+
+        const int much = 1 + static_cast<int>(gen() % static_cast<unsigned>(most));
+
+        for (int one = 0; one < much; ++one) made.push_back(gen() % 5 == 0 ? '\n' : static_cast<char>('a' + gen() % 26));
+
+        return made;
+    };
+
+    for (int round = 0; round < 200; ++round) {
+        std::string want = drawn(60);
+
+        Quilt one{bytes(want)};
+
+        Quilt::Scrap kept;
+        std::string told;
+
+        for (int step = 0; step < 30; ++step) {
+            const unsigned what = gen() % 5;
+
+            if (what == 0 || want.empty()) {
+                const std::size_t at = want.empty() ? 0 : gen() % (want.size() + 1);
+                const std::string more = drawn(5);
+
+                want.insert(at, more);
+                one.put(at, one.stored(more));
+            } else if (what == 1) {
+                const std::size_t at = gen() % want.size();
+                const std::size_t size = 1 + gen() % (want.size() - at);
+
+                const Quilt::Scrap cut = one.taken(at, size);
+
+                same(cut.much, size);
+                same(one.text(cut), want.substr(at, size));
+                same(one.lines(cut), static_cast<std::size_t>(std::count(want.begin() + static_cast<std::ptrdiff_t>(at),
+                                                                        want.begin() + static_cast<std::ptrdiff_t>(at + size), '\n')));
+                same(one.last(cut), want[at + size - 1]);
+
+                const bool front = gen() % 2 == 0;
+
+                Quilt::joined(kept, cut, front);
+                told = front ? want.substr(at, size) + told : told + want.substr(at, size);
+
+                same(one.text(kept), told);
+                same(kept.much, told.size());
+
+                want.erase(at, size);
+                one.erase(at, size);
+            } else if (what == 2 && kept.much > 0) {
+                const std::size_t at = gen() % (want.size() + 1);
+
+                want.insert(at, told);
+                one.put(at, kept);
+            } else {
+                const std::size_t at = gen() % want.size();
+                const std::size_t size = 1 + gen() % (want.size() - at);
+                const std::size_t target = gen() % (want.size() + 1);
+
+                const std::string moved = want.substr(at, size);
+
+                want.insert(target, moved);
+                one.put(target, one.taken(at, size));
+            }
+
+            same(one.whole(), want.size());
+            same(whole(one), want);
+        }
+    }
+
+    Quilt none{bytes("abc")};
+
+    same(none.last(Quilt::Scrap{}), '\0');
+    same(none.taken(3, 5).much, std::size_t{0});
+    same(none.taken(1, 0).much, std::size_t{0});
+    ought(none.taken(1, 0).pieces.empty());
+    ought(none.stored("").pieces.empty());
+    same(none.taken(1, 100).much, std::size_t{2});
+}
+
+// **Skasowanie i jego cofnięcie nie kopiują tekstu i zszywają dokument z powrotem.** Dopiski nie
+// rosną ani przy wyjmowaniu, ani przy wstawianiu skrawka, choćby sto razy; a po wstawieniu
+// wyjętego skrawka na to samo miejsce dokument znowu jest jednym odcinkiem — cofanie nie zostawia
+// po sobie pociętej kołdry. Tak samo dopisany tekst: wyjęty i wstawiony z powrotem zlewa się
+// z sąsiadami w jeden odcinek dopisków.
+TRIAL("Quilt: skrawek wraca bez kopii i zszywa odcinki") {
+    std::string doc;
+
+    for (int line = 0; line < 20000; ++line) doc += "wiersz " + std::to_string(line) + "\n";
+
+    Quilt one{bytes(doc)};
+
+    for (int round = 0; round < 100; ++round) {
+        const Quilt::Scrap cut = one.taken(1000, 100000);
+
+        one.erase(1000, 100000);
+        one.put(1000, cut);
+    }
+
+    same(one.appended(), std::size_t{0});
+    same(whole(one), doc);
+    same(one.taken(0, one.whole()).pieces.size(), std::size_t{1});
+
+    one.insert(500, "abcdef");
+
+    const Quilt::Scrap mid = one.taken(502, 2);
+
+    one.erase(502, 2);
+
+    same(one.taken(0, one.whole()).pieces.size(), std::size_t{4});
+
+    one.put(502, mid);
+
+    same(one.appended(), std::size_t{6});
+    same(one.taken(0, one.whole()).pieces.size(), std::size_t{3});
+    same(text(one.bytes(498, 10)), doc.substr(498, 2) + "abcdef" + doc.substr(500, 2));
+}
+
+// **Odcinki zlewają się na każdym styku.** Pisanie po znaku na końcu i w środku przedłuża jeden
+// odcinek dopisków; skrawek wyjęty z początku i wstawiony z powrotem zlewa się z prawym sąsiadem;
+// sklejanie skrawków z przodu i z tyłu zlewa przylegające odcinki, a pusty skrawek nie zmienia
+// niczego. Tekst byłby ten sam i bez zlewania — ale od liczby odcinków zależy koszt wszystkiego.
+TRIAL("Quilt: odcinki zlewają się na stykach") {
+    Quilt one{bytes("abcdef")};
+
+    const auto pieces = [&one] { return one.taken(0, one.whole()).pieces.size(); };
+
+    for (const char sign : std::string{"xyz"}) one.insert(one.whole(), std::string(1, sign));
+
+    same(pieces(), std::size_t{2});
+
+    for (const char sign : std::string{"123"}) one.insert(3 + static_cast<std::size_t>(sign - '1'), std::string(1, sign));
+
+    same(whole(one), std::string{"abc123defxyz"});
+    same(pieces(), std::size_t{4});
+
+    Quilt other{bytes("abcdef")};
+
+    const Quilt::Scrap head = other.taken(0, 3);
+
+    other.erase(0, 3);
+    other.put(0, head);
+
+    same(other.taken(0, other.whole()).pieces.size(), std::size_t{1});
+
+    Quilt::Scrap kept = other.taken(2, 1);
+
+    Quilt::joined(kept, other.taken(1, 1), true);
+    Quilt::joined(kept, other.taken(3, 2), false);
+
+    same(kept.pieces.size(), std::size_t{1});
+    same(other.text(kept), std::string{"bcde"});
+
+    Quilt::joined(kept, Quilt::Scrap{}, true);
+    Quilt::joined(kept, Quilt::Scrap{}, false);
+
+    same(kept.pieces.size(), std::size_t{1});
+    same(kept.much, std::size_t{4});
 }

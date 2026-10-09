@@ -49,12 +49,11 @@ Pool::~Pool() {
         if (one.joinable()) one.join();
 }
 
-Pool::Job Pool::take(std::function<void()> what) {
-    return handed(std::move(what), false, nullptr);
-}
-
-Pool::Job Pool::easily(std::function<void()> what) {
-    return handed(std::move(what), true, nullptr);
+// **Jedno słowo na „oddaj do wykonania"**, to samo co `Loop::post` — raz na pętlę, raz do puli
+// (przegląd, krok 6d). Tor mówi, czy praca czeka na system (`io`), czy liczy (`cpu`); dawniej były
+// to dwie nazwy, take i easily, a druga nie mówiła, że chodzi o liczenie.
+Pool::Job Pool::post(std::function<void()> what, Lane lane) {
+    return handed(std::move(what), lane, nullptr);
 }
 
 // **Numer wpisany, zanim zadanie stanie się widoczne.** Wersja bez miejsca oddaje numer dopiero
@@ -62,20 +61,16 @@ Pool::Job Pool::easily(std::function<void()> what) {
 // zadanie odwołać, ma okno, w którym ono już biegnie, a numeru jeszcze nie ma. `drop()` nie ma
 // wówczas czego zdjąć ani czyim dzwonkiem zadzwonić, więc anulowana praca przechodzi całą robotę
 // do końca. Zmierzone na 4000 obietnic: na 1523 uruchomione ciała 467 nie usłyszało dzwonka.
-Pool::Job Pool::take(std::function<void()> what, std::atomic<Job>& into) {
-    return handed(std::move(what), false, &into);
+Pool::Job Pool::post(std::function<void()> what, Lane lane, std::atomic<Job>& into) {
+    return handed(std::move(what), lane, &into);
 }
 
-Pool::Job Pool::easily(std::function<void()> what, std::atomic<Job>& into) {
-    return handed(std::move(what), true, &into);
-}
-
-// Dwie kolejki, jeden zespół. Praca zwykła ma prawo czekać na plik albo na martwy udział
+// Dwie kolejki, jeden zespół. Praca na torze `io` ma prawo czekać na plik albo na martwy udział
 // sieciowy, więc pula rośnie dla niej bez ograniczeń — inaczej dziewiąte takie zadanie
-// zatrzymałoby cały program. Praca łatwa deklaruje, że tylko liczy, więc nie ma sensu
+// zatrzymałoby cały program. Praca na torze `cpu` deklaruje, że tylko liczy, więc nie ma sensu
 // puszczać jej więcej naraz, niż maszyna ma rdzeni: dwustu liczących na ośmiu rdzeniach
 // policzy wolniej niż ośmiu.
-Pool::Job Pool::handed(std::function<void()> what, bool easy, std::atomic<Job>* into) {
+Pool::Job Pool::handed(std::function<void()> what, Lane lane, std::atomic<Job>* into) {
     std::unique_lock<std::mutex> held{guard_};
 
     const Job which = ++next_;
@@ -85,21 +80,21 @@ Pool::Job Pool::handed(std::function<void()> what, bool easy, std::atomic<Job>* 
     // zobaczy zero, ten wie, że żaden robotnik go jeszcze nie podniósł.
     if (into != nullptr) into->store(which);
 
-    if (easy) easy_.push_back(Doing{which, std::move(what)});
-    else eager_.push_back(Doing{which, std::move(what)});
+    if (lane == Lane::cpu) cpu_.push_back(Doing{which, std::move(what)});
+    else io_.push_back(Doing{which, std::move(what)});
 
     // Porównujemy z długością kolejki, a nie z zerem. Robotnik obudzony przed chwilą jest
     // wciąż liczony jako wolny, dopóki sam nie zdejmie zadania — więc reguła „stawiaj, gdy
     // nikt nie jest wolny" przy garści zadań wrzuconych naraz stawia jednego i każe reszcie
     // czekać w kolejce.
-    const bool hasty = eager_.size() > idle_;
-    const bool slack = !hasty && easy_.size() > idle_ && spare_ < most_;
+    const bool hasty = io_.size() > idle_;
+    const bool slack = !hasty && cpu_.size() > idle_ && spare_ < most_;
 
     if (hasty || slack) {
         staff_.emplace_back([this] { serve(); });
         ++idle_;
 
-        // Robotnicy postawieni dla pracy łatwej liczeni osobno: inaczej praca blokująca, która
+        // Robotnicy postawieni dla pracy liczącej liczeni osobno: inaczej praca blokująca, która
         // zajęła cały zespół, zagłodziłaby liczącą — sufit byłby wyczerpany cudzymi wątkami.
         if (slack) ++spare_;
     }
@@ -127,7 +122,7 @@ bool Pool::pulled(std::deque<Doing>& from, Job which) {
 void Pool::drop(Job which) {
     const std::lock_guard<std::mutex> held{guard_};
 
-    if (pulled(eager_, which) || pulled(easy_, which)) {
+    if (pulled(io_, which) || pulled(cpu_, which)) {
         emptied_.notify_all();
         return;
     }
@@ -138,7 +133,7 @@ void Pool::drop(Job which) {
 
 void Pool::drain() {
     std::unique_lock<std::mutex> held{guard_};
-    emptied_.wait(held, [this] { return eager_.empty() && easy_.empty() && busy_ == 0; });
+    emptied_.wait(held, [this] { return io_.empty() && cpu_.empty() && busy_ == 0; });
 }
 
 std::size_t Pool::staff() const {
@@ -154,24 +149,24 @@ void Pool::serve() {
 
     while (true) {
         Doing one;
-        bool easy = false;
+        bool cpu = false;
 
         {
             std::unique_lock<std::mutex> held{guard_};
 
             stirred_.wait(held, [this] {
-                return closing_ || !eager_.empty() || (!easy_.empty() && easing_ < most_);
+                return closing_ || !io_.empty() || (!cpu_.empty() && cpu_busy_ < most_);
             });
 
-            if (!eager_.empty()) {
-                one = std::move(eager_.front());
-                eager_.pop_front();
-            } else if (!easy_.empty() && (easing_ < most_ || closing_)) {
-                one = std::move(easy_.front());
-                easy_.pop_front();
+            if (!io_.empty()) {
+                one = std::move(io_.front());
+                io_.pop_front();
+            } else if (!cpu_.empty() && (cpu_busy_ < most_ || closing_)) {
+                one = std::move(cpu_.front());
+                cpu_.pop_front();
 
-                easy = true;
-                ++easing_;
+                cpu = true;
+                ++cpu_busy_;
             } else {
                 if (closing_) {
                     standing = nullptr;
@@ -215,11 +210,15 @@ void Pool::serve() {
 
             --busy_;
             ++idle_;
-            if (easy) --easing_;
+            if (cpu) --cpu_busy_;
         }
 
+        // Zwolnione miejsce liczącej pracy może przyjąć jeden czekający robotnik — budzimy jednego,
+        // a nie wszystkich. Praca blokująca miejsca nie zajmuje, więc po niej nikogo budzić nie
+        // trzeba: kolejkę sprawdzi ten robotnik sam, w następnym obrocie.
         emptied_.notify_all();
-        stirred_.notify_all();
+
+        if (cpu) stirred_.notify_one();
     }
 }
 

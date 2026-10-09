@@ -18,6 +18,24 @@ constexpr char esc = '\x1b';
 // śmieci. Bez tego zepsute wejście rosłoby w buforze bez końca.
 constexpr std::size_t most = 64;
 
+// Napisy sterujące — OSC (`Esc ]`), DCS (`Esc P`), APC (`Esc _`), PM (`Esc ^`) i SOS (`Esc X`) —
+// to odpowiedzi terminala, nie klawisze: kolor tła, XTGETTCAP, odpowiedź protokołu obrazów kitty.
+// Kończy je ST (`Esc \`), a OSC także dzwonek. Bywają długie, więc mają własny zapas.
+constexpr std::size_t stretched = 4096;
+
+bool stringed(char lead) { return lead == ']' || lead == 'P' || lead == '_' || lead == '^' || lead == 'X'; }
+
+// Koniec napisu sterującego od `from`; `npos`, gdy jeszcze nie przyszedł.
+std::size_t ended(const std::string& rest, std::size_t from, char lead) {
+    for (std::size_t at = from; at < rest.size(); ++at) {
+        if (lead == ']' && rest[at] == '\x07') return at + 1;
+
+        if (rest[at] == esc && at + 1 < rest.size() && rest[at + 1] == '\\') return at + 2;
+    }
+
+    return std::string::npos;
+}
+
 std::vector<int> numbers(std::string_view body) {
     std::vector<int> made;
 
@@ -141,14 +159,35 @@ bool Decoder::pending() const {
 
 // Wiszący Esc rozstrzyga ten, kto ma zegar — dekoder tylko mówi, że coś trzyma. Po upływie
 // czasu zamieniamy go w klawisz i puszczamy w obieg to, co za nim zostało.
+//
+// Esc z początkiem napisu sterującego, po którym nic nie domknęło napisu, to jednak Alt z literą —
+// Alt+P, Alt+] — i taki klawisz wychodzi, a reszta idzie jako zwykłe znaki.
 void Decoder::flush(ui::Root& onto) {
     if (!pending()) return;
+
+    if (held_->rest.size() >= 2 && stringed(held_->rest[1])) {
+        ui::Mods mods;
+        mods.alt = true;
+
+        ui::KeyEvent what{ui::Key{ui::Key{static_cast<char32_t>(held_->rest[1])}, mods}};
+
+        held_->rest.erase(0, 2);
+
+        (void)onto.dispatch(what);
+
+        std::string spare;
+        spare.swap(held_->rest);
+
+        fed(spare, onto);
+
+        return;
+    }
 
     held_->rest.erase(0, 1);
 
     ui::KeyEvent what{ui::Key{ui::Code::escape}};
 
-    (void)onto.deal(what);
+    (void)onto.dispatch(what);
 
     std::string spare;
     spare.swap(held_->rest);
@@ -200,7 +239,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
             ui::PasteEvent what{std::move(held.pasted)};
             held.pasted.clear();
 
-            (void)onto.deal(what);
+            (void)onto.dispatch(what);
 
             continue;
         }
@@ -217,11 +256,26 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
             if (lead == esc) {
                 ui::KeyEvent what{ui::Key{ui::Code::escape}};
 
-                (void)onto.deal(what);
+                (void)onto.dispatch(what);
 
                 ++at;
 
                 continue;
+            }
+
+            // **Spóźnione odpowiedzi terminala nie są klawiszami.** Sonda możliwości czeka na nie
+            // chwilę; przez SSH albo na wolnym terminalu odpowiedź przychodziła po czasie i szła
+            // tutaj — kolor tła z OSC 11 stawał się Alt+] i ciągiem liter wpisanych w pole.
+            if (stringed(lead)) {
+                const std::size_t end = ended(held.rest, at + 2, lead);
+
+                if (end != std::string::npos) {
+                    at = end;
+
+                    continue;
+                }
+
+                if (held.rest.size() - at <= stretched) break;
             }
 
             if (lead == '[' || lead == 'O') {
@@ -263,7 +317,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
                     if ((mask & 64) != 0) {
                         ui::WheelEvent what{where, (mask & 1) != 0 ? -1 : 1, mods};
 
-                        (void)onto.deal(what);
+                        (void)onto.dispatch(what);
 
                         continue;
                     }
@@ -279,12 +333,21 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
                     ui::MouseEvent what{where, press, button, mods};
 
-                    (void)onto.deal(what);
+                    (void)onto.dispatch(what);
 
                     continue;
                 }
 
+                // Odpowiedzi ze znacznikiem prywatnym — Primary i Secondary DA, DECRPM, raport
+                // położenia kursora DECXCPR, flagi klawiatury kitty — klawiszami nie są nigdy.
+                if (!body.empty() && (body.front() == '?' || body.front() == '>' || body.front() == '='))
+                    continue;
+
                 const std::vector<int> among = numbers(body);
+
+                // Raport położenia kursora (CPR): `Esc [ wiersz ; kolumna R`. F3 z modyfikatorem
+                // ma ten sam kształt, ale zawsze z jedynką na przedzie.
+                if (last == 'R' && among.size() >= 2 && among[0] != 1) continue;
 
                 if (last == '~') {
                     if (!among.empty() && among[0] == 200) {
@@ -297,22 +360,22 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
                     const ui::Key key = among.empty() ? ui::Key{} : tilde(among[0]);
 
-                    if (!key.held()) continue;
+                    if (key.empty()) continue;
 
                     ui::KeyEvent what{ui::Key{key, among.size() > 1 ? marked(among[1]) : ui::Mods{}}};
 
-                    (void)onto.deal(what);
+                    (void)onto.dispatch(what);
 
                     continue;
                 }
 
                 const ui::Key key = lettered(last);
 
-                if (!key.held()) continue;
+                if (key.empty()) continue;
 
                 ui::KeyEvent what{ui::Key{key, among.size() > 1 ? marked(among[1]) : ui::Mods{}}};
 
-                (void)onto.deal(what);
+                (void)onto.dispatch(what);
 
                 continue;
             }
@@ -330,14 +393,14 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
                 ui::KeyEvent what{ui::Key{key, mods}};
 
-                (void)onto.deal(what);
+                (void)onto.dispatch(what);
 
                 at += 2;
 
                 continue;
             }
 
-            const std::size_t more = following(next);
+            const std::size_t more = utf8::trailing(next);
 
             if (more == 0) {
                 at += 2;
@@ -355,7 +418,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
             ui::KeyEvent what{ui::Key{code, mods}};
 
-            (void)onto.deal(what);
+            (void)onto.dispatch(what);
 
             at += 2 + more;
 
@@ -369,7 +432,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
             ui::KeyEvent what{ui::Key{key, mods}};
 
-            (void)onto.deal(what);
+            (void)onto.dispatch(what);
 
             ++at;
 
@@ -379,14 +442,14 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
         if (byte < 0x80) {
             ui::KeyEvent what{ui::Key{static_cast<char32_t>(byte)}};
 
-            (void)onto.deal(what);
+            (void)onto.dispatch(what);
 
             ++at;
 
             continue;
         }
 
-        const std::size_t more = following(byte);
+        const std::size_t more = utf8::trailing(byte);
 
         if (more == 0) {
             ++at;
@@ -405,7 +468,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
         ui::KeyEvent what{ui::Key{code}};
 
-        (void)onto.deal(what);
+        (void)onto.dispatch(what);
 
         at += 1 + more;
     }

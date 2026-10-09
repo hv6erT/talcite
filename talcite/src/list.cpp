@@ -1,11 +1,13 @@
 #include "talcite/list.hpp"
 
 #include <algorithm>
+#include <climits>
 
-#include "talcite/bar.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/root.hpp"
+
+#include "scrollbar.hpp"
 
 namespace talcite::ui {
 
@@ -16,12 +18,13 @@ constexpr int stepping = 3;
 
 }
 
-List::List(int wide, int high, ListStyle style) : style_(style), wide_(wide), high_(high) {}
+List::List(int wide, int high, ScrollShape shape)
+    : shape_(shape), grip_(std::make_shared<Grip>()), wide_(wide), high_(high) {}
 
 // Lista trzyma pozycje jako dzieci, tak samo jak menu — więc przyjmuje ich dowolnie wiele.
-int List::takes() const { return plenty; }
+int List::capacity() const { return plenty; }
 
-// Lista składa się z wierszy. `which()` liczy numer wśród dzieci i sięga po nie jak po pozycje,
+// Lista składa się z wierszy. `which()` i `current()` liczą numer wśród dzieci i sięga po nie jak po pozycje,
 // więc obce dziecko rozjeżdżałoby numerację z tym, co widać.
 bool List::accepts(const Node& one) const { return dynamic_cast<const ListItem*>(&one) != nullptr; }
 
@@ -55,7 +58,7 @@ int List::nearest(int from, int step) const {
     for (int at = from + step; at >= 0 && at < much; at += step) {
         const ListItem* one = item(at);
 
-        if (one != nullptr && one->able()) return at;
+        if (one != nullptr && one->enabled()) return at;
     }
 
     return -1;
@@ -69,7 +72,7 @@ int List::nearest(int from, int step) const {
 void List::focus() {
     ListItem* one = item(which_);
 
-    if (one == nullptr || !one->able()) one = item(nearest(-1, 1));
+    if (one == nullptr || !one->enabled()) one = item(nearest(-1, 1));
 
     if (one != nullptr) {
         one->focus();
@@ -80,10 +83,23 @@ void List::focus() {
     Node::focus();
 }
 
+// **Bieżący wiersz ma dwie twarze pod dwiema nazwami**, tak samo w każdym widżecie z pozycjami:
+// `which()` to jego numer, `current()` — on sam. Kto chce z wierszem coś zrobić — przeczytać
+// napis, nacisnąć, porównać tożsamość — bierze `current()`; kto potrzebuje numeru do własnej
+// tablicy obok, bierze `which()`. Pustka to `nullopt` i `nullptr`, bez umownej liczby. W środku
+// numer siedzi jako `int` z `-1`, bo rachunek kroków w `nearest` idzie na nim.
+std::optional<std::size_t> List::which() const {
+    if (item(which_) == nullptr) return std::nullopt;
+
+    return static_cast<std::size_t>(which_);
+}
+
+ListItem* List::current() const { return item(which_); }
+
 // Numer bieżącego wiersza ustawia się **przez ognisko**, gdy lista je trzyma; w innym razie zostaje
 // zapamiętany i użyty przy najbliższym wejściu w listę. Dzięki temu wyjście Tabem na przycisk
 // i powrót wracają na ten sam wiersz.
-void List::which(int given) {
+void List::aim(int given) {
     const int much = static_cast<int>(children().many());
 
     if (much == 0) {
@@ -99,22 +115,26 @@ void List::which(int given) {
 
     if (top == nullptr) return;
 
-    for (const Node* at = top->focus(); at != nullptr; at = at->parent())
+    for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
         if (at == this) {
-            if (ListItem* one = item(which_); one != nullptr && one->able()) one->focus();
+            if (ListItem* one = item(which_); one != nullptr && one->enabled()) one->focus();
 
             return;
         }
 }
 
-void List::which(ListItem* one) {
-    for (int at = 0; at < static_cast<int>(children().many()); ++at)
-        if (children()[static_cast<std::size_t>(at)].get() == one) {
-            which(at);
-
-            return;
-        }
+// Po numerze — do budowy listy, gdy wołający ma numer opcji, a nie jeszcze wiersz. Ponad ostatni
+// przycina do ostatniego, jak dotąd.
+void List::which(std::size_t given) {
+    aim(static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX))));
 }
+
+// Wiersz spoza listy nic nie zmienia.
+void List::current(ListItem& one) {
+    if (const std::optional<std::size_t> at = children().find(one)) which(*at);
+}
+
+std::size_t List::first() const { return static_cast<std::size_t>(shift_); }
 
 void List::pick() {
     if (ListItem* one = item(which_)) one->pick();
@@ -122,21 +142,16 @@ void List::pick() {
 
 // Przewinięcie widoku, bez ruszania bieżącego wiersza. Górnej granicy tu nie sprawdzamy, bo zależy
 // od wysokości, której w tej chwili nie znamy — przytnie ją malowanie.
-void List::first(int given) {
-    const int was = shift_;
-
-    shift_ = std::max(given, 0);
-
-    if (shift_ != was) stirred();
-}
-
-// **Zawiadamiamy zdarzeniem, nie własnym wywołaniem zwrotnym.** Wcześniej stało tu `moved`, czyli
+//
+// **Zawiadamiamy zdarzeniem, nie własnym wywołaniem zwrotnym.** Wcześniej stało tu moved, czyli
 // drugi mechanizm obok `on` i `off` — a jedna rzecz ma mieć jedną drogę. Zdarzenie nie niesie
 // numeru wiersza, bo pytający ma go pod ręką w `which()`, a widok w `first()`.
-void List::stirred() {
-    ScrollEvent one;
+void List::first(std::size_t given) {
+    const int was = shift_;
 
-    (void)trigger(one);
+    shift_ = static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX)));
+
+    if (shift_ != was) (void)trigger(ScrollEvent{});
 }
 
 bool List::going(int to) {
@@ -170,7 +185,7 @@ bool List::walking(int step, int times) {
 //
 // Wysokość strony bierzemy z prostokąta **z poprzedniej klatki**: tylko on zna szerokość i wysokość,
 // które lista naprawdę dostała. Przed pierwszym malowaniem strona to jeden wiersz.
-bool List::react(KeyEvent& what) {
+bool List::handle(KeyEvent& what) {
     if (what.mods().ctrl || what.mods().alt) return false;
 
     const int page = std::max(area().size.high, 1);
@@ -197,7 +212,7 @@ bool List::react(KeyEvent& what) {
 // programie plikowym wisi na tym odświeżanie podglądu.
 //
 // Na końcu przewijania oddajemy false, więc ruch idzie w górę i przewijak nad listą go dostaje.
-bool List::react(WheelEvent& what) {
+bool List::handle(WheelEvent& what) {
     const int much = static_cast<int>(children().many());
     const int window = std::max(area().size.high, 0);
     const int was = shift_;
@@ -206,7 +221,38 @@ bool List::react(WheelEvent& what) {
 
     if (shift_ == was) return false;
 
-    stirred();
+    (void)trigger(ScrollEvent{});
+
+    return true;
+}
+
+// Widok na nowe miejsce, przycięte do treści; zawiadomienie tylko o zmianie, jak przy kółku.
+void List::slid(int to) {
+    const int much = static_cast<int>(children().many());
+    const int window = std::max(area().size.high, 0);
+    const int was = shift_;
+
+    shift_ = std::clamp(to, 0, std::max(much - window, 0));
+
+    if (shift_ != was) (void)trigger(ScrollEvent{});
+}
+
+// **Mysz na pasku** (U6 w twa): strzałka — wiersz, tor — strona, suwak — ciągnięcie. Jak kółko:
+// rusza widok, bieżącego wiersza nie.
+bool List::handle(MouseEvent& what) {
+    const Asked asked = grip_->mouse(what, local(what.where()), *this);
+    const int window = std::max(area().size.high, 1);
+
+    switch (asked.part) {
+        case Part::none: return false;
+        case Part::back: slid(shift_ - 1); break;
+        case Part::forth: slid(shift_ + 1); break;
+        case Part::before: slid(shift_ - window); break;
+        case Part::after: slid(shift_ + window); break;
+        case Part::thumb:
+            if (asked.to.has_value()) slid(static_cast<int>(*asked.to));
+            break;
+    }
 
     return true;
 }
@@ -214,8 +260,8 @@ bool List::react(WheelEvent& what) {
 // **Tu jest cała księgowość bieżącego wiersza.** Ognisko postawione na pozycji — klawiszem, klikiem,
 // Tabem czy z programu — bąbelkuje stamtąd do listy, więc wszystkie te drogi schodzą się w jednym
 // miejscu, zamiast każda ustawiać numer po swojemu.
-bool List::react(FocusEvent& what) {
-    Node* one = dynamic_cast<Node*>(what.at());
+bool List::handle(FocusEvent& what) {
+    Node* one = dynamic_cast<Node*>(what.target());
 
     if (one == nullptr || one == this) return false;
 
@@ -227,7 +273,7 @@ bool List::react(FocusEvent& what) {
         if (which_ != at) {
             which_ = at;
 
-            stirred();
+            (void)trigger(ScrollEvent{});
         }
 
         break;
@@ -241,7 +287,7 @@ View List::paint(Size given, Area seen) {
 
     // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const int much = static_cast<int>(children().many());
 
@@ -249,7 +295,8 @@ View List::paint(Size given, Area seen) {
     // sam się nie naprawi. Przycinamy go tutaj, bo tu i tak liczymy wszystko od nowa.
     if (which_ >= much) which_ = much - 1;
 
-    const int aside = style_.progress && given.wide > 0 ? 1 : 0;
+    // Pasek „gdy trzeba" (`needed`) stoi tylko przy liście dłuższej niż okno.
+    const int aside = shape_.scrollbar && given.wide > 0 && (!shape_.needed || much > given.high) ? 1 : 0;
     const int wide = given.wide - aside;
 
     // **Przewinięcie liczy się tutaj**, bo dopiero tu znana jest wysokość, którą lista naprawdę
@@ -276,13 +323,29 @@ View List::paint(Size given, Area seen) {
         const Area where{{0, shown ? y : 0}, {wide, shown ? 1 : 0}};
         const Area part = Area::crossed(seen, where);
 
-        made.within(children()[static_cast<std::size_t>(at)]->render(where, part - where.at),
+        made.draw(children()[static_cast<std::size_t>(at)]->render(where, part - where.at),
                     part.at - seen.at);
     }
 
-    if (aside != 0)
-        barred(made, {given.wide - 1 - seen.at.x, -seen.at.y}, given.high, true, shift_, much,
-               given.high, skin(), bar_);
+    if (aside != 0) {
+        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
+                            .much = given.high,
+                            .shift = static_cast<std::size_t>(shift_),
+                            .whole = static_cast<std::size_t>(much),
+                            .window = static_cast<std::size_t>(given.high),
+                            .skin = skin(),
+                            .role = scrollbar_role_};
+
+        bar.draw(made);
+
+        Track mine = bar.track();
+
+        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
+
+        grip_->laid(mine);
+    } else {
+        grip_->laid(std::nullopt);
+    }
 
     return made;
 }

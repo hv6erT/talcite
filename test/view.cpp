@@ -1,7 +1,9 @@
 #include "proving.hpp"
 
 #include <string>
+#include <string_view>
 
+#include "talcite/encoding.hpp"
 #include "talcite/view.hpp"
 
 using namespace talcite;
@@ -12,7 +14,7 @@ namespace {
 Style marked() {
     Style made;
     made.bold = true;
-    made.ink = Color{false, 200, 100, 50};
+    made.foreground = Color{false, 200, 100, 50};
 
     return made;
 }
@@ -22,11 +24,31 @@ View painted(ui::Size how, char32_t what) {
     View made{how};
 
     for (int y = 0; y < how.high; ++y)
-        for (int x = 0; x < how.wide; ++x) made.letter({x, y}, what, Style{});
+        for (int x = 0; x < how.wide; ++x) made.put({x, y}, what, Style{});
 
     return made;
 }
 
+}
+
+// `put` ma dwa przeciążenia: znak i napis. Każdy zapis, jaki pisze się odruchowo — literał znaku,
+// literał napisu, `std::string` — musi trafić tam, gdzie znaczy, bez rzutowania.
+TRIAL("View: put rozróżnia znak od napisu") {
+    View one{{6, 1}};
+
+    one.put({0, 0}, U'ż', marked());
+    one.put({1, 0}, 'a', Style{});
+    one.put({2, 0}, "bc", Style{});
+    one.put({4, 0}, std::string{"d"}, Style{});
+    one.put({5, 0}, std::string_view{"e"}, Style{});
+
+    same(one.at({0, 0}).letter, U'ż');
+    ought(one.at({0, 0}).style == marked());
+    same(one.at({1, 0}).letter, U'a');
+    same(one.at({2, 0}).letter, U'b');
+    same(one.at({3, 0}).letter, U'c');
+    same(one.at({4, 0}).letter, U'd');
+    same(one.at({5, 0}).letter, U'e');
 }
 
 TRIAL("View: świeża kartka ma rozmiar i same spacje") {
@@ -49,7 +71,7 @@ TRIAL("View: ujemny wymiar schodzi do zera, a nie do wyjątku") {
 TRIAL("View: litera staje tam, gdzie kazano") {
     View one{{4, 2}};
 
-    one.letter({2, 1}, U'A', marked());
+    one.put({2, 1}, U'A', marked());
 
     same(one.at({2, 1}).letter, U'A');
     ought(one.at({2, 1}).style.bold);
@@ -59,9 +81,9 @@ TRIAL("View: litera staje tam, gdzie kazano") {
 TRIAL("View: pisanie poza kartką nic nie robi") {
     View one{{2, 2}};
 
-    one.letter({5, 0}, U'A', Style{});
-    one.letter({-1, 0}, U'B', Style{});
-    one.letter({0, 9}, U'C', Style{});
+    one.put({5, 0}, U'A', Style{});
+    one.put({-1, 0}, U'B', Style{});
+    one.put({0, 9}, U'C', Style{});
 
     same(one.at({0, 0}).letter, U' ');
     same(one.at({1, 1}).letter, U' ');
@@ -70,7 +92,7 @@ TRIAL("View: pisanie poza kartką nic nie robi") {
 TRIAL("View: napis idzie w prawo") {
     View one{{6, 1}};
 
-    one.string({1, 0}, "abc", Style{});
+    one.put({1, 0}, "abc", Style{});
 
     same(one.at({0, 0}).letter, U' ');
     same(one.at({1, 0}).letter, U'a');
@@ -81,7 +103,7 @@ TRIAL("View: napis idzie w prawo") {
 TRIAL("View: napis z ogonkami liczy znaki, nie bajty") {
     View one{{4, 1}};
 
-    one.string({0, 0}, "żółw", Style{});
+    one.put({0, 0}, "żółw", Style{});
 
     same(one.at({0, 0}).letter, U'ż');
     same(one.at({1, 0}).letter, U'ó');
@@ -92,7 +114,7 @@ TRIAL("View: napis z ogonkami liczy znaki, nie bajty") {
 TRIAL("View: napis urywa się na krawędzi") {
     View one{{3, 1}};
 
-    one.string({1, 0}, "abcdef", Style{});
+    one.put({1, 0}, "abcdef", Style{});
 
     same(one.at({1, 0}).letter, U'a');
     same(one.at({2, 0}).letter, U'b');
@@ -106,7 +128,7 @@ TRIAL("View: popsuty UTF-8 daje znak zastępczy zamiast zniknąć") {
     said += static_cast<char>(0xFF);
     said += "b";
 
-    one.string({0, 0}, said, Style{});
+    one.put({0, 0}, said, Style{});
 
     same(one.at({0, 0}).letter, U'a');
     same(one.at({1, 0}).letter, U'�');
@@ -116,7 +138,7 @@ TRIAL("View: popsuty UTF-8 daje znak zastępczy zamiast zniknąć") {
 TRIAL("View: znak podwójnej szerokości zajmuje dwie kratki") {
     View one{{4, 1}};
 
-    one.letter({1, 0}, U'漢', Style{});
+    one.put({1, 0}, U'漢', Style{});
 
     same(one.at({1, 0}).letter, U'漢');
     same(one.at({2, 0}).letter, static_cast<char32_t>(0));
@@ -125,7 +147,7 @@ TRIAL("View: znak podwójnej szerokości zajmuje dwie kratki") {
 TRIAL("View: podwójny znak na ostatniej kolumnie zostaje spacją") {
     View one{{3, 1}};
 
-    one.letter({2, 0}, U'漢', Style{});
+    one.put({2, 0}, U'漢', Style{});
 
     same(one.at({2, 0}).letter, U' ');
 }
@@ -133,8 +155,8 @@ TRIAL("View: podwójny znak na ostatniej kolumnie zostaje spacją") {
 TRIAL("View: nadpisanie połowy podwójnego znaku sprząta drugą połowę") {
     View one{{4, 1}};
 
-    one.letter({0, 0}, U'漢', Style{});
-    one.letter({1, 0}, U'x', Style{});
+    one.put({0, 0}, U'漢', Style{});
+    one.put({1, 0}, U'x', Style{});
 
     same(one.at({0, 0}).letter, U' ');
     same(one.at({1, 0}).letter, U'x');
@@ -143,8 +165,8 @@ TRIAL("View: nadpisanie połowy podwójnego znaku sprząta drugą połowę") {
 TRIAL("View: nadpisanie pierwszej połowy sprząta ciąg dalszy") {
     View one{{4, 1}};
 
-    one.letter({1, 0}, U'漢', Style{});
-    one.letter({1, 0}, U'x', Style{});
+    one.put({1, 0}, U'漢', Style{});
+    one.put({1, 0}, U'x', Style{});
 
     same(one.at({1, 0}).letter, U'x');
     same(one.at({2, 0}).letter, U' ');
@@ -165,14 +187,14 @@ TRIAL("View: cień zmienia styl, ale zostawia literę spod spodu") {
     View one = painted({4, 1}, U'x');
 
     View two{{4, 1}};
-    two.bare({{0, 0}, {4, 1}});
+    two.clear({{0, 0}, {4, 1}});
 
     Style dark;
     dark.faint = true;
 
     two.shade({{1, 0}, {2, 1}}, dark);
 
-    one.within(two, {0, 0});
+    one.draw(two, {0, 0});
 
     same(one.at({0, 0}).letter, U'x');
     ought(!one.at({0, 0}).style.faint);
@@ -192,7 +214,7 @@ TRIAL("View: cień nad pustką rysuje się jak zwykła kratka") {
 
     two.shade({{0, 0}, {2, 1}}, dark);
 
-    one.within(two, {0, 0});
+    one.draw(two, {0, 0});
 
     same(one.at({0, 0}).letter, U' ');
     ought(one.at({0, 0}).style.faint);
@@ -207,19 +229,19 @@ TRIAL("View: cień przez pustkę dochodzi piętro wyżej") {
 
     // Piętro środkowe: samo nic.
     View middle{{3, 1}};
-    middle.bare({{0, 0}, {3, 1}});
+    middle.clear({{0, 0}, {3, 1}});
 
     // Piętro górne: sam cień.
     View above{{3, 1}};
-    above.bare({{0, 0}, {3, 1}});
+    above.clear({{0, 0}, {3, 1}});
 
     Style dark;
     dark.faint = true;
 
     above.shade({{1, 0}, {1, 1}}, dark);
 
-    middle.within(above, {0, 0});
-    under.within(middle, {0, 0});
+    middle.draw(above, {0, 0});
+    under.draw(middle, {0, 0});
 
     same(under.at({1, 0}).letter, U'x');
     ought(under.at({1, 0}).style.faint);
@@ -227,14 +249,102 @@ TRIAL("View: cień przez pustkę dochodzi piętro wyżej") {
     ought(!under.at({2, 0}).style.faint);
 }
 
+// **Sam pierwszy plan** (kratka brzegu obrazu): znak i jego barwa własne, tło spod spodu. Napis tak nie
+// robi — jego rola podaje własne tło — więc to osobny rodzaj kratki, a nie nowa reguła wklejania.
+TRIAL("View: pierwszy plan bierze tło spodu, a znak i barwę ma swoje") {
+    View one{{2, 1}};
+
+    Style blue;
+
+    blue.background = Color{false, 0, 0, 160};
+
+    one.fill({{0, 0}, {2, 1}}, blue);
+
+    View two{{2, 1}};
+    two.clear({{0, 0}, {2, 1}});
+
+    Style red;
+
+    red.foreground = Color{false, 200, 0, 0};
+
+    two.foreground({0, 0}, U'▌', red);
+
+    // Znak zerowy to brak znaku — bez niego pierwszy plan niczego nie kładzie.
+    two.foreground({1, 0}, 0, red);
+
+    same(static_cast<int>(two.at({1, 0}).shown), static_cast<int>(Shown::none));
+
+    one.draw(two, {0, 0});
+
+    same(one.at({0, 0}).letter, U'▌');
+    same(one.at({0, 0}).style.foreground, (Color{false, 200, 0, 0}));
+    same(one.at({0, 0}).style.background, (Color{false, 0, 0, 160}));
+    same(static_cast<int>(one.at({0, 0}).shown), static_cast<int>(Shown::own));
+    same(one.at({1, 0}).style.background, (Color{false, 0, 0, 160}));
+
+    // Zwykła kratka z tym samym stylem zasłania tło spodu przezroczystym — tak jak napis.
+    View three{{2, 1}};
+    three.clear({{0, 0}, {2, 1}});
+    three.put({0, 0}, U'▌', red);
+
+    one.draw(three, {0, 0});
+
+    ought(one.at({0, 0}).style.background.transparent);
+}
+
+TRIAL("View: pierwszy plan przez pustkę dochodzi piętro wyżej, a z podanym tłem jest zwykłą kratką") {
+    View under{{2, 1}};
+
+    Style blue;
+
+    blue.background = Color{false, 0, 0, 160};
+
+    under.fill({{0, 0}, {2, 1}}, blue);
+
+    View middle{{2, 1}};
+    middle.clear({{0, 0}, {2, 1}});
+
+    View above{{2, 1}};
+    above.clear({{0, 0}, {2, 1}});
+
+    Style red;
+
+    red.foreground = Color{false, 200, 0, 0};
+
+    Style papered = red;
+
+    papered.background = Color{false, 0, 120, 0};
+
+    above.foreground({0, 0}, U'▐', red);
+    above.foreground({1, 0}, U'▐', papered);
+
+    same(static_cast<int>(above.at({0, 0}).shown), static_cast<int>(Shown::foreground));
+    same(static_cast<int>(above.at({1, 0}).shown), static_cast<int>(Shown::own));
+
+    middle.draw(above, {0, 0});
+
+    same(static_cast<int>(middle.at({0, 0}).shown), static_cast<int>(Shown::foreground));
+
+    under.draw(middle, {0, 0});
+
+    same(under.at({0, 0}).letter, U'▐');
+    same(under.at({0, 0}).style.background, (Color{false, 0, 0, 160}));
+    same(under.at({1, 0}).style.background, (Color{false, 0, 120, 0}));
+
+    // Poza kartką pierwszy plan nie robi nic.
+    above.foreground({5, 0}, U'x', red);
+
+    same(above.size().wide, 2);
+}
+
 TRIAL("View: kratka nierysowana nie zmienia niczego") {
     View one = painted({3, 1}, U'x');
 
     View two{{3, 1}};
-    two.letter({0, 0}, U'a', marked());
-    two.bare({{1, 0}, {2, 1}});
+    two.put({0, 0}, U'a', marked());
+    two.clear({{1, 0}, {2, 1}});
 
-    one.within(two, {0, 0});
+    one.draw(two, {0, 0});
 
     same(one.at({0, 0}).letter, U'a');
     same(one.at({1, 0}).letter, U'x');
@@ -246,10 +356,10 @@ TRIAL("View: zamalowanie po pustce znów zasłania") {
     View one = painted({2, 1}, U'x');
 
     View two{{2, 1}};
-    two.bare({{0, 0}, {2, 1}});
-    two.letter({1, 0}, U'b', Style{});
+    two.clear({{0, 0}, {2, 1}});
+    two.put({1, 0}, U'b', Style{});
 
-    one.within(two, {0, 0});
+    one.draw(two, {0, 0});
 
     same(one.at({0, 0}).letter, U'x');
     same(one.at({1, 0}).letter, U'b');
@@ -258,7 +368,7 @@ TRIAL("View: zamalowanie po pustce znów zasłania") {
 TRIAL("View: wklejenie stawia cudzą kartkę pod przesunięciem") {
     View one{{6, 4}};
 
-    one.within(painted({2, 2}, U'x'), {3, 1});
+    one.draw(painted({2, 2}, U'x'), {3, 1});
 
     same(one.at({3, 1}).letter, U'x');
     same(one.at({4, 2}).letter, U'x');
@@ -269,7 +379,7 @@ TRIAL("View: wklejenie stawia cudzą kartkę pod przesunięciem") {
 TRIAL("View: wklejenie przycina to, co wystaje") {
     View one{{3, 2}};
 
-    one.within(painted({4, 4}, U'x'), {2, 1});
+    one.draw(painted({4, 4}, U'x'), {2, 1});
 
     same(one.at({2, 1}).letter, U'x');
     same(one.size().wide, 3);
@@ -280,10 +390,10 @@ TRIAL("View: wklejenie z ujemnym przesunięciem bierze tylko widoczną część"
     View one{{3, 2}};
 
     View two{{3, 2}};
-    two.letter({0, 0}, U'a', Style{});
-    two.letter({2, 1}, U'b', Style{});
+    two.put({0, 0}, U'a', Style{});
+    two.put({2, 1}, U'b', Style{});
 
-    one.within(two, {-1, -1});
+    one.draw(two, {-1, -1});
 
     same(one.at({1, 0}).letter, U'b');
     same(one.at({0, 0}).letter, U' ');
@@ -292,7 +402,7 @@ TRIAL("View: wklejenie z ujemnym przesunięciem bierze tylko widoczną część"
 TRIAL("View: wklejenie zupełnie obok nie rusza kartki") {
     View one{{3, 2}};
 
-    one.within(painted({2, 2}, U'x'), {9, 9});
+    one.draw(painted({2, 2}, U'x'), {9, 9});
 
     same(one.at({0, 0}).letter, U' ');
     same(one.at({2, 1}).letter, U' ');
@@ -302,9 +412,9 @@ TRIAL("View: brzeg wklejenia nie zostawia połowy podwójnego znaku") {
     View one{{3, 1}};
 
     View two{{4, 1}};
-    two.letter({2, 0}, U'漢', Style{});
+    two.put({2, 0}, U'漢', Style{});
 
-    one.within(two, {0, 0});
+    one.draw(two, {0, 0});
 
     same(one.at({2, 0}).letter, U' ');
 }
@@ -314,4 +424,33 @@ TRIAL("View: pytanie o kratkę spoza kartki oddaje pustą") {
 
     same(one.at({9, 9}).letter, U' ');
     same(one.at({-1, 0}).letter, U' ');
+}
+
+// Nazwa pliku, tytuł z sieci, opis z NFO — tekst obcy idzie na ekran, a nie do terminala jako
+// rozkaz. C0 i DEL pokazują się swoimi obrazkami, C1 i znaki kierunku pisma znakiem zastępczym,
+// a szerokość zostaje jedna kratka, więc kolumny się nie rozjeżdżają.
+TRIAL("View: znaki sterujące stają się widoczne, a nie wykonywane") {
+    View one{{9, 1}};
+
+    one.put({0, 0}, std::string{"a\x1b]2;\x07"} + "\xc2\x9b" + "\xe2\x80\xae" + "\x7f" + "z", Style{});
+
+    // Liczbami, nie literałami — kompilator słusznie ostrzega przed znakami kierunku w źródle.
+    constexpr char32_t substitute = 0xFFFD;
+
+    same(one.at({0, 0}).letter, U'a');
+    same(one.at({1, 0}).letter, char32_t{0x241B});
+    same(one.at({2, 0}).letter, U']');
+    same(one.at({4, 0}).letter, U';');
+    same(one.at({5, 0}).letter, char32_t{0x2407});
+    same(one.at({6, 0}).letter, substitute);
+    same(one.at({7, 0}).letter, substitute);
+    same(one.at({8, 0}).letter, char32_t{0x2421});
+
+    for (const char32_t each : {0x200Eu, 0x200Fu, 0x061Cu, 0x2028u, 0x2029u, 0x202Au, 0x202Eu, 0x2066u, 0x2069u, 0x80u, 0x9Fu})
+        same(shown(each), substitute);
+
+    for (const char32_t each : {0x20u, 0x7Eu, 0xA0u, 0x17Cu, 0x2400u, 0x206Au, 0x2027u, 0x6F22u}) same(shown(each), each);
+
+    same(shown(0), char32_t{0x2400});
+    same(shown(0x1F), char32_t{0x241F});
 }

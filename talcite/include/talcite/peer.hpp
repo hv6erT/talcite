@@ -8,20 +8,20 @@
 #include "talcite/address.hpp"
 #include "talcite/bytes.hpp"
 #include "talcite/patience.hpp"
-#include "talcite/post.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/relay.hpp"
-#include "talcite/scout.hpp"
+#include "talcite/stunclient.hpp"
 
 namespace talcite::net {
 
-struct Way {
+struct Candidate {
     enum class Sort : std::uint8_t { here, seen, lent };
 
     Address where;
     Sort sort = Sort::here;
 
-    friend bool operator==(const Way&, const Way&) = default;
+    friend bool operator==(const Candidate&, const Candidate&) = default;
 };
 
 class Peer {
@@ -30,19 +30,19 @@ public:
 
     Peer() = default;
 
-    explicit Peer(Post post);
+    explicit Peer(Udp post);
 
-    Peer(Post post, Relay relay);
+    Peer(Udp post, Relay relay);
 
     [[nodiscard]] bool held() const { return held_ != nullptr; }
 
-    [[nodiscard]] Promise<std::vector<Way>> gather(Scout scout, Patience patience);
+    [[nodiscard]] Promise<std::vector<Candidate>> gather(StunClient scout, Patience patience);
 
-    [[nodiscard]] std::vector<Way> ways() const;
+    [[nodiscard]] std::vector<Candidate> candidates() const;
 
-    void add(Way theirs);
+    void add(Candidate theirs);
 
-    [[nodiscard]] std::vector<Way> theirs() const;
+    [[nodiscard]] std::vector<Candidate> theirs() const;
 
     [[nodiscard]] Promise<Address> reach(Patience patience);
 

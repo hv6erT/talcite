@@ -6,7 +6,7 @@
 
 #include "talcite/event.hpp"
 #include "talcite/node.hpp"
-#include "talcite/veil.hpp"
+#include "talcite/modal.hpp"
 
 namespace demo {
 
@@ -33,16 +33,16 @@ std::shared_ptr<One> doing(std::shared_ptr<One> one, std::function<void()> what)
 // Zamykanie zasłony Escapem.
 //
 // Biblioteka tego **nie robi**: zamknięcie okna jest czynnością, a czynności, której wołający nie
-// może odwołać, `react` wykonywać nie ma prawa. Tu, po stronie aplikacji, decyzja jest nasza — i to
+// może odwołać, `handle` wykonywać nie ma prawa. Tu, po stronie aplikacji, decyzja jest nasza — i to
 // jest dokładnie ta jedna linijka, którą płaci się za tę regułę.
 template <typename One>
 std::shared_ptr<One> closing(std::shared_ptr<One> one) {
-    const std::weak_ptr<talcite::ui::Veil> weak = one;
+    const std::weak_ptr<talcite::ui::Modal> weak = one;
 
     (void)one->template on<talcite::ui::KeyEvent>([weak](talcite::ui::KeyEvent& what) {
         if (what.key().code() != talcite::ui::Code::escape) return false;
 
-        if (const std::shared_ptr<talcite::ui::Veil> mine = weak.lock()) mine->close();
+        if (const std::shared_ptr<talcite::ui::Modal> mine = weak.lock()) mine->close();
 
         return true;
     });

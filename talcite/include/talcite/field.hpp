@@ -6,11 +6,12 @@
 #include <string>
 #include <utility>
 
+#include "talcite/enablednode.hpp"
 #include "talcite/node.hpp"
 
 namespace talcite::ui {
 
-class Field : public Node {
+class Field : public EnabledNode<Node> {
 public:
     explicit Field(int wide, std::string text = {});
 
@@ -22,10 +23,6 @@ public:
 
     void wide(int given) { wide_ = given; }
 
-    [[nodiscard]] bool able() const { return able_; }
-
-    void able(bool given);
-
     [[nodiscard]] std::size_t cursor() const;
 
     void cursor(std::size_t given);
@@ -36,27 +33,31 @@ public:
 
     void allows(std::function<bool(char32_t one)> given);
 
-    [[nodiscard]] bool focusable() const override;
+    [[nodiscard]] bool concealed() const { return concealed_; }
+
+    void concealed(bool on);
 
     [[nodiscard]] Size wants(Size room) const override;
 
     [[nodiscard]] std::optional<Spot> caret() const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(ClickEvent& what) override;
+    bool handle(ClickEvent& what) override;
 
-    bool react(PasteEvent& what) override;
+    bool handle(PasteEvent& what) override;
 
 private:
     void guessing();
 
     void insert(const std::string& what);
+
+    [[nodiscard]] int spanned(std::size_t from, std::size_t upto) const;
 
     std::string text_;
     std::string ahead_;
@@ -65,7 +66,7 @@ private:
     std::size_t at_ = 0;
     std::size_t from_ = 0;
     int wide_ = 0;
-    bool able_ = true;
+    bool concealed_ = false;
 };
 
 }

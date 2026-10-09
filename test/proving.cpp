@@ -1,9 +1,12 @@
 #include "proving.hpp"
 
+#include "talcite/host.hpp"
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -14,8 +17,8 @@
 #include <io.h>
 #include <windows.h>
 
-// CommandLineToArgvW — argumenty w postaci szerokiej, bez przepisania na stronę kodową ANSI.
-#include <shellapi.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace proving {
@@ -93,33 +96,9 @@ std::wstring widely(const std::string& what) {
 
 #endif
 
-// **Argumenty czytamy szeroko, nie wąsko.** Windows podaje `main` argumenty przepisane na stronę
-// kodową ANSI, więc „dzień" przychodzi tam z pytajnikiem w środku — i próba porównująca bajty
-// obwiniałaby uruchamianie za coś, co zepsuł odbiór. Prawdziwe argumenty stoją obok, w postaci
-// szerokiej; bierzemy je stamtąd i przepisujemy na UTF-8, w którym rozmawia reszta talcite.
-std::vector<std::string> worded(int count, char** given) {
-    std::vector<std::string> made;
-
-#ifdef _WIN32
-
-    int many = 0;
-
-    wchar_t** wide = CommandLineToArgvW(GetCommandLineW(), &many);
-
-    if (wide != nullptr) {
-        for (int at = 0; at < many; ++at) made.push_back(narrowly(std::wstring{wide[at]}));
-
-        LocalFree(wide);
-
-        return made;
-    }
-
-#endif
-
-    for (int at = 0; at < count; ++at) made.emplace_back(given[at]);
-
-    return made;
-}
+// Argumenty w UTF-8 z talcite: na Windows `main` dostaje je przepisane na stronę kodową ANSI,
+// a próby porównują bajty. Droga szeroka mieszka w `talcite::arguments`, tu tylko z niej bierzemy.
+std::vector<std::string> worded(int count, char** given) { return talcite::arguments(count, given); }
 
 std::string around(const std::string& name) {
 #ifdef _WIN32
@@ -229,6 +208,75 @@ int pretending(const std::vector<std::string>& given) {
         std::this_thread::sleep_for(std::chrono::milliseconds{rest.empty() ? 0 : std::atoi(rest.c_str())});
 
         return 0;
+    }
+
+    // Rodzic z wnukiem: uruchamia samą siebie na `sleeping` **bez** talcite — zwykłym `fork`/`exec`
+    // albo `CreateProcessW`, bez własnej grupy i bez zadania — wypisuje numer wnuka i śpi tyle samo.
+    // Tak wygląda powłoka albo plik wsadowy, który uruchomił właściwy program: zabicie samego
+    // rodzica zostawiłoby wnuka przy życiu.
+    if (what == "parent") {
+#ifdef _WIN32
+        std::wstring line = L"\"" + widely(proving::mine()) + L"\" --pretending sleeping " + widely(rest);
+
+        STARTUPINFOW setting{};
+        setting.cb = sizeof setting;
+
+        PROCESS_INFORMATION told{};
+
+        if (CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &setting, &told) == 0)
+            return 3;
+
+        CloseHandle(told.hThread);
+        CloseHandle(told.hProcess);
+
+        said(stdout, std::to_string(told.dwProcessId) + "\n");
+#else
+        const pid_t which = ::fork();
+
+        if (which < 0) return 3;
+
+        if (which == 0) {
+            ::execl(proving::mine().c_str(), proving::mine().c_str(), "--pretending", "sleeping", rest.c_str(), static_cast<char*>(nullptr));
+            ::_exit(127);
+        }
+
+        said(stdout, std::to_string(which) + "\n");
+#endif
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{rest.empty() ? 0 : std::atoi(rest.c_str())});
+
+        return 0;
+    }
+
+    // Program puszczony wolno (`Child::detached`) nie ma rur — mówi przez plik: swój numer, a na
+    // POSIX-ie jeszcze sesję i rodzica. Plik powstaje pod inną nazwą i przechodzi na swoją
+    // w całości, żeby czytający nie zobaczył połowy. Potem śpi tyle, ile podano.
+    if (what == "noted") {
+#ifdef _WIN32
+        const std::string made = std::to_string(GetCurrentProcessId());
+#else
+        const std::string made =
+            std::to_string(::getpid()) + " " + std::to_string(::getsid(0)) + " " + std::to_string(::getppid());
+#endif
+        const std::filesystem::path where{rest};
+
+        std::filesystem::path part = where;
+
+        part += ".part";
+
+        {
+            std::ofstream out{part, std::ios::binary};
+
+            out << made;
+        }
+
+        std::error_code why;
+
+        std::filesystem::rename(part, where, why);
+
+        if (given.size() > 2) std::this_thread::sleep_for(std::chrono::milliseconds{std::atoi(given[2].c_str())});
+
+        return why ? 4 : 0;
     }
 
     if (what == "where") {

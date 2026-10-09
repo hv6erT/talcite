@@ -4,19 +4,19 @@
 #include <string>
 #include <vector>
 
+#include "talcite/buttons.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/style.hpp"
+#include "talcite/row.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class Button;
 class Frame;
-class Row;
 class Span;
 
 class Message : public Dialog {
 public:
-    Message(std::string title, std::string text, MessageStyle style = {});
+    Message(std::string title, std::string text, MessageShape shape = {});
 
     [[nodiscard]] const std::string& title() const;
 
@@ -30,20 +30,18 @@ public:
 
     void role(std::string given) override;
 
-    std::shared_ptr<Button> add(std::string text);
+    [[nodiscard]] Buttons& buttons() { return buttons_; }
 
-    void clear();
-
-    [[nodiscard]] const std::vector<std::shared_ptr<Button>>& buttons() const { return buttons_; }
+    [[nodiscard]] const Buttons& buttons() const { return buttons_; }
 
 private:
     std::shared_ptr<Frame> frame_;
     std::shared_ptr<Span> title_;
     std::shared_ptr<Span> text_;
     std::vector<std::shared_ptr<Frame>> boxes_;
-    std::shared_ptr<Row> row_;
-    std::vector<std::shared_ptr<Button>> buttons_;
-    MessageStyle style_;
+    std::shared_ptr<Row> row_ = std::make_shared<Row>(RowShape{1, true});
+    Buttons buttons_{*row_};
+    MessageShape shape_;
 };
 
 }

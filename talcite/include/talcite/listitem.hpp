@@ -4,11 +4,12 @@
 #include <string>
 #include <utility>
 
+#include "talcite/enablednode.hpp"
 #include "talcite/node.hpp"
 
 namespace talcite::ui {
 
-class ListItem : public Node {
+class ListItem : public EnabledNode<Node> {
 public:
     explicit ListItem(std::string text);
 
@@ -16,30 +17,23 @@ public:
 
     void text(std::string given) { text_ = std::move(given); }
 
-    [[nodiscard]] bool able() const { return able_; }
-
-    void able(bool given);
-
     void pick();
-
-    [[nodiscard]] bool focusable() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(ClickEvent& what) override;
+    bool handle(ClickEvent& what) override;
 
-    bool react(DoubleClickEvent& what) override;
+    bool handle(DoubleClickEvent& what) override;
 
 private:
     std::string text_;
-    bool able_ = true;
 };
 
 }

@@ -16,7 +16,7 @@ enum class Sort : std::uint8_t { asking, told, amiss, telling };
 
 // Sprawy, czyli co wiadomość ma załatwić. Rodzaj wiadomości składa się ze sprawy i klasy, a te
 // dwie rzeczy są w liczbie przemieszane bitami — stąd osobne wyliczenie zamiast gołych liczb.
-// Nazwa nie brzmi Way, bo tamto jest już drogą do rozmówcy w peer.hpp.
+// Nazwa nie brzmi Way — tak nazywała się wtedy droga do rozmówcy w peer.hpp, dziś `Candidate`.
 enum class Task : std::uint16_t {
     binding = 0x001,
     allocate = 0x003,

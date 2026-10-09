@@ -11,12 +11,12 @@
 
 namespace talcite::ui {
 
-Span::Span(std::string text, SpanStyle style) : text_(std::move(text)), style_(style) {
+Span::Span(std::string text, SpanShape shape) : text_(std::move(text)), shape_(shape) {
     role("talcite.normal");
 }
 
 // Napis nie ma czego trzymać w środku.
-int Span::takes() const { return 0; }
+int Span::capacity() const { return 0; }
 
 namespace {
 
@@ -55,7 +55,7 @@ std::vector<std::string> parted(const std::string& what) {
 //
 // Funkcja plikowa, a nie metoda: nie sięga do niczego, co należy do napisu, a nagłówek publiczny
 // nie ma powodu wiedzieć, że w środku jest jeszcze jeden krok.
-void wrapped(const std::string& what, int wide, std::vector<std::string>& into) {
+void wrap_into(const std::string& what, int wide, std::vector<std::string>& into) {
     std::vector<std::string> words;
 
     for (std::size_t at = 0; at <= what.size();) {
@@ -125,7 +125,7 @@ std::vector<std::string> Span::lines(int wide) const {
 
     const std::vector<std::string> parts = parted(text_);
 
-    if (!style_.wrapping) return parts;
+    if (!shape_.wrapped) return parts;
 
     if (wide <= 0) return {};
 
@@ -138,7 +138,7 @@ std::vector<std::string> Span::lines(int wide) const {
             continue;
         }
 
-        wrapped(one, wide, made);
+        wrap_into(one, wide, made);
     }
 
     return made;
@@ -165,7 +165,7 @@ View Span::paint(Size given, Area seen) {
 
     // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
@@ -173,8 +173,8 @@ View Span::paint(Size given, Area seen) {
     // zmienia; ale napis postawiony w czerwonym pudełku błędu ma być czerwony, a jedna rola dla
     // wszystkich napisów w programie nie umie być naraz czerwona i granatowa. Kto buduje takie
     // pudełko, ten wie, co w nim stoi, i mówi to wprost.
-    const Style look = how.get<Style>(role());
-    const char32_t mark = how.get<char32_t>("talcite.elide");
+    const Style look = how.style(role());
+    const char32_t mark = how.glyph("talcite.elide");
 
     const std::vector<std::string> said = lines(given.wide);
 
@@ -191,19 +191,19 @@ View Span::paint(Size given, Area seen) {
             continue;
         }
 
-        const std::string shown = elided(one, given.wide, style_.elide, mark);
+        const std::string shown = elided(one, given.wide, shape_.elide, mark);
 
         int x = 0;
 
-        if (style_.justify != JustifyStyle::left) {
+        if (shape_.justify != Justify::left) {
             const int room = given.wide - measured(shown).wide;
 
-            x = style_.justify == JustifyStyle::right ? room : room / 2;
+            x = shape_.justify == Justify::right ? room : room / 2;
 
             if (x < 0) x = 0;
         }
 
-        made.string({x - seen.at.x, y - seen.at.y}, shown, look);
+        made.put({x - seen.at.x, y - seen.at.y}, shown, look);
 
         ++y;
     }

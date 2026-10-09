@@ -16,27 +16,46 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "talcite/bell.hpp"
+#include "talcite/encoding.hpp"
 #include "talcite/pool.hpp"
+
+#include "folding.hpp"
+#include "fscore.hpp"
+#include "storing.hpp"
 
 #ifdef _WIN32
 
 #include <windows.h>
 
+#include <aclapi.h>
+#include <shlobj.h>
 #include <winnetwk.h>
 
 #else
 
+#include <cerrno>
 #include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
 #include <sys/stat.h>
-#include <sys/statfs.h>
 #include <unistd.h>
 
-#if defined(__linux__)
+#if defined(TALCITE_LINUX_FS)
 
-#include <poll.h>
-#include <sys/inotify.h>
+#include <sys/statfs.h>
+#include <sys/syscall.h>
+
+#elif defined(TALCITE_BSD_FS)
+
+#include <sys/param.h>
+#include <sys/mount.h>
+
+#if defined(__APPLE__)
+#include <cstdio>
+#endif
 
 #endif
 
@@ -44,21 +63,9 @@
 
 namespace talcite::fs {
 
-namespace {
+using namespace core;
 
-namespace stood = std::filesystem;
-
-constexpr std::size_t on_disk = 1024 * 1024;
-constexpr std::size_t afar = 64 * 1024;
-constexpr std::size_t astray = 256 * 1024;
-
-[[noreturn]] void amiss(const std::string& said, const path& where) { throw Trouble{said, where}; }
-
-#ifdef _WIN32
-
-std::wstring longly(const path& where);
-
-#endif
+namespace core {
 
 // **Wpis, za którym system nie umie podążyć, istnieje mimo to.** `std::filesystem::exists`
 // podąża za punktem ponownej analizy, a gdy trafi na znacznik, którego nie zna, melduje „nie ma".
@@ -74,6 +81,26 @@ std::wstring longly(const path& where);
 //
 // Wiszące dowiązanie i wiszące złącze dalej odpowiadają „nie ma", bo za nimi `GetFileAttributesW`
 // podąża i też się przewraca — a to jest ta odpowiedź, której się po `exists` spodziewamy.
+#ifdef _WIN32
+
+// **Ścieżka za długa dla `std::filesystem`.** Program bez `longPathAware` w manifeście (próby,
+// każdy program na bibliotece, który go nie ma) albo system bez LongPathsEnabled: MSVC woła system
+// bez przedrostka \\?\, a system za 260 znakami odpowiada „nie ma ścieżki" — bez błędu. `exists`
+// i `kind` mówiły więc „nie ma" o pliku, który stoi, a zapis z polityką kolizji brał go za wolne
+// miejsce. Dla takich ścieżek pytamy sami, z przedrostkiem; krótszych nie ruszamy. Granica 248 to
+// granica katalogu, niższa niż pliku.
+DWORD attributes_beyond(const path& where) {
+    std::error_code ignored;
+
+    const path whole = where.is_absolute() ? where : stood::absolute(where, ignored);
+
+    if (whole.native().size() < MAX_PATH - 12) return INVALID_FILE_ATTRIBUTES;
+
+    return GetFileAttributesW(longly(where).c_str());
+}
+
+#endif
+
 bool exists_at(const path& where) {
     std::error_code why;
 
@@ -81,15 +108,30 @@ bool exists_at(const path& where) {
 
 #ifdef _WIN32
     if (why) return GetFileAttributesW(longly(where).c_str()) != INVALID_FILE_ATTRIBUTES;
-#endif
 
+    return attributes_beyond(where) != INVALID_FILE_ATTRIBUTES;
+#else
     return false;
+#endif
 }
 
 Kind kind_at(const path& where) {
     std::error_code trouble;
 
     const stood::file_status told = stood::symlink_status(where, trouble);
+
+#ifdef _WIN32
+    if (trouble || !stood::exists(told)) {
+        const DWORD seen = attributes_beyond(where);
+
+        if (seen != INVALID_FILE_ATTRIBUTES) {
+            if ((seen & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return Kind::link;
+
+            return (seen & FILE_ATTRIBUTE_DIRECTORY) != 0 ? Kind::folder : Kind::file;
+        }
+    }
+#endif
+
     if (trouble) return Kind::none;
 
     if (stood::is_symlink(told)) return Kind::link;
@@ -108,7 +150,7 @@ std::uintmax_t size_at(const path& where) {
     std::error_code trouble;
 
     const std::uintmax_t told = stood::file_size(where, trouble);
-    if (trouble) amiss("Nie można odczytać rozmiaru pliku.", where);
+    if (trouble) amiss("Cannot read the file size.", where);
 
     return told;
 }
@@ -116,13 +158,13 @@ std::uintmax_t size_at(const path& where) {
 // Na Windows atrybuty są jednym słowem bitowym. Na POSIX ukrycie jest umową o nazwie —
 // kropka na początku — a tylko-do-odczytu odczytujemy z prawa zapisu właściciela. Znacznika
 // systemowego POSIX nie ma i udawać go nie będziemy.
-Marks marks_at(const path& where) {
-    Marks made;
+Attributes attributes_at(const path& where) {
+    Attributes made;
 
 #ifdef _WIN32
 
     const DWORD told = GetFileAttributesW(longly(where).c_str());
-    if (told == INVALID_FILE_ATTRIBUTES) amiss("Nie można odczytać atrybutów.", where);
+    if (told == INVALID_FILE_ATTRIBUTES) amiss("Cannot read attributes.", where);
 
     made.hidden = (told & FILE_ATTRIBUTE_HIDDEN) != 0;
     made.readonly = (told & FILE_ATTRIBUTE_READONLY) != 0;
@@ -133,7 +175,7 @@ Marks marks_at(const path& where) {
     std::error_code trouble;
 
     const stood::file_status told = stood::status(where, trouble);
-    if (trouble) amiss("Nie można odczytać atrybutów.", where);
+    if (trouble) amiss("Cannot read attributes.", where);
 
     const std::string named = where.filename().string();
 
@@ -145,13 +187,13 @@ Marks marks_at(const path& where) {
     return made;
 }
 
-void marked_at(const path& where, Marks what) {
+void attributed_at(const path& where, Attributes what) {
 #ifdef _WIN32
 
     const std::wstring named = longly(where);
 
     DWORD told = GetFileAttributesW(named.c_str());
-    if (told == INVALID_FILE_ATTRIBUTES) amiss("Nie można odczytać atrybutów.", where);
+    if (told == INVALID_FILE_ATTRIBUTES) amiss("Cannot read attributes.", where);
 
     const auto sway = [&told](DWORD flag, bool on) {
         if (on) told |= flag;
@@ -165,14 +207,14 @@ void marked_at(const path& where, Marks what) {
     if (told == 0) told = FILE_ATTRIBUTE_NORMAL;
 
     if (SetFileAttributesW(named.c_str(), told) == 0)
-        amiss("Nie można ustawić atrybutów.", where);
+        amiss("Cannot set attributes.", where);
 
 #else
 
     std::error_code trouble;
 
     const stood::file_status told = stood::status(where, trouble);
-    if (trouble) amiss("Nie można odczytać atrybutów.", where);
+    if (trouble) amiss("Cannot read attributes.", where);
 
     constexpr stood::perms writing = stood::perms::owner_write | stood::perms::group_write |
                                      stood::perms::others_write;
@@ -183,16 +225,16 @@ void marked_at(const path& where, Marks what) {
     else rights |= stood::perms::owner_write;
 
     stood::permissions(where, rights, trouble);
-    if (trouble) amiss("Nie można ustawić atrybutów.", where);
+    if (trouble) amiss("Cannot set attributes.", where);
 
 #endif
 }
 
-bool alike_at(const path& one, const path& two) {
+bool equivalent_at(const path& one, const path& two) {
     std::error_code trouble;
 
     const bool told = stood::equivalent(one, two, trouble);
-    if (trouble) amiss("Nie można porównać ścieżek.", one);
+    if (trouble) amiss("Cannot compare the paths.", one);
 
     return told;
 }
@@ -201,7 +243,7 @@ path target_at(const path& where) {
     std::error_code trouble;
 
     const path told = stood::read_symlink(where, trouble);
-    if (trouble) amiss("To nie jest dowiązanie.", where);
+    if (trouble) amiss("Not a link.", where);
 
     return told;
 }
@@ -213,47 +255,74 @@ void linking_at(const path& where, const path& onto, bool hard) {
     else if (kind_at(onto) == Kind::folder) stood::create_directory_symlink(onto, where, trouble);
     else stood::create_symlink(onto, where, trouble);
 
-    if (trouble) amiss("Nie można utworzyć dowiązania.", where);
+    if (trouble) amiss("Cannot create the link.", where);
 }
 
-// Odstęp między zegarem plikowym a kalendarzowym bierzemy raz na cały bieg programu. Oba
-// idą za czasem rzeczywistym, więc odstęp jest stały — a liczony za każdym razem od nowa
-// migotałby o ułamek sekundy, bo oba odczyty nigdy nie wypadną w tej samej chwili. Po
-// ścięciu do sekund to migotanie robiło z ustawionego czasu czas o sekundę wcześniejszy.
-using Apart = std::chrono::system_clock::duration;
+#ifdef _WIN32
 
-Apart apart_now() {
-    static const Apart apart = std::chrono::system_clock::now().time_since_epoch() -
-                               std::chrono::duration_cast<Apart>(
-                                   stood::file_time_type::clock::now().time_since_epoch());
+// Czas plikowy Windows liczy się w setkach nanosekund od roku 1601. Do epoki uniksowej jest
+// 11 644 473 600 sekund. Przeliczamy wprost, bez okrężnej drogi przez różnicę zegarów —
+// tutaj znamy dokładną wartość, a nie tylko odstęp między dwoma „teraz".
+constexpr std::int64_t epochs_apart = 11644473600LL * 10000000LL;
 
-    return apart;
+Instant instant_of(FILETIME told) {
+    const std::uint64_t much = (static_cast<std::uint64_t>(told.dwHighDateTime) << 32) | told.dwLowDateTime;
+
+    return Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(much) - epochs_apart) * 100}};
 }
 
-std::chrono::sys_seconds stamped(stood::file_time_type when, Apart apart) {
-    return std::chrono::time_point_cast<std::chrono::seconds>(
-        std::chrono::system_clock::time_point{
-            std::chrono::duration_cast<Apart>(when.time_since_epoch()) + apart});
+FILETIME filetime_of(Instant when) {
+    const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
+        when.time_since_epoch());
+
+    const auto much = static_cast<std::uint64_t>(ticks.count() + epochs_apart);
+
+    FILETIME made{};
+
+    made.dwLowDateTime = static_cast<DWORD>(much & 0xFFFFFFFFull);
+    made.dwHighDateTime = static_cast<DWORD>(much >> 32);
+
+    return made;
 }
 
-// Przeliczenie bez clock_cast, bo zegar plikowy nie na każdej bibliotece standardowej daje
-// się nim przerzucić.
-std::chrono::sys_seconds written_at(const path& where) {
-    std::error_code trouble;
+#endif
 
-    const stood::file_time_type told = stood::last_write_time(where, trouble);
-    if (trouble) amiss("Nie można odczytać czasu zapisu.", where);
+// Czas zapisu prosto od systemu, bez `std::filesystem`. Tamto szło przez zegar plikowy i odstęp
+// między nim a kalendarzowym mierzony przy starcie — i gubiło wszystko poniżej sekundy.
+Instant instant_at(const path& where) {
+#ifdef _WIN32
+    WIN32_FILE_ATTRIBUTE_DATA told{};
 
-    return stamped(told, apart_now());
+    if (GetFileAttributesExW(longly(where).c_str(), GetFileExInfoStandard, &told) == 0)
+        amiss("Cannot read the write time.", where);
+
+    return instant_of(told.ftLastWriteTime);
+#else
+    struct stat told {};
+
+    if (::stat(where.c_str(), &told) != 0) amiss("Cannot read the write time.", where);
+
+#ifdef __APPLE__
+    const timespec& when = told.st_mtimespec;
+#else
+    const timespec& when = told.st_mtim;
+#endif
+
+    return Instant{std::chrono::seconds{when.tv_sec} + std::chrono::nanoseconds{when.tv_nsec}};
+#endif
 }
 
-Room roomy_at(const path& where) {
+std::chrono::sys_seconds modified_at(const path& where) {
+    return std::chrono::floor<std::chrono::seconds>(instant_at(where));
+}
+
+Space space_at(const path& where) {
     std::error_code trouble;
 
     const stood::space_info told = stood::space(where, trouble);
-    if (trouble) amiss("Nie można sprawdzić miejsca na nośniku.", where);
+    if (trouble) amiss("Cannot check the free space.", where);
 
-    return Room{told.capacity, told.available};
+    return Space{told.capacity, told.available};
 }
 
 // Rata zależy od nośnika, bo anulowanie działa między ratami, a nie w ich środku. Na udziale
@@ -283,8 +352,10 @@ Room roomy_at(const path& where) {
 // Windows łamie się na ścieżkach dłuższych niż 260 znaków, chyba że poda się je
 // z przedrostkiem \\?\. Przedrostek wyłącza za to wszelkie prostowanie — ścieżka musi być
 // już bezwzględna i bez kropek — a udział sieciowy ma własną postać: \\?\UNC\serwer\udział.
-// std::filesystem robi to u siebie samo; nasze własne wywołania systemowe muszą to robić
-// jawnie, a jest ich sporo: otwarcie pliku, atrybuty, przejście katalogu i obserwacja.
+// std::filesystem pod MSVC robi to tylko w programie z `longPathAware` na systemie
+// z LongPathsEnabled; nasze własne wywołania systemowe muszą to robić jawnie, a jest ich sporo:
+// otwarcie pliku, atrybuty, przejście katalogu i obserwacja (`exists` i `kind` — patrz
+// `attributes_beyond`).
 std::wstring longly(const path& where) {
     std::error_code ignored;
 
@@ -309,6 +380,16 @@ std::wstring longly(const path& where) {
 
 #endif
 
+#ifndef _WIN32
+
+Mount minded(const std::string& kind);
+
+std::string format_at(const path& where);
+
+#endif
+
+path present_at(const path& where);
+
 Mount mount_at(const path& where) {
 #ifdef _WIN32
 
@@ -330,7 +411,7 @@ Mount mount_at(const path& where) {
         default: return Mount::other;
     }
 
-#else
+#elif defined(TALCITE_LINUX_FS)
 
     struct statfs told {};
 
@@ -338,21 +419,129 @@ Mount mount_at(const path& where) {
 
     if (statfs(asked.c_str(), &told) != 0) return Mount::other;
 
+    // NFS, SMB (stary i nowy), CIFS, Ceph, Lustre, AFS — sieć; ISO 9660 i UDF — płyta. FUSE to
+    // tylko sposób podłączenia, więc o nim mówi nazwa systemu plików z tablicy montowań.
     switch (static_cast<unsigned long>(told.f_type)) {
         case 0x6969ul:
         case 0x517Bul:
         case 0xFF534D42ul:
         case 0xFE534D42ul:
-        case 0x65735546ul: return Mount::remote;
+        case 0x00C36400ul:
+        case 0x0BD00BD0ul:
+        case 0x5346414Ful: return Mount::remote;
+        case 0x65735546ul: return minded(format_at(asked));
         case 0x9660ul:
         case 0x15013346ul: return Mount::optical;
         default: return Mount::disk;
     }
 
+#elif defined(TALCITE_BSD_FS)
+
+    // macOS i BSD mówią rodzaj nazwą w samym `statfs` — bez tablicy montowań.
+    return minded(format_at(exists_at(where) ? where : where.parent_path()));
+
+#else
+
+    // Przenośny POSIX nie ma jak zapytać o rodzaj nośnika. Istniejąca ścieżka to dysk: obserwacja
+    // i tak idzie tu odpytywaniem, a rata dysku jest najszybsza.
+    return exists_at(present_at(where)) ? Mount::disk : Mount::other;
+
 #endif
 }
 
-std::size_t slice_at(const path& where) {
+// Najbliższa istniejąca ścieżka: cel kopii zwykle jeszcze nie istnieje, a pytamy o jego nośnik.
+path present_at(const path& where) {
+    std::error_code ignored;
+
+    path made = where.is_absolute() ? where : stood::absolute(where, ignored);
+
+    while (!made.empty() && !exists_at(made)) {
+        const path up = made.parent_path();
+
+        if (up == made) break;
+
+        made = up;
+    }
+
+    return made;
+}
+
+void settled_folder([[maybe_unused]] const path& where) {
+#ifndef _WIN32
+    const int folder = ::open(where.empty() ? "." : where.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+
+    if (folder < 0) return;
+
+    // Udział sieciowy i część systemów plików odmawia utrwalenia katalogu; zmiana nazwy i tak się
+    // stała, więc odmowa nie jest tu błędem.
+    (void)::fsync(folder);
+    ::close(folder);
+#endif
+}
+
+bool fat_at(const path& where) {
+    const path here = present_at(where);
+
+#ifdef _WIN32
+    std::vector<wchar_t> root(32768, L'\0');
+
+    if (GetVolumePathNameW(longly(here).c_str(), root.data(), static_cast<DWORD>(root.size())) == 0) return false;
+
+    std::wstring format(MAX_PATH + 1, L'\0');
+
+    if (GetVolumeInformationW(root.data(), nullptr, 0, nullptr, nullptr, nullptr, format.data(), MAX_PATH) == 0)
+        return false;
+
+    // `FAT` i `FAT32`; `exFAT` tej granicy nie ma.
+    return format.rfind(L"FAT", 0) == 0;
+#elif defined(TALCITE_LINUX_FS)
+    struct statfs told {};
+
+    return statfs(here.c_str(), &told) == 0 && static_cast<unsigned long>(told.f_type) == 0x4d44ul;
+#elif defined(TALCITE_BSD_FS)
+    // `msdos` na macOS, `msdosfs` na FreeBSD.
+    return format_at(here).rfind("msdos", 0) == 0;
+#else
+    (void)here;
+
+    return false;
+#endif
+}
+
+bool together_at(const path& one, const path& two) {
+    const path left = present_at(one);
+    const path right = present_at(two);
+
+#ifdef _WIN32
+    std::vector<wchar_t> first(32768, L'\0');
+    std::vector<wchar_t> second(32768, L'\0');
+
+    if (GetVolumePathNameW(longly(left).c_str(), first.data(), static_cast<DWORD>(first.size())) == 0 ||
+        GetVolumePathNameW(longly(right).c_str(), second.data(), static_cast<DWORD>(second.size())) == 0)
+        return false;
+
+    return _wcsicmp(first.data(), second.data()) == 0;
+#else
+    struct stat here {};
+    struct stat there {};
+
+    if (::stat(left.c_str(), &here) != 0 || ::stat(right.c_str(), &there) != 0) return false;
+
+    return here.st_dev == there.st_dev;
+#endif
+}
+
+std::optional<std::uintmax_t> room_at(const path& where) {
+    std::error_code trouble;
+
+    const stood::space_info told = stood::space(present_at(where), trouble);
+
+    if (trouble || told.available == static_cast<std::uintmax_t>(-1)) return std::nullopt;
+
+    return told.available;
+}
+
+std::size_t chunk_at(const path& where) {
     switch (mount_at(where)) {
         case Mount::remote: return afar;
         case Mount::removable:
@@ -372,39 +561,89 @@ bool stopped() {
 
 #ifndef _WIN32
 
-Entry noted(const stood::directory_entry& one, Apart apart) {
-    std::error_code ignored;
+// Rodzaj wpisu prosto z trybu, jak w `stat(2)`: dowiązanie rozpoznajemy przed wszystkim innym, bo
+// `lstat` mówi o wpisie, a nie o tym, na co wskazuje.
+Kind kinded(::mode_t mode) {
+    if (S_ISLNK(mode)) return Kind::link;
+    if (S_ISREG(mode)) return Kind::file;
+    if (S_ISDIR(mode)) return Kind::folder;
+    if (S_ISCHR(mode) || S_ISBLK(mode)) return Kind::device;
 
+    return Kind::special;
+}
+
+// **Wszystko z jednego pytania.** `std::filesystem` pyta o to samo w kawałkach — osobno o rodzaj,
+// osobno o rozmiar, osobno o prawa, osobno o czas, osobno o istnienie celu — i każdy kawałek idzie
+// do systemu osobno: zmierzone `strace`, trzy `stat`-y na wpis (150 wpisów, 454 wywołania), a z
+// naszym własnym o prawa i właściciela cztery. Jeden `lstat` daje to wszystko naraz.
+//
+// Dowiązanie kosztuje drugie pytanie — `stat`, czyli **przez** dowiązanie. Płacimy je za trzy
+// rzeczy: czy cel w ogóle jest (`stale`), czym jest (`reach` — po nim panel wie, że w dowiązanie
+// do katalogu da się wejść) i jakie ma prawa. Znaczniki mówią bowiem o tym, na co wpis
+// wskazuje — `readonly` dowiązania do pliku tylko do odczytu ma być prawdą — a `rights` o samym
+// wpisie, więc dowiązanie ma swoje `lrwxrwxrwx`. To rozróżnienie było i zostaje; zmienia się tylko
+// to, że oba biorą się z jednego miejsca zamiast z czterech.
+//
+// Wpis, o który nie da się zapytać, wraca z `Kind::none` — tak samo jak dotąd, gdy pytania
+// `std::filesystem` po kolei zawodziły.
+Entry noted(const stood::directory_entry& one) {
     Entry made;
     made.where = one.path();
 
-    if (one.is_symlink(ignored)) made.kind = Kind::link;
-    else if (one.is_regular_file(ignored)) made.kind = Kind::file;
-    else if (one.is_directory(ignored)) made.kind = Kind::folder;
-    else if (one.is_character_file(ignored) || one.is_block_file(ignored))
-        made.kind = Kind::device;
-    else made.kind = Kind::special;
+    struct stat told {};
 
-    if (made.kind == Kind::file) made.size = one.file_size(ignored);
+    if (::lstat(one.path().c_str(), &told) != 0) return made;
+
+    made.kind = kinded(told.st_mode);
+    made.reach = made.kind;
+
+    if (made.kind == Kind::file) made.size = static_cast<std::uintmax_t>(told.st_size);
+
+    made.modified = std::chrono::sys_seconds{std::chrono::seconds{told.st_mtime}};
+    made.accessed = std::chrono::sys_seconds{std::chrono::seconds{told.st_atime}};
+    made.rights = static_cast<stood::perms>(told.st_mode & 07777);
+    made.links = told.st_nlink;
+    made.owner = static_cast<std::uint32_t>(told.st_uid);
+    made.group = static_cast<std::uint32_t>(told.st_gid);
 
     const std::string named = one.path().filename().string();
 
-    // Wszystko z jednego `status()`: prawo zapisu właściciela, bit wykonywania (którykolwiek,
-    // tak liczy MC) i to, czy dowiązanie ma dokąd prowadzić — `exists()` patrzy przez dowiązanie.
-    // Żadnego dodatkowego pytania do systemu na wpis.
-    const stood::perms rights = one.status(ignored).permissions();
+    made.attributes.hidden = named.size() > 1 && named.front() == '.';
 
-    made.marks.hidden = named.size() > 1 && named.front() == '.';
-    made.marks.readonly = (rights & stood::perms::owner_write) == stood::perms::none;
-    made.marks.executable =
-        (rights & (stood::perms::owner_exec | stood::perms::group_exec |
-                   stood::perms::others_exec)) != stood::perms::none;
-    made.marks.stale = made.kind == Kind::link && !one.exists(ignored);
+    ::mode_t mode = told.st_mode;
 
-    const stood::file_time_type when = one.last_write_time(ignored);
-    if (!ignored) made.written = stamped(when, apart);
+    if (made.kind == Kind::link) {
+        std::error_code ignored;
+
+        const path where = stood::read_symlink(one.path(), ignored);
+
+        if (!ignored) made.target = where;
+
+        struct stat through {};
+
+        made.reach = Kind::none;
+
+        if (::stat(one.path().c_str(), &through) == 0) {
+            mode = through.st_mode;
+            made.reach = kinded(through.st_mode);
+        } else {
+            made.attributes.stale = true;
+        }
+    }
+
+    // Bit wykonywania **którykolwiek**, tak liczy MC.
+    made.attributes.readonly = (mode & S_IWUSR) == 0;
+    made.attributes.executable = (mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
 
     return made;
+}
+
+// Jeden wpis tą samą drogą co w wykazie, bez czytania całego katalogu. Wpisu, którego nie ma,
+// nie ma też tutaj: wraca `Kind::none`, jak wpis, o który nie da się zapytać.
+Entry entry_at(const path& where) {
+    std::error_code ignored;
+
+    return noted(stood::directory_entry{where, ignored});
 }
 
 #endif
@@ -416,15 +655,8 @@ void sorted(std::vector<Entry>& among) {
 
 #ifdef _WIN32
 
-// Czas plikowy Windows liczy się w setkach nanosekund od roku 1601. Do epoki uniksowej jest
-// 11 644 473 600 sekund. Przeliczamy wprost, bez okrężnej drogi przez różnicę zegarów —
-// tutaj znamy dokładną wartość, a nie tylko odstęp między dwoma „teraz".
 std::chrono::sys_seconds stamped(FILETIME told) {
-    const std::uint64_t much =
-        (static_cast<std::uint64_t>(told.dwHighDateTime) << 32) | told.dwLowDateTime;
-
-    return std::chrono::sys_seconds{std::chrono::seconds{
-        static_cast<std::int64_t>(much / 10000000ull) - 11644473600ll}};
+    return std::chrono::floor<std::chrono::seconds>(instant_of(told));
 }
 
 // Rozszerzenia, które Windows uruchamia wprost. PATHEXT ma ich więcej, ale te cztery są tym,
@@ -437,6 +669,31 @@ bool runnable(const path& where) {
     return ending == L".exe" || ending == L".com" || ending == L".bat" || ending == L".cmd";
 }
 
+// Punkt ponownej analizy to nie zawsze dowiązanie. Rodzaj mówi znacznik, który `FIND_DATA` niesie
+// w `dwReserved0`. Dowiązanie symboliczne, węzeł montowania (junction), dowiązanie WSL i alias
+// aplikacji ze sklepu — to są dowiązania. Plik OneDrive na żądanie, plik po deduplikacji serwera,
+// plik z obrazu WIM — to zwykłe pliki i katalogi, które system czyta przezroczyście; dawniej szły
+// jako dowiązania, bez rozmiaru, a biblioteka nie widziała w nich filmów. Gniazdo AF_UNIX jest
+// tym, czym na POSIX-ie: czymś szczególnym.
+constexpr DWORD wsl_link = 0xA000001DUL;
+constexpr DWORD app_alias = 0x8000001BUL;
+constexpr DWORD unix_socket = 0x80000023UL;
+
+Kind reparsed(const WIN32_FIND_DATAW& told) {
+    const bool folder = (told.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+
+    if ((told.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return folder ? Kind::folder : Kind::file;
+
+    switch (told.dwReserved0) {
+        case IO_REPARSE_TAG_SYMLINK:
+        case IO_REPARSE_TAG_MOUNT_POINT:
+        case wsl_link:
+        case app_alias: return Kind::link;
+        case unix_socket: return Kind::special;
+        default: return folder ? Kind::folder : Kind::file;
+    }
+}
+
 // Jedno pytanie do systemu oddaje nazwę, rodzaj, rozmiar, czas i atrybuty razem.
 // directory_iterator nie wystawia atrybutów, więc trzeba było dopytywać o każdy wpis
 // z osobna — przy skanowaniu udziału sieciowego to podwajało liczbę wypraw przez sieć.
@@ -445,23 +702,52 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
 
     made.where = here / path{told.cFileName};
 
-    if ((told.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) made.kind = Kind::link;
-    else if ((told.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) made.kind = Kind::folder;
-    else made.kind = Kind::file;
+    made.kind = reparsed(told);
 
     if (made.kind == Kind::file)
         made.size = (static_cast<std::uintmax_t>(told.nFileSizeHigh) << 32) | told.nFileSizeLow;
 
-    made.written = stamped(told.ftLastWriteTime);
+    made.modified = stamped(told.ftLastWriteTime);
+    made.accessed = stamped(told.ftLastAccessTime);
 
-    made.marks.hidden = (told.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
-    made.marks.readonly = (told.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
-    made.marks.system = (told.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+    made.attributes.hidden = (told.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+    made.attributes.readonly = (told.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
+    made.attributes.system = (told.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
 
     // Wykonywalny po rozszerzeniu — Windows nie ma bitu. `stale` zostaje fałszem: sprawdzenie
     // celu punktu ponownej analizy to osobna wyprawa do systemu na każdy wpis, a przy udziale
     // sieciowym podwajałaby liczbę wypraw — powód, dla którego `noted` czyta z `FIND_DATA`.
-    made.marks.executable = made.kind == Kind::file && runnable(made.where);
+    made.attributes.executable = made.kind == Kind::file && runnable(made.where);
+
+    // Prawa udajemy tak samo, jak robi to `std::filesystem` na tym systemie: wszystko wolno, chyba
+    // że plik jest tylko do odczytu. Liczby dowiązań, właściciela ani grupy `FIND_DATA` nie niesie,
+    // a wyciągnięcie ich wymagałoby otwarcia każdego pliku z osobna — MC na Windows też ich nie
+    // pokazuje, więc zostają puste.
+    made.rights = made.attributes.readonly ? stood::perms::owner_read | stood::perms::group_read |
+                                            stood::perms::others_read | stood::perms::owner_exec |
+                                            stood::perms::group_exec | stood::perms::others_exec
+                                      : stood::perms::all;
+
+    // Cel dowiązania jak na POSIX-ie, tylko dla dowiązania. `read_symlink` czyta dowiązania
+    // symboliczne, a nie węzły montowania (junction) — dla nich cel zostaje pusty, tak jak `stale`
+    // zostaje fałszem, i z tego samego powodu.
+    made.reach = made.kind;
+
+    if (made.kind == Kind::link) {
+        std::error_code ignored;
+
+        const path told = stood::read_symlink(made.where, ignored);
+
+        if (!ignored) made.target = told;
+
+        const stood::file_status through = stood::status(made.where, ignored);
+
+        made.reach = ignored ? Kind::none
+                     : stood::is_directory(through)    ? Kind::folder
+                     : stood::is_regular_file(through) ? Kind::file
+                     : stood::exists(through)          ? Kind::special
+                                                       : Kind::none;
+    }
 
     return made;
 }
@@ -478,7 +764,7 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
     if (looking == INVALID_HANDLE_VALUE) {
         if (quiet) return made;
 
-        amiss("Nie można otworzyć katalogu.", where);
+        amiss("Cannot open the directory.", where);
     }
 
     do {
@@ -491,15 +777,80 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
         made.push_back(noted(told, where));
     } while (FindNextFileW(looking, &told) != 0);
 
+    // **Koniec wykazu to tylko `ERROR_NO_MORE_FILES`.** Każdy inny błąd — zerwane połączenie
+    // z udziałem w połowie wykazu — dawniej też kończył pętlę, więc wykaz wychodził ucięty jak
+    // kompletny, a przeniesienie katalogu kasowało to, czego nie zdążyło zobaczyć.
+    const DWORD why = GetLastError();
+
     FindClose(looking);
+
+    if (why != ERROR_NO_MORE_FILES && !stopped()) amiss("Cannot read the directory.", where);
+
+    return made;
+}
+
+// Jeden wpis: `FIND_DATA` samego wpisu, jak w wykazie, a do tego **liczba nazw** z otwartego
+// uchwytu. W wykazie jej nie ma, bo kosztowałaby otwarcie każdego pliku; przy jednym wpisie to
+// jedno otwarcie, a bez niej zapis „obok i przemianuj" nie wie, że zerwałby twarde dowiązanie.
+// Wpisu, którego nie ma, nie ma też tutaj: wraca `Kind::none`.
+Entry entry_at(const path& where) {
+    WIN32_FIND_DATAW told{};
+
+    const HANDLE looking = FindFirstFileExW(longly(where).c_str(), FindExInfoBasic, &told,
+                                            FindExSearchNameMatch, nullptr, 0);
+
+    if (looking == INVALID_HANDLE_VALUE) {
+        Entry none;
+
+        none.where = where;
+
+        return none;
+    }
+
+    FindClose(looking);
+
+    Entry made = noted(told, where.parent_path());
+
+    const HANDLE opened = CreateFileW(longly(where).c_str(), FILE_READ_ATTRIBUTES,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                      OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                      nullptr);
+
+    if (opened != INVALID_HANDLE_VALUE) {
+        BY_HANDLE_FILE_INFORMATION about{};
+
+        if (GetFileInformationByHandle(opened, &about) != 0) made.links = about.nNumberOfLinks;
+
+        CloseHandle(opened);
+    }
 
     return made;
 }
 
 #endif
 
+// Katalog pod ścieżką albo dowiązanie, które do katalogu prowadzi — **tylko u korzenia**. Panel
+// wchodzi przez dowiązanie jak MC, a `kind_at` go nie rozwija, bo wpis dowiązania ma pokazywać
+// dowiązanie. Dawniej obie drogi odmawiały: „Not a directory." na katalogu, do którego człowiek
+// właśnie chciał wejść.
+namespace {
+
+bool folder_at(const path& where) {
+    const Kind kind = kind_at(where);
+
+    if (kind == Kind::folder) return true;
+
+    if (kind != Kind::link) return false;
+
+    std::error_code trouble;
+
+    return stood::is_directory(stood::status(where, trouble));
+}
+
+}
+
 std::vector<Entry> list_at(const path& where) {
-    if (kind_at(where) != Kind::folder) amiss("To nie jest katalog.", where);
+    if (!folder_at(where)) amiss("Not a directory.", where);
 
 #ifdef _WIN32
 
@@ -511,16 +862,14 @@ std::vector<Entry> list_at(const path& where) {
     stood::directory_iterator at{where, stood::directory_options::skip_permission_denied,
                                  trouble};
 
-    if (trouble) amiss("Nie można otworzyć katalogu.", where);
-
-    const Apart apart = apart_now();
+    if (trouble) amiss("Cannot open the directory.", where);
 
     std::vector<Entry> made;
 
     for (const stood::directory_entry& one : at) {
         if (stopped()) return made;
 
-        made.push_back(noted(one, apart));
+        made.push_back(noted(one));
     }
 
 #endif
@@ -531,13 +880,10 @@ std::vector<Entry> list_at(const path& where) {
 }
 
 // Katalog, do którego nie ma wstępu, pomijamy zamiast przewracać całe przejście. Zabranie
-// prawa do jednego podkatalogu nie może unieważnić skanowania biblioteki.
+// prawa do jednego podkatalogu nie może unieważnić skanowania biblioteki. Za dowiązaniem idziemy
+// tylko u korzenia (`folder_at`); w głębi zostaje wpisem, bo dowiązanie do przodka zamknęłoby koło.
 std::vector<Entry> walk_at(const path& where) {
-    if (kind_at(where) != Kind::folder) amiss("To nie jest katalog.", where);
-
-#ifndef _WIN32
-    const Apart apart = apart_now();
-#endif
+    if (!folder_at(where)) amiss("Not a directory.", where);
 
     std::vector<Entry> made;
     std::vector<path> waiting{where};
@@ -567,7 +913,7 @@ std::vector<Entry> walk_at(const path& where) {
         for (const stood::directory_entry& one : at) {
             if (stopped()) return made;
 
-            Entry note = noted(one, apart);
+            Entry note = noted(one);
             if (note.kind == Kind::folder) waiting.push_back(note.where);
 
             made.push_back(std::move(note));
@@ -581,452 +927,519 @@ std::vector<Entry> walk_at(const path& where) {
     return made;
 }
 
-void make_at(const path& where) {
+void make_folder_at(const path& where) {
     if (kind_at(where) == Kind::folder) return;
 
     std::error_code trouble;
 
     stood::create_directories(where, trouble);
-    if (trouble) amiss("Nie można utworzyć katalogu.", where);
+    if (trouble) amiss("Cannot create the directory.", where);
 }
 
-void rename_at(const path& from, const path& to) {
+// Nazwa obok: `cel.bin` → `cel (2).bin`. Składana na postaci rodzimej ścieżki, nie przez
+// `string()`, które pod MSVC oddaje stronę kodową ANSI i psuje albo odrzuca polskie litery.
+path beside(const path& to, int at) {
+    const path::string_type tail = path{" (" + std::to_string(at) + ")"}.native();
+
+    path made = to;
+    made.replace_filename(to.stem().native() + tail + to.extension().native());
+
+    return made;
+}
+
+path settled_on(const path& to, Conflict how) {
+    if (kind_at(to) == Kind::none) return to;
+
+    switch (how) {
+        case Conflict::overwrite: return to;
+        case Conflict::skip: return {};
+        case Conflict::fail: amiss("The target already exists.", to);
+        case Conflict::rename: break;
+    }
+
+    for (int at = 2; at <= 100; ++at) {
+        const path other = beside(to, at);
+
+        if (kind_at(other) == Kind::none) return other;
+    }
+
+    amiss("No free name beside the target.", to);
+}
+
+namespace {
+
+#if defined(TALCITE_LINUX_FS)
+
+constexpr unsigned noreplace = 1U;
+
+#endif
+
+#ifdef _WIN32
+
+// **Ten sam wpis pod inną pisownią — na Windows.** Ten sam katalog i nazwa równa bez wielkości
+// liter: dowiązania twarde w jednym katalogu różnią się nazwą także bez wielkości liter, a w różnych
+// katalogach — katalogiem. Porównujemy nazwy, nie spis katalogu: `from` podane inną pisownią niż
+// na dysku zostawia w spisie wpis o pisowni `to`, choć to ten sam wpis.
+bool respelled(const path& from, const path& to) {
+    std::error_code trouble;
+
+    const path one = stood::absolute(from, trouble).lexically_normal();
+    const path two = stood::absolute(to, trouble).lexically_normal();
+
+    const std::wstring left = one.filename().wstring();
+    const std::wstring right = two.filename().wstring();
+
+    if (CompareStringOrdinal(left.c_str(), static_cast<int>(left.size()), right.c_str(),
+                             static_cast<int>(right.size()), TRUE) != CSTR_EQUAL)
+        return false;
+
+    return one.parent_path() == two.parent_path() || stood::equivalent(one.parent_path(), two.parent_path(), trouble);
+}
+
+#endif
+
+// Wynik jednej próby przeniesienia przez system.
+enum class Push : std::uint8_t { done, taken, away, refused };
+
+// **Przeniesienie, które nie nadpisuje, niepodzielnie.** Sprawdzenie celu i osobne przeniesienie
+// zostawiały okno, w którym cel mógł się pojawić — a `std::filesystem::rename` na POSIX-ie nadpisuje
+// plik po cichu, pusty katalog też. Dlatego o „cel stoi" pytamy sam system, w tym samym wywołaniu:
+// na Windows `MoveFileExW` bez `MOVEFILE_REPLACE_EXISTING`, na Linuksie `renameat2` z
+// `RENAME_NOREPLACE`. System plików, który tej flagi nie zna (`EINVAL`), dostaje dawną drogę —
+// sprawdzenie i przeniesienie.
+//
+// **Odmowa ma powód i od powodu zależy, co dalej.** Zajęty cel rozstrzyga polityka kolizji; inny
+// nośnik (`EXDEV`, `ERROR_NOT_SAME_DEVICE`) to jedyny powód, dla którego `move` wolno kopiować
+// i sprzątać źródło. Każda inna odmowa — plik otwarty w odtwarzaczu, brak praw, za długa nazwa —
+// jest błędem. Dawniej każda kończyła się kopią i kasowaniem źródła, także taka, po której kopia
+// lądowała we wnętrzu samego źródła.
+Push pushed(const path& from, const path& to) {
+#ifdef _WIN32
+    // Przemianowanie na drugie dowiązanie twarde tego samego pliku `MoveFileExW` bez nadpisania
+    // przyjmuje bez słowa, choć to osobny wpis. Pytamy więc najpierw, czy cel stoi — jedno pytanie
+    // o atrybuty — i stojący oddajemy jako zajęty. Do systemu idzie dalej tylko ten sam wpis:
+    // przeniesienie na samego siebie i inna pisownia (`heat` → `Heat`), którą `MoveFileExW` robi sam.
+    if (GetFileAttributesW(longly(to).c_str()) != INVALID_FILE_ATTRIBUTES && !respelled(from, to))
+        return Push::taken;
+
+    if (MoveFileExW(longly(from).c_str(), longly(to).c_str(), 0) != 0) return Push::done;
+
+    switch (GetLastError()) {
+        case ERROR_ALREADY_EXISTS:
+        case ERROR_FILE_EXISTS: return Push::taken;
+        case ERROR_NOT_SAME_DEVICE: return Push::away;
+        default: return Push::refused;
+    }
+#else
+#if defined(TALCITE_LINUX_FS)
+    if (::syscall(SYS_renameat2, AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), noreplace) == 0) return Push::done;
+
+    if (errno == EEXIST) return Push::taken;
+    if (errno == EXDEV) return Push::away;
+    if (errno != EINVAL && errno != ENOSYS) return Push::refused;
+#else
+#if defined(TALCITE_BSD_FS) && defined(__APPLE__)
+    if (::renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0) return Push::done;
+
+    if (errno == EEXIST) return Push::taken;
+    if (errno == EXDEV) return Push::away;
+    if (errno != ENOTSUP && errno != EINVAL) return Push::refused;
+#endif
+
+    // **Bez przemianowania „bez nadpisania" w systemie** — BSD, przenośny POSIX — plik idzie
+    // dowiązaniem twardym: `linkat` nie nadpisuje nigdy (`EEXIST`), więc nowa nazwa powstaje
+    // niepodzielnie, a stara znika potem. Katalogu tak się nie da, a system plików bez dowiązań
+    // twardych (FAT, część FUSE) odmawia — wtedy zostaje sprawdzenie i przemianowanie.
+    struct stat told {};
+
+    if (::lstat(from.c_str(), &told) == 0 && !S_ISDIR(told.st_mode)) {
+        if (::linkat(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), 0) == 0) {
+            if (::unlink(from.c_str()) == 0) return Push::done;
+
+            (void)::unlink(to.c_str());
+
+            return Push::refused;
+        }
+
+        if (errno == EEXIST) return Push::taken;
+        if (errno == EXDEV) return Push::away;
+        if (errno != EPERM && errno != ENOTSUP && errno != EOPNOTSUPP && errno != EMLINK && errno != ENOSYS)
+            return Push::refused;
+    }
+#endif
+
+    if (kind_at(to) != Kind::none) return Push::taken;
+
     std::error_code trouble;
 
     stood::rename(from, to, trouble);
-    if (trouble) amiss("Nie można zmienić nazwy.", from);
+
+    if (!trouble) return Push::done;
+
+    return trouble == std::errc::cross_device_link ? Push::away : Push::refused;
+#endif
 }
 
-}
-
-// Uchwyt jest wspólny, a nie kopiowany: File to typ wartościowy tak samo jak Promise, więc
-// kopie dzielą ten sam otwarty plik, a zamyka go dopiero ostatnia. Dzięki temu File przechodzi
-// przez obietnicę bez sztuczek z wskaźnikami.
-struct File::Held {
-    path where;
-
+// Przeniesienie, które **zastępuje** cel. Zapis obok i przemianowanie na cel to droga każdego
+// bezpiecznego zapisu, więc przemianowanie ma być trwałe: Windows przepuszcza je przez dysk
+// (`MOVEFILE_WRITE_THROUGH`), a na POSIX-ie utrwalamy katalog, w którym zmieniła się nazwa —
+// inaczej po zaniku zasilania katalog może wciąż wskazywać stary plik albo żaden.
 #ifdef _WIN32
-    void* handle = nullptr;
 
-    ~Held() {
-        if (handle != nullptr && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-    }
-#else
-    int handle = -1;
+// **Zastąpienie z semantyką POSIX** (Windows 10 1709+): cel otwarty przez kogoś innym z
+// `FILE_SHARE_DELETE` — odtwarzacz, indeksowanie, drugie okno twa — zostaje zastąpiony jak na
+// Linuksie, a otwarte uchwyty dalej widzą starą treść. `MoveFileExW` w takiej sytuacji odmawia
+// dostępu i zapis kończył się błędem. System albo nośnik bez tej drogi (starszy Windows, FAT,
+// część udziałów) odpowiada „nie obsługuję", i wtedy idzie `MoveFileExW` jak dawniej.
+std::optional<Push> posix_replaced(const path& from, const path& to) {
+    const HANDLE one = CreateFileW(longly(from).c_str(), DELETE | SYNCHRONIZE | GENERIC_WRITE,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                   FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 
-    ~Held() {
-        if (handle >= 0) ::close(handle);
-    }
+    if (one == INVALID_HANDLE_VALUE) return std::nullopt;
+
+    const std::wstring named = longly(to);
+    const std::size_t room = sizeof(FILE_RENAME_INFO) + named.size() * sizeof(wchar_t);
+
+    std::vector<std::byte> held(room);
+
+    auto* told = reinterpret_cast<FILE_RENAME_INFO*>(held.data());
+
+    told->Flags = 0x00000001 | 0x00000002;
+    told->RootDirectory = nullptr;
+    told->FileNameLength = static_cast<DWORD>(named.size() * sizeof(wchar_t));
+
+    std::memcpy(told->FileName, named.c_str(), named.size() * sizeof(wchar_t));
+
+    // `FileRenameInfoEx` = 22; flagi to `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` i
+    // `FILE_RENAME_FLAG_POSIX_SEMANTICS` — liczbami, bo starsze nagłówki MinGW ich nie mają.
+    const BOOL done = SetFileInformationByHandle(one, static_cast<FILE_INFO_BY_HANDLE_CLASS>(22), told,
+                                                 static_cast<DWORD>(room));
+
+    const DWORD why = done != 0 ? ERROR_SUCCESS : GetLastError();
+
+    // Utrwalenie tego, co zrobiło `MOVEFILE_WRITE_THROUGH`: wpis o nowej nazwie na nośniku.
+    if (done != 0) (void)FlushFileBuffers(one);
+
+    CloseHandle(one);
+
+    if (done != 0) return Push::done;
+
+    if (why == ERROR_NOT_SAME_DEVICE) return Push::away;
+
+    if (why == ERROR_INVALID_PARAMETER || why == ERROR_NOT_SUPPORTED || why == ERROR_INVALID_FUNCTION)
+        return std::nullopt;
+
+    return Push::refused;
+}
+
 #endif
 
-    Held() = default;
+Push replaced(const path& from, const path& to) {
+#ifdef _WIN32
+    if (const std::optional<Push> made = posix_replaced(from, to)) return *made;
 
-    Held(const Held&) = delete;
-    Held& operator=(const Held&) = delete;
-    Held(Held&&) = delete;
-    Held& operator=(Held&&) = delete;
-};
+    if (MoveFileExW(longly(from).c_str(), longly(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0)
+        return Push::done;
+
+    return GetLastError() == ERROR_NOT_SAME_DEVICE ? Push::away : Push::refused;
+#else
+    if (::rename(from.c_str(), to.c_str()) != 0) return errno == EXDEV ? Push::away : Push::refused;
+
+    settled_folder(to.parent_path());
+
+    return Push::done;
+#endif
+}
+
+// Wpis nie zmieści się we własnym wnętrzu. Wystarczy porównanie ścieżek bezwzględnych: przodka
+// schowanego za dowiązaniem i tak odrzuci sam system (`EINVAL`), a odmowa systemu jest dziś błędem,
+// nie zaproszeniem do kopii. Tu chodzi o zdanie, które mówi, co się stało. O rodzaj wpisu nie
+// pytamy: plik też nie ma wnętrza, a pytanie kosztowałoby zajrzenie do każdego przenoszonego pliku.
+bool within(const path& from, const path& to) {
+    std::error_code ignored;
+
+    const path whole = stood::absolute(from, ignored).lexically_normal();
+    const path aim = stood::absolute(to, ignored).lexically_normal();
+
+    const auto [left, right] = std::mismatch(whole.begin(), whole.end(), aim.begin(), aim.end());
+
+    return left == whole.end() && right != aim.end();
+}
+
+#ifndef _WIN32
+
+// **Ten sam wpis pod inną pisownią.** Na systemie bez wielkości liter `heat` i `Heat` to jeden
+// wpis, więc cel „stoi" — ale zmiana nazwy między nimi jest zwyczajną zmianą nazwy. Dowiązanie
+// twarde też jest `equivalent`, a jest osobnym wpisem, którego nadpisać nie wolno. Rozróżnia je
+// katalog: osobny wpis leży w nim pod dokładnie tą nazwą, inna pisownia tego samego — nie.
+bool same_entry(const path& from, const path& to) {
+    std::error_code trouble;
+
+    if (!stood::equivalent(from, to, trouble) || trouble) return false;
+
+    // Ta sama ścieżka to ten sam wpis. Sama nazwa nie wystarcza: dowiązanie twarde w innym
+    // katalogu pod tą samą nazwą to osobny wpis, a `rename` między dowiązaniami nic nie robi.
+    if (stood::absolute(from, trouble).lexically_normal() == stood::absolute(to, trouble).lexically_normal())
+        return true;
+
+    for (const stood::directory_entry& one : stood::directory_iterator{to.parent_path(), trouble})
+        if (one.path().filename() == to.filename()) return false;
+
+    return !trouble;
+}
+
+#endif
+
+}
+
+bool recased(const path& from, const path& to) {
+    const std::string one = to_string(from.filename());
+    const std::string two = to_string(to.filename());
+
+    if (one == two) return false;
+
+    std::size_t left = 0;
+    std::size_t right = 0;
+
+    while (left < one.size() && right < two.size())
+        if (ui::folded(utf8::decode(one, left)) != ui::folded(utf8::decode(two, right))) return false;
+
+    if (left != one.size() || right != two.size()) return false;
+
+    std::error_code trouble;
+
+    return stood::absolute(from, trouble).lexically_normal().parent_path() ==
+           stood::absolute(to, trouble).lexically_normal().parent_path();
+}
+
+bool respelled_twice(const path& from, const path& to, const std::function<bool(const path&, const path&)>& move,
+                     const std::function<bool(const path&)>& exact) {
+    if (exact(to)) return true;
+
+    path aside = to;
+
+    aside += ".~case";
+
+    if (!move(from, aside)) return false;
+
+    if (move(aside, to)) return true;
+
+    (void)move(aside, from);
+
+    return false;
+}
 
 namespace {
 
-std::shared_ptr<File::Held> open_at(const path& where, Mode how) {
-    auto made = std::make_shared<File::Held>();
-    made->where = where;
+// Spis katalogu ma wpis dokładnie pod tą nazwą — nie inną pisownią tego samego.
+bool spelled_exactly(const path& to) {
+    std::error_code trouble;
 
-#ifdef _WIN32
-    const DWORD reach = how == Mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE;
-    const DWORD shared = FILE_SHARE_READ | FILE_SHARE_WRITE;
-    const DWORD when = how == Mode::read ? OPEN_EXISTING
-                                         : (how == Mode::fresh ? CREATE_ALWAYS : OPEN_ALWAYS);
+    const path folder = to.has_parent_path() ? to.parent_path() : path{"."};
 
-    made->handle = CreateFileW(longly(where).c_str(), reach, shared, nullptr, when,
-                               FILE_ATTRIBUTE_NORMAL, nullptr);
+    for (const stood::directory_entry& one : stood::directory_iterator{folder, trouble})
+        if (one.path().filename() == to.filename()) return true;
 
-    if (made->handle == INVALID_HANDLE_VALUE) amiss("Nie można otworzyć pliku.", where);
-#else
-    int flags = how == Mode::read ? O_RDONLY : O_RDWR;
-    if (how == Mode::write) flags |= O_CREAT;
-    if (how == Mode::fresh) flags |= O_CREAT | O_TRUNC;
+    return false;
+}
 
-    // **Zamykany przy uruchomieniu programu potomnego** — inaczej dziecko dziedziczy każdy plik,
-    // który akurat mamy otwarty, i trzyma go po naszym `close()`.
-    made->handle = ::open(where.c_str(), flags | O_CLOEXEC, 0644);
+// Po udanej zmianie samej wielkości liter: czy naprawdę się stała.
+Shift confirmed(const path& from, const path& to, Shift made) {
+    if (!made.done || !recased(from, to)) return made;
 
-    if (made->handle < 0) amiss("Nie można otworzyć pliku.", where);
-#endif
+    const auto move = [](const path& one, const path& two) { return pushed(one, two) == Push::done; };
+
+    if (!respelled_twice(from, to, move, spelled_exactly)) amiss("Cannot rename.", from);
 
     return made;
 }
 
-Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
-    Bytes made(much);
+}
 
-    std::size_t got = 0;
+Shift shifted(const path& from, const path& to, Conflict how) {
+    if (within(from, to)) amiss("Cannot move an entry into itself.", from);
 
-    while (got < much) {
-#ifdef _WIN32
-        OVERLAPPED told{};
-        told.Offset = static_cast<DWORD>((at + got) & 0xFFFFFFFFull);
-        told.OffsetHigh = static_cast<DWORD>((at + got) >> 32);
-
-        DWORD taken = 0;
-        const DWORD wanted = static_cast<DWORD>(std::min<std::size_t>(much - got, 1u << 30));
-
-        if (ReadFile(held.handle, made.data() + got, wanted, &taken, &told) == 0) {
-            if (GetLastError() == ERROR_HANDLE_EOF) break;
-
-            amiss("Nie można odczytać pliku.", held.where);
+    if (how == Conflict::overwrite) {
+        switch (replaced(from, to)) {
+            case Push::done: return {to, true};
+            case Push::away: return {to, false};
+            default: amiss("Cannot rename.", from);
         }
-#else
-        const ssize_t taken = ::pread(held.handle, made.data() + got, much - got,
-                                      static_cast<off_t>(at + got));
-
-        if (taken < 0) amiss("Nie można odczytać pliku.", held.where);
-#endif
-
-        if (taken == 0) break;
-
-        got += static_cast<std::size_t>(taken);
     }
 
-    made.resize(got);
-
-    return made;
-}
-
-std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what) {
-    std::size_t put = 0;
-
-    while (put < what.size()) {
-#ifdef _WIN32
-        OVERLAPPED told{};
-        told.Offset = static_cast<DWORD>((at + put) & 0xFFFFFFFFull);
-        told.OffsetHigh = static_cast<DWORD>((at + put) >> 32);
-
-        DWORD given = 0;
-        const DWORD wanted =
-            static_cast<DWORD>(std::min<std::size_t>(what.size() - put, 1u << 30));
-
-        if (WriteFile(held.handle, what.data() + put, wanted, &given, &told) == 0)
-            amiss("Nie można zapisać pliku.", held.where);
-#else
-        const ssize_t given = ::pwrite(held.handle, what.data() + put, what.size() - put,
-                                       static_cast<off_t>(at + put));
-
-        if (given < 0) amiss("Nie można zapisać pliku.", held.where);
-#endif
-
-        // **Zerowy zapis to brak postępu**, a nie koniec pracy: wołający kręci pętlę warunkiem na
-        // przesunięciu, więc oddanie zera przy niepustym kawałku zapętliłoby kopiowanie na pełnym
-        // rdzeniu. Mówimy o tym wprost, zamiast milczeć.
-        if (given == 0) amiss("Nie można zapisać pliku.", held.where);
-
-        put += static_cast<std::size_t>(given);
-    }
-
-    return put;
-}
-
-std::uintmax_t sized(const File::Held& held) {
-#ifdef _WIN32
-    LARGE_INTEGER told{};
-
-    if (GetFileSizeEx(held.handle, &told) == 0) amiss("Nie można odczytać rozmiaru pliku.",
-                                                      held.where);
-
-    return static_cast<std::uintmax_t>(told.QuadPart);
-#else
-    struct stat told {};
-
-    if (::fstat(held.handle, &told) != 0) amiss("Nie można odczytać rozmiaru pliku.", held.where);
-
-    return static_cast<std::uintmax_t>(told.st_size);
-#endif
-}
-
-}
-
-const path& File::where() const {
-    static const path nowhere;
-
-    return held_ ? held_->where : nowhere;
-}
-
-Promise<Bytes> File::read(std::uintmax_t at, std::size_t much) const {
-    auto held = held_;
-
-    return Promise<Bytes>{[held, at, much](auto resolve, auto) {
-        if (!held) amiss("Plik nie jest otwarty.", path{});
-
-        resolve(read_at(*held, at, much));
-    }};
-}
-
-Promise<std::size_t> File::write(std::uintmax_t at, Bytes what) const {
-    auto held = held_;
-
-    return Promise<std::size_t>{[held, at, what = std::move(what)](auto resolve, auto) {
-        if (!held) amiss("Plik nie jest otwarty.", path{});
-
-        resolve(write_at(*held, at, what));
-    }};
-}
-
-struct Flow::Held {
-    std::shared_ptr<File::Held> file;
-    std::atomic<std::uintmax_t> at{0};
-    std::atomic<bool> busy{false};
-};
-
-namespace {
-
-// Zajętość bierzemy w chwili tworzenia obietnicy, nie w chwili jej wykonania — obietnice są
-// leniwe, więc dwa odczyty utworzone przed uruchomieniem któregokolwiek wystartowałyby
-// z tej samej pozycji, a który padnie, zależałoby od kolejności w puli. Strażnik zwalnia
-// strumień, gdy operacja się kończy — także wyjątkiem — i gdy obietnica ginie nieruszona.
-class Claim {
-public:
-    explicit Claim(std::shared_ptr<Flow::Held> held) : held_(std::move(held)) {}
-
-    ~Claim() { free(); }
-
-    Claim(const Claim&) = delete;
-    Claim& operator=(const Claim&) = delete;
-    Claim(Claim&&) = delete;
-    Claim& operator=(Claim&&) = delete;
-
-    void free() {
-        if (!held_) return;
-
-        held_->busy.store(false);
-        held_.reset();
-    }
-
-private:
-    std::shared_ptr<Flow::Held> held_;
-};
-
-class Freeing {
-public:
-    explicit Freeing(std::shared_ptr<Claim> claim) : claim_(std::move(claim)) {}
-
-    ~Freeing() { claim_->free(); }
-
-    Freeing(const Freeing&) = delete;
-    Freeing& operator=(const Freeing&) = delete;
-    Freeing(Freeing&&) = delete;
-    Freeing& operator=(Freeing&&) = delete;
-
-private:
-    std::shared_ptr<Claim> claim_;
-};
-
-// Funkcja oddająca obietnicę nie powinna rzucać w twarz wołającemu — wszystko, co się nie
-// udało, ma przyjść tą samą drogą co reszta błędów modułu. Stąd zamiast wyjątku wracamy
-// z pustym strażnikiem i powodem, a wołający robi z tego obietnicę, która odrzuci.
-struct Claiming {
-    std::shared_ptr<Claim> claim;
-    std::string said;
-    path where;
-};
-
-Claiming claimed(const std::shared_ptr<Flow::Held>& held) {
-    if (!held) return {nullptr, "Strumień jest zamknięty.", path{}};
-
-    bool spare = false;
-
-    if (!held->busy.compare_exchange_strong(spare, true))
-        return {nullptr, "Strumień jest zajęty.", held->file->where};
-
-    return {std::make_shared<Claim>(held), std::string{}, path{}};
-}
-
-}
-
-Flow File::flow() const {
-    if (!held_) amiss("Plik nie jest otwarty.", path{});
-
-    auto made = std::make_shared<Flow::Held>();
-    made->file = held_;
-
-    return Flow{made};
-}
-
-const path& Flow::where() const {
-    static const path nowhere;
-
-    return held_ ? held_->file->where : nowhere;
-}
-
-std::uintmax_t Flow::at() const { return held_ ? held_->at.load() : 0; }
-
-void Flow::seek(std::uintmax_t at) {
-    if (!held_) amiss("Strumień jest zamknięty.", path{});
-
-    if (held_->busy.load()) amiss("Strumień jest zajęty.", held_->file->where);
-
-    held_->at.store(at);
-}
-
-Promise<Bytes> Flow::read(std::size_t much) {
-    auto held = held_;
-    Claiming got = claimed(held);
-
-    if (!got.claim)
-        return Promise<Bytes>{
-            [said = std::move(got.said), where = std::move(got.where)](auto, auto) {
-                amiss(said, where);
-            }};
-
-    return Promise<Bytes>{[held, claim = std::move(got.claim), much](auto resolve, auto) {
-        Bytes made;
-
-        // Zwolnienie musi wypaść przed rozstrzygnięciem, nie po nim: resolve budzi wątek
-        // czekający na await, a ten natychmiast sięga po następny odczyt. Zwalnianie po
-        // resolve zostawiało szparę, w której kolejne czytanie z pętli słyszało „zajęty".
-        {
-            const Freeing freeing{claim};
-
-            const std::uintmax_t at = held->at.load();
-
-            made = read_at(*held->file, at, much);
-
-            held->at.store(at + made.size());
+    const auto settled = [&from](const path& aim) -> std::optional<Shift> {
+        switch (pushed(from, aim)) {
+            case Push::done: return Shift{aim, true};
+            case Push::away: return Shift{aim, false};
+            case Push::taken: return std::nullopt;
+            case Push::refused: break;
         }
 
-        resolve(std::move(made));
-    }};
-}
+        amiss("Cannot rename.", from);
+    };
 
-Promise<std::size_t> Flow::write(Bytes what) {
-    auto held = held_;
-    Claiming got = claimed(held);
+    if (const std::optional<Shift> made = settled(to)) return confirmed(from, to, *made);
 
-    if (!got.claim)
-        return Promise<std::size_t>{
-            [said = std::move(got.said), where = std::move(got.where)](auto, auto) {
-                amiss(said, where);
-            }};
+#ifndef _WIN32
+    // Na Windows ten sam wpis rozstrzyga już `pushed` — tu dochodzi tylko cel naprawdę zajęty.
+    if (same_entry(from, to)) {
+        std::error_code trouble;
 
-    return Promise<std::size_t>{
-        [held, claim = std::move(got.claim), what = std::move(what)](auto resolve, auto) {
-            std::size_t much = 0;
+        stood::rename(from, to, trouble);
+        if (trouble) amiss("Cannot rename.", from);
 
-            {
-                const Freeing freeing{claim};
-
-                const std::uintmax_t at = held->at.load();
-
-                much = write_at(*held->file, at, what);
-
-                held->at.store(at + much);
-            }
-
-            resolve(much);
-        }};
-}
-
-Promise<std::uintmax_t> File::size() const {
-    auto held = held_;
-
-    return Promise<std::uintmax_t>{[held](auto resolve, auto) {
-        if (!held) amiss("Plik nie jest otwarty.", path{});
-
-        resolve(sized(*held));
-    }};
-}
-
-Promise<File> open(const path& where, Mode how) {
-    return Promise<File>{
-        [where, how](auto resolve, auto) { resolve(File{open_at(where, how)}); }};
-}
-
-namespace {
-
-// Bilet operacji ratami: wie, ile bajtów albo pozycji z ilu już zeszło. Wirtualny progress
-// z Ticket jest tu po to, żeby pasek postępu pytał, a nikt niczego nie przepisywał w górę.
-template <typename T>
-struct Counted : Result<T> {
-    std::atomic<std::uintmax_t> done{0};
-    std::atomic<std::uintmax_t> whole{0};
-
-    [[nodiscard]] double progress() const override {
-        if (over(*this)) return 1.0;
-
-        const std::uintmax_t all = whole.load();
-        if (all == 0) return 0.0;
-
-        return std::min(1.0, static_cast<double>(done.load()) / static_cast<double>(all));
+        return confirmed(from, to, {to, true});
     }
-};
+#endif
 
-template <typename T>
-class HaulPromise : public Promise<T> {
-public:
-    HaulPromise(typename Promise<T>::Callback given, std::shared_ptr<Counted<T>> made)
-        : Promise<T>(std::move(given), std::move(made)) {}
-};
+    switch (how) {
+        case Conflict::skip: return {};
+        case Conflict::fail: amiss("The target already exists.", to);
+        case Conflict::overwrite:
+        case Conflict::rename: break;
+    }
 
-std::size_t rated(const path& from, const path& to) {
-    return std::min(slice_at(from), slice_at(to));
+    for (int at = 2; at <= 100; ++at)
+        if (const std::optional<Shift> made = settled(beside(to, at))) return *made;
+
+    amiss("No free name beside the target.", to);
 }
+
+bool replaced_at(const path& from, const path& to) { return replaced(from, to) == Push::done; }
+
+}
+
+// Ścieżka jako tekst **zawsze w UTF-8** i z powrotem. Bez tego programy stojące na bibliotece
+// sięgają po `path::string()`, a to pod MSVC oddaje bieżącą stronę kodową ANSI, nie UTF-8 —
+// nazwa pliku z polskimi znakami dochodzi do rysowania już zepsuta i wygląda na ekranie jak
+// ciąg znaków zastępczych, bo dekoder biblioteki odrzuca bajt po bajcie. To samo w drugą stronę:
+// `path{std::string}` czyta bajty jako ANSI, więc katalog założony z pola tekstowego dostaje
+// inną nazwę, niż wpisał człowiek.
+//
+// `u8string()` jest UTF-8 z definicji na każdym systemie, więc **nie ma tu ani jednego `#ifdef`**.
+// Przejście przez `std::u8string` to przepisanie bajt w bajt; osobny typ istnieje właśnie po to,
+// żeby kodowania nie dało się pomylić, i dlatego nie da się go po prostu przypisać.
+//
+// Wyjątek od tej reguły jest jeden: Windows. Tam `u8string()` przy samotnej połowie pary
+// zastępczej w nazwie (NTFS ją dopuszcza) rzuca albo gubi znaki, zależnie od biblioteki
+// standardowej — a nazwy pliku do pokazania nie wolno wywracać. Dlatego na Windows przepisujemy
+// sami, ze znakiem zastępczym w miejscu zepsutej jednostki. Tekst do przechowania, bez strat,
+// daje `stored`.
+std::string to_string(const path& where) {
+#ifdef _WIN32
+    return ::talcite::to_string(std::wstring_view{where.native()});
+#else
+    const std::u8string said = where.u8string();
+
+    return std::string{reinterpret_cast<const char*>(said.data()), said.size()};
+#endif
+}
+
+path from_string(std::string_view said) {
+    return path{std::u8string{reinterpret_cast<const char8_t*>(said.data()), said.size()}};
+}
+
+// Ścieżka do JSON-u i z powrotem: zawsze poprawny UTF-8, zawsze ta sama ścieżka — opis
+// w `storing.cpp`. `to_string` jest dla ludzi, `stored` dla plików.
+std::string stored(const path& where) {
+#ifdef _WIN32
+    const std::wstring& native = where.native();
+
+    return stored_units(std::u16string_view{reinterpret_cast<const char16_t*>(native.data()), native.size()});
+#else
+    return stored_bytes(where.native());
+#endif
+}
+
+path restored(std::string_view said) {
+#ifdef _WIN32
+    const std::u16string made = restored_units(said);
+
+    return path{std::wstring{reinterpret_cast<const wchar_t*>(made.data()), made.size()}};
+#else
+    return path{restored_bytes(said)};
+#endif
+}
+
+namespace core {
 
 // Udział sieciowy poznajemy tym samym rozpoznaniem, które dobiera ratę — krótsza rata
 // i brak wiarygodnych powiadomień biorą się z tej samej przyczyny.
-[[maybe_unused]] bool afar_at(const path& where) { return slice_at(where) == afar; }
+[[maybe_unused]] bool afar_at(const path& where) { return chunk_at(where) == afar; }
 
 #ifdef _WIN32
 
-std::vector<Drive> drives_at() {
-    std::vector<Drive> made;
+// Litery z `GetLogicalDrives`, bez pytania samych nośników: pytanie o etykietę i miejsce potrafi
+// czekać sekundami na odłączony dysk sieciowy albo pusty czytnik kart, a wykaz ma stanąć od razu.
+// Szczegóły każdej litery bierze `volume_at`, osobno — wolny nośnik spowalnia wtedy tylko siebie.
+std::vector<path> roots_at() {
+    std::vector<path> made;
 
     const DWORD mask = GetLogicalDrives();
 
-    for (int at = 0; at < 26; ++at) {
-        if ((mask & (1ul << at)) == 0) continue;
+    for (int at = 0; at < 26; ++at)
+        if ((mask & (1ul << at)) != 0) made.emplace_back(std::wstring{static_cast<wchar_t>(L'A' + at)} + L":\\");
 
-        const wchar_t letter = static_cast<wchar_t>(L'A' + at);
-        const std::wstring root = std::wstring{letter} + L":\\";
+    return made;
+}
 
-        Drive one;
+// Jeden nośnik: litera albo udział `\\serwer\zasób`. Korzeń dostaje ukośnik wsteczny na końcu, bo
+// bez niego Windows czyta `C:` jako katalog bieżący na tym dysku, a udziału nie rozpoznaje wcale.
+Volume volume_at(const path& where) {
+    Volume one;
 
-        one.where = path{root};
-        one.mount = mount_at(one.where);
+    std::wstring root = where.wstring();
 
-        std::wstring label(MAX_PATH + 1, L'\0');
+    std::replace(root.begin(), root.end(), L'/', L'\\');
 
-        if (GetVolumeInformationW(root.c_str(), label.data(), MAX_PATH, nullptr, nullptr,
-                                  nullptr, nullptr, 0) != 0) {
-            label.resize(std::wcslen(label.c_str()));
-            one.named = path{label}.string();
-        }
+    if (!root.empty() && root.back() != L'\\') root += L'\\';
 
-        std::error_code ignored;
+    one.where = path{root};
+    one.mount = mount_at(one.where);
 
-        const stood::space_info told = stood::space(one.where, ignored);
+    std::wstring label(MAX_PATH + 1, L'\0');
+    std::wstring format(MAX_PATH + 1, L'\0');
 
-        if (!ignored) {
-            one.room.whole = told.capacity;
-            one.room.spare = told.available;
-        }
+    if (GetVolumeInformationW(root.c_str(), label.data(), MAX_PATH, nullptr, nullptr, nullptr, format.data(),
+                              MAX_PATH) != 0) {
+        label.resize(std::wcslen(label.c_str()));
+        format.resize(std::wcslen(format.c_str()));
 
-        // Dysk mapowany pokazuje się jako litera, ale panel powinien wiedzieć, co za nią stoi.
-        if (one.mount == Mount::remote) {
+        // Przez `to_string`, nie `string()`: etykieta spoza strony kodowej ANSI rzucała
+        // i zabierała cały wykaz nośników.
+        one.label = to_string(path{label});
+        one.format = to_string(path{format});
+    }
+
+    std::error_code ignored;
+
+    const stood::space_info told = stood::space(one.where, ignored);
+
+    if (!ignored) {
+        one.space.total = told.capacity;
+        one.space.free = told.available;
+    }
+
+    // Dysk mapowany pokazuje się jako litera, ale panel powinien wiedzieć, co za nią stoi. Udział
+    // podany wprost jest swoim własnym źródłem.
+    if (one.mount == Mount::remote) {
+        if (root.size() == 3 && root[1] == L':') {
             std::wstring behind(1024, L'\0');
             DWORD much = static_cast<DWORD>(behind.size());
 
-            const std::wstring named = std::wstring{letter} + L":";
+            const std::wstring named = root.substr(0, 2);
 
             if (WNetGetConnectionW(named.c_str(), behind.data(), &much) == NO_ERROR) {
                 behind.resize(std::wcslen(behind.c_str()));
-                one.behind = path{behind};
+                one.source = path{behind};
             }
+        } else {
+            one.source = path{root.substr(0, root.size() - 1)};
         }
-
-        made.push_back(std::move(one));
     }
 
-    return made;
+    return one;
 }
 
 #else
@@ -1076,15 +1489,35 @@ bool phony(const std::string& kind) {
     return std::find(among.begin(), among.end(), kind) != among.end();
 }
 
+// FUSE bywa dyskiem: `fuseblk` (ntfs-3g, exfat-fuse na dysku USB), mergerfs i bindfs składające
+// lokalne katalogi, szyfrujące nakładki na lokalny katalog. Dawniej każdy `fuse.*` szedł jako sieć —
+// a z tym mniejsza rata i odpytywanie zamiast powiadomień na zwykłym dysku z filmami. Nieznany
+// `fuse.*` zostaje siecią: odpytywanie widzi wszystko, tylko wolniej.
+bool fused_locally(const std::string& kind) {
+    static const std::vector<std::string> among{
+        "fuseblk",       "fuse.mergerfs", "fuse.bindfs", "fuse.ntfs-3g",          "fuse.exfat",
+        "fuse.encfs",    "fuse.gocryptfs", "fuse.cryfs", "fuse.fuse-overlayfs",   "fuse.unionfs",
+        "fuse.squashfuse", "fuse.securefs"};
+
+    return std::find(among.begin(), among.end(), kind) != among.end();
+}
+
 Mount minded(const std::string& kind) {
-    if (kind.rfind("nfs", 0) == 0 || kind == "cifs" || kind == "smbfs" || kind == "smb3" ||
-        kind.rfind("fuse.", 0) == 0 || kind == "afs" || kind == "9p")
+    if (fused_locally(kind)) return Mount::disk;
+
+    // Nazwy z Linuksa i z `statfs` macOS i BSD: `afpfs`, `webdav`, `macfuse` po stronie sieci,
+    // `cd9660` i `cddafs` po stronie płyt.
+    if (kind.rfind("nfs", 0) == 0 || kind == "cifs" || kind == "smbfs" || kind == "smb3" || kind == "ceph" ||
+        kind == "lustre" || kind.rfind("fuse", 0) == 0 || kind == "afs" || kind == "9p" || kind == "afpfs" ||
+        kind == "webdav" || kind == "macfuse" || kind == "osxfuse")
         return Mount::remote;
 
-    if (kind == "iso9660" || kind == "udf") return Mount::optical;
+    if (kind == "iso9660" || kind == "udf" || kind == "cd9660" || kind == "cddafs") return Mount::optical;
 
     return Mount::disk;
 }
+
+#if defined(TALCITE_LINUX_FS)
 
 // Etykiety nośników leżą w /dev/disk/by-label jako dowiązania do urządzeń. Nic lepszego bez
 // dodatkowych bibliotek nie ma, a to wystarcza, żeby panel pokazał nazwę zamiast /dev/sdb1.
@@ -1108,14 +1541,60 @@ std::map<path, std::string> labelled() {
     return made;
 }
 
-std::vector<Drive> drives_at() {
-    std::vector<Drive> made;
+// Nazwa systemu plików pod ścieżką: najdłuższy punkt montowania z tablicy, który jest jej przodkiem.
+std::string format_at(const path& where) {
+    std::error_code ignored;
+
+    const path here = stood::weakly_canonical(where, ignored);
+
+    std::ifstream reading{"/proc/mounts"};
+    if (!reading) return {};
+
+    std::string made;
+    std::size_t deepest = 0;
+    std::string line;
+
+    while (std::getline(reading, line)) {
+        std::istringstream taking{line};
+
+        std::string device;
+        std::string mounted;
+        std::string kind;
+
+        if (!(taking >> device >> mounted >> kind)) continue;
+
+        const path at{plainly(mounted)};
+
+        const auto [left, right] = std::mismatch(at.begin(), at.end(), here.begin(), here.end());
+
+        if (left != at.end()) continue;
+
+        const auto depth = static_cast<std::size_t>(std::distance(at.begin(), at.end()));
+
+        // Późniejszy wpis na tym samym miejscu przykrywa wcześniejszy, więc remis wygrywa ostatni.
+        if (depth >= deepest) {
+            deepest = depth;
+            made = kind;
+        }
+    }
+
+    return made;
+}
+
+// Tablica montowań bez wnętrzności systemu. Ten sam punkt montowania może wystąpić kilka razy —
+// liczy się ostatni, bo to on przykrywa poprzednie.
+struct Mounted {
+    std::string device;
+    path where;
+    std::string kind;
+};
+
+std::vector<Mounted> mounted_at() {
+    std::vector<Mounted> made;
 
     std::ifstream reading{"/proc/mounts"};
     if (!reading) reading.open("/etc/mtab");
     if (!reading) return made;
-
-    const std::map<path, std::string> labels = labelled();
 
     std::string line;
 
@@ -1132,61 +1611,281 @@ std::vector<Drive> drives_at() {
 
         if (phony(kind) || tucked(here)) continue;
 
-        Drive one;
+        Mounted one{plainly(device), path{here}, kind};
 
-        one.where = path{here};
-        one.mount = minded(kind);
-        one.named = plainly(device);
-
-        std::error_code ignored;
-
-        const path onto = stood::canonical(one.named, ignored);
-
-        if (!ignored) {
-            const auto found = labels.find(onto);
-            if (found != labels.end()) one.named = found->second;
-        }
-
-        if (one.mount == Mount::remote) one.behind = path{plainly(device)};
-
-        const stood::space_info told = stood::space(one.where, ignored);
-
-        if (!ignored) {
-            one.room.whole = told.capacity;
-            one.room.spare = told.available;
-        }
-
-        // Ten sam punkt montowania może wystąpić kilka razy — liczy się ostatni, bo to on
-        // przykrywa poprzednie.
-        const auto stale = std::find_if(made.begin(), made.end(), [&one](const Drive& mine) {
-            return mine.where == one.where;
-        });
+        const auto stale = std::find_if(made.begin(), made.end(),
+                                        [&one](const Mounted& mine) { return mine.where == one.where; });
 
         if (stale != made.end()) *stale = std::move(one);
         else made.push_back(std::move(one));
     }
 
-    std::sort(made.begin(), made.end(),
-              [](const Drive& one, const Drive& two) { return one.where < two.where; });
+    std::sort(made.begin(), made.end(), [](const Mounted& one, const Mounted& two) { return one.where < two.where; });
 
     return made;
 }
 
-#endif
+// Same punkty montowania — z tablicy, bez pytania nośników. Martwy udział NFS potrafi zawiesić
+// pytanie o miejsce na zawsze; `volume_at` pyta każdy osobno, więc wisi tylko on.
+std::vector<path> roots_at() {
+    std::vector<path> made;
 
-void writing_at(const path& where, std::chrono::sys_seconds when) {
-    const Apart apart = apart_now();
+    for (const Mounted& one : mounted_at()) made.push_back(one.where);
 
-    const stood::file_time_type told{std::chrono::duration_cast<stood::file_time_type::duration>(
-        std::chrono::duration_cast<Apart>(when.time_since_epoch()) - apart)};
-
-    std::error_code trouble;
-
-    stood::last_write_time(where, told, trouble);
-    if (trouble) amiss("Nie można ustawić czasu zapisu.", where);
+    return made;
 }
 
-path real_at(const path& where) {
+// Nośnik pod punktem montowania. Ścieżka, która punktem montowania nie jest, dostaje to, co da się
+// o niej powiedzieć bez tablicy: rodzaj i system plików nośnika, na którym leży, i własną nazwę.
+Volume volume_at(const path& where) {
+    Volume one;
+
+    one.where = where;
+
+    const std::vector<Mounted> table = mounted_at();
+
+    const auto found =
+        std::find_if(table.begin(), table.end(), [&where](const Mounted& mine) { return mine.where == where; });
+
+    if (found != table.end()) {
+        one.mount = minded(found->kind);
+        one.label = found->device;
+        one.format = found->kind;
+
+        std::error_code ignored;
+
+        const path onto = stood::canonical(one.label, ignored);
+
+        if (!ignored) {
+            const std::map<path, std::string> labels = labelled();
+
+            const auto named = labels.find(onto);
+            if (named != labels.end()) one.label = named->second;
+        }
+
+        if (one.mount == Mount::remote) one.source = path{found->device};
+    } else {
+        one.mount = mount_at(where);
+        one.format = format_at(where);
+        one.label = where.has_filename() ? where.filename().string() : where.string();
+    }
+
+    std::error_code ignored;
+
+    const stood::space_info told = stood::space(one.where, ignored);
+
+    if (!ignored) {
+        one.space.total = told.capacity;
+        one.space.free = told.available;
+    }
+
+    return one;
+}
+
+#elif defined(TALCITE_BSD_FS)
+
+// Rodzaj systemu plików wprost od `statfs`: `apfs`, `msdos`, `smbfs`, `nfs`, `cd9660`.
+std::string format_at(const path& where) {
+    struct statfs told {};
+
+    if (::statfs(present_at(where).c_str(), &told) != 0) return {};
+
+    return std::string{told.f_fstypename};
+}
+
+// Wykaz nośników z `getmntinfo`: punkt montowania, źródło i rodzaj. Etykiet nie ma — macOS nazywa
+// punkt montowania etykietą, więc zostaje nazwa katalogu.
+std::vector<Volume> mounted_at() {
+    std::vector<Volume> made;
+
+    struct statfs* among = nullptr;
+
+    const int many = ::getmntinfo(&among, MNT_NOWAIT);
+
+    for (int at = 0; at < many; ++at) {
+        const std::string kind{among[at].f_fstypename};
+        const std::string here{among[at].f_mntonname};
+
+        if (phony(kind) || kind == "devfs" || kind == "fdescfs" || kind == "procfs" || tucked(here)) continue;
+
+        Volume one;
+
+        one.where = path{here};
+        one.mount = minded(kind);
+        one.format = kind;
+        one.label = one.where == path{"/"} ? std::string{"/"} : one.where.filename().string();
+
+        if (one.mount == Mount::remote) one.source = path{std::string{among[at].f_mntfromname}};
+
+        one.space.total = static_cast<std::uintmax_t>(among[at].f_blocks) * among[at].f_bsize;
+        one.space.free = static_cast<std::uintmax_t>(among[at].f_bavail) * among[at].f_bsize;
+
+        made.push_back(std::move(one));
+    }
+
+    std::sort(made.begin(), made.end(),
+              [](const Volume& one, const Volume& two) { return one.where < two.where; });
+
+    return made;
+}
+
+// `MNT_NOWAIT` oddaje to, co jądro już wie, bez pytania nośników — więc wykaz jest od razu.
+std::vector<path> roots_at() {
+    std::vector<path> made;
+
+    for (const Volume& one : mounted_at()) made.push_back(one.where);
+
+    return made;
+}
+
+Volume volume_at(const path& where) {
+    for (Volume& one : mounted_at())
+        if (one.where == where) return std::move(one);
+
+    Volume one;
+
+    one.where = where;
+    one.mount = mount_at(where);
+    one.format = format_at(where);
+    one.label = where.has_filename() ? where.filename().string() : where.string();
+
+    std::error_code ignored;
+
+    const stood::space_info told = stood::space(one.where, ignored);
+
+    if (!ignored) {
+        one.space.total = told.capacity;
+        one.space.free = told.available;
+    }
+
+    return one;
+}
+
+#else
+
+// Przenośny POSIX: rodzaju nie zna nikt, a wykaz nośników to sam korzeń.
+std::string format_at(const path&) { return {}; }
+
+std::vector<path> roots_at() { return {path{"/"}}; }
+
+Volume volume_at(const path& where) {
+    Volume one;
+
+    one.where = where;
+    one.label = where.has_filename() ? where.filename().string() : where.string();
+    one.mount = mount_at(where);
+
+    std::error_code ignored;
+
+    const stood::space_info told = stood::space(one.where, ignored);
+
+    if (!ignored) {
+        one.space.total = told.capacity;
+        one.space.free = told.available;
+    }
+
+    return one;
+}
+
+#endif
+
+#endif
+
+// Wykaz nośników to korzenie i nośnik każdego z nich — ta sama droga na każdym systemie.
+std::vector<Volume> volumes_at() {
+    std::vector<Volume> made;
+
+    for (const path& one : roots_at()) made.push_back(volume_at(one));
+
+    return made;
+}
+
+// **Nośnik, na którym leży ścieżka** — jego korzeń, a nie sama ścieżka: `volume_at` mówi o punkcie
+// montowania albo literze dysku, a Info w twa pyta o plik. Windows wie to sam
+// (`GetVolumePathNameW`, także dla udziału i katalogu zamontowanego w NTFS); gdzie indziej —
+// najdłuższy korzeń z tablicy montowań, który jest początkiem ścieżki. Ścieżka spoza wszystkich
+// korzeni (nie powinno się zdarzyć, ale tablica bywa niepełna) dostaje własny korzeń.
+path mounting_at(const path& where) {
+#ifdef _WIN32
+    std::wstring room(32768, L'\0');
+
+    if (GetVolumePathNameW(longly(where).c_str(), room.data(), static_cast<DWORD>(room.size())) != 0) {
+        room.resize(std::wcslen(room.c_str()));
+
+        // Długi przedrostek `\\?\` od `longly` wraca w odpowiedzi — korzeń ma być taki, jak w wykazie.
+        if (room.rfind(L"\\\\?\\UNC\\", 0) == 0) room = L"\\\\" + room.substr(8);
+        else if (room.rfind(L"\\\\?\\", 0) == 0) room = room.substr(4);
+
+        return path{room};
+    }
+
+    return where.root_path();
+#else
+    std::error_code ignored;
+
+    path whole = stood::weakly_canonical(where, ignored);
+
+    if (ignored) whole = where;
+
+    path best = whole.root_path();
+    std::size_t longest = 0;
+
+    for (const path& root : roots_at()) {
+        std::size_t parts = 0;
+        auto mine = whole.begin();
+        bool under = true;
+
+        for (const path& piece : root) {
+            if (piece.empty()) continue;
+
+            if (mine == whole.end() || *mine != piece) {
+                under = false;
+
+                break;
+            }
+
+            ++mine;
+            ++parts;
+        }
+
+        if (under && parts > longest) {
+            longest = parts;
+            best = root;
+        }
+    }
+
+    return best;
+#endif
+}
+
+// Przez uchwyt, także dla katalogu: `std::filesystem` z MinGW otwierał katalog bez
+// `FILE_FLAG_BACKUP_SEMANTICS` i czasu katalogu nie ustawiał wcale.
+void stamp_at(const path& where, Instant when) {
+#ifdef _WIN32
+    const HANDLE one = CreateFileW(longly(where).c_str(), FILE_WRITE_ATTRIBUTES,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                   FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+
+    if (one == INVALID_HANDLE_VALUE) amiss("Cannot set the write time.", where);
+
+    const FILETIME told = filetime_of(when);
+    const BOOL done = SetFileTime(one, nullptr, nullptr, &told);
+
+    CloseHandle(one);
+
+    if (done == 0) amiss("Cannot set the write time.", where);
+#else
+    const auto whole = std::chrono::floor<std::chrono::seconds>(when);
+
+    const timespec told[2] = {{0, UTIME_OMIT},
+                              {static_cast<time_t>(whole.time_since_epoch().count()),
+                               static_cast<long>((when - whole).count())}};
+
+    if (::utimensat(AT_FDCWD, where.c_str(), told, 0) != 0) amiss("Cannot set the write time.", where);
+#endif
+}
+
+path canonical_at(const path& where) {
     std::error_code trouble;
 
     const path told = stood::weakly_canonical(where, trouble);
@@ -1194,374 +1893,10 @@ path real_at(const path& where) {
     return trouble ? where : told;
 }
 
-// Rozwijanie dowiązań potrafi zawrócić tam, gdzie już byliśmy — link wskazujący na przodka
-// zapętliłby kopiowanie na zawsze. Trzymamy więc rzeczywiste ścieżki rozwiniętych katalogów.
-using Seen = std::vector<path>;
-
-bool sighted(Seen& seen, const path& real) {
-    if (std::find(seen.begin(), seen.end(), real) != seen.end()) return true;
-
-    seen.push_back(real);
-
-    return false;
-}
-
-// Zwraca ścieżkę, pod którą wolno pisać, albo pustą, gdy pozycję należy pominąć.
-path settled_on(const path& to, Clash how) {
-    if (kind_at(to) == Kind::none) return to;
-
-    switch (how) {
-        case Clash::overwrite: return to;
-        case Clash::skip: return {};
-        case Clash::refuse: amiss("Cel już istnieje.", to);
-        case Clash::beside: break;
-    }
-
-    const path folder = to.parent_path();
-    const std::string stem = to.stem().string();
-    const std::string tail = to.extension().string();
-
-    for (int at = 2; at <= 100; ++at) {
-        const path other = folder / (stem + " (" + std::to_string(at) + ")" + tail);
-
-        if (kind_at(other) == Kind::none) return other;
-    }
-
-    amiss("Nie ma wolnej nazwy obok celu.", to);
-}
-
-// Kopia przerwana w połowie nie może zostawić po sobie pliku, który wygląda na kompletny.
-// Cel znika, chyba że doszliśmy do końca.
-class Sweeping {
-public:
-    explicit Sweeping(path where) : where_(std::move(where)), was_(exists_at(where_)) {}
-
-    ~Sweeping() {
-        if (kept_ || was_) return;
-
-        std::error_code ignored;
-        stood::remove_all(where_, ignored);
-    }
-
-    Sweeping(const Sweeping&) = delete;
-    Sweeping& operator=(const Sweeping&) = delete;
-    Sweeping(Sweeping&&) = delete;
-    Sweeping& operator=(Sweeping&&) = delete;
-
-    void keep() { kept_ = true; }
-
-private:
-    path where_;
-    bool was_ = false;
-    bool kept_ = false;
-};
-
-// Zwraca fałsz, gdy zadanie anulowano w połowie — wtedy obietnica nie rozstrzyga się wcale.
-bool file_at(const path& from, const path& to, Counted<void>& held) {
-    const std::shared_ptr<File::Held> mine = open_at(from, Mode::read);
-
-    const std::uintmax_t whole = sized(*mine);
-    held.whole.store(whole);
-
-    Sweeping sweeping{to};
-
-    const std::shared_ptr<File::Held> yours = open_at(to, Mode::fresh);
-
-    const std::size_t rata = rated(from, to);
-
-    for (std::uintmax_t at = 0; at < whole;) {
-        if (stopped()) return false;
-
-        const Bytes part = read_at(*mine, at, rata);
-        if (part.empty()) break;
-
-        at += write_at(*yours, at, part);
-        held.done.store(at);
-    }
-
-    sweeping.keep();
-
-    return true;
-}
-
-bool tree_at(const path& from, const path& to, Counted<void>& held, Clash how, Seen& seen,
-             int deep);
-
-// Jedna pozycja z wykazu. Dowiązanie rozwijamy — kopiujemy to, na co wskazuje, a nie samo
-// dowiązanie. Potok, gniazdo i urządzenie pomijamy: otwarcie potoku do odczytu zawiesiłoby
-// wątek puli bez ratunku, a to gorsze niż brak kopii.
-bool spread_at(const path& from, Kind kind, const path& to, Clash how, Seen& seen, int deep) {
-    if (kind == Kind::folder) {
-        make_at(to);
-        writing_at(to, written_at(from));
-
-        return true;
-    }
-
-    path onto = from;
-
-    if (kind == Kind::link) {
-        std::error_code trouble;
-
-        onto = stood::canonical(from, trouble);
-        if (trouble) return true;
-
-        kind = kind_at(onto);
-
-        if (kind == Kind::folder) {
-            if (sighted(seen, onto)) return true;
-
-            Counted<void> apart;
-
-            return tree_at(onto, to, apart, how, seen, deep + 1);
-        }
-    }
-
-    if (kind != Kind::file) return true;
-
-    const path where = settled_on(to, how);
-    if (where.empty()) return true;
-
-    Counted<void> apart;
-
-    if (!file_at(onto, where, apart)) return false;
-
-    writing_at(where, written_at(onto));
-
-    return true;
-}
-
-// Katalog idzie wpis po wpisie; postęp liczymy tutaj we wpisach, nie w bajtach. Wykaz jest
-// posortowany ścieżkami, a rodzic zawsze poprzedza swoje dzieci, więc katalogi da się
-// tworzyć po kolei. Zawartość rozwiniętych dowiązań ma własny licznik i do tego się nie
-// dolicza — inaczej mieszalibyśmy dwie miary w jednym ułamku.
-bool tree_at(const path& from, const path& to, Counted<void>& held, Clash how, Seen& seen,
-             int deep) {
-    if (deep > 64) return true;
-
-    const std::vector<Entry> among = walk_at(from);
-
-    held.whole.store(among.size() + 1);
-
-    Sweeping sweeping{to};
-
-    make_at(to);
-    held.done.fetch_add(1);
-
-    for (const Entry& one : among) {
-        if (stopped()) return false;
-
-        const path where = to / one.where.lexically_relative(from);
-
-        if (!spread_at(one.where, one.kind, where, how, seen, deep)) return false;
-
-        held.done.fetch_add(1);
-    }
-
-    sweeping.keep();
-
-    writing_at(to, written_at(from));
-
-    return true;
-}
-
-bool copy_at(const path& from, const path& to, Counted<void>& held, Clash how) {
-    Kind what = kind_at(from);
-
-    if (what == Kind::none) amiss("Nie ma czego kopiować.", from);
-
-    path onto = from;
-
-    if (what == Kind::link) {
-        std::error_code trouble;
-
-        onto = stood::canonical(from, trouble);
-        if (trouble) amiss("Dowiązanie prowadzi donikąd.", from);
-
-        what = kind_at(onto);
-    }
-
-    Seen seen;
-
-    if (what == Kind::folder) {
-        sighted(seen, real_at(onto));
-
-        return tree_at(onto, to, held, how, seen, 0);
-    }
-
-    if (what != Kind::file) amiss("Tej pozycji nie da się skopiować.", from);
-
-    const path where = settled_on(to, how);
-    if (where.empty()) return true;
-
-    if (!file_at(onto, where, held)) return false;
-
-    writing_at(where, written_at(onto));
-
-    return true;
-}
-
-}
-
-Promise<Bytes> read(const path& where) {
-    auto held = std::make_shared<Counted<Bytes>>();
-
-    return HaulPromise<Bytes>{[where, held](auto resolve, auto) {
-                              const std::shared_ptr<File::Held> one =
-                                  open_at(where, Mode::read);
-
-                              const std::uintmax_t whole = sized(*one);
-                              held->whole.store(whole);
-
-                              const std::size_t rata = slice_at(where);
-
-                              Bytes made;
-                              made.reserve(static_cast<std::size_t>(whole));
-
-                              for (std::uintmax_t at = 0; at < whole;) {
-                                  if (stopped()) return;
-
-                                  Bytes part = read_at(*one, at, rata);
-                                  if (part.empty()) break;
-
-                                  at += part.size();
-                                  held->done.store(at);
-
-                                  made.insert(made.end(), part.begin(), part.end());
-                              }
-
-                              resolve(std::move(made));
-                          },
-                          held};
-}
-
-Promise<void> write(const path& where, Bytes what, Clash how) {
-    auto held = std::make_shared<Counted<void>>();
-
-    return HaulPromise<void>{[where, what = std::move(what), how, held](auto resolve, auto) {
-                             const path at_all = settled_on(where, how);
-
-                             if (at_all.empty()) {
-                                 resolve();
-                                 return;
-                             }
-
-                             const std::shared_ptr<File::Held> one =
-                                 open_at(at_all, Mode::fresh);
-
-                             held->whole.store(what.size());
-
-                             const std::size_t rata = slice_at(at_all);
-
-                             for (std::size_t at = 0; at < what.size();) {
-                                 if (stopped()) return;
-
-                                 const std::size_t much =
-                                     std::min<std::size_t>(rata, what.size() - at);
-
-                                 Bytes part{what.begin() + static_cast<std::ptrdiff_t>(at),
-                                            what.begin() +
-                                                static_cast<std::ptrdiff_t>(at + much)};
-
-                                 at += write_at(*one, at, part);
-                                 held->done.store(at);
-                             }
-
-                             resolve();
-                         },
-                         held};
-}
-
-Promise<void> copy(const path& from, const path& to, Clash how) {
-    auto held = std::make_shared<Counted<void>>();
-
-    return HaulPromise<void>{[from, to, how, held](auto resolve, auto) {
-                             if (!copy_at(from, to, *held, how)) return;
-
-                             resolve();
-                         },
-                         held};
-}
-
-// Najpierw zwykła zmiana nazwy, bo w obrębie jednego nośnika jest natychmiastowa. Dopiero
-// gdy się nie uda — a nie uda się między nośnikami — kopiujemy i sprzątamy źródło.
-Promise<void> move(const path& from, const path& to, Clash how) {
-    auto held = std::make_shared<Counted<void>>();
-
-    return HaulPromise<void>{[from, to, how, held](auto resolve, auto) {
-                             if (kind_at(from) == Kind::none)
-                                 amiss("Nie ma czego przenieść.", from);
-
-                             const path where = settled_on(to, how);
-
-                             if (where.empty()) {
-                                 held->whole.store(1);
-                                 held->done.store(1);
-
-                                 resolve();
-                                 return;
-                             }
-
-                             std::error_code trouble;
-                             stood::rename(from, where, trouble);
-
-                             if (!trouble) {
-                                 held->whole.store(1);
-                                 held->done.store(1);
-
-                                 resolve();
-                                 return;
-                             }
-
-                             if (!copy_at(from, where, *held, Clash::overwrite)) return;
-
-                             std::error_code ignored;
-                             stood::remove_all(from, ignored);
-
-                             resolve();
-                         },
-                         held};
-}
-
-Promise<void> erase(const path& where) {
-    auto held = std::make_shared<Counted<void>>();
-
-    return HaulPromise<void>{[where, held](auto resolve, auto) {
-                             if (kind_at(where) == Kind::none) {
-                                 resolve();
-                                 return;
-                             }
-
-                             std::vector<Entry> among;
-
-                             if (kind_at(where) == Kind::folder) among = walk_at(where);
-
-                             held->whole.store(among.size() + 1);
-
-                             // Od najgłębszych, bo katalog daje się usunąć dopiero pusty.
-                             for (auto at = among.rbegin(); at != among.rend(); ++at) {
-                                 if (stopped()) return;
-
-                                 std::error_code ignored;
-                                 stood::remove(at->where, ignored);
-
-                                 held->done.fetch_add(1);
-                             }
-
-                             std::error_code trouble;
-                             stood::remove(where, trouble);
-
-                             if (trouble) amiss("Nie można usunąć.", where);
-
-                             held->done.fetch_add(1);
-
-                             resolve();
-                         },
-                         held};
 }
 
 Trouble::Trouble(const std::string& said, path where)
-    : std::runtime_error(said), where_(std::move(where)) {}
+    : talcite::Trouble(said), where_(std::move(where)) {}
 
 Promise<bool> exists(const path& where) {
     return Promise<bool>{[where](auto resolve, auto) { resolve(exists_at(where)); }};
@@ -1575,55 +1910,262 @@ Promise<std::uintmax_t> size(const path& where) {
     return Promise<std::uintmax_t>{[where](auto resolve, auto) { resolve(size_at(where)); }};
 }
 
-Promise<std::chrono::sys_seconds> written(const path& where) {
+Promise<std::chrono::sys_seconds> modified(const path& where) {
     return Promise<std::chrono::sys_seconds>{
-        [where](auto resolve, auto) { resolve(written_at(where)); }};
+        [where](auto resolve, auto) { resolve(modified_at(where)); }};
 }
 
-Promise<void> written(const path& where, std::chrono::sys_seconds when) {
+Promise<void> modified(const path& where, std::chrono::sys_seconds when) {
     return Promise<void>{[where, when](auto resolve, auto) {
-        writing_at(where, when);
+        stamp_at(where, Instant{when});
         resolve();
     }};
 }
 
-Promise<Room> roomy(const path& where) {
-    return Promise<Room>{[where](auto resolve, auto) { resolve(roomy_at(where)); }};
+Promise<Space> space(const path& where) {
+    return Promise<Space>{[where](auto resolve, auto) { resolve(space_at(where)); }};
 }
 
 Promise<Mount> mount(const path& where) {
     return Promise<Mount>{[where](auto resolve, auto) { resolve(mount_at(where)); }};
 }
 
-Promise<std::vector<Drive>> drives() {
-    return Promise<std::vector<Drive>>{[](auto resolve, auto) { resolve(drives_at()); }};
+Promise<std::vector<Volume>> volumes() {
+    return Promise<std::vector<Volume>>{[](auto resolve, auto) { resolve(volumes_at()); }};
 }
 
-Promise<std::size_t> slice(const path& where) {
-    return Promise<std::size_t>{[where](auto resolve, auto) { resolve(slice_at(where)); }};
+Promise<std::vector<path>> roots() {
+    return Promise<std::vector<path>>{[](auto resolve, auto) { resolve(roots_at()); }};
 }
 
-Promise<Marks> marks(const path& where) {
-    return Promise<Marks>{[where](auto resolve, auto) { resolve(marks_at(where)); }};
+Promise<path> mounted(const path& where) {
+    return Promise<path>{[where](auto resolve, auto) { resolve(mounting_at(where)); }};
 }
 
-Promise<void> marks(const path& where, Marks what) {
+Promise<Volume> volume(const path& where) {
+    return Promise<Volume>{[where](auto resolve, auto) { resolve(volume_at(where)); }};
+}
+
+Promise<std::size_t> chunk(const path& where) {
+    return Promise<std::size_t>{[where](auto resolve, auto) { resolve(chunk_at(where)); }};
+}
+
+namespace {
+
+// Nazwy właścicieli i grup pytamy systemu **raz na numer**: odpowiedź jest ta sama przez cały
+// przebieg programu, a katalog potrafi mieć tysiąc plików jednego właściciela. Zamek, bo pytanie
+// pada z puli wątków.
+std::string cached(std::map<std::uint32_t, std::string>& among, std::mutex& guard,
+                   std::uint32_t which, const std::function<std::string(std::uint32_t)>& ask) {
+    {
+        const std::lock_guard<std::mutex> held{guard};
+
+        const auto found = among.find(which);
+
+        if (found != among.end()) return found->second;
+    }
+
+    std::string made = ask(which);
+
+    const std::lock_guard<std::mutex> held{guard};
+
+    among.insert_or_assign(which, made);
+
+    return made;
+}
+
+std::string owner_at(std::uint32_t which) {
+#ifdef _WIN32
+    (void)which;
+
+    return {};
+#else
+    std::vector<char> room(1024);
+
+    ::passwd told{};
+    ::passwd* found = nullptr;
+
+    while (::getpwuid_r(static_cast<::uid_t>(which), &told, room.data(), room.size(), &found) ==
+           ERANGE)
+        room.resize(room.size() * 2);
+
+    return found != nullptr && found->pw_name != nullptr ? std::string{found->pw_name}
+                                                         : std::string{};
+#endif
+}
+
+std::string group_at(std::uint32_t which) {
+#ifdef _WIN32
+    (void)which;
+
+    return {};
+#else
+    std::vector<char> room(1024);
+
+    ::group told{};
+    ::group* found = nullptr;
+
+    while (::getgrgid_r(static_cast<::gid_t>(which), &told, room.data(), room.size(), &found) ==
+           ERANGE)
+        room.resize(room.size() * 2);
+
+    return found != nullptr && found->gr_name != nullptr ? std::string{found->gr_name}
+                                                         : std::string{};
+#endif
+}
+
+}
+
+// Nazwa właściciela i grupy po numerze — obietnicą, jak wszystko w `fs`, bo na maszynie z nazwami
+// z sieci (LDAP, NIS) pierwsze pytanie o dany numer potrafi się zaciąć. Kto rysuje wykaz, pyta raz
+// na listing, nie raz na wiersz. Numer, którego system nie zna, oddaje pusty napis: pokazujący
+// wypisze wtedy sam numer, jak `ls`.
+Promise<std::string> owner(std::uint32_t which) {
+    return Promise<std::string>{[which](auto resolve, auto) {
+        static std::map<std::uint32_t, std::string> among;
+        static std::mutex guard;
+
+        resolve(cached(among, guard, which, owner_at));
+    }};
+}
+
+Promise<std::string> group(std::uint32_t which) {
+    return Promise<std::string>{[which](auto resolve, auto) {
+        static std::map<std::uint32_t, std::string> among;
+        static std::mutex guard;
+
+        resolve(cached(among, guard, which, group_at));
+    }};
+}
+
+Promise<Attributes> attributes(const path& where) {
+    return Promise<Attributes>{[where](auto resolve, auto) { resolve(attributes_at(where)); }};
+}
+
+Promise<void> attributes(const path& where, Attributes what) {
     return Promise<void>{[where, what](auto resolve, auto) {
-        marked_at(where, what);
+        attributed_at(where, what);
         resolve();
     }};
 }
 
-Promise<bool> alike(const path& one, const path& two) {
-    return Promise<bool>{[one, two](auto resolve, auto) { resolve(alike_at(one, two)); }};
+Promise<Entry> entry(const path& where) {
+    return Promise<Entry>{[where](auto resolve, auto) { resolve(entry_at(where)); }};
+}
+
+#ifdef _WIN32
+
+namespace {
+
+// Na Windows prawa to **lista dostępu**, a nie bity: `std::filesystem` przekłada bity tylko na
+// atrybut „tylko do odczytu", który niczego nie chroni. Przekład jest więc nasz, i jest wąski,
+// bo bity grupy i innych nie mają na Windows odpowiednika jeden do jednego:
+//
+// - **bez praw grupy i innych** — lista chroniona (bez dziedziczenia po katalogu) z jednym
+//   wpisem: pełny dostęp dla użytkownika, który uruchomił program. Tak leży plik z kluczami;
+// - **z jakimkolwiek prawem grupy albo innych** — lista wraca do dziedziczonej po katalogu, czyli
+//   do tego, co Windows daje każdemu nowemu plikowi.
+void guarded(const path& where, stood::perms what) {
+    const std::wstring named = longly(where);
+
+    constexpr stood::perms shared = stood::perms::group_all | stood::perms::others_all;
+
+    if ((what & shared) != stood::perms::none) {
+        // Lista już dziedziczona nie ma czego zdejmować. Ustawiona na nowo straciłaby wpisy dopisane
+        // ręką — komuś dane prawo do odczytu — a `Rewrite` w twa woła to przy każdym zapisie obok.
+        PSECURITY_DESCRIPTOR held = nullptr;
+        PACL listed = nullptr;
+
+        if (GetNamedSecurityInfoW(named.c_str(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr, &listed,
+                                  nullptr, &held) == ERROR_SUCCESS) {
+            SECURITY_DESCRIPTOR_CONTROL control = 0;
+            DWORD revision = 0;
+
+            const bool inherited = GetSecurityDescriptorControl(held, &control, &revision) != 0 &&
+                                   (control & SE_DACL_PROTECTED) == 0;
+
+            LocalFree(held);
+
+            if (inherited) return;
+        }
+
+        ACL empty{};
+
+        if (!InitializeAcl(&empty, sizeof empty, ACL_REVISION)) amiss("Cannot change the rights.", where);
+
+        if (SetNamedSecurityInfoW(const_cast<LPWSTR>(named.c_str()), SE_FILE_OBJECT,
+                                  DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION, nullptr,
+                                  nullptr, &empty, nullptr) != ERROR_SUCCESS)
+            amiss("Cannot change the rights.", where);
+
+        return;
+    }
+
+    HANDLE token = nullptr;
+
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) amiss("Cannot change the rights.", where);
+
+    DWORD size = 0;
+
+    (void)GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+
+    std::vector<std::byte> user(size);
+
+    const bool known = GetTokenInformation(token, TokenUser, user.data(), size, &size) != 0;
+
+    CloseHandle(token);
+
+    if (!known) amiss("Cannot change the rights.", where);
+
+    const PSID me = reinterpret_cast<const TOKEN_USER*>(user.data())->User.Sid;
+
+    const DWORD room = sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + GetLengthSid(me);
+
+    std::vector<std::byte> listed(room);
+
+    const auto list = reinterpret_cast<PACL>(listed.data());
+
+    if (!InitializeAcl(list, room, ACL_REVISION) || !AddAccessAllowedAce(list, ACL_REVISION, FILE_ALL_ACCESS, me))
+        amiss("Cannot change the rights.", where);
+
+    if (SetNamedSecurityInfoW(const_cast<LPWSTR>(named.c_str()), SE_FILE_OBJECT,
+                              DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, list,
+                              nullptr) != ERROR_SUCCESS)
+        amiss("Cannot change the rights.", where);
+}
+
+}
+
+#endif
+
+// Prawa idą **za dowiązaniem**, jak `chmod`: dowiązanie symboliczne praw nie ma. Na Windows bity
+// przekładają się na atrybut „tylko do odczytu" i na listę dostępu (`guarded`).
+Promise<void> rights(const path& where, std::filesystem::perms what) {
+    return Promise<void>{[where, what](auto resolve, auto) {
+        std::error_code why;
+
+        stood::permissions(where, what, stood::perm_options::replace, why);
+
+        if (why) amiss("Cannot change the rights.", where);
+
+#ifdef _WIN32
+        guarded(where, what);
+#endif
+
+        resolve();
+    }};
+}
+
+Promise<bool> equivalent(const path& one, const path& two) {
+    return Promise<bool>{[one, two](auto resolve, auto) { resolve(equivalent_at(one, two)); }};
 }
 
 Promise<path> target(const path& where) {
     return Promise<path>{[where](auto resolve, auto) { resolve(target_at(where)); }};
 }
 
-Promise<path> real(const path& where) {
-    return Promise<path>{[where](auto resolve, auto) { resolve(real_at(where)); }};
+Promise<path> canonical(const path& where) {
+    return Promise<path>{[where](auto resolve, auto) { resolve(canonical_at(where)); }};
 }
 
 Promise<void> link(const path& where, const path& onto, bool hard) {
@@ -1635,18 +2177,18 @@ Promise<void> link(const path& where, const path& onto, bool hard) {
 
 // Katalog bieżący jest wspólny dla całego procesu, więc jego zmiana dotyka też wątków puli.
 // Stąd osobna obietnica: zmiana jest zdarzeniem, odczyt tylko zajrzeniem.
-path here() {
+path current() {
     std::error_code ignored;
 
     return stood::current_path(ignored);
 }
 
-Promise<void> here(const path& where) {
+Promise<void> current(const path& where) {
     return Promise<void>{[where](auto resolve, auto) {
         std::error_code trouble;
 
         stood::current_path(where, trouble);
-        if (trouble) amiss("Nie można wejść do katalogu.", where);
+        if (trouble) amiss("Cannot enter the directory.", where);
 
         resolve();
     }};
@@ -1672,18 +2214,150 @@ path temp() {
     return stood::temp_directory_path(ignored);
 }
 
-Promise<void> make(const path& where) {
+namespace {
+
+#ifdef _WIN32
+
+// Identyfikatory folderów znanych wpisane tu, a nie wzięte z `knownfolders.h`: tam są deklaracjami,
+// których definicje MinGW trzyma w osobnej bibliotece uuid. Wartości to stałe Windows — nie
+// zmieniają się między wydaniami, bo od nich zależą programy sprzed lat.
+GUID known_of(Known which) {
+    switch (which) {
+        case Known::home: return {0x5e6c858f, 0x0e22, 0x4760, {0x9a, 0xfe, 0xea, 0x33, 0x17, 0xb6, 0x71, 0x73}};
+        case Known::desktop: return {0xb4bfcc3a, 0xdb2c, 0x424c, {0xb0, 0x29, 0x7f, 0xe9, 0x9a, 0x87, 0xc6, 0x41}};
+        case Known::documents: return {0xfdd39ad0, 0x238f, 0x46af, {0xad, 0xb4, 0x6c, 0x85, 0x48, 0x03, 0x69, 0xc7}};
+        case Known::downloads: return {0x374de290, 0x123f, 0x4565, {0x91, 0x64, 0x39, 0xc4, 0x92, 0x5e, 0x46, 0x7b}};
+        case Known::music: return {0x4bd8d571, 0x6d19, 0x48d3, {0xbe, 0x97, 0x42, 0x22, 0x20, 0x08, 0x0e, 0x43}};
+        case Known::pictures: return {0x33e28130, 0x4e1e, 0x4676, {0x83, 0x5a, 0x98, 0x39, 0x5c, 0x3b, 0xc3, 0xbb}};
+        case Known::videos: return {0x18989b1d, 0x99b5, 0x455b, {0x84, 0x1c, 0xab, 0x7c, 0x74, 0xe4, 0xdd, 0xfc}};
+    }
+
+    return {};
+}
+
+std::optional<path> asked_folder(Known which) {
+    PWSTR told = nullptr;
+
+    const GUID id = known_of(which);
+
+    std::optional<path> made;
+
+    if (SHGetKnownFolderPath(id, 0, nullptr, &told) == S_OK && told != nullptr) made = path{told};
+
+    CoTaskMemFree(told);
+
+    return made;
+}
+
+#else
+
+// Nazwa zmiennej w `user-dirs.dirs` i katalog, który stoi w domu, gdy pliku nie ma albo wpisu
+// w nim brak. macOS nazywa wideo po swojemu.
+std::pair<std::string_view, std::string_view> xdg_of(Known which) {
+    switch (which) {
+        case Known::home: return {"", ""};
+        case Known::desktop: return {"XDG_DESKTOP_DIR", "Desktop"};
+        case Known::documents: return {"XDG_DOCUMENTS_DIR", "Documents"};
+        case Known::downloads: return {"XDG_DOWNLOAD_DIR", "Downloads"};
+        case Known::music: return {"XDG_MUSIC_DIR", "Music"};
+        case Known::pictures: return {"XDG_PICTURES_DIR", "Pictures"};
+#ifdef __APPLE__
+        case Known::videos: return {"XDG_VIDEOS_DIR", "Movies"};
+#else
+        case Known::videos: return {"XDG_VIDEOS_DIR", "Videos"};
+#endif
+    }
+
+    return {"", ""};
+}
+
+// Ścieżka bez ukośników na końcu — `/home/ala/` i `/home/ala` to ten sam katalog.
+std::string bared(const path& where) {
+    std::string made = where.lexically_normal().string();
+
+    while (made.size() > 1 && made.back() == '/') made.pop_back();
+
+    return made;
+}
+
+// Wpis z `user-dirs.dirs` według xdg-user-dirs: `XDG_DOWNLOAD_DIR="$HOME/Pobrane"` — w cudzysłowie,
+// ścieżka bezwzględna albo od `$HOME`. Wpis równy samemu domowi znaczy „wyłączony": wtedy folderu nie
+// ma i nie szukamy zastępczego. Brak wpisu i wpis krzywy (ścieżka względna) to co innego — o folderze
+// nikt nic nie powiedział i zostaje nazwa zwyczajowa. Stąd dwa poziomy: zewnętrzny mówi, czy wpis był.
+std::optional<std::optional<path>> configured(std::string_view key, const path& house) {
+    const char* given = std::getenv("XDG_CONFIG_HOME");
+
+    const path where = (given != nullptr && *given == '/' ? path{given} : house / ".config") / "user-dirs.dirs";
+
+    std::ifstream reading{where};
+
+    std::string line;
+
+    while (std::getline(reading, line)) {
+        if (line.rfind(std::string{key} + "=", 0) != 0) continue;
+
+        std::string told = line.substr(key.size() + 1);
+
+        if (told.size() >= 2 && told.front() == '"' && told.back() == '"') told = told.substr(1, told.size() - 2);
+
+        std::string made;
+
+        if (told.rfind("$HOME", 0) == 0) made = bared(house) + told.substr(5);
+        else if (!told.empty() && told.front() == '/') made = told;
+        else continue;
+
+        if (bared(path{made}) == bared(house)) return std::optional<path>{};
+
+        return std::optional<path>{path{bared(path{made})}};
+    }
+
+    return std::nullopt;
+}
+
+std::optional<path> asked_folder(Known which) {
+    const path house = home();
+
+    if (house.empty()) return std::nullopt;
+
+    if (which == Known::home) return house;
+
+    const auto [key, fallback] = xdg_of(which);
+
+    if (std::optional<std::optional<path>> made = configured(key, house)) return *made;
+
+    return house / std::string{fallback};
+}
+
+#endif
+
+}
+
+// Folder znany tylko wtedy, gdy naprawdę stoi na dysku: wpis w ustawieniach systemu, którego
+// katalogu nikt nie założył, nie jest miejscem, do którego da się wejść.
+Promise<std::optional<path>> folder(Known which) {
+    return Promise<std::optional<path>>{[which](auto resolve, auto) {
+        std::optional<path> made = asked_folder(which);
+
+        std::error_code ignored;
+
+        if (made && !stood::is_directory(*made, ignored)) made.reset();
+
+        resolve(std::move(made));
+    }};
+}
+
+Promise<void> make_folder(const path& where) {
     return Promise<void>{[where](auto resolve, auto) {
-        make_at(where);
+        make_folder_at(where);
         resolve();
     }};
 }
 
-Promise<void> rename(const path& from, const path& to, Clash how) {
+Promise<void> rename(const path& from, const path& to, Conflict how) {
     return Promise<void>{[from, to, how](auto resolve, auto) {
-        const path where = settled_on(to, how);
+        const Shift made = shifted(from, to, how);
 
-        if (!where.empty()) rename_at(from, where);
+        if (!made.where.empty() && !made.done) amiss("Cannot rename.", from);
 
         resolve();
     }};
@@ -1697,1009 +2371,6 @@ Promise<std::vector<Entry>> list(const path& where) {
 Promise<std::vector<Entry>> walk(const path& where) {
     return Promise<std::vector<Entry>>{
         [where](auto resolve, auto) { resolve(walk_at(where)); }};
-}
-
-
-// ---------------------------------------------------------------------------------------
-// Obserwowanie katalogów. Jeden wątek na całą bibliotekę, tak samo jak zegar w Time: sto
-// obserwowanych katalogów nie może kosztować stu wątków.
-// ---------------------------------------------------------------------------------------
-
-struct Watch::Held {
-    path where;
-    bool deep = false;
-    std::uint64_t which = 0;
-
-    struct Wanting {
-        std::shared_ptr<Result<std::vector<Change>>> result;
-        std::shared_ptr<Waiter> gone;
-    };
-
-    std::mutex guard;
-    std::deque<Change> pending;
-    std::vector<Wanting> waiting;
-
-    ~Held();
-
-    Held() = default;
-
-    Held(const Held&) = delete;
-    Held& operator=(const Held&) = delete;
-    Held(Held&&) = delete;
-    Held& operator=(Held&&) = delete;
-};
-
-namespace {
-
-constexpr std::size_t brim = 4096;
-
-class Watching;
-
-Watching& watching();
-
-// Wspólne ujście dla obu dróg. Zaplecze nie wie, komu służy — oddaje zmiany pod numerem,
-// a rozdzielacz wie, czy to zwykła obserwacja, czy plik pilnowany przez katalog nadrzędny.
-void reached(std::uint64_t which, std::vector<Change> among);
-
-// Obietnica sięgająca po chroniony konstruktor, żeby podstawić bilet, który rozstrzygnie
-// wątek obserwatora, a nie własne wywołanie.
-class Nexting : public Promise<std::vector<Change>> {
-public:
-    Nexting(Promise<std::vector<Change>>::Callback given,
-            std::shared_ptr<Result<std::vector<Change>>> made)
-        : Promise<std::vector<Change>>(std::move(given), std::move(made)) {}
-};
-
-// Anulowane zgłoszenie musi zniknąć z kolejki czekających, inaczej pierwsza paczka poszłaby
-// do nikogo. To samo ogniwo co Dropping w zegarze.
-class Forgetting : public Waiter {
-public:
-    Forgetting(std::weak_ptr<Watch::Held> whose, Result<std::vector<Change>>* which)
-        : whose_(std::move(whose)), which_(which) {}
-
-    void woke() override {
-        const std::shared_ptr<Watch::Held> held = whose_.lock();
-        if (!held) return;
-
-        const std::lock_guard<std::mutex> kept{held->guard};
-
-        const auto at = std::find_if(
-            held->waiting.begin(), held->waiting.end(),
-            [this](const Watch::Held::Wanting& one) { return one.result.get() == which_; });
-
-        if (at != held->waiting.end()) held->waiting.erase(at);
-    }
-
-private:
-    std::weak_ptr<Watch::Held> whose_;
-    Result<std::vector<Change>>* which_;
-};
-
-// Powtórzone „zmieniony" dla tej samej ścieżki scalamy — system plików produkuje serie, a
-// panel i tak odrysuje się raz. Po przepełnieniu zostaje jeden wpis: zgubiłem rachubę.
-void noting(Watch::Held& held, Change made) {
-    if (made.stir == Stir::changed) {
-        std::size_t looked = 0;
-
-        for (auto at = held.pending.rbegin(); at != held.pending.rend() && looked < 32;
-             ++at, ++looked) {
-            if (at->where != made.where) continue;
-            if (at->stir == Stir::changed) return;
-
-            break;
-        }
-    }
-
-    held.pending.push_back(std::move(made));
-
-    if (held.pending.size() <= brim) return;
-
-    held.pending.clear();
-    held.pending.push_back(Change{held.where, path{}, Stir::lost});
-}
-
-void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among) {
-    std::shared_ptr<Result<std::vector<Change>>> lucky;
-    std::vector<Change> giving;
-
-    {
-        const std::lock_guard<std::mutex> kept{held->guard};
-
-        for (Change& one : among) noting(*held, std::move(one));
-
-        if (!held->waiting.empty() && !held->pending.empty()) {
-            lucky = held->waiting.front().result;
-            held->waiting.erase(held->waiting.begin());
-
-            giving.assign(std::make_move_iterator(held->pending.begin()),
-                          std::make_move_iterator(held->pending.end()));
-            held->pending.clear();
-        }
-    }
-
-    // Poza zamkiem: rozstrzygnięcie budzi obserwatorów, a wśród nich nasze własne ogniwo.
-    if (lucky) settled(*lucky, std::move(giving));
-}
-
-}
-
-namespace {
-
-#if defined(__linux__)
-
-constexpr std::uint32_t noticed = IN_CREATE | IN_DELETE | IN_MODIFY | IN_ATTRIB |
-                                  IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF;
-
-struct Post {
-    path where;
-    bool deep = false;
-    std::vector<int> spots;
-};
-
-// Katalogi pod korzeniem zbieramy własnym przejściem, a nie przez walk_at — tamto pyta
-// dzwonek bieżącego zadania, a wątek obserwatora żadnego zadania nie ma.
-std::vector<path> under(const path& where) {
-    std::vector<path> made;
-    std::vector<path> waiting{where};
-
-    while (!waiting.empty()) {
-        const path here = std::move(waiting.back());
-        waiting.pop_back();
-
-        std::error_code trouble;
-        stood::directory_iterator at{here, stood::directory_options::skip_permission_denied,
-                                     trouble};
-
-        if (trouble) continue;
-
-        for (const stood::directory_entry& one : at) {
-            std::error_code ignored;
-
-            if (!one.is_directory(ignored) || one.is_symlink(ignored)) continue;
-
-            made.push_back(one.path());
-            waiting.push_back(one.path());
-        }
-    }
-
-    return made;
-}
-
-class Prompt {
-public:
-    void begin() {
-        fd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-
-        keeper_ = std::thread{[this] { serve(); }};
-    }
-
-    [[nodiscard]] bool ready() const { return fd_ >= 0; }
-
-    void add(std::uint64_t which, const path& where, bool deep) {
-        auto post = std::make_shared<Post>();
-
-        post->where = where;
-        post->deep = deep;
-
-        std::vector<std::pair<int, path>> made;
-
-        const int first = inotify_add_watch(fd_, where.c_str(), noticed);
-        if (first < 0) amiss("Nie można obserwować.", where);
-
-        made.emplace_back(first, where);
-
-        if (deep)
-            for (const path& one : under(where)) {
-                const int more = inotify_add_watch(fd_, one.c_str(), noticed);
-                if (more >= 0) made.emplace_back(more, one);
-            }
-
-        const std::lock_guard<std::mutex> kept{guard_};
-
-        for (const auto& [spot, where] : made) {
-            post->spots.push_back(spot);
-            spots_[spot].push_back(Spot{which, where});
-        }
-
-        posts_[which] = std::move(post);
-    }
-
-    // inotify na to samo miejsce oddaje ten sam deskryptor i tylko scala maski — dwie
-    // obserwacje jednego katalogu dzielą więc jeden wpis. Zdejmujemy go dopiero wtedy, gdy
-    // nikt już z niego nie korzysta.
-    void drop(std::uint64_t which) {
-        std::vector<int> spare;
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = posts_.find(which);
-            if (at == posts_.end()) return;
-
-            const std::shared_ptr<Post> taken = std::move(at->second);
-            posts_.erase(at);
-
-            for (const int one : taken->spots) {
-                const auto found = spots_.find(one);
-                if (found == spots_.end()) continue;
-
-                std::vector<Spot>& among = found->second;
-
-                among.erase(std::remove_if(among.begin(), among.end(),
-                                           [which](const Spot& mine) {
-                                               return mine.which == which;
-                                           }),
-                            among.end());
-
-                if (among.empty()) {
-                    spots_.erase(found);
-                    spare.push_back(one);
-                }
-            }
-        }
-
-        for (const int one : spare) inotify_rm_watch(fd_, one);
-    }
-
-private:
-    struct Spot {
-        std::uint64_t which = 0;
-        path where;
-    };
-
-    void serve() {
-        std::vector<char> room(64 * 1024);
-
-        while (true) {
-            pollfd told{};
-            told.fd = fd_;
-            told.events = POLLIN;
-
-            if (::poll(&told, 1, 1000) <= 0) continue;
-
-            const ssize_t given = ::read(fd_, room.data(), room.size());
-            if (given <= 0) continue;
-
-            take(room.data(), static_cast<std::size_t>(given));
-        }
-    }
-
-    void take(const char* room, std::size_t much) {
-        std::unordered_map<std::uint64_t, std::vector<Change>> among;
-        std::map<std::pair<std::uint64_t, std::uint32_t>, path> moving;
-        std::vector<std::pair<std::uint64_t, path>> fresh;
-
-        for (std::size_t at = 0; at + sizeof(inotify_event) <= much;) {
-            const auto* told = reinterpret_cast<const inotify_event*>(room + at);
-            at += sizeof(inotify_event) + told->len;
-
-            if ((told->mask & IN_Q_OVERFLOW) != 0) {
-                spilled();
-                return;
-            }
-
-            std::vector<Spot> spots;
-
-            {
-                const std::lock_guard<std::mutex> kept{guard_};
-
-                const auto found = spots_.find(told->wd);
-                if (found == spots_.end()) continue;
-
-                spots = found->second;
-            }
-
-            // Ten sam deskryptor może należeć do kilku obserwacji naraz, więc jedno
-            // zdarzenie rozchodzi się do każdej z nich osobno.
-            for (const Spot& spot : spots) {
-                const std::uint64_t which = spot.which;
-                const path where = told->len > 0 ? spot.where / path{told->name} : spot.where;
-
-                std::vector<Change>& mine = among[which];
-
-                if ((told->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
-                    mine.push_back(Change{where, path{}, Stir::gone});
-                    continue;
-                }
-
-                if ((told->mask & IN_MOVED_FROM) != 0) {
-                    moving[{which, told->cookie}] = where;
-                    mine.push_back(Change{where, path{}, Stir::gone});
-                    continue;
-                }
-
-                if ((told->mask & IN_MOVED_TO) != 0) {
-                    const auto paired = moving.find({which, told->cookie});
-
-                    if (paired == moving.end()) {
-                        mine.push_back(Change{where, path{}, Stir::made});
-                    } else {
-                        // Para „wyszło stąd" i „weszło tam" to jedno przemianowanie, więc
-                        // zdejmujemy zgłoszone przed chwilą zniknięcie.
-                        const auto stale =
-                            std::find_if(mine.begin(), mine.end(), [&paired](const Change& one) {
-                                return one.stir == Stir::gone && one.where == paired->second;
-                            });
-
-                        if (stale != mine.end()) mine.erase(stale);
-
-                        mine.push_back(Change{where, paired->second, Stir::renamed});
-                        moving.erase(paired);
-                    }
-
-                    if ((told->mask & IN_ISDIR) != 0) fresh.emplace_back(which, where);
-
-                    continue;
-                }
-
-                if ((told->mask & IN_CREATE) != 0) {
-                    mine.push_back(Change{where, path{}, Stir::made});
-
-                    if ((told->mask & IN_ISDIR) != 0) fresh.emplace_back(which, where);
-
-                    continue;
-                }
-
-                if ((told->mask & IN_DELETE) != 0) {
-                    mine.push_back(Change{where, path{}, Stir::gone});
-                    continue;
-                }
-
-                mine.push_back(Change{where, path{}, Stir::changed});
-            }
-        }
-
-        for (const auto& [which, where] : fresh) sprout(which, where);
-
-        for (auto& [which, mine] : among) reached(which, std::move(mine));
-    }
-
-    // Nowy podkatalog pod obserwacją w głąb trzeba dopisać z osobna — inotify nie zna
-    // obserwowania drzewa, zna tylko pojedyncze katalogi. To jest cena, o której mowa
-    // w CLAUDE.md: przy dużym drzewie to tysiące deskryptorów.
-    void sprout(std::uint64_t which, const path& where) {
-        std::vector<path> among{where};
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = posts_.find(which);
-            if (at == posts_.end() || !at->second->deep) return;
-        }
-
-        for (const path& one : under(where)) among.push_back(one);
-
-        for (const path& one : among) {
-            const int spot = inotify_add_watch(fd_, one.c_str(), noticed);
-            if (spot < 0) continue;
-
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = posts_.find(which);
-            if (at == posts_.end()) {
-                inotify_rm_watch(fd_, spot);
-                continue;
-            }
-
-            at->second->spots.push_back(spot);
-            spots_[spot].push_back(Spot{which, one});
-        }
-    }
-
-    void spilled() {
-        std::vector<std::pair<std::uint64_t, path>> among;
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            for (const auto& [which, post] : posts_) among.emplace_back(which, post->where);
-        }
-
-        for (const auto& [which, where] : among)
-            reached(which, std::vector<Change>{Change{where, path{}, Stir::lost}});
-    }
-
-    std::mutex guard_;
-    std::unordered_map<int, std::vector<Spot>> spots_;
-    std::unordered_map<std::uint64_t, std::shared_ptr<Post>> posts_;
-    int fd_ = -1;
-    std::thread keeper_;
-};
-
-#endif
-
-}
-
-namespace {
-
-#if defined(_WIN32)
-
-constexpr DWORD noticed = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                          FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SIZE |
-                          FILE_NOTIFY_CHANGE_LAST_WRITE;
-
-struct Post {
-    path where;
-    bool deep = false;
-    std::uint64_t which = 0;
-
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    OVERLAPPED told{};
-    std::vector<char> room = std::vector<char>(64 * 1024);
-    bool going = false;
-};
-
-class Prompt {
-public:
-    void begin() {
-        port_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
-
-        keeper_ = std::thread{[this] { serve(); }};
-    }
-
-    [[nodiscard]] bool ready() const { return port_ != nullptr; }
-
-    void add(std::uint64_t which, const path& where, bool deep) {
-        auto post = std::make_shared<Post>();
-
-        post->where = where;
-        post->deep = deep;
-
-        post->handle = CreateFileW(longly(where).c_str(), FILE_LIST_DIRECTORY,
-                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                   nullptr, OPEN_EXISTING,
-                                   FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED, nullptr);
-
-        if (post->handle == INVALID_HANDLE_VALUE) amiss("Nie można obserwować.", where);
-
-        post->which = which;
-
-        if (CreateIoCompletionPort(post->handle, port_, static_cast<ULONG_PTR>(which), 0) ==
-            nullptr) {
-            CloseHandle(post->handle);
-            amiss("Nie można obserwować.", where);
-        }
-
-        if (!armed(*post)) {
-            CloseHandle(post->handle);
-            amiss("Nie można obserwować.", where);
-        }
-
-        const std::lock_guard<std::mutex> kept{guard_};
-
-        posts_[which] = std::move(post);
-    }
-
-    // Uchwytu nie zamykamy tutaj. Odczyt jest w locie i system trzyma bufor oraz OVERLAPPED
-    // aż do zakończenia; zamknięcie spod ręki zostawiłoby zapis do zwolnionej pamięci.
-    // Znaczymy więc wpis i czekamy, aż zerwane zakończenie wróci do wątku obserwatora.
-    void drop(std::uint64_t which) {
-        const std::lock_guard<std::mutex> kept{guard_};
-
-        const auto at = posts_.find(which);
-        if (at == posts_.end()) return;
-
-        at->second->going = true;
-
-        CancelIoEx(at->second->handle, &at->second->told);
-    }
-
-private:
-    static bool armed(Post& post) {
-        DWORD given = 0;
-
-        return ReadDirectoryChangesW(post.handle, post.room.data(),
-                                     static_cast<DWORD>(post.room.size()),
-                                     post.deep ? TRUE : FALSE, noticed, &given, &post.told,
-                                     nullptr) != 0;
-    }
-
-    void serve() {
-        while (true) {
-            DWORD given = 0;
-            ULONG_PTR key = 0;
-            OVERLAPPED* told = nullptr;
-
-            const BOOL fine = GetQueuedCompletionStatus(port_, &given, &key, &told, INFINITE);
-
-            if (told == nullptr) continue;
-
-            std::shared_ptr<Post> post;
-
-            {
-                const std::lock_guard<std::mutex> kept{guard_};
-
-                const auto at = posts_.find(static_cast<std::uint64_t>(key));
-                if (at == posts_.end()) continue;
-
-                post = at->second;
-
-                if (post->going || fine == 0) {
-                    CloseHandle(post->handle);
-                    posts_.erase(at);
-
-                    continue;
-                }
-            }
-
-            // Zerowy odczyt znaczy, że systemowi zabrakło miejsca na zdarzenia. Nie ma czego
-            // odzyskiwać — zostaje przyznanie się i prośba o ponowne przeczytanie katalogu.
-            if (given == 0)
-                reached(post->which,
-                        std::vector<Change>{Change{post->where, path{}, Stir::lost}});
-            else reached(post->which, take(*post, given));
-
-            if (!armed(*post)) drop(post->which);
-        }
-    }
-
-    static std::vector<Change> take(const Post& post, DWORD much) {
-        std::vector<Change> among;
-
-        path stale;
-        std::size_t at = 0;
-
-        while (at + sizeof(FILE_NOTIFY_INFORMATION) <= much) {
-            const auto* told =
-                reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(post.room.data() + at);
-
-            const std::wstring named{told->FileName,
-                                     told->FileNameLength / sizeof(wchar_t)};
-
-            const path where = post.where / path{named};
-
-            switch (told->Action) {
-                case FILE_ACTION_ADDED:
-                    among.push_back(Change{where, path{}, Stir::made});
-                    break;
-
-                case FILE_ACTION_REMOVED:
-                    among.push_back(Change{where, path{}, Stir::gone});
-                    break;
-
-                case FILE_ACTION_RENAMED_OLD_NAME:
-                    stale = where;
-                    break;
-
-                case FILE_ACTION_RENAMED_NEW_NAME:
-                    among.push_back(Change{where, stale, Stir::renamed});
-                    stale.clear();
-                    break;
-
-                default:
-                    among.push_back(Change{where, path{}, Stir::changed});
-                    break;
-            }
-
-            if (told->NextEntryOffset == 0) break;
-
-            at += told->NextEntryOffset;
-        }
-
-        return among;
-    }
-
-    std::mutex guard_;
-    std::unordered_map<std::uint64_t, std::shared_ptr<Post>> posts_;
-    HANDLE port_ = nullptr;
-    std::thread keeper_;
-};
-
-#endif
-
-// Odpytywanie. Tam, gdzie system nie umie powiedzieć sam — a także tam, gdzie umie, ale
-// kłamie — zaglądamy do katalogu co jakiś czas i porównujemy z tym, co widzieliśmy poprzednio.
-// Nie ma tu przemianowań: znika stara nazwa, pojawia się nowa, i tyle da się uczciwie
-// powiedzieć bez pomocy systemu.
-struct Sight {
-    Kind kind = Kind::none;
-    std::uintmax_t size = 0;
-    std::chrono::sys_seconds written{};
-};
-
-std::map<path, Sight> sighted(const path& where, bool deep) {
-    std::map<path, Sight> made;
-
-    const Kind what = kind_at(where);
-    if (what == Kind::none) return made;
-
-    if (what != Kind::folder) {
-        Sight mine;
-        mine.kind = what;
-
-        std::error_code ignored;
-        mine.size = stood::file_size(where, ignored);
-
-        try {
-            mine.written = written_at(where);
-        } catch (...) {
-        }
-
-        made[where] = mine;
-
-        return made;
-    }
-
-    std::vector<Entry> among;
-
-    try {
-        among = deep ? walk_at(where) : list_at(where);
-    } catch (...) {
-        return made;
-    }
-
-    for (const Entry& one : among) made[one.where] = Sight{one.kind, one.size, one.written};
-
-    return made;
-}
-
-std::vector<Change> apart(const std::map<path, Sight>& was, const std::map<path, Sight>& now) {
-    std::vector<Change> made;
-
-    for (const auto& [where, mine] : now) {
-        const auto at = was.find(where);
-
-        if (at == was.end()) {
-            made.push_back(Change{where, path{}, Stir::made});
-            continue;
-        }
-
-        if (at->second.kind != mine.kind || at->second.size != mine.size ||
-            at->second.written != mine.written)
-            made.push_back(Change{where, path{}, Stir::changed});
-    }
-
-    for (const auto& [where, mine] : was)
-        if (now.find(where) == now.end()) made.push_back(Change{where, path{}, Stir::gone});
-
-    return made;
-}
-
-class Polling {
-public:
-    void begin() { keeper_ = std::thread{[this] { serve(); }}; }
-
-    // Pierwsze spojrzenie bierzemy tutaj, w wątku wołającego, żeby zmiany zaraz po powrocie
-    // z watch() nie przepadły. Od tej chwili `seen` należy już wyłącznie do wątku
-    // odpytującego, a przekazanie idzie przez ten zamek.
-    void add(std::uint64_t which, const path& where, bool deep) {
-        auto post = std::make_shared<Post>();
-
-        post->where = where;
-        post->deep = deep;
-        post->seen = sighted(where, deep);
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            posts_[which] = std::move(post);
-        }
-
-        stirred_.notify_all();
-    }
-
-    void drop(std::uint64_t which) {
-        const std::lock_guard<std::mutex> kept{guard_};
-
-        posts_.erase(which);
-    }
-
-private:
-    struct Post {
-        path where;
-        bool deep = false;
-        std::map<path, Sight> seen;
-    };
-
-    // Nigdy nie zjadamy więcej niż dziesiątej części rdzenia: przerwa jest dziesięciokrotnie
-    // dłuższa od samego zaglądania, nie krótsza niż pół sekundy i nie dłuższa niż dziesięć.
-    // Mały katalog odpytuje się więc dwa razy na sekundę, a wielkie drzewo — rzadko, bo samo
-    // przejście po nim kosztuje. Stała częstotliwość byłaby albo za wolna, albo za droga.
-    void serve() {
-        while (true) {
-            std::vector<std::pair<std::uint64_t, std::shared_ptr<Post>>> among;
-
-            {
-                std::unique_lock<std::mutex> kept{guard_};
-
-                if (posts_.empty()) {
-                    stirred_.wait(kept);
-                    continue;
-                }
-
-                among.reserve(posts_.size());
-                for (const auto& [which, post] : posts_) among.emplace_back(which, post);
-            }
-
-            const auto began = std::chrono::steady_clock::now();
-
-            for (const auto& [which, post] : among) {
-                std::map<path, Sight> now = sighted(post->where, post->deep);
-                std::vector<Change> mine = apart(post->seen, now);
-
-                post->seen = std::move(now);
-
-                if (!mine.empty()) reached(which, std::move(mine));
-            }
-
-            const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - began);
-
-            const auto rest = std::clamp(spent * 10, std::chrono::milliseconds{500},
-                                         std::chrono::milliseconds{10000});
-
-            std::unique_lock<std::mutex> kept{guard_};
-            stirred_.wait_for(kept, rest);
-        }
-    }
-
-    std::mutex guard_;
-    std::condition_variable stirred_;
-    std::unordered_map<std::uint64_t, std::shared_ptr<Post>> posts_;
-    std::thread keeper_;
-};
-
-// Rozdzielacz. Zdarzenia z systemu są tańsze i szybsze, więc bierzemy je wszędzie, gdzie
-// są wiarygodne — a na udziale sieciowym wiarygodne nie są. inotify nie widzi zmian
-// zrobionych przez inną maszynę, bo jądro nie ma o nich pojęcia; polegać można tylko na
-// własnym zaglądaniu. Dlatego o wyborze rozstrzyga to samo rozpoznanie nośnika, które daje
-// ratę w `slice`.
-class Watching {
-public:
-    void begin() {
-        polling_.begin();
-
-#if !defined(TALCITE_WATCH_POLLING) && (defined(__linux__) || defined(_WIN32))
-        prompt_.begin();
-#endif
-    }
-
-    std::uint64_t add(const std::shared_ptr<Watch::Held>& held) {
-        Kept kept;
-
-        kept.whose = held;
-        kept.asking = asking(held->where);
-
-        // Pojedynczego pliku nie obserwujemy wprost. ReadDirectoryChangesW w ogóle tego nie
-        // umie, a inotify przywiązuje się do i-węzła, nie do nazwy — zapis przez podmianę
-        // zostawiłby obserwację przy usuniętej treści. Pilnujemy więc katalogu nadrzędnego
-        // i przy każdym drgnięciu naszej nazwy zaglądamy do samego pliku.
-        if (!kept.asking && kind_at(held->where) != Kind::folder) {
-            kept.peering = true;
-            kept.only = held->where;
-            kept.seen = sighted(held->where, false);
-        }
-
-        const path where = kept.peering ? held->where.parent_path() : held->where;
-        const bool deep = kept.peering ? false : held->deep;
-
-        std::uint64_t which = 0;
-
-        {
-            const std::lock_guard<std::mutex> held_{guard_};
-
-            which = ++next_;
-        }
-
-        if (kept.asking) {
-            polling_.add(which, where, deep);
-        } else {
-#if !defined(TALCITE_WATCH_POLLING) && (defined(__linux__) || defined(_WIN32))
-            prompt_.add(which, where, deep);
-#endif
-        }
-
-        // Dopiero po udanym dopisaniu — nieudane nie zostawia po sobie wpisu do zdejmowania.
-        const std::lock_guard<std::mutex> held_{guard_};
-
-        among_[which] = std::move(kept);
-
-        return which;
-    }
-
-    void drop(std::uint64_t which) {
-        bool mine = true;
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = among_.find(which);
-            if (at == among_.end()) return;
-
-            mine = at->second.asking;
-            among_.erase(at);
-        }
-
-        if (mine) {
-            polling_.drop(which);
-            return;
-        }
-
-#if !defined(TALCITE_WATCH_POLLING) && (defined(__linux__) || defined(_WIN32))
-        prompt_.drop(which);
-#endif
-    }
-
-    void reached(std::uint64_t which, std::vector<Change> among) {
-        std::shared_ptr<Watch::Held> held;
-        bool peering = false;
-        path only;
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = among_.find(which);
-            if (at == among_.end()) return;
-
-            held = at->second.whose.lock();
-            peering = at->second.peering;
-            only = at->second.only;
-        }
-
-        if (!held) return;
-
-        if (!peering) {
-            handed(held, std::move(among));
-            return;
-        }
-
-        if (!touched(among, only)) return;
-
-        // Katalog powiedział tylko, że coś drgnęło przy naszej nazwie. Co dokładnie — mówi
-        // dopiero spojrzenie na sam plik, porównane z poprzednim.
-        std::map<path, Sight> now = sighted(only, false);
-        std::vector<Change> mine;
-
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
-
-            const auto at = among_.find(which);
-            if (at == among_.end()) return;
-
-            mine = apart(at->second.seen, now);
-            at->second.seen = std::move(now);
-        }
-
-        if (!mine.empty()) handed(held, std::move(mine));
-    }
-
-private:
-    struct Kept {
-        std::weak_ptr<Watch::Held> whose;
-        bool asking = false;
-        bool peering = false;
-        path only;
-        std::map<path, Sight> seen;
-    };
-
-    static bool touched(const std::vector<Change>& among, const path& only) {
-        for (const Change& one : among) {
-            if (one.stir == Stir::lost) return true;
-            if (one.where == only || one.was == only) return true;
-        }
-
-        return false;
-    }
-
-    // Zdarzenia z systemu są tańsze i szybsze, więc bierzemy je wszędzie, gdzie są
-    // wiarygodne. Na udziale sieciowym pod Linuksem wiarygodne nie są: inotify nie widzi
-    // zmian zrobionych przez inną maszynę, bo jądro nie ma o nich pojęcia — a to jest
-    // dokładnie przypadek NAS-a. Rozstrzyga to samo rozpoznanie nośnika, co przy racie.
-    // Windows na udziale radzi sobie sam, bo powiadomienia przychodzą z serwera.
-    static bool asking(const path& where) {
-#if defined(TALCITE_WATCH_POLLING)
-        (void)where;
-
-        return true;
-#elif defined(_WIN32)
-        (void)where;
-
-        return false;
-#elif defined(__linux__)
-        return afar_at(kind_at(where) == Kind::folder ? where : where.parent_path());
-#else
-        (void)where;
-
-        return true;
-#endif
-    }
-
-    std::mutex guard_;
-    std::unordered_map<std::uint64_t, Kept> among_;
-    std::uint64_t next_ = 0;
-
-    Polling polling_;
-
-#if !defined(TALCITE_WATCH_POLLING) && (defined(__linux__) || defined(_WIN32))
-    Prompt prompt_;
-#endif
-};
-
-// Obserwator jest celowo nieusuwany, z tego samego powodu co zegar: powstaje później niż
-// pula, więc zniknąłby pierwszy, w chwili gdy robotnicy jeszcze biegną.
-Watching& watching() {
-    static Watching* only = [] {
-        auto* made = new Watching;
-        made->begin();
-
-        return made;
-    }();
-
-    return *only;
-}
-
-void reached(std::uint64_t which, std::vector<Change> among) {
-    watching().reached(which, std::move(among));
-}
-
-}
-
-
-Watch::Held::~Held() {
-    if (which != 0) watching().drop(which);
-}
-
-const path& Watch::where() const {
-    static const path nowhere;
-
-    return held_ ? held_->where : nowhere;
-}
-
-Promise<Watch> watch(const path& where, bool deep) {
-    return Promise<Watch>{[where, deep](auto resolve, auto) {
-        if (kind_at(where) != Kind::folder && kind_at(where) != Kind::file)
-            amiss("Nie ma czego obserwować.", where);
-
-        auto held = std::make_shared<Watch::Held>();
-
-        held->where = where;
-        held->deep = deep;
-        held->which = watching().add(held);
-
-        resolve(Watch{held});
-    }};
-}
-
-Promise<std::vector<Change>> Watch::next() {
-    auto held = held_;
-
-    if (!held)
-        return Promise<std::vector<Change>>{
-            [](auto, auto) { amiss("Obserwacja jest zamknięta.", path{}); }};
-
-    auto made = std::make_shared<Result<std::vector<Change>>>();
-
-    return Nexting{[held, made](auto, auto) {
-                       // Bilet trzyma obserwatorów słabo, więc ogniwo musi mieć właściciela
-                       // z tej strony — inaczej ginie zaraz po powrocie stąd, a anulowane
-                       // zgłoszenie zostaje w kolejce i połyka pierwszą paczkę.
-                       const std::shared_ptr<Waiter> gone =
-                           std::make_shared<Forgetting>(held, made.get());
-
-                       std::vector<Change> giving;
-
-                       {
-                           const std::lock_guard<std::mutex> kept{held->guard};
-
-                           if (held->pending.empty()) {
-                               held->waiting.push_back(Watch::Held::Wanting{made, gone});
-                           } else {
-                               giving.assign(std::make_move_iterator(held->pending.begin()),
-                                             std::make_move_iterator(held->pending.end()));
-                               held->pending.clear();
-                           }
-                       }
-
-                       if (!giving.empty()) {
-                           settled(*made, std::move(giving));
-                           return;
-                       }
-
-                       // Poza zamkiem, tak samo jak w zegarze: bilet już rozstrzygnięty
-                       // zawoła ogniwo od razu, a ono wraca tutaj po ten sam zamek.
-                       if (hooked(*made, gone)) gone->woke();
-                   },
-                   made};
 }
 
 }

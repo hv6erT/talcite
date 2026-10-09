@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "talcite/encoding.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
@@ -33,12 +33,12 @@ constexpr int tabbing = 8;
 
     while (at < what.size() && at < upto) {
         const std::size_t was = at;
-        const char32_t sign = letter(what, at);
+        const char32_t sign = utf8::decode(what, at);
 
         if (sign == U'\t')
             much = ((much / tabbing) + 1) * tabbing;
         else
-            much += std::max(widely(sign), 0);
+            much += std::max(width(sign), 0);
 
         if (was == at) break;
     }
@@ -55,7 +55,7 @@ inline std::string cut(std::string_view what, int wide) {
 
     while (at < what.size()) {
         const std::size_t began = at;
-        const int one = widely(letter(what, at));
+        const int one = width(utf8::decode(what, at));
 
         if (much + one > wide) break;
 
@@ -79,7 +79,7 @@ inline std::string tail(std::string_view what, int wide) {
     while (at < what.size()) {
         const std::size_t began = at;
 
-        much.push_back(widely(letter(what, at)));
+        much.push_back(width(utf8::decode(what, at)));
         spots.push_back(began);
     }
 
@@ -102,20 +102,20 @@ inline std::string tail(std::string_view what, int wide) {
 //
 // **Znak podaje wołający**, a nie ta funkcja: bierze go ze skórki, jak każdy inny znak. Argument
 // jest wymagany właśnie po to, żeby żaden zaszyty wielokropek nie przetrwał niezauważony.
-inline std::string elided(const std::string& one, int wide, ElideStyle how, char32_t mark) {
-    if (how == ElideStyle::none) return one;
+inline std::string elided(const std::string& one, int wide, Elide how, char32_t mark) {
+    if (how == Elide::none) return one;
 
     if (measured(one).wide <= wide) return one;
 
     if (wide <= 0) return {};
 
-    const std::string dots = spelled(mark);
+    const std::string dots = utf8::encode(mark);
 
     if (wide == 1) return dots;
 
-    if (how == ElideStyle::right) return cut(one, wide - 1) + dots;
+    if (how == Elide::right) return cut(one, wide - 1) + dots;
 
-    if (how == ElideStyle::left) return dots + tail(one, wide - 1);
+    if (how == Elide::left) return dots + tail(one, wide - 1);
 
     const int half = (wide - 1) / 2;
 

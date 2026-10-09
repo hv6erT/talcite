@@ -2,10 +2,11 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "talcite/button.hpp"
-#include "talcite/compatibilities.hpp"
+#include "talcite/capabilities.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/line.hpp"
@@ -13,6 +14,7 @@
 #include "talcite/listitem.hpp"
 #include "talcite/root.hpp"
 #include "talcite/span.hpp"
+#include "talcite/style.hpp"
 #include "talcite/skin.hpp"
 
 using namespace talcite;
@@ -28,7 +30,7 @@ public:
 // Pojemnik, który układa dzieci w wiersze — tyle, ile trzeba, żeby lista i chętny liść stały obok.
 class Hold : public ui::Node {
 public:
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
@@ -44,7 +46,7 @@ protected:
             const ui::Area where{{0, 0}, first ? given : ui::Size{}};
             const ui::Area part = ui::Area::crossed(seen, where);
 
-            made.within(one->render(where, part - where.at), part.at - seen.at);
+            made.draw(one->render(where, part - where.at), part.at - seen.at);
 
             first = false;
         }
@@ -64,7 +66,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -75,7 +77,7 @@ std::string read(const View& one, int y) {
 Style tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Style made{};
 
-    made.ink = Color{false, red, green, blue};
+    made.foreground = Color{false, red, green, blue};
 
     return made;
 }
@@ -85,13 +87,13 @@ Style tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 TRIAL("Skin: wbudowana zna role i znaki") {
     const ui::Skin one;
 
-    ought(one.get<Style>("talcite.list.focus").reverse);
-    ought(one.get<Style>("talcite.input").under);
-    ought(one.get<Style>("talcite.shade").faint);
+    ought(one.style("talcite.list.focus").reverse);
+    ought(one.style("talcite.input").under);
+    ought(one.style("talcite.shade").faint);
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'─');
-    same(one.get<char32_t>("talcite.line.twin.across"), U'═');
-    same(one.get<char32_t>("talcite.scroll.thumb"), U'█');
+    same(one.glyph("talcite.line.thin.across"), U'─');
+    same(one.glyph("talcite.line.twin.across"), U'═');
+    same(one.glyph("talcite.scroll.thumb"), U'█');
 }
 
 // **Odczyt nigdy nie rzuca**, bo woła się go z malowania. Nieznana rola daje barwy domyślne
@@ -99,8 +101,8 @@ TRIAL("Skin: wbudowana zna role i znaki") {
 TRIAL("Skin: nieznana rola daje pusty styl, nieznany znak pytajnik") {
     const ui::Skin one;
 
-    same(one.get<Style>("czego.tu.nie.ma"), Style{});
-    same(one.get<char32_t>("czego.tu.nie.ma"), U'?');
+    same(one.style("czego.tu.nie.ma"), Style{});
+    same(one.glyph("czego.tu.nie.ma"), U'?');
 }
 
 // Zero jest zabronione: w `View` znaczy dalszy ciąg znaku dwukolumnowego i składanie klatki takie
@@ -108,8 +110,8 @@ TRIAL("Skin: nieznana rola daje pusty styl, nieznany znak pytajnik") {
 TRIAL("Skin: nieznany znak nigdy nie jest zerem") {
     const ui::Skin one;
 
-    ought(one.get<char32_t>("nie.ma.takiego") != 0);
-    ought(ui::Skin::plain().get<char32_t>("nie.ma.takiego") != 0);
+    ought(one.glyph("nie.ma.takiego") != 0);
+    ought(ui::Skin::plain().glyph("nie.ma.takiego") != 0);
 }
 
 // To jest `Store(spare, held)`: wołający daje swoje, biblioteka dokłada resztę — tylko scalone raz,
@@ -117,41 +119,44 @@ TRIAL("Skin: nieznany znak nigdy nie jest zerem") {
 TRIAL("Skin: podane nadpisuje, reszta zostaje wbudowana") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
-    same(one.get<Style>("talcite.list.focus"), tinted(10, 20, 30));
+    same(one.style("talcite.list.focus"), tinted(10, 20, 30));
 
     // Nietknięte role dalej są takie, jak we wbudowanej.
-    ought(one.get<Style>("talcite.input").under);
-    ought(one.get<Style>("talcite.shade").faint);
-    same(one.get<char32_t>("talcite.line.thin.across"), U'─');
+    ought(one.style("talcite.input").under);
+    ought(one.style("talcite.shade").faint);
+    same(one.glyph("talcite.line.thin.across"), U'─');
 }
 
 TRIAL("Skin: plain zawsze oddaje wbudowaną, także gdy nadpisano") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
-    same(one.get<Style>("talcite.list.focus"), tinted(10, 20, 30));
-    ought(one.plain<Style>("talcite.list.focus").reverse);
-    ought(one.plain<Style>("talcite.list.focus").ink.transparent);
+    same(one.style("talcite.list.focus"), tinted(10, 20, 30));
+    ought(ui::Skin::plain().style("talcite.list.focus").reverse);
+    ought(ui::Skin::plain().style("talcite.list.focus").foreground.transparent);
 
-    same(one.plain<char32_t>("talcite.line.thin.across"), U'─');
+    same(ui::Skin::plain().glyph("talcite.line.thin.across"), U'─');
 }
 
 TRIAL("Skin: komplet ramki składa się z pojedynczych znaków") {
     const ui::Skin one;
 
-    const ui::Lines thin = one.get<ui::Lines>("talcite.line.thin");
+    const ui::Lines thin = one.lines(ui::Border::thin);
 
     same(thin.across, U'─');
     same(thin.upright, U'│');
     same(thin.upper_left, U'┌');
     same(thin.right_joint, U'┤');
 
-    const ui::Lines twin = one.get<ui::Lines>("talcite.line.twin");
+    const ui::Lines twin = one.lines(ui::Border::twin);
 
     same(twin.across, U'═');
     same(twin.lower_right, U'╝');
 
-    // Nieznana grubość daje cienki — ten sam wybór, który robi `drawn` dla `LineStyle::none`.
-    same(one.get<ui::Lines>("talcite.line.czegoś").across, U'─');
+    // Bez obramowania oddaje cienki — ten sam wybór, który robi `drawn` dla `Border::none`.
+    same(one.lines(ui::Border::none).across, U'─');
+    same(one.lines(ui::Border::none).upper_left, U'┌');
+
+    same(one.lines(ui::Border::thick).across, U'━');
 }
 
 // Komplet jest **złożony**, a nie zapamiętany osobno: podmiana jednego znaku zmienia całą ósemkę.
@@ -159,14 +164,14 @@ TRIAL("Skin: komplet ramki składa się z pojedynczych znaków") {
 TRIAL("Skin: podmiana znaku zmienia złożony komplet") {
     const ui::Skin one{{}, {{"talcite.line.thin.across", U'='}}};
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'=');
-    same(one.get<ui::Lines>("talcite.line.thin").across, U'=');
+    same(one.glyph("talcite.line.thin.across"), U'=');
+    same(one.lines(ui::Border::thin).across, U'=');
 
     // Reszta kompletu bez zmian.
-    same(one.get<ui::Lines>("talcite.line.thin").upright, U'│');
+    same(one.lines(ui::Border::thin).upright, U'│');
 
     // I nie tknęło to grubszych.
-    same(one.get<ui::Lines>("talcite.line.twin").across, U'═');
+    same(one.lines(ui::Border::twin).across, U'═');
 }
 
 TRIAL("Skin: wbudowana to zawsze ten sam egzemplarz") {
@@ -177,7 +182,7 @@ TRIAL("Skin: węzeł bez korzenia dostaje wbudowaną") {
     const Peek one;
 
     same(&one.seen(), &ui::Skin::plain());
-    ought(one.seen().get<Style>("talcite.list.focus").reverse);
+    ought(one.seen().style("talcite.list.focus").reverse);
 }
 
 TRIAL("Skin: węzeł w drzewie dostaje skórkę korzenia") {
@@ -207,14 +212,14 @@ TRIAL("Skin: podmiana na korzeniu widoczna od razu w głębi") {
     one->children().add(deeper);
     top.children().add(one);
 
-    ought(deeper->seen().get<Style>("talcite.list.focus").reverse);
+    ought(deeper->seen().style("talcite.list.focus").reverse);
 
     top.skin(ui::Skin{{{"talcite.list.focus", tinted(1, 2, 3)}}});
 
-    same(deeper->seen().get<Style>("talcite.list.focus"), tinted(1, 2, 3));
+    same(deeper->seen().style("talcite.list.focus"), tinted(1, 2, 3));
 
     // Reszta dalej z wbudowanej, bo nowa skórka też jest kompletna od urodzenia.
-    ought(deeper->seen().get<Style>("talcite.input").under);
+    ought(deeper->seen().style("talcite.input").under);
 }
 
 // Węzeł zdjęty z drzewa przestaje widzieć skórkę korzenia — i **nie zostaje bez niczego**.
@@ -226,12 +231,12 @@ TRIAL("Skin: zdjęty węzeł wraca do wbudowanej") {
     top.children().add(one);
     top.skin(ui::Skin{{{"talcite.input", tinted(9, 9, 9)}}});
 
-    same(one->seen().get<Style>("talcite.input"), tinted(9, 9, 9));
+    same(one->seen().style("talcite.input"), tinted(9, 9, 9));
 
     (void)top.children().remove(one.get());
 
     same(&one->seen(), &ui::Skin::plain());
-    ought(one->seen().get<Style>("talcite.input").under);
+    ought(one->seen().style("talcite.input").under);
 }
 
 // **Skórka nie jest zamknięta.** Aplikacja wymyśla własne role obok tych, które zna biblioteka,
@@ -250,19 +255,19 @@ TRIAL("Skin: aplikacja dokłada własne role obok wbudowanych") {
         {"fork.panel.exec", tinted(4, 5, 6)},
     }});
 
-    same(one->seen().get<Style>("fork.panel.directory"), tinted(1, 2, 3));
-    same(one->seen().get<Style>("fork.panel.exec"), tinted(4, 5, 6));
+    same(one->seen().style("fork.panel.directory"), tinted(1, 2, 3));
+    same(one->seen().style("fork.panel.exec"), tinted(4, 5, 6));
 
     // Role biblioteki stoją obok, nietknięte.
-    ought(one->seen().get<Style>("talcite.list.focus").reverse);
-    ought(one->seen().get<Style>("talcite.input").under);
+    ought(one->seen().style("talcite.list.focus").reverse);
+    ought(one->seen().style("talcite.input").under);
 }
 
 TRIAL("Skin: własne znaki dokłada się tak samo jak własne role") {
     const ui::Skin one{{}, {{"fork.panel.mark", U'*'}}};
 
-    same(one.get<char32_t>("fork.panel.mark"), U'*');
-    same(one.get<char32_t>("talcite.line.thin.across"), U'─');
+    same(one.glyph("fork.panel.mark"), U'*');
+    same(one.glyph("talcite.line.thin.across"), U'─');
 }
 
 // Rola, której nie ustawił nikt, daje barwy domyślne terminala — i **tego nie da się odróżnić** od
@@ -271,8 +276,8 @@ TRIAL("Skin: własne znaki dokłada się tak samo jak własne role") {
 TRIAL("Skin: cudza rola bez wpisu daje domyślne terminala") {
     const ui::Skin one;
 
-    same(one.get<Style>("fork.panel.directory"), Style{});
-    same(one.plain<Style>("fork.panel.directory"), Style{});
+    same(one.style("fork.panel.directory"), Style{});
+    same(ui::Skin::plain().style("fork.panel.directory"), Style{});
 }
 
 // **Wierzchni dokłada, ale nie odbiera.** Po to jest scalanie: widżet spoza biblioteki trzyma swój
@@ -281,19 +286,19 @@ TRIAL("Skin: cudza rola bez wpisu daje domyślne terminala") {
 TRIAL("Style: scalanie dokłada kolor wierzchniego, a znaczniki sumuje") {
     Style base{};
 
-    base.ink = Color{false, 1, 2, 3};
+    base.foreground = Color{false, 1, 2, 3};
     base.under = true;
 
     Style over{};
 
-    over.paper = Color{false, 9, 9, 9};
+    over.background = Color{false, 9, 9, 9};
     over.reverse = true;
 
     const Style made = Style::merge(base, over);
 
     // Kolor spodni został, bo wierzchni go nie podał; tło przyszło z wierzchniego.
-    same(made.ink, (Color{false, 1, 2, 3}));
-    same(made.paper, (Color{false, 9, 9, 9}));
+    same(made.foreground, (Color{false, 1, 2, 3}));
+    same(made.background, (Color{false, 9, 9, 9}));
 
     ought(made.under);
     ought(made.reverse);
@@ -303,13 +308,13 @@ TRIAL("Style: scalanie dokłada kolor wierzchniego, a znaczniki sumuje") {
 TRIAL("Style: ustawiony kolor wierzchniego zasłania spodni") {
     Style base{};
 
-    base.ink = Color{false, 1, 2, 3};
+    base.foreground = Color{false, 1, 2, 3};
 
     Style over{};
 
-    over.ink = Color{false, 7, 7, 7};
+    over.foreground = Color{false, 7, 7, 7};
 
-    same(Style::merge(base, over).ink, (Color{false, 7, 7, 7}));
+    same(Style::merge(base, over).foreground, (Color{false, 7, 7, 7}));
 }
 
 // Pusty styl niczego nie zmienia — i to jest ten przypadek, dla którego scalanie powstało: rola,
@@ -317,7 +322,7 @@ TRIAL("Style: ustawiony kolor wierzchniego zasłania spodni") {
 TRIAL("Style: scalanie z pustym zostawia wygląd zapasowy") {
     Style base{};
 
-    base.ink = Color{false, 1, 2, 3};
+    base.foreground = Color{false, 1, 2, 3};
     base.bold = true;
     base.under = true;
 
@@ -346,13 +351,13 @@ TRIAL("Skin: cudzy widżet nakłada skórkę na własny wygląd zapasowy") {
     const ui::Skin bare;
 
     // Skórka nie zna tej roli — zostaje wygląd własny.
-    same(Style::merge(mine, bare.get<Style>("fork.panel.directory")), mine);
+    same(Style::merge(mine, bare.style("fork.panel.directory")), mine);
 
     const ui::Skin told{{{"fork.panel.directory", tinted(1, 2, 3)}}};
 
-    const Style made = Style::merge(mine, told.get<Style>("fork.panel.directory"));
+    const Style made = Style::merge(mine, told.style("fork.panel.directory"));
 
-    same(made.ink, (Color{false, 1, 2, 3}));
+    same(made.foreground, (Color{false, 1, 2, 3}));
     ought(made.bold);
 }
 
@@ -378,7 +383,7 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
 
     Style told{};
 
-    told.ink = Color{false, 5, 6, 7};
+    told.foreground = Color{false, 5, 6, 7};
 
     top.skin(ui::Skin{{{"talcite.list.mark", told}}});
 
@@ -387,7 +392,7 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
     (void)top.render({{0, 0}, {20, 3}});
 
     // Z ogniskiem bieżący wiersz jest w negatywie, a nie w roli „bez ogniska".
-    same(list->which(), 0);
+    same(list->which(), std::optional<std::size_t>{0});
     ought(top.render({{0, 0}, {20, 3}}).at({0, 0}).style.reverse);
 
     // Po wyjściu ogniska zostaje sam znacznik — i wchodzi rola.
@@ -395,13 +400,13 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
 
     const View made = top.render({{0, 0}, {20, 3}});
 
-    same(list->which(), 0);
+    same(list->which(), std::optional<std::size_t>{0});
     ought(!made.at({0, 0}).style.reverse);
-    same(made.at({0, 0}).style.ink.red, static_cast<std::uint8_t>(5));
+    same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(5));
 
     // Wiersz, który bieżący nie jest, roli nie dostaje.
-    ought(list->which() != 1);
-    ought(made.at({0, 1}).style.ink.transparent);
+    ought(list->which() != std::optional<std::size_t>{1});
+    ought(made.at({0, 1}).style.foreground.transparent);
 }
 
 // **Znaki też przychodzą ze skórki.** Grubość dalej wybiera widżet — to jest wybór kształtu —
@@ -409,7 +414,7 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
 TRIAL("Skin: znak ramki ze skórki idzie na ramkę") {
     ui::Root top;
 
-    const auto frame = std::make_shared<ui::Frame>("kot", ui::FrameStyle{ui::LineStyle::twin});
+    const auto frame = std::make_shared<ui::Frame>("kot", ui::FrameShape{ui::Border::twin});
 
     top.children().add(frame);
 
@@ -451,7 +456,7 @@ TRIAL("Skin: wielokropek bierze się ze skórki") {
 
     const auto one = std::make_shared<ui::Span>("dokumenty");
 
-    one->elide(ui::ElideStyle::right);
+    one->elide(ui::Elide::right);
 
     top.children().add(one);
 
@@ -465,7 +470,7 @@ TRIAL("Skin: wielokropek bierze się ze skórki") {
 TRIAL("Skin: strzałki i suwak przewijaka biorą znaki ze skórki") {
     ui::Root top;
 
-    const auto list = std::make_shared<ui::List>(ui::plenty, ui::plenty, ui::ListStyle{true});
+    const auto list = std::make_shared<ui::List>(ui::plenty, ui::plenty, ui::ScrollShape{true});
 
     for (int which = 0; which < 10; ++which)
         list->children().add(std::make_shared<ui::ListItem>("wiersz"));
@@ -504,7 +509,7 @@ namespace {
 Style inked(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Style made{};
 
-    made.ink = Color{false, red, green, blue};
+    made.foreground = Color{false, red, green, blue};
 
     return made;
 }
@@ -521,11 +526,11 @@ TRIAL("Rola: napis pyta o rdzeń, który mu zadano") {
     top.children().add(one);
 
     same(one->role(), std::string{"talcite.normal"});
-    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.ink, (Color{false, 1, 1, 1}));
+    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
 
     one->role("moja.rola");
 
-    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.ink, (Color{false, 9, 9, 9}));
+    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
 TRIAL("Rola: ramka pyta o rdzeń, który jej zadano") {
@@ -533,7 +538,7 @@ TRIAL("Rola: ramka pyta o rdzeń, który jej zadano") {
 
     Style mine{};
 
-    mine.paper = Color{false, 7, 7, 7};
+    mine.background = Color{false, 7, 7, 7};
 
     top.skin(ui::Skin{{{"talcite.frame", inked(1, 1, 1)}, {"moja.ramka", mine}}});
 
@@ -546,8 +551,8 @@ TRIAL("Rola: ramka pyta o rdzeń, który jej zadano") {
     const View made = top.render({{0, 0}, {6, 3}});
 
     // Kreska i tło biorą się z tej samej roli.
-    same(made.at({0, 0}).style.paper, (Color{false, 7, 7, 7}));
-    same(made.at({2, 1}).style.paper, (Color{false, 7, 7, 7}));
+    same(made.at({0, 0}).style.background, (Color{false, 7, 7, 7}));
+    same(made.at({2, 1}).style.background, (Color{false, 7, 7, 7}));
 }
 
 TRIAL("Rola: przycisk dokłada końcówkę na stan") {
@@ -557,7 +562,7 @@ TRIAL("Rola: przycisk dokłada końcówkę na stan") {
 
     these["moj.guzik"] = inked(1, 1, 1);
     these["moj.guzik.focus"] = inked(2, 2, 2);
-    these["moj.guzik.off"] = inked(3, 3, 3);
+    these["moj.guzik.disabled"] = inked(3, 3, 3);
 
     top.skin(ui::Skin{these});
 
@@ -569,15 +574,15 @@ TRIAL("Rola: przycisk dokłada końcówkę na stan") {
 
     one->role("moj.guzik");
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.ink, (Color{false, 1, 1, 1}));
+    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
 
     one->focus();
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.ink, (Color{false, 2, 2, 2}));
+    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 2, 2, 2}));
 
-    one->able(false);
+    one->enabled(false);
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.ink, (Color{false, 3, 3, 3}));
+    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 TRIAL("Rola: litera aktywna też idzie za rdzeniem") {
@@ -609,22 +614,72 @@ TRIAL("Rola: litera aktywna też idzie za rdzeniem") {
     ought(!made.at({3, 0}).style.reverse);
 }
 
+// **Litera aktywna zmienia pismo i atrybuty, nigdy tła.** Skórki z Midnight Commandera dają `.key`
+// parę pismo–tło, a na literę w pozycji podświetlonej MC ma osobną rolę, której u nas nie ma —
+// więc tło z `.key` wchodziło w środek podświetlenia jako dziura: pomarańczowe `L` na tle paska,
+// `eft` na fioletowym. Próba stawia w `.key` tło inne niż tło ogniska i pyta o kratkę litery.
+TRIAL("Rola: litera aktywna bierze tło spod siebie, a pismo z .key") {
+    ui::Root top;
+
+    ui::Styles these;
+
+    Style plain = tinted(1, 1, 1);
+    Style focus = tinted(2, 2, 2);
+    Style key = tinted(9, 9, 9);
+
+    plain.background = Color{false, 10, 10, 10};
+    focus.background = Color{false, 20, 20, 20};
+    key.background = Color{false, 10, 10, 10};
+    key.bold = true;
+
+    these["moj.guzik"] = plain;
+    these["moj.guzik.focus"] = focus;
+    these["moj.guzik.key"] = key;
+
+    top.skin(ui::Skin{these});
+
+    const auto one = std::make_shared<ui::Button>("Tak");
+
+    one->keys().add(U'T');
+    one->role("moj.guzik");
+
+    top.children().add(one);
+
+    // Bez ogniska: pismo z `.key`, tło przycisku — tu przypadkiem to samo, co w `.key`.
+    View made = top.render({{0, 0}, {9, 1}});
+
+    same(made.at({2, 0}).letter, U'T');
+    same(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
+    same(made.at({2, 0}).style.background, (Color{false, 10, 10, 10}));
+    ought(made.at({2, 0}).style.bold);
+
+    // Z ogniskiem: pismo dalej z `.key`, ale tło **ogniska**, nie z `.key`.
+    one->focus();
+
+    made = top.render({{0, 0}, {9, 1}});
+
+    same(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
+    same(made.at({2, 0}).style.background, (Color{false, 20, 20, 20}));
+    same(made.at({3, 0}).style.background, (Color{false, 20, 20, 20}));
+    ought(made.at({2, 0}).style.bold);
+}
+
 // Rodzina komunikatu i rodzina błędu muszą być w skórce wbudowanej, inaczej przycisk z ogniskiem
 // w komunikacie straciłby podświetlenie: pytałby o rolę, o której nikt nie słyszał.
 TRIAL("Skin: wbudowana zna rodzinę komunikatu i błędu") {
     const ui::Skin one;
 
     for (const std::string& stem : {std::string{"talcite.message"}, std::string{"talcite.error"}}) {
-        ought(one.get<Style>(stem + ".button.focus").reverse);
-        ought(one.get<Style>(stem + ".button.key").under);
-        ought(one.get<Style>(stem + ".button.off").faint);
+        ought(one.style(stem + ".button.focus").reverse);
+        ought(one.style(stem + ".button.key").under);
+        ought(one.style(stem + ".button.disabled").faint);
 
         // Reszta rodziny jest pusta z rozmysłem: bez barw pudełko błędu niczym się nie różni od
         // zwykłego okna, tak samo jak w mono-skórce Midnight Commandera.
-        same(one.get<Style>(stem), Style{});
-        same(one.get<Style>(stem + ".title"), Style{});
-        same(one.get<Style>(stem + ".text"), Style{});
-        same(one.get<Style>(stem + ".box"), Style{});
+        same(one.style(stem), Style{});
+        same(one.style(stem + ".title"), Style{});
+        same(one.style(stem + ".text"), Style{});
+        same(one.style(stem + ".box"), Style{});
     }
 }
 
@@ -653,7 +708,7 @@ TRIAL("Skin: jedna wartość obowiązuje na każdym poziomie") {
     for (const Colors level : {Colors::mono, Colors::ansi, Colors::palette, Colors::rgb}) {
         one.colors(level);
 
-        same(one.get<Style>("talcite.list.focus"), tinted(10, 20, 30));
+        same(one.style("talcite.list.focus"), tinted(10, 20, 30));
     }
 }
 
@@ -661,14 +716,14 @@ TRIAL("Skin: wariant to najwyższy nieprzekraczający poziomu") {
     ui::Skin one{{{"talcite.list.focus", shaded()}}};
 
     one.colors(Colors::ansi);
-    same(one.get<Style>("talcite.list.focus"), tinted(1, 1, 1));
+    same(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
     // Na `palette` nie ma własnego wariantu — obowiązuje `ansi`, nie `rgb`: wyżej się nie sięga.
     one.colors(Colors::palette);
-    same(one.get<Style>("talcite.list.focus"), tinted(1, 1, 1));
+    same(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
     one.colors(Colors::rgb);
-    same(one.get<Style>("talcite.list.focus"), tinted(3, 3, 3));
+    same(one.style("talcite.list.focus"), tinted(3, 3, 3));
 }
 
 TRIAL("Skin: bez wariantu na poziom rola wraca do wbudowanej, nie do przybliżenia") {
@@ -677,9 +732,9 @@ TRIAL("Skin: bez wariantu na poziom rola wraca do wbudowanej, nie do przybliżen
     // `mono` nie ma nic poniżej siebie, a skórka zaczyna od `ansi` — więc wbudowana: odwrócenie.
     one.colors(Colors::mono);
 
-    same(one.get<Style>("talcite.list.focus"), ui::Skin::plain().get<Style>("talcite.list.focus"));
-    ought(one.get<Style>("talcite.list.focus").reverse);
-    ought(one.get<Style>("talcite.list.focus").ink.transparent);
+    same(one.style("talcite.list.focus"), ui::Skin::plain().style("talcite.list.focus"));
+    ought(one.style("talcite.list.focus").reverse);
+    ought(one.style("talcite.list.focus").foreground.transparent);
 }
 
 TRIAL("Skin: rola spoza wbudowanych bez wariantu daje pusty styl") {
@@ -687,7 +742,7 @@ TRIAL("Skin: rola spoza wbudowanych bez wariantu daje pusty styl") {
 
     one.colors(Colors::mono);
 
-    same(one.get<Style>("app.thing"), Style{});
+    same(one.style("app.thing"), Style{});
 }
 
 TRIAL("Skin: znak ma wersję ASCII i unicode, terminal bez unicode bierze tylko ASCII") {
@@ -698,13 +753,13 @@ TRIAL("Skin: znak ma wersję ASCII i unicode, terminal bez unicode bierze tylko 
 
     ui::Skin one{{}, {{"talcite.line.thin.across", sign}}};
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'-');
-    same(one.get<ui::Lines>("talcite.line.thin").across, U'-');
+    same(one.glyph("talcite.line.thin.across"), U'-');
+    same(one.lines(ui::Border::thin).across, U'-');
 
     one.unicode(true);
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'─');
-    same(one.get<ui::Lines>("talcite.line.thin").across, U'─');
+    same(one.glyph("talcite.line.thin.across"), U'─');
+    same(one.lines(ui::Border::thin).across, U'─');
 }
 
 TRIAL("Skin: znak z samą wersją unicode na terminalu bez unicode wraca do wbudowanego") {
@@ -714,11 +769,11 @@ TRIAL("Skin: znak z samą wersją unicode na terminalu bez unicode wraca do wbud
 
     ui::Skin one{{}, {{"talcite.line.thin.across", sign}}};
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'─');
+    same(one.glyph("talcite.line.thin.across"), U'─');
 
     one.unicode(true);
 
-    same(one.get<char32_t>("talcite.line.thin.across"), U'=');
+    same(one.glyph("talcite.line.thin.across"), U'=');
 }
 
 TRIAL("Root: fakty o terminalu przechodzą na każdą kolejną skórkę") {
@@ -731,11 +786,11 @@ TRIAL("Root: fakty o terminalu przechodzą na każdą kolejną skórkę") {
 
     same(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::rgb));
     ought(top.skin().unicode());
-    same(top.skin().get<Style>("talcite.list.focus"), tinted(3, 3, 3));
+    same(top.skin().style("talcite.list.focus"), tinted(3, 3, 3));
 
     top.colors(Colors::ansi);
 
-    same(top.skin().get<Style>("talcite.list.focus"), tinted(1, 1, 1));
+    same(top.skin().style("talcite.list.focus"), tinted(1, 1, 1));
 }
 
 TRIAL("Root: bez faktów skórka stoi na mono i ASCII") {
@@ -743,4 +798,30 @@ TRIAL("Root: bez faktów skórka stoi na mono i ASCII") {
 
     same(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::mono));
     ought(!top.skin().unicode());
+}
+
+// Paleta 256 barw: szesnaście podstawowych w wartościach xterma, sześcian 6×6×6 i rampa szarości.
+// Spoza palety — pustka. Z niej liczy terminal przy wypisywaniu i z niej czyta barwy aplikacja.
+TRIAL("Paleta: Color::indexed daje podstawowe, sześcian i szarości, a spoza palety nic") {
+    const auto rgb = [](int which) {
+        const std::optional<Color> one = Color::indexed(which);
+
+        return one ? std::to_string(one->red) + "," + std::to_string(one->green) + "," + std::to_string(one->blue)
+                   : std::string{"-"};
+    };
+
+    same(rgb(0), std::string{"0,0,0"});
+    same(rgb(4), std::string{"0,0,128"});
+    same(rgb(7), std::string{"192,192,192"});
+    same(rgb(8), std::string{"128,128,128"});
+    same(rgb(15), std::string{"255,255,255"});
+    same(rgb(16), std::string{"0,0,0"});
+    same(rgb(17), std::string{"0,0,95"});
+    same(rgb(52), std::string{"95,0,0"});
+    same(rgb(231), std::string{"255,255,255"});
+    same(rgb(232), std::string{"8,8,8"});
+    same(rgb(255), std::string{"238,238,238"});
+    same(rgb(-1), std::string{"-"});
+    same(rgb(256), std::string{"-"});
+    ought(!Color::indexed(3)->transparent);
 }

@@ -1,46 +1,42 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "talcite/area.hpp"
+#include "talcite/style.hpp"
 
 namespace talcite {
 
-struct Color {
-    bool transparent = true;
-    std::uint8_t red = 0;
-    std::uint8_t green = 0;
-    std::uint8_t blue = 0;
-
-    friend constexpr bool operator==(Color, Color) = default;
-};
-
-struct Style {
-    Color ink;
-    Color paper;
-    bool bold = false;
-    bool faint = false;
-    bool italic = false;
-    bool under = false;
-    bool reverse = false;
-    bool crossed = false;
-
-    [[nodiscard]] static Style merge(Style base, Style over);
-
-    friend constexpr bool operator==(Style, Style) = default;
-};
-
-enum class Shown : std::uint8_t { own, shade, none };
+enum class Shown : std::uint8_t { own, shade, none, foreground };
 
 struct Cell {
     char32_t letter = U' ';
     Style style;
     Shown shown = Shown::own;
+    std::uint32_t picture = 0;
 
     friend constexpr bool operator==(Cell, Cell) = default;
+};
+
+class Pixels;
+
+struct Picture {
+    std::uint32_t mark = 0;
+    ui::Size size;
+    std::shared_ptr<const std::string> sixel;
+    std::shared_ptr<const Pixels> pixels;
+    std::size_t still = 0;
+};
+
+struct Placement {
+    ui::Spot at;
+    Picture picture;
 };
 
 [[nodiscard]] ui::Size measured(std::string_view what);
@@ -53,17 +49,25 @@ public:
 
     [[nodiscard]] ui::Size size() const { return size_; }
 
-    void letter(ui::Spot at, char32_t what, const Style& how);
+    void put(ui::Spot at, char32_t what, const Style& how);
 
-    void string(ui::Spot at, std::string_view what, const Style& how);
+    void put(ui::Spot at, std::string_view what, const Style& how);
 
     void fill(const ui::Area& where, const Style& how);
 
     void shade(const ui::Area& where, const Style& how);
 
-    void bare(const ui::Area& where);
+    void foreground(ui::Spot at, char32_t what, const Style& how);
 
-    void within(const View& one, ui::Spot at);
+    void clear(const ui::Area& where);
+
+    void draw(const View& one, ui::Spot at);
+
+    void picture(const ui::Area& where, Picture what);
+
+    [[nodiscard]] const std::vector<Picture>& pictures() const { return pictures_; }
+
+    [[nodiscard]] std::vector<Placement> bared(const ui::Area& room);
 
     [[nodiscard]] Cell at(ui::Spot where) const;
 
@@ -76,6 +80,7 @@ private:
 
     ui::Size size_;
     std::vector<Cell> cells_;
+    std::vector<Picture> pictures_;
 };
 
 }

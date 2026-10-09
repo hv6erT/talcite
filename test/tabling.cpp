@@ -22,7 +22,7 @@ std::string said(const View& one, int y) {
 
         if (letter == 0) continue;
 
-        spelled(letter, made);
+        utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -32,28 +32,28 @@ std::string said(const View& one, int y) {
 
 // Źródło wierszy: nazwa i numer. Oddaje **najwyżej tyle, ile poproszono**, i zero za końcem —
 // dokładnie ten kontrakt, którego tabela ma się trzymać.
-ui::Weft numbered(std::size_t much) {
+ui::TableSource numbered(std::size_t much) {
     return [much](std::size_t which, std::size_t most) {
-        std::vector<ui::Knots> made;
+        std::vector<ui::TableRow> made;
 
         for (std::size_t one = which; one < much && made.size() < most; ++one)
-            made.push_back(ui::Knots{ui::Knot{"plik" + std::to_string(one), {}},
-                                     ui::Knot{std::to_string(one * 10), {}}});
+            made.push_back(ui::TableRow{ui::TableCell{"plik" + std::to_string(one), {}},
+                                     ui::TableCell{std::to_string(one * 10), {}}});
 
         return made;
     };
 }
 
-std::vector<ui::Warp> twofold() {
-    return {ui::Warp{"Nazwa", 0, ui::JustifyStyle::left},
-            ui::Warp{"Rozmiar", 8, ui::JustifyStyle::right}};
+std::vector<ui::TableColumn> twofold() {
+    return {ui::TableColumn{"Nazwa", 0, ui::Justify::left},
+            ui::TableColumn{"Rozmiar", 8, ui::Justify::right}};
 }
 
 std::shared_ptr<ui::Table> shown(Sheet& sheet, std::size_t much) {
     const auto one = std::make_shared<ui::Table>();
 
-    one->warps(twofold());
-    one->hold(numbered(much), much);
+    one->columns(twofold());
+    one->source(numbered(much), much);
 
     sheet.children().add(one);
 
@@ -67,7 +67,7 @@ std::shared_ptr<ui::Table> shown(Sheet& sheet, std::size_t much) {
 TRIAL("Table: pusta nic nie niesie") {
     const ui::Table one;
 
-    ought(!one.held());
+    ought(!one.sourced());
     same(one.rows(), std::size_t{0});
     ought(!one.which().has_value());
     same(one.first(), std::size_t{0});
@@ -78,7 +78,7 @@ TRIAL("Table: po podaniu stoi na pierwszym wierszu") {
 
     const auto one = shown(sheet, 10);
 
-    ought(one->held());
+    ought(one->sourced());
     same(one->rows(), std::size_t{10});
     same(*one->which(), std::size_t{0});
     same(one->first(), std::size_t{0});
@@ -118,12 +118,12 @@ TRIAL("Table: wyrównanie w prawo dopycha od lewej") {
     const auto one = std::make_shared<ui::Table>();
 
     one->heading(false);
-    one->warps({ui::Warp{"", 6, ui::JustifyStyle::right}});
-    one->hold(
+    one->columns({ui::TableColumn{"", 6, ui::Justify::right}});
+    one->source(
         [](std::size_t which, std::size_t most) {
-            std::vector<ui::Knots> made;
+            std::vector<ui::TableRow> made;
 
-            if (which == 0 && most > 0) made.push_back(ui::Knots{ui::Knot{"ab", {}}});
+            if (which == 0 && most > 0) made.push_back(ui::TableRow{ui::TableCell{"ab", {}}});
 
             return made;
         },
@@ -236,15 +236,15 @@ TRIAL("Table: strona przenosi o ekran") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.deal(down));
+    ought(sheet.dispatch(down));
     same(*one->which(), std::size_t{5});
 
-    ought(sheet.deal(down));
+    ought(sheet.dispatch(down));
     same(*one->which(), std::size_t{10});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(sheet.deal(up));
+    ought(sheet.dispatch(up));
     same(*one->which(), std::size_t{5});
 }
 
@@ -258,7 +258,7 @@ TRIAL("Table: kółko przewija widok, a wiersza nie rusza") {
 
     ui::WheelEvent what{{2, 2}, -1};
 
-    ought(sheet.deal(what));
+    ought(sheet.dispatch(what));
 
     same(one->first(), std::size_t{3});
     same(*one->which(), std::size_t{0});
@@ -273,7 +273,7 @@ TRIAL("Table: kółko na końcu przewijania oddaje zdarzenie wyżej") {
 
     ui::WheelEvent up{{2, 2}, 1};
 
-    ought(!sheet.deal(up));
+    ought(!sheet.dispatch(up));
 }
 
 TRIAL("Table: ruch zawiadamia zdarzeniem, a nie wywołaniem zwrotnym") {
@@ -312,7 +312,7 @@ TRIAL("Table: kliknięcie stawia wiersz bieżący pod nagłówkiem") {
 
     ui::ClickEvent what{{4, 3}, ui::Mouse::left};
 
-    ought(sheet.deal(what));
+    ought(sheet.dispatch(what));
     same(*one->which(), std::size_t{2});
 }
 
@@ -328,7 +328,7 @@ TRIAL("Table: kliknięcie w nagłówek nie rusza wiersza") {
 
     ui::ClickEvent what{{4, 0}, ui::Mouse::left};
 
-    ought(sheet.deal(what));
+    ought(sheet.dispatch(what));
     same(*one->which(), std::size_t{4});
 }
 
@@ -341,8 +341,47 @@ TRIAL("Table: kliknięcie poniżej ostatniego wiersza nic nie zmienia") {
 
     ui::ClickEvent what{{4, 6}, ui::Mouse::left};
 
-    ought(sheet.deal(what));
+    ought(sheet.dispatch(what));
     same(*one->which(), std::size_t{0});
+}
+
+// Dwuklik na wierszu stawia go bieżącym i idzie wyżej drogą widżetów — co znaczy, wie aplikacja; na
+// nagłówku i pod ostatnim wierszem tabela go bierze i dalej nie idzie (U5).
+TRIAL("Table: dwuklik na wierszu idzie wyżej, na nagłówku i pustce — nie") {
+    struct Heard : ui::Root {
+        int many = 0;
+
+        bool handle(ui::DoubleClickEvent&) override {
+            ++many;
+
+            return true;
+        }
+    };
+
+    Heard sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->columns(twofold());
+    one->source(numbered(3), 3);
+
+    sheet.children().add(one);
+
+    (void)sheet.render({{0, 0}, {30, 8}});
+
+    ui::DoubleClickEvent row{{4, 3}, ui::Mouse::left};
+
+    ought(sheet.dispatch(row));
+    same(*one->which(), std::size_t{2});
+    same(sheet.many, 1);
+
+    ui::DoubleClickEvent head{{4, 0}, ui::Mouse::left};
+    ui::DoubleClickEvent below{{4, 6}, ui::Mouse::left};
+
+    ought(sheet.dispatch(head));
+    ought(sheet.dispatch(below));
+    same(sheet.many, 1);
+    same(*one->which(), std::size_t{2});
 }
 
 // --- Zaznaczanie ---------------------------------------------------------------------------------
@@ -390,9 +429,44 @@ TRIAL("Table: zaznaczenie poza zakresem czeka, a rysowanie je przycina") {
     ought(one->chosen().all().empty());
 }
 
+// Liczba zaznaczonych idzie obok bitów: drugie dodanie tego samego i zdjęcie niezaznaczonego jej nie
+// ruszają, przycięcie przy rysowaniu zdejmuje tylko to, co odcięło, a `clear` zeruje.
+TRIAL("Table: liczba zaznaczonych nadąża za dodaniem, zdjęciem i przycięciem") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 3);
+
+    ought(one->chosen().empty());
+
+    one->chosen().add(1);
+    one->chosen().add(1);
+    one->chosen().add(2);
+    one->chosen().add(7);
+    one->chosen().add(9);
+
+    same(one->chosen().many(), std::size_t{4});
+
+    one->chosen().remove(0);
+    one->chosen().remove(20);
+    one->chosen().remove(2);
+    one->chosen().remove(2);
+
+    same(one->chosen().many(), std::size_t{3});
+
+    (void)sheet.render({{0, 0}, {30, 5}});
+
+    same(one->chosen().many(), std::size_t{1});
+    ought(!one->chosen().empty());
+
+    one->chosen().clear();
+
+    same(one->chosen().many(), std::size_t{0});
+    ought(one->chosen().empty());
+}
+
 // Insert zaznacza i schodzi niżej — odruch z panelu.
 // **Insertu tabela nie bierze.** Stało tu zaznaczanie ze zejściem o wiersz niżej — jedyne miejsce
-// w bibliotece, gdzie `react` zmieniał dane, a nie tylko przesuwał kursor, i którego wołający nie
+// w bibliotece, gdzie `handle` zmieniał dane, a nie tylko przesuwał kursor, i którego wołający nie
 // miał jak odwołać: przechwycenie „wyżej" nie działa, bo tabela leży bliżej ogniska.
 TRIAL("Table: insert przechodzi wyżej, a zaznaczenia nie rusza") {
     Sheet sheet;
@@ -405,14 +479,14 @@ TRIAL("Table: insert przechodzi wyżej, a zaznaczenia nie rusza") {
 
     ui::KeyEvent what{ui::Code::insert};
 
-    ought(!sheet.deal(what));
+    ought(!sheet.dispatch(what));
 
     ought(!one->chosen().contains(0));
     same(*one->which(), std::size_t{0});
 }
 
 // Kto chce ten odruch, wiesza uchwyt i woła `mark` sam — i wtedy działa, bo uchwyt widzi klawisz
-// niezależnie od tego, co robi `react`.
+// niezależnie od tego, co robi `handle`.
 TRIAL("Table: zaznaczanie Insertem da się dołożyć uchwytem") {
     Sheet sheet;
 
@@ -445,7 +519,7 @@ TRIAL("Table: zaznaczanie Insertem da się dołożyć uchwytem") {
 
     ui::KeyEvent what{ui::Code::insert};
 
-    ought(sheet.deal(what));
+    ought(sheet.dispatch(what));
 
     ought(one->chosen().contains(0));
     same(*one->which(), std::size_t{1});
@@ -476,13 +550,13 @@ TRIAL("Table: rola komórki nakłada się na rolę wiersza") {
     const auto one = std::make_shared<ui::Table>();
 
     one->heading(false);
-    one->warps({ui::Warp{"", 4, ui::JustifyStyle::left}, ui::Warp{"", 4, ui::JustifyStyle::left}});
-    one->hold(
+    one->columns({ui::TableColumn{"", 4, ui::Justify::left}, ui::TableColumn{"", 4, ui::Justify::left}});
+    one->source(
         [](std::size_t which, std::size_t most) {
-            std::vector<ui::Knots> made;
+            std::vector<ui::TableRow> made;
 
             if (which == 0 && most > 0)
-                made.push_back(ui::Knots{ui::Knot{"aa", "talcite.table.mark"}, ui::Knot{"bb", {}}});
+                made.push_back(ui::TableRow{ui::TableCell{"aa", "talcite.table.mark"}, ui::TableCell{"bb", {}}});
 
             return made;
         },
@@ -511,12 +585,12 @@ TRIAL("Table: again pyta źródło od nowa i zostawia zaznaczenia") {
     const auto one = std::make_shared<ui::Table>();
 
     one->heading(false);
-    one->warps({ui::Warp{"", 0, ui::JustifyStyle::left}});
-    one->hold(
+    one->columns({ui::TableColumn{"", 0, ui::Justify::left}});
+    one->source(
         [said](std::size_t which, std::size_t most) {
-            std::vector<ui::Knots> made;
+            std::vector<ui::TableRow> made;
 
-            if (which == 0 && most > 0) made.push_back(ui::Knots{ui::Knot{*said, {}}});
+            if (which == 0 && most > 0) made.push_back(ui::TableRow{ui::TableCell{*said, {}}});
 
             return made;
         },
@@ -530,7 +604,7 @@ TRIAL("Table: again pyta źródło od nowa i zostawia zaznaczenia") {
 
     *said = "nowe";
 
-    one->again();
+    one->refresh();
 
     const View made = sheet.render({{0, 0}, {10, 1}});
 
@@ -538,7 +612,7 @@ TRIAL("Table: again pyta źródło od nowa i zostawia zaznaczenia") {
 
     std::string got;
 
-    for (int x = 0; x < 4; ++x) spelled(made.at({x, 0}).letter, got);
+    for (int x = 0; x < 4; ++x) utf8::encode(made.at({x, 0}).letter, got);
 
     same(got, std::string{"nowe"});
 }
@@ -554,7 +628,7 @@ TRIAL("Table: nowe źródło zeruje położenie i zaznaczenia") {
     one->end();
     one->chosen().add(3);
 
-    one->hold(numbered(4), 4);
+    one->source(numbered(4), 4);
 
     same(*one->which(), std::size_t{0});
     same(one->first(), std::size_t{0});
@@ -574,13 +648,47 @@ TRIAL("Table: pasek zabiera kolumnę treści") {
     // Bez paska liczba wyrównana do prawej kończy się w ostatniej kolumnie okna.
     same(sheet.render({{0, 0}, {30, 3}}).at({29, 0}).letter, U'0');
 
-    one->progress(true);
+    one->scrollbar(true);
 
     const View made = sheet.render({{0, 0}, {30, 3}});
 
     // Z paskiem treść zwęża się o kratkę, a na jej miejscu staje pasek.
     same(made.at({28, 0}).letter, U'0');
     ought(made.at({29, 0}).letter != U' ');
+}
+
+// Pasek stoi tylko wtedy, gdy wierszy jest więcej, niż widać; kolumna na niego zostaje, żeby
+// kolumny tabeli nie skakały, gdy lista urośnie.
+TRIAL("Table: pasek tylko przy wierszach, których nie widać") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 3);
+
+    one->heading(false);
+    one->scrollbar(true);
+
+    const View fits = sheet.render({{0, 0}, {30, 3}});
+
+    same(fits.at({29, 0}).letter, U' ');
+    same(fits.at({28, 0}).letter, U'0');
+
+    Sheet other;
+
+    const auto more = shown(other, 4);
+
+    more->heading(false);
+    more->scrollbar(true);
+
+    ought(other.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
+
+    // Nagłówek zabiera wiersz: trzy wiersze pod nagłówkiem w oknie na trzy już się nie mieszczą.
+    Sheet headed;
+
+    const auto titled = shown(headed, 3);
+
+    titled->scrollbar(true);
+
+    ought(headed.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
 }
 
 // --- Co idzie wyżej ------------------------------------------------------------------------------
@@ -596,54 +704,42 @@ TRIAL("Table: enter i litery przechodzą wyżej") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(!sheet.deal(enter));
+    ought(!sheet.dispatch(enter));
 
     ui::KeyEvent letter{U'a'};
 
-    ought(!sheet.deal(letter));
+    ought(!sheet.dispatch(letter));
 
     ui::KeyEvent f2{ui::Code::f2};
 
-    ought(!sheet.deal(f2));
+    ought(!sheet.dispatch(f2));
 }
 
 TRIAL("Table: nie przyjmuje dzieci") {
     ui::Table one;
 
-    same(one.takes(), 0);
+    same(one.capacity(), 0);
 }
 
-// **`ChosenNode` jest bazą, nie tylko polem tabeli** — właśnie po to, żeby cudzy widżet wierszowy
-// dostał to samo zaznaczenie bez przepisywania go u siebie. Ta próba stawia taki widżet: dziedziczy
-// po `ChosenNode<Node>`, niczego nie dopisuje i ma pełny zbiór.
-TRIAL("ChosenNode: cudzy widżet dostaje zaznaczenie bez pisania czegokolwiek") {
-    class Mine : public ui::ChosenNode<ui::Node> {
-    public:
-        // Jedyne, co widżet dokłada: kiedy przyciąć zbiór do swojej liczby wierszy.
-        void rows(std::size_t given) { settle(given); }
-    };
+// Reszta słownika zaznaczenia: ile, zdjęcie jednego i pustość. Zaznaczenie było kiedyś bazą
+// ChosenNode „na zapas" dla cudzych widżetów wierszowych; drugi użytkownik się nie pojawił, więc
+// tabela trzyma zbiór wprost, a ta próba sprawdza go na niej.
+TRIAL("Table: zaznaczenie liczy, zdejmuje pojedynczo i wie, że jest puste") {
+    Sheet sheet;
 
-    Mine one;
+    const auto one = shown(sheet, 10);
 
-    ought(one.chosen().empty());
+    ought(one->chosen().empty());
 
-    one.chosen().add(1);
-    one.chosen().add(4);
-    one.chosen().add(9);
+    one->chosen().add(1);
+    one->chosen().add(4);
+    one->chosen().add(9);
 
-    ought(one.chosen().contains(4));
-    same(one.chosen().many(), std::size_t{3});
-    same(one.chosen().all(), (std::vector<std::size_t>{1, 4, 9}));
+    same(one->chosen().many(), std::size_t{3});
+    ought(!one->chosen().empty());
 
-    one.chosen().remove(4);
+    one->chosen().remove(4);
 
-    ought(!one.chosen().contains(4));
-
-    one.rows(5);
-
-    same(one.chosen().all(), (std::vector<std::size_t>{1}));
-
-    one.chosen().clear();
-
-    ought(one.chosen().empty());
+    ought(!one->chosen().contains(4));
+    same(one->chosen().all(), (std::vector<std::size_t>{1, 9}));
 }

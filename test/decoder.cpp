@@ -23,7 +23,7 @@ struct Told {
 };
 
 // Korzeń zapisujący. Dekoder karmi prawdziwe drzewo, więc przypadki sprawdzają całą drogę
-// od bajtu do react, a nie sam rozbiór.
+// od bajtu do handle, a nie sam rozbiór.
 class Sheet : public ui::Root {
 public:
     [[nodiscard]] const std::vector<Told>& among() const { return among_; }
@@ -31,7 +31,7 @@ public:
     [[nodiscard]] std::size_t much() const { return among_.size(); }
 
 protected:
-    bool react(ui::KeyEvent& what) override {
+    bool handle(ui::KeyEvent& what) override {
         Told one;
         one.what = Told::What::key;
         one.key = what.key();
@@ -42,7 +42,7 @@ protected:
         return true;
     }
 
-    bool react(ui::MouseEvent& what) override {
+    bool handle(ui::MouseEvent& what) override {
         Told one;
         one.what = Told::What::mouse;
         one.where = what.where();
@@ -55,7 +55,7 @@ protected:
         return true;
     }
 
-    bool react(ui::WheelEvent& what) override {
+    bool handle(ui::WheelEvent& what) override {
         Told one;
         one.what = Told::What::wheel;
         one.where = what.where();
@@ -67,10 +67,10 @@ protected:
         return true;
     }
 
-    bool react(ui::PasteEvent& what) override {
+    bool handle(ui::PasteEvent& what) override {
         Told one;
         one.what = Told::What::paste;
-        one.said = what.said();
+        one.said = what.text();
 
         among_.push_back(one);
 
@@ -513,4 +513,157 @@ TRIAL("Decoder: znak pocięty między korzeniami trafia do tego drugiego") {
     same(first.much(), std::size_t{0});
     same(second.much(), std::size_t{1});
     ought(second.among()[0].key == U'ł');
+}
+
+// **Po bajcie to samo, co całością.** `Term` karmi dekoder bajt po bajcie i przy każdym bierze
+// bieżący korzeń — bo klawisz w środku odczytanego kawałka może przełączyć ekran (`Term::show`),
+// a klawisze wpisane z wyprzedzeniem mają trafić już do nowego. To działa tylko wtedy, gdy dla
+// dekodera granica karmienia nic nie znaczy: litery, UTF-8, klawisze z sekwencji, Alt, mysz,
+// kółko i wklejenie w nawiasach wychodzą te same, w tej samej kolejności.
+TRIAL("Decoder: karmienie po bajcie daje te same zdarzenia, co całością") {
+    const std::string said = std::string{"aż"} + "\x1b[A" + "\x1b[1;5C" + "\x1bx" + "\x1b[15~" +
+                             "\x1b[<0;10;5M" + "\x1b[<0;10;5m" + "\x1b[<64;3;4M" +
+                             "\x1b[200~wklej\nto\x1b[201~" + "🙂" + "\t";
+
+    Sheet whole;
+    Sheet bytes;
+
+    Decoder one;
+    Decoder other;
+
+    one.fed(said, whole);
+
+    for (const char each : said) other.fed(std::string_view{&each, 1}, bytes);
+
+    ought(!one.pending());
+    ought(!other.pending());
+    same(whole.much(), bytes.much());
+    same(whole.much(), std::size_t{12});
+
+    for (std::size_t at = 0; at < whole.much() && at < bytes.much(); ++at) {
+        const Told& left = whole.among()[at];
+        const Told& right = bytes.among()[at];
+
+        same(static_cast<int>(left.what), static_cast<int>(right.what));
+        ought(left.key == right.key);
+        same(left.mods.ctrl, right.mods.ctrl);
+        same(left.mods.alt, right.mods.alt);
+        same(left.mods.shift, right.mods.shift);
+        same(left.where.x, right.where.x);
+        same(left.where.y, right.where.y);
+        same(static_cast<int>(left.press), static_cast<int>(right.press));
+        same(static_cast<int>(left.button), static_cast<int>(right.button));
+        same(left.steps, right.steps);
+        same(left.said, right.said);
+    }
+}
+
+// Przełączenie korzenia w środku kawałka: uchwyt pierwszego klawisza przestawia cel, a reszta
+// — karmiona po bajcie, jak robi to `Term` — idzie już do drugiego korzenia.
+TRIAL("Decoder: po bajcie reszta kawałka idzie do korzenia przełączonego w jego środku") {
+    Sheet first;
+    Sheet second;
+
+    ui::Root* onto = &first;
+
+    Decoder decoder;
+
+    const std::string said = std::string{"x"} + "yż" + "\x1b[A";
+
+    for (std::size_t at = 0; at < said.size(); ++at) {
+        decoder.fed(std::string_view{said}.substr(at, 1), *onto);
+
+        if (first.much() == 1) onto = &second;
+    }
+
+    same(first.much(), std::size_t{1});
+    ought(first.among()[0].key == U'x');
+    same(second.much(), std::size_t{3});
+    ought(second.among()[0].key == U'y');
+    ought(second.among()[1].key == U'ż');
+    ought(second.among()[2].key == ui::Key{ui::Code::up});
+}
+
+
+// Odpowiedzi terminala, które przyszły po czasie — po sondzie możliwości, przez SSH — nie są
+// klawiszami. Dawniej kolor tła stawał się Alt+] i ciągiem liter, raport położenia kursora —
+// Ctrl+F3, a odpowiedź XTGETTCAP — Alt+P z resztą wpisaną w pole.
+TRIAL("Decoder: spóźnione odpowiedzi terminala nie są klawiszami") {
+    const std::string late =
+        "\x1b]11;rgb:0000/0000/0000\x1b\\"
+        "\x1bP1+r5463=787465726d\x1b\\"
+        "\x1b_Gi=31;OK\x1b\\"
+        "\x1b[?62;1;2c"
+        "\x1b[>0;280;0c"
+        "\x1b[?1006;2$y"
+        "\x1b[?12;5R"
+        "\x1b[?1;5R"
+        "\x1b[12;5R"
+        "\x1b[?1u"
+        "\x1b]11;rgb:ffff/ffff/ffff\x07"
+        "q";
+
+    Sheet whole;
+    Decoder once;
+
+    once.fed(late, whole);
+
+    same(whole.much(), std::size_t{1});
+    ought(whole.among()[0].key.letter() == U'q');
+    ought(!once.pending());
+
+    // Po bajcie, tak jak karmi `Term` — to samo.
+    Sheet piece;
+    Decoder slowly;
+
+    for (const char one : late) slowly.fed(std::string(1, one), piece);
+
+    same(piece.much(), std::size_t{1});
+    ought(piece.among()[0].key.letter() == U'q');
+}
+
+// F3 z modyfikatorem ma kształt raportu położenia, ale z jedynką na przedzie — zostaje klawiszem.
+TRIAL("Decoder: Ctrl+F3 zostaje klawiszem") {
+    Sheet sheet;
+    Decoder decoder;
+
+    decoder.fed("\x1b[1;5R", sheet);
+
+    same(sheet.much(), std::size_t{1});
+    ought(sheet.among()[0].key.code() == ui::Code::f3);
+    ought(sheet.among()[0].mods.ctrl);
+}
+
+// Esc z literą, którą zaczyna się napis sterujący, czeka na zegar: domknięty — znika, a niedomknięty
+// to Alt z tą literą i zwykłe znaki za nim.
+TRIAL("Decoder: Alt z literą zaczynającą napis rozstrzyga zegar") {
+    Sheet sheet;
+    Decoder decoder;
+
+    decoder.fed("\x1bP", sheet);
+
+    ought(decoder.pending());
+    same(sheet.much(), std::size_t{0});
+
+    decoder.flush(sheet);
+
+    same(sheet.much(), std::size_t{1});
+    ought(sheet.among()[0].key.letter() == U'P');
+    ought(sheet.among()[0].mods.alt);
+
+    Sheet more;
+    Decoder other;
+
+    other.fed("\x1b]ab", more);
+
+    ought(other.pending());
+
+    other.flush(more);
+
+    same(more.much(), std::size_t{3});
+    ought(more.among()[0].key.letter() == U']');
+    ought(more.among()[0].mods.alt);
+    ought(more.among()[1].key.letter() == U'a');
+    ought(!more.among()[1].mods.alt);
+    ought(more.among()[2].key.letter() == U'b');
 }

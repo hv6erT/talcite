@@ -7,42 +7,48 @@
 #include <string>
 #include <vector>
 
-#include "talcite/chosennode.hpp"
+#include "talcite/chosen.hpp"
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-struct Warp {
+struct TableColumn {
     std::string title;
     int wide = 0;
-    JustifyStyle justify = JustifyStyle::left;
+    Justify justify = Justify::left;
 };
 
-struct Knot {
+struct TableCell {
     std::string text;
     std::string role;
 };
 
-using Knots = std::vector<Knot>;
+using TableRow = std::vector<TableCell>;
 
-using Weft = std::function<std::vector<Knots>(std::size_t which, std::size_t most)>;
+using TableSource = std::function<std::vector<TableRow>(std::size_t from, std::size_t most)>;
 
-class Table : public ChosenNode<Node> {
+class Table : public Node {
 public:
     Table();
 
-    explicit Table(TableStyle style);
+    explicit Table(TableShape shape);
 
     ~Table() override;
 
-    void hold(Weft given, std::size_t rows);
+    [[nodiscard]] Chosen& chosen() { return chosen_; }
 
-    [[nodiscard]] bool held() const;
+    [[nodiscard]] const Chosen& chosen() const { return chosen_; }
 
-    void again();
+    void source(TableSource given, std::size_t rows);
 
-    void warps(std::vector<Warp> given);
+    [[nodiscard]] bool sourced() const;
+
+    void refresh();
+
+    void columns(std::vector<TableColumn> given);
+
+    [[nodiscard]] const std::vector<TableColumn>& columns() const;
 
     [[nodiscard]] std::size_t rows() const;
 
@@ -66,37 +72,45 @@ public:
 
     void heading(bool given);
 
-    [[nodiscard]] bool progress() const;
+    [[nodiscard]] bool scrollbar() const;
 
-    void progress(bool given);
+    void scrollbar(bool given);
 
-    [[nodiscard]] const std::string& bar() const;
+    [[nodiscard]] const std::string& scrollbar_role() const;
 
-    void bar(std::string given);
+    void scrollbar_role(std::string given);
 
     [[nodiscard]] bool focusable() const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
+
+    [[nodiscard]] std::optional<std::size_t> column_under(Spot where) const;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(WheelEvent& what) override;
+    bool handle(WheelEvent& what) override;
 
-    bool react(ClickEvent& what) override;
+    bool handle(ClickEvent& what) override;
+
+    bool handle(DoubleClickEvent& what) override;
+
+    bool handle(MouseEvent& what) override;
 
 private:
     struct Kept;
 
+    [[nodiscard]] std::optional<std::size_t> row_under(Spot where) const;
+
     void spread(Size given);
 
-    void stirred();
 
     std::unique_ptr<Kept> kept_;
+    Chosen chosen_;
 };
 
 }

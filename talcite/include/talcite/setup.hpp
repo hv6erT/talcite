@@ -4,7 +4,7 @@
 
 #include "talcite/area.hpp"
 #include "talcite/blocks.hpp"
-#include "talcite/compatibilities.hpp"
+#include "talcite/capabilities.hpp"
 
 namespace talcite {
 
@@ -18,10 +18,10 @@ struct Setup {
     std::optional<ui::Size> cell;
 
     std::optional<bool> unicode;
-    std::optional<bool> hovering;
-    std::optional<bool> pasting;
-    std::optional<bool> syncing;
-    std::optional<bool> titling;
+    std::optional<bool> hover;
+    std::optional<bool> bracketed_paste;
+    std::optional<bool> synchronized;
+    std::optional<bool> titles;
 };
 
 }

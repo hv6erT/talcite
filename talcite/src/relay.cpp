@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/address.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "stunning.hpp"
 
@@ -36,7 +36,7 @@ struct Bound {
 };
 
 struct Lasting {
-    Post post;
+    Udp post;
     Address server;
     std::string user;
     std::string word;
@@ -51,7 +51,7 @@ struct Lasting {
     Address lent;
     Address seen;
 
-    std::deque<Parcel> spare;
+    std::deque<Datagram> spare;
 
     // Trwające zapytanie. Przekaźnik prowadzi **jedną rozmowę naraz** — przydział, odświeżenie,
     // pozwolenie — więc zamiast tablicy wystarczy jedno miejsce na numer i jedno na odpowiedź.
@@ -89,7 +89,7 @@ struct Relay::Held {
     std::shared_ptr<Lasting> alive;
 
     // Własna kopia poczty, wyłącznie do zamykania — kopie dzielą gniazdo, ale nie dzielą obiektu.
-    Post closing;
+    Udp closing;
 
     ~Held() {
         {
@@ -177,7 +177,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to);
 void channeling(const std::shared_ptr<Lasting>& held);
 
 bool turning(const std::shared_ptr<Lasting>& held) {
-    Parcel came;
+    Datagram came;
 
     try {
         if (held->shutting.load()) return false;
@@ -221,7 +221,7 @@ bool turning(const std::shared_ptr<Lasting>& held) {
 
                 if (held->spare.size() >= plenty) held->spare.pop_front();
 
-                held->spare.push_back(Parcel{whom, std::move(data)});
+                held->spare.push_back(Datagram{whom, std::move(data)});
             }
 
             held->stirring.notify_all();
@@ -242,7 +242,7 @@ bool turning(const std::shared_ptr<Lasting>& held) {
 
             if (held->spare.size() >= plenty) held->spare.pop_front();
 
-            held->spare.push_back(Parcel{made.peer, std::move(made.data)});
+            held->spare.push_back(Datagram{made.peer, std::move(made.data)});
         }
 
         held->stirring.notify_all();
@@ -293,7 +293,7 @@ void waking(const std::shared_ptr<Lasting>& held) {
         resolve();
     }};
 
-    made.go();
+    made.start();
 }
 
 // Jedno zapytanie z powtórkami, rozkład jak w STUN: pół sekundy, potem podwojenie. Biegnie na wątku
@@ -328,7 +328,7 @@ Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Nu
             if (held->shutting.load()) {
                 held->waiting = false;
 
-                throw Trouble{"Przekaźnik jest zamknięty."};
+                throw Trouble{"The relay is closed."};
             }
 
             Message made = std::move(held->answer);
@@ -440,7 +440,7 @@ void renewed(const std::shared_ptr<Lasting>& held) {
         resolve();
     }};
 
-    made.go();
+    made.start();
 }
 
 // Pozwolenia odnawiamy **wszystkie naraz**: jedno zapytanie niesie tyle adresów rozmówców, ile
@@ -492,7 +492,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
         resolve();
     }};
 
-    made.go();
+    made.start();
 }
 
 // Związanie kanału z rozmówcą. Numer wybieramy sami i **trzymamy go od razu**, jeszcze przed
@@ -575,7 +575,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
         resolve();
     }};
 
-    made.go();
+    made.start();
 }
 
 // Kanał żyje dziesięć minut i **ruch go nie przedłuża** — tak samo jak pozwolenie. Przeterminowany
@@ -626,7 +626,7 @@ Promise<T> amiss_now(const std::string& said) {
 
 }
 
-Relay::Relay(Post post, Address server, std::string user, std::string word)
+Relay::Relay(Udp post, Address server, std::string user, std::string word)
     : held_(std::make_shared<Held>()) {
     held_->alive = std::make_shared<Lasting>();
     held_->alive->post = post;
@@ -658,7 +658,7 @@ Address Relay::seen() const {
 // i jednorazowym znacznikiem — i **dopiero z nich da się policzyć klucz**, więc pierwsze zapytanie
 // zawsze idzie bez podpisu, a drugie z podpisem. Tak każe RFC i tak działa każdy serwer TURN.
 Promise<Address> Relay::open(Patience patience) {
-    if (!held_) return amiss_now<Address>("Przekaźnik jest pusty.");
+    if (!held_) return amiss_now<Address>("The relay is empty.");
 
     auto held = held_->alive;
 
@@ -679,7 +679,7 @@ Promise<Address> Relay::open(Patience patience) {
 
             if (told.sort == Sort::amiss && (told.code == 401 || told.code == 438)) {
                 if (held->user.empty())
-                    throw Trouble{"Przekaźnik żąda poświadczeń, a nie mam żadnych.", told.code};
+                    throw Trouble{"The relay demands credentials and there are none.", told.code};
 
                 {
                     const std::lock_guard<std::mutex> kept{held->guard};
@@ -701,11 +701,11 @@ Promise<Address> Relay::open(Patience patience) {
             }
 
             if (told.sort == Sort::amiss)
-                throw Trouble{"Przekaźnik odmówił przydziału: " +
+                throw Trouble{"The relay refused allocation: " +
                                   (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
                               told.code, held->server};
 
-            if (!told.lent.held()) throw Trouble{"Przekaźnik nie podał użyczonego adresu."};
+            if (!told.lent.held()) throw Trouble{"The relay gave no relayed address."};
 
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
@@ -728,7 +728,7 @@ Promise<Address> Relay::open(Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
@@ -736,9 +736,9 @@ Promise<Address> Relay::open(Patience patience) {
 // Przekaźnik nie przepuści ani jednego bajtu od kogoś, o kim mu nie powiedziano. To nie jest
 // grzeczność, tylko obrona samego przekaźnika przed staniem się otwartym wzmacniaczem.
 Promise<void> Relay::allow(Address peer, Patience patience) {
-    if (!held_) return amiss_now<void>("Przekaźnik jest pusty.");
+    if (!held_) return amiss_now<void>("The relay is empty.");
 
-    if (!peer.held()) return amiss_now<void>("Pusty adres nie jest rozmówcą.");
+    if (!peer.held()) return amiss_now<void>("An empty address is not a peer.");
 
     auto held = held_->alive;
 
@@ -752,7 +752,7 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                if (held->lost) throw Trouble{"Przydział przepadł."};
+                if (held->lost) throw Trouble{"The allocation is lost."};
             }
 
             const Number number = numbered();
@@ -766,7 +766,7 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
             const Message told = asking(held, what, number, patience);
 
             if (told.sort == Sort::amiss)
-                throw Trouble{"Przekaźnik odmówił pozwolenia: " +
+                throw Trouble{"The relay refused permission: " +
                                   (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
                               told.code, held->server};
 
@@ -795,7 +795,7 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
@@ -803,9 +803,9 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
 // Wysyłka idzie **oznajmieniem**, nie zapytaniem: nie ma na nią odpowiedzi i nie ma czego czekać.
 // Gubi się tak samo jak zwykły datagram, bo to jest zwykły datagram, tylko opakowany.
 Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
-    if (!held_) return amiss_now<void>("Przekaźnik jest pusty.");
+    if (!held_) return amiss_now<void>("The relay is empty.");
 
-    if (!to.held()) return amiss_now<void>("Pusty adres nie jest celem.");
+    if (!to.held()) return amiss_now<void>("An empty address is no destination.");
 
     auto held = held_->alive;
 
@@ -815,7 +815,7 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                if (held->lost) throw Trouble{"Przydział przepadł."};
+                if (held->lost) throw Trouble{"The allocation is lost."};
             }
 
             std::uint16_t channel = 0;
@@ -855,17 +855,17 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
 
-Promise<Parcel> Relay::receive(std::size_t most, Patience patience) {
-    if (!held_) return amiss_now<Parcel>("Przekaźnik jest pusty.");
+Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
+    if (!held_) return amiss_now<Datagram>("The relay is empty.");
 
     auto held = held_->alive;
 
-    Promise<Parcel> made{[held, most, patience](auto resolve, auto reject) {
+    Promise<Datagram> made{[held, most, patience](auto resolve, auto reject) {
         try {
             waking(held);
 
@@ -879,14 +879,14 @@ Promise<Parcel> Relay::receive(std::size_t most, Patience patience) {
 
             // Odebrane wcześniej oddajemy nawet wtedy, gdy przydział już przepadł — te bajty
             // naprawdę przyszły i nikt ich nie unieważnił.
-            if (held->spare.empty() && held->lost) throw Trouble{"Przydział przepadł."};
+            if (held->spare.empty() && held->lost) throw Trouble{"The allocation is lost."};
 
-            if (held->spare.empty()) throw Trouble{"Przekaźnik jest zamknięty."};
+            if (held->spare.empty()) throw Trouble{"The relay is closed."};
 
             if (held->spare.front().bytes.size() > most)
-                throw Trouble{"Przesyłka nie mieści się w podanym miejscu."};
+                throw Trouble{"The parcel does not fit in the given space."};
 
-            Parcel one = std::move(held->spare.front());
+            Datagram one = std::move(held->spare.front());
 
             held->spare.pop_front();
 
@@ -898,7 +898,7 @@ Promise<Parcel> Relay::receive(std::size_t most, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }

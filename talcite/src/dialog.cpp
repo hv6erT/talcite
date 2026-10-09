@@ -2,10 +2,10 @@
 
 namespace talcite::ui {
 
-Dialog::Dialog(VeilStyle style) : Veil(style) {}
+Dialog::Dialog(ModalShape shape) : Modal(shape) {}
 
 // **Zasłona formularzowa** — czyli zasłona plus dwie reguły, i obie są regułami okna, nie widżetu.
-// Wszystko inne: pełny ekran, modalność, Esc, wędrówka Tabem, cień i zamykanie — należy do `Veil`
+// Wszystko inne: pełny ekran, modalność, Esc, wędrówka Tabem, cień i zamykanie — należy do `Modal`
 // i tu się nie powtarza.
 //
 // **Dialog nie wie już, czym jest przycisk.** Enter naciska wyłącznie ten przycisk, który ma
@@ -16,22 +16,22 @@ Dialog::Dialog(VeilStyle style) : Veil(style) {}
 // podstawowy". Robiła za wołającego coś, o co ten nie prosił, i była jedynym miejscem w bibliotece,
 // gdzie okno rozpoznawało rodzaj swojego dziecka. `Button::primary()` zostaje — ale jest **tylko
 // oznaczeniem**, które rysuje klamrę ze strzałkami.
-bool Dialog::react(KeyEvent& what) {
+bool Dialog::handle(KeyEvent& what) {
     const Code code = what.key().code();
 
     // **Klawisz aktywny to rozdanie, a nie pytanie o typ.** Okno nie zgaduje, kto na co odpowiada —
     // podaje zdarzenie w głąb i czeka, aż ktoś je weźmie. Kto chce odpowiadać, przesłania
-    // `react(HotEvent<KeyEvent>&)` albo wiesza `on<>` — na równych prawach, jednym mechanizmem.
+    // `handle(ShortcutEvent&)` albo wiesza `on<>` — na równych prawach, jednym mechanizmem.
     //
     // Robimy to **przed** oddaniem klawisza zasłonie, bo zasłona i tak połknie wszystko, czego nie
     // rozpoznała. Escape i Tab do rozdania nie trafiają: te dwa zasłona rozstrzyga wcześniej.
     if (code != Code::escape && code != Code::tab) {
-        (void)offer(what);
+        (void)broadcast(what);
 
         return true;
     }
 
-    return Veil::react(what);
+    return Modal::handle(what);
 }
 
 }

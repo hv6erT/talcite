@@ -21,14 +21,14 @@ public:
 
     [[nodiscard]] bool focusable() const override { return true; }
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     ~Leaf() override {
         if (alive_ != nullptr) --*alive_;
     }
 
 protected:
-    bool react(ui::KeyEvent& what) override {
+    bool handle(ui::KeyEvent& what) override {
         (void)what;
 
         if (told_ != nullptr) told_->push_back(named_);
@@ -36,7 +36,7 @@ protected:
         return false;
     }
 
-    bool react(ui::SizeEvent& what) override {
+    bool handle(ui::SizeEvent& what) override {
         (void)what;
 
         if (told_ != nullptr) told_->push_back(named_ + ":rozmiar");
@@ -54,10 +54,10 @@ class Crown : public ui::Root {
 public:
     explicit Crown(std::vector<std::string>* told = nullptr) : told_(told) {}
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
 protected:
-    bool react(ui::KeyEvent& what) override {
+    bool handle(ui::KeyEvent& what) override {
         (void)what;
 
         if (told_ != nullptr) told_->push_back("korzeń");
@@ -65,7 +65,7 @@ protected:
         return false;
     }
 
-    bool react(ui::SizeEvent& what) override {
+    bool handle(ui::SizeEvent& what) override {
         (void)what;
 
         if (told_ != nullptr) told_->push_back("korzeń:rozmiar");
@@ -75,6 +75,34 @@ protected:
 
 private:
     std::vector<std::string>* told_ = nullptr;
+};
+
+// Korzeń, który widzi klawisze pierwszy: `z` bierze sam, przy `x` zdejmuje z drzewa węzeł
+// z ogniskiem (jak przedrostek, który zamyka widok) i puszcza klawisz dalej.
+class Seer : public Crown {
+public:
+    explicit Seer(std::vector<std::string>* told) : Crown(told), told_(told) {}
+
+    std::shared_ptr<ui::Node> doomed;
+
+protected:
+    bool foresee(ui::KeyEvent& what) override {
+        if (what.key().letter() == U'x' && doomed) {
+            (void)children().remove(doomed.get());
+            doomed.reset();
+
+            return false;
+        }
+
+        if (what.key().letter() != U'z') return false;
+
+        told_->push_back("przewidział");
+
+        return true;
+    }
+
+private:
+    std::vector<std::string>* told_;
 };
 
 std::shared_ptr<Leaf> leaf(const std::string& named, std::vector<std::string>* told = nullptr,
@@ -87,7 +115,7 @@ std::shared_ptr<Leaf> leaf(const std::string& named, std::vector<std::string>* t
 TRIAL("Root: świeży korzeń nie ma ogniska") {
     const Crown top;
 
-    ought(top.focus() == nullptr);
+    ought(top.focused_node() == nullptr);
 }
 
 TRIAL("Root: korzeń jest własnym korzeniem") {
@@ -137,7 +165,7 @@ TRIAL("Root: ognisko daje się ustawić i odczytać z obu stron") {
 
     one->focus();
 
-    ought(top.focus() == one.get());
+    ought(top.focused_node() == one.get());
     ought(one->focused());
 }
 
@@ -149,9 +177,9 @@ TRIAL("Root: ognisko da się zgasić") {
     top.children().add(one);
     one->focus();
 
-    top.focus(nullptr);
+    top.move_focus(nullptr);
 
-    ought(top.focus() == nullptr);
+    ought(top.focused_node() == nullptr);
     ought(!one->focused());
 }
 
@@ -163,8 +191,8 @@ TRIAL("Root: węzeł z cudzego drzewa nie dostanie ogniska") {
 
     first.children().add(one);
 
-    threw(second.focus(one.get()));
-    ought(second.focus() == nullptr);
+    threw(second.move_focus(one.get()));
+    ought(second.focused_node() == nullptr);
 }
 
 TRIAL("Root: węzeł poza drzewem nie weźmie ogniska") {
@@ -189,12 +217,59 @@ TRIAL("Root: klawisz idzie do ogniska i wędruje w górę") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
     same(told.size(), std::size_t{3});
     same(told[0], std::string{"spód"});
     same(told[1], std::string{"środek"});
     same(told[2], std::string{"korzeń"});
-    ought(what.at() == low.get());
+    ought(what.target() == low.get());
+}
+
+// `foresee` widzi klawisz przed ogniskiem: wzięty nie idzie dalej, puszczony idzie zwykłą drogą.
+TRIAL("Root: foresee widzi klawisz pierwszy") {
+    std::vector<std::string> told;
+
+    Seer top{&told};
+
+    const std::shared_ptr<Leaf> low = leaf("spód", &told);
+
+    top.children().add(low);
+    low->focus();
+
+    ui::KeyEvent taken{U'z'};
+
+    ought(top.dispatch(taken));
+    same(told.size(), std::size_t{1});
+    same(told[0], std::string{"przewidział"});
+
+    told.clear();
+
+    ui::KeyEvent passed{U'a'};
+
+    ought(!top.dispatch(passed));
+    same(told.size(), std::size_t{2});
+    same(told[0], std::string{"spód"});
+}
+
+// Przewidujący może zdjąć węzeł z ogniskiem — klawisz idzie wtedy do korzenia, nie do zdjętego.
+TRIAL("Root: foresee może zdjąć ognisko, klawisz idzie wtedy do korzenia") {
+    std::vector<std::string> told;
+
+    Seer top{&told};
+
+    const std::shared_ptr<Leaf> low = leaf("spód", &told);
+
+    top.children().add(low);
+    low->focus();
+
+    top.doomed = low;
+
+    ui::KeyEvent what{U'x'};
+
+    ought(!top.dispatch(what));
+    same(told.size(), std::size_t{1});
+    same(told[0], std::string{"korzeń"});
+    ought(top.focused_node() == nullptr);
 }
 
 TRIAL("Root: klawisz bez ogniska idzie do korzenia") {
@@ -206,10 +281,10 @@ TRIAL("Root: klawisz bez ogniska idzie do korzenia") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
     same(told.size(), std::size_t{1});
     same(told[0], std::string{"korzeń"});
-    ought(what.at() == &top);
+    ought(what.target() == &top);
 }
 
 TRIAL("Root: rozmiar zawsze idzie do korzenia, nawet przy ognisku") {
@@ -224,12 +299,12 @@ TRIAL("Root: rozmiar zawsze idzie do korzenia, nawet przy ognisku") {
 
     ui::SizeEvent what{80, 25};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
     same(told.size(), std::size_t{1});
     same(told[0], std::string{"korzeń:rozmiar"});
 }
 
-TRIAL("Root: deal oddaje to, co powiedziała wędrówka") {
+TRIAL("Root: dispatch oddaje to, co powiedziała wędrówka") {
     Crown top;
 
     const std::shared_ptr<Leaf> one = leaf("jeden");
@@ -241,7 +316,7 @@ TRIAL("Root: deal oddaje to, co powiedziała wędrówka") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 }
 
 TRIAL("Root: zdjęcie ogniskowanego węzła gasi ognisko") {
@@ -254,7 +329,7 @@ TRIAL("Root: zdjęcie ogniskowanego węzła gasi ognisko") {
 
     (void)top.children().remove(one.get());
 
-    ought(top.focus() == nullptr);
+    ought(top.focused_node() == nullptr);
 }
 
 TRIAL("Root: zdjęcie przodka ogniskowanego węzła też gasi ognisko") {
@@ -269,7 +344,7 @@ TRIAL("Root: zdjęcie przodka ogniskowanego węzła też gasi ognisko") {
 
     (void)top.children().remove(mid.get());
 
-    ought(top.focus() == nullptr);
+    ought(top.focused_node() == nullptr);
 }
 
 TRIAL("Root: zdjęcie węzła obok ogniska niczego nie gasi") {
@@ -284,7 +359,7 @@ TRIAL("Root: zdjęcie węzła obok ogniska niczego nie gasi") {
 
     (void)top.children().remove(two.get());
 
-    ought(top.focus() == one.get());
+    ought(top.focused_node() == one.get());
 }
 
 TRIAL("Root: zdjęcie poza doręczaniem zwalnia od razu") {
@@ -328,7 +403,7 @@ TRIAL("Root: węzeł zamykający się w trakcie własnej reakcji nie wywala węd
 
     ui::KeyEvent what{U'a'};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
 
     // Uchwyt zdjął gałąź, po której wędrówka właśnie szła. Doszła mimo to do końca po dawnej
     // trasie, a węzły dożyły końca doręczania.
@@ -358,7 +433,7 @@ TRIAL("Root: odłożone zwolnienie następuje po doręczaniu") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
 
     same(alive, 1);
 }
@@ -386,7 +461,7 @@ TRIAL("Root: odłożone zwolnienie naprawdę zwalnia") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
 
     same(alive, 0);
 }
@@ -404,16 +479,16 @@ TRIAL("Root: wyjątek z uchwytu nie zostawia korzenia w stanie doręczania") {
 
     Leaf* stale = static_cast<Leaf*>(top.children().front().get());
 
-    const ui::Handle which =
+    ui::Hook which =
         top.on<ui::KeyEvent>([](ui::KeyEvent&) -> bool {
             throw std::runtime_error("uchwyt się wywrócił");
         });
 
     ui::KeyEvent what{U'a'};
 
-    threw((void)top.deal(what));
+    threw((void)top.dispatch(what));
 
-    top.off<ui::KeyEvent>(which);
+    top.off(which);
 
     // Gdyby licznik doręczania został podniesiony przez wyjątek, zdjęcie odłożyłoby się
     // zamiast zwolnić od razu — i to jest jedyny sposób, żeby to zobaczyć z zewnątrz.
@@ -434,14 +509,14 @@ public:
 
     [[nodiscard]] bool focusable() const override { return true; }
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     [[nodiscard]] const ui::Node* other() const { return other_; }
 
     [[nodiscard]] bool held() const { return held_; }
 
 protected:
-    bool react(ui::FocusEvent& what) override {
+    bool handle(ui::FocusEvent& what) override {
         told_->push_back(named_ + ":objął");
         other_ = what.other();
         held_ = focused();
@@ -449,7 +524,7 @@ protected:
         return false;
     }
 
-    bool react(ui::UnfocusEvent& what) override {
+    bool handle(ui::UnfocusEvent& what) override {
         told_->push_back(named_ + ":stracił");
         other_ = what.other();
         held_ = focused();
@@ -550,7 +625,7 @@ TRIAL("Root: zgaszenie ogniska wysyła tylko utratę") {
     one->focus();
     told.clear();
 
-    top.focus(nullptr);
+    top.move_focus(nullptr);
 
     same(told.size(), std::size_t{1});
     same(told[0], std::string{"jeden:stracił"});
@@ -569,7 +644,7 @@ TRIAL("Root: ustawienie tego samego ogniska nic nie wysyła") {
     told.clear();
 
     one->focus();
-    top.focus(one.get());
+    top.move_focus(one.get());
 
     same(told.size(), std::size_t{0});
 }

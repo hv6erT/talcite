@@ -39,21 +39,23 @@ public:
 
     [[nodiscard]] bool contains(const Node* one) const;
 
+    [[nodiscard]] std::optional<std::size_t> find(const Node& one) const;
+
     [[nodiscard]] const std::shared_ptr<Node>& operator[](std::size_t which) const {
         if (which >= inside_.size())
-            throw std::out_of_range("talcite::ui::Children: nie ma takiego dziecka");
+            throw std::out_of_range("talcite::ui::Children: no such child");
 
         return inside_[which];
     }
 
     [[nodiscard]] const std::shared_ptr<Node>& front() const {
-        if (inside_.empty()) throw std::out_of_range("talcite::ui::Children: nie ma żadnego dziecka");
+        if (inside_.empty()) throw std::out_of_range("talcite::ui::Children: no children");
 
         return inside_.front();
     }
 
     [[nodiscard]] const std::shared_ptr<Node>& back() const {
-        if (inside_.empty()) throw std::out_of_range("talcite::ui::Children: nie ma żadnego dziecka");
+        if (inside_.empty()) throw std::out_of_range("talcite::ui::Children: no children");
 
         return inside_.back();
     }
@@ -91,17 +93,21 @@ public:
 
     [[nodiscard]] const Area& area() const { return area_; }
 
+    [[nodiscard]] std::optional<Area> screen_area() const;
+
+    [[nodiscard]] std::optional<Area> area_in(const Node& top) const;
+
+    [[nodiscard]] Spot local(Spot where) const;
+
     [[nodiscard]] const std::string& role() const { return role_; }
 
     virtual void role(std::string given);
 
-    [[nodiscard]] virtual int takes() const;
+    [[nodiscard]] virtual int capacity() const;
 
     [[nodiscard]] virtual bool accepts(const Node& one) const;
 
     void unfocus();
-
-    [[nodiscard]] virtual int layer() const;
 
     [[nodiscard]] virtual bool focusable() const;
 
@@ -109,22 +115,20 @@ public:
 
     virtual void focus();
 
-    // **Klawisz aktywny to rozdanie, a nie pytanie o typ.** Węzeł podaje to, co niesie, swoim
-    // potomkom i czeka, aż któryś weźmie. Pierwszy, który powie „tak", kończy przejście; kto chce
-    // odpowiadać, przesłania `react(HotEvent<...>&)` albo wiesza `on<>`.
-    //
-    // **Zatrzymujemy się na potomku chętnym na ognisko**: co ma w środku, rozstrzyga on sam. Ta sama
-    // granica rządzi wędrówką Taba, i z tego samego powodu — przycisk schowany w liście nie ma
-    // odpowiadać na literę pisaną w tej liście.
-    //
-    // Chodzimy po **migawce**, a nie po żywym wektorze: uchwyt ma prawo dopiąć albo odpiąć dziecko
-    // w reakcji, a wtedy bufor się przenosi i dalsze przejście czyta zwolnioną pamięć. Kopie
-    // wskazań trzymają przy tym potomków przy życiu na czas rozdania.
-    //
-    // Zdarzenie składamy **osobno dla każdego potomka**, bo `trigger` zapisuje w nim, komu je
-    // doręczono, i przy jednym egzemplarzu na całe przejście `at()` kłamałoby po pierwszym kroku.
-    template <std::derived_from<Event> One>
-    bool offer(One& what) {
+    View render(const Area& where);
+
+    View render(const Area& where, const Area& seen);
+
+    [[nodiscard]] virtual Size wants(Size room) const;
+
+    [[nodiscard]] virtual Area placement(Size room) const;
+
+    [[nodiscard]] virtual std::optional<Spot> caret() const;
+
+    [[nodiscard]] virtual std::optional<std::chrono::milliseconds> due() const;
+
+protected:
+    bool broadcast(KeyEvent& what) {
         const std::vector<std::shared_ptr<Node>> these{inside_.begin(), inside_.end()};
 
         for (const std::shared_ptr<Node>& one : these) {
@@ -132,28 +136,14 @@ public:
 
             if (one->focusable()) continue;
 
-            if (one->offer(what)) return true;
+            if (one->broadcast(what)) return true;
         }
 
         return false;
     }
 
-    View render(const Area& where);
-
-    View render(const Area& where, const Area& seen);
-
-    [[nodiscard]] virtual Size wants(Size room) const;
-
-    [[nodiscard]] virtual std::optional<Spot> caret() const;
-
-    [[nodiscard]] virtual std::optional<std::chrono::milliseconds> due() const;
-
-protected:
-    template <std::derived_from<Event> One>
-    bool offer(One& what, Node& one) {
-        HotEvent<One> hot{what};
-
-        return one.trigger(hot);
+    bool offer(KeyEvent& what, Node& one) {
+        return one.trigger(ShortcutEvent{what.key()});
     }
 
     [[nodiscard]] const Skin& skin() const;
@@ -168,6 +158,7 @@ private:
     std::string role_;
     Children inside_;
     Area area_;
+    Area seen_;
 };
 
 }

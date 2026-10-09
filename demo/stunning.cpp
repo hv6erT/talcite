@@ -5,10 +5,9 @@
 #include <vector>
 
 #include "talcite/address.hpp"
-#include "talcite/post.hpp"
-#include "talcite/scout.hpp"
+#include "talcite/udp.hpp"
+#include "talcite/stunclient.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "servers.hpp"
 #include "speaking.hpp"
@@ -18,10 +17,11 @@ namespace {
 using showing::known;
 using showing::Server;
 
-std::string named(talcite::net::Scout::Mapping what) {
+std::string named(talcite::net::StunClient::Mapping what) {
     switch (what) {
-        case talcite::net::Scout::Mapping::alike: return "zgodne — przebijanie ma sens";
-        case talcite::net::Scout::Mapping::symmetric: return "symetryczne — przebijanie nie zadziała";
+        case talcite::net::StunClient::Mapping::alike: return "zgodne — przebijanie ma sens";
+        case talcite::net::StunClient::Mapping::symmetric:
+            return "symetryczne — przebijanie nie zadziała";
         default: return "nieznane";
     }
 }
@@ -92,11 +92,11 @@ int main(int count, char** given) {
             }
         }
 
-        net::Post mine{net::Address::any(net::Family::four, 0)};
+        net::Udp mine{net::Address::any(net::Family::four, 0)};
 
         std::cout << "gniazdo stoi na " << mine.mine().spelled() << "\n";
 
-        net::Scout scout{mine, soon};
+        net::StunClient scout{mine, soon};
 
         for (const Server& one : asking) {
             std::vector<net::Address> found;

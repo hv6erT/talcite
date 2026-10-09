@@ -24,25 +24,7 @@ int around(bool primary) { return primary ? 6 : 4; }
 
 Button::Button(std::string text) : text_(std::move(text)) { role("talcite.button"); }
 
-int Button::takes() const { return 0; }
-
-// Ognisko bierze tylko dostępny przycisk. Wyłączony wypada z wędrówki Tabem sam, tym samym
-// warunkiem, którym przestaje odpowiadać na klawisz.
-bool Button::focusable() const { return able_; }
-
-// **Wyłączenie oddaje ognisko.** Bez tego zostawałoby na węźle, który już nie jest `focusable()` —
-// czyli łamałoby niezmiennik, dla którego ten znacznik powstał.
-//
-// Oddaje je **najbliższemu chętnemu przodkowi**, a dopiero gdy takiego nie ma — nikomu. Gaszenie
-// ogniska na amen wyglądało niewinnie i psuło modalność: dialog połyka klawisze **jako ognisko**,
-// więc bez ogniska klawisz szedł prosto do korzenia, a zamknięte okno przestawało być zamknięte.
-void Button::able(bool given) {
-    able_ = given;
-
-    if (given) return;
-
-    unfocus();
-}
+int Button::capacity() const { return 0; }
 
 Size Button::wants(Size room) const {
     const int wide = measured(text_).wide + around(primary_);
@@ -56,7 +38,7 @@ View Button::paint(Size given, Area seen) {
     // **Przezroczysty tam, gdzie nic nie rysuje** — reguła opisana przy `Node::paint`. Przycisk
     // maluje jeden wiersz, a wiersz układu daje mu swoją wysokość, więc bez tego reszta prostokąta
     // szła do rodzica jako nieprzezroczyste spacje i zakrywała jego tło.
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
@@ -69,7 +51,7 @@ View Button::paint(Size given, Area seen) {
     // Sklejenie nazwy przydziela pamięć raz na stan i raz na klatkę. Przy trzech przyciskach
     // w oknie to jest nic, a trzymanie czterech gotowych napisów w każdym przycisku kosztowałoby
     // więcej i przy każdej zmianie rdzenia trzeba by je odświeżać.
-    const Style look = how.get<Style>(!able_      ? role() + ".off"
+    const Style look = how.style(!enabled()      ? role() + ".disabled"
                                       : focused() ? role() + ".focus"
                                                   : role());
 
@@ -88,20 +70,20 @@ View Button::paint(Size given, Area seen) {
     const int room = std::max(given.wide - aside - apart, 0);
 
     const std::string shown =
-        elided(text_, room, ElideStyle::right, how.get<char32_t>("talcite.elide"));
+        elided(text_, room, Elide::right, how.glyph("talcite.elide"));
 
     const int inner = measured(shown).wide;
 
-    made.string({-seen.at.x, -seen.at.y}, first, look);
-    made.string({aside - seen.at.x, -seen.at.y}, shown, look);
-    made.string({aside + inner - seen.at.x, -seen.at.y}, after, look);
+    made.put({-seen.at.x, -seen.at.y}, first, look);
+    made.put({aside - seen.at.x, -seen.at.y}, shown, look);
+    made.put({aside + inner - seen.at.x, -seen.at.y}, after, look);
 
     // Znakowanie liczymy po **przyciętym** napisie: litera, której po przycięciu nie widać, nie ma
     // czego podkreślać, a policzona po całym napisie trafiłaby w wielokropek albo w klamrę.
     // Litera aktywna ma własną rolę, nakładaną na wygląd przycisku — dzięki temu skórka może dać
     // jej barwę, a wbudowana zostaje przy podkreśleniu, które widać na każdym terminalu.
-    talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, marking(shown),
-                      Style::merge(look, how.get<Style>(role() + ".key")));
+    talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+                      look, how.style(role() + ".key"));
 
     return made;
 }
@@ -111,11 +93,9 @@ View Button::paint(Size given, Area seen) {
 // niezależnie od tego, czym je wywołano — Enterem, myszą czy klawiszem aktywnym. Wywołanie
 // zwrotne omijało cały mechanizm i było jedynym miejscem w talcite, gdzie zdarzenia nie było widać.
 void Button::pick() {
-    if (!able_) return;
+    if (!enabled()) return;
 
-    PickEvent one;
-
-    (void)trigger(one);
+    (void)trigger(PickEvent{});
 }
 
 // Enter i spacja naciskają ten przycisk, który ma ognisko — tak jest w Midnight Commanderze
@@ -124,8 +104,8 @@ void Button::pick() {
 //
 // Ze sterującym nie łapiemy: Ctrl+Enter i Alt+spacja to z założenia inne skróty. Tak samo odsiewa
 // je legenda.
-bool Button::react(KeyEvent& what) {
-    if (!able_) return false;
+bool Button::handle(KeyEvent& what) {
+    if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -141,12 +121,12 @@ bool Button::react(KeyEvent& what) {
 
 // Klawisz aktywny przychodzi z bazy — ona sprawdziła, że jest nasz. Zostaje powiedzieć, co robimy,
 // a przycisk robi to samo, co przy Enterze i przy kliknięciu.
-void Button::act() { pick(); }
+void Button::activate() { pick(); }
 
 // Klik w przycisk **bierze ognisko** — inaczej niż pole legendy, które go nie rusza. Tam liczyło
 // się to, co zaznaczone w panelu; tutaj kliknięty przycisk staje się tym, na którym stoisz.
-bool Button::react(ClickEvent&) {
-    if (!able_) return true;
+bool Button::handle(ClickEvent&) {
+    if (!enabled()) return true;
 
     if (root() != nullptr) focus();
 

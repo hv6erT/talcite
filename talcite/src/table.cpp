@@ -3,12 +3,10 @@
 #include <algorithm>
 #include <utility>
 
-#include "talcite/bar.hpp"
 #include "talcite/skin.hpp"
 
 #include "eliding.hpp"
-
-#include "placing.hpp"
+#include "scrollbar.hpp"
 
 namespace talcite::ui {
 
@@ -27,10 +25,10 @@ constexpr int spacing = 1;
 }
 
 struct Table::Kept {
-    Weft weft;
+    TableSource source;
     std::size_t rows = 0;
 
-    std::vector<Warp> warps;
+    std::vector<TableColumn> columns;
 
     std::size_t top = 0;
     std::optional<std::size_t> which;
@@ -38,7 +36,7 @@ struct Table::Kept {
     // To, co widać. Przeliczane wtedy i tylko wtedy, gdy zmieni się przydział albo położenie —
     // inaczej każda klatka pytałaby źródło od nowa, a przy animowanym sąsiedztwie dzieje się to
     // dziesięć razy na sekundę.
-    std::vector<Knots> shown;
+    std::vector<TableRow> shown;
     bool fresh = true;
     Size sized;
 
@@ -49,27 +47,29 @@ struct Table::Kept {
     // dwanaście kilobajtów, a „zaznacz wszystkie" jest w panelu równie częste jak „zaznacz trzy",
     // więc zbiór bywałby większy od wektora.
 
-    TableStyle style;
+    TableShape shape;
 
-    std::string bar = "talcite.scroll";
+    std::string scrollbar_role = "talcite.scroll";
+
+    Grip grip;
 };
 
 Table::Table() : kept_(std::make_unique<Kept>()) { role("talcite.table"); }
 
-Table::Table(TableStyle style) : kept_(std::make_unique<Kept>()) {
+Table::Table(TableShape shape) : kept_(std::make_unique<Kept>()) {
     role("talcite.table");
 
-    kept_->style = style;
+    kept_->shape = shape;
 }
 
 Table::~Table() = default;
 
 // Liczbę wierszy podaje wołający, bo tylko on ją zna: tabela nie ma jak policzyć katalogu,
 // a pytanie źródła „ile masz" przy każdej klatce byłoby drogie.
-void Table::hold(Weft given, std::size_t rows) {
+void Table::source(TableSource given, std::size_t rows) {
     Kept& kept = *kept_;
 
-    kept.weft = std::move(given);
+    kept.source = std::move(given);
     kept.rows = rows;
 
     kept.top = 0;
@@ -81,19 +81,21 @@ void Table::hold(Weft given, std::size_t rows) {
     kept.fresh = true;
 }
 
-bool Table::held() const { return static_cast<bool>(kept_->weft); }
+bool Table::sourced() const { return static_cast<bool>(kept_->source); }
 
 // Zaznaczeń **nie czyścimy**: po przesortowaniu numery wierszy znaczą co innego niż przed, ale to
-// wołający wie, czy tak było, więc `unmark` woła on, kiedy uzna.
-void Table::again() {
+// wołający wie, czy tak było, więc `chosen().clear()` woła on, kiedy uzna.
+void Table::refresh() {
     kept_->shown.clear();
     kept_->fresh = true;
 }
 
-void Table::warps(std::vector<Warp> given) {
-    kept_->warps = std::move(given);
+void Table::columns(std::vector<TableColumn> given) {
+    kept_->columns = std::move(given);
     kept_->fresh = true;
 }
+
+const std::vector<TableColumn>& Table::columns() const { return kept_->columns; }
 
 std::size_t Table::rows() const { return kept_->rows; }
 
@@ -103,40 +105,34 @@ std::size_t Table::first() const { return kept_->top; }
 
 std::size_t Table::shown() const { return kept_->shown.size(); }
 
-bool Table::heading() const { return kept_->style.heading; }
+bool Table::heading() const { return kept_->shape.heading; }
 
 void Table::heading(bool given) {
-    if (kept_->style.heading == given) return;
+    if (kept_->shape.heading == given) return;
 
-    kept_->style.heading = given;
+    kept_->shape.heading = given;
     kept_->fresh = true;
 }
 
-bool Table::progress() const { return kept_->style.progress; }
+bool Table::scrollbar() const { return kept_->shape.scrollbar; }
 
-void Table::progress(bool given) {
-    if (kept_->style.progress == given) return;
+void Table::scrollbar(bool given) {
+    if (kept_->shape.scrollbar == given) return;
 
-    kept_->style.progress = given;
+    kept_->shape.scrollbar = given;
     kept_->fresh = true;
 }
 
-const std::string& Table::bar() const { return kept_->bar; }
+const std::string& Table::scrollbar_role() const { return kept_->scrollbar_role; }
 
-void Table::bar(std::string given) { kept_->bar = std::move(given); }
+void Table::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
 
 bool Table::focusable() const { return true; }
 
 // Tabela nie przyjmuje dzieci: wiersze przychodzą ze źródła, nie z drzewa węzłów.
-int Table::takes() const { return 0; }
+int Table::capacity() const { return 0; }
 
 Size Table::wants(Size room) const { return room; }
-
-void Table::stirred() {
-    ScrollEvent moved;
-
-    (void)trigger(moved);
-}
 
 // Postawienie bieżącego wiersza **dociąga do niego widok**, jeśli wypadł poza ekran. Wysokość
 // bierzemy z prostokąta z poprzedniej klatki — tylko on wie, ile tabela naprawdę dostała.
@@ -151,7 +147,7 @@ void Table::which(std::size_t given) {
 
     kept.which = want;
 
-    const int high = std::max(area().size.high - (kept.style.heading ? 1 : 0), 1);
+    const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
 
     if (want < kept.top)
         kept.top = want;
@@ -160,7 +156,7 @@ void Table::which(std::size_t given) {
 
     kept.fresh = true;
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 }
 
 void Table::first(std::size_t given) {
@@ -173,7 +169,7 @@ void Table::first(std::size_t given) {
     kept.top = want;
     kept.fresh = true;
 
-    stirred();
+    (void)trigger(ScrollEvent{});
 }
 
 // Ujemna liczba idzie w górę — ta sama umowa co w `Page::step`, żeby nie było dwóch nazw na jeden
@@ -190,7 +186,7 @@ void Table::step(int rows) {
 }
 
 void Table::page(int pages) {
-    const int high = std::max(area().size.high - (kept_->style.heading ? 1 : 0), 1);
+    const int high = std::max(area().size.high - (kept_->shape.heading ? 1 : 0), 1);
 
     step(pages * high);
 }
@@ -206,17 +202,17 @@ namespace {
 // Szerokości kolumn dla danej szerokości okna. Kolumna z `wide > 0` bierze swoje, a te z zerem
 // dzielą resztę po równo. Gdy zabraknie miejsca, ucinamy od prawej — panel nie przewija się
 // w poziomie, tylko przycina, i my też nie.
-std::vector<int> parted(const std::vector<Warp>& warps, int wide) {
-    std::vector<int> made(warps.size(), 0);
+std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
+    std::vector<int> made(columns.size(), 0);
 
-    if (warps.empty() || wide <= 0) return made;
+    if (columns.empty() || wide <= 0) return made;
 
-    const int between = spacing * static_cast<int>(warps.size() - 1);
+    const int between = spacing * static_cast<int>(columns.size() - 1);
 
     int fixed = 0;
     int loose = 0;
 
-    for (const Warp& one : warps) {
+    for (const TableColumn& one : columns) {
         if (one.wide > 0)
             fixed += one.wide;
         else
@@ -225,9 +221,9 @@ std::vector<int> parted(const std::vector<Warp>& warps, int wide) {
 
     int rest = wide - between - fixed;
 
-    for (std::size_t at = 0; at < warps.size(); ++at) {
-        if (warps[at].wide > 0) {
-            made[at] = warps[at].wide;
+    for (std::size_t at = 0; at < columns.size(); ++at) {
+        if (columns[at].wide > 0) {
+            made[at] = columns[at].wide;
 
             continue;
         }
@@ -266,7 +262,7 @@ std::vector<int> parted(const std::vector<Warp>& warps, int wide) {
 
 // Napis dopchnięty do szerokości kolumny wedle wyrównania. Przycinamy `cut`em z `eliding.hpp`,
 // czyli po kolumnach i szerokościach znaków, a nie po bajtach.
-std::string ranged(const std::string& what, int wide, JustifyStyle justify) {
+std::string ranged(const std::string& what, int wide, Justify justify) {
     if (wide <= 0) return {};
 
     const std::string got = cut(what, wide);
@@ -275,9 +271,9 @@ std::string ranged(const std::string& what, int wide, JustifyStyle justify) {
 
     if (rest == 0) return got;
 
-    if (justify == JustifyStyle::right) return std::string(static_cast<std::size_t>(rest), ' ') + got;
+    if (justify == Justify::right) return std::string(static_cast<std::size_t>(rest), ' ') + got;
 
-    if (justify == JustifyStyle::center) {
+    if (justify == Justify::center) {
         const int left = rest / 2;
 
         return std::string(static_cast<std::size_t>(left), ' ') + got +
@@ -300,21 +296,21 @@ void Table::spread(Size given) {
     kept.fresh = false;
     kept.shown.clear();
 
-    const int aside = kept.style.progress && given.wide > 0 ? 1 : 0;
-    const int high = given.high - (kept.style.heading ? 1 : 0);
+    const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
+    const int high = given.high - (kept.shape.heading ? 1 : 0);
 
-    kept.spread = parted(kept.warps, given.wide - aside);
+    kept.spread = parted(kept.columns, given.wide - aside);
 
-    if (!kept.weft || given.wide <= 0 || high <= 0) return;
+    if (!kept.source || given.wide <= 0 || high <= 0) return;
 
     const std::size_t want = static_cast<std::size_t>(high);
 
     while (kept.shown.size() < want) {
-        const std::vector<Knots> got = kept.weft(kept.top + kept.shown.size(), batch);
+        const std::vector<TableRow> got = kept.source(kept.top + kept.shown.size(), batch);
 
         if (got.empty()) break;
 
-        for (const Knots& one : got) {
+        for (const TableRow& one : got) {
             if (kept.shown.size() >= want) break;
 
             kept.shown.push_back(one);
@@ -327,12 +323,12 @@ View Table::paint(Size given, Area seen) {
 
     View made{seen.size};
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     // Zaznaczenie przycinamy do liczby wierszy **tutaj**, bo zbiór nie ma wskazania na tabelę
     // i nie ma jak się o zmianie dowiedzieć — ta sama droga, którą historia przycina swoją listę
     // i którą strona kasuje kursor wędrówki po znacznikach.
-    settle(kept.rows);
+    chosen_.keep(kept.rows);
 
     // Wiersze mogły zniknąć za plecami tabeli — przycinamy tu, bo tu i tak liczymy wszystko od nowa.
     if (kept.which.has_value() && *kept.which >= kept.rows)
@@ -348,25 +344,25 @@ View Table::paint(Size given, Area seen) {
 
     const Skin& how = skin();
 
-    const int aside = kept.style.progress && given.wide > 0 ? 1 : 0;
+    const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
     const int wide = given.wide - aside;
-    const int head = kept.style.heading ? 1 : 0;
+    const int head = kept.shape.heading ? 1 : 0;
 
     // Nagłówek. Tytuły kolumn stoją w tych samych szerokościach co treść, więc kolumna i jej opis
     // nigdy się nie rozjeżdżają.
     if (head != 0 && wide > 0) {
-        const Style look = how.get<Style>(role() + ".head");
+        const Style look = how.style(role() + ".head");
 
         made.fill({{-seen.at.x, -seen.at.y}, {wide, 1}}, look);
 
         int at = -seen.at.x;
 
-        for (std::size_t one = 0; one < kept.warps.size() && one < kept.spread.size(); ++one) {
+        for (std::size_t one = 0; one < kept.columns.size() && one < kept.spread.size(); ++one) {
             const int room = kept.spread[one];
 
             if (room > 0)
-                made.string({at, -seen.at.y}, ranged(kept.warps[one].title, room,
-                                                     kept.warps[one].justify),
+                made.put({at, -seen.at.y}, ranged(kept.columns[one].title, room,
+                                                     kept.columns[one].justify),
                             look);
 
             at += room + spacing;
@@ -380,7 +376,7 @@ View Table::paint(Size given, Area seen) {
         const bool here = kept.which.has_value() && *kept.which == number;
         const bool taken = chosen().contains(number);
 
-        const Style look = how.get<Style>(here && taken ? role() + ".mark.focus"
+        const Style look = how.style(here && taken ? role() + ".mark.focus"
                                           : here       ? role() + ".focus"
                                           : taken      ? role() + ".mark"
                                                        : role());
@@ -398,26 +394,43 @@ View Table::paint(Size given, Area seen) {
                 continue;
             }
 
-            const Knot& knot = one < kept.shown[row].size() ? kept.shown[row][one] : Knot{};
+            const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : TableCell{};
 
             // Rola komórki nakłada się **na** rolę stanu wiersza, więc kolor rodzaju pliku nie
             // unieważnia podświetlenia — zaznaczony wiersz i tak żółknie w całości.
             const Style look_one =
-                knot.role.empty() ? look : Style::merge(look, how.get<Style>(knot.role));
+                cell.role.empty() ? look : Style::merge(look, how.style(cell.role));
 
-            const JustifyStyle justify =
-                one < kept.warps.size() ? kept.warps[one].justify : JustifyStyle::left;
+            const Justify justify =
+                one < kept.columns.size() ? kept.columns[one].justify : Justify::left;
 
-            made.string({at, y}, ranged(knot.text, room, justify), look_one);
+            made.put({at, y}, ranged(cell.text, room, justify), look_one);
 
             at += room + spacing;
         }
     }
 
-    if (aside != 0 && given.high > 0)
-        barred(made, {given.wide - 1 - seen.at.x, -seen.at.y}, given.high, true,
-               static_cast<int>(kept.top), static_cast<int>(kept.rows),
-               std::max(given.high - head, 1), how, kept.bar);
+    // Pasek tylko wtedy, gdy wierszy jest więcej, niż widać; kolumna na niego zostaje, żeby
+    // kolumny tabeli nie skakały przy zmianie listy.
+    if (aside != 0 && given.high > 0 && kept.rows > static_cast<std::size_t>(std::max(given.high - head, 0))) {
+        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
+                            .much = given.high,
+                            .shift = kept.top,
+                            .whole = kept.rows,
+                            .window = static_cast<std::size_t>(std::max(given.high - head, 1)),
+                            .skin = how,
+                            .role = kept.scrollbar_role};
+
+        bar.draw(made);
+
+        Track mine = bar.track();
+
+        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
+
+        kept.grip.laid(mine);
+    } else {
+        kept.grip.laid(std::nullopt);
+    }
 
     return made;
 }
@@ -425,7 +438,7 @@ View Table::paint(Size given, Area seen) {
 // Strzałki, klawisze stron, Home, End i Insert. **Enter i litery idą wyżej**: „wybrano wiersz" to
 // sprawa aplikacji, bo w panelu Enter wchodzi do katalogu, a w oknie dialogowym naciska przycisk
 // podstawowy.
-bool Table::react(KeyEvent& what) {
+bool Table::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 
     if (what.mods().ctrl || what.mods().alt) return false;
@@ -447,7 +460,7 @@ bool Table::react(KeyEvent& what) {
 
         // **Insertu tabela nie bierze.** Stało tu zaznaczanie ze zejściem o wiersz niżej — odruch
         // z panelu Midnight Commandera. Był to jedyny klawisz w całej bibliotece, przy którym
-        // `react` **zmieniał dane**, a nie tylko przesuwał kursor, i którego wołający nie miał jak
+        // `handle` **zmieniał dane**, a nie tylko przesuwał kursor, i którego wołający nie miał jak
         // odwołać: przechwycenie „wyżej" nie działa, bo tabela leży bliżej ogniska. Kto chce ten
         // odruch, wiesza `on<KeyEvent>` na tabeli i woła `mark` sam.
 
@@ -459,10 +472,10 @@ bool Table::react(KeyEvent& what) {
 
 // Kółko przesuwa **sam widok**, a wiersza bieżącego nie rusza — tak samo jak w liście i w panelu
 // Midnight Commandera. Na końcu przewijania oddajemy fałsz, żeby ruch dostał przewijak wyżej.
-bool Table::react(WheelEvent& what) {
+bool Table::handle(WheelEvent& what) {
     Kept& kept = *kept_;
 
-    const int high = std::max(area().size.high - (kept.style.heading ? 1 : 0), 1);
+    const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
 
     const auto much = static_cast<std::ptrdiff_t>(kept.rows);
     const auto was = static_cast<std::ptrdiff_t>(kept.top);
@@ -478,27 +491,94 @@ bool Table::react(WheelEvent& what) {
     return true;
 }
 
-// Klik stawia wiersz bieżący i bierze ognisko. **Dwuklik przepuszczamy wyżej**, z tego samego
-// powodu co Enter.
-bool Table::react(ClickEvent& what) {
-    Kept& kept = *kept_;
+// Wiersz danych pod kratką ekranu; nagłówek i pustka pod ostatnim wierszem to nic.
+std::optional<std::size_t> Table::row_under(Spot where) const {
+    const Kept& kept = *kept_;
 
-    if (root() != nullptr) focus();
+    const int head = kept.shape.heading ? 1 : 0;
+    const int y = local(where).y - head;
 
-    if (kept.rows == 0) return true;
-
-    const int head = kept.style.heading ? 1 : 0;
-    const int y = own(*this, what.where()).y - head;
-
-    if (y < 0) return true;
+    if (y < 0) return std::nullopt;
 
     const std::size_t at = kept.top + static_cast<std::size_t>(y);
 
-    if (at >= kept.rows) return true;
+    if (at >= kept.rows) return std::nullopt;
 
-    which(at);
+    return at;
+}
+
+// Kolumna pod kratką nagłówka — po szerokościach z ostatniej klatki, z odstępem między kolumnami
+// po stronie lewej kolumny. Poza nagłówkiem, na pasku i za ostatnią kolumną — nic.
+std::optional<std::size_t> Table::column_under(Spot where) const {
+    const Kept& kept = *kept_;
+
+    const Spot here = local(where);
+
+    if (!kept.shape.heading || here.y != 0 || here.x < 0 || kept.grip.over(here)) return std::nullopt;
+
+    int at = 0;
+
+    for (std::size_t one = 0; one < kept.spread.size() && one < kept.columns.size(); ++one) {
+        const int room = kept.spread[one];
+
+        if (room > 0 && here.x < at + room + spacing) return one;
+
+        at += room + spacing;
+    }
+
+    return std::nullopt;
+}
+
+// **Mysz na pasku** (U6 w twa): strzałka — wiersz, tor — strona, suwak — ciągnięcie. Ruszamy sam
+// widok, jak kółko, a wiersza bieżącego nie: tak samo jak w MC i jak w przewijaku.
+bool Table::handle(MouseEvent& what) {
+    Kept& kept = *kept_;
+
+    const Asked asked = kept.grip.mouse(what, local(what.where()), *this);
+
+    const auto high = static_cast<std::size_t>(std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1));
+    const std::size_t most = kept.rows > high ? kept.rows - high : 0;
+
+    switch (asked.part) {
+        case Part::none: return false;
+        case Part::back: first(kept.top > 0 ? kept.top - 1 : 0); break;
+        case Part::forth: first(std::min(kept.top + 1, most)); break;
+        case Part::before: first(kept.top > high ? kept.top - high : 0); break;
+        case Part::after: first(std::min(kept.top + high, most)); break;
+        case Part::thumb:
+            if (asked.to.has_value()) first(std::min(*asked.to, most));
+            break;
+    }
 
     return true;
+}
+
+// Klik stawia wiersz bieżący i bierze ognisko. Klik na pasku zrobił już swoje przy wciśnięciu —
+// tu nie stawia wiersza, który akurat stoi na tej wysokości.
+bool Table::handle(ClickEvent& what) {
+    if (kept_->grip.over(local(what.where()))) return true;
+
+    if (root() != nullptr) focus();
+
+    if (const std::optional<std::size_t> at = row_under(what.where())) which(*at);
+
+    return true;
+}
+
+// **Dwuklik na wierszu przepuszczamy wyżej**, z tego samego powodu co Enter: co znaczy wybór
+// wiersza, wie aplikacja. Wiersz staje się bieżący (klik przed dwuklikiem już go postawił, ale
+// lista mogła się w międzyczasie przesunąć). Dwuklik na nagłówku i pod ostatnim wierszem nic nie
+// znaczy i dalej nie idzie.
+bool Table::handle(DoubleClickEvent& what) {
+    if (kept_->grip.over(local(what.where()))) return true;
+
+    const std::optional<std::size_t> at = row_under(what.where());
+
+    if (!at) return true;
+
+    which(*at);
+
+    return false;
 }
 
 }

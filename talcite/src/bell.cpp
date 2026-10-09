@@ -1,5 +1,7 @@
 #include "talcite/bell.hpp"
 
+#include "sealed.hpp"
+
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -21,7 +23,7 @@ namespace talcite {
 
 Bell::Bell() {
     event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (event_ == nullptr) throw std::runtime_error("talcite::Bell: nie można utworzyć zdarzenia");
+    if (event_ == nullptr) throw std::runtime_error("talcite::Bell: cannot create the event");
 }
 
 Bell::~Bell() {
@@ -45,17 +47,12 @@ bool Bell::wait(std::chrono::milliseconds patience) {
 // gniazdami, w jednym poll(), a do tego potrzebny jest deskryptor.
 Bell::Bell() {
     int both[2] = {-1, -1};
-    if (::pipe(both) != 0) throw std::runtime_error("talcite::Bell: nie można utworzyć rurki");
+
+    // Rurki dzwonka nie mają trafiać do programu potomnego — pula ma ich dwie na robotnika.
+    if (!sealed::piped(both, true)) throw std::runtime_error("talcite::Bell: cannot create the pipe");
 
     heard_ = both[0];
     rung_ = both[1];
-
-    ::fcntl(heard_, F_SETFL, O_NONBLOCK);
-    ::fcntl(rung_, F_SETFL, O_NONBLOCK);
-
-    // Rurki dzwonka nie mają trafiać do programu potomnego — pula ma ich dwie na robotnika.
-    ::fcntl(heard_, F_SETFD, ::fcntl(heard_, F_GETFD, 0) | FD_CLOEXEC);
-    ::fcntl(rung_, F_SETFD, ::fcntl(rung_, F_GETFD, 0) | FD_CLOEXEC);
 }
 
 Bell::~Bell() {

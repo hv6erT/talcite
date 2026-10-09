@@ -1,69 +1,79 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "talcite/keyednode.hpp"
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
 class MenuItem;
+class Menubar;
 
 class Menu : public KeyedNode<Node> {
 public:
-    explicit Menu(std::string title, MenuStyle style = {});
+    explicit Menu(std::string title, MenuShape shape = {});
 
     [[nodiscard]] const std::string& title() const { return title_; }
 
     void title(std::string given) { title_ = std::move(given); }
 
-    [[nodiscard]] LineStyle border() const { return style_.border; }
+    [[nodiscard]] Border border() const { return shape_.border; }
 
-    void border(LineStyle given) { style_.border = given; }
+    void border(Border given) { shape_.border = given; }
 
-    [[nodiscard]] bool shade() const { return style_.shade; }
+    [[nodiscard]] bool shade() const { return shape_.shade; }
 
-    void shade(bool given) { style_.shade = given; }
+    void shade(bool given) { shape_.shade = given; }
 
     [[nodiscard]] bool opened() const;
 
-    [[nodiscard]] int which() const { return which_; }
+    [[nodiscard]] std::optional<std::size_t> which() const;
 
-    void which(int given);
+    void which(std::size_t given);
 
-    void which(MenuItem* one);
+    [[nodiscard]] MenuItem* current() const;
+
+    void current(MenuItem& one);
 
     void pick();
+
+    void open();
+
+    void close();
 
     void focus() override;
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] Area placement(Size room) const override;
+
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] bool accepts(const Node& one) const override;
-
-    [[nodiscard]] int layer() const override;
 
     [[nodiscard]] bool focusable() const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    void act() override;
+    void activate() override;
 
-    bool react(KeyEvent& what) override;
+    using KeyedNode::handle;
 
-    bool react(ClickEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(FocusEvent& what) override;
+    bool handle(FocusEvent& what) override;
 
-    bool react(UnfocusEvent& what) override;
+    bool handle(UnfocusEvent& what) override;
 
 private:
-    friend class MenuWindow;
+    friend class Menubar;
+    friend class MenuTitle;
 
     [[nodiscard]] Size fold() const;
 
@@ -71,10 +81,13 @@ private:
 
     [[nodiscard]] MenuItem* item(int which) const;
 
+    void aim(int given);
+
     std::string title_;
-    MenuStyle style_;
+    MenuShape shape_;
     int which_ = -1;
-    int aside_ = 0;
+    Menubar* bar_ = nullptr;
+    Node* head_ = nullptr;
 };
 
 }

@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <stdexcept>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "talcite/bytes.hpp"
 #include "talcite/promise.hpp"
+#include "talcite/trouble.hpp"
 
 namespace talcite::fs {
 
@@ -20,22 +22,25 @@ using talcite::Bytes;
 
 enum class Kind : std::uint8_t { none, file, folder, link, device, special };
 
-struct Room {
-    std::uintmax_t whole = 0;
-    std::uintmax_t spare = 0;
+struct Space {
+    std::uintmax_t total = 0;
+    std::uintmax_t free = 0;
 };
 
 enum class Mount : std::uint8_t { disk, remote, removable, optical, other };
 
-struct Drive {
+enum class Known : std::uint8_t { home, desktop, documents, downloads, music, pictures, videos };
+
+struct Volume {
     path where;
-    path behind;
-    std::string named;
+    path source;
+    std::string label;
+    std::string format;
     Mount mount = Mount::other;
-    Room room;
+    Space space;
 };
 
-struct Marks {
+struct Attributes {
     bool hidden = false;
     bool readonly = false;
     bool system = false;
@@ -45,23 +50,30 @@ struct Marks {
 
 struct Entry {
     path where;
+    std::optional<path> target;
     Kind kind = Kind::none;
+    Kind reach = Kind::none;
     std::uintmax_t size = 0;
-    std::chrono::sys_seconds written{};
-    Marks marks;
+    std::chrono::sys_seconds modified{};
+    std::chrono::sys_seconds accessed{};
+    Attributes attributes;
+    std::filesystem::perms rights = std::filesystem::perms::unknown;
+    std::uintmax_t links = 1;
+    std::optional<std::uint32_t> owner;
+    std::optional<std::uint32_t> group;
 };
 
-enum class Clash : std::uint8_t { overwrite, skip, beside, refuse };
-
-enum class Stir : std::uint8_t { made, gone, changed, renamed, lost };
+enum class Conflict : std::uint8_t { overwrite, skip, rename, fail };
 
 struct Change {
+    enum class Kind : std::uint8_t { created, removed, modified, renamed, overflow };
+
     path where;
     path was;
-    Stir stir = Stir::changed;
+    Kind kind = Kind::modified;
 };
 
-class Trouble : public std::runtime_error {
+class Trouble : public talcite::Trouble {
 public:
     Trouble(const std::string& said, path where);
 
@@ -71,48 +83,74 @@ private:
     path where_;
 };
 
+[[nodiscard]] std::string to_string(const path& where);
+
+[[nodiscard]] path from_string(std::string_view said);
+
+[[nodiscard]] std::string stored(const path& where);
+
+[[nodiscard]] path restored(std::string_view said);
+
 [[nodiscard]] Promise<bool> exists(const path& where);
 
 [[nodiscard]] Promise<Kind> kind(const path& where);
 
 [[nodiscard]] Promise<std::uintmax_t> size(const path& where);
 
-[[nodiscard]] Promise<std::chrono::sys_seconds> written(const path& where);
+[[nodiscard]] Promise<std::chrono::sys_seconds> modified(const path& where);
 
-[[nodiscard]] Promise<void> written(const path& where, std::chrono::sys_seconds when);
+[[nodiscard]] Promise<void> modified(const path& where, std::chrono::sys_seconds when);
 
-[[nodiscard]] Promise<Room> roomy(const path& where);
+[[nodiscard]] Promise<Space> space(const path& where);
 
-[[nodiscard]] Promise<std::size_t> slice(const path& where);
+[[nodiscard]] Promise<std::size_t> chunk(const path& where);
 
 [[nodiscard]] Promise<Mount> mount(const path& where);
 
-[[nodiscard]] Promise<std::vector<Drive>> drives();
+[[nodiscard]] Promise<std::vector<Volume>> volumes();
 
-[[nodiscard]] Promise<Marks> marks(const path& where);
+[[nodiscard]] Promise<std::vector<path>> roots();
 
-[[nodiscard]] Promise<void> marks(const path& where, Marks what);
+[[nodiscard]] Promise<Volume> volume(const path& where);
 
-[[nodiscard]] Promise<bool> alike(const path& one, const path& two);
+[[nodiscard]] Promise<path> mounted(const path& where);
+
+[[nodiscard]] Promise<Attributes> attributes(const path& where);
+
+[[nodiscard]] Promise<std::string> owner(std::uint32_t which);
+
+[[nodiscard]] Promise<std::string> group(std::uint32_t which);
+
+[[nodiscard]] Promise<void> attributes(const path& where, Attributes what);
+
+[[nodiscard]] Promise<Entry> entry(const path& where);
+
+[[nodiscard]] Promise<void> rights(const path& where, std::filesystem::perms what);
+
+[[nodiscard]] Promise<bool> equivalent(const path& one, const path& two);
 
 [[nodiscard]] Promise<path> target(const path& where);
 
-[[nodiscard]] Promise<path> real(const path& where);
+[[nodiscard]] Promise<path> canonical(const path& where);
 
 [[nodiscard]] Promise<void> link(const path& where, const path& onto, bool hard = false);
 
-[[nodiscard]] path here();
+[[nodiscard]] path current();
 
-[[nodiscard]] Promise<void> here(const path& where);
+[[nodiscard]] Promise<void> current(const path& where);
 
 [[nodiscard]] path home();
 
 [[nodiscard]] path temp();
 
-[[nodiscard]] Promise<void> make(const path& where);
+[[nodiscard]] Promise<path> runtime();
+
+[[nodiscard]] Promise<std::optional<path>> folder(Known which);
+
+[[nodiscard]] Promise<void> make_folder(const path& where);
 
 [[nodiscard]] Promise<void> rename(const path& from, const path& to,
-                                   Clash how = Clash::refuse);
+                                   Conflict how = Conflict::fail);
 
 [[nodiscard]] Promise<std::vector<Entry>> list(const path& where);
 
@@ -121,20 +159,20 @@ private:
 [[nodiscard]] Promise<Bytes> read(const path& where);
 
 [[nodiscard]] Promise<void> write(const path& where, Bytes what,
-                                  Clash how = Clash::overwrite);
+                                  Conflict how = Conflict::overwrite);
 
 [[nodiscard]] Promise<void> copy(const path& from, const path& to,
-                                 Clash how = Clash::refuse);
+                                 Conflict how = Conflict::fail);
 
 [[nodiscard]] Promise<void> move(const path& from, const path& to,
-                                 Clash how = Clash::refuse);
+                                 Conflict how = Conflict::fail);
 
 [[nodiscard]] Promise<void> erase(const path& where);
 
-enum class Mode : std::uint8_t { read, write, fresh };
+enum class Mode : std::uint8_t { read, write, truncate, exclusive };
 
 class File;
-class Flow;
+class Cursor;
 
 [[nodiscard]] Promise<File> open(const path& where, Mode how = Mode::read);
 
@@ -154,9 +192,11 @@ public:
 
     [[nodiscard]] Promise<std::uintmax_t> size() const;
 
-    [[nodiscard]] Flow flow() const;
+    [[nodiscard]] Promise<void> sync() const;
 
-    void close() { held_.reset(); }
+    [[nodiscard]] Cursor cursor() const;
+
+    void close();
 
 private:
     friend Promise<File> open(const path& where, Mode how);
@@ -192,11 +232,11 @@ private:
     std::shared_ptr<Held> held_;
 };
 
-class Flow {
+class Cursor {
 public:
     struct Held;
 
-    Flow() = default;
+    Cursor() = default;
 
     [[nodiscard]] bool held() const { return held_ != nullptr; }
 
@@ -213,9 +253,9 @@ public:
     void close() { held_.reset(); }
 
 private:
-    friend Flow File::flow() const;
+    friend Cursor File::cursor() const;
 
-    explicit Flow(std::shared_ptr<Held> held) : held_(std::move(held)) {}
+    explicit Cursor(std::shared_ptr<Held> held) : held_(std::move(held)) {}
 
     std::shared_ptr<Held> held_;
 };

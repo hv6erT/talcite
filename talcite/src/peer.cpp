@@ -9,8 +9,8 @@
 #include <mutex>
 #include <utility>
 
+#include "talcite/address.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "stunning.hpp"
 
@@ -18,7 +18,7 @@ namespace talcite::net {
 
 // To, co widzi pętla odbioru. **Nie to samo, co trzyma wołający** — patrz Held niżej.
 struct Living {
-    Post post;
+    Udp post;
 
     // Przekaźnik jest **cudzą własnością**: rozmówca go używa, ale nigdy nie zamyka. Ten sam
     // egzemplarz dotykają trzy wątki — pętla poczty przy odpowiadaniu, pętla przekaźnika przy
@@ -29,8 +29,8 @@ struct Living {
     mutable std::mutex guard;
     std::condition_variable stirring;
 
-    std::vector<Way> mine;
-    std::vector<Way> theirs;
+    std::vector<Candidate> mine;
+    std::vector<Candidate> theirs;
     Address met;
 
     // Którym kanałem poszła zwycięska droga. **Kanał jest częścią tożsamości rozmowy**: ten sam
@@ -67,10 +67,10 @@ struct Peer::Held {
     std::shared_ptr<Living> alive;
 
     // **Własna kopia poczty, wyłącznie do zamykania.** Kopie dzielą gniazdo, ale nie dzielą
-    // obiektu — a `Post`, jak każdy typ wartościowy w talcite, nie znosi dotykania tego samego
+    // obiektu — a `Udp`, jak każdy typ wartościowy w talcite, nie znosi dotykania tego samego
     // egzemplarza z dwóch wątków naraz. Zamykanie tej, z której czyta pętla, było wyścigiem
     // na jej własnym uchwycie.
-    Post closing;
+    Udp closing;
 
     ~Held() {
         {
@@ -144,7 +144,7 @@ void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what,
 constexpr std::size_t roomier = 16;
 
 bool knowing(const Living& held, const Address& where) {
-    for (const Way& one : held.theirs)
+    for (const Candidate& one : held.theirs)
         if (one.where == where) return true;
 
     return false;
@@ -161,9 +161,9 @@ void noted(const std::shared_ptr<Living>& held, const Address& where) {
 
     if (held->theirs.size() >= roomier) return;
 
-    for (const Way& one : held->theirs)
+    for (const Candidate& one : held->theirs)
         if (one.where.family() == where.family() && one.where.bytes() == where.bytes()) {
-            held->theirs.push_back(Way{where, Way::Sort::seen});
+            held->theirs.push_back(Candidate{where, Candidate::Sort::seen});
 
             return;
         }
@@ -172,7 +172,7 @@ void noted(const std::shared_ptr<Living>& held, const Address& where) {
 // Co zrobić z jednym odebranym datagramem. `through` mówi, którym kanałem przyszedł: naszym
 // gniazdem czy naszym przekaźnikiem — i tym samym kanałem idzie odpowiedź, bo tylko on jest
 // dowiedziony jako przechodni.
-void taking(const std::shared_ptr<Living>& held, Parcel came, bool through) {
+void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
     Message made;
 
     if (understood(came.bytes, made)) {
@@ -252,7 +252,7 @@ void taking(const std::shared_ptr<Living>& held, Parcel came, bool through) {
 
 // Jeden obrót pętli odbioru. Oddaje fałsz, gdy gniazdo się zamknęło i nie ma po co kręcić dalej.
 bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
-    Parcel came;
+    Datagram came;
 
     try {
         if (held->shutting.load()) return false;
@@ -301,7 +301,7 @@ bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
 // Jeden obrót pętli od przekaźnika. Osobna, bo obie czekają blokująco, a jeden wątek nie umie
 // czekać na dwa gniazda naraz.
 bool drawing(const std::shared_ptr<Living>& held) {
-    Parcel came;
+    Datagram came;
 
     try {
         if (held->shutting.load()) return false;
@@ -372,7 +372,7 @@ void waking(const std::shared_ptr<Living>& held) {
             resolve();
         }};
 
-        made.go();
+        made.start();
     }
 
     if (!held->relay.held()) return;
@@ -386,7 +386,7 @@ void waking(const std::shared_ptr<Living>& held) {
             resolve();
         }};
 
-        made.go();
+        made.start();
     }
 }
 
@@ -409,7 +409,7 @@ void letting(const std::shared_ptr<Living>& held) {
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
-        for (const Way& one : held->theirs) {
+        for (const Candidate& one : held->theirs) {
             Address bare = one.where;
 
             bare.port(0);
@@ -448,7 +448,7 @@ Promise<T> amiss_now(const std::string& said) {
 
 }
 
-Peer::Peer(Post post) : held_(std::make_shared<Held>()) {
+Peer::Peer(Udp post) : held_(std::make_shared<Held>()) {
     held_->alive = std::make_shared<Living>();
     held_->alive->post = post;
     held_->alive->number = numbered();
@@ -457,11 +457,11 @@ Peer::Peer(Post post) : held_(std::make_shared<Held>()) {
 
 // Przekaźnik podaje się **przy powstaniu albo wcale**. Wpięty później zostawiałby chwilę, w której
 // zebrane już drogi milczą o użyczonym adresie, a druga strona nie ma pod co się dobijać.
-Peer::Peer(Post post, Relay relay) : Peer(std::move(post)) {
+Peer::Peer(Udp post, Relay relay) : Peer(std::move(post)) {
     held_->alive->relay = std::move(relay);
 }
 
-std::vector<Way> Peer::ways() const {
+std::vector<Candidate> Peer::candidates() const {
     if (!held_) return {};
 
     const std::lock_guard<std::mutex> kept{held_->alive->guard};
@@ -469,7 +469,7 @@ std::vector<Way> Peer::ways() const {
     return held_->alive->mine;
 }
 
-std::vector<Way> Peer::theirs() const {
+std::vector<Candidate> Peer::theirs() const {
     if (!held_) return {};
 
     const std::lock_guard<std::mutex> kept{held_->alive->guard};
@@ -496,7 +496,7 @@ bool Peer::relayed() const {
 // Drogi próbujemy w kolejności, w jakiej leżą, a leżą wedle rodzaju: własna karta przed odbiciem
 // od serwera, odbicie przed przekaźnikiem. Dwie maszyny w jednej sieci nie mają po co wychodzić
 // na świat, a przekaźnik kosztuje cudze pasmo i jest ostatecznością.
-void Peer::add(Way one) {
+void Peer::add(Candidate one) {
     if (!held_) return;
 
     if (!one.where.held()) return;
@@ -505,14 +505,15 @@ void Peer::add(Way one) {
 
     if (one.where == held_->alive->post.mine()) return;
 
-    std::vector<Way>& theirs = held_->alive->theirs;
+    std::vector<Candidate>& theirs = held_->alive->theirs;
 
     if (std::find(theirs.begin(), theirs.end(), one) != theirs.end()) return;
 
     const auto at =
-        std::upper_bound(theirs.begin(), theirs.end(), one, [](const Way& left, const Way& right) {
-            return left.sort < right.sort;
-        });
+        std::upper_bound(theirs.begin(), theirs.end(), one,
+                         [](const Candidate& left, const Candidate& right) {
+                             return left.sort < right.sort;
+                         });
 
     theirs.insert(at, one);
 }
@@ -520,45 +521,38 @@ void Peer::add(Way one) {
 // Zbieranie kandydatów. Adresy własnych kart dostają port **naszego gniazda**, bo to jego szuka
 // druga strona. Pętla zwrotna wypada: wysłana drugiej stronie kazałaby jej dobijać się do samej
 // siebie, a odpowiedź od własnego gniazda wyglądałaby jak udane przebicie.
-Promise<std::vector<Way>> Peer::gather(Scout scout, Patience patience) {
-    if (!held_) return amiss_now<std::vector<Way>>("Rozmówca jest pusty.");
+Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience) {
+    if (!held_) return amiss_now<std::vector<Candidate>>("The peer is empty.");
 
     if (held_->alive->living.load())
-        return amiss_now<std::vector<Way>>("Zbieranie musi się skończyć, zanim ruszy przebijanie.");
+        return amiss_now<std::vector<Candidate>>("Gathering must finish before punching starts.");
 
     auto held = held_->alive;
 
-    Promise<std::vector<Way>> made{[held, scout, patience](auto resolve, auto reject) {
+    Promise<std::vector<Candidate>> made{[held, scout, patience](auto resolve, auto reject) {
         try {
             const Clock::time_point until = Clock::now() + patience;
 
             const std::uint16_t port = held->post.mine().port();
 
-            std::vector<Way> found;
+            std::vector<Candidate> found;
 
             for (Address one : mine(held->post.mine().family()).await()) {
                 if (one == Address::loopback(one.family(), 0)) continue;
 
                 one.port(port);
 
-                found.push_back(Way{one, Way::Sort::here});
+                found.push_back(Candidate{one, Candidate::Sort::here});
             }
 
-            // Odbicia od serwera może nie być — bez zwiadowcy albo bez odpowiedzi. To nie jest
-            // powód, żeby wywrócić zbieranie: w jednej sieci lokalnej same karty wystarczą.
-            // Odbicia od serwera może nie być — bez zwiadowcy, bez odpowiedzi albo po terminie.
+            // Odbicia od serwera może nie być — bez zwiadowcy, bez odpowiedzi albo po terminie. To nie
+            // jest powód, żeby wywrócić zbieranie: w jednej sieci lokalnej same karty wystarczą.
             // **Termin jest nasz**, nie zwiadowcy: ten ma własną cierpliwość z konstruktora,
             // zwykle o rząd wielkości dłuższą, i bez tego pilnowania zjadał ją w całości.
             if (scout.held() && Clock::now() < until) {
-                auto asking = scout.seen();
-
                 try {
-                    // Ścigamy zwiad z **naszym** terminem; gdy zdąży, jego obietnica jest już
-                    // rozstrzygnięta i drugie await oddaje adres bez czekania.
-                    Time::within(asking, left(until)).await();
-
-                    if (const Address seen = asking.await(); seen.held())
-                        found.push_back(Way{seen, Way::Sort::seen});
+                    if (const Address seen = scout.seen().timeout(left(until)).await(); seen.held())
+                        found.push_back(Candidate{seen, Candidate::Sort::seen});
                 } catch (const std::exception&) {
                 }
             }
@@ -573,7 +567,7 @@ Promise<std::vector<Way>> Peer::gather(Scout scout, Patience patience) {
 
                     if (!lent.held()) lent = held->relay.open(left(until)).await();
 
-                    if (lent.held()) found.push_back(Way{lent, Way::Sort::lent});
+                    if (lent.held()) found.push_back(Candidate{lent, Candidate::Sort::lent});
                 } catch (const std::exception&) {
                 }
             }
@@ -590,7 +584,7 @@ Promise<std::vector<Way>> Peer::gather(Scout scout, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
@@ -599,12 +593,12 @@ Promise<std::vector<Way>> Peer::gather(Scout scout, Patience patience) {
 // NAT-cie, ale otwiera dziurę w moim, a cudzy ginie na moim, otwierając dziurę w jego. Dopiero
 // drugi datagram każdej ze stron trafia na otwarte przejście.
 Promise<Address> Peer::reach(Patience patience) {
-    if (!held_) return amiss_now<Address>("Rozmówca jest pusty.");
+    if (!held_) return amiss_now<Address>("The peer is empty.");
 
     bool was = false;
 
     if (!held_->alive->reaching.compare_exchange_strong(was, true))
-        return amiss_now<Address>("Rozmówca już się dobija.");
+        return amiss_now<Address>("The peer is already punching.");
 
     auto held = held_->alive;
 
@@ -614,7 +608,7 @@ Promise<Address> Peer::reach(Patience patience) {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
                 if (held->theirs.empty())
-                    throw Trouble{"Nie znam żadnej drogi do drugiej strony."};
+                    throw Trouble{"No known way to the other side."};
             }
 
             waking(held);
@@ -626,7 +620,7 @@ Promise<Address> Peer::reach(Patience patience) {
                 // w trakcie przebijania. Adres raz załatwiony nie kosztuje tu nic.
                 letting(held);
 
-                std::vector<Way> ways;
+                std::vector<Candidate> ways;
 
                 Number number;
 
@@ -637,7 +631,7 @@ Promise<Address> Peer::reach(Patience patience) {
                     number = held->number;
                 }
 
-                for (const Way& one : ways) {
+                for (const Candidate& one : ways) {
                     if (held->shutting.load()) break;
 
                     // Termin sprawdzamy **przy każdej drodze**, nie raz na obrót. Przy kilkunastu
@@ -672,13 +666,13 @@ Promise<Address> Peer::reach(Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
 
 Promise<void> Peer::send(Bytes what, Patience patience) {
-    if (!held_) return amiss_now<void>("Rozmówca jest pusty.");
+    if (!held_) return amiss_now<void>("The peer is empty.");
 
     Address met;
 
@@ -691,14 +685,14 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
         through = held_->alive->relayed;
     }
 
-    if (!met.held()) return amiss_now<void>("Nie ma jeszcze do kogo mówić.");
+    if (!met.held()) return amiss_now<void>("No one to talk to yet.");
 
     auto held = held_->alive;
 
     Promise<void> made{[held, met, through, what = std::move(what), patience](auto resolve,
                                                                              auto reject) mutable {
         try {
-            if (held->shutting.load()) throw Trouble{"Rozmówca jest zamknięty."};
+            if (held->shutting.load()) throw Trouble{"The peer is closed."};
 
             // Mówimy **tym kanałem, którym się przebiliśmy**. Wysyłka wprost pod adres, który
             // odezwał się przez przekaźnik, trafiłaby w NAT drugiej strony i przepadła.
@@ -712,7 +706,7 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
 
             const std::lock_guard<std::mutex> kept{held->speaking};
 
-            if (held->shutting.load()) throw Trouble{"Rozmówca jest zamknięty."};
+            if (held->shutting.load()) throw Trouble{"The peer is closed."};
 
             held->post.send(met, std::move(what), patience).await();
 
@@ -722,13 +716,13 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }
 
 Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
-    if (!held_) return amiss_now<Bytes>("Rozmówca jest pusty.");
+    if (!held_) return amiss_now<Bytes>("The peer is empty.");
 
     auto held = held_->alive;
 
@@ -749,13 +743,13 @@ Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
                 }))
                 throw Overdue{};
 
-            if (held->spare.empty()) throw Trouble{"Rozmówca jest zamknięty."};
+            if (held->spare.empty()) throw Trouble{"The peer is closed."};
 
             // Datagram jest całością. Oddanie kawałka udającego całość byłoby gorsze niż odmowa —
-            // tak samo rozstrzyga to Post. Ale **odmowa nie ma prawa go zjeść**: sprawdzamy rozmiar
+            // tak samo rozstrzyga to Udp. Ale **odmowa nie ma prawa go zjeść**: sprawdzamy rozmiar
             // przed zdjęciem z kolejki, więc powtórzenie z większym miejscem jeszcze go zastanie.
             if (held->spare.front().size() > most)
-                throw Trouble{"Przesyłka nie mieści się w podanym miejscu."};
+                throw Trouble{"The parcel does not fit in the given space."};
 
             Bytes one = std::move(held->spare.front());
 
@@ -769,7 +763,7 @@ Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
         }
     }};
 
-    made.go();
+    made.start();
 
     return made;
 }

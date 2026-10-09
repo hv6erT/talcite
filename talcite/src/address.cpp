@@ -106,7 +106,7 @@ Address::Address(std::string_view text, std::uint16_t port) {
     // sklejone z bzdurą budowało się pomyślnie. Kto kroi nazwę z bufora sieciowego, dostawał
     // poprawnie wyglądający adres z popsutego pola.
     if (said.find('\0') != std::string::npos)
-        throw Trouble{"To nie jest adres: tekst ma zero w środku."};
+        throw Trouble{"Not an address: the text has a zero inside."};
 
     // Nawiasy kwadratowe zdejmujemy **przed** numerem łącza, a nie po nim. Odwrotnie zamykający
     // nawias wpadał do tekstu numeru, a do rozbioru szło `[fe80::1` — czyli postać, którą sami
@@ -125,7 +125,7 @@ Address::Address(std::string_view text, std::uint16_t port) {
         // Nieznana nazwa łącza cichła do zera, a adres link-local bez numeru jest bezużyteczny:
         // błąd wychodził dopiero przy połączeniu, daleko od literówki.
         if (scope == 0)
-            throw Trouble{"To nie jest numer łącza: " + tail + "."};
+            throw Trouble{"Not an interface number: " + tail + "."};
 
         said.resize(mark);
     }
@@ -155,7 +155,7 @@ Address::Address(std::string_view text, std::uint16_t port) {
 
     // Nazwa domenowa **nie jest** adresem i nie udajemy, że jest — od nazw jest resolve, który
     // umie zapytać świata. Cichy pusty adres wyszedłby dopiero przy nieudanym połączeniu.
-    throw Trouble{"To nie jest adres: " + std::string{text} + "."};
+    throw Trouble{"Not an address: " + std::string{text} + "."};
 }
 
 // Adres lokalny nie powstaje z bajtów ani z portu — jest od tego `local()`. Bez tej odmowy dałoby
@@ -164,22 +164,22 @@ Address::Address(std::string_view text, std::uint16_t port) {
 Address::Address(Family family, const std::array<std::byte, 16>& bytes, std::uint16_t port)
     : bytes_(bytes), port_(port), family_(family) {
     if (family == Family::local)
-        throw Trouble{"Adres lokalny nie powstaje z bajtów — jest od tego local()."};
+        throw Trouble{"A local address is not built from bytes — use local()."};
 }
 
 // Ścieżkę bierzemy przez wartość i przenosimy: wołający albo ją buduje na miejscu, albo oddaje
 // swoją, a kopiowanie w środku byłoby trzecim egzemplarzem tego samego napisu.
 Address Address::local(std::string path) {
-    if (path.empty()) throw Trouble{"Ścieżka gniazda lokalnego jest pusta."};
+    if (path.empty()) throw Trouble{"The local socket path is empty."};
 
     // Ten sam powód, dla którego zero w środku odrzuca konstruktor tekstowy: ścieżka jedzie do
     // pola zakończonego zerem, więc reszty i tak nikt by nie zobaczył.
     if (path.find('\0') != std::string::npos)
-        throw Trouble{"Ścieżka gniazda lokalnego ma zero w środku."};
+        throw Trouble{"The local socket path has a zero inside."};
 
     if (path.size() > longest)
-        throw Trouble{"Ścieżka gniazda lokalnego jest dłuższa niż " + std::to_string(longest) +
-                      " bajtów: " + path + "."};
+        throw Trouble{"The local socket path is longer than " + std::to_string(longest) +
+                      " bytes: " + path + "."};
 
     Address made;
 
@@ -193,20 +193,20 @@ Address Address::local(std::string path) {
 // nigdy nie przeczyta. Stan, którego nie da się wyrazić, jest lepszy od stanu, którego nie da się
 // zauważyć — ta sama zasada, na której stoi `Key`.
 void Address::port(std::uint16_t given) {
-    if (family_ == Family::local) throw Trouble{"Adres lokalny nie ma portu."};
+    if (family_ == Family::local) throw Trouble{"A local address has no port."};
 
     port_ = given;
 }
 
 void Address::scope(std::uint32_t given) {
-    if (family_ == Family::local) throw Trouble{"Adres lokalny nie ma numeru łącza."};
+    if (family_ == Family::local) throw Trouble{"A local address has no interface number."};
 
     scope_ = given;
 }
 
 Address Address::any(Family family, std::uint16_t port) {
     if (family == Family::local)
-        throw Trouble{"Adres lokalny nie ma postaci dowolnej — trzeba podać ścieżkę."};
+        throw Trouble{"A local address has no wildcard form — a path is required."};
 
     Address made;
 
@@ -218,7 +218,7 @@ Address Address::any(Family family, std::uint16_t port) {
 
 Address Address::loopback(Family family, std::uint16_t port) {
     if (family == Family::local)
-        throw Trouble{"Gniazdo lokalne samo jest pętlą zwrotną — nie ma osobnego adresu."};
+        throw Trouble{"A local socket is its own loopback — it has no separate address."};
 
     Address made = any(family, port);
 
@@ -264,6 +264,23 @@ std::string Address::spelled() const {
     return "[" + text() + "]:" + std::to_string(port_);
 }
 
+// IPv4 widziany przez gniazdo podwójne (`::ffff:a.b.c.d`) to zwykły IPv4 — tak go wołać i tak
+// zapisywać. Każdy inny adres zostaje, jaki był.
+Address Address::unmapped() const {
+    if (family_ != Family::six) return *this;
+
+    for (std::size_t at = 0; at < 10; ++at)
+        if (bytes_[at] != std::byte{0}) return *this;
+
+    if (bytes_[10] != std::byte{0xff} || bytes_[11] != std::byte{0xff}) return *this;
+
+    Address made = any(Family::four, port_);
+
+    for (std::size_t at = 0; at < 4; ++at) made.bytes_[at] = bytes_[12 + at];
+
+    return made;
+}
+
 Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Family family) {
     return Promise<std::vector<Address>>{[host, port, family](auto giving, auto amiss) {
         starting();
@@ -281,7 +298,7 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
 
         if (code != 0) {
             amiss(std::make_exception_ptr(
-                Trouble{"Nie znam nazwy " + host + ": " + amiss_named(code) + ".", code}));
+                Trouble{"Unknown name " + host + ": " + amiss_named(code) + ".", code}));
 
             return;
         }
@@ -306,7 +323,7 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
         }
 
         if (made.empty()) {
-            amiss(std::make_exception_ptr(Trouble{"Nazwa nie ma adresów: " + host + "."}));
+            amiss(std::make_exception_ptr(Trouble{"The name has no addresses: " + host + "."}));
 
             return;
         }
@@ -355,7 +372,7 @@ Promise<std::vector<Address>> mine(Family family) {
         // pusty wykaz i tak samo ma robić Windows.
         if (code != NO_ERROR && code != ERROR_NO_DATA) {
             amiss(std::make_exception_ptr(
-                Trouble{"Nie umiem wypisać własnych adresów: " + spoken(static_cast<int>(code)) + ".",
+                Trouble{"Cannot list own addresses: " + spoken(static_cast<int>(code)) + ".",
                         static_cast<int>(code)}));
 
             return;
@@ -380,7 +397,7 @@ Promise<std::vector<Address>> mine(Family family) {
 
         if (::getifaddrs(&first) != 0) {
             amiss(std::make_exception_ptr(
-                Trouble{"Nie umiem wypisać własnych adresów: " + spoken(errno) + ".", errno}));
+                Trouble{"Cannot list own addresses: " + spoken(errno) + ".", errno}));
 
             return;
         }
@@ -416,6 +433,40 @@ Promise<std::vector<Address>> mine(Family family) {
 
         giving(std::move(made));
     }};
+}
+
+// Kłopot **nie tłumaczy** numeru sam z siebie. Kusiło, ale numery przychodzą z trzech różnych
+// światów — errno, WSA i EAI — i ta sama liczba znaczy w nich co innego. Zdanie składa ten, kto
+// wie, skąd wziął numer; od zamiany numeru na zdanie jest spoken().
+Trouble::Trouble(const std::string& said, int code, Address where)
+    : talcite::Trouble(said, code), where_(std::move(where)) {}
+
+// Numer błędu bez zdania obok jest bezużyteczny w dzienniku, a zdanie od systemu jest w jego
+// języku — i tak ma być, bo to system się skarży, nie my.
+std::string spoken(int code) {
+    if (code == 0) return {};
+
+#ifdef _WIN32
+    char* said = nullptr;
+
+    const DWORD much = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
+            FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr, static_cast<DWORD>(code), 0, reinterpret_cast<char*>(&said), 0, nullptr);
+
+    if (much == 0 || said == nullptr) return std::to_string(code);
+
+    std::string made{said, much};
+
+    LocalFree(said);
+
+    while (!made.empty() && (made.back() == '\r' || made.back() == '\n' || made.back() == ' '))
+        made.pop_back();
+
+    return made;
+#else
+    return std::strerror(code);
+#endif
 }
 
 }

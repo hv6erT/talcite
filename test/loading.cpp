@@ -4,12 +4,12 @@
 #include <string>
 #include <vector>
 
-#include "talcite/exchange.hpp"
-#include "talcite/gate.hpp"
-#include "talcite/post.hpp"
+#include "talcite/address.hpp"
+#include "exchange.hpp"
+#include "talcite/listener.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/stream.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 using namespace talcite;
 
@@ -21,30 +21,16 @@ namespace {
 
 const net::Patience soon{15000};
 
-Bytes spelt(const std::string& what) {
-    Bytes made(what.size());
 
-    for (std::size_t at = 0; at < what.size(); ++at) made[at] = static_cast<std::byte>(what[at]);
 
-    return made;
-}
-
-std::string read(const Bytes& what) {
-    std::string made;
-
-    for (const std::byte one : what) made += static_cast<char>(one);
-
-    return made;
-}
-
-net::Gate standing() { return net::Gate{net::Address::loopback(net::Family::four, 0)}; }
+net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
 struct Pair {
     net::Stream server;
     net::Stream client;
 };
 
-Pair joined(const net::Gate& gate) {
+Pair joined(const net::Listener& gate) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
 
@@ -57,19 +43,19 @@ Pair joined(const net::Gate& gate) {
 }
 
 TRIAL("Obciążenie: pięćdziesiąt połączeń po kolei") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     for (int which = 0; which < 50; ++which) {
         Pair both = joined(gate);
 
-        both.client.write(spelt(std::to_string(which)), soon).await();
+        both.client.write(bytes(std::to_string(which)), soon).await();
 
-        same(read(both.server.read(16, soon).await()), std::to_string(which));
+        same(text(both.server.read(16, soon).await()), std::to_string(which));
     }
 }
 
 TRIAL("Obciążenie: pięćdziesiąt połączeń naraz") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     std::vector<net::Stream> servers;
     std::vector<net::Stream> clients;
@@ -87,37 +73,37 @@ TRIAL("Obciążenie: pięćdziesiąt połączeń naraz") {
     for (net::Stream& one : servers) reading.push_back(one.read(16, soon));
 
     for (int which = 0; which < 50; ++which)
-        clients[static_cast<std::size_t>(which)].write(spelt(std::to_string(which)), soon).await();
+        clients[static_cast<std::size_t>(which)].write(bytes(std::to_string(which)), soon).await();
 
     for (int which = 0; which < 50; ++which)
-        same(read(reading[static_cast<std::size_t>(which)].await()), std::to_string(which));
+        same(text(reading[static_cast<std::size_t>(which)].await()), std::to_string(which));
 }
 
 TRIAL("Obciążenie: czytanie i pisanie naraz na jednym strumieniu") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     Pair both = joined(gate);
 
     auto reading = both.client.read(64, soon);
 
-    both.server.write(spelt("z drugiej strony"), soon).await();
-    both.client.write(spelt("i z tej"), soon).await();
+    both.server.write(bytes("z drugiej strony"), soon).await();
+    both.client.write(bytes("i z tej"), soon).await();
 
-    same(read(reading.await()), std::string{"z drugiej strony"});
-    same(read(both.server.read(64, soon).await()), std::string{"i z tej"});
+    same(text(reading.await()), std::string{"z drugiej strony"});
+    same(text(both.server.read(64, soon).await()), std::string{"i z tej"});
 }
 
 // Najważniejszy przypadek dla IOCP: przerwanie **jednej** operacji, a nie całego gniazda.
 // Na jednym strumieniu wisi czytanie z terminem i pisanie bez — po upływie terminu czytanie ma
 // paść, a pisanie dojść do końca.
 TRIAL("Obciążenie: termin przerywa jedną operację, nie gniazdo") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     Pair both = joined(gate);
 
     const std::string much(400000, 'x');
 
-    auto writing = both.client.write(spelt(much), soon);
+    auto writing = both.client.write(bytes(much), soon);
     auto reading = both.client.read(64, net::Patience{200});
 
     bool late = false;
@@ -137,7 +123,7 @@ TRIAL("Obciążenie: termin przerywa jedną operację, nie gniazdo") {
 
         if (one.empty()) break;
 
-        made += read(one);
+        made += text(one);
     }
 
     writing.await();
@@ -145,42 +131,42 @@ TRIAL("Obciążenie: termin przerywa jedną operację, nie gniazdo") {
     same(made.size(), much.size());
 
     // Strumień żyje dalej: przerwane czytanie nie zabrało ze sobą połączenia.
-    both.server.write(spelt("dalej stoję"), soon).await();
+    both.server.write(bytes("dalej stoję"), soon).await();
 
-    same(read(both.client.read(64, soon).await()), std::string{"dalej stoję"});
+    same(text(both.client.read(64, soon).await()), std::string{"dalej stoję"});
 }
 
 TRIAL("Obciążenie: pusty zapis nic nie psuje") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     Pair both = joined(gate);
 
     both.client.write(Bytes{}, soon).await();
-    both.client.write(spelt("po pustym"), soon).await();
+    both.client.write(bytes("po pustym"), soon).await();
 
-    same(read(both.server.read(64, soon).await()), std::string{"po pustym"});
+    same(text(both.server.read(64, soon).await()), std::string{"po pustym"});
 }
 
 TRIAL("Obciążenie: czytanie mniejsze niż to, co przyszło") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     Pair both = joined(gate);
 
-    both.client.write(spelt("abcdefgh"), soon).await();
+    both.client.write(bytes("abcdefgh"), soon).await();
 
-    same(read(both.server.read(3, soon).await()), std::string{"abc"});
-    same(read(both.server.read(3, soon).await()), std::string{"def"});
-    same(read(both.server.read(3, soon).await()), std::string{"gh"});
+    same(text(both.server.read(3, soon).await()), std::string{"abc"});
+    same(text(both.server.read(3, soon).await()), std::string{"def"});
+    same(text(both.server.read(3, soon).await()), std::string{"gh"});
 }
 
 TRIAL("Obciążenie: zamknięcie przerywa obie strony naraz") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     Pair both = joined(gate);
 
     const std::string much(400000, 'y');
 
-    auto writing = both.client.write(spelt(much), soon);
+    auto writing = both.client.write(bytes(much), soon);
     auto reading = both.client.read(64, soon);
 
     both.client.close();
@@ -205,7 +191,7 @@ TRIAL("Obciążenie: zamknięcie przerywa obie strony naraz") {
 }
 
 TRIAL("Obciążenie: brama zamknięta w trakcie czekania na połączenie") {
-    net::Gate gate = standing();
+    net::Listener gate = standing();
 
     auto meeting = gate.accept(soon);
 
@@ -226,7 +212,7 @@ TRIAL("Obciążenie: nawiązanie do martwego portu pada, a nie wisi") {
     net::Address where;
 
     {
-        const net::Gate gate = standing();
+        const net::Listener gate = standing();
 
         where = gate.mine();
     }
@@ -243,26 +229,26 @@ TRIAL("Obciążenie: nawiązanie do martwego portu pada, a nie wisi") {
 }
 
 TRIAL("Obciążenie: dwadzieścia datagramów pod rząd") {
-    const net::Post here{net::Address::loopback(net::Family::four, 0)};
-    const net::Post there{net::Address::loopback(net::Family::four, 0)};
+    const net::Udp here{net::Address::loopback(net::Family::four, 0)};
+    const net::Udp there{net::Address::loopback(net::Family::four, 0)};
 
     for (int which = 0; which < 20; ++which) {
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), spelt(std::to_string(which)), soon).await();
+        there.send(here.mine(), bytes(std::to_string(which)), soon).await();
 
-        same(read(waiting.await().bytes), std::to_string(which));
+        same(text(waiting.await().bytes), std::to_string(which));
     }
 }
 
 TRIAL("Obciążenie: po wszystkim centrala nie trzyma gniazd") {
     {
-        const net::Gate gate = standing();
+        const net::Listener gate = standing();
 
         for (int which = 0; which < 5; ++which) {
             Pair both = joined(gate);
 
-            both.client.write(spelt("raz"), soon).await();
+            both.client.write(bytes("raz"), soon).await();
 
             (void)both.server.read(16, soon).await();
         }

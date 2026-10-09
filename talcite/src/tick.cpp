@@ -28,30 +28,14 @@ void Tick::ticked(bool given) { on_ = given; }
 
 // Odwrócenie stanu **razem z zawiadomieniem**. Tędy idzie spacja, kliknięcie i klawisz aktywny.
 void Tick::pick() {
-    if (!able_) return;
+    if (!enabled()) return;
 
     on_ = !on_;
 
-    PickEvent one;
-
-    (void)trigger(one);
+    (void)trigger(PickEvent{});
 }
 
-void Tick::able(bool given) {
-    if (able_ == given) return;
-
-    able_ = given;
-
-    // Wyłączony ptaszek nie może zostać z ogniskiem: Tab przestaje go widzieć, więc ognisko
-    // utknęłoby na czymś, z czego nie da się wyjść.
-    if (able_) return;
-
-    unfocus();
-}
-
-bool Tick::focusable() const { return able_; }
-
-int Tick::takes() const { return 0; }
+int Tick::capacity() const { return 0; }
 
 // Jeden wiersz, nie tyle, ile dano — tak samo jak przycisk. Wiersz układu daje dzieciom swoją
 // wysokość, a bez tego negatyw ogniska rozlałby się na całą jego wysokość.
@@ -63,13 +47,13 @@ View Tick::paint(Size given, Area seen) {
     View made{seen.size};
 
     // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
     // Rola na stan, złożona z rdzenia i końcówki — ta sama umowa co w przycisku, żeby autor skórki
     // opisywał rodzinę `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.off` i niczego nie zgadywał.
-    const Style look = how.get<Style>(!able_ ? role() + ".off" : focused() ? role() + ".focus" : role());
+    const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
 
@@ -79,28 +63,28 @@ View Tick::paint(Size given, Area seen) {
     // urwana zostawiałaby po sobie coś, co wygląda jak zwykły tekst.
     const int room = std::max(given.wide - around, 0);
 
-    made.string({-seen.at.x, -seen.at.y}, first, look);
+    made.put({-seen.at.x, -seen.at.y}, first, look);
 
     if (room <= 0) return made;
 
     const std::string shown =
-        elided(text_, room, ElideStyle::right, how.get<char32_t>("talcite.elide"));
+        elided(text_, room, Elide::right, how.glyph("talcite.elide"));
 
-    made.string({around - seen.at.x, -seen.at.y}, shown, look);
+    made.put({around - seen.at.x, -seen.at.y}, shown, look);
 
     // Znakowanie liczymy po **przyciętym** napisie: litera, której po przycięciu nie widać, nie ma
     // czego podkreślać. Klawisz aktywny bez podkreślenia byłby zresztą klawiszem, o którym nikt się
     // nie dowie — a w Midnight Commanderze pole wyboru swoją literę pokazuje.
-    talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, marking(shown),
-                      Style::merge(look, how.get<Style>(role() + ".key")));
+    talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+                      look, how.style(role() + ".key"));
 
     return made;
 }
 
 // **Spacja odwraca, Enter idzie wyżej.** W oknie dialogowym Enter należy do przycisku podstawowego,
 // więc pole wyboru, które by go połknęło, psułoby zatwierdzanie okna.
-bool Tick::react(KeyEvent& what) {
-    if (!able_) return false;
+bool Tick::handle(KeyEvent& what) {
+    if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -111,8 +95,8 @@ bool Tick::react(KeyEvent& what) {
     return true;
 }
 
-bool Tick::react(ClickEvent&) {
-    if (!able_) return true;
+bool Tick::handle(ClickEvent&) {
+    if (!enabled()) return true;
 
     if (root() != nullptr) focus();
 
@@ -123,6 +107,6 @@ bool Tick::react(ClickEvent&) {
 
 // Klawisz aktywny przychodzi z bazy — ona sprawdziła, że jest nasz. Ptaszek robi to samo, co przy
 // spacji i przy kliknięciu: odwraca się i zawiadamia.
-void Tick::act() { pick(); }
+void Tick::activate() { pick(); }
 
 }

@@ -1,17 +1,21 @@
 #include <cstddef>
-#include <fstream>
+#include <cstdint>
+#include <exception>
+#include <filesystem>
 #include <functional>
-#include <ios>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "talcite/bytes.hpp"
 #include "talcite/column.hpp"
+#include "talcite/fs.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/mark.hpp"
+#include "talcite/promise.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
@@ -29,7 +33,7 @@ public:
     std::function<void()> sized;
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -37,7 +41,7 @@ protected:
 
     // Górny pasek dopełnia się do szerokości okna, więc po zmianie rozmiaru trzeba go złożyć
     // od nowa. Zdarzenie i tak przechodzi przez korzeń, więc nie ma czego dokładać.
-    bool react(talcite::ui::SizeEvent&) override {
+    bool handle(talcite::ui::SizeEvent&) override {
         if (sized) sized();
 
         return false;
@@ -172,19 +176,19 @@ int main(int argc, char** argv) {
     // biblioteki zaczynają się od `talcite.` i cudze nie mają prawa ich przykrywać.
     sheet.skin(talcite::ui::Skin{{{"demo.bar", turned()}}});
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto column = std::make_shared<talcite::ui::Column>();
 
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
-    const auto shown = std::make_shared<talcite::ui::Viewer>(talcite::ui::ScrollStyle{true});
+    const auto shown = std::make_shared<talcite::ui::Viewer>(talcite::ui::ScrollShape{true});
 
     bar->role("demo.bar");
-    bar->wrapping(false);
+    bar->wrapped(false);
 
     column->children().add(bar);
     column->children().add(shown);
 
-    legend->body()->children().add(column);
+    legend->content(column);
 
     sheet.children().add(legend);
 
@@ -213,7 +217,8 @@ int main(int argc, char** argv) {
         const std::string left = *source;
         const std::string right = placed() + "  UTF-8";
 
-        const int room = term.wide() - talcite::measured(left).wide - talcite::measured(right).wide;
+        const int room =
+            term.size().wide - talcite::measured(left).wide - talcite::measured(right).wide;
 
         bar->text(left + std::string(room > 1 ? static_cast<std::size_t>(room) : 1, ' ') + right);
     };
@@ -230,7 +235,7 @@ int main(int argc, char** argv) {
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zawijaj"), [shown, naming] {
-        shown->wrapping(!shown->wrapping());
+        shown->wrapped(!shown->wrapped());
 
         naming();
     });
@@ -250,37 +255,37 @@ int main(int argc, char** argv) {
     (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjście"),
                       [&term] { term.stop(); });
 
+    // **Plik czytany strumieniowo i asynchronicznie.** `fs::open` i `File::read` idą przez pulę,
+    // a podgląd dostaje `Feed`, czyli źródło oddające obietnicę: żadne okno nie czeka na dysk na wątku
+    // głównym. Otwarcie też nie czeka — do jego przyjścia podgląd jest pusty. Uchwyt pliku żyje
+    // w domknięciu, więc nikt go nie zamknie wcześniej niż podgląd.
+    std::optional<talcite::Promise<void>> opening;
+
     if (argc > 1) {
-        // **Plik czytany strumieniowo.** Uchwyt żyje w domknięciu, więc nikt go nie zamknie
-        // wcześniej niż podgląd, a każde wołanie sięga tylko po ten kawałek, o który proszono.
-        const auto file = std::make_shared<std::ifstream>(argv[1], std::ios::binary);
+        const std::filesystem::path where = talcite::fs::from_string(argv[1]);
 
-        if (file->good()) {
-            file->seekg(0, std::ios::end);
+        opening.emplace(
+            talcite::fs::open(where)
+                .then([](talcite::fs::File file) {
+                    return file.size().then([file](std::uintmax_t whole) {
+                        return std::pair{file, static_cast<std::size_t>(whole)};
+                    });
+                })
+                .here()
+                .then([shown, source, where](std::pair<talcite::fs::File, std::size_t> got) {
+                    *source = talcite::fs::to_string(where);
 
-            const auto whole = static_cast<std::size_t>(file->tellg());
+                    shown->hold(
+                        [file = got.first](std::size_t at, std::size_t most) { return file.read(at, most); },
+                        got.second);
+                })
+                .fail([shown, source, where](const std::exception&) {
+                    *source = "nie udało się otworzyć: " + talcite::fs::to_string(where);
 
-            *source = argv[1];
+                    shown->hold(lump(sample));
+                }));
 
-            shown->hold(
-                [file](std::size_t at, std::size_t most) {
-                    talcite::Bytes made(most);
-
-                    file->clear();
-                    file->seekg(static_cast<std::streamoff>(at));
-                    file->read(reinterpret_cast<char*>(made.data()),
-                               static_cast<std::streamsize>(most));
-
-                    made.resize(static_cast<std::size_t>(file->gcount()));
-
-                    return made;
-                },
-                whole);
-        } else {
-            *source = std::string{"nie udało się otworzyć: "} + argv[1];
-
-            shown->hold(lump(sample));
-        }
+        opening->start();
     } else {
         const std::string said = sample;
 
@@ -293,7 +298,7 @@ int main(int argc, char** argv) {
         shown->marks().all(hunted(said, "wiersz"));
     }
 
-    term.onto(sheet);
+    term.show(sheet);
 
     // Bez ogniska klawisze kończą wędrówkę na korzeniu i legenda nigdy ich nie zobaczy. Podgląd
     // bierze je sam, więc `Pane` nie jest tu potrzebny.

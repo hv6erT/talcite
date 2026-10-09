@@ -1,15 +1,17 @@
 #include "proving.hpp"
 
+#include "faking.hpp"
+
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "talcite/gate.hpp"
-#include "talcite/secured.hpp"
+#include "talcite/address.hpp"
+#include "talcite/listener.hpp"
+#include "talcite/tls.hpp"
 #include "talcite/stream.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 using namespace talcite;
 
@@ -17,158 +19,29 @@ namespace {
 
 const net::Patience soon{15000};
 
-Bytes spelt(const std::string& what) {
-    Bytes made(what.size());
 
-    for (std::size_t at = 0; at < what.size(); ++at) made[at] = static_cast<std::byte>(what[at]);
 
-    return made;
-}
+using faking::Watching;
 
-std::string spelling(const Bytes& what) {
-    std::string made;
-
-    for (const std::byte one : what) made += static_cast<char>(one);
-
-    return made;
-}
-
-// **To nie jest kryptografia i nie udaje nią być.** To atrapa: odwraca bity jednym bajtem, żeby
-// dało się zobaczyć, że treść naprawdę przechodzi przez szew, i wymienia powitanie, żeby pompa
-// miała uścisk dłoni do przeprowadzenia. Cały sens: sprawdzić `Secured` bez żadnej biblioteki.
-class Turning : public net::Secure {
-public:
-    explicit Turning(bool poison = false) : poison_(poison) {}
-
-    [[nodiscard]] bool ready() const override { return said_ && heard_; }
-
-    void push(Bytes given) override {
-        came_.insert(came_.end(), given.begin(), given.end());
-
-        for (;;) {
-            if (came_.empty()) return;
-
-            const std::size_t much = static_cast<std::size_t>(came_.front());
-
-            if (came_.size() < much + 1) return;
-
-            Bytes one(came_.begin() + 1, came_.begin() + 1 + static_cast<std::ptrdiff_t>(much));
-
-            came_.erase(came_.begin(), came_.begin() + 1 + static_cast<std::ptrdiff_t>(much));
-
-            for (std::byte& what : one) what ^= std::byte{0x5A};
-
-            if (!heard_) {
-                if (spelling(one) != "CZESC") {
-                    amiss_ = "Powitanie nie tak brzmi.";
-
-                    return;
-                }
-
-                heard_ = true;
-
-                continue;
-            }
-
-            if (spelling(one) == "TRUCIZNA") {
-                amiss_ = "Trucizna w rekordzie.";
-
-                return;
-            }
-
-            plain_.insert(plain_.end(), one.begin(), one.end());
-        }
-    }
-
-    // Pierwsze pytanie o szyfrogram **napędza** uścisk dłoni — bez tego nikt by go nie zaczął.
-    [[nodiscard]] Bytes pull() override {
-        if (!said_) {
-            said_ = true;
-
-            framed(spelt("CZESC"));
-        }
-
-        Bytes made = std::move(out_);
-
-        out_.clear();
-
-        return made;
-    }
-
-    void write(Bytes given) override {
-        if (poison_) given = spelt("TRUCIZNA");
-
-        for (std::size_t at = 0; at < given.size(); at += 255) {
-            const std::size_t much = std::min<std::size_t>(255, given.size() - at);
-
-            framed(Bytes{given.begin() + static_cast<std::ptrdiff_t>(at),
-                         given.begin() + static_cast<std::ptrdiff_t>(at + much)});
-        }
-    }
-
-    [[nodiscard]] Bytes read() override {
-        Bytes made = std::move(plain_);
-
-        plain_.clear();
-
-        return made;
-    }
-
-    void close() override {}
-
-    [[nodiscard]] std::string amiss() const override { return amiss_; }
-
-private:
-    void framed(Bytes what) {
-        out_.push_back(static_cast<std::byte>(what.size()));
-
-        for (std::byte one : what) out_.push_back(one ^ std::byte{0x5A});
-    }
-
-    Bytes came_;
-    Bytes plain_;
-    Bytes out_;
-    std::string amiss_;
-    bool said_ = false;
-    bool heard_ = false;
-    bool poison_ = false;
-};
-
-class Watching : public net::Keeper {
-public:
-    explicit Watching(bool poison = false) : poison_(poison) {}
-
-    [[nodiscard]] std::unique_ptr<net::Secure> client(std::string) override {
-        return std::make_unique<Turning>(poison_);
-    }
-
-    [[nodiscard]] std::unique_ptr<net::Secure> server() override {
-        return std::make_unique<Turning>();
-    }
-
-private:
-    bool poison_ = false;
-};
-
-net::Gate standing() { return net::Gate{net::Address::loopback(net::Family::four, 0)}; }
+net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
 struct Pair {
-    net::Secured server;
-    net::Secured client;
+    net::TlsStream server;
+    net::TlsStream client;
 };
 
-Pair guarded(const net::Gate& gate, const net::Guard& guard) {
+Pair guarded(const net::Listener& gate, const talcite::Seam<net::TlsProvider>& guard) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
 
     net::Stream one = meeting.await();
     net::Stream two = joining.await();
 
-    auto there = net::Secured::server(std::move(one), guard, soon);
-    auto here = net::Secured::client(std::move(two), guard, "gdziekolwiek", soon);
+    auto there = net::TlsStream::server(std::move(one), guard, soon);
+    auto here = net::TlsStream::client(std::move(two), guard, "gdziekolwiek", soon);
 
-    net::Secured server = there.await();
-    net::Secured client = here.await();
+    net::TlsStream server = there.await();
+    net::TlsStream client = here.await();
 
     return Pair{std::move(server), std::move(client)};
 }
@@ -176,9 +49,9 @@ Pair guarded(const net::Gate& gate, const net::Guard& guard) {
 }
 
 TRIAL("Szew: uścisk dłoni dochodzi do skutku po obu stronach") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -189,31 +62,31 @@ TRIAL("Szew: uścisk dłoni dochodzi do skutku po obu stronach") {
 }
 
 TRIAL("Szew: treść przechodzi w obie strony") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(spelt("tajna wiadomość"), soon).await();
+    both.client.write(bytes("tajna wiadomość"), soon).await();
 
-    same(spelling(both.server.read(1024, soon).await()), std::string{"tajna wiadomość"});
+    same(text(both.server.read(1024, soon).await()), std::string{"tajna wiadomość"});
 
-    both.server.write(spelt("i odpowiedź"), soon).await();
+    both.server.write(bytes("i odpowiedź"), soon).await();
 
-    same(spelling(both.client.read(1024, soon).await()), std::string{"i odpowiedź"});
+    same(text(both.client.read(1024, soon).await()), std::string{"i odpowiedź"});
 }
 
 TRIAL("Szew: sto tysięcy bajtów przechodzi w kawałkach") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
     const std::string much(100000, 'z');
 
-    auto writing = both.client.write(spelt(much), soon);
+    auto writing = both.client.write(bytes(much), soon);
 
     std::string made;
 
@@ -222,7 +95,7 @@ TRIAL("Szew: sto tysięcy bajtów przechodzi w kawałkach") {
 
         if (one.empty()) break;
 
-        made += spelling(one);
+        made += text(one);
     }
 
     writing.await();
@@ -232,23 +105,23 @@ TRIAL("Szew: sto tysięcy bajtów przechodzi w kawałkach") {
 }
 
 TRIAL("Szew: czytanie mniejsze niż rekord zostawia resztę na później") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(spelt("abcdefghij"), soon).await();
+    both.client.write(bytes("abcdefghij"), soon).await();
 
-    same(spelling(both.server.read(4, soon).await()), std::string{"abcd"});
-    same(spelling(both.server.read(4, soon).await()), std::string{"efgh"});
-    same(spelling(both.server.read(4, soon).await()), std::string{"ij"});
+    same(text(both.server.read(4, soon).await()), std::string{"abcd"});
+    same(text(both.server.read(4, soon).await()), std::string{"efgh"});
+    same(text(both.server.read(4, soon).await()), std::string{"ij"});
 }
 
 TRIAL("Szew: zamknięcie drugiej strony daje pustkę") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -258,9 +131,9 @@ TRIAL("Szew: zamknięcie drugiej strony daje pustkę") {
 }
 
 TRIAL("Szew: cisza kończy się terminem") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -276,9 +149,9 @@ TRIAL("Szew: cisza kończy się terminem") {
 }
 
 TRIAL("Szew: drugie czytanie naraz dostaje odmowę") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -301,13 +174,13 @@ TRIAL("Szew: drugie czytanie naraz dostaje odmowę") {
 }
 
 TRIAL("Szew: kłopot zgłoszony przez zabezpieczenie wychodzi na wierzch") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>(true)};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>(true)};
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(spelt("cokolwiek"), soon).await();
+    both.client.write(bytes("cokolwiek"), soon).await();
 
     bool amiss = false;
 
@@ -322,10 +195,66 @@ TRIAL("Szew: kłopot zgłoszony przez zabezpieczenie wychodzi na wierzch") {
     ought(amiss);
 }
 
-TRIAL("Szew: uścisk urwany w połowie odrzuca obietnicę") {
-    const net::Gate gate = standing();
+// Kłopot, którego przejściówka nie rozpoznała, też jest `TlsTrouble` — z powodem „inny"; po stronie
+// serwera bez nazwy, bo serwer o nią nie pyta.
+TRIAL("Szew: kłopot bez rozpoznanego powodu to TlsTrouble z powodem other") {
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>(true)};
+
+    Pair both = guarded(gate, guard);
+
+    both.client.write(bytes("cokolwiek"), soon).await();
+
+    bool amiss = false;
+
+    try {
+        (void)both.server.read(64, soon).await();
+    } catch (const net::TlsTrouble& why) {
+        amiss = true;
+
+        same(why.why(), net::TlsTrouble::Why::other);
+        ought(why.host().empty());
+        ought(why.where().held());
+    }
+
+    ought(amiss);
+}
+
+// Odmowa uścisku z powodem od przejściówki: każdy powód dochodzi do wołającego taki, jaki był, razem
+// z nazwą serwera, o którą pytał klient, i z adresem drugiej strony.
+TRIAL("Szew: odmowa uścisku niesie powód, nazwę serwera i adres") {
+    for (const net::TlsTrouble::Why one : {net::TlsTrouble::Why::ciphers, net::TlsTrouble::Why::untrusted,
+                                           net::TlsTrouble::Why::expired, net::TlsTrouble::Why::misnamed}) {
+        const net::Listener gate = standing();
+
+        const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>(false, one)};
+
+        auto meeting = gate.accept(soon);
+        net::Stream two = net::Stream::connect(gate.mine(), soon).await();
+        const net::Stream there = meeting.await();
+
+        bool refused = false;
+
+        try {
+            (void)net::TlsStream::client(std::move(two), guard, "talcite.test", soon).await();
+        } catch (const net::TlsTrouble& why) {
+            refused = true;
+
+            same(why.why(), one);
+            same(why.host(), std::string{"talcite.test"});
+            ought(why.where() == gate.mine());
+            same(std::string{why.what()}, std::string{"Uścisk odrzucony."});
+        }
+
+        ought(refused);
+    }
+}
+
+TRIAL("Szew: uścisk urwany w połowie odrzuca obietnicę") {
+    const net::Listener gate = standing();
+
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
@@ -333,7 +262,7 @@ TRIAL("Szew: uścisk urwany w połowie odrzuca obietnicę") {
     net::Stream one = meeting.await();
     net::Stream two = joining.await();
 
-    auto here = net::Secured::client(std::move(two), guard, "gdziekolwiek", soon);
+    auto here = net::TlsStream::client(std::move(two), guard, "gdziekolwiek", soon);
 
     // Druga strona nie odpowiada, tylko zamyka.
     one.close();
@@ -350,64 +279,89 @@ TRIAL("Szew: uścisk urwany w połowie odrzuca obietnicę") {
 }
 
 TRIAL("Szew: pisanie i czytanie naraz nie mieszają się na gnieździe") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
     auto reading = both.client.read(1024, soon);
 
-    both.server.write(spelt("od serwera"), soon).await();
-    both.client.write(spelt("od klienta"), soon).await();
+    both.server.write(bytes("od serwera"), soon).await();
+    both.client.write(bytes("od klienta"), soon).await();
 
-    same(spelling(reading.await()), std::string{"od serwera"});
-    same(spelling(both.server.read(1024, soon).await()), std::string{"od klienta"});
+    same(text(reading.await()), std::string{"od serwera"});
+    same(text(both.server.read(1024, soon).await()), std::string{"od klienta"});
 }
 
 // Strażnik jest wartością, więc **można go nie mieć**. Pusty musi powiedzieć to wprost, a nie
 // sięgnąć przez pusty wskaźnik przy pierwszej rundzie uścisku dłoni.
-class Nothing : public net::Keeper {
+class Nothing : public net::TlsProvider {
 public:
-    [[nodiscard]] std::unique_ptr<net::Secure> client(std::string) override { return nullptr; }
+    [[nodiscard]] std::string_view name() const override { return "nothing"; }
 
-    [[nodiscard]] std::unique_ptr<net::Secure> server() override { return nullptr; }
+    [[nodiscard]] std::unique_ptr<net::TlsSession> client(std::string) override { return nullptr; }
+
+    [[nodiscard]] std::unique_ptr<net::TlsSession> server() override { return nullptr; }
 };
 
-TRIAL("Szew: pusty strażnik odmawia z powodem") {
-    const net::Gate gate = standing();
+// Pusty szew to brak dostawcy — błąd talcite, więc idzie językiem talcite: `Unbound`, ten sam typ,
+// który rzuca `Seam::provider()`. Obietnica go odrzuca, zamiast rzucać wołającemu w twarz.
+TRIAL("Szew: pusty szew odmawia Unbound, a provider() na nim rzuca to samo") {
+    const net::Listener gate = standing();
 
     auto joining = net::Stream::connect(gate.mine(), soon);
 
     net::Stream two = joining.await();
 
+    const talcite::Seam<net::TlsProvider> none;
+
+    ought(!none.bound());
+
     bool amiss = false;
 
     try {
-        (void)net::Secured::client(std::move(two), net::Guard{}, "gdziekolwiek", soon).await();
-    } catch (const net::Trouble&) {
+        (void)none.provider();
+    } catch (const talcite::Unbound& why) {
+        amiss = std::string{why.what()} == "No provider for TLS.";
+    }
+
+    ought(amiss);
+
+    amiss = false;
+
+    try {
+        (void)net::TlsStream::client(std::move(two), none, "gdziekolwiek", soon).await();
+    } catch (const talcite::Unbound&) {
         amiss = true;
     }
 
     ought(amiss);
+}
+
+TRIAL("Szew: dostawca ma nazwę, a szew go oddaje") {
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
+
+    ought(guard.bound());
+    same(std::string{guard.provider().name()}, std::string{"flipping"});
 }
 
 TRIAL("Szew: strażnik oddający pustkę odmawia z powodem") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
     auto joining = net::Stream::connect(gate.mine(), soon);
 
     net::Stream two = joining.await();
 
-    const net::Guard guard{std::make_shared<Nothing>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Nothing>()};
 
-    ought(guard.held());
-    ought(guard.server() == nullptr);
+    ought(guard.bound());
+    ought(guard.provider().server() == nullptr);
 
     bool amiss = false;
 
     try {
-        (void)net::Secured::server(std::move(two), guard, soon).await();
+        (void)net::TlsStream::server(std::move(two), guard, soon).await();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -415,13 +369,13 @@ TRIAL("Szew: strażnik oddający pustkę odmawia z powodem") {
     ought(amiss);
 }
 
-// Odmowy z `Secured` wychodziły **napisem**, nie kłopotem: `reject` opakowuje napis w `Rejected`,
+// Odmowy z `TlsStream` wychodziły **napisem**, nie kłopotem: `reject` opakowuje napis w `Rejected`,
 // więc żadnej z nich nie łapało `catch (const Trouble&)`. Reszta biblioteki odmawia kłopotem
 // i te cztery miejsca muszą robić tak samo.
 TRIAL("Szew: odmowy wychodzą kłopotem, a nie samym napisem") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -440,7 +394,7 @@ TRIAL("Szew: odmowy wychodzą kłopotem, a nie samym napisem") {
     amiss = false;
 
     try {
-        both.client.write(spelt("do zamkniętego"), soon).await();
+        both.client.write(bytes("do zamkniętego"), soon).await();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -453,9 +407,9 @@ TRIAL("Szew: odmowy wychodzą kłopotem, a nie samym napisem") {
 // miejsce i drugie zastaje wolne — próba przechodziła wtedy z przypadku, raz na kilkanaście
 // przebiegów sprawdzając co innego, niż mówi jej nazwa.
 TRIAL("Szew: drugie czytanie naraz odmawia kłopotem") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     Pair both = guarded(gate, guard);
 
@@ -478,7 +432,7 @@ TRIAL("Szew: drugie czytanie naraz odmawia kłopotem") {
     }
 }
 
-// **Zamknięcie w trakcie pisania.** `Secured::close()` dotyka składowej, którą w tej samej chwili
+// **Zamknięcie w trakcie pisania.** `TlsStream::close()` dotyka składowej, którą w tej samej chwili
 // czyta robotnik puli prowadzący zapis — a `Stream` trzyma zwykły `shared_ptr`, nie atomowy.
 // Zapis obok odczytu tego samego wskazania to UB, więc czytelnicy biorą dziś kopię spod zamka,
 // a zamknięcie idzie pod tym samym zamkiem.
@@ -487,9 +441,9 @@ TRIAL("Szew: drugie czytanie naraz odmawia kłopotem") {
 // **nikt się nie wywraca ani nie wiesza**, a pod TSan-em pokrywa ścieżkę, której cała reszta prób
 // nie dotykała: bez niej sanitizer nie miał czego zobaczyć.
 TRIAL("Szew: zamknięcie w trakcie zapisu nikogo nie wywraca") {
-    const net::Gate gate = standing();
+    const net::Listener gate = standing();
 
-    const net::Guard guard{std::make_shared<Watching>()};
+    const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
     for (int turn = 0; turn < 8; ++turn) {
         Pair both = guarded(gate, guard);
@@ -503,7 +457,7 @@ TRIAL("Szew: zamknięcie w trakcie zapisu nikogo nie wywraca") {
 
         Promise<void> wrote = both.client.write(std::move(much), soon);
 
-        wrote.go();
+        wrote.start();
 
         std::thread other{[&both] { both.client.close(); }};
 

@@ -7,10 +7,9 @@
 
 #include "talcite/address.hpp"
 #include "talcite/peer.hpp"
-#include "talcite/post.hpp"
-#include "talcite/scout.hpp"
+#include "talcite/udp.hpp"
+#include "talcite/stunclient.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "servers.hpp"
 #include "speaking.hpp"
@@ -50,10 +49,11 @@ bool taken(const std::string& said, net::Address& made) {
     return true;
 }
 
-std::string named(net::Scout::Mapping what) {
+std::string named(net::StunClient::Mapping what) {
     switch (what) {
-        case net::Scout::Mapping::alike: return "zgodne — przebijanie ma sens";
-        case net::Scout::Mapping::symmetric: return "symetryczne — przebijanie nie zadziała";
+        case net::StunClient::Mapping::alike: return "zgodne — przebijanie ma sens";
+        case net::StunClient::Mapping::symmetric:
+            return "symetryczne — przebijanie nie zadziała";
         default: return "nieznane";
     }
 }
@@ -81,9 +81,9 @@ int main(int count, char** given) {
     const net::Patience soon{8000};
 
     try {
-        net::Post mine{net::Address::any(net::Family::four, 0)};
+        net::Udp mine{net::Address::any(net::Family::four, 0)};
 
-        net::Scout scout{mine, soon};
+        net::StunClient scout{mine, soon};
 
         for (const showing::Server& one : showing::known()) {
             try {
@@ -106,13 +106,14 @@ int main(int count, char** given) {
 
         net::Peer peer{mine};
 
-        const std::vector<net::Way> ways = peer.gather(scout, net::Patience{12000}).await();
+        const std::vector<net::Candidate> ways = peer.gather(scout, net::Patience{12000}).await();
 
         std::cout << "\nmoje drogi — przepisz je drugiej stronie:\n";
 
-        for (const net::Way& one : ways)
+        for (const net::Candidate& one : ways)
             std::cout << "    " << one.where.spelled()
-                      << (one.sort == net::Way::Sort::here ? "   (własna karta)" : "   (odbite)")
+                      << (one.sort == net::Candidate::Sort::here ? "   (własna karta)"
+                                                                 : "   (odbite)")
                       << "\n";
 
         std::vector<std::string> said;
@@ -143,7 +144,7 @@ int main(int count, char** given) {
                 return 2;
             }
 
-            peer.add(net::Way{where, net::Way::Sort::seen});
+            peer.add(net::Candidate{where, net::Candidate::Sort::seen});
 
             std::cout << "\ndobijam się do " << where.spelled() << "\n";
         }

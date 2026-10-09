@@ -16,7 +16,20 @@ namespace talcite::ui {
 
 class Root;
 
-using Handle = std::uint64_t;
+class Hook {
+public:
+    Hook() = default;
+
+    [[nodiscard]] bool empty() const { return number_ == 0; }
+
+private:
+    friend class Handler;
+
+    Hook(std::type_index type, std::uint64_t number) : type_(type), number_(number) {}
+
+    std::type_index type_ = typeid(void);
+    std::uint64_t number_ = 0;
+};
 
 class Handler {
 public:
@@ -30,55 +43,73 @@ public:
     Handler& operator=(Handler&&) = delete;
 
     template <std::derived_from<Event> One>
-    Handle on(std::function<bool(One&)> what) {
+    Hook on(std::function<bool(One&)> what) {
         return kept(typeid(One), std::make_shared<std::function<bool(One&)>>(std::move(what)));
     }
 
-    template <std::derived_from<Event> One>
-    void off(Handle which) {
-        freed(typeid(One), which);
-    }
+    void off(Hook& which);
 
     [[nodiscard]] virtual Handler* parent() const;
 
 protected:
     template <std::derived_from<Event> One>
     bool trigger(One& what) {
-        if (what.at_ == nullptr) what.at_ = this;
+        if (what.target_ == nullptr) what.target_ = this;
 
         return carried(what);
     }
 
-    virtual bool react(KeyEvent& what);
-    virtual bool react(MouseEvent& what);
-    virtual bool react(ClickEvent& what);
-    virtual bool react(DoubleClickEvent& what);
-    virtual bool react(WheelEvent& what);
-    virtual bool react(SizeEvent& what);
-    virtual bool react(FocusEvent& what);
-    virtual bool react(UnfocusEvent& what);
-    virtual bool react(ScrollEvent& what);
-    virtual bool react(PickEvent& what);
-    virtual bool react(CloseEvent& what);
-    virtual bool react(HotEvent<KeyEvent>& what);
-    virtual bool react(PasteEvent& what);
+    template <std::derived_from<Event> One>
+    bool trigger(One&& what) {
+        return trigger(static_cast<One&>(what));
+    }
+
+    virtual bool handle(KeyEvent& what);
+    virtual bool handle(MouseEvent& what);
+    virtual bool handle(ClickEvent& what);
+    virtual bool handle(DoubleClickEvent& what);
+    virtual bool handle(WheelEvent& what);
+    virtual bool handle(SizeEvent& what);
+    virtual bool handle(FocusEvent& what);
+    virtual bool handle(UnfocusEvent& what);
+    virtual bool handle(EnableEvent& what);
+    virtual bool handle(DisableEvent& what);
+    virtual bool handle(ScrollEvent& what);
+    virtual bool handle(PickEvent& what);
+    virtual bool handle(CloseEvent& what);
+    virtual bool handle(ShortcutEvent& what);
+    virtual bool handle(PasteEvent& what);
 
 private:
     friend class Root;
 
+    template <class One>
+    [[nodiscard]] static consteval bool known() {
+        return requires(Handler& at, One& what) { at.handle(what); };
+    }
+
+    template <class One>
+    [[nodiscard]] static consteval bool exact() {
+        return requires { static_cast<bool (Handler::*)(One&)>(&Handler::handle); };
+    }
+
     template <std::derived_from<Event> One>
     bool carried(One& what) {
-        bool widget = true;
+        static_assert(!known<One>() || exact<One>(),
+                      "talcite::ui::Handler: an event derived from a library event needs its own handle");
+
+        bool widget = known<One>();
         bool caller = true;
         bool took = false;
 
         for (Handler* at = this; at != nullptr;) {
             Handler* up = at->parent();
 
-            if (widget && at->react(what)) {
-                widget = false;
-                took = true;
-            }
+            if constexpr (known<One>())
+                if (widget && at->handle(what)) {
+                    widget = false;
+                    took = true;
+                }
 
             if (caller && at->handed(what)) {
                 caller = false;
@@ -107,9 +138,7 @@ private:
 
     struct Hands;
 
-    Handle kept(std::type_index which, std::shared_ptr<void> what);
-
-    void freed(std::type_index which, Handle one);
+    Hook kept(std::type_index which, std::shared_ptr<void> what);
 
     [[nodiscard]] std::vector<std::shared_ptr<void>> among(std::type_index which) const;
 

@@ -37,31 +37,40 @@ public:
 
     void cell(Size given);
 
-    [[nodiscard]] std::optional<Spot> caret() const;
+    [[nodiscard]] Graphics graphics() const { return graphics_; }
+
+    void graphics(Graphics given);
+
+    [[nodiscard]] std::optional<Spot> caret() const override;
 
     [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override;
 
-    [[nodiscard]] Node* focus() const { return focus_; }
+    [[nodiscard]] Node* focused_node() const { return focus_; }
 
-    void focus(Node* one);
+    void move_focus(Node* one);
 
-    bool deal(KeyEvent& what);
+    bool dispatch(KeyEvent& what);
 
-    bool deal(PasteEvent& what);
+    bool dispatch(PasteEvent& what);
 
-    bool deal(SizeEvent& what);
+    bool dispatch(SizeEvent& what);
 
-    bool deal(MouseEvent& what);
+    bool dispatch(MouseEvent& what);
 
-    bool deal(WheelEvent& what);
+    bool dispatch(WheelEvent& what);
 
-    bool deal(ClickEvent& what);
+    bool dispatch(ClickEvent& what);
 
-    bool deal(DoubleClickEvent& what);
+    bool dispatch(DoubleClickEvent& what);
 
-    [[nodiscard]] bool clicking() const { return clicking_; }
+    [[nodiscard]] std::chrono::milliseconds double_click() const { return double_click_; }
 
-    void settle();
+    void double_click(std::chrono::milliseconds given) { double_click_ = given; }
+
+    void capture(Node& one);
+
+protected:
+    [[nodiscard]] virtual bool foresee(KeyEvent& what);
 
 private:
     friend class Children;
@@ -70,13 +79,12 @@ private:
     Skin skin_;
     Blocks blocks_ = Blocks::basic;
     Size cell_;
+    Graphics graphics_ = Graphics::none;
 
     Node* under(Spot where);
 
     void minded(const MouseEvent& what);
 
-    // Doręczanie liczy się, bo w jego trakcie nie wolno nikogo zwolnić. Licznik, a nie znacznik,
-    // bo uchwyt ma prawo doręczyć kolejne zdarzenie w środku pierwszego.
     template <std::derived_from<Event> One>
     bool sent(Node& one, One& what) {
         ++busy_;
@@ -108,11 +116,12 @@ private:
 
     Spot began_;
     Mouse pressing_ = Mouse::none;
+    std::weak_ptr<Node> held_;
 
+    std::chrono::milliseconds double_click_{400};
+    std::optional<std::chrono::steady_clock::time_point> first_click_;
     Spot waiting_;
     Mouse clicked_ = Mouse::none;
-    Mods marked_;
-    bool clicking_ = false;
 };
 
 }

@@ -4,7 +4,7 @@
 #include <utility>
 
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
@@ -21,31 +21,31 @@ struct Lines {
 
 class Line : public Node {
 public:
-    explicit Line(std::string text = {}, LineStyle lines = LineStyle::thin);
+    explicit Line(std::string text = {}, Border border = Border::thin);
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
     void text(std::string given) { text_ = std::move(given); }
 
-    [[nodiscard]] LineStyle border() const { return lines_; }
+    [[nodiscard]] Border border() const { return border_; }
 
-    void border(LineStyle given) { lines_ = given; }
+    void border(Border given) { border_ = given; }
 
-    [[nodiscard]] JustifyStyle justify() const { return justify_; }
+    [[nodiscard]] Justify justify() const { return justify_; }
 
-    void justify(JustifyStyle given) { justify_ = given; }
+    void justify(Justify given) { justify_ = given; }
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
 private:
     std::string text_;
-    LineStyle lines_ = LineStyle::thin;
-    JustifyStyle justify_ = JustifyStyle::center;
+    Border border_ = Border::thin;
+    Justify justify_ = Justify::center;
 };
 
 }

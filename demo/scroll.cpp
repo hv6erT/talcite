@@ -5,7 +5,7 @@
 #include "talcite/frame.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/vscroll.hpp"
+#include "talcite/scroll.hpp"
 
 namespace {
 
@@ -16,7 +16,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -33,7 +33,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto scroll = std::make_shared<talcite::ui::VScroll>(talcite::ui::ScrollStyle{true});
+    const auto scroll = std::make_shared<talcite::ui::Scroll>(talcite::ui::Axis::vertical, talcite::ui::ScrollShape{true});
     const auto column = std::make_shared<talcite::ui::Column>();
 
     for (int which = 0; which < 200; ++which)
@@ -48,7 +48,7 @@ int main() {
 
     sheet.children().add(frame);
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — przewijanie");
 
     term.run();

@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,8 @@ public:
         if (alive_ != nullptr) --*alive_;
     }
 
+    using ui::Node::broadcast;
+
     template <typename One>
     bool send(One& what) {
         return trigger(what);
@@ -37,10 +40,10 @@ public:
 
     void eats(bool given) { eats_ = given; }
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
 protected:
-    bool react(ui::KeyEvent& what) override {
+    bool handle(ui::KeyEvent& what) override {
         (void)what;
 
         if (told_ != nullptr) told_->push_back(named_);
@@ -72,6 +75,29 @@ TRIAL("Node: dopięte dziecko zna rodzica") {
     ought(down->parent() == &up);
     same(up.much(), std::size_t{1});
     ought(up.first() == down.get());
+}
+
+// `index` oddaje numer dziecka wśród dzieci — i pustkę dla węzła, który dzieckiem nie jest,
+// także po odpięciu. Lista, menu i pasek menu liczyły to każde własną pętlą.
+TRIAL("Node: index zna numer dziecka i nie zna obcego") {
+    Twig top{"góra"};
+
+    const std::shared_ptr<Twig> first = twig("pierwsze");
+    const std::shared_ptr<Twig> second = twig("drugie");
+    const std::shared_ptr<Twig> stranger = twig("obce");
+
+    top.children().add(first);
+    top.children().add(second);
+
+    same(top.children().find(*first), std::optional<std::size_t>{0});
+    same(top.children().find(*second), std::optional<std::size_t>{1});
+    ought(!top.children().find(*stranger).has_value());
+    ought(!top.children().find(top).has_value());
+
+    (void)top.children().remove(first.get());
+
+    ought(!top.children().find(*first).has_value());
+    same(top.children().find(*second), std::optional<std::size_t>{0});
 }
 
 TRIAL("Node: świeży węzeł nie ma rodzica ani dzieci") {
@@ -244,7 +270,7 @@ TRIAL("Node: rozdanie schodzi po kolei i kończy się na pierwszym, który weźm
     for (const auto& [named, which] :
          {std::pair{std::string{"raz"}, one}, std::pair{std::string{"dwa"}, two},
           std::pair{std::string{"trzy"}, three}})
-        (void)which->on<ui::HotEvent<ui::KeyEvent>>([&said, named](ui::HotEvent<ui::KeyEvent>&) {
+        (void)which->on<ui::ShortcutEvent>([&said, named](ui::ShortcutEvent&) {
             said.push_back(named);
 
             return named == "dwa";
@@ -252,7 +278,7 @@ TRIAL("Node: rozdanie schodzi po kolei i kończy się na pierwszym, który weźm
 
     ui::KeyEvent what{U'x'};
 
-    ought(up.offer(what));
+    ought(up.broadcast(what));
 
     same(static_cast<int>(said.size()), 2);
     same(said[0], std::string{"raz"});
@@ -271,7 +297,7 @@ TRIAL("Node: rozdanie przeżywa przebudowę drzewa w uchwycie") {
     up.children().add(one);
     up.children().add(two);
 
-    (void)one->on<ui::HotEvent<ui::KeyEvent>>([&up](ui::HotEvent<ui::KeyEvent>&) {
+    (void)one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
         for (int at = 0; at < 64; ++at) up.children().add(twig("dokładka"));
 
         return false;
@@ -279,7 +305,7 @@ TRIAL("Node: rozdanie przeżywa przebudowę drzewa w uchwycie") {
 
     int done = 0;
 
-    (void)two->on<ui::HotEvent<ui::KeyEvent>>([&done](ui::HotEvent<ui::KeyEvent>&) {
+    (void)two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
         ++done;
 
         return true;
@@ -287,7 +313,7 @@ TRIAL("Node: rozdanie przeżywa przebudowę drzewa w uchwycie") {
 
     ui::KeyEvent what{U'x'};
 
-    ought(up.offer(what));
+    ought(up.broadcast(what));
 
     same(done, 1);
     same(up.much(), std::size_t{66});
@@ -303,7 +329,7 @@ TRIAL("Node: rozdanie przeżywa opróżnienie drzewa w uchwycie") {
     up.children().add(one);
     up.children().add(two);
 
-    (void)one->on<ui::HotEvent<ui::KeyEvent>>([&up](ui::HotEvent<ui::KeyEvent>&) {
+    (void)one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
         up.children().clear();
 
         return false;
@@ -311,7 +337,7 @@ TRIAL("Node: rozdanie przeżywa opróżnienie drzewa w uchwycie") {
 
     int done = 0;
 
-    (void)two->on<ui::HotEvent<ui::KeyEvent>>([&done](ui::HotEvent<ui::KeyEvent>&) {
+    (void)two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
         ++done;
 
         return true;
@@ -321,7 +347,7 @@ TRIAL("Node: rozdanie przeżywa opróżnienie drzewa w uchwycie") {
 
     // Zdjęte rodzeństwo dostaje zdarzenie mimo wszystko, bo migawka trzyma je przy życiu — tak samo
     // zachowują się uchwyty w `Handler`.
-    ought(up.offer(what));
+    ought(up.broadcast(what));
 
     same(done, 1);
     ought(up.children().empty());
@@ -420,7 +446,7 @@ TRIAL("Node: zdarzenie wędruje drzewem w górę") {
     same(told.size(), std::size_t{3});
     same(told[0], std::string{"spód"});
     same(told[2], std::string{"szczyt"});
-    ought(what.at() == low.get());
+    ought(what.target() == low.get());
 }
 
 TRIAL("Node: odpięta gałąź nie oddaje zdarzeń dawnemu rodzicowi") {
@@ -451,7 +477,7 @@ TRIAL("Node: uchwyt dopięty do rodzica łapie zdarzenie z dziecka") {
     const ui::Handler* seen = nullptr;
 
     (void)up->on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
-        seen = what.at();
+        seen = what.target();
 
         return true;
     });

@@ -6,7 +6,7 @@
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
@@ -26,7 +26,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -40,16 +40,16 @@ void typed(ui::Root& top, const std::string& what) {
     std::size_t at = 0;
 
     while (at < what.size()) {
-        ui::KeyEvent one{letter(what, at)};
+        ui::KeyEvent one{utf8::decode(what, at)};
 
-        (void)top.deal(one);
+        (void)top.dispatch(one);
     }
 }
 
 void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
     ui::KeyEvent one{ui::Key{code, mods}};
 
-    (void)top.deal(one);
+    (void)top.dispatch(one);
 }
 
 }
@@ -149,7 +149,7 @@ TRIAL("Pole: wklejenie wchodzi przy kursorze, końce wierszy jako odstępy") {
 
     ui::PasteEvent what{"raz\ndwa"};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(one->text(), std::string{"abraz dwa"});
     same(one->cursor(), static_cast<std::size_t>(9));
@@ -237,7 +237,7 @@ TRIAL("Pole: klik trafia we właściwy znak także w głębi drzewa") {
 
     ui::ClickEvent what{{5, 2}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
     same(one->cursor(), static_cast<std::size_t>(3));
 }
 
@@ -252,15 +252,15 @@ TRIAL("Pole: klik stawia kursor tam, gdzie kliknięto") {
 
     ui::ClickEvent what{{3, 0}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(one->cursor(), static_cast<std::size_t>(3));
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     // Klik za treścią stawia kursor na jej końcu.
     ui::ClickEvent aside{{9, 0}, ui::Mouse::left};
 
-    ought(top.deal(aside));
+    ought(top.dispatch(aside));
 
     same(one->cursor(), static_cast<std::size_t>(6));
 }
@@ -272,13 +272,13 @@ TRIAL("Pole: wyłączone nie bierze ogniska i nie przyjmuje znaków") {
 
     top.children().add(one);
 
-    one->able(false);
+    one->enabled(false);
 
     ought(!one->focusable());
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     typed(top, "c");
 
@@ -359,7 +359,7 @@ TRIAL("Podpowiedź: Tab jej nie uzupełnia i idzie wyżej") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(!top.deal(tab));
+    ought(!top.dispatch(tab));
 
     same(one->text(), std::string{"ka"});
     same(one->guessed(), std::string{"talog"});
@@ -408,13 +408,13 @@ TRIAL("Podpowiedź: niepasująca do treści odpada") {
     ui::KeyEvent tab{ui::Code::tab};
 
     // Bez podpowiedzi Tab do pola nie należy.
-    ought(!top.deal(tab));
+    ought(!top.dispatch(tab));
 }
 
 namespace {
 
 struct Asked {
-    std::shared_ptr<ui::VeilWindow> window;
+    std::shared_ptr<ui::Modals> window;
     std::shared_ptr<ui::Dialog> dialog;
     std::shared_ptr<ui::Field> field;
     std::shared_ptr<ui::Button> yes;
@@ -424,7 +424,7 @@ struct Asked {
 Asked naming(ui::Root& top, int* done) {
     Asked made;
 
-    made.window = std::make_shared<ui::VeilWindow>();
+    made.window = std::make_shared<ui::Modals>();
     made.dialog = std::make_shared<ui::Dialog>();
     made.field = std::make_shared<ui::Field>(12);
     made.yes = proving::doing(std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
@@ -478,7 +478,7 @@ TRIAL("Dialog: litera w polu wpisuje się, a nie naciska przycisku") {
 }
 
 // **Pole przepuszcza Enter, a okno go nie przechwytuje.** Nikt więc nie zatwierdza formularza za
-// wołającego — kto tego chce, wiesza uchwyt na polu i sam decyduje, co znaczy „gotowe". Zasłona
+// wołającego — kto tego chce, słucha `SubmitEvent` i sam decyduje, co znaczy „gotowe". Zasłona
 // klawisz połyka, bo jest modalna, ale nic nim nie naciska.
 TRIAL("Dialog: Enter w polu nie naciska żadnego przycisku") {
     ui::Root top;
@@ -491,26 +491,28 @@ TRIAL("Dialog: Enter w polu nie naciska żadnego przycisku") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
 
     same(done, 0);
     same(asked.field->text(), std::string{"nazwa"});
 }
 
-// Tak wygląda to samo napisane po nowemu: czynność „gotowe" wisi tam, gdzie stoi ognisko.
-TRIAL("Dialog: Enter w polu robi to, co dopiął wołający") {
+// Enter w polu to `SubmitEvent`, a zdarzenie idzie w górę: jeden uchwyt na oknie słyszy każde pole
+// i naciska to, co wołający uzna za OK. Pole nie zna przycisku. Enter na przycisku z ogniskiem
+// naciska ten przycisk i `SubmitEvent` nie powstaje — inaczej Enter na „Nie" zatwierdzałby okno.
+TRIAL("Dialog: Enter w polu ogłasza SubmitEvent, który słyszy okno") {
     ui::Root top;
 
     int done = 0;
 
     const Asked asked = naming(top, &done);
 
-    int ready = 0;
+    int submitted = 0;
 
-    (void)asked.field->on<ui::KeyEvent>([&ready](ui::KeyEvent& what) {
-        if (what.key() != ui::Code::enter) return false;
+    (void)asked.dialog->on<ui::SubmitEvent>([&submitted, yes = asked.yes](ui::SubmitEvent&) {
+        ++submitted;
 
-        ++ready;
+        yes->pick();
 
         return true;
     });
@@ -519,10 +521,29 @@ TRIAL("Dialog: Enter w polu robi to, co dopiął wołający") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
 
-    same(ready, 1);
+    same(submitted, 1);
+    same(done, 1);
     same(asked.field->text(), std::string{"nazwa"});
+
+    int refused = 0;
+
+    (void)asked.no->on<ui::PickEvent>([&refused](ui::PickEvent&) {
+        ++refused;
+
+        return true;
+    });
+
+    asked.no->focus();
+
+    ui::KeyEvent again{ui::Code::enter};
+
+    ought(top.dispatch(again));
+
+    same(refused, 1);
+    same(submitted, 1);
+    same(done, 1);
 }
 
 // Esc w polu **nie zamyka okna** — pole go nie bierze, a zasłona tylko połyka. Kto chce zamykanie,
@@ -536,9 +557,9 @@ TRIAL("Dialog: Esc w polu okna nie zamyka") {
 
     ui::KeyEvent what{ui::Code::escape};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    ought(!asked.window->veils().empty());
+    ought(!asked.window->empty());
 }
 
 // Tab należy do wędrówki ogniska i tylko do niej — pole przestało go brać, więc nie ma już
@@ -552,9 +573,9 @@ TRIAL("Dialog: Tab w polu bez podpowiedzi przechodzi do przycisku") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
+    ought(top.dispatch(tab));
 
-    same(top.focus(), static_cast<ui::Node*>(asked.yes.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
 // Tab **zawsze** przenosi ognisko, także wtedy, gdy pole ma co uzupełniać. Wcześniej pierwszy Tab
@@ -572,10 +593,10 @@ TRIAL("Dialog: Tab w polu z podpowiedzią przenosi ognisko od razu") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
+    ought(top.dispatch(tab));
 
     same(asked.field->text(), std::string{"na"});
-    same(top.focus(), static_cast<ui::Node*>(asked.yes.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
 // **Pole liczbowe to jedna lambda, a nie osobny widżet.** Midnight Commander nie ma widżetu
@@ -610,7 +631,7 @@ TRIAL("Pole: filtr odsiewa przy wklejaniu, resztę wpuszcza") {
 
     ui::PasteEvent what{"12ab34"};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     // Jeden zły znak w środku nie unieważnia całego wklejenia.
     same(one->text(), std::string{"1234"});
@@ -697,7 +718,7 @@ TRIAL("Kursor: zagnieżdżone pole składa położenie z prostokątów") {
 TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
     ui::Root top;
 
-    const auto scroll = std::make_shared<ui::Scroll>(ui::ScrollStyle{false});
+    const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::both, ui::ScrollShape{false});
     const auto column = std::make_shared<ui::Column>();
 
     for (int at = 0; at < 10; ++at) column->children().add(std::make_shared<ui::Field>(6, "ab"));
@@ -709,6 +730,16 @@ TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
     top.children().add(scroll);
 
     away->focus();
+
+    // Pierwsza klatka po zmianie ogniska idzie za nim — przewijak dosuwa pole do dolnej krawędzi
+    // i kursor stoi na niej. Potem przewinięcie odjeżdża (jak kółkiem), pole zostaje w ognisku
+    // poza oknem i kursora nie ma.
+    (void)top.render({{0, 0}, {8, 3}});
+
+    ought(top.caret().has_value());
+    same(*top.caret(), (ui::Spot{2, 2}));
+
+    scroll->shift({0, 0});
 
     (void)top.render({{0, 0}, {8, 3}});
 
@@ -762,7 +793,7 @@ TRIAL("Field: rdzeń roli można podmienić") {
 
     Style look{};
 
-    look.ink = Color{false, 3, 3, 3};
+    look.foreground = Color{false, 3, 3, 3};
 
     these["moje.pole"] = look;
 
@@ -771,5 +802,101 @@ TRIAL("Field: rdzeń roli można podmienić") {
 
     const View made = top.render({{0, 0}, {6, 1}});
 
-    same(made.at({0, 0}).style.ink, (Color{false, 3, 3, 3}));
+    same(made.at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
+}
+
+TRIAL("Pole ukryte: kropki zamiast znaków, treść bez zmian") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(10, "tajne");
+
+    one->concealed(true);
+
+    top.children().add(one);
+
+    one->focus();
+
+    typed(top, "!");
+
+    same(one->text(), std::string{"tajne!"});
+    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••••"});
+    ought(one->concealed());
+
+    one->concealed(false);
+
+    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"tajne!"});
+}
+
+TRIAL("Pole ukryte: znak szeroki to jedna kropka") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(10, "日本ab");
+
+    one->concealed(true);
+
+    top.children().add(one);
+
+    one->focus();
+
+    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••"});
+    same(*top.caret(), (ui::Spot{4, 0}));
+}
+
+TRIAL("Pole ukryte: przewija się po kropkach") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(4, "日本日本");
+
+    one->concealed(true);
+
+    top.children().add(one);
+
+    one->focus();
+
+    same(read(top.render({{0, 0}, {4, 1}}), 0), std::string{"•••"});
+    same(*top.caret(), (ui::Spot{3, 0}));
+}
+
+TRIAL("Pole ukryte: klik liczy kratki kropkami") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(10, "日本日本");
+
+    one->concealed(true);
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {10, 1}});
+
+    ui::ClickEvent what{{2, 0}, ui::Mouse::left};
+
+    ought(top.dispatch(what));
+    same(one->cursor(), static_cast<std::size_t>(2));
+}
+
+TRIAL("Pole ukryte: bez podpowiedzi") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(10, "ka");
+
+    one->guess([](const std::string&) { return std::string{"katalog"}; });
+
+    same(one->guessed(), std::string{"talog"});
+
+    one->concealed(true);
+
+    ought(one->guessed().empty());
+
+    top.children().add(one);
+
+    one->focus();
+
+    typed(top, "t");
+
+    ought(one->guessed().empty());
+    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"•••"});
+
+    one->concealed(false);
+
+    same(one->guessed(), std::string{"alog"});
 }

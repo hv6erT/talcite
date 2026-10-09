@@ -5,16 +5,16 @@
 
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
-#include "talcite/menuline.hpp"
-#include "talcite/menuwindow.hpp"
+#include "talcite/menuseparator.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/message.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
@@ -29,7 +29,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -43,11 +43,11 @@ talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
-talcite::Style painted(talcite::Color ink, talcite::Color paper) {
+talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -112,13 +112,13 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
-    const auto menus = std::make_shared<talcite::ui::MenuWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
 
-    const auto dialogs = std::make_shared<talcite::ui::VeilWindow>();
+    const auto dialogs = std::make_shared<talcite::ui::Modals>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>("/etc");
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -127,7 +127,7 @@ int main() {
                                                        "F5 czekanie  F6 skórka");
 
     const auto list = std::make_shared<talcite::ui::List>(talcite::ui::plenty, talcite::ui::plenty,
-                                                       talcite::ui::ListStyle{true});
+                                                       talcite::ui::ScrollShape{true});
 
     for (const char* one :
          {"..", "GNUstep", "ImageMagick-7", "ModemManager", "NetworkManager", "ODBCDataSources",
@@ -139,14 +139,14 @@ int main() {
     column->children().add(list);
 
     frame->children().add(column);
-    dialogs->body()->children().add(frame);
-    menus->body()->children().add(dialogs);
-    legend->body()->children().add(menus);
+    dialogs->content(frame);
+    menus->content(dialogs);
+    legend->content(menus);
 
     const auto file = menus->add("Plik");
 
     file->children().add(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"));
-    file->children().add(std::make_shared<talcite::ui::MenuLine>());
+    file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
     file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
                           [&term] { term.stop(); }));
 
@@ -168,7 +168,7 @@ int main() {
         const std::weak_ptr<talcite::ui::Message> weak = one;
 
         for (const std::pair<std::string, char32_t>& what : these) {
-            const std::shared_ptr<talcite::ui::Button> made = one->add(what.first);
+            const std::shared_ptr<talcite::ui::Button> made = one->buttons().add(what.first);
 
             if (what.second != 0) made->keys().add(what.second);
 
@@ -248,7 +248,7 @@ int main() {
 
     list->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — powiadomienia");
 
     term.run();

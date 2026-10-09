@@ -4,16 +4,16 @@
 
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/history.hpp"
+#include "talcite/historyfield.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/row.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 
 #include "doing.hpp"
 
@@ -24,7 +24,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -38,11 +38,11 @@ talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
-talcite::Style painted(talcite::Color ink, talcite::Color paper) {
+talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
-    made.ink = ink;
-    made.paper = paper;
+    made.foreground = foreground;
+    made.background = background;
 
     return made;
 }
@@ -83,8 +83,8 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
-    const auto veils = std::make_shared<talcite::ui::VeilWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto modals = std::make_shared<talcite::ui::Modals>();
 
     const auto column = std::make_shared<talcite::ui::Column>();
     const auto frame = std::make_shared<talcite::ui::Frame>("Wykonane");
@@ -95,7 +95,7 @@ int main() {
 
     const auto line = std::make_shared<talcite::ui::Row>();
     const auto sign = std::make_shared<talcite::ui::Span>("Polecenie: ");
-    const auto said = std::make_shared<talcite::ui::History>(talcite::ui::plenty);
+    const auto said = std::make_shared<talcite::ui::HistoryField>(talcite::ui::plenty);
 
     // **Klawisz rozwijający podaje aplikacja**, bo biblioteka żadnego sobie nie przypisuje — i leży
     // tam, gdzie klawisze wszystkich innych widżetów, czyli w `keys()`. Modyfikator jest częścią
@@ -131,8 +131,8 @@ int main() {
     column->children().add(line);
     column->children().add(frame);
 
-    veils->body()->children().add(column);
-    legend->body()->children().add(veils);
+    modals->content(column);
+    legend->content(modals);
 
     // Enter nie należy do pola — pole go przepuszcza, więc łapiemy go tutaj i to jest miejsce,
     // w którym polecenie „się liczy".
@@ -173,7 +173,7 @@ int main() {
 
     said->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — historia poleceń");
 
     term.run();

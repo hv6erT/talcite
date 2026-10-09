@@ -9,9 +9,14 @@
 
 namespace talcite::ui {
 
-Line::Line(std::string text, LineStyle lines) : text_(std::move(text)), lines_(lines) {}
+// Rola jak u ramki, bo rozdzielnik jest kawałkiem ramki: kreska w barwie `role()`, napis
+// w `role() + ".title"`. Domyślnie `talcite.frame`, więc bez nadanej roli wygląda jak dotąd;
+// z rolą nadaną — jak jego ramka, np. kreska nad wierszem stanu w panelu czynnym i biernym.
+Line::Line(std::string text, Border border) : text_(std::move(text)), border_(border) {
+    role("talcite.frame");
+}
 
-int Line::takes() const { return 0; }
+int Line::capacity() const { return 0; }
 
 // **Rozdzielnik nie rozpycha rodzica.** Prosi o szerokość samego napisu, a bez napisu o zero —
 // tak samo i z tego samego powodu, co kreska w menu: to nie linia ma decydować, jak szerokie jest
@@ -29,21 +34,21 @@ View Line::paint(Size given, Area seen) {
 
     // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
-    const Style look = how.get<Style>("talcite.frame");
+    const Style look = how.style(role());
 
-    if (lines_ != LineStyle::none) {
-        const Lines glyphs = how.get<Lines>(named(lines_));
+    if (border_ != Border::none) {
+        const Lines glyphs = how.lines(border_);
 
         across(made, {-seen.at.x, -seen.at.y}, given.wide, glyphs.across, look);
     }
 
     // Napis rysuje ta sama funkcja, którą ramka stawia tytuł w krawędzi — bo to jest ta sama rzecz.
     along(made, {-seen.at.x, -seen.at.y}, given.wide, text_, justify_,
-          how.get<Style>("talcite.title"), how.get<char32_t>("talcite.elide"));
+          how.style(role() + ".title"), how.glyph("talcite.elide"));
 
     return made;
 }

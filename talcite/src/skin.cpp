@@ -104,12 +104,12 @@ Styles building() {
 
         {"talcite.input", lined()},
         {"talcite.input.guess", faded()},
-        {"talcite.input.off", faded()},
+        {"talcite.input.disabled", faded()},
 
         {"talcite.button", Style{}},
         {"talcite.button.focus", turned()},
         {"talcite.button.key", lined()},
-        {"talcite.button.off", faded()},
+        {"talcite.button.disabled", faded()},
 
         // Komunikat ma **własną rodzinę ról**, a nie te same, co reszta okna: pudełko błędu
         // wygląda inaczej niż zwykłe okno, a jedna rola nie umie być naraz czerwona i granatowa.
@@ -122,7 +122,7 @@ Styles building() {
         {"talcite.message.button", Style{}},
         {"talcite.message.button.focus", turned()},
         {"talcite.message.button.key", lined()},
-        {"talcite.message.button.off", faded()},
+        {"talcite.message.button.disabled", faded()},
 
         // Błąd to **ten sam widżet z innym rdzeniem**, więc i rodzina ról jest ta sama. Bez barw
         // niczym się nie różni i tak ma być: mono-skórka Midnight Commandera też nie odróżnia
@@ -134,25 +134,25 @@ Styles building() {
         {"talcite.error.button", Style{}},
         {"talcite.error.button.focus", turned()},
         {"talcite.error.button.key", lined()},
-        {"talcite.error.button.off", faded()},
+        {"talcite.error.button.disabled", faded()},
 
         {"talcite.list", Style{}},
         {"talcite.list.focus", turned()},
         {"talcite.list.mark", Style{}},
-        {"talcite.list.off", faded()},
+        {"talcite.list.disabled", faded()},
 
         {"talcite.tick", Style{}},
         {"talcite.tick.focus", turned()},
         {"talcite.tick.key", lined()},
-        {"talcite.tick.off", faded()},
+        {"talcite.tick.disabled", faded()},
 
         {"talcite.choice", Style{}},
         {"talcite.choice.focus", turned()},
-        {"talcite.choice.off", faded()},
+        {"talcite.choice.disabled", faded()},
 
         {"talcite.select", Style{}},
         {"talcite.select.focus", turned()},
-        {"talcite.select.off", faded()},
+        {"talcite.select.disabled", faded()},
 
         {"talcite.table", Style{}},
         {"talcite.table.head", turned()},
@@ -160,13 +160,26 @@ Styles building() {
         {"talcite.table.mark", bolded()},
         {"talcite.table.mark.focus", boldly()},
 
+        // Widok różnic. Bez barw strony nie różnią się niczym — różnicę wnosi paleta — ale
+        // zaznaczone części napisu muszą być widać i na monochromatycznym terminalu: usunięte
+        // podkreśla, dodane wytłuszcza. Kursor odwraca, jak w tabeli.
+        {"talcite.diff", Style{}},
+        {"talcite.diff.head", turned()},
+        {"talcite.diff.title", bolded()},
+        {"talcite.diff.focus", turned()},
+        {"talcite.diff.gone", Style{}},
+        {"talcite.diff.came", Style{}},
+        {"talcite.diff.gone.mark", lined()},
+        {"talcite.diff.came.mark", bolded()},
+        {"talcite.diff.number", faded()},
+
         {"talcite.menubar", Style{}},
         {"talcite.menubar.focus", turned()},
         {"talcite.menubar.key", lined()},
 
         {"talcite.menu", Style{}},
         {"talcite.menu.focus", turned()},
-        {"talcite.menu.off", faded()},
+        {"talcite.menu.disabled", faded()},
         {"talcite.menu.key", lined()},
         {"talcite.menu.frame", Style{}},
 
@@ -175,7 +188,7 @@ Styles building() {
         {"talcite.legend.tag", Style{}},
         {"talcite.legend.key", lined()},
         {"talcite.legend.text", turned()},
-        {"talcite.legend.off", faded()},
+        {"talcite.legend.disabled", faded()},
 
         {"talcite.scroll", Style{}},
         {"talcite.scroll.thumb", Style{}},
@@ -188,7 +201,7 @@ Styles building() {
 
 // Znaki ramek leżą pojedynczo, tak jak w pliku skórki Midnight Commandera — komplet składa się
 // z nich dopiero w konstruktorze.
-void ruled(Glyphs& into, std::string_view named, LineStyle how) {
+void ruled(Glyphs& into, std::string_view named, Border how) {
     const Lines one = drawn(how);
     const std::string prefix{named};
 
@@ -214,30 +227,21 @@ Glyphs glyphing() {
         {"talcite.gauge.right", U']'},
 
         {"talcite.choice.dot", U'•'},
+        {"talcite.input.conceal", U'•'},
         {"talcite.select.mark", U'▼'},
 
         {"talcite.elide", U'…'},
     };
 
-    ruled(made, "talcite.line.thin", LineStyle::thin);
-    ruled(made, "talcite.line.twin", LineStyle::twin);
-    ruled(made, "talcite.line.thick", LineStyle::thick);
+    ruled(made, "talcite.line.thin", Border::thin);
+    ruled(made, "talcite.line.twin", Border::twin);
+    ruled(made, "talcite.line.thick", Border::thick);
 
     return made;
 }
 
-// Który komplet znaków kryje się pod tą nazwą. Nieznana nazwa daje cienki — ten sam wybór, który
-// robi `drawn` dla `LineStyle::none`.
-std::size_t weighed(std::string_view key) {
-    if (key == "talcite.line.twin") return static_cast<std::size_t>(LineStyle::twin);
-
-    if (key == "talcite.line.thick") return static_cast<std::size_t>(LineStyle::thick);
-
-    return static_cast<std::size_t>(LineStyle::thin);
-}
-
 // Znak dla poziomu; gdy skórka nie ma go na tym poziomie — wbudowany, a gdy i tego nie ma — `?`,
-// nigdy zero (powód przy `taken`).
+// nigdy zero (powód przy `Skin::style`).
 char32_t glyphed(const Glyphs& among, const Glyphs& spare, const std::string& named,
                  bool unicode) {
     if (const auto at = among.find(named); at != among.end())
@@ -310,29 +314,23 @@ const Skin& Skin::plain() {
 // Nieznany znak oddaje `U'?'`, a **nigdy zera**: w `View` zero znaczy dalszy ciąg znaku
 // dwukolumnowego i składanie klatki takie kratki pomija, więc zero zrobiłoby dziurę w obrazie
 // zamiast widocznego błędu.
-template <typename Value>
-Value Skin::taken(std::string_view key) const {
-    if constexpr (std::is_same_v<Value, Style>) {
-        if (const auto at = styles_.find(key); at != styles_.end())
-            if (const std::optional<Style> one = at->second.fitted(colors_)) return *one;
+Style Skin::style(std::string_view key) const {
+    if (const auto at = styles_.find(key); at != styles_.end())
+        if (const std::optional<Style> one = at->second.fitted(colors_)) return *one;
 
-        if (this == &plain()) return Style{};
+    if (this == &plain()) return Style{};
 
-        return plain().taken<Style>(key);
-    } else if constexpr (std::is_same_v<Value, char32_t>) {
-        return glyphed(glyphs_, glyphed(), std::string{key}, unicode_);
-    } else {
-        return lines_[weighed(key)];
-    }
+    return plain().style(key);
 }
 
-// Wartość wbudowana, z pominięciem tego, co dała aplikacja. Poziom nie ma tu znaczenia: wbudowane
-// wchodzą jako jedna wartość na każdy poziom, więc `plain()` na `mono` oddaje to samo, co oddałaby
-// na `rgb`.
-template <typename Value>
-Value Skin::spared(std::string_view key) const {
-    return plain().taken<Value>(key);
+char32_t Skin::glyph(std::string_view key) const {
+    return glyphed(glyphs_, glyphed(), std::string{key}, unicode_);
 }
+
+// Komplet leży gotowy, złożony przy budowaniu i po każdej zmianie poziomu znaków (`framed`).
+// `Border::none` oddaje cienki: widżet bez ramki o znaki nie pyta, a gdyby zapytał, dostaje
+// komplet, który da się narysować, a nie spacje udające brak.
+Lines Skin::lines(Border border) const { return lines_[static_cast<std::size_t>(border)]; }
 
 void Skin::colors(Colors given) { colors_ = given; }
 
@@ -343,19 +341,13 @@ void Skin::unicode(bool given) {
 }
 
 void Skin::framed() {
-    lines_[static_cast<std::size_t>(LineStyle::none)] =
-        gathered(glyphs_, glyphed(), "talcite.line.thin", unicode_);
-    lines_[static_cast<std::size_t>(LineStyle::thin)] =
-        gathered(glyphs_, glyphed(), "talcite.line.thin", unicode_);
-    lines_[static_cast<std::size_t>(LineStyle::twin)] =
-        gathered(glyphs_, glyphed(), "talcite.line.twin", unicode_);
-    lines_[static_cast<std::size_t>(LineStyle::thick)] =
-        gathered(glyphs_, glyphed(), "talcite.line.thick", unicode_);
+    for (const Border one : {Border::none, Border::thin, Border::twin, Border::thick})
+        lines_[static_cast<std::size_t>(one)] = gathered(glyphs_, glyphed(), named(one), unicode_);
 }
 
 // Wariant o poziomie najwyższym nieprzekraczającym podanego. Skórka z samym `rgb` na terminalu
 // `ansi` nie ma czego pokazać — i oddaje pustkę, a nie przybliżenie: co wtedy rysować, rozstrzyga
-// `Skin::taken`, sięgając do wbudowanej.
+// `Skin::style`, sięgając do wbudowanej.
 std::optional<Style> Shades::fitted(Colors level) const {
     const std::array<const std::optional<Style>*, 4> by{&mono, &ansi, &palette, &rgb};
 
@@ -376,13 +368,5 @@ std::optional<char32_t> Signs::fitted(bool wanted) const {
 }
 
 Signs::Signs(char32_t same) : ascii(same), unicode(same) {}
-
-template Style Skin::taken<Style>(std::string_view) const;
-template char32_t Skin::taken<char32_t>(std::string_view) const;
-template Lines Skin::taken<Lines>(std::string_view) const;
-
-template Style Skin::spared<Style>(std::string_view) const;
-template char32_t Skin::spared<char32_t>(std::string_view) const;
-template Lines Skin::spared<Lines>(std::string_view) const;
 
 }

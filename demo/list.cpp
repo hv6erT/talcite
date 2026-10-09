@@ -4,11 +4,11 @@
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/row.hpp"
@@ -24,7 +24,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -51,7 +51,7 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
     const auto made = std::make_shared<talcite::ui::Dialog>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>(
-        "Wybór pliku", talcite::ui::FrameStyle{talcite::ui::LineStyle::twin});
+        "Wybór pliku", talcite::ui::FrameShape{talcite::ui::Border::twin});
 
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -62,21 +62,19 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
     column->children().add(field);
     column->children().add(std::make_shared<talcite::ui::Span>(" "));
 
-    const auto list = std::make_shared<talcite::ui::List>(34, 8, talcite::ui::ListStyle{true});
+    const auto list = std::make_shared<talcite::ui::List>(34, 8, talcite::ui::ScrollShape{true});
 
     for (int which = 0; which < 40; ++which)
         list->children().add(std::make_shared<talcite::ui::ListItem>(named(which)));
 
     // Wybrany wiersz wpisuje się do pola. To jest **`ScrollEvent`, a nie `PickEvent`**: odzywa się
-    // przy każdej zmianie wiersza, a nie dopiero przy zatwierdzeniu. Numeru zdarzenie nie niesie —
-    // słuchacz czyta go z `which()`, bo lista i tak go trzyma.
+    // przy każdej zmianie wiersza, a nie dopiero przy zatwierdzeniu. Wiersza zdarzenie nie niesie —
+    // słuchacz bierze go z `current()`, bo lista i tak go trzyma.
     const std::weak_ptr<talcite::ui::List> weakly = list;
 
     (void)list->on<talcite::ui::ScrollEvent>([field, weakly](talcite::ui::ScrollEvent&) {
         if (const auto one = weakly.lock())
-            if (const auto* item = dynamic_cast<talcite::ui::ListItem*>(
-                    one->children()[static_cast<std::size_t>(one->which())].get()))
-                field->text(item->text());
+            if (const talcite::ui::ListItem* item = one->current()) field->text(item->text());
 
         return false;
     });
@@ -144,15 +142,15 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto dialogs = std::make_shared<talcite::ui::VeilWindow>();
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
+    const auto dialogs = std::make_shared<talcite::ui::Modals>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — lista");
     const auto column = std::make_shared<talcite::ui::Column>();
     const auto told = std::make_shared<talcite::ui::Span>("strzałki, PgUp, PgDn, Home, End, kółko");
 
     const auto list = std::make_shared<talcite::ui::List>(talcite::ui::plenty, talcite::ui::plenty,
-                                                       talcite::ui::ListStyle{true});
+                                                       talcite::ui::ScrollShape{true});
 
     for (int which = 0; which < 200; ++which)
         list->children().add(std::make_shared<talcite::ui::ListItem>(named(which)));
@@ -161,15 +159,14 @@ int main() {
     for (int which = 0; which < 200; which += 10)
         if (const auto one = std::dynamic_pointer_cast<talcite::ui::ListItem>(
                 list->children()[static_cast<std::size_t>(which)]))
-            one->able(false);
+            one->enabled(false);
 
     const std::weak_ptr<talcite::ui::List> weakly = list;
 
     (void)list->on<talcite::ui::ScrollEvent>([told, weakly](talcite::ui::ScrollEvent&) {
         if (const auto one = weakly.lock())
-            if (const auto* item = dynamic_cast<talcite::ui::ListItem*>(
-                    one->children()[static_cast<std::size_t>(one->which())].get()))
-                told->text("wiersz " + std::to_string(one->which()) + ": " + item->text());
+            if (const talcite::ui::ListItem* item = one->current())
+                told->text("wiersz " + std::to_string(one->which().value_or(0)) + ": " + item->text());
 
         return false;
     });
@@ -189,8 +186,8 @@ int main() {
     column->children().add(list);
     frame->children().add(column);
 
-    legend->body()->children().add(frame);
-    dialogs->body()->children().add(legend);
+    legend->content(frame);
+    dialogs->content(legend);
 
     (void)demo::doing(legend->add(talcite::ui::Code::f3, "Wybór"),
                       [dialogs, told] { dialogs->open(demo::closing(asking(told))); });
@@ -201,7 +198,7 @@ int main() {
 
     list->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — lista");
 
     term.run();

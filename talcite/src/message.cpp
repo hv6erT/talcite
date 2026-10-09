@@ -5,11 +5,12 @@
 #include <utility>
 #include <vector>
 
-#include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/row.hpp"
 #include "talcite/span.hpp"
+
+#include "amid.hpp"
 
 namespace talcite::ui {
 
@@ -19,34 +20,13 @@ namespace {
 // z każdej strony czytają się jak margines, a jedna wygląda jak niedoróbka.
 constexpr int loose = 4;
 
-// **Odstęp, który znika razem z sąsiadem.** Pusty wiersz między pudełkami ma sens tylko wtedy, gdy
-// są oba: komunikat bez treści albo bez odpowiedzi nie ma czego rozdzielać. Pytamy o to przy każdej
-// klatce, a nie raz przy budowie, bo i treść, i przyciski wolno dołożyć później — i wtedy wiersz
-// ma się pojawić sam, bez przebudowywania kolumny.
-class Gap : public Node {
-public:
-    Gap(const Node& above, const Node& below) : above_(&above), below_(&below) {}
-
-    [[nodiscard]] int takes() const override { return 0; }
-
-    [[nodiscard]] Size wants(Size room) const override {
-        if (above_->wants(room).high == 0 || below_->wants(room).high == 0) return {};
-
-        return {0, std::min(1, room.high)};
-    }
-
-private:
-    const Node* above_;
-    const Node* below_;
-};
-
 // **Pudełko, które znika razem ze swoją treścią.** Sama ramka tego nie potrafi: `Frame::wants`
 // dolicza krawędzie także wokół dziecka, które nic nie chce, więc pusty napis w pudełku to nie
 // pustka, tylko obwódka dwa na dwa. Ten węzeł pyta więc **treść**, nie ramkę, i gdy treść chce
 // zera wierszy, sam też chce zera — a kolumna nie daje mu ani jednej kratki.
 //
 // Dzięki temu kształt kolumny jest **stały**: tytuł, pudełko treści, odstęp, pudełko odpowiedzi
-// stoją w niej od początku i na zawsze. `text()` i `add()` są zwykłymi ustawiaczami —
+// stoją w niej od początku i na zawsze. `text()` i `buttons().add()` są zwykłymi ustawiaczami —
 // niczego nie dopinają, nie wstawiają i nie przebudowują — a to, czy pudełko widać, wychodzi
 // z rozmiarów przy najbliższej klatce.
 //
@@ -77,30 +57,6 @@ private:
     std::shared_ptr<Node> inside_;
 };
 
-// Dziecko na środku w poziomie. Wiersz układa przyciski od lewej, a kolumna daje mu całą swoją
-// szerokość — bez tego rząd przycisków klejłby się do lewej krawędzi, a w Midnight Commanderze
-// stoi pośrodku.
-class Amid : public Node {
-protected:
-    View paint(Size given, Area seen) override {
-        View made{seen.size};
-
-        made.bare({{0, 0}, seen.size});
-
-        if (children().empty()) return made;
-
-        const Size wants = children().front()->wants(given);
-        const int wide = std::clamp(wants.wide, 0, given.wide);
-
-        const Area where{{std::max((given.wide - wide) / 2, 0), 0}, {wide, given.high}};
-        const Area part = Area::crossed(seen, where);
-
-        made.within(children().front()->render(where, part - where.at), part.at - seen.at);
-
-        return made;
-    }
-};
-
 // **Szerokość pudełka rozstrzyga się tutaj.** Dialog pyta swoje jedyne dziecko, ile chce, i tyle mu
 // daje — więc gdyby pytał ramkę wprost, komunikat z jednym długim zdaniem rozciągnąłby się na cały
 // ekran. Ten węzeł zwęża pytanie, a nie odpowiedź: napis dostaje mniej miejsca, więc **zawija się**,
@@ -115,6 +71,35 @@ public:
         const int wide = room.wide > loose * 2 ? room.wide - loose : room.wide;
 
         return children().front()->wants({std::max(wide, 1), room.high});
+    }
+};
+
+// **Kratka oddechu po obu stronach treści** — w komunikacie bez pudełek. Pudełko dawało ją swoją
+// krawędzią; bez niego napis stykałby się z ramką okna. Pyta treść o pokój węższy o dwie kratki i chce
+// tyle, ile ona, plus te dwie — wysokość treści, więc pusta treść to zero wierszy i `Gap` widzi pustkę.
+class Aired : public Node {
+public:
+    explicit Aired(std::shared_ptr<Node> inside) { children().add(std::move(inside)); }
+
+    [[nodiscard]] Size wants(Size room) const override {
+        const Size inside = children().front()->wants({std::max(room.wide - 2, 0), room.high});
+
+        // Ponad pokój wyjdzie tylko na ekranie węższym niż sam oddech, a tam przycina ramka okna.
+        return {inside.wide + 2, inside.high};
+    }
+
+protected:
+    View paint(Size given, Area seen) override {
+        View made{seen.size};
+
+        made.clear({{0, 0}, seen.size});
+
+        const Area where{{1, 0}, {std::max(given.wide - 2, 0), given.high}};
+        const Area part = Area::crossed(seen, where);
+
+        made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
+
+        return made;
     }
 };
 
@@ -136,30 +121,38 @@ public:
 //                      └── Frame(.box) → Amid → Row(odstęp 1) → przyciski
 //
 // **Kolumna jest złożona raz i nie zmienia się nigdy.** Wszystko, co widać albo czego nie widać,
-// wychodzi z `wants` — więc `text()` i `add()` wolno wołać kiedykolwiek, także na oknie już
-// otwartym, i nic nie trzeba przy tym przestawiać.
+// wychodzi z `wants` — więc `text()` i `buttons().add()` wolno wołać kiedykolwiek, także na oknie
+// już otwartym, i nic nie trzeba przy tym przestawiać.
+//
+// **Bez pudełek** (`boxed` zgaszone) komunikat wygląda jak formularz: tytuł stoi na górnej krawędzi
+// ramki, treść ma kratkę oddechu z obu stron, a przyciski stoją pośrodku pod pustym wierszem:
+//
+//     Capped → Frame(tytuł, rdzeń)
+//              └── Titled          ← nie węższy niż tytuł, jak w formularzu
+//                  └── Column
+//                      ├── Aired → Span(treść)
+//                      ├── Gap
+//                      └── Amid → Row(odstęp 1) → przyciski
 //
 // Krawędź zewnętrznej ramki pełni podwójną służbę: rysuje się rolą `<rdzeń>`, więc skórka decyduje,
 // czy widać z niej kreskę, czy sam kolor tła. W Midnight Commanderze pudełko błędu ma ją niewidoczną
 // i wygląda to jak kolumna oddechu — a to jest dokładnie ta sama kratka.
-Message::Message(std::string title, std::string text, MessageStyle style)
-    : Dialog(VeilStyle{style.shade}), style_(style) {
+Message::Message(std::string title, std::string text, MessageShape shape)
+    : Dialog(ModalShape{shape.shade}), shape_(shape) {
     const auto capped = std::make_shared<Capped>();
 
-    frame_ = std::make_shared<Frame>(std::string{}, FrameStyle{style_.border});
+    frame_ = std::make_shared<Frame>(std::string{}, FrameShape{shape_.border});
 
     const auto column = std::make_shared<Column>();
 
     title_ = std::make_shared<Span>(std::move(title),
-                                    SpanStyle{false, JustifyStyle::center, ElideStyle::right});
+                                    SpanShape{false, Justify::center, Elide::right});
 
     text_ = std::make_shared<Span>(std::move(text),
-                                   SpanStyle{true, JustifyStyle::center, ElideStyle::none});
+                                   SpanShape{true, Justify::center, Elide::none});
 
     // Odstęp między przyciskami należy do wiersza, nie do treści — przycisk zgaszony
     // do zera nie zostawia po sobie dziury.
-    row_ = std::make_shared<Row>(1);
-
     const auto amid = std::make_shared<Amid>();
 
     amid->children().add(row_);
@@ -167,14 +160,35 @@ Message::Message(std::string title, std::string text, MessageStyle style)
     // Pudełko wokół treści i wokół przycisków — tak wygląda komunikat w Midnight Commanderze.
     // Kto woli gołą treść, gasi `boxed` i dostaje samą kolumnę w ramce.
     const auto boxing = [this]() -> std::shared_ptr<Frame> {
-        if (!style_.boxed) return nullptr;
+        if (!shape_.boxed) return nullptr;
 
-        auto made = std::make_shared<Frame>(std::string{}, FrameStyle{LineStyle::thin});
+        auto made = std::make_shared<Frame>(std::string{}, FrameShape{Border::thin});
 
         boxes_.push_back(made);
 
         return made;
     };
+
+    if (!shape_.boxed) {
+        frame_->title(title_->text());
+
+        const auto said = std::make_shared<Aired>(text_);
+        const auto titled = std::make_shared<Titled>(*frame_);
+
+        column->children().add(said);
+        column->children().add(std::make_shared<Gap>(*said, *amid));
+        column->children().add(amid);
+
+        titled->children().add(column);
+        frame_->children().add(titled);
+        capped->children().add(frame_);
+
+        children().add(capped);
+
+        role("talcite.message");
+
+        return;
+    }
 
     const auto said = std::make_shared<Boxed>(text_, boxing());
     const auto asks = std::make_shared<Boxed>(amid, boxing());
@@ -195,39 +209,15 @@ Message::Message(std::string title, std::string text, MessageStyle style)
 
 const std::string& Message::title() const { return title_->text(); }
 
-void Message::title(std::string given) { title_->text(std::move(given)); }
+void Message::title(std::string given) {
+    title_->text(std::move(given));
+
+    if (!shape_.boxed) frame_->title(title_->text());
+}
 
 const std::string& Message::text() const { return text_->text(); }
 
 void Message::text(std::string given) { text_->text(std::move(given)); }
-
-// **Odpowiedź robi okno, a oddaje ją wołającemu.** Gdyby przyjmowało gotowy przycisk, musiałoby mu
-// nadpisać rolę i wcisnąć się przed uchwyty, które wołający już na nim powiesił. Tak jest jedna
-// kolejność i nie ma jej jak popsuć, a wołający dostaje pełny przycisk: `primary()`, `keys()`,
-// `role()` i własne `on<PickEvent>`, w którym mieszka czynność tej odpowiedzi.
-//
-// Komunikat **nie wiesza na przycisku niczego swojego** i sam się po naciśnięciu nie zamyka.
-// Zamknięcie jest częścią czynności odpowiedzi, więc należy do wołającego: jego uchwyt woła
-// `close()`, kiedy uzna, że okno ma zejść. Nie każda odpowiedź kończy okno — przycisk „Pomoc"
-// w formularzu nie ma go zamykać — a biblioteka nie zna się na tym lepiej niż aplikacja.
-std::shared_ptr<Button> Message::add(std::string text) {
-    auto one = std::make_shared<Button>(std::move(text));
-
-    one->role(role() + ".button");
-
-    row_->children().add(one);
-
-    buttons_.push_back(one);
-
-    return one;
-}
-
-// Czyszczenie zabiera przyciski razem z odstępami — cały wiersz jest ich i niczyj więcej.
-void Message::clear() {
-    row_->children().clear();
-
-    buttons_.clear();
-}
 
 // Rdzeń rozdaje się **po zbudowaniu i po każdej zmianie**, bo dzieci trzymają go u siebie. Rodzina
 // jest pięcioczłonowa: samo okno, tytuł, pudełka w środku, treść i przyciski. Skórka opisuje więc
@@ -241,7 +231,7 @@ void Message::role(std::string given) {
 
     for (const std::shared_ptr<Frame>& one : boxes_) one->role(role() + ".box");
 
-    for (const std::shared_ptr<Button>& one : buttons_) one->role(role() + ".button");
+    buttons_.role(role() + ".button");
 }
 
 }

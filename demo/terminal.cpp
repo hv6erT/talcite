@@ -2,7 +2,7 @@
 #include <iostream>
 #include <string>
 
-#include "talcite/compatibilities.hpp"
+#include "talcite/capabilities.hpp"
 
 #include "speaking.hpp"
 
@@ -118,7 +118,7 @@ int main() {
 
     const auto began = std::chrono::steady_clock::now();
 
-    talcite::Compatibilities compat;
+    talcite::Capabilities compat;
 
     // Pierwsze pytanie odpala badanie; reszta jest już buforowana.
     const talcite::Colors colors = compat.colors();
@@ -134,11 +134,11 @@ int main() {
     shown("mysz", named(compat.mouse()));
     shown("ekran zapasowy", named(compat.screen()));
     shown("tło", named(compat.shade()));
-    shown("wklejanie w nawiasach", named(compat.pasting()));
-    shown("zgłaszanie ogniska", named(compat.focusing()));
-    shown("rysowanie uzgodnione", named(compat.syncing()));
+    shown("wklejanie w nawiasach", named(compat.bracketed_paste()));
+    shown("zgłaszanie ogniska", named(compat.focus_events()));
+    shown("rysowanie uzgodnione", named(compat.synchronized()));
     shown("Unicode", named(compat.unicode()));
-    shown("tytuł okna", named(compat.titling()));
+    shown("tytuł okna", named(compat.titles()));
 
     std::cout << "\nObrazy\n\n";
 

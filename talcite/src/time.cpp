@@ -18,9 +18,9 @@ using Moment = std::chrono::steady_clock::time_point;
 class Timing;
 
 // Bilet oczekiwania. Postęp jest tu znany dokładnie — minęło tyle z tylu — więc odliczanie
-// rysuje pasek za darmo. Chwila startu zapisuje się dopiero przy go(), bo obietnica jest
+// rysuje pasek za darmo. Chwila startu zapisuje się dopiero przy start(), bo obietnica jest
 // leniwa i przed uruchomieniem nie ma czego liczyć.
-class Waiting : public Result<void> {
+class Waiting : public detail::Result<void> {
 public:
     explicit Waiting(std::chrono::milliseconds whole) : whole_(whole) {}
 
@@ -54,7 +54,7 @@ public:
         : Promise<void>(std::move(given), std::move(made)) {}
 };
 
-class Dropping : public Waiter {
+class Dropping : public detail::Waiter {
 public:
     Dropping(Timing& whose, std::uint64_t which) : whose_(whose), which_(which) {}
 
@@ -80,8 +80,8 @@ public:
 
     void begin() { keeper_ = std::thread{[this] { serve(); }}; }
 
-    void after(Moment when, std::shared_ptr<Result<void>> result, bool bad) {
-        std::shared_ptr<Waiter> watch;
+    void after(Moment when, std::shared_ptr<detail::Result<void>> result, bool bad) {
+        std::shared_ptr<detail::Waiter> watch;
         std::uint64_t which = 0;
 
         {
@@ -97,7 +97,7 @@ public:
 
         // Poza zamkiem, bo obietnica już rozstrzygnięta zawoła ogniwo od razu, a ono wraca
         // tutaj po drop() — pod zamkiem byłoby to zakleszczenie na własnym wątku.
-        if (hooked(*result, watch)) drop(which);
+        if (detail::hooked(*result, watch)) drop(which);
     }
 
     void drop(std::uint64_t which) {
@@ -122,8 +122,8 @@ private:
     struct Entry {
         std::uint64_t which = 0;
         Moment when;
-        std::shared_ptr<Result<void>> result;
-        std::shared_ptr<Waiter> watch;
+        std::shared_ptr<detail::Result<void>> result;
+        std::shared_ptr<detail::Waiter> watch;
         bool bad = false;
     };
 
@@ -167,8 +167,8 @@ private:
             // Rozstrzyganie poza zamkiem: budzi ono obserwatorów, a wśród nich nasze własne
             // ogniwo zdejmujące wpis, które wraca tu po zamek.
             for (Entry& one : due) {
-                if (one.bad) spoiled(*one.result, std::make_exception_ptr(Overdue{}));
-                else settled(*one.result);
+                if (one.bad) detail::spoiled(*one.result, std::make_exception_ptr(Overdue{}));
+                else detail::settled(*one.result);
             }
         }
     }
@@ -211,16 +211,16 @@ Promise<void> counted(std::chrono::milliseconds patience, bool bad) {
 
 }
 
-Overdue::Overdue() : std::runtime_error("Minął czas.") {}
+Overdue::Overdue() : Trouble("Timed out.") {}
 
-Time::Time() : began_(std::chrono::steady_clock::now()) {}
+Stopwatch::Stopwatch() : began_(std::chrono::steady_clock::now()) {}
 
-std::chrono::milliseconds Time::spent() const {
+std::chrono::milliseconds Stopwatch::spent() const {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - began_);
 }
 
-void Time::reset() { began_ = std::chrono::steady_clock::now(); }
+void Stopwatch::reset() { began_ = std::chrono::steady_clock::now(); }
 
 std::chrono::steady_clock::time_point Time::now() { return std::chrono::steady_clock::now(); }
 
@@ -231,5 +231,11 @@ std::chrono::sys_seconds Time::stamp() {
 Promise<void> Time::later(std::chrono::milliseconds patience) { return counted(patience, false); }
 
 Promise<void> Time::limit(std::chrono::milliseconds patience) { return counted(patience, true); }
+
+// Termin dla `Promise::timeout`. Nagłówek obietnicy nie może sięgnąć po `time.hpp`, bo ten
+// sięga po niego — więc deklaracja stoi w `detail`, a ciało tutaj, przy zegarze.
+Promise<void> detail::deadline(std::chrono::milliseconds patience) {
+    return counted(patience, true);
+}
 
 }

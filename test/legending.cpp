@@ -5,10 +5,10 @@
 
 #include "talcite/encoding.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
-#include "talcite/menuwindow.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
@@ -36,12 +36,12 @@ protected:
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.letter({x - seen.at.x, y - seen.at.y}, what_, Style{});
+                made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
 
         return made;
     }
 
-    bool react(ui::ClickEvent&) override {
+    bool handle(ui::ClickEvent&) override {
         ++hit;
 
         return true;
@@ -58,7 +58,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -71,7 +71,7 @@ std::string read(const View& one, int y) {
 TRIAL("Legenda: pola dzielą wiersz i stykają się bokami") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
 
     (void)window->add(ui::Code::f1, "Kopiuj");
     (void)window->add(ui::Code::f2, "Wyjdź");
@@ -91,7 +91,7 @@ TRIAL("Legenda: pola dzielą wiersz i stykają się bokami") {
 TRIAL("Legenda: reszta z dzielenia idzie do pól od lewej") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
 
     for (int at = 0; at < 3; ++at) (void)window->add(ui::Code::f1, "");
 
@@ -106,6 +106,15 @@ TRIAL("Legenda: reszta z dzielenia idzie do pól od lewej") {
 
 // Etykietka wyprowadza się z klawisza, a nie stoi obok niego w osobnym polu — inaczej dałoby się
 // napisać legendę, która kłamie o tym, co nacisnąć.
+TRIAL("Legenda: pole nie bierze ogniska, także włączone") {
+    ui::Legend window;
+
+    const auto one = window.add(ui::Code::f5, "Kopiuj");
+
+    ought(one->enabled());
+    ought(!one->focusable());
+}
+
 TRIAL("Legenda: etykietka bierze się z klawisza") {
     same((ui::LegendItem{ui::Code::f1, ""}.tag()), std::string{"1"});
     same((ui::LegendItem{ui::Code::f5, ""}.tag()), std::string{"5"});
@@ -121,12 +130,12 @@ TRIAL("Legenda: etykietka bierze się z klawisza") {
 TRIAL("Legenda: klawisz dochodzi bąbelkiem od ogniska") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
 
-    window->body()->children().add(body);
+    window->content(body);
     (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
@@ -136,13 +145,13 @@ TRIAL("Legenda: klawisz dochodzi bąbelkiem od ogniska") {
 
     ui::KeyEvent what{ui::Code::f5};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
     same(done, 1);
 
     // Klawisz, którego legenda nie trzyma, nie jest jej sprawą.
     ui::KeyEvent other{ui::Code::f6};
 
-    ought(!top.deal(other));
+    ought(!top.dispatch(other));
     same(done, 1);
 }
 
@@ -151,12 +160,12 @@ TRIAL("Legenda: klawisz dochodzi bąbelkiem od ogniska") {
 TRIAL("Legenda: ze sterującym nie łapie") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
 
-    window->body()->children().add(body);
+    window->content(body);
     (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
@@ -166,11 +175,11 @@ TRIAL("Legenda: ze sterującym nie łapie") {
 
     ui::KeyEvent held{ui::Key{ui::Code::f5, ui::Mods{true, false, false}}};
 
-    ought(!top.deal(held));
+    ought(!top.dispatch(held));
 
     ui::KeyEvent aside{ui::Key{ui::Code::f5, ui::Mods{false, true, false}}};
 
-    ought(!top.deal(aside));
+    ought(!top.dispatch(aside));
 
     same(done, 0);
 }
@@ -180,12 +189,12 @@ TRIAL("Legenda: ze sterującym nie łapie") {
 TRIAL("Legenda: kliknięcie robi to samo i nie zabiera ogniska") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
 
-    window->body()->children().add(body);
+    window->content(body);
     (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
@@ -195,15 +204,15 @@ TRIAL("Legenda: kliknięcie robi to samo i nie zabiera ogniska") {
 
     ui::ClickEvent what{{3, 3}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
     same(done, 1);
-    same(top.focus(), static_cast<ui::Node*>(body.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
@@ -213,9 +222,9 @@ TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
         ++done;
         return true;
     });
-    one->able(false);
+    one->enabled(false);
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
@@ -224,12 +233,12 @@ TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
 
     ui::KeyEvent what{ui::Code::f5};
 
-    ought(!top.deal(what));
+    ought(!top.dispatch(what));
 
     ui::ClickEvent where{{3, 3}, ui::Mouse::left};
 
     // Klik pole bierze — bo w nie trafiono — ale czynu nie robi.
-    ought(top.deal(where));
+    ought(top.dispatch(where));
 
     same(done, 0);
 }
@@ -237,10 +246,10 @@ TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
 TRIAL("Legenda: treść dostaje wszystkie wiersze poza ostatnim") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
 
-    window->body()->children().add(body);
+    window->content(body);
     (void)window->add(ui::Code::f1, "Raz");
     top.children().add(window);
 
@@ -255,10 +264,10 @@ TRIAL("Legenda: treść dostaje wszystkie wiersze poza ostatnim") {
 TRIAL("Legenda: bez pól nie zabiera wiersza") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     const View made = top.render({{0, 0}, {6, 3}});
@@ -269,7 +278,7 @@ TRIAL("Legenda: bez pól nie zabiera wiersza") {
 TRIAL("Legenda: za wąskie pole ucina nazwę, a potem etykietkę") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
 
     (void)window->add(ui::Code::f1, "Kopiuj");
     (void)window->add(ui::Code::f2, "Wyjdź");
@@ -291,7 +300,7 @@ TRIAL("Legenda: za wąskie pole ucina nazwę, a potem etykietkę") {
 TRIAL("Legenda: litera odpowiada bez różnicy wielkości") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -304,38 +313,38 @@ TRIAL("Legenda: litera odpowiada bez różnicy wielkości") {
         return true;
     });
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
 
     ui::KeyEvent small{U'q'};
 
-    ought(top.deal(small));
+    ought(top.dispatch(small));
     same(said, 1);
 
     ui::KeyEvent big{U'Q'};
 
-    ought(top.deal(big));
+    ought(top.dispatch(big));
     same(said, 2);
 }
 
 TRIAL("Legenda: opróżnienie pozwala złożyć pasek od nowa") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
 
     (void)window->add(ui::Code::f1, "Raz");
     (void)window->add(ui::Code::f2, "Dwa");
     top.children().add(window);
 
     same(static_cast<int>(window->items().size()), 2);
-    same(window->takes(), 3);
+    same(window->capacity(), 3);
 
     window->clear();
 
     ought(window->items().empty());
-    same(window->takes(), 1);
+    same(window->capacity(), 1);
 
     (void)window->add(ui::Code::f3, "Trzy");
 
@@ -350,21 +359,21 @@ TRIAL("Legenda: opróżnienie pozwala złożyć pasek od nowa") {
 TRIAL("Legenda: rozwinięte menu nie zamalowuje paska klawiszy") {
     ui::Root top;
 
-    const auto legend = std::make_shared<ui::LegendWindow>();
-    const auto menus = std::make_shared<ui::MenuWindow>();
+    const auto legend = std::make_shared<ui::Legend>();
+    const auto menus = std::make_shared<ui::Menubar>();
 
     menus->keys().add(ui::Key{ui::Code::f9});
-    const auto one = menus->add("Plik", ui::MenuStyle{ui::LineStyle::thin, false});
+    const auto one = menus->add("Plik", ui::MenuShape{ui::Border::thin, false});
 
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
     one->children().add(std::make_shared<ui::MenuItem>("Wyjście"));
     one->children().add(std::make_shared<ui::MenuItem>("Jeszcze"));
 
-    legend->body()->children().add(menus);
+    legend->content(menus);
     (void)legend->add(ui::Code::f5, "Kopiuj");
     top.children().add(legend);
 
-    one->focus();
+    one->open();
 
     const View made = top.render({{0, 0}, {12, 7}});
 
@@ -379,8 +388,8 @@ TRIAL("Legenda: rozwinięte menu nie zamalowuje paska klawiszy") {
 TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
     ui::Root top;
 
-    const auto legend = std::make_shared<ui::LegendWindow>();
-    const auto menus = std::make_shared<ui::MenuWindow>();
+    const auto legend = std::make_shared<ui::Legend>();
+    const auto menus = std::make_shared<ui::Menubar>();
 
     menus->keys().add(ui::Key{ui::Code::f9});
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
@@ -390,8 +399,8 @@ TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
 
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
 
-    menus->body()->children().add(body);
-    legend->body()->children().add(menus);
+    menus->content(body);
+    legend->content(menus);
     (void)proving::doing(legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(legend);
 
@@ -402,28 +411,33 @@ TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
     // Przy zamkniętym menu legenda działa.
     ui::KeyEvent first{ui::Code::f5};
 
-    ought(top.deal(first));
+    ought(top.dispatch(first));
     same(done, 1);
 
+    // F9 bierze pasek, rozwinięcie wybiera się osobno — dopiero rozwinięte menu jest modalne.
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.deal(open));
+    ought(top.dispatch(open));
+
+    ui::KeyEvent drop{ui::Code::down};
+
+    ought(top.dispatch(drop));
     ought(one->opened());
 
     ui::KeyEvent second{ui::Code::f5};
 
-    ought(top.deal(second));
+    ought(top.dispatch(second));
     same(done, 1);
 }
 
 // --- Grupa ------------------------------------------------------------------------------------
 
-// Pole robi **pasek**, a nie wołający: wtedy rola, miejsce w drzewie i miejsce w takes() biorą się
+// Pole robi **pasek**, a nie wołający: wtedy rola, miejsce w drzewie i miejsce w capacity() biorą się
 // z jednego wywołania i nie ma jak ich rozjechać.
 TRIAL("Legenda: zdjęte pole znika też z drzewa") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
     const auto two = window->add(ui::Code::f2, "Wyjdź");
 
@@ -449,7 +463,7 @@ TRIAL("Legenda: zdjęte pole znika też z drzewa") {
 TRIAL("Legenda: rdzeń roli pola można podmienić") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
 
     same(one->role(), std::string{"talcite.legend"});
@@ -461,8 +475,8 @@ TRIAL("Legenda: rdzeń roli pola można podmienić") {
     Style key{};
     Style text{};
 
-    key.ink = Color{false, 1, 1, 1};
-    text.ink = Color{false, 2, 2, 2};
+    key.foreground = Color{false, 1, 1, 1};
+    text.foreground = Color{false, 2, 2, 2};
 
     these["moj.pas.tag"] = key;
     these["moj.pas.text"] = text;
@@ -472,8 +486,8 @@ TRIAL("Legenda: rdzeń roli pola można podmienić") {
 
     const View made = top.render({{0, 0}, {16, 4}});
 
-    same(made.at({0, 3}).style.ink, (Color{false, 1, 1, 1}));
-    same(made.at({1, 3}).style.ink, (Color{false, 2, 2, 2}));
+    same(made.at({0, 3}).style.foreground, (Color{false, 1, 1, 1}));
+    same(made.at({1, 3}).style.foreground, (Color{false, 2, 2, 2}));
 }
 
 // Pole ma **zbiór** klawiszy, nie jeden klawisz: etykietkę rysuje pierwszy z nich, ale odpowiada
@@ -481,7 +495,7 @@ TRIAL("Legenda: rdzeń roli pola można podmienić") {
 TRIAL("Legenda: pole odpowiada na każdy ze swoich klawiszy") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -496,7 +510,7 @@ TRIAL("Legenda: pole odpowiada na każdy ze swoich klawiszy") {
         return true;
     });
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
@@ -505,42 +519,42 @@ TRIAL("Legenda: pole odpowiada na każdy ze swoich klawiszy") {
 
     ui::KeyEvent named{ui::Code::f10};
 
-    ought(top.deal(named));
+    ought(top.dispatch(named));
     same(said, 1);
 
     ui::KeyEvent letter{U'Q'};
 
-    ought(top.deal(letter));
+    ought(top.dispatch(letter));
     same(said, 2);
 }
 
 // Pasek rozdaje pola **zdarzeniem aktywnym**, więc uchwyt zawieszony z zewnątrz odpowiada na
-// równych prawach z `react` — tak samo jak w oknie dialogowym i w menu. Wcześniej pasek wołał
+// równych prawach z `handle` — tak samo jak w oknie dialogowym i w menu. Wcześniej pasek wołał
 // `pick()` wprost i uchwyt na klawiszu aktywnym nie miał jak dojść.
 TRIAL("Legenda: pole odpowiada na klawisz uchwytem zawieszonym z zewnątrz") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
 
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
-    (void)one->on<ui::HotEvent<ui::KeyEvent>>([&said](ui::HotEvent<ui::KeyEvent>&) {
+    (void)one->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
         ++said;
 
         return true;
     });
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
 
     ui::KeyEvent key{ui::Code::f5};
 
-    ought(top.deal(key));
+    ought(top.dispatch(key));
     same(said, 1);
 }
 
@@ -549,12 +563,12 @@ TRIAL("Legenda: pole odpowiada na klawisz uchwytem zawieszonym z zewnątrz") {
 TRIAL("Legenda: rozdanie nie wchodzi w treść") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
 
-    (void)body->on<ui::HotEvent<ui::KeyEvent>>([&said](ui::HotEvent<ui::KeyEvent>&) {
+    (void)body->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
         ++said;
 
         return true;
@@ -562,14 +576,14 @@ TRIAL("Legenda: rozdanie nie wchodzi w treść") {
 
     (void)window->add(ui::Code::f5, "Kopiuj");
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
 
     ui::KeyEvent key{ui::Code::f7};
 
-    ought(!top.deal(key));
+    ought(!top.dispatch(key));
     same(said, 0);
 }
 
@@ -578,7 +592,7 @@ TRIAL("Legenda: rozdanie nie wchodzi w treść") {
 TRIAL("Legenda: klawisz-litera podkreśla się w nazwie zamiast etykietki") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto one = window->add(ui::Key{U'k'}, "Kopiuj");
 
     top.children().add(window);
@@ -595,7 +609,7 @@ TRIAL("Legenda: klawisz-litera podkreśla się w nazwie zamiast etykietki") {
 TRIAL("Legenda: klawisz-litera spoza nazwy zostaje etykietką") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto one = window->add(ui::Key{U'q'}, "Wyjdź");
 
     top.children().add(window);
@@ -611,7 +625,7 @@ TRIAL("Legenda: klawisz-litera spoza nazwy zostaje etykietką") {
 TRIAL("Legenda: klawisz funkcyjny zostaje przy cyfrze") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
 
     (void)window->add(ui::Code::f5, "Kopiuj");
 
@@ -628,7 +642,7 @@ TRIAL("Legenda: klawisz funkcyjny zostaje przy cyfrze") {
 TRIAL("Legenda: cyfra zostaje, choć pole ma też literę") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
     one->keys().add(ui::Key{U'k'});
@@ -648,7 +662,7 @@ TRIAL("Legenda: cyfra zostaje, choć pole ma też literę") {
 TRIAL("Legenda: pole ze sterującym odpowiada tylko na swoją kombinację") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int plain = 0;
@@ -663,20 +677,41 @@ TRIAL("Legenda: pole ze sterującym odpowiada tylko na swoją kombinację") {
     (void)one->on<ui::PickEvent>([&plain](ui::PickEvent&) { ++plain; return true; });
     (void)two->on<ui::PickEvent>([&held](ui::PickEvent&) { ++held; return true; });
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
 
     ui::KeyEvent bare{ui::Key{ui::Code::f5}};
 
-    ought(top.deal(bare));
+    ought(top.dispatch(bare));
     same(plain, 1);
     same(held, 0);
 
     ui::KeyEvent with{ui::Key{ui::Code::f5, ctrl}};
 
-    ought(top.deal(with));
+    ought(top.dispatch(with));
     same(plain, 1);
     same(held, 1);
+}
+
+// Treść jest jedna: nowa wypiera starą, a pusty wskaźnik opróżnia gniazdo. Stara treść wychodzi
+// z drzewa całkiem, więc można ją włożyć gdzie indziej.
+TRIAL("Legenda: nowa treść wypiera starą, a pusta opróżnia gniazdo") {
+    ui::Legend window;
+
+    const auto one = std::make_shared<Box>(ui::Size{4, 1}, U'a');
+    const auto two = std::make_shared<Box>(ui::Size{4, 1}, U'b');
+
+    window.content(one);
+    window.content(two);
+
+    same(window.content(), static_cast<ui::Node*>(two.get()));
+    ought(one->parent() == nullptr);
+    same(read(window.render({{0, 0}, {4, 2}}), 0), std::string{"bbbb"});
+
+    window.content(nullptr);
+
+    ought(window.content() == nullptr);
+    ought(two->parent() == nullptr);
 }

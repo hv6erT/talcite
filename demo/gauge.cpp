@@ -8,7 +8,7 @@
 #include "talcite/frame.hpp"
 #include "talcite/gauge.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/line.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/span.hpp"
@@ -24,7 +24,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -43,7 +43,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — pasek postępu");
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -61,14 +61,14 @@ int main() {
     column->children().add(guess);
 
     frame->children().add(column);
-    legend->body()->children().add(frame);
+    legend->content(frame);
 
     // Postęp udawany: co pięćdziesiąt milisekund o krok dalej. W prawdziwym programie zamiast
     // licznika stoi tu `one.progress()` z obietnicy kopiowania — ta sama liczba, ten sam ułamek.
     const auto running = std::make_shared<bool>(false);
     const auto again = std::make_shared<std::function<void()>>();
 
-    // **Obietnicę trzeba trzymać do rozstrzygnięcia.** Porzucone `then(...).go()` nigdy nie
+    // **Obietnicę trzeba trzymać do rozstrzygnięcia.** Porzucone `then(...).start()` nigdy nie
     // zadziała, bo ogniwo wisi na obietnicy słabym wskazaniem — to ta sama reguła, dzięki której
     // śmierć właściciela odcina wywołania zwrotne.
     const auto beat = std::make_shared<std::optional<talcite::Promise<void>>>();
@@ -89,9 +89,9 @@ int main() {
         }
 
         beat->emplace(
-            talcite::Time::later(std::chrono::milliseconds{50}).main().then([again] { (*again)(); }));
+            talcite::Time::later(std::chrono::milliseconds{50}).here().then([again] { (*again)(); }));
 
-        (*beat)->go();
+        (*beat)->start();
     };
 
     (void)demo::doing(legend->add(talcite::ui::Code::f5, "Zacznij"),
@@ -113,7 +113,7 @@ int main() {
 
     sheet.children().add(legend);
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — pasek postępu");
 
     term.run();

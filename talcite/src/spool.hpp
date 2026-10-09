@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "talcite/bytes.hpp"
 #include "talcite/feed.hpp"
+#include "talcite/promise.hpp"
 
 namespace talcite {
 
@@ -16,13 +19,29 @@ namespace talcite {
 //
 // Nie zna szerokości okna, skórki ani drzewa. Nie rozwija tabulatorów i nie zawija: oddaje surowy
 // wiersz bez `\n` i bez `\r` na końcu. Wszystko, co dotyczy rysowania, zostaje w `Viewer`.
-class Spool {
+//
+// **Na bajty nie czeka.** `Feed` oddaje obietnicę: okno, którego nie ma pod ręką, szpula
+// zamawia i odpowiada tym, co ma — mniej wierszy albo pustką — a `stalled()` mówi, że odpowiedź
+// jest niepełna, bo czeka na dysk. Okno dochodzi na wątek główny i wtedy wołany jest uchwyt
+// `awoken`; kto pytał, pyta drugi raz. Dokument podany bajtami nie stoi nigdy.
+//
+// `Peek` to szew **wewnętrzny**, nie część API biblioteki: zerknięcie w bajty, które już są —
+// edytor czyta przez kołdrę, która leży w pamięci i odpowiada od ręki, a szpula edytora nie ma
+// prawa stawać na kursorze. To nie źródło, tylko wartość w kawałkach, której nie da się podać
+// jednym wskaźnikiem. Żadne wejście publiczne nie przyjmuje `Peek` — źródło poza pamięcią jest
+// w talcite zawsze obietnicą (`Feed`), a publiczny `talcite::Fetch` to źródło pikseli, też
+// obietnica.
+class Spool : public std::enable_shared_from_this<Spool> {
 public:
-    Spool(Feed feed, std::size_t whole);
+    using Peek = std::function<Bytes(std::size_t at, std::size_t most)>;
+
+    Spool(Feed feed, std::size_t whole, Bytes head = {});
+
+    Spool(Peek peek, std::size_t whole);
 
     explicit Spool(Bytes given);
 
-    [[nodiscard]] std::vector<std::string> lines(std::size_t which, std::size_t most);
+    [[nodiscard]] std::optional<std::vector<std::string>> lines(std::size_t which, std::size_t most);
 
     [[nodiscard]] std::optional<std::size_t> at(std::size_t which);
 
@@ -32,9 +51,17 @@ public:
 
     [[nodiscard]] std::optional<std::size_t> counted() const { return counted_; }
 
+    [[nodiscard]] bool stalled() const { return stalled_; }
+
+    void counting();
+
+    void awoken(std::function<void()> given);
+
     void screen(int high);
 
-    void changed(std::size_t at, std::ptrdiff_t bytes, std::ptrdiff_t lines);
+    void changed(std::size_t at, std::size_t gone, std::size_t came, std::ptrdiff_t lines);
+
+    void rewritten(std::size_t at, std::ptrdiff_t bytes, std::ptrdiff_t lines);
 
 private:
     struct Anchor {
@@ -42,7 +69,18 @@ private:
         std::size_t at = 0;
     };
 
+    struct Want {
+        std::size_t at = 0;
+        std::size_t upto = 0;
+    };
+
+    [[nodiscard]] bool cached(std::size_t at, std::size_t upto) const;
+
     [[nodiscard]] bool ranged(std::size_t at, std::size_t much);
+
+    void ask(std::size_t at, std::size_t upto);
+
+    void arrived(std::size_t from, Bytes got);
 
     [[nodiscard]] char sign(std::size_t at) const;
 
@@ -55,11 +93,19 @@ private:
     void anchored(std::size_t which, std::size_t at);
 
     Feed feed_;
+    Peek peek_;
     Bytes held_;
     std::size_t whole_ = 0;
 
     Bytes chunk_;
     std::size_t chunked_ = 0;
+
+    bool stalled_ = false;
+    bool busy_ = false;
+    bool counting_ = false;
+    std::optional<Want> wanted_;
+    std::optional<Promise<void>> ordered_;
+    std::function<void()> awoken_;
 
     Anchor here_;
 

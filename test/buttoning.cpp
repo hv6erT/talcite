@@ -6,7 +6,7 @@
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/field.hpp"
 #include "talcite/root.hpp"
@@ -32,7 +32,7 @@ protected:
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.letter({x - seen.at.x, y - seen.at.y}, U'x', Style{});
+                made.put({x - seen.at.x, y - seen.at.y}, U'x', Style{});
 
         return made;
     }
@@ -47,7 +47,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -76,12 +76,19 @@ TRIAL("Przycisk: napis rysuje się w całości, bez umów o znakach") {
 
 namespace {
 
+// Korzeń, który rozsyła klawisz aktywny sam — w programie robi to dialog, legenda albo menu, ale
+// rozsyłanie jest chronione, więc próba potrzebuje własnego wejścia.
+class Top : public ui::Root {
+public:
+    using ui::Root::broadcast;
+};
+
 // Czy przycisk odpowie na ten klawisz aktywny. Pytamy **drogą, którą chodzi okno** — podaniem
 // zdarzenia — a nie osobną metodą do pytania, bo takiej już nie ma i nie ma jej celowo.
-bool hotly(ui::Root& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
+bool hotly(Top& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
     int done = 0;
 
-    const ui::Handle held = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    ui::Hook held = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -89,9 +96,9 @@ bool hotly(ui::Root& top, const std::shared_ptr<ui::Button>& one, ui::Key what) 
 
     ui::KeyEvent key{what};
 
-    (void)top.offer(key);
+    (void)top.broadcast(key);
 
-    one->off<ui::PickEvent>(held);
+    one->off(held);
 
     return done != 0;
 }
@@ -99,7 +106,7 @@ bool hotly(ui::Root& top, const std::shared_ptr<ui::Button>& one, ui::Key what) 
 }
 
 TRIAL("Przycisk: klawisze aktywne podaje wołający") {
-    ui::Root top;
+    Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
 
@@ -154,6 +161,19 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
     ought(!one->keys().contains(ui::Key{U'n'}));
     ought(!one->keys().contains(ui::Key{}));
 
+    // Litera nie patrzy na Shift (wielkość składa się), klawisz kodowany patrzy: Shift+F2 to inny
+    // klawisz niż F2 — jak w MC, gdzie Shift+F7 powtarza szukanie, a F7 je zaczyna.
+    ought(one->keys().contains(ui::Key{U't', ui::Mods{.shift = true}}));
+    ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
+    ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.ctrl = true}}));
+
+    one->keys().add(ui::Key{ui::Code::f2, ui::Mods{.shift = true}});
+
+    ought(one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
+    same(one->keys().many(), std::size_t{3});
+
+    one->keys().remove(ui::Key{ui::Code::f2, ui::Mods{.shift = true}});
+
     // Pusty klawisz nie wchodzi, a ten sam drugi raz nie dokłada się bez skutku.
     one->keys().add(ui::Key{});
     one->keys().add(U't');
@@ -196,14 +216,14 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
 }
 
 TRIAL("Przycisk: wyłączony nie odpowiada na swoje klawisze") {
-    ui::Root top;
+    Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
 
     top.children().add(one);
 
     one->keys().add(U'T');
-    one->able(false);
+    one->enabled(false);
 
     ought(!hotly(top, one, ui::Key{U'T'}));
 }
@@ -250,8 +270,42 @@ TRIAL("Przycisk: podkreśla się pierwsze wystąpienie, bez różnicy wielkości
     ought(!made.at({6, 0}).style.under);
 }
 
+// Wielkość składa się także poza łaciną podstawową — rosyjskie i ukraińskie menu twa podkreślają
+// litery cyrylicy, a skrót z wielką literą ma znaleźć małą w napisie i odpowiadać na obie.
+TRIAL("Przycisk: wielkość składa się w cyrylicy i w łacinie z ogonkami") {
+    Top top;
+
+    const auto one = std::make_shared<ui::Button>("Карта");
+    const auto two = std::make_shared<ui::Button>("Mżawka");
+
+    one->keys().add(U'А');
+    two->keys().add(U'Ż');
+
+    top.children().add(one);
+
+    const View made = top.render({{0, 0}, {9, 1}});
+
+    same(made.at({3, 0}).letter, U'а');
+    ought(made.at({3, 0}).style.under);
+    ought(!made.at({2, 0}).style.under);
+
+    ought(hotly(top, one, ui::Key{U'а'}));
+    ought(hotly(top, one, ui::Key{U'А'}));
+    ought(!hotly(top, one, ui::Key{U'a'}));
+
+    top.children().clear();
+    top.children().add(two);
+
+    const View other = top.render({{0, 0}, {10, 1}});
+
+    same(other.at({3, 0}).letter, U'ż');
+    ought(other.at({3, 0}).style.under);
+
+    ought(hotly(top, two, ui::Key{U'ż'}));
+}
+
 TRIAL("Przycisk: klawisz spoza napisu nie znakuje niczego") {
-    ui::Root top;
+    Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
 
@@ -372,20 +426,20 @@ TRIAL("Przycisk: Enter naciska ten z ogniskiem, spacja nie") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
     same(done, 1);
 
     // **Spacja nie jest sprawą przycisku.** Była nią kiedyś — odruch z innego świata niż Midnight
     // Commander — i zabierała aplikacji klawisz, który w oknie z polem tekstowym należy do pisania.
     ui::KeyEvent space{U' '};
 
-    ought(!top.deal(space));
+    ought(!top.dispatch(space));
     same(done, 1);
 
     // Zwykła litera nie jest sprawą przycisku — tym zajmuje się dialog.
     ui::KeyEvent other{U'z'};
 
-    ought(!top.deal(other));
+    ought(!top.dispatch(other));
     same(done, 1);
 }
 
@@ -403,11 +457,11 @@ TRIAL("Przycisk: ze sterującym nie łapie") {
 
     ui::KeyEvent held{ui::Key{ui::Code::enter, ui::Mods{true, false, false}}};
 
-    ought(!top.deal(held));
+    ought(!top.dispatch(held));
 
     ui::KeyEvent aside{ui::Key{U' ', ui::Mods{false, true, false}}};
 
-    ought(!top.deal(aside));
+    ought(!top.dispatch(aside));
 
     same(done, 0);
 }
@@ -419,7 +473,7 @@ TRIAL("Przycisk: niedostępny nie bierze ogniska i nie odpowiada") {
 
     const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
-    one->able(false);
+    one->enabled(false);
 
     top.children().add(one);
 
@@ -427,7 +481,7 @@ TRIAL("Przycisk: niedostępny nie bierze ogniska i nie odpowiada") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     ought(top.render({{0, 0}, {7, 1}}).at({2, 0}).style.faint);
 
@@ -447,12 +501,12 @@ TRIAL("Przycisk: wyłączenie oddaje ognisko") {
 
     one->focus();
 
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
-    one->able(false);
+    one->enabled(false);
 
     // Poza dialogiem nie ma chętnego przodka — korzeń ogniska nie bierze — więc gaśnie zupełnie.
-    same(top.focus(), static_cast<ui::Node*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     // Wyłączenie przycisku bez ogniska niczego nie rusza.
     const auto other = std::make_shared<ui::Button>("Nie");
@@ -461,9 +515,9 @@ TRIAL("Przycisk: wyłączenie oddaje ognisko") {
     top.children().add(other);
 
     other->focus();
-    one->able(true);
+    one->enabled(true);
 
-    same(top.focus(), static_cast<ui::Node*>(other.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 TRIAL("Przycisk: klik bierze ognisko i naciska") {
@@ -479,16 +533,16 @@ TRIAL("Przycisk: klik bierze ognisko i naciska") {
 
     ui::ClickEvent what{{3, 0}, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(done, 1);
-    same(top.focus(), static_cast<ui::Node*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 namespace {
 
 struct Both {
-    std::shared_ptr<ui::VeilWindow> window;
+    std::shared_ptr<ui::Modals> window;
     std::shared_ptr<ui::Dialog> dialog;
     std::shared_ptr<ui::Button> first;
     std::shared_ptr<ui::Button> second;
@@ -497,7 +551,7 @@ struct Both {
 Both asking(ui::Root& top, int* done) {
     Both made;
 
-    made.window = std::make_shared<ui::VeilWindow>();
+    made.window = std::make_shared<ui::Modals>();
     made.dialog = std::make_shared<ui::Dialog>();
     made.first = proving::doing(std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
     made.second = std::make_shared<ui::Button>("Nie");
@@ -530,15 +584,15 @@ TRIAL("Dialog: Tab chodzi po chętnych i zawija") {
 
     const Both both = asking(top, &done);
 
-    same(top.focus(), static_cast<ui::Node*>(both.first.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
-    same(top.focus(), static_cast<ui::Node*>(both.second.get()));
+    ought(top.dispatch(tab));
+    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
-    ought(top.deal(tab));
-    same(top.focus(), static_cast<ui::Node*>(both.first.get()));
+    ought(top.dispatch(tab));
+    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
 TRIAL("Dialog: Tab z przesuwnikiem chodzi wstecz") {
@@ -550,23 +604,23 @@ TRIAL("Dialog: Tab z przesuwnikiem chodzi wstecz") {
 
     ui::KeyEvent back{ui::Key{ui::Code::tab, ui::Mods{false, false, true}}};
 
-    ought(top.deal(back));
-    same(top.focus(), static_cast<ui::Node*>(both.second.get()));
+    ought(top.dispatch(back));
+    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
-    ought(top.deal(back));
-    same(top.focus(), static_cast<ui::Node*>(both.first.get()));
+    ought(top.dispatch(back));
+    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
 TRIAL("Dialog: Tab nie wychodzi poza dialog") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto outside = std::make_shared<Box>(ui::Size{10, 3});
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto one = std::make_shared<ui::Button>("Tak");
 
     dialog->children().add(one);
-    window->body()->children().add(outside);
+    window->content(outside);
     top.children().add(window);
     window->open(dialog);
 
@@ -575,11 +629,11 @@ TRIAL("Dialog: Tab nie wychodzi poza dialog") {
     ui::KeyEvent tab{ui::Code::tab};
 
     for (int turn = 0; turn < 4; ++turn) {
-        ought(top.deal(tab));
+        ought(top.dispatch(tab));
 
         // Jedyny chętny w dialogu, więc ognisko z niego nie schodzi — a już na pewno nie na to,
         // co leży pod spodem.
-        same(top.focus(), static_cast<ui::Node*>(one.get()));
+        same(top.focused_node(), static_cast<ui::Node*>(one.get()));
     }
 }
 
@@ -592,7 +646,7 @@ TRIAL("Dialog: Enter nie naciska podstawowego, gdy ognisko stoi poza przyciskiem
 
     int done = 0;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto aside = std::make_shared<Box>(ui::Size{6, 1});
     const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
@@ -614,7 +668,7 @@ TRIAL("Dialog: Enter nie naciska podstawowego, gdy ognisko stoi poza przyciskiem
     ui::KeyEvent enter{ui::Code::enter};
 
     // Zasłona i tak połyka wszystko, czego nikt nie wziął — modalność zostaje.
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
     same(done, 0);
 }
 
@@ -640,7 +694,7 @@ TRIAL("Dialog: Enter na przycisku naciska jego, nie podstawowy") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
 
     same(other, 1);
     same(done, 0);
@@ -653,7 +707,7 @@ TRIAL("Dialog: Enter na przycisku naciska jego, nie podstawowy") {
 TRIAL("Dialog: otwarcie staje na pierwszym chętnym") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto first = std::make_shared<ui::Button>("Tak");
     const auto second = std::make_shared<ui::Button>("Nie");
@@ -669,7 +723,7 @@ TRIAL("Dialog: otwarcie staje na pierwszym chętnym") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focus(), static_cast<ui::Node*>(first.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
 // Po to ta reguła jest: okno z polem tekstowym ma zaczynać z ogniskiem w polu, choćby przycisk
@@ -677,7 +731,7 @@ TRIAL("Dialog: otwarcie staje na pierwszym chętnym") {
 TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto field = std::make_shared<ui::Field>(20);
     const auto yes = std::make_shared<ui::Button>("Szukaj");
@@ -693,7 +747,7 @@ TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focus(), static_cast<ui::Node*>(field.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(field.get()));
 
     // Enter zostaje przy ognisku: przycisk oznaczony jako podstawowy nie jest przez to naciskany.
     int done = 0;
@@ -706,7 +760,7 @@ TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.deal(enter));
+    ought(top.dispatch(enter));
     same(done, 0);
 }
 
@@ -720,18 +774,18 @@ TRIAL("Dialog: klawisz aktywny naciska z dowolnego miejsca okna") {
     // Ognisko stoi na „Tak", a naciskamy jego klawisz małą literą.
     ui::KeyEvent small{U't'};
 
-    ought(top.deal(small));
+    ought(top.dispatch(small));
     same(done, 1);
 
     ui::KeyEvent large{U'T'};
 
-    ought(top.deal(large));
+    ought(top.dispatch(large));
     same(done, 2);
 
     // Klawisz, którego żaden przycisk nie ma, nic nie robi — ale dialog i tak go połyka.
     ui::KeyEvent other{U'z'};
 
-    ought(top.deal(other));
+    ought(top.dispatch(other));
     same(done, 2);
 }
 
@@ -742,21 +796,21 @@ TRIAL("Dialog: niedostępny przycisk wypada z wędrówki i z klawiszy") {
 
     const Both both = asking(top, &done);
 
-    both.first->able(false);
+    both.first->enabled(false);
 
     // Ognisko zeszło z wyłączonego przycisku na **najbliższego chętnego przodka**, czyli na sam
     // dialog. Gdyby zgasło zupełnie, klawisz szedłby prosto do korzenia i zamknięte okno
     // przestałoby być zamknięte.
-    same(top.focus(), static_cast<ui::Node*>(both.dialog.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(both.dialog.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
-    same(top.focus(), static_cast<ui::Node*>(both.second.get()));
+    ought(top.dispatch(tab));
+    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
     ui::KeyEvent small{U't'};
 
-    ought(top.deal(small));
+    ought(top.dispatch(small));
     same(done, 0);
 }
 
@@ -765,7 +819,7 @@ TRIAL("Dialog: niedostępny przycisk wypada z wędrówki i z klawiszy") {
 TRIAL("Dialog: bez chętnych w środku ognisko zostaje na dialogu") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
 
     dialog->children().add(std::make_shared<ui::Column>());
@@ -773,10 +827,10 @@ TRIAL("Dialog: bez chętnych w środku ognisko zostaje na dialogu") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focus(), static_cast<ui::Node*>(dialog.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.deal(tab));
-    same(top.focus(), static_cast<ui::Node*>(dialog.get()));
+    ought(top.dispatch(tab));
+    same(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
 }

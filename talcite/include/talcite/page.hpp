@@ -9,7 +9,13 @@
 #include "talcite/feed.hpp"
 #include "talcite/markednode.hpp"
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
+
+namespace talcite {
+
+class Spool;
+
+}
 
 namespace talcite::ui {
 
@@ -20,41 +26,39 @@ struct Place {
 
 class Page : public MarkedNode<Node> {
 public:
-    Page();
-
-    explicit Page(ScrollStyle style);
-
     ~Page() override;
-
-    void hold(Roll given, std::size_t lines);
 
     [[nodiscard]] bool held() const;
 
     [[nodiscard]] std::optional<std::size_t> first() const;
 
-    [[nodiscard]] virtual std::optional<std::size_t> lines() const;
+    [[nodiscard]] std::optional<std::size_t> lines() const;
 
     void first(std::size_t given);
 
+    [[nodiscard]] std::optional<std::size_t> at() const;
+
+    void at(std::size_t given);
+
+    [[nodiscard]] std::optional<std::size_t> whole() const;
+
     void end();
 
-    void slide(int lines);
+    bool slide(int lines);
 
-    void page(int pages);
+    [[nodiscard]] bool wrapped() const;
 
-    [[nodiscard]] bool wrapping() const;
+    void wrapped(bool given);
 
-    void wrapping(bool given);
+    [[nodiscard]] bool scrollbar() const;
 
-    [[nodiscard]] bool progress() const;
-
-    void progress(bool given);
+    void scrollbar(bool given);
 
     [[nodiscard]] std::size_t shown() const;
 
-    [[nodiscard]] const std::string& bar() const;
+    [[nodiscard]] const std::string& scrollbar_role() const;
 
-    void bar(std::string given);
+    void scrollbar_role(std::string given);
 
     [[nodiscard]] const std::string& chosen() const;
 
@@ -62,49 +66,51 @@ public:
 
     [[nodiscard]] bool focusable() const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    [[nodiscard]] virtual std::optional<std::size_t> at() const;
+    Page();
 
-    [[nodiscard]] virtual std::optional<std::size_t> below() const;
+    explicit Page(ScrollShape shape);
 
-    [[nodiscard]] virtual std::optional<std::size_t> whole() const;
+    void hold(std::shared_ptr<Spool> given);
 
-    virtual void counting();
+    void hold(Roll given, std::size_t lines);
 
-    virtual void screen(int high);
+    [[nodiscard]] const std::shared_ptr<Spool>& spool() const;
 
     [[nodiscard]] int pieces(std::size_t which) const;
 
-    bool moved(int lines);
+    void invalidate();
 
-    void afresh();
+    bool reveal(std::size_t line);
 
-    bool show(std::size_t line);
+    [[nodiscard]] std::optional<Spot> spot_of(Place where) const;
 
-    [[nodiscard]] std::optional<Spot> spotted(std::size_t line, std::size_t byte) const;
-
-    [[nodiscard]] std::optional<Place> struck(Spot where) const;
+    [[nodiscard]] std::optional<Place> place_of(Spot where) const;
 
     [[nodiscard]] std::size_t topmost() const override;
 
-    void stirred();
-
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(WheelEvent& what) override;
+    bool handle(WheelEvent& what) override;
 
-    bool react(ClickEvent& what) override;
+    bool handle(ClickEvent& what) override;
+
+    bool handle(MouseEvent& what) override;
 
     bool reach(std::size_t which) override;
 
 private:
     struct Kept;
+
+    void page(int pages);
+
+    bool move_by(int lines);
 
     void spread(Size given);
 

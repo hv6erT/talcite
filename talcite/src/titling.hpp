@@ -5,7 +5,7 @@
 
 #include "eliding.hpp"
 #include "talcite/area.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
@@ -20,7 +20,7 @@ namespace talcite::ui {
 //
 // **Styl przychodzi z zewnątrz, a nie z roli.** Ten napis rysuje się w środku cudzego widżetu, więc
 // to gospodarz odpytał skórkę i to on wie, jak ma wyglądać jego tytuł.
-inline void along(View& into, Spot at, int much, const std::string& said, JustifyStyle justify,
+inline void along(View& into, Spot at, int much, const std::string& said, Justify justify,
                   const Style& look, char32_t mark) {
     if (said.empty() || much <= 2) return;
 
@@ -29,11 +29,11 @@ inline void along(View& into, Spot at, int much, const std::string& said, Justif
     const int wide = std::min(measured(whole).wide, much);
 
     const int aside = much - wide;
-    const int x = justify == JustifyStyle::left    ? 0
-                  : justify == JustifyStyle::right ? aside
+    const int x = justify == Justify::left    ? 0
+                  : justify == Justify::right ? aside
                                                    : aside / 2;
 
-    into.string({at.x + x, at.y}, elided(whole, wide, ElideStyle::right, mark), look);
+    into.put({at.x + x, at.y}, elided(whole, wide, Elide::right, mark), look);
 }
 
 }

@@ -4,13 +4,13 @@
 #include <utility>
 
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
 class Frame : public Node {
 public:
-    explicit Frame(std::string title = {}, FrameStyle style = {});
+    explicit Frame(std::string title = {}, FrameShape shape = {});
 
     [[nodiscard]] const std::string& title() const { return title_; }
 
@@ -20,29 +20,33 @@ public:
 
     void footer(std::string given) { footer_ = std::move(given); }
 
-    [[nodiscard]] LineStyle border() const { return style_.border; }
+    [[nodiscard]] Border border() const { return shape_.border; }
 
-    void border(LineStyle given) { style_.border = given; }
+    void border(Border given) { shape_.border = given; }
 
-    [[nodiscard]] JustifyStyle justify() const { return style_.justify; }
+    [[nodiscard]] Justify justify() const { return shape_.justify; }
 
-    void justify(JustifyStyle given) { style_.justify = given; }
+    void justify(Justify given) { shape_.justify = given; }
 
-    [[nodiscard]] bool top() const { return style_.top; }
+    [[nodiscard]] Justify footing() const { return shape_.footing; }
 
-    void top(bool given) { style_.top = given; }
+    void footing(Justify given) { shape_.footing = given; }
 
-    [[nodiscard]] bool bottom() const { return style_.bottom; }
+    [[nodiscard]] bool top() const { return shape_.top; }
 
-    void bottom(bool given) { style_.bottom = given; }
+    void top(bool given) { shape_.top = given; }
 
-    [[nodiscard]] bool left() const { return style_.left; }
+    [[nodiscard]] bool bottom() const { return shape_.bottom; }
 
-    void left(bool given) { style_.left = given; }
+    void bottom(bool given) { shape_.bottom = given; }
 
-    [[nodiscard]] bool right() const { return style_.right; }
+    [[nodiscard]] bool left() const { return shape_.left; }
 
-    void right(bool given) { style_.right = given; }
+    void left(bool given) { shape_.left = given; }
+
+    [[nodiscard]] bool right() const { return shape_.right; }
+
+    void right(bool given) { shape_.right = given; }
 
     [[nodiscard]] Size wants(Size room) const override;
 
@@ -61,7 +65,7 @@ private:
 
     std::string title_;
     std::string footer_;
-    FrameStyle style_;
+    FrameShape shape_;
 };
 
 }

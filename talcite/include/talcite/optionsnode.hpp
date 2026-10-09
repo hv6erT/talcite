@@ -12,7 +12,7 @@
 
 namespace talcite::ui {
 
-class History;
+class HistoryField;
 
 class Options {
 public:
@@ -39,7 +39,7 @@ public:
 
     [[nodiscard]] bool contains(const std::string& one) const;
 
-    [[nodiscard]] int which(const std::string& one) const;
+    [[nodiscard]] std::optional<std::size_t> find(const std::string& one) const;
 
     [[nodiscard]] const std::string& operator[](std::size_t which) const;
 
@@ -54,10 +54,10 @@ public:
     [[nodiscard]] walk end() const { return inside_.end(); }
 
 private:
-    template <std::derived_from<Node> Above>
+    template <std::derived_from<Node> Base>
     friend class OptionsNode;
 
-    friend class History;
+    friend class HistoryField;
 
     Options() = default;
 
@@ -66,56 +66,43 @@ private:
     std::vector<std::string> inside_;
 };
 
-template <std::derived_from<Node> Above>
-class OptionsNode : public Above {
+template <std::derived_from<Node> Base>
+class OptionsNode : public Base {
 public:
     [[nodiscard]] Options& options() { return options_; }
 
     [[nodiscard]] const Options& options() const { return options_; }
 
-    [[nodiscard]] std::optional<std::string> which() const {
+    [[nodiscard]] std::optional<std::size_t> which() const {
         if (options_.empty()) return {};
 
-        return options_[std::min(at_, options_.many() - 1)];
+        return std::min(at_, options_.many() - 1);
     }
 
-    void which(const std::string& one) {
-        const int found = options_.which(one);
-
-        if (found >= 0) at_ = static_cast<std::size_t>(found);
-    }
-
-    [[nodiscard]] bool able() const { return able_; }
-
-    virtual void able(bool given) {
-        if (able_ == given) return;
-
-        able_ = given;
-
-        if (able_) return;
-
-        this->unfocus();
-    }
-
-    [[nodiscard]] int takes() const override { return 0; }
-
-protected:
-    explicit OptionsNode(std::string role) { this->role(std::move(role)); }
-
-    [[nodiscard]] std::size_t at() const {
-        return options_.empty() ? 0 : std::min(at_, options_.many() - 1);
-    }
-
-    void at(std::size_t given) {
+    void which(std::size_t given) {
         if (options_.empty()) return;
 
         at_ = std::min(given, options_.many() - 1);
     }
 
+    [[nodiscard]] std::optional<std::string> value() const {
+        if (options_.empty()) return {};
+
+        return options_[std::min(at_, options_.many() - 1)];
+    }
+
+    void value(const std::string& one) {
+        if (const std::optional<std::size_t> found = options_.find(one)) at_ = *found;
+    }
+
+    [[nodiscard]] int capacity() const override { return 0; }
+
+protected:
+    explicit OptionsNode(std::string role) { this->role(std::move(role)); }
+
 private:
     Options options_;
     std::size_t at_ = 0;
-    bool able_ = true;
 };
 
 }

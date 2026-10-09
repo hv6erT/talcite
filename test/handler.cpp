@@ -30,15 +30,15 @@ public:
     using ui::Handler::trigger;
 
 protected:
-    bool react(ui::KeyEvent& what) override {
+    bool handle(ui::KeyEvent& what) override {
         (void)what;
 
-        told_.push_back(named_ + ":react");
+        told_.push_back(named_ + ":handle");
 
         return takes_;
     }
 
-    bool react(ui::MouseEvent& what) override {
+    bool handle(ui::MouseEvent& what) override {
         (void)what;
 
         told_.push_back(named_ + ":mysz");
@@ -55,7 +55,7 @@ private:
 
 }
 
-TRIAL("Handler: react celu dostaje zdarzenie") {
+TRIAL("Handler: handle celu dostaje zdarzenie") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -63,7 +63,7 @@ TRIAL("Handler: react celu dostaje zdarzenie") {
 
     ought(!one.send(what));
     same(told.size(), std::size_t{1});
-    same(told[0], std::string{"jeden:react"});
+    same(told[0], std::string{"jeden:handle"});
 }
 
 TRIAL("Handler: nieobsłużone idzie do rodzica") {
@@ -78,8 +78,8 @@ TRIAL("Handler: nieobsłużone idzie do rodzica") {
 
     ought(!down.send(what));
     same(told.size(), std::size_t{2});
-    same(told[0], std::string{"dół:react"});
-    same(told[1], std::string{"góra:react"});
+    same(told[0], std::string{"dół:handle"});
+    same(told[1], std::string{"góra:handle"});
 }
 
 TRIAL("Handler: obsłużone nie idzie wyżej") {
@@ -95,7 +95,7 @@ TRIAL("Handler: obsłużone nie idzie wyżej") {
 
     ought(down.send(what));
     same(told.size(), std::size_t{1});
-    same(told[0], std::string{"dół:react"});
+    same(told[0], std::string{"dół:handle"});
 }
 
 TRIAL("Handler: at wskazuje na pierwszy węzeł, nie na ostatni") {
@@ -110,10 +110,10 @@ TRIAL("Handler: at wskazuje na pierwszy węzeł, nie na ostatni") {
     ui::KeyEvent what{U'a'};
 
     ought(down.send(what));
-    ought(what.at() == &down);
+    ought(what.target() == &down);
 }
 
-TRIAL("Handler: uchwyt z on dostaje zdarzenie, gdy react go nie wziął") {
+TRIAL("Handler: uchwyt z on dostaje zdarzenie, gdy handle go nie wziął") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -128,16 +128,16 @@ TRIAL("Handler: uchwyt z on dostaje zdarzenie, gdy react go nie wziął") {
 
     ought(!one.send(what));
     same(told.size(), std::size_t{2});
-    same(told[0], std::string{"jeden:react"});
+    same(told[0], std::string{"jeden:handle"});
     same(told[1], std::string{"uchwyt"});
 }
 
 // **Dwa kanały, dwa niezależne zatrzymania.** Widżet i wołający wędrują tą samą drogą, ale każdy
-// zamyka wyłącznie swój ruch: prawda z `react` mówi „dość reagowania w górę", prawda z uchwytu mówi
+// zamyka wyłącznie swój ruch: prawda z `handle` mówi „dość reagowania w górę", prawda z uchwytu mówi
 // „dość uchwytów w górę", i żadne z tych zdań nie mówi nic o drugim kanale. Wcześniej niosła to
 // jedna wartość i znaczyła dwie rzeczy naraz — stąd brało się to, że widżet zasłaniał wołającemu
 // zdarzenie, którego wołający miał pełne prawo zobaczyć.
-TRIAL("Handler: react, który wziął, nie ucisza uchwytów") {
+TRIAL("Handler: handle, który wziął, nie ucisza uchwytów") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -154,7 +154,7 @@ TRIAL("Handler: react, który wziął, nie ucisza uchwytów") {
 
     ought(one.send(what));
     same(told.size(), std::size_t{2});
-    same(told[0], std::string{"jeden:react"});
+    same(told[0], std::string{"jeden:handle"});
     same(told[1], std::string{"uchwyt"});
 }
 
@@ -183,7 +183,7 @@ TRIAL("Handler: wszystkie uchwyty biegną, nawet gdy pierwszy wziął") {
     same(told[2], std::string{"drugi"});
 }
 
-// Prawda z uchwytu zamyka **drogę uchwytów**, a nie całą wędrówkę: `react` przodka i tak się
+// Prawda z uchwytu zamyka **drogę uchwytów**, a nie całą wędrówkę: `handle` przodka i tak się
 // odezwie. Dzięki temu uchwyt wołającego nigdy nie oślepia widżetu, który stoi nad nim — a to jest
 // dokładnie ten przypadek, przez który przycisk komunikatu potrafił połknąć własne naciśnięcie.
 TRIAL("Handler: uchwyt, który wziął, zatrzymuje tylko swój kanał") {
@@ -208,8 +208,8 @@ TRIAL("Handler: uchwyt, który wziął, zatrzymuje tylko swój kanał") {
 
     ought(down.send(what));
     same(told.size(), std::size_t{2});
-    same(told[0], std::string{"dół:react"});
-    same(told[1], std::string{"góra:react"});
+    same(told[0], std::string{"dół:handle"});
+    same(told[1], std::string{"góra:handle"});
 
     // Uchwyt na górze już nie biegnie — jego kanał zamknął się na dole.
     same(seen, 0);
@@ -230,7 +230,7 @@ TRIAL("Handler: uchwyty innego rodzaju milczą") {
 
     ought(!one.send(what));
     same(told.size(), std::size_t{1});
-    same(told[0], std::string{"jeden:react"});
+    same(told[0], std::string{"jeden:handle"});
 }
 
 TRIAL("Handler: off zdejmuje uchwyt") {
@@ -238,13 +238,13 @@ TRIAL("Handler: off zdejmuje uchwyt") {
 
     Knot one{told, "jeden"};
 
-    const ui::Handle which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    ui::Hook which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("uchwyt");
 
         return true;
     });
 
-    one.off<ui::KeyEvent>(which);
+    one.off(which);
 
     ui::KeyEvent what{U'a'};
 
@@ -252,14 +252,51 @@ TRIAL("Handler: off zdejmuje uchwyt") {
     same(told.size(), std::size_t{1});
 }
 
-TRIAL("Handler: off pod niewłaściwym rodzajem nic nie zdejmuje") {
+// **Uchwyt zna swój typ i wie, czy coś przez niego wisi.** Pomyłki w typie przy odpinaniu już nie
+// ma jak zrobić; pusty jest świeży i odpięty, a dopiero `on` daje niepusty.
+TRIAL("Handler: uchwyt jest pusty świeży i po odpięciu, a pełny po dopięciu") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
 
-    const ui::Handle which = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+    const ui::Hook fresh;
 
-    one.off<ui::MouseEvent>(which);
+    ought(fresh.empty());
+
+    ui::Hook which = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+
+    ought(!which.empty());
+
+    ui::Hook copy = which;
+
+    one.off(which);
+
+    ought(which.empty());
+
+    // Kopia wskazuje to samo, co już odpięte: jej odpięcie nic nie robi i niczego nie psuje.
+    ought(!copy.empty());
+
+    one.off(copy);
+
+    ought(copy.empty());
+
+    ui::KeyEvent what{U'a'};
+
+    ought(!one.send(what));
+}
+
+// Uchwyt tego samego numeru przy innym typie nie zdejmuje cudzego — typ jest w uchwycie, nie w
+// wołaniu, więc odpina się dokładnie to, co dopięto.
+TRIAL("Handler: uchwyt odpina tylko swój typ") {
+    std::vector<std::string> told;
+
+    Knot one{told, "jeden"};
+
+    ui::Hook mouse = one.on<ui::MouseEvent>([](ui::MouseEvent&) { return true; });
+
+    (void)one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+
+    one.off(mouse);
 
     ui::KeyEvent what{U'a'};
 
@@ -271,7 +308,7 @@ TRIAL("Handler: off zdejmuje jeden, a nie wszystkie") {
 
     Knot one{told, "jeden"};
 
-    const ui::Handle first = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    ui::Hook first = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("pierwszy");
 
         return false;
@@ -283,7 +320,7 @@ TRIAL("Handler: off zdejmuje jeden, a nie wszystkie") {
         return false;
     });
 
-    one.off<ui::KeyEvent>(first);
+    one.off(first);
 
     ui::KeyEvent what{U'a'};
 
@@ -292,13 +329,17 @@ TRIAL("Handler: off zdejmuje jeden, a nie wszystkie") {
     same(told[1], std::string{"drugi"});
 }
 
-TRIAL("Handler: off na pustym i zerowym numerze niczego nie psuje") {
+TRIAL("Handler: off na pustym uchwycie niczego nie psuje") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
 
-    one.off<ui::KeyEvent>(0);
-    one.off<ui::KeyEvent>(7);
+    ui::Hook none;
+
+    one.off(none);
+    one.off(none);
+
+    ought(none.empty());
 
     ui::KeyEvent what{U'a'};
 
@@ -316,7 +357,7 @@ TRIAL("Handler: uchwyt widzi cel przez at") {
     const ui::Handler* seen = nullptr;
 
     (void)up.on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
-        seen = what.at();
+        seen = what.target();
 
         return true;
     });
@@ -343,9 +384,9 @@ TRIAL("Handler: wędrówka przez trzy szczeble") {
 
     ought(low.send(what));
     same(told.size(), std::size_t{3});
-    same(told[0], std::string{"spód:react"});
-    same(told[1], std::string{"środek:react"});
-    same(told[2], std::string{"szczyt:react"});
+    same(told[0], std::string{"spód:handle"});
+    same(told[1], std::string{"środek:handle"});
+    same(told[2], std::string{"szczyt:handle"});
 }
 
 TRIAL("Handler: rodzaje wędrują tą samą drogą") {
@@ -369,11 +410,11 @@ TRIAL("Handler: uchwyt odpięty w trakcie własnego biegu nie wywala pętli") {
 
     Knot one{told, "jeden"};
 
-    ui::Handle which = 0;
+    ui::Hook which;
 
     which = one.on<ui::KeyEvent>([&one, &which, &told](ui::KeyEvent&) {
         told.push_back("pierwszy");
-        one.off<ui::KeyEvent>(which);
+        one.off(which);
 
         return false;
     });
@@ -391,7 +432,7 @@ TRIAL("Handler: uchwyt odpięty w trakcie własnego biegu nie wywala pętli") {
     same(told[2], std::string{"drugi"});
 }
 
-TRIAL("Handler: węzeł odpięty od rodzica w trakcie react i tak oddaje wyżej") {
+TRIAL("Handler: węzeł odpięty od rodzica w trakcie handle i tak oddaje wyżej") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -409,5 +450,77 @@ TRIAL("Handler: węzeł odpięty od rodzica w trakcie react i tak oddaje wyżej"
 
     ought(!down.send(what));
     same(told.size(), std::size_t{2});
-    same(told[1], std::string{"góra:react"});
+    same(told[1], std::string{"góra:handle"});
+}
+
+// **Zdarzenie programu idzie wyłącznie kanałem wołających.** Kanał widżetu zna tylko zdarzenia
+// biblioteki — dla typu spoza zestawu `carried` go nawet nie otwiera — a uchwyty dostają je
+// jak każde inne: w górę, do pierwszego, który weźmie.
+namespace {
+
+class Own : public ui::Event {};
+
+class Mute : public ui::Handler {
+public:
+    void under(ui::Handler* one) { up_ = one; }
+
+    [[nodiscard]] ui::Handler* parent() const override { return up_; }
+
+    template <typename One>
+    bool send(One& what) {
+        return trigger(what);
+    }
+
+private:
+    ui::Handler* up_ = nullptr;
+};
+
+}
+
+TRIAL("Handler: zdarzenie programu wędruje w górę do uchwytów") {
+    Mute under;
+    Mute middle;
+    Mute above;
+
+    under.under(&middle);
+    middle.under(&above);
+
+    std::vector<std::string> heard;
+
+    (void)middle.on<Own>([&heard](Own&) {
+        heard.emplace_back("środek");
+
+        return false;
+    });
+    (void)above.on<Own>([&heard](Own&) {
+        heard.emplace_back("góra");
+
+        return true;
+    });
+
+    Own what;
+
+    ought(under.send(what));
+    same(heard.size(), std::size_t{2});
+    same(heard[1], std::string{"góra"});
+}
+
+TRIAL("Handler: zdarzenie programu, którego nikt nie wziął, oddaje fałsz") {
+    Mute under;
+    Mute above;
+
+    under.under(&above);
+
+    int heard = 0;
+
+    (void)above.on<Own>([&heard](Own&) {
+        ++heard;
+
+        return false;
+    });
+
+    Own what;
+
+    ought(!under.send(what));
+    same(heard, 1);
 }

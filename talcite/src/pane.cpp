@@ -11,30 +11,18 @@ namespace talcite::ui {
 //
 // Powód, dla którego on w ogóle musi istnieć, jest jeden i mało oczywisty: **klawisz idzie bąbelkiem
 // od ogniska w górę**. Legenda i pasek menu są przodkami treści, więc dopóki ogniska nie ma nigdzie,
-// `Root::deal` podaje klawisz korzeniowi i tam wędrówka się kończy — F-klawisze milczą. Okno bez
+// `Root::dispatch` podaje klawisz korzeniowi i tam wędrówka się kończy — F-klawisze milczą. Okno bez
 // żadnego przycisku i bez pola tekstowego musi więc mieć **coś**, co to ognisko potrzyma. Cztery
 // dema miały na to własną atrapę; teraz mają jedną wspólną.
-bool Pane::focusable() const { return able_; }
 
-// **Wyłączenie oddaje ognisko najbliższemu chętnemu przodkowi** — ta sama reguła i ten sam powód, co
-// w przycisku, polu, wierszu listy, pozycji menu, polu wyboru, grupie opcji i wyborze. Pojemnik był
-// ósmy i jedyny, który zostawał z ogniskiem na węźle mówiącym o sobie `focusable() == false`.
+// **Bierze cały pokój i tylko tyle.** Panel i podgląd mają zająć swoją część okna niezależnie od
+// tego, jak duża jest treść, i po to `Pane` to nadpisuje — bez tego `Node::wants` zszedłby do
+// życzenia dziecka i cztery dema zmieniłyby wygląd.
 //
-// W dialogu Tab wygrzebałby się z tego sam, bo `Veil::step` przy ognisku spoza swojej listy skacze
-// na pierwszy chętny — ale poza zasłoną nie ma kto tego naprawić i ognisko zostaje tam na stałe.
-void Pane::able(bool given) {
-    if (able_ == given) return;
-
-    able_ = given;
-
-    if (able_) return;
-
-    unfocus();
-}
-
-// Prawda oddaje cały pokój, fałsz schodzi do życzenia dziecka. Pierwsze jest tym, czego chce panel
-// i podgląd — mają zająć swoją część okna niezależnie od tego, jak duża jest treść.
-Size Pane::wants(Size room) const { return full_ ? room : Node::wants(room); }
+// Stała, nie ustawienie. Stało tu pole `full_` z parą ustawiaczy, które **nie miały ani jednego
+// wołającego** poza trzema próbami sprawdzającymi je same; rozmiar wszedł tu przy okazji i zastygł.
+// Teraz od zadawania rozmiaru jest `Box`, a `Pane` został przy tym, po co powstał — przy ognisku.
+Size Pane::wants(Size room) const { return room; }
 
 // **Pojemnik nie zabiera kliknięć swoim dzieciom.** Mysz wędruje od najgłębszego węzła pod kursorem
 // w górę, więc dziecko jest pierwsze i kto je weźmie, ten kończy wędrówkę; tutaj dochodzi tylko to,
@@ -46,8 +34,8 @@ Size Pane::wants(Size room) const { return full_ ? room : Node::wants(room); }
 //
 // Straż na korzeniu jest ta sama co w `Field`: `Node::focus()` rzuca na węźle poza drzewem, a widżet
 // bywa renderowany w próbie bez korzenia.
-bool Pane::react(ClickEvent&) {
-    if (!able_) return false;
+bool Pane::handle(ClickEvent&) {
+    if (!enabled()) return false;
 
     if (root() != nullptr) focus();
 

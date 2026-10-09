@@ -5,6 +5,7 @@
 
 #include "talcite/column.hpp"
 #include "talcite/root.hpp"
+#include "talcite/stack.hpp"
 #include "talcite/row.hpp"
 #include "talcite/view.hpp"
 
@@ -28,18 +29,18 @@ protected:
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.letter({x - seen.at.x, y - seen.at.y}, what_, Style{});
+                made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
 
         return made;
     }
 
-    bool react(ui::MouseEvent&) override {
+    bool handle(ui::MouseEvent&) override {
         ++hit;
 
         return true;
     }
 
-    bool react(ui::WheelEvent&) override {
+    bool handle(ui::WheelEvent&) override {
         ++hit;
 
         return true;
@@ -50,53 +51,14 @@ private:
     char32_t what_ = U'?';
 };
 
-// Pojemnik, który kładzie wszystkie dzieci na sobie, w tym samym miejscu. Do sprawdzenia, kto
-// wygrywa przy trafianiu myszą.
-class Stack : public ui::Node {
-public:
-    [[nodiscard]] int takes() const override { return ui::plenty; }
-
-protected:
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
-
-        int highest = 0;
-
-        for (const std::shared_ptr<Node>& one : children())
-            highest = std::max(highest, one->layer());
-
-        // Dzieci leżą na sobie, więc kolejność malowania jest tu wszystkim: najpierw niższe
-        // warstwy, potem wyższe, a w obrębie warstwy — kolejność drzewa.
-        for (int layer = 0; layer <= highest; ++layer)
-            for (const std::shared_ptr<Node>& one : children()) {
-                if (one->layer() != layer) continue;
-
-                const ui::Area where{{0, 0}, given};
-                const ui::Area part = ui::Area::crossed(seen, where);
-
-                made.within(one->render(where, part - where.at), part.at - seen.at);
-            }
-
-        return made;
-    }
-};
-
-// To samo pudełko, ale leżące na warstwie wyżej — czyli na rodzeństwie.
-class Over : public Box {
-public:
-    Over(ui::Size wants, char32_t what) : Box(wants, what) {}
-
-    [[nodiscard]] int layer() const override { return 1; }
-};
-
 class Sheet : public ui::Root {
 public:
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     int hit = 0;
 
 protected:
-    bool react(ui::MouseEvent&) override {
+    bool handle(ui::MouseEvent&) override {
         ++hit;
 
         return true;
@@ -205,7 +167,7 @@ TRIAL("Trafianie: klik ląduje w dziecku pod kursorem") {
 
     ui::MouseEvent what{{2, 3}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(first->hit, 0);
     same(second->hit, 1);
@@ -225,7 +187,7 @@ TRIAL("Trafianie: klik obok dzieci zostaje w korzeniu") {
 
     ui::MouseEvent what{{3, 3}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(first->hit, 0);
     same(top.hit, 1);
@@ -244,7 +206,7 @@ TRIAL("Trafianie: schodzi przez kilka pięter") {
 
     ui::MouseEvent what{{1, 0}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(deep->hit, 1);
 }
@@ -252,7 +214,7 @@ TRIAL("Trafianie: schodzi przez kilka pięter") {
 TRIAL("Trafianie: z nakładających się rodzeństw wygrywa ostatnie") {
     Sheet top;
 
-    const auto stack = std::make_shared<Stack>();
+    const auto stack = std::make_shared<ui::Stack>();
     const auto under = std::make_shared<Box>(ui::Size{4, 4}, U'a');
     const auto over = std::make_shared<Box>(ui::Size{4, 4}, U'b');
 
@@ -264,7 +226,7 @@ TRIAL("Trafianie: z nakładających się rodzeństw wygrywa ostatnie") {
 
     ui::MouseEvent what{{1, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(under->hit, 0);
     same(over->hit, 1);
@@ -285,52 +247,54 @@ TRIAL("Trafianie: kółko celuje tak samo jak klik") {
 
     ui::WheelEvent what{{0, 2}, 1};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(second->hit, 1);
 }
 
-TRIAL("Warstwy: wyższa wygrywa z rodzeństwem przy trafianiu") {
+// **Na wierzchu jest ostatnie dopięte — i to jest jedyne źródło tej prawdy.** Malowanie idzie
+// po kolei, więc późniejsze zamalowuje wcześniejsze; trafianie bierze ostatnie pasujące, więc
+// mysz celuje w to, co widać. Oba mechanizmy czytają tę samą kolejność i nie mają jak się rozejść.
+TRIAL("Nakładanie: ostatnie dopięte wygrywa przy trafianiu") {
     Sheet top;
 
-    const auto stack = std::make_shared<Stack>();
-    const auto over = std::make_shared<Over>(ui::Size{4, 4}, U'b');
+    const auto stack = std::make_shared<ui::Stack>();
     const auto under = std::make_shared<Box>(ui::Size{4, 4}, U'a');
+    const auto over = std::make_shared<Box>(ui::Size{4, 4}, U'b');
 
-    // Wyższe dopięte **pierwsze**, więc przy równych warstwach wygrałoby drugie.
-    stack->children().add(over);
     stack->children().add(under);
+    stack->children().add(over);
     top.children().add(stack);
 
     (void)top.render({{0, 0}, {4, 4}});
 
     ui::MouseEvent what{{1, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(under->hit, 0);
     same(over->hit, 1);
 }
 
-TRIAL("Warstwy: wyższa kładzie się na rodzeństwie przy rysowaniu") {
-    Stack stack;
+TRIAL("Nakładanie: ostatnie dopięte kładzie się na rodzeństwie przy rysowaniu") {
+    ui::Stack stack;
 
-    const auto over = std::make_shared<Over>(ui::Size{4, 1}, U'b');
     const auto under = std::make_shared<Box>(ui::Size{4, 1}, U'a');
+    const auto over = std::make_shared<Box>(ui::Size{4, 1}, U'b');
 
-    stack.children().add(over);
     stack.children().add(under);
+    stack.children().add(over);
 
     const View made = stack.render({{0, 0}, {4, 1}});
 
     same(made.at({0, 0}).letter, U'b');
 }
 
-TRIAL("Warstwy: wyższa nie wychodzi poza rodzica") {
+TRIAL("Nakładanie: nakładka nie wychodzi poza rodzica") {
     ui::Node top;
 
-    const auto stack = std::make_shared<Stack>();
-    const auto over = std::make_shared<Over>(ui::Size{8, 8}, U'b');
+    const auto stack = std::make_shared<ui::Stack>();
+    const auto over = std::make_shared<Box>(ui::Size{8, 8}, U'b');
 
     stack->children().add(over);
     top.children().add(stack);
@@ -351,7 +315,7 @@ TRIAL("Trafianie: bez rozstawienia wszystko idzie do korzenia") {
 
     ui::MouseEvent what{{2, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     same(first->hit, 0);
     same(top.hit, 1);

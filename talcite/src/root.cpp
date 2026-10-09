@@ -1,5 +1,8 @@
 #include "talcite/root.hpp"
 
+#include "talcite/modal.hpp"
+#include "talcite/modals.hpp"
+
 #include <stdexcept>
 #include <utility>
 
@@ -29,7 +32,7 @@ void Root::colors(Colors given) { skin_.colors(given); }
 
 void Root::unicode(bool given) { skin_.unicode(given); }
 
-// **Fakty o kratce kładzie tu ten, kto pogania drzewo** — zwykle `Term`, w `onto()` i przy każdym
+// **Fakty o kratce kładzie tu ten, kto pogania drzewo** — zwykle `Term`, w `show()` i przy każdym
 // `reconfigure`. Drzewo nie wie, skąd się wzięły, i dlatego równie dobrze może je postawić próba
 // albo druga warstwa renderowania. Powiadamiania znów nie ma: widżet czyta je przy malowaniu, więc
 // najbliższa klatka po prostu wychodzi inna.
@@ -37,11 +40,21 @@ void Root::blocks(Blocks given) { blocks_ = given; }
 
 void Root::cell(Size given) { cell_ = given; }
 
+void Root::graphics(Graphics given) { graphics_ = given; }
+
 // Pole przestawiamy przed wysłaniem obu zdarzeń, nie pomiędzy. Uchwyt, który w reakcji na
 // utratę zapyta focused(), ma dostać odpowiedź już nową, a nie z połowy operacji.
-void Root::focus(Node* one) {
+void Root::move_focus(Node* one) {
     if (one != nullptr && one->root() != this)
-        throw std::logic_error("talcite::ui::Root: węzeł nie należy do tego drzewa");
+        throw std::logic_error("talcite::ui::Root: the node does not belong to this tree");
+
+    // **Zasłona przykrywa też ognisko.** Prośba węzła spod otwartej zasłony nie jest spełniana od
+    // razu — zasłona zapisuje ją jako to, dokąd ognisko ma wrócić po jej zamknięciu (`withheld`).
+    // Idziemy od węzła w górę i pytamy pierwsze okno zasłon, które go przykrywa.
+    if (one != nullptr)
+        for (Node* each = one; each != nullptr; each = each->parent())
+            if (auto* modals = dynamic_cast<Modals*>(each->parent()); modals != nullptr && modals->withheld(*one))
+                return;
 
     // Wołanie na węźle, który ogniska nie bierze, **nic nie robi** — i to nie jest przeoczenie.
     // Ognisko oddaje się także temu, kto je miał wcześniej: tak wracają do aplikacji i pasek menu,
@@ -70,28 +83,72 @@ void Root::focus(Node* one) {
 
 // Klawisz i wklejenie idą do ogniska, a gdy ogniska nie ma — do korzenia. Inaczej skrót
 // obsługiwany przez aplikację milczałby, dopóki użytkownik czegoś nie wskaże.
-bool Root::deal(KeyEvent& what) { return sent(focus_ != nullptr ? *focus_ : *this, what); }
+//
+// **Korzeń widzi klawisz pierwszy, jeśli chce** (`foresee`): klawisz po przedrostku (Ctrl+X w MC)
+// należy do przedrostka, a nie do ogniska — litera po Ctrl+X nie może trafić do szukania w panelu
+// ani do pola. Domyślnie korzeń nie chce niczego i klawisz idzie zwykłą drogą, od ogniska w górę.
+// Wołamy pod tą samą strażą co `sent`, bo przewidujący może zamknąć węzeł albo przestawić ognisko.
+bool Root::dispatch(KeyEvent& what) {
+    ++busy_;
 
-bool Root::deal(PasteEvent& what) { return sent(focus_ != nullptr ? *focus_ : *this, what); }
+    bool foreseen = false;
 
-bool Root::deal(SizeEvent& what) { return sent(*this, what); }
+    try {
+        foreseen = foresee(what);
+    } catch (...) {
+        released();
+
+        throw;
+    }
+
+    released();
+
+    if (foreseen) return true;
+
+    return sent(focus_ != nullptr ? *focus_ : *this, what);
+}
+
+bool Root::foresee(KeyEvent&) { return false; }
+
+bool Root::dispatch(PasteEvent& what) { return sent(focus_ != nullptr ? *focus_ : *this, what); }
+
+bool Root::dispatch(SizeEvent& what) { return sent(*this, what); }
 
 // Mysz celuje w najgłębszy węzeł pod kursorem, a nie w ognisko: klika się to, co się widzi.
 // Surowe zdarzenie idzie pierwsze i zawsze — kto zaznacza ciągnięciem, nie może czekać na
 // werdykt w sprawie kliknięcia.
-bool Root::deal(MouseEvent& what) {
-    const bool made = sent(*under(what.where()), what);
+//
+// **Wyjątkiem jest przytrzymanie** (`hold`): ruch i puszczenie idą wtedy do węzła, który o nie
+// poprosił, gdziekolwiek jest kursor — inaczej okno ciągnięte za krawędź gubiłoby mysz przy
+// pierwszym szybszym ruchu. Wciśnięcie zaczyna od nowa i zawsze idzie pod kursor, a puszczenie
+// przytrzymanie zdejmuje, więc zgubione puszczenie nie zostawia myszy przywiązanej na zawsze.
+// Przytrzymany węzeł, który zszedł z drzewa, nie dostaje już nic.
+bool Root::dispatch(MouseEvent& what) {
+    if (what.press() == Press::down) held_.reset();
+
+    const std::shared_ptr<Node> kept = held_.lock();
+
+    Node* aim = kept && kept->root() == this ? kept.get() : under(what.where());
+
+    const bool made = sent(*aim, what);
+
+    if (what.press() == Press::up) held_.reset();
 
     minded(what);
 
     return made;
 }
 
-bool Root::deal(WheelEvent& what) { return sent(*under(what.where()), what); }
+// Przytrzymanie prosi węzeł, który dostał wciśnięcie — na życzenie, a nie dla każdego, bo
+// najechanie myszą na pozycje menu ma dalej iść pod kursor. Trzymamy słabo: przytrzymany może
+// zejść z drzewa w trakcie ciągnięcia.
+void Root::capture(Node& one) { held_ = one.weak_from_this(); }
 
-bool Root::deal(ClickEvent& what) { return sent(*under(what.where()), what); }
+bool Root::dispatch(WheelEvent& what) { return sent(*under(what.where()), what); }
 
-bool Root::deal(DoubleClickEvent& what) { return sent(*under(what.where()), what); }
+bool Root::dispatch(ClickEvent& what) { return sent(*under(what.where()), what); }
+
+bool Root::dispatch(DoubleClickEvent& what) { return sent(*under(what.where()), what); }
 
 // **Kliknięcie idzie od razu, dwuklik jest zdarzeniem dodatkowym** — tak robi Windows
 // (`WM_LBUTTONDOWN` natychmiast, `WM_LBUTTONDBLCLK` zamiast drugiego wciśnięcia), X11
@@ -101,9 +158,15 @@ bool Root::deal(DoubleClickEvent& what) { return sent(*under(what.where()), what
 // niczego potrzebne: odbiorcy dwukliku znoszą kliknięcie przed nim (lista stawia ognisko, potem
 // wybiera; edytor stawia kursor, potem zaznacza wyraz).
 //
-// Drugie puszczenie w oknie, w tej samej kratce i tym samym przyciskiem, daje sam
-// `DoubleClickEvent` — bez drugiego `ClickEvent`, tak jak w Windows. Okno mierzy `Term`, bo tu
-// nie ma zegara; jego `settle()` znaczy teraz tylko „drugie już nie przyjdzie, zapomnij".
+// Drugie puszczenie w tej samej kratce, tym samym przyciskiem i **nie później niż
+// `double_click()` po pierwszym** daje sam `DoubleClickEvent` — bez drugiego `ClickEvent`, tak jak
+// w Windows. Okno mierzymy chwilami, które niosą same zdarzenia (`MouseEvent::when`), więc korzeń
+// nie potrzebuje zegara, a nikt z zewnątrz nie musi mu mówić, że czas minął: przeterminowane
+// pierwsze kliknięcie po prostu nie pasuje do drugiego. Dawniej `Term` odliczał okno sam i gasił
+// czekanie publicznym settle, a korzeń wystawiał mu clicking — protokół, którego już nie ma.
+//
+// Każdy korzeń czeka na swoje: klik na jednym ekranie i klik na drugim nie składają się
+// w dwuklik, bo to są dwa różne korzenie.
 void Root::minded(const MouseEvent& what) {
     if (what.press() == Press::down) {
         began_ = what.where();
@@ -122,32 +185,36 @@ void Root::minded(const MouseEvent& what) {
     // które czeka na swoje drugie, zostawiamy w spokoju — zamknie je czas.
     if (which == Mouse::none || which != what.button() || !(began_ == what.where())) return;
 
-    if (clicking_ && clicked_ == what.button() && waiting_ == what.where()) {
-        clicking_ = false;
+    if (first_click_.has_value() && clicked_ == what.button() && waiting_ == what.where() &&
+        what.when() - *first_click_ <= double_click_) {
+        first_click_.reset();
 
         DoubleClickEvent one{what.where(), what.button(), what.mods()};
 
-        (void)deal(one);
+        (void)dispatch(one);
 
         return;
     }
 
-    clicking_ = true;
+    first_click_ = what.when();
     waiting_ = what.where();
     clicked_ = what.button();
-    marked_ = what.mods();
 
     ClickEvent one{what.where(), what.button(), what.mods()};
 
-    (void)deal(one);
+    (void)dispatch(one);
 }
-
-void Root::settle() { clicking_ = false; }
 
 // Schodzimy piętro po piętrze, odejmując przesunięcie każdego wejścia, bo prostokąt węzła jest
 // wyrażony względem rodzica — tak zapisuje go render. Z rodzeństwa wygrywa **ostatnie** pasujące,
 // bo składanie idzie po kolei i ostatnie leży na wierzchu. Węzeł, pod którym nic nie ma, jest
 // celem; dopóki nikt nic nie rozstawił, wszystkie prostokąty są zerowe i celem zostaje korzeń.
+//
+// **„Na wierzchu" ma jedno źródło: kolejność dzieci.** Stał tu jeszcze numer warstwy (`layer()`),
+// nadpisywany przez zasłonę i otwarte menu — i nie rozstrzygał niczego, bo każdy pojemnik
+// dopina nakładkę **po** treści, a przy równej warstwie i tak wygrywało późniejsze. Opis przy
+// nim obiecywał, że pojemniki malują „najpierw niższe warstwy, potem wyższe"; żaden tego nie
+// robił. Dwa źródła jednej prawdy, z których drugie było martwe — zdjęte.
 Node* Root::under(Spot where) {
     Node* at = this;
 
@@ -161,9 +228,17 @@ Node* Root::under(Spot where) {
                 where.y >= box.at.y + box.size.high)
                 continue;
 
-            // Wyżej leżące wygrywa z niżej leżącym, a przy równej warstwie — późniejsze, bo
-            // rysuje się na wierzchu.
-            if (into == nullptr || one->layer() >= into->layer()) into = one.get();
+            // **Tylko to, co widać.** Dziecko przewijaka stoi w prostokącie większym niż okno —
+            // wiersz przewinięty pod pasek albo za dolną krawędź ma tam swój prostokąt, choć nie
+            // narysował ani kratki. Bez tego klik w pasek przewijaka trafiał w wiersz pod nim (U6).
+            const Area& seen = one->seen_;
+            const Spot inner{where.x - box.at.x, where.y - box.at.y};
+
+            if (inner.x < seen.at.x || inner.x >= seen.at.x + seen.size.wide || inner.y < seen.at.y ||
+                inner.y >= seen.at.y + seen.size.high)
+                continue;
+
+            into = one.get();
         }
 
         if (into == nullptr) return at;
@@ -175,6 +250,10 @@ Node* Root::under(Spot where) {
     }
 }
 
+// **Doręczanie liczy się**, bo w jego trakcie nie wolno nikogo zwolnić: zdjęty węzeł czeka
+// w `dying_`, aż ostatnie doręczenie się skończy. **Licznik, a nie znacznik**, bo uchwyt ma prawo
+// doręczyć kolejne zdarzenie w środku pierwszego. Podnosi go szablon `sent` w nagłówku, a opuszcza
+// ta funkcja — także przy wyjątku z uchwytu. Całość w `CLAUDE.md`, „Odkładane usuwanie".
 void Root::released() {
     if (--busy_ > 0) return;
 

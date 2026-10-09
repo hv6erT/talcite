@@ -4,11 +4,12 @@
 #include <mutex>
 #include <utility>
 
+#include "talcite/address.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "handing.hpp"
 #include "inside.hpp"
+#include "piping.hpp"
 #include "starting.hpp"
 
 namespace talcite::net {
@@ -23,7 +24,17 @@ struct Stream::Held {
     // Zamknięcie musi być jednorazowe: uchwyt oddany centrali dwa razy zostałby zamknięty dwa
     // razy, a drugie zamknięcie trafiłoby w cudze, świeżo otwarte gniazdo o tym samym numerze.
     void close() {
-        if (const Handle one = which.exchange(nothing); one != nothing) forget(one);
+        const Handle one = which.exchange(nothing);
+
+        if (one == nothing) return;
+
+        forget(one);
+
+        // **Rura nie zamyka się w pół** — nie ma odpowiednika `shutdown`, a druga strona widzi koniec
+        // dopiero po zamknięciu uchwytu. Zamykamy go więc już teraz, a nie przy ostatniej kopii:
+        // centrala zamknie go, gdy wrócą zakończenia w locie. Nowych zgłoszeń na tym numerze już nie
+        // będzie (`which` jest pusty), a zapis do rury nie wraca po kawałku, więc nic go nie wznowi.
+        if (pipes::piped(one)) retiring(std::exchange(numbered, nothing));
     }
 
     // **Numer przeżywa zamknięcie i ginie dopiero razem z uchwytem.** Zgłoszenia w locie trzymają
@@ -55,18 +66,18 @@ std::chrono::steady_clock::time_point until(Patience patience) {
 // dostaje odmowę, zamiast po cichu psuć dane.
 template <typename T>
 Promise<T> busy() {
-    auto made = std::make_shared<Result<T>>();
+    auto made = std::make_shared<detail::Result<T>>();
 
-    spoiled(*made, std::make_exception_ptr(Trouble{"Strumień jest już zajęty w tę stronę."}));
+    detail::spoiled(*made, std::make_exception_ptr(Trouble{"The stream is already busy in that direction."}));
 
     return HandPromise<T>{made};
 }
 
 template <typename T>
 Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) {
-    auto made = std::make_shared<Result<T>>();
+    auto made = std::make_shared<detail::Result<T>>();
 
-    spoiled(*made, std::make_exception_ptr(Trouble{said, code, std::move(where)}));
+    detail::spoiled(*made, std::make_exception_ptr(Trouble{said, code, std::move(where)}));
 
     return HandPromise<T>{made};
 }
@@ -91,7 +102,7 @@ Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) 
 // Zakończenie może też przyjść **przed** naszym odrzuceniem i rozstrzygnąć bilet pierwsze —
 // wołający dostałby wtedy kłopot z numerem przerwania zamiast `Cancelled`. Od tego jest `quitted`:
 // ustawione przed zdejmowaniem, każe spóźnionemu zakończeniu posprzątać i zamilknąć.
-struct JoinPromise : Doing, Result<Stream> {
+struct JoinPromise : Doing, detail::Result<Stream> {
     std::shared_ptr<Stream::Held> mine;
 
     // Nawiązanie nie ma znacznika kierunku, a mimo to zdjąć się musi: zgłoszenie leżące
@@ -104,7 +115,7 @@ struct JoinPromise : Doing, Result<Stream> {
 
         if (code != 0) {
             spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Nie mogę się połączyć: " + spoken(code) + ".", code,
+                               Trouble{"Cannot connect: " + spoken(code) + ".", code,
                                        mine->peer}));
 
             return;
@@ -127,7 +138,7 @@ struct JoinPromise : Doing, Result<Stream> {
     }
 };
 
-struct ReadPromise : Doing, Result<Bytes> {
+struct ReadPromise : Doing, detail::Result<Bytes> {
     std::shared_ptr<Stream::Held> mine;
 
     void yielded() {
@@ -163,7 +174,7 @@ struct ReadPromise : Doing, Result<Bytes> {
 
         if (code != 0) {
             spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Nie mogę czytać: " + spoken(code) + ".", code,
+                               Trouble{"Cannot read: " + spoken(code) + ".", code,
                                        mine->peer}));
 
             return;
@@ -186,7 +197,7 @@ struct ReadPromise : Doing, Result<Bytes> {
     }
 };
 
-struct WritePromise : Doing, Result<void> {
+struct WritePromise : Doing, detail::Result<void> {
     std::shared_ptr<Stream::Held> mine;
 
     void yielded() {
@@ -211,9 +222,9 @@ struct WritePromise : Doing, Result<void> {
             // przeniesiony i już go nie ma, więc bez tej liczby wołający nie wie, czy wznawiać od
             // zera, czy wcale — a ponowienie całości znaczy dla drugiej strony treść podwojoną.
             spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Nie mogę pisać: " + spoken(code) + ". Zeszło " +
-                                           std::to_string(much) + " z " +
-                                           std::to_string(buffer.size()) + " bajtów.",
+                               Trouble{"Cannot write: " + spoken(code) + ". Took " +
+                                           std::to_string(much) + " of " +
+                                           std::to_string(buffer.size()) + " bytes.",
                                        code, mine->peer}));
 
             return;
@@ -235,9 +246,12 @@ struct WritePromise : Doing, Result<void> {
 
 // Nawiązania **nie zaczynamy tutaj**. Na uniksach jest to nieblokujący connect, na Windows
 // ConnectEx z zakończeniem w porcie — a to jest wiedza zaplecza, nie strumienia. Zgłaszamy
-// zamiar, a centrala wie, jak go ruszyć.
+// zamiar, a centrala wie, jak go ruszyć. Adres lokalny tam, gdzie idzie rurą, łączy pula
+// (`pipes::dialed`) — rura nie ma nakładanego łączenia.
 Promise<Stream> Stream::connect(Address where, Patience patience) {
-    if (!where.held()) return amiss_now<Stream>("Pusty adres nie jest celem.");
+    if (!where.held()) return amiss_now<Stream>("An empty address is no destination.");
+
+    if (where.family() == Family::local && pipes::chosen()) return pipes::dialed(std::move(where), patience);
 
     auto mine = std::make_shared<Held>();
 
@@ -245,7 +259,7 @@ Promise<Stream> Stream::connect(Address where, Patience patience) {
     mine->numbered = mine->which.load();
 
     if (mine->which.load() == nothing)
-        return amiss_now<Stream>("Nie mogę otworzyć gniazda: " + spoken(net::amiss()) + ".",
+        return amiss_now<Stream>("Cannot open a socket: " + spoken(net::amiss()) + ".",
                                  net::amiss(), where);
 
     mine->peer = where;
@@ -297,12 +311,12 @@ const Address& Stream::peer() const { return held_ ? held_->peer : nowhere(); }
 const Address& Stream::mine() const { return held_ ? held_->mine : nowhere(); }
 
 Promise<Bytes> Stream::read(std::size_t most, Patience patience) const {
-    if (!held_) return amiss_now<Bytes>("Strumień jest zamknięty.");
+    if (!held_) return amiss_now<Bytes>("The stream is closed.");
 
     // Zerowe czytanie **nie jest końcem strumienia**, a tak wyglądało: recv z zerową długością
     // oddaje zero także na zdrowym gnieździe, a zero bez błędu znaczy u nas „druga strona
     // zamknęła". Warstwa ramkująca trafiała na to na granicy ramki.
-    if (most == 0) return amiss_now<Bytes>("Zerowe czytanie niczego nie powie.");
+    if (most == 0) return amiss_now<Bytes>("A zero-length read says nothing.");
 
     // Przydział bufora idzie **przed** zajęciem znacznika. Rozmiar podaje wołający, więc resize
     // potrafi rzucić — a wyjątek rzucony po zajęciu zostawiał znacznik ustawiony na zawsze i
@@ -334,7 +348,7 @@ Promise<Bytes> Stream::read(std::size_t most, Patience patience) const {
 }
 
 Promise<void> Stream::write(Bytes what, Patience patience) const {
-    if (!held_) return amiss_now<void>("Strumień jest zamknięty.");
+    if (!held_) return amiss_now<void>("The stream is closed.");
 
     auto one = std::make_shared<WritePromise>();
 
@@ -365,6 +379,15 @@ void Stream::nagle(bool given) const {
     if (!held_ || held_->peer.family() == Family::local) return;
 
     nagling(held_->which.load(), given);
+}
+
+// Tylko gniazdo lokalne ma po drugiej stronie użytkownika tego samego komputera; o połączeniu
+// sieciowym system nic takiego nie wie.
+std::optional<bool> Stream::kindred() const {
+    // Przyjęte połączenie lokalne nie ma nazwy po drugiej stronie — o rodzinie mówi wtedy nasz koniec.
+    if (!held_ || (held_->peer.family() != Family::local && held_->mine.family() != Family::local)) return std::nullopt;
+
+    return net::kindred(held_->which.load());
 }
 
 void Stream::close() {

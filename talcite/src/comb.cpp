@@ -20,7 +20,7 @@ char lowered(char one) {
 // zaznaczanie wyrazu podwójnym kliknięciem. Poszerzony bajt ciągu UTF-8 daje tam tę samą
 // odpowiedź co znak, z którego pochodzi, więc nie trzeba tu odtwarzać znaków.
 bool lettered(char one) {
-    return wordly(static_cast<char32_t>(static_cast<unsigned char>(one)));
+    return in_word(static_cast<char32_t>(static_cast<unsigned char>(one)));
 }
 
 bool bounded(std::string_view where, Hit one) {
@@ -97,7 +97,7 @@ Comb::Comb(std::string what, Sift how) : kept_(std::make_unique<Kept>()) {
     } catch (const std::regex_error&) {
         // Treść od biblioteki standardowej jest po angielsku i zależy od implementacji, więc
         // mówimy swoje. Do rozpoznania, co dokładnie jest nie tak, i tak by nie wystarczyła.
-        kept_->wrong = "Niepoprawne wyrażenie regularne.";
+        kept_->wrong = "Invalid regular expression.";
     }
 }
 

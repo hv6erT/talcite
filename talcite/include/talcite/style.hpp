@@ -1,62 +1,34 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 
-#include "talcite/view.hpp"
+namespace talcite {
 
-namespace talcite::ui {
+struct Color {
+    bool transparent = true;
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
 
-enum class JustifyStyle : std::uint8_t { left, right, center };
+    [[nodiscard]] static std::optional<Color> indexed(int which);
 
-enum class ElideStyle : std::uint8_t { none, left, middle, right };
-
-enum class LineStyle : std::uint8_t { none, thin, twin, thick };
-
-struct SpanStyle {
-    bool wrapping = false;
-    JustifyStyle justify = JustifyStyle::left;
-    ElideStyle elide = ElideStyle::none;
+    friend constexpr bool operator==(Color, Color) = default;
 };
 
-struct ScrollStyle {
-    bool progress = false;
-};
+struct Style {
+    Color foreground;
+    Color background;
+    bool bold = false;
+    bool faint = false;
+    bool italic = false;
+    bool under = false;
+    bool reverse = false;
+    bool crossed = false;
 
-struct FrameStyle {
-    LineStyle border = LineStyle::thin;
-    JustifyStyle justify = JustifyStyle::center;
-    bool top = true;
-    bool bottom = true;
-    bool left = true;
-    bool right = true;
-};
+    [[nodiscard]] static Style merge(Style base, Style over);
 
-struct MenuStyle {
-    LineStyle border = LineStyle::thin;
-    bool shade = true;
-};
-
-struct VeilStyle {
-    bool shade = true;
-};
-
-struct ListStyle {
-    bool progress = false;
-};
-
-struct TableStyle {
-    bool heading = true;
-    bool progress = false;
-};
-
-struct GaugeStyle {
-    bool percent = true;
-};
-
-struct MessageStyle {
-    LineStyle border = LineStyle::twin;
-    bool boxed = true;
-    bool shade = true;
+    friend constexpr bool operator==(Style, Style) = default;
 };
 
 }

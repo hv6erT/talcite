@@ -58,7 +58,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) {
             term_.stop();
 
@@ -67,7 +67,7 @@ protected:
 
         std::string said = marked(what.mods());
 
-        if (what.key().letter() != 0) said += "'" + talcite::spelled(what.key().letter()) + "'";
+        if (what.key().letter() != 0) said += "'" + talcite::utf8::encode(what.key().letter()) + "'";
         else said += named(what.key().code());
 
         shown("klawisz", said);
@@ -75,7 +75,7 @@ protected:
         return true;
     }
 
-    bool react(talcite::ui::MouseEvent& what) override {
+    bool handle(talcite::ui::MouseEvent& what) override {
         const std::string where =
             std::to_string(what.where().x) + ", " + std::to_string(what.where().y);
 
@@ -88,32 +88,32 @@ protected:
         return true;
     }
 
-    bool react(talcite::ui::ClickEvent& what) override {
+    bool handle(talcite::ui::ClickEvent& what) override {
         shown("kliknięcie", std::to_string(what.where().x) + ", " + std::to_string(what.where().y));
 
         return true;
     }
 
-    bool react(talcite::ui::DoubleClickEvent& what) override {
+    bool handle(talcite::ui::DoubleClickEvent& what) override {
         shown("podwójne kliknięcie",
               std::to_string(what.where().x) + ", " + std::to_string(what.where().y));
 
         return true;
     }
 
-    bool react(talcite::ui::WheelEvent& what) override {
+    bool handle(talcite::ui::WheelEvent& what) override {
         shown("kółko", what.steps() > 0 ? "w górę" : "w dół");
 
         return true;
     }
 
-    bool react(talcite::ui::PasteEvent& what) override {
-        shown("wklejenie", std::to_string(what.said().size()) + " bajtów");
+    bool handle(talcite::ui::PasteEvent& what) override {
+        shown("wklejenie", std::to_string(what.text().size()) + " bajtów");
 
         return true;
     }
 
-    bool react(talcite::ui::SizeEvent& what) override {
+    bool handle(talcite::ui::SizeEvent& what) override {
         shown("rozmiar", std::to_string(what.wide()) + " na " + std::to_string(what.high()));
 
         return true;
@@ -125,14 +125,14 @@ protected:
         talcite::Style head;
         head.bold = true;
 
-        made.string({2 - seen.at.x, 0 - seen.at.y}, "Naciskaj klawisze. F10 kończy.", head);
+        made.put({2 - seen.at.x, 0 - seen.at.y}, "Naciskaj klawisze. F10 kończy.", head);
 
         int y = 2;
 
         for (const std::string& one : said_) {
             if (y >= given.high) break;
 
-            made.string({2 - seen.at.x, y - seen.at.y}, one, talcite::Style{});
+            made.put({2 - seen.at.x, y - seen.at.y}, one, talcite::Style{});
 
             ++y;
         }
@@ -145,7 +145,7 @@ private:
         said_.push_back(what + ": " + said);
 
         const std::size_t room =
-            static_cast<std::size_t>(term_.high() > 3 ? term_.high() - 3 : 1);
+            static_cast<std::size_t>(term_.size().high > 3 ? term_.size().high - 3 : 1);
 
         while (said_.size() > room) said_.pop_front();
     }
@@ -161,7 +161,7 @@ int main() {
 
     Sheet sheet{term};
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — klawisze");
 
     term.run();

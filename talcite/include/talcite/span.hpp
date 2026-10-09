@@ -5,31 +5,31 @@
 #include <vector>
 
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
 class Span : public Node {
 public:
-    explicit Span(std::string text, SpanStyle style = {});
+    explicit Span(std::string text, SpanShape shape = {});
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
     void text(std::string given) { text_ = std::move(given); }
 
-    [[nodiscard]] bool wrapping() const { return style_.wrapping; }
+    [[nodiscard]] bool wrapped() const { return shape_.wrapped; }
 
-    void wrapping(bool given) { style_.wrapping = given; }
+    void wrapped(bool given) { shape_.wrapped = given; }
 
-    [[nodiscard]] JustifyStyle justify() const { return style_.justify; }
+    [[nodiscard]] Justify justify() const { return shape_.justify; }
 
-    void justify(JustifyStyle given) { style_.justify = given; }
+    void justify(Justify given) { shape_.justify = given; }
 
-    [[nodiscard]] ElideStyle elide() const { return style_.elide; }
+    [[nodiscard]] Elide elide() const { return shape_.elide; }
 
-    void elide(ElideStyle given) { style_.elide = given; }
+    void elide(Elide given) { shape_.elide = given; }
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
 
@@ -40,7 +40,7 @@ private:
     [[nodiscard]] std::vector<std::string> lines(int wide) const;
 
     std::string text_;
-    SpanStyle style_;
+    SpanShape shape_;
 };
 
 }

@@ -4,10 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "talcite/area.hpp"
 #include "talcite/bytes.hpp"
+#include "talcite/promise.hpp"
 
 namespace talcite {
 
@@ -37,15 +39,21 @@ private:
 
 [[nodiscard]] ui::Size fitting(ui::Size image, ui::Size room, ui::Size cell);
 
-enum class Picture : std::uint8_t { none, gif, png, jpeg, bmp };
+enum class Format : std::uint8_t { none, gif, png, jpeg, bmp };
 
 using Taking = std::function<bool(const Bytes& canvas, ui::Size size,
                                   std::chrono::milliseconds after)>;
 
-[[nodiscard]] Picture guessed(const Bytes& what);
+[[nodiscard]] Format format_of(const Bytes& what);
 
-[[nodiscard]] Pixels decoded(const Bytes& what, std::size_t most = 0);
+[[nodiscard]] std::optional<ui::Size> size_of(const Bytes& head);
 
-void decoded(const Bytes& what, const Taking& each);
+using Fetch = std::function<Promise<Pixels>(ui::Size want)>;
+
+struct Figure {
+    Format format = Format::none;
+    ui::Size size;
+    Fetch fetch;
+};
 
 }

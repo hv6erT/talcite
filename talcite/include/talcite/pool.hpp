@@ -15,6 +15,8 @@
 
 namespace talcite {
 
+enum class Lane : std::uint8_t { io, cpu };
+
 class Pool {
 public:
     using Job = std::uint64_t;
@@ -28,13 +30,9 @@ public:
     Pool(Pool&&) = delete;
     Pool& operator=(Pool&&) = delete;
 
-    Job take(std::function<void()> what);
+    Job post(std::function<void()> what, Lane lane = Lane::io);
 
-    Job easily(std::function<void()> what);
-
-    Job take(std::function<void()> what, std::atomic<Job>& into);
-
-    Job easily(std::function<void()> what, std::atomic<Job>& into);
+    Job post(std::function<void()> what, Lane lane, std::atomic<Job>& into);
 
     void drop(Job which);
 
@@ -50,7 +48,7 @@ private:
         std::function<void()> what;
     };
 
-    Job handed(std::function<void()> what, bool easy, std::atomic<Job>* into);
+    Job handed(std::function<void()> what, Lane lane, std::atomic<Job>* into);
 
     [[nodiscard]] static bool pulled(std::deque<Doing>& from, Job which);
 
@@ -59,14 +57,14 @@ private:
     mutable std::mutex guard_;
     std::condition_variable stirred_;
     std::condition_variable emptied_;
-    std::deque<Doing> eager_;
-    std::deque<Doing> easy_;
+    std::deque<Doing> io_;
+    std::deque<Doing> cpu_;
     std::unordered_map<Job, Bell*> running_;
     std::vector<std::thread> staff_;
     Job next_ = 0;
     std::size_t most_ = 0;
     std::size_t spare_ = 0;
-    std::size_t easing_ = 0;
+    std::size_t cpu_busy_ = 0;
     std::size_t idle_ = 0;
     std::size_t busy_ = 0;
     bool closing_ = false;

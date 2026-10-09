@@ -1,16 +1,16 @@
 #pragma once
 
-#include "talcite/style.hpp"
-#include "talcite/veil.hpp"
+#include "talcite/shape.hpp"
+#include "talcite/modal.hpp"
 
 namespace talcite::ui {
 
-class Dialog : public Veil {
+class Dialog : public Modal {
 public:
-    explicit Dialog(VeilStyle style = {});
+    explicit Dialog(ModalShape shape = {});
 
 protected:
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 };
 
 }

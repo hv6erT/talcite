@@ -7,12 +7,12 @@
 #include <string>
 #include <vector>
 
+#include "talcite/address.hpp"
 #include "talcite/digest.hpp"
 #include "talcite/peer.hpp"
-#include "talcite/post.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/relay.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 #include "stunning.hpp"
 
@@ -108,25 +108,11 @@ void bearing(Bytes& made, const Bytes& what) {
     minded(made);
 }
 
-std::string spelling(const Bytes& what) {
-    std::string made;
 
-    for (const std::byte one : what) made += static_cast<char>(one);
 
-    return made;
-}
+void bearing(Bytes& made, const std::string& what) { bearing(made, bytes(what)); }
 
-Bytes spelt(const std::string& what) {
-    Bytes made(what.size());
-
-    for (std::size_t at = 0; at < what.size(); ++at) made[at] = static_cast<std::byte>(what[at]);
-
-    return made;
-}
-
-void bearing(Bytes& made, const std::string& what) { bearing(made, spelt(what)); }
-
-net::Post standing() { return net::Post{net::Address::loopback(net::Family::four, 0)}; }
+net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 // Zapytanie i odpowiedź wiążąca składane **bajt po bajcie**, bo udają drugą stronę. Gdyby składał
 // je mój kodek, sprawdzałbym się z samym sobą — a tu chodzi o to, czy rozmówca rozumie kogoś obcego.
@@ -209,8 +195,8 @@ Bytes channelling(std::uint16_t channel, const std::string& what) {
 
 // Przydział na udawanym serwerze: przyjmuje zapytanie i oddaje użyczony adres. Oddaje przy okazji
 // adres gniazda klienta, bo wszystko dalsze idzie właśnie tam.
-net::Address allotted(net::Post& server, const net::Patience& patience) {
-    const net::Parcel came = server.receive(1024, patience).await();
+net::Address allotted(net::Udp& server, const net::Patience& patience) {
+    const net::Datagram came = server.receive(1024, patience).await();
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -229,7 +215,7 @@ struct Ready {
     std::uint16_t channel = 0;
 };
 
-Ready readied(net::Relay& relay, net::Post& server, const net::Address& them) {
+Ready readied(net::Relay& relay, net::Udp& server, const net::Address& them) {
     Ready made;
 
     auto asking = relay.open(soon);
@@ -238,10 +224,10 @@ Ready readied(net::Relay& relay, net::Post& server, const net::Address& them) {
 
     (void)asking.await();
 
-    relay.send(them, spelt("raz"), soon).await();
+    relay.send(them, bytes("raz"), soon).await();
 
     for (int turn = 0; turn < 6 && made.channel == 0; ++turn) {
-        const net::Parcel came = server.receive(1024, soon).await();
+        const net::Datagram came = server.receive(1024, soon).await();
 
         net::Message told;
 
@@ -263,14 +249,14 @@ Ready readied(net::Relay& relay, net::Post& server, const net::Address& them) {
 }
 
 TRIAL("Przekaźnik: przydział oddaje użyczony adres") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     // Zapytanie musi być przydziałem i musi prosić o UDP.
     net::Message told;
@@ -296,14 +282,14 @@ TRIAL("Przekaźnik: przydział oddaje użyczony adres") {
 }
 
 TRIAL("Przekaźnik: odmowa przydziału wychodzi jako kłopot") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0113, came.bytes);
 
@@ -343,14 +329,14 @@ TRIAL("Przekaźnik: odmowa przydziału wychodzi jako kłopot") {
 // Serwer żądający poświadczeń odpowiada najpierw odmową z dziedziną i znacznikiem. Bez poświadczeń
 // nie mamy z czego policzyć klucza i musimy powiedzieć to wprost, zamiast próbować bez końca.
 TRIAL("Przekaźnik: żądanie poświadczeń bez poświadczeń kończy się wprost") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0113, came.bytes);
 
@@ -398,8 +384,8 @@ TRIAL("Przekaźnik: żądanie poświadczeń bez poświadczeń kończy się wpros
 }
 
 TRIAL("Przekaźnik: cisza serwera kończy się terminem") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
@@ -415,14 +401,14 @@ TRIAL("Przekaźnik: cisza serwera kończy się terminem") {
 }
 
 TRIAL("Przekaźnik: pozwolenie idzie z adresem rozmówcy") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    net::Parcel came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -450,14 +436,14 @@ TRIAL("Przekaźnik: pozwolenie idzie z adresem rozmówcy") {
 }
 
 TRIAL("Przekaźnik: wysyłka idzie oznajmieniem z treścią") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    net::Parcel came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -468,7 +454,7 @@ TRIAL("Przekaźnik: wysyłka idzie oznajmieniem z treścią") {
 
     (void)asking.await();
 
-    relay.send(net::Address{"198.51.100.77", 5555}, spelt("przez przekaźnik"), soon).await();
+    relay.send(net::Address{"198.51.100.77", 5555}, bytes("przez przekaźnik"), soon).await();
 
     // Pierwsza wysyłka idzie oznajmieniem, a **obok niej** leci zamówienie kanału — kolejność
     // dwóch datagramów nie jest niczyją obietnicą, więc szukamy tego, o który chodzi.
@@ -485,7 +471,7 @@ TRIAL("Przekaźnik: wysyłka idzie oznajmieniem z treścią") {
 
         same(static_cast<int>(told.sort), static_cast<int>(net::Sort::telling));
         same(told.peer.text(), std::string{"198.51.100.77"});
-        same(spelling(told.data), std::string{"przez przekaźnik"});
+        same(text(told.data), std::string{"przez przekaźnik"});
 
         sent = true;
     }
@@ -494,14 +480,14 @@ TRIAL("Przekaźnik: wysyłka idzie oznajmieniem z treścią") {
 }
 
 TRIAL("Przekaźnik: treść od rozmówcy przychodzi z jego adresem") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -521,25 +507,25 @@ TRIAL("Przekaźnik: treść od rozmówcy przychodzi z jego adresem") {
 
     server.send(came.from, data, soon).await();
 
-    const net::Parcel given = waiting.await();
+    const net::Datagram given = waiting.await();
 
     same(given.from.text(), std::string{"198.51.100.77"});
     same(given.from.port(), static_cast<std::uint16_t>(5555));
-    same(spelling(given.bytes), std::string{"od obcego"});
+    same(text(given.bytes), std::string{"od obcego"});
 }
 
 // Odpowiedź przychodzi **tylko od serwera**. Cudzy datagram na tym gnieździe nie ma prawa ani
 // udawać odpowiedzi, ani podać się za treść od rozmówcy.
 TRIAL("Przekaźnik: obcy datagram nie udaje przekaźnika") {
-    net::Post mine = standing();
-    net::Post server = standing();
-    net::Post evil = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
+    net::Udp evil = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(net::Patience{1500});
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     // Obcy podszywa się pod przydział, z prawidłowym numerem transakcji.
     Bytes back = headed(0x0103, came.bytes);
@@ -576,14 +562,14 @@ TRIAL("Przekaźnik: pusty nie robi niczego po cichu") {
 }
 
 TRIAL("Przekaźnik: za duża przesyłka nie ginie przy odmowie") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
     auto asking = relay.open(soon);
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -615,7 +601,7 @@ TRIAL("Przekaźnik: za duża przesyłka nie ginie przy odmowie") {
 
     ought(amiss);
 
-    same(spelling(relay.receive(1024, soon).await().bytes),
+    same(text(relay.receive(1024, soon).await().bytes),
          std::string{"dłuższe niż cztery bajty"});
 }
 
@@ -623,20 +609,20 @@ TRIAL("Przekaźnik: za duża przesyłka nie ginie przy odmowie") {
 // użyczony adres wychodzi do sygnalizacji, czy pozwolenia lecą po adresie bez portu, czy odpowiedź
 // wraca tym kanałem, którym przyszła próba, i czy dane potem idą tamtędy, a nie wprost.
 TRIAL("Rozmówca: przekaźnik dokłada użyczoną drogę do własnych kandydatów") {
-    net::Post server = standing();
+    net::Udp server = standing();
 
     net::Peer left{standing(), net::Relay{standing(), server.mine()}};
 
-    auto gathering = left.gather(net::Scout{}, soon);
+    auto gathering = left.gather(net::StunClient{}, soon);
 
     (void)allotted(server, soon);
 
-    const std::vector<net::Way> ours = gathering.await();
+    const std::vector<net::Candidate> ours = gathering.await();
 
     bool lent = false;
 
-    for (const net::Way& one : ours)
-        if (one.sort == net::Way::Sort::lent) {
+    for (const net::Candidate& one : ours)
+        if (one.sort == net::Candidate::Sort::lent) {
             lent = true;
 
             same(one.where.text(), std::string{"203.0.113.5"});
@@ -646,36 +632,36 @@ TRIAL("Rozmówca: przekaźnik dokłada użyczoną drogę do własnych kandydató
     ought(lent);
 
     // Droga użyczona stoi **na końcu**: własna karta przed odbiciem, odbicie przed przekaźnikiem.
-    same(ours.back().sort, net::Way::Sort::lent);
+    same(ours.back().sort, net::Candidate::Sort::lent);
 
-    same(left.ways().size(), ours.size());
+    same(left.candidates().size(), ours.size());
 }
 
 TRIAL("Rozmówca: bez przekaźnika nie ma użyczonej drogi ani rozmowy przez przekaźnik") {
     net::Peer left{standing()};
 
-    for (const net::Way& one : left.gather(net::Scout{}, soon).await())
-        ought(one.sort != net::Way::Sort::lent);
+    for (const net::Candidate& one : left.gather(net::StunClient{}, soon).await())
+        ought(one.sort != net::Candidate::Sort::lent);
 
     ought(!left.relayed());
 }
 
 TRIAL("Rozmówca: pozwolenie idzie po adresie, bez portu") {
-    net::Post server = standing();
+    net::Udp server = standing();
 
     net::Peer left{standing(), net::Relay{standing(), server.mine()}};
 
-    auto gathering = left.gather(net::Scout{}, soon);
+    auto gathering = left.gather(net::StunClient{}, soon);
 
     (void)allotted(server, soon);
 
     (void)gathering.await();
 
-    left.add(net::Way{net::Address{"198.51.100.77", 5555}, net::Way::Sort::here});
+    left.add(net::Candidate{net::Address{"198.51.100.77", 5555}, net::Candidate::Sort::here});
 
     auto reaching = left.reach(net::Patience{3000});
 
-    const net::Parcel came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).await();
 
     net::Message told;
 
@@ -696,11 +682,11 @@ TRIAL("Rozmówca: pozwolenie idzie po adresie, bez portu") {
 }
 
 TRIAL("Rozmówca: przez przekaźnik odpowiada tym samym kanałem i nim rozmawia") {
-    net::Post server = standing();
+    net::Udp server = standing();
 
     net::Peer left{standing(), net::Relay{standing(), server.mine()}};
 
-    auto gathering = left.gather(net::Scout{}, soon);
+    auto gathering = left.gather(net::StunClient{}, soon);
 
     const net::Address whence = allotted(server, soon);
 
@@ -708,12 +694,12 @@ TRIAL("Rozmówca: przez przekaźnik odpowiada tym samym kanałem i nim rozmawia"
 
     const net::Address them{"198.51.100.77", 5555};
 
-    left.add(net::Way{them, net::Way::Sort::here});
+    left.add(net::Candidate{them, net::Candidate::Sort::here});
 
     auto reaching = left.reach(net::Patience{10000});
 
     // Pozwolenie dla drugiej strony.
-    net::Parcel came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).await();
 
     net::Message told;
 
@@ -776,7 +762,7 @@ TRIAL("Rozmówca: przez przekaźnik odpowiada tym samym kanałem i nim rozmawia"
     // Od tej chwili mówimy przekaźnikiem, a nie wprost.
     auto waiting = left.receive(1024, soon);
 
-    left.send(spelt("przez cudze pasmo"), soon).await();
+    left.send(bytes("przez cudze pasmo"), soon).await();
 
     bool sent = false;
 
@@ -787,25 +773,25 @@ TRIAL("Rozmówca: przez przekaźnik odpowiada tym samym kanałem i nim rozmawia"
 
         if (told.task != net::Task::sending) continue;
 
-        if (spelling(told.data) == "przez cudze pasmo") sent = true;
+        if (text(told.data) == "przez cudze pasmo") sent = true;
     }
 
     ought(sent);
 
-    server.send(whence, carrying(them, spelt("z drugiej strony")), soon).await();
+    server.send(whence, carrying(them, bytes("z drugiej strony")), soon).await();
 
-    same(spelling(waiting.await()), std::string{"z drugiej strony"});
+    same(text(waiting.await()), std::string{"z drugiej strony"});
 }
 
 TRIAL("Rozmówca: pusty nie wywraca się przy pytaniach") {
     net::Peer left;
 
-    ought(left.ways().empty());
+    ought(left.candidates().empty());
     ought(left.theirs().empty());
     ought(!left.met().held());
     ought(!left.relayed());
 
-    left.add(net::Way{net::Address{"203.0.113.9", 5000}, net::Way::Sort::here});
+    left.add(net::Candidate{net::Address{"203.0.113.9", 5000}, net::Candidate::Sort::here});
 
     ought(left.theirs().empty());
 }
@@ -822,13 +808,13 @@ TRIAL("Kanał: główkę poznaje się po dwóch bitach, nie po zgadywaniu") {
     ought(!net::unwrapped(Bytes{std::byte{0x40}, std::byte{0x01}}, channel, data));
 
     // Ucięta treść: długość obiecuje więcej, niż przyszło.
-    Bytes cut = net::wrapped(0x4001, spelt("cztery"));
+    Bytes cut = net::wrapped(0x4001, bytes("cztery"));
 
     cut.pop_back();
 
     ought(!net::unwrapped(cut, channel, data));
 
-    const Bytes whole = net::wrapped(0x4001, spelt("cztery"));
+    const Bytes whole = net::wrapped(0x4001, bytes("cztery"));
 
     // Cztery bajty główki i ani jednego dopełnienia — po UDP datagram sam wyznacza koniec.
     same(whole.size(), static_cast<std::size_t>(10));
@@ -836,12 +822,12 @@ TRIAL("Kanał: główkę poznaje się po dwóch bitach, nie po zgadywaniu") {
     ought(net::unwrapped(whole, channel, data));
 
     same(channel, static_cast<std::uint16_t>(0x4001));
-    same(spelling(data), std::string{"cztery"});
+    same(text(data), std::string{"cztery"});
 }
 
 TRIAL("Przekaźnik: kanał zamawia się sam, a potem główka ma cztery bajty") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
@@ -855,10 +841,10 @@ TRIAL("Przekaźnik: kanał zamawia się sam, a potem główka ma cztery bajty") 
     bool tight = false;
 
     for (int turn = 0; turn < 40 && !tight; ++turn) {
-        relay.send(them, spelt("dwa"), soon).await();
+        relay.send(them, bytes("dwa"), soon).await();
 
         try {
-            const net::Parcel came = server.receive(1024, net::Patience{200}).await();
+            const net::Datagram came = server.receive(1024, net::Patience{200}).await();
 
             std::uint16_t channel = 0;
 
@@ -867,7 +853,7 @@ TRIAL("Przekaźnik: kanał zamawia się sam, a potem główka ma cztery bajty") 
             if (!net::unwrapped(came.bytes, channel, data)) continue;
 
             same(channel, ready.channel);
-            same(spelling(data), std::string{"dwa"});
+            same(text(data), std::string{"dwa"});
 
             // Trzy bajty treści i cztery główki — nie trzydzieści dziewięć.
             same(came.bytes.size(), static_cast<std::size_t>(7));
@@ -881,8 +867,8 @@ TRIAL("Przekaźnik: kanał zamawia się sam, a potem główka ma cztery bajty") 
 }
 
 TRIAL("Przekaźnik: treść z kanału przychodzi z adresem rozmówcy") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 
@@ -894,17 +880,17 @@ TRIAL("Przekaźnik: treść z kanału przychodzi z adresem rozmówcy") {
 
     server.send(ready.whence, channelling(ready.channel, "z kanału"), soon).await();
 
-    const net::Parcel given = waiting.await();
+    const net::Datagram given = waiting.await();
 
     same(given.from, them);
-    same(spelling(given.bytes), std::string{"z kanału"});
+    same(text(given.bytes), std::string{"z kanału"});
 }
 
 // Numer kanału nadajemy my, więc obcy numer nie ma prawa niczego znaczyć — nie wiadomo nawet, komu
 // miałby należeć nadawca.
 TRIAL("Przekaźnik: obcy numer kanału nie wchodzi do rozmowy") {
-    net::Post mine = standing();
-    net::Post server = standing();
+    net::Udp mine = standing();
+    net::Udp server = standing();
 
     net::Relay relay{mine, server.mine()};
 

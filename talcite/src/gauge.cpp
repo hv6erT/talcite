@@ -24,9 +24,9 @@ constexpr int telling = 5;
 
 }
 
-Gauge::Gauge(int wide, GaugeStyle style) : style_(style), wide_(wide) { role("talcite.gauge"); }
+Gauge::Gauge(int wide, GaugeShape shape) : shape_(shape), wide_(wide) { role("talcite.gauge"); }
 
-int Gauge::takes() const { return 0; }
+int Gauge::capacity() const { return 0; }
 
 // Szerokość podaje wołający, tak jak w polu: pasek w oknie ma być tak szeroki, jak zdecydował
 // budujący okno. Wysokość zawsze jeden wiersz.
@@ -59,7 +59,7 @@ void Gauge::busy(bool given) {
     else beat_.reset();
 }
 
-// **Pasek kręci się sam, zegarem biblioteki.** `Time::later` odmierza, `main()` przenosi ciąg
+// **Pasek kręci się sam, zegarem biblioteki.** `Time::later` odmierza, `here()` przenosi ciąg
 // dalszy na wątek pętli, a `Loop::post` w środku pętli budzi terminal i wymusza klatkę.
 //
 // Dwa warunki muszą być spełnione, inaczej nie ruszamy wcale. Bez pętli nie ma na co przenieść
@@ -77,7 +77,7 @@ void Gauge::beating() {
     const int mine = turn_;
 
     // **Obietnicę trzeba trzymać.** Ogniwo wisi na obietnicy słabym wskazaniem, więc porzucone
-    // `then(...).go()` po prostu nigdy nie zadziała — to jest ta sama reguła, dzięki której
+    // `then(...).start()` po prostu nigdy nie zadziała — to jest ta sama reguła, dzięki której
     // śmierć właściciela odcina wywołania i dzięki której nie ma metody `clear()`. Typ chowamy
     // za `shared_ptr<void>`, żeby nagłówek widżetu nie wciągał całej maszynerii obietnic; tę samą
     // sztuczkę robi u siebie `Carry`.
@@ -85,7 +85,7 @@ void Gauge::beating() {
     // Podmiana w środku wywołania zwrotnego jest bezpieczna: `Carry` na czas przeniesienia na
     // pętlę trzyma sam siebie, więc puszczenie naszego uchwytu nie zabija kodu, który właśnie
     // biegnie.
-    beat_ = std::make_shared<Promise<void>>(Time::later(pacing).main().then([weak, mine] {
+    beat_ = std::make_shared<Promise<void>>(Time::later(pacing).here().then([weak, mine] {
         const std::shared_ptr<Node> one = weak.lock();
 
         if (!one) return;
@@ -98,7 +98,7 @@ void Gauge::beating() {
         gauge.beating();
     }));
 
-    std::static_pointer_cast<Promise<void>>(beat_)->go();
+    std::static_pointer_cast<Promise<void>>(beat_)->start();
 }
 
 View Gauge::paint(Size given, Area seen) {
@@ -106,21 +106,21 @@ View Gauge::paint(Size given, Area seen) {
 
     // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
 
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     if (given.wide <= 0 || given.high <= 0) return made;
 
     const Skin& how = skin();
 
-    const Style look = how.get<Style>(role());
-    const Style full = how.get<Style>(role() + ".done");
+    const Style look = how.style(role());
+    const Style full = how.style(role() + ".done");
 
-    const char32_t block = how.get<char32_t>(role() + ".done");
-    const char32_t empty = how.get<char32_t>(role() + ".rest");
+    const char32_t block = how.glyph(role() + ".done");
+    const char32_t empty = how.glyph(role() + ".rest");
 
     // Procent odpada pierwszy, gdy jest ciasno, a klamry drugie — pasek na jedną kratkę dalej
     // coś mówi, sama klamra nie mówi nic.
-    const bool told = style_.percent && given.wide >= telling + 3;
+    const bool told = shape_.percent && given.wide >= telling + 3;
     const int room = told ? given.wide - telling : given.wide;
 
     const bool boxed = room >= 3;
@@ -128,8 +128,8 @@ View Gauge::paint(Size given, Area seen) {
     const int from = boxed ? 1 : 0;
 
     if (boxed) {
-        made.letter({-seen.at.x, -seen.at.y}, how.get<char32_t>(role() + ".left"), look);
-        made.letter({room - 1 - seen.at.x, -seen.at.y}, how.get<char32_t>(role() + ".right"),
+        made.put({-seen.at.x, -seen.at.y}, how.glyph(role() + ".left"), look);
+        made.put({room - 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".right"),
                     look);
     }
 
@@ -145,7 +145,7 @@ View Gauge::paint(Size given, Area seen) {
         const int at = which <= travel ? which : span - which;
 
         for (int x = 0; x < bar; ++x)
-            made.letter({from + x - seen.at.x, -seen.at.y},
+            made.put({from + x - seen.at.x, -seen.at.y},
                         x >= at && x < at + much ? block : empty,
                         x >= at && x < at + much ? full : look);
 
@@ -160,7 +160,7 @@ View Gauge::paint(Size given, Area seen) {
     if (done >= bar && part_ < 1.0) done = bar - 1;
 
     for (int x = 0; x < bar; ++x)
-        made.letter({from + x - seen.at.x, -seen.at.y}, x < done ? block : empty,
+        made.put({from + x - seen.at.x, -seen.at.y}, x < done ? block : empty,
                     x < done ? full : look);
 
     if (!told) return made;
@@ -171,8 +171,8 @@ View Gauge::paint(Size given, Area seen) {
 
     std::string said = std::to_string(shown) + "%";
 
-    made.string({given.wide - static_cast<int>(said.size()) - seen.at.x, -seen.at.y}, said,
-                how.get<Style>(role() + ".text"));
+    made.put({given.wide - static_cast<int>(said.size()) - seen.at.x, -seen.at.y}, said,
+                how.style(role() + ".text"));
 
     return made;
 }

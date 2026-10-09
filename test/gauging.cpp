@@ -23,7 +23,7 @@ std::string read(const View& one) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, 0}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -41,7 +41,7 @@ TRIAL("Gauge: chce tyle, ile mu kazano, i zawsze jeden wiersz") {
     same(one.wants({40, 3}), (ui::Size{20, 3 > 1 ? 1 : 3}));
     same(one.wants({12, 3}), (ui::Size{12, 1}));
     same(one.wants({40, 0}), (ui::Size{20, 0}));
-    same(one.takes(), 0);
+    same(one.capacity(), 0);
 }
 
 // Ułamek przycinamy w jednym miejscu — tam, gdzie wchodzi. Porównanie odwrotne łapie przy okazji
@@ -174,7 +174,7 @@ TRIAL("Gauge: nieokreślony bez pętli nie rusza zegara i nie psuje się") {
     same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
-// **Pasek kręci się sam.** `Time::later` odmierza, `main()` przenosi ciąg dalszy na wątek pętli,
+// **Pasek kręci się sam.** `Time::later` odmierza, `here()` przenosi ciąg dalszy na wątek pętli,
 // a `Loop::turn()` go wykonuje — tu w próbie ręcznie, w programie robi to `Term`.
 TRIAL("Gauge: nieokreślony kręci się sam zegarem biblioteki") {
     Loop loop;
@@ -185,7 +185,7 @@ TRIAL("Gauge: nieokreślony kręci się sam zegarem biblioteki") {
 
     const std::string was = drawn(*one, 20);
 
-    Time began;
+    Stopwatch began;
 
     while (began.spent() < std::chrono::seconds{3}) {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
@@ -226,7 +226,7 @@ TRIAL("Gauge: rdzeń roli można podmienić") {
 
     Style look{};
 
-    look.ink = Color{false, 4, 4, 4};
+    look.foreground = Color{false, 4, 4, 4};
 
     these["moj.wskaznik"] = look;
 
@@ -235,5 +235,5 @@ TRIAL("Gauge: rdzeń roli można podmienić") {
 
     const View made = top.render({{0, 0}, {8, 1}});
 
-    same(made.at({1, 0}).style.ink, (Color{false, 4, 4, 4}));
+    same(made.at({1, 0}).style.foreground, (Color{false, 4, 4, 4}));
 }

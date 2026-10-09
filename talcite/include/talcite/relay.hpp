@@ -7,7 +7,7 @@
 #include "talcite/address.hpp"
 #include "talcite/bytes.hpp"
 #include "talcite/patience.hpp"
-#include "talcite/post.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/promise.hpp"
 
 namespace talcite::net {
@@ -18,7 +18,7 @@ public:
 
     Relay() = default;
 
-    Relay(Post post, Address server, std::string user = {}, std::string word = {});
+    Relay(Udp post, Address server, std::string user = {}, std::string word = {});
 
     [[nodiscard]] bool held() const { return held_ != nullptr; }
 
@@ -32,7 +32,7 @@ public:
 
     [[nodiscard]] Promise<void> send(Address to, Bytes what, Patience patience);
 
-    [[nodiscard]] Promise<Parcel> receive(std::size_t most, Patience patience);
+    [[nodiscard]] Promise<Datagram> receive(std::size_t most, Patience patience);
 
     void close();
 

@@ -1,4 +1,4 @@
-#include "talcite/exchange.hpp"
+#include "exchange.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -14,6 +14,7 @@
 #include "talcite/pool.hpp"
 
 #include "inside.hpp"
+#include "sealed.hpp"
 #include "starting.hpp"
 
 #ifndef TALCITE_IOCP
@@ -74,16 +75,10 @@ public:
 #else
         int both[2] = {-1, -1};
 
-        if (::pipe(both) == 0) {
-            // Oba końce nieblokujące, bo opróżnianie budzika czyta aż do pustki — a czytanie
-            // blokujące z pustego potoku zatrzymałoby centralę na zawsze.
-            for (const int one : both) {
-                ::fcntl(one, F_SETFL, ::fcntl(one, F_GETFL, 0) | O_NONBLOCK);
-
-                // Budzik centrali nie ma trafiać do programu potomnego.
-                ::fcntl(one, F_SETFD, ::fcntl(one, F_GETFD, 0) | FD_CLOEXEC);
-            }
-
+        // Oba końce nieblokujące, bo opróżnianie budzika czyta aż do pustki — a czytanie blokujące
+        // z pustego potoku zatrzymałoby centralę na zawsze. Budzik nie ma trafiać do programu
+        // potomnego.
+        if (sealed::piped(both, true)) {
             heard_ = both[0];
             told_ = both[1];
         }
@@ -304,14 +299,14 @@ std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
 // Odmowa dla zgłoszenia na gnieździe, którego już nie ma. Idzie przez pulę, a nie wprost, bo
 // done() budzi czekającego i wywołuje jego ciąg dalszy — a tego nie robimy na wątku wołającego.
 void aborted(std::shared_ptr<Doing> one) {
-    pooling().take([one = std::move(one)] { one->done(0, ECONNABORTED); });
+    pooling().post([one = std::move(one)] { one->done(0, ECONNABORTED); });
 }
 
 // Krok i zakończenie idą **na wątek z puli**, nie na wątek centrali. Ciąg dalszy obietnicy to
 // cudzy kod — gdyby pobiegł na jedynym wątku, który pilnuje wszystkich gniazd, jeden powolny then
 // zatrzymałby całą sieć. Wątek centrali nie robi więc nic poza czekaniem.
 void handed(std::shared_ptr<Doing> one, int what, bool amiss = false) {
-    pooling().take([one = std::move(one), what, amiss]() mutable {
+    pooling().post([one = std::move(one), what, amiss]() mutable {
         if (what > 0) {
             one->done(0, what);
 

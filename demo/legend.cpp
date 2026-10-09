@@ -4,15 +4,15 @@
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
-#include "talcite/menuline.hpp"
-#include "talcite/menuwindow.hpp"
+#include "talcite/menuseparator.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/pane.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/vscroll.hpp"
+#include "talcite/scroll.hpp"
 
 #include "doing.hpp"
 
@@ -23,7 +23,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
-    bool react(talcite::ui::KeyEvent& what) override {
+    bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
@@ -43,8 +43,8 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::LegendWindow>();
-    const auto menus = std::make_shared<talcite::ui::MenuWindow>();
+    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
@@ -52,7 +52,7 @@ int main() {
 
     const auto pane = std::make_shared<talcite::ui::Pane>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — legenda");
-    const auto scroll = std::make_shared<talcite::ui::VScroll>(talcite::ui::ScrollStyle{true});
+    const auto scroll = std::make_shared<talcite::ui::Scroll>(talcite::ui::Axis::vertical, talcite::ui::ScrollShape{true});
     const auto column = std::make_shared<talcite::ui::Column>();
     const auto said =
         std::make_shared<talcite::ui::Span>("Klawisze funkcyjne i klikanie w pola robią to samo");
@@ -65,14 +65,14 @@ int main() {
     scroll->children().add(column);
     frame->children().add(scroll);
     pane->children().add(frame);
-    menus->body()->children().add(pane);
-    legend->body()->children().add(menus);
+    menus->content(pane);
+    legend->content(menus);
 
     const auto file = menus->add("Plik");
 
     file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"),
                           [said] { said->text("z menu: Kopiuj"); }));
-    file->children().add(std::make_shared<talcite::ui::MenuLine>());
+    file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
     file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
                           [&term] { term.stop(); }));
 
@@ -93,7 +93,7 @@ int main() {
     // Pole niedostępne: etykietka widoczna, nazwa przygaszona, klawisz milczy.
     const auto gone = demo::doing(legend->add(talcite::ui::Code::f8, "Usuń"), told("Usuń"));
 
-    gone->able(false);
+    gone->enabled(false);
 
     // F9 połknie pasek menu, bo stoi bliżej ogniska. Kliknięcie w to pole ma jednak zrobić to samo,
     // co klawisz — więc czyn otwiera menu wprost.
@@ -111,7 +111,7 @@ int main() {
 
     pane->focus();
 
-    term.onto(sheet);
+    term.show(sheet);
     term.title("talcite — legenda");
 
     term.run();

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 #include "talcite/address.hpp"
 #include "talcite/bytes.hpp"
@@ -86,6 +87,10 @@ void ending(Handle one);
 void nagling(Handle one, bool given);
 
 void sharing(Handle one);
+
+void broadcasting(Handle one, bool given);
+
+[[nodiscard]] std::optional<bool> kindred(Handle one);
 
 [[nodiscard]] bool listening(Handle one, const Address& where, int waiting);
 

@@ -4,9 +4,9 @@
 #include <cstddef>
 #include <string>
 
-#include "talcite/post.hpp"
+#include "talcite/address.hpp"
+#include "talcite/udp.hpp"
 #include "talcite/time.hpp"
-#include "talcite/trouble.hpp"
 
 using namespace talcite;
 
@@ -14,28 +14,14 @@ namespace {
 
 const net::Patience soon{4000};
 
-Bytes spelt(const std::string& what) {
-    Bytes made(what.size());
 
-    for (std::size_t at = 0; at < what.size(); ++at) made[at] = static_cast<std::byte>(what[at]);
 
-    return made;
-}
-
-std::string read(const Bytes& what) {
-    std::string made;
-
-    for (const std::byte one : what) made += static_cast<char>(one);
-
-    return made;
-}
-
-net::Post standing() { return net::Post{net::Address::loopback(net::Family::four, 0)}; }
+net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 }
 
 TRIAL("Poczta: dostaje port od systemu") {
-    const net::Post one = standing();
+    const net::Udp one = standing();
 
     ought(one.held());
     ought(one.mine().port() != 0);
@@ -46,7 +32,7 @@ TRIAL("Poczta: pusty adres odrzuca") {
     bool threw = false;
 
     try {
-        const net::Post one{net::Address{}};
+        const net::Udp one{net::Address{}};
 
         (void)one;
     } catch (const net::Trouble&) {
@@ -57,41 +43,41 @@ TRIAL("Poczta: pusty adres odrzuca") {
 }
 
 TRIAL("Poczta: datagram dochodzi i wie, od kogo") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     auto waiting = here.receive(1024, soon);
 
-    there.send(here.mine(), spelt("kartka"), soon).await();
+    there.send(here.mine(), bytes("kartka"), soon).await();
 
-    const net::Parcel made = waiting.await();
+    const net::Datagram made = waiting.await();
 
-    same(read(made.bytes), std::string{"kartka"});
+    same(text(made.bytes), std::string{"kartka"});
     same(made.from.port(), there.mine().port());
     same(made.from.text(), std::string{"127.0.0.1"});
 }
 
 TRIAL("Poczta: pusty datagram to nie to samo, co brak datagramu") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     auto waiting = here.receive(1024, soon);
 
     there.send(here.mine(), Bytes{}, soon).await();
 
-    const net::Parcel made = waiting.await();
+    const net::Datagram made = waiting.await();
 
     same(static_cast<int>(made.bytes.size()), 0);
     ought(made.from.held());
 }
 
 TRIAL("Poczta: obcięty datagram zgłasza kłopot, a nie kawałek") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     auto waiting = here.receive(4, soon);
 
-    there.send(here.mine(), spelt("dużo dłuższa treść"), soon).await();
+    there.send(here.mine(), bytes("dużo dłuższa treść"), soon).await();
 
     bool cut = false;
 
@@ -100,14 +86,14 @@ TRIAL("Poczta: obcięty datagram zgłasza kłopot, a nie kawałek") {
     } catch (const net::Trouble& why) {
         cut = true;
 
-        ought(std::string{why.what()}.find("buforze") != std::string::npos);
+        ought(std::string{why.what()}.find("buffer") != std::string::npos);
     }
 
     ought(cut);
 }
 
 TRIAL("Poczta: cisza kończy się terminem") {
-    const net::Post here = standing();
+    const net::Udp here = standing();
 
     bool late = false;
 
@@ -121,7 +107,7 @@ TRIAL("Poczta: cisza kończy się terminem") {
 }
 
 TRIAL("Poczta: drugie odbieranie naraz dostaje odmowę") {
-    const net::Post here = standing();
+    const net::Udp here = standing();
 
     auto first = here.receive(1024, net::Patience{300});
 
@@ -142,12 +128,12 @@ TRIAL("Poczta: drugie odbieranie naraz dostaje odmowę") {
 }
 
 TRIAL("Poczta: pusty adres nie jest celem") {
-    const net::Post here = standing();
+    const net::Udp here = standing();
 
     bool amiss = false;
 
     try {
-        here.send(net::Address{}, spelt("nigdzie"), soon).await();
+        here.send(net::Address{}, bytes("nigdzie"), soon).await();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -156,37 +142,37 @@ TRIAL("Poczta: pusty adres nie jest celem") {
 }
 
 TRIAL("Poczta: kilka datagramów po kolei zachowuje kolejność na pętli") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     for (int which = 0; which < 5; ++which) {
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), spelt(std::to_string(which)), soon).await();
+        there.send(here.mine(), bytes(std::to_string(which)), soon).await();
 
-        same(read(waiting.await().bytes), std::to_string(which));
+        same(text(waiting.await().bytes), std::to_string(which));
     }
 }
 
 TRIAL("Poczta: odpowiedź wraca pod adres nadawcy") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     auto waiting = here.receive(1024, soon);
 
-    there.send(here.mine(), spelt("pytanie"), soon).await();
+    there.send(here.mine(), bytes("pytanie"), soon).await();
 
-    const net::Parcel made = waiting.await();
+    const net::Datagram made = waiting.await();
 
     auto back = there.receive(1024, soon);
 
-    here.send(made.from, spelt("odpowiedź"), soon).await();
+    here.send(made.from, bytes("odpowiedź"), soon).await();
 
-    same(read(back.await().bytes), std::string{"odpowiedź"});
+    same(text(back.await().bytes), std::string{"odpowiedź"});
 }
 
 TRIAL("Poczta: zamknięta nie przyjmuje zgłoszeń") {
-    net::Post here = standing();
+    net::Udp here = standing();
 
     here.close();
 
@@ -202,7 +188,7 @@ TRIAL("Poczta: zamknięta nie przyjmuje zgłoszeń") {
 }
 
 TRIAL("Poczta: zamknięcie przerywa czekające odbieranie") {
-    net::Post here = standing();
+    net::Udp here = standing();
 
     auto waiting = here.receive(1024, soon);
 
@@ -223,7 +209,7 @@ TRIAL("Poczta: zamknięcie przerywa czekające odbieranie") {
 
 // Poczta po zamknięciu odpowiada grzecznie na wszystko — również na pytanie o własny adres.
 TRIAL("Poczta: adres po zamknięciu jest pusty, a nie wybucha") {
-    net::Post one{net::Address::loopback(net::Family::four, 0)};
+    net::Udp one{net::Address::loopback(net::Family::four, 0)};
 
     one.close();
 
@@ -233,8 +219,8 @@ TRIAL("Poczta: adres po zamknięciu jest pusty, a nie wybucha") {
 // Anulowane odbieranie zostawiało gniazdo poczty zajęte na zawsze — ta sama wada, co
 // w strumieniu, bo mechanizm jest jeden.
 TRIAL("Poczta: anulowane odbieranie zwalnia gniazdo") {
-    const net::Post here = standing();
-    const net::Post there = standing();
+    const net::Udp here = standing();
+    const net::Udp there = standing();
 
     auto first = here.receive(1024, net::Patience{0});
 
@@ -250,11 +236,11 @@ TRIAL("Poczta: anulowane odbieranie zwalnia gniazdo") {
 
     ought(quit);
 
-    there.send(here.mine(), spelt("paczka"), soon).await();
+    there.send(here.mine(), bytes("paczka"), soon).await();
 
     for (int tried = 0; tried < 200; ++tried) {
         try {
-            same(read(here.receive(1024, soon).await().bytes), std::string{"paczka"});
+            same(text(here.receive(1024, soon).await().bytes), std::string{"paczka"});
 
             return;
         } catch (const net::Trouble&) {
@@ -268,8 +254,8 @@ TRIAL("Poczta: anulowane odbieranie zwalnia gniazdo") {
 // **Anulowanie zwalnia kierunek od razu** — ta sama reguła i ten sam powód co przy bramie
 // i strumieniu, opisane w `streaming.cpp`. Bez odczekiwania pośrodku, bo to ono maskowało usterkę.
 TRIAL("Poczta: po anulowaniu można od razu odbierać znowu") {
-    const net::Post one = standing();
-    const net::Post other = standing();
+    const net::Udp one = standing();
+    const net::Udp other = standing();
 
     auto first = one.receive(64, net::Patience{0});
 
@@ -282,14 +268,14 @@ TRIAL("Poczta: po anulowaniu można od razu odbierać znowu") {
 
     auto waiting = one.receive(64, soon);
 
-    other.send(one.mine(), spelt("znowu"), soon).await();
+    other.send(one.mine(), bytes("znowu"), soon).await();
 
-    same(read(waiting.await().bytes), std::string{"znowu"});
+    same(text(waiting.await().bytes), std::string{"znowu"});
 }
 
 TRIAL("Poczta: sto anulowań pod rząd nie zajmuje jej na stałe") {
-    const net::Post one = standing();
-    const net::Post other = standing();
+    const net::Udp one = standing();
+    const net::Udp other = standing();
 
     for (int again = 0; again < 100; ++again) {
         auto waiting = one.receive(64, net::Patience{0});
@@ -304,16 +290,16 @@ TRIAL("Poczta: sto anulowań pod rząd nie zajmuje jej na stałe") {
 
     auto waiting = one.receive(64, soon);
 
-    other.send(one.mine(), spelt("po stu"), soon).await();
+    other.send(one.mine(), bytes("po stu"), soon).await();
 
-    same(read(waiting.await().bytes), std::string{"po stu"});
+    same(text(waiting.await().bytes), std::string{"po stu"});
 }
 
 TRIAL("Poczta: gniazdo lokalne odmawia, bo datagramów tam nie ma") {
     bool told = false;
 
     try {
-        const net::Post one{net::Address::local("/tmp/talcite-poczta.sock")};
+        const net::Udp one{net::Address::local("/tmp/talcite-poczta.sock")};
     } catch (const net::Trouble&) {
         told = true;
     }

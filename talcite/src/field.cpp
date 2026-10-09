@@ -7,14 +7,13 @@
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
-#include "placing.hpp"
 
 namespace talcite::ui {
 
 namespace {
 
 // Krok w tył po UTF-8: schodzimy z bajtów ciągłych, aż staniemy na początku znaku. W przód robi to
-// `letter`, w tył trzeba samemu — kodowanie czyta się tylko w jedną stronę.
+// `utf8::decode`, w tył trzeba samemu — kodowanie czyta się tylko w jedną stronę.
 std::size_t before(const std::string& text, std::size_t at) {
     if (at == 0) return 0;
 
@@ -30,29 +29,31 @@ std::size_t after(const std::string& text, std::size_t at) {
 
     const std::size_t began = at;
 
-    (void)letter(text, at);
+    (void)utf8::decode(text, at);
 
     return at > began ? at : text.size();
 }
 
+}
+
 // Ile kratek zajmuje kawałek napisu. Liczymy **szerokościami**, nie bajtami i nie znakami —
-// inaczej pierwszy znak dwukolumnowy rozjechałby i kursor, i przewijanie.
-int spanned(const std::string& text, std::size_t from, std::size_t upto) {
+// inaczej pierwszy znak dwukolumnowy rozjechałby i kursor, i przewijanie. Pole ukryte rysuje
+// każdy znak jedną kropką, więc tam kratka to znak; szerokość zdradzałaby, jakie znaki wpisano.
+int Field::spanned(std::size_t from, std::size_t upto) const {
     int made = 0;
 
     std::size_t at = from;
 
-    while (at < upto && at < text.size()) {
+    while (at < upto && at < text_.size()) {
         const std::size_t began = at;
+        const char32_t one = utf8::decode(text_, at);
 
-        made += widely(letter(text, at));
+        made += concealed_ ? 1 : width(one);
 
         if (began == at) break;
     }
 
     return made;
-}
-
 }
 
 Field::Field(int wide, std::string text) : text_(std::move(text)), wide_(wide) {
@@ -61,9 +62,8 @@ Field::Field(int wide, std::string text) : text_(std::move(text)), wide_(wide) {
     at_ = text_.size();
 }
 
-int Field::takes() const { return 0; }
+int Field::capacity() const { return 0; }
 
-bool Field::focusable() const { return able_; }
 
 Size Field::wants(Size room) const {
     return {std::min(std::max(wide_, 0), room.wide), std::min(1, room.high)};
@@ -76,17 +76,7 @@ Size Field::wants(Size room) const {
 std::optional<Spot> Field::caret() const {
     if (!focused()) return {};
 
-    return Spot{spanned(text_, from_, at_), 0};
-}
-
-// Wyłączenie oddaje ognisko najbliższemu chętnemu przodkowi — tak samo i z tego samego powodu, co
-// w przycisku: bez ogniska dialog przestaje połykać klawisze.
-void Field::able(bool given) {
-    able_ = given;
-
-    if (given) return;
-
-    unfocus();
+    return Spot{spanned(from_, at_), 0};
 }
 
 std::size_t Field::cursor() const {
@@ -96,7 +86,7 @@ std::size_t Field::cursor() const {
     while (at < at_ && at < text_.size()) {
         const std::size_t began = at;
 
-        (void)letter(text_, at);
+        (void)utf8::decode(text_, at);
 
         if (began == at) break;
 
@@ -138,10 +128,13 @@ void Field::guess(std::function<std::string(const std::string& what)> given) {
 // Podpowiadamy tylko, gdy kursor stoi **na końcu**: w środku napisu dopisek za kursorem byłby
 // kłamstwem o tym, co się stanie po naciśnięciu klawisza. Podpowiedź, która nie zaczyna się od
 // tego, co już napisano, jest odrzucana — nie ma jak jej dopisać.
+//
+// Pole ukryte nie podpowiada wcale: podpowiedź pokazuje tekst jawnie, a jej źródło — historia,
+// katalog — mogłoby zdradzić dawny sekret albo jego początek.
 void Field::guessing() {
     ahead_.clear();
 
-    if (!guess_ || at_ != text_.size()) return;
+    if (!guess_ || concealed_ || at_ != text_.size()) return;
 
     const std::string whole = guess_(text_);
 
@@ -157,6 +150,15 @@ void Field::guessing() {
 // furtka służy do zakazu ukośników w nazwie pliku czy do samych cyfr szesnastkowych.
 void Field::allows(std::function<bool(char32_t one)> given) { allows_ = std::move(given); }
 
+// **Pole ukryte** — na klucze i hasła: każdy znak rysuje się kropką, a podpowiedzi nie ma. Treść
+// zostaje ta sama i `text()` oddaje ją jawnie; ukryty jest tylko ekran. Kopiowania pole i tak
+// nie ma, więc nie ma czego wyłączać.
+void Field::concealed(bool on) {
+    concealed_ = on;
+
+    guessing();
+}
+
 void Field::insert(const std::string& what) {
     std::string clean;
 
@@ -166,7 +168,7 @@ void Field::insert(const std::string& what) {
 
     while (at < what.size()) {
         const std::size_t began = at;
-        const char32_t one = letter(what, at);
+        const char32_t one = utf8::decode(what, at);
 
         if (began == at) break;
 
@@ -179,7 +181,7 @@ void Field::insert(const std::string& what) {
         // znak w środku, a przepuszczenie kłamałoby o tym, co pole przyjmuje.
         if (allows_ && !allows_(which)) continue;
 
-        spelled(which, clean);
+        utf8::encode(which, clean);
     }
 
     if (clean.empty()) return;
@@ -194,7 +196,7 @@ View Field::paint(Size given, Area seen) {
     View made{seen.size};
 
     // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
-    made.bare({{0, 0}, seen.size});
+    made.clear({{0, 0}, seen.size});
 
     const int room = std::max(given.wide, 0);
 
@@ -203,14 +205,14 @@ View Field::paint(Size given, Area seen) {
     // stan, i dzieje się tak świadomie: inaczej kursor potrafiłby wyjechać poza widoczny kawałek.
     if (at_ < from_) from_ = at_;
 
-    while (room > 0 && spanned(text_, from_, at_) >= room) from_ = after(text_, from_);
+    while (room > 0 && spanned(from_, at_) >= room) from_ = after(text_, from_);
 
     const Skin& how = skin();
 
     // **Podkreślenie nie jest już tutaj** — siedzi we wbudowanej skórce, w roli `talcite.input`.
     // W Midnight Commanderze pole wyróżnia sam kolor tła, więc gdy dojdą barwy, wystarczy podmienić
     // wpis w skórce i z kodu nie ubędzie ani nie przybędzie ani jedna linijka.
-    const Style look = how.get<Style>(able_ ? role() : role() + ".off");
+    const Style look = how.style(enabled() ? role() : role() + ".disabled");
 
     made.fill({{-seen.at.x, -seen.at.y}, {room, 1}}, look);
 
@@ -221,7 +223,7 @@ View Field::paint(Size given, Area seen) {
     while (upto < text_.size()) {
         const std::size_t began = upto;
         const std::size_t next = after(text_, upto);
-        const int much = spanned(text_, began, next);
+        const int much = spanned(began, next);
 
         if (wide + much > room) break;
 
@@ -231,27 +233,44 @@ View Field::paint(Size given, Area seen) {
         if (began == upto) break;
     }
 
-    made.string({-seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
+    if (concealed_) {
+        const std::string dot = utf8::encode(how.glyph("talcite.input.conceal"));
+
+        std::string dots;
+
+        for (int which = 0; which < wide; ++which) dots += dot;
+
+        made.put({-seen.at.x, -seen.at.y}, dots, look);
+    } else {
+        made.put({-seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
+    }
 
     // Podpowiedź **wyszarzona**, za treścią, na tyle, ile zostało miejsca. Nie jest częścią napisu
     // i nie wchodzi do `text()` — dopóki nikt jej nie przyjmie.
     if (!ahead_.empty() && wide < room) {
-        const Style dim = Style::merge(look, how.get<Style>(role() + ".guess"));
+        const Style dim = Style::merge(look, how.style(role() + ".guess"));
 
-        made.string({wide - seen.at.x, -seen.at.y}, ahead_, dim);
+        made.put({wide - seen.at.x, -seen.at.y}, ahead_, dim);
     }
 
     return made;
 }
 
-// Enter, Esc i klawisze funkcyjne **oddajemy dalej** — to dzięki temu Enter w polu zatwierdza
-// dialog, a Esc go zamyka, jak w Midnight Commanderze. Zwykłe litery bierzemy **zawsze**: bez tego
-// „t" w polu naciskałoby przycisk, który ma tę literę w klawiszach aktywnych.
+// **Enter pole ogłasza jako `SubmitEvent`** — „wpis zatwierdzony" — i nic poza tym nie robi: nie
+// zna okna ani jego przycisków. Kto chce, żeby Enter w polu zatwierdzał formularz, wiesza uchwyt na
+// formularzu (zdarzenie idzie w górę, więc jeden uchwyt obejmuje każde pole) i tam naciska swoje
+// OK. Klawisz bierzemy tylko wtedy, gdy ktoś zdarzenie wziął; inaczej idzie dalej jak dawniej.
+// Dawniej ten komentarz mówił, że samo oddanie Entera zatwierdza dialog — prawdą przestało to być,
+// gdy okno przestało szukać przycisku podstawowego, i aplikacja musiała łatać to po swojemu.
+//
+// Esc i klawisze funkcyjne **oddajemy dalej** — to dzięki temu Esc w polu zamyka dialog, jak
+// w Midnight Commanderze. Zwykłe litery bierzemy **zawsze**: bez tego „t" w polu naciskałoby
+// przycisk, który ma tę literę w klawiszach aktywnych.
 //
 // Tab bierzemy **tylko wtedy, gdy jest co uzupełnić**. W innym razie oddajemy go dalej i ognisko
 // przechodzi do następnego — tak samo rozstrzygają to powłoki.
-bool Field::react(KeyEvent& what) {
-    if (!able_) return false;
+bool Field::handle(KeyEvent& what) {
+    if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -281,6 +300,8 @@ bool Field::react(KeyEvent& what) {
             return true;
 
         case Code::left: at_ = before(text_, at_); guessing(); return true;
+
+        case Code::enter: return trigger(SubmitEvent{});
 
         case Code::home: at_ = 0; guessing(); return true;
 
@@ -318,7 +339,7 @@ bool Field::react(KeyEvent& what) {
 
     std::string said;
 
-    spelled(one, said);
+    utf8::encode(one, said);
 
     // Znak odsiany **połykamy**, a nie oddajemy wyżej. Klawisz był skierowany do pola i to, że pole
     // go nie chce, nie znaczy, że ma go dostać ktoś inny — inaczej „t" odrzucone w polu na cyfry
@@ -328,29 +349,29 @@ bool Field::react(KeyEvent& what) {
     return true;
 }
 
-bool Field::react(PasteEvent& what) {
-    if (!able_) return false;
+bool Field::handle(PasteEvent& what) {
+    if (!enabled()) return false;
 
-    insert(what.said());
+    insert(what.text());
 
     return true;
 }
 
 // Klik stawia kursor tam, gdzie kliknięto, i bierze ognisko. Kolumnę przeliczamy tą samą miarą,
 // którą maluje `paint` — inaczej kursor lądowałby obok miejsca, w które celowano.
-bool Field::react(ClickEvent& what) {
-    if (!able_) return true;
+bool Field::handle(ClickEvent& what) {
+    if (!enabled()) return true;
 
     if (root() != nullptr) focus();
 
-    const int wanted = own(*this, what.where()).x;
+    const int wanted = local(what.where()).x;
 
     std::size_t at = from_;
     int wide = 0;
 
     while (at < text_.size()) {
         const std::size_t next = after(text_, at);
-        const int much = spanned(text_, at, next);
+        const int much = spanned(at, next);
 
         if (wide + much > wanted) break;
 

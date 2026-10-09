@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "talcite/address.hpp"
-#include "talcite/trouble.hpp"
 
 using namespace talcite;
 
@@ -392,4 +391,22 @@ TRIAL("Adres lokalny: nie powstaje żadną z pozostałych dróg") {
     ought(bytes);
     ought(any);
     ought(loop);
+}
+
+TRIAL("Adres: IPv4 z gniazda podwójnego wraca jako IPv4, reszta zostaje") {
+    const net::Address mapped = net::Address{"::ffff:192.0.2.7", 4242}.unmapped();
+
+    same(mapped.family(), net::Family::four);
+    same(mapped.spelled(), std::string{"192.0.2.7:4242"});
+
+    for (const char* other : {"::fffe:192.0.2.7", "::1:ffff:192.0.2.7", "1::ffff:c000:207", "2001:db8::1", "::"}) {
+        const net::Address one{other, 80};
+
+        ought(one.unmapped() == one);
+    }
+
+    const net::Address four{"192.0.2.7", 80};
+
+    ought(four.unmapped() == four);
+    ought(net::Address{}.unmapped() == net::Address{});
 }

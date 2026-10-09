@@ -3,6 +3,8 @@
 #include <memory>
 #include <string_view>
 
+#include "talcite/child.hpp"
+#include "talcite/console.hpp"
 #include "talcite/loop.hpp"
 #include "talcite/root.hpp"
 #include "talcite/setup.hpp"
@@ -11,7 +13,7 @@ namespace talcite {
 
 class Term {
 public:
-    explicit Term(Setup given = {});
+    explicit Term(Setup given = {}, Seam<Console> with = console());
 
     ~Term();
 
@@ -38,13 +40,11 @@ public:
 
     [[nodiscard]] bool unicode() const;
 
-    void onto(ui::Root& given);
+    void show(ui::Root& given);
 
-    [[nodiscard]] ui::Root* onto() const;
+    [[nodiscard]] ui::Root* shown() const;
 
-    [[nodiscard]] int wide() const;
-
-    [[nodiscard]] int high() const;
+    [[nodiscard]] ui::Size size() const;
 
     void title(std::string_view said);
 
@@ -56,16 +56,18 @@ public:
 
     void stop();
 
-    class Aside {
+    [[nodiscard]] Exit execute(Command what);
+
+    class Pause {
     public:
-        explicit Aside(Term& given);
+        explicit Pause(Term& given);
 
-        ~Aside();
+        ~Pause();
 
-        Aside(const Aside&) = delete;
-        Aside& operator=(const Aside&) = delete;
-        Aside(Aside&&) = delete;
-        Aside& operator=(Aside&&) = delete;
+        Pause(const Pause&) = delete;
+        Pause& operator=(const Pause&) = delete;
+        Pause(Pause&&) = delete;
+        Pause& operator=(Pause&&) = delete;
 
     private:
         Term& term_;

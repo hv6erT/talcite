@@ -6,11 +6,11 @@
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/veilwindow.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/legenditem.hpp"
-#include "talcite/legendwindow.hpp"
+#include "talcite/legend.hpp"
 #include "talcite/root.hpp"
 #include "talcite/span.hpp"
 
@@ -36,12 +36,12 @@ protected:
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.letter({x - seen.at.x, y - seen.at.y}, what_, Style{});
+                made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
 
         return made;
     }
 
-    bool react(ui::ClickEvent&) override {
+    bool handle(ui::ClickEvent&) override {
         ++hit;
 
         return true;
@@ -58,7 +58,7 @@ class Nest : public ui::Node {
 public:
     [[nodiscard]] bool focusable() const override { return true; }
 
-    [[nodiscard]] int takes() const override { return ui::plenty; }
+    [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     [[nodiscard]] ui::Size wants(ui::Size) const override { return {4, 2}; }
 };
@@ -83,7 +83,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::spelled(letter, made);
+        if (letter != 0) talcite::utf8::encode(letter, made);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();
@@ -96,13 +96,13 @@ std::string read(const View& one, int y) {
 TRIAL("Dialog: pudełko staje na środku, z miejscem na cień") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto under = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
 
     one->children().add(std::make_shared<Box>(ui::Size{6, 3}, U'o'));
 
-    window->body()->children().add(under);
+    window->content(under);
     top.children().add(window);
     window->open(one);
 
@@ -118,13 +118,13 @@ TRIAL("Dialog: pudełko staje na środku, z miejscem na cień") {
 TRIAL("Dialog: poza pudełkiem widać to, co pod spodem") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto under = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
 
     one->children().add(std::make_shared<Box>(ui::Size{4, 1}, U'o'));
 
-    window->body()->children().add(under);
+    window->content(under);
     top.children().add(window);
     window->open(one);
 
@@ -142,13 +142,13 @@ TRIAL("Dialog: poza pudełkiem widać to, co pod spodem") {
 TRIAL("Dialog: cień przygasza, a nie zamalowuje") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto under = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
 
     one->children().add(std::make_shared<Box>(ui::Size{6, 3}, U'o'));
 
-    window->body()->children().add(under);
+    window->content(under);
     top.children().add(window);
     window->open(one);
 
@@ -171,8 +171,8 @@ TRIAL("Dialog: cień przygasza, a nie zamalowuje") {
 TRIAL("Dialog: bez cienia pudełko środkuje się na całym ekranie") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
-    const auto one = std::make_shared<ui::Dialog>(ui::VeilStyle{false});
+    const auto window = std::make_shared<ui::Modals>();
+    const auto one = std::make_shared<ui::Dialog>(ui::ModalShape{false});
 
     one->children().add(std::make_shared<Box>(ui::Size{6, 4}, U'o'));
 
@@ -189,13 +189,13 @@ TRIAL("Dialog: bez cienia pudełko środkuje się na całym ekranie") {
 TRIAL("Dialog: kliknięcie obok pudełka nie dochodzi pod spód") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto under = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
     const auto inside = std::make_shared<Box>(ui::Size{6, 3}, U'o');
     const auto one = std::make_shared<ui::Dialog>();
 
     one->children().add(inside);
-    window->body()->children().add(under);
+    window->content(under);
     top.children().add(window);
     window->open(one);
 
@@ -203,13 +203,13 @@ TRIAL("Dialog: kliknięcie obok pudełka nie dochodzi pod spód") {
 
     ui::ClickEvent aside{{0, 0}, ui::Mouse::left};
 
-    ought(top.deal(aside));
+    ought(top.dispatch(aside));
     same(under->hit, 0);
 
     // Kliknięcie w pudełko dochodzi do jego treści.
     ui::ClickEvent within{{7, 4}, ui::Mouse::left};
 
-    ought(top.deal(within));
+    ought(top.dispatch(within));
     same(inside->hit, 1);
     same(under->hit, 0);
 }
@@ -219,15 +219,15 @@ TRIAL("Dialog: kliknięcie obok pudełka nie dochodzi pod spód") {
 TRIAL("Dialog: klawisz nie dochodzi do legendy pod spodem") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
-    const auto legend = std::make_shared<ui::LegendWindow>();
+    const auto window = std::make_shared<ui::Modals>();
+    const auto legend = std::make_shared<ui::Legend>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
 
-    legend->body()->children().add(body);
+    legend->content(body);
     (void)proving::doing(legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
-    window->body()->children().add(legend);
+    window->content(legend);
     top.children().add(window);
 
     body->focus();
@@ -237,7 +237,7 @@ TRIAL("Dialog: klawisz nie dochodzi do legendy pod spodem") {
     // Bez dialogu legenda działa.
     ui::KeyEvent first{ui::Code::f5};
 
-    ought(top.deal(first));
+    ought(top.dispatch(first));
     same(done, 1);
 
     const auto one = std::make_shared<ui::Dialog>();
@@ -250,7 +250,7 @@ TRIAL("Dialog: klawisz nie dochodzi do legendy pod spodem") {
 
     ui::KeyEvent second{ui::Code::f5};
 
-    ought(top.deal(second));
+    ought(top.dispatch(second));
     same(done, 1);
 }
 
@@ -260,7 +260,7 @@ TRIAL("Dialog: klawisz nie dochodzi do legendy pod spodem") {
 TRIAL("Dialog: Esc zamyka dopiero z uchwytem wołającego") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
 
@@ -268,7 +268,7 @@ TRIAL("Dialog: Esc zamyka dopiero z uchwytem wołającego") {
 
     one->children().add(inside);
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
@@ -276,18 +276,18 @@ TRIAL("Dialog: Esc zamyka dopiero z uchwytem wołającego") {
     window->open(one);
 
     // Ognisko idzie **w głąb dialogu**, na pierwszego chętnego, a nie na sam dialog.
-    same(top.focus(), static_cast<ui::Node*>(inside.get()));
-    same(window->opened(), static_cast<ui::Veil*>(one.get()));
-    same(window->takes(), 2);
+    same(top.focused_node(), static_cast<ui::Node*>(inside.get()));
+    same(window->current(), static_cast<ui::Modal*>(one.get()));
+    same(window->capacity(), 2);
 
     (void)top.render({{0, 0}, {20, 10}});
 
     ui::KeyEvent what{ui::Code::escape};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
     // Sam Esc niczego nie zamknął — został połknięty przez modalność i tyle.
-    ought(!window->veils().empty());
+    ought(!window->empty());
 
     const std::weak_ptr<ui::Dialog> weak = one;
 
@@ -299,12 +299,12 @@ TRIAL("Dialog: Esc zamyka dopiero z uchwytem wołającego") {
         return true;
     });
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
 
-    ought(window->veils().empty());
-    same(window->opened(), static_cast<ui::Veil*>(nullptr));
-    same(window->takes(), 1);
-    same(top.focus(), static_cast<ui::Node*>(body.get()));
+    ought(window->empty());
+    same(window->current(), static_cast<ui::Modal*>(nullptr));
+    same(window->capacity(), 1);
+    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 // Stos: każdy dialog pamięta **swoje** ognisko, więc zamknięcie wierzchniego wraca do tego pod
@@ -313,7 +313,7 @@ TRIAL("Dialog: Esc zamyka dopiero z uchwytem wołającego") {
 TRIAL("Dialog: stos wraca ognisko warstwa po warstwie") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
     const auto two = std::make_shared<ui::Dialog>();
@@ -324,7 +324,7 @@ TRIAL("Dialog: stos wraca ognisko warstwa po warstwie") {
     one->children().add(first);
     two->children().add(second);
 
-    window->body()->children().add(body);
+    window->content(body);
     top.children().add(window);
 
     body->focus();
@@ -332,9 +332,9 @@ TRIAL("Dialog: stos wraca ognisko warstwa po warstwie") {
     window->open(one);
     window->open(two);
 
-    same(window->opened(), static_cast<ui::Veil*>(two.get()));
-    same(top.focus(), static_cast<ui::Node*>(second.get()));
-    same(static_cast<int>(window->veils().size()), 2);
+    same(window->current(), static_cast<ui::Modal*>(two.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(second.get()));
+    same(static_cast<int>(window->many()), 2);
 
     (void)top.render({{0, 0}, {20, 10}});
 
@@ -343,19 +343,19 @@ TRIAL("Dialog: stos wraca ognisko warstwa po warstwie") {
 
     window->close();
 
-    same(window->opened(), static_cast<ui::Veil*>(one.get()));
-    same(top.focus(), static_cast<ui::Node*>(first.get()));
+    same(window->current(), static_cast<ui::Modal*>(one.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     window->close();
 
-    ought(window->veils().empty());
-    same(top.focus(), static_cast<ui::Node*>(body.get()));
+    ought(window->empty());
+    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 TRIAL("Dialog: zamknięcie po uchwycie zdejmuje ten, o który chodzi") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
     const auto two = std::make_shared<ui::Dialog>();
 
@@ -368,21 +368,21 @@ TRIAL("Dialog: zamknięcie po uchwycie zdejmuje ten, o który chodzi") {
     window->open(two);
 
     // Zdejmujemy spodni, nie wierzchni.
-    window->close(one.get());
+    window->close(*one);
 
-    same(static_cast<int>(window->veils().size()), 1);
-    same(window->opened(), static_cast<ui::Veil*>(two.get()));
+    same(static_cast<int>(window->many()), 1);
+    same(window->current(), static_cast<ui::Modal*>(two.get()));
 
     // Zamknięcie własną ręką robi to samo.
     two->close();
 
-    ought(window->veils().empty());
+    ought(window->empty());
 }
 
 TRIAL("Dialog: treść większa niż ekran przycina się do niego") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
 
     one->children().add(std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'o'));
@@ -399,7 +399,7 @@ TRIAL("Dialog: treść większa niż ekran przycina się do niego") {
 TRIAL("Dialog: pudełkiem jest zwykła rama z tytułem") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
     const auto frame = std::make_shared<ui::Frame>("Uwaga");
 
@@ -423,7 +423,7 @@ TRIAL("Dialog: pudełkiem jest zwykła rama z tytułem") {
 TRIAL("Dialog: chętny widżet jest jednym przystankiem, a nie tyloma, ile ma dzieci") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
 
@@ -445,23 +445,23 @@ TRIAL("Dialog: chętny widżet jest jednym przystankiem, a nie tyloma, ile ma dz
     top.children().add(window);
     window->open(one);
 
-    same(top.focus(), static_cast<ui::Node*>(first.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     ui::KeyEvent step{ui::Code::tab};
 
-    ought(top.deal(step));
-    same(top.focus(), static_cast<ui::Node*>(nest.get()));
+    ought(top.dispatch(step));
+    same(top.focused_node(), static_cast<ui::Node*>(nest.get()));
 
     ui::KeyEvent again{ui::Code::tab};
 
-    ought(top.deal(again));
-    same(top.focus(), static_cast<ui::Node*>(last.get()));
+    ought(top.dispatch(again));
+    same(top.focused_node(), static_cast<ui::Node*>(last.get()));
 
     // Zawinięcie na koniec — i po drodze ani razu nie stanęliśmy w środku gniazda.
     ui::KeyEvent round{ui::Code::tab};
 
-    ought(top.deal(round));
-    same(top.focus(), static_cast<ui::Node*>(first.get()));
+    ought(top.dispatch(round));
+    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
 // Ognisko, które zeszło głębiej niż przystanek, dalej należy do przystanku: krok Tabem liczy się
@@ -469,7 +469,7 @@ TRIAL("Dialog: chętny widżet jest jednym przystankiem, a nie tyloma, ile ma dz
 TRIAL("Dialog: ognisko w środku widżetu liczy się jako ognisko na nim") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
 
@@ -489,25 +489,25 @@ TRIAL("Dialog: ognisko w środku widżetu liczy się jako ognisko na nim") {
     top.children().add(window);
     window->open(one);
 
-    same(top.focus(), static_cast<ui::Node*>(first.get()));
+    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     // Krok na gniazdo stawia ognisko **w jego wnętrzu**, bo tak rozstrzyga samo gniazdo.
     ui::KeyEvent step{ui::Code::tab};
 
-    ought(top.deal(step));
-    same(top.focus(), static_cast<ui::Node*>(inner.get()));
+    ought(top.dispatch(step));
+    same(top.focused_node(), static_cast<ui::Node*>(inner.get()));
 
     // Następny krok wychodzi z gniazda, a nie kręci się w nim.
     ui::KeyEvent again{ui::Code::tab};
 
-    ought(top.deal(again));
-    same(top.focus(), static_cast<ui::Node*>(last.get()));
+    ought(top.dispatch(again));
+    same(top.focused_node(), static_cast<ui::Node*>(last.get()));
 
     // Wstecz wraca do wnętrza gniazda, znów przez nie samo.
     ui::KeyEvent back{ui::Key{ui::Code::tab, ui::Mods{false, false, true}}};
 
-    ought(top.deal(back));
-    same(top.focus(), static_cast<ui::Node*>(inner.get()));
+    ought(top.dispatch(back));
+    same(top.focused_node(), static_cast<ui::Node*>(inner.get()));
 }
 
 // Ta sama granica co w wędrówce, tylko dla klawiszy aktywnych i przycisku podstawowego: przycisk
@@ -516,7 +516,7 @@ TRIAL("Dialog: ognisko w środku widżetu liczy się jako ognisko na nim") {
 TRIAL("Dialog: klawisz aktywny nie sięga w głąb chętnego widżetu") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto one = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
     const auto nest = std::make_shared<Nest>();
@@ -544,29 +544,29 @@ TRIAL("Dialog: klawisz aktywny nie sięga w głąb chętnego widżetu") {
 
     ui::KeyEvent held{U'T'};
 
-    ought(top.deal(held));
+    ought(top.dispatch(held));
     same(hidden, 0);
 
     ui::KeyEvent free{U'N'};
 
-    ought(top.deal(free));
+    ought(top.dispatch(free));
     same(plain, 1);
 
     // Przycisk podstawowy ma tę samą granicę — Enter nie znajduje go w środku gniazda.
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(top.deal(what));
+    ought(top.dispatch(what));
     same(hidden, 0);
 }
 
 TRIAL("Dialog: pusty nie rysuje niczego i nie zasłania") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto under = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
     const auto one = std::make_shared<ui::Dialog>();
 
-    window->body()->children().add(under);
+    window->content(under);
     top.children().add(window);
     window->open(one);
 
@@ -582,7 +582,7 @@ TRIAL("Dialog: pusty nie rysuje niczego i nie zasłania") {
 TRIAL("Dialog: uchwyt na klawisz aktywny działa jak wbudowany") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
     const auto span = std::make_shared<ui::Span>("nie jestem przyciskiem");
@@ -595,8 +595,8 @@ TRIAL("Dialog: uchwyt na klawisz aktywny działa jak wbudowany") {
 
     int done = 0;
 
-    (void)span->on<ui::HotEvent<ui::KeyEvent>>([&done](ui::HotEvent<ui::KeyEvent>& what) {
-        if (what.held().key() != ui::Key{U'z'}) return false;
+    (void)span->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent& what) {
+        if (what.key() != ui::Key{U'z'}) return false;
 
         ++done;
 
@@ -605,12 +605,12 @@ TRIAL("Dialog: uchwyt na klawisz aktywny działa jak wbudowany") {
 
     ui::KeyEvent other{ui::Key{U'x'}};
 
-    ought(top.deal(other));
+    ought(top.dispatch(other));
     same(done, 0);
 
     ui::KeyEvent mine{ui::Key{U'z'}};
 
-    ought(top.deal(mine));
+    ought(top.dispatch(mine));
     same(done, 1);
 }
 
@@ -619,7 +619,7 @@ TRIAL("Dialog: uchwyt na klawisz aktywny działa jak wbudowany") {
 TRIAL("Dialog: rozdany klawisz nie wraca w górę") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::VeilWindow>();
+    const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto column = std::make_shared<ui::Column>();
     const auto span = std::make_shared<ui::Span>("napis");
@@ -632,7 +632,7 @@ TRIAL("Dialog: rozdany klawisz nie wraca w górę") {
 
     int above = 0;
 
-    (void)column->on<ui::HotEvent<ui::KeyEvent>>([&above](ui::HotEvent<ui::KeyEvent>&) {
+    (void)column->on<ui::ShortcutEvent>([&above](ui::ShortcutEvent&) {
         ++above;
 
         return false;
@@ -640,7 +640,7 @@ TRIAL("Dialog: rozdany klawisz nie wraca w górę") {
 
     int under = 0;
 
-    (void)span->on<ui::HotEvent<ui::KeyEvent>>([&under](ui::HotEvent<ui::KeyEvent>&) {
+    (void)span->on<ui::ShortcutEvent>([&under](ui::ShortcutEvent&) {
         ++under;
 
         return false;
@@ -648,7 +648,7 @@ TRIAL("Dialog: rozdany klawisz nie wraca w górę") {
 
     ui::KeyEvent what{ui::Key{U'z'}};
 
-    (void)top.deal(what);
+    (void)top.dispatch(what);
 
     // Kolumna dostaje je raz jako ona sama, a **nie** drugi raz bąbelkiem od napisu.
     same(above, 1);

@@ -1,12 +1,16 @@
 #include "inside.hpp"
+#include "sealed.hpp"
 
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <optional>
+#include <vector>
 
-#include "talcite/trouble.hpp"
+#include "talcite/address.hpp"
 
+#include "piping.hpp"
 #include "starting.hpp"
 
 #ifdef _WIN32
@@ -273,16 +277,26 @@ Handle opened(Family family, bool stream) {
     u_long yes = 1;
 
     ::ioctlsocket(static_cast<SOCKET>(made), FIONBIO, &yes);
+
+    // **ICMP „port nieosiągalny" nie zamyka gniazda UDP.** Windows zgłasza go następnemu odczytowi
+    // jako WSAECONNRESET — jedna paczka wysłana pod martwy adres (sąsiad, który już odszedł, stary
+    // serwer STUN) zrywała odbiór od wszystkich pozostałych. Na POSIX-ie gniazdo niepołączone tego
+    // nie dostaje wcale. `SIO_UDP_CONNRESET` = `_WSAIOW(IOC_VENDOR, 12)`, liczbą, bo siedzi
+    // w mswsock.h, którego nic poza tym nie potrzebuje.
+    if (!stream) {
+        BOOL off = FALSE;
+        DWORD given = 0;
+
+        (void)::WSAIoctl(static_cast<SOCKET>(made), 0x9800000CUL, &off, sizeof off, nullptr, 0, &given, nullptr,
+                         nullptr);
+    }
 #else
     // **Zamykane przy uruchomieniu programu potomnego.** Bez tego dziecko dziedziczy wszystkie
     // nasze gniazda i trzyma zajęty port długo po tym, jak my go zamkniemy — dokładnie ten sam
     // powód, dla którego gałąź windowsowa buduje listę uchwytów do przekazania.
-    const Handle made = ::socket(which, stream ? SOCK_STREAM : SOCK_DGRAM, 0);
+    const Handle made = sealed::socketed(which, stream ? SOCK_STREAM : SOCK_DGRAM);
 
     if (made < 0) return nothing;
-
-    ::fcntl(made, F_SETFL, ::fcntl(made, F_GETFL, 0) | O_NONBLOCK);
-    ::fcntl(made, F_SETFD, ::fcntl(made, F_GETFD, 0) | FD_CLOEXEC);
 
     // **Zapis w gniazdo, którego druga strona już zamknęła, nie ma prawa zabić naszego procesu.**
     // Domyślną reakcją na SIGPIPE jest śmierć — a biblioteka sieciowa, która ubija program
@@ -316,6 +330,8 @@ Handle opened(Family family, bool stream) {
 
 void ending(Handle one) {
     if (one == nothing) return;
+
+    if (pipes::piped(one)) return pipes::closed(one);
 
 #ifdef _WIN32
     ::closesocket(static_cast<SOCKET>(one));
@@ -354,6 +370,8 @@ int settling(Handle one) {
 }
 
 Address named(Handle one, bool peer) {
+    if (pipes::piped(one)) return pipes::named(one, peer);
+
     sockaddr_storage told{};
 
 #ifdef _WIN32
@@ -373,6 +391,8 @@ Address named(Handle one, bool peer) {
 }
 
 void nagling(Handle one, bool given) {
+    if (pipes::piped(one)) return;
+
     const int off = given ? 0 : 1;
 
     ::setsockopt(static_cast<int>(one), IPPROTO_TCP, TCP_NODELAY,
@@ -390,6 +410,114 @@ void sharing(Handle one) {
     (void)one;
 #endif
 }
+
+// Wysyłka na adres rozgłoszeniowy (majak w sieci lokalnej). Bez tej zgody system odmawia wysyłki na
+// 255.255.255.255, żeby nikt nie rozgłaszał przypadkiem.
+void broadcasting(Handle one, bool given) {
+    const int yes = given ? 1 : 0;
+
+#ifdef _WIN32
+    ::setsockopt(static_cast<SOCKET>(one), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&yes), sizeof yes);
+#else
+    ::setsockopt(one, SOL_SOCKET, SO_BROADCAST, &yes, sizeof yes);
+#endif
+}
+
+// **Czy po drugiej stronie gniazda lokalnego jest ten sam użytkownik.** Gniazdo leży w katalogu,
+// do którego nikt inny nie ma prawa (`fs::runtime`), ale demon pytany o udostępnienia nie powinien
+// polegać na jednej zaporze: pyta system, kto naprawdę łączy. Linux i BSD mówią to wprost;
+// Windows daje numer procesu, a użytkownika bierzemy z jego żetonu. Pustka — system nie umie
+// powiedzieć (nie gniazdo lokalne, stary system); wołający decyduje, czy to odmowa.
+#ifdef _WIN32
+
+#ifndef SIO_AF_UNIX_GETPEERPID
+#define SIO_AF_UNIX_GETPEERPID _WSAIOR(IOC_VENDOR, 256)
+#endif
+
+namespace {
+
+// Użytkownik żetonu procesu — kopia identyfikatora, bo bufor żetonu żyje tylko w tej funkcji.
+std::vector<unsigned char> user_of(HANDLE process) {
+    HANDLE token = nullptr;
+
+    if (OpenProcessToken(process, TOKEN_QUERY, &token) == 0) return {};
+
+    DWORD much = 0;
+
+    (void)GetTokenInformation(token, TokenUser, nullptr, 0, &much);
+
+    std::vector<unsigned char> room(much);
+
+    std::vector<unsigned char> made;
+
+    if (much > 0 && GetTokenInformation(token, TokenUser, room.data(), much, &much) != 0) {
+        const auto* told = reinterpret_cast<const TOKEN_USER*>(room.data());
+        const DWORD length = GetLengthSid(told->User.Sid);
+
+        made.assign(static_cast<const unsigned char*>(told->User.Sid),
+                    static_cast<const unsigned char*>(told->User.Sid) + length);
+    }
+
+    CloseHandle(token);
+
+    return made;
+}
+
+}
+
+std::optional<bool> kindred(Handle one) {
+    ULONG pid = 0;
+    DWORD got = 0;
+
+    if (pipes::piped(one)) {
+        const std::optional<unsigned long> facing = pipes::facing(one);
+
+        if (!facing) return std::nullopt;
+
+        pid = static_cast<ULONG>(*facing);
+    } else if (WSAIoctl(static_cast<SOCKET>(one), SIO_AF_UNIX_GETPEERPID, nullptr, 0, &pid, sizeof pid, &got, nullptr,
+                        nullptr) != 0) {
+        return std::nullopt;
+    }
+
+    // Proces, którego nie wolno nam nawet obejrzeć, należy do kogoś innego.
+    HANDLE theirs = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+
+    if (theirs == nullptr) return false;
+
+    const std::vector<unsigned char> them = user_of(theirs);
+    const std::vector<unsigned char> us = user_of(GetCurrentProcess());
+
+    CloseHandle(theirs);
+
+    return !them.empty() && them == us;
+}
+
+#else
+
+std::optional<bool> kindred(Handle one) {
+#if defined(SO_PEERCRED)
+    ucred told{};
+    socklen_t much = sizeof told;
+
+    if (::getsockopt(one, SOL_SOCKET, SO_PEERCRED, &told, &much) != 0) return std::nullopt;
+
+    return told.uid == ::geteuid();
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
+    uid_t uid = 0;
+    gid_t gid = 0;
+
+    if (::getpeereid(one, &uid, &gid) != 0) return std::nullopt;
+
+    return uid == ::geteuid();
+#else
+    (void)one;
+
+    return std::nullopt;
+#endif
+}
+
+#endif
 
 namespace {
 
@@ -573,8 +701,10 @@ bool underway() {
 #endif
 }
 
+// Rury nie zamykamy w pół: `DisconnectNamedPipe` wyrzuca to, czego druga strona jeszcze nie
+// przeczytała. Koniec zobaczy przy zamknięciu uchwytu, gdy zejdzie ostatnie zgłoszenie.
 void shutting(Handle one) {
-    if (one == nothing) return;
+    if (one == nothing || pipes::piped(one)) return;
 
 #ifdef _WIN32
     ::shutdown(static_cast<SOCKET>(one), SD_BOTH);
@@ -599,18 +729,14 @@ Address taken(Handle one, Handle& made) {
 #else
     socklen_t much = sizeof told;
 
-    made = ::accept(one, reinterpret_cast<sockaddr*>(&told), &much);
+    // Przyjęte gniazdo też nie ma trafić do programu potomnego.
+    made = sealed::accepted(one, reinterpret_cast<sockaddr*>(&told), &much);
 
     if (made < 0) {
         made = nothing;
 
         return {};
     }
-
-    // Przyjęte gniazdo też nie ma trafić do programu potomnego.
-    ::fcntl(made, F_SETFD, ::fcntl(made, F_GETFD, 0) | FD_CLOEXEC);
-
-    ::fcntl(made, F_SETFL, ::fcntl(made, F_GETFL, 0) | O_NONBLOCK);
 #endif
 
     return seen(told);

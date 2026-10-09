@@ -1,34 +1,41 @@
 #pragma once
 
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "talcite/node.hpp"
-#include "talcite/style.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
+
+class Grip;
 
 class ListItem;
 
 class List : public Node {
 public:
-    explicit List(int wide = plenty, int high = plenty, ListStyle style = {});
+    explicit List(int wide = plenty, int high = plenty, ScrollShape shape = {});
 
-    [[nodiscard]] int which() const { return which_; }
+    [[nodiscard]] std::optional<std::size_t> which() const;
 
-    void which(int given);
+    void which(std::size_t given);
 
-    void which(ListItem* one);
+    [[nodiscard]] ListItem* current() const;
+
+    void current(ListItem& one);
 
     void pick();
 
-    [[nodiscard]] int first() const { return shift_; }
+    [[nodiscard]] std::size_t first() const;
 
-    void first(int given);
+    void first(std::size_t given);
 
-    [[nodiscard]] bool progress() const { return style_.progress; }
+    [[nodiscard]] bool scrollbar() const { return shape_.scrollbar; }
 
-    void progress(bool given) { style_.progress = given; }
+    void scrollbar(bool given) { shape_.scrollbar = given; }
 
     [[nodiscard]] int wide() const { return wide_; }
 
@@ -42,27 +49,31 @@ public:
 
     [[nodiscard]] bool focusable() const override;
 
-    [[nodiscard]] const std::string& bar() const { return bar_; }
+    [[nodiscard]] const std::string& scrollbar_role() const { return scrollbar_role_; }
 
-    void bar(std::string given) { bar_ = std::move(given); }
+    void scrollbar_role(std::string given) { scrollbar_role_ = std::move(given); }
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] int takes() const override;
+    [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] bool accepts(const Node& one) const override;
 
 protected:
     View paint(Size given, Area seen) override;
 
-    bool react(KeyEvent& what) override;
+    bool handle(KeyEvent& what) override;
 
-    bool react(WheelEvent& what) override;
+    bool handle(WheelEvent& what) override;
 
-    bool react(FocusEvent& what) override;
+    bool handle(FocusEvent& what) override;
+
+    bool handle(MouseEvent& what) override;
 
 private:
     [[nodiscard]] ListItem* item(int which) const;
+
+    void aim(int given);
 
     [[nodiscard]] int nearest(int from, int step) const;
 
@@ -70,10 +81,12 @@ private:
 
     bool walking(int step, int times);
 
-    void stirred();
+    void slid(int to);
 
-    std::string bar_ = "talcite.scroll";
-    ListStyle style_;
+
+    std::string scrollbar_role_ = "talcite.scroll";
+    ScrollShape shape_;
+    std::shared_ptr<Grip> grip_;
     int which_ = -1;
     int shift_ = 0;
     int wide_ = plenty;

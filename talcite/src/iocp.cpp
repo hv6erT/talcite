@@ -1,4 +1,4 @@
-#include "talcite/exchange.hpp"
+#include "exchange.hpp"
 
 #include "inside.hpp"
 
@@ -18,6 +18,7 @@
 
 #include "talcite/pool.hpp"
 
+#include "piping.hpp"
 #include "starting.hpp"
 
 #include <winsock2.h>
@@ -29,6 +30,9 @@
 namespace talcite::net {
 
 namespace {
+
+// Rura po drugiej stronie zamknięta — dla czytającego to koniec strumienia, nie awaria.
+bool ended_pipe(DWORD code) { return code == ERROR_BROKEN_PIPE || code == ERROR_PIPE_NOT_CONNECTED; }
 
 // Klucz zakończenia, które nie należy do żadnej operacji — mówi tylko „obudź się i policz
 // terminy". To zastępuje budzik z pary gniazd, który jest potrzebny przy WSAPoll.
@@ -144,7 +148,7 @@ void sweeping(Exchange::Held& held, Handle one) {
 // Zakończenie idzie **na wątek z puli**, nie tutaj. Ciąg dalszy obietnicy to cudzy kod — gdyby
 // pobiegł na wątku centrali, jeden powolny then zatrzymałby całą sieć.
 void handed(std::shared_ptr<Doing> one, std::size_t much, int code, bool late) {
-    pooling().take([one = std::move(one), much, code, late]() mutable {
+    pooling().post([one = std::move(one), much, code, late]() mutable {
         // **Zapis przerwany terminem nie jest udany, choćby część bajtów zeszła.** Wcześniej
         // gałąź terminu omijało się przy niezerowym liczniku, a kod błędu zerowało — więc
         // przerwany zapis megabajta, z którego poszło 64 KiB, meldował się jako zapisany w całości.
@@ -223,7 +227,7 @@ bool began(const std::shared_ptr<Flying>& fly) {
                 const bool ever = one.ever;
                 const auto until = one.until;
 
-                pooling().take([mine = fly->one, which, ever, until]() {
+                pooling().post([mine = fly->one, which, ever, until]() {
                     timeval how{};
 
                     if (ever) {
@@ -290,6 +294,30 @@ bool began(const std::shared_ptr<Flying>& fly) {
         }
 
         case Kind::meeting: {
+            // **Rura czeka na klienta na swojej instancji** (`pipes::spare`); przyjęta instancja
+            // jest od razu strumieniem. Klient, który zdążył przed nami, nie daje zakończenia
+            // w porcie — rozstrzygamy na miejscu. Klient, który zdążył też odejść, to strumień,
+            // który od razu mówi „koniec".
+            if (pipes::piped(one.held)) {
+                if (::ConnectNamedPipe(reinterpret_cast<HANDLE>(one.held), &fly->over) != 0) return true;
+
+                const DWORD why = ::GetLastError();
+
+                if (why == ERROR_IO_PENDING) return true;
+
+                if (why == ERROR_PIPE_CONNECTED || why == ERROR_NO_DATA) {
+                    one.made = one.held;
+
+                    handed(fly->one, 0, 0, false);
+
+                    return false;
+                }
+
+                handed(fly->one, 0, static_cast<int>(why), false);
+
+                return false;
+            }
+
             asking();
 
             if (accepting == nullptr) {
@@ -330,6 +358,20 @@ bool began(const std::shared_ptr<Flying>& fly) {
 
         case Kind::getting:
         case Kind::fetching: {
+            if (pipes::piped(one.held)) {
+                if (::ReadFile(reinterpret_cast<HANDLE>(one.held), one.buffer.data(), static_cast<DWORD>(one.buffer.size()), nullptr,
+                               &fly->over) != 0)
+                    return true;
+
+                const DWORD why = ::GetLastError();
+
+                if (why == ERROR_IO_PENDING) return true;
+
+                handed(fly->one, 0, ended_pipe(why) ? 0 : static_cast<int>(why), false);
+
+                return false;
+            }
+
             fly->what.buf = reinterpret_cast<CHAR*>(one.buffer.data());
             fly->what.len = static_cast<ULONG>(one.buffer.size());
 
@@ -365,6 +407,28 @@ bool began(const std::shared_ptr<Flying>& fly) {
 
         case Kind::putting:
         case Kind::sending: {
+            if (pipes::piped(one.held)) {
+                // Zapis zera bajtów dochodzi do czytającego jako zero bajtów — czyli jako koniec.
+                // Gniazdo nie wysyła wtedy nic i rura też nie ma.
+                if (one.much >= one.buffer.size()) {
+                    handed(fly->one, one.much, 0, false);
+
+                    return false;
+                }
+
+                if (::WriteFile(reinterpret_cast<HANDLE>(one.held), one.buffer.data() + one.much,
+                                static_cast<DWORD>(one.buffer.size() - one.much), nullptr, &fly->over) != 0)
+                    return true;
+
+                const DWORD why = ::GetLastError();
+
+                if (why == ERROR_IO_PENDING) return true;
+
+                handed(fly->one, one.much, static_cast<int>(why), false);
+
+                return false;
+            }
+
             fly->what.buf = reinterpret_cast<CHAR*>(one.buffer.data()) + one.much;
             fly->what.len = static_cast<ULONG>(one.buffer.size() - one.much);
 
@@ -399,6 +463,9 @@ bool began(const std::shared_ptr<Flying>& fly) {
 // dopowiedzenia systemowi, czym właśnie się stały.
 void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
     Doing& one = *fly->one;
+
+    // Koniec rury przy czytaniu: tyle, ile przyszło, i bez błędu — dokładnie jak zamknięte gniazdo.
+    if (code != 0 && one.kind == Kind::getting && ended_pipe(static_cast<DWORD>(code)) && pipes::piped(one.held)) code = 0;
 
     if (code != 0) {
         // Za duży datagram to **nie jest awaria odbioru**, tylko odpowiedź: tyle się zmieściło,
@@ -438,6 +505,14 @@ void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
         }
 
         case Kind::meeting: {
+            if (pipes::piped(one.held)) {
+                one.made = one.held;
+
+                handed(fly->one, 0, 0, false);
+
+                return;
+            }
+
             const SOCKET which = static_cast<SOCKET>(one.held);
 
             (void)::setsockopt(static_cast<SOCKET>(one.made), SOL_SOCKET,
