@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -223,9 +224,11 @@ constexpr std::uint16_t pcp_port = 5351;
 // The longest UPnP lease, in seconds; IGD version 1 does not accept more.
 constexpr std::uint32_t upnp_longest = 604800;
 
-// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
+// The time left until `until`, rounded up to a whole millisecond and at least one, so that it can be
+// passed as a patience. Rounding down would let a wait end before `until`, and the caller, seeing
+// time left, would start another round in the last fraction of a millisecond.
 Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
+    const auto rest = std::chrono::ceil<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
@@ -319,14 +322,19 @@ std::string pmp_said(std::uint32_t code) {
 // A request with retries: a quarter of a second, then doubling, until the deadline. `judged` gets
 // every datagram from the router and says whether that is the end; foreign sources and oversized
 // datagrams are skipped silently. Returns whether `judged` accepted an answer.
+//
+// The rounds end at moments fixed from the first send (250, 750, 1750 ms, ...), not from the clock
+// after each wait: the number of sends then follows from the deadline alone. A wait that ends a
+// little early or late moves no round, and the last round, which ends at the deadline, is the last.
 template <typename Judge>
 bool asked(const Udp& post, const Address& where, const Bytes& what, Clock::time_point until, Judge judged) {
     Patience wait{250};
+    Clock::time_point edge = Clock::now();
 
-    while (Clock::now() < until) {
+    while (edge < until) {
         post.send(where, what, left(until)).await();
 
-        const Clock::time_point edge = std::min(Clock::now() + wait, until);
+        edge = std::min(edge + wait, until);
 
         while (Clock::now() < edge) {
             Datagram came;

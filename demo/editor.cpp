@@ -237,19 +237,32 @@ int main(int argc, char** argv) {
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
     const auto shown = std::make_shared<talcite::ui::Editor>(talcite::ui::ScrollShape{true});
 
-    // The application adds Ctrl+C, Ctrl+X and Ctrl+V, because the editor does not assign them to
-    // itself: in raw mode Ctrl+C is not an interrupt but an ordinary key, and a widget that
-    // swallowed it would take away the application's chance to use it for quitting. The Midnight
-    // Commander set (Ctrl+Ins, Shift+Ins, Shift+Del) the editor handles by itself.
+    // The application binds the clipboard keys, because the editor assigns no key to an action: both
+    // sets call the same methods, Ctrl+C, Ctrl+X and Ctrl+V as elsewhere and Ctrl+Ins, Shift+Del and
+    // Shift+Ins as in Midnight Commander. In raw mode Ctrl+C is not an interrupt but an ordinary key,
+    // and a widget that swallowed it would take away the application's chance to use it for quitting.
     {
         const std::weak_ptr<talcite::ui::Editor> weak = shown;
 
         (void)shown->on<talcite::ui::KeyEvent>([weak](talcite::ui::KeyEvent& what) {
-            if (!what.mods().ctrl || what.mods().alt) return false;
+            const talcite::ui::Mods mods = what.mods();
+
+            if (mods.alt) return false;
 
             const auto mine = weak.lock();
 
             if (!mine) return false;
+
+            if (what.key().code() == talcite::ui::Code::insert) {
+                if (mods.ctrl && !mods.shift) return mine->copy();
+                if (mods.shift && !mods.ctrl) return mine->paste();
+
+                return false;
+            }
+
+            if (what.key().code() == talcite::ui::Code::remove) return mods.shift && !mods.ctrl && mine->cut();
+
+            if (!mods.ctrl) return false;
 
             switch (what.key().letter()) {
                 case U'c': return mine->copy();

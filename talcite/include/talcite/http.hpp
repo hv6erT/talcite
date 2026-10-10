@@ -43,13 +43,13 @@ struct Request {
     Url url;
     std::vector<Header> headers;
     std::string method = "GET";
-    Bytes body;
+    Bytes body{};
 };
 
 struct Response {
     int status = 0;
     std::vector<Header> headers;
-    Bytes body;
+    Bytes body{};
     Url url;
 
     [[nodiscard]] const std::string* header(std::string_view name) const;

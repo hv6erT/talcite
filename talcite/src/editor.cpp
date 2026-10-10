@@ -575,8 +575,6 @@ std::size_t Editor::line() const {
 // cursor counts in bytes, and only the spool knows the byte where a line starts, hence the method
 // here and not in the caller.
 void Editor::line(std::size_t which) {
-    Kept& kept = *kept_;
-
     if (!spool()) return;
 
     const std::size_t many = spool()->counted().value_or(0);
@@ -836,8 +834,6 @@ constexpr std::size_t combing = 64;
 // The search does not wrap at the end of the document: calling again from zero is a decision of
 // the application, not of the widget.
 std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
-    Kept& kept = *kept_;
-
     if (!spool() || !how.ready()) return {};
 
     const std::size_t at = std::min(from, spool()->whole());
@@ -1309,43 +1305,23 @@ std::size_t worded(Spool& spool, std::size_t at, bool forth) {
 
 }
 
-// The editor's keys: the clipboard keys of Midnight Commander, typing, Enter, Backspace and Delete,
-// and movement by characters, words, lines and pages, Home and End. Other keys go to `Page`, and
-// a move past the first or the last line goes up to an ancestor.
+// The editor's keys: typing, Enter, Backspace and Delete, and movement by characters, words, lines
+// and pages, Home and End. Other keys go to `Page`, and a move past the first or the last line goes
+// up to an ancestor.
+//
+// The editor binds no key to an action of its own: undo, redo, the block and the clipboard are
+// methods (`undo`, `block().mark()`, `copy`, `cut`, `paste`...), and which keys call them is the
+// application's choice, made in one table of its own. A key bound here could not be taken away:
+// the application would have to work around it, and a second set beside it (Midnight Commander's
+// Ctrl+Ins, Shift+Ins and Shift+Del, or Ctrl+C, Ctrl+V and Ctrl+X from elsewhere) would be
+// written in two places. In raw mode Ctrl+C is not an interrupt but an ordinary key, so taking it
+// here would also hide it from an application that wants it for quitting.
 bool Editor::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 
     if (!kept.quilt) return false;
 
     const Mods mods = what.mods();
-
-    // One set of clipboard keys, not two: the one from Midnight Commander, because that is the
-    // model of this library. A second set, Ctrl+C/X/V, would be trouble: in raw mode Ctrl+C is not
-    // an interrupt but an ordinary key, so the editor would swallow it whenever it had the focus,
-    // and an application that wants it for quitting would stop seeing it, with no way to undo
-    // that. So Ctrl+C goes up like any other key.
-    //
-    // Whoever prefers the reflex from the rest of the world attaches `on<KeyEvent>` and calls
-    // `copy`, `cut` and `paste` themselves; the handler sees the key whatever `handle` does.
-    if (what.key().code() == Code::insert && !mods.alt) {
-        if (mods.ctrl) {
-            (void)copy();
-
-            return true;
-        }
-
-        if (mods.shift) {
-            (void)paste();
-
-            return true;
-        }
-    }
-
-    if (what.key().code() == Code::remove && mods.shift && !mods.ctrl && !mods.alt) {
-        (void)cut();
-
-        return true;
-    }
 
     if (what.key().letter() != 0 && !mods.ctrl && !mods.alt) {
         insert(utf8::encode(what.key().letter()));
@@ -1381,7 +1357,13 @@ bool Editor::handle(KeyEvent& what) {
 
         case Code::backspace: back_erase(behind(*kept.quilt, kept.cursor)); return true;
 
-        case Code::remove: front_erase(ahead(*kept.quilt, kept.cursor)); return true;
+        // Delete with Shift is not a deletion: it is the cut key of Midnight Commander, and goes on
+        // to the application like Insert with a modifier.
+        case Code::remove:
+            if (mods.shift) break;
+
+            front_erase(ahead(*kept.quilt, kept.cursor));
+            return true;
 
         // With Ctrl the arrow goes by words, without it by characters. A character, not a byte:
         // otherwise the arrow would stop in the middle of a diacritic.
@@ -1468,8 +1450,6 @@ bool Editor::handle(KeyEvent& what) {
 // number, because with wrapping one line takes several rows, and a column is not a byte, because a
 // tab takes eight cells. Computing it here by hand would put the cursor somewhere else entirely.
 bool Editor::handle(ClickEvent& what) {
-    Kept& kept = *kept_;
-
     if (root() != nullptr) focus();
 
     if (!spool()) return true;
@@ -1575,8 +1555,6 @@ bool Editor::handle(MouseEvent& what) {
 // A click on a place that is not a word takes a run of the same kind: spaces only or punctuation
 // only. It always selects something, so a double click never looks ignored.
 bool Editor::handle(DoubleClickEvent& what) {
-    Kept& kept = *kept_;
-
     if (root() != nullptr) focus();
 
     if (!spool()) return true;

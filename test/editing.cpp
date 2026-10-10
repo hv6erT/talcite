@@ -1599,10 +1599,10 @@ TRIAL("Editor: two editors on one clipboard exchange text") {
     same(two->text(), std::string{"piesma"});
 }
 
-// Ctrl with a letter is not the editor's business: its clipboard keys are those of Midnight
-// Commander. In raw mode Ctrl+C is not an interrupt but an ordinary key, so an editor that took it
-// whenever it had the focus would hide it from an application that wants it for quitting, with no
-// way for the application to undo that.
+// Ctrl with a letter is not the editor's business: the editor binds no clipboard key at all. In raw
+// mode Ctrl+C is not an interrupt but an ordinary key, so an editor that took it whenever it had the
+// focus would hide it from an application that wants it for quitting, with no way for the
+// application to undo that.
 TRIAL("Editor: ctrl with a letter goes up and leaves the clipboard alone") {
     Sheet sheet;
 
@@ -1628,8 +1628,8 @@ TRIAL("Editor: ctrl with a letter goes up and leaves the clipboard alone") {
     same(one->text(), std::string{"ala ma kota"});
 }
 
-// Whoever prefers the habit from the rest of the world adds it with a hook, and then it works,
-// because a hook sees the key regardless of what `handle` does.
+// The application binds the clipboard keys it wants with a hook, and then they work, because a hook
+// sees the key regardless of what `handle` does.
 TRIAL("Editor: clipboard on ctrl can be added with a hook") {
     Sheet sheet;
 
@@ -1655,7 +1655,10 @@ TRIAL("Editor: clipboard on ctrl can be added with a hook") {
     same(one->selection().text(), std::string{"ala "});
 }
 
-TRIAL("Editor: insert and delete with modifiers work the clipboard") {
+// The keys of Midnight Commander's clipboard (Ctrl+Ins, Shift+Ins, Shift+Del) go up as well: they
+// are the application's to bind, and Shift+Del in particular does not delete a character on its
+// way, which would leave the application cutting from a changed text.
+TRIAL("Editor: insert and delete with modifiers go up and leave the text alone") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1665,22 +1668,22 @@ TRIAL("Editor: insert and delete with modifiers work the clipboard") {
 
     ui::KeyEvent copy{ui::Key{ui::Code::insert, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(copy));
+    ought(!sheet.dispatch(copy));
 
     one->cursor(11);
 
     ui::KeyEvent paste{ui::Key{ui::Code::insert, ui::Mods{false, false, true}}};
 
-    ought(sheet.dispatch(paste));
-    same(one->text(), std::string{"ala ma kotaala "});
+    ought(!sheet.dispatch(paste));
 
-    one->selection().set(0, 4);
+    one->cursor(0);
 
     ui::KeyEvent cut{ui::Key{ui::Code::remove, ui::Mods{false, false, true}}};
 
-    ought(sheet.dispatch(cut));
+    ought(!sheet.dispatch(cut));
 
-    same(one->text(), std::string{"ma kotaala "});
+    same(one->text(), std::string{"ala ma kota"});
+    same(one->cursor(), std::size_t{0});
 }
 
 // Delete alone, without Shift, still deletes a character rather than cutting.
