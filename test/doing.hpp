@@ -9,13 +9,13 @@
 
 namespace proving {
 
-// Czynność przypięta do naciśnięcia.
+// Attaches an action to a press.
 //
-// Ten sam skrót, co w demach: biblioteka ma **jeden** mechanizm zawiadamiania i celowo nie daje
-// skrótu, bo skrót w bibliotece stałby się drugim mechanizmem. Próba, która chce tylko policzyć
-// naciśnięcia, nie musi za każdym razem rozpisywać uchwytu.
+// The same shortcut as in the demos: the library has one notification mechanism and deliberately
+// offers no shortcut, because a shortcut in the library would become a second mechanism. A trial
+// that only wants to count presses does not have to spell out the handler every time.
 //
-// Oddaje ten sam wskaźnik, żeby dało się to wpleść w miejsce, w którym widżet powstaje.
+// Returns the same pointer, so the call can be woven into the place where the widget is created.
 template <typename One>
 std::shared_ptr<One> doing(std::shared_ptr<One> one, std::function<void()> what) {
     (void)one->template on<talcite::ui::PickEvent>(

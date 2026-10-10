@@ -37,6 +37,8 @@
 //
 // Headers carry no comments at all, public or internal: what a name in a header does not say for
 // itself is said next to its definition, in the `.cpp` file.
+// The exception are headers that hold only inline or template code, listed in
+// `inline-headers.txt`: with no `.cpp` file of their own, they explain their code where it is.
 
 namespace {
 
@@ -694,13 +696,13 @@ bool filed(std::string_view one) {
     return false;
 }
 
-// While the comments are rewritten in English, the files not rewritten yet are listed, one
-// path per line, in `pending-comments.txt` and skipped by the two tests below. The list only
-// shrinks; when it is empty, it goes, together with this function.
-std::set<std::string> pending() {
+// Headers that hold only inline or template code have no `.cpp` file to explain it in, so they
+// keep their comments. They are listed, one path per line, in `inline-headers.txt`; their
+// comments are checked like those of a `.cpp` file.
+std::set<std::string> inlined() {
     std::set<std::string> made;
 
-    std::istringstream lines{slurped(root() / "test" / "pending-comments.txt")};
+    std::istringstream lines{slurped(root() / "test" / "inline-headers.txt")};
     std::string line;
 
     while (std::getline(lines, line))
@@ -758,12 +760,12 @@ std::string checked(const Named& all, std::string one) {
 
 TRIAL("Names: every name quoted in a comment exists") {
     const Named all = taken();
-    const std::set<std::string> skipped = pending();
+    const std::set<std::string> kept = inlined();
 
     std::vector<std::string> bad;
 
     for (const auto& [name, where] : sources()) {
-        if (where.extension() != ".cpp" || skipped.contains(name)) continue;
+        if (where.extension() != ".cpp" && !kept.contains(name)) continue;
 
         for (const Comment& comment : split(slurped(where)).comments) {
             const std::string& text = comment.text;
@@ -796,12 +798,12 @@ TRIAL("Names: every name quoted in a comment exists") {
 }
 
 TRIAL("Names: headers carry no comments") {
-    const std::set<std::string> skipped = pending();
+    const std::set<std::string> kept = inlined();
 
     std::vector<std::string> bad;
 
     for (const auto& [name, where] : sources()) {
-        if (where.extension() != ".hpp" || skipped.contains(name)) continue;
+        if (where.extension() != ".hpp" || kept.contains(name)) continue;
 
         for (const Comment& comment : split(slurped(where)).comments)
             bad.push_back("  " + name + ":" + std::to_string(comment.line));
@@ -820,12 +822,12 @@ TRIAL("Names: headers carry no comments") {
 // function (`= default`, `{}`) needs none, and neither do lambdas, which the comment of their
 // enclosing function covers, nor trials, whose name is their description.
 TRIAL("Names: every function that does something has a comment above it") {
-    const std::set<std::string> skipped = pending();
+    const std::set<std::string> kept = inlined();
 
     std::vector<std::string> bad;
 
     for (const auto& [name, where] : sources()) {
-        if (where.extension() != ".cpp" || skipped.contains(name)) continue;
+        if (where.extension() != ".cpp" && !kept.contains(name)) continue;
 
         const std::string source = slurped(where);
         const std::set<std::size_t> above = commented(source);
@@ -836,6 +838,30 @@ TRIAL("Names: every function that does something has a comment above it") {
 
     if (!bad.empty()) {
         std::string said = "functions without a comment right above them:";
+
+        for (const std::string& one : bad) said += '\n' + one;
+
+        ::proving::fell(__FILE__, __LINE__, said);
+    }
+}
+
+// The list of inline headers names headers that exist, so that a header removed or renamed does
+// not leave an exception behind.
+TRIAL("Names: the inline headers on the list exist") {
+    const std::set<std::string> listed = inlined();
+
+    std::set<std::string> found;
+
+    for (const auto& [name, where] : sources())
+        if (where.extension() == ".hpp") found.insert(name);
+
+    std::vector<std::string> bad;
+
+    for (const std::string& one : listed)
+        if (!found.contains(one)) bad.push_back("  " + one);
+
+    if (!bad.empty()) {
+        std::string said = "headers in inline-headers.txt that are not in the project:";
 
         for (const std::string& one : bad) said += '\n' + one;
 

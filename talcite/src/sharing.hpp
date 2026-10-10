@@ -8,9 +8,10 @@
 
 #include "talcite/share.hpp"
 
-// Części udziałów, które da się sprawdzić bez sieci: odczytanie odmowy z kodu Windows i ze zdania
-// `gio`, odszukanie zamontowanego udziału wśród katalogów GVfs, odpowiedzi dla `gio mount` i wykaz
-// udziałów z `gio list`. Zerowanie hasła (`wiped`) jest publiczne — twa czyści nim swoje kopie.
+// The parts of shares that can be tested without a network: reading a refusal from a Windows code
+// and from a gio message, finding a mounted share among the GVfs folders, the answers for gio
+// mount, and the share list from gio list. Wiping a password (`wiped`) is public: twa clears its
+// own copies with it.
 namespace talcite::fs {
 
 [[nodiscard]] Refused refused_by_windows(std::uint32_t code);

@@ -9,29 +9,29 @@
 
 namespace talcite::ui {
 
-// Domalowanie **litery aktywnej** w napisie, który już stoi na obrazie. Kolumnę wskazuje
-// `shortcut_column(const Keys&, const std::string&)`; tutaj zostaje samo znalezienie znaku, który na tej
-// kolumnie siedzi, i przemalowanie go innym wyglądem.
+// Repaints the shortcut letter in a label that is already in the view. The free function
+// `shortcut_column` gives the column; what remains here is finding the character that sits in
+// that column and repainting it with a different style.
 //
-// Rozdzielenie na dwie części nie jest kaprysem: kolumnę trzeba znać **przed** rysowaniem, bo
-// bywa potrzebna do rozplanowania napisu, a przemalować można dopiero **po**. Widżet i tak wie,
-// o ile kratek przesunął napis od lewej, więc przesunięcie podaje w `at`.
+// The split into two parts is deliberate: the column must be known before drawing, because it may
+// be needed to lay out the label, while repainting can only happen after. The widget knows anyway
+// by how many cells it shifted the label from the left, so it passes the offset in `at`.
 //
-// Stało to dotąd przepisane w przycisku, w pozycji menu i w polu wyboru — trzy egzemplarze tej
-// samej pętli po znakach napisu. Czwarty i piąty egzemplarz miały właśnie dojść w pasku klawiszy
-// i w pasku menu; to jest ten moment, w którym kopiowanie przestaje się opłacać.
+// It is shared by the button, the menu item, the checkbox, the key bar and the menu bar, which
+// would otherwise each repeat the same loop over the label's characters.
 //
-// Chodzimy po **kratkach**, nie po bajtach, bo napis jest w UTF-8, a znaki szerokie zajmują dwie
-// kratki. Napis musi być ten sam, który poszedł na obraz — czyli **już przycięty**: kolumna
-// policzona po całości trafiłaby w wielokropek.
+// We walk by cells, not bytes, because the label is UTF-8 and wide characters take two cells. The
+// label must be the same one that went into the view, that is, already trimmed: a column counted
+// over the whole label would land on the ellipsis.
 //
-// **Litera aktywna zmienia pismo i atrybuty, nigdy tła.** Rola `.key` wchodzi na wygląd napisu
-// bez swojego `background`: skórki przeniesione z Midnight Commandera mają w `.key` parę pismo–tło
-// (tam `menuhot` i `dhotnormal` to `fg;bg`), a MC ma na literę w pozycji podświetlonej **osobną**
-// rolę (`menuhotsel`, `dhotfocus`), której u nas nie ma. Z tłem z `.key` litera w podświetlonym
-// tytule stała na tle paska, jak dziura w podświetleniu — widać to było w każdej z dwudziestu
-// dziewięciu skórek, bo w każdej tło `.key` równa się tłu zwykłej pozycji. Tło bierze więc to,
-// na czym litera stoi; pismo i pogrubienie czy podkreślenie idą z `.key`.
+// The shortcut letter changes the foreground and attributes, never the background. The .key role
+// is merged into the label's style without its `background`: skins ported from Midnight Commander
+// have a foreground-background pair in .key (there menuhot and dhotnormal are fg;bg), while MC has
+// a separate role for the letter in a highlighted item (menuhotsel, dhotfocus) that we do not
+// have. With the background from .key, the letter in a highlighted title would stand on the bar's
+// background like a hole in the highlight, since in each of the 29 skins the .key background
+// equals the background of a normal item. So the background is whatever the letter stands on;
+// the foreground and bold or underline come from .key.
 inline void marking(View& into, Spot at, const std::string& shown, int which, Style look,
                     Style key) {
     if (which < 0) return;

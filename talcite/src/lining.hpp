@@ -11,8 +11,8 @@
 
 namespace talcite::ui {
 
-// Nazwa kompletu znaków w skórce. Grubość dalej wybiera widżet — to jest wybór kształtu, a nie
-// wyglądu; skórka mówi tylko, **jakimi znakami** ta grubość jest rysowana.
+// The name of the glyph set in the skin. The widget still chooses the weight, since that is a
+// choice of shape, not of looks; the skin only says which glyphs draw that weight.
 [[nodiscard]] inline std::string_view named(Border how) {
     switch (how) {
         case Border::twin: return "talcite.line.twin";
@@ -21,10 +21,10 @@ namespace talcite::ui {
     }
 }
 
-// Trzy komplety znaków ramki w jednym miejscu, bo dwie kopie tej samej tablicy prędzej czy później
-// zaczęłyby się różnić. **To już nie jest nagłówek publiczny**: od chwili, gdy znaki przychodzą ze
-// skórki, jedynym czytelnikiem tej tablicy jest ona sama — to z niej bierze wartości wbudowane.
-// `Border::none` nie ma tu wpisu: kto nie rysuje linii, nie pyta o znaki.
+// The three sets of frame glyphs in one place, because two copies of the same table would sooner
+// or later start to differ. This is not a public header: the glyphs come from the skin, so the
+// only reader of this table is the skin itself, which takes its built-in values from here.
+// `Border::none` has no entry: whoever draws no line does not ask for glyphs.
 [[nodiscard]] inline Lines drawn(Border how) {
     switch (how) {
         case Border::twin: return {U'╔', U'╗', U'╚', U'╝', U'═', U'║', U'╠', U'╣'};
@@ -33,7 +33,8 @@ namespace talcite::ui {
     }
 }
 
-// Ile kratek zajmuje najszerszy ze znaków — tyle musi mieć bok, na którym któryś z nich stanie.
+// How many cells the widest of the glyphs takes (at least one); a side on which any of them stands
+// must be that wide.
 [[nodiscard]] inline int widest(std::initializer_list<char32_t> ones) {
     int made = 1;
 
@@ -42,33 +43,35 @@ namespace talcite::ui {
     return made;
 }
 
-// Szerokości lewego i prawego boku ramki w kratkach. **Znak dwukolumnowy zabiera dwie**: skórka
-// może rysować ramkę znakami CJK, a wtedy bok nie jest już jedną kratką i wnętrze zaczyna się
-// dalej. Bok liczy się od najszerszego znaku, który na nim stanie — pionu, narożników i złączki —
-// bo węższy znak w szerszym boku po prostu zostawia obok siebie tło, a szerszy w węższym wyszedłby
-// poza ramkę.
+// The widths of the left and right sides of a frame in cells. A double-width glyph takes two: a
+// skin may draw the frame with CJK characters, and then a side is no longer one cell and the
+// inside starts further in. A side is measured by the widest glyph that stands on it (the
+// vertical, the corners and the joint), because a narrower glyph on a wider side just leaves
+// background beside it, while a wider one on a narrower side would stick out of the frame.
 struct Sides {
     int left = 1;
     int right = 1;
 };
 
+// The side widths for the given glyph set.
 [[nodiscard]] inline Sides sided(const Lines& one) {
     return {widest({one.upright, one.upper_left, one.lower_left, one.left_joint}),
             widest({one.upright, one.upper_right, one.lower_right, one.right_joint})};
 }
 
-// Pozioma kreska od `from` na `much` kratek. Idzie **krokiem szerokości znaku**, bo znak
-// dwukolumnowy postawiony w każdej kolumnie nadpisywałby własnego sąsiada. Reszta, w którą cały
-// znak już się nie mieści, zostaje tym, co tam było — tłem, nie połówką znaku.
+// A horizontal line from `from` over `much` cells. It steps by the glyph's width, because a
+// double-width glyph put in every column would overwrite its own neighbor. A remainder into which
+// a whole glyph no longer fits stays what it was: background, not half a glyph.
 inline void across(View& into, Spot from, int much, char32_t glyph, const Style& look) {
     const int step = width(glyph);
 
     for (int x = 0; x + step <= much; x += step) into.put({from.x + x, from.y}, glyph, look);
 }
 
-// Czy kreska pozioma dochodzi do prawej kratki `last`. Dla znaku jednokolumnowego to pytanie
-// o samą tę kratkę. Dla dwukolumnowego kreska mogła skończyć się o kratkę wcześniej, bo w nieparzystą
-// szerokość ostatni znak się nie mieścił — i to też jest „dochodzi", bo dalej dojść nie mogła.
+// Whether a horizontal line reaches the right cell `last`. For a single-width glyph this asks
+// about that cell alone. For a double-width one the line may have ended one cell earlier, because
+// the last glyph did not fit in an odd width, and that also counts as reaching, because the line
+// could not get any further.
 [[nodiscard]] inline bool reaching(const View& seen, Spot last, char32_t glyph) {
     const int step = width(glyph);
 

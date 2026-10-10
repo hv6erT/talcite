@@ -192,7 +192,7 @@ TRIAL("Seam: trouble reported by the protection comes to the surface") {
     } catch (const net::Trouble& why) {
         amiss = true;
 
-        ought(std::string{why.what()}.find("Trucizna") != std::string::npos);
+        ought(std::string{why.what()}.find("Poison") != std::string::npos);
     }
 
     ought(amiss);

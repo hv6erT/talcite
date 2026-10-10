@@ -10,14 +10,14 @@
 
 namespace demo {
 
-// Czynność przypięta do naciśnięcia.
+// Attaches an action to a press.
 //
-// Biblioteka ma **jeden** mechanizm zawiadamiania — `on<PickEvent>` — i celowo nie daje skrótu,
-// bo skrót w bibliotece stałby się drugim mechanizmem. Tu, po stronie aplikacji, skrót jest na
-// miejscu: mieści wołanie w jednej linijce, a pod spodem jest tym samym uchwytem, który mógłby
-// powiesić ktokolwiek.
+// The library has one notification mechanism, `on<PickEvent>`, and deliberately offers no
+// shortcut, because a shortcut in the library would become a second mechanism. Here, on the
+// application side, a shortcut is fine: it fits the call on one line, and underneath it is the
+// same handler that anyone could attach.
 //
-// Oddaje ten sam wskaźnik, żeby dało się to wpleść w miejsce, w którym widżet powstaje.
+// Returns the same pointer, so the call can be woven into the place where the widget is created.
 template <typename One>
 std::shared_ptr<One> doing(std::shared_ptr<One> one, std::function<void()> what) {
     (void)one->template on<talcite::ui::PickEvent>(
@@ -30,11 +30,11 @@ std::shared_ptr<One> doing(std::shared_ptr<One> one, std::function<void()> what)
     return one;
 }
 
-// Zamykanie zasłony Escapem.
+// Closes the modal on Escape.
 //
-// Biblioteka tego **nie robi**: zamknięcie okna jest czynnością, a czynności, której wołający nie
-// może odwołać, `handle` wykonywać nie ma prawa. Tu, po stronie aplikacji, decyzja jest nasza — i to
-// jest dokładnie ta jedna linijka, którą płaci się za tę regułę.
+// The library does not do this: closing a window is an action, and `handle` must not perform an
+// action the caller cannot cancel. Here, on the application side, the decision is ours, and this
+// is exactly the one line that the rule costs.
 template <typename One>
 std::shared_ptr<One> closing(std::shared_ptr<One> one) {
     const std::weak_ptr<talcite::ui::Modal> weak = one;

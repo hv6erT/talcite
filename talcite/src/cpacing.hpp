@@ -9,7 +9,7 @@
 #include "talcite/handshake.hpp"
 #include "talcite/seam.hpp"
 
-// CPace na X25519 i SHA-512 (draft-irtf-cfrg-cpace) — części, które sprawdzają wektory CFRG.
+// CPace over X25519 and SHA-512 (draft-irtf-cfrg-cpace): the parts checked by the CFRG test vectors.
 namespace talcite::net::cpacing {
 
 [[nodiscard]] Bytes prepended(const Bytes& data);

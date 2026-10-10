@@ -12,11 +12,11 @@
 
 #include "talcite/fs.hpp"
 
-// **Która droga systemu plików.** Linux ma własne: `statfs` z magią rodzaju, /proc/mounts,
-// `renameat2`, inotify, `copy_file_range`. macOS i BSD mają `statfs` z nazwą rodzaju i `getmntinfo`.
-// Reszta POSIX-u dostaje drogę przenośną, ubogą, ale prawdziwą. `TALCITE_GENERIC_POSIX` wymusza ją
-// także na Linuksie — tak jak `TALCITE_POLL` w sieci — żeby dało się ją sprawdzić tam, gdzie
-// akurat stoi coś lepszego.
+// Which file-system path to take. Linux has its own: `statfs` with a type magic, /proc/mounts,
+// renameat2, inotify, `copy_file_range`. macOS and the BSDs have `statfs` with a type name and
+// `getmntinfo`. The rest of POSIX gets the portable path, poor but real. `TALCITE_GENERIC_POSIX`
+// forces it on Linux too, like `TALCITE_POLL` does for networking, so that it can be tested where
+// something better happens to be available.
 #if !defined(_WIN32) && !defined(TALCITE_GENERIC_POSIX)
 #if defined(__linux__)
 #define TALCITE_LINUX_FS 1
@@ -27,24 +27,24 @@
 
 namespace talcite::fs::core {
 
-// **Wspólny rdzeń `fs`** — to, czego potrzebują wszystkie cztery pliki: pytania o ścieżki
-// (`fs.cpp`), pliki i kursory (`file.cpp`), kopiowanie (`copy.cpp`) i obserwowanie (`watch.cpp`).
-// Dawniej jeden plik na prawie trzy tysiące wierszy trzymał to w przestrzeni anonimowej; po
-// podziale (przegląd, krok 7b) funkcje synchroniczne `*_at` mieszkają w `core`, a każdy plik
-// woła je bez kwalifikatora przez `using namespace core`.
+// The shared core of `fs`: what all four files need, namely path queries (`fs.cpp`), files and
+// cursors (`file.cpp`), copying (`copy.cpp`) and watching (`watch.cpp`). The synchronous *_at
+// functions live in `core`, and each file calls them unqualified through a using-directive for
+// `core`.
 
 namespace stood = std::filesystem;
 
-// Raty odczytu według nośnika: dysk stały, udział sieciowy, reszta.
+// Read chunk sizes by medium: local disk, network share, everything else.
 inline constexpr std::size_t on_disk = 1024 * 1024;
 inline constexpr std::size_t afar = 64 * 1024;
 inline constexpr std::size_t astray = 256 * 1024;
 
+// Throws an `fs` `Trouble` with the given message and the path it concerns.
 [[noreturn]] inline void amiss(const std::string& said, const path& where) {
     throw Trouble{said, where};
 }
 
-// Funkcje synchroniczne wołane z więcej niż jednego pliku.
+// Synchronous functions called from more than one file.
 [[nodiscard]] bool afar_at(const path& where);
 
 [[nodiscard]] path canonical_at(const path& where);
@@ -63,15 +63,16 @@ void make_folder_at(const path& where);
 
 [[nodiscard]] std::chrono::sys_seconds modified_at(const path& where);
 
-// Czas zapisu z pełną dokładnością systemu: nanosekundy na POSIX, setki nanosekund na Windows.
-// Kopia przenosi go w całości — dawniej przez sekundy z `std::filesystem` i przeliczenie zegara
-// plikowego, które gubiło ułamek i bywało przesunięte o sekundę na granicy.
+// Modification time at the system's full precision: nanoseconds on POSIX, hundreds of
+// nanoseconds on Windows. A copy carries it over whole; going through seconds from
+// `std::filesystem` and converting the file clock would lose the fraction and can be off by one
+// second at a boundary.
 using Instant = std::chrono::sys_time<std::chrono::nanoseconds>;
 
 [[nodiscard]] Instant instant_at(const path& where);
 
-// Czas zapisu wpisany przez uchwyt — plik albo katalog, wszystko jedno; na Windows katalog
-// otwiera się z `FILE_FLAG_BACKUP_SEMANTICS`, czego `std::filesystem` z MinGW nie robił.
+// Sets the modification time through a handle, file or folder alike; on Windows a folder is
+// opened with `FILE_FLAG_BACKUP_SEMANTICS`, which MinGW's `std::filesystem` does not do.
 void stamp_on(const File::Held& held, Instant when);
 
 [[nodiscard]] std::shared_ptr<File::Held> open_at(const path& where, Mode how);
@@ -82,9 +83,9 @@ void stamp_on(const File::Held& held, Instant when);
 
 [[nodiscard]] path settled_on(const path& to, Conflict how);
 
-// Wynik przeniesienia z rozstrzygnięciem kolizji: `where` puste — pominięte (`skip`); `done`
-// fałszywe przy niepustym `where` — **wyłącznie** inny nośnik. Każdą inną odmowę `shifted` zgłasza
-// sam, bo tylko inny nośnik pozwala przenieść kopią.
+// The result of a move with collision resolution: an empty `where` means skipped (skip); a false
+// `done` with a non-empty `where` means only one thing, a different medium. `shifted` reports every
+// other refusal itself, because only a different medium allows moving by copying.
 struct Shift {
     path where;
     bool done = false;
@@ -92,43 +93,46 @@ struct Shift {
 
 [[nodiscard]] Shift shifted(const path& from, const path& to, Conflict how);
 
-// Zmiana samej wielkości liter (`heat` → `Heat`) w jednym katalogu.
+// A change of letter case only (heat -> Heat) within one folder.
 [[nodiscard]] bool recased(const path& from, const path& to);
 
-// Zmiana wielkości liter, którą serwer przyjął bez słowa i nie zrobił (Samba bez rozróżniania,
-// część NAS-ów): sprawdzamy spis katalogu (`exact`), a gdy nazwy tam nie ma — dwa kroki przez
-// nazwę obok. Ruch (`move`) to `pushed` w prawdziwym biegu; w próbach — podróbka serwera.
-// Fałsz, gdy drugi krok się nie udał (pierwszy jest wtedy cofnięty).
+// A case change that the server accepted silently but did not perform (case-insensitive Samba,
+// some NAS devices): we check the folder listing (`exact`), and when the name is not there, take
+// two steps through a name beside it. The move (`move`) is `pushed` in a real run and a fake
+// server in trials. False when the second step failed (the first is then undone).
 [[nodiscard]] bool respelled_twice(const path& from, const path& to,
                                    const std::function<bool(const path&, const path&)>& move,
                                    const std::function<bool(const path&)>& exact);
 
-// Zastąpienie celu przemianowaniem, trwałe; fałsz, gdy system odmówił.
+// Replaces the target by renaming, durably; false when the system refused.
 [[nodiscard]] bool replaced_at(const path& from, const path& to);
 
 [[nodiscard]] std::uintmax_t sized(const File::Held& held);
 
 void sync_at(const File::Held& held);
 
-// Katalog utrwalony po zmianie nazwy w nim (POSIX); na Windows robi to `MOVEFILE_WRITE_THROUGH`.
+// Makes a folder durable after a rename inside it (POSIX); on Windows `MOVEFILE_WRITE_THROUGH`
+// does this.
 void settled_folder(const path& where);
 
-// Czy nośnik pod ścieżką to FAT (FAT16, FAT32) — sprawdzian przed kopią pyta o granicę 4 GiB.
+// Whether the medium under the path is FAT (FAT16, FAT32); the check before a copy asks about the
+// 4 GiB limit.
 [[nodiscard]] bool fat_at(const path& where);
 
-// Czy obie ścieżki leżą na jednym nośniku — wtedy przeniesienie jest zmianą nazwy i miejsca nie trzeba.
+// Whether both paths lie on one medium; then a move is a rename and needs no free space.
 [[nodiscard]] bool together_at(const path& one, const path& two);
 
-// Ile wolnego miejsca ma nośnik pod ścieżką (albo pod jej najbliższym istniejącym przodkiem);
-// brak, gdy system nie powie.
+// How much free space the medium under the path (or under its nearest existing ancestor) has;
+// nothing when the system does not tell.
 [[nodiscard]] std::optional<std::uintmax_t> room_at(const path& where);
 
 void stamp_at(const path& where, Instant when);
 
-// Treść pliku przez system, bez przechodzenia przez naszą pamięć. `cloned_on` współdzieli bloki
-// (reflink na Btrfs i XFS) i oddaje prawdę, gdy cała treść już jest; `spliced_on` przenosi kawałek
-// od `at` w jądrze — na NFS 4.2 i SMB jako kopia po stronie serwera — i oddaje, ile przeszło, albo
-// nic, gdy system tego nie umie dla tej pary i trzeba czytać i pisać samemu.
+// File content copied by the system, without passing through our memory. `cloned_on` shares
+// blocks (reflink on Btrfs and XFS) and returns true when the whole content is already there;
+// `spliced_on` moves a piece starting at `at` in the kernel (on NFS 4.2 and SMB as a server-side
+// copy) and returns how much went through, or nothing when the system cannot do it for this pair
+// and we have to read and write ourselves.
 [[nodiscard]] bool cloned_on(const File::Held& from, const File::Held& to);
 
 [[nodiscard]] std::optional<std::size_t> spliced_on(const File::Held& from, const File::Held& to,

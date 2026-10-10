@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <memory>
@@ -53,6 +55,67 @@ constexpr std::chrono::milliseconds deciding{400};
 // size this often, regardless of records.
 constexpr std::chrono::milliseconds glancing{100};
 
+// The trace of listening, for finding out on a real Windows console why the program waits. It is
+// written only when the environment variable TALCITE_TRACE names a file; the file is opened once,
+// appended to, and every line is flushed at once, so the trace survives the program being killed.
+// Each line starts with the milliseconds since the first line. Without the variable this costs one
+// look at the environment.
+FILE* traced() {
+    static FILE* const kept = [] {
+        wchar_t named[MAX_PATH];
+
+        const DWORD many = GetEnvironmentVariableW(L"TALCITE_TRACE", named, MAX_PATH);
+
+        if (many == 0 || many >= MAX_PATH) return static_cast<FILE*>(nullptr);
+
+        return _wfopen(named, L"a");
+    }();
+
+    return kept;
+}
+
+// Writes one line of the trace, if there is one.
+void noted(const std::string& line) {
+    FILE* const into = traced();
+
+    if (into == nullptr) return;
+
+    static const auto began = std::chrono::steady_clock::now();
+
+    const auto spent =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+
+    std::fprintf(into, "%10lld %s\n", static_cast<long long>(spent), line.c_str());
+    std::fflush(into);
+}
+
+// One input record in a few characters for the trace: a key with its state, virtual key and
+// character, a mouse record with its flags and buttons, or the kind of a silent record.
+std::string recorded(const INPUT_RECORD& one) {
+    char room[96];
+
+    switch (one.EventType) {
+        case KEY_EVENT:
+            std::snprintf(room, sizeof(room), "key(%s vk=%u ch=%u rep=%u)",
+                          one.Event.KeyEvent.bKeyDown != 0 ? "down" : "up",
+                          static_cast<unsigned>(one.Event.KeyEvent.wVirtualKeyCode),
+                          static_cast<unsigned>(one.Event.KeyEvent.uChar.UnicodeChar),
+                          static_cast<unsigned>(one.Event.KeyEvent.wRepeatCount));
+            break;
+        case MOUSE_EVENT:
+            std::snprintf(room, sizeof(room), "mouse(flags=%lu buttons=%lu)",
+                          static_cast<unsigned long>(one.Event.MouseEvent.dwEventFlags),
+                          static_cast<unsigned long>(one.Event.MouseEvent.dwButtonState));
+            break;
+        case WINDOW_BUFFER_SIZE_EVENT: std::snprintf(room, sizeof(room), "size"); break;
+        case FOCUS_EVENT: std::snprintf(room, sizeof(room), "focus"); break;
+        case MENU_EVENT: std::snprintf(room, sizeof(room), "menu"); break;
+        default: std::snprintf(room, sizeof(room), "type=%u", static_cast<unsigned>(one.EventType)); break;
+    }
+
+    return room;
+}
+
 // Modifiers and locks alone turn into no byte, so waiting for them would end with standing in
 // ReadFile until the next real key.
 bool aside(const KEY_EVENT_RECORD& key) {
@@ -92,7 +155,19 @@ bool speaking(HANDLE input) {
         DWORD given = 0;
         const DWORD asked = many < 64 ? many : 64;
 
-        if (PeekConsoleInputW(input, seen, asked, &given) == 0 || given == 0) return true;
+        if (PeekConsoleInputW(input, seen, asked, &given) == 0 || given == 0) {
+            noted("speaking: " + std::to_string(many) + " waiting, peek gave none");
+
+            return true;
+        }
+
+        if (traced() != nullptr) {
+            std::string line = "speaking: peeked";
+
+            for (DWORD at = 0; at < given; ++at) line += ' ' + recorded(seen[at]);
+
+            noted(line);
+        }
 
         // Mouse records are left for reading, even when they need not produce anything: ReadFile
         // turns them into a sequence when mouse tracking is on.
@@ -800,7 +875,13 @@ public:
             const DWORD ready =
                 WaitForMultipleObjects(many, watched, FALSE, static_cast<DWORD>(slice.count()));
 
-            if (ready == WAIT_OBJECT_0 + 1) return made;
+            if (ready == WAIT_OBJECT_0 + 1) {
+                noted("hear: the bell rang");
+
+                return made;
+            }
+
+            if (ready == WAIT_OBJECT_0) noted("hear: input is waiting");
 
             if (ready == WAIT_OBJECT_0 && legacy_ != nullptr) {
                 bool stirred = false;
@@ -819,8 +900,19 @@ public:
                     wchar_t room[512];
                     DWORD given = 0;
 
-                    if (ReadConsoleW(input, room, sizeof(room) / sizeof(room[0]), &given, nullptr) == 0 || given == 0)
-                        return made;
+                    noted("hear: ReadConsoleW begins");
+
+                    const auto asked_at = std::chrono::steady_clock::now();
+
+                    const BOOL read = ReadConsoleW(input, room, sizeof(room) / sizeof(room[0]), &given, nullptr);
+
+                    noted("hear: ReadConsoleW gave " + std::to_string(read != 0 ? given : 0) + " after " +
+                          std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now() - asked_at)
+                                             .count()) +
+                          " ms");
+
+                    if (read == 0 || given == 0) return made;
 
                     std::wstring wide = half_;
 

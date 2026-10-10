@@ -8,27 +8,27 @@
 
 namespace talcite::ui {
 
-// **Podążanie przewijaka za ogniskiem.** `Scroll` robi to na każdej otwartej osi: po rozstawieniu dzieci
-// pytają węzeł z ogniskiem o jego prostokąt w treści (`Node::area_in`) i dosuwają przewinięcie.
-// Nagłówek wewnętrzny, jak `spool.hpp`: API biblioteki tego nie potrzebuje.
+// A scroll following the focus. `Scroll` does this on every open axis: after laying out its
+// children, it asks the focused node for its rectangle within the content (`Node::area_in`) and
+// shifts the scroll to it. An internal header, like `spool.hpp`: the library API does not need it.
 
-// Ile razy najwyżej wolno w jednej klatce dosunąć i narysować od nowa: każdy nawrót rozstawia
-// jeden poziom głębiej, a drzewa głębszego niż to nikt tu nie składa.
+// The most times one frame may shift and redraw: each repeat lays out one level deeper, and no
+// tree here is built deeper than this.
 inline constexpr int passes = 8;
 
-// Węzeł w ognisku korzenia, o ile przewijak w ogóle stoi w drzewie.
+// The node focused in the root, or null when the scroll is not in a tree at all.
 [[nodiscard]] inline const Node* beheld(const Node& scroll) {
     const Root* top = scroll.root();
 
     return top != nullptr ? top->focused_node() : nullptr;
 }
 
-// Przewinięcie, przy którym odcinek [at, at + much) treści mieści się w oknie o długości `window`
-// — dosunięty do bliższego brzegu; gdy dłuższy niż okno, wygrywa początek. Jedna oś naraz. Przycięcie na końcu jest strażą, nie regułą: dla węzła leżącego w treści
-// wynik i tak mieści się w [0, whole - window], ale prostokąt węzła z pojemnika, którego ta klatka
-// nie rozstawiała, jest z poprzedniej klatki i może wystawać za treść — a przewinięcie za koniec
-// pokazałoby pustkę do następnej klatki. Mutant bez przycięcia przeżył zestaw; kod zostaje z tego
-// powodu.
+// The scroll offset at which the segment [at, at + much) of the content fits in a window of
+// length `window`, moved to the nearer edge; when the segment is longer than the window, its start
+// wins. One axis at a time. The clamp at the end is a guard, not a rule: for a node lying inside
+// the content the result fits in [0, whole - window] anyway, but the rectangle of a node in a
+// container that this frame did not lay out comes from the previous frame and may stick out past
+// the content, and scrolling past the end would show emptiness until the next frame.
 [[nodiscard]] inline int followed(int shift, int at, int much, int window, int whole) {
     int want = shift;
 

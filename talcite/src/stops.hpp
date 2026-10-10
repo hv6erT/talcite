@@ -7,14 +7,14 @@
 
 namespace talcite::ui {
 
-// **Przystanki wędrówki ognisk** — wszyscy chętni na ognisko w głąb, w kolejności ułożenia. Tab
-// w zasłonie chodzi dokładnie po nich, a okno niemodalne bierze pierwszego, gdy nie pamięta
-// niczego. Jedno pojęcie, dotąd w dwóch kopiach: w zasłonie i w pojemniku okien.
+// The stops of focus traversal: every focusable node in depth, in layout order, appended to
+// `into`. Tab in a modal walks exactly over them, and a non-modal window takes the first one when
+// it remembers nothing. One concept, shared by the modal and the window container.
 //
-// **Widżet chętny na ognisko jest liściem**: co ma w środku, rozstrzyga sam. Bez tej reguły Tab
-// w oknie z listą chodziłby po każdym jej wierszu z osobna, bo wiersz też jest chętny. Samego
-// `from` reguła nie dotyczy, bo zbieranie zaczyna się od jego dzieci i o jego chętność nikt tu nie
-// pyta — zasłona jest chętna, a jej przystanki i tak leżą w środku.
+// A focusable widget is a leaf: it decides about its own inside. Without this rule, Tab in a
+// window with a list would walk over each of its rows separately, because a row is focusable too.
+// The rule does not apply to `from` itself, because collecting starts at its children and nobody
+// here asks whether it is focusable: a modal is focusable, and its stops lie inside it anyway.
 inline void stops(const Node& from, std::vector<Node*>& into) {
     for (const std::shared_ptr<Node>& one : from.children()) {
         if (one->focusable()) {
@@ -27,6 +27,7 @@ inline void stops(const Node& from, std::vector<Node*>& into) {
     }
 }
 
+// The same stops, returned as a new list.
 [[nodiscard]] inline std::vector<Node*> stops(const Node& from) {
     std::vector<Node*> made;
 

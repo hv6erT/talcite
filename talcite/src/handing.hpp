@@ -8,16 +8,16 @@
 
 namespace talcite::net {
 
-// Obietnica, która już biegnie. Zwykła Promise jest leniwa — czeka na start() i dopiero wtedy
-// wrzuca robotę do puli. Operacji sieciowej nie da się nie zacząć: gniazdo i tak zbiera dane do
-// bufora jądra, a przeskok przez pulę kosztowałby więcej niż samo zgłoszenie do centrali.
+// A promise that is already running. A plain Promise is lazy: it waits for start() and only then
+// puts the work into the pool. A network operation cannot be left unstarted: the socket collects
+// data into the kernel buffer anyway, and a hop through the pool would cost more than the
+// registration with the dispatcher itself.
 //
-// Stoi **w jednym miejscu**, choć potrzebują jej poczta, strumień i brama. Powtórzona w trzech
-// plikach była trzema definicjami tej samej nazwy w jednej przestrzeni — a to jest naruszenie
-// zasady jednej definicji, którego konsolidator nie zgłasza: wybiera dowolną z nich i biegnie
-// dalej. Dopóki były co do znaku takie same, działało; jedna rozbieżna zmiana w którymkolwiek
-// z tych plików wywróciłaby program w miejscu, które z niczym się nie kojarzy. Dokładnie to
-// zrobiła para `Living` w rozmówcy i przekaźniku, i kosztowało pół dnia szukania.
+// It lives in one place, although datagrams, streams and listeners all need it. Repeated in each
+// of their files it would be several definitions of the same name in one namespace, which violates
+// the one-definition rule without the linker reporting it: the linker picks any one of them and
+// moves on. As long as they are identical to the character this works; one diverging change in any of
+// those files would break the program at a place that seems unrelated.
 template <typename T>
 class HandPromise : public Promise<T> {
 public:

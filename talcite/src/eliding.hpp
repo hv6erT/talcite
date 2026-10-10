@@ -12,21 +12,22 @@
 
 namespace talcite::ui {
 
-// Przycinanie napisów do liczby kratek. Stoi **w jednym miejscu**, bo potrzebuje go i napis,
-// i legenda, a wcześniej podobny szablon powtórzony w trzech plikach okazał się naruszeniem
-// zasady jednej definicji, którego konsolidator nie zgłasza.
+// Trimming strings to a number of cells. It lives in one place because both the label and the
+// legend need it; a similar template repeated in several files violates the one-definition rule,
+// which the linker does not report.
 
-// Tabulator w licencjach i stronach podręcznika jest wszędzie. Rozwijamy go **przy rysowaniu**,
-// nie w danych: gdyby wszedł do treści wiersza, pozycja bajtowa przestałaby się zgadzać z plikiem.
+// Tabs are everywhere in licenses and manual pages. We expand them when drawing, not in the data:
+// if a tab expansion entered the line's content, byte positions would no longer match the file.
 constexpr int tabbing = 8;
 
-// Ile kratek zajmuje początek wiersza aż do podanego bajtu. Tabulator dobija do najbliższej ósemki,
-// znak podwójny bierze dwie kratki, znak łączący zero — ta sama reguła, którą kartka tnie wiersz
-// na kawałki. Stoi tu, żeby stała w jednym miejscu: gdyby cięcie i pasek stanu liczyły osobno,
-// prędzej czy później pokazałyby dwie różne kolumny dla tego samego kursora.
+// How many cells the start of a line takes up to the given byte. A tab advances to the next
+// multiple of eight, a double-width character takes two cells, a combining character zero: the same
+// rule by which `Page` cuts a line into pieces. It lives here so that it exists in one place: if the
+// cutting and the status bar counted separately, sooner or later they would show two different
+// columns for the same cursor.
 //
-// Bez szerokości okna, więc bez ucinania tabulatora na krawędzi — kartka to robi, bo musi
-// zmieścić kawałek, a licząc kolumnę pytamy o wiersz, nie o ekran.
+// No window width is involved, so a tab is not clipped at the edge. `Page` does that because it
+// has to fit a piece; counting a column asks about the line, not the screen.
 [[nodiscard]] inline int columns(std::string_view what, std::size_t upto) {
     int much = 0;
     std::size_t at = 0;
@@ -46,8 +47,9 @@ constexpr int tabbing = 8;
     return much;
 }
 
-// Kawałek napisu, który mieści się w podanej liczbie kratek. Liczymy znakami, nie bajtami, i po
-// szerokościach — inaczej pierwszy chiński znak albo pierwszy ogonek rozjechałby łamanie.
+// The head of a string that fits in the given number of cells. We count by characters, not bytes,
+// and by their widths; otherwise the first CJK character or the first diacritic would break the
+// wrapping.
 inline std::string cut(std::string_view what, int wide) {
     std::size_t at = 0;
     std::size_t upto = 0;
@@ -68,8 +70,8 @@ inline std::string cut(std::string_view what, int wide) {
     return std::string{what.substr(0, upto)};
 }
 
-// To samo od końca: ogon o zadanej szerokości. Idziemy znak po znaku od początku, bo UTF-8 czyta
-// się tylko w tę stronę, a dopiero potem odliczamy od tyłu.
+// The same from the end: the tail of the given width. We walk character by character from the
+// start, because UTF-8 reads only in that direction, and only then count back from the end.
 inline std::string tail(std::string_view what, int wide) {
     std::vector<std::size_t> spots;
     std::vector<int> much;
@@ -96,12 +98,13 @@ inline std::string tail(std::string_view what, int wide) {
     return std::string{what.substr(spots[which])};
 }
 
-// Wielokropek zajmuje jedną kratkę, więc na tekst zostaje o tyle mniej. Przy szerokości jednej
-// kratki zostaje sam wielokropek — to jest jedyna uczciwa odpowiedź, bo każda inna udawałaby, że
-// widać coś z treści.
+// Shortens a string to the given width with an ellipsis on the side chosen by `how`. The ellipsis
+// takes one cell, so the text gets one cell less. At a width of one cell only the ellipsis
+// remains; that is the only honest answer, because any other would pretend that some of the
+// content is visible.
 //
-// **Znak podaje wołający**, a nie ta funkcja: bierze go ze skórki, jak każdy inny znak. Argument
-// jest wymagany właśnie po to, żeby żaden zaszyty wielokropek nie przetrwał niezauważony.
+// The caller supplies the mark, not this function: it takes it from the skin, like any other
+// glyph. The argument is required precisely so that no hard-coded ellipsis goes unnoticed.
 inline std::string elided(const std::string& one, int wide, Elide how, char32_t mark) {
     if (how == Elide::none) return one;
 

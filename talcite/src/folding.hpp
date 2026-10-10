@@ -5,26 +5,26 @@
 
 namespace talcite::ui {
 
-// Litery porównujemy bez różnicy wielkości: **proste składanie wielkości z Unicode** (CaseFolding.txt,
-// statusy C i S) dla łaciny podstawowej, Latin-1, Latin Extended-A, greki i cyrylicy razem z jej
-// uzupełnieniem. Poza tymi blokami litera zostaje, jaka była.
+// Letters are compared case-insensitively using Unicode simple case folding (CaseFolding.txt,
+// statuses C and S) for Basic Latin, Latin-1, Latin Extended-A, Greek, and Cyrillic together with
+// its supplement. Outside these blocks a letter stays as it is.
 //
-// Bloki są wybrane, nie przypadkowe. Pliki języków twa mają skróty z literami czeskimi, polskimi,
-// niemieckimi, francuskimi i cyrylicą — „Alt+Л" w rosyjskim i ukraińskim — a menu w tych językach
-// podkreśla litery z tych samych alfabetów. Pełne tablice Unicode to kilkaset zakresów, których nikt
-// tu nie naciśnie.
+// The blocks are chosen, not arbitrary. The language files of twa have shortcuts with Czech,
+// Polish, German, French and Cyrillic letters ("Alt+Л" in Russian and Ukrainian), and the menus in
+// those languages underline letters from the same alphabets. The full Unicode tables are several
+// hundred ranges that nobody here will press.
 //
-// Składanie proste, nie pełne: litera przechodzi w jedną literę. „ß" zostaje „ß", „İ" zostaje „İ"
-// (jej złożenie to dwa znaki), „ς" idzie w „σ", a „ſ" w „s" — tak, jak każe tablica.
+// Simple folding, not full: a letter maps to a single letter. "ß" stays "ß", "İ" stays "İ" (its
+// full folding is two characters), "ς" goes to "σ", and "ſ" to "s", as the table says.
 //
-// Stało to przepisane osobno w przycisku i w ptaszku, słowo w słowo. Teraz jest raz i pytają o to
-// dwa miejsca: przynależność klawisza do zbioru i szukanie litery do podkreślenia w napisie.
+// It is defined once and used in two places: matching a key against a set, and finding the letter
+// to underline in a label.
 
 struct Fold {
     char32_t first;
     char32_t last;
     int shift;
-    bool alternate;  // co druga, od `first`: wielka, mała, wielka…
+    bool alternate;  // every other one, starting at `first`: upper, lower, upper...
 };
 
 inline constexpr std::array<Fold, 42> folds{{
@@ -44,6 +44,9 @@ inline constexpr std::array<Fold, 42> folds{{
     {0x04C0, 0x04C0, 15, false},  {0x04C1, 0x04CD, 1, true},    {0x04D0, 0x052E, 1, true},
 }};
 
+// The simple case folding of one character: finds the range in `folds` that holds it and applies
+// its shift; a character outside every range, or a lowercase one in an alternating range, is
+// returned unchanged.
 inline char32_t folded(char32_t one) {
     const auto after = std::upper_bound(folds.begin(), folds.end(), one,
                                         [](char32_t which, const Fold& fold) { return which < fold.first; });
