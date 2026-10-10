@@ -15,15 +15,17 @@ using namespace talcite;
 
 namespace {
 
-// Pudełko malujące jeden znak na całym przydziale — po to, żeby widać było, kto leży na wierzchu
-// i gdzie stoi.
+// A box that paints one character over its whole allotment, so that it is visible who lies on top
+// and where it stands.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // Wants the size it was built with, whatever the room.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
 protected:
+    // Fills the given size with the box's character.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -39,30 +41,34 @@ private:
     char32_t what_;
 };
 
-// Dziecko, które **samo mówi, gdzie stoi** — w jednym miejscu, mniejszym niż pokój. To jest cała
-// różnica między nakładką w rogu a zasłoną na całości.
+// A child that says where it stands by itself: in one place, smaller than the room. That is the
+// whole difference between an overlay in a corner and a veil over everything.
 class Pinned : public Box {
 public:
     Pinned(ui::Area where, char32_t what) : Box(where.size, what), where_(where) {}
 
+    // The fixed place the child was built with.
     [[nodiscard]] ui::Area placement(ui::Size) const override { return where_; }
 
 private:
     ui::Area where_;
 };
 
+// A root that takes any number of children, so that trials can hang a stack or a row on it.
 class Sheet : public ui::Root {
 public:
+    // Takes any number of children.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 };
 
 }
 
-// --- Domyślne miejsce ----------------------------------------------------------------------------
+// --- Default place -------------------------------------------------------------------------------
 
-// Zwykły węzeł bierze w stosie cały pokój. Tyle bierze zasłona, żeby łapać mysz wszędzie, i tyle
-// bierze treść aplikacji — więc to jest domyślna odpowiedź, a nie osobne ustawienie.
-TRIAL("Stack: dziecko bez własnego miejsca bierze cały pokój") {
+// A plain node in a stack takes the whole room. A veil takes that much to catch the mouse
+// everywhere, and so does the application's content, so this is the default answer rather than a
+// separate setting.
+TRIAL("Stack: a child without a place of its own takes the whole room") {
     ui::Stack stack;
 
     const auto one = std::make_shared<Box>(ui::Size{2, 1}, U'a');
@@ -74,11 +80,11 @@ TRIAL("Stack: dziecko bez własnego miejsca bierze cały pokój") {
     same(one->area(), (ui::Area{{0, 0}, {6, 3}}));
 }
 
-// --- Własne miejsce ------------------------------------------------------------------------------
+// --- A place of its own --------------------------------------------------------------------------
 
-// **Po to jest `placement`.** Dziecko staje tam, gdzie powiedziało, a reszta pokoju zostaje
-// przezroczysta — spod nakładki widać to, co leży niżej.
-TRIAL("Stack: dziecko z własnym miejscem staje tam, gdzie powiedziało") {
+// This is what `placement` is for. The child stands where it said, and the rest of the room stays
+// transparent: what lies below shows from under the overlay.
+TRIAL("Stack: a child with a place of its own stands where it said") {
     ui::Stack stack;
 
     const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
@@ -98,11 +104,10 @@ TRIAL("Stack: dziecko z własnym miejscem staje tam, gdzie powiedziało") {
     same(made.at({2, 2}).letter, U'a');
 }
 
-// **Stos jest przezroczysty tam, gdzie żadne dziecko nie leży** — inaczej zamalowywałby spacjami
-// wszystko, co stoi pod nim w rodzicu. Widać to dopiero wtedy, gdy stos sam jest nakładką:
-// pierwsza wersja tej próby nie miała nic pod stosem i przeszła zdjęcie `clear`, bo nie było
-// czego zamalować.
-TRIAL("Stack: poza dziećmi przepuszcza to, co leży pod nim") {
+// The stack is transparent where no child lies; otherwise it would paint spaces over everything
+// standing below it in its parent. That shows only when the stack is itself an overlay, so the trial
+// puts something under it, giving `clear` something to paint over.
+TRIAL("Stack: outside its children it lets through what lies below") {
     ui::Stack outer;
 
     const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
@@ -120,9 +125,10 @@ TRIAL("Stack: poza dziećmi przepuszcza to, co leży pod nim") {
     same(made.at({5, 2}).letter, U'a');
 }
 
-// Dziecko może wejść na rodzeństwo, ale nie może wyjść poza rodzica — i pilnuje tego **pojemnik**,
-// bo tu jest jedno miejsce, a w dzieciach byłoby ich tyle, ile klas.
-TRIAL("Stack: miejsce wystające poza pokój zostaje przycięte") {
+// A child may overlap its siblings but may not go outside its parent, and the container enforces
+// that, because here it is one place, while in the children it would be as many as there are
+// classes.
+TRIAL("Stack: a place sticking out of the room is clipped") {
     ui::Stack stack;
 
     const auto one = std::make_shared<Pinned>(ui::Area{{4, 2}, {10, 10}}, U'b');
@@ -135,7 +141,7 @@ TRIAL("Stack: miejsce wystające poza pokój zostaje przycięte") {
     same(made.size(), (ui::Size{6, 3}));
 }
 
-TRIAL("Stack: miejsce poza pokojem daje pusty prostokąt, nie ujemny") {
+TRIAL("Stack: a place outside the room gives an empty rectangle, not a negative one") {
     ui::Stack stack;
 
     const auto one = std::make_shared<Pinned>(ui::Area{{-3, 8}, {4, 4}}, U'b');
@@ -150,11 +156,11 @@ TRIAL("Stack: miejsce poza pokojem daje pusty prostokąt, nie ujemny") {
     ought(one->area().at.y <= 3);
 }
 
-// --- Trafianie -----------------------------------------------------------------------------------
+// --- Hitting -------------------------------------------------------------------------------------
 
-// Mysz czyta tę samą kolejność i te same prostokąty, którymi stos maluje: klik w nakładkę trafia
-// w nakładkę, klik obok niej — w to, co pod spodem.
-TRIAL("Stack: klik trafia w nakładkę tylko tam, gdzie ona jest") {
+// The mouse reads the same order and the same rectangles the stack paints with: a click on the
+// overlay hits the overlay, a click beside it hits what lies below.
+TRIAL("Stack: a click hits the overlay only where it is") {
     Sheet top;
 
     const auto stack = std::make_shared<ui::Stack>();
@@ -188,15 +194,14 @@ TRIAL("Stack: klik trafia w nakładkę tylko tam, gdzie ona jest") {
 
 // --- screen_area, area_in -----------------------------------------------------------------------
 
-// Miejsce na ekranie składa się z prostokątów w górę drzewa i **liczy się przy każdym pytaniu**:
-// współrzędna zapamiętana przy rozwinięciu zestarzałaby się przy pierwszym przesunięciu czegokolwiek
-// powyżej.
+// The place on the screen is assembled from rectangles up the tree and is computed on every
+// question: a coordinate remembered when something was rolled out would go stale at the first move
+// of anything above.
 //
-// Węzeł stoi **dwa piętra w dół i z przesunięciem na każdym** — bo pierwsza wersja tej próby
-// miała kolumnę w (0, 0) i przeszła zdjęcie składania pięter: własny prostokąt węzła był wtedy
-// równy miejscu na ekranie i próba nie widziała różnicy. Piąty raz ta sama pomyłka: pytanie
-// o miejsce, na którym mechanizm nie zostawia śladu.
-TRIAL("screen_area: składa miejsce na ekranie przez piętra i widzi przesunięcie") {
+// The node stands two levels down with an offset at each one. With a column at (0, 0) the node's
+// own rectangle would equal its place on the screen, and the trial could not tell whether the
+// levels are composed at all; a question has to be asked where the mechanism leaves a trace.
+TRIAL("screen_area: assembles the place on the screen through the levels and sees the offset") {
     Sheet top;
 
     const auto outer = std::make_shared<ui::Column>();
@@ -213,7 +218,7 @@ TRIAL("screen_area: składa miejsce na ekranie przez piętra i widzi przesunięc
 
     (void)top.render({{0, 0}, {6, 4}});
 
-    // Własny prostokąt mówi „drugi wiersz kolumny wewnętrznej"; miejsce na ekranie — „trzeci".
+    // The own rectangle says "second row of the inner column"; the place on the screen says "third".
     same(second->area().at, (ui::Spot{0, 1}));
 
     const std::optional<ui::Area> where = second->screen_area();
@@ -221,7 +226,7 @@ TRIAL("screen_area: składa miejsce na ekranie przez piętra i widzi przesunięc
     ought(where.has_value());
     same(where->at, (ui::Spot{0, 2}));
 
-    // Coś powyżej zniknęło — miejsce ma to zobaczyć bez żadnego zawiadomienia.
+    // Something above disappeared; the place has to see that without any notification.
     outer->children().remove(head.get());
     outer->children().add(std::make_shared<Box>(ui::Size{6, 2}, U'c'));
 
@@ -230,15 +235,15 @@ TRIAL("screen_area: składa miejsce na ekranie przez piętra i widzi przesunięc
     same(second->screen_area()->at, (ui::Spot{0, 1}));
 }
 
-TRIAL("screen_area: węzeł bez prostokąta nie ma miejsca") {
+TRIAL("screen_area: a node without a rectangle has no place") {
     const auto one = std::make_shared<Box>(ui::Size{6, 1}, U'a');
 
     ought(!one->screen_area().has_value());
 }
 
-// Ta sama pomyłka w drugiej osi: próba wyżej stoi cała przy lewej krawędzi, więc nie widziała,
-// czy przesunięcia przodków w poziomie w ogóle się sumują.
-TRIAL("screen_area: sumuje przesunięcia przodków także w poziomie") {
+// The same in the other axis: the trial above stands entirely at the left edge, so it could not
+// see whether the ancestors' horizontal offsets add up at all.
+TRIAL("screen_area: adds up the ancestors' offsets horizontally too") {
     Sheet top;
 
     const auto row = std::make_shared<ui::Row>();
@@ -260,10 +265,10 @@ TRIAL("screen_area: sumuje przesunięcia przodków także w poziomie") {
     same(third->local({6, 0}), (ui::Spot{1, 0}));
 }
 
-// Prostokąt w układzie przodka: bez przesunięcia samego przodka, a dla węzła spoza niego — pustka.
-// Przewijak pyta tak o węzeł z ogniskiem, więc odpowiedź „jest gdzieś" dla węzła obok
-// przewinęłaby treść do miejsca, którego w niej nie ma.
-TRIAL("area_in: liczy od przodka i nie odpowiada za węzły spoza niego") {
+// A rectangle in an ancestor's coordinates: without the ancestor's own offset, and for a node
+// outside it, nothing. The scroller asks this about the focused node, so an answer of "somewhere"
+// for a node beside it would scroll the content to a place that is not in it.
+TRIAL("area_in: counts from the ancestor and does not answer for nodes outside it") {
     Sheet top;
 
     const auto row = std::make_shared<ui::Row>();

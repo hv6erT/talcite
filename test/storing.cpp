@@ -16,14 +16,15 @@
 
 using namespace talcite;
 
-// **Ścieżka do przechowania** — zawsze poprawny UTF-8 (JSON nie przyjmie innego) i zawsze z powrotem
-// ta sama ścieżka. Obie gałęzie, bajtów POSIX-a i jednostek UTF-16 Windows, są zwykłymi funkcjami,
-// więc sprawdzamy je tu obie; na końcu prawdziwy plik o nazwie spoza UTF-8 przechodzi tam i z powrotem.
+// A path for storing: always valid UTF-8 (JSON accepts nothing else) and always the same path when
+// read back. Both branches, POSIX bytes and Windows UTF-16 units, are plain functions, so we check
+// them both here; at the end a real file with a name outside UTF-8 makes the round trip.
 namespace {
 
+// The leading U+FFFF that marks the escaped form of a stored name.
 const std::string marker = "\xEF\xBF\xBF";
 
-// Czy napis jest poprawnym UTF-8 — liczone osobno, nie tą samą funkcją, którą sprawdzamy.
+// Whether the text is valid UTF-8, computed separately, not by the function under test.
 bool valid(const std::string& text) {
     std::size_t at = 0;
 
@@ -72,7 +73,7 @@ bool valid(const std::string& text) {
 
 }
 
-TRIAL("Przechowanie: nazwa, która jest tekstem, zostaje sobą") {
+TRIAL("Storage: a name that is text stays itself") {
     for (const std::string one : {std::string{}, std::string{"film.mkv"}, std::string{"Żółw – 2001 (100%).mkv"},
                                   std::string{"a\"b\\c\n</x>{}"}, std::string{"\xF0\x9F\x8E\xAC kino"},
                                   std::string{"zespół/płyta 1/01 – utwór.flac"}, std::string{"100%41 i %uD800"}}) {
@@ -83,12 +84,13 @@ TRIAL("Przechowanie: nazwa, która jest tekstem, zostaje sobą") {
     same(fs::stored_units(u"Żółw 100%.mkv"), std::string{"Żółw 100%.mkv"});
     same(fs::stored_units(u"\U0001F3AC"), std::string{"\xF0\x9F\x8E\xAC"});
     ought(fs::restored_units("Żółw 100%.mkv") == std::u16string{u"Żółw 100%.mkv"});
-    // Ucieczki znaczą coś tylko w postaci zastępczej — w zwykłej nazwie „%41” to trzy znaki.
+    // Escapes mean something only in the escaped form; in a plain name "%41" is three characters.
     ought(fs::restored_units("100%41 i %uD800") == std::u16string{u"100%41 i %uD800"});
 }
 
-// Latin-1 ze starego archiwum: bajt spoza UTF-8 idzie ucieczką, procent obok też, reszta jak jest.
-TRIAL("Przechowanie: bajty spoza UTF-8 idą ucieczką i wracają co do bajtu") {
+// Latin-1 from an old archive: a byte outside UTF-8 is escaped, so is a percent sign beside it, and
+// the rest stays as it is.
+TRIAL("Storage: bytes outside UTF-8 are escaped and come back byte for byte") {
     const std::string latin = "Am\xE9lie 100%.mkv";
     const std::string made = fs::stored_bytes(latin);
 
@@ -96,8 +98,9 @@ TRIAL("Przechowanie: bajty spoza UTF-8 idą ucieczką i wracają co do bajtu") {
     ought(valid(made));
     same(fs::restored_bytes(made), latin);
 
-    // Każdy rodzaj zepsucia: bajt ciągu bez początku, ucięty znak, przedłużony zapis, połowa pary
-    // zastępczej zapisana w UTF-8, ponad U+10FFFF, bajty, których w UTF-8 nie ma wcale.
+    // Every kind of damage: a continuation byte without a lead, a truncated character, an overlong
+    // encoding, half of a surrogate pair written in UTF-8, above U+10FFFF, bytes that never occur in
+    // UTF-8.
     for (const std::string broken : {std::string{"\x80"}, std::string{"a\xC3"}, std::string{"\xC0\x80"},
                                      std::string{"\xE0\x80\xAF"}, std::string{"\xED\xA0\x80"},
                                      std::string{"\xF4\x90\x80\x80"}, std::string{"\xF5\x80\x80\x80"},
@@ -110,15 +113,15 @@ TRIAL("Przechowanie: bajty spoza UTF-8 idą ucieczką i wracają co do bajtu") {
     }
 }
 
-// Znak ucięty końcem widoku, choć w pamięci za nim stoi jego dalszy ciąg: liczy się koniec widoku,
-// nie to, co leży za nim.
-TRIAL("Przechowanie: znak ucięty końcem napisu nie sięga za koniec") {
+// A character cut off by the end of the view, though its continuation stands after it in memory:
+// what counts is the end of the view, not what lies beyond it.
+TRIAL("Storage: a character cut off by the end of the string does not reach past the end") {
     const std::string whole = "a\xC3\xA9";
 
     same(fs::stored_bytes(std::string_view{whole.data(), 2}), marker + "a%C3");
     same(fs::stored_bytes(std::string_view{whole.data() + 1, 1}), marker + "%C3");
 
-    // Ucieczka ucięta końcem widoku też nie sięga za niego.
+    // An escape cut off by the end of the view does not reach past it either.
     const std::string kept = marker + "x%41";
 
     same(fs::restored_bytes(std::string_view{kept.data(), kept.size() - 1}), std::string{"x%4"});
@@ -129,7 +132,7 @@ TRIAL("Przechowanie: znak ucięty końcem napisu nie sięga za koniec") {
     same(fs::restored_bytes(std::string_view{unit.data(), unit.size() - 2}), std::string{"%uD80"});
 }
 
-TRIAL("Przechowanie: samotna połowa pary UTF-16 idzie ucieczką i wraca") {
+TRIAL("Storage: a lone half of a UTF-16 pair is escaped and comes back") {
     const std::u16string lone = u"a" + std::u16string(1, char16_t{0xD800}) + u"b%" + std::u16string(1, char16_t{0xDFFF});
     const std::string made = fs::stored_units(lone);
 
@@ -137,30 +140,30 @@ TRIAL("Przechowanie: samotna połowa pary UTF-16 idzie ucieczką i wraca") {
     ought(valid(made));
     ought(fs::restored_units(made) == lone);
 
-    // Para w złej kolejności to dwie samotne połowy.
+    // A pair in the wrong order is two lone halves.
     const std::u16string reversed{char16_t{0xDC00}, char16_t{0xD800}};
 
     same(fs::stored_units(reversed), marker + "%uDC00%uD800");
     ought(fs::restored_units(fs::stored_units(reversed)) == reversed);
 }
 
-// Nazwa, która naprawdę zaczyna się od U+FFFF, też idzie postacią zastępczą — inaczej odczyt wziąłby
-// ją za ucieczkę. Żadna nazwa nie ma dwóch zapisów, żaden zapis dwóch nazw.
-TRIAL("Przechowanie: nazwa zaczynająca się od znaku znacznika nie myli odczytu") {
+// A name that really starts with U+FFFF also takes the escaped form; otherwise reading would take
+// it for an escape. No name has two spellings, and no spelling stands for two names.
+TRIAL("Storage: a name starting with the marker character does not confuse reading") {
     const std::string odd = marker + "%41";
 
     same(fs::stored_bytes(odd), marker + marker + "%2541");
     same(fs::restored_bytes(fs::stored_bytes(odd)), odd);
     ought(fs::restored_units(fs::stored_units(u"￿%41")) == std::u16string{u"￿%41"});
 
-    // Znacznik w środku nazwy niczego nie zmienia.
+    // The marker in the middle of a name changes nothing.
     same(fs::stored_bytes("a" + marker), "a" + marker);
 }
 
-// Zapis z jednego systemu czytany na drugim nie wywraca odczytu: bajt spoza ASCII na Windows staje
-// się znakiem zastępczym, samotna jednostka na POSIX-ie — trzema bajtami WTF-8. Ucieczka popsuta
-// ręcznie jest zwykłym tekstem.
-TRIAL("Przechowanie: obcy zapis i popsuta ucieczka czytają się bez wywrotki") {
+// A spelling from one system read on the other does not upset reading: a non-ASCII byte becomes a
+// replacement character on Windows, and a lone unit becomes three WTF-8 bytes on POSIX. An escape
+// damaged by hand is plain text.
+TRIAL("Storage: a foreign spelling and a damaged escape read without failing") {
     ought(fs::restored_units(marker + "Am%E9lie%41") == std::u16string{u"Am�lieA"});
     same(fs::restored_bytes(marker + "%uD800"), std::string{"\xED\xA0\x80"});
     same(fs::restored_bytes(marker + "50%zz%4%u12G4%"), std::string{"50%zz%4%u12G4%"});
@@ -168,8 +171,9 @@ TRIAL("Przechowanie: obcy zapis i popsuta ucieczka czytają się bez wywrotki") 
     ought(fs::restored_units("bad\xFF") == std::u16string{u"bad�"});
 }
 
-// Dowolne bajty i dowolne jednostki: zapis zawsze poprawnym UTF-8, odczyt zawsze tym samym.
-TRIAL("Przechowanie: losowe nazwy zawsze tam i z powrotem") {
+// Arbitrary bytes and arbitrary units: the stored form is always valid UTF-8, and reading it always
+// gives the same thing back.
+TRIAL("Storage: random names always make the round trip") {
     std::mt19937 drawn{20261005};
     std::uniform_int_distribution<int> length{0, 24};
     std::uniform_int_distribution<int> byte{1, 255};
@@ -196,9 +200,10 @@ TRIAL("Przechowanie: losowe nazwy zawsze tam i z powrotem") {
     }
 }
 
-// Prawdziwy plik: na POSIX-ie nazwa z bajtem Latin-1, na Windows z samotną połową pary. Ścieżka
-// przechowana i odtworzona wskazuje ten sam plik. System, który takiej nazwy nie przyjmie, pomija próbę.
-TRIAL("Przechowanie: plik o nazwie spoza UTF-8 odnajduje się po zapisie") {
+// A real file: on POSIX a name with a Latin-1 byte, on Windows one with a lone half of a pair. The
+// path stored and restored points to the same file. A system that does not accept such a name skips
+// the trial.
+TRIAL("Storage: a file with a name outside UTF-8 is found again after storing") {
     namespace stood = std::filesystem;
 
     std::error_code why;
@@ -221,7 +226,7 @@ TRIAL("Przechowanie: plik o nazwie spoza UTF-8 odnajduje się po zapisie") {
     }
 
     if (!stood::exists(one, why)) {
-        std::cout << "        ten system nie przyjmuje takiej nazwy — próba pominięta\n";
+        std::cout << "        this system does not accept such a name, trial skipped\n";
 
         stood::remove_all(nook, why);
 
@@ -235,7 +240,8 @@ TRIAL("Przechowanie: plik o nazwie spoza UTF-8 odnajduje się po zapisie") {
     ought(stood::exists(fs::restored(kept), why));
 
 #ifdef _WIN32
-    // Tekst do pokazania nie rzuca i jest tekstem — zepsuta jednostka staje się znakiem zastępczym.
+    // The text for display does not throw and is text: a broken unit becomes a replacement
+    // character.
     same(fs::to_string(one).substr(fs::to_string(one).size() - 10), std::string{"\xEF\xBF\xBDlie.mkv"});
 #endif
 

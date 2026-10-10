@@ -12,10 +12,18 @@
 
 namespace talcite::ui {
 
+// `Rolled` is a veil that places its box under the given node. Transparency, modality, the shadow
+// and returning the focus come from `Modal`, and none of that is repeated here. It does not know
+// what a choice, a list or a history is. It gets the node under which it has to stand, and that is
+// all, so it serves anyone who needs something rolled out beneath them, without a single branch for
+// "and what if this is a choice".
 Rolled::Rolled(std::weak_ptr<Node> under) : under_(std::move(under)) {}
 
-// Rozwinięta lista zamyka się Escape'em — i to jest jedyne miejsce, gdzie ten klawisz zamyka
-// zasłonę. Reszta zachowania idzie po `Modal`, łącznie z połykaniem wszystkiego innego.
+// A rolled-out list closes on Escape, and this is the only place where that key closes a veil.
+// `Modal` does not take Escape, because closing a window the caller cannot cancel would decide for
+// the caller. Here there is no such doubt: nobody outside assembles or sees the rolled-out list; it
+// is entirely a widget of the library, just like the arrows in a menu. The rest of the behavior
+// comes from `Modal`, including swallowing everything else.
 bool Rolled::handle(KeyEvent& what) {
     if (what.key().code() == Code::escape) {
         close();
@@ -26,12 +34,13 @@ bool Rolled::handle(KeyEvent& what) {
     return Modal::handle(what);
 }
 
-// Pudełko staje **pod** zaczepieniem. Gdy pod spodem nie starcza miejsca — nad nim; gdy wystaje
-// w prawo — dosuwa się w lewo. Tak samo jak ostatnie menu w pasku, i z tego samego powodu:
-// o krawędziach ekranu wie tylko ten, kto ma cały ekran, a zasłona go ma.
+// The box stands under its anchor. When there is not enough room below, it goes above; when it
+// sticks out to the right, it moves left. Just like the last menu in a menu bar, and for the same
+// reason: only the one who has the whole screen knows its edges, and the veil has it.
 //
-// Węzła, którego już nie ma, nie da się trzymać — wtedy oddajemy środek, czyli zachowanie `Modal`.
-// To nie jest awaria: widżet wolno zdjąć z drzewa przy rozwiniętej liście.
+// A node that no longer exists cannot be held on to; then the center is returned, which is the
+// behavior of `Modal`. This is not a failure: a widget may be taken off the tree while its list is
+// rolled out.
 Area Rolled::seat(Size given) const {
     if (children().empty()) return {};
 
@@ -43,8 +52,8 @@ Area Rolled::seat(Size given) const {
 
     if (!where.has_value()) return Modal::seat(given);
 
-    // Miejsce na cień odejmujemy przed liczeniem, tak samo jak robi to `Modal` — inaczej cień
-    // wychodziłby poza ekran, a przy dolnej krawędzi zabrakłoby na niego wiersza.
+    // Room for the shadow is subtracted before computing, just as `Modal` does; otherwise the
+    // shadow would go off screen, and at the bottom edge there would be no row left for it.
     const int aside = shade() ? 2 : 0;
     const int apart = shade() ? 1 : 0;
 
@@ -59,9 +68,9 @@ Area Rolled::seat(Size given) const {
 
     const int below = where->at.y + where->size.high;
 
-    // Pod spodem, jeśli się mieści; nad, jeśli nie; a gdy nie mieści się i tam — zostajemy pod
-    // spodem i pozwalamy przyciąć. Wybór „mniej złego" należy tu do nas, bo tylko my znamy oba
-    // wymiary naraz.
+    // Below, if it fits; above, if not; and when it does not fit there either, it stays below and
+    // gets cut. The choice of the lesser evil is ours here, because only we know both dimensions
+    // at once.
     int y = below;
 
     if (below + wants.high > room.high) {
@@ -77,6 +86,9 @@ Area Rolled::seat(Size given) const {
     return {{x, y}, wants};
 }
 
+// The nearest veil window up the tree, or null. The same trick by which a menu item finds its menu
+// and a veil its window, only one floor further, because there is usually a form between the
+// widget and the window.
 Modals* housing(Node* from) {
     for (Node* at = from; at != nullptr; at = at->parent())
         if (Modals* one = dynamic_cast<Modals*>(at)) return one;
@@ -84,14 +96,28 @@ Modals* housing(Node* from) {
     return nullptr;
 }
 
+// Rolls the list up, if it is still open, and forgets it.
+//
+// `Popup` is a rolled-out list as part of a widget. A choice and a history hold one `Popup` and
+// differ only in where they take their strings from and what they do with the chosen row. The
+// object is not a node and lives in the widget under which it rolls the list out; the widget holds
+// it through `unique_ptr`, because the public header cannot show this class. It shows at most
+// `rows()` rows at once (eight by default, never fewer than one); a longer list gets a scrollbar.
+//
+// The rolled-out list belongs to the window, not to us. The window holds it, closes it on Escape
+// and returns the focus. Holding it strongly, we would be left with a dead handle after every
+// closing by someone else's hand; a weak pointer says exactly as much as is true, "this one is
+// mine as long as it exists", and `opened()` is true exactly while it does.
 void Popup::close() {
     if (const std::shared_ptr<Modal> one = rolled_.lock()) one->close();
 
     rolled_.reset();
 }
 
-// Złożenie i otwarcie rozwiniętej listy: ramka, lista z pozycjami, zasłona pod widżetem, wpis do
-// okna. Brak okna zasłon w górę drzewa znaczy „nie ma gdzie tego otworzyć" i nie robi nic.
+// Assembles and opens the rolled-out list: a frame, a list with the items, a veil under the
+// widget, an entry in the window. `took` gets the index of the chosen row. No veil window up the
+// tree means "there is nowhere to open it" and does nothing; so does an empty list or one that is
+// already open.
 void Popup::open(const std::vector<std::string>& among, std::size_t which,
                  std::function<void(std::size_t)> took) {
     if (among.empty() || opened()) return;
@@ -100,9 +126,9 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
 
     if (window == nullptr) return;
 
-    // Szerokość bierzemy z **najdłuższej pozycji**, a nie z widżetu: rozwinięta lista ma pokazać
-    // treść, a nie ułożyć się pod szerokość wiersza, z którego wyszła. O krawędzie ekranu i tak
-    // dotnie ją zasłona.
+    // The width comes from the longest item, not from the widget: a rolled-out list has to show
+    // the content, not fit the width of the row it came from. The veil trims it to the screen
+    // edges anyway.
     int wide = 0;
 
     for (const std::string& one : among) wide = std::max(wide, measured(one).wide);
@@ -116,14 +142,14 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
 
     if (which < among.size()) list->which(which);
 
-    // **Wybór wraca zwykłym zdarzeniem, nie wywołaniem zwrotnym.** `ListItem::pick()` ogłasza
-    // `PickEvent`, a my słuchamy go na liście, którą sami złożyliśmy. `Rolled` nie bierze w tym
-    // udziału i nie musi wiedzieć, po co ją niesie.
+    // The choice comes back as an ordinary event, not a callback. `ListItem::pick()` announces a
+    // `PickEvent`, and we listen to it on the list we assembled ourselves. `Rolled` takes no part
+    // in this and does not need to know why it carries the list.
     //
-    // Uchwyt trzyma **słabe** wskazanie na widżet: rozwinięta lista może przeżyć widżet, jeśli ktoś
-    // zdejmie go z drzewa przy otwartej liście. Dopóki widżet żyje, żyje i ten obiekt, więc `this`
-    // jest pewne dokładnie wtedy, gdy wskazanie da się zamknąć. Najpierw zamknięcie, potem wybór —
-    // widżet, który dostaje wiersz, ma już listę zwiniętą.
+    // The handler holds a weak pointer to the widget: the rolled-out list can outlive the widget
+    // if someone takes the widget off the tree while the list is open. As long as the widget
+    // lives, this object lives too, so `this` is valid exactly when the pointer can be locked.
+    // First closing, then the choice: the widget that gets the row already has its list rolled up.
     const std::weak_ptr<Node> mine = under_->weak_from_this();
     const std::weak_ptr<List> theirs = list;
 

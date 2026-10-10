@@ -12,49 +12,57 @@
 
 namespace talcite::net {
 
-// **Kanał szyfrowany na strumieniu** (S1 w twa): najpierw uzgodnienie klucza (dowolna droga szwu
-// `Handshake`), potem wiadomości zapieczętowane AES-256-GCM z szwu szyfrów. Każda wiadomość to
-// ramka: cztery bajty długości od najstarszego, potem treść. Ramki uzgodnienia idą jawnie — chroni je
-// samo uzgodnienie; ramki danych są zapieczętowane, a nagłówek długości jest treścią dodatkową AEAD,
-// więc podmiana długości to odmowa. Nonce to licznik wiadomości w danym kierunku (cztery bajty zer
-// i osiem licznika), więc powtórzenie, przestawienie i zgubienie wiadomości łamie pieczęć następnej.
-// Kanał mówi wiadomościami, nie bajtami — po drugiej stronie przychodzi dokładnie to, co wysłano.
+// An encrypted channel over a stream: first key agreement (any implementation of the `Handshake`
+// seam), then messages sealed with AES-256-GCM from the cipher seam. Every message is a frame: four
+// bytes of length, most significant first, then the content. Handshake frames go in the clear,
+// protected by the handshake itself; data frames are sealed, and the length header is the AEAD
+// additional data, so tampering with the length is a refusal. The nonce is the message counter in
+// the given direction (four zero bytes and eight of the counter), so a repeated, reordered or lost
+// message breaks the seal of the next one. The channel speaks in messages, not bytes: exactly what
+// was sent arrives on the other side.
 //
-// Zapisy idą po kolei przez ogon obietnic (jak w `TlsStream`), odczyt bierze z zapasu to, co
-// przyszło ponad bieżącą ramkę. Strumień czyta się i zamyka pod `minding`, a praca asynchroniczna
-// biegnie na kopii — ta sama reguła i ten sam powód co w `TlsStream` (`close()` przestawia
-// `shared_ptr` w składowej). Podrobiona ramka albo nieudane uzgodnienie zamykają strumień: liczniki
-// już się rozjechały, a druga strona ma się dowiedzieć od razu, a nie po upływie cierpliwości.
-// Kanał ma jednego czytelnika naraz — dwa `receive` w locie mogłyby wziąć liczniki nie po kolei.
+// Writes go in order through a tail of promises (as in `TlsStream`), and a read takes from the
+// spare buffer whatever came beyond the current frame. The stream is read and closed under
+// `minding`, and asynchronous work runs on a copy: the same rule and the same reason as in
+// `TlsStream` (`close()` replaces the `shared_ptr` in the member). A forged frame or a failed
+// handshake closes the stream: the counters have already diverged, and the other side should learn
+// at once, not after its patience runs out. The channel has one reader at a time; two `receive`
+// calls in flight could take the counters out of order.
 namespace {
 
-// Najdłuższa ramka: wiadomość cztery megabajty plus znacznik. Dłuższa zapowiedź to zerwanie — obcy
-// nie ma prawa kazać nam rezerwować gigabajtów.
+// The longest frame: a four-megabyte message plus the tag. A longer announcement breaks the
+// channel: a stranger may not make us reserve gigabytes.
 constexpr std::uint32_t biggest = (4u << 20) + 16;
 
 using Clock = std::chrono::steady_clock;
 
+// The time left until the deadline, but at least one millisecond, so that a late call still gets a
+// nonzero patience.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
 
+// An already fulfilled promise.
 Promise<void> already() {
     return Promise<void>{[](auto resolve, auto) { resolve(); }};
 }
 
+// A promise already rejected with `Trouble` and the given text.
 template <typename T>
 Promise<T> refused(const char* said) {
     return Promise<T>{[said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
 }
 
+// The empty address a closed channel reports as its peer.
 const Address& nowhere() {
     static const Address one;
 
     return one;
 }
 
+// The four-byte length header of a frame, most significant byte first.
 Bytes headed(std::size_t much) {
     Bytes made(4);
 
@@ -63,6 +71,8 @@ Bytes headed(std::size_t much) {
     return made;
 }
 
+// The 12-byte GCM nonce for a message number: four zero bytes, then the counter, most significant
+// byte first.
 Bytes nonce(std::uint64_t counter) {
     Bytes made(12);
 
@@ -90,19 +100,22 @@ struct Channel::Held {
 
 namespace {
 
+// A copy of the stream taken under the lock, for asynchronous work.
 Stream borrowed(const std::shared_ptr<Channel::Held>& held) {
     const std::lock_guard<std::mutex> kept{held->minding};
 
     return held->one;
 }
 
+// Closes the stream under the lock.
 void shut(Channel::Held& held) {
     const std::lock_guard<std::mutex> kept{held.minding};
 
     held.one.close();
 }
 
-// Zapis po kolei: każdy następny czeka na poprzedni, a ogon wraca do spełnionego, gdy kolejka pusta.
+// Writing in order: each write waits for the previous one, and the tail goes back to a fulfilled
+// promise when the queue is empty.
 Promise<void> posting(const std::shared_ptr<Channel::Held>& held, Bytes what, Patience patience) {
     const std::lock_guard<std::mutex> kept{held->sending};
 
@@ -125,7 +138,8 @@ Promise<void> posting(const std::shared_ptr<Channel::Held>& held, Bytes what, Pa
     return made;
 }
 
-// Cała ramka z zapasu, jeśli już jest — inaczej nic.
+// A whole frame from the spare buffer, if it is already there, or nothing. Throws and closes the
+// stream when the announced length is above `biggest`.
 std::optional<Bytes> whole(Channel::Held& held) {
     const std::lock_guard<std::mutex> kept{held.minding};
 
@@ -150,7 +164,8 @@ std::optional<Bytes> whole(Channel::Held& held) {
     return made;
 }
 
-// Następna ramka: z zapasu albo po doczytaniu. Koniec strumienia w środku ramki to zerwanie.
+// The next frame: from the spare buffer or after reading more. The end of the stream in the middle
+// of a frame breaks the channel.
 Promise<Bytes> framed(const std::shared_ptr<Channel::Held>& held, Clock::time_point until) {
     if (std::optional<Bytes> ready = whole(*held))
         return Promise<Bytes>{[made = std::move(*ready)](auto resolve, auto) mutable { resolve(std::move(made)); }};
@@ -168,6 +183,7 @@ Promise<Bytes> framed(const std::shared_ptr<Channel::Held>& held, Clock::time_po
     });
 }
 
+// The content with its length header in front.
 Bytes frame(const Bytes& what) {
     Bytes made = headed(what.size());
 
@@ -176,7 +192,8 @@ Bytes frame(const Bytes& what) {
     return made;
 }
 
-// Uzgodnienie: póki ma co powiedzieć — mówimy; gotowe — koniec; inaczej czekamy na ramkę.
+// The handshake: while it has something to say, we say it; when it is ready, we are done; otherwise
+// we wait for a frame. More than 16 turns means it will never finish.
 Promise<void> shaking(const std::shared_ptr<Channel::Held>& held, const std::shared_ptr<Handshake>& how,
                       Clock::time_point until, int turn) {
     Bytes out;
@@ -204,6 +221,8 @@ Promise<void> shaking(const std::shared_ptr<Channel::Held>& held, const std::sha
 
 }
 
+// A channel over the stream once the handshake has finished. On failure the stream is closed and
+// the promise rejected.
 Promise<Channel> Channel::opened(Stream one, std::shared_ptr<Handshake> how, Seam<CipherProvider> cipher,
                                  Patience patience) {
     if (!how || !cipher.bound()) return refused<Channel>("A channel needs a handshake and a cipher.");
@@ -226,6 +245,7 @@ Promise<Channel> Channel::opened(Stream one, std::shared_ptr<Handshake> how, Sea
     return made;
 }
 
+// The address of the other side, or an empty address once the channel is closed.
 const Address& Channel::peer() const {
     if (!held_) return nowhere();
 
@@ -234,8 +254,8 @@ const Address& Channel::peer() const {
     return held_->one.peer();
 }
 
-// Pieczęć liczy się od razu, pod zamkiem — licznik idzie w tej samej kolejności, w której ramki
-// wchodzą do kolejki zapisu.
+// Sends one message. The seal is computed right away, under the lock, so the counter advances in
+// the same order in which the frames enter the write queue.
 Promise<void> Channel::send(Bytes what, Patience patience) const {
     if (!held_) return refused<void>("The channel is closed.");
 
@@ -258,6 +278,8 @@ Promise<void> Channel::send(Bytes what, Patience patience) const {
     return posting(held_, std::move(made), patience);
 }
 
+// The next message, opened and checked. A forged or lost message closes the channel and rejects the
+// promise.
 Promise<Bytes> Channel::receive(Patience patience) const {
     if (!held_) return refused<Bytes>("The channel is closed.");
 
@@ -285,6 +307,7 @@ Promise<Bytes> Channel::receive(Patience patience) const {
     });
 }
 
+// Closes the stream; later calls refuse.
 void Channel::close() {
     if (!held_) return;
 

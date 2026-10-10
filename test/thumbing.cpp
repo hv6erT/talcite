@@ -17,18 +17,19 @@
 
 using namespace talcite;
 
-// **Mysz na pasku przewijania** (U6 w twa): strzałka przesuwa o wiersz, tor przed i za suwakiem
-// o stronę, suwak daje się ciągnąć — w tabeli, na stronie, w liście i w przewijaku, jedną
-// mechaniką. Klik na pasku nie stawia wiersza tabeli i nie jest dwuklikiem na wierszu.
+// The mouse on a scrollbar: an arrow moves by a row, the track before and after the thumb by a
+// page, and the thumb can be dragged, in a table, a page, a list and a scroller, with one mechanism.
+// A click on the scrollbar does not set a table row and is not a double click on a row.
 namespace {
 
-// Korzeń, który liczy dwukliki dochodzące widżetową drogą — tą samą, którą panel twa robi z nich
-// Enter.
+// A root that counts the double clicks arriving along the widget path, the same path along which
+// the twa panel turns them into Enter.
 class Sheet : public ui::Root {
 public:
     int doubled = 0;
 
 protected:
+    // Counts the double click and consumes it.
     bool handle(ui::DoubleClickEvent&) override {
         ++doubled;
 
@@ -36,6 +37,7 @@ protected:
     }
 };
 
+// Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells.
 std::string said_at(const View& one, int y) {
     std::string made;
 
@@ -50,17 +52,21 @@ std::string said_at(const View& one, int y) {
     return made;
 }
 
+// Sends one mouse event of the given kind at `at` to the root.
 void pressed(ui::Root& top, ui::Spot at, ui::Press how, ui::Mouse button = ui::Mouse::left) {
     ui::MouseEvent what{at, how, button};
 
     (void)top.dispatch(what);
 }
 
+// A left click at `at`: a press followed by a release.
 void clicked(ui::Root& top, ui::Spot at) {
     pressed(top, at, ui::Press::down);
     pressed(top, at, ui::Press::up);
 }
 
+// A one-column row source of `much` file names; it returns at most `most` rows and none past the
+// end.
 ui::TableSource numbered(std::size_t much) {
     return [much](std::size_t which, std::size_t most) {
         std::vector<ui::TableRow> made;
@@ -72,8 +78,8 @@ ui::TableSource numbered(std::size_t much) {
     };
 }
 
-// Tabela stu wierszy w oknie 20x11: nagłówek i dziesięć wierszy, pasek w kolumnie 19 od wiersza 0
-// do 10 — strzałka w górę w wierszu 0, w dół w wierszu 10.
+// A table of a hundred rows in a 20x11 window: a heading and ten rows, the scrollbar in column 19
+// from row 0 to 10, with the up arrow in row 0 and the down arrow in row 10.
 std::shared_ptr<ui::Table> table(Sheet& top) {
     const auto one = std::make_shared<ui::Table>(ui::TableShape{.heading = true, .scrollbar = true});
 
@@ -87,7 +93,8 @@ std::shared_ptr<ui::Table> table(Sheet& top) {
     return one;
 }
 
-// Wiersz paska, w którym stoi suwak — szukamy po znaku, który rysuje go skórka domyślna.
+// The scrollbar row where the thumb stands, found by the glyph the default skin draws it with; -1
+// if there is none between `from` and `to`.
 int thumb_row(Sheet& top, int x, int from, int to) {
     const View shown = top.render({{0, 0}, {20, 11}});
     const char32_t track = shown.at({x, to - 1}).letter;
@@ -98,6 +105,7 @@ int thumb_row(Sheet& top, int x, int from, int to) {
     return -1;
 }
 
+// A text of `much` numbered lines.
 std::string lines(int much) {
     std::string made;
 
@@ -108,7 +116,7 @@ std::string lines(int much) {
 
 }
 
-TRIAL("Pasek: strzałki tabeli przesuwają widok o wiersz, wiersza bieżącego nie ruszają") {
+TRIAL("Scrollbar: a table's arrows move the view by a row and leave the current row alone") {
     Sheet top;
 
     const auto one = table(top);
@@ -131,12 +139,12 @@ TRIAL("Pasek: strzałki tabeli przesuwają widok o wiersz, wiersza bieżącego n
     same(one->first(), std::size_t{0});
 }
 
-TRIAL("Pasek: tor tabeli przewija o stronę, na końcu staje") {
+TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end") {
     Sheet top;
 
     const auto one = table(top);
 
-    // Suwak stoi na górze toru — tor pod nim to strona w dół.
+    // The thumb stands at the top of the track, so the track below it is a page down.
     clicked(top, {19, 9});
 
     same(one->first(), std::size_t{10});
@@ -153,7 +161,7 @@ TRIAL("Pasek: tor tabeli przewija o stronę, na końcu staje") {
 
     same(one->first(), std::size_t{80});
 
-    // Strona za końcem staje na końcu, nie za nim.
+    // A page past the end stops at the end, not beyond it.
     one->first(85);
 
     (void)top.render({{0, 0}, {20, 11}});
@@ -161,8 +169,8 @@ TRIAL("Pasek: tor tabeli przewija o stronę, na końcu staje") {
 
     same(one->first(), std::size_t{75});
 
-    // W wyższym oknie (dwadzieścia wierszy, tor dziewiętnaście kratek) suwak przy 75 stoi w kratkach
-    // 15–17 toru, więc tor pod nim jest — strona w dół z 75 to 80, nie 95.
+    // In a taller window (twenty rows, a track of nineteen cells) the thumb at 75 stands in cells
+    // 15–17 of the track, so there is track below it: a page down from 75 is 80, not 95.
     one->first(75);
 
     (void)top.render({{0, 0}, {20, 21}});
@@ -171,7 +179,7 @@ TRIAL("Pasek: tor tabeli przewija o stronę, na końcu staje") {
     same(one->first(), std::size_t{80});
 }
 
-TRIAL("Pasek: suwak tabeli daje się ciągnąć, także poza pasek") {
+TRIAL("Scrollbar: a table's thumb can be dragged, also outside the scrollbar") {
     Sheet top;
 
     const auto one = table(top);
@@ -185,12 +193,12 @@ TRIAL("Pasek: suwak tabeli daje się ciągnąć, także poza pasek") {
 
     same(one->first(), std::size_t{90});
 
-    // Kratka toru to dziewięćdziesiąt ósmych wiersza — zaokrąglone, nie ucięte: trzecia daje 34.
+    // One cell of the track is ninety eighths of a row, rounded, not truncated: the third gives 34.
     pressed(top, {19, 4}, ui::Press::move);
 
     same(one->first(), std::size_t{34});
 
-    // Ruch w bok, poza pasek — przytrzymanie dalej prowadzi go do tabeli.
+    // A move sideways, off the scrollbar: holding the button still leads it to the table.
     pressed(top, {3, 5}, ui::Press::move);
 
     ought(one->first() > 0 && one->first() < 90);
@@ -201,15 +209,16 @@ TRIAL("Pasek: suwak tabeli daje się ciągnąć, także poza pasek") {
 
     pressed(top, {40, 0}, ui::Press::up);
 
-    // Po puszczeniu ruch niczego nie ciągnie.
+    // After release a move drags nothing.
     pressed(top, {19, 9}, ui::Press::move);
 
     same(one->first(), std::size_t{0});
 }
 
-// Suwak długi na kilka kratek trzyma się kursora tą kratką, za którą go chwycono — ruch o kratkę
-// przesuwa widok o kratkę toru, a nie skacze początkiem suwaka pod kursor.
-TRIAL("Pasek: suwak chwycony w środku idzie za kursorem tą samą kratką") {
+// A thumb several cells long keeps to the cursor by the cell it was grabbed at: a move by one cell
+// shifts the view by one cell of the track, rather than jumping the start of the thumb under the
+// cursor.
+TRIAL("Scrollbar: a thumb grabbed in the middle follows the cursor by the same cell") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Table>(ui::TableShape{.heading = true, .scrollbar = true});
@@ -221,7 +230,8 @@ TRIAL("Pasek: suwak chwycony w środku idzie za kursorem tą samą kratką") {
 
     (void)top.render({{0, 0}, {20, 11}});
 
-    // Tor 9 kratek, okno 10 z 20 — suwak cztery kratki, od wiersza 1 do 4. Chwyt w wierszu 3.
+    // A track of 9 cells, a window of 10 out of 20: the thumb is four cells, from row 1 to 4. The
+    // grab is in row 3.
     pressed(top, {19, 3}, ui::Press::down);
     pressed(top, {19, 3}, ui::Press::move);
 
@@ -234,7 +244,7 @@ TRIAL("Pasek: suwak chwycony w środku idzie za kursorem tą samą kratką") {
     pressed(top, {19, 4}, ui::Press::up);
 }
 
-TRIAL("Pasek: klik na pasku tabeli nie stawia wiersza i nie jest dwuklikiem na wierszu") {
+TRIAL("Scrollbar: a click on a table's scrollbar does not set a row and is not a double click on a row") {
     Sheet top;
 
     const auto one = table(top);
@@ -247,14 +257,14 @@ TRIAL("Pasek: klik na pasku tabeli nie stawia wiersza i nie jest dwuklikiem na w
     same(*one->which(), std::size_t{3});
     same(top.doubled, 0);
 
-    // Klik obok paska stawia wiersz jak zawsze.
+    // A click beside the scrollbar sets the row as always.
     (void)top.render({{0, 0}, {20, 11}});
     clicked(top, {2, 2});
 
     same(*one->which(), one->first() + 1);
 }
 
-TRIAL("Pasek: prawy przycisk i tabela bez paska nic nie przewijają") {
+TRIAL("Scrollbar: the right button and a table without a scrollbar scroll nothing") {
     Sheet top;
 
     const auto one = table(top);
@@ -272,12 +282,12 @@ TRIAL("Pasek: prawy przycisk i tabela bez paska nic nie przewijają") {
     same(one->first(), std::size_t{0});
 }
 
-TRIAL("Tabela: column_under mówi, nad którą kolumną nagłówka stoi kratka") {
+TRIAL("Table: column_under tells which heading column a cell stands under") {
     Sheet top;
 
     const auto one = table(top);
 
-    // Szerokość 19 bez paska: Wiek 4, odstęp 1, Nazwa 14.
+    // A width of 19 without the scrollbar: Wiek 4, a gap of 1, Nazwa 14.
     same(one->column_under({0, 0}).value_or(9), std::size_t{0});
     same(one->column_under({13, 0}).value_or(9), std::size_t{0});
     same(one->column_under({14, 0}).value_or(9), std::size_t{0});
@@ -287,7 +297,7 @@ TRIAL("Tabela: column_under mówi, nad którą kolumną nagłówka stoi kratka")
     ought(!one->column_under({2, 1}).has_value());
 }
 
-TRIAL("Pasek: strona tekstu — strzałka, tor i suwak") {
+TRIAL("Scrollbar: a text page, with arrow, track and thumb") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Viewer>(ui::ScrollShape{.scrollbar = true});
@@ -314,7 +324,7 @@ TRIAL("Pasek: strona tekstu — strzałka, tor i suwak") {
 
     (void)top.render({{0, 0}, {20, 10}});
 
-    // Suwak ciągnięty na sam dół toru — koniec tekstu.
+    // The thumb dragged to the very bottom of the track: the end of the text.
     const View shown = top.render({{0, 0}, {20, 10}});
     const char32_t track = shown.at({19, 8}).letter;
 
@@ -332,7 +342,7 @@ TRIAL("Pasek: strona tekstu — strzałka, tor i suwak") {
     same(one->first().value_or(0), std::size_t{90});
 }
 
-TRIAL("Pasek: lista — strzałka, tor i suwak ruszają widok, nie wybór") {
+TRIAL("Scrollbar: in a list the arrow, track and thumb move the view, not the choice") {
     Sheet top;
 
     const auto one = std::make_shared<ui::List>(ui::plenty, ui::plenty, ui::ScrollShape{.scrollbar = true});
@@ -359,12 +369,14 @@ TRIAL("Pasek: lista — strzałka, tor i suwak ruszają widok, nie wybór") {
 
     ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
 
-    // Tor nad suwakiem — strona w górę; strzałka w dół na końcu niczego nie rusza i nie zawiadamia.
+    // The track above the thumb is a page up; the down arrow at the end moves nothing and does not
+    // notify.
     clicked(top, {19, 1});
 
     ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 30"));
 
-    // Suwak przy 30 stoi w szóstej kratce toru; tor pod nim to strona w dół, do końca.
+    // The thumb at 30 stands in the sixth cell of the track; the track below it is a page down, to
+    // the end.
     clicked(top, {19, 8});
 
     ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
@@ -383,7 +395,7 @@ TRIAL("Pasek: lista — strzałka, tor i suwak ruszają widok, nie wybór") {
     ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
 }
 
-TRIAL("Pasek: przewijak w obu osiach — każdy pasek swoją osią") {
+TRIAL("Scrollbar: a scroller in both axes, each scrollbar with its own axis") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Scroll>(ui::Axis::both, ui::ScrollShape{.scrollbar = true});
@@ -397,7 +409,7 @@ TRIAL("Pasek: przewijak w obu osiach — każdy pasek swoją osią") {
 
     (void)top.render({{0, 0}, {20, 10}});
 
-    // Pionowy: kolumna 19, wiersze 0–8; poziomy: wiersz 9, kolumny 0–18.
+    // Vertical: column 19, rows 0–8; horizontal: row 9, columns 0–18.
     clicked(top, {19, 8});
 
     same(one->shift().y, 1);
@@ -412,7 +424,8 @@ TRIAL("Pasek: przewijak w obu osiach — każdy pasek swoją osią") {
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {0, 9});
 
-    // Wiersz przewinięty pod poziomy pasek nie łapie kliku — dostaje go pasek, a widok w pionie stoi.
+    // A row scrolled under the horizontal scrollbar does not catch the click: the scrollbar gets it,
+    // and the vertical view stays.
     same(one->shift().x, 0);
     same(one->shift().y, 1);
 
@@ -421,8 +434,8 @@ TRIAL("Pasek: przewijak w obu osiach — każdy pasek swoją osią") {
 
     same(one->shift().y, 10);
 
-    // Suwak pionowy ciągnięty przez poziomy pasek dalej jest pionowym: ruch idzie do chwytu, który
-    // trzyma, a nie do paska pod kursorem.
+    // A vertical thumb dragged across the horizontal scrollbar is still vertical: the move goes to
+    // the grab that holds it, not to the scrollbar under the cursor.
     one->shift({0, 0});
 
     (void)top.render({{0, 0}, {20, 10}});

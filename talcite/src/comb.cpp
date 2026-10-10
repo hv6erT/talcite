@@ -10,19 +10,21 @@ namespace talcite {
 
 namespace {
 
+// Lowers an ASCII letter; every other byte comes back unchanged.
 char lowered(char one) {
     const unsigned char sign = static_cast<unsigned char>(one);
 
     return static_cast<char>(std::tolower(sign));
 }
 
-// Granica wyrazu liczona **po bajtach**, regułą z `encoding.hpp` — tą samą, którą stosuje
-// zaznaczanie wyrazu podwójnym kliknięciem. Poszerzony bajt ciągu UTF-8 daje tam tę samą
-// odpowiedź co znak, z którego pochodzi, więc nie trzeba tu odtwarzać znaków.
+// A word boundary counted in bytes, with the rule from `encoding.hpp`, the same one that
+// double-click word selection uses. A widened byte of a UTF-8 sequence gives the same answer
+// there as the character it comes from, so characters do not have to be rebuilt here.
 bool lettered(char one) {
     return in_word(static_cast<char32_t>(static_cast<unsigned char>(one)));
 }
 
+// True when the hit stands as a whole word: no word byte touches it from either side.
 bool bounded(std::string_view where, Hit one) {
     if (one.from > 0 && lettered(where[one.from - 1])) return false;
 
@@ -31,8 +33,8 @@ bool bounded(std::string_view where, Hit one) {
     return true;
 }
 
-// Zwykłe szukanie napisu, bajt po bajcie. Bez wielkości liter porównujemy **tylko ASCII** —
-// zwijanie wielkości poza nim to znowu Unicode, więc „Ą" nie znajdzie się przez „ą".
+// A plain substring search, byte by byte. Without case sensitivity only ASCII is compared:
+// case folding beyond it is Unicode again, so "Ą" is not found through "ą".
 std::optional<std::size_t> hunted(std::string_view where, std::string_view what, std::size_t from,
                                   bool cased) {
     if (what.empty() || what.size() > where.size()) return {};
@@ -67,16 +69,18 @@ struct Comb::Kept {
     bool ready = false;
 };
 
-Comb::Comb() : kept_(std::make_unique<Kept>()) { kept_->wrong = "Pusty wzorzec."; }
+// An empty comb, which finds nothing and reports an empty pattern.
+Comb::Comb() : kept_(std::make_unique<Kept>()) { kept_->wrong = "Empty pattern."; }
 
-// **Konstruktor nie rzuca.** Wzorzec przychodzi z pola tekstowego, a użytkownik ma pełne prawo
-// wpisać „[" — to nie jest błąd programu, tylko odpowiedź „tak się nie da", którą trzeba pokazać.
+// The constructor does not throw. The pattern comes from a text field, and the user has every
+// right to type "[". That is not a program error but an answer, "this cannot be done", which has
+// to be shown; it ends up in `wrong()`.
 Comb::Comb(std::string what, Sift how) : kept_(std::make_unique<Kept>()) {
     kept_->what = std::move(what);
     kept_->how = how;
 
     if (kept_->what.empty()) {
-        kept_->wrong = "Pusty wzorzec.";
+        kept_->wrong = "Empty pattern.";
 
         return;
     }
@@ -95,8 +99,8 @@ Comb::Comb(std::string what, Sift how) : kept_(std::make_unique<Kept>()) {
         kept_->exp.emplace(kept_->what, flags);
         kept_->ready = true;
     } catch (const std::regex_error&) {
-        // Treść od biblioteki standardowej jest po angielsku i zależy od implementacji, więc
-        // mówimy swoje. Do rozpoznania, co dokładnie jest nie tak, i tak by nie wystarczyła.
+        // The text from the standard library is in English and depends on the implementation, so
+        // we say our own. It would not be enough to tell what exactly is wrong anyway.
         kept_->wrong = "Invalid regular expression.";
     }
 }
@@ -107,17 +111,21 @@ Comb::Comb(Comb&& other) noexcept = default;
 
 Comb& Comb::operator=(Comb&& other) noexcept = default;
 
+// True when the pattern is usable; otherwise `wrong()` says why it is not.
 bool Comb::ready() const { return kept_->ready; }
 
+// Why the pattern cannot be used; meaningful only when `ready()` is false.
 const std::string& Comb::wrong() const { return kept_->wrong; }
 
+// The pattern as it was given.
 const std::string& Comb::what() const { return kept_->what; }
 
+// The search options the comb was made with.
 Sift Comb::how() const { return kept_->how; }
 
 namespace {
 
-// Pierwsze dopasowanie od podanego bajtu, jeszcze **bez** warunku całych wyrazów.
+// The first match from the given byte on, still without the whole-word condition.
 std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::string_view where,
                             std::size_t from, bool cased) {
     if (from > where.size()) return {};
@@ -134,15 +142,16 @@ std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::s
 
     std::size_t at = from;
 
-    // Puste dopasowanie — „x*" wszędzie tam, gdzie nie ma iksa — **pomijamy i szukamy dalej**.
-    // Zamiana pustki nie ma sensu, a poddanie się na pierwszej pustce znaczyłoby, że „x*" nie
-    // znajduje iksów.
+    // An empty match ("x*" wherever there is no x) is skipped and the search goes on. Replacing
+    // emptiness makes no sense, and giving up at the first empty match would mean that "x*" does
+    // not find any x.
     while (at <= where.size()) {
         std::cmatch got;
 
         auto flags = std::regex_constants::match_default;
 
-        // Bez tego „^" dopasowałoby się w środku wiersza, a „\b" nie widziałoby bajtu przed sobą.
+        // Without this "^" would match in the middle of a line and "\b" would not see the byte
+        // before it.
         if (at > 0) flags |= std::regex_constants::match_prev_avail;
 
         if (!std::regex_search(where.data() + at, end, got, *exp, flags)) return {};
@@ -160,6 +169,8 @@ std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::s
 
 }
 
+// The first hit that begins at or after `from`, honoring the whole-word option; nothing when the
+// pattern is not ready or there is no further hit.
 std::optional<Hit> Comb::forth(std::string_view where, std::size_t from) const {
     const Kept& kept = *kept_;
 
@@ -181,9 +192,9 @@ std::optional<Hit> Comb::forth(std::string_view where, std::size_t from) const {
     return {};
 }
 
-// Wstecz idziemy od początku wiersza do przodu i zapamiętujemy ostatnie dopasowanie **zaczynające
-// się przed** podanym miejscem. Szukanie od tyłu byłoby szybsze, ale wyrażenie regularne czyta się
-// tylko w jedną stronę, więc i tak trzeba by przejść wiersz od początku.
+// Searching backward goes from the start of the line forward and keeps the last match that begins
+// before the given place. Searching from the end would be faster, but a regular expression reads
+// in one direction only, so the line would have to be walked from the start anyway.
 std::optional<Hit> Comb::back(std::string_view where, std::size_t upto) const {
     std::optional<Hit> made;
 
@@ -201,6 +212,8 @@ std::optional<Hit> Comb::back(std::string_view where, std::size_t upto) const {
     return made;
 }
 
+// Every hit in the line, from left to right and without overlaps; the next search starts where
+// the previous hit ends.
 std::vector<Hit> Comb::all(std::string_view where) const {
     std::vector<Hit> made;
 

@@ -26,6 +26,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -36,11 +37,8 @@ private:
     talcite::Term& term_;
 };
 
-// **Bez pliku i bez wbudowanego GIF-a.** Dekodery mieszkają w talcite-adapters, a talcite nie
-// linkuje przejściówek — więc demo pokazuje to, co widżet robi z obrazkami **robionymi w kodzie**:
-// proporcję kratki, cięcia idące za krawędzią, przezroczystość przechodzącą przez tło ramki
-// i różnicę między dwiema gęstościami siatki. Animację z pliku i prawdziwe pliki z dysku ogląda
-// program sprawdzający przejściówkę (talcite-stb-check).
+// A picture of the given size whose every pixel is computed by `fn`, from coordinates running from
+// -1 to 1 across the picture, as a single still frame of RGBA bytes.
 talcite::Pixels painted(int wide, int high, void (*fn)(double, double, std::uint8_t*)) {
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(wide) * high * 4);
 
@@ -58,8 +56,9 @@ talcite::Pixels painted(int wide, int high, void (*fn)(double, double, std::uint
     return talcite::Pixels{{wide, high}, {talcite::Still{std::move(lump), std::chrono::milliseconds{0}}}};
 }
 
-// Koło barw: odcień z kąta, nasycenie z promienia. Sprawdza naraz proporcję kratki — koło ma być
-// kołem — i to, czy cięcia idą za krawędzią barwy, a nie za jasnością.
+// A color wheel: hue from the angle, saturation from the radius. It checks the cell proportion (the
+// wheel has to be round) and whether the cuts follow the edge of the color rather than the
+// brightness.
 void wheeled(double x, double y, std::uint8_t* at) {
     const double r = std::sqrt(x * x + y * y);
 
@@ -112,7 +111,7 @@ void wheeled(double x, double y, std::uint8_t* at) {
     at[3] = 255;
 }
 
-// Pierścień z dziurą: przezroczystość widać wtedy, gdy przez środek prześwituje tło ramki.
+// A ring with a hole: transparency shows when the frame's background shines through the middle.
 void ringed(double x, double y, std::uint8_t* at) {
     const double r = std::sqrt(x * x + y * y);
 
@@ -122,8 +121,8 @@ void ringed(double x, double y, std::uint8_t* at) {
     at[3] = r <= 1.0 && r >= 0.5 ? 255 : 0;
 }
 
-// Skos: najostrzejsza próba dla kształtów. Znaki blokowe mają na to ćwiartki i ósemki, sekstanty
-// gęstszą siatkę — i to tu różnicę widać najlepiej.
+// A slant: the hardest test for shapes. Block characters have quarters and eighths for it, sextants
+// a denser grid, and this is where the difference shows best.
 void slanted(double x, double y, std::uint8_t* at) {
     const bool over = y < x;
 
@@ -133,8 +132,8 @@ void slanted(double x, double y, std::uint8_t* at) {
     at[3] = 255;
 }
 
-// Gradient: sprawdza uśrednianie. Przy uśrednianiu surowych bajtów środek wychodzi zauważalnie
-// ciemniejszy, niż powinien.
+// A gradient: it checks averaging. Averaging the raw bytes makes the middle noticeably darker than
+// it should be.
 void faded(double x, double y, std::uint8_t* at) {
     const double one = (x + 1.0) / 2.0;
     const double two = (y + 1.0) / 2.0;
@@ -145,19 +144,25 @@ void faded(double x, double y, std::uint8_t* at) {
     at[3] = 255;
 }
 
+// The name of the grid density shown on the status line.
 std::string told(talcite::ui::Blocks kind) {
-    return kind >= talcite::ui::Blocks::sextants ? "sekstanty (2x3)" : "znaki blokowe (8x8)";
+    return kind >= talcite::ui::Blocks::sextants ? "sextants (2x3)" : "block characters (8x8)";
 }
 
 }
 
+// No file and no built-in GIF. The decoders live in talcite-adapters, and talcite does not link the
+// adapters, so the demo shows what the widget does with pictures made in code: the cell proportion,
+// cuts that follow the edge, transparency that lets the frame's background through, and the
+// difference between the two grid densities. Animation from a file and real files from the disk are
+// viewed by the program that checks the adapter (talcite-stb-check).
 int main() {
     talcite::Term term;
 
     Sheet sheet{term};
 
     const auto legend = std::make_shared<talcite::ui::Legend>();
-    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — obrazy");
+    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — images");
     const auto column = std::make_shared<talcite::ui::Column>();
 
     const auto said = std::make_shared<talcite::ui::Span>(std::string{});
@@ -166,8 +171,8 @@ int main() {
 
     shown->hold(painted(240, 240, wheeled));
 
-    // Pojemnik obejmuje **całą treść okna**, tak jak w pozostałych demach: kliknięcie gdziekolwiek
-    // w ramce zabiera ognisko, a bez ogniska legenda nie dostałaby klawiszy.
+    // The pane covers the whole content of the window, as in the other demos: a click anywhere in
+    // the frame takes the focus, and without focus the legend would not get the keys.
     const auto pane = std::make_shared<talcite::ui::Pane>();
 
     column->children().add(said);
@@ -177,27 +182,27 @@ int main() {
     pane->children().add(frame);
     legend->content(pane);
 
-    // Co teraz widać — trzymane **osobno**, a nie wyłuskiwane z napisu na ekranie. Poprzednio
-    // odtwarzałem je przez `substr` z tego, co sam przed chwilą wypisałem, i to była proteza:
-    // napis jest dla człowieka, nie na stan programu.
-    const auto subject = std::make_shared<std::string>("koło barw");
+    // What is shown now, kept separately rather than extracted from the text on the screen: the
+    // text is for a human, not a store of program state.
+    const auto subject = std::make_shared<std::string>("color wheel");
 
-    // Życzenie aplikacji wobec terminala. Trzymamy je u siebie, bo `reconfigure` idzie przez pętlę
-    // i wchodzi dopiero na granicy klatki — a podpis chcemy mieć od razu.
+    // The application's wish for the terminal. We keep it ourselves, because `reconfigure` goes
+    // through the loop and takes effect only at a frame boundary, while we want the caption right
+    // away.
     const auto wish = std::make_shared<talcite::Setup>();
 
-    // **Stan ruchu idzie na sam przód i wypisuje się zawsze.** Wcześniej stał na końcu długiego
-    // napisu i tylko wtedy, gdy było co animować — więc F7 wyglądał na martwy dokładnie wtedy,
-    // gdy najbardziej chciało się wiedzieć, czy działa.
+    // The motion state comes first and is always shown, so that F7 never looks dead at the very
+    // moment one most wants to know whether it works.
     const auto naming = [said, shown, subject, wish] {
-        // Napis mówi **stan przełącznika**, a nie to, czy akurat coś się rusza — bo tylko wtedy
-        // F7 widać od pierwszej chwili. Liczba klatek dochodzi dopiero po pierwszym układzie, bo
-        // GIF nie mówi jej w nagłówku, i to jest jedyne, co się tu pojawia z opóźnieniem.
-        std::string more = shown->play() ? "ruch" : "stop";
+        // The text gives the state of the switch, not whether something happens to be moving,
+        // because only then does F7 show from the first moment. The frame count appears only after
+        // the first layout, because a GIF does not give it in its header, and it is the only thing
+        // here that shows up late.
+        std::string more = shown->play() ? "moving" : "stop";
 
         more += " · " + *subject;
 
-        if (shown->frames() > 1) more += ", klatek " + std::to_string(shown->frames());
+        if (shown->frames() > 1) more += ", frames " + std::to_string(shown->frames());
 
         more += " · " + told(wish->blocks.value_or(talcite::ui::Blocks::basic));
 
@@ -214,26 +219,27 @@ int main() {
         };
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Koło"),
-                      picking("koło barw", painted(240, 240, wheeled)));
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Wheel"),
+                      picking("color wheel", painted(240, 240, wheeled)));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Pierść"),
-                      picking("pierścień z dziurą", painted(240, 240, ringed)));
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Ring"),
+                      picking("ring with a hole", painted(240, 240, ringed)));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Skos"),
-                      picking("skos", painted(240, 240, slanted)));
+    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Slant"),
+                      picking("slant", painted(240, 240, slanted)));
 
     (void)demo::doing(legend->add(talcite::ui::Code::f5, "Gradient"),
                       picking("gradient", painted(240, 240, faded)));
 
-    // **Sekstantów nie włączamy z pomiaru.** Sonda mówi tylko, czy znak zajmuje jedną kratkę,
-    // a nie czy font go ma — więc życzenie stawia tu użytkownik, po jednym naciśnięciu i jednym
-    // spojrzeniu na ekran. Windows Terminal podmienia czcionkę i pokaże je nawet bez Cascadii.
+    // Sextants are not turned on from a measurement. The probe only tells whether the character
+    // takes one cell, not whether the font has it, so here the user makes the wish, after one key
+    // press and one look at the screen. Windows Terminal substitutes the font and shows them even
+    // without Cascadia.
     //
-    // Widżet nie ma już czego przestawiać: gęstość leży na korzeniu, a stawia ją tam `Term`.
-    // Klawisz mówi więc **terminalowi**, a obrazek dowiaduje się o tym przy najbliższej klatce —
-    // sam, przez porównanie w `spread()`. To jedyne wywołanie `reconfigure` w całym projekcie.
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Siatka"), [&term, wish, naming] {
+    // The widget has nothing to switch: the density lies on the root, and `Term` puts it there. So
+    // the key tells the terminal, and the picture learns about it on the next frame by itself,
+    // through the comparison in `spread()`. This is the only call to `reconfigure` in the demos.
+    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Grid"), [&term, wish, naming] {
         wish->blocks = wish->blocks.value_or(talcite::ui::Blocks::basic) <
                                talcite::ui::Blocks::sextants
                            ? talcite::ui::Blocks::sextants
@@ -244,26 +250,26 @@ int main() {
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Ruch"), [shown, naming] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Motion"), [shown, naming] {
         shown->play(!shown->play());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 
     pane->focus();
 
-    // **Animacja chodzi sama**, gdy jest co animować: widżet mówi korzeniowi, kiedy najpóźniej
-    // chce być obudzony, a `Term` wkłada to do swojego ogranicznika — F7 tylko zatrzymuje
-    // i puszcza. Obrazki z kodu są nieruchome, więc tu F7 pokazuje jedynie stan przełącznika;
-    // ruch z pliku ogląda talcite-stb-check.
+    // Animation runs by itself when there is something to animate: the widget tells the root when
+    // it wants to be woken at the latest, and `Term` puts that into its limiter; F7 only stops and
+    // resumes it. Pictures made in code do not move, so here F7 shows only the state of the switch;
+    // motion from a file is viewed in talcite-stb-check.
     naming();
 
     term.show(sheet);
-    term.title("talcite — obrazy");
+    term.title("talcite — images");
 
     term.run();
 

@@ -3,11 +3,11 @@
 #include <array>
 #include <cstdint>
 
-// **Paleta 256 barw, jedna dla biblioteki i dla aplikacji.** Szesnaście podstawowych w wartościach
-// xterma, sześcian 6×6×6 i rampa szarości. Terminal liczy z niej najbliższą barwę przy wypisywaniu
-// w 16 i 256 barwach, a aplikacja czyta z niej barwy podane numerem w pliku skórki. Dawniej obie
-// strony trzymały własną kopię tych samych tablic — twa w `look.cpp`, talcite w `term.cpp` — i nic
-// nie pilnowało, żeby `blue` z pliku wracało na terminal jako `blue`.
+// The 256-color palette, one for the library and the applications: sixteen basic colors with
+// xterm's values, a 6x6x6 cube and a grey ramp. The terminal finds the nearest color in it when
+// writing in 16 and 256 colors, and an application reads from it the colors a skin file gives by
+// number. Keeping a single table is what guarantees that `blue` read from a file goes back to the
+// terminal as `blue`.
 namespace talcite {
 
 namespace {
@@ -31,6 +31,7 @@ constexpr std::array<std::array<std::uint8_t, 3>, 16> basics{{{0, 0, 0},
 
 constexpr std::array<std::uint8_t, 6> steps{0, 95, 135, 175, 215, 255};
 
+// An opaque color with the given components.
 Color solid(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Color made;
 
@@ -44,8 +45,8 @@ Color solid(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 
 }
 
-// Numer palety na barwę: 0–15 podstawowe, 16–231 sześcian, 232–255 rampa szarości co dziesięć od
-// ośmiu. Spoza palety — pustka.
+// The color for a palette number: 0-15 are the basic colors, 16-231 the cube, 232-255 the grey ramp
+// in steps of ten from eight. Outside the palette, `std::nullopt`.
 std::optional<Color> Color::indexed(int which) {
     if (which < 0 || which > 255) return std::nullopt;
 

@@ -12,13 +12,15 @@
 
 using namespace talcite;
 
-// **CPace** — części drogi bez krzywej, sprawdzane wektorami z draft-irtf-cfrg-cpace-21 (dodatek
-// B.1, X25519 + SHA-512): ciąg generatora, Elligator2, transkrypt i ISK. Mnożenie na krzywej daje
-// system, więc pełną rozmowę z wektorami Ya, Yb i K sprawdza talcite-adapters na prawdziwym X25519.
-// Dodatkowe wejścia Elligator2 (zero, u ≥ p, p − 1) policzono niezależnie, w Pythonie, wprost ze
-// wzorów RFC 9380.
+// CPace: the parts of the exchange that need no curve arithmetic, checked against the vectors of
+// draft-irtf-cfrg-cpace-21 (appendix B.1, X25519 + SHA-512): the generator string, Elligator2, the
+// transcript and the ISK. Multiplication on the curve comes from the system, so the full exchange
+// with the Ya, Yb and K vectors is checked by talcite-adapters on a real X25519. The extra
+// Elligator2 inputs (zero, u ≥ p, p − 1) were computed independently, in Python, straight from the
+// formulas of RFC 9380.
 namespace {
 
+// Bytes from a string of hex digits, two digits per byte; a trailing odd digit is ignored.
 Bytes lump(std::string_view hex) {
     Bytes made;
 
@@ -28,6 +30,7 @@ Bytes lump(std::string_view hex) {
     return made;
 }
 
+// The bytes as lowercase hex, two digits per byte, for comparing with the vectors.
 std::string spelled(const Bytes& one) {
     static constexpr char digits[] = "0123456789abcdef";
 
@@ -41,6 +44,7 @@ std::string spelled(const Bytes& one) {
     return made;
 }
 
+// The characters of the text as bytes, one byte per char.
 Bytes text(std::string_view said) {
     Bytes made;
 
@@ -49,10 +53,11 @@ Bytes text(std::string_view said) {
     return made;
 }
 
+// Whether this system lacks the digests; if so, prints a note that the trial is skipped.
 bool missing() {
     if (summing()) return false;
 
-    std::cout << "        ten system nie daje skrótów — próba pominięta\n";
+    std::cout << "        this system provides no digests; trial skipped\n";
 
     return true;
 }
@@ -63,7 +68,7 @@ const std::string generator_g = "d04bf6d41f6a289632a2e929fa29bebd51092512a7829fd
 
 }
 
-TRIAL("CPace: długość przed danymi w LEB128") {
+TRIAL("CPace: length before the data in LEB128") {
     same(spelled(net::cpacing::prepended({})), std::string{"00"});
     same(spelled(net::cpacing::prepended(text("ab"))), std::string{"026162"});
 
@@ -82,8 +87,8 @@ TRIAL("CPace: długość przed danymi w LEB128") {
     same(spelled(Bytes(long_one.begin(), long_one.begin() + 2)), std::string{"ac02"});
 }
 
-// B.1.1: 170 bajtów — DSI, hasło, 109 zer dopełnienia, CI i sid.
-TRIAL("CPace: ciąg generatora według wektora B.1.1") {
+// B.1.1: 170 bytes, made of DSI, password, 109 padding zeros, CI and sid.
+TRIAL("CPace: generator string per vector B.1.1") {
     same(spelled(net::cpacing::generator_string(text("CPace255"), text("Password"), ci, sid, 128)),
          std::string{"0843506163653235350850617373776f72646d000000000000000000"
                      "00000000000000000000000000000000000000000000000000000000"
@@ -94,24 +99,25 @@ TRIAL("CPace: ciąg generatora według wektora B.1.1") {
                      "2c57"});
 }
 
-// Długie hasło nie dostaje dopełnienia — pole zer zostaje, puste.
-TRIAL("CPace: ciąg generatora bez dopełnienia przy długim haśle") {
+// A long password gets no padding; the field of zeros stays empty.
+TRIAL("CPace: generator string without padding for a long password") {
     const Bytes made = net::cpacing::generator_string(text("CPace255"), Bytes(200, std::byte{'x'}), {}, {}, 128);
 
     same(made.size(), std::size_t{9 + 2 + 200 + 1 + 1 + 1});
     same(spelled(Bytes(made.begin() + 211, made.end())), std::string{"000000"});
 }
 
-// B.1.1: skrót ciągu z ustawionym bitem 255 i ten sam po jego wyczyszczeniu dają ten sam generator.
-TRIAL("CPace: Elligator2 według wektora B.1.1, bit 255 odrzucony") {
+// B.1.1: the digest with bit 255 set and the same digest with it cleared give the same generator.
+TRIAL("CPace: Elligator2 per vector B.1.1, bit 255 dropped") {
     same(spelled(net::cpacing::elligator2(lump("03998087bdb1a2617bbe25ef5a7c18cd4f84f902328701790958755ee4aed1d3"))),
          generator_g);
     same(spelled(net::cpacing::elligator2(lump("03998087bdb1a2617bbe25ef5a7c18cd4f84f902328701790958755ee4aed153"))),
          generator_g);
 }
 
-// Brzegi ciała: zero, p (to samo co zero), p − 1 i 2²⁵⁵ − 1 (niekanoniczne, ≡ 18), plus dwa zwykłe.
-TRIAL("CPace: Elligator2 na brzegach ciała i zwykłych wejściach") {
+// Edges of the field: zero, p (the same as zero), p − 1 and 2²⁵⁵ − 1 (non-canonical, ≡ 18), plus
+// two ordinary inputs.
+TRIAL("CPace: Elligator2 at the edges of the field and on ordinary inputs") {
     const std::string zero(64, '0');
 
     same(spelled(net::cpacing::elligator2(Bytes(32))), zero);
@@ -125,16 +131,16 @@ TRIAL("CPace: Elligator2 na brzegach ciała i zwykłych wejściach") {
     same(spelled(net::cpacing::elligator2(lump("c2595004278b88f4395b85c62a1234c0333d85a93a13d632b02874c55e5bcb97"))),
          std::string{"fe116d99766cf12de5328932f69c8daf67633f1eea55ded3b1f053865f3da550"});
 
-    // Wejście wyszukane tak, by wynik przed postacią kanoniczną leżał tuż ponad p (ostatnie odjęcie p
-    // i jego przeniesienie mają znaczenie).
+    // An input chosen so that the result before reduction to canonical form lies just above p (the
+    // final subtraction of p and its carry matter).
     same(spelled(net::cpacing::elligator2(lump("94832161f3dd13cbbb8265b8876a8df9806a920e325777bd4d3623b997297129"))),
          std::string{"bd188d56b4dd95fdc8dda4872265b3dafe78a304f84d79e8ad3734435db9ff7f"});
 
     threw(static_cast<void>(net::cpacing::elligator2(Bytes(31))));
 }
 
-// B.1.5: transkrypt dzwoniący–odbierający, 74 bajty.
-TRIAL("CPace: transkrypt według wektora B.1.5") {
+// B.1.5: the initiator–responder transcript, 74 bytes.
+TRIAL("CPace: transcript per vector B.1.5") {
     const Bytes ya = lump("1d13c89278cdadd826f6d8d7f887701430f8380ddc17611cdd6dc989ce0c9f32");
     const Bytes yb = lump("248cccf6d5cdc3646f0ad593f9e6cef4e69d4945f8372e623512ecea32185623");
 
@@ -144,8 +150,9 @@ TRIAL("CPace: transkrypt według wektora B.1.5") {
                      "4945f8372e623512ecea3218562303414462"});
 }
 
-// B.1.1 i B.1.5 przez SHA-512 z systemu: generator wprost z hasła i ISK z K i transkryptu.
-TRIAL("CPace: generator i ISK według wektorów B.1.1 i B.1.5") {
+// B.1.1 and B.1.5 through the system's SHA-512: the generator straight from the password, and the
+// ISK from K and the transcript.
+TRIAL("CPace: generator and ISK per vectors B.1.1 and B.1.5") {
     if (missing()) return;
 
     same(spelled(net::cpacing::generator(text("Password"), ci, sid)), generator_g);

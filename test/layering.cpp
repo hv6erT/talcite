@@ -14,17 +14,22 @@ using namespace talcite;
 
 namespace {
 
+// A focusable node of a fixed size that paints its area with one letter and counts the clicks it
+// receives.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // Always focusable, so that it can hold the focus under and inside veils.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // The fixed size, whatever space is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int hit = 0;
 
 protected:
+    // Fills the whole given size with the letter, shifted to the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -35,6 +40,7 @@ protected:
         return made;
     }
 
+    // Counts a click that reached this box.
     bool handle(ui::ClickEvent&) override {
         ++hit;
 
@@ -46,13 +52,14 @@ private:
     char32_t what_ = U'?';
 };
 
-// Zasłona, która stawia pudełko tam, gdzie jej każą, zamiast na środku. Po to `seat()` jest
-// wirtualne: to jedyne, czym zasłony różnią się między sobą.
+// A veil that places its box where it is told, instead of in the middle. That is why `seat()` is
+// virtual: it is the only thing in which veils differ from one another.
 class Aside : public ui::Modal {
 public:
     explicit Aside(ui::Spot where) : ui::Modal(ui::ModalShape{false}), where_(where) {}
 
 protected:
+    // The box at the given spot, in the size its only child wants; nothing when there is no child.
     [[nodiscard]] ui::Area seat(ui::Size given) const override {
         if (children().empty()) return {};
 
@@ -65,14 +72,16 @@ private:
     ui::Spot where_;
 };
 
-// Najmniejsze potrzebne otoczenie: okno z treścią pod spodem i zasłona nad nią. Treścią jest
-// wiersz, żeby próba mogła dostawić do niej drugi węzeł obok pierwszego.
+// The smallest surroundings needed: a window with content underneath and a veil above it. The
+// content is a row, so that a trial can put a second node next to the first.
 struct Stage {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Row> under = std::make_shared<ui::Row>();
+    // The focusable content under the veils; it has the focus whenever no veil is open.
     std::shared_ptr<Box> body = std::make_shared<Box>(ui::Size{40, 10}, U'.');
 
+    // Puts the content into the window, the window into the root, and gives the content the focus.
     Stage() {
         under->children().add(body);
         window->content(under);
@@ -83,11 +92,11 @@ struct Stage {
 
 }
 
-// --- Co zasłona wie o sobie ----------------------------------------------------------------------
+// --- What a veil knows about itself --------------------------------------------------------------
 
-// Zasłona **jest ekranem**, choć widać na niej samo pudełko. Z tego jednego faktu bierze się cała
-// modalność, więc pilnujemy go wprost.
-TRIAL("Modal: zajmuje wszystko, co dostała, i leży nad rodzeństwem") {
+// A veil is the screen, although only its box is visible on it. All of modality comes from this one
+// fact, so we guard it directly.
+TRIAL("Modal: it takes everything it was given and lies above its siblings") {
     const ui::Modal one;
 
     same(one.wants({40, 10}), (ui::Size{40, 10}));
@@ -95,7 +104,7 @@ TRIAL("Modal: zajmuje wszystko, co dostała, i leży nad rodzeństwem") {
     ought(one.focusable());
 }
 
-TRIAL("Modal: pudełko staje na środku") {
+TRIAL("Modal: the box stands in the middle") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>(ui::ModalShape{false});
@@ -112,9 +121,9 @@ TRIAL("Modal: pudełko staje na środku") {
     same(made.at({14, 3}).letter, U'.');
 }
 
-// --- Modalność -----------------------------------------------------------------------------------
+// --- Modality ------------------------------------------------------------------------------------
 
-TRIAL("Modal: kliknięcie obok pudełka nie dochodzi pod spód") {
+TRIAL("Modal: a click beside the box does not reach what is underneath") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>(ui::ModalShape{false});
@@ -131,10 +140,10 @@ TRIAL("Modal: kliknięcie obok pudełka nie dochodzi pod spód") {
     same(stage.body->hit, 0);
 }
 
-// **Escape'a zasłona nie bierze.** Zamykał okno — czyli wykonywał czynność, której wołający nie
-// miał jak odwołać. Połyka go jak każdy inny klawisz, bo połykanie niczego nie robi, a modalność
-// inaczej się nie wyrazi.
-TRIAL("Modal: Esc niczego nie zamyka, tylko zostaje połknięty") {
+// A veil does not take Escape. Closing the window would perform an action the caller has no way to
+// cancel. It swallows Escape like any other key, because swallowing does nothing, and modality
+// cannot be expressed otherwise.
+TRIAL("Modal: Esc closes nothing, it is only swallowed") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>();
@@ -154,9 +163,9 @@ TRIAL("Modal: Esc niczego nie zamyka, tylko zostaje połknięty") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 }
 
-// Kto chce „Esc zamyka", wiesza uchwyt — i wtedy działa, bo uchwyt widzi klawisz niezależnie od
-// tego, że zasłona go połyka.
-TRIAL("Modal: zamykanie Escapem da się dołożyć uchwytem") {
+// Whoever wants "Esc closes" attaches a hook, and then it works, because a hook sees the key
+// regardless of the veil swallowing it.
+TRIAL("Modal: closing with Escape can be added with a hook") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>();
@@ -184,7 +193,7 @@ TRIAL("Modal: zamykanie Escapem da się dołożyć uchwytem") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
-TRIAL("Modal: Tab wodzi ogniskiem po chętnych i zawija") {
+TRIAL("Modal: Tab moves the focus over the willing nodes and wraps around") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>();
@@ -209,12 +218,12 @@ TRIAL("Modal: Tab wodzi ogniskiem po chętnych i zawija") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
-// --- Podział ------------------------------------------------------------------------------------
+// --- Division of roles ---------------------------------------------------------------------------
 
-// **To jest ta próba, dla której cały podział.** Enter naciskający przycisk podstawowy to reguła
-// formularza, nie zasłony. Goła zasłona ma go połknąć i nie robić nic — inaczej rozwinięta lista
-// zatwierdzałaby cudze okno tym samym klawiszem, którym wybiera pozycję.
-TRIAL("Modal: Enter nie naciska przycisku podstawowego") {
+// This is the trial the whole division of roles exists for. Enter pressing the primary button is a
+// rule of a form, not of a veil. A bare veil is to swallow it and do nothing; otherwise an open
+// list would confirm someone else's window with the same key it uses to choose an item.
+TRIAL("Modal: Enter does not press the primary button") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>();
@@ -234,8 +243,8 @@ TRIAL("Modal: Enter nie naciska przycisku podstawowego") {
 
     stage.window->open(one);
 
-    // Ognisko odsuwamy z przycisku na samą zasłonę: przycisk z ogniskiem zna Enter sam z siebie,
-    // a próba jest o tym, co robi z Enterem **okno**.
+    // We move the focus from the button to the veil itself: a button with the focus knows Enter on
+    // its own, and the trial is about what the window does with Enter.
     one->focus();
 
     ui::KeyEvent what{ui::Code::enter};
@@ -244,10 +253,10 @@ TRIAL("Modal: Enter nie naciska przycisku podstawowego") {
     same(done, 0);
 }
 
-// A w dialogu — czyli w zasłonie formularzowej — jest **tak samo**. Oznaczenie podstawowego rysuje
-// klamrę ze strzałkami i na tym kończy się jego rola; okno nie szuka przycisku po drzewie i nie
-// naciska go za wołającego. Enter należy do tego, kto ma ognisko.
-TRIAL("Dialog: Enter też nie naciska przycisku podstawowego") {
+// And in a dialog, that is, in a form-like veil, it is the same. Marking a button primary draws the
+// bracket with arrows, and that is where its role ends; the window does not search the tree for the
+// button and does not press it for the caller. Enter belongs to whoever has the focus.
+TRIAL("Dialog: Enter does not press the primary button either") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Dialog>();
@@ -271,16 +280,16 @@ TRIAL("Dialog: Enter też nie naciska przycisku podstawowego") {
 
     ui::KeyEvent what{ui::Code::enter};
 
-    // Zasłona klawisz połyka, bo jest modalna — ale nic nim nie naciska.
+    // The veil swallows the key, because it is modal, but presses nothing with it.
     ought(stage.top.dispatch(what));
     same(done, 0);
 }
 
-// --- Własne położenie pudełka --------------------------------------------------------------------
+// --- A custom position of the box ----------------------------------------------------------------
 
-// Zasłona pochodna stawia pudełko tam, gdzie każe `seat()` — i **nic poza tym się nie zmienia**:
-// przezroczystość, modalność i zamykanie zostają.
-TRIAL("Modal: pochodna stawia pudełko tam, gdzie każe box") {
+// A derived veil places the box where `seat()` says, and nothing else changes: transparency,
+// modality and closing stay.
+TRIAL("Modal: a derived veil places the box where seat says") {
     Stage stage;
 
     const auto one = std::make_shared<Aside>(ui::Spot{3, 6});
@@ -294,12 +303,12 @@ TRIAL("Modal: pochodna stawia pudełko tam, gdzie każe box") {
     same(made.at({3, 6}).letter, U'o');
     same(made.at({10, 7}).letter, U'o');
 
-    // Poza pudełkiem dalej widać to, co pod spodem.
+    // Outside the box, what is underneath is still visible.
     same(made.at({2, 6}).letter, U'.');
     same(made.at({3, 5}).letter, U'.');
 }
 
-TRIAL("Modal: pochodna dalej połyka kliknięcia obok i Escape") {
+TRIAL("Modal: a derived veil still swallows clicks beside it and Escape") {
     Stage stage;
 
     const auto one = std::make_shared<Aside>(ui::Spot{3, 6});
@@ -321,15 +330,15 @@ TRIAL("Modal: pochodna dalej połyka kliknięcia obok i Escape") {
     ought(!stage.window->empty());
 }
 
-// Uchwyt `CloseEvent` ma prawo otworzyć następną zasłonę — tak robi ekran, gdy po OK w oknie
-// opcji nie da się wczytać skórki i trzeba to powiedzieć. Otwarcie przesuwa wektor zasłon w trakcie
-// zdejmowania, a nowa zasłona zapamiętała ognisko w oknie, które właśnie schodzi z drzewa: obie
-// rzeczy trzeba przeżyć — zamykana schodzi, nowa zostaje z ogniskiem, a po jej zamknięciu ognisko
-// wraca tam, skąd wyszło pierwsze okno.
-TRIAL("Modal: uchwyt zamknięcia może otworzyć następną zasłonę, a ognisko wraca po obu") {
+// A `CloseEvent` hook has the right to open the next veil: a screen does that when, after OK in the
+// options window, the skin cannot be loaded and this has to be said. Opening shifts the vector of
+// veils in the middle of removal, and the new veil has remembered the focus in a window that is
+// just leaving the tree. Both have to be survived: the closed veil leaves, the new one stays with
+// the focus, and after it closes the focus returns to where the first window took it from.
+TRIAL("Modal: a close hook may open the next veil, and the focus returns after both") {
     Stage stage;
 
-    // Kilka zasłon otwartych i zamkniętych z rzędu, żeby wektor miał co przesuwać.
+    // Several veils opened and closed in a row, so that the vector has something to shift.
     for (int round = 0; round < 3; ++round) {
         const auto first = std::make_shared<ui::Modal>();
         const auto inside = std::make_shared<Box>(ui::Size{6, 3}, U'o');
@@ -367,9 +376,9 @@ TRIAL("Modal: uchwyt zamknięcia może otworzyć następną zasłonę, a ognisko
     }
 }
 
-// Zdjęcie niższej zasłony w stosie zostawia ognisko w wierzchniej — nie ściąga go do treści pod
-// spodem, bo ta jest wciąż zasłonięta.
-TRIAL("Modal: zdjęcie niższej zasłony zostawia ognisko wierzchniej") {
+// Removing a lower veil in the stack leaves the focus in the top one; it does not pull it down to
+// the content underneath, because that is still covered.
+TRIAL("Modal: removing a lower veil leaves the focus with the top one") {
     Stage stage;
 
     const auto lower = std::make_shared<ui::Modal>();
@@ -394,11 +403,11 @@ TRIAL("Modal: zdjęcie niższej zasłony zostawia ognisko wierzchniej") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
-// --- Zasłona jest modalna także dla ogniska ------------------------------------------------------
+// --- A veil is modal for the focus too -----------------------------------------------------------
 
-// Ta sama treść drugi raz nie jest zmianą. Wyjęcie i włożenie z powrotem zabrałoby jej ognisko,
-// a wołający, który ustawia treść „na pewno", nie spodziewa się niczego.
-TRIAL("Modals: ta sama treść drugi raz nie zabiera ogniska") {
+// The same content a second time is not a change. Taking it out and putting it back would take its
+// focus away, and a caller that sets the content "to be sure" expects nothing to happen.
+TRIAL("Modals: the same content a second time does not take the focus away") {
     Stage stage;
 
     stage.window->content(stage.under);
@@ -407,11 +416,11 @@ TRIAL("Modals: ta sama treść drugi raz nie zabiera ogniska") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
-// Węzeł pod otwartą zasłoną może poprosić o ognisko w każdej chwili — w twa robi to kartka
-// podglądu, gdy plik dojdzie z puli, choć nad nią wisi już komunikat o błędzie. Prośba nie jest
-// spełniana od razu, bo klawisze poszłyby pod okno, którego nie dałoby się wtedy zamknąć ani
-// Enterem, ani Escapem. Staje się za to tym, **dokąd ognisko wróci po zamknięciu** zasłony.
-TRIAL("Modal: prośba o ognisko spod zasłony wraca dopiero po jej zamknięciu") {
+// A node under an open veil may ask for the focus at any moment: in twa the preview sheet does so
+// when a file arrives from the pool, though an error message already hangs above it. The request is
+// not granted at once, because the keys would go under a window that could then be closed neither
+// with Enter nor with Escape. Instead, it becomes where the focus returns after the veil closes.
+TRIAL("Modal: a focus request from under a veil takes effect only after it closes") {
     Stage stage;
 
     const auto other = std::make_shared<Box>(ui::Size{5, 2}, U'y');
@@ -426,20 +435,20 @@ TRIAL("Modal: prośba o ognisko spod zasłony wraca dopiero po jej zamknięciu")
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
-    // Prośba z treści: ognisko zostaje w zasłonie.
+    // A request from the content: the focus stays in the veil.
     other->focus();
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
-    // Po zamknięciu ognisko idzie tam, gdzie prosił ostatni chętny — nie tam, skąd je wzięto.
+    // After closing, the focus goes where the last willing node asked, not where it was taken from.
     one->close();
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
-// Przykryty węzeł nie dostaje przy tym **żadnego zdarzenia ogniska**: mignięcie `FocusEvent`
-// i `UnfocusEvent` przestawiłoby panelom czynny panel, bo one śledzą go właśnie tak.
-TRIAL("Modal: wstrzymana prośba nie posyła zdarzeń ogniska") {
+// The covered node gets no focus event at all meanwhile: a flash of `FocusEvent` and `UnfocusEvent`
+// would switch the active panel, because panels track it exactly that way.
+TRIAL("Modal: a deferred request sends no focus events") {
     Stage stage;
 
     const auto other = std::make_shared<Box>(ui::Size{5, 2}, U'y');
@@ -477,9 +486,9 @@ TRIAL("Modal: wstrzymana prośba nie posyła zdarzeń ogniska") {
     same(went, 0);
 }
 
-// Prośba z niższej zasłony idzie do wierzchniej: to ona zejdzie pierwsza i to ona odda ognisko.
-// Prośba z wierzchniej zasłony jest zwykłą prośbą — nic jej nie wstrzymuje.
-TRIAL("Modal: prośba z niższej zasłony czeka, z wierzchniej działa od razu") {
+// A request from a lower veil goes to the top one: that one leaves first and gives back the focus.
+// A request from the top veil is an ordinary request; nothing defers it.
+TRIAL("Modal: a request from a lower veil waits, one from the top veil works at once") {
     Stage stage;
 
     const auto lower = std::make_shared<ui::Modal>();
@@ -507,17 +516,17 @@ TRIAL("Modal: prośba z niższej zasłony czeka, z wierzchniej działa od razu")
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
-    // Z niższej zasłony: czeka.
+    // From the lower veil: it waits.
     beside->focus();
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
-    // W wierzchniej: od razu.
+    // In the top one: at once.
     next->focus();
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(next.get()));
 
-    // Po zejściu wierzchniej ognisko trafia tam, gdzie prosiła niższa.
+    // After the top veil leaves, the focus goes where the lower one asked.
     upper->close();
 
     same(stage.top.focused_node(), static_cast<ui::Node*>(beside.get()));
@@ -527,11 +536,12 @@ TRIAL("Modal: prośba z niższej zasłony czeka, z wierzchniej działa od razu")
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
-// --- Warstwy: to, co zasłony i okna mają wspólne ---------------------------------------------------
+// --- Layers: what veils and windows have in common -----------------------------------------------
 
-// Zasłona i okno to **warstwy** jednego rodzaju: zamyka je pojemnik, a bieżąca jest ta na wierzchu.
-// Treść pod zasłonami warstwą nie jest i ani nie liczy się do `many()`, ani nie bywa bieżąca.
-TRIAL("Layers: bieżąca jest wierzchnia, treść się nie liczy") {
+// A veil and a window are layers of one kind: their container closes them, and the current one is
+// the one on top. The content under the veils is not a layer; it neither counts toward `many()` nor
+// is ever current.
+TRIAL("Layers: the current one is on top, the content does not count") {
     Stage stage;
 
     ought(stage.window->empty());
@@ -551,7 +561,7 @@ TRIAL("Layers: bieżąca jest wierzchnia, treść się nie liczy") {
     ought(!first->current());
 }
 
-TRIAL("Layers: close bez argumentu zamyka wierzchnią, a cudzej warstwy nie rusza") {
+TRIAL("Layers: close without an argument closes the top one and leaves a foreign layer alone") {
     Stage stage;
 
     const auto first = std::make_shared<ui::Modal>();
@@ -577,9 +587,9 @@ TRIAL("Layers: close bez argumentu zamyka wierzchnią, a cudzej warstwy nie rusz
     ought(stage.window->empty());
 }
 
-// Warstwa poza pojemnikiem nie ma czego zamykać i nie jest bieżąca — nie rzuca, bo zamykanie bywa
-// wołane z uchwytów, które nie wiedzą, czy okno jeszcze wisi.
-TRIAL("Layer: poza pojemnikiem close nic nie robi, a current jest fałszem") {
+// A layer outside a container has nothing to close and is not current. It does not throw, because
+// closing is sometimes called from hooks that do not know whether the window still hangs.
+TRIAL("Layer: outside a container close does nothing and current is false") {
     const auto alone = std::make_shared<ui::Modal>();
 
     int closed = 0;
@@ -596,7 +606,7 @@ TRIAL("Layer: poza pojemnikiem close nic nie robi, a current jest fałszem") {
     ought(!alone->current());
 }
 
-TRIAL("Layer: zamknięcie ogłasza się raz, a warstwa schodzi z drzewa") {
+TRIAL("Layer: closing is announced once and the layer leaves the tree") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Modal>();
@@ -621,9 +631,9 @@ TRIAL("Layer: zamknięcie ogłasza się raz, a warstwa schodzi z drzewa") {
     ought(stage.window->empty());
 }
 
-// Otwarcie, które się nie udało, nie zostawia po sobie śladu: warstwa wisząca już gdzie indziej
-// nie da się dopiąć drugi raz, a lista otwarcia nie może jej wtedy liczyć.
-TRIAL("Layers: nieudane otwarcie nie zostaje na liście") {
+// An opening that failed leaves no trace: a layer that already hangs elsewhere cannot be attached a
+// second time, and the list of openings must not count it then.
+TRIAL("Layers: a failed opening does not stay on the list") {
     Stage stage;
 
     const auto elsewhere = std::make_shared<ui::Modals>();

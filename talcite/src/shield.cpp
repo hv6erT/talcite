@@ -12,25 +12,26 @@
 
 #endif
 
-// **Sekret tylko dla tego użytkownika tego komputera.** Na Windows system szyfruje go kluczem
-// konta (DPAPI): plik z sekretem skopiowany na inne konto albo inny komputer nic nie mówi. Gdzie
-// indziej systemowego odpowiednika bez doinstalowania czegokolwiek nie ma — bajty zostają, jakie
-// są, a ochroną jest plik tylko dla właściciela, który zapisuje wołający. `shielding()` mówi,
-// która z dróg działa, żeby wołający mógł to zapisać obok sekretu.
+// A secret readable only by this user on this computer. On Windows the system encrypts it with the
+// account's key (DPAPI): a secret file copied to another account or another computer reveals
+// nothing. Elsewhere there is no system equivalent without installing something, so the bytes stay
+// as they are, and the protection is an owner-only file, which the caller writes. `shielding()`
+// says which of the two applies, so that the caller can record it next to the secret.
 namespace talcite {
 
 #ifdef _WIN32
 
 namespace {
 
-// Tablice systemu biorą długość jako DWORD — sekret dłuższy niż 4 GiB nie jest sekretem.
+// The system's blobs take the length as a DWORD; a secret longer than 4 GiB is not a secret, so it
+// is refused with `Trouble`.
 DATA_BLOB blob_of(const Bytes& given) {
     if (given.size() > 0xffffffffu) throw Trouble{"The secret is too long to shield."};
 
     DATA_BLOB made{};
 
-    // Pusty sekret dostaje wskazanie na bajt, którego nie czytamy: Wine (i nie wiadomo, czy nie
-    // któryś Windows) odrzuca pusty wskaźnik jako złe dane, choć długość jest zerowa.
+    // An empty secret gets a pointer to a byte that is never read: Wine (and possibly some Windows
+    // version) rejects a null pointer as bad data, even though the length is zero.
     static BYTE nothing = 0;
 
     made.cbData = static_cast<DWORD>(given.size());
@@ -39,10 +40,12 @@ DATA_BLOB blob_of(const Bytes& given) {
     return made;
 }
 
+// Throws `Trouble` with the message, the Windows error number in the text and as the code.
 [[noreturn]] void failed(const char* what, DWORD why) {
     throw Trouble{std::string{what} + " (Windows error " + std::to_string(why) + ").", static_cast<int>(why)};
 }
 
+// Copies the bytes out of a blob that the system allocated, then wipes and frees it.
 Bytes taken(DATA_BLOB& from) {
     Bytes made(from.cbData);
 
@@ -56,8 +59,11 @@ Bytes taken(DATA_BLOB& from) {
 
 }
 
+// Whether secrets are really encrypted here: on Windows they are.
 bool shielding() { return true; }
 
+// Encrypts the secret with the current user's DPAPI key, without any prompt; throws `Trouble` on
+// failure.
 Bytes shielded(const Bytes& plain) {
     DATA_BLOB in = blob_of(plain);
     DATA_BLOB out{};
@@ -68,6 +74,8 @@ Bytes shielded(const Bytes& plain) {
     return taken(out);
 }
 
+// Decrypts a secret made by `shielded` for the same user; throws `Trouble` when that fails (for
+// example on another account or computer).
 Bytes unshielded(const Bytes& kept) {
     DATA_BLOB in = blob_of(kept);
     DATA_BLOB out{};
@@ -80,10 +88,13 @@ Bytes unshielded(const Bytes& kept) {
 
 #else
 
+// Whether secrets are really encrypted here: outside Windows they are not.
 bool shielding() { return false; }
 
+// Outside Windows the secret is returned unchanged.
 Bytes shielded(const Bytes& plain) { return plain; }
 
+// Outside Windows the kept bytes are the secret itself.
 Bytes unshielded(const Bytes& kept) { return kept; }
 
 #endif

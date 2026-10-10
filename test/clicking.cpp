@@ -13,14 +13,16 @@ using namespace talcite;
 
 namespace {
 
-// Korzeń, który zapisuje, co do niego dotarło i w jakiej kolejności.
+// A root that records what reached it and in what order.
 class Sheet : public ui::Root {
 public:
+    // Takes any number of children.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     std::vector<std::string> told;
 
 protected:
+    // Records a raw mouse event as a press, a release or a motion.
     bool handle(ui::MouseEvent& what) override {
         told.push_back(what.press() == ui::Press::down ? "wciśnięcie"
                        : what.press() == ui::Press::up ? "puszczenie"
@@ -29,6 +31,7 @@ protected:
         return true;
     }
 
+    // Records a click with its cell.
     bool handle(ui::ClickEvent& what) override {
         told.push_back("kliknięcie " + std::to_string(what.where().x) + "," +
                        std::to_string(what.where().y));
@@ -36,6 +39,7 @@ protected:
         return true;
     }
 
+    // Records a double click with its cell.
     bool handle(ui::DoubleClickEvent& what) override {
         told.push_back("podwójne " + std::to_string(what.where().x) + "," +
                        std::to_string(what.where().y));
@@ -44,24 +48,29 @@ protected:
     }
 };
 
+// A focusable node of a fixed size that counts the clicks and double clicks it gets.
 class Box : public ui::Node {
 public:
     explicit Box(ui::Size wants) : wants_(wants) {}
 
+    // Always takes the focus.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // Always the size it was made with.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int clicks = 0;
     int doubles = 0;
 
 protected:
+    // Counts a click.
     bool handle(ui::ClickEvent&) override {
         ++clicks;
 
         return true;
     }
 
+    // Counts a double click.
     bool handle(ui::DoubleClickEvent&) override {
         ++doubles;
 
@@ -72,19 +81,22 @@ private:
     ui::Size wants_;
 };
 
-// **Zegar próby.** Zdarzenia niosą chwile podane wprost, więc o tym, czy drugie kliknięcie
-// zmieściło się w oknie, rozstrzyga próba, a nie obciążenie maszyny. Czas stoi, dopóki próba
-// sama go nie przesunie przez `later`.
+// The trial's clock. Events carry moments given directly, so whether a second click fit in the
+// window is decided by the trial, not by the machine's load. Time stands still until the trial
+// itself moves it with `later`.
 std::chrono::steady_clock::time_point moment{};
 
+// Moves the trial's clock forward by `much`.
 void later(std::chrono::milliseconds much) { moment += much; }
 
+// Sends a press of `which` at `where` at the trial's current moment.
 void pressed(ui::Root& onto, ui::Spot where, ui::Mouse which = ui::Mouse::left) {
     ui::MouseEvent what{where, ui::Press::down, which, {}, moment};
 
     (void)onto.dispatch(what);
 }
 
+// Sends a release of `which` at `where` at the trial's current moment.
 void freed(ui::Root& onto, ui::Spot where, ui::Mouse which = ui::Mouse::left) {
     ui::MouseEvent what{where, ui::Press::up, which, {}, moment};
 
@@ -93,7 +105,7 @@ void freed(ui::Root& onto, ui::Spot where, ui::Mouse which = ui::Mouse::left) {
 
 }
 
-TRIAL("Kliknięcie: wciśnięcie i puszczenie w tej samej kratce to kliknięcie, od razu") {
+TRIAL("Click: press and release in the same cell is a click, at once") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -105,7 +117,7 @@ TRIAL("Kliknięcie: wciśnięcie i puszczenie w tej samej kratce to kliknięcie,
     same(top.told[2], std::string{"kliknięcie 3,2"});
 }
 
-TRIAL("Kliknięcie: po oknie dwukliku następne w tej samej kratce jest znów pojedyncze") {
+TRIAL("Click: after the double-click window the next one in the same cell is single again") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -119,15 +131,16 @@ TRIAL("Kliknięcie: po oknie dwukliku następne w tej samej kratce jest znów po
     same(top.told.size(), std::size_t{6});
     same(top.told.back(), std::string{"kliknięcie 3,2"});
 
-    // I to ono otwiera nowe okno: następne tuż po nim jest dwuklikiem.
+    // And it opens a new window: the next one right after it is a double click.
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-// Granica okna należy do okna: drugie dokładnie po `double_click()` jeszcze jest dwuklikiem.
-TRIAL("Kliknięcie: drugie równo na granicy okna jest dwuklikiem") {
+// The window's limit belongs to the window: a second click exactly `double_click()` later is still
+// a double click.
+TRIAL("Click: a second one exactly at the window's limit is a double click") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -141,7 +154,7 @@ TRIAL("Kliknięcie: drugie równo na granicy okna jest dwuklikiem") {
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-TRIAL("Kliknięcie: okno dwukliku ustawia się na korzeniu, domyślnie 400 ms") {
+TRIAL("Click: the double-click window is set on the root, 400 ms by default") {
     Sheet top;
 
     same(top.double_click(), std::chrono::milliseconds{400});
@@ -168,8 +181,8 @@ TRIAL("Kliknięcie: okno dwukliku ustawia się na korzeniu, domyślnie 400 ms") 
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-// Chwila, której nie podano, to chwila powstania zdarzenia — tak pracuje terminal.
-TRIAL("Kliknięcie: zdarzenie myszy bez podanej chwili niesie teraz") {
+// A moment that is not given is the moment the event is made; this is how the terminal works.
+TRIAL("Click: a mouse event without a given moment carries now") {
     const auto before = std::chrono::steady_clock::now();
 
     const ui::MouseEvent what{{0, 0}, ui::Press::down, ui::Mouse::left};
@@ -180,7 +193,7 @@ TRIAL("Kliknięcie: zdarzenie myszy bez podanej chwili niesie teraz") {
     ought(what.when() <= after);
 }
 
-TRIAL("Kliknięcie: drugie w oknie daje dwuklik, bez drugiego pojedynczego") {
+TRIAL("Click: a second one within the window gives a double click, without a second single") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -190,7 +203,7 @@ TRIAL("Kliknięcie: drugie w oknie daje dwuklik, bez drugiego pojedynczego") {
 
     same(top.told.back(), std::string{"podwójne 3,2"});
 
-    // Jedno kliknięcie — to pierwsze, jak w Windows; drugie puszczenie jest już dwuklikiem.
+    // One click, the first, as in Windows; the second release is already a double click.
     int clicks = 0;
 
     for (const std::string& one : top.told) clicks += one.rfind("kliknięcie", 0) == 0 ? 1 : 0;
@@ -198,7 +211,7 @@ TRIAL("Kliknięcie: drugie w oknie daje dwuklik, bez drugiego pojedynczego") {
     same(clicks, 1);
 }
 
-TRIAL("Kliknięcie: po podwójnym zaczynamy od nowa") {
+TRIAL("Click: after a double click it starts over") {
     Sheet top;
 
     pressed(top, {1, 1});
@@ -211,14 +224,14 @@ TRIAL("Kliknięcie: po podwójnym zaczynamy od nowa") {
 
     same(top.told.back(), std::string{"kliknięcie 1,1"});
 
-    // Trzecie otworzyło nowe okno, więc czwarte jest znów dwuklikiem.
+    // The third opened a new window, so the fourth is a double click again.
     pressed(top, {1, 1});
     freed(top, {1, 1});
 
     same(top.told.back(), std::string{"podwójne 1,1"});
 }
 
-TRIAL("Kliknięcie: puszczenie w innej kratce to ciągnięcie") {
+TRIAL("Click: release in another cell is a drag") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -226,14 +239,14 @@ TRIAL("Kliknięcie: puszczenie w innej kratce to ciągnięcie") {
 
     same(top.told.size(), std::size_t{2});
 
-    // Ciągnięcie nie otworzyło okna: kliknięcie w kratkę puszczenia jest pojedyncze.
+    // The drag opened no window: a click in the release cell is single.
     pressed(top, {5, 2});
     freed(top, {5, 2});
 
     same(top.told.back(), std::string{"kliknięcie 5,2"});
 }
 
-TRIAL("Kliknięcie: ciągnięcie nie psuje okna dwukliku po kliknięciu") {
+TRIAL("Click: a drag does not break the double-click window after a click") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -248,7 +261,7 @@ TRIAL("Kliknięcie: ciągnięcie nie psuje okna dwukliku po kliknięciu") {
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-TRIAL("Kliknięcie: drugie w innej kratce jest osobnym pojedynczym") {
+TRIAL("Click: a second one in another cell is a separate single") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -259,14 +272,14 @@ TRIAL("Kliknięcie: drugie w innej kratce jest osobnym pojedynczym") {
 
     same(top.told.back(), std::string{"kliknięcie 8,4"});
 
-    // Okno przeniosło się na drugą kratkę: trzecie w niej jest dwuklikiem.
+    // The window moved to the second cell: a third click there is a double click.
     pressed(top, {8, 4});
     freed(top, {8, 4});
 
     same(top.told.back(), std::string{"podwójne 8,4"});
 }
 
-TRIAL("Kliknięcie: drugie innym przyciskiem nie jest podwójnym") {
+TRIAL("Click: a second one with another button is not a double") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -277,14 +290,14 @@ TRIAL("Kliknięcie: drugie innym przyciskiem nie jest podwójnym") {
 
     same(top.told.back(), std::string{"kliknięcie 3,2"});
 
-    // Okno przeszło na prawy: drugie prawym jest dwuklikiem.
+    // The window moved to the right button: a second right click is a double click.
     pressed(top, {3, 2}, ui::Mouse::right);
     freed(top, {3, 2}, ui::Mouse::right);
 
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-TRIAL("Kliknięcie: puszczenie innego przycisku niż wciśnięty nic nie znaczy") {
+TRIAL("Click: releasing a button other than the pressed one means nothing") {
     Sheet top;
 
     pressed(top, {3, 2}, ui::Mouse::left);
@@ -293,21 +306,21 @@ TRIAL("Kliknięcie: puszczenie innego przycisku niż wciśnięty nic nie znaczy"
     same(top.told.size(), std::size_t{2});
 }
 
-TRIAL("Kliknięcie: samo puszczenie, bez wciśnięcia, nic nie zaczyna") {
+TRIAL("Click: a release alone, without a press, starts nothing") {
     Sheet top;
 
     freed(top, {3, 2});
 
     same(top.told.size(), std::size_t{1});
 
-    // Nic nie czeka: pełne kliknięcie w tę kratkę jest pojedyncze.
+    // Nothing is waiting: a full click in this cell is single.
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
     same(top.told.back(), std::string{"kliknięcie 3,2"});
 }
 
-TRIAL("Kliknięcie: ruch myszy niczego nie rozstrzyga") {
+TRIAL("Click: mouse motion decides nothing") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -323,7 +336,7 @@ TRIAL("Kliknięcie: ruch myszy niczego nie rozstrzyga") {
     same(top.told.back(), std::string{"podwójne 3,2"});
 }
 
-TRIAL("Kliknięcie: surowe zdarzenie idzie przed pochodnym") {
+TRIAL("Click: the raw event goes before the derived one") {
     Sheet top;
 
     pressed(top, {3, 2});
@@ -337,7 +350,7 @@ TRIAL("Kliknięcie: surowe zdarzenie idzie przed pochodnym") {
     same(top.told[5], std::string{"podwójne 3,2"});
 }
 
-TRIAL("Kliknięcie: celuje w węzeł pod kursorem, nie w korzeń") {
+TRIAL("Click: targets the node under the cursor, not the root") {
     Sheet top;
 
     const auto column = std::make_shared<ui::Column>();
@@ -366,15 +379,16 @@ TRIAL("Kliknięcie: celuje w węzeł pod kursorem, nie w korzeń") {
     same(second->doubles, 1);
 }
 
-// --- Przytrzymanie myszy -------------------------------------------------------------------------
+// --- Mouse capture -------------------------------------------------------------------------------
 
 namespace {
 
-// Pole, które liczy surowe zdarzenia myszy i — gdy każemy — prosi przy wciśnięciu o przytrzymanie.
+// A field that counts raw mouse events and, when told to, asks for capture on a press.
 class Grabber : public ui::Node {
 public:
     explicit Grabber(bool grabs) : grabs_(grabs) {}
 
+    // Five cells by one.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return {5, 1}; }
 
     int downs = 0;
@@ -382,6 +396,7 @@ public:
     int ups = 0;
 
 protected:
+    // Counts the event by kind and, on a press, asks the root for capture when `grabs_` is set.
     bool handle(ui::MouseEvent& what) override {
         if (what.press() == ui::Press::down) {
             ++downs;
@@ -400,12 +415,14 @@ private:
     bool grabs_ = false;
 };
 
+// Two `Grabber` fields side by side in a row of ten cells; only the left one may capture.
 struct Pair {
     ui::Root top;
     std::shared_ptr<ui::Row> row = std::make_shared<ui::Row>();
     std::shared_ptr<Grabber> left;
     std::shared_ptr<Grabber> right = std::make_shared<Grabber>(false);
 
+    // Builds the tree and draws it once, so that the fields have their areas.
     explicit Pair(bool grabs) : left(std::make_shared<Grabber>(grabs)) {
         row->children().add(left);
         row->children().add(right);
@@ -414,6 +431,7 @@ struct Pair {
         (void)top.render({{0, 0}, {10, 1}});
     }
 
+    // Sends a raw mouse event to the root.
     void sent(ui::Spot where, ui::Press press, ui::Mouse which = ui::Mouse::left) {
         ui::MouseEvent what{where, press, which};
 
@@ -423,9 +441,9 @@ struct Pair {
 
 }
 
-// Węzeł, który poprosił o przytrzymanie, dostaje ruch i puszczenie **gdziekolwiek jest kursor**,
-// aż do puszczenia. Po nim ruch znów idzie pod kursor.
-TRIAL("Root: przytrzymany dostaje ruch i puszczenie poza sobą") {
+// A node that asked for capture gets motion and the release wherever the cursor is, until the
+// release. After it, motion goes under the cursor again.
+TRIAL("Root: the captor gets motion and release outside itself") {
     Pair pair{true};
 
     pair.sent({1, 0}, ui::Press::down);
@@ -444,9 +462,9 @@ TRIAL("Root: przytrzymany dostaje ruch i puszczenie poza sobą") {
     same(pair.right->moves, 1);
 }
 
-// Przytrzymanie jest na życzenie: kto nie poprosił, nie dostaje ruchu poza sobą — tak działa
-// najechanie myszą na pozycje menu.
-TRIAL("Root: bez prośby ruch idzie pod kursor") {
+// Capture is on request: whoever did not ask gets no motion outside itself; this is how hovering
+// over menu items works.
+TRIAL("Root: without a request motion goes under the cursor") {
     Pair pair{false};
 
     pair.sent({1, 0}, ui::Press::down);
@@ -460,9 +478,9 @@ TRIAL("Root: bez prośby ruch idzie pod kursor") {
     same(pair.right->ups, 1);
 }
 
-// Zgubione puszczenie nie przywiązuje myszy na zawsze: nowe wciśnięcie idzie pod kursor
-// i zdejmuje stare przytrzymanie.
-TRIAL("Root: wciśnięcie zdejmuje stare przytrzymanie") {
+// A lost release does not tie the mouse forever: a new press goes under the cursor and removes
+// the old capture.
+TRIAL("Root: a press removes an old capture") {
     Pair pair{true};
 
     pair.sent({1, 0}, ui::Press::down);
@@ -475,8 +493,8 @@ TRIAL("Root: wciśnięcie zdejmuje stare przytrzymanie") {
     same(pair.right->moves, 1);
 }
 
-// Przytrzymany, który zszedł z drzewa w trakcie ciągnięcia, nie dostaje już nic.
-TRIAL("Root: przytrzymany, który zszedł z drzewa, nie dostaje nic") {
+// A captor that left the tree during a drag gets nothing more.
+TRIAL("Root: a captor that left the tree gets nothing") {
     Pair pair{true};
 
     pair.sent({1, 0}, ui::Press::down);
@@ -484,7 +502,7 @@ TRIAL("Root: przytrzymany, który zszedł z drzewa, nie dostaje nic") {
     (void)pair.row->children().remove(pair.left.get());
     (void)pair.top.render({{0, 0}, {10, 1}});
 
-    // Prawe pole przesunęło się na miejsce lewego.
+    // The right field has moved into the left one's place.
     pair.sent({1, 0}, ui::Press::move);
 
     same(pair.left->moves, 0);

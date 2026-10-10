@@ -29,6 +29,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -39,6 +40,7 @@ private:
     talcite::Term& term_;
 };
 
+// A style with the given foreground and background and nothing else set.
 talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
@@ -48,12 +50,13 @@ talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     return made;
 }
 
+// A true-color value from its three components.
 talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
-// Skórka barwna: te same role, inne wartości. Żaden widżet o niej nie wie — pyta o rolę i dostaje
-// to, co ta skórka mówi.
+// A colored skin: the same roles, different values. No widget knows about it; each asks for its
+// role and gets what this skin says.
 talcite::ui::Skin coloured() {
     const talcite::Color background = tinted(0, 0, 140);
     const talcite::Color light = tinted(200, 200, 200);
@@ -85,8 +88,8 @@ talcite::ui::Skin coloured() {
     }};
 }
 
-// Skórka dla terminala bez znaków rysunkowych. **To jest cały zastępnik ASCII** — nie gałąź w
-// kodzie, tylko druga paleta.
+// A skin for a terminal without box-drawing characters. This is the whole ASCII fallback: not a
+// branch in the code, only a second palette.
 talcite::ui::Skin plainly() {
     return talcite::ui::Skin{{},
                           {
@@ -113,8 +116,8 @@ talcite::ui::Skin plainly() {
 
 }
 
-// Jeden ekran, trzy palety. **Przełączenie to jedno wywołanie na korzeniu** — bez powiadamiania,
-// bez obchodzenia drzewa i bez przebudowy czegokolwiek: następna klatka po prostu czyta co innego.
+// One screen, three palettes. Switching is one call on the root: no notifications, no walk over the
+// tree and no rebuilding of anything; the next frame simply reads something else.
 int main() {
     talcite::Term term;
 
@@ -123,32 +126,32 @@ int main() {
     const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto menus = std::make_shared<talcite::ui::Menubar>();
 
-    // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
+    // The application gives the key that opens the menus; the library assigns none by itself.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
 
 
-    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — skórki");
+    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — skins");
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    const auto told = std::make_shared<talcite::ui::Span>("skórka wbudowana");
+    const auto told = std::make_shared<talcite::ui::Span>("built-in skin");
 
     const auto list =
         std::make_shared<talcite::ui::List>(talcite::ui::plenty, 6, talcite::ui::ScrollShape{true});
 
     for (int which = 0; which < 30; ++which)
-        list->children().add(std::make_shared<talcite::ui::ListItem>("bardzo długa nazwa pliku numer " +
+        list->children().add(std::make_shared<talcite::ui::ListItem>("a very long file name, number " +
                                                        std::to_string(which) + ".txt"));
 
-    const auto field = std::make_shared<talcite::ui::Field>(30, "nazwa");
+    const auto field = std::make_shared<talcite::ui::Field>(30, "name");
 
     const auto gauge = std::make_shared<talcite::ui::Gauge>(40);
 
     gauge->part(0.62);
 
-    const auto yes = std::make_shared<talcite::ui::Button>("Zmień");
-    const auto no = std::make_shared<talcite::ui::Button>("Przerwij");
+    const auto yes = std::make_shared<talcite::ui::Button>("Change");
+    const auto no = std::make_shared<talcite::ui::Button>("Stop");
 
-    yes->keys().add(U'Z');
+    yes->keys().add(U'C');
     no->keys().add(U'P');
     yes->primary(true);
 
@@ -158,9 +161,9 @@ int main() {
     row->children().add(no);
 
     column->children().add(told);
-    column->children().add(std::make_shared<talcite::ui::Line>("Pliki"));
+    column->children().add(std::make_shared<talcite::ui::Line>("Files"));
     column->children().add(list);
-    column->children().add(std::make_shared<talcite::ui::Line>("Nazwa"));
+    column->children().add(std::make_shared<talcite::ui::Line>("Name"));
     column->children().add(field);
     column->children().add(gauge);
     column->children().add(row);
@@ -169,42 +172,42 @@ int main() {
     menus->content(frame);
     legend->content(menus);
 
-    const auto file = menus->add("Plik");
+    const auto file = menus->add("File");
 
-    file->children().add(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"));
+    file->children().add(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
+    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
-    (void)menus->add("Widok");
+    (void)menus->add("View");
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zwykła"), [&sheet, told] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Plain"), [&sheet, told] {
         sheet.skin(talcite::ui::Skin{});
-        told->text("skórka wbudowana");
+        told->text("built-in skin");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Barwna"), [&sheet, told] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Color"), [&sheet, told] {
         sheet.skin(coloured());
-        told->text("skórka barwna — te same role, inne wartości");
+        told->text("color skin — the same roles, different values");
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f4, "ASCII"), [&sheet, told] {
         sheet.skin(plainly());
-        told->text("skórka ASCII — same znaki, bez rysunkowych");
+        told->text("ASCII skin — plain characters, no box drawing");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "MenuGr"), [menus] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 
     list->focus();
 
     term.show(sheet);
-    term.title("talcite — skórki");
+    term.title("talcite — skins");
 
     term.run();
 

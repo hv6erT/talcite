@@ -16,11 +16,12 @@ const net::Patience soon{4000};
 
 
 
+// A UDP socket on an IPv4 loopback address with a port chosen by the system.
 net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 }
 
-TRIAL("Poczta: dostaje port od systemu") {
+TRIAL("Post: gets a port from the system") {
     const net::Udp one = standing();
 
     ought(one.held());
@@ -28,7 +29,7 @@ TRIAL("Poczta: dostaje port od systemu") {
     same(one.mine().text(), std::string{"127.0.0.1"});
 }
 
-TRIAL("Poczta: pusty adres odrzuca") {
+TRIAL("Post: an empty address is refused") {
     bool threw = false;
 
     try {
@@ -42,7 +43,7 @@ TRIAL("Poczta: pusty adres odrzuca") {
     ought(threw);
 }
 
-TRIAL("Poczta: datagram dochodzi i wie, od kogo") {
+TRIAL("Post: a datagram arrives and knows who sent it") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -57,7 +58,7 @@ TRIAL("Poczta: datagram dochodzi i wie, od kogo") {
     same(made.from.text(), std::string{"127.0.0.1"});
 }
 
-TRIAL("Poczta: pusty datagram to nie to samo, co brak datagramu") {
+TRIAL("Post: an empty datagram is not the same as no datagram") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -71,7 +72,7 @@ TRIAL("Poczta: pusty datagram to nie to samo, co brak datagramu") {
     ought(made.from.held());
 }
 
-TRIAL("Poczta: obcięty datagram zgłasza kłopot, a nie kawałek") {
+TRIAL("Post: a truncated datagram reports trouble, not a piece") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -92,7 +93,7 @@ TRIAL("Poczta: obcięty datagram zgłasza kłopot, a nie kawałek") {
     ought(cut);
 }
 
-TRIAL("Poczta: cisza kończy się terminem") {
+TRIAL("Post: silence ends with the deadline") {
     const net::Udp here = standing();
 
     bool late = false;
@@ -106,7 +107,7 @@ TRIAL("Poczta: cisza kończy się terminem") {
     ought(late);
 }
 
-TRIAL("Poczta: drugie odbieranie naraz dostaje odmowę") {
+TRIAL("Post: a second receive at the same time is refused") {
     const net::Udp here = standing();
 
     auto first = here.receive(1024, net::Patience{300});
@@ -127,7 +128,7 @@ TRIAL("Poczta: drugie odbieranie naraz dostaje odmowę") {
     }
 }
 
-TRIAL("Poczta: pusty adres nie jest celem") {
+TRIAL("Post: an empty address is not a destination") {
     const net::Udp here = standing();
 
     bool amiss = false;
@@ -141,7 +142,7 @@ TRIAL("Poczta: pusty adres nie jest celem") {
     ought(amiss);
 }
 
-TRIAL("Poczta: kilka datagramów po kolei zachowuje kolejność na pętli") {
+TRIAL("Post: several datagrams in a row keep their order on loopback") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -154,7 +155,7 @@ TRIAL("Poczta: kilka datagramów po kolei zachowuje kolejność na pętli") {
     }
 }
 
-TRIAL("Poczta: odpowiedź wraca pod adres nadawcy") {
+TRIAL("Post: the reply comes back to the sender's address") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -171,7 +172,7 @@ TRIAL("Poczta: odpowiedź wraca pod adres nadawcy") {
     same(text(back.await().bytes), std::string{"odpowiedź"});
 }
 
-TRIAL("Poczta: zamknięta nie przyjmuje zgłoszeń") {
+TRIAL("Post: a closed socket accepts no requests") {
     net::Udp here = standing();
 
     here.close();
@@ -187,7 +188,7 @@ TRIAL("Poczta: zamknięta nie przyjmuje zgłoszeń") {
     ought(amiss);
 }
 
-TRIAL("Poczta: zamknięcie przerywa czekające odbieranie") {
+TRIAL("Post: closing cancels a pending receive") {
     net::Udp here = standing();
 
     auto waiting = here.receive(1024, soon);
@@ -207,8 +208,9 @@ TRIAL("Poczta: zamknięcie przerywa czekające odbieranie") {
     ought(amiss);
 }
 
-// Poczta po zamknięciu odpowiada grzecznie na wszystko — również na pytanie o własny adres.
-TRIAL("Poczta: adres po zamknięciu jest pusty, a nie wybucha") {
+// After closing, the socket answers everything politely, including the question about its own
+// address.
+TRIAL("Post: the address after closing is empty instead of blowing up") {
     net::Udp one{net::Address::loopback(net::Family::four, 0)};
 
     one.close();
@@ -216,9 +218,9 @@ TRIAL("Poczta: adres po zamknięciu jest pusty, a nie wybucha") {
     ought(!one.mine().held());
 }
 
-// Anulowane odbieranie zostawiało gniazdo poczty zajęte na zawsze — ta sama wada, co
-// w strumieniu, bo mechanizm jest jeden.
-TRIAL("Poczta: anulowane odbieranie zwalnia gniazdo") {
+// A cancelled receive must free the socket; it is the same rule as in the stream, because the
+// mechanism is shared.
+TRIAL("Post: a cancelled receive frees the socket") {
     const net::Udp here = standing();
     const net::Udp there = standing();
 
@@ -251,9 +253,10 @@ TRIAL("Poczta: anulowane odbieranie zwalnia gniazdo") {
     ought(false);
 }
 
-// **Anulowanie zwalnia kierunek od razu** — ta sama reguła i ten sam powód co przy bramie
-// i strumieniu, opisane w `streaming.cpp`. Bez odczekiwania pośrodku, bo to ono maskowało usterkę.
-TRIAL("Poczta: po anulowaniu można od razu odbierać znowu") {
+// Cancelling frees the direction at once: the same rule and the same reason as for the listener
+// and the stream, described in streaming.cpp. There is no wait in between, since a wait would hide
+// the failure.
+TRIAL("Post: after cancelling, receiving again works at once") {
     const net::Udp one = standing();
     const net::Udp other = standing();
 
@@ -273,7 +276,7 @@ TRIAL("Poczta: po anulowaniu można od razu odbierać znowu") {
     same(text(waiting.await().bytes), std::string{"znowu"});
 }
 
-TRIAL("Poczta: sto anulowań pod rząd nie zajmuje jej na stałe") {
+TRIAL("Post: a hundred cancels in a row do not leave it busy for good") {
     const net::Udp one = standing();
     const net::Udp other = standing();
 
@@ -295,7 +298,7 @@ TRIAL("Poczta: sto anulowań pod rząd nie zajmuje jej na stałe") {
     same(text(waiting.await().bytes), std::string{"po stu"});
 }
 
-TRIAL("Poczta: gniazdo lokalne odmawia, bo datagramów tam nie ma") {
+TRIAL("Post: a local socket refuses, because there are no datagrams there") {
     bool told = false;
 
     try {

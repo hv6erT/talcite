@@ -23,10 +23,10 @@
 
 #endif
 
-// **Katalog tylko dla tego użytkownika i znak „już działam".** Dwie rzeczy, których potrzebuje
-// program w tle rozmawiający z programem na ekranie (demon udostępniania w twa): miejsce na gniazdo
-// lokalne, do którego nikt inny nie zajrzy, i blokada jednej kopii, która znika sama, gdy program
-// padnie.
+// A folder for this user only, and an "I am already running" mark. These are the two things a
+// background program talking to a program on the screen needs (the sharing daemon in twa): a place
+// for a local socket that nobody else can look into, and a single-instance lock that disappears by
+// itself when the program dies.
 namespace talcite {
 
 namespace fs {
@@ -37,9 +37,11 @@ namespace stood = std::filesystem;
 
 #ifdef _WIN32
 
-// FOLDERID_LocalAppData — stała Windows, wpisana tu z tego samego powodu co foldery znane w `fs.cpp`.
+// FOLDERID_LocalAppData, a Windows constant written out here for the same reason as the known
+// folders in `fs.cpp`.
 const GUID local_app_data{0xf1b32785, 0x6fba, 0x4fcf, {0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91}};
 
+// The user's local application data folder. Throws when Windows does not give one.
 path runtime_at() {
     PWSTR told = nullptr;
 
@@ -56,9 +58,9 @@ path runtime_at() {
 
 #else
 
-// Katalog jest nasz, gdy jest katalogiem (nie dowiązaniem), należy do nas i nikt poza nami nie ma
-// do niego żadnego prawa. Cudzy albo otwarty — nie nadaje się, bo przez niego ktoś mógłby podsunąć
-// własne gniazdo albo czytać nasze.
+// Whether the folder is ours: a folder (not a link) that belongs to us, to which nobody else has
+// any right. Someone else's or an open one will not do, because through it someone could slip in
+// their own socket or read ours.
 bool private_folder(const path& where) {
     struct stat told{};
 
@@ -67,18 +69,20 @@ bool private_folder(const path& where) {
     return S_ISDIR(told.st_mode) && told.st_uid == ::geteuid() && (told.st_mode & 077) == 0;
 }
 
+// A private folder for runtime files: XDG_RUNTIME_DIR when it really is private, or else our own
+// folder in the temporary folder. Throws when no private folder can be had.
 path runtime_at() {
-    // XDG_RUNTIME_DIR zakłada system przy logowaniu, z prawami 0700 i tylko dla nas — jeśli taki
-    // jest naprawdę.
+    // The system creates XDG_RUNTIME_DIR at login, with mode 0700 and for us only, if it really is
+    // such a folder.
     if (const char* given = std::getenv("XDG_RUNTIME_DIR"); given != nullptr && *given == '/') {
         const path made{given};
 
         if (private_folder(made)) return made;
     }
 
-    // Bez niego: własny katalog w katalogu tymczasowym, z numerem użytkownika w nazwie. Katalog
-    // tymczasowy jest wspólny, więc ktoś mógł go założyć przed nami — wtedy nie jest nasz i nie
-    // bierzemy go, zamiast rozluźniać jego prawa.
+    // Without it: our own folder in the temporary folder, with the user number in its name. The
+    // temporary folder is shared, so someone could have created it before us; then it is not ours,
+    // and we do not take it rather than loosen its permissions.
     const path made = temp() / ("talcite-" + std::to_string(::geteuid()));
 
     if (::mkdir(made.c_str(), 0700) != 0 && errno != EEXIST) core::amiss("Cannot create the runtime folder.", made);
@@ -98,6 +102,7 @@ path runtime_at() {
 
 }
 
+// The private runtime folder, found on the pool; the promise fails when there is none.
 Promise<path> runtime() {
     return Promise<path>{[](auto resolve, auto) { resolve(runtime_at()); }};
 }
@@ -105,8 +110,10 @@ Promise<path> runtime() {
 }
 
 struct Claim::Held {
+    // Gives the lock back when the last owner lets go.
     ~Held() { release(); }
 
+    // Closes the lock file, which releases the lock; safe to call twice.
     void release() {
 #ifdef _WIN32
         if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
@@ -130,6 +137,7 @@ struct Claim::Held {
 
 namespace {
 
+// The empty path a released claim reports.
 const fs::path& nowhere() {
     static const fs::path one;
 
@@ -138,15 +146,15 @@ const fs::path& nowhere() {
 
 }
 
-// **Blokada jednej kopii.** Plik otwarty na wyłączność — na Windows bez dzielenia, na POSIX-ie
-// z `flock` — trzymany, dopóki żyje uchwyt. Proces, który padnie, oddaje go razem z deskryptorami,
-// więc po awarii nie zostaje nic do sprzątania: plik stoi dalej, ale nikt go nie trzyma. Pliku
-// nie kasujemy przy zwolnieniu — skasowany między otwarciem a blokadą dwóch chętnych dałby dwie
-// blokady na dwóch różnych plikach o jednej nazwie.
+// The single-instance lock. A file opened exclusively (on Windows without sharing, on POSIX with
+// `flock`) and held as long as the handle lives. A process that dies gives it back together with
+// its descriptors, so after a crash there is nothing to clean up: the file stays, but nobody holds
+// it. We do not delete the file on release: deleted between the open and the lock of two
+// contenders, it would give two locks on two different files with one name.
 //
-// Zajęte przez kogoś innego to pustka, a nie odmowa: „już działa" jest odpowiedzią, a odmową jest
-// tylko to, czego nie dało się sprawdzić (brak katalogu, brak praw). Na POSIX-ie dowiązania nie
-// przechodzimy — cudze dowiązanie w naszym miejscu nie ma prawa wskazać pliku, który zablokujemy.
+// Taken by someone else is an empty result, not a refusal: "already running" is an answer, and a
+// refusal is only what could not be checked (no folder, no permissions). On POSIX we do not follow
+// links: someone else's link in our place must not point at a file we would lock.
 Promise<std::optional<Claim>> Claim::taken(fs::path where) {
     return Promise<std::optional<Claim>>{[where = std::move(where)](auto resolve, auto) {
         auto held = std::make_shared<Held>();
@@ -192,8 +200,10 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
     }};
 }
 
+// The path of the lock file, or an empty path once released.
 const fs::path& Claim::where() const { return held_ ? held_->where : nowhere(); }
 
+// Gives the lock back now instead of when the claim is destroyed.
 void Claim::release() {
     if (!held_) return;
 

@@ -13,9 +13,9 @@
 
 using namespace talcite;
 
-// **Jeden korzeń dla wszystkiego, co może się nie udać w biegu.** Kto chce pokazać okno błędu,
-// łapie `Trouble` i nie łapie przy tym cudzych wyjątków ani złego użycia (`std::logic_error`).
-TRIAL("Trouble: błędy biblioteki mają wspólny korzeń") {
+// One root for everything that can fail at run time. Whoever wants to show an error window catches
+// `Trouble`, and does not catch foreign exceptions or misuse (`std::logic_error`) along with it.
+TRIAL("Trouble: the library's errors share one root") {
     ought((std::is_base_of_v<Trouble, fs::Trouble>));
     ought((std::is_base_of_v<Trouble, net::Trouble>));
     ought((std::is_base_of_v<Trouble, Rejected>));
@@ -24,16 +24,16 @@ TRIAL("Trouble: błędy biblioteki mają wspólny korzeń") {
     ought((std::is_base_of_v<Trouble, Refused>));
 }
 
-// **Przerwanie nie jest awarią.** Kto przerwał, ten wie; okno błędu o anulowaniu byłoby kłamstwem,
-// a twa odsiewało je dotąd ręcznie, po typie. Dlatego `Cancelled` stoi obok korzenia, nie pod nim.
-TRIAL("Trouble: anulowanie stoi poza korzeniem") {
+// An interruption is not a failure. Whoever interrupted knows it; an error window about a
+// cancellation would be a lie. That is why `Cancelled` stands beside the root, not under it.
+TRIAL("Trouble: cancellation stands outside the root") {
     ought((!std::is_base_of_v<Trouble, Cancelled>));
     ought((std::is_base_of_v<std::runtime_error, Cancelled>));
 }
 
-// Kod systemowy niesie korzeń, więc gałęzie go nie powtarzają: kłopot sieciowy oddaje ten sam
-// kod, który dostał, a zdanie zostaje zdaniem wołającego.
-TRIAL("Trouble: kod systemowy siedzi w korzeniu") {
+// The root carries the system code, so the branches do not repeat it: a network trouble gives back
+// the same code it got, and the sentence stays the caller's sentence.
+TRIAL("Trouble: the system code sits in the root") {
     const net::Trouble one{"Nie wyszło.", 5};
 
     const Trouble& root = one;
@@ -43,9 +43,9 @@ TRIAL("Trouble: kod systemowy siedzi w korzeniu") {
     same(Trouble{"Bez kodu."}.code(), 0);
 }
 
-// Odrzucenie napisem, obietnica po terminie i odmowa szwu wracają jako `Trouble` — to są te
-// ścieżki, którymi błąd dochodzi do aplikacji w praktyce.
-TRIAL("Trouble: odrzucenie napisem łapie się jako Trouble") {
+// A rejection with a string, a promise past its deadline and a seam's refusal come back as
+// `Trouble`; these are the paths by which an error reaches the application in practice.
+TRIAL("Trouble: a rejection with a string is caught as Trouble") {
     Promise<int> one{[](auto, auto reject) { reject("Nie ma."); }};
 
     bool caught = false;

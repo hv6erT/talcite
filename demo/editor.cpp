@@ -40,12 +40,15 @@ public:
     std::function<void()> sized;
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
     }
 
+    // Lets the status bar recompute its padding when the terminal changes size. The event goes on
+    // to others.
     bool handle(talcite::ui::SizeEvent&) override {
         if (sized) sized();
 
@@ -56,61 +59,62 @@ private:
     talcite::Term& term_;
 };
 
-// **Tekst wbudowany.** Edytor ma co pokazać także wtedy, gdy nikt nie podał ścieżki — a przy
-// okazji stoi tu wszystko, co potrafi się zepsuć: tabulatory, pusty wiersz, ogonki i wiersz
-// dłuższy niż okno.
+// Built-in text. The editor has something to show even when no path is given, and the text holds
+// everything that tends to break: tabs, an empty line, non-ASCII letters and a line longer than the
+// window.
 constexpr const char* sample =
-    "talcite — edytor tekstu\n"
+    "talcite — text editor (Zażółć gęślą jaźń)\n"
     "\n"
-    "Dokument leży w tablicy kawałków, więc pliku nikt nie wczytuje w całości. Wpisanie znaku\n"
-    "rozcina jeden kawałek na trzy, skasowanie rozcina i wyrzuca, a oryginał zostaje tam, gdzie\n"
-    "był — za źródłem. Pamięć rośnie z liczbą zmian, nie z rozmiarem pliku.\n"
+    "The document lives in a piece table, so the file is never read in whole. Typing a character\n"
+    "splits one piece into three, deleting splits and drops, and the original stays where it\n"
+    "was — behind the source. Memory grows with the number of changes, not with the file size.\n"
     "\n"
-    "Klawisze\n"
-    "\tF2\tzapis\n"
-    "\tF3\tszukanie\n"
-    "\tF4\tzamiana\n"
-    "\tF5\tzawijanie wierszy\n"
-    "\tF7\tcofnięcie\n"
-    "\tF8\tponowienie\n"
-    "\tF10\twyjście\n"
+    "Keys\n"
+    "\tF2\tsave\n"
+    "\tF3\tsearch\n"
+    "\tF4\treplace\n"
+    "\tF5\tline wrapping\n"
+    "\tF7\tundo\n"
+    "\tF8\tredo\n"
+    "\tF10\texit\n"
     "\n"
-    "Strzałki chodzą po znakach i wierszach, Home i End po wierszu, PageUp i PageDown po ekranie,\n"
-    "a Ctrl ze strzałką po wyrazach. Z klawiszem Shift każdy z nich ciągnie zaznaczenie.\n"
+    "Arrows move by characters and lines, Home and End along the line, PageUp and PageDown by screen,\n"
+    "and Ctrl with an arrow by words. With Shift, each of them extends the selection.\n"
     "\n"
-    "Myszą: kliknięcie stawia kursor — także za tabulatorem i w zawiniętej połowie wiersza, bo\n"
-    "kolumna nie jest bajtem, a rząd nie jest wierszem. Dwuklik bierze wyraz, a ciągnięcie zaznacza;\n"
-    "przy dolnej krawędzi widok schodzi za kursorem tak szybko, jak szybko ruszasz myszą.\n"
+    "Mouse: a click places the cursor — also past a tab and in the wrapped half of a line, because\n"
+    "a column is not a byte and a row is not a line. A double click takes a word, and dragging selects;\n"
+    "at the bottom edge the view follows the cursor as fast as you move the mouse.\n"
     "\n"
-    "Schowek\n"
+    "Clipboard\n"
     "\n"
-    "\tCtrl+C\tCtrl+Ins\tkopiowanie\n"
-    "\tCtrl+X\tShift+Del\twycięcie\n"
-    "\tCtrl+V\tShift+Ins\twklejenie\n"
+    "\tCtrl+C\tCtrl+Ins\tcopy\n"
+    "\tCtrl+X\tShift+Del\tcut\n"
+    "\tCtrl+V\tShift+Ins\tpaste\n"
     "\n"
-    "Schowek jest **systemowy**, a nie nasz: na Windows idzie do schowka systemu, a na Linuksie\n"
-    "i przez ssh prosimy o to terminal, żeby wstawił go do schowka tej maszyny, przy której siedzisz.\n"
-    "W drugą stronę wkleja sam terminal swoim skrótem — i to działa niezależnie od powyższych.\n"
+    "The clipboard is the system's, not ours: on Windows it goes to the system clipboard, and on Linux\n"
+    "and over ssh we ask the terminal to put it into the clipboard of the machine you are sitting at.\n"
+    "The other way, the terminal pastes by itself with its own shortcut — and that works regardless.\n"
     "\n"
-    "Cofanie\n"
+    "Undo\n"
     "\n"
-    "Pisany wyraz cofa się w całości, nie po literze: spacja, tabulator i enter zamykają grupę,\n"
-    "a ruch kursora ją gasi. Zamiana wszystkich wystąpień wraca jednym ruchem, choćby zmian było\n"
-    "sto. Gwiazdka na górnym pasku znaczy, że dokument ma niezapisane zmiany — i gaśnie sama,\n"
-    "gdy cofniesz wszystko z powrotem.\n"
+    "A typed word is undone as a whole, not letter by letter: space, tab and enter close the group,\n"
+    "and moving the cursor ends it. Replacing all occurrences comes back in one step, even if there\n"
+    "were a hundred changes. An asterisk on the top bar means the document has unsaved changes — and\n"
+    "it goes out by itself when you undo everything back.\n"
     "\n"
-    "Szukanie\n"
+    "Search\n"
     "\n"
-    "Grzebień szuka w jednym wierszu, a po dokumencie chodzi edytor — bo tylko on wie, gdzie\n"
-    "wiersz się zaczyna. Wzorzec nie przekracza więc końca wiersza. W okienku szukania można\n"
-    "włączyć wyrażenie regularne, wielkość liter i całe wyrazy.\n"
+    "The comb searches within one line, and the editor walks the document — because only it knows\n"
+    "where a line begins. So a pattern does not cross the end of a line. In the search window you can\n"
+    "turn on regular expressions, letter case and whole words.\n"
     "\n"
-    "Zapis\n"
+    "Saving\n"
     "\n"
-    "Biblioteka nie dotyka plików: źródło daje aplikacja i ujście daje aplikacja. To demo pisze\n"
-    "obok, do pliku z końcówką .new, i mówi o tym na pasku — bo pisanie po tym samym pliku,\n"
-    "z którego czyta źródło, zniszczyłoby dokument.\n";
+    "The library does not touch files: the application provides both the source and the sink. This\n"
+    "demo writes alongside, to a file ending in .new, and says so on the bar — because writing over the\n"
+    "file the source reads from would destroy the document.\n";
 
+// The bytes of a string, as the editor takes its content.
 talcite::Bytes lump(const std::string& what) {
     talcite::Bytes made;
 
@@ -121,6 +125,7 @@ talcite::Bytes lump(const std::string& what) {
     return made;
 }
 
+// A reversed style, for the status bar.
 talcite::Style turned() {
     talcite::Style made{};
 
@@ -129,11 +134,11 @@ talcite::Style turned() {
     return made;
 }
 
-// Okienko szukania: wzorzec i trzy przełączniki. Zły wzorzec **nie jest wyjątkiem** — grzebień
-// mówi, że nie jest gotowy, i to trafia na pasek.
+// The search window: a pattern and three switches. A bad pattern is not an exception: the comb says
+// it is not ready, and that goes to the bar.
 //
-// Ognisko trafia w pole samo: okno stawia je na pierwszym chętnym, a pole stoi tu przed
-// przyciskami.
+// Focus lands in the field by itself: the window puts it on the first node that wants it, and the
+// field stands here before the buttons.
 std::shared_ptr<talcite::ui::Dialog>
 hunting(const std::string& title, bool swapping,
         std::function<void(std::string, std::string, talcite::Sift)> after) {
@@ -144,7 +149,7 @@ hunting(const std::string& title, bool swapping,
 
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    column->children().add(std::make_shared<talcite::ui::Span>("Szukany tekst:"));
+    column->children().add(std::make_shared<talcite::ui::Span>("Search for:"));
 
     const auto what = std::make_shared<talcite::ui::Field>(40);
 
@@ -153,18 +158,18 @@ hunting(const std::string& title, bool swapping,
     const auto with = std::make_shared<talcite::ui::Field>(40);
 
     if (swapping) {
-        column->children().add(std::make_shared<talcite::ui::Span>("Zamień na:"));
+        column->children().add(std::make_shared<talcite::ui::Span>("Replace with:"));
         column->children().add(with);
     }
 
-    column->children().add(std::make_shared<talcite::ui::Line>("Jak"));
+    column->children().add(std::make_shared<talcite::ui::Line>("How"));
 
-    // Trzy niezależne przełączniki. Każdy trzyma swój stan **sam**, więc nie ma czego pilnować
-    // z zewnątrz — odczytujemy je dopiero przy zatwierdzeniu okna. Litera aktywna działa
-    // z dowolnego miejsca okna i jest w napisie podkreślona.
-    const auto regex = std::make_shared<talcite::ui::Tick>("wyrażenie regularne");
-    const auto cased = std::make_shared<talcite::ui::Tick>("wielkość liter");
-    const auto whole = std::make_shared<talcite::ui::Tick>("całe wyrazy");
+    // Three independent switches. Each one keeps its own state, so there is nothing to track from
+    // outside; we read them only when the window is confirmed. A hot letter works from anywhere in
+    // the window and is underlined in the label.
+    const auto regex = std::make_shared<talcite::ui::Tick>("regular expression");
+    const auto cased = std::make_shared<talcite::ui::Tick>("letter case");
+    const auto whole = std::make_shared<talcite::ui::Tick>("complete words");
 
     regex->keys().add(U'g');
     cased->keys().add(U'l');
@@ -174,12 +179,12 @@ hunting(const std::string& title, bool swapping,
     column->children().add(cased);
     column->children().add(whole);
 
-    column->children().add(std::make_shared<talcite::ui::Line>("Co dalej"));
+    column->children().add(std::make_shared<talcite::ui::Line>("What next"));
 
-    const auto yes = std::make_shared<talcite::ui::Button>(swapping ? "Zamień" : "Szukaj");
-    const auto no = std::make_shared<talcite::ui::Button>("Przerwij");
+    const auto yes = std::make_shared<talcite::ui::Button>(swapping ? "Replace" : "Search");
+    const auto no = std::make_shared<talcite::ui::Button>("Stop");
 
-    yes->keys().add(swapping ? U'Z' : U'S');
+    yes->keys().add(swapping ? U'R' : U'S');
     no->keys().add(U'P');
     yes->primary(true);
 
@@ -216,6 +221,8 @@ hunting(const std::string& title, bool swapping,
 
 }
 
+// An editor over the file named on the command line, or over the built-in text when there is none.
+// Saving writes next to the file, to the same name with `.new` appended.
 int main(int argc, char** argv) {
     talcite::Term term;
 
@@ -230,10 +237,10 @@ int main(int argc, char** argv) {
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
     const auto shown = std::make_shared<talcite::ui::Editor>(talcite::ui::ScrollShape{true});
 
-    // **Ctrl+C, Ctrl+X i Ctrl+V dokłada aplikacja**, bo edytor ich sobie nie przypisuje: w trybie
-    // surowym Ctrl+C nie jest przerwaniem, tylko zwykłym klawiszem, i widżet połykający go
-    // odbierałby aplikacji możliwość użycia go na wyjście. Komplet z Midnight Commandera —
-    // Ctrl+Ins, Shift+Ins, Shift+Del — edytor obsługuje sam.
+    // The application adds Ctrl+C, Ctrl+X and Ctrl+V, because the editor does not assign them to
+    // itself: in raw mode Ctrl+C is not an interrupt but an ordinary key, and a widget that
+    // swallowed it would take away the application's chance to use it for quitting. The Midnight
+    // Commander set (Ctrl+Ins, Shift+Ins, Shift+Del) the editor handles by itself.
     {
         const std::weak_ptr<talcite::ui::Editor> weak = shown;
 
@@ -264,11 +271,11 @@ int main(int argc, char** argv) {
 
     sheet.children().add(dialogs);
 
-    const auto source = std::make_shared<std::string>("tekst wbudowany");
+    const auto source = std::make_shared<std::string>("built-in text");
     const auto told = std::make_shared<std::string>();
 
-    // Po lewej źródło z gwiazdką, po prawej wiersz i kolumna. Kolumna liczy się **w kratkach**,
-    // nie w bajtach, więc za tabulatorem skacze o osiem — dokładnie tak, jak to widać.
+    // On the left the source with an asterisk, on the right the line and the column. The column is
+    // counted in cells, not bytes, so after a tab it jumps by eight, exactly as it looks.
     const auto naming = [&term, bar, shown, source, told] {
         std::string left = *source;
 
@@ -276,7 +283,7 @@ int main(int argc, char** argv) {
 
         if (!told->empty()) left += "   " + *told;
 
-        const std::string right = "wiersz " + std::to_string(shown->line() + 1) + " kolumna " +
+        const std::string right = "line " + std::to_string(shown->line() + 1) + " column " +
                                   std::to_string(shown->column() + 1) + "  UTF-8";
 
         const int room =
@@ -287,8 +294,9 @@ int main(int argc, char** argv) {
 
     sheet.sized = naming;
 
-    // Nasłuch wisi na kolumnie, nie na pasku: zdarzenie idzie bąbelkiem w górę od edytora,
-    // a pasek jest jego rodzeństwem. Obserwator oddaje fałsz, żeby nie zasłonić go nikomu wyżej.
+    // The listener hangs on the column, not on the bar: the event bubbles up from the editor, and
+    // the bar is its sibling. The observer returns false so as not to hide the event from anyone
+    // above.
     (void)column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
         naming();
 
@@ -303,25 +311,25 @@ int main(int argc, char** argv) {
 
     const auto where = std::make_shared<std::string>();
 
-    // Zapis idzie przez pulę: plik otwiera `fs::open`, kawałki pisze `File::write`, a edytor
-    // pierze dziennik dopiero po spełnieniu całości. Obietnicę trzeba trzymać — inaczej zginie
-    // z tym domknięciem.
+    // Saving goes through the pool: `fs::open` opens the file, `File::write` writes the pieces, and
+    // the editor clears its journal only once the whole save is fulfilled. The promise has to be
+    // kept, or it would die with this closure.
     const auto saving = std::make_shared<std::optional<talcite::Promise<void>>>();
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zapisz"), [shown, where, saying, saving] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Save"), [shown, where, saying, saving] {
         if (where->empty()) {
-            saying("nie ma dokąd zapisać");
+            saying("nowhere to save");
 
             return;
         }
 
         if (shown->busy()) {
-            saying("zapis trwa");
+            saying("saving in progress");
 
             return;
         }
 
-        saying("zapisuję…");
+        saying("saving…");
 
         const std::filesystem::path onto = talcite::fs::from_string(*where);
 
@@ -332,7 +340,8 @@ int main(int argc, char** argv) {
                     const auto at = std::make_shared<std::uintmax_t>(0);
 
                     return shown->save([file, at](talcite::Bytes got) mutable {
-                        // Pusty kawałek to koniec: nie ma co pisać, jest co domknąć.
+                        // An empty piece is the end: there is nothing to write, only the file to
+                        // close.
                         if (got.empty()) {
                             file.close();
 
@@ -347,17 +356,17 @@ int main(int argc, char** argv) {
                     });
                 })
                 .here()
-                .then([where, saying] { saying("zapisano do " + *where); })
+                .then([where, saying] { saying("saved to " + *where); })
                 .fail([saying](const std::exception& why) {
-                    saying(std::string{"zapis się nie udał: "} + why.what());
+                    saying(std::string{"save failed: "} + why.what());
                 }));
 
         (*saving)->start();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Szukaj"), [dialogs, shown, saying] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
-            "Szukanie", false,
+            "Search", false,
             [shown, saying](std::string what, std::string, talcite::Sift how) {
                 const talcite::Comb comb{std::move(what), how};
 
@@ -372,13 +381,13 @@ int main(int argc, char** argv) {
                 if (shown->find(comb, shown->cursor(), false).has_value())
                     saying({});
                 else
-                    saying("nie znaleziono");
+                    saying("not found");
             })));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Zamień"), [dialogs, shown, saying] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Replace"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
-            "Zamiana", true,
+            "Replace", true,
             [shown, saying](std::string what, std::string with, talcite::Sift how) {
                 const talcite::Comb comb{std::move(what), how};
 
@@ -392,34 +401,34 @@ int main(int argc, char** argv) {
 
                 const std::size_t much = shown->replace_all(comb, with);
 
-                saying(much > 0 ? "zamieniono: " + std::to_string(much)
-                                : std::string{"nie znaleziono"});
+                saying(much > 0 ? "replaced: " + std::to_string(much)
+                                : std::string{"not found"});
             })));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Zawijaj"), [shown, naming] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Cofnij"), [shown, saying] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Undo"), [shown, saying] {
         shown->undo();
 
         saying({});
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f8, "Ponów"), [shown, saying] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f8, "Redo"), [shown, saying] {
         shown->redo();
 
         saying({});
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjście"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
-    // Plik wchodzi w całości, bo edytor jest rezydentny — ale czyta go pula (`fs::read`), a edytor
-    // dostaje bajty przy obrocie pętli; do tej pory jest pusty.
+    // The file is read in whole, because the editor is resident, but the pool reads it (`fs::read`)
+    // and the editor gets the bytes on a turn of the loop; until then it is empty.
     std::optional<talcite::Promise<void>> opening;
 
     if (argc > 1) {
@@ -435,7 +444,7 @@ int main(int argc, char** argv) {
                                 shown->hold(std::move(got));
                             })
                             .fail([shown, source, from](const std::exception&) {
-                                *source = "nie udało się otworzyć: " + talcite::fs::to_string(from);
+                                *source = "could not open: " + talcite::fs::to_string(from);
 
                                 shown->hold(lump(sample));
                             }));
@@ -448,7 +457,7 @@ int main(int argc, char** argv) {
     }
 
     term.show(sheet);
-    term.title("talcite — edytor tekstu");
+    term.title("talcite — text editor");
 
     shown->focus();
 

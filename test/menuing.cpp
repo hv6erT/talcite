@@ -20,25 +20,31 @@ using namespace talcite;
 
 namespace {
 
-// Rozwinięte menu paska. To pytanie próby, nie biblioteki: pasek mówi, które menu jest bieżące,
-// a menu — czy jest rozwinięte. Osobne `opened()` na pasku było drugą drogą do tej samej odpowiedzi.
+// The bar's unrolled menu. This is the trial's question, not the library's: the bar says which menu
+// is current, and the menu says whether it is unrolled. The bar has no separate `opened()`, since
+// that would be a second way to the same answer.
 ui::Menu* unfolded(const ui::Menubar& bar) {
     ui::Menu* one = bar.current();
 
     return one != nullptr && one->opened() ? one : nullptr;
 }
 
+// A focusable box that asks for a fixed size, fills it with one letter and counts the clicks it
+// takes.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // The box can take the focus.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // The size given in the constructor, whatever room is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int hit = 0;
 
 protected:
+    // Fills the whole given size with the box's letter, shifted by the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -49,6 +55,7 @@ protected:
         return made;
     }
 
+    // Counts the click and takes it.
     bool handle(ui::ClickEvent&) override {
         ++hit;
 
@@ -60,6 +67,7 @@ private:
     char32_t what_ = U'?';
 };
 
+// The text of row `y` of the view, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -76,7 +84,7 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("Menu: zamknięte to sam tytuł w wierszu zerowym") {
+TRIAL("Menu: a closed one is just the title in row zero") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -92,15 +100,15 @@ TRIAL("Menu: zamknięte to sam tytuł w wierszu zerowym") {
     same(read(made, 0), std::string{" Plik"});
     same(read(made, 1), std::string{""});
 
-    // Zwinięte menu jest **poza drzewem** — nie ma rodzica ani prostokąta. To, co widać w wierszu
-    // zerowym, to jego tytuł, osobny węzeł w rzędzie tytułów.
+    // A rolled-up menu is outside the tree: it has no parent and no rectangle. What shows in row
+    // zero is its title, a separate node in the row of titles.
     ought(!one->opened());
     ought(one->parent() == nullptr);
 }
 
-// Opróżnienie paska — tak samo jak w legendzie i z tego samego powodu: przełączenie kontekstu
-// zdejmuje stare menu i wpuszcza nowe, a `capacity()` musi iść w parze z drzewem.
-TRIAL("Menu: opróżnienie paska pozwala złożyć go od nowa") {
+// Emptying the bar, just as in the legend and for the same reason: switching context removes the
+// old menus and lets in new ones, and `capacity()` has to go hand in hand with the tree.
+TRIAL("Menu: emptying the bar allows putting it together anew") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -125,7 +133,7 @@ TRIAL("Menu: opróżnienie paska pozwala złożyć go od nowa") {
     same(read(made, 0), std::string{" Pomoc"});
 }
 
-TRIAL("Menu: tytuły stoją obok siebie") {
+TRIAL("Menu: the titles stand side by side") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -141,11 +149,11 @@ TRIAL("Menu: tytuły stoją obok siebie") {
     same(read(made, 0), std::string{" Plik  Widok"});
 }
 
-// **F9 bierze pasek, a nie rozwija menu.** Rozwija dopiero strzałka w dół, Enter albo litera
-// tytułu — jak w Midnight Commanderze przy `drop_menus` wyłączonym. Przedtem F9 rozwijało pierwsze
-// menu, zanim człowiek zdążył powiedzieć które, a rozwinięte menu połykało litery swoich pozycji,
-// więc do tytułów docierało tylko to, czego żadna z nich nie chciała.
-TRIAL("Menu: F9 bierze pasek, dół rozwija, Esc zamyka") {
+// F9 takes the bar instead of unrolling a menu. Only the down arrow, Enter or a title's letter
+// unrolls, as in Midnight Commander with drop_menus off. If F9 unrolled the first menu before the
+// user said which, the unrolled menu would swallow the letters of its items, and only what none of
+// them wanted would reach the titles.
+TRIAL("Menu: F9 takes the bar, down unrolls, Esc closes") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -179,9 +187,9 @@ TRIAL("Menu: F9 bierze pasek, dół rozwija, Esc zamyka") {
     ought(!one->opened());
 }
 
-// **Menu zwija się samo**, para do `open`: ognisko wraca na jego tytuł, a następne rozwinięcie
-// zaczyna od góry. Pasek już nie sięga do numeru pozycji menu.
-TRIAL("Menu: close zwija, oddaje ognisko tytułowi i zapomina pozycję") {
+// The menu rolls itself up, the pair of `open`: the focus goes back to its title, and the next
+// unrolling starts from the top. The bar does not reach into the menu's item number.
+TRIAL("Menu: close rolls up, gives the focus to the title and forgets the item") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -214,7 +222,7 @@ TRIAL("Menu: close zwija, oddaje ognisko tytułowi i zapomina pozycję") {
 
     ought(first->focused());
 
-    // Kreska nie jest pozycją: strzałka ją przeskakuje, a na zamkniętym menu close nic nie psuje.
+    // The line is not an item: the arrow skips it, and on a closed menu close breaks nothing.
     ui::KeyEvent down{ui::Code::down};
 
     ought(top.dispatch(down));
@@ -226,7 +234,7 @@ TRIAL("Menu: close zwija, oddaje ognisko tytułowi i zapomina pozycję") {
     ought(!one->opened());
     ought(body->focused());
 
-    // Zwinięte menu zachowuje zapamiętaną pozycję: od niej zacznie przy rozwinięciu.
+    // A rolled-up menu keeps the remembered item: it starts from it when unrolled.
     one->which(2);
     one->close();
 
@@ -237,10 +245,10 @@ TRIAL("Menu: close zwija, oddaje ognisko tytułowi i zapomina pozycję") {
     ought(second->focused());
 }
 
-// **`dropdown()` rozwija od wejścia** — jak Midnight Commander z włączonym „Drop down menus":
-// F9 pokazuje pierwsze menu od razu, strzałka w bok przechodzi na sąsiada rozwinięte, Esc
-// zamyka wszystko. Bez flagi zachowanie jak wyżej. Program stawia flagę z ustawienia.
-TRIAL("Menu: z dropdown() F9 rozwija pierwsze menu, a strzałka w bok rozwija sąsiada") {
+// `dropdown()` unrolls from the start, like Midnight Commander with "Drop down menus" on: F9 shows
+// the first menu at once, a side arrow moves to the neighbor unrolled, Esc closes everything.
+// Without the flag the behavior is as above. The program sets the flag from a setting.
+TRIAL("Menu: with dropdown() F9 unrolls the first menu, and a side arrow unrolls the neighbor") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -285,14 +293,14 @@ TRIAL("Menu: z dropdown() F9 rozwija pierwsze menu, a strzałka w bok rozwija s�
     ought(window->current() == nullptr);
     ought(body->focused());
 
-    // Drugie wejście — przez enter(), jak z pola paska klawiszy — też rozwija.
+    // The second way in, through enter(), as from the key bar's field, unrolls too.
     window->enter();
 
     ought(first->opened());
 
     window->leave();
 
-    // Bez flagi po staremu: sam tytuł.
+    // Without the flag, as before: just the title.
     window->dropdown(false);
 
     ought(top.dispatch(open));
@@ -302,11 +310,12 @@ TRIAL("Menu: z dropdown() F9 rozwija pierwsze menu, a strzałka w bok rozwija s�
     ought(top.dispatch(close));
 }
 
-// **`open()` to publiczne wejście do paska** — to samo, co robi F9, gdy pasek jest bezczynny —
-// do pary z `close()`. Potrzebne, bo pole paska klawiszy woła metodę, a nie naciska klawisza;
-// przedtem wołało `Menu::focus()`, czyli rozwijało pierwsze menu, i klik robił co innego niż F9.
-// Pasek już czynny — z ogniskiem na drugim tytule albo z menu rozwiniętym — zostaje, jak stoi.
-TRIAL("Menu: open() bierze pasek zwinięty i zostawia czynny w spokoju") {
+// `open()` is the public way into the bar, the same that F9 does when the bar is idle, the pair of
+// `close()`. It is needed because the key bar's field calls a method rather than pressing a key;
+// calling `focus()` on the menu instead would unroll the first menu, and a click would do something
+// other than F9. A bar that is already active, with the focus on the second title or with a menu
+// unrolled, stays as it is.
+TRIAL("Menu: open() takes a rolled-up bar and leaves an active one alone") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -331,7 +340,7 @@ TRIAL("Menu: open() bierze pasek zwinięty i zostawia czynny w spokoju") {
     ought(!window->expanded());
     ought(!body->focused());
 
-    // Czynny pasek: ognisko na drugim tytule zostaje, gdzie było.
+    // An active bar: the focus on the second title stays where it was.
     ui::KeyEvent right{ui::Code::right};
 
     ought(top.dispatch(right));
@@ -342,7 +351,7 @@ TRIAL("Menu: open() bierze pasek zwinięty i zostawia czynny w spokoju") {
     same(window->current(), second.get());
     ought(unfolded(*window) == nullptr);
 
-    // Rozwinięte menu też zostaje rozwinięte.
+    // An unrolled menu stays unrolled too.
     second->open();
 
     ought(second->opened());
@@ -352,18 +361,18 @@ TRIAL("Menu: open() bierze pasek zwinięty i zostawia czynny w spokoju") {
     ought(second->opened());
     ought(window->expanded());
 
-    // Zamknięcie oddaje ognisko treści, jak po F9.
+    // Closing gives the focus back to the content, as after F9.
     window->leave();
 
     ought(body->focused());
 }
 
-// **Bit rozwinięcia żyje w pasku, nie w ognisku**, więc przeżywa odpięcie paska od drzewa:
-// `Root::losing` gasi ognisko bez zdarzenia, a bit zostaje. Wejście musi go więc gasić samo —
-// inaczej pasek dopięty z powrotem wchodziłby „zwinięty" z bitem rozwinięcia, i pierwsza
-// strzałka w bok rozwijałaby sąsiada. Stan bierzemy z wędrówki przez pusty tytuł: bit stoi,
-// a menu nie ma.
-TRIAL("Menu: pasek dopięty z powrotem wchodzi zwinięty, choć odpięto go z bitem rozwinięcia") {
+// The unrolled bit lives in the bar, not in the focus, so it survives the bar being detached from
+// the tree: `Root::losing` clears the focus without an event, and the bit stays. So entering has to
+// clear it itself; otherwise a bar attached again would enter "rolled up" with the unrolled bit
+// set, and the first side arrow would unroll the neighbor. The state comes from walking through an
+// empty title: the bit is set, and there is no menu.
+TRIAL("Menu: a bar attached again enters rolled up, though it was detached with the unrolled bit") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -403,7 +412,7 @@ TRIAL("Menu: pasek dopięty z powrotem wchodzi zwinięty, choć odpięto go z bi
     ought(!window->expanded());
 }
 
-TRIAL("Menu: otwarte rysuje pudełko z pozycjami") {
+TRIAL("Menu: an open one draws a box with the items") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -426,7 +435,7 @@ TRIAL("Menu: otwarte rysuje pudełko z pozycjami") {
     same(read(made, 4), std::string{"└──────────────┘"});
 }
 
-TRIAL("Menu: strzałki chodzą po pozycjach i omijają kreskę") {
+TRIAL("Menu: the arrows walk the items and skip the line") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -443,8 +452,8 @@ TRIAL("Menu: strzałki chodzą po pozycjach i omijają kreskę") {
 
     one->open();
 
-    // Otwarcie staje od razu na pierwszej pozycji, jak w Midnight Commanderze, bo otwarcie **jest**
-    // postawieniem ogniska, a ognisko siedzi na pozycji.
+    // Opening stands on the first item at once, as in Midnight Commander, because opening is
+    // putting the focus there, and the focus sits on an item.
     same(one->which(), std::optional<std::size_t>{0});
     same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
@@ -454,7 +463,7 @@ TRIAL("Menu: strzałki chodzą po pozycjach i omijają kreskę") {
     same(one->which(), std::optional<std::size_t>{2});
     same(top.focused_node(), static_cast<ui::Node*>(second.get()));
 
-    // Menu zawija — jest krótkie i widać je całe, więc nie ma gdzie się zgubić.
+    // The menu wraps around: it is short and visible whole, so there is nowhere to get lost.
     ought(top.dispatch(down));
     same(one->which(), std::optional<std::size_t>{0});
 
@@ -464,9 +473,9 @@ TRIAL("Menu: strzałki chodzą po pozycjach i omijają kreskę") {
     same(one->which(), std::optional<std::size_t>{2});
 }
 
-// Numer i węzeł podświetlonej pozycji — dwie nazwy jednej rzeczy, jak w liście. Pozycja spoza
-// menu niczego nie ustawia.
-TRIAL("Menu: which to numer, current to pozycja, a obca pozycja nie ustawia niczego") {
+// The number and the node of the highlighted item are two names for one thing, as in the list. An
+// item from outside the menu sets nothing.
+TRIAL("Menu: which is the number, current the item, and a foreign item sets nothing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -496,9 +505,9 @@ TRIAL("Menu: which to numer, current to pozycja, a obca pozycja nie ustawia nicz
     same(one->current(), first.get());
 }
 
-// **Podświetlona pozycja to ta z ogniskiem** — nie ma osobnego znacznika, który mógłby się z tym
-// rozjechać. Stąd bierze się też to, że dopięty do pozycji uchwyt widzi klawisz przed menu.
-TRIAL("Menu: podświetlenie jest ogniskiem pozycji") {
+// The highlighted item is the one with the focus; there is no separate marker that could drift
+// apart from it. That is also why a handler attached to an item sees the key before the menu.
+TRIAL("Menu: the highlight is the item's focus") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -536,9 +545,10 @@ TRIAL("Menu: podświetlenie jest ogniskiem pozycji") {
     ought(!made.at({1, 2}).style.reverse);
     ought(made.at({1, 3}).style.reverse);
 
-    // Uchwyt dopięty do pozycji dostaje klawisz **przed** menu, ale go menu nie odbiera: prawda
-    // z uchwytu zamyka drogę uchwytów, a `handle` menu biegnie swoją i przesuwa podświetlenie.
-    // Widżet i wołający nie zasłaniają sobie nawzajem — każdy zamyka tylko własny kanał.
+    // A handler attached to the item gets the key before the menu, but does not take it away from
+    // the menu: true from the handler ends the path of handlers, and the menu's `handle` runs its
+    // own and moves the highlight. The widget and the caller do not hide things from each other;
+    // each closes only its own channel.
     ui::KeyEvent down{ui::Code::down};
 
     ought(top.dispatch(down));
@@ -546,15 +556,15 @@ TRIAL("Menu: podświetlenie jest ogniskiem pozycji") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-// --- Litery aktywne ------------------------------------------------------------------------------
+// --- Hotkeys -------------------------------------------------------------------------------------
 
-// Tak działa menu w Midnight Commanderze: w otwartym „Plik" wciśnięcie „w" uruchamia „Wyjście" bez
-// chodzenia strzałkami. **Menu nie porównuje klawiszy** — rozdaje je swoim pozycjom i czeka, aż
-// któraś weźmie.
+// This is how the menu works in Midnight Commander: in the open File menu ("Plik") pressing "w"
+// runs Exit ("Wyjście") without walking with the arrows. The menu does not compare keys; it hands
+// them out to its items and waits for one of them to take it.
 //
-// Wybór **zamyka menu**, tak samo jak Enter i jak kliknięcie, więc numer podświetlenia po wszystkim
-// gaśnie — o to samo chodzi w `Menu::pick`.
-TRIAL("Menu: litera aktywna wybiera pozycję w otwartym menu") {
+// A pick closes the menu, just as Enter and a click do, so the highlight number is cleared
+// afterwards; that is what `Menu::pick` is about too.
+TRIAL("Menu: a hotkey picks an item in an open menu") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -589,8 +599,8 @@ TRIAL("Menu: litera aktywna wybiera pozycję w otwartym menu") {
     ought(!one->opened());
 }
 
-// Zamknięte menu nie rozdaje niczego: litery należą wtedy do treści pod paskiem.
-TRIAL("Menu: zamknięte nie bierze liter") {
+// A closed menu hands out nothing: the letters then belong to the content below the bar.
+TRIAL("Menu: a closed one does not take letters") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -618,9 +628,9 @@ TRIAL("Menu: zamknięte nie bierze liter") {
     same(said, 0);
 }
 
-// Litera, której żadna pozycja nie wzięła, **nie wybiera niczego** — a to, że otwarte menu i tak ją
-// połyka, jest regułą paska, nie pozycji: rozwinięte menu jest modalne jak w MC.
-TRIAL("Menu: litera, której nikt nie wziął, niczego nie wybiera") {
+// A letter that no item took picks nothing; that the open menu swallows it anyway is a rule of the
+// bar, not of the item: an unrolled menu is modal, as in MC.
+TRIAL("Menu: a letter nobody took picks nothing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -652,7 +662,7 @@ TRIAL("Menu: litera, której nikt nie wziął, niczego nie wybiera") {
     ought(one->opened());
 }
 
-TRIAL("Menu: wyszarzona pozycja nie odpowiada na swoją literę") {
+TRIAL("Menu: a grayed-out item does not answer its letter") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -685,8 +695,8 @@ TRIAL("Menu: wyszarzona pozycja nie odpowiada na swoją literę") {
     ought(one->opened());
 }
 
-// Ze sterującym nie łapiemy — ta sama reguła co w przycisku i w legendzie.
-TRIAL("Menu: litera ze sterującym nie wybiera pozycji") {
+// With Control we do not catch it; the same rule as in the button and in the legend.
+TRIAL("Menu: a letter with a modifier does not pick an item") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -720,8 +730,9 @@ TRIAL("Menu: litera ze sterującym nie wybiera pozycji") {
     same(said, 0);
 }
 
-// Litera podkreśla się w napisie, a rolę na to daje skórka — kod widżetu nie wie o niej nic.
-TRIAL("Menu: litera aktywna podkreśla się w napisie pozycji") {
+// The letter is underlined in the text, and the skin gives the role for it; the widget's code knows
+// nothing about it.
+TRIAL("Menu: a hotkey is underlined in the item's text") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -739,15 +750,16 @@ TRIAL("Menu: litera aktywna podkreśla się w napisie pozycji") {
 
     const View made = top.render({{0, 0}, {20, 6}});
 
-    // „ Kopiuj" — napis stoi o kratkę od lewej, więc „p" jest w czwartej kolumnie ramki.
+    // " Kopiuj": the text stands one cell from the left, so "p" is in the fourth column of the
+    // frame.
     same(made.at({4, 2}).letter, U'p');
     ought(made.at({4, 2}).style.under);
     ought(!made.at({3, 2}).style.under);
 }
 
-// Wyszarzenie podświetlonej pozycji oddaje ognisko menu: otwarte zostaje otwarte, tylko nic w nim
-// nie jest podświetlone.
-TRIAL("Menu: wyszarzenie podświetlonej pozycji nie zamyka menu") {
+// Graying out the highlighted item gives the focus to the menu: an open menu stays open, only
+// nothing in it is highlighted.
+TRIAL("Menu: graying out the highlighted item does not close the menu") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -770,7 +782,7 @@ TRIAL("Menu: wyszarzenie podświetlonej pozycji nie zamyka menu") {
     ought(one->current() == nullptr);
 }
 
-TRIAL("Menu: Enter woła zadanie i zamyka") {
+TRIAL("Menu: Enter calls the task and closes") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -796,7 +808,7 @@ TRIAL("Menu: Enter woła zadanie i zamyka") {
     ought(!one->opened());
 }
 
-TRIAL("Menu: klik wybiera pozycję pod kursorem, nie podświetloną") {
+TRIAL("Menu: a click picks the item under the cursor, not the highlighted one") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -825,11 +837,10 @@ TRIAL("Menu: klik wybiera pozycję pod kursorem, nie podświetloną") {
     ought(!one->opened());
 }
 
-// **Ognisko wychodzi z paska — menu się zwija.** Przedtem działo się to samo z siebie, bo
-// „rozwinięte" wynikało z ogniska, i nikt tego nie zapisał; odkąd rozwinięcie jest dopięciem,
-// pasek zdejmuje je wprost na `UnfocusEvent`. Wyjście robimy tak, jak robi je każdy widżet
-// treści po kliknięciu — biorąc ognisko — bo to ognisko, nie klik, jest tu mechanizmem.
-TRIAL("Menu: ognisko wychodzące z paska zwija rozwinięte menu") {
+// The focus leaves the bar, so the menu rolls up. Unrolling is attaching, so the bar removes it
+// explicitly on `UnfocusEvent`. Leaving is done the way every content widget does it after a
+// click, by taking the focus, because the focus, not the click, is the mechanism here.
+TRIAL("Menu: the focus leaving the bar rolls up the unrolled menu") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -853,7 +864,7 @@ TRIAL("Menu: ognisko wychodzące z paska zwija rozwinięte menu") {
     ought(body->focused());
 }
 
-TRIAL("Menu: klik w tytuł otwiera i zamyka") {
+TRIAL("Menu: a click on the title opens and closes") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -877,9 +888,10 @@ TRIAL("Menu: klik w tytuł otwiera i zamyka") {
     ought(!one->opened());
 }
 
-// Tytuł bez pozycji to przycisk w pasku, nie pusta lista: nie rozwija się, podświetla się jak
-// inne przy wędrówce strzałkami, a Enter i klik wołają jego własne `PickEvent`.
-TRIAL("Menu: bez pozycji nie rozwija się, Enter i klik wołają zdarzenie tytułu") {
+// A title without items is a button in the bar, not an empty list: it does not unroll, it is
+// highlighted like the others when walking with the arrows, and Enter and a click call its own
+// `PickEvent`.
+TRIAL("Menu: without items it does not unroll, Enter and a click call the title's event") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -905,21 +917,21 @@ TRIAL("Menu: bez pozycji nie rozwija się, Enter i klik wołają zdarzenie tytu�
 
     (void)top.render({{0, 0}, {30, 8}});
 
-    // F9 stawia ognisko na pierwszym menu — pustym: ognisko jest na nim samym, nic nie stoi
-    // otworem, nic nie leży na treści.
+    // F9 puts the focus on the first menu, the empty one: the focus is on the menu itself, nothing
+    // stands open, nothing lies over the content.
     ui::KeyEvent open{ui::Code::f9};
 
     ought(top.dispatch(open));
     same(window->current(), left.get());
     ought(!left->opened());
 
-    // Pod tytułem widać treść, nie pudełko.
+    // Below the title the content shows, not a box.
     const View shut = top.render({{0, 0}, {30, 8}});
 
     same(read(shut, 1), std::string{"xxxxxxxxxx"});
 
-    // Strzałka w prawo idzie na pełne menu; **rozwinięcia ze sobą nie niesie**, bo pasek wszedł
-    // zwinięty. Rozwija dopiero strzałka w dół — i to jest ta sama reguła, co przy F9.
+    // The right arrow goes to the full menu; it does not carry unrolling with it, because the bar
+    // entered rolled up. Only the down arrow unrolls, the same rule as with F9.
     ui::KeyEvent right{ui::Code::right};
 
     ought(top.dispatch(right));
@@ -937,7 +949,7 @@ TRIAL("Menu: bez pozycji nie rozwija się, Enter i klik wołają zdarzenie tytu�
     same(window->current(), left.get());
     ought(!file->opened());
 
-    // Enter woła zdarzenie tytułu i zamyka pasek.
+    // Enter calls the title's event and closes the bar.
     ui::KeyEvent enter{ui::Code::enter};
 
     ought(top.dispatch(enter));
@@ -946,7 +958,7 @@ TRIAL("Menu: bez pozycji nie rozwija się, Enter i klik wołają zdarzenie tytu�
     ought(body->focused());
     ought(unfolded(*window) == nullptr);
 
-    // Klik w tytuł — to samo, bez otwierania.
+    // A click on the title does the same, without opening.
     (void)top.render({{0, 0}, {30, 8}});
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
@@ -957,7 +969,7 @@ TRIAL("Menu: bez pozycji nie rozwija się, Enter i klik wołają zdarzenie tytu�
     ought(window->current() == nullptr);
 }
 
-TRIAL("Menu: lewo i prawo przełączają, nie zamykając") {
+TRIAL("Menu: left and right switch without closing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -982,7 +994,7 @@ TRIAL("Menu: lewo i prawo przełączają, nie zamykając") {
     ought(first->opened());
 }
 
-TRIAL("Menu: Esc wraca do tego, kto miał ognisko") {
+TRIAL("Menu: Esc returns to whoever had the focus") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1001,15 +1013,15 @@ TRIAL("Menu: Esc wraca do tego, kto miał ognisko") {
 
     ought(top.dispatch(open));
 
-    // Esc wraca z **czynnego paska** tak samo jak z rozwiniętego menu — ognisko sprzed wejścia
-    // pasek zapamiętuje przy pierwszym wzięciu, nie przy rozwinięciu.
+    // Esc returns from an active bar just as from an unrolled menu: the bar remembers the focus
+    // from before entering when it is first taken, not when unrolling.
     ui::KeyEvent close{ui::Code::escape};
 
     ought(top.dispatch(close));
     same(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
 }
 
-TRIAL("Menu: przejście z menu na menu nie gubi ogniska aplikacji") {
+TRIAL("Menu: moving from menu to menu does not lose the application's focus") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1037,7 +1049,7 @@ TRIAL("Menu: przejście z menu na menu nie gubi ogniska aplikacji") {
     same(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
 }
 
-TRIAL("Menu: treść stoi pod wierszem tytułów") {
+TRIAL("Menu: the content stands below the row of titles") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1058,7 +1070,7 @@ TRIAL("Menu: treść stoi pod wierszem tytułów") {
     same(body->area().at.y, 0);
 }
 
-TRIAL("Menu: otwarte zakrywa treść przy trafianiu") {
+TRIAL("Menu: an open one covers the content for hit testing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1085,7 +1097,7 @@ TRIAL("Menu: otwarte zakrywa treść przy trafianiu") {
     same(body->hit, 0);
 }
 
-TRIAL("Menu: zamknięte nie łapie kliknięć tam, gdzie było otwarte") {
+TRIAL("Menu: a closed one does not catch clicks where it was open") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1116,7 +1128,7 @@ TRIAL("Menu: zamknięte nie łapie kliknięć tam, gdzie było otwarte") {
     same(body->hit, 1);
 }
 
-TRIAL("Menu: kreska dochodzi do ramki") {
+TRIAL("Menu: the line reaches the frame") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1136,7 +1148,7 @@ TRIAL("Menu: kreska dochodzi do ramki") {
     same(read(made, 3), std::string{"├─────────┤"});
 }
 
-TRIAL("Menu: wyszarzonej pozycji nie da się wybrać") {
+TRIAL("Menu: a grayed-out item cannot be picked") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1172,11 +1184,11 @@ TRIAL("Menu: wyszarzonej pozycji nie da się wybrać") {
     same(done, 0);
 }
 
-// **Pudełko staje pod swoim tytułem**, nie pod pierwszym z brzegu. To jest jedyne miejsce, w którym
-// menu liczy swoje położenie — ze `standing()` tytułu, przy każdej klatce — i jedyna próba, która
-// o nie pyta poza przypadkiem krawędzi: przy pierwszym menu tytuł stoi w zerze, więc pudełko
-// w zerze wyglądałoby na dobrze policzone, choć nie byłoby policzone wcale.
-TRIAL("Menu: pudełko drugiego menu staje pod drugim tytułem") {
+// The box stands below its own title, not below the first one around. This is the only place where
+// the menu computes its position (from the title's `standing()`, every frame), and the only trial
+// that asks about it beyond the edge case: with the first menu the title stands at zero, so a box
+// at zero would look correctly computed even if it were not computed at all.
+TRIAL("Menu: the second menu's box stands below the second title") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1191,13 +1203,13 @@ TRIAL("Menu: pudełko drugiego menu staje pod drugim tytułem") {
 
     const View made = top.render({{0, 0}, {30, 6}});
 
-    // „ Plik " zajmuje sześć kolumn, więc „Widok" zaczyna się w szóstej — i tam stoi lewy róg.
+    // " Plik " takes six columns, so "Widok" starts in the sixth, and the left corner stands there.
     same(read(made, 0), std::string{" Plik  Widok"});
     same(made.at({6, 1}).letter, U'┌');
     same(made.at({0, 1}).letter, U' ');
 }
 
-TRIAL("Menu: przy prawej krawędzi wysuwa się w lewo") {
+TRIAL("Menu: at the right edge it slides out to the left") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1219,7 +1231,7 @@ TRIAL("Menu: przy prawej krawędzi wysuwa się w lewo") {
     same(read(made, 1), std::string{"  ┌──────────────────────┐"});
 }
 
-TRIAL("Menu: cień nie zjada tego, co pod spodem") {
+TRIAL("Menu: the shadow does not eat what lies below") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1244,7 +1256,7 @@ TRIAL("Menu: cień nie zjada tego, co pod spodem") {
     ought(made.at({2, 4}).style.faint);
 }
 
-TRIAL("Menu: pasek nie przyjmuje niczego z zewnątrz") {
+TRIAL("Menu: the bar accepts nothing from outside") {
     ui::Menubar window;
 
     bool threw = false;
@@ -1259,7 +1271,7 @@ TRIAL("Menu: pasek nie przyjmuje niczego z zewnątrz") {
     same(static_cast<int>(window.children().many()), 1);
 }
 
-TRIAL("Menu: treść staje pod paskiem") {
+TRIAL("Menu: the content stands below the bar") {
     ui::Menubar window;
 
     ought(window.content() == nullptr);
@@ -1270,8 +1282,8 @@ TRIAL("Menu: treść staje pod paskiem") {
 
     same(window.content(), static_cast<ui::Node*>(one.get()));
 
-    // Gniazdo treści siedzi w kolumnie pod rzędem tytułów, a kolumna jest pierwszym dzieckiem
-    // stosu paska.
+    // The content slot sits in a column below the row of titles, and the column is the first child
+    // of the bar's stack.
     same(static_cast<const ui::Node*>(one->parent()->parent()->parent()),
          static_cast<const ui::Node*>(&window));
 
@@ -1280,7 +1292,7 @@ TRIAL("Menu: treść staje pod paskiem") {
     same(read(made, 1), std::string{"aaaaaaaa"});
 }
 
-TRIAL("Menu: zamknięcie gasi podświetlenie") {
+TRIAL("Menu: closing clears the highlight") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1299,12 +1311,12 @@ TRIAL("Menu: zamknięcie gasi podświetlenie") {
     ought(one->current() == nullptr);
 }
 
-// --- Najechanie myszą ----------------------------------------------------------------------------
+// --- Hovering with the mouse ---------------------------------------------------------------------
 
-// **Podświetlenie chodzi za kursorem**, jak w Midnight Commanderze. Ruch bez wciśniętego przycisku
-// przychodzi tylko wtedy, gdy aplikacja poprosi o to w `Setup::hover` — ale sama droga jest ta
-// sama, co przy każdym innym zdarzeniu myszy, i tu sprawdzamy właśnie ją.
-TRIAL("Menu: najechanie przestawia podświetlenie") {
+// The highlight follows the cursor, as in Midnight Commander. Motion without a pressed button comes
+// only when the application asks for it in `Setup::hover`, but the path itself is the same as for
+// any other mouse event, and that path is what is checked here.
+TRIAL("Menu: hovering moves the highlight") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1330,9 +1342,9 @@ TRIAL("Menu: najechanie przestawia podświetlenie") {
     same(one->which(), std::optional<std::size_t>{1});
 }
 
-// Ruch **nie należy do nikogo na wyłączność**: pozycja przestawia podświetlenie i puszcza zdarzenie
-// dalej, żeby nie odbierać go temu, kto też go potrzebuje.
-TRIAL("Menu: najechanie nie połyka zdarzenia") {
+// Motion belongs to nobody exclusively: the item moves the highlight and lets the event go on, so
+// as not to take it away from someone who needs it too.
+TRIAL("Menu: hovering does not swallow the event") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1353,7 +1365,7 @@ TRIAL("Menu: najechanie nie połyka zdarzenia") {
     ought(!top.dispatch(what));
 }
 
-TRIAL("Menu: najechanie na wyłączoną pozycję nie przestawia") {
+TRIAL("Menu: hovering over a disabled item does not move the highlight") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1381,9 +1393,9 @@ TRIAL("Menu: najechanie na wyłączoną pozycję nie przestawia") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-// Zamknięte menu to sam tytuł w pasku: pod kursorem nie ma wtedy żadnej pozycji, więc nie ma czego
-// podświetlać i nic się nie dzieje.
-TRIAL("Menu: najechanie na zamknięte niczego nie otwiera") {
+// A closed menu is just the title in the bar: there is no item under the cursor then, so there is
+// nothing to highlight and nothing happens.
+TRIAL("Menu: hovering over a closed one opens nothing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1403,9 +1415,9 @@ TRIAL("Menu: najechanie na zamknięte niczego nie otwiera") {
     ought(!one->opened());
 }
 
-// --- Grupa ------------------------------------------------------------------------------------
+// --- Group ------------------------------------------------------------------------------------
 
-TRIAL("Menu: zdjęte menu znika też z drzewa") {
+TRIAL("Menu: a removed menu disappears from the tree too") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1418,7 +1430,7 @@ TRIAL("Menu: zdjęte menu znika też z drzewa") {
 
     same(window->menus().size(), std::size_t{2});
 
-    // Zwinięte menu nie jest w drzewie; rozwinięte jest dzieckiem paska — i tylko wtedy.
+    // A rolled-up menu is not in the tree; an unrolled one is a child of the bar, and only then.
     ought(!window->children().contains(second.get()));
 
     second->children().add(std::make_shared<ui::MenuItem>("Odśwież"));
@@ -1432,14 +1444,14 @@ TRIAL("Menu: zdjęte menu znika też z drzewa") {
     ought(!window->children().contains(second.get()));
     ought(!window->children().contains(first.get()));
 
-    // Opróżniony pasek składa się od nowa, a stare menu nie mają już z nim nic wspólnego.
+    // An emptied bar is put together anew, and the old menus have nothing to do with it anymore.
     const auto again = window->add("Plik");
 
     same(window->menus().size(), std::size_t{1});
     same(read(top.render({{0, 0}, {26, 6}}), 0), std::string{" Plik"});
 }
 
-TRIAL("Menu: rdzeń roli tytułu można podmienić") {
+TRIAL("Menu: the stem of the title's role can be replaced") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1465,13 +1477,13 @@ TRIAL("Menu: rdzeń roli tytułu można podmienić") {
     same(top.render({{0, 0}, {26, 6}}).at({1, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
-// --- Co menu przyjmuje ---------------------------------------------------------------------------
+// --- What the menu accepts -----------------------------------------------------------------------
 
-// **`capacity()` mówi ile, `accepts()` mówi czego.** Menu chodzi po swoich dzieciach jak po pozycjach —
-// liczy je, przeskakuje rozdzielniki, sięga po `enabled()` — więc obce dziecko byłoby dla niego pustką
-// w środku wędrówki. Zamiast oddawać tę pustkę w kółko przy każdym dostępie, odmawiamy raz,
-// przy dopięciu.
-TRIAL("Menu: przyjmuje pozycje i rozdzielniki, obcego dziecka nie") {
+// `capacity()` says how many, `accepts()` says what. The menu walks its children as items (it
+// counts them, skips the separators, reaches for `enabled()`), so a foreign child would be a hole
+// in the middle of the walk. Instead of handing out that hole over and over on every access, we
+// refuse once, at attaching.
+TRIAL("Menu: accepts items and separators, not a foreign child") {
     const auto one = std::make_shared<ui::Menu>("Plik");
 
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
@@ -1491,9 +1503,8 @@ TRIAL("Menu: przyjmuje pozycje i rozdzielniki, obcego dziecka nie") {
     same(one->children().many(), std::size_t{2});
 }
 
-// Kreska sięgała po `"talcite.menu.frame"` wpisane na sztywno, choć rdzeń roli miała po pozycji menu
-// od początku. Podmiana rdzenia obejmuje teraz i kreskę.
-TRIAL("MenuSeparator: kreska idzie za rdzeniem roli pozycji") {
+// The line follows the stem of the item's role, so replacing the stem covers the line as well.
+TRIAL("MenuSeparator: the line follows the stem of the item's role") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1504,8 +1515,8 @@ TRIAL("MenuSeparator: kreska idzie za rdzeniem roli pozycji") {
 
     same(line->role(), std::string{"talcite.menu"});
 
-    // Kreska nie rozpycha menu, więc bez zwykłej pozycji obok miałaby zerową szerokość i nie
-    // narysowałaby ani jednej kratki.
+    // The line does not stretch the menu, so without an ordinary item next to it it would have
+    // zero width and would not draw a single cell.
     menu->children().add(std::make_shared<ui::MenuItem>("Otwórz"));
     menu->children().add(line);
 
@@ -1535,9 +1546,9 @@ TRIAL("MenuSeparator: kreska idzie za rdzeniem roli pozycji") {
     ought(found);
 }
 
-// **Litera tytułu przełącza menu przy czynnym pasku.** Tytuł jest dziś węzłem z klawiszami, więc
-// bierze ją tym samym mechanizmem, co pozycja menu i pole legendy.
-TRIAL("Menu: litera tytułu przełącza menu przy czynnym pasku") {
+// A title's letter switches menus while the bar is active. The title is a node with keys, so it
+// takes the letter by the same mechanism as a menu item and a legend field.
+TRIAL("Menu: a title's letter switches menus while the bar is active") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1562,8 +1573,8 @@ TRIAL("Menu: litera tytułu przełącza menu przy czynnym pasku") {
 
     ui::KeyEvent nine{ui::Code::f9};
 
-    // F9 bierze pasek zwinięty — i **właśnie dlatego** litera tytułu ma teraz gdzie zadziałać:
-    // gdyby pierwsze menu było rozwinięte, połknęłoby literę na rzecz swoich pozycji.
+    // F9 takes the bar rolled up, and that is exactly why the title's letter has somewhere to work
+    // now: if the first menu were unrolled, it would swallow the letter for its items.
     ought(top.dispatch(nine));
     same(window->current(), first.get());
     same(unfolded(*window), static_cast<ui::Menu*>(nullptr));
@@ -1579,9 +1590,9 @@ TRIAL("Menu: litera tytułu przełącza menu przy czynnym pasku") {
     same(unfolded(*window), first.get());
 }
 
-// Bez czynnego paska litera nie ma prawa niczego rozwinąć — inaczej pisanie nad panelem
-// otwierałoby menu.
-TRIAL("Menu: litera tytułu przy zamkniętym pasku nic nie robi") {
+// Without an active bar a letter must not unroll anything; otherwise typing over a panel would open
+// menus.
+TRIAL("Menu: a title's letter with the bar closed does nothing") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1606,8 +1617,8 @@ TRIAL("Menu: litera tytułu przy zamkniętym pasku nic nie robi") {
     ought(unfolded(*window) == nullptr);
 }
 
-// Pozycja otwartego menu bierze literę **przed** tytułami: leży bliżej ogniska.
-TRIAL("Menu: litera pozycji wygrywa z literą tytułu") {
+// An item of an open menu takes the letter before the titles: it lies closer to the focus.
+TRIAL("Menu: an item's letter wins over a title's letter") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1646,9 +1657,9 @@ TRIAL("Menu: litera pozycji wygrywa z literą tytułu") {
 
     ought(top.dispatch(nine));
 
-    // Rozwinięcie jest tu **warunkiem pytania**: pierwszeństwo pozycji nad tytułem rozstrzyga się
-    // dopiero przy rozwiniętym menu. Przy zwiniętym ta sama litera należy do tytułu — tak samo
-    // rozdziela to Midnight Commander, jedną zmienną `is_dropped`.
+    // Unrolling is the condition of the question here: the item's priority over the title is
+    // decided only with the menu unrolled. With it rolled up the same letter belongs to the title;
+    // Midnight Commander divides it the same way, with one variable, is_dropped.
     ui::KeyEvent drop{ui::Code::down};
 
     ought(top.dispatch(drop));
@@ -1659,8 +1670,8 @@ TRIAL("Menu: litera pozycji wygrywa z literą tytułu") {
     same(said, 1);
 }
 
-// Tytuł podkreśla swoją literę, tak jak pozycja menu i przycisk.
-TRIAL("Menu: litera tytułu podkreśla się w pasku") {
+// The title underlines its letter, just like a menu item and a button.
+TRIAL("Menu: a title's letter is underlined in the bar") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1681,10 +1692,10 @@ TRIAL("Menu: litera tytułu podkreśla się w pasku") {
     ought(!made.at({1, 0}).style.under);
 }
 
-// **Bez podanego klawisza pasek nie otwiera się z klawiatury.** Stało tu wpisane na sztywno F9 —
-// biblioteka zajmowała sobie kombinację, o której nikt jej nie powiedział, i nie dało się jej ani
-// zmienić, ani wyłączyć.
-TRIAL("Menu: bez podanego klawisza pasek nie otwiera się z klawiatury") {
+// Without a given key the bar does not open from the keyboard. The library takes no key
+// combination that nobody told it about; the caller gives the key, and can change it or leave it
+// out.
+TRIAL("Menu: without a given key the bar does not open from the keyboard") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1705,9 +1716,9 @@ TRIAL("Menu: bez podanego klawisza pasek nie otwiera się z klawiatury") {
     ought(!one->opened());
 }
 
-// Klawisz podany przez wołającego przełącza pasek — otwiera zamknięty, zamyka otwarty. I nie musi
-// być F9: pasek jest węzłem z klawiszami, jak pozycja menu i pole legendy.
-TRIAL("Menu: podany klawisz przełącza pasek") {
+// The key given by the caller toggles the bar: it opens a closed one and closes an open one. And it
+// does not have to be F9: the bar is a node with keys, like a menu item and a legend field.
+TRIAL("Menu: the given key toggles the bar") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1738,7 +1749,7 @@ TRIAL("Menu: podany klawisz przełącza pasek") {
     ought(!one->opened());
 }
 
-TRIAL("Menu: znaki dwukolumnowe poszerzają pudełko o szerokość boków") {
+TRIAL("Menu: double-width characters widen the box by the width of the sides") {
     ui::Root top;
 
     top.skin(ui::Skin{{},
@@ -1765,7 +1776,8 @@ TRIAL("Menu: znaki dwukolumnowe poszerzają pudełko o szerokość boków") {
 
     const View made = top.render({{0, 0}, {30, 8}});
 
-    // Wnętrze ma czternaście kratek, jak w próbie ze zwykłą ramką — boki dokładają po dwie.
+    // The inside has fourteen cells, as in the trial with an ordinary frame; the sides add two
+    // each.
     same(one->wants({80, 25}).wide, 18);
     same(read(made, 1), std::string{"口一一一一一一一口"});
     same(read(made, 2), std::string{"丨 Kopiuj    F5 丨"});

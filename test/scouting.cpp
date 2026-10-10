@@ -15,17 +15,20 @@
 
 using namespace talcite;
 
-// Udawany serwer STUN składa odpowiedzi **bajt po bajcie**, nie moim kodekiem. Dzięki temu to
-// jest prawdziwy test zgodności z formatem, a nie sprawdzanie się z samym sobą.
+// The fake STUN server puts its responses together byte by byte, not with our codec. That makes
+// this a real test of conformance with the format, not a check of the code against itself.
 namespace {
 
 const net::Patience soon{6000};
 
+// Appends a 16-bit value in network byte order.
 void pushed(Bytes& into, std::uint16_t what) {
     into.push_back(static_cast<std::byte>(what >> 8));
     into.push_back(static_cast<std::byte>(what & 0xFF));
 }
 
+// A STUN Binding success response with transaction number `number` and one IPv4 address
+// attribute of type `kind` for `one`:`port`, XOR-ed with the magic cookie when `xored` is set.
 Bytes addressed(std::uint16_t kind, const std::string& one, std::uint16_t port,
                 const Bytes& number, bool xored) {
     Bytes value;
@@ -73,6 +76,8 @@ Bytes addressed(std::uint16_t kind, const std::string& one, std::uint16_t port,
     return made;
 }
 
+// A Binding success response with transaction number `number` and an XOR-MAPPED-ADDRESS of
+// 2001:db8::1 on `port`.
 Bytes sixed(const Bytes& number, std::uint16_t port) {
     Bytes value;
 
@@ -81,7 +86,7 @@ Bytes sixed(const Bytes& number, std::uint16_t port) {
 
     pushed(value, static_cast<std::uint16_t>(port ^ 0x2112));
 
-    // 2001:db8::1 przekłamane ciasteczkiem i numerem transakcji.
+    // 2001:db8::1 XOR-ed with the cookie and the transaction number.
     const std::uint8_t plain[16] = {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01};
     const std::uint8_t cookie[4] = {0x21, 0x12, 0xA4, 0x42};
 
@@ -109,6 +114,7 @@ Bytes sixed(const Bytes& number, std::uint16_t port) {
     return made;
 }
 
+// A Binding error response with transaction number `number` and error code 420.
 Bytes refused(const Bytes& number) {
     Bytes value;
 
@@ -138,18 +144,20 @@ Bytes refused(const Bytes& number) {
     return made;
 }
 
+// The 12-byte transaction number of a STUN message.
 Bytes numbered(const Bytes& what) {
     return Bytes{what.begin() + 8, what.begin() + 20};
 }
 
+// A UDP socket on an IPv4 loopback address with a port chosen by the system.
 net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 using Server = std::pair<std::string, std::uint16_t>;
 
-// Publiczne serwery STUN wbudowane w test, żeby zgodność z prawdziwym światem dało się sprawdzić
-// jednym poleceniem. Kolejność nie jest przypadkowa: `mapping()` pyta **dwa pierwsze**, a te muszą
-// należeć do różnych operatorów. Oba adresy Google rozwiązują się dziś na ten sam adres, więc
-// postawione obok siebie dałyby werdykt „zgodne" z jednego serwera — czyli nieprawdę.
+// Public STUN servers built into the test, so that conformance with the real world can be checked
+// with one command. The order is not accidental: `mapping()` asks the first two, and those must
+// belong to different operators. Both Google names currently resolve to the same address, so next
+// to each other they would give the verdict "alike" from one server, which is untrue.
 std::vector<Server> known() {
     return {{"stun.l.google.com", 19302},
             {"stun.cloudflare.com", 3478},
@@ -159,7 +167,7 @@ std::vector<Server> known() {
 
 }
 
-TRIAL("Zwiad: odbity adres z przekłamanego atrybutu") {
+TRIAL("Scout: the reflected address from the XOR-ed attribute") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -182,7 +190,7 @@ TRIAL("Zwiad: odbity adres z przekłamanego atrybutu") {
     same(scout.last().text(), std::string{"203.0.113.7"});
 }
 
-TRIAL("Zwiad: stary atrybut bez przekłamania też jest rozumiany") {
+TRIAL("Scout: the old attribute without XOR is understood too") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -201,7 +209,7 @@ TRIAL("Zwiad: stary atrybut bez przekłamania też jest rozumiany") {
     same(asking.await().text(), std::string{"198.51.100.9"});
 }
 
-TRIAL("Zwiad: adres szóstej rodziny") {
+TRIAL("Scout: an address of the IPv6 family") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -222,7 +230,7 @@ TRIAL("Zwiad: adres szóstej rodziny") {
     same(made.port(), static_cast<std::uint16_t>(9999));
 }
 
-TRIAL("Zwiad: cudza odpowiedź nie jest przyjmowana") {
+TRIAL("Scout: someone else's response is not accepted") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -238,7 +246,7 @@ TRIAL("Zwiad: cudza odpowiedź nie jest przyjmowana") {
 
     other[0] = ~other[0];
 
-    // Najpierw odpowiedź z cudzym numerem transakcji, potem właściwa.
+    // First a response with another transaction number, then the right one.
     server.send(came.from, addressed(0x0020, "1.2.3.4", 1, other, true), soon).await();
     server
         .send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true), soon)
@@ -247,7 +255,7 @@ TRIAL("Zwiad: cudza odpowiedź nie jest przyjmowana") {
     same(asking.await().text(), std::string{"203.0.113.7"});
 }
 
-TRIAL("Zwiad: śmieć na gnieździe nie przeszkadza") {
+TRIAL("Scout: garbage on the socket does not get in the way") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -269,7 +277,7 @@ TRIAL("Zwiad: śmieć na gnieździe nie przeszkadza") {
     same(asking.await().text(), std::string{"203.0.113.7"});
 }
 
-TRIAL("Zwiad: odmowa serwera wychodzi jako kłopot") {
+TRIAL("Scout: the server's refusal comes out as trouble") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -296,7 +304,7 @@ TRIAL("Zwiad: odmowa serwera wychodzi jako kłopot") {
     ought(amiss);
 }
 
-TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
+TRIAL("Scout: a retry after a lost request") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -306,7 +314,7 @@ TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
 
     auto asking = scout.seen();
 
-    // Pierwsze zapytanie przepada — odpowiadamy dopiero na drugie.
+    // The first request is lost; we answer only the second.
     (void)server.receive(1024, soon).await();
 
     const net::Datagram came = server.receive(1024, soon).await();
@@ -318,7 +326,7 @@ TRIAL("Zwiad: powtórka po zgubionym zapytaniu") {
     same(asking.await().text(), std::string{"203.0.113.7"});
 }
 
-TRIAL("Zwiad: cisza kończy się terminem") {
+TRIAL("Scout: silence ends with the deadline") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -337,7 +345,7 @@ TRIAL("Zwiad: cisza kończy się terminem") {
     ought(late);
 }
 
-TRIAL("Zwiad: bez serwerów nie ma czego pytać") {
+TRIAL("Scout: without servers there is nothing to ask") {
     net::Udp mine = standing();
 
     net::StunClient scout{mine, soon};
@@ -353,7 +361,7 @@ TRIAL("Zwiad: bez serwerów nie ma czego pytać") {
     ought(amiss);
 }
 
-TRIAL("Zwiad: dwa pytania naraz dostają odmowę") {
+TRIAL("Scout: two questions at once are refused") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -379,7 +387,7 @@ TRIAL("Zwiad: dwa pytania naraz dostają odmowę") {
     }
 }
 
-TRIAL("Zwiad: zgodne odbicia znaczą, że przebijanie ma sens") {
+TRIAL("Scout: matching reflections mean hole punching makes sense") {
     net::Udp mine = standing();
     net::Udp one = standing();
     net::Udp two = standing();
@@ -407,7 +415,7 @@ TRIAL("Zwiad: zgodne odbicia znaczą, że przebijanie ma sens") {
     same(scout.known(), net::StunClient::Mapping::alike);
 }
 
-TRIAL("Zwiad: różne odbicia znaczą NAT symetryczny") {
+TRIAL("Scout: differing reflections mean a symmetric NAT") {
     net::Udp mine = standing();
     net::Udp one = standing();
     net::Udp two = standing();
@@ -434,7 +442,7 @@ TRIAL("Zwiad: różne odbicia znaczą NAT symetryczny") {
     same(asking.await(), net::StunClient::Mapping::symmetric);
 }
 
-TRIAL("Zwiad: przy jednym serwerze werdyktu nie ma") {
+TRIAL("Scout: with one server there is no verdict") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -445,14 +453,14 @@ TRIAL("Zwiad: przy jednym serwerze werdyktu nie ma") {
     same(scout.mapping().await(), net::StunClient::Mapping::unknown);
 }
 
-// Jedyna próba w całym zestawie, która wychodzi w internet. **Brak sieci nie jest tu porażką** —
-// zestaw ma przechodzić na maszynie odciętej, a odcięcia od wady kodu odróżnić się nie da. Próba
-// wypisuje więc, co zastała, i wywraca się wyłącznie wtedy, gdy serwer odpowiedział **źle**:
-// pustym adresem albo werdyktem bez treści. Sam odczyt z prawdziwego świata trzeba przeczytać
-// oczami, a najwygodniej tak:
+// The only trial in the whole suite that goes out to the internet. No network is not a failure
+// here: the suite must pass on a machine that is cut off, and being cut off cannot be told apart
+// from a bug in the code. So the trial prints what it found and fails only when a server answered
+// wrongly: with an empty address or a verdict without content. The reading from the real world
+// has to be read with one's own eyes, most conveniently like this:
 //
-//     talcite-test --only "Zwiad: prawdziwe serwery w internecie"
-TRIAL("Zwiad: prawdziwe serwery w internecie") {
+//     talcite-test --only "Scout: real servers on the internet"
+TRIAL("Scout: real servers on the internet") {
     net::Udp mine{net::Address::any(net::Family::four, 0)};
 
     net::StunClient scout{mine, net::Patience{4000}};
@@ -468,7 +476,7 @@ TRIAL("Zwiad: prawdziwe serwery w internecie") {
     }
 
     if (scout.servers().empty()) {
-        std::cout << "        bez sieci — nazw serwerów nie dało się rozwiązać, próba pominięta\n";
+        std::cout << "        no network: the server names could not be resolved, trial skipped\n";
 
         return;
     }
@@ -478,35 +486,35 @@ TRIAL("Zwiad: prawdziwe serwery w internecie") {
     try {
         seen = scout.seen().await();
     } catch (const std::exception& why) {
-        std::cout << "        bez odpowiedzi z sieci (" << why.what() << ") — próba pominięta\n";
+        std::cout << "        no answer from the network (" << why.what() << "), trial skipped\n";
 
         return;
     }
 
-    std::cout << "        widzą mnie jako " << seen.spelled() << "\n";
+    std::cout << "        they see me as " << seen.spelled() << "\n";
 
     ought(seen.held());
     ought(seen.port() != 0);
 
     const net::StunClient::Mapping what = scout.mapping().await();
 
-    std::cout << "        odwzorowanie: "
+    std::cout << "        mapping: "
               << (what == net::StunClient::Mapping::alike
-                      ? "zgodne"
-                      : what == net::StunClient::Mapping::symmetric ? "symetryczne" : "nieznane")
+                      ? "alike"
+                      : what == net::StunClient::Mapping::symmetric ? "symmetric" : "unknown")
               << "\n";
 
-    // Werdykt jest **wypisany, nie sprawdzany**. „Nieznane" znaczy tu, że któryś z dwóch pierwszych
-    // serwerów zamilkł — a to jest stan sieci, nie wada kodu, i test nie ma prawa się o to
-    // przewracać. Prawdziwym sprawdzianem zgodności jest adres wyżej: obcy serwer odpowiedział
-    // tak, że nasz kodek wyjął z tego sensowny adres i port.
+    // The verdict is printed, not checked. "Unknown" here means that one of the first two servers
+    // went silent, and that is the state of the network, not a bug in the code, and the test must
+    // not fail over it. The real check of conformance is the address above: a foreign server
+    // answered so that our codec got a sensible address and port out of it.
 }
 
-// Znacznik „już pytam" zerowało samo ciało obietnicy, więc pytanie anulowane albo porzucone
-// nieruszone unieruchamiało zwiadowcę **na zawsze**. Teraz znika najpóźniej wraz z obietnicą.
-// Anulowanie nie zatrzymuje pytania, które już biegnie — to jest umowa całego talcite — więc
-// zwiadowca odzyskuje głos dopiero, gdy tamto się skończy.
-TRIAL("Zwiad: anulowane pytanie nie unieruchamia zwiadowcy na zawsze") {
+// The "already asking" flag goes away at the latest together with the promise, so a question
+// cancelled, or abandoned untouched, does not freeze the scout for good. Cancelling does not stop a
+// question that is already running (that is the contract of all of talcite), so the scout gets
+// its voice back only when that one ends.
+TRIAL("Scout: a cancelled question does not freeze the scout for good") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -540,8 +548,9 @@ TRIAL("Zwiad: anulowane pytanie nie unieruchamia zwiadowcy na zawsze") {
     ought(again);
 }
 
-// To samo gniazdo niesie potem ruch rozmówcy, więc jeden zwykły duży pakiet nie może kończyć zwiadu.
-TRIAL("Zwiad: za duży datagram nie wywraca pytania") {
+// The same socket later carries the peer's traffic, so one ordinary large packet must not end the
+// scouting.
+TRIAL("Scout: an oversized datagram does not break the question") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -562,8 +571,8 @@ TRIAL("Zwiad: za duży datagram nie wywraca pytania") {
     same(asking.await().text(), std::string{"203.0.113.7"});
 }
 
-// Jeden źle ustawiony serwer na początku listy wykluczał wszystkie następne.
-TRIAL("Zwiad: odmowa jednego serwera nie kończy obchodu") {
+// One misconfigured server at the head of the list must not rule out all the ones after it.
+TRIAL("Scout: one server's refusal does not end the round") {
     net::Udp mine = standing();
     net::Udp bad = standing();
     net::Udp good = standing();
@@ -588,9 +597,9 @@ TRIAL("Zwiad: odmowa jednego serwera nie kończy obchodu") {
     same(asking.await().text(), std::string{"198.51.100.9"});
 }
 
-// Ten sam adres dodany dwa razy dawał dwie identyczne odpowiedzi, a z nich werdykt „zgodne" —
-// czyli kłamstwo w stronę niebezpieczną.
-TRIAL("Zwiad: ten sam serwer dwa razy nie daje werdyktu") {
+// The same address added twice must not give two identical answers and from them the verdict
+// "alike", which would be a lie in the dangerous direction.
+TRIAL("Scout: the same server twice gives no verdict") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -602,8 +611,8 @@ TRIAL("Zwiad: ten sam serwer dwa razy nie daje werdyktu") {
     same(scout.mapping().await(), net::StunClient::Mapping::unknown);
 }
 
-// Popsuty atrybut przekłamany nie ma prawa skasować poprawnie odczytanego starego.
-TRIAL("Zwiad: zły atrybut nie kasuje dobrego") {
+// A broken XOR-ed attribute must not erase a correctly read old one.
+TRIAL("Scout: a bad attribute does not erase a good one") {
     net::Udp mine = standing();
     net::Udp server = standing();
 
@@ -617,7 +626,7 @@ TRIAL("Zwiad: zły atrybut nie kasuje dobrego") {
 
     Bytes made = addressed(0x0001, "198.51.100.9", 1234, numbered(came.bytes), false);
 
-    // Dopisujemy przekłamany atrybut z niemożliwą rodziną i poprawiamy długość wiadomości.
+    // We append an XOR-ed attribute with an impossible family and fix the message length.
     Bytes value;
 
     value.push_back(std::byte{0});
@@ -641,8 +650,8 @@ TRIAL("Zwiad: zły atrybut nie kasuje dobrego") {
     same(asking.await().text(), std::string{"198.51.100.9"});
 }
 
-// Powód odmowy pisze obcy, a zdanie idzie na terminal.
-TRIAL("Zwiad: powód odmowy nie niesie znaków sterujących") {
+// The reason for a refusal is written by a stranger, and the text goes to the terminal.
+TRIAL("Scout: the refusal reason carries no control characters") {
     net::Udp mine = standing();
     net::Udp server = standing();
 

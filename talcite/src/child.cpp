@@ -43,70 +43,75 @@ namespace talcite {
 
 namespace {
 
-// Rata czytania. Ta sama, którą `fs` bierze na udział sieciowy: rura nie ma rozmiaru, o który
-// dałoby się zapytać, więc jedyne, co możemy wybrać, to jak często wracać po odpowiedź na pytanie
-// „czy jeszcze jestem potrzebny".
+// The read chunk. It is the same one `fs` uses on a network share: a pipe has no size one could ask
+// about, so the only thing we can choose is how often to come back for the answer to "am I still
+// needed".
 constexpr std::size_t brim = 64 * 1024;
 
 #ifdef _WIN32
 
-// Rura anonimowa nie da się czytać z ogranicznikiem czasu, a `ReadFile` na niej stoi do skutku —
-// czyli do końca cudzego programu. Zaglądanie co tyle jest jedynym sposobem, żeby anulowanie
-// w ogóle miało kiedy zadziałać.
+// An anonymous pipe cannot be read with a timeout, and `ReadFile` on it blocks until something
+// arrives, that is until the end of the other program. Peeking every so often is the only way for
+// cancellation to ever get a chance to work.
 constexpr std::chrono::milliseconds peeking{20};
 
 #endif
 
+// Throws `fs::Trouble` with the text and the program's path.
 [[noreturn]] void amiss(const std::string& said, const fs::path& where) {
     throw fs::Trouble{said, where};
 }
 
 }
 
-// Dziecko powstaje w jednym miejscu w tym pliku, ale opakować je musi ktoś, kto ma prawo do
-// prywatnego konstruktora. Zamiast otwierać go wszystkim, otwieramy go jednej klasie, której poza
-// tym plikiem nie ma.
+// A child is made in one place in this file, but it has to be wrapped by someone with access to the
+// private constructor. Instead of opening it to everyone, we open it to one class that does not
+// exist outside this file.
 class Rearing {
 public:
+    // Wraps the shared state into a `Child`.
     [[nodiscard]] static Child made(std::shared_ptr<Child::Held> held) {
         return Child{std::move(held)};
     }
 
+    // The shared state inside a `Child`.
     [[nodiscard]] static const std::shared_ptr<Child::Held>& inside(const Child& one) {
         return one.held_;
     }
 };
 
-// **Grób.** Wszystko, co jest potrzebne, żeby program pochować i żeby go po pochowaniu nie zabić
-// drugi raz — trzymane osobno od reszty, bo przeżywa `Child`: zadanie czekające na koniec ma
-// prawo dobiec do końca także wtedy, gdy ostatni uchwyt puszczono wcześniej.
+// The grave. Everything needed to bury the program and not to kill it a second time after burial,
+// kept apart from the rest, because it outlives `Child`: a task waiting for the end may run to
+// completion even when the last handle was let go earlier.
 //
-// Osobno **musi** być jeszcze z jednego powodu: obietnica z `wait()` mieszka w `Held`, a jej
-// domknięcie musi trzymać to, na co czeka. Trzymając `Held`, trzymałaby samą siebie i nic by się
-// nigdy nie zwolniło.
+// It has to be separate for one more reason: the promise from `wait()` lives in `Held`, and its
+// closure has to hold what it waits for. Holding `Held`, it would hold itself, and nothing would
+// ever be freed.
 struct Grave {
     std::mutex guard;
     bool gone = false;
     std::int64_t which = -1;
 
-    // Czy program stoi we **własnej** grupie. Na Windowsie uprzejme zakończenie idzie zdarzeniem
-    // konsoli, a to zdarzenie trafia w całą grupę — więc wysłane do programu, który siedzi w
-    // naszej, zabiłoby przy okazji nas samych.
+    // Whether the program stands in its own group. On Windows the polite ending goes by a console
+    // event, and that event hits the whole group, so sent to a program that sits in ours it would
+    // kill us as well.
     bool grouped = false;
 
-    // Czy program dostał nasz terminal. Tylko taki wznawiamy po zatrzymaniu — program na rurach
-    // zatrzymany ręką z zewnątrz ma zostać zatrzymany.
+    // Whether the program got our terminal. Only such a program is resumed after a stop; a program
+    // on pipes stopped by hand from outside should stay stopped.
     bool foreground = false;
 
 #ifdef _WIN32
     HANDLE process = nullptr;
 
-    // Zadanie (job) obejmujące program i wszystko, co on uruchomi. `kill()` kończy całe drzewo:
-    // plik wsadowy to cmd.exe, który dopiero uruchamia właściwy program, a zabity sam cmd.exe
-    // zostawiał go przy życiu. Zamknięcie uchwytu niczego nie zabija — bez
-    // `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, tak jak puszczenie `Child` zostawia program swojemu losowi.
+    // A job object covering the program and everything it starts. `kill()` ends the whole tree: a
+    // batch file runs as cmd.exe, which only then starts the actual program, and killing cmd.exe
+    // alone would leave that program alive. Closing the handle kills nothing (there is no
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE), just as letting go of a `Child` leaves the program to
+    // its fate.
     HANDLE job = nullptr;
 
+    // Closes the process and job handles.
     ~Grave() {
         if (process != nullptr) CloseHandle(process);
         if (job != nullptr) CloseHandle(job);
@@ -124,28 +129,28 @@ struct Child::Held {
     HANDLE from = nullptr;
     HANDLE wrong = nullptr;
 
-    // Zdarzenie budzące. `close_input()` je podnosi, a pisarz czeka na nie **razem** z zakończeniem
-    // własnego zapisu — bo synchronicznego `WriteFile`, który już stanął na pełnej rurze, nie da
-    // się obudzić inaczej niż przerwaniem samego wejścia-wyjścia. Ręczne, bo ma zostać podniesione
-    // na zawsze: budzi każdego piszącego, a nie tylko pierwszego, tak samo jak rura budząca
-    // na POSIX-ie.
+    // The wake-up event. `close_input()` raises it, and a writer waits for it together with the
+    // completion of its own write, because a synchronous `WriteFile` already stuck on a full pipe
+    // cannot be woken other than by canceling the I/O itself. It is manual-reset, because it has to
+    // stay raised for good: it wakes every writer, not just the first, just like the wake-up pipe
+    // on POSIX.
     HANDLE rouse = nullptr;
 #else
     int into = -1;
     int from = -1;
     int wrong = -1;
 
-    // Rura budząca. `close_input()` wrzuca do niej bajt, a pisarz stojący na `poll` widzi go obok
-    // wejścia i dzwonka — bo **zamknięcie deskryptora nie budzi `poll`, który już na nim stoi**.
-    // Bez tego `close_input()` na dziecku, które nie czyta, kończył zapis dopiero ze śmiercią
-    // dziecka.
+    // The wake-up pipe. `close_input()` drops a byte into it, and a writer waiting in `poll` sees
+    // it next to the input and the bell, because closing a descriptor does not wake a `poll`
+    // already waiting on it. Without it, `close_input()` on a child that does not read would end
+    // the write only when the child dies.
     int rouse[2] = {-1, -1};
 #endif
 
-    // **Zamknięcie wejścia jest odroczone.** Zwolniony numer deskryptora system natychmiast
-    // rozdaje dalej, więc zamknięcie go spod biegnącego wywołania systemowego grozi tym, że
-    // treść dla dziecka trafi w cudzy plik. Zamyka więc ostatni wychodzący, a nie ten, kto
-    // poprosił: `close_input()` stawia znacznik, a `poured` liczy siebie.
+    // Closing the input is deferred. The system hands out a freed descriptor number again right
+    // away, so closing it under a running system call risks content meant for the child landing in
+    // someone else's file. So the last writer to leave closes it, not whoever asked:
+    // `close_input()` sets a flag, and `poured` counts itself.
     int writers = 0;
     bool sealing = false;
 
@@ -162,6 +167,7 @@ namespace {
 
 #ifdef _WIN32
 
+// Closes the handle once and marks it closed.
 void closed(HANDLE& one) {
     if (one == nullptr || one == INVALID_HANDLE_VALUE) return;
 
@@ -171,6 +177,7 @@ void closed(HANDLE& one) {
 
 #else
 
+// Closes the descriptor once and marks it closed.
 void closed(int& one) {
     if (one < 0) return;
 
@@ -182,6 +189,7 @@ void closed(int& one) {
 
 }
 
+// Closes whatever pipes are still open.
 Child::Held::~Held() {
     closed(into);
     closed(from);
@@ -201,9 +209,10 @@ Child::Held::~Held() {
 
 namespace {
 
-// Odczyt jednej raty z jednej rury. Wołane z robotnika puli, więc dzwonek tego robotnika jest tym,
-// co zamienia `cancel()` na obietnicy w przerwane czekanie — a nie w przerwane wywołanie systemowe.
-// Pusty wynik znaczy **koniec rury**, nie błąd: program się skończył i nikt już nic nie napisze.
+// Reads one chunk from one pipe. It is called from a pool worker, so that worker's bell is what
+// turns `cancel()` on the promise into an interrupted wait rather than an interrupted system call.
+// An empty result means the end of the pipe, not an error: the program has ended and nobody will
+// write anything more.
 Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
     Bytes made;
 
@@ -289,10 +298,11 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
         if (many == 2 && (watched[1].revents & POLLIN) != 0) throw Cancelled{};
 
-        // **`POLLNVAL` musi być w masce**, choć się o niego nie prosi. `poll` zgłasza go, gdy
-        // deskryptor jest już zamknięty, i wraca z nim **natychmiast** — bez tego warunku pętla
-        // kręciłaby się bez końca, paląc robotnika puli i nie rozstrzygając obietnicy. To nie jest
-        // stan hipotetyczny: rury zamyka `close_input()` i destruktor, oba z innego wątku niż ten.
+        // `POLLNVAL` has to be in the mask, even though nobody asks for it. `poll` reports it when
+        // the descriptor is already closed and returns with it at once; without this condition the
+        // loop would spin forever, burning a pool worker and never settling the promise. This is
+        // not a hypothetical state: the pipes are closed by `close_input()` and by the destructor,
+        // both from a thread other than this one.
         if ((watched[0].revents & POLLNVAL) != 0)
             amiss("The program output is already closed.", held.program);
 
@@ -320,12 +330,14 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
 #ifndef _WIN32
 
-// Pisanie do rury, której drugi koniec już nie żyje, wysyła SIGPIPE — a domyślną reakcją na
-// SIGPIPE jest śmierć **naszego** procesu. Blokujemy go na czas pisania i tylko na tym wątku:
-// ustawienie go na ignorowany raz na zawsze byłoby cichą zmianą warunków całej aplikacji, o którą
-// nikt nas nie prosił. Sygnał, który zdążył się zebrać, zdejmujemy z kolejki sami.
+// Writing to a pipe whose other end is already dead sends SIGPIPE, and the default reaction to
+// SIGPIPE is the death of our own process. We block it for the time of writing and only on this
+// thread: setting it to ignored once and for all would be a silent change to the conditions of the
+// whole application that nobody asked us for. A signal that has managed to gather we take off the
+// queue ourselves.
 class Muffled {
 public:
+    // Blocks SIGPIPE on this thread, remembering the mask it had.
     Muffled() {
         sigemptyset(&mine_);
         sigaddset(&mine_, SIGPIPE);
@@ -333,6 +345,7 @@ public:
         held_ = pthread_sigmask(SIG_BLOCK, &mine_, &was_) == 0;
     }
 
+    // Consumes a SIGPIPE that arrived meanwhile, then restores the thread's mask.
     ~Muffled() {
         if (!held_) return;
 
@@ -360,13 +373,16 @@ private:
 
 #endif
 
-// **Ostatni wychodzący zamyka.** Strażnik, bo `poured` wychodzi także wyjątkiem — przez `amiss`,
-// przez `Cancelled` z dzwonka i przez `throw` z samego zamknięcia. Gdyby licznik opuszczała zwykła
-// linijka na końcu, każde z tych wyjść zostawiałoby wejście otwarte na zawsze.
+// The last writer to leave closes the input. A guard, because `poured` also leaves by exception:
+// through `amiss`, through `Cancelled` from the bell and through a `throw` from the close itself.
+// If an ordinary line at the end decremented the counter, each of these exits would leave the input
+// open forever.
 class Writing {
 public:
     explicit Writing(Child::Held& held) : held_(held) {}
 
+    // Leaves the count of writers and closes the input if it was the last one and closing was
+    // requested.
     ~Writing() {
         const std::lock_guard<std::mutex> kept{held_.guard};
 
@@ -382,6 +398,9 @@ private:
     Child::Held& held_;
 };
 
+// Writes all of the bytes into the program's input, in chunks of at most `brim`, and returns how
+// many were written. Throws when the input is closed, before or during the write, or the write
+// fails; throws `Cancelled` when the worker's bell rings.
 std::size_t poured(Child::Held& held, const Bytes& what) {
     if (what.empty()) return 0;
 
@@ -404,12 +423,12 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
     const Writing counted{held};
 
-    // Zdarzenie zakończenia zapisu. Własne, nie współdzielone: każda rata czeka na swoje.
+    // The event for the completion of a write. Our own, not shared: each chunk waits for its own.
     const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
     if (ready == nullptr) amiss("Cannot write to the program.", held.program);
 
-    // Zamykamy je każdą drogą wyjścia — także wyjątkiem z `amiss`.
+    // It is closed on every way out, including an exception from `amiss`.
     const std::shared_ptr<void> closing{ready, [](void* which) { CloseHandle(which); }};
 
     std::size_t done = 0;
@@ -426,25 +445,26 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
         DWORD given = 0;
 
-        // Uchwyt jest nakładany, więc `WriteFile` prawie zawsze wraca „w toku" i to jest sytuacja
-        // zwyczajna, a nie awaria. Prawda znaczy „zeszło od razu"; wtedy i tak pytamy o wynik
-        // jednym wywołaniem niżej, żeby nie mieć dwóch dróg wyjścia.
+        // The handle is overlapped, so `WriteFile` nearly always returns "pending", and that is an
+        // ordinary situation, not a failure. True means "it went at once"; even then we ask for the
+        // result one call below, so as not to have two ways out.
         if (WriteFile(one, what.data() + done, asked, &given, &over) == 0) {
             if (GetLastError() != ERROR_IO_PENDING)
                 amiss("Cannot write to the program.", held.program);
 
-            // **Czekamy na dwie rzeczy naraz**: na zejście raty i na zapieczętowanie. To jest ten
-            // sam kształt, co `poll` na POSIX-ie, i z tego samego powodu — zamknięcie wejścia musi
-            // przerwać zapis stojący na pełnej rurze, a nie czekać na śmierć dziecka.
+            // We wait for two things at once: the chunk going through and the sealing. This is the
+            // same shape as `poll` on POSIX, and for the same reason: closing the input has to
+            // interrupt a write stuck on a full pipe, not wait for the child to die.
             const HANDLE these[2] = {ready, wake};
             const DWORD many = wake != nullptr ? 2 : 1;
 
             const DWORD which = WaitForMultipleObjects(many, these, FALSE, INFINITE);
 
             if (which == WAIT_OBJECT_0 + 1) {
-                // Przerwaną ratę **trzeba zabrać jądru**, zanim zniknie jej `OVERLAPPED` i bufor.
-                // `CancelIoEx` prosi o przerwanie, a `GetOverlappedResult` z czekaniem oddaje
-                // pewność, że jądro już tej pamięci nie dotyka.
+                // An interrupted chunk has to be taken back from the kernel before its `OVERLAPPED`
+                // and buffer disappear. `CancelIoEx` asks for the interruption, and
+                // `GetOverlappedResult` with waiting gives the certainty that the kernel no longer
+                // touches that memory.
                 (void)CancelIoEx(one, &over);
                 (void)GetOverlappedResult(one, &over, &given, TRUE);
 
@@ -488,9 +508,10 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
     std::size_t done = 0;
 
     while (done < what.size()) {
-        // Trzy rzeczy naraz: wejście do dziecka, dzwonek robotnika i rura budząca. Dzwonek zamienia
-        // `cancel()` w przerwane czekanie, a rura budząca — `close_input()`. Bez tej trzeciej
-        // pisarz stojący na pełnej rurze budzi się dopiero, gdy dziecko coś przeczyta albo umrze.
+        // Three things at once: the child's input, the worker's bell and the wake-up pipe. The bell
+        // turns `cancel()` into an interrupted wait, and the wake-up pipe does the same for
+        // `close_input()`. Without the third, a writer stuck on a full pipe would wake only when
+        // the child reads something or dies.
         pollfd watched[3];
         int many = 1;
 
@@ -518,14 +539,13 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
         if (bell != nullptr && (watched[1].revents & POLLIN) != 0) throw Cancelled{};
 
-        // Rura budząca jest **poziomowa i nigdy nie opróżniana**: bajt wrzucony przez
-        // `close_input()` zostaje w niej na zawsze, więc budzi wszystkich piszących, a nie tylko
-        // pierwszego.
+        // The wake-up pipe is level-triggered and never drained: the byte dropped by
+        // `close_input()` stays in it forever, so it wakes every writer, not just the first.
         if (roused >= 0 && (watched[roused].revents & POLLIN) != 0)
             amiss("The program input is already closed.", held.program);
 
-        // Zamknięcie **między** obrotami pętli: wtedy `poll` wraca z tym natychmiast. Zamknięcia
-        // w trakcie własnego czekania `poll` nie zauważa — od tego jest rura budząca.
+        // A close between turns of the loop: then `poll` returns with this at once. `poll` does not
+        // notice a close during its own wait; that is what the wake-up pipe is for.
         if ((watched[0].revents & POLLNVAL) != 0)
             amiss("The program input is already closed.", held.program);
 
@@ -547,9 +567,9 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 #endif
 }
 
-// Czekanie na koniec. Stoi na własnym robotniku puli przez cały czas życia programu — pula rośnie
-// dla pracy blokującej bez ograniczeń, więc nikogo tym nie zagłodzimy, a odpytywanie co jakiś czas
-// kosztowałoby czuwanie w bezczynności.
+// Waiting for the end. It occupies its own pool worker for the whole life of the program: the pool
+// grows without limit for blocking work, so this starves nobody, and polling every so often would
+// cost staying awake while idle.
 Exit buried(const std::shared_ptr<Grave>& grave, const fs::path& program) {
     Exit made;
 
@@ -586,8 +606,8 @@ Exit buried(const std::shared_ptr<Grave>& grave, const fs::path& program) {
         }
     }
 
-    // Program zabity przez nas kończy się kodem, który sami mu podaliśmy. Windows nie zna sygnałów,
-    // więc nie ma tu czego rozdzielać — zostaje zwykłe wyjście z kodem.
+    // A program we killed ends with the code we gave it ourselves. Windows has no signals, so there
+    // is nothing to tell apart here; what remains is an ordinary exit with a code.
     made.ended = Ended::normal;
     made.code = static_cast<int>(code);
 
@@ -600,10 +620,10 @@ Exit buried(const std::shared_ptr<Grave>& grave, const fs::path& program) {
     int told = 0;
 
     for (;;) {
-        // **Zatrzymanie to nie koniec.** Program z naszym terminalem zatrzymany przez Ctrl+Z
-        // (SIGTSTP) dawniej stał na zawsze: `waitpid` bez `WUNTRACED` nie wracał, terminal należał
-        // do zatrzymanej grupy, a twa czekała. Kontroli zadań nie prowadzimy, więc zatrzymany
-        // program wznawiamy — Ctrl+Z w programie uruchomionym z twa nic nie robi, jak w MC.
+        // A stop is not the end. A program with our terminal stopped by Ctrl+Z (SIGTSTP) would
+        // otherwise stand forever: `waitpid` without `WUNTRACED` would not return, the terminal
+        // would belong to the stopped group, and twa would wait. We do not do job control, so a
+        // stopped program is resumed: Ctrl+Z in a program started from twa does nothing, as in MC.
         const pid_t done = ::waitpid(static_cast<pid_t>(which), &told, grave->foreground ? WUNTRACED : 0);
 
         if (done > 0 && WIFSTOPPED(told)) {
@@ -627,8 +647,8 @@ Exit buried(const std::shared_ptr<Grave>& grave, const fs::path& program) {
         return made;
     }
 
-    // Pochowany. Od tej chwili numer wolno przydzielić komuś innemu, więc każdy sygnał wysłany pod
-    // niego trafiłby w obcy program — i dlatego `stop()` oraz `kill()` pytają o ten sam zamek.
+    // Buried. From this moment the number may be given to someone else, so any signal sent to it
+    // would hit a stranger's program, and that is why `stop()` and `kill()` ask for the same lock.
     {
         const std::lock_guard<std::mutex> kept{grave->guard};
 
@@ -652,10 +672,10 @@ Exit buried(const std::shared_ptr<Grave>& grave, const fs::path& program) {
 
 #ifdef _WIN32
 
-// Cytowanie według reguł, którymi rozbiera wiersz poleceń biblioteka uruchomieniowa MSVC: ukośnik
-// odwrotny jest znakiem ucieczki **tylko** przed cudzysłowem i przed innym ukośnikiem stojącym
-// przed cudzysłowem. Robimy to sami, bo `CreateProcessW` bierze jeden napis, a wołający podał nam
-// argumenty osobno i nie ma powodu, żeby wiedział o tej regule.
+// Quoting by the rules with which the MSVC runtime takes a command line apart: a backslash is an
+// escape character only before a quotation mark and before another backslash standing before a
+// quotation mark. We do it ourselves, because `CreateProcessW` takes one string, while the caller
+// gave us the arguments separately and has no reason to know this rule.
 void quoted(const std::wstring& one, std::wstring& into) {
     if (!one.empty() && one.find_first_of(L" \t\n\v\"") == std::wstring::npos) {
         into += one;
@@ -691,10 +711,11 @@ void quoted(const std::wstring& one, std::wstring& into) {
     into += L'"';
 }
 
-// Program po nazwie szukamy **sami**: w katalogu naszego programu, potem w PATH, a w każdym
-// miejscu z rozszerzeniami z PATHEXT. `CreateProcessW` z samą nazwą zaglądał po drodze do katalogu
-// bieżącego — a to bywa katalog panelu z cudzym `git.exe` w środku — i dokładał wyłącznie `.exe`,
-// więc `npm` (npm.cmd) się nie uruchamiał. Ścieżkę z ukośnikiem albo dyskiem bierzemy, jak jest.
+// We search for a program by name ourselves: in our own program's folder, then in PATH, and in
+// every place with the extensions from PATHEXT. Given a bare name, `CreateProcessW` would look into
+// the current folder on the way (which can be a panel's folder with someone else's git.exe inside)
+// and would add only .exe, so npm (npm.cmd) would not start. A path with a slash or a drive is
+// taken as it is. Throws when nothing is found.
 std::wstring sought(const fs::path& program) {
     const std::wstring named = program.wstring();
 
@@ -762,11 +783,12 @@ std::wstring sought(const fs::path& program) {
             if (told != INVALID_FILE_ATTRIBUTES && (told & FILE_ATTRIBUTE_DIRECTORY) == 0) return tried;
         }
 
-    // Nie znaleziony — odmawiamy tutaj. Oddana dalej sama nazwa wróciłaby w `CreateProcessW` do
-    // katalogu bieżącego, czyli dokładnie tam, skąd mieliśmy nie brać.
+    // Not found: we refuse here. A bare name passed on would make `CreateProcessW` go back to the
+    // current folder, exactly where we must not take it from.
     amiss("Cannot start the program.", program);
 }
 
+// Whether the program is a batch file (.bat or .cmd), which only cmd.exe can run.
 bool batched(const std::wstring& program) {
     std::wstring ending = fs::path{program}.extension().wstring();
 
@@ -775,12 +797,13 @@ bool batched(const std::wstring& program) {
     return ending == L".bat" || ending == L".cmd";
 }
 
-// Plik wsadowy uruchamia cmd.exe, który **sam rozbiera wiersz** według własnych reguł: `&`, `|`
-// i `%ZMIENNA%` w argumencie wykonałyby cudze polecenie (BatBadBut, 2024). Wołamy więc cmd.exe
-// jawnie — z katalogu systemowego, bez AutoRun (`/d`), bez opóźnionego rozwijania (`/v:off`) —
-// a każdy argument idzie w cudzysłowie, w którym `&|<>^()` nic nie znaczą. Zostają znaki, których
-// cudzysłów nie chroni: cudzysłów, procent i koniec wiersza. Takiego argumentu nie przekazujemy
-// wcale — odmowa jest lepsza niż zgadywanie, co z niego zrobi cmd.
+// A batch file runs in cmd.exe, which takes the line apart by its own rules: `&`, `|` and
+// `%VARIABLE%` in an argument would run someone else's command (BatBadBut, 2024). So we call
+// cmd.exe explicitly (from the system folder, without AutoRun via `/d`, without delayed expansion
+// via `/v:off`), and every argument goes in quotation marks, inside which `&|<>^()` mean nothing.
+// What remains are the characters quotes do not protect: the quotation mark, the percent sign and
+// the line end. Such an argument is not passed at all; refusing is better than guessing what cmd
+// would make of it.
 void batch_quoted(const std::wstring& one, std::wstring& into, const fs::path& program) {
     if (one.find_first_of(L"\"%\r\n") != std::wstring::npos || one.find(L'\0') != std::wstring::npos)
         amiss("This argument cannot be passed to a batch file.", program);
@@ -795,6 +818,8 @@ struct Launch {
     std::wstring line;
 };
 
+// The application path and the command line for `CreateProcessW`: the program found by `sought`
+// with its arguments quoted, or cmd.exe from the system folder around a batch file.
 Launch commanded(const Command& what) {
     Launch made;
 
@@ -836,7 +861,9 @@ Launch commanded(const Command& what) {
     return made;
 }
 
-// Blok środowiska to ciąg par `nazwa=wartość`, każda zakończona zerem, całość drugim zerem.
+// The child's environment: ours when it inherits, with the command's variables set over it (names
+// compared without regard to case, as Windows does). The environment block is a sequence of
+// `name=value` pairs, each ending with a zero, and the whole with a second zero.
 std::wstring surrounded(const Command& what) {
     std::vector<std::wstring> among;
 
@@ -847,8 +874,8 @@ std::wstring surrounded(const Command& what) {
             for (wchar_t* at = whole; *at != L'\0';) {
                 const std::wstring one{at};
 
-                // Windows trzyma na początku bloku pozycje zaczynające się od `=`; to nie są
-                // zmienne, tylko katalogi bieżące dysków, i przepisujemy je bez ruszania.
+                // Windows keeps entries starting with `=` at the beginning of the block; they are
+                // not variables but the current folders of the drives, and we copy them untouched.
                 among.push_back(one);
 
                 at += one.size() + 1;
@@ -885,9 +912,10 @@ std::wstring surrounded(const Command& what) {
 
 #else
 
-// Wyszukanie programu po PATH robimy **przed** rozwidleniem, żeby w dziecku wywołać `execv`,
-// a nie `execvp`: między `fork` a `exec` wolno wołać tylko to, co jest bezpieczne w obsłudze
-// sygnału, a `execvp` po drodze przydziela pamięć. Tu przydzielamy w rodzicu, na spokojnie.
+// The PATH search happens before forking, so that the child calls `execve` with a full path and not
+// execvp: between `fork` and `exec` only what is async-signal-safe may be called, and execvp
+// allocates memory along the way. Here we allocate in the parent, at leisure. A name with a slash
+// is taken as it is, and a name not found is returned unchanged for `execve` to fail on.
 std::string found(const fs::path& program) {
     const std::string named = program.string();
 
@@ -917,6 +945,8 @@ std::string found(const fs::path& program) {
     return named;
 }
 
+// The child's environment: ours when it inherits, with the command's variables set over it, as
+// `name=value` strings.
 std::vector<std::string> surrounded(const Command& what) {
     std::vector<std::string> among;
 
@@ -940,9 +970,9 @@ std::vector<std::string> surrounded(const Command& what) {
 
 #endif
 
-// Uruchomienie. `ahead` znaczy „ten program dostaje nasz terminal": wtedy nie zakładamy rur wcale,
-// bo jego wejściem jest klawiatura, a wyjściem ekran — i dodatkowo stawiamy go na pierwszym planie,
-// żeby Ctrl-C szło do niego, a nie do nas.
+// Starting. `ahead` means "this program gets our terminal": then we create no pipes at all, because
+// its input is the keyboard and its output the screen, and we also put it in the foreground, so
+// that Ctrl-C goes to it and not to us.
 std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     auto held = std::make_shared<Child::Held>();
 
@@ -974,26 +1004,26 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     };
 
     if (!ahead) {
-        // **Rura wejścia powstaje inaczej niż pozostałe dwie**, i to jest cena za działające
-        // `close_input()`. `CreatePipe` oddaje wyłącznie uchwyty synchroniczne, a zapis
-        // synchroniczny, który stanął na pełnej rurze, da się obudzić tylko przez
-        // `CancelSynchronousIo` z uchwytem cudzego wątku — a to zostawia okno, którego nie sposób
-        // domknąć: między sprawdzeniem znacznika a wejściem w `WriteFile` przerwanie trafia w
-        // próżnię.
+        // The input pipe is made differently from the other two, and that is the price of a working
+        // `close_input()`. `CreatePipe` gives only synchronous handles, and a synchronous write
+        // stuck on a full pipe can be woken only by CancelSynchronousIo with another thread's
+        // handle, which leaves a window that cannot be closed: between checking the flag and
+        // entering `WriteFile`, the interruption hits nothing.
         //
-        // Nasz koniec robimy więc **nakładany**, a wtedy pisarz czeka na zakończenie zapisu
-        // i na zdarzenie budzące **naraz** — dokładnie tak, jak na POSIX-ie `poll` czeka na
-        // deskryptor i na rurę budzącą. Dziecko dostaje swój koniec zwykły i dziedziczny,
-        // bo tego właśnie oczekuje każdy program czytający z wejścia.
+        // So we make our end overlapped, and then the writer waits for the completion of the write
+        // and for the wake-up event at the same time, exactly as `poll` on POSIX waits for the
+        // descriptor and for the wake-up pipe. The child gets its end ordinary and inheritable,
+        // because that is what every program reading its input expects.
         //
-        // Nazwa musi być niepowtarzalna w całym systemie, więc bierze numer procesu i licznik.
+        // The name has to be unique in the whole system, so it takes the process number and a
+        // counter.
         {
             static std::atomic<unsigned> counted{0};
 
             wchar_t named[64];
 
-            // `swprintf`, a nie `_snwprintf_s`: to drugie jest wyłącznie MSVC, a chcemy, żeby
-            // plik zbudował się także pod MinGW.
+            // `swprintf`, not _snwprintf_s: the latter exists only in MSVC, and the file should
+            // also build under MinGW.
             (void)swprintf(named, sizeof(named) / sizeof(named[0]), L"\\\\.\\pipe\\talcite-%lu-%u",
                            static_cast<unsigned long>(GetCurrentProcessId()), counted.fetch_add(1));
 
@@ -1028,14 +1058,14 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
             amiss("Cannot create the error pipe.", what.program);
         }
 
-        // Nasze końce **nie** mają być dziedziczone: dziecko trzymające koniec do zapisu na
-        // własnym wyjściu nigdy nie doczekałoby się końca rury.
+        // Our ends must not be inherited: a child holding the write end of its own output would
+        // never see the end of the pipe.
         SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
         SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
 
-        // Zdarzenie budzące dla `close_input()`. Gdyby się nie udało, zostaje samo odroczone
-        // zamknięcie: pisarz dowie się o zapieczętowaniu przy następnej racie zamiast natychmiast.
-        // To jest pogorszenie, a nie awaria, więc dziecka z tego powodu nie odrzucamy.
+        // The wake-up event for `close_input()`. If it cannot be created, only the deferred close
+        // remains: the writer learns about the sealing on the next chunk instead of at once. That
+        // is a degradation, not a failure, so we do not reject the child for it.
         held->rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
         if (err_read != nullptr) SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0);
@@ -1055,8 +1085,8 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
 
     STARTUPINFOEXW setting{};
 
-    // Rozmiar musi odpowiadać temu, co naprawdę podajemy: rozszerzona postać tylko wtedy, gdy
-    // dokładamy listę uchwytów. Podana bez tej flagi byłaby kłamstwem o wielkości struktury.
+    // The size has to match what we really pass: the extended form only when we add the handle
+    // list. Given without that flag, it would be a lie about the size of the structure.
     setting.StartupInfo.cb =
         ahead ? static_cast<DWORD>(sizeof(STARTUPINFOW)) : static_cast<DWORD>(sizeof(setting));
 
@@ -1069,9 +1099,8 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         setting.StartupInfo.hStdOutput = out_write;
         setting.StartupInfo.hStdError = what.merge ? out_write : err_write;
 
-        // Dziedziczenie uchwytów jest na Windowsie **wszystko albo nic**, chyba że poda się listę.
-        // Bez niej dziecko dostałoby także nasze gniazda — i trzymało zajęty port długo po tym,
-        // jak my go zamkniemy.
+        // Handle inheritance on Windows is all or nothing, unless a list is given. Without it the
+        // child would also get our sockets and keep a port busy long after we close it.
         passed[0] = in_read;
         passed[1] = out_write;
         passed[2] = what.merge ? out_write : err_write;
@@ -1100,11 +1129,11 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
 
     PROCESS_INFORMATION told{};
 
-    // Własna grupa procesów dla programu na rurach — dzięki niej `stop()` ma dokąd wysłać
-    // Ctrl-Break. Program, który dostaje nasz terminal, zostaje w **naszej** grupie, bo inaczej
-    // nie dosięgnąłby go Ctrl-C naciśnięty przez użytkownika.
+    // Its own process group for a program on pipes, so that `stop()` has somewhere to send
+    // Ctrl-Break. A program that gets our terminal stays in our group, because otherwise Ctrl-C
+    // pressed by the user would not reach it.
     //
-    // Wstrzymany na start, żeby wszedł do zadania, zanim cokolwiek uruchomi sam.
+    // It starts suspended, so that it enters the job before it starts anything itself.
     const DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED |
                         (ahead ? 0u : (EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_PROCESS_GROUP));
 
@@ -1119,8 +1148,8 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         amiss("Cannot start the program.", what.program);
     }
 
-    // Zadanie, które się nie uda — proces już w cudzym zadaniu bez prawa wyjścia, stary system — nie
-    // jest powodem do odmowy: `kill()` zabije wtedy sam program, jak dawniej.
+    // A job that cannot be made (the process is already in someone else's job without the right to
+    // leave, an old system) is no reason to refuse: `kill()` then kills only the program itself.
     HANDLE job = CreateJobObjectW(nullptr, nullptr);
 
     if (job != nullptr && AssignProcessToJobObject(job, told.hProcess) == 0) {
@@ -1156,9 +1185,9 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
             closed(*one);
     };
 
-    // Wszystkie trzy rury zamykane przy uruchomieniu **od urodzenia** (`sealed::piped`): drugi
-    // program startujący w tej samej chwili z innego wątku nie dostanie końców tego. Dziecko
-    // przekłada swoje końce na 0, 1 i 2, a `dup2` znacznika nie przenosi.
+    // All three pipes are closed on exec from birth (`sealed::piped`): another program starting at
+    // the same moment from another thread will not get the ends of this one. The child moves its
+    // ends to 0, 1 and 2, and `dup2` does not carry the flag over.
     if (!ahead) {
         if (!sealed::piped(in_pipe, false)) amiss("Cannot create the input pipe.", what.program);
 
@@ -1173,9 +1202,8 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         }
     }
 
-    // Wszystko, czego dziecko będzie potrzebowało, składamy **tutaj**. Po rozwidleniu wolno mu
-    // wołać tylko to, co jest bezpieczne w obsłudze sygnału, więc żadnego przydzielania pamięci
-    // ani składania napisów już tam nie ma.
+    // Everything the child will need is put together here. After the fork it may call only what is
+    // async-signal-safe, so there is no memory allocation or string building there anymore.
     const std::string program = found(what.program);
     const std::string where = what.where.empty() ? std::string{} : what.where.string();
 
@@ -1206,17 +1234,17 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
 
     if (which == 0) {
         if (ahead) {
-            // Własna grupa procesów i pierwszy plan: bez tego Ctrl-C poszłoby do nas, a próba
-            // czytania z terminala zatrzymałaby dziecko sygnałem SIGTTIN. Samo `tcsetpgrp` też
-            // wysyła sygnał — SIGTTOU — więc najpierw go uciszamy.
+            // Its own process group and the foreground: without this Ctrl-C would go to us, and an
+            // attempt to read from the terminal would stop the child with SIGTTIN. `tcsetpgrp`
+            // itself also sends a signal, SIGTTOU, so we silence it first.
             ::setpgid(0, 0);
 
             std::signal(SIGTTOU, SIG_IGN);
 
             (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());
         } else {
-            // Też własna grupa, ale bez pierwszego planu: `stop()` i `kill()` sięgają wtedy całej
-            // grupy, więc z powłoką giną programy, które ona uruchomiła.
+            // Its own group too, but without the foreground: `stop()` and `kill()` then reach the
+            // whole group, so the programs a shell started die with it.
             ::setpgid(0, 0);
 
             (void)::dup2(in_pipe[0], STDIN_FILENO);
@@ -1227,14 +1255,14 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
                                   err_pipe[1]})
                 if (one > STDERR_FILENO) ::close(one);
 
-            // Koniec rury, który już był jednym z 0, 1, 2 — rodzic bez wejścia standardowego dostaje
-            // od `pipe2` właśnie zero — `dup2` zostawił jak był, ze znacznikiem, a ten zamknąłby go
-            // przy `exec`.
+            // A pipe end that already was one of 0, 1, 2 (a parent without standard input gets
+            // exactly zero from `pipe2`) is left by `dup2` as it was, with the flag, and the flag
+            // would close it on `exec`.
             for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
         }
 
-        // Sygnały ustawione przez nas na ignorowane zostają takie po `exec` — a program, który
-        // dostał w spadku zignorowane SIGPIPE, zachowa się inaczej niż uruchomiony z powłoki.
+        // Signals we set to ignored stay ignored after `exec`, and a program that inherited an
+        // ignored SIGPIPE behaves differently from one started from a shell.
         std::signal(SIGPIPE, SIG_DFL);
 
         if (!where.empty() && ::chdir(where.c_str()) != 0) ::_exit(127);
@@ -1244,9 +1272,9 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         ::_exit(127);
     }
 
-    // To samo robi dziecko — i robią to oba celowo. Kto zdąży pierwszy, ten ustawia; drugie
-    // wywołanie nic nie zmienia. Inaczej zostaje szpara, w której dziecko już czyta, a pierwszego
-    // planu jeszcze nie ma, albo `kill()` trafia w grupę, której jeszcze nie ma.
+    // The child does the same, and both do it on purpose. Whoever is first sets it; the second call
+    // changes nothing. Otherwise a gap remains in which the child already reads and the foreground
+    // is not there yet, or `kill()` hits a group that does not exist yet.
     ::setpgid(which, which);
 
     if (ahead) {
@@ -1265,16 +1293,16 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     held->from = out_pipe[0];
     held->wrong = err_pipe[0];
 
-    // **Nasze końce rur są nieblokujące.** Pętle czytania i pisania są napisane pod to od początku
-    // — pytają `poll`, obsługują `EAGAIN` i mają obok siebie dzwonek — ale bez tego ustawienia
-    // `EAGAIN` nigdy nie przychodzi, bo zapis blokujący do rury wraca dopiero po oddaniu
-    // **wszystkiego**, o co poproszono. Wtedy robotnik puli stoi w środku wywołania systemowego,
-    // gdzie ani dzwonek, ani `close_input()` nie mają jak go dosięgnąć: zmierzone `close_input()`
-    // na dziecku, które nie czyta, kończyło zapis dopiero ze śmiercią dziecka.
+    // Our pipe ends are non-blocking. The read and write loops are written for this (they ask
+    // `poll`, handle `EAGAIN` and keep the bell next to them), but without this setting `EAGAIN`
+    // never comes, because a blocking write to a pipe returns only after handing over everything it
+    // was asked to. The pool worker then stands inside a system call, where neither the bell nor
+    // `close_input()` can reach it: `close_input()` on a child that does not read would end the
+    // write only when the child dies.
     //
-    // Ustawienie dotyczy **wyłącznie naszych końców**. Rura ma dwa osobne opisy otwarcia — my
-    // trzymamy wejście do zapisu i dwa wyjścia do odczytu, dziecko trzyma te drugie — więc
-    // dziecko dostaje swoje końce blokujące, tak jak każdy program się tego spodziewa.
+    // The setting applies only to our ends. A pipe has two separate open file descriptions (we hold
+    // the input for writing and the two outputs for reading, the child holds the other ends), so
+    // the child gets its ends blocking, as every program expects.
     for (const int one : {held->into, held->from, held->wrong}) {
         if (one < 0) continue;
 
@@ -1283,9 +1311,9 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         if (flags >= 0) (void)::fcntl(one, F_SETFL, flags | O_NONBLOCK);
     }
 
-    // Rura budząca dla `close_input()`. Gdyby się nie udała, zostaje samo odroczone zamknięcie:
-    // pisarz dowie się o zapieczętowaniu przy następnym obrocie pętli zamiast natychmiast. To jest
-    // pogorszenie, a nie awaria, więc dziecka z tego powodu nie odrzucamy.
+    // The wake-up pipe for `close_input()`. If it cannot be created, only the deferred close
+    // remains: the writer learns about the sealing on the next turn of the loop instead of at once.
+    // That is a degradation, not a failure, so we do not reject the child for it.
     if (!sealed::piped(held->rouse, true)) held->rouse[0] = held->rouse[1] = -1;
 
     held->grave->which = static_cast<std::int64_t>(which);
@@ -1304,29 +1332,28 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         }
     }};
 
-    // Ruszamy **od razu**, nie przy pierwszym pytaniu o koniec. Obietnice w talcite są leniwe, więc
-    // dziecko, o którego koniec nikt nigdy nie zapyta, nie zostałoby pochowane i zostałoby po nim
-    // widmo w tablicy procesów. A prawo puszczenia uchwytu bez pytania o cokolwiek jest właśnie
-    // tym, co obiecuje `close()`.
+    // We start right away, not on the first question about the end. Promises in talcite are lazy,
+    // so a child whose end nobody ever asks about would not be buried and would leave a zombie in
+    // the process table. And the right to let go of the handle without asking anything is exactly
+    // what `close()` promises.
     held->waiting->start();
 
     return held;
 }
 
-// **Program puszczony wolno** (S1: demon udostępniania w twa). Nie jest naszym dzieckiem: nie ma
-// rur, nie dziedziczy niczego poza środowiskiem, nie ginie z nami i nikt go nie chowa — zostaje,
-// gdy program, który go uruchomił, się skończy, także wtedy, gdy zamknięto terminal. Oddajemy sam
-// numer procesu.
+// A program let loose (the sharing daemon in twa). It is not our child: it has no pipes, inherits
+// nothing but the environment, does not die with us and nobody buries it; it stays when the program
+// that started it ends, even when the terminal is closed. We return only the process number.
 //
-// POSIX: dwa rozwidlenia z `setsid` pośrodku — wnuk nie ma terminala sterującego i nie jest liderem
-// sesji, więc żadnego nie zdobędzie, a jego rodzicem zostaje system, nie my. Wejście i wyjścia idą
-// do /dev/null. Środkowy proces mówi numer wnuka, a wnuk — błąd `exec`, gdy się nie udał; rura ma
-// znacznik zamknięcia przy uruchomieniu, więc udane `exec` zamyka ją bez słowa. Każda wiadomość to
-// znak i osiem bajtów, jednym zapisem — krócej niż `PIPE_BUF`, więc niepodzielna, w jakiejkolwiek
-// kolejności przyjdą obie.
+// POSIX: two forks with `setsid` in between. The grandchild has no controlling terminal and is not
+// a session leader, so it will never get one, and its parent becomes the system, not us. Input and
+// outputs go to /dev/null. The middle process reports the grandchild's number, and the grandchild
+// reports the `exec` error when it fails; the pipe is closed on exec, so a successful `exec` closes
+// it without a word. Each message is a character and eight bytes in one write, shorter than
+// PIPE_BUF and therefore atomic, in whatever order the two arrive.
 //
-// Windows: proces bez konsoli, we własnej grupie, wyjęty z naszego zadania, gdy zadanie na to
-// pozwala (inaczej zginąłby razem z nim), bez dziedziczenia uchwytów.
+// Windows: a process without a console, in its own group, taken out of our job when the job allows
+// it (otherwise it would die together with the job), without inheriting handles.
 std::int64_t loosed(const Command& what) {
     if (what.program.empty()) amiss("No program given.", what.program);
 
@@ -1349,8 +1376,8 @@ std::int64_t loosed(const Command& what) {
                                flags | CREATE_BREAKAWAY_FROM_JOB, around.data(),
                                where.empty() ? nullptr : where.c_str(), &setting, &told);
 
-    // Zadanie, które wyjścia nie pozwala, odmawia całego startu — wtedy program zostaje w nim;
-    // to lepsze niż nie wystartować wcale.
+    // A job that does not allow leaving refuses the whole start; then the program stays in it,
+    // which is better than not starting at all.
     if (done == 0 && GetLastError() == ERROR_ACCESS_DENIED)
         done = CreateProcessW(launch.application.c_str(), launch.line.data(), nullptr, nullptr, FALSE, flags,
                               around.data(), where.empty() ? nullptr : where.c_str(), &setting, &told);
@@ -1389,7 +1416,7 @@ std::int64_t loosed(const Command& what) {
 
     if (!sealed::piped(told, false)) amiss("Cannot create the start pipe.", what.program);
 
-    // Znak i osiem bajtów. Bez przydzielania pamięci — to biegnie między `fork` a `exec`.
+    // A character and eight bytes. No memory allocation: this runs between `fork` and `exec`.
     const auto say = [&told](char kind, std::int64_t value) {
         char one[9];
 
@@ -1499,8 +1526,8 @@ std::int64_t loosed(const Command& what) {
 #endif
 }
 
-// Pętla czytająca jedną rurę do końca. Osobna obietnica na każdą stronę, bo czytać trzeba **obie
-// naraz**: program, który zapełni tę, w którą akurat nie patrzymy, stanie i nie skończy się nigdy.
+// A loop reading one pipe to the end. A separate promise for each side, because both have to be
+// read at once: a program that fills the one we are not looking at will stop and never end.
 [[nodiscard]] Promise<void> sipping(std::shared_ptr<Child::Held> held, bool errors,
                                     std::shared_ptr<Bytes> into) {
     return Promise<void>{[held, errors, into](auto resolve, Reject reject) {
@@ -1522,6 +1549,7 @@ std::int64_t loosed(const Command& what) {
 
 }
 
+// Starts a program let loose and resolves to its process number; see `loosed`.
 Promise<std::int64_t> Child::detached(Command what) {
     return Promise<std::int64_t>{[what = std::move(what)](auto resolve, Reject reject) {
         try {
@@ -1532,6 +1560,7 @@ Promise<std::int64_t> Child::detached(Command what) {
     }};
 }
 
+// Starts a child program on pipes.
 Promise<Child> Child::start(Command what) {
     return Promise<Child>{[what = std::move(what)](auto resolve, Reject reject) {
         try {
@@ -1542,8 +1571,11 @@ Promise<Child> Child::start(Command what) {
     }};
 }
 
+// The child's process number, or -1 for an empty handle.
 std::int64_t Child::pid() const { return held_ == nullptr ? -1 : held_->grave->which; }
 
+// Writes the bytes to the child's input on the pool and resolves to how many were written; 0 for an
+// empty handle.
 Promise<std::size_t> Child::write(Bytes what) const {
     std::shared_ptr<Held> held = held_;
 
@@ -1563,10 +1595,10 @@ Promise<std::size_t> Child::write(Bytes what) const {
         }};
 }
 
-// **Zamyka ostatni wychodzący, nie ten, kto poprosił.** Dopóki jakikolwiek zapis siedzi
-// w wywołaniu systemowym na tym deskryptorze, zamknięcie oddałoby jego numer systemowi, a ten
-// rozdaje numery natychmiast — więc treść przeznaczona dla dziecka mogłaby trafić w cudzy plik.
-// Zamiast tego stawiamy znacznik i budzimy czekających; zamknie ten, kto wyjdzie jako ostatni.
+// Closes the child's input. The last writer to leave closes it, not whoever asked. As long as any
+// write sits in a system call on this descriptor, closing would give its number back to the system,
+// which hands numbers out again at once, so content meant for the child could land in someone
+// else's file. Instead we set a flag and wake the waiting writers; whoever leaves last closes it.
 void Child::close_input() const {
     if (held_ == nullptr) return;
 
@@ -1584,25 +1616,28 @@ void Child::close_input() const {
 
 #ifdef _WIN32
 
-    // Zdarzenie ręczne: raz podniesione zostaje podniesione, więc budzi każdego piszącego, a nie
-    // tylko pierwszego — tak samo jak bajt w rurze budzącej na POSIX-ie.
+    // A manual-reset event: once raised it stays raised, so it wakes every writer, not just the
+    // first, just like the byte in the wake-up pipe on POSIX.
     if (held_->rouse != nullptr) (void)SetEvent(held_->rouse);
 
 #else
 
-    // Bajt zostaje w rurze na zawsze i nikt go nie zbiera — rura jest poziomowa, więc budzi
-    // każdego, kto na nią spojrzy, a nie tylko pierwszego.
+    // The byte stays in the pipe forever and nobody collects it: the pipe is level-triggered, so it
+    // wakes everyone who looks at it, not just the first.
     if (held_->rouse[1] >= 0) {
         const char one = 0;
 
-        // Wynik nas nie obchodzi: rura jest pusta i jednobajtowy zapis nie ma jak nie przejść,
-        // a gdyby jednak nie przeszedł, zostaje odroczone zamknięcie i następny obrót pętli.
+        // The result does not matter: the pipe is empty and a one-byte write cannot fail to go
+        // through, and if it did after all, the deferred close and the next turn of the loop
+        // remain.
         if (::write(held_->rouse[1], &one, 1) < 0) return;
     }
 
 #endif
 }
 
+// Reads at most `most` bytes of the child's output on the pool; empty at the end of the output or
+// for an empty handle.
 Promise<Bytes> Child::read(std::size_t most) const {
     std::shared_ptr<Held> held = held_;
 
@@ -1621,6 +1656,8 @@ Promise<Bytes> Child::read(std::size_t most) const {
     }};
 }
 
+// Reads at most `most` bytes of the child's error output on the pool; empty at the end of it or for
+// an empty handle.
 Promise<Bytes> Child::read_errors(std::size_t most) const {
     std::shared_ptr<Held> held = held_;
 
@@ -1639,6 +1676,8 @@ Promise<Bytes> Child::read_errors(std::size_t most) const {
     }};
 }
 
+// The child's exit, the same promise for every caller. An empty handle resolves to `Ended::lost` at
+// once.
 Promise<Exit> Child::wait() const {
     if (held_ == nullptr || !held_->waiting.has_value())
         return Promise<Exit>{[](auto resolve, Reject) { resolve(Exit{Ended::lost, 0, 0}); }};
@@ -1646,6 +1685,8 @@ Promise<Exit> Child::wait() const {
     return *held_->waiting;
 }
 
+// Asks the program to end: SIGTERM to its whole group on POSIX, Ctrl-Break on Windows. Does nothing
+// once the program is buried.
 void Child::stop() const {
     if (held_ == nullptr) return;
 
@@ -1657,20 +1698,22 @@ void Child::stop() const {
 
 #ifdef _WIN32
 
-    // Zdarzenie konsoli idzie do **całej grupy**, więc wolno je wysłać tylko programowi, któremu
-    // grupę założyliśmy. Ten, który dostał nasz terminal, siedzi w naszej — Ctrl-Break wysłany pod
-    // jego numer zabiłby razem z nim nas. Jemu zostaje `kill()`.
+    // A console event goes to the whole group, so it may be sent only to a program for which we
+    // made a group. The one that got our terminal sits in ours: a Ctrl-Break sent to its number
+    // would kill us along with it. For that one only `kill()` remains.
     if (grave->grouped)
         (void)GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, static_cast<DWORD>(grave->which));
 
 #else
 
-    // Cała grupa programu: powłoka i to, co uruchomiła.
+    // The program's whole group: the shell and what it started.
     (void)::kill(-static_cast<pid_t>(grave->which), SIGTERM);
 
 #endif
 }
 
+// Kills the program at once: SIGKILL to its whole group on POSIX, the whole job (or the process
+// alone) on Windows. Does nothing once the program is buried.
 void Child::kill() const {
     if (held_ == nullptr) return;
 
@@ -1692,11 +1735,13 @@ void Child::kill() const {
 #endif
 }
 
-// Puszczenie uchwytu **nie zabija** programu. Zabijanie w destruktorze byłoby zaskoczeniem — kto
-// chce zabić, ma na to `stop()` i `kill()`, a kto tylko przestał się interesować, zostawia go
-// swojemu losowi. Robotnik czekający na koniec dokończy i pochowa.
+// Letting go of the handle does not kill the program. Killing in the destructor would be a
+// surprise: whoever wants to kill has `stop()` and `kill()`, and whoever has merely lost interest
+// leaves it to its fate. The worker waiting for the end will finish and bury it.
 void Child::close() { held_.reset(); }
 
+// Runs the program to the end on pipes: feeds it the input, collects both outputs and resolves to
+// them with the exit.
 Promise<Output> Child::run(Command what, Bytes input) {
     return Promise<Output>{[what = std::move(what), input = std::move(input)](auto resolve,
                                                                        Reject reject) mutable {
@@ -1708,9 +1753,9 @@ Promise<Output> Child::run(Command what, Bytes input) {
             auto read = std::make_shared<Bytes>();
             auto errors = std::make_shared<Bytes>();
 
-            // Czytanie ruszamy **przed** pisaniem. Odwrotna kolejność zakleszcza się na wejściu
-            // większym niż rura: my czekamy, aż dziecko odbierze, dziecko czeka, aż my odbierzemy
-            // to, co zdążyło wypisać.
+            // Reading starts before writing. The other order deadlocks on input larger than the
+            // pipe: we wait for the child to take it, and the child waits for us to take what it
+            // has managed to print.
             Promise<void> reading = sipping(held, false, read);
             Promise<void> moaning =
                 what.merge ? Promise<void>{[](auto done, Reject) { done(); }}
@@ -1741,9 +1786,10 @@ Promise<Output> Child::run(Command what, Bytes input) {
 
 #ifdef _WIN32
 
-// Cały wiersz polecenia z pełną ścieżką programu na czele — dla miejsc, które biorą jeden napis
-// i same go uruchamiają później, jak klucz `Run` (`login.cpp`). Reguły cytowania te same, co przy
-// uruchamianiu: plik wsadowy przez cmd.exe z katalogu systemowego, każdy argument w cudzysłowie.
+// The whole command line with the program's full path at its head, for places that take one string
+// and start it themselves later, such as the Run key (`login.cpp`). The quoting rules are the same
+// as for starting: a batch file through cmd.exe from the system folder, every argument in quotation
+// marks.
 std::wstring launched(const Command& what) {
     const Launch made = commanded(what);
 
@@ -1768,6 +1814,7 @@ std::wstring launched(const Command& what) {
 
 #endif
 
+// Hands the terminal to the program and waits for it to end, with our drawing paused.
 Exit Term::execute(Command what) {
     const Pause step{*this};
 
@@ -1777,8 +1824,8 @@ Exit Term::execute(Command what) {
 
 #ifndef _WIN32
 
-    // Terminal wraca do nas. Bez tego zostałby przy grupie, której już nie ma, a nasze pierwsze
-    // czytanie skończyłoby się zatrzymaniem na SIGTTIN.
+    // The terminal comes back to us. Without this it would stay with a group that no longer exists,
+    // and our first read would end in a stop by SIGTTIN.
     void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
 
     (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());

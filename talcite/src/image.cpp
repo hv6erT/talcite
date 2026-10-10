@@ -13,41 +13,45 @@
 
 namespace talcite::ui {
 
+// An empty image in the `talcite.image` role.
 Image::Image() { role("talcite.image"); }
 
 namespace {
 
-// **Gęstość siatki i wymiar kratki nie należą do widżetu.** Są faktem o powierzchni, na której
-// rysujemy, więc leżą na korzeniu, a `Image` sięga po nie tak samo, jak sięga po skórkę. Poza
-// drzewem zostaje to, co przy milczącym terminalu: znaki blokowe i „nie wiadomo".
+// The grid density and the cell size do not belong to the widget. They are facts about the surface
+// we draw on, so they live on the root, and `Image` reaches for them the same way it reaches for
+// the skin. Outside a tree we get what a silent terminal gives: block characters and "unknown".
 [[nodiscard]] Blocks grained(const Node& one) {
     const Root* top = one.root();
 
     return top != nullptr ? top->blocks() : Blocks::basic;
 }
 
-// Barwność i znaki też są faktem o powierzchni: czarno-białe rysuje samą sylwetkę, a bez Unicode
-// nie ma znaków blokowych. Poza drzewem — pełne kolory i Unicode, jak przy milczącym terminalu.
+// Color depth and characters are facts about the surface too: monochrome draws only the silhouette,
+// and without Unicode there are no block characters. Outside a tree: full color and Unicode, as
+// with a silent terminal.
 [[nodiscard]] Colors colored(const Node& one) {
     const Root* top = one.root();
 
     return top != nullptr ? top->colors() : Colors::rgb;
 }
 
+// Whether the surface shows Unicode; true outside a tree.
 [[nodiscard]] bool lettered(const Node& one) {
     const Root* top = one.root();
 
     return top != nullptr ? top->unicode() : true;
 }
 
+// The size of one cell in pixels, as the root knows it; zero means unknown.
 [[nodiscard]] Size celled(const Node& one) {
     const Root* top = one.root();
 
     return top != nullptr ? top->cell() : Size{};
 }
 
-// **Piksele, gdy powierzchnia je przyjmie** (G1, G2): terminal mówi sixel albo kitty, a kratka ma
-// znany wymiar — bez niego nie wiadomo, ile pikseli zamówić. `none` znaczy „znaki".
+// Pixels, when the surface accepts them: the terminal speaks sixel or kitty, and the cell has a
+// known size; without it there is no telling how many pixels to order. `none` means characters.
 [[nodiscard]] Graphics sharp(const Node& one) {
     const Root* top = one.root();
 
@@ -56,18 +60,18 @@ namespace {
     return top->graphics();
 }
 
-// Znak obrazu: niepowtarzalny w całym programie, bo kratki różnych obrazów spotykają się w jednej
-// klatce. Zero znaczy „żaden obraz".
+// An image mark: unique in the whole program, because cells of different images meet in one frame.
+// Zero means "no image".
 [[nodiscard]] std::uint32_t marked() {
     static std::atomic<std::uint32_t> next{0};
 
     return ++next;
 }
 
-// Klatka bez opóźnienia to nie animacja, tylko obrazek. Dekoder GIF-a nigdy takich nie wypuszcza —
-// najkrótsze podnosi do stu milisekund — ale obrazek zrobiony w kodzie bywa złożony z klatek
-// o zerowym czasie i wtedy „która klatka teraz" nie ma odpowiedzi.
-
+// Fills `upto` with the running end time of every frame and returns the total length. A frame
+// without a delay is not an animation but a still picture. The GIF decoder never produces those (it
+// raises the shortest to a hundred milliseconds), but a picture made in code may consist of frames
+// with zero time, and then "which frame now" has no answer, so such frames count as zero.
 [[nodiscard]] std::chrono::milliseconds summed(const Pixels& one,
                                                std::vector<std::chrono::milliseconds>& upto) {
     upto.clear();
@@ -87,14 +91,14 @@ namespace {
 
 }
 
-// **Trzymamy źródło, nie obrazek.** To jest lekcja z `frk::Animation` posunięta do końca: tam klatki
-// leżały skompresowane i rozwijała się jedna naraz, tu w pamięci stoją klatki **już w rozdzielczości
-// kratek**, a pełnej rozdzielczości nie ma nigdy — źródło (`Figure::fetch`, z `figured` nad bajtami
-// i szwem, albo cokolwiek, co umie oddać piksele w zadanym rozmiarze) dekoduje na puli i oddaje
-// klatki już zmniejszone. Widżet nie zna ani bajtów, ani szwu: rodzaj i kształt dostaje gotowe,
-// od ręki — układ pyta o nie przed malowaniem — a piksele zamawia, gdy w `paint` pozna rozmiar.
-// Źródło bez kształtu (bez dostawcy) zostawia widżet pusty od razu; odmowa źródła opróżnia go,
-// gdy wróci zamówienie. Liczbę klatek widżet zna, gdy wróci pierwsze.
+// We hold the source, not the picture. Frames are kept in memory already at cell resolution, and
+// the full resolution never is: the source (`Figure::fetch`, from `figured` over bytes and a seam,
+// or anything that can produce pixels in a given size) decodes on the pool and hands over frames
+// already scaled down. The widget knows neither the bytes nor the seam: it gets the format and the
+// shape ready, at once (layout asks for them before painting), and orders pixels once `paint` tells
+// it the size. A source without a shape (without a provider) leaves the widget empty at once; a
+// refusal by the source empties it when the order returns. The widget knows the number of frames
+// once the first order returns.
 void Image::hold(Figure given) {
     fetch_ = std::move(given.fetch);
     whole_ = {};
@@ -115,8 +119,8 @@ void Image::hold(Figure given) {
     began_ = std::chrono::steady_clock::now();
 }
 
-// Druga droga: obrazek zrobiony w kodzie, dla którego pliku nie ma. Ustawienie jednego źródła
-// czyści drugie, żeby nie było stanu, w którym oba coś znaczą.
+// The other way: a picture made in code, for which there is no file. Setting one source clears the
+// other, so that there is no state in which both mean something.
 void Image::hold(Pixels given) {
     fetch_ = {};
     ordered_.reset();
@@ -136,20 +140,23 @@ void Image::hold(Pixels given) {
     began_ = std::chrono::steady_clock::now();
 }
 
-// Zwolnienie: bez źródła, bez klatek, bez rodzaju — to, co `hold(Pixels{})` robiło mimochodem,
-// nazwane po imieniu. Kartka zamykana ma nie trzymać ani pliku w domknięciu źródła, ani klatek.
+// Releases everything: no source, no frames, no format. A page being closed must hold neither a
+// file in the source's closure nor frames.
 void Image::clear() { hold(Pixels{}); }
 
+// Whether the image has a size, that is, something to show.
 bool Image::held() const { return size_.wide > 0 && size_.high > 0; }
 
-// Zajęty, póki czeka na cokolwiek z puli: na klatki albo — przy pikselach — na ich sixel.
+// Busy while waiting for anything from the pool: for frames or, with pixels, for their sixel.
 bool Image::busy() const { return ordered_.has_value() || encoded_.has_value(); }
 
+// An image holds no children.
 int Image::capacity() const { return 0; }
 
-// Zatrzymanie zamraża **tę klatkę, którą widać**, a nie zerową. Inaczej pauza przeskakiwałaby obraz.
-// Wznowienie rusza od zamrożonej: przewija zegar tak, jakby animacja właśnie do niej doszła — bez
-// tego po pauzie obraz przeskakiwał o tyle klatek, ile minęło czasu od pokazania.
+// Pausing freezes the frame that is visible, not frame zero; otherwise a pause would make the
+// picture jump. Resuming starts from the frozen frame: it winds the clock as if the animation had
+// just reached it, so that after a pause the picture does not jump by as many frames as time has
+// passed since it was shown.
 void Image::play(bool given) {
     if (play_ == given) return;
 
@@ -160,9 +167,9 @@ void Image::play(bool given) {
     if (given) still(still_);
 }
 
-// Ustawienie klatki jest zarazem **przewinięciem**: przesuwamy początek odliczania tak, jakby
-// animacja dobiegła właśnie do niej. Dzięki temu jedno wywołanie działa tak samo przy zatrzymanej
-// i chodzącej animacji, a próby mogą sprawdzić rachunek czasu bez czekania.
+// Setting the frame is also seeking: the start of the count is moved as if the animation had just
+// reached that frame. One call thus works the same for a paused and a running animation, and tests
+// can check the time arithmetic without waiting.
 void Image::still(std::size_t given) {
     still_ = given;
 
@@ -176,16 +183,18 @@ void Image::still(std::size_t given) {
     began_ = std::chrono::steady_clock::now() - gone;
 }
 
+// The frame shown now.
 std::size_t Image::still() const { return chosen(); }
 
-// Bez wymiaru kratki koło wychodzi jajkiem, więc `fitting` bierze go pod uwagę; zero znaczy
-// „nie wiadomo" i wtedy przyjmuje 1:2.
+// Without the cell size a circle comes out as an egg, so `fitting` takes it into account; zero
+// means "unknown", and then 1:2 is assumed.
 Size Image::wants(Size room) const {
     if (!held()) return {0, 0};
 
     return fitting(size_, room, celled(*this));
 }
 
+// How long until the next frame is due; nothing for a still picture or a paused animation.
 std::optional<std::chrono::milliseconds> Image::due() const {
     if (!play_ || upto_.size() < 2 || total_ <= std::chrono::milliseconds{0}) return {};
 
@@ -202,6 +211,8 @@ std::optional<std::chrono::milliseconds> Image::due() const {
     return *found - at;
 }
 
+// The frame to show at this moment: the set frame when paused or still, otherwise the one the clock
+// points at within the loop.
 std::size_t Image::chosen() const {
     if (!play_ || upto_.size() < 2 || total_ <= std::chrono::milliseconds{0})
         return upto_.empty() ? still_ : std::min(still_, upto_.size() - 1);
@@ -219,21 +230,21 @@ std::size_t Image::chosen() const {
     return static_cast<std::size_t>(found - upto_.begin());
 }
 
-// Przeliczamy **tylko wtedy, gdy zmienił się przydział, siatka albo kratka**. To jest ta różnica,
-// której zalążek w demie świadomie nie miał: bez niej zdjęcie z dysku przechodziłoby przez filtr
-// dziesięć razy na sekundę.
+// Frames are recomputed only when the allotted size, the grid or the cell has changed. Without
+// that, a photo from disk would go through the filter ten times a second.
 //
-// **I to samo porównanie wystarcza za powiadomienie o zmianie ustawień.** Pierwsza klatka po
-// `reconfigure` czyta z korzenia inną gęstość albo inną kratkę, warunek pęka i klatki przeliczają
-// się same. Nikt nikomu niczego nie zgłasza.
+// The same comparison also serves as notification of a settings change. The first frame after
+// `reconfigure` reads a different density or cell from the root, the condition breaks and the
+// frames recompute themselves. Nobody has to report anything to anyone.
 //
-// **Plik nie przelicza się tu, tylko zamawia** — kształt szpuli: w `paint` widżet wie, ile ma
-// miejsca, więc tu liczy rozmiar docelowy i woła z nim źródło; wynik wraca
-// przez pętlę i wchodzi, jeśli rozmiar wciąż ten sam — inaczej następny `paint` zamawia od nowa.
-// Do tego czasu widżet maluje to, co miał (przy zmianie rozmiaru stare klatki, bez migotania),
-// albo nic. Jedno zamówienie naraz; nowe zastępuje stare, a stary wynik poznaje się po rozmiarze.
-// Wskaźnik do siebie słaby: wynik dla widżetu, który zginął, nie ma dokąd wejść. Obrazek z kodu
-// (`hold(Pixels)`) przelicza się od ręki, bo jest w pamięci i jest mały.
+// A file is not recomputed here but ordered, in the manner of a spool: in `paint` the widget knows
+// how much room it has, so here it computes the target size and calls the source with it; the
+// result comes back through the loop and is taken if the size is still the same, otherwise the next
+// `paint` orders again. Until then the widget paints what it had (old frames when the size changes,
+// without flicker) or nothing. One order at a time; a new one replaces the old, and an old result
+// is recognized by its size. The pointer to ourselves is weak: a result for a widget that has died
+// has nowhere to go. A picture from code (`hold(Pixels)`) is recomputed at once, because it is in
+// memory and small.
 void Image::spread(Size given) {
     const Blocks kind = grained(*this);
     const bool unicode = lettered(*this);
@@ -259,8 +270,8 @@ void Image::spread(Size given) {
         return;
     }
 
-    // Przy pikselach zamawiamy pełną rozdzielczość pola — kratki razy piksele kratki — a znaki,
-    // na czas, gdy obrazu nie widać w całości, liczymy z niej w `sharpened`.
+    // With pixels we order the full resolution of the area (cells times cell pixels), and the
+    // characters shown while the picture is not fully visible are computed from it in `sharpened`.
     const Size step = fine != Graphics::none ? celled(*this) : grain(kind, unicode);
     const Size want{room.wide * step.wide, room.high * step.high};
 
@@ -274,8 +285,9 @@ void Image::spread(Size given) {
 
         const std::weak_ptr<Image> weak = std::static_pointer_cast<Image>(weak_from_this().lock());
 
-        // Odmowa źródła (odrzucona obietnica) i pusty wynik kończą się tak samo: widżet pusty,
-        // rodzaj zostaje — widżet ma pokazać, co może; kto chce zdania odmowy, dekoduje szwem sam.
+        // A refusal by the source (a rejected promise) and an empty result end the same way: the
+        // widget is empty and the format stays. The widget shows what it can; whoever wants the
+        // refusal message decodes through the seam themselves.
         const auto emptied = [](Image& self) {
             self.size_ = {};
             self.fit_ = {};
@@ -344,15 +356,16 @@ void Image::spread(Size given) {
     sharpened();
 }
 
-// **Klatki w pikselach i ich zastępstwo w znakach.** Przy pikselach `fit_` ma pełną rozdzielczość
-// pola, więc znaki — rysowane, gdy obrazu nie widać w całości, i zanim sixel będzie gotów — liczą się
-// z niej tu, raz. Sixel koduje się na puli, torem `cpu`, wszystkie klatki naraz; do tego czasu obraz
-// stoi w znakach. Wyniku dla klatek, których już nie ma, nie trzeba rozpoznawać: porzucona obietnica
-// (`encoded_.reset()`) jest odwołana i jej `then` nie przychodzi.
+// Frames in pixels and their stand-in in characters. With pixels `fit_` has the full resolution of
+// the area, so the characters (drawn while the picture is not fully visible, and before the sixel
+// is ready) are computed from it here, once. Sixel is encoded on the pool, on the `cpu` lane, all
+// frames at once; until then the picture stands in characters. A result for frames that no longer
+// exist does not need to be recognized: an abandoned promise (`encoded_.reset()`) is cancelled and
+// its `then` never arrives.
 //
-// **Kitty nie koduje niczego tutaj** (G2): terminal dostaje surowe piksele, a wysyła je `Term`, raz
-// na klatkę obrazu. Obrazy są więc gotowe od razu — wszystkie klatki dzielą jedne piksele, a jak
-// długo ktoś je trzyma, tak długo terminal może je trzymać u siebie.
+// Kitty encodes nothing here: the terminal gets raw pixels, and `Term` sends them, once per frame
+// of the image. The pictures are therefore ready at once; all frames share one set of pixels, and
+// as long as someone holds them, the terminal may keep them on its side.
 void Image::sharpened() {
     encoded_.reset();
     pictures_.clear();
@@ -404,8 +417,8 @@ void Image::sharpened() {
     encoded_->start();
 }
 
-// Ustawienie w polu: **na środku**, jak podgląd w Midnight Commanderze. Reszta pola zostaje
-// nierysowana, więc widać przez nią tło rodzica — to samo, co robi każdy pojemnik.
+// Placement in the area: centered, like the preview in Midnight Commander. The rest of the area is
+// left undrawn, so the parent's background shows through it, as with every container.
 View Image::paint(Size given, Area seen) {
     View made{seen.size};
 

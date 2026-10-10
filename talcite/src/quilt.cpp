@@ -7,20 +7,38 @@ namespace talcite {
 
 namespace {
 
-// Czy odcinek `after` zaczyna się w źródle dokładnie tam, gdzie kończy się `before` — wtedy dwa
-// są jednym.
+// Whether piece `after` starts in its source exactly where `before` ends; then the two are one.
 bool follows(const Quilt::Piece& before, const Quilt::Piece& after) {
     return before.added == after.added && before.at + before.much == after.at;
 }
 
 }
 
+// A quilt sewn from pieces: a document that can be changed without rewriting it. The document is a
+// chain of pieces (`Piece`), each of which says "this many bytes from the original, starting at X"
+// or "this many bytes from the additions, starting at Y". Typing a character cuts one piece into
+// three, deleting cuts and throws out. Nobody ever touches the original: it lies in memory as it
+// came, and the changes live beside it. The memory for changes grows with their number, not with
+// the size of the file, and undo is cheap, because a piece goes back into place. Word and VS Code
+// do the same, and not by accident: it is the only structure that gives both at once.
+//
+// The original is in memory by choice: the editor reads bytes at every cursor move and cannot wait
+// for a window from disk. A source outside memory is only a promise in talcite, and a quilt over a
+// promise (with a window and a "busy" state in the editor) is a separate step for a document
+// larger than memory.
+//
+// The whole thing is also a plain byte source: it hands out bytes from a given offset, which is
+// exactly what `Spool` wants. Thanks to that, lines, wrapping, marks and the scrollbar do not know
+// that the document can change. The quilt starts as one piece covering the whole original.
 Quilt::Quilt(Bytes given) : held_(std::move(given)), whole_(held_.size()) {
     if (whole_ > 0) pieces_.push_back(Piece{false, 0, whole_});
 }
 
-// Numer odcinka, w którym leży bajt `at` (ostatniego zaczynającego się nie dalej niż `at`), po
-// początkach — binarnie. Początki liczą się od nowa przy pierwszym pytaniu po zmianie.
+// The index of the piece in which byte `at` lies (the last one starting no further than `at`),
+// found by binary search over the piece starts. The starts are computed lazily: a change marks them
+// stale and the first question after it computes them again. A change shifts the vector of pieces
+// anyway, so recomputing at the first read after it does not change its cost, and there are many
+// reads per change.
 std::size_t Quilt::located(std::size_t at) {
     if (stale_) {
         starts_.resize(pieces_.size());
@@ -40,8 +58,8 @@ std::size_t Quilt::located(std::size_t at) {
     return after == starts_.begin() ? 0 : static_cast<std::size_t>(after - starts_.begin()) - 1;
 }
 
-// Oddaje numer odcinka **zaczynającego się** dokładnie w `at`, rozcinając ten, w którego środek
-// wypada. Dla końca dokumentu oddaje numer za ostatnim.
+// Returns the index of the piece that starts exactly at `at`, cutting the piece into whose middle
+// it falls. For the end of the document it returns the index past the last one.
 std::size_t Quilt::split(std::size_t at) {
     if (at >= whole_) return pieces_.size();
 
@@ -63,7 +81,8 @@ std::size_t Quilt::split(std::size_t at) {
     return which + 1;
 }
 
-// Bajty spod `at`: odcinek początkowy binarnie, potem kolejne — każdy jednym kopiowaniem.
+// At most `most` bytes from `at`: the first piece is found by binary search, then the following
+// ones, each with a single copy.
 Bytes Quilt::bytes(std::size_t at, std::size_t most) {
     Bytes made;
 
@@ -100,15 +119,18 @@ Bytes Quilt::bytes(std::size_t at, std::size_t most) {
     return made;
 }
 
+// Inserts `what` at byte `at`: the text goes to the additions and its piece into the document.
 void Quilt::insert(std::size_t at, std::string_view what) { put(at, stored(what)); }
 
+// Deletes `much` bytes from `at`, clamped to the end of the document. Only pieces go away; the
+// bytes stay where they lie.
 void Quilt::erase(std::size_t at, std::size_t much) {
     if (much == 0 || at >= whole_) return;
 
     const std::size_t took = std::min(much, whole_ - at);
 
-    // Rozcinamy najpierw wcześniej, potem później: drugie cięcie dzieje się za pierwszym, więc
-    // pierwszego numeru nie unieważnia.
+    // We cut the earlier place first, then the later one: the second cut happens past the first,
+    // so it does not invalidate the first index.
     const std::size_t from = split(at);
     const std::size_t upto = split(at + took);
 
@@ -120,8 +142,12 @@ void Quilt::erase(std::size_t at, std::size_t much) {
     stale_ = true;
 }
 
-// Odcinki pod zakresem, przycięte do jego brzegów. Dokumentu nie rusza — nie rozcina nawet
-// odcinków, bo skrawek niesie własne kopie opisów, a nie numery.
+// The pieces under a range, trimmed to its edges, as a scrap: a part of the document given by
+// pieces, without bytes. The original and the additions never change, so a reference to them is
+// always valid; a scrap taken today can be put back a week later and will be the same text. The
+// editor's journal rests on this: a deleted gigabyte is one piece, not a gigabyte of copies. The
+// document is not touched, not even cut, because the scrap carries its own copies of the piece
+// descriptions, not indices.
 Quilt::Scrap Quilt::taken(std::size_t at, std::size_t much) {
     Scrap made;
 
@@ -147,7 +173,12 @@ Quilt::Scrap Quilt::taken(std::size_t at, std::size_t much) {
     return made;
 }
 
-// Tekst trafia do dopisków, ale jeszcze nie do dokumentu — stanie tam, gdzie go wstawi `put`.
+// Stores text in the additions as a scrap, but not yet in the document; it will stand wherever
+// `put` inserts it. The additions only grow and never shrink. Deleted text stays in them as
+// garbage, and that is not an oversight: if they shrank, every piece pointing further would have
+// to be corrected, and then the cost of a deletion would depend on the number of changes, not on
+// one. `appended()` reports their size, only for tests: they check that undo and moving do not
+// copy text, which cannot be seen otherwise.
 Quilt::Scrap Quilt::stored(std::string_view what) {
     Scrap made;
 
@@ -161,15 +192,16 @@ Quilt::Scrap Quilt::stored(std::string_view what) {
     return made;
 }
 
-// **Wstawienie odcinków, bez bajtów.** Na obu brzegach odcinek zlewa się z sąsiadem, gdy w źródle
-// leżą jeden za drugim: pisanie w ciągu przedłuża ostatni odcinek (bez tego akapit dałby pięćset
-// odcinków zamiast jednego, a od ich liczby zależy koszt wszystkiego powyżej), a cofnięcie
-// skasowania zszywa dokument z powrotem w te same odcinki, które były przed nim.
+// Inserts the pieces of a scrap at `at`, without bytes. On both edges a piece merges with its
+// neighbor when they lie one after the other in their source: continuous typing extends the last
+// piece (without that a paragraph would give five hundred pieces instead of one, and the cost of
+// everything above depends on their number), and undoing a deletion sews the document back into
+// the same pieces it had before.
 void Quilt::put(std::size_t at, const Scrap& what) {
     if (what.much == 0) return;
 
-    // Cięcie w miejscu wstawienia liczy się po dokumencie **sprzed** wstawienia; długość i początki
-    // zmieniają się dopiero potem.
+    // The cut at the insertion point is computed on the document before the insertion; the length
+    // and the starts change only afterward.
     const std::size_t which = split(std::min(at, whole_));
 
     std::size_t first = 0;
@@ -190,7 +222,7 @@ void Quilt::put(std::size_t at, const Scrap& what) {
                    what.pieces.begin() + static_cast<std::ptrdiff_t>(first),
                    what.pieces.begin() + static_cast<std::ptrdiff_t>(last));
 
-    // Wszystko weszło w lewego sąsiada — i ten może teraz stykać się z prawym.
+    // Everything went into the left neighbor, and that one may now touch the right one.
     if (first == last && which > 0 && which < pieces_.size() && follows(pieces_[which - 1], pieces_[which])) {
         pieces_[which - 1].much += pieces_[which].much;
         pieces_.erase(pieces_.begin() + static_cast<std::ptrdiff_t>(which));
@@ -201,7 +233,7 @@ void Quilt::put(std::size_t at, const Scrap& what) {
     stale_ = true;
 }
 
-// Końce wierszy w skrawku, liczone w źródłach, bez kopiowania.
+// The number of line ends in a scrap, counted in the sources, without copying.
 std::size_t Quilt::lines(const Scrap& what) const {
     std::size_t made = 0;
 
@@ -221,6 +253,7 @@ std::size_t Quilt::lines(const Scrap& what) const {
     return made;
 }
 
+// The bytes of a scrap as a string.
 std::string Quilt::text(const Scrap& what) const {
     std::string made;
 
@@ -239,7 +272,7 @@ std::string Quilt::text(const Scrap& what) const {
     return made;
 }
 
-// Ostatni bajt skrawka; zero dla pustego.
+// The last byte of a scrap; zero for an empty one.
 char Quilt::last(const Scrap& what) const {
     if (what.pieces.empty()) return '\0';
 
@@ -248,10 +281,11 @@ char Quilt::last(const Scrap& what) const {
     return one.added ? added_[one.at + one.much - 1] : static_cast<char>(held_[one.at + one.much - 1]);
 }
 
-// Dołożenie skrawka z przodu albo z tyłu, ze zlaniem odcinków na styku. Kasowanie wstecz (trzymany
-// Backspace) dokłada z przodu po znaku, a każdy znak leży w źródle tuż przed poprzednim — więc
-// odcinek się wydłuża i nic nie przesuwa. Przesunięcie wektora zdarza się tylko na granicy
-// odcinków dokumentu, a nie przy każdym znaku.
+// Adds scrap `more` at the front or the back of `into`, merging the pieces where they meet.
+// Deleting backward (a held Backspace) adds at the front one character at a time, and each
+// character lies in the source just before the previous one, so the piece grows longer and
+// nothing shifts. The vector shifts only at a boundary between document pieces, not at every
+// character.
 void Quilt::joined(Scrap& into, const Scrap& more, bool front) {
     if (more.much == 0) return;
 
@@ -284,10 +318,15 @@ void Quilt::joined(Scrap& into, const Scrap& more, bool front) {
     to.insert(to.end(), from.begin() + static_cast<std::ptrdiff_t>(begin), from.end());
 }
 
-// Nowa lista odcinków w jednym przejściu: stare odcinki przed cięciem przechodzą (rozcięte na jego
-// brzegach), te pod cięciem odpadają, w jego miejsce wchodzi odcinek dopisków. Koszt to liczba
-// odcinków plus liczba cięć, a nie ich iloczyn — dawniej każde cięcie szło osobno przez `insert`
-// i `erase`, każde po całej liście.
+// Applies many cuts at once, in one pass over the pieces, for "replace all" and its undo. Each cut
+// (`Cut`) replaces `much` bytes from `at` with `text`. The cuts are ascending, disjoint, and at
+// positions in the document from before the whole change. The same text of several cuts in a row
+// goes to the additions once, and the pieces share it.
+//
+// The new list of pieces is built in one pass: old pieces before a cut pass through (cut at its
+// edges), those under the cut drop out, and a piece of the additions takes its place. The cost is
+// the number of pieces plus the number of cuts, not their product, as it would be if every cut
+// went separately through `insert` and `erase`, each over the whole list.
 void Quilt::spliced(const std::vector<Cut>& cuts) {
     std::vector<Piece> made;
     made.reserve(pieces_.size() + 2 * cuts.size());
@@ -296,7 +335,7 @@ void Quilt::spliced(const std::vector<Cut>& cuts) {
     std::size_t gone = 0;
     std::size_t taken = 0;
 
-    // Kawałek bieżącego odcinka, który jeszcze nie przeszedł: od `taken` do jego końca.
+    // The part of the current piece that has not passed yet runs from `taken` to its end.
     const auto copied = [&](std::size_t upto) {
         while (which < pieces_.size() && gone < upto) {
             const Piece& one = pieces_[which];

@@ -14,15 +14,18 @@
 
 namespace talcite::net {
 
+// The state of a stream shared by its copies and by the operations in flight.
 struct Stream::Held {
+    // The last owner closes the stream and only then retires the handle number.
     ~Held() {
         close();
 
         retiring(numbered);
     }
 
-    // Zamknięcie musi być jednorazowe: uchwyt oddany centrali dwa razy zostałby zamknięty dwa
-    // razy, a drugie zamknięcie trafiłoby w cudze, świeżo otwarte gniazdo o tym samym numerze.
+    // Closes the stream once. Closing must happen only once: a handle given to the hub twice would
+    // be closed twice, and the second close would hit someone else's freshly opened socket with
+    // the same number.
     void close() {
         const Handle one = which.exchange(nothing);
 
@@ -30,26 +33,27 @@ struct Stream::Held {
 
         forget(one);
 
-        // **Rura nie zamyka się w pół** — nie ma odpowiednika `shutdown`, a druga strona widzi koniec
-        // dopiero po zamknięciu uchwytu. Zamykamy go więc już teraz, a nie przy ostatniej kopii:
-        // centrala zamknie go, gdy wrócą zakończenia w locie. Nowych zgłoszeń na tym numerze już nie
-        // będzie (`which` jest pusty), a zapis do rury nie wraca po kawałku, więc nic go nie wznowi.
+        // A pipe cannot be half-closed: there is no equivalent of shutdown, and the other side
+        // sees the end only when the handle is closed. So it is retired right now, not at the last
+        // copy: the hub closes it once the completions in flight have returned. There will be no
+        // new requests on this number (`which` is empty), and a write to a pipe does not return in
+        // pieces, so nothing resumes it.
         if (pipes::piped(one)) retiring(std::exchange(numbered, nothing));
     }
 
-    // **Numer przeżywa zamknięcie i ginie dopiero razem z uchwytem.** Zgłoszenia w locie trzymają
-    // uchwyt przez `kept`, więc deskryptor zamyka się dopiero wtedy, gdy nikt nie może już ani go
-    // zgłosić, ani na nim czytać. Zamykany wcześniej wracał jako numer świeżo otwartego gniazda —
-    // i wtedy ktoś czytał z cudzego połączenia.
+    // The number outlives the close and dies only together with this state. Requests in flight
+    // hold the state through `kept`, so the descriptor is closed only when nobody can submit it or
+    // read on it any more. Closed earlier, the number could come back as that of a freshly opened
+    // socket, and someone would read from another connection.
     Handle numbered = nothing;
 
     std::atomic<Handle> which{nothing};
     Address peer;
     Address mine;
 
-    // **Kto** trzyma dany kierunek, a nie „czy ktoś go trzyma" — powód opisany niżej, przy wzorze
-    // zdejmowania. Gołe wskaźniki, bo to są wyłącznie znaczniki tożsamości: nigdy nie sięgamy przez
-    // nie do obiektu. Zgłoszenia żyją własnym uchwytem w centrali i przez `kept`.
+    // Who holds each direction, not whether someone holds it; the reason is described below, at the
+    // withdrawal pattern. Raw pointers, because they are only identity markers: we never reach the
+    // object through them. Requests live by their own handle in the hub and through `kept`.
     std::mutex guard;
     const void* reading = nullptr;
     const void* writing = nullptr;
@@ -57,13 +61,15 @@ struct Stream::Held {
 
 namespace {
 
+// The deadline that `patience` sets from now.
 std::chrono::steady_clock::time_point until(Patience patience) {
     return std::chrono::steady_clock::now() + patience;
 }
 
-// Jedno czytanie i jedno pisanie naraz. To nie jest oszczędność, tylko ochrona: dwa czytania na
-// jednym strumieniu przepletłyby bajty i rozjechały wszystko, co po nich idzie. Drugie zgłoszenie
-// dostaje odmowę, zamiast po cichu psuć dane.
+// A promise already rejected because the direction is busy. One read and one write at a time: this
+// is not thrift but protection, because two reads on one stream would interleave the bytes and
+// derail everything after them. The second request is refused instead of silently corrupting
+// data.
 template <typename T>
 Promise<T> busy() {
     auto made = std::make_shared<detail::Result<T>>();
@@ -73,6 +79,7 @@ Promise<T> busy() {
     return HandPromise<T>{made};
 }
 
+// A promise already rejected with `Trouble` carrying the message, code and address.
 template <typename T>
 Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) {
     auto made = std::make_shared<detail::Result<T>>();
@@ -82,34 +89,35 @@ Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) 
     return HandPromise<T>{made};
 }
 
-// Zgłoszenie sieciowe jest **jednocześnie biletem obietnicy**, więc anulowanie musi je zdjąć
-// z centrali, a nie tylko odrzucić. Wzór jest we wszystkich sześciu ten sam.
+// A network request is at the same time the promise's ticket, so cancelling has to withdraw it
+// from the hub, not just reject it. The pattern is the same in all six.
 //
-// Anulowanie zwalnia kierunek **od razu**, bez oglądania się na to, co powiedziało `withdraw` —
-// bo to jest jedyna chwila, w której wołający się o tym dowiaduje. Zaraz po anulowaniu ma prawo
-// poprosić o następne czytanie i ma je dostać, a nie usłyszeć „zajęty".
+// Cancelling frees the direction at once, regardless of what `withdraw` said, because that is the
+// only moment the caller learns of it. Right after cancelling, the caller may ask for the next read
+// and must get it, not hear "busy".
 //
-// Dwa zaplecza kończą przy tym inaczej i **na tym polegał błąd**. Na uniksach `withdraw` wyjmuje
-// zgłoszenie z mapy i oddaje prawdę, więc zwolnienie na miejscu było oczywiste. Na Windows
-// `CancelIoEx` tylko prosi — zakończenie i tak przyjdzie portem — więc `withdraw` nie mówi prawdy
-// **nigdy**, a znacznik zdejmowało dopiero spóźnione `done()` na wątku puli. Między anulowaniem
-// a tą chwilą kierunek zostawał zajęty i następna prośba dostawała odmowę bez powodu.
+// The two backends finish differently here. On Unix `withdraw` takes the request out of the map
+// and returns true, so freeing on the spot is obvious. On Windows CancelIoEx only asks (the
+// completion still arrives through the port), so `withdraw` never returns true, and the marker
+// would be cleared only by the late `done()` on a pool thread. Until then the direction would stay
+// busy and the next request would be refused for no reason.
 //
-// Dlatego znacznik nie jest flagą, tylko **tożsamością**: zwalnia go wyłącznie ten, kto go zajął.
-// Spóźnione zakończenie anulowanej operacji zastaje wtedy cudzą tożsamość i nie rusza niczego —
-// bez tego zdjęłoby znacznik należący już do następnej operacji.
+// That is why the marker is not a flag but an identity: only whoever took it releases it. The late
+// completion of a cancelled operation then finds another identity and touches nothing; otherwise
+// it would clear the marker that already belongs to the next operation.
 //
-// Zakończenie może też przyjść **przed** naszym odrzuceniem i rozstrzygnąć bilet pierwsze —
-// wołający dostałby wtedy kłopot z numerem przerwania zamiast `Cancelled`. Od tego jest `quitted`:
-// ustawione przed zdejmowaniem, każe spóźnionemu zakończeniu posprzątać i zamilknąć.
+// The completion may also arrive before our rejection and settle the ticket first; the caller would
+// then get a `Trouble` with the abort error number instead of `Cancelled`. That is what `quitted`
+// is for: set before withdrawing, it tells the late completion to clean up and stay silent.
 struct JoinPromise : Doing, detail::Result<Stream> {
     std::shared_ptr<Stream::Held> mine;
 
-    // Nawiązanie nie ma znacznika kierunku, a mimo to zdjąć się musi: zgłoszenie leżące
-    // w centrali trzyma `kept`, czyli **otwarte gniazdo**. Porzucone łączenie bez terminu
-    // zostawiało je otwarte do końca programu.
+    // Withdraws an abandoned connect from the hub. Connecting has no direction marker, yet it must
+    // be withdrawn: a request lying in the hub holds `kept`, that is, an open socket. An abandoned
+    // connect without a deadline would leave it open until the program ends.
     void dropped() override { (void)withdraw(shared_from_this()); }
 
+    // The connect finished: the stream with both addresses, or `Trouble` with the error.
     void done(std::size_t, int code) override {
         if (quitted.load()) return;
 
@@ -121,9 +129,9 @@ struct JoinPromise : Doing, detail::Result<Stream> {
             return;
         }
 
-        // Adres rozmówcy znamy od początku — to jest ten, pod który się łączyliśmy. Pytamy
-        // system, bo przy nazwie domenowej i przy rodzinie podwójnej może się okazać inny, ale
-        // **jego milczenie nie ma prawa wymazać tego, co już wiemy**.
+        // We know the peer's address from the start: it is the one we connected to. We ask the
+        // system, because with a domain name or a dual-stack family it may turn out different,
+        // but its silence must not erase what we already know.
         if (const Address said = named(held, true); said.held()) mine->peer = said;
 
         mine->mine = named(held, false);
@@ -131,6 +139,7 @@ struct JoinPromise : Doing, detail::Result<Stream> {
         settled(*this, Stream{mine});
     }
 
+    // The deadline passed before the connection was made: rejects with `Overdue`.
     void late() override {
         if (quitted.load()) return;
 
@@ -138,27 +147,30 @@ struct JoinPromise : Doing, detail::Result<Stream> {
     }
 };
 
+// One read in flight.
 struct ReadPromise : Doing, detail::Result<Bytes> {
     std::shared_ptr<Stream::Held> mine;
 
+    // Releases the read direction, but only if this read still holds it.
     void yielded() {
         const std::lock_guard<std::mutex> kept{mine->guard};
 
         if (mine->reading == this) mine->reading = nullptr;
     }
 
+    // Withdraws an abandoned read from the hub and frees the direction at once.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
         yielded();
     }
 
-    // Bajty, które przyszły, są ważniejsze od tego, jak operacja się skończyła. Przy IOCP
-    // przerwane czytanie potrafi mieć już przepisaną część treści — oddanie jej zamiast wyjątku
-    // sprawia, że **żaden bajt nie ginie** i strumień nigdy nie wchodzi w stan nieznany.
+    // The read finished. The bytes that arrived matter more than how the operation ended. With
+    // IOCP an interrupted read may already have copied part of the content; returning it instead
+    // of an exception means no byte is lost and the stream never enters an unknown state.
     //
-    // Anulowanie jest tu jedynym wyjątkiem i to wyjątkiem świadomym: kto sam przerwał czytanie,
-    // ten powiedział, że treść go już nie obchodzi, a odebrane bajty nie mają dokąd pójść.
+    // Cancelling is the only exception, and a deliberate one: whoever interrupted the read said the
+    // content no longer matters, and the received bytes have nowhere to go.
     void done(std::size_t much, int code) override {
         yielded();
 
@@ -180,14 +192,14 @@ struct ReadPromise : Doing, detail::Result<Bytes> {
             return;
         }
 
-        // Zero bajtów bez błędu znaczy dokładnie jedno: druga strona zamknęła.
+        // Zero bytes without an error means exactly one thing: the other side has closed.
         buffer.clear();
 
         settled(*this, std::move(buffer));
     }
 
-    // Termin z pustymi rękami odrzuca. Gdyby spełniał pustką, nie dałoby się odróżnić ciszy od
-    // zamknięcia przez drugą stronę — a to są dwie zupełnie różne wiadomości.
+    // A deadline with empty hands rejects with `Overdue`. If it resolved with nothing, silence could
+    // not be told from the other side closing, and those are two entirely different messages.
     void late() override {
         yielded();
 
@@ -197,30 +209,34 @@ struct ReadPromise : Doing, detail::Result<Bytes> {
     }
 };
 
+// One write in flight.
 struct WritePromise : Doing, detail::Result<void> {
     std::shared_ptr<Stream::Held> mine;
 
+    // Releases the write direction, but only if this write still holds it.
     void yielded() {
         const std::lock_guard<std::mutex> kept{mine->guard};
 
         if (mine->writing == this) mine->writing = nullptr;
     }
 
+    // Withdraws an abandoned write from the hub and frees the direction at once.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
         yielded();
     }
 
+    // The write finished: resolves, or rejects with `Trouble` saying how much was written.
     void done(std::size_t much, int code) override {
         yielded();
 
         if (quitted.load()) return;
 
         if (code != 0) {
-            // Ile bajtów zdążyło zejść przed zerwaniem, mówimy **wprost**. Bufor został
-            // przeniesiony i już go nie ma, więc bez tej liczby wołający nie wie, czy wznawiać od
-            // zera, czy wcale — a ponowienie całości znaczy dla drugiej strony treść podwojoną.
+            // How many bytes got out before the break is said explicitly. The buffer was moved and
+            // is gone, so without this number the caller does not know whether to resume from zero
+            // or not at all, and resending everything means doubled content for the other side.
             spoiled(*this, std::make_exception_ptr(
                                Trouble{"Cannot write: " + spoken(code) + ". Took " +
                                            std::to_string(much) + " of " +
@@ -233,6 +249,7 @@ struct WritePromise : Doing, detail::Result<void> {
         settled(*this);
     }
 
+    // The deadline passed before the write finished: rejects with `Overdue`.
     void late() override {
         yielded();
 
@@ -244,10 +261,11 @@ struct WritePromise : Doing, detail::Result<void> {
 
 }
 
-// Nawiązania **nie zaczynamy tutaj**. Na uniksach jest to nieblokujący connect, na Windows
-// ConnectEx z zakończeniem w porcie — a to jest wiedza zaplecza, nie strumienia. Zgłaszamy
-// zamiar, a centrala wie, jak go ruszyć. Adres lokalny tam, gdzie idzie rurą, łączy pula
-// (`pipes::dialed`) — rura nie ma nakładanego łączenia.
+// Connects to `where` within `patience`. The connect does not start here. On Unix it is a
+// non-blocking connect, on Windows ConnectEx with completion through the port, and that is
+// knowledge of the backend, not of the stream. We submit the intent, and the hub knows how to set
+// it going. A local address that goes through a pipe is connected by the pool (`pipes::dialed`):
+// a pipe has no overlapped connect.
 Promise<Stream> Stream::connect(Address where, Patience patience) {
     if (!where.held()) return amiss_now<Stream>("An empty address is no destination.");
 
@@ -279,11 +297,11 @@ Promise<Stream> Stream::connect(Address where, Patience patience) {
     return HandPromise<Stream>{one};
 }
 
-// Pusty adres oddawany wtedy, gdy uchwytu już nie ma. Wszystkie pozostałe metody odpowiadają po
-// zamknięciu grzecznie, więc te też muszą — sięganie po nieistniejący uchwyt kończyło się
-// naruszeniem pamięci, a klasa wyraźnie zamierza być używalna po close().
 namespace {
 
+// The empty address returned when the state is gone. All the other methods answer politely after
+// closing, so these must too: reaching for a state that does not exist would be a memory
+// violation, and the class is meant to stay usable after close().
 const Address& nowhere() {
     static const Address one;
 
@@ -292,9 +310,9 @@ const Address& nowhere() {
 
 }
 
-// Brama przyjęła połączenie i ma goły uchwyt, ale Held zna tylko ten plik — stąd wolna funkcja
-// zamiast metody. Publiczny konstruktor Stream nikomu nie szkodzi: Held jest typem niepełnym,
-// więc z zewnątrz nie da się go zbudować.
+// Wraps a connection accepted by the gate. The gate has a bare handle, but only this file knows
+// `Held`, hence a free function instead of a method. The public `Stream` constructor harms nobody:
+// `Held` is an incomplete type, so it cannot be built from outside.
 Stream greeting(Handle one, Address from) {
     auto mine = std::make_shared<Stream::Held>();
 
@@ -306,27 +324,30 @@ Stream greeting(Handle one, Address from) {
     return Stream{mine};
 }
 
+// The address of the other side, or an empty one after closing.
 const Address& Stream::peer() const { return held_ ? held_->peer : nowhere(); }
 
+// The address of our side, or an empty one after closing.
 const Address& Stream::mine() const { return held_ ? held_->mine : nowhere(); }
 
+// Reads up to `most` bytes within `patience`; an empty result means the other side has closed.
 Promise<Bytes> Stream::read(std::size_t most, Patience patience) const {
     if (!held_) return amiss_now<Bytes>("The stream is closed.");
 
-    // Zerowe czytanie **nie jest końcem strumienia**, a tak wyglądało: recv z zerową długością
-    // oddaje zero także na zdrowym gnieździe, a zero bez błędu znaczy u nas „druga strona
-    // zamknęła". Warstwa ramkująca trafiała na to na granicy ramki.
+    // A zero-length read is refused, because it would look like the end of the stream: recv with
+    // zero length returns zero on a healthy socket too, and zero without an error means "the other
+    // side has closed" here. A framing layer can hit this at a frame boundary.
     if (most == 0) return amiss_now<Bytes>("A zero-length read says nothing.");
 
-    // Przydział bufora idzie **przed** zajęciem znacznika. Rozmiar podaje wołający, więc resize
-    // potrafi rzucić — a wyjątek rzucony po zajęciu zostawiał znacznik ustawiony na zawsze i
-    // gniazdo już nigdy nie czytało, bo nie powstawało zgłoszenie, które by go zdjęło.
+    // The buffer is allocated before the marker is taken. The caller gives the size, so resize can
+    // throw, and an exception thrown after taking the marker would leave it set forever: the socket
+    // would never read again, because no request would exist to clear it.
     auto one = std::make_shared<ReadPromise>();
 
     one->buffer.resize(most);
 
-    // Zajęcie kierunku i zapamiętanie, czyj on jest, pod jednym zamkiem: inaczej dwa czytania
-    // zaczęte naraz zapisałyby się jedno po drugim.
+    // Taking the direction and recording whose it is happen under one lock; otherwise two reads
+    // started at once would each record themselves, one after the other.
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
 
@@ -347,6 +368,7 @@ Promise<Bytes> Stream::read(std::size_t most, Patience patience) const {
     return HandPromise<Bytes>{one};
 }
 
+// Writes all the bytes within `patience`.
 Promise<void> Stream::write(Bytes what, Patience patience) const {
     if (!held_) return amiss_now<void>("The stream is closed.");
 
@@ -373,23 +395,24 @@ Promise<void> Stream::write(Bytes what, Patience patience) const {
     return HandPromise<void>{one};
 }
 
-// Algorytm Nagle'a jest własnością TCP, a gniazdo lokalne nie ma z TCP nic wspólnego — tam to
-// wywołanie odmówiłoby po cichu, a cicha odmowa jest gorsza od niezrobienia niczego.
+// Turns Nagle's algorithm on or off. It is a property of TCP, and a local socket has nothing to do
+// with TCP; there the call would fail silently, and a silent failure is worse than doing nothing.
 void Stream::nagle(bool given) const {
     if (!held_ || held_->peer.family() == Family::local) return;
 
     nagling(held_->which.load(), given);
 }
 
-// Tylko gniazdo lokalne ma po drugiej stronie użytkownika tego samego komputera; o połączeniu
-// sieciowym system nic takiego nie wie.
+// Whether the other side runs as the same user on this computer. Only a local socket can say so;
+// about a network connection the system knows nothing of the kind, so the answer is nothing.
 std::optional<bool> Stream::kindred() const {
-    // Przyjęte połączenie lokalne nie ma nazwy po drugiej stronie — o rodzinie mówi wtedy nasz koniec.
+    // An accepted local connection has no name on the other side; our end tells the family then.
     if (!held_ || (held_->peer.family() != Family::local && held_->mine.family() != Family::local)) return std::nullopt;
 
     return net::kindred(held_->which.load());
 }
 
+// Closes the stream; this copy becomes empty, and operations in flight finish on their own.
 void Stream::close() {
     if (!held_) return;
 

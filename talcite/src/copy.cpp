@@ -43,13 +43,15 @@ using namespace core;
 
 namespace {
 
-// Bilet operacji ratami: wie, ile bajtów albo pozycji z ilu już zeszło. Wirtualny progress
-// z Ticket jest tu po to, żeby pasek postępu pytał, a nikt niczego nie przepisywał w górę.
+// The ticket of an operation done in installments: it knows how many bytes or entries out of how
+// many are done. The virtual progress of `Ticket` is here so that the progress bar can ask, and
+// nobody has to pass anything upward.
 template <typename T>
 struct Counted : detail::Result<T> {
     std::atomic<std::uintmax_t> done{0};
     std::atomic<std::uintmax_t> whole{0};
 
+    // The finished share between 0 and 1; a settled operation counts as complete.
     [[nodiscard]] double progress() const override {
         if (over(*this)) return 1.0;
 
@@ -67,14 +69,16 @@ public:
         : Promise<T>(std::move(given), std::move(made)) {}
 };
 
+// The installment size for a copy: the smaller of the two disks' preferred chunks.
 std::size_t rated(const path& from, const path& to) {
     return std::min(chunk_at(from), chunk_at(to));
 }
 
-// Rozwijanie dowiązań potrafi zawrócić tam, gdzie już byliśmy — link wskazujący na przodka
-// zapętliłby kopiowanie na zawsze. Trzymamy więc rzeczywiste ścieżki rozwiniętych katalogów.
+// Following links can lead back to where we have already been: a link pointing to an ancestor
+// would loop the copy forever. So the real paths of the folders already followed are kept.
 using Seen = std::vector<path>;
 
+// True when `real` was already followed; otherwise records it and returns false.
 bool sighted(Seen& seen, const path& real) {
     if (std::find(seen.begin(), seen.end(), real) != seen.end()) return true;
 
@@ -83,20 +87,21 @@ bool sighted(Seen& seen, const path& real) {
     return false;
 }
 
-// Zwraca ścieżkę, pod którą wolno pisać, albo pustą, gdy pozycję należy pominąć.
-// Czy przy tym rozstrzygnięciu kolizji pytanie „a może to ten sam plik?" ma sens. `skip` ma prawo
-// po prostu nic nie zrobić, a `beside` — zrobić kopię obok, i to jest jedyny sensowny sposób
-// skopiowania pliku na samego siebie. Zostają `overwrite`, który kasował, i `refuse`, któremu
-// należy się zdanie mówiące, o co chodzi.
+// Whether, for this conflict rule, the question "is it perhaps the same file?" makes sense. `skip`
+// may simply do nothing, and `rename` makes a copy beside it, which is the only sensible way to
+// copy a file onto itself. That leaves `overwrite`, which would delete the source, and `fail`,
+// which deserves a sentence that says what the matter is.
 bool asked(Conflict how) { return how == Conflict::overwrite || how == Conflict::fail; }
 
 
-// Kopia przerwana w połowie nie może zostawić po sobie pliku, który wygląda na kompletny.
-// Cel znika, chyba że doszliśmy do końca.
+// A copy interrupted halfway must not leave behind a file that looks complete. The target
+// disappears unless the copy reached the end.
 class Sweeping {
 public:
+    // Remembers whether the target existed before; an existing one is never removed.
     explicit Sweeping(path where) : where_(std::move(where)), was_(exists_at(where_)) {}
 
+    // Removes the target, unless `keep` was called or it existed before.
     ~Sweeping() {
         if (kept_ || was_) return;
 
@@ -109,6 +114,7 @@ public:
     Sweeping(Sweeping&&) = delete;
     Sweeping& operator=(Sweeping&&) = delete;
 
+    // Marks the target as complete, so that it stays.
     void keep() { kept_ = true; }
 
 private:
@@ -117,8 +123,9 @@ private:
     bool kept_ = false;
 };
 
-// Plik obok celu na czas zastępowania: kropka, nazwa celu, sześć losowych znaków i `.part`.
-// Serwery multimediów nie biorą `.part` za film, a losowy ogon nie trafi w cudzy plik.
+// A file beside the target for the time of a replacement: a dot, the target's name, six random
+// characters and `.part`. Media servers do not take `.part` for a film, and the random tail does
+// not hit someone else's file.
 path aside_of(const path& to) {
     static constexpr std::string_view digits = "0123456789abcdef";
 
@@ -138,15 +145,16 @@ path aside_of(const path& to) {
     return made;
 }
 
-// Trzy rodzaje pisania do pliku: `Mode::truncate` pisze wprost (cel nie istnieje), zastąpienie
-// pisze obok i przemianowuje — przerwane albo nieudane nie rusza starego celu, a drugie dowiązanie
-// twarde do starego pliku zostaje ze starą treścią — a `durable` dodatkowo czeka, aż dane leżą na
-// nośniku, zanim powie „gotowe". Zastąpienie utrwala zawsze: bez tego zanik zasilania tuż po
-// przemianowaniu zostawiał na miejscu celu plik pusty.
+// Three kinds of writing to a file: `Mode::truncate` writes directly (the target does not exist);
+// a replacement writes beside it and renames, so an interrupted or failed one does not touch the
+// old target, and a second hard link to the old file keeps the old content; and `durable`
+// additionally waits until the data is on the medium before it says "done". A replacement is
+// always made durable: without that, a power loss right after the rename could leave an empty
+// file in place of the target.
 //
-// `fill` dostaje ścieżkę, pod którą ma powstać treść, i oddaje otwarty uchwyt do niej albo nic,
-// gdy zadanie anulowano w połowie — wtedy obietnica nie rozstrzyga się wcale. Czas zapisu, gdy
-// jest, wpisujemy przez ten sam uchwyt przed utrwaleniem.
+// `fill` gets the path where the content is to appear and returns an open handle to it, or
+// nothing when the task was cancelled halfway; then the promise is not settled at all. The
+// modification time, when there is one, is written through the same handle before syncing.
 template <typename Fill>
 bool poured_at(const path& to, bool durable, std::optional<Instant> when, Fill fill) {
     const bool there = kind_at(to) != Kind::none;
@@ -171,7 +179,8 @@ bool poured_at(const path& to, bool durable, std::optional<Instant> when, Fill f
     return true;
 }
 
-// Zapis ratami przez nasz bufor — gdy treść już mamy albo gdy system nie umie skopiować sam.
+// Writing in installments through our own buffer, when the content is already at hand or when the
+// system cannot copy on its own.
 template <typename Pour>
 bool poured_at(const path& to, bool durable, Pour pour) {
     return poured_at(to, durable, std::nullopt, [&](const path& into) -> std::shared_ptr<File::Held> {
@@ -183,16 +192,17 @@ bool poured_at(const path& to, bool durable, Pour pour) {
     });
 }
 
-// Kawałek dla kopii w jądrze: większy niż rata odczytu, bo przy kopii po stronie serwera każdy
-// kawałek to jedno pytanie przez sieć, a mały kawałek zjadałby całą korzyść. Anulowanie czeka
-// najwyżej na jeden.
+// The piece for an in-kernel copy: larger than a read installment, because with a server-side
+// copy every piece is one question over the network, and a small piece would eat up the whole
+// benefit. A cancellation waits for at most one piece.
 constexpr std::size_t spliced_piece = 16 * 1024 * 1024;
 
 #ifdef _WIN32
 
-// `CopyFileExW` kopiuje sam: na udziale SMB po stronie serwera, z odciążeniem ODX na macierzy,
-// z atrybutami i strumieniami. Postęp i anulowanie idą przez wywołanie zwrotne, w tym samym
-// wątku, więc dzwonek robotnika słychać jak w naszej pętli. Anulowane — system sam usuwa cel.
+// `CopyFileExW` copies on its own: server-side on an SMB share, with ODX offload on a storage
+// array, with attributes and streams. Progress and cancellation go through the callback, on the
+// same thread, so the worker's bell is heard as in our own loop. When cancelled, the system
+// removes the target itself.
 DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_INTEGER, DWORD, DWORD, HANDLE, HANDLE,
                       LPVOID held) {
     static_cast<Counted<void>*>(held)->done.store(static_cast<std::uintmax_t>(done.QuadPart));
@@ -202,6 +212,8 @@ DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_IN
 
 #endif
 
+// Copies one file to `to`: first the system's own copy (Windows), then a clone, then an in-kernel
+// copy in pieces, and finally our own read and write loop. False when cancelled halfway.
 bool file_at(const path& from, const path& to, Counted<void>& held, bool durable = false) {
     const std::shared_ptr<File::Held> mine = open_at(from, Mode::read);
 
@@ -218,8 +230,9 @@ bool file_at(const path& from, const path& to, Counted<void>& held, bool durable
 
         if (CopyFileExW(longly(from).c_str(), longly(into).c_str(), copied, &held, &cancel,
                         COPY_FILE_FAIL_IF_EXISTS) != 0) {
-            // Atrybut „tylko do odczytu" przyszedł ze źródła; zostawiony, zablokowałby utrwalenie
-            // tutaj i każde następne nadpisanie celu. Nasza pętla też go nie przenosiła.
+            // The read-only attribute came from the source; left in place, it would block syncing
+            // here and every later overwrite of the target. Our own loop does not carry it over
+            // either.
             const DWORD told = GetFileAttributesW(longly(into).c_str());
 
             if (told != INVALID_FILE_ATTRIBUTES && (told & FILE_ATTRIBUTE_READONLY) != 0)
@@ -232,8 +245,8 @@ bool file_at(const path& from, const path& to, Counted<void>& held, bool durable
 
         if (GetLastError() == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
 
-        // Inna odmowa — system bez tej drogi (Wine), nośnik, który jej nie lubi. Zwykła pętla
-        // powie, co naprawdę jest nie tak, albo po prostu skopiuje.
+        // Another refusal: a system without this path (Wine), a medium that does not like it. The
+        // plain loop will say what is really wrong, or simply copy.
 #endif
         std::shared_ptr<File::Held> yours = open_at(into, Mode::truncate);
 
@@ -253,8 +266,8 @@ bool file_at(const path& from, const path& to, Counted<void>& held, bool durable
                     spliced_on(*mine, *yours, at, static_cast<std::size_t>(std::min<std::uintmax_t>(
                                                       whole - at, std::max(rata, spliced_piece))));
 
-                // Zero przed końcem to nie koniec pliku, tylko system, który tej drogi nie
-                // dotrzymał (pliki generowane, część FUSE) — dalej idziemy sami.
+                // Zero before the end is not the end of the file but a system that did not keep
+                // to this path (generated files, some FUSE file systems); the rest goes our way.
                 if (went && *went > 0) {
                     at += *went;
                     held.done.store(at);
@@ -276,7 +289,8 @@ bool file_at(const path& from, const path& to, Counted<void>& held, bool durable
     });
 }
 
-// Czas katalogu z pełną dokładnością, a gdy katalog zniknął spod ręki — ten z wykazu.
+// The folder's time with full precision, or the one from the listing when the folder has vanished
+// in the meantime.
 Instant instant_or(const path& where, std::chrono::sys_seconds otherwise) {
     try {
         return instant_at(where);
@@ -288,9 +302,9 @@ Instant instant_or(const path& where, std::chrono::sys_seconds otherwise) {
 bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how, Seen& seen,
              int deep);
 
-// Jedna pozycja z wykazu. Dowiązanie rozwijamy — kopiujemy to, na co wskazuje, a nie samo
-// dowiązanie. Potok, gniazdo i urządzenie pomijamy: otwarcie potoku do odczytu zawiesiłoby
-// wątek puli bez ratunku, a to gorsze niż brak kopii.
+// One entry from the listing. A link is followed: what it points to is copied, not the link
+// itself. A pipe, a socket and a device are skipped: opening a pipe for reading would hang a pool
+// thread beyond rescue, and that is worse than a missing copy.
 bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& seen, int deep) {
     if (kind == Kind::folder) {
         make_folder_at(to);
@@ -327,10 +341,10 @@ bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& 
     return file_at(onto, where, apart);
 }
 
-// Katalog idzie wpis po wpisie; postęp liczymy tutaj we wpisach, nie w bajtach. Wykaz jest
-// posortowany ścieżkami, a rodzic zawsze poprzedza swoje dzieci, więc katalogi da się
-// tworzyć po kolei. Zawartość rozwiniętych dowiązań ma własny licznik i do tego się nie
-// dolicza — inaczej mieszalibyśmy dwie miary w jednym ułamku.
+// A folder goes entry by entry; progress is counted here in entries, not in bytes. The listing is
+// sorted by path and a parent always precedes its children, so folders can be created in order.
+// The content of followed links has its own counter and is not added to this one; otherwise two
+// measures would be mixed in one fraction.
 bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how, Seen& seen,
              int deep) {
     if (deep > 64) return true;
@@ -360,8 +374,9 @@ bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how
 
     sweeping.keep();
 
-    // Czas katalogu dopiero na końcu i od najgłębszych: każdy wpis włożony do środka go przestawiał,
-    // więc podkatalog kopii miał dawniej czas kopiowania zamiast czasu źródła.
+    // The folders' times only at the end and from the deepest: every entry put inside changes the
+    // time, so stamping earlier would leave the copy's subfolders with the time of copying instead
+    // of the source's time.
     for (auto at = folders.rbegin(); at != folders.rend(); ++at) stamp_at(at->first, at->second);
 
     stamp_at(to, instant_at(from));
@@ -369,12 +384,15 @@ bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how
     return true;
 }
 
-// **Sprawdzian przed kopią.** Kopia 40 GB padała przy 4 GiB na FAT32 albo przy 95% na pełnym
-// dysku, po kwadransie pracy i z połową pliku do posprzątania. Pytamy więc wcześniej: o największy
-// plik, gdy cel to FAT (exFAT tej granicy nie ma), i o sumę, gdy nośnik celu mówi, ile ma miejsca.
-// Nośnik, który nie odpowie, nie blokuje kopii — sprawdzian ma oszczędzać czas, a nie zgadywać.
+// A check before copying. Without it a 40 GB copy would fail at 4 GiB on FAT32, or at 95% on a
+// full disk, after a quarter of an hour of work and with half a file to clean up. So the question
+// is asked earlier: about the largest file when the target is FAT (exFAT has no such limit), and
+// about the total when the target medium says how much room it has. A medium that does not answer
+// does not block the copy: the check is there to save time, not to guess.
 constexpr std::uintmax_t fat_limit = 0xFFFFFFFFull;
 
+// Throws `Trouble` when the largest file does not fit on a FAT target or the total does not fit in
+// the free space.
 void fits_at(const path& to, std::uintmax_t whole, std::uintmax_t largest) {
     if (largest > fat_limit && fat_at(to)) amiss("The file is too large for this disk.", to);
 
@@ -382,8 +400,8 @@ void fits_at(const path& to, std::uintmax_t whole, std::uintmax_t largest) {
         amiss("Not enough free space.", to);
 }
 
-// Ile zajmie kopia: same pliki. Tego, co za dowiązaniami, nie liczymy, więc suma jest dolną
-// granicą — wystarczy, żeby odmówić tego, co na pewno się nie zmieści.
+// How much the copy takes: the files only. What lies behind links is not counted, so the total is
+// a lower bound, enough to refuse what certainly does not fit.
 void measured(const std::vector<Entry>& among, std::uintmax_t& whole, std::uintmax_t& largest) {
     for (const Entry& one : among) {
         if (one.kind != Kind::file) continue;
@@ -393,6 +411,9 @@ void measured(const std::vector<Entry>& among, std::uintmax_t& whole, std::uintm
     }
 }
 
+// Copies a file or a folder (following a link given as `from`) to `to`, after checking that it
+// fits. Throws `Trouble` for nothing to copy, a dangling link, an entry that is neither file nor
+// folder, or a copy onto itself. False when cancelled.
 bool copy_at(const path& from, const path& to, Counted<void>& held, Conflict how) {
     Kind what = kind_at(from);
 
@@ -412,8 +433,8 @@ bool copy_at(const path& from, const path& to, Counted<void>& held, Conflict how
     Seen seen;
 
     if (what == Kind::folder) {
-        // **Nic na samo siebie.** Katalog kopiowany na własną ścieżkę wchodziłby w to, co
-        // właśnie tworzy; MC odmawia i my też.
+        // Nothing onto itself. A folder copied onto its own path would walk into what it is just
+        // creating; MC refuses, and so does this.
         if (asked(how) && kind_at(to) != Kind::none && equivalent_at(onto, to))
             amiss("Cannot copy a directory onto itself.", from);
 
@@ -430,11 +451,11 @@ bool copy_at(const path& from, const path& to, Counted<void>& held, Conflict how
 
     if (what != Kind::file) amiss("This entry cannot be copied.", from);
 
-    // **Plik nie kopiuje się na samego siebie.** Przy `Conflict::overwrite` cel otwierał się do
-    // zapisu i ucinał do zera, czyli kasował to, co miało zostać skopiowane — sprawdzone i tak
-    // właśnie było. Pytamy **przed** `settled_on`, żeby zdanie mówiło, o co naprawdę chodzi,
-    // a nie „cel już istnieje"; tylko gdy cel istnieje, bo `equivalent` bez drugiej strony nie ma
-    // czego porównać.
+    // A file is not copied onto itself. With `Conflict::overwrite` the target would be opened for
+    // writing and truncated to zero, deleting what was to be copied. The question is asked before
+    // `settled_on`, so that the sentence says what the matter really is and not "the target
+    // already exists"; and only when the target exists, because an equivalence check has nothing
+    // to compare without the other side.
     if (asked(how) && kind_at(to) != Kind::none && equivalent_at(onto, to))
         amiss("Cannot copy a file onto itself.", from);
 
@@ -452,17 +473,17 @@ bool copy_at(const path& from, const path& to, Counted<void>& held, Conflict how
     return file_at(onto, where, held);
 }
 
-// **Przeniesienie wpis po wpisie** — między nośnikami albo przy łączeniu katalogu z istniejącym.
-// Każdy plik najpierw próbuje zwykłej zmiany nazwy (w obrębie nośnika natychmiastowej); gdy system
-// odpowie „inny nośnik", plik się kopiuje, utrwala na nośniku celu i dopiero wtedy znika ze źródła.
-// Katalogi źródła schodzą na końcu i tylko puste.
+// Moving entry by entry, between media or when merging a folder with an existing one. Every file
+// first tries a plain rename (instant within one medium); when the system answers "another
+// medium", the file is copied, made durable on the target medium and only then disappears from
+// the source. The source folders go last, and only when empty.
 //
-// Dawniej było odwrotnie: najpierw cała kopia, potem `remove_all` źródła, którego błąd ginął.
-// Wszystko, czego kopia nie zobaczyła — podkatalog bez wstępu, wykaz ucięty zerwanym połączeniem,
-// wpis pominięty — szło do kosza razem z resztą.
+// Copying everything first and removing the source afterward would be wrong: a failure of that
+// removal would get lost, and everything the copy did not see (a folder without access, a listing
+// cut off by a broken connection, a skipped entry) would go to waste together with the rest.
 //
-// Przeszkody sprawdzamy przed pierwszym ruchem: wpis, którego przenieść się nie da (potok, urządzenie,
-// zerwane dowiązanie), i katalog, do którego nie ma wstępu, odmawiają całości.
+// The obstacles are checked before the first move: an entry that cannot be moved (a pipe, a
+// device, a dangling link) and a folder without access refuse the whole move.
 std::vector<Entry> surveyed(const path& from) {
     std::vector<Entry> made;
     std::vector<path> waiting{from};
@@ -488,13 +509,14 @@ std::vector<Entry> surveyed(const path& from) {
     return made;
 }
 
-// Jeden plik albo dowiązanie. Fałsz — anulowano w trakcie kopii; źródło zostaje wtedy całe.
+// One file or link. False when cancelled during the copy; the source then stays whole.
 bool carried(const path& from, const path& to, Conflict how) {
     const Shift made = shifted(from, to, how);
 
     if (made.where.empty() || made.done) return true;
 
-    // Inny nośnik: system odmówił, zanim spojrzał na cel, więc kolizję rozstrzygamy jeszcze raz.
+    // Another medium: the system refused before it looked at the target, so the conflict is
+    // settled once more.
     const path where = settled_on(to, how);
     if (where.empty()) return true;
 
@@ -526,8 +548,10 @@ bool carried(const path& from, const path& to, Conflict how) {
     return true;
 }
 
+// Moves `from` to `to` entry by entry, for a move across media or a merge of folders. Throws
+// `Trouble` when something cannot be moved or entries stayed behind; false when cancelled.
 bool relocated(const path& from, const path& to, Counted<void>& held, Conflict how) {
-    // Pojedynczy plik trafia tu tylko z innego nośnika — w obrębie jednego wystarczyła zmiana nazwy.
+    // A single file comes here only from another medium; within one, a rename was enough.
     if (kind_at(from) != Kind::folder) {
         if (kind_at(from) == Kind::file) {
             std::error_code ignored;
@@ -580,8 +604,8 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
         held.done.fetch_add(1);
     }
 
-    // Od najgłębszych: katalog schodzi tylko pusty, a jego czas zapisu przechodzi na cel dopiero teraz,
-    // bo każdy wpis włożony do środka go przestawiał.
+    // From the deepest: a folder goes only when empty, and its modification time passes to the
+    // target only now, because every entry put inside changes it.
     for (auto at = folders.rbegin(); at != folders.rend(); ++at) {
         std::error_code ignored;
 
@@ -601,6 +625,7 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
 
 }
 
+// Reads the whole file in installments, reporting progress; a cancelled read never settles.
 Promise<Bytes> read(const path& where) {
     auto held = std::make_shared<Counted<Bytes>>();
 
@@ -633,8 +658,8 @@ Promise<Bytes> read(const path& where) {
                           held};
 }
 
-// Zapis istniejącego pliku idzie obok i przemianowaniem na cel (`poured_at`) — przerwany nie
-// zostawia ogryzka pod prawdziwą nazwą.
+// Writing over an existing file goes beside it and renames onto the target (`poured_at`), so an
+// interrupted write leaves no stub under the real name.
 Promise<void> write(const path& where, Bytes what, Conflict how) {
     auto held = std::make_shared<Counted<void>>();
 
@@ -673,6 +698,8 @@ Promise<void> write(const path& where, Bytes what, Conflict how) {
                          held};
 }
 
+// Copies a file or a folder in a pool task, with progress in bytes for a file and in entries for a
+// folder; `how` settles a conflict with an existing target.
 Promise<void> copy(const path& from, const path& to, Conflict how) {
     auto held = std::make_shared<Counted<void>>();
 
@@ -684,10 +711,10 @@ Promise<void> copy(const path& from, const path& to, Conflict how) {
                          held};
 }
 
-// Najpierw zwykła zmiana nazwy, bo w obrębie jednego nośnika jest natychmiastowa. Dopiero gdy
-// system odpowie „inny nośnik" — i tylko wtedy — przenosimy wpis po wpisie (`relocated`). Każda
-// inna odmowa jest błędem: plik otwarty w odtwarzaczu nie może skończyć jako kopia 40 GB i dwa
-// egzemplarze. Katalog nadpisywany katalogiem łączy się z nim, też wpis po wpisie.
+// First a plain rename, because within one medium it is instant. Only when the system answers
+// "another medium", and only then, the entries are moved one by one (`relocated`). Every other
+// refusal is an error: a file open in a player must not end up as a 40 GB copy, present twice.
+// A folder overwritten with a folder merges with it, also entry by entry.
 Promise<void> move(const path& from, const path& to, Conflict how) {
     auto held = std::make_shared<Counted<void>>();
 
@@ -705,8 +732,8 @@ Promise<void> move(const path& from, const path& to, Conflict how) {
 
                              const Shift made = shifted(from, to, how);
 
-                             // Inny nośnik — system nie musiał nawet spojrzeć na cel. Kolizję
-                             // rozstrzygamy więc jeszcze raz, zanim cokolwiek się przeniesie.
+                             // Another medium: the system did not even have to look at the target.
+                             // So the conflict is settled once more before anything is moved.
                              const path where = made.where.empty() || made.done ? path{} : settled_on(to, how);
 
                              if (where.empty()) {
@@ -724,6 +751,7 @@ Promise<void> move(const path& from, const path& to, Conflict how) {
                          held};
 }
 
+// Removes a file or a whole folder; a missing entry counts as already removed.
 Promise<void> erase(const path& where) {
     auto held = std::make_shared<Counted<void>>();
 
@@ -739,7 +767,7 @@ Promise<void> erase(const path& where) {
 
                              held->whole.store(among.size() + 1);
 
-                             // Od najgłębszych, bo katalog daje się usunąć dopiero pusty.
+                             // From the deepest, because a folder can be removed only when empty.
                              for (auto at = among.rbegin(); at != among.rend(); ++at) {
                                  if (stopped()) return;
 

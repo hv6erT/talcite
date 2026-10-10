@@ -13,13 +13,15 @@
 
 using namespace talcite;
 
-// **X25519 z talcite** — drabina Montgomery'ego na zapas, gdy system krzywej 25519 nie daje
-// (CNG przed Windows 10, Wine). Wektory z RFC 7748 (§5.2, także iterowane, i §6.1), punkty małego
-// rzędu z bitem 255 i bez, wartości niekanoniczne i przycinanie skalara; do tego brzegi postaci
-// kanonicznej ciała. Z libcrypto na losowych wejściach porównuje drabinę próba w talcite-adapters.
-// Oczekiwane wyniki brzegów policzono niezależnie w Pythonie.
+// X25519 in talcite: the Montgomery ladder used as a fallback when the system does not provide
+// curve 25519 (CNG before Windows 10, Wine). The RFC 7748 vectors (§5.2, also iterated, and §6.1),
+// small-order points with and without bit 255, non-canonical values and scalar clamping; and on top
+// of that the edges of the field's canonical form. A trial in talcite-adapters compares the ladder
+// with libcrypto on random inputs. The expected results for the edges were computed independently
+// in Python.
 namespace {
 
+// Turns a hexadecimal string into bytes, two digits per byte.
 Bytes lump(std::string_view hex) {
     Bytes made;
 
@@ -29,10 +31,11 @@ Bytes lump(std::string_view hex) {
     return made;
 }
 
+// Spells the result as lowercase hexadecimal, or "none" when X25519 refused.
 std::string spelled(const std::optional<Bytes>& one) {
     static constexpr char digits[] = "0123456789abcdef";
 
-    if (!one) return "brak";
+    if (!one) return "none";
 
     std::string made;
 
@@ -44,6 +47,7 @@ std::string spelled(const std::optional<Bytes>& one) {
     return made;
 }
 
+// The base point u = 9 as 32 little-endian bytes.
 Bytes base() {
     Bytes made(32);
 
@@ -58,15 +62,15 @@ const std::string product = "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b
 
 }
 
-TRIAL("X25519: oba wektory z RFC 7748 §5.2") {
+TRIAL("X25519: both vectors from RFC 7748 §5.2") {
     same(spelled(x25519(scalar, point)), product);
     same(spelled(x25519(lump("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"),
                         lump("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"))),
          std::string{"95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957"});
 }
 
-// k = u = 9, potem k ← X25519(k, u) i u ← poprzednie k.
-TRIAL("X25519: wektory iterowane z RFC 7748 §5.2, raz i tysiąc razy") {
+// k = u = 9, then k ← X25519(k, u) and u ← the previous k.
+TRIAL("X25519: the iterated vectors from RFC 7748 §5.2, once and a thousand times") {
     Bytes k = base();
     Bytes u = base();
 
@@ -87,7 +91,7 @@ TRIAL("X25519: wektory iterowane z RFC 7748 §5.2, raz i tysiąc razy") {
     same(spelled(k), std::string{"684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51"});
 }
 
-TRIAL("X25519: Alicja i Bob z RFC 7748 §6.1") {
+TRIAL("X25519: Alice and Bob from RFC 7748 §6.1") {
     const Bytes alice = lump("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
     const Bytes bob = lump("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
 
@@ -105,9 +109,9 @@ TRIAL("X25519: Alicja i Bob z RFC 7748 §6.1") {
     same(spelled(x25519(bob, *alice_public)), shared);
 }
 
-// Siedem punktów małego rzędu (0, 1, dwa rzędu 8, p − 1, p, p + 1), każdy także z bitem 255 —
-// wynik zerowy to odmowa.
-TRIAL("X25519: punkt małego rzędu to odmowa, z bitem 255 i bez") {
+// Seven small-order points (0, 1, two of order 8, p − 1, p, p + 1), each also with bit 255 set; a
+// zero result is a refusal.
+TRIAL("X25519: a small-order point is refused, with and without bit 255") {
     const std::string_view low[] = {
         "0000000000000000000000000000000000000000000000000000000000000000",
         "0100000000000000000000000000000000000000000000000000000000000000",
@@ -121,16 +125,16 @@ TRIAL("X25519: punkt małego rzędu to odmowa, z bitem 255 i bez") {
     for (const std::string_view one : low) {
         Bytes u = lump(one);
 
-        same(spelled(x25519(scalar, u)), std::string{"brak"});
+        same(spelled(x25519(scalar, u)), std::string{"none"});
 
         u.back() |= std::byte{0x80};
 
-        same(spelled(x25519(scalar, u)), std::string{"brak"});
+        same(spelled(x25519(scalar, u)), std::string{"none"});
     }
 }
 
-// Bit 255 współrzędnej się pomija, a u od p w górę liczy się jak zredukowane: p + 9 to 9.
-TRIAL("X25519: bit 255 pominięty, u niekanoniczne zredukowane") {
+// Bit 255 of the coordinate is ignored, and u from p upward is treated as reduced: p + 9 is 9.
+TRIAL("X25519: bit 255 ignored, a non-canonical u reduced") {
     Bytes high = point;
 
     high.back() |= std::byte{0x80};
@@ -142,8 +146,8 @@ TRIAL("X25519: bit 255 pominięty, u niekanoniczne zredukowane") {
     same(spelled(x25519(scalar, past)), spelled(x25519(scalar, base())));
 }
 
-// Przycięcie z RFC: bity 0–2 i 255 skalara nic nie znaczą, bit 254 zawsze jest jedynką.
-TRIAL("X25519: skalar przycięty jak w RFC 7748") {
+// Clamping from the RFC: bits 0–2 and 255 of the scalar mean nothing, bit 254 is always one.
+TRIAL("X25519: the scalar is clamped as in RFC 7748") {
     Bytes flipped = scalar;
 
     flipped.front() ^= std::byte{0x07};
@@ -158,10 +162,10 @@ TRIAL("X25519: skalar przycięty jak w RFC 7748") {
     ought(spelled(x25519(other, point)) != product);
 }
 
-// Brzegi `packed`: 2²⁵⁶ − 1 leży powyżej 2p, więc potrzebuje dwóch odjęć p; nadmiar ostatniej
-// kończyny, który po powrocie przechodzi przez piętnaście pełnych, potrzebuje trzeciego przeniesienia;
-// −1 to p − 1.
-TRIAL("X25519: ciało oddaje postać kanoniczną także na brzegach") {
+// The edges of `packed`: 2²⁵⁶ − 1 lies above 2p, so it needs two subtractions of p; an excess in
+// the last limb that, after wrapping around, passes through fifteen full limbs needs a third carry;
+// −1 is p − 1.
+TRIAL("X25519: the field gives the canonical form also at the edges") {
     curving::Limbs full{};
 
     full.fill(0xffff);
@@ -181,11 +185,11 @@ TRIAL("X25519: ciało oddaje postać kanoniczną także na brzegach") {
     same(spelled(curving::packed(below)), std::string{"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"});
 }
 
-TRIAL("X25519: zły rozmiar skalara rzuca, zły rozmiar u to odmowa") {
+TRIAL("X25519: a wrong scalar size throws, a wrong u size is a refusal") {
     threw(static_cast<void>(x25519(Bytes(31), point)));
     threw(static_cast<void>(x25519(Bytes(33), point)));
 
-    same(spelled(x25519(scalar, Bytes(31))), std::string{"brak"});
-    same(spelled(x25519(scalar, Bytes(33))), std::string{"brak"});
-    same(spelled(x25519(scalar, Bytes{})), std::string{"brak"});
+    same(spelled(x25519(scalar, Bytes(31))), std::string{"none"});
+    same(spelled(x25519(scalar, Bytes(33))), std::string{"none"});
+    same(spelled(x25519(scalar, Bytes{})), std::string{"none"});
 }

@@ -27,9 +27,9 @@ using namespace talcite;
 
 namespace {
 
-// Wszystkie próby uruchamiają **binarkę testową**, nie cudzy program: `--pretending` każe jej udawać
-// to, czego akurat potrzeba. Dzięki temu nie zależymy od tego, czy na maszynie stoi powłoka, `echo`
-// czy `cmd`, i to samo działa pod Windowsem i pod Linuksem.
+// All trials start the test binary, not someone else's program: --pretending tells it to pretend
+// whatever is needed. Thanks to this we do not depend on whether the machine has a shell, echo or
+// cmd, and the same works under Windows and under Linux.
 Command pretending(std::vector<std::string> what) {
     Command made;
 
@@ -45,16 +45,16 @@ Command pretending(std::vector<std::string> what) {
 
 }
 
-// --- Uruchomienie i koniec -----------------------------------------------------------------------
+// --- Start and end -------------------------------------------------------------------------------
 
-TRIAL("Child: puste dziecko o niczym nie wie") {
+TRIAL("Child: an empty child knows nothing") {
     const Child one;
 
     ought(!one.held());
     same(one.pid(), std::int64_t{-1});
 }
 
-TRIAL("Child: uruchomiony program oddaje wyjście i kod zero") {
+TRIAL("Child: a started program gives its output and code zero") {
     const Output made = Child::run(pretending({"said", "dzień dobry"})).await();
 
     same(text(made.out), std::string{"dzień dobry"});
@@ -63,36 +63,36 @@ TRIAL("Child: uruchomiony program oddaje wyjście i kod zero") {
     same(made.exit.code, 0);
 }
 
-TRIAL("Child: kod wyjścia wraca taki, jaki program podał") {
+TRIAL("Child: the exit code comes back as the program gave it") {
     const Output made = Child::run(pretending({"code", "7"})).await();
 
     ought(made.exit.ended == Ended::normal);
     same(made.exit.code, 7);
 }
 
-// Dwa strumienie są **osobne**, dopóki nikt nie poprosi o zlanie ich w jeden.
-TRIAL("Child: wyjście i błędy idą osobno") {
+// The two streams are separate until someone asks for them to be merged into one.
+TRIAL("Child: output and errors go separately") {
     const Output made = Child::run(pretending({"both"})).await();
 
-    same(text(made.out), std::string{"wyjście"});
-    same(text(made.err), std::string{"błąd"});
+    same(text(made.out), std::string{"output"});
+    same(text(made.err), std::string{"error"});
 }
 
-TRIAL("Child: merge zlewa błędy do wyjścia") {
+TRIAL("Child: merge pours errors into the output") {
     Command what = pretending({"both"});
     what.merge = true;
 
     const Output made = Child::run(std::move(what)).await();
 
     ought(made.err.empty());
-    same(made.out.size(), std::string{"wyjście"}.size() + std::string{"błąd"}.size());
+    same(made.out.size(), std::string{"output"}.size() + std::string{"error"}.size());
 }
 
-// Systemy mówią o tym **różnymi drogami** i obie są prawidłowe. Na POSIX rozwidlenie się udaje,
-// a `exec` już nie — dziecko wychodzi wtedy z kodem 127, bo o niepowodzeniu nie ma komu powiedzieć
-// wcześniej. Na Windowsie `CreateProcessW` odmawia od razu i odmowa wraca odrzuceniem obietnicy.
-// Próba pilnuje jedynej rzeczy wspólnej: że żadna z tych dróg nie oddaje cichego zera.
-TRIAL("Child: nieistniejący program nie udaje, że poszło") {
+// The systems report this in different ways, and both are correct. On POSIX the fork succeeds and
+// exec does not; the child then exits with code 127, because there is nobody to tell about the
+// failure earlier. On Windows CreateProcessW refuses at once, and the refusal comes back as a
+// rejected promise. The trial guards the one thing in common: neither way gives a silent zero.
+TRIAL("Child: a missing program does not pretend it worked") {
     Command what;
     what.program = fs::path{"nie-ma-takiego-programu-w-talcite"};
 
@@ -104,23 +104,23 @@ TRIAL("Child: nieistniejący program nie udaje, że poszło") {
     }
 }
 
-TRIAL("Child: brak programu jest odmową, nie ciszą") {
+TRIAL("Child: no program is a refusal, not silence") {
     threw((void)Child::run(Command{}).await());
 }
 
-// --- Wejście -------------------------------------------------------------------------------------
+// --- Input ---------------------------------------------------------------------------------------
 
-TRIAL("Child: podane wejście wraca wyjściem") {
+TRIAL("Child: the given input comes back as output") {
     const Output made = Child::run(pretending({"echo"}), bytes("tam i z powrotem")).await();
 
     same(text(made.out), std::string{"tam i z powrotem"});
     same(made.exit.code, 0);
 }
 
-// Drugi program nie dostaje w spadku rur pierwszego. Dawniej nasze końce rur nie miały znacznika
-// zamknięcia przy uruchomieniu, więc program uruchomiony później trzymał wejście pierwszego
-// otwarte — i pierwszy nie widział końca wejścia, dopóki drugi żył.
-TRIAL("Child: drugi program nie trzyma wejścia pierwszego") {
+// A second program does not inherit the first one's pipes. Without the close-on-exec flag on our
+// ends of the pipes, a program started later would hold the first one's input open, and the first
+// would not see the end of its input while the second lived.
+TRIAL("Child: a second program does not hold the first one's input") {
     const Child first = Child::start(pretending({"echo"})).await();
     const Child second = Child::start(pretending({"sleeping", "8000"})).await();
 
@@ -141,10 +141,10 @@ TRIAL("Child: drugi program nie trzyma wejścia pierwszego") {
 
 #ifndef _WIN32
 
-// Proces bez wejścia standardowego (zamknięty deskryptor zero — demon, usługa) dostaje od `pipe2`
-// właśnie zero na koniec rury dziecka. `dup2` na samego siebie nic nie robi i zostawia znacznik
-// zamknięcia przy uruchomieniu, więc dziecko dostawało zamknięte wejście i nie czytało nic.
-TRIAL("Child: rura na deskryptorze zero dochodzi do programu") {
+// A process without standard input (descriptor zero closed: a daemon, a service) gets exactly
+// zero from pipe2 for the child's end of the pipe. dup2 onto itself does nothing and leaves the
+// close-on-exec flag, so the child would get a closed input and read nothing.
+TRIAL("Child: a pipe on descriptor zero reaches the program") {
     const int saved = ::dup(STDIN_FILENO);
 
     ::close(STDIN_FILENO);
@@ -173,18 +173,18 @@ TRIAL("Child: rura na deskryptorze zero dochodzi do programu") {
 
 #if defined(__linux__)
 
-// Gniazdo otwarte przez nas nie trafia do programu potomnego — inaczej trzymałby zajęty port długo
-// po tym, jak my go zamkniemy. Sprawdzamy wprost: deskryptory dziecka w /proc.
-TRIAL("Child: nasze gniazda nie trafiają do programu") {
+// A socket we opened does not reach a child program; otherwise it would keep the port taken long
+// after we close it. We check directly: the child's descriptors in /proc.
+TRIAL("Child: our sockets do not reach the program") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Udp post{net::Address::loopback(net::Family::four, 0)};
 
     const Child one = Child::start(pretending({"sleeping", "3000"})).await();
 
-    // **Liczymy po wykonaniu, nie przed nim.** Między rozwidleniem a `exec` dziecko trzyma jeszcze
-    // wszystkie nasze deskryptory — zamyka je dopiero `exec` (CLOEXEC) — a start może oddać dziecko
-    // wcześniej. Pod obciążeniem próba trafiała w tę szparę i widziała gniazda, których po `exec`
-    // już nie ma. Gniazdo, które naprawdę przeszło, zostaje na zawsze, więc czekanie go nie ukryje.
+    // We count after exec, not before. Between fork and exec the child still holds all our
+    // descriptors (only exec closes them, CLOEXEC), and start may hand over the child earlier.
+    // Under load the trial could hit that gap and see sockets that are gone after exec. A socket
+    // that really got through stays forever, so waiting does not hide it.
     std::size_t sockets = 0;
 
     for (int round = 0; round < 200; ++round) {
@@ -209,8 +209,8 @@ TRIAL("Child: nasze gniazda nie trafiają do programu") {
 
 #endif
 
-// Zamknięcie wejścia jest **poleceniem**: bez niego `echo` czekałoby w nieskończoność.
-TRIAL("Child: bez zamknięcia wejścia program czeka, z zamknięciem kończy") {
+// Closing the input is a command: without it echo would wait forever.
+TRIAL("Child: without closing the input the program waits, with it the program ends") {
     const Child one = Child::start(pretending({"echo"})).await();
 
     (void)one.write(bytes("raz")).await();
@@ -230,9 +230,9 @@ TRIAL("Child: bez zamknięcia wejścia program czeka, z zamknięciem kończy") {
     same(one.wait().await().code, 0);
 }
 
-// Rura ma dno. Program, który pisze na obie strony więcej, niż one mieszczą, zakleszcza czytającego,
-// który patrzy tylko w jedną — i to jest właśnie powód, dla którego `taken` istnieje.
-TRIAL("Child: taken nie zakleszcza się na obfitym wyjściu") {
+// A pipe has a bottom. A program that writes to both streams more than they hold deadlocks a reader
+// that watches only one of them, and that is exactly why taken exists.
+TRIAL("Child: taken does not deadlock on plentiful output") {
     const Output made = Child::run(pretending({"much"})).await();
 
     same(made.out.size(), std::size_t{300 * 1000});
@@ -240,27 +240,28 @@ TRIAL("Child: taken nie zakleszcza się na obfitym wyjściu") {
     same(made.exit.code, 0);
 }
 
-// --- Przepis -------------------------------------------------------------------------------------
+// --- Command -------------------------------------------------------------------------------------
 
-TRIAL("Child: argumenty idą osobno, także ze spacjami") {
+TRIAL("Child: arguments go separately, also with spaces") {
     const Output made = Child::run(pretending({"args", "jeden dwa", "trzy"})).await();
 
     same(text(made.out), std::string{"jeden dwa\ntrzy\n"});
 }
 
-TRIAL("Child: katalog roboczy jest tym, który podano") {
+TRIAL("Child: the working directory is the one given") {
     Command what = pretending({"where"});
     what.where = fs::temp();
 
     const Output made = Child::run(std::move(what)).await();
 
-    // **Pytamy system, a nie porównujemy napisów.** Ta sama ścieżka bywa zapisana inaczej —
-    // Windows oddaje katalog tymczasowy z ukośnikiem na końcu, a katalog bieżący bez niego — więc
-    // porównanie znak po znaku mówiłoby o zapisie, a nie o tym, o co pytamy.
+    // We ask the system instead of comparing strings. The same path can be written differently
+    // (Windows gives the temporary directory with a trailing backslash and the current directory
+    // without one), so a character-by-character comparison would speak of the spelling, not of
+    // what we ask.
     ought(fs::equivalent(fs::path{text(made.out)}, fs::temp()).await());
 }
 
-TRIAL("Child: zmienna środowiska dochodzi do programu") {
+TRIAL("Child: an environment variable reaches the program") {
     Command what = pretending({"around", "TALCITE_PROBA"});
     what.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
 
@@ -269,21 +270,21 @@ TRIAL("Child: zmienna środowiska dochodzi do programu") {
     same(text(made.out), std::string{"wartość"});
 }
 
-// Bez dziedziczenia program nie ma **nic** poza tym, co mu podano — a to jest jedyny sposób, żeby
-// uruchomić coś w znanych warunkach.
-TRIAL("Child: bez dziedziczenia zostaje samo to, co podano") {
+// Without inheritance the program has nothing but what it was given, and that is the only way to
+// run something under known conditions.
+TRIAL("Child: without inheritance only what was given remains") {
     Command what = pretending({"around", "PATH"});
     what.inherit = false;
     what.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
 
     const Output made = Child::run(std::move(what)).await();
 
-    same(text(made.out), std::string{"<brak>"});
+    same(text(made.out), std::string{"<none>"});
 }
 
-// --- Zakończenie ---------------------------------------------------------------------------------
+// --- Ending --------------------------------------------------------------------------------------
 
-TRIAL("Child: kill kończy program, który jeszcze śpi") {
+TRIAL("Child: kill ends a program that is still sleeping") {
     const Child one = Child::start(pretending({"sleeping", "30000"})).await();
 
     Promise<Exit> waiting = one.wait();
@@ -306,8 +307,8 @@ TRIAL("Child: kill kończy program, który jeszcze śpi") {
 
 namespace {
 
-// Czy proces o tym numerze jeszcze żyje — czeka na jego koniec najwyżej tyle, ile podano. Zombie
-// liczy się jako koniec: nie wykonuje już niczego, a pochować go może tylko jego rodzic.
+// Whether the process with this id is still alive, waiting for its end at most `patience`. A
+// zombie counts as ended: it executes nothing any more, and only its parent can reap it.
 bool alive(std::int64_t which, std::chrono::milliseconds patience) {
 #ifdef _WIN32
     const HANDLE one = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(which));
@@ -344,10 +345,10 @@ bool alive(std::int64_t which, std::chrono::milliseconds patience) {
 
 }
 
-// `kill()` kończy całe drzewo: program i to, co on uruchomił. Rodzic tutaj uruchamia wnuka zwykłą
-// drogą systemu, tak jak powłoka albo plik wsadowy uruchamiają właściwy program — dawniej wnuk
-// przeżywał zabicie rodzica i spał dalej.
-TRIAL("Child: kill kończy też to, co program uruchomił") {
+// `kill()` ends the whole tree: the program and what it started. The parent here starts the
+// grandchild the ordinary system way, just as a shell or a batch file starts the actual program;
+// the grandchild must not survive the parent's killing and sleep on.
+TRIAL("Child: kill also ends what the program started") {
     const Child one = Child::start(pretending({"parent", "30000"})).await();
 
     std::string line;
@@ -366,8 +367,8 @@ TRIAL("Child: kill kończy też to, co program uruchomił") {
     ought(!alive(grandchild, std::chrono::milliseconds{3000}));
 }
 
-// `stop()` prosi o koniec całą grupę — rodzica i wnuka — a nie samego rodzica.
-TRIAL("Child: stop prosi o koniec także to, co program uruchomił") {
+// `stop()` asks the whole group to end (the parent and the grandchild), not the parent alone.
+TRIAL("Child: stop also asks what the program started to end") {
     const Child one = Child::start(pretending({"parent", "30000"})).await();
 
     std::string line;
@@ -384,9 +385,9 @@ TRIAL("Child: stop prosi o koniec także to, co program uruchomił") {
     ought(!alive(grandchild, std::chrono::milliseconds{3000}));
 }
 
-// Zabijanie po pochowaniu musi być **ciche i bezpieczne**: numer procesu wolno wtedy przydzielić
-// komuś innemu, więc sygnał wysłany w ciemno trafiłby w obcy program.
-TRIAL("Child: kill po końcu nie robi już nic") {
+// Killing after reaping must be quiet and safe: the process id may then be given to someone else,
+// so a signal sent blindly would hit a foreign program.
+TRIAL("Child: kill after the end does nothing") {
     const Child one = Child::start(pretending({"code", "3"})).await();
 
     same(one.wait().await().code, 3);
@@ -397,7 +398,7 @@ TRIAL("Child: kill po końcu nie robi już nic") {
     same(one.wait().await().code, 3);
 }
 
-TRIAL("Child: koniec można pytać wiele razy i zawsze mówi to samo") {
+TRIAL("Child: the end can be asked for many times and always says the same") {
     const Child one = Child::start(pretending({"code", "5"})).await();
 
     same(one.wait().await().code, 5);
@@ -405,8 +406,8 @@ TRIAL("Child: koniec można pytać wiele razy i zawsze mówi to samo") {
     same(one.wait().await().code, 5);
 }
 
-// Puszczenie uchwytu nie jest rozkazem śmierci — program ma dokończyć swoje.
-TRIAL("Child: close nie zabija programu") {
+// Letting go of the handle is not an order to die; the program should finish its work.
+TRIAL("Child: close does not kill the program") {
     Child one = Child::start(pretending({"code", "0"})).await();
 
     Promise<Exit> waiting = one.wait();
@@ -419,10 +420,10 @@ TRIAL("Child: close nie zabija programu") {
 
 #ifndef _WIN32
 
-// Kto puścił uchwyt i **nigdy nie zapytał o koniec**, i tak nie zostawia po sobie widma: chowanie
-// rusza przy uruchomieniu, a nie przy pierwszym pytaniu. Sprawdzalne tylko na POSIX, bo tylko tam
-// nieodebrany koniec zostaje w tablicy procesów.
-TRIAL("Child: porzucone dziecko zostaje pochowane bez pytania") {
+// Whoever let go of the handle and never asked for the end still leaves no zombie behind: reaping
+// starts at launch, not at the first question. Checkable only on POSIX, because only there an
+// uncollected end stays in the process table.
+TRIAL("Child: an abandoned child is reaped without being asked") {
     std::int64_t which = -1;
 
     {
@@ -433,20 +434,21 @@ TRIAL("Child: porzucone dziecko zostaje pochowane bez pytania") {
         one.close();
     }
 
-    // Pytamy sygnałem zerowym, a **nie** przez `waitpid`: `waitpid` sam by widmo sprzątnął i próba
-    // przestałaby cokolwiek sprawdzać. Widmo na to pytanie wciąż odpowiada, pochowane już nie.
+    // We ask with signal zero, not with waitpid: waitpid would clean up the zombie itself and the
+    // trial would stop checking anything. A zombie still answers this question, a reaped one does
+    // not.
     for (int again = 0; again < 200; ++again) {
         if (::kill(static_cast<pid_t>(which), 0) != 0 && errno == ESRCH) return;
 
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
     }
 
-    ought(!"po dziecku zostało widmo");
+    ought(!"a zombie was left after the child");
 }
 
 #endif
 
-TRIAL("Child: numer procesu jest znany od razu") {
+TRIAL("Child: the process id is known at once") {
     const Child one = Child::start(pretending({"code", "0"})).await();
 
     ought(one.held());
@@ -455,13 +457,13 @@ TRIAL("Child: numer procesu jest znany od razu") {
     (void)one.wait().await();
 }
 
-// **`close_input()` przerywa zapis, który stoi na pełnej rurze.** Bez rury budzącej zamknięcie
-// deskryptora nie budziło `poll`, który już na nim stał — zapis kończył się dopiero ze śmiercią
-// dziecka, a robotnik puli siedział tam cały ten czas. Mierzone: 2798 ms przed poprawką, 0 ms po.
-TRIAL("Child: seal() przerywa zapis stojący na pełnej rurze") {
+// `close_input()` interrupts a write that is stuck on a full pipe. Without the wake-up pipe,
+// closing the descriptor does not wake a poll already waiting on it: the write would end only with
+// the child's death, and a pool worker would sit there all that time.
+TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
     const Child one = Child::start(pretending({"sleeping", "5000"})).await();
 
-    // Więcej, niż mieści rura, do dziecka, które w ogóle nie czyta — zapis stanie na pewno.
+    // More than the pipe holds, to a child that does not read at all: the write is sure to stall.
     Promise<std::size_t> wrote = one.write(bytes(std::string(1024 * 1024, 'x')));
 
     wrote.start();
@@ -484,22 +486,24 @@ TRIAL("Child: seal() przerywa zapis stojący na pełnej rurze") {
                           std::chrono::steady_clock::now() - began)
                           .count();
 
-    // Zapis kończy się na obu systemach — ale z różnych powodów, więc tylko to sprawdzamy wszędzie.
+    // The write ends on both systems, but for different reasons, so only that is checked
+    // everywhere.
     ought(told);
 
-    // **Natychmiastowość obowiązuje na obu systemach.** Na POSIX-ie budzi rura budząca leżąca
-    // w zbiorze `poll` obok wejścia i dzwonka; pod Windowsem — zdarzenie, na które pisarz czeka
-    // razem z zakończeniem własnej, nakładanej raty. Kształt jest ten sam: czekaj na dwie rzeczy
-    // naraz, bo zapisu stojącego na pełnej rurze nie da się obudzić inaczej.
+    // Immediacy holds on both systems. On POSIX the wake-up pipe in the poll set, next to the
+    // input and the bell, wakes it; under Windows an event that the writer waits for together with
+    // the completion of its own overlapped portion. The shape is the same: wait for two things at
+    // once, because a write stuck on a full pipe cannot be woken any other way.
     //
-    // Sufit z ogromnym zapasem: dziecko żyje pięć sekund, a zmierzone przerwanie zajmuje 0 ms.
+    // A ceiling with a huge margin: the child lives five seconds, and the measured interruption
+    // takes 0 ms.
     ought(took < 2000);
 
     one.kill();
 }
 
-// Po zapieczętowaniu nowy zapis nie ma dokąd pójść i mówi to wprost, zamiast czekać.
-TRIAL("Child: zapis po seal() jest odmową") {
+// After sealing, a new write has nowhere to go and says so plainly instead of waiting.
+TRIAL("Child: a write after seal() is a refusal") {
     const Child one = Child::start(pretending({"sleeping", "200"})).await();
 
     one.close_input();
@@ -517,8 +521,8 @@ TRIAL("Child: zapis po seal() jest odmową") {
     (void)one.wait().await();
 }
 
-// Pieczętowanie dwa razy jest bez skutku, a nie błędem — tak samo jak zamykanie zamkniętego.
-TRIAL("Child: seal() dwa razy nic nie psuje") {
+// Sealing twice has no effect and is not an error, just like closing something closed.
+TRIAL("Child: seal() twice breaks nothing") {
     const Child one = Child::start(pretending({"echo"})).await();
 
     (void)one.write(bytes("raz")).await();
@@ -544,9 +548,11 @@ TRIAL("Child: seal() dwa razy nic nie psuje") {
 
 namespace {
 
-// Katalog na czas próby i PATH z nim na początku; oba wracają, jak były.
+// A directory for the duration of a trial and PATH with it in front; both go back as they were.
 class Planted {
 public:
+    // Creates an empty directory talcite-<name> in the temporary directory and puts it at the
+    // front of PATH.
     explicit Planted(const std::string& name) {
         where_ = std::filesystem::temp_directory_path() / std::filesystem::path{"talcite-" + name};
 
@@ -566,6 +572,7 @@ public:
         SetEnvironmentVariableW(L"PATH", (where_.wstring() + L";" + path_).c_str());
     }
 
+    // Restores PATH and removes the directory.
     ~Planted() {
         SetEnvironmentVariableW(L"PATH", path_.c_str());
 
@@ -577,6 +584,7 @@ public:
     Planted(const Planted&) = delete;
     Planted& operator=(const Planted&) = delete;
 
+    // The planted directory.
     [[nodiscard]] const std::filesystem::path& where() const { return where_; }
 
 private:
@@ -586,9 +594,9 @@ private:
 
 }
 
-// Plik wsadowy po samej nazwie — PATHEXT dokłada `.cmd` — i z argumentami, które cmd.exe wziąłby za
-// polecenia: `&` i `|` dochodzą dosłownie, w cudzysłowie, a drugie `echo` się nie wykonuje.
-TRIAL("Child: plik wsadowy po nazwie dostaje argumenty dosłownie") {
+// A batch file by its bare name (PATHEXT adds .cmd), with arguments that cmd.exe would take for
+// commands: & and | arrive literally, in quotes, and the second echo does not run.
+TRIAL("Child: a batch file run by name gets its arguments literally") {
     const Planted planted{"wsad"};
 
     {
@@ -606,8 +614,8 @@ TRIAL("Child: plik wsadowy po nazwie dostaje argumenty dosłownie") {
     same(text(made.out), std::string{"\"a & echo WSTRZYK\"\r\n\"b|c\"\r\n"});
 }
 
-// Procentu cudzysłów przed cmd.exe nie chroni — `%PATH%` rozwinąłby się w środku argumentu.
-TRIAL("Child: argument z procentem nie idzie do pliku wsadowego") {
+// Quotes do not protect a percent sign from cmd.exe: %PATH% would expand inside the argument.
+TRIAL("Child: an argument with a percent sign does not go to a batch file") {
     const Planted planted{"procent"};
 
     {
@@ -623,9 +631,9 @@ TRIAL("Child: argument z procentem nie idzie do pliku wsadowego") {
     threw((void)Child::run(what).await());
 }
 
-// Program leżący tylko w katalogu bieżącym nie uruchamia się po samej nazwie: katalog bieżący to
-// katalog panelu, a w nim może leżeć cokolwiek.
-TRIAL("Child: program z katalogu bieżącego nie uruchamia się po nazwie") {
+// A program that lies only in the current directory does not start by its bare name: the current
+// directory is the panel's directory, and anything may lie in it.
+TRIAL("Child: a program in the current directory does not start by name") {
     const Planted planted{"obcy"};
 
     const std::filesystem::path aside = planted.where() / "osobno";
@@ -659,12 +667,12 @@ TRIAL("Child: program z katalogu bieżącego nie uruchamia się po nazwie") {
 
 #endif
 
-// --- Program puszczony wolno ---------------------------------------------------------------------
+// --- Detached program ----------------------------------------------------------------------------
 
 namespace {
 
-// Plik, który program puszczony wolno zapisze, kiedy wystartuje — czekamy na niego najwyżej
-// kilka sekund.
+// The contents of the file a detached program writes when it starts; we wait for it at most a
+// few seconds, and an empty string means it never came.
 std::string awaited_note(const std::filesystem::path& where) {
     for (int turn = 0; turn < 250; ++turn) {
         std::ifstream input{where, std::ios::binary};
@@ -679,9 +687,9 @@ std::string awaited_note(const std::filesystem::path& where) {
 
 }
 
-// Program puszczony wolno żyje sam: znamy jego numer od razu, a on nie jest naszym dzieckiem —
-// na POSIX-ie siedzi w innej sesji niż my i nie ma nas za rodzica.
-TRIAL("Child: detached — program żyje sam, a my znamy jego numer") {
+// A detached program lives on its own: we know its id at once, and it is not our child; on POSIX
+// it sits in a session other than ours and does not have us as its parent.
+TRIAL("Child: detached, the program lives on its own and we know its id") {
     const std::filesystem::path where = fs::temp() / "talcite-wolny.txt";
 
     std::error_code why;
@@ -718,7 +726,7 @@ TRIAL("Child: detached — program żyje sam, a my znamy jego numer") {
     std::filesystem::remove(where, why);
 }
 
-TRIAL("Child: detached — nieistniejący program to odmowa, nie cisza") {
+TRIAL("Child: detached, a missing program is a refusal, not silence") {
     Command what;
 
     what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
@@ -727,8 +735,8 @@ TRIAL("Child: detached — nieistniejący program to odmowa, nie cisza") {
     threw(Child::detached(Command{}).await());
 }
 
-// Katalog roboczy, którego nie ma — też odmowa, a nie program uruchomiony gdzie indziej.
-TRIAL("Child: detached — katalog roboczy, którego nie ma, to odmowa") {
+// A working directory that does not exist is a refusal too, not a program started elsewhere.
+TRIAL("Child: detached, a missing working directory is a refusal") {
     Command what = pretending({"code", "0"});
 
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";

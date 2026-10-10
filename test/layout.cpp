@@ -13,17 +13,19 @@ using namespace talcite;
 
 namespace {
 
-// Węzeł, który chce z góry ustalonego rozmiaru i zamalowuje przydzieloną kartkę jedną literą.
-// Tyle wystarczy, żeby sprawdzić i rachunek układu, i to, gdzie trafia treść.
+// A node that wants a fixed size and paints the area it is given with one letter. That is enough to
+// check both the layout arithmetic and where the content lands.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // The fixed size, whatever space is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int hit = 0;
 
 protected:
+    // Fills the whole given size with the letter, shifted to the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -34,12 +36,14 @@ protected:
         return made;
     }
 
+    // Counts a mouse event that reached this box.
     bool handle(ui::MouseEvent&) override {
         ++hit;
 
         return true;
     }
 
+    // Counts a wheel event that reached this box.
     bool handle(ui::WheelEvent&) override {
         ++hit;
 
@@ -51,13 +55,17 @@ private:
     char32_t what_ = U'?';
 };
 
+// A root that counts the mouse events that reach it, so a trial can see that nothing below took
+// them.
 class Sheet : public ui::Root {
 public:
+    // Room for any number of children.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 
     int hit = 0;
 
 protected:
+    // Counts a mouse event that reached the root itself.
     bool handle(ui::MouseEvent&) override {
         ++hit;
 
@@ -67,7 +75,7 @@ protected:
 
 }
 
-TRIAL("Układ: domyślne wants sumuje wysokości i bierze najszersze dziecko") {
+TRIAL("Layout: the default wants adds up the heights and takes the widest child") {
     ui::Column one;
 
     one.children().add(std::make_shared<Box>(ui::Size{3, 2}, U'a'));
@@ -79,7 +87,7 @@ TRIAL("Układ: domyślne wants sumuje wysokości i bierze najszersze dziecko") {
     same(wants.high, 3);
 }
 
-TRIAL("Układ: render zapisuje przydzielony prostokąt") {
+TRIAL("Layout: render records the area it was given") {
     ui::Node one;
 
     (void)one.render({{2, 3}, {10, 4}});
@@ -90,7 +98,7 @@ TRIAL("Układ: render zapisuje przydzielony prostokąt") {
     same(one.area().size.high, 4);
 }
 
-TRIAL("Układ: dzieci stają jedno pod drugim, na całą szerokość") {
+TRIAL("Layout: children stand one below another, across the full width") {
     ui::Column one;
 
     const auto first = std::make_shared<Box>(ui::Size{3, 2}, U'a');
@@ -109,7 +117,7 @@ TRIAL("Układ: dzieci stają jedno pod drugim, na całą szerokość") {
     same(second->area().size.high, 1);
 }
 
-TRIAL("Układ: treść dziecka ląduje na swojej wysokości") {
+TRIAL("Layout: a child's content lands at its own height") {
     ui::Column one;
 
     one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'a'));
@@ -123,7 +131,7 @@ TRIAL("Układ: treść dziecka ląduje na swojej wysokości") {
     same(made.at({0, 3}).letter, U' ');
 }
 
-TRIAL("Układ: dziecko poza dolną krawędzią dostaje zerową wysokość") {
+TRIAL("Layout: a child below the bottom edge gets zero height") {
     ui::Column one;
 
     const auto first = std::make_shared<Box>(ui::Size{4, 3}, U'a');
@@ -139,7 +147,7 @@ TRIAL("Układ: dziecko poza dolną krawędzią dostaje zerową wysokość") {
     same(second->area().at.y, 3);
 }
 
-TRIAL("Układ: prostokąt dziecka jest względem rodzica, nie ekranu") {
+TRIAL("Layout: a child's area is relative to the parent, not the screen") {
     ui::Column one;
 
     const auto inner = std::make_shared<Box>(ui::Size{4, 1}, U'a');
@@ -152,7 +160,7 @@ TRIAL("Układ: prostokąt dziecka jest względem rodzica, nie ekranu") {
     same(inner->area().at.y, 0);
 }
 
-TRIAL("Trafianie: klik ląduje w dziecku pod kursorem") {
+TRIAL("Hit testing: a click lands in the child under the cursor") {
     Sheet top;
 
     const auto column = std::make_shared<ui::Column>();
@@ -174,7 +182,7 @@ TRIAL("Trafianie: klik ląduje w dziecku pod kursorem") {
     same(top.hit, 0);
 }
 
-TRIAL("Trafianie: klik obok dzieci zostaje w korzeniu") {
+TRIAL("Hit testing: a click beside the children stays in the root") {
     Sheet top;
 
     const auto column = std::make_shared<ui::Column>();
@@ -193,7 +201,7 @@ TRIAL("Trafianie: klik obok dzieci zostaje w korzeniu") {
     same(top.hit, 1);
 }
 
-TRIAL("Trafianie: schodzi przez kilka pięter") {
+TRIAL("Hit testing: it descends through several levels") {
     Sheet top;
 
     const auto middle = std::make_shared<ui::Node>();
@@ -211,7 +219,7 @@ TRIAL("Trafianie: schodzi przez kilka pięter") {
     same(deep->hit, 1);
 }
 
-TRIAL("Trafianie: z nakładających się rodzeństw wygrywa ostatnie") {
+TRIAL("Hit testing: of overlapping siblings, the last one wins") {
     Sheet top;
 
     const auto stack = std::make_shared<ui::Stack>();
@@ -232,7 +240,7 @@ TRIAL("Trafianie: z nakładających się rodzeństw wygrywa ostatnie") {
     same(over->hit, 1);
 }
 
-TRIAL("Trafianie: kółko celuje tak samo jak klik") {
+TRIAL("Hit testing: the wheel aims the same way as a click") {
     Sheet top;
 
     const auto column = std::make_shared<ui::Column>();
@@ -252,10 +260,10 @@ TRIAL("Trafianie: kółko celuje tak samo jak klik") {
     same(second->hit, 1);
 }
 
-// **Na wierzchu jest ostatnie dopięte — i to jest jedyne źródło tej prawdy.** Malowanie idzie
-// po kolei, więc późniejsze zamalowuje wcześniejsze; trafianie bierze ostatnie pasujące, więc
-// mysz celuje w to, co widać. Oba mechanizmy czytają tę samą kolejność i nie mają jak się rozejść.
-TRIAL("Nakładanie: ostatnie dopięte wygrywa przy trafianiu") {
+// On top is the child attached last, and that is the only source of this truth. Painting goes in
+// order, so a later child paints over an earlier one; hit testing takes the last match, so the
+// mouse aims at what is visible. Both mechanisms read the same order and cannot drift apart.
+TRIAL("Stacking: the child attached last wins in hit testing") {
     Sheet top;
 
     const auto stack = std::make_shared<ui::Stack>();
@@ -276,7 +284,7 @@ TRIAL("Nakładanie: ostatnie dopięte wygrywa przy trafianiu") {
     same(over->hit, 1);
 }
 
-TRIAL("Nakładanie: ostatnie dopięte kładzie się na rodzeństwie przy rysowaniu") {
+TRIAL("Stacking: the child attached last is painted over its siblings") {
     ui::Stack stack;
 
     const auto under = std::make_shared<Box>(ui::Size{4, 1}, U'a');
@@ -290,7 +298,7 @@ TRIAL("Nakładanie: ostatnie dopięte kładzie się na rodzeństwie przy rysowan
     same(made.at({0, 0}).letter, U'b');
 }
 
-TRIAL("Nakładanie: nakładka nie wychodzi poza rodzica") {
+TRIAL("Stacking: an overlay does not extend beyond its parent") {
     ui::Node top;
 
     const auto stack = std::make_shared<ui::Stack>();
@@ -306,7 +314,7 @@ TRIAL("Nakładanie: nakładka nie wychodzi poza rodzica") {
     same(made.at({2, 1}).letter, U'b');
 }
 
-TRIAL("Trafianie: bez rozstawienia wszystko idzie do korzenia") {
+TRIAL("Hit testing: without a layout pass everything goes to the root") {
     Sheet top;
 
     const auto first = std::make_shared<Box>(ui::Size{6, 2}, U'a');

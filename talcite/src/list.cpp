@@ -13,7 +13,7 @@ namespace talcite::ui {
 
 namespace {
 
-// Trzy wiersze na ząbek kółka — ta sama stała i ten sam powód co w przewijaku.
+// Three rows per wheel notch, the same constant and the same reason as in the scroller.
 constexpr int stepping = 3;
 
 }
@@ -21,35 +21,38 @@ constexpr int stepping = 3;
 List::List(int wide, int high, ScrollShape shape)
     : shape_(shape), grip_(std::make_shared<Grip>()), wide_(wide), high_(high) {}
 
-// Lista trzyma pozycje jako dzieci, tak samo jak menu — więc przyjmuje ich dowolnie wiele.
+// A list holds its items as children, just like a menu, so it accepts any number of them.
 int List::capacity() const { return plenty; }
 
-// Lista składa się z wierszy. `which()` i `current()` liczą numer wśród dzieci i sięga po nie jak po pozycje,
-// więc obce dziecko rozjeżdżałoby numerację z tym, co widać.
+// A list is made of rows only. `which()` and `current()` count positions among the children and
+// treat them as items, so a foreign child would put the numbering out of step with what is shown.
 bool List::accepts(const Node& one) const { return dynamic_cast<const ListItem*>(&one) != nullptr; }
 
-// **Lista jest chętna zawsze, także pusta.** Pusty panel plików musi dać się wybrać Tabem, inaczej
-// pusty katalog wyrzucałby ognisko w bok. Chętność jest tu przy okazji granicą wędrówki: chętny
-// widżet jest dla Tabu liściem, więc Tab staje na liście, a nie na każdym jej wierszu.
+// A list is always focusable, even when empty. An empty file panel must be reachable with Tab;
+// otherwise an empty directory would push the focus aside. Focusability is also the boundary of
+// the traversal here: a focusable widget is a leaf for Tab, so Tab stops on the list and not on
+// each of its rows.
 //
-// Wyłączenia całej listy **nie ma i nie ma go celowo**. Wyłączona byłaby niechętna, a wtedy Tab
-// zszedłby w nią i stanął na wierszu — bo wiersz dalej byłby chętny. Wyłącza się pojedyncze
-// pozycje; to samo pojęcie, co w menu.
+// There is deliberately no way to disable the whole list. A disabled list would not be focusable,
+// and then Tab would descend into it and stop on a row, because the row would still be focusable.
+// Single items are disabled instead, the same notion as in a menu.
 bool List::focusable() const { return true; }
 
+// The size given at construction, cut to the room offered.
 Size List::wants(Size room) const {
     return {std::min(wide_, room.wide), std::min(high_, room.high)};
 }
 
+// The item at the given position, or `nullptr` when the position is outside the list.
 ListItem* List::item(int which) const {
     if (which < 0 || which >= static_cast<int>(children().many())) return nullptr;
 
     return dynamic_cast<ListItem*>(children()[static_cast<std::size_t>(which)].get());
 }
 
-// Najbliższa dostępna pozycja w podanym kierunku, **bez zawijania**. Menu zawija, bo jest krótkie
-// i widać je całe; lista na dziesięć tysięcy plików, która z ostatniego wiersza skacze na pierwszy,
-// gubi człowieka. Tak samo rozstrzyga to panel Midnight Commandera.
+// The nearest enabled item in the given direction, or -1, without wrapping around. A menu wraps
+// because it is short and fully visible; a list of ten thousand files that jumps from the last
+// row to the first loses the user. The Midnight Commander panel decides it the same way.
 int List::nearest(int from, int step) const {
     const int much = static_cast<int>(children().many());
 
@@ -64,11 +67,12 @@ int List::nearest(int from, int step) const {
     return -1;
 }
 
-// **Ognisko idzie na pozycję, a nie na listę** — i stąd bierze się cała reszta: klawisz zaczyna
-// u wiersza, więc dopięty do niego uchwyt widzi go pierwszy, a numer bieżącego wiersza lista
-// dostaje bąbelkowaniem, zamiast prowadzić własną księgowość obok ogniska.
+// The focus goes to an item, not to the list, and everything else follows from that: a key starts
+// at the row, so a handler attached to the row sees it first, and the list learns the number of
+// the current row by bubbling instead of keeping its own bookkeeping beside the focus.
 //
-// Gdy nie ma na czym stanąć — lista pusta albo same niedostępne pozycje — bierze ognisko sama.
+// When there is nothing to stand on (the list is empty or all items are disabled), the list takes
+// the focus itself.
 void List::focus() {
     ListItem* one = item(which_);
 
@@ -83,22 +87,24 @@ void List::focus() {
     Node::focus();
 }
 
-// **Bieżący wiersz ma dwie twarze pod dwiema nazwami**, tak samo w każdym widżecie z pozycjami:
-// `which()` to jego numer, `current()` — on sam. Kto chce z wierszem coś zrobić — przeczytać
-// napis, nacisnąć, porównać tożsamość — bierze `current()`; kto potrzebuje numeru do własnej
-// tablicy obok, bierze `which()`. Pustka to `nullopt` i `nullptr`, bez umownej liczby. W środku
-// numer siedzi jako `int` z `-1`, bo rachunek kroków w `nearest` idzie na nim.
+// The current row has two faces under two names, as in every widget with items: `which()` is its
+// number, `current()` the row itself. Whoever wants to do something with the row (read its text,
+// press it, compare identity) takes `current()`; whoever needs a number for their own array
+// alongside takes `which()`. Emptiness is `nullopt` and `nullptr`, with no sentinel number.
+// Inside, the number is kept as an `int` with -1, because the step arithmetic in `nearest` works
+// on it.
 std::optional<std::size_t> List::which() const {
     if (item(which_) == nullptr) return std::nullopt;
 
     return static_cast<std::size_t>(which_);
 }
 
+// The current row itself, or `nullptr` when there is none.
 ListItem* List::current() const { return item(which_); }
 
-// Numer bieżącego wiersza ustawia się **przez ognisko**, gdy lista je trzyma; w innym razie zostaje
-// zapamiętany i użyty przy najbliższym wejściu w listę. Dzięki temu wyjście Tabem na przycisk
-// i powrót wracają na ten sam wiersz.
+// Sets the current row, clamped to the list. When the list holds the focus, the row is set
+// through the focus; otherwise the number is remembered and used the next time the list is
+// entered. That way leaving with Tab for a button and coming back returns to the same row.
 void List::aim(int given) {
     const int much = static_cast<int>(children().many());
 
@@ -123,29 +129,31 @@ void List::aim(int given) {
         }
 }
 
-// Po numerze — do budowy listy, gdy wołający ma numer opcji, a nie jeszcze wiersz. Ponad ostatni
-// przycina do ostatniego, jak dotąd.
+// Sets the current row by number, for building a list when the caller has the number of an
+// option but not the row yet. A number past the end is cut to the last row.
 void List::which(std::size_t given) {
     aim(static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX))));
 }
 
-// Wiersz spoza listy nic nie zmienia.
+// Makes the given row current. A row that is not in the list changes nothing.
 void List::current(ListItem& one) {
     if (const std::optional<std::size_t> at = children().find(one)) which(*at);
 }
 
+// The number of the first visible row.
 std::size_t List::first() const { return static_cast<std::size_t>(shift_); }
 
+// Picks the current row, as Enter on it would.
 void List::pick() {
     if (ListItem* one = item(which_)) one->pick();
 }
 
-// Przewinięcie widoku, bez ruszania bieżącego wiersza. Górnej granicy tu nie sprawdzamy, bo zależy
-// od wysokości, której w tej chwili nie znamy — przytnie ją malowanie.
+// Scrolls the view without moving the current row. The upper bound is not checked here, because
+// it depends on a height not known at this moment; painting cuts it.
 //
-// **Zawiadamiamy zdarzeniem, nie własnym wywołaniem zwrotnym.** Wcześniej stało tu moved, czyli
-// drugi mechanizm obok `on` i `off` — a jedna rzecz ma mieć jedną drogę. Zdarzenie nie niesie
-// numeru wiersza, bo pytający ma go pod ręką w `which()`, a widok w `first()`.
+// The change is announced with an event, not with a callback of its own: one thing has one path,
+// and events go through `on` and `off`. The event carries no row number, because whoever asks has
+// it at hand in `which()`, and the view in `first()`.
 void List::first(std::size_t given) {
     const int was = shift_;
 
@@ -154,6 +162,8 @@ void List::first(std::size_t given) {
     if (shift_ != was) (void)trigger(ScrollEvent{});
 }
 
+// Moves the focus to the given row; a negative number means there is nowhere to go. The key is
+// consumed either way.
 bool List::going(int to) {
     if (to < 0) return true;
 
@@ -162,8 +172,8 @@ bool List::going(int to) {
     return true;
 }
 
-// Krok o zadaną liczbę wierszy, pozycja po pozycji, żeby niedostępne nie liczyły się jako przebyte
-// i żeby ruch zatrzymał się na końcu zamiast wyjść poza.
+// Steps the given number of rows, item by item, so that disabled items do not count as passed and
+// the movement stops at the end instead of going past it.
 bool List::walking(int step, int times) {
     int at = which_;
 
@@ -178,13 +188,13 @@ bool List::walking(int step, int times) {
     return going(at);
 }
 
-// Strzałki i klawisze stron należą do listy; Enter zabrała już pozycja, bo to ona ma ognisko.
-// Litery, Tab i Esc oddajemy oknu — odwrotnie niż w polu, gdzie litery trzeba połknąć, bo w polu
-// się pisze. Tu litera ma dojść do przycisku w dialogu, a w programie plikowym do szybkiego
-// szukania, które panel dopisze sobie sam.
+// The arrows and the page keys belong to the list; Enter has already been taken by the item,
+// because the item has the focus. Letters, Tab and Esc are left to the window, unlike in a text
+// field, which has to swallow letters because one types in it. Here a letter has to reach a button
+// in the dialog, or in the file manager the quick search that the panel adds itself.
 //
-// Wysokość strony bierzemy z prostokąta **z poprzedniej klatki**: tylko on zna szerokość i wysokość,
-// które lista naprawdę dostała. Przed pierwszym malowaniem strona to jeden wiersz.
+// The page height comes from the rectangle of the previous frame: only it knows the width and
+// height the list really got. Before the first paint a page is one row.
 bool List::handle(KeyEvent& what) {
     if (what.mods().ctrl || what.mods().alt) return false;
 
@@ -207,11 +217,12 @@ bool List::handle(KeyEvent& what) {
     }
 }
 
-// Kółko przesuwa **sam widok**, a bieżący wiersz zostawia tam, gdzie stoi — tak samo jak przewijak
-// i jak panel Midnight Commandera. Gdyby przesuwało wiersz, każdy ząbek wołałby `moved`, a w
-// programie plikowym wisi na tym odświeżanie podglądu.
+// The wheel moves only the view and leaves the current row where it is, like the scroller and like
+// the Midnight Commander panel. If it moved the row, every notch would change the current row, and
+// in the file manager the preview refresh hangs on that.
 //
-// Na końcu przewijania oddajemy false, więc ruch idzie w górę i przewijak nad listą go dostaje.
+// At the end of the scroll range we return false, so the movement goes up and a scroller above
+// the list gets it.
 bool List::handle(WheelEvent& what) {
     const int much = static_cast<int>(children().many());
     const int window = std::max(area().size.high, 0);
@@ -226,7 +237,8 @@ bool List::handle(WheelEvent& what) {
     return true;
 }
 
-// Widok na nowe miejsce, przycięte do treści; zawiadomienie tylko o zmianie, jak przy kółku.
+// Moves the view to a new place, cut to the content; it announces only an actual change, as with
+// the wheel.
 void List::slid(int to) {
     const int much = static_cast<int>(children().many());
     const int window = std::max(area().size.high, 0);
@@ -237,8 +249,8 @@ void List::slid(int to) {
     if (shift_ != was) (void)trigger(ScrollEvent{});
 }
 
-// **Mysz na pasku** (U6 w twa): strzałka — wiersz, tor — strona, suwak — ciągnięcie. Jak kółko:
-// rusza widok, bieżącego wiersza nie.
+// The mouse on the scrollbar: an arrow moves one row, the track one page, the thumb is dragged.
+// Like the wheel, it moves the view but not the current row.
 bool List::handle(MouseEvent& what) {
     const Asked asked = grip_->mouse(what, local(what.where()), *this);
     const int window = std::max(area().size.high, 1);
@@ -257,9 +269,9 @@ bool List::handle(MouseEvent& what) {
     return true;
 }
 
-// **Tu jest cała księgowość bieżącego wiersza.** Ognisko postawione na pozycji — klawiszem, klikiem,
-// Tabem czy z programu — bąbelkuje stamtąd do listy, więc wszystkie te drogi schodzą się w jednym
-// miejscu, zamiast każda ustawiać numer po swojemu.
+// All the bookkeeping of the current row is here. A focus placed on an item, by a key, a click,
+// Tab or from the program, bubbles from there to the list, so all these paths meet in one place
+// instead of each setting the number its own way.
 bool List::handle(FocusEvent& what) {
     Node* one = dynamic_cast<Node*>(what.target());
 
@@ -282,26 +294,28 @@ bool List::handle(FocusEvent& what) {
     return false;
 }
 
+// Paints the visible rows and, when there is one, the scrollbar; the scroll position is settled
+// here, because only here is the real height known.
 View List::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent where nothing is drawn, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
     const int much = static_cast<int>(children().many());
 
-    // Pozycje mogły zniknąć za plecami listy — `Node::drop` nie jest wirtualne, więc numer wiersza
-    // sam się nie naprawi. Przycinamy go tutaj, bo tu i tak liczymy wszystko od nowa.
+    // Items may have disappeared behind the list's back: `Children::remove` is not virtual, so the row
+    // number does not fix itself. It is cut here, because everything is recomputed here anyway.
     if (which_ >= much) which_ = much - 1;
 
-    // Pasek „gdy trzeba" (`needed`) stoi tylko przy liście dłuższej niż okno.
+    // A scrollbar shown "when needed" (`needed`) appears only for a list longer than the window.
     const int aside = shape_.scrollbar && given.wide > 0 && (!shape_.needed || much > given.high) ? 1 : 0;
     const int wide = given.wide - aside;
 
-    // **Przewinięcie liczy się tutaj**, bo dopiero tu znana jest wysokość, którą lista naprawdę
-    // dostała. Doganiamy bieżący wiersz tylko wtedy, gdy się ruszył: bez tego warunku kółko byłoby
-    // cofane w tej samej klatce, w której je obrócono.
+    // The scroll position is computed here, because only here is the height the list really got
+    // known. The view catches up with the current row only when the row moved; without this
+    // condition the wheel would be undone in the same frame in which it was turned.
     if (follow_ && which_ >= 0 && given.high > 0) {
         if (which_ < shift_) shift_ = which_;
 
@@ -312,10 +326,10 @@ View List::paint(Size given, Area seen) {
 
     shift_ = std::clamp(shift_, 0, std::max(much - given.high, 0));
 
-    // Nikt nie wypada z pętli, nawet gdy jest poza widokiem: wiersz niewidoczny dostaje prostokąt
-    // o zerowej wysokości i dzięki temu jego `area()` mówi prawdę o tej klatce. Inaczej wiersz,
-    // który właśnie zjechał, łapałby myszą w miejscu, gdzie stał poprzednio. Ta sama reguła co
-    // w kolumnie; gdyby kiedyś zaczęła kosztować, zerować trzeba tylko te, które właśnie zniknęły.
+    // No row is skipped, even outside the view: an invisible row gets a rectangle of zero height,
+    // so its `area()` tells the truth about this frame. Otherwise a row that just scrolled away
+    // would catch the mouse where it stood before. The same rule as in the column; if it ever
+    // becomes costly, only the rows that just disappeared need to be zeroed.
     for (int at = 0; at < much; ++at) {
         const int y = at - shift_;
         const bool shown = y >= 0 && y < given.high;

@@ -12,28 +12,29 @@
 
 namespace talcite::ui {
 
+// A legend field for one key and its label, with the role "talcite.legend".
 LegendItem::LegendItem(Key key, std::string text) : text_(std::move(text)) {
     role("talcite.legend");
 
     keys().add(key);
 }
 
-// **Pole legendy nie bierze ogniska**, także włączone: odpowiada na klawisz aktywny i na kliknięcie,
-// a Tab chodzi po treści okna, nie po legendzie.
+// A legend field never takes the focus, even when enabled: it answers to its hotkey and to a
+// click, and Tab moves through the window's content, not through the legend.
 bool LegendItem::takes_focus() const { return false; }
 
-// Pole nie ma czego trzymać w środku.
+// A field has nothing to hold inside.
 int LegendItem::capacity() const { return 0; }
 
-// Szerokość dostaje od paska, wysokość ma zawsze jedną.
+// The width comes from the bar; the height is always one row.
 Size LegendItem::wants(Size room) const { return {room.wide, 1}; }
 
-// **Rysowana etykietka klawisza wyprowadza się z klawisza, a nie stoi obok niego w polu.** Dwa
-// źródła tej samej prawdy rozjeżdżają się przy pierwszej zmianie skrótu, a tak nie da się napisać
-// legendy, która kłamie o tym, co nacisnąć.
+// The key tag that is drawn: the number of a function key or the letter, or nothing. It is
+// derived from the key rather than stored beside it in the field. Two sources of the same truth
+// drift apart at the first change of a shortcut; this way a legend cannot lie about what to press.
 std::string LegendItem::tag() const {
-    // Pole zgłasza się jednym klawiszem — pierwszym ze zbioru. Zbiór trzyma ich więcej, bo tak ma
-    // każdy węzeł z klawiszami, ale etykietka jest jedna i nie ma jak pokazać dwóch naraz.
+    // A field is shown by one key, the first in the set. The set may hold more, as every keyed
+    // node does, but there is one tag and it cannot show two keys at once.
     if (keys().empty()) return {};
 
     const Key which = keys().front();
@@ -45,37 +46,39 @@ std::string LegendItem::tag() const {
 
     if (const char32_t letter = which.letter(); letter != 0) return utf8::encode(letter);
 
-    // Escape, Enter i reszta nazwanych klawiszy nie mają w Midnight Commanderze etykietki, więc
-    // i tu jej nie wymyślamy. Pole bez etykietki oddaje samą nazwę czynności.
+    // Escape, Enter and the other named keys have no tag in Midnight Commander, so none is made
+    // up here either. A field without a tag shows only the name of the action.
     return {};
 }
 
+// Fires a `PickEvent` on the field, unless it is disabled.
 void LegendItem::pick() {
     if (!enabled()) return;
 
     (void)trigger(PickEvent{});
 }
 
-// Czynność pola to jego wybranie — i to jedno zdanie jest całym powodem, dla którego pole dziedziczy
-// po węźle z klawiszami. Dopasowanie klawisza, zwijanie wielkości liter i odsianie wyłączonych pól
-// robi już `KeyedNode`; tutaj zostaje wyłącznie to, co dla legendy własne.
+// The action of a field is picking it, and that is the whole reason the field derives from the
+// keyed node. Matching the key, folding letter case and skipping disabled fields are done by
+// `KeyedNode`; only what is specific to the legend is left here.
 void LegendItem::activate() { pick(); }
 
-// Wygląd Midnight Commandera: **cyfra zwykłym wyglądem, nazwa w negatywie**. Dzięki temu cyfra
-// czyta się jako „to naciśnij", a nazwa jako klawisz do kliknięcia. Negatyw obejmuje dopełnienie
-// do końca pola, więc sąsiednie pola stykają się bokami i pasek nie ma dziur.
+// Paints the field in the Midnight Commander look: the number in the plain style, the name in
+// reverse video. The number then reads as "press this" and the name as a button to click. The
+// reverse video covers the padding to the end of the field, so neighboring fields touch and the
+// bar has no gaps.
 //
-// **Etykietka i litera aktywna to dwie drogi do tego samego**, więc nigdy nie rysujemy obu naraz.
-// Klawisz funkcyjny nie ma litery, którą dałoby się podkreślić — dostaje cyfrę z boku, jak w MC.
-// Klawisz-litera obecna w nazwie **zastępuje** etykietkę podkreśleniem, tak jak w pozycji menu:
-// dwa razy to samo w polu szerokim na sześć kratek byłoby marnotrawstwem i szumem. Litera, której
-// w nazwie nie ma, wraca do etykietki — inaczej byłaby skrótem, o którym nikt się nie dowie.
+// The tag and the hotkey letter are two ways to the same thing, so both are never drawn at once.
+// A function key has no letter to underline and gets the number at the side, as in MC. A letter
+// key that occurs in the name replaces the tag with an underline, as in a menu item: the same
+// thing twice in a field six cells wide would be waste and noise. A letter that does not occur in
+// the name goes back to the tag; otherwise it would be a shortcut nobody learns about.
 View LegendItem::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Cyfra, litera aktywna i nazwa mają **osobne role**, więc skórka rozstrzyga o każdej z osobna.
-    // Wbudowana daje cyfrze wygląd zwykły, literze podkreślenie, a nazwie negatyw — czyli to, co
-    // robi MC na gołym terminalu.
+    // The number, the hotkey letter and the name have separate roles, so the skin decides each
+    // one on its own. The built-in skin gives the number the plain style, the letter an underline
+    // and the name reverse video, which is what MC does on a bare terminal.
     const Skin& how = skin();
 
     const Style gone = enabled() ? Style{} : how.style(role() + ".disabled");
@@ -87,15 +90,15 @@ View LegendItem::paint(Size given, Area seen) {
 
     const char32_t dots = how.glyph("talcite.elide");
 
-    // Liczymy najpierw po napisie przyciętym do **całej** szerokości, bo taki będzie, gdy
-    // etykietka odpadnie. Kolejność jest wymuszona: dopiero wynik rozstrzyga, ile miejsca zostaje
-    // na nazwę — a szerokość nazwy rozstrzyga, gdzie naprawdę stoi litera.
+    // First the text trimmed to the whole width is examined, because that is what it will be
+    // when the tag is dropped. The order is forced: only this result decides how much room is
+    // left for the name, and the width of the name decides where the letter really stands.
     const std::string whole = elided(text_, given.wide, Elide::right, dots);
 
-    // Etykietka odpada **tylko wtedy, gdy sama jest tą literą** — inaczej pokazywalibyśmy jedno
-    // i to samo dwa razy w polu szerokim na sześć kratek. Pole zgłoszone klawiszem funkcyjnym
-    // zatrzymuje cyfrę nawet wtedy, gdy ma w zapasie także literę: pasek czyta się jako ciąg
-    // numerów i dziura w tym ciągu byłaby gorsza niż brak podkreślenia.
+    // The tag is dropped only when it is that very letter; otherwise the same thing would be
+    // shown twice in a field six cells wide. A field registered with a function key keeps the
+    // number even when it also has a letter: the bar reads as a sequence of numbers, and a gap in
+    // it would be worse than a missing underline.
     const bool named = !keys().empty() && keys().front().letter() != 0;
 
     const std::string what = named && shortcut_column(whole) >= 0 ? std::string{} : tag();
@@ -116,17 +119,17 @@ View LegendItem::paint(Size given, Area seen) {
 
     made.put({aside - seen.at.x, -seen.at.y}, shown, label);
 
-    // Kolumnę liczymy po **tym** napisie, a nie po tamtym: z etykietką nazwa jest węższa, więc
-    // litera, którą widać w szerszej, w tej może już siedzieć w wielokropku.
+    // The column is computed on this text, not on the earlier one: with the tag the name is
+    // narrower, so a letter visible in the wider one may already be inside the ellipsis here.
     talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
                       label, how.style(role() + ".key"));
 
     return made;
 }
 
-// Kliknięcie robi to samo, co klawisz — i **nie zabiera ogniska**. Pasek klawiszy w Midnight
-// Commanderze nie odbiera go panelowi, bo po kliknięciu „Kopiuj" kopiować ma się to, co było
-// zaznaczone, a nie to, co akurat dostało ognisko.
+// A click does the same as the key and does not take the focus. The key bar in Midnight Commander
+// does not take it from the panel, because after clicking "Copy" what was selected is to be
+// copied, not whatever just got the focus.
 bool LegendItem::handle(ClickEvent&) {
     pick();
 

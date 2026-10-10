@@ -16,6 +16,7 @@ using namespace talcite;
 
 namespace {
 
+// The text of row `y` of the view, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -30,8 +31,8 @@ std::string read(const View& one, int y) {
     return made;
 }
 
-// Czy napis widać gdziekolwiek w klatce. Przy próbach, w których pudełko pojawia się i znika,
-// wiersz przestaje być stały — a sprawdzamy wtedy obecność, nie miejsce.
+// Whether the text shows anywhere in the frame. In trials where the box appears and disappears, the
+// row stops being fixed, so they check presence, not place.
 bool shown(const View& one, const std::string& what) {
     for (int y = 0; y < one.size().high; ++y)
         if (read(one, y).find(what) != std::string::npos) return true;
@@ -39,38 +40,41 @@ bool shown(const View& one, const std::string& what) {
     return false;
 }
 
+// Dispatches a press of the key `code` with modifiers `mods` from the root.
 void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
     ui::KeyEvent one{ui::Key{code, mods}};
 
     (void)top.dispatch(one);
 }
 
+// Dispatches a typed letter from the root.
 void typed(ui::Root& top, char32_t letter) {
     ui::KeyEvent one{ui::Key{letter}};
 
     (void)top.dispatch(one);
 }
 
-// Jedna odpowiedź w próbie: napis i jej klawisz aktywny. W bibliotece takiej struktury nie ma —
-// odpowiedź **jest** przyciskiem — ale próby budują ich dziesiątki i jedna linijka na sztukę
-// czyta się lepiej niż trzy.
+// One answer in a trial: the text and its hotkey. The library has no such structure (an answer is a
+// button), but the trials build dozens of them, and one line apiece reads better than three.
 struct Said {
     std::string text;
     char32_t key = 0;
 };
 
-// Okno z otwartym komunikatem — tak, jak używa się go naprawdę: **przyciski przed otwarciem**, bo
-// ognisko stawia się w chwili otwarcia i tego, co przyjdzie potem, samo nie dogoni.
+// A window with an open message, used as it is for real: buttons before opening, because the focus
+// is placed at the moment of opening and does not catch up with what comes later.
 struct Opened {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Message> one;
 
-    // Która odpowiedź padła i ile razy okno się zamknęło — jedno i drugie tak, jak dowiaduje się
-    // o tym aplikacja: **czynność siedzi na przycisku**, a zamknięcie ogłasza zasłona.
+    // Which answer was given and how many times the window closed, both learned the way the
+    // application learns them: the action sits on the button, and the veil announces the close.
     int said = -99;
     int closed = 0;
 
+    // Builds the message with the given answers, hangs on each one an action that records it and
+    // closes the message, counts the closes, and opens the message in the window.
     Opened(std::string title, std::string text, std::vector<Said> answers = {},
           ui::MessageShape style = {}) {
         top.children().add(window);
@@ -85,8 +89,8 @@ struct Opened {
 
             const int which = static_cast<int>(at);
 
-            // **Zamknięcie jest częścią czynności odpowiedzi**, więc woła je wołający — okno
-            // samo z siebie nie schodzi z ekranu.
+            // Closing is part of the answer's action, so the caller calls it; the window does not
+            // leave the screen by itself.
             (void)made->on<ui::PickEvent>([this, which](ui::PickEvent&) {
                 said = which;
 
@@ -105,14 +109,15 @@ struct Opened {
         window->open(one);
     }
 
+    // Renders the whole window at the given size.
     View drawn(ui::Size size) { return top.render({{0, 0}, size}); }
 };
 
 }
 
-// --- Kształt ----------------------------------------------------------------------------------
+// --- Shape ------------------------------------------------------------------------------------
 
-TRIAL("Message: tytuł nad pudełkiem treści, przyciski w drugim pudełku") {
+TRIAL("Message: title above the content box, buttons in a second box") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
     const View seen = made.drawn({30, 12});
@@ -129,15 +134,15 @@ TRIAL("Message: tytuł nad pudełkiem treści, przyciski w drugim pudełku") {
     same(read(seen, 9), std::string{"      ╚═════════════╝"});
 }
 
-// Pojedyncza odpowiedź jest **zwykłym przyciskiem**, a nie podstawowym: tak wygląda `[ OK ]`
-// w Midnight Commanderze. Enter i tak działa, bo naciska go ognisko, a nie oznaczenie.
-TRIAL("Message: pojedyncza odpowiedź nie jest podstawowa") {
+// A single answer is an ordinary button, not the primary one: that is how `[ OK ]` looks in
+// Midnight Commander. Enter works anyway, because the focus presses it, not the mark.
+TRIAL("Message: a single answer is not primary") {
     Opened made{"Uwaga", "Coś.", {{"OK", U'O'}}};
 
     ought(!made.one->buttons()[0]->primary());
 }
 
-TRIAL("Message: bez tytułu nie ma wiersza tytułu") {
+TRIAL("Message: without a title there is no title row") {
     Opened made{std::string{}, "Sama treść.", {{"OK", U'O'}}};
 
     const View seen = made.drawn({30, 12});
@@ -146,7 +151,7 @@ TRIAL("Message: bez tytułu nie ma wiersza tytułu") {
     same(read(seen, 3), std::string{"      ║│Sama treść.│║"});
 }
 
-TRIAL("Message: bez odpowiedzi nie ma drugiego pudełka") {
+TRIAL("Message: without answers there is no second box") {
     Opened made{"Czekaj", "Przeglądam…"};
 
     const View seen = made.drawn({30, 10});
@@ -159,9 +164,9 @@ TRIAL("Message: bez odpowiedzi nie ma drugiego pudełka") {
     same(read(seen, 6), std::string{"      ╚═════════════╝"});
 }
 
-// Bez pudełek komunikat wygląda jak formularz: tytuł na krawędzi ramki, treść z kratką oddechu po
-// obu stronach, przyciski pośrodku pod pustym wierszem.
-TRIAL("Message: zgaszone pudełka dają tytuł na ramce i treść z oddechem") {
+// Without boxes the message looks like a form: the title on the edge of the frame, the content with
+// a cell of breathing room on both sides, the buttons centered below an empty row.
+TRIAL("Message: boxes off give the title on the frame and content with breathing room") {
     Opened made{"Bez", "Goła treść.", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
     const View seen = made.drawn({30, 10});
@@ -174,14 +179,14 @@ TRIAL("Message: zgaszone pudełka dają tytuł na ramce i treść z oddechem") {
     same(made.one->role(), std::string{"talcite.message"});
 }
 
-// Długa treść bez pudełek zawija się w pokoju węższym o oddech — żadne słowo nie ginie za ramką —
-// a okno nie chce więcej niż pokój, także bardzo wąski.
-TRIAL("Message: bez pudełek długa treść zawija się z oddechem, okno mieści się w pokoju") {
+// Long content without boxes wraps in a room narrower by the breathing room, so no word is lost
+// behind the frame, and the window wants no more than the room, even a very narrow one.
+TRIAL("Message: without boxes long content wraps with breathing room, the window fits the room") {
     Opened made{"T", "jeden dwa trzy cztery pięć sześć siedem osiem", {{"OK", U'O'}},
                 ui::MessageShape{ui::Border::twin, false}};
 
-    // Na każdej szerokości widać pierwsze i ostatnie słowo — zawijanie liczy się w tym samym pokoju,
-    // w którym napis potem stoi.
+    // At every width the first and the last word show: wrapping is computed in the same room the
+    // text then stands in.
     for (const int wide : {20, 21, 22, 23, 24, 25, 26}) {
         const View seen = made.drawn({wide, 14});
 
@@ -199,8 +204,9 @@ TRIAL("Message: bez pudełek długa treść zawija się z oddechem, okno mieści
     ought(made.one->wants({3, 10}).wide <= 3);
 }
 
-// Tytuł zmieniony po zbudowaniu idzie na ramkę, a długi tytuł poszerza okno, zamiast się uciąć.
-TRIAL("Message: bez pudełek nowy tytuł stoi na ramce i poszerza okno") {
+// A title changed after construction goes onto the frame, and a long title widens the window
+// instead of being cut.
+TRIAL("Message: without boxes a new title stands on the frame and widens the window") {
     Opened made{"A", "b", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
     made.one->title("Bardzo długi tytuł");
@@ -212,8 +218,8 @@ TRIAL("Message: bez pudełek nowy tytuł stoi na ramce i poszerza okno") {
     ought(read(seen, 2).find("═ Bardzo długi tytuł ═") != std::string::npos);
 }
 
-// Bez treści nie ma wiersza treści ani odstępu; bez przycisków — odstępu ani rzędu.
-TRIAL("Message: bez pudełek pusta treść i brak przycisków nie zostawiają dziur") {
+// Without content there is no content row and no gap; without buttons, no gap and no row.
+TRIAL("Message: without boxes empty content and no buttons leave no holes") {
     Opened bare{"Tytuł", "", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
     const View one = bare.drawn({30, 10});
@@ -237,7 +243,7 @@ TRIAL("Message: bez pudełek pusta treść i brak przycisków nie zostawiają dz
     same(rows, 3);
 }
 
-TRIAL("Message: przyciski stoją pośrodku i mają odstęp") {
+TRIAL("Message: buttons stand in the middle and have a gap") {
     Opened made{"Pytanie", "Plik już istnieje.", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     const View seen = made.drawn({40, 12});
@@ -245,9 +251,9 @@ TRIAL("Message: przyciski stoją pośrodku i mają odstęp") {
     same(read(seen, 7), std::string{"        ║│ [ Tak ] [ Nie ]  │║"});
 }
 
-// --- Szerokość --------------------------------------------------------------------------------
+// --- Width ------------------------------------------------------------------------------------
 
-TRIAL("Message: długa treść zawija się, zamiast rozpychać okno na cały ekran") {
+TRIAL("Message: long content wraps instead of stretching the window across the screen") {
     Opened made{"Uwaga",
                "To jest bardzo długie zdanie, które nie ma prawa rozepchnąć okna na całą "
                "szerokość ekranu, bo tak się okien nie robi.",
@@ -255,31 +261,32 @@ TRIAL("Message: długa treść zawija się, zamiast rozpychać okno na cały ekr
 
     const View seen = made.drawn({60, 16});
 
-    // Cztery kratki oddechu z boków i miejsce na cień — okno nie dotyka krawędzi.
+    // Four cells of breathing room on the sides and room for the shadow: the window does not touch
+    // the edge.
     ought(read(seen, 1).size() > 40);
     same(seen.at({0, 1}).letter, U' ');
     same(seen.at({59, 1}).letter, U' ');
 
-    // Treść poszła na kilka wierszy, a nie została ucięta.
+    // The content went onto several rows instead of being cut.
     ought(read(seen, 4).find("To jest") != std::string::npos);
     ought(!read(seen, 5).empty());
 }
 
-TRIAL("Message: krótka treść nie rozdyma okna") {
+TRIAL("Message: short content does not inflate the window") {
     Opened made{"A", "b", {{"OK", U'O'}}};
 
     const View seen = made.drawn({60, 12});
 
-    // Szerokość dyktuje najszersze dziecko — tu rząd przycisków, nie treść.
+    // The width is dictated by the widest child, here the row of buttons, not the content.
     same(read(seen, 3), std::string{"                        ║│  b   │║"});
     same(read(seen, 7), std::string{"                        ║│[ OK ]│║"});
 }
 
-// --- Odpowiedź --------------------------------------------------------------------------------
+// --- Answer -----------------------------------------------------------------------------------
 
-// **Czynność odpowiedzi mieszka na przycisku**, tak samo jak w pozycji menu i w polu legendy,
-// a zamknięcie okna jest jej częścią — komunikat nie zamyka się sam.
-TRIAL("Message: odpowiedź robi to, co dopiął wołający") {
+// The answer's action lives on the button, just as in a menu item and in a legend field, and
+// closing the window is part of it; the message does not close by itself.
+TRIAL("Message: an answer does what the caller attached") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}, {"Przerwij", U'P'}}};
 
     (void)made.drawn({44, 14});
@@ -290,11 +297,11 @@ TRIAL("Message: odpowiedź robi to, co dopiął wołający") {
     ought(made.window->empty());
 }
 
-// **Escape sam z siebie nie zamyka**, bo zasłona przestała go brać — okno wykonujące czynność,
-// której wołający nie może odwołać, jest decyzją za niego. Zamknięcie nadal ogłasza się osobnym
-// zdarzeniem, bo przycisku „zamknij" nie ma i nie ma na czym wieszać czynności; zmienił się tylko
-// ten, kto zamknięcie zaczyna.
-TRIAL("Message: Esc zamyka dopiero z uchwytem, a zamknięcie się ogłasza") {
+// Escape does not close by itself, because the veil does not take it: a window performing an
+// action that the caller cannot cancel would be deciding for the caller. Closing is still announced
+// by a separate event, because there is no "close" button to hang an action on; it is the caller's
+// handler that starts the close.
+TRIAL("Message: Esc closes only with a handler, and the close is announced") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     (void)made.drawn({44, 14});
@@ -321,9 +328,9 @@ TRIAL("Message: Esc zamyka dopiero z uchwytem, a zamknięcie się ogłasza") {
     ought(made.window->empty());
 }
 
-// Zamknięcie ogłasza się **przy każdym** zamknięciu, nie tylko przy Escu — także wtedy, gdy woła
-// je uchwyt wołającego. Kto słucha jednego zdarzenia, dowie się o obu drogach.
-TRIAL("Message: zamknięcie z uchwytu też się ogłasza") {
+// Every close is announced, not only the one from Esc, also when the caller's handler calls it.
+// Whoever listens to one event learns about both paths.
+TRIAL("Message: a close from a handler is announced too") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     (void)made.drawn({44, 14});
@@ -334,10 +341,10 @@ TRIAL("Message: zamknięcie z uchwytu też się ogłasza") {
     same(made.closed, 1);
 }
 
-// Otwarcie stawia ognisko na pierwszej odpowiedzi, więc **Enter naciska tę, na której stoisz** —
-// oznaczenie podstawowej rozstrzyga dopiero wtedy, gdy ognisko jest gdzie indziej. Tak jest
-// w Midnight Commanderze i tak wychodzi z tego, że przycisk z ogniskiem sam bierze Enter.
-TRIAL("Message: Enter naciska odpowiedź pod ogniskiem") {
+// Opening puts the focus on the first answer, so Enter presses the one you are on; the primary mark
+// decides only when the focus is elsewhere. That is how Midnight Commander does it, and it follows
+// from the focused button taking Enter itself.
+TRIAL("Message: Enter presses the answer under focus") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     made.one->buttons()[1]->primary(true);
@@ -349,16 +356,16 @@ TRIAL("Message: Enter naciska odpowiedź pod ogniskiem") {
     same(made.said, 0);
 }
 
-// Oznaczenie podstawowej **niczego nie naciska** — rysuje klamrę ze strzałkami i tyle. Enter należy
-// do tego, kto ma ognisko; gdy ognisko zeszło z przycisków, nie naciska nic.
-TRIAL("Message: bez ogniska na przycisku Enter nic nie naciska") {
+// The primary mark presses nothing: it draws the bracket with arrows and that is all. Enter belongs
+// to whoever has the focus; when the focus has left the buttons, it presses nothing.
+TRIAL("Message: without focus on a button Enter presses nothing") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     made.one->buttons()[1]->primary(true);
 
     (void)made.drawn({44, 14});
 
-    // Ognisko wraca na samo okno — wtedy klawisz obsługuje dialog, a nie przycisk.
+    // The focus goes back to the window itself; then the dialog handles the key, not a button.
     made.one->focus();
 
     pressed(made.top, ui::Code::enter);
@@ -368,7 +375,7 @@ TRIAL("Message: bez ogniska na przycisku Enter nic nie naciska") {
     ought(!made.window->empty());
 }
 
-TRIAL("Message: klawisz aktywny działa z całego okna") {
+TRIAL("Message: a hotkey works from the whole window") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     (void)made.drawn({44, 14});
@@ -378,10 +385,10 @@ TRIAL("Message: klawisz aktywny działa z całego okna") {
     same(made.said, 1);
 }
 
-// Oznaczenie należy do **przycisku**, nie do komunikatu: `Message::base` zniknęło, bo mówiło
-// przyciskom to, co przycisk i tak o sobie wie. Jedyności nikt nie pilnuje — dialog bierze
-// pierwszy znaleziony w głąb i to jest reguła zamiast pilnowania.
-TRIAL("Message: podstawową oznacza się na przycisku") {
+// The primary mark belongs to the button, not to the message, since it is something the button
+// knows about itself. Nobody enforces that there is only one: the dialog takes the first found
+// depth-first, and that rule takes the place of enforcement.
+TRIAL("Message: the primary answer is marked on the button") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     ought(!made.one->buttons()[0]->primary());
@@ -398,7 +405,7 @@ TRIAL("Message: podstawową oznacza się na przycisku") {
     ought(!made.one->buttons()[1]->primary());
 }
 
-TRIAL("Message: podstawowa rysuje się klamrą ze strzałkami") {
+TRIAL("Message: the primary answer is drawn in a bracket with arrows") {
     Opened made{"Pytanie", "Co?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     made.one->buttons()[0]->primary(true);
@@ -406,9 +413,9 @@ TRIAL("Message: podstawowa rysuje się klamrą ze strzałkami") {
     same(read(made.drawn({40, 12}), 7), std::string{"        ║│[< Tak >] [ Nie ]│║"});
 }
 
-// --- Role -------------------------------------------------------------------------------------
+// --- Roles ------------------------------------------------------------------------------------
 
-TRIAL("Message: rdzeń roli rozdaje się na wszystkie części") {
+TRIAL("Message: the role's stem is handed out to all the parts") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
     same(made.one->role(), std::string{"talcite.message"});
@@ -436,13 +443,14 @@ TRIAL("Message: rdzeń roli rozdaje się na wszystkie części") {
     made.top.skin(ui::Skin{these});
     made.one->role("moj.blad");
 
-    // Otwarcie stawia ognisko na przycisku, a ten pyta wtedy o końcówkę `.focus`. Tu chcemy
-    // zobaczyć rolę spoczynkową, więc ognisko wraca na samo okno.
+    // Opening puts the focus on the button, which then asks for the `.focus` suffix. Here we want
+    // to see the resting role, so the focus goes back to the window itself.
     made.one->focus();
 
     const View seen = made.drawn({30, 12});
 
-    // Krawędź okna, tytuł, kreska pudełka, treść i przycisk — każde ze swojej roli.
+    // The window's edge, the title, the box's line, the content and the button, each from its own
+    // role.
     same(seen.at({6, 0}).style.background, (Color{false, 1, 1, 1}));
     same(seen.at({11, 1}).style.foreground, (Color{false, 2, 2, 2}));
     same(seen.at({7, 2}).style.foreground, (Color{false, 4, 4, 4}));
@@ -450,7 +458,7 @@ TRIAL("Message: rdzeń roli rozdaje się na wszystkie części") {
     same(seen.at({10, 7}).style.foreground, (Color{false, 5, 5, 5}));
 }
 
-TRIAL("Message: przycisk pod ogniskiem bierze końcówkę swojego rdzenia") {
+TRIAL("Message: a button under focus takes the suffix of its stem") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
     ui::Styles these;
@@ -469,11 +477,11 @@ TRIAL("Message: przycisk pod ogniskiem bierze końcówkę swojego rdzenia") {
     same(made.drawn({30, 12}).at({10, 7}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
-// --- Budowa -----------------------------------------------------------------------------------
+// --- Construction -----------------------------------------------------------------------------
 
-// Komunikat składa się sam i nie ma drugiej drogi, którą dałoby się go złożyć źle — dokładnie tak,
-// jak pasek menu nie przyjmuje treści inaczej niż przez `content()`.
-TRIAL("Message: nie przyjmuje dziecka z zewnątrz") {
+// The message puts itself together and has no second path by which it could be put together
+// wrong, just as the menu bar accepts content only through `content()`.
+TRIAL("Message: does not accept a child from outside") {
     ui::Message one{"Tytuł", "Treść"};
 
     bool threw = false;
@@ -487,7 +495,7 @@ TRIAL("Message: nie przyjmuje dziecka z zewnątrz") {
     ought(threw);
 }
 
-TRIAL("Message: treść i tytuł da się zmienić po zbudowaniu") {
+TRIAL("Message: content and title can be changed after construction") {
     Opened made{"Stary", "Stara treść.", {{"OK", U'O'}}};
 
     made.one->title("Nowy");
@@ -503,11 +511,10 @@ TRIAL("Message: treść i tytuł da się zmienić po zbudowaniu") {
     ought(read(seen, 3).find("Stara") == std::string::npos);
 }
 
-// **To jest próba na błąd, dla którego cała przebudowa się zaczęła.** Treść dopinana warunkowo
-// przepadała dla każdego, kto zbudował komunikat bez niej i nadał ją potem: napis szedł na węzeł,
-// który nie był niczyim dzieckiem, i nie pokazywał się nigdy. Teraz pudełko treści stoi w kolumnie
-// od początku, a to, czy je widać, wychodzi z rozmiaru.
-TRIAL("Message: treść nadana po zbudowaniu pokazuje się") {
+// Content set after construction shows. The content box stands in the column from the start, and
+// whether it is visible follows from its size, so text given later does not end up on a node that
+// is nobody's child and never shows.
+TRIAL("Message: content set after construction shows") {
     Opened made{"Uwaga", std::string{}, {{"OK", U'O'}}};
 
     ought(!shown(made.drawn({30, 12}), "Jest treść."));
@@ -517,9 +524,9 @@ TRIAL("Message: treść nadana po zbudowaniu pokazuje się") {
     ought(shown(made.drawn({30, 12}), "Jest treść."));
 }
 
-// To samo od drugiej strony: pudełko treści znika, gdy treść zabrać, i nie zostawia po sobie ani
-// obwódki, ani wiersza odstępu.
-TRIAL("Message: treść zabrana po zbudowaniu chowa pudełko") {
+// The same from the other side: the content box disappears when the content is taken away, and
+// leaves behind neither an outline nor a gap row.
+TRIAL("Message: content taken away after construction hides the box") {
     Opened made{"Uwaga", "Była treść.", {{"OK", U'O'}}};
 
     const View was = made.drawn({30, 12});
@@ -531,12 +538,12 @@ TRIAL("Message: treść zabrana po zbudowaniu chowa pudełko") {
     ought(!shown(seen, "Była treść."));
     ought(shown(seen, "[ OK ]"));
 
-    // Bez treści okno jest niższe o pudełko i o wiersz między pudełkami.
+    // Without content the window is shorter by the box and by the row between the boxes.
     ought(read(seen, 9).empty());
     ought(!read(was, 9).empty());
 }
 
-TRIAL("Message: odpowiedź dołożona po zbudowaniu działa jak każda inna") {
+TRIAL("Message: an answer added after construction works like any other") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}}};
 
     int seen = 0;
@@ -558,7 +565,7 @@ TRIAL("Message: odpowiedź dołożona po zbudowaniu działa jak każda inna") {
     same(seen, 1);
 }
 
-TRIAL("Message: pierwsza odpowiedź dołożona po zbudowaniu pokazuje drugie pudełko") {
+TRIAL("Message: the first answer added after construction shows the second box") {
     Opened made{"Czekaj", "Przeglądam…"};
 
     ought(!shown(made.drawn({30, 12}), "[ Stop ]"));
@@ -568,7 +575,7 @@ TRIAL("Message: pierwsza odpowiedź dołożona po zbudowaniu pokazuje drugie pud
     ought(shown(made.drawn({30, 12}), "[ Stop ]"));
 }
 
-TRIAL("Message: clear() zabiera odpowiedzi razem z pudełkiem") {
+TRIAL("Message: clear() takes the answers away together with the box") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     (void)made.drawn({44, 14});
@@ -583,10 +590,10 @@ TRIAL("Message: clear() zabiera odpowiedzi razem z pudełkiem") {
     ought(shown(seen, "Co robić?"));
 }
 
-// **Odpowiedź bez czynności nie robi nic** — i tak ma być. Biblioteka nie dokłada przyciskowi
-// zachowania, którego wołający na nim nie powiesił, więc świeżo dołożona odpowiedź nie zamyka
-// okna i niczego nie ogłasza.
-TRIAL("Message: odpowiedź bez uchwytu niczego nie robi") {
+// An answer without an action does nothing, and that is how it should be. The library does not add
+// behavior to a button that the caller did not hang on it, so a freshly added answer does not close
+// the window and announces nothing.
+TRIAL("Message: an answer without a handler does nothing") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     made.one->buttons().clear();
@@ -602,10 +609,10 @@ TRIAL("Message: odpowiedź bez uchwytu niczego nie robi") {
     ought(!made.window->empty());
 }
 
-// Przycisk zdjęty z okna **dalej ma swoją czynność** — należy ona do wołającego i nikt mu jej nie
-// zabiera ani nie odbiera jej mocy. Skoro ta czynność zamyka okno, to okno się zamknie, choć
-// przycisk nie stoi już w drzewie: biblioteka niczego tu za nikogo nie rozstrzyga.
-TRIAL("Message: przycisk zdjęty przez clear() dalej robi swoje") {
+// A button removed from the window still has its action: it belongs to the caller, and nobody takes
+// it away or strips its power. Since that action closes the window, the window closes, even though
+// the button no longer stands in the tree; the library decides nothing for anyone here.
+TRIAL("Message: a button removed by clear() still does its job") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
     const std::shared_ptr<ui::Button> was = made.one->buttons()[0];
@@ -620,9 +627,9 @@ TRIAL("Message: przycisk zdjęty przez clear() dalej robi swoje") {
     same(made.closed, 1);
 }
 
-// Rola odpowiedzi rozdaje się i **przy dołożeniu**, i przy zmianie rdzenia — w obie strony, bez
-// względu na to, co było pierwsze.
-TRIAL("Message: odpowiedź dołożona po zmianie rdzenia bierze jego końcówkę") {
+// The answer's role is handed out both when it is added and when the stem changes, in both
+// directions, whichever comes first.
+TRIAL("Message: an answer added after the stem changes takes its suffix") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
     made.one->role("moj.blad");

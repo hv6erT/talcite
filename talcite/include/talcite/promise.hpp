@@ -81,7 +81,7 @@ public:
         return *this;
     }
 
-    ~Promise() { detail::buried(std::move(upstream_)); }
+    ~Promise() { detail::buried(upstream_); }
 
     void start() {
         if (detail::over(*result_)) return;

@@ -17,8 +17,11 @@ using namespace talcite;
 
 namespace {
 
+// Three encoding names, the options of every select in these trials.
 std::vector<std::string> three() { return {"UTF-8", "ISO-8859-2", "CP1250"}; }
 
+// Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
+// dropping trailing spaces.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -35,8 +38,9 @@ std::string read(const View& one, int y) {
     return made;
 }
 
-// Rozwinięta lista, jeśli wisi: zasłona → ramka → lista. Próby pytają ją wprost o wiersze, suwak
-// i bieżącą pozycję, bo to są rzeczy, których z ekranu nie da się odczytać bez liczenia kratek.
+// The rolled-out list, if one is open: veil, then frame, then list. The trials ask it directly
+// for its rows, its scrollbar and its current position, since those cannot be read off the screen
+// without counting cells.
 ui::List* rolled(const ui::Modals& window) {
     const ui::Modal* veil = window.current();
 
@@ -45,6 +49,7 @@ ui::List* rolled(const ui::Modals& window) {
     return dynamic_cast<ui::List*>(veil->children().front()->children().front().get());
 }
 
+// Counts in `done` every `ui::PickEvent` that `one` sends.
 void counted(const std::shared_ptr<ui::Select>& one, int& done) {
     (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
@@ -53,28 +58,30 @@ void counted(const std::shared_ptr<ui::Select>& one, int& done) {
     });
 }
 
-// Wybór **w oknie**, bo bez okna zasłon nie ma go gdzie rozwinąć — a to jest część umowy, nie
-// niedogodność próby.
+// A select inside a window, because without a window there is nowhere to roll out the veil. That
+// is part of the contract, not a limitation of the trial.
 struct Stage {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Column> column = std::make_shared<ui::Column>();
     std::shared_ptr<ui::Select> one = std::make_shared<ui::Select>(three());
 
+// Puts the select into a column inside the window and hangs the window on the root.
     Stage() {
         column->children().add(one);
         window->content(column);
         top.children().add(window);
     }
 
+// Draws the whole stage at the given size.
     View drawn(ui::Size size = {30, 12}) { return top.render({{0, 0}, size}); }
 };
 
 }
 
-// --- Co wybór wie o sobie ------------------------------------------------------------------------
+// --- What a select knows about itself ------------------------------------------------------------
 
-TRIAL("Select: pusty nic nie niesie, ale ognisko bierze") {
+TRIAL("Select: an empty one carries nothing but takes focus") {
     const ui::Select one;
 
     same(one.options().many(), std::size_t{0});
@@ -84,27 +91,28 @@ TRIAL("Select: pusty nic nie niesie, ale ognisko bierze") {
     ought(!one.opened());
 }
 
-TRIAL("Select: świeży stoi na pierwszej opcji") {
+TRIAL("Select: a fresh one stands on the first option") {
     const ui::Select one{three()};
 
     same(one.options().many(), std::size_t{3});
     same(*one.value(), std::string{"UTF-8"});
 }
 
-TRIAL("Select: wybór można podać przy tworzeniu i przyciąć") {
+TRIAL("Select: the choice can be given at construction and is clamped") {
     same(*ui::Select(three(), 2).value(), std::string{"CP1250"});
     same(*ui::Select(three(), 9).value(), std::string{"CP1250"});
 }
 
-// Najdłuższa pozycja plus dwie kratki na spację i znak rozwinięcia; wysokość zawsze jeden wiersz.
-TRIAL("Select: chce najdłuższej opcji i jednego wiersza") {
+// The longest option plus two cells for a space and the roll-out mark; the height is always one
+// row.
+TRIAL("Select: wants the longest option and one row") {
     const ui::Select one{three()};
 
     same(one.wants({40, 10}), (ui::Size{12, 1}));
     same(one.wants({6, 3}), (ui::Size{6, 1}));
 }
 
-TRIAL("Select: podanie nowych opcji przycina wybór") {
+TRIAL("Select: giving new options clamps the choice") {
     ui::Select one{three(), 2};
 
     one.options().all({"raz"});
@@ -112,11 +120,11 @@ TRIAL("Select: podanie nowych opcji przycina wybór") {
     same(*one.value(), std::string{"raz"});
 }
 
-// --- Rysowanie -----------------------------------------------------------------------------------
+// --- Drawing -------------------------------------------------------------------------------------
 
-// Wiersz wychodzi szeroki na najdłuższą opcję plus dwie kratki, bo tyle chce — a znak rozwinięcia
-// stoi przy prawej krawędzi tego, co dostał.
-TRIAL("Select: rysuje bieżącą wartość i znak rozwinięcia przy prawej krawędzi") {
+// The row comes out as wide as the longest option plus two cells, because that is what it wants,
+// and the roll-out mark stands at the right edge of what it was given.
+TRIAL("Select: draws the current value and the roll-out mark at the right edge") {
     Stage stage;
 
     const View made = stage.drawn();
@@ -124,20 +132,20 @@ TRIAL("Select: rysuje bieżącą wartość i znak rozwinięcia przy prawej kraw�
     same(read(made, 0), std::string{"UTF-8"} + std::string(6, ' ') + "\xe2\x96\xbc");
 }
 
-TRIAL("Select: za wąski ucina napis, a nie znak rozwinięcia") {
+TRIAL("Select: when too narrow it cuts the text, not the roll-out mark") {
     Stage stage;
 
     stage.one->value("ISO-8859-2");
 
     const View made = stage.drawn({8, 12});
 
-    // Znak rozwinięcia zostaje na swoim miejscu, a napis ustępuje mu wielokropkiem.
+    // The roll-out mark keeps its place, and the text makes way for it with an ellipsis.
     same(made.at({7, 0}).letter, U'▼');
     same(made.at({5, 0}).letter, U'…');
     same(made.at({0, 0}).letter, U'I');
 }
 
-TRIAL("Select: z ogniskiem ma własną rolę") {
+TRIAL("Select: has its own role when focused") {
     Stage stage;
 
     ought(!stage.drawn().at({0, 0}).style.reverse);
@@ -147,10 +155,10 @@ TRIAL("Select: z ogniskiem ma własną rolę") {
     ought(stage.drawn().at({0, 0}).style.reverse);
 }
 
-// --- Klawisze przy zamkniętym --------------------------------------------------------------------
+// --- Keys while closed ---------------------------------------------------------------------------
 
-// **Ruch jest wyborem** — strzałka od razu przestawia wartość, tak samo jak w grupie opcji.
-TRIAL("Select: strzałki przestawiają wartość i zawiadamiają") {
+// Moving is choosing: an arrow changes the value at once, just as in a radio group.
+TRIAL("Select: arrows change the value and notify") {
     Stage stage;
 
     stage.one->focus();
@@ -174,8 +182,8 @@ TRIAL("Select: strzałki przestawiają wartość i zawiadamiają") {
     ought(!stage.one->opened());
 }
 
-// Na krańcu klawisz **idzie wyżej**: w oknie strzałka ma wtedy przejść do następnego widżetu.
-TRIAL("Select: na krańcu oddaje strzałkę wyżej") {
+// At either end the key goes up the tree: in a window the arrow then has to move to the next widget.
+TRIAL("Select: at either end it passes the arrow up") {
     Stage stage;
 
     stage.one->focus();
@@ -192,7 +200,7 @@ TRIAL("Select: na krańcu oddaje strzałkę wyżej") {
     same(*stage.one->value(), std::string{"CP1250"});
 }
 
-TRIAL("Select: Home i End skaczą na krańce") {
+TRIAL("Select: Home and End jump to the ends") {
     Stage stage;
 
     stage.one->focus();
@@ -208,9 +216,9 @@ TRIAL("Select: Home i End skaczą na krańce") {
     same(*stage.one->value(), std::string{"UTF-8"});
 }
 
-// **Litery idą wyżej i to jest warunek**, żeby klawisz aktywny przycisku działał, gdy ognisko stoi
-// na wyborze. Tak samo robi menu: bierze swoje, resztę puszcza.
-TRIAL("Select: litery i Tab idą wyżej") {
+// Letters go up the tree, and that is required so that a button's hotkey works while focus is on
+// the select. A menu does the same: it takes its own keys and lets the rest through.
+TRIAL("Select: letters and Tab go up the tree") {
     Stage stage;
 
     stage.one->focus();
@@ -224,7 +232,7 @@ TRIAL("Select: litery i Tab idą wyżej") {
     ought(!stage.top.dispatch(tab));
 }
 
-TRIAL("Select: podanie wartości milczy") {
+TRIAL("Select: setting the value is silent") {
     Stage stage;
 
     int done = 0;
@@ -237,9 +245,9 @@ TRIAL("Select: podanie wartości milczy") {
     same(done, 0);
 }
 
-// --- Rozwijanie ----------------------------------------------------------------------------------
+// --- Rolling out ---------------------------------------------------------------------------------
 
-TRIAL("Select: Enter rozwija, Esc zamyka i oddaje ognisko") {
+TRIAL("Select: Enter rolls out, Esc closes and gives focus back") {
     Stage stage;
 
     stage.one->focus();
@@ -259,9 +267,9 @@ TRIAL("Select: Enter rozwija, Esc zamyka i oddaje ognisko") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
-// **Spacja nie rozwija.** Rozwijała kiedyś, razem z Enterem — a to zabierało aplikacji klawisz,
-// który w oknie z polem tekstowym należy do pisania. Tak samo straciła ją przycisk.
-TRIAL("Select: spacja nie rozwija") {
+// Space does not roll out. In a window with a text field that key belongs to typing, so the select
+// must not take it from the application. The button does not take it either.
+TRIAL("Select: space does not roll out") {
     Stage stage;
 
     stage.one->focus();
@@ -272,8 +280,8 @@ TRIAL("Select: spacja nie rozwija") {
     ought(!stage.one->opened());
 }
 
-// **Rozwinięta lista staje pod widżetem**, a nie na środku ekranu jak zwykłe okno.
-TRIAL("Select: rozwinięta lista staje pod wyborem") {
+// The rolled-out list stands below the widget, not in the middle of the screen like a plain window.
+TRIAL("Select: the rolled-out list stands below the select") {
     Stage stage;
 
     (void)stage.drawn();
@@ -282,23 +290,23 @@ TRIAL("Select: rozwinięta lista staje pod wyborem") {
 
     const View made = stage.drawn();
 
-    // Wiersz zero to sam wybór; ramka listy zaczyna się w wierszu pierwszym, od lewej krawędzi.
+    // Row zero is the select itself; the list's frame starts in row one, at the left edge.
     same(made.at({0, 1}).letter, U'┌');
     same(made.at({0, 2}).letter, U'│');
     same(made.at({1, 2}).letter, U'U');
     same(made.at({1, 3}).letter, U'I');
 }
 
-// Pod dolną krawędzią nie ma miejsca, więc lista **wychodzi w górę**. O tym, że się nie mieści,
-// wie tylko ten, kto ma cały ekran.
-TRIAL("Select: bez miejsca pod spodem lista wychodzi w górę") {
+// There is no room below the bottom edge, so the list opens upward. Only the one who has the whole
+// screen knows that it does not fit.
+TRIAL("Select: with no room below, the list opens upward") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
     const auto column = std::make_shared<ui::Column>();
     const auto one = std::make_shared<ui::Select>(three());
 
-    // Wybór stoi w ostatnim wierszu ekranu.
+    // The select stands in the last row of the screen.
     for (int at = 0; at < 6; ++at)
         column->children().add(std::make_shared<ui::Select>(std::vector<std::string>{"x"}));
 
@@ -312,16 +320,17 @@ TRIAL("Select: bez miejsca pod spodem lista wychodzi w górę") {
 
     const View made = top.render({{0, 0}, {30, 7}});
 
-    // Wybór jest w ostatnim wierszu, więc w wierszu 6 dalej stoi on sam ze swoim znakiem.
+    // The select is in the last row, so row 6 still shows the select itself with its mark.
     same(made.at({11, 6}).letter, U'▼');
 
-    // A ramka listy kończy się tuż nad nim.
+    // And the list's frame ends right above it.
     same(made.at({0, 5}).letter, U'└');
     same(made.at({0, 1}).letter, U'┌');
 }
 
-// Ile wierszy widać naraz, mówi wołający; mniej niż jednego nie ma sensu, więc zero znaczy jeden.
-TRIAL("Select: liczba wierszy listy ma dolną granicę") {
+// The caller says how many rows are visible at once; fewer than one makes no sense, so zero means
+// one.
+TRIAL("Select: the number of list rows has a lower bound") {
     ui::Select one{three()};
 
     same(one.rows(), 8);
@@ -335,9 +344,9 @@ TRIAL("Select: liczba wierszy listy ma dolną granicę") {
     same(one.rows(), 2);
 }
 
-// Lista dłuższa niż okno wierszy dostaje tyle wierszy, ile kazano, i suwak obok. Krótsza — tyle,
-// ile ma pozycji, i bez suwaka.
-TRIAL("Select: lista ma tyle wierszy, ile kazano, a dłuższa dostaje suwak") {
+// A list longer than the row count gets as many rows as it was told, with a scrollbar beside it. A
+// shorter one gets as many rows as it has items, and no scrollbar.
+TRIAL("Select: the list has the rows it was told, and a longer one gets a scrollbar") {
     Stage stage;
 
     stage.one->rows(2);
@@ -360,9 +369,9 @@ TRIAL("Select: lista ma tyle wierszy, ile kazano, a dłuższa dostaje suwak") {
     ought(!list->scrollbar());
 }
 
-// Rozwinięta lista stoi na **bieżącej wartości** — Enter bez ruchu to wybór tego, co już jest,
-// a nie skok na pierwszą pozycję.
-TRIAL("Select: rozwinięta lista stoi na bieżącej wartości") {
+// The rolled-out list stands on the current value: Enter without moving chooses what is already
+// there instead of jumping to the first item.
+TRIAL("Select: the rolled-out list stands on the current value") {
     Stage stage;
 
     stage.one->value("CP1250");
@@ -374,9 +383,9 @@ TRIAL("Select: rozwinięta lista stoi na bieżącej wartości") {
     same(list->which(), std::optional<std::size_t>{2});
 }
 
-// Zamknięcie z ręki wołającego mówi „zamknięte" od razu, choć zdjęta zasłona może jeszcze chwilę
-// żyć w korzeniu.
-TRIAL("Select: zamknięcie od razu mówi, że zamknięte") {
+// Closing by the caller reports "closed" at once, even though the removed veil may live on in the
+// root for a moment.
+TRIAL("Select: closing reports closed at once") {
     Stage stage;
 
     stage.one->open();
@@ -386,7 +395,7 @@ TRIAL("Select: zamknięcie od razu mówi, że zamknięte") {
     ought(stage.window->empty());
 }
 
-TRIAL("Select: rozwinięcie dwa razy nie tworzy dwóch list") {
+TRIAL("Select: rolling out twice does not make two lists") {
     Stage stage;
 
     stage.one->open();
@@ -395,7 +404,7 @@ TRIAL("Select: rozwinięcie dwa razy nie tworzy dwóch list") {
     same(static_cast<int>(stage.window->many()), 1);
 }
 
-TRIAL("Select: pusty nie ma czego rozwijać") {
+TRIAL("Select: an empty one has nothing to roll out") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -410,11 +419,11 @@ TRIAL("Select: pusty nie ma czego rozwijać") {
     ought(window->empty());
 }
 
-// --- Wybór z rozwiniętej listy -------------------------------------------------------------------
+// --- Choosing from the rolled-out list -----------------------------------------------------------
 
-// Wybór wraca **jednym zdarzeniem z wyboru**, nie z listy — aplikacja nie musi wiedzieć, że pod
-// spodem stała jakakolwiek lista.
-TRIAL("Select: pozycja wybrana Enterem wraca zdarzeniem i zamyka listę") {
+// The choice comes back as one event from the select, not from the list, so the application does
+// not need to know that any list was involved.
+TRIAL("Select: an item chosen with Enter comes back as an event and closes the list") {
     Stage stage;
 
     stage.one->focus();
@@ -440,9 +449,9 @@ TRIAL("Select: pozycja wybrana Enterem wraca zdarzeniem i zamyka listę") {
     ought(!stage.one->opened());
 }
 
-// Wybór przychodzi, **gdy listy już nie ma** — wołający, który w odpowiedzi otwiera coś nowego albo
-// pyta o `opened()`, widzi stan po zwinięciu.
-TRIAL("Select: zdarzenie wyboru przychodzi przy zwiniętej liście") {
+// The choice arrives once the list is gone: a caller that opens something new in response, or asks
+// `opened()`, sees the state after the list rolled up.
+TRIAL("Select: the pick event arrives with the list rolled up") {
     Stage stage;
 
     bool open = true;
@@ -469,9 +478,9 @@ TRIAL("Select: zdarzenie wyboru przychodzi przy zwiniętej liście") {
     ought(!open);
 }
 
-// Wybranie tej samej pozycji **nie jest zmianą** — ta sama reguła co przy kliknięciu w już wybraną
-// opcję w grupie.
-TRIAL("Select: wybranie tej samej pozycji nie zawiadamia") {
+// Choosing the same item is not a change, the same rule as clicking an already chosen option in a
+// radio group.
+TRIAL("Select: choosing the same item does not notify") {
     Stage stage;
 
     stage.one->focus();
@@ -492,11 +501,11 @@ TRIAL("Select: wybranie tej samej pozycji nie zawiadamia") {
     ought(!stage.one->opened());
 }
 
-// --- Kliknięcie ----------------------------------------------------------------------------------
+// --- Clicking ------------------------------------------------------------------------------------
 
-// Kliknięcie rozwija, a ognisko idzie **w głąb rozwiniętej listy** — tak jak przy każdym innym
-// otwarciu zasłony. Do wyboru wraca dopiero po zamknięciu.
-TRIAL("Select: kliknięcie bierze ognisko i rozwija") {
+// A click rolls out, and focus goes into the rolled-out list, as with every other veil that opens.
+// It returns to the select only after the list closes.
+TRIAL("Select: a click takes focus and rolls out") {
     Stage stage;
 
     (void)stage.drawn();
@@ -515,9 +524,9 @@ TRIAL("Select: kliknięcie bierze ognisko i rozwija") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
-// --- Wyłączony -----------------------------------------------------------------------------------
+// --- Disabled ------------------------------------------------------------------------------------
 
-TRIAL("Select: wyłączony nie rozwija, nie wybiera i oddaje ognisko") {
+TRIAL("Select: when disabled it does not roll out, does not choose and gives up focus") {
     Stage stage;
 
     stage.one->focus();
@@ -537,7 +546,7 @@ TRIAL("Select: wyłączony nie rozwija, nie wybiera i oddaje ognisko") {
     same(*stage.one->value(), std::string{"UTF-8"});
 }
 
-TRIAL("Select: wyłączenie w trakcie zamyka rozwiniętą listę") {
+TRIAL("Select: disabling it while open closes the rolled-out list") {
     Stage stage;
 
     stage.one->focus();
@@ -551,19 +560,21 @@ TRIAL("Select: wyłączenie w trakcie zamyka rozwiniętą listę") {
     ought(!stage.one->opened());
     ought(stage.window->empty());
 
-    // Ognisko siedziało w liście. Zamknięta lista oddaje je wyborowi, a ten — już wyłączony — dalej.
+    // Focus was in the list. The closed list gives it back to the select, which is now disabled and
+    // passes it on.
     ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
     ought(!stage.one->focused());
 }
 
 namespace {
 
-// Pojemnik, który jako widżet słucha wyłączeń w swoim poddrzewie.
+// A container that, as a widget, listens for disable events in its subtree.
 class Watcher : public ui::Column {
 public:
     const ui::Handler* seen = nullptr;
 
 protected:
+    // Remembers the target of the disable event and consumes it.
     bool handle(ui::DisableEvent& what) override {
         seen = what.target();
 
@@ -573,7 +584,7 @@ protected:
 
 }
 
-TRIAL("Select: zwinięcie listy nie zasłania wyłączenia przodkom") {
+TRIAL("Select: rolling up the list does not hide the disable event from ancestors") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -591,12 +602,13 @@ TRIAL("Select: zwinięcie listy nie zasłania wyłączenia przodkom") {
     same(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
 }
 
-// --- W oknie dialogowym --------------------------------------------------------------------------
+// --- In a dialog ---------------------------------------------------------------------------------
 
-// Ognisko siedziało w rozwiniętej liście, a zamknięta lista oddaje je temu, kto je miał — wyborowi,
-// który już go nie bierze. Kiedyś zostawało więc nigdzie, a dialog połyka klawisze i rozdaje
-// klawisze aktywne tylko wtedy, gdy ognisko jest w nim — klawisz szedł prosto do korzenia.
-TRIAL("Select: wyłączony w dialogu z rozwiniętą listą oddaje ognisko dialogowi") {
+// Focus was in the rolled-out list, and the closed list gives it back to whoever had it before:
+// the select, which no longer accepts it. Focus must then land on the dialog, because a dialog
+// swallows keys and hands out hotkeys only while focus is inside it; otherwise a key would go
+// straight to the root.
+TRIAL("Select: disabled in a dialog with the list rolled out, it gives focus to the dialog") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -622,8 +634,8 @@ TRIAL("Select: wyłączony w dialogu z rozwiniętą listą oddaje ognisko dialog
     ought(top.dispatch(key));
 }
 
-// Wybór jest **jednym przystankiem** wędrówki, a rozwinięta lista jej nie psuje.
-TRIAL("Select: w oknie jest jednym przystankiem Taba") {
+// A select is one stop of the Tab cycle, and a rolled-out list does not break the cycle.
+TRIAL("Select: in a window it is one stop for Tab") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -650,9 +662,9 @@ TRIAL("Select: w oknie jest jednym przystankiem Taba") {
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
-// Rozwinięta lista **leży nad oknem dialogowym**, bo obie są zasłonami w tym samym oknie, a stos
-// rozstrzyga kolejność. Zamknięcie listy oddaje ognisko oknu, a nie aplikacji.
-TRIAL("Select: lista rozwinięta w oknie zamyka się nad nim i oddaje mu ognisko") {
+// The rolled-out list lies above the dialog, because both are veils in the same window and the
+// stack decides the order. Closing the list gives focus back to the dialog, not to the application.
+TRIAL("Select: a list rolled out in a dialog closes above it and gives focus back to it") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();

@@ -24,12 +24,13 @@
 
 using namespace talcite;
 
-// **Katalog tylko dla użytkownika i blokada jednej kopii** (S1): demon udostępniania w twa trzyma
-// w pierwszym gniazdo lokalne, a drugą sprawdza, czy już działa.
+// A directory for the user alone and a single-instance lock: the sharing daemon in twa keeps its
+// local socket in the first and checks with the second whether it is already running.
 namespace {
 
 namespace stood = std::filesystem;
 
+// A path for a lock file in the temporary directory, with nothing left there from an earlier run.
 stood::path spot(const std::string& name) {
     const stood::path made = fs::temp() / ("talcite-blokada-" + name);
 
@@ -42,6 +43,7 @@ stood::path spot(const std::string& name) {
 
 #ifndef _WIN32
 
+// Whether `where` is a real directory (not a symlink) owned by us and closed to group and others.
 bool private_folder(const stood::path& where) {
     struct stat told{};
 
@@ -49,8 +51,9 @@ bool private_folder(const stood::path& where) {
            (told.st_mode & 077) == 0;
 }
 
-// Zmienna środowiska na czas jednej próby i z powrotem.
+// An environment variable for the duration of one trial, and back.
 struct Varied {
+    // Sets `name` to `value` (or unsets it for `nullptr`), remembering the previous value.
     Varied(const char* name, const char* value) : name_(name) {
         if (const char* was = std::getenv(name)) was_ = std::string{was};
 
@@ -58,6 +61,7 @@ struct Varied {
         else ::unsetenv(name);
     }
 
+    // Restores the previous value, or unsets the variable if it had none.
     ~Varied() {
         if (was_) ::setenv(name_, was_->c_str(), 1);
         else ::unsetenv(name_);
@@ -75,7 +79,7 @@ private:
 
 }
 
-TRIAL("Katalog ulotny: istnieje i jest tylko nasz") {
+TRIAL("Runtime directory: exists and is ours alone") {
     const fs::path made = fs::runtime().await();
 
     ought(!made.empty());
@@ -88,9 +92,9 @@ TRIAL("Katalog ulotny: istnieje i jest tylko nasz") {
 
 #ifndef _WIN32
 
-// XDG_RUNTIME_DIR, który nie jest prywatny — otwarty dla wszystkich — nie jest brany; zostaje
-// własny katalog w katalogu tymczasowym, a jego zbyt luźne prawa zwężamy.
-TRIAL("Katalog ulotny: cudzy albo otwarty XDG_RUNTIME_DIR nie jest brany") {
+// An XDG_RUNTIME_DIR that is not private (open to everyone) is not taken; our own directory in the
+// temporary directory remains, and its too loose permissions are narrowed.
+TRIAL("Runtime directory: a foreign or open XDG_RUNTIME_DIR is not taken") {
     const stood::path open = fs::temp() / "talcite-ulotny-otwarty";
 
     std::error_code why;
@@ -109,16 +113,16 @@ TRIAL("Katalog ulotny: cudzy albo otwarty XDG_RUNTIME_DIR nie jest brany") {
     same(made, own);
     ought(private_folder(made));
 
-    // Prywatny XDG_RUNTIME_DIR wygrywa.
+    // A private XDG_RUNTIME_DIR wins.
     ::chmod(open.c_str(), 0700);
 
     same(fs::runtime().await(), open);
 }
 
-// Cudzy katalog — w XDG_RUNTIME_DIR albo założony przed nami w katalogu tymczasowym pod naszą
-// nazwą — nie jest brany: ten pierwszy ustępuje własnemu, ten drugi jest odmową. Oddać katalog
-// komuś innemu umie tylko administrator, więc bez tych praw próba się pomija.
-TRIAL("Katalog ulotny: cudzy katalog nie jest nasz") {
+// Someone else's directory (in XDG_RUNTIME_DIR, or created before us in the temporary directory
+// under our name) is not taken: the first gives way to our own, the second is a refusal. Only an
+// administrator can give a directory to someone else, so without those rights the trial skips.
+TRIAL("Runtime directory: someone else's directory is not ours") {
     const stood::path room = fs::temp() / "talcite-ulotny-cudzy";
 
     std::error_code why;
@@ -128,7 +132,7 @@ TRIAL("Katalog ulotny: cudzy katalog nie jest nasz") {
     ::chmod((room / "xdg").c_str(), 0700);
 
     if (::chown((room / "xdg").c_str(), 65534, 65534) != 0) {
-        std::cout << "        bez praw administratora nie da się oddać katalogu — próba pominięta\n";
+        std::cout << "        without administrator rights a directory cannot be given away, trial skipped\n";
 
         return;
     }
@@ -153,10 +157,10 @@ TRIAL("Katalog ulotny: cudzy katalog nie jest nasz") {
 
 #endif
 
-// Druga blokada tego samego pliku — także w tym samym programie, bo POSIX blokuje opis otwarcia,
-// a Windows plik bez dzielenia — dostaje pustkę: „już działa" to odpowiedź, nie odmowa. Po
-// zwolnieniu bierze ją następny.
-TRIAL("Blokada: jedna kopia, pustka dla drugiej, a po zwolnieniu następna") {
+// A second lock on the same file (also in the same program, because POSIX locks the open file
+// description and Windows the file without sharing) gets nothing: "already running" is an answer,
+// not a refusal. After release the next one takes it.
+TRIAL("Lock: one instance, nothing for the second, and after release the next one") {
     const stood::path where = spot("jedna");
 
     std::optional<Claim> first = Claim::taken(where).await();
@@ -177,9 +181,9 @@ TRIAL("Blokada: jedna kopia, pustka dla drugiej, a po zwolnieniu następna") {
     ought(third.has_value() && third->held());
 }
 
-// Kopia uchwytu trzyma tę samą blokadę: zwolnienie jednej kopii nie zwalnia pozostałych, dopiero
-// ostatnia, która zginie.
-TRIAL("Blokada: trzyma ją ostatnia kopia uchwytu") {
+// A copy of the handle holds the same lock: releasing one copy does not release the others; only
+// the last one to go does.
+TRIAL("Lock: the last copy of the handle holds it") {
     const stood::path where = spot("kopie");
 
     std::optional<Claim> one = Claim::taken(where).await();
@@ -199,16 +203,16 @@ TRIAL("Blokada: trzyma ją ostatnia kopia uchwytu") {
     ought(Claim::taken(where).await().has_value());
 }
 
-// Miejsce, w którym pliku założyć nie można, to odmowa — nie pustka, bo nikt tam nie działa.
-TRIAL("Blokada: brak katalogu to odmowa, nie „już działa”") {
+// A place where the file cannot be created is a refusal, not nothing, because nobody runs there.
+TRIAL("Lock: a missing directory is a refusal, not already running") {
     threw(Claim::taken(fs::temp() / "talcite-nie-ma-takiego-katalogu" / "blokada").await());
 }
 
 #ifndef _WIN32
 
-// Dowiązanie w miejscu pliku blokady nie jest przechodzone — cudze dowiązanie nie wskaże pliku,
-// który zablokujemy.
-TRIAL("Blokada: dowiązania nie przechodzi") {
+// A symlink in place of the lock file is not followed, so someone else's link cannot choose the
+// file we lock.
+TRIAL("Lock: does not follow a symlink") {
     const stood::path where = spot("dowiazanie");
     const stood::path aim = spot("dowiazanie-cel");
 
@@ -222,9 +226,10 @@ TRIAL("Blokada: dowiązania nie przechodzi") {
 
 #endif
 
-// Sekret tylko dla tego użytkownika: na Windows szyfruje go system i wraca ten sam, a zaszyfrowany
-// nie jest jawny; gdzie indziej bajty zostają, jakie są (chroni je plik tylko dla właściciela).
-TRIAL("Sekret: tam i z powrotem ten sam, a na Windows nie jawnie") {
+// A secret for this user alone: on Windows the system encrypts it and it comes back the same, and
+// encrypted it is not in the clear; elsewhere the bytes stay as they are (a file for the owner
+// alone protects them).
+TRIAL("Secret: the same there and back, and not in the clear on Windows") {
     const Bytes plain = bytes("słowo-sekret 48 bitów");
 
     const Bytes kept = shielded(plain);
@@ -246,10 +251,10 @@ TRIAL("Sekret: tam i z powrotem ten sam, a na Windows nie jawnie") {
     same(unshielded(shielded(Bytes{})), Bytes{});
 }
 
-// **Program przy logowaniu** (S1): demon wstaje po ponownym uruchomieniu, póki coś udostępnia.
-// Linux: plik `.desktop` w `$XDG_CONFIG_HOME/autostart` — tu podstawiony katalog; Windows: wartość
-// w kluczu `Run` użytkownika — pod Wine to jego własny rejestr.
-TRIAL("Logowanie: wpis staje, podmienia się i schodzi, a nazwa spoza kształtu to odmowa") {
+// A program at login: the daemon comes up after a restart as long as it shares something.
+// Linux: a .desktop file in $XDG_CONFIG_HOME/autostart (here a substituted directory); Windows: a
+// value in the user's Run key (under Wine, its own registry).
+TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a refusal") {
 #ifdef _WIN32
     const std::string name = "talcite-proba";
 
@@ -277,7 +282,8 @@ TRIAL("Logowanie: wpis staje, podmienia się i schodzi, a nazwa spoza kształtu 
 
     ought(told == L"C:\\windows\\notepad.exe \"a b\" c");
 
-    // Katalogu roboczego ani środowiska Windows tu nie da — odmowa, nie ciche pominięcie.
+    // Windows offers neither a working directory nor an environment here: a refusal, not a silent
+    // omission.
     Command elsewhere = what;
 
     elsewhere.where = L"C:\\windows";
@@ -326,7 +332,8 @@ TRIAL("Logowanie: wpis staje, podmienia się i schodzi, a nazwa spoza kształtu 
                                "Exec=env A=b \"/opt/twa dir/twad\" --a \"b c\" 100%% \"x\\\\$y\" \"back\\\\\\\\slash\"\n"
                                "Path=/tmp/w\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"});
 
-    // Drugi wpis pod tą samą nazwą podmienia pierwszy, bez śladu po pliku w toku.
+    // A second entry under the same name replaces the first, leaving no trace of the file in
+    // progress.
     Command plain;
 
     plain.program = "/usr/bin/twad";
@@ -337,7 +344,7 @@ TRIAL("Logowanie: wpis staje, podmienia się i schodzi, a nazwa spoza kształtu 
                                "Terminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"});
     ought(!stood::exists(stood::path{file}.concat(".part")));
 
-    // Końca wiersza w argumencie nie da się zapisać — odmowa, a stary wpis zostaje.
+    // A line end in an argument cannot be written: a refusal, and the old entry stays.
     Command broken = plain;
 
     broken.arguments = {"a\nb"};
@@ -351,7 +358,7 @@ TRIAL("Logowanie: wpis staje, podmienia się i schodzi, a nazwa spoza kształtu 
     ought(!login::enrolled(name).await());
     ought(!stood::exists(file));
 
-    // Bez XDG_CONFIG_HOME (albo ze ścieżką względną) — `~/.config`.
+    // Without XDG_CONFIG_HOME (or with a relative path): ~/.config.
     const Varied home{"HOME", root.c_str()};
     const Varied relative{"XDG_CONFIG_HOME", "wzgledna"};
 

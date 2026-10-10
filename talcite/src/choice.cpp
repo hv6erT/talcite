@@ -14,24 +14,26 @@ namespace talcite::ui {
 
 namespace {
 
-// Klamra ze znakiem i spacja za nią: `(•) `. Cztery kratki, tak jak w polu wyboru.
+// The bracket with the mark and a space after it: `(•) `. Four cells, as in a check box.
 constexpr int around = 4;
 
 }
 
 Choice::Choice() : OptionsNode("talcite.choice") {}
 
+// A group of radio options with the given one chosen.
 Choice::Choice(std::vector<std::string> options, std::size_t which) : Choice() {
     this->options().all(std::move(options));
 
     this->which(which);
 }
 
-// **Grupa bierze ognisko na siebie**, a nie poszczególne opcje: Tab wchodzi do niej raz i raz z niej
-// wychodzi, a strzałki chodzą w środku. Ten sam kształt ma lista i tak samo zachowuje się grupa
-// w Midnight Commanderze.
+// The group takes the focus as a whole, not the single options: Tab enters it once and leaves it
+// once, and the arrows move inside. A list has the same shape, and a group in Midnight Commander
+// behaves the same way. A group without options takes no focus.
 bool Choice::takes_focus() const { return !options().empty(); }
 
+// As wide as the widest option plus the bracket, one row per option, within the room.
 Size Choice::wants(Size room) const {
     int wide = 0;
 
@@ -41,10 +43,11 @@ Size Choice::wants(Size room) const {
             std::min(static_cast<int>(options().many()), room.high)};
 }
 
+// One row per option: the bracket with the mark on the chosen one, then the label cut to the width.
 View Choice::paint(Size given, Area seen) {
-    // **Ognisko oddajemy leniwie, przy rysowaniu**, a nie w chwili opróżnienia zbioru: `Options`
-    // nie ma wskazania na właściciela, więc nie ma jak go zawiadomić. Grupa bez opcji nie jest już
-    // ogniskowalna, a ognisko na węźle, który go nie przyjmuje, nie ma prawa zostać.
+    // We give up the focus lazily, while drawing, not when the set is emptied: `Options` has no
+    // pointer to its owner, so it has no way to notify it. A group without options is no longer
+    // focusable, and focus must not stay on a node that does not accept it.
     if (focused() && !focusable()) unfocus();
 
     View made{seen.size};
@@ -53,8 +56,8 @@ View Choice::paint(Size given, Area seen) {
 
     const Skin& how = skin();
 
-    // Znak wyboru bierze się ze **skórki**, a nie z kodu: terminal bez Unicode dostanie gwiazdkę,
-    // tak samo jak wielokropek przycinania bierze się z `talcite.elide`.
+    // The mark comes from the skin, not from the code: a terminal without Unicode gets an asterisk,
+    // just as the ellipsis of clipping comes from `talcite.elide`.
     const char32_t dot = how.glyph(role() + ".dot");
 
     const Style plain = how.style(enabled() ? role() : role() + ".disabled");
@@ -67,8 +70,8 @@ View Choice::paint(Size given, Area seen) {
 
         if (static_cast<int>(at) >= given.high) break;
 
-        // Podświetlona jest **wybrana opcja, i tylko gdy grupa ma ognisko** — inaczej okno bez
-        // ogniska w grupie wyglądałoby, jakby stało na niej.
+        // The chosen option is highlighted, and only when the group has the focus; otherwise a
+        // window whose focus is elsewhere would look as if it stood on the group.
         const bool here = at == this->which() && focused();
 
         const Style look = here ? focus : plain;
@@ -96,9 +99,10 @@ View Choice::paint(Size given, Area seen) {
     return made;
 }
 
-// **Ruch jest wyborem**: strzałka od razu przestawia zaznaczenie, tak jak w Midnight Commanderze,
-// a nie przesuwa jakiegoś osobnego kursora do zatwierdzenia spacją. Spacja i tak działa, bo bywa
-// odruchem. Enter, Tab i litery idą wyżej — Enter należy do przycisku podstawowego okna.
+// Moving is choosing: an arrow changes the choice at once, as in Midnight Commander, instead of
+// moving a separate cursor to confirm with space. Space works anyway, since it is sometimes a
+// reflex. Enter, Tab and letters go up; Enter belongs to the window's primary button. A change
+// announces a `PickEvent`.
 bool Choice::handle(KeyEvent& what) {
     if (!enabled() || options().empty()) return false;
 
@@ -138,6 +142,8 @@ bool Choice::handle(KeyEvent& what) {
     return true;
 }
 
+// A click takes the focus and chooses the option in the clicked row, announcing a `PickEvent` when
+// the choice changed.
 bool Choice::handle(ClickEvent& what) {
     if (!enabled() || options().empty()) return true;
 

@@ -12,14 +12,15 @@ using namespace talcite;
 
 namespace {
 
-// Linia do atrapy stoi w klasie bazowej **przed** `Capabilities`, bo ta dostaje konsolę już przy
-// budowie. Sama atrapa niczego nie udaje ponad rozmowę: badanie i podłoga idą przez prawdziwy
-// kod, więc rozbiór odpowiedzi sprawdza się bez żadnego terminala i na każdym systemie.
+// The line to the fake stands in a base class before `Capabilities`, because that one gets the
+// console already at construction. The fake pretends nothing beyond the conversation: the probe
+// and the floor go through the real code, so parsing the answers is checked without any terminal
+// and on every system.
 struct Wire {
     std::shared_ptr<faking::Terminal> line;
 };
 
-// Terminal nagrany.
+// A recorded terminal.
 class Taped : private Wire, public Capabilities {
 public:
     explicit Taped(std::string said, std::size_t piece = 0)
@@ -28,15 +29,19 @@ public:
     explicit Taped(std::shared_ptr<faking::Terminal> given)
         : Wire{std::move(given)}, Capabilities(Seam<Console>{line}) {}
 
+    // Everything the probe wrote to the terminal.
     [[nodiscard]] const std::string& asked() const { return line->written; }
 
+    // How many times the probe waited for the terminal's answer.
     [[nodiscard]] int rounds() const { return line->rounds; }
 
+    // The fake terminal itself, for its raw-mode counters.
     [[nodiscard]] const faking::Terminal& terminal() const { return *line; }
 };
 
-// Terminal nieodpowiadający — ani jednego bajtu, także na wartownika. Za konsolę odpowiada sam,
-// zamiast pytać tę prawdziwą: inaczej wynik zależałby od tego, z czego uruchomiono program.
+// A terminal that does not answer: not a single byte, not even to the sentinel. It answers for the
+// console itself instead of asking the real one; otherwise the result would depend on what the
+// program was started from.
 std::shared_ptr<faking::Terminal> mute(bool vt = false) {
     auto made = faking::terminal();
 
@@ -45,7 +50,7 @@ std::shared_ptr<faking::Terminal> mute(bool vt = false) {
     return made;
 }
 
-// Terminal, z którym nie ma jak rozmawiać — przekierowanie do potoku.
+// A terminal there is no way to talk to: output redirected to a pipe.
 std::shared_ptr<faking::Terminal> apart() {
     auto made = faking::terminal();
 
@@ -71,7 +76,7 @@ const std::string modern =
 
 }
 
-TRIAL("Capabilities: pytania kończą się wartownikiem") {
+TRIAL("Capabilities: the questions end with a sentinel") {
     const Taped one{modern};
 
     (void)one.colors();
@@ -82,7 +87,7 @@ TRIAL("Capabilities: pytania kończą się wartownikiem") {
     ought(asked.rfind("\x1b[c") == asked.size() - 3);
 }
 
-TRIAL("Capabilities: nowoczesny terminal oddaje wszystko") {
+TRIAL("Capabilities: a modern terminal reports everything") {
     const Taped one{modern};
 
     same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
@@ -95,7 +100,7 @@ TRIAL("Capabilities: nowoczesny terminal oddaje wszystko") {
     same(one.named(), std::string{"xterm"});
 }
 
-TRIAL("Capabilities: pomiary szerokości wracają po kolei") {
+TRIAL("Capabilities: the width measurements come back in order") {
     const Taped one{modern};
 
     same(one.wide(), 2);
@@ -103,13 +108,13 @@ TRIAL("Capabilities: pomiary szerokości wracają po kolei") {
     same(one.joined(), 2);
 }
 
-TRIAL("Capabilities: XTGETTCAP podnosi kolor do pełnego") {
+TRIAL("Capabilities: XTGETTCAP raises color to full") {
     const Taped one{modern};
 
     same(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
 }
 
-TRIAL("Capabilities: nieznany tryb zostaje nieznany") {
+TRIAL("Capabilities: an unknown mode stays unknown") {
     const Taped one{
         "\x1b[?1006;0$y"
         "\x1b[?2004;0$y"
@@ -121,7 +126,7 @@ TRIAL("Capabilities: nieznany tryb zostaje nieznany") {
     ought(!one.synchronized());
 }
 
-TRIAL("Capabilities: jasne tło rozpoznane") {
+TRIAL("Capabilities: a light background is recognized") {
     const Taped one{
         "\x1b]11;rgb:ffff/ffff/ffff\x1b\\"
         "\x1b[?62;1c"};
@@ -129,7 +134,7 @@ TRIAL("Capabilities: jasne tło rozpoznane") {
     same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
-TRIAL("Capabilities: wartownik kończy czekanie od razu") {
+TRIAL("Capabilities: the sentinel ends the wait at once") {
     const Taped one{"\x1b[?62;1c"};
 
     (void)one.colors();
@@ -137,7 +142,7 @@ TRIAL("Capabilities: wartownik kończy czekanie od razu") {
     same(one.rounds(), 1);
 }
 
-TRIAL("Capabilities: milczący terminal zostaje przy podłodze") {
+TRIAL("Capabilities: a silent terminal stays at the floor") {
     const Taped one{mute()};
 
     same(static_cast<int>(one.screen()), static_cast<int>(Screen::older));
@@ -146,7 +151,7 @@ TRIAL("Capabilities: milczący terminal zostaje przy podłodze") {
     same(one.wide(), 1);
 }
 
-TRIAL("Capabilities: bez terminala nie wysyłamy ani bajtu") {
+TRIAL("Capabilities: without a terminal not a single byte is sent") {
     const Taped one{apart()};
 
     (void)one.colors();
@@ -154,7 +159,7 @@ TRIAL("Capabilities: bez terminala nie wysyłamy ani bajtu") {
     ought(one.asked().empty());
 }
 
-TRIAL("Capabilities: pytamy raz, choćby pytań było wiele") {
+TRIAL("Capabilities: the probe runs once, however many questions there are") {
     const Taped one{modern};
 
     (void)one.colors();
@@ -165,7 +170,7 @@ TRIAL("Capabilities: pytamy raz, choćby pytań było wiele") {
     same(one.rounds(), 1);
 }
 
-TRIAL("Capabilities: cudze bajty nie giną") {
+TRIAL("Capabilities: other bytes are not lost") {
     const Taped one{
         "abc"
         "\x1b[?2004;2$y"
@@ -176,7 +181,7 @@ TRIAL("Capabilities: cudze bajty nie giną") {
     same(one.rest(), std::string{"abcq"});
 }
 
-TRIAL("Capabilities: odpowiedź poszatkowana składa się w całość") {
+TRIAL("Capabilities: a fragmented answer is put back together") {
     const Taped one{modern, 3};
 
     same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
@@ -184,7 +189,7 @@ TRIAL("Capabilities: odpowiedź poszatkowana składa się w całość") {
     same(one.wide(), 2);
 }
 
-TRIAL("Capabilities: krótki zapis koloru tła też działa") {
+TRIAL("Capabilities: the short form of the background color works too") {
     const Taped one{
         "\x1b]11;rgb:f/f/f\x1b\\"
         "\x1b[?62;1c"};
@@ -192,7 +197,7 @@ TRIAL("Capabilities: krótki zapis koloru tła też działa") {
     same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
-TRIAL("Capabilities: sam błękit to ciemne tło, choć składowa wysoka") {
+TRIAL("Capabilities: pure blue is a dark background, though its component is high") {
     const Taped one{
         "\x1b]11;rgb:0000/0000/ffff\x1b\\"
         "\x1b[?62;1c"};
@@ -200,7 +205,7 @@ TRIAL("Capabilities: sam błękit to ciemne tło, choć składowa wysoka") {
     same(static_cast<int>(one.shade()), static_cast<int>(Shade::dark));
 }
 
-TRIAL("Capabilities: kolor tła zakończony dzwonkiem też się liczy") {
+TRIAL("Capabilities: a background color ended with BEL counts too") {
     const Taped one{
         "\x1b]11;rgb:ffff/ffff/ffff\x07"
         "\x1b[?62;1c"};
@@ -208,9 +213,9 @@ TRIAL("Capabilities: kolor tła zakończony dzwonkiem też się liczy") {
     same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
-// Ogon, który w chwili końca badania jest niedokończony, może być równie dobrze początkiem
-// naciśniętego klawisza. Wyrzucenie go gubiłoby klawisz, więc idzie do cudzych bajtów.
-TRIAL("Capabilities: niedokończony ogon nie ginie") {
+// A tail that is unfinished when the probe ends may just as well be the start of a pressed key.
+// Throwing it away would lose the key, so it goes to the other bytes.
+TRIAL("Capabilities: an unfinished tail is not lost") {
     const Taped one{
         "\x1b[?2004;2$y"
         "\x1b[?62;1c"
@@ -220,7 +225,7 @@ TRIAL("Capabilities: niedokończony ogon nie ginie") {
     same(one.rest(), std::string{"\x1b[A"});
 }
 
-TRIAL("Capabilities: tmux i screen rozpoznają się po rodzinie") {
+TRIAL("Capabilities: tmux and screen are recognized by their family") {
     const Taped one{"\x1b[>84;0;0c\x1b[?62;1c"};
     const Taped two{"\x1b[>83;40500;0c\x1b[?62;1c"};
 
@@ -228,7 +233,7 @@ TRIAL("Capabilities: tmux i screen rozpoznają się po rodzinie") {
     same(two.named(), std::string{"screen"});
 }
 
-TRIAL("Capabilities: klawisze wciśnięte w trakcie startu nie giną") {
+TRIAL("Capabilities: keys pressed during startup are not lost") {
     const Taped one{
         "\x1b[?2004;2$y"
         "\x1b[A"
@@ -239,7 +244,7 @@ TRIAL("Capabilities: klawisze wciśnięte w trakcie startu nie giną") {
     same(one.rest(), std::string{"\x1b[A" "q"});
 }
 
-TRIAL("Capabilities: nieznana odpowiedź OSC też wraca w całości") {
+TRIAL("Capabilities: an unknown OSC answer also comes back whole") {
     const Taped one{
         "\x1b]10;rgb:1111/1111/1111\x1b\\"
         "\x1b[?62;1c"};
@@ -247,10 +252,10 @@ TRIAL("Capabilities: nieznana odpowiedź OSC też wraca w całości") {
     same(one.rest(), std::string{"\x1b]10;rgb:1111/1111/1111\x1b\\"});
 }
 
-// Podłoga czyta środowisko **z konsoli**, więc próba ustawia je atrapie, zamiast przestawiać
-// zmienne całego procesu. Dawniej robiła to przez setenv — i przy okazji zależała od tego, co
-// w środowisku zostawił uruchamiający.
-TRIAL("Capabilities: NO_COLOR gasi kolor mimo odpowiedzi terminala") {
+// The floor reads the environment from the console, so the trial sets it on the fake instead of
+// changing the variables of the whole process, and so does not depend on what the caller left in
+// the environment.
+TRIAL("Capabilities: NO_COLOR turns color off despite the terminal's answer") {
     auto line = faking::terminal(modern);
 
     line->environment["NO_COLOR"] = "1";
@@ -261,7 +266,7 @@ TRIAL("Capabilities: NO_COLOR gasi kolor mimo odpowiedzi terminala") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::mono));
 }
 
-TRIAL("Capabilities: COLORTERM podnosi do pełnej palety") {
+TRIAL("Capabilities: COLORTERM raises to the full palette") {
     auto line = mute();
 
     line->environment["COLORTERM"] = "truecolor";
@@ -272,7 +277,7 @@ TRIAL("Capabilities: COLORTERM podnosi do pełnej palety") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
-TRIAL("Capabilities: TERM z 256 daje paletę indeksowaną") {
+TRIAL("Capabilities: TERM with 256 gives the indexed palette") {
     auto line = mute();
 
     line->environment["TERM"] = "xterm-256color";
@@ -282,7 +287,7 @@ TRIAL("Capabilities: TERM z 256 daje paletę indeksowaną") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
 }
 
-TRIAL("Capabilities: TERM dumb znaczy nic") {
+TRIAL("Capabilities: TERM dumb means nothing") {
     auto line = mute();
 
     line->environment["TERM"] = "dumb";
@@ -295,11 +300,11 @@ TRIAL("Capabilities: TERM dumb znaczy nic") {
     ought(!told.titles());
 }
 
-// Na tej drodze **decyduje konsola, nie TERM** — i tylko tutaj, bo wszystkie wcześniejsze gałęzie
-// (NO_COLOR, COLORTERM, 256, dumb) kończą się przed pytaniem konsoli. Odpowiedź konsoli podstawia
-// atrapa, więc obie strony tej decyzji sprawdzają się na każdym systemie, a wynik nie zależy od
-// tego, z czego uruchomiono program.
-TRIAL("Capabilities: zwykły TERM przy konsoli bez sekwencji daje szesnaście kolorów") {
+// On this path the console decides, not TERM, and only here, because all the earlier branches
+// (NO_COLOR, COLORTERM, 256, dumb) end before the console is asked. The fake supplies the console's
+// answer, so both sides of this decision are checked on every system, and the result does not
+// depend on what the program was started from.
+TRIAL("Capabilities: a plain TERM with a console without sequences gives sixteen colors") {
     auto line = mute(false);
 
     line->environment["TERM"] = "vt220";
@@ -309,7 +314,7 @@ TRIAL("Capabilities: zwykły TERM przy konsoli bez sekwencji daje szesnaście ko
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::ansi));
 }
 
-TRIAL("Capabilities: zwykły TERM przy konsoli z sekwencjami daje pełną paletę") {
+TRIAL("Capabilities: a plain TERM with a console with sequences gives the full palette") {
     auto line = mute(true);
 
     line->environment["TERM"] = "vt220";
@@ -319,7 +324,7 @@ TRIAL("Capabilities: zwykły TERM przy konsoli z sekwencjami daje pełną palet�
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
-TRIAL("Capabilities: COLORTERM 24bit też podnosi do pełnej palety") {
+TRIAL("Capabilities: COLORTERM 24bit also raises to the full palette") {
     auto line = mute();
 
     line->environment["COLORTERM"] = "24bit";
@@ -329,9 +334,9 @@ TRIAL("Capabilities: COLORTERM 24bit też podnosi do pełnej palety") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
-// Windows Terminal nie ustawia ani COLORTERM, ani TERM, ale ma pełną paletę i mówi o sobie własną
-// zmienną.
-TRIAL("Capabilities: WT_SESSION daje pełną paletę bez TERM") {
+// Windows Terminal sets neither COLORTERM nor TERM, but it has the full palette and announces
+// itself with its own variable.
+TRIAL("Capabilities: WT_SESSION gives the full palette without TERM") {
     auto line = mute();
 
     line->environment.erase("TERM");
@@ -342,8 +347,8 @@ TRIAL("Capabilities: WT_SESSION daje pełną paletę bez TERM") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
-// Umowa NO_COLOR mówi „obecna i niepusta". Pusta zmienna niczego nie gasi.
-TRIAL("Capabilities: pusty NO_COLOR nie gasi koloru") {
+// The NO_COLOR convention says "present and not empty". An empty variable turns nothing off.
+TRIAL("Capabilities: an empty NO_COLOR does not turn color off") {
     auto line = mute();
 
     line->environment["NO_COLOR"] = "";
@@ -353,7 +358,7 @@ TRIAL("Capabilities: pusty NO_COLOR nie gasi koloru") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
 }
 
-TRIAL("Capabilities: KITTY_WINDOW_ID zgaduje obrazy kitty bez sondy") {
+TRIAL("Capabilities: KITTY_WINDOW_ID guesses kitty images without a probe") {
     auto line = apart();
 
     line->environment["KITTY_WINDOW_ID"] = "1";
@@ -363,7 +368,7 @@ TRIAL("Capabilities: KITTY_WINDOW_ID zgaduje obrazy kitty bez sondy") {
     same(static_cast<int>(told.graphics()), static_cast<int>(Graphics::kitty));
 }
 
-TRIAL("Capabilities: nazwę bierzemy z TERM_PROGRAM, a bez niej z TERM") {
+TRIAL("Capabilities: the name comes from TERM_PROGRAM, and without it from TERM") {
     auto one = apart();
     auto two = apart();
 
@@ -376,8 +381,8 @@ TRIAL("Capabilities: nazwę bierzemy z TERM_PROGRAM, a bez niej z TERM") {
     same(second.named(), std::string{"xterm-256color"});
 }
 
-// Na Windows podłoga zakłada unicode zawsze, więc zmienne rozstrzygają tylko na POSIX-ie.
-TRIAL("Capabilities: unicode rozstrzyga LANG, LC_ALL albo LC_CTYPE") {
+// On Windows the floor always assumes unicode, so the variables decide only on POSIX.
+TRIAL("Capabilities: LANG, LC_ALL or LC_CTYPE decide unicode") {
     auto plain = apart();
     auto fine = apart();
 
@@ -401,7 +406,7 @@ TRIAL("Capabilities: unicode rozstrzyga LANG, LC_ALL albo LC_CTYPE") {
     ought(two.unicode());
 }
 
-TRIAL("Capabilities: sonda chodzi w trybie surowym i zdejmuje go po sobie") {
+TRIAL("Capabilities: the probe runs in raw mode and leaves it afterwards") {
     const Taped one{modern};
 
     (void)one.colors();
@@ -410,7 +415,7 @@ TRIAL("Capabilities: sonda chodzi w trybie surowym i zdejmuje go po sobie") {
     same(one.terminal().depth, 0);
 }
 
-TRIAL("Capabilities: bez terminala nie ma trybu surowego") {
+TRIAL("Capabilities: without a terminal there is no raw mode") {
     const Taped one{apart()};
 
     (void)one.colors();
@@ -418,14 +423,15 @@ TRIAL("Capabilities: bez terminala nie ma trybu surowego") {
     same(one.terminal().entered, 0);
 }
 
-// --- Obrazy -------------------------------------------------------------------------------------
+// --- Images -------------------------------------------------------------------------------------
 //
-// Sixela nie musimy o nic pytać: pierwotne DA wysyłamy jako wartownika sondy, a czwórka na jego
-// liście znaczy „umiem sixel". Kitty odpowiada w APC. Rozmiar kratki w pikselach przychodzi z `16t`.
+// Sixel needs no question of its own: the primary DA is sent as the probe's sentinel, and a 4 in
+// its list means "I can do sixel". Kitty answers in an APC. The cell size in pixels comes from 16t.
 
 namespace {
 
-// Pięć pomiarów szerokości po kolei: szeroki znak, znacznik, złączenie, sekstant, oktant.
+// A recorded answer with five width measurements in order (wide character, combining mark,
+// joiner, sextant, octant), each digit in `wides` being a width, then `more` and the DA `da`.
 std::string taped(const char* wides, const char* da, const char* more = "") {
     std::string made;
 
@@ -448,21 +454,22 @@ const char* const drawing = "\x1b[?62;1;2;4;6;22c";
 
 }
 
-TRIAL("Capabilities: sixel poznaje się z pierwotnego DA") {
+TRIAL("Capabilities: sixel is recognized from the primary DA") {
     const Taped one{taped("21211", drawing)};
 
     same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::sixel));
 }
 
-TRIAL("Capabilities: bez czwórki w DA nie ma sixela") {
+TRIAL("Capabilities: without a 4 in DA there is no sixel") {
     const Taped one{taped("21211", plain)};
 
     same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::none));
 }
 
-// tmux od 3.4 odpowiada czwórką, ale obraz gubi i rysuje w cudzych panelach — piksele w nim to
-// jawne życzenie aplikacji, nie wniosek z sondy. Ten sam terminal bez tmuxa sixel ma.
-TRIAL("Capabilities: w tmuxie i w screenie czwórka z DA nie daje sixela") {
+// tmux from 3.4 on answers with a 4, but it loses images and draws them into other panes, so
+// pixels in it are an explicit wish of the application, not a conclusion from the probe. The same
+// terminal without tmux does have sixel.
+TRIAL("Capabilities: in tmux and in screen a 4 in DA gives no sixel") {
     for (const auto& [name, value] : std::vector<std::pair<std::string, std::string>>{
              {"TMUX", "/tmp/tmux-1000/default,1234,0"}, {"STY", "1234.pts-0.host"}}) {
         auto line = faking::terminal(taped("21211", drawing));
@@ -481,76 +488,77 @@ TRIAL("Capabilities: w tmuxie i w screenie czwórka z DA nie daje sixela") {
     same(static_cast<int>(Taped{line}.graphics()), static_cast<int>(Graphics::none));
 }
 
-// Kitty jest lepsze od sixela — pełna barwa zamiast palety — więc gdy terminal umie oba, wygrywa.
-TRIAL("Capabilities: kitty wygrywa z sixelem") {
+// Kitty is better than sixel (full color instead of a palette), so when a terminal can do both,
+// it wins.
+TRIAL("Capabilities: kitty wins over sixel") {
     const Taped one{taped("21211", drawing, "\x1b_Gi=31;OK\x1b\\")};
 
     same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
 }
 
-TRIAL("Capabilities: odpowiedź kitty nie wraca jako naciśnięte klawisze") {
+TRIAL("Capabilities: the kitty answer does not come back as pressed keys") {
     const Taped one{taped("21211", plain, "\x1b_Gi=31;OK\x1b\\")};
 
     same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
     same(one.rest(), std::string{});
 }
 
-TRIAL("Capabilities: rozmiar kratki przychodzi z 16t") {
+TRIAL("Capabilities: the cell size comes from 16t") {
     const Taped one{taped("21211", plain, "\x1b[6;20;10t")};
 
     same(one.cell().wide, 10);
     same(one.cell().high, 20);
 }
 
-// Zero znaczy „nie wiadomo", a nie „zero pikseli" — i wołający ma prawo to odróżnić, bo od tego
-// zależy, czy zgadywać proporcję kratki.
-TRIAL("Capabilities: nieznany rozmiar kratki to zero") {
+// Zero means "unknown", not "zero pixels", and the caller is entitled to tell them apart, because
+// whether to guess the cell's aspect ratio depends on it.
+TRIAL("Capabilities: an unknown cell size is zero") {
     const Taped one{taped("21211", plain)};
 
     same(one.cell().wide, 0);
     same(one.cell().high, 0);
 }
 
-TRIAL("Capabilities: cudzy raport okna nie jest rozmiarem kratki") {
+TRIAL("Capabilities: another window report is not the cell size") {
     const Taped one{taped("21211", plain, "\x1b[8;24;80t")};
 
     same(one.cell().wide, 0);
 }
 
-// --- Znaki blokowe ------------------------------------------------------------------------------
+// --- Block characters ---------------------------------------------------------------------------
 //
-// Pomiar odpowiada wyłącznie na pytanie „czy ten znak zajmuje jedną kratkę". Czy font go ma, nie
-// da się zmierzyć — brakujący glif rysuje się jako pusty prostokąt i zajmuje tyle samo miejsca.
-// Dlatego `blocks()` oddaje **sufit**, a nie wybór: mówi, czego terminal jeszcze nie rozsypie.
-// Wyboru dokonuje `Term`, biorąc mniejszą z dwóch — życzenia i sufitu.
+// The measurement answers only the question "does this character take one cell". Whether the font
+// has it cannot be measured: a missing glyph is drawn as an empty rectangle and takes the same
+// room. That is why `blocks()` gives a ceiling, not a choice: it says what the terminal will not
+// scatter yet. `Term` makes the choice, taking the smaller of the wish and the ceiling.
 
-TRIAL("Blocks: oba znaki równe kratce podnoszą sufit do oktantów") {
+TRIAL("Blocks: both characters one cell wide raise the ceiling to octants") {
     const Taped one{taped("21211", plain)};
 
     same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
 }
 
-TRIAL("Blocks: rozjechany sekstant zbija sufit do znaków blokowych") {
+TRIAL("Blocks: a misaligned sextant lowers the ceiling to block characters") {
     const Taped one{taped("21221", plain)};
 
     same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::basic));
 }
 
-TRIAL("Blocks: rozjechany oktant zbija sufit do sekstantów") {
+TRIAL("Blocks: a misaligned octant lowers the ceiling to sextants") {
     const Taped one{taped("21212", plain)};
 
     same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::sextants));
 }
 
-// Milczący terminal niczego nie obalił, więc sufit zostaje wysoko. Brak pomiaru to nie to samo,
-// co pomiar mówiący „nie".
-TRIAL("Blocks: bez pomiaru sufit zostaje najwyższy") {
+// A silent terminal has disproved nothing, so the ceiling stays high. No measurement is not the
+// same as a measurement saying "no".
+TRIAL("Blocks: without a measurement the ceiling stays highest") {
     const Taped one{mute()};
 
     same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
 }
 
-TRIAL("Capabilities: sonda pyta o kratkę i o kitty, a wartownik dalej jest ostatni") {
+TRIAL("Capabilities: the probe asks for the cell and for kitty, and the sentinel is still last") {
     const Taped one{taped("21211", plain)};
 
     (void)one.graphics();
@@ -563,9 +571,9 @@ TRIAL("Capabilities: sonda pyta o kratkę i o kitty, a wartownik dalej jest osta
 }
 
 
-// W tmuxie zmienne zewnętrznego terminala nie zgadują niczego: sesja założona w kitty niesie
-// `KITTY_WINDOW_ID` do każdego okna, a tmux obrazów kitty nie przepuszcza. Zostaje `TERM`.
-TRIAL("Capabilities: w tmuxie zmienne zewnętrznego terminala nie zgadują") {
+// In tmux the outer terminal's variables guess nothing: a session started in kitty carries
+// KITTY_WINDOW_ID into every window, and tmux does not pass kitty images through. TERM remains.
+TRIAL("Capabilities: in tmux the outer terminal's variables guess nothing") {
     auto line = apart();
 
     line->environment["TMUX"] = "/tmp/tmux-1000/default,1234,0";
@@ -580,7 +588,7 @@ TRIAL("Capabilities: w tmuxie zmienne zewnętrznego terminala nie zgadują") {
     same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
     same(told.named(), std::string{"tmux-256color"});
 
-    // screen i tmux rozpoznane innymi drogami: zmienną screena, samym TERM.
+    // screen and tmux recognized in other ways: by screen's variable, by TERM alone.
     for (const auto& [name, value] : std::vector<std::pair<std::string, std::string>>{
              {"TMUX", "/tmp/tmux-1000/default,1234,0"},
              {"STY", "1234.pts-0.host"},
@@ -598,7 +606,7 @@ TRIAL("Capabilities: w tmuxie zmienne zewnętrznego terminala nie zgadują") {
         ought(muxed.named() != "WezTerm");
     }
 
-    // Ten sam zestaw bez tmuxa — zmienne znów mówią.
+    // The same set without tmux: the variables speak again.
     auto plain = apart();
 
     plain->environment["KITTY_WINDOW_ID"] = "1";
@@ -610,8 +618,8 @@ TRIAL("Capabilities: w tmuxie zmienne zewnętrznego terminala nie zgadują") {
     same(bare.named(), std::string{"WezTerm"});
 }
 
-// Przez SSH sonda czeka dłużej, bo odpowiedź wraca po pełnym obiegu sieci.
-TRIAL("Capabilities: przez SSH sonda czeka dłużej") {
+// Over SSH the probe waits longer, because the answer comes back after a full network round trip.
+TRIAL("Capabilities: over SSH the probe waits longer") {
     auto near = mute();
     auto far = mute();
 

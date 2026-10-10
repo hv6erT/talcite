@@ -25,8 +25,10 @@ namespace proving {
 
 namespace {
 
+// The path this test program was started with, for trials that start it again.
 std::string called;
 
+// The file name without its directories.
 [[nodiscard]] std::string_view bared(std::string_view file) {
     const std::size_t at = file.find_last_of("/\\");
 
@@ -35,14 +37,17 @@ std::string called;
 
 }
 
+// Every trial registered by `TRIAL`, in the order the files were linked and the trials written.
 std::vector<Trial>& gathered() {
     static std::vector<Trial> held;
 
     return held;
 }
 
+// The path this test program was started with.
 const std::string& mine() { return called; }
 
+// Ends the running trial as failed, with the place and the reason.
 void fell(std::string_view file, int line, const std::string& said) {
     throw Failed{std::string{bared(file)} + ":" + std::to_string(line) + "  " + said};
 }
@@ -53,12 +58,14 @@ namespace {
 
 using proving::Trial;
 
+// The file name without its directories.
 [[nodiscard]] std::string_view bared(std::string_view file) {
     const std::size_t at = file.find_last_of("/\\");
 
     return at == std::string_view::npos ? file : file.substr(at + 1);
 }
 
+// Writes the text to the stream as it is and flushes it at once.
 void said(std::FILE* into, const std::string& what) {
     if (!what.empty()) std::fwrite(what.data(), 1, what.size(), into);
 
@@ -67,6 +74,7 @@ void said(std::FILE* into, const std::string& what) {
 
 #ifdef _WIN32
 
+// UTF-16 from Windows as UTF-8.
 std::string narrowly(const std::wstring& what) {
     if (what.empty()) return {};
 
@@ -81,6 +89,7 @@ std::string narrowly(const std::wstring& what) {
     return made;
 }
 
+// UTF-8 as UTF-16 for Windows.
 std::wstring widely(const std::string& what) {
     if (what.empty()) return {};
 
@@ -96,10 +105,11 @@ std::wstring widely(const std::string& what) {
 
 #endif
 
-// Argumenty w UTF-8 z talcite: na Windows `main` dostaje je przepisane na stronę kodową ANSI,
-// a próby porównują bajty. Droga szeroka mieszka w `talcite::arguments`, tu tylko z niej bierzemy.
+// The arguments in UTF-8, from talcite: on Windows `main` gets them converted to the ANSI code
+// page, while the trials compare bytes. The wide-character path lives in `talcite::arguments`.
 std::vector<std::string> worded(int count, char** given) { return talcite::arguments(count, given); }
 
+// The value of an environment variable in UTF-8, or "<none>" when it is not set.
 std::string around(const std::string& name) {
 #ifdef _WIN32
 
@@ -108,7 +118,7 @@ std::string around(const std::string& name) {
     const DWORD much =
         GetEnvironmentVariableW(widely(name).c_str(), room.data(), static_cast<DWORD>(room.size()));
 
-    if (much == 0) return "<brak>";
+    if (much == 0) return "<none>";
 
     room.resize(much);
 
@@ -118,11 +128,12 @@ std::string around(const std::string& name) {
 
     const char* told = std::getenv(name.c_str());
 
-    return told == nullptr ? std::string{"<brak>"} : std::string{told};
+    return told == nullptr ? std::string{"<none>"} : std::string{told};
 
 #endif
 }
 
+// The current directory in UTF-8.
 std::string here() {
 #ifdef _WIN32
 
@@ -135,16 +146,28 @@ std::string here() {
 #endif
 }
 
-// **Program pomocniczy siedzi w testach, nie w bibliotece** — ta sama reguła, co przy serwerach.
-// Binarka testowa umie udawać cudzy program i uruchamia samą siebie, więc sprawdzenie uruchamiania
-// nie zależy od tego, czy na maszynie stoi akurat powłoka, `echo` czy `cmd`.
+// The path the test program was started with, made absolute when it is relative, so that a trial
+// that starts the program again in another working directory still finds it. A bare name was found
+// through PATH and stays as it is.
+std::string started(const std::string& said) {
+    const bool bare = said.find_first_of("/\\") == std::string::npos;
+    const bool rooted = said.starts_with('/') || said.starts_with('\\') ||
+                        (said.size() > 2 && said[1] == ':' && (said[2] == '/' || said[2] == '\\'));
+
+    return bare || rooted ? said : here() + "/" + said;
+}
+
+// The helper program lives in the tests, not in the library: the test binary can pretend to be
+// another program and starts itself, so the trials of starting programs do not depend on whether
+// the machine happens to have a shell, `echo` or cmd. Returns the exit code of the pretended
+// program.
 //
-// Wołane **przed** czymkolwiek innym w `main`, żeby udawanie nie ciągnęło za sobą zbierania prób.
+// Called before anything else in `main`, so that pretending does not pull in the trials.
 int pretending(const std::vector<std::string>& given) {
 #ifdef _WIN32
 
-    // Bez tego Windows zamieniłby każdy `\n` na `\r\n` i porównanie bajtów przestałoby cokolwiek
-    // znaczyć.
+    // Without this, Windows would turn every `\n` into `\r\n`, and comparing bytes would mean
+    // nothing.
     _setmode(_fileno(stdout), _O_BINARY);
     _setmode(_fileno(stderr), _O_BINARY);
     _setmode(_fileno(stdin), _O_BINARY);
@@ -167,8 +190,8 @@ int pretending(const std::vector<std::string>& given) {
     }
 
     if (what == "both") {
-        said(stdout, "wyjście");
-        said(stderr, "błąd");
+        said(stdout, "output");
+        said(stderr, "error");
 
         return 0;
     }
@@ -190,8 +213,8 @@ int pretending(const std::vector<std::string>& given) {
     }
 
     if (what == "much") {
-        // Więcej, niż mieści rura. Czytający, który zapomniałby czytać obu stron naraz, stanie
-        // tutaj i nigdy się nie doczeka.
+        // More than a pipe holds. A reader that forgot to read both sides at once would get stuck
+        // here and wait forever.
         const std::string one(1000, 'x');
 
         for (int at = 0; at < 300; ++at) {
@@ -210,10 +233,10 @@ int pretending(const std::vector<std::string>& given) {
         return 0;
     }
 
-    // Rodzic z wnukiem: uruchamia samą siebie na `sleeping` **bez** talcite — zwykłym `fork`/`exec`
-    // albo `CreateProcessW`, bez własnej grupy i bez zadania — wypisuje numer wnuka i śpi tyle samo.
-    // Tak wygląda powłoka albo plik wsadowy, który uruchomił właściwy program: zabicie samego
-    // rodzica zostawiłoby wnuka przy życiu.
+    // A parent with a grandchild: it starts itself as `sleeping` without talcite, by a plain
+    // fork/exec or CreateProcessW, with no group of its own and no job, prints the grandchild's
+    // number and sleeps as long. That is what a shell or a batch file that started the real program
+    // looks like: killing the parent alone would leave the grandchild alive.
     if (what == "parent") {
 #ifdef _WIN32
         std::wstring line = L"\"" + widely(proving::mine()) + L"\" --pretending sleeping " + widely(rest);
@@ -248,9 +271,9 @@ int pretending(const std::vector<std::string>& given) {
         return 0;
     }
 
-    // Program puszczony wolno (`Child::detached`) nie ma rur — mówi przez plik: swój numer, a na
-    // POSIX-ie jeszcze sesję i rodzica. Plik powstaje pod inną nazwą i przechodzi na swoją
-    // w całości, żeby czytający nie zobaczył połowy. Potem śpi tyle, ile podano.
+    // A program let go (`Child::detached`) has no pipes, so it speaks through a file: its number,
+    // and on POSIX also its session and parent. The file is written under another name and renamed
+    // in one piece, so that the reader never sees half of it. Then it sleeps as long as given.
     if (what == "noted") {
 #ifdef _WIN32
         const std::string made = std::to_string(GetCurrentProcessId());
@@ -286,7 +309,7 @@ int pretending(const std::vector<std::string>& given) {
     }
 
     if (what == "around") {
-        said(stdout, rest.empty() ? std::string{"<brak>"} : around(rest));
+        said(stdout, rest.empty() ? std::string{"<none>"} : around(rest));
 
         return 0;
     }
@@ -304,13 +327,15 @@ int pretending(const std::vector<std::string>& given) {
         return 0;
     }
 
-    std::fprintf(stderr, "Nieznane udawanie: %s\n", what.c_str());
+    std::fprintf(stderr, "Unknown pretending: %s\n", what.c_str());
 
     return 2;
 }
 
 }
 
+// Runs the trials (all, one file with `--file`, one trial with `--only`), lists them with `--list`,
+// or pretends to be another program with `--pretending`. Exits with 0 only when every trial passed.
 int main(int count, char** given) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
@@ -318,7 +343,7 @@ int main(int count, char** given) {
 
     const std::vector<std::string> words = worded(count, given);
 
-    if (!words.empty()) proving::called = words[0];
+    if (!words.empty()) proving::called = started(words[0]);
 
     if (words.size() > 1 && words[1] == "--pretending")
         return pretending(std::vector<std::string>{words.begin() + 2, words.end()});
@@ -336,7 +361,7 @@ int main(int count, char** given) {
         else if (one == "--file" && at + 1 < many) chosen = words[static_cast<std::size_t>(++at)];
         else if (one == "--only" && at + 1 < many) only = words[static_cast<std::size_t>(++at)];
         else {
-            std::cerr << "Użycie: talcite-test [--list] [--file <plik>] [--only <nazwa>]\n";
+            std::cerr << "Usage: talcite-test [--list] [--file <file>] [--only <name>]\n";
             return 2;
         }
     }
@@ -363,13 +388,13 @@ int main(int count, char** given) {
             ++passed;
             std::cout << "  ok    " << one.named << "\n";
         } catch (const proving::Failed& why) {
-            std::cout << "  ŹLE   " << one.named << "\n        " << why.what() << "\n";
+            std::cout << "  FAIL  " << one.named << "\n        " << why.what() << "\n";
         } catch (const std::exception& why) {
-            std::cout << "  ŹLE   " << one.named << "\n        rzuciło: " << why.what() << "\n";
+            std::cout << "  FAIL  " << one.named << "\n        threw: " << why.what() << "\n";
         }
     }
 
-    std::cout << "\nPrzeszło " << passed << " z " << ran << ".\n";
+    std::cout << "\nPassed " << passed << " of " << ran << ".\n";
 
     return passed == ran ? 0 : 1;
 }

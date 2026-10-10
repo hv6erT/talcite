@@ -12,11 +12,12 @@ namespace talcite::ui {
 
 namespace {
 
-// Czy to jest bieżący wiersz swojej listy. Pytamy listę, bo to ona prowadzi numer — pozycja nie
-// trzyma drugiego znacznika obok ogniska i obok tego numeru.
+// Whether this is the current row of its list. We ask the list, because the list keeps the number;
+// the item holds no second flag beside the focus and that number.
 //
-// **Nie jest to metoda publiczna i nie ma być.** Kto pyta o bieżący wiersz, pyta listy: `current()`.
-// Pozycji do tego nie potrzeba, a druga droga do jednej prawdy to zawsze druga droga do rozjazdu.
+// This is not a public method and is not meant to be. Whoever asks about the current row asks the
+// list: `current()`. The item is not needed for that, and a second path to one truth is always a
+// second path to disagreement.
 bool current(const ListItem& one) {
     const List* up = dynamic_cast<const List*>(one.parent());
 
@@ -27,40 +28,41 @@ bool current(const ListItem& one) {
 
 }
 
+// A list row with the given text, in the role "talcite.list".
 ListItem::ListItem(std::string text) : text_(std::move(text)) { role("talcite.list"); }
 
-// Pozycja nie ma czego trzymać w środku — tak samo jak napis i jak pozycja menu.
+// An item has nothing to hold inside, just like a label and a menu item.
 int ListItem::capacity() const { return 0; }
 
-// Bez odstępów po bokach, inaczej niż w pozycji menu: w liście plików nazwa zaczyna się od pierwszej
-// kratki i nie ma jej od czego odsuwać. Szerokość to sam napis — rozciąga ją lista, dając wierszowi
-// cały swój prostokąt.
+// No padding at the sides, unlike a menu item: in a file list the name starts at the first cell
+// and there is nothing to set it apart from. The width is the text alone; the list stretches it by
+// giving the row its whole rectangle.
 Size ListItem::wants(Size room) const {
     return {std::min(measured(text_).wide, room.wide), std::min(1, room.high)};
 }
 
-// Sam wybór to wywołanie tego, co powierzył budujący. O tym, że pozycja leży w czymś, co się
-// przewija, nie wie i wiedzieć nie musi.
-// Zdarzenie **bąbelkuje przez listę**, więc aplikacja może słuchać na niej jednym uchwytem
-// zamiast wieszać wywołanie zwrotne na każdym wierszu z osobna. `Event::at()` mówi który.
+// Picks the item by firing a `PickEvent`, unless it is disabled. The item does not know, and need
+// not know, that it lies in something that scrolls. The event bubbles through the list, so the
+// application can listen on the list with one handler instead of hanging a callback on each row;
+// `Event::target()` says which row it was.
 void ListItem::pick() {
     if (!enabled()) return;
 
     (void)trigger(PickEvent{});
 }
 
-// **Bieżąca pozycja to ta z ogniskiem.** Nie ma osobnego znacznika „podświetlona", bo dwa źródła
-// tej samej prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola
-// „otwarte", tylko pyta o ognisko. Dzięki temu skórka będzie miała rolę „pozycja z ogniskiem",
-// a nie „pozycja z jakimś znacznikiem, który akurat znaczy to samo".
+// Paints the row. The current item is the one with the focus. There is no separate "highlighted"
+// flag, because two sources of the same truth drift apart sooner or later; for exactly this reason
+// a menu has no "open" field and asks about the focus instead. The skin thus has a role for "item
+// with the focus", not for "item with some flag that happens to mean the same".
 //
-// **Bieżący wiersz bez ogniska ma własną rolę.** Panel Midnight Commandera nie pokazuje kursora,
-// gdy jest nieaktywny, ale listbox w oknie dialogowym pokazuje go innym kolorem — i to jest
-// `talcite.list.mark`. Wbudowana skórka zostawia tę rolę pustą, więc dziś nie widać nic, dokładnie jak
-// dotąd; wypełni ją pierwsza skórka z barwami i **z kodu nie ubędzie ani nie przybędzie nic**.
+// The current row without the focus has its own role. The Midnight Commander panel shows no cursor
+// when inactive, but a listbox in a dialog shows it in another color, and that is
+// `talcite.list.mark`. The built-in skin leaves this role empty, so nothing shows; a skin with
+// colors can fill it without any change to the code.
 //
-// Napis dłuższy niż wiersz przycinamy wielokropkiem z prawej, jak w przycisku. Pole się przewija,
-// bo w nim się pisze; wiersz listy nie ma czego przewijać, więc uczciwiej jest przyciąć.
+// A text longer than the row is cut with an ellipsis on the right, as in a button. A text field
+// scrolls because one types in it; a list row has nothing to scroll, so cutting is more honest.
 View ListItem::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -79,13 +81,13 @@ View ListItem::paint(Size given, Area seen) {
     return made;
 }
 
-// Enter jest **klawiszem samej pozycji**, bo to ona ma ognisko — inaczej niż w menu, gdzie Enter
-// bierze menu, bo pozycja ogniska nie ma. Wszystko inne oddajemy dalej: strzałki i klawisze stron
-// należą do listy, litery i Tab do okna.
+// Enter is the key of the item itself, because the item has the focus, unlike in a menu, where
+// the menu takes Enter because its items have no focus. Everything else is passed on: the arrows
+// and the page keys belong to the list, letters and Tab to the window.
 //
-// `handle` biegnie **przed** uchwytami z `on<KeyEvent>`, ale ich nie zasłania: kanały są dwa
-// i prawda z `handle` zamyka tylko drogę widżetów. Dopięty uchwyt zobaczy więc każdy klawisz,
-// łącznie z Enterem — a Enter ogłasza się dodatkowo jako `PickEvent`.
+// `handle` runs before the key handlers attached with `on` but does not hide anything from them:
+// there are two channels, and true from `handle` closes only the widget path. An attached handler
+// therefore sees every key, Enter included, and Enter is additionally announced as a `PickEvent`.
 bool ListItem::handle(KeyEvent& what) {
     if (!enabled()) return false;
 
@@ -98,12 +100,13 @@ bool ListItem::handle(KeyEvent& what) {
     return true;
 }
 
-// Klik bierze ognisko i tym samym czyni pozycję bieżącą. Reszta — numer wiersza, dociągnięcie
-// widoku, powiadomienie aplikacji — dzieje się w liście, do której `FocusEvent` i tak zabąbelkuje.
+// A click takes the focus and so makes the item current. The rest (the row number, pulling the
+// view along, notifying the application) happens in the list, which the `FocusEvent` bubbles up
+// to anyway.
 bool ListItem::handle(ClickEvent&) {
-    // Pozycja niedostępna **przepuszcza klik wyżej**, zamiast go połykać: skoro nie odpowiada na
-    // swój klawisz, to nie ma powodu, żeby odpowiadała na mysz — a lista pod spodem ma prawo
-    // zrobić z tym kliknięciem, co uważa.
+    // A disabled item lets the click pass up instead of swallowing it: since it does not answer
+    // to its key, there is no reason for it to answer to the mouse, and the list underneath may do
+    // with the click whatever it sees fit.
     if (!enabled()) return false;
 
     if (root() != nullptr) focus();
@@ -111,8 +114,8 @@ bool ListItem::handle(ClickEvent&) {
     return true;
 }
 
-// Dwuklik w wiersz robi to, co Enter — i po drodze też stawia na nim ognisko, bo dwuklik może
-// paść na wiersz, który bieżącym jeszcze nie jest.
+// A double click on a row does what Enter does, and also puts the focus on it on the way, because
+// the double click may land on a row that is not current yet.
 bool ListItem::handle(DoubleClickEvent&) {
     if (!enabled()) return false;
 

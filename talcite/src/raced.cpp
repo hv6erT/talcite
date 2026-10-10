@@ -9,14 +9,16 @@
 
 #include "talcite/time.hpp"
 
-// **Wyścig adresów (RFC 8305).** Nazwa daje zwykle IPv6 i IPv4, a sieć, w której IPv6 jest
-// zapowiedziane, ale nie dochodzi, nie odmawia — pakiety giną i każda próba czeka do końca
-// cierpliwości. Dawniej adresy szły po kolei, więc TMDB za takim routerem odpowiadało po dziesięciu
-// sekundach zamiast po ułamku. Teraz następny adres rusza, gdy poprzedni milczy dłużej niż `gap`,
-// albo od razu, gdy wszystkie dotąd zaczęte odmówiły; wygrywa pierwszy, który się połączy,
-// a reszta jest przerywana. Porażka wszystkich jest porażką ostatniego, jak dawniej.
+// The address race (RFC 8305, "Happy Eyeballs"): connecting to the first address that answers.
+// A name usually gives IPv6 and IPv4, and a network in which IPv6 is announced but does not get
+// through does not refuse: the packets are lost and every attempt waits out its whole patience.
+// Trying the addresses one after another, a server behind such a router would answer after ten
+// seconds instead of a fraction of one. So the next address starts when the previous one has been
+// silent for longer than `gap`, or at once when all attempts started so far have refused; the first
+// one to connect wins, and the rest are cancelled. The failure of all is the failure of the last.
 namespace talcite::net {
 
+// The order of attempts: families alternate, starting with the one the system gave first.
 std::vector<Address> interleaved(std::vector<Address> found) {
     if (found.empty()) return found;
 
@@ -41,9 +43,10 @@ std::vector<Address> interleaved(std::vector<Address> found) {
 
 namespace {
 
-// Stan jednego wyścigu. Trzyma go ciało obietnicy oddanej z `raced`; ogniwa prób i zegary sięgają
-// po niego słabo, więc nic nie trzyma się w kółko. Ogony prób (`tails`) stan trzyma mocno, bo
-// rodzic trzyma swoje ogniwa słabo i ogon bez właściciela zginąłby, zanim próba się skończy.
+// The state of one race. The body of the promise returned from `raced` holds it; the links of the
+// attempts and the clocks reach for it weakly, so nothing holds itself in a cycle. The state holds
+// the attempts' tails (`tails`) strongly, because a parent holds its links weakly, and a tail
+// without an owner would die before the attempt ends.
 struct Race {
     std::vector<Address> order;
     Patience patience{};
@@ -66,8 +69,8 @@ using Held = std::shared_ptr<Race>;
 
 void launched(const Held& race);
 
-// Koniec wyścigu: próby, które jeszcze trwają, i zegary przerywa się już poza zamkiem — przerwanie
-// odrzuca, a odrzucenie wraca do `failed`, który bierze ten sam zamek.
+// Ends the race: attempts still running and the clocks are cancelled outside the lock, because
+// cancelling rejects, and the rejection comes back to `failed`, which takes the same lock.
 void ended(const Held& race, std::unique_lock<std::mutex>& kept) {
     race->over = true;
 
@@ -80,6 +83,8 @@ void ended(const Held& race, std::unique_lock<std::mutex>& kept) {
     for (Promise<void>& one : clocks) one.cancel();
 }
 
+// An attempt connected: the first one resolves the race, and a stream that comes too late is
+// closed.
 void won(const Held& race, Stream stream) {
     std::unique_lock<std::mutex> kept{race->guard};
 
@@ -98,6 +103,8 @@ void won(const Held& race, Stream stream) {
     resolve(std::move(stream));
 }
 
+// An attempt failed with `why`. When it was the last address, the race is rejected with that
+// error; otherwise the next attempt may start early.
 void failed(const Held& race, std::exception_ptr why) {
     std::unique_lock<std::mutex> kept{race->guard};
 
@@ -117,7 +124,8 @@ void failed(const Held& race, std::exception_ptr why) {
         return;
     }
 
-    // Wszystkie zaczęte odmówiły — następny rusza od razu, bez czekania na zegar.
+    // All attempts started so far have refused, so the next one starts at once, without waiting
+    // for the clock.
     const bool idle = race->lost == race->next && race->next < race->order.size();
 
     kept.unlock();
@@ -125,8 +133,10 @@ void failed(const Held& race, std::exception_ptr why) {
     if (idle) launched(race);
 }
 
-// Ogniwa prób i zegara budujemy poza zamkiem: odmowa od razu — gniazda nie da się otworzyć — rozstrzyga
-// próbę, zanim `fail` wróci, a jego ciało bierze ten sam zamek.
+// Starts the attempt on the next address and, when more addresses remain, the clock for the one
+// after it. The links of the attempt and the clock are built outside the lock: an immediate
+// refusal (the socket cannot be opened) settles the attempt before `fail` returns, and its body
+// takes the same lock.
 void launched(const Held& race) {
     std::size_t at = 0;
     Address where;
@@ -156,8 +166,9 @@ void launched(const Held& race) {
     std::optional<Promise<void>> clock;
 
     if (more) {
-        // Zegar do następnej próby. Gdy w międzyczasie ruszyła już kolejna (odmowa przyspieszyła
-        // kolejkę), zegar nie robi nic — `next` jest wtedy dalej niż u tego, kto go nastawiał.
+        // The clock for the next attempt. When another one has started in the meantime (a refusal
+        // sped up the queue), the clock does nothing: `next` is then further than it was for
+        // whoever set the clock.
         clock = Time::later(race->gap).then([weak = std::weak_ptr<Race>{race}, after = at + 1] {
             const Held alive = weak.lock();
 
@@ -188,7 +199,8 @@ void launched(const Held& race) {
         }
     }
 
-    // Wyścig rozstrzygnął się, zanim ta próba stanęła w stanie — nie ma już na co jej puszczać.
+    // The race was decided before this attempt was recorded in the state, so there is nothing left
+    // to run it for.
     if (late) {
         attempt.cancel();
 
@@ -202,6 +214,9 @@ void launched(const Held& race) {
 
 }
 
+// Connects to the first of `found` that answers, starting the next attempt after `gap` of silence
+// (`stagger`, 250 ms, by default). This is private to the library: the HTTP client uses it, and the
+// tests pass a gap shorter than the default.
 Promise<Stream> raced(std::vector<Address> found, Patience patience, std::chrono::milliseconds gap) {
     if (found.empty())
         return Promise<Stream>{[](auto, auto reject) { reject(std::make_exception_ptr(Trouble{"There is no address."})); }};
@@ -212,7 +227,7 @@ Promise<Stream> raced(std::vector<Address> found, Patience patience, std::chrono
     race->patience = patience;
     race->gap = gap;
 
-    // Jak każda obietnica sieci — rusza od razu, a nie przy pierwszym czekaniu.
+    // Like every network promise, it starts at once, not at the first wait.
     Promise<Stream> made{[race](auto resolve, auto reject) {
         {
             const std::lock_guard<std::mutex> kept{race->guard};

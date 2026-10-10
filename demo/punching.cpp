@@ -18,6 +18,7 @@ namespace {
 
 using namespace talcite;
 
+// The bytes of a string, one per character.
 Bytes spelt(const std::string& what) {
     Bytes made(what.size());
 
@@ -26,6 +27,7 @@ Bytes spelt(const std::string& what) {
     return made;
 }
 
+// The bytes as a string, one character per byte.
 std::string spelling(const Bytes& what) {
     std::string made;
 
@@ -34,7 +36,8 @@ std::string spelling(const Bytes& what) {
     return made;
 }
 
-// Adres drugiej strony podaje się dokładnie tak, jak wypisał go jej program: adres, dwukropek, port.
+// The other side's address is given exactly as its program printed it: address, colon, port.
+// Returns false when there is no port or it is above 65535.
 bool taken(const std::string& said, net::Address& made) {
     const std::size_t colon = said.rfind(':');
 
@@ -49,32 +52,33 @@ bool taken(const std::string& said, net::Address& made) {
     return true;
 }
 
+// What the NAT mapping means for hole punching, in words.
 std::string named(net::StunClient::Mapping what) {
     switch (what) {
-        case net::StunClient::Mapping::alike: return "zgodne — przebijanie ma sens";
+        case net::StunClient::Mapping::alike: return "consistent — punching makes sense";
         case net::StunClient::Mapping::symmetric:
-            return "symetryczne — przebijanie nie zadziała";
-        default: return "nieznane";
+            return "symmetric — punching will not work";
+        default: return "unknown";
     }
 }
 
 }
 
-// Przebijanie NAT sprawdzone naprawdę. Testy przechodzą protokół po pętli zwrotnej, a to jest coś
-// zupełnie innego niż dwie maszyny za dwoma NAT-ami — czyli dokładnie ten przypadek, na którym
-// `fork` się przewracał.
+// NAT hole punching, tested for real. The tests run the protocol over loopback, and that is
+// something quite different from two machines behind two NATs, which is exactly the case this
+// program covers.
 //
-// **Sygnalizacją jesteś Ty.** Talcite jej nie pisze i nie napisze: nie ma jednego standardu, a wybór
-// należy do wdrożenia. Tutaj kanałem sygnalizacji jest kopiuj-wklej.
+// You are the signaling. talcite does not write it and will not: there is no single standard, and
+// the choice belongs to the deployment. Here the signaling channel is copy and paste.
 //
-// Uruchamia się **raz, po obu stronach naraz**, bez argumentów. Każda strona wypisze swoje drogi
-// i poczeka, aż wklei się cudzą; po wklejeniu obie zaczynają się dobijać.
+// Run it once, on both sides at the same time, without arguments. Each side prints its ways and
+// waits for the other side's to be pasted; once they are pasted, both start knocking.
 //
-// Uruchomienie dwa razy — najpierw po adres, potem z cudzym adresem — **nie zadziała i nie może**:
-// odwzorowanie na NAT-cie należy do **gniazda**, a drugie uruchomienie otwiera nowe gniazdo i
-// dostaje nowy port zewnętrzny. Adres podany drugiej stronie wskazywałby wtedy dziurę, której już
-// nie ma. Dlatego gniazdo musi przeżyć całą wymianę adresów — i dlatego czytamy z wejścia zamiast
-// z wiersza poleceń.
+// Running it twice (first for the address, then with the other side's address) does not work and
+// cannot: a mapping on the NAT belongs to the socket, and a second run opens a new socket and gets
+// a new external port. The address given to the other side would then point at a hole that no
+// longer exists. So the socket has to live through the whole exchange of addresses, and that is why
+// we read from standard input rather than from the command line.
 int main(int count, char** given) {
     const showing::Speaking speaking;
 
@@ -96,24 +100,24 @@ int main(int count, char** given) {
         }
 
         if (scout.servers().empty()) {
-            std::cout << "żadnego serwera STUN nie udało się rozwiązać — bez tego nie poznam"
-                         " swojego adresu zewnętrznego.\n";
+            std::cout << "no STUN server could be resolved — without one I cannot learn"
+                         " my external address.\n";
 
             return 1;
         }
 
-        std::cout << "odwzorowanie: " << named(scout.mapping().await()) << "\n";
+        std::cout << "mapping: " << named(scout.mapping().await()) << "\n";
 
         net::Peer peer{mine};
 
         const std::vector<net::Candidate> ways = peer.gather(scout, net::Patience{12000}).await();
 
-        std::cout << "\nmoje drogi — przepisz je drugiej stronie:\n";
+        std::cout << "\nmy ways — copy them to the other side:\n";
 
         for (const net::Candidate& one : ways)
             std::cout << "    " << one.where.spelled()
-                      << (one.sort == net::Candidate::Sort::here ? "   (własna karta)"
-                                                                 : "   (odbite)")
+                      << (one.sort == net::Candidate::Sort::here ? "   (own interface)"
+                                                                 : "   (reflected)")
                       << "\n";
 
         std::vector<std::string> said;
@@ -121,13 +125,13 @@ int main(int count, char** given) {
         for (int at = 1; at < count; ++at) said.emplace_back(given[at]);
 
         if (said.empty()) {
-            std::cout << "\nWklej **odbity** adres drugiej strony i naciśnij enter."
-                         " Gniazdo czeka otwarte,\nwięc adres wypisany wyżej jest wciąż ważny.\n> ";
+            std::cout << "\nPaste the other side's reflected address and press enter."
+                         " The socket stays open,\nso the address printed above is still valid.\n> ";
 
             std::string line;
 
             if (!std::getline(std::cin, line) || line.empty()) {
-                std::cout << "\nnic nie podano — kończę.\n";
+                std::cout << "\nnothing given — quitting.\n";
 
                 return 0;
             }
@@ -139,33 +143,33 @@ int main(int count, char** given) {
             net::Address where;
 
             if (!taken(one, where)) {
-                std::cout << "nie rozumiem adresu: " << one << "\n";
+                std::cout << "cannot understand the address: " << one << "\n";
 
                 return 2;
             }
 
             peer.add(net::Candidate{where, net::Candidate::Sort::seen});
 
-            std::cout << "\ndobijam się do " << where.spelled() << "\n";
+            std::cout << "\nknocking at " << where.spelled() << "\n";
         }
 
         const net::Address met = peer.reach(net::Patience{45000}).await();
 
-        std::cout << "**przebite** — rozmawiam z " << met.spelled() << "\n\n";
+        std::cout << "punched through — talking to " << met.spelled() << "\n\n";
 
         const std::string me = ways.empty() ? std::string{"?"} : ways.back().where.spelled();
 
-        // Trzy części, bo dwie rzeczy warto zobaczyć osobno. Najpierw rozmowa: czy treść idzie
-        // w obie strony. Potem **cisza dłuższa niż odwzorowanie żyje na NAT-cie** — zwykle
-        // trzydzieści sekund — w której gada wyłącznie podtrzymanie z wnętrza rozmówcy. I znów
-        // rozmowa: jeśli przeszła, to znaczy, że podtrzymanie utrzymało dziurę otwartą.
+        // Three parts, because two things are worth seeing separately. First a conversation: does
+        // content go both ways. Then a silence longer than a mapping lives on the NAT (usually
+        // thirty seconds), during which only the peer's internal keepalive talks. And a
+        // conversation again: if it gets through, the keepalive has kept the hole open.
         const auto talking = [&](const char* what, std::chrono::seconds much) {
             const auto began = std::chrono::steady_clock::now();
 
             int turn = 0;
 
             while (std::chrono::steady_clock::now() - began < much) {
-                peer.send(spelt(std::string{what} + " " + std::to_string(turn++) + " od " + me),
+                peer.send(spelt(std::string{what} + " " + std::to_string(turn++) + " from " + me),
                           soon)
                     .await();
 
@@ -174,43 +178,43 @@ int main(int count, char** given) {
                 for (int at = 0; at < 8; ++at) {
                     Bytes came;
 
-                    // Najpierw odbieramy, dopiero potem piszemy. Wypisanie początku zdania przed
-                    // odbiorem zostawiało je urwane, gdy kolejka okazała się pusta.
+                    // Receive first and print afterwards, so that a line is never left half-printed
+                    // when the queue turns out to be empty.
                     try {
                         came = peer.receive(4096, net::Patience{1}).await();
                     } catch (const std::exception&) {
                         break;
                     }
 
-                    std::cout << "  słyszę: " << spelling(came) << "\n";
+                    std::cout << "  hearing: " << spelling(came) << "\n";
                 }
             }
         };
 
-        std::cout << "rozmowa przez dziesięć sekund:\n";
+        std::cout << "talking for ten seconds:\n";
 
-        talking("rata", std::chrono::seconds{10});
+        talking("round", std::chrono::seconds{10});
 
-        std::cout << "\ncisza przez czterdzieści pięć sekund — gada tylko podtrzymanie:\n";
+        std::cout << "\nforty-five seconds of silence — only the keepalive talks:\n";
 
         Time::later(std::chrono::milliseconds{45000}).await();
 
-        std::cout << "\nznów rozmowa — jeśli idzie, dziura przetrwała ciszę:\n";
+        std::cout << "\ntalking again — if it gets through, the hole survived the silence:\n";
 
-        talking("po ciszy", std::chrono::seconds{10});
+        talking("after silence", std::chrono::seconds{10});
 
-        std::cout << "\nkoniec.\n";
+        std::cout << "\nthe end.\n";
     } catch (const Overdue&) {
-        std::cout << "nie zdążyliśmy się przebić. Obie strony muszą dobijać się naraz, a przy"
-                     " NAT-cie symetrycznym po którejkolwiek stronie nie uda się nigdy.\n";
+        std::cout << "we did not punch through in time. Both sides have to knock at the same time, and with a"
+                     " symmetric NAT on either side it will never work.\n";
 
         return 1;
     } catch (const net::Trouble& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     } catch (const std::exception& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     }

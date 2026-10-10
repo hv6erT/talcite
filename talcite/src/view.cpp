@@ -7,17 +7,18 @@
 
 namespace talcite {
 
-// Dwa style w jeden: **wierzchni dokłada, ale nie odbiera**. Kolor przezroczysty przepuszcza to,
-// co pod spodem, a ustawiony zasłania; znaczniki się sumują.
+// Two styles in one: the upper one adds but does not take away. A transparent color lets through
+// what is below, a set one covers it; the attribute flags add up.
 //
-// Po to jest, żeby widżet spoza biblioteki mógł mieć własny wygląd zapasowy: `merge(mój, ze skórki)`
-// daje mój wygląd, gdy skórka o tej roli nie słyszała, i wygląd ze skórki tam, gdzie coś powiedziała.
-// Sumowanie znaczników, a nie zastępowanie, bierze się wprost z tego zastosowania — rola nieustawiona
-// oddaje styl pusty, a zastępowanie wymazywałoby nim to, co dał wołający.
+// This exists so that a widget from outside the library can have its own fallback look:
+// merge(mine, from the skin) gives my look when the skin has not heard of the role, and the skin's
+// look where it said something. Adding the flags up instead of replacing them follows directly
+// from this use: a role that is not set gives an empty style, and replacing would wipe out with it
+// what the caller gave.
 //
-// **Ceną jest to, że wierzchni nie zgasi znacznika spodniego.** `Style` nie ma stanu „nie ustawiono"
-// na znacznikach — ma go tylko kolor — więc odróżnić „nie mam zdania" od „ma być wyłączone" nie da
-// się bez dokładania tego stanu do typu, przez który przechodzi całe rysowanie.
+// The price is that the upper style cannot switch off a flag of the lower one. `Style` has no
+// "not set" state for the flags (only the colors have one), so "no opinion" cannot be told apart
+// from "must be off" without adding that state to a type that all drawing passes through.
 Style Style::merge(Style base, Style over) {
     Style made = base;
 
@@ -35,8 +36,8 @@ Style Style::merge(Style base, Style over) {
     return made;
 }
 
-// Napis mierzymy w kratkach, a nie w znakach ani w bajtach: ogonek liczy się za jeden, znak
-// pisma wschodniego za dwa.
+// Text is measured in cells, not in characters or bytes: a letter with a diacritic counts as
+// one, an East Asian wide character as two.
 ui::Size measured(std::string_view what) {
     ui::Size made{0, what.empty() ? 0 : 1};
 
@@ -47,9 +48,10 @@ ui::Size measured(std::string_view what) {
     return made;
 }
 
+// A blank view of the given size, with every cell empty.
 View::View(ui::Size given) {
-    // Ujemny wymiar bierze się z ciasnego okna, nie z błędu wołającego — „zostało minus dwa"
-    // ma dać pustą kartkę, a nie wywrócić program.
+    // A negative dimension comes from a cramped window, not from a mistake of the caller:
+    // "minus two left" must give an empty sheet, not crash the program.
     size_.wide = std::max(given.wide, 0);
     size_.high = std::max(given.high, 0);
 
@@ -57,18 +59,20 @@ View::View(ui::Size given) {
                   Cell{});
 }
 
+// Whether `where` lies inside the view.
 bool View::holds(ui::Spot where) const {
     return where.x >= 0 && where.y >= 0 && where.x < size_.wide && where.y < size_.high;
 }
 
+// The cell at `where`, without a bounds check; callers check with `holds` first.
 Cell& View::cell(ui::Spot where) {
     return cells_[static_cast<std::size_t>(where.y) * static_cast<std::size_t>(size_.wide) +
                   static_cast<std::size_t>(where.x)];
 }
 
-// Znak podwójnej szerokości stoi w dwóch komórkach i pisanie w jedną z nich osieroca drugą.
-// Zamieniamy tę drugą na spację, zanim cokolwiek nadpiszemy — inaczej na ekranie zostaje połowa
-// znaku, która przy porównywaniu klatek zaczyna mrugać.
+// A double-width character occupies two cells, and writing into one of them orphans the other.
+// We turn that other one into a space before overwriting anything; otherwise half a character
+// stays on the screen and starts flickering when frames are compared.
 void View::broken(ui::Spot where) {
     if (!holds(where)) return;
 
@@ -83,7 +87,8 @@ void View::broken(ui::Spot where) {
     }
 }
 
-// Każdy znak idzie przez `shown` — komórka nigdy nie niesie znaku sterującego do terminala.
+// Puts one character at `at`. Every character goes through `shown`, so a cell never carries a
+// control character to the terminal.
 void View::put(ui::Spot at, char32_t what, const Style& how) {
     if (what == 0 || !holds(at)) return;
 
@@ -91,7 +96,7 @@ void View::put(ui::Spot at, char32_t what, const Style& how) {
 
     const int much = width(what);
 
-    // Połowa znaku podwójnego to śmieć, więc na ostatniej kolumnie zostawiamy spację.
+    // Half of a double-width character is garbage, so the last column gets a space instead.
     if (much == 2 && !holds({at.x + 1, at.y})) {
         broken(at);
 
@@ -109,6 +114,8 @@ void View::put(ui::Spot at, char32_t what, const Style& how) {
     if (much == 2) cell({at.x + 1, at.y}) = Cell{0, how};
 }
 
+// Puts UTF-8 text starting at `at`, advancing by each character's width and stopping at the
+// right edge.
 void View::put(ui::Spot at, std::string_view what, const Style& how) {
     std::size_t which = 0;
 
@@ -121,15 +128,17 @@ void View::put(ui::Spot at, std::string_view what, const Style& how) {
     }
 }
 
+// Fills `where` with spaces in the style `how`.
 void View::fill(const ui::Area& where, const Style& how) {
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) put({x, y}, U' ', how);
 }
 
-// Cień nie ma własnej litery. Komórka zapamiętuje styl i to, że litery nie wnosi — rozstrzyga
-// się to dopiero przy wklejaniu, gdy widać, co leży pod spodem. Liter zmieszać się nie da, więc
-// przezroczystość znaku jest czymś innym niż przezroczystość koloru: znak albo jest, albo go nie
-// ma. To dlatego cień nie potrzebuje alfy.
+// A shadow has no character of its own. The cell remembers the style and the fact that it brings
+// no character; that is resolved only when the view is drawn onto another, when it is clear what
+// lies below. Characters cannot be blended, so the transparency of a character is something other
+// than the transparency of a color: a character is either there or not. That is why a shadow
+// needs no alpha.
 void View::shade(const ui::Area& where, const Style& how) {
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
@@ -142,11 +151,12 @@ void View::shade(const ui::Area& where, const Style& how) {
         }
 }
 
-// **Sam pierwszy plan.** Kratka niesie znak i jego barwę, a tło — gdy go nie podano — bierze przy
-// wklejaniu z tego, co leży pod spodem: kratka brzegu obrazu stoi w oknie, w podglądzie, na panelu,
-// a tylko spód wie, jakie tam jest tło. Zwykły napis tak nie robi i robić nie ma — jego rola podaje
-// własne tło (próba ramki w `framing.cpp`); kratka pierwszego planu to osobna, jawna prośba. Podane
-// tło wygrywa: kratka z tłem jest zwykłą kratką.
+// Foreground only. The cell carries a character and its color, and its background, when none is
+// given, is taken from what lies below when the view is drawn: a cell on the edge of a picture
+// stands in a window, in a viewer, on a panel, and only what is below knows its background. Plain
+// text does not work like this and must not; its role gives its own background (see the frame
+// trial in `framing.cpp`). A foreground cell is a separate, explicit request. A given background
+// wins: a cell with a background is an ordinary cell.
 void View::foreground(ui::Spot at, char32_t what, const Style& how) {
     put(at, what, how);
 
@@ -155,9 +165,10 @@ void View::foreground(ui::Spot at, char32_t what, const Style& how) {
     cell(at).shown = Shown::foreground;
 }
 
-// Kratka, której węzeł nie rysuje, a która mimo to leży w jego prostokącie. Zdarza się to
-// zawsze, gdy kształt nie jest prostokątem: menu zajmuje pas tytułu i pudełko pod nim, a rogi
-// między nimi należą do sąsiadów. Bez tego węzeł zamalowałby je spacjami.
+// Marks cells that the node does not draw although they lie in its rectangle. This happens
+// whenever the shape is not a rectangle: a menu takes the title strip and the box below it, and
+// the corners between them belong to the neighbors. Without this the node would paint them over
+// with spaces.
 void View::clear(const ui::Area& where) {
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
@@ -167,9 +178,11 @@ void View::clear(const ui::Area& where) {
         }
 }
 
+// Draws `one` onto this view with its top left corner at `at`, clipped to this view, resolving
+// shadows, foreground cells and cells that were not drawn against what lies below.
 void View::draw(const View& one, ui::Spot at) {
-    // Obrazy idą w górę razem z kratkami. Gdzie stoją, mówią kratki, nie spis — spis mówi tylko,
-    // czym je narysować — więc przesuwać ani przycinać w nim nie ma czego.
+    // Pictures go up together with the cells. Where they stand is told by the cells, not by the
+    // list (the list only says what to draw them with), so there is nothing in it to shift or clip.
     for (const Picture& one_picture : one.pictures_)
         if (std::none_of(pictures_.begin(), pictures_.end(),
                          [&one_picture](const Picture& mine) { return mine.mark == one_picture.mark; }))
@@ -182,7 +195,7 @@ void View::draw(const View& one, ui::Spot at) {
 
     if (upto_x > from_x)
         for (int y = from_y; y < upto_y; ++y) {
-            // Para znaków przeciętych brzegiem wklejenia — po obu stronach.
+            // Pairs of characters cut by the edge of the drawn view, on both sides.
             broken({from_x, y});
             broken({upto_x - 1, y});
 
@@ -191,13 +204,14 @@ void View::draw(const View& one, ui::Spot at) {
                                                   static_cast<std::size_t>(one.size_.wide) +
                                               static_cast<std::size_t>(x - at.x)];
 
-                // Komórka bez własnej litery zmienia tylko styl tego, co zastała — tak wygląda
-                // cień: tekst spod spodu zostaje widoczny, tylko przygasa. Komórka, której węzeł
-                // w ogóle nie rysował, nie zmienia niczego.
+                // A cell without its own character only changes the style of what it finds; this
+                // is how a shadow looks: the text below stays visible, only dimmed. A cell that the
+                // node did not draw at all changes nothing.
                 if (said.shown == Shown::none) continue;
 
-                // Pierwszy plan nad pustką zostaje sobą i czeka piętro wyżej, jak cień; nad czymkolwiek
-                // bierze jego tło i staje się zwykłą kratką.
+                // A foreground cell over emptiness stays what it is and waits one level up, like
+                // a shadow; over anything else it takes that background and becomes an ordinary
+                // cell.
                 if (said.shown == Shown::foreground) {
                     Cell& under = cell({x, y});
 
@@ -221,16 +235,15 @@ void View::draw(const View& one, ui::Spot at) {
 
                     under.style = said.style;
 
-                    // **Cień nad pustką zostaje cieniem**, zamiast zniknąć. Kratka, na której nikt
-                    // jeszcze nic nie narysował, wciąż mówi „mnie tu nie ma" — a wklejenie takie
-                    // pomija, więc przyciemnienie przepadało piętro wyżej i cień pod dialogiem
-                    // urywał się w połowie. Złapał to odcisk klatki przy przejściu pojemników na
-                    // przezroczystość: wcześniej pustki nie było, bo każdy węzeł zamalowywał swój
-                    // prostokąt, i wada nie miała jak wyjść.
+                    // A shadow over emptiness stays a shadow instead of vanishing. A cell on
+                    // which nothing has been drawn yet still says "I am not here", and drawing
+                    // skips such cells, so the dimming would be lost one level up and the shadow
+                    // under a dialog would break off halfway.
                     if (under.shown == Shown::none) under.shown = Shown::shade;
 
-                    // Obraz w pikselach nie umie przygasnąć, więc cień go zasłania: kratka przestaje
-                    // należeć do obrazu, a obraz rysuje się znakami, póki cień nie zejdzie.
+                    // A pixel picture cannot be dimmed, so the shadow hides it: the cell stops
+                    // belonging to the picture, and the picture is drawn in characters until the
+                    // shadow goes away.
                     under.picture = 0;
 
                     continue;
@@ -245,11 +258,12 @@ void View::draw(const View& one, ui::Spot at) {
         }
 }
 
-// **Obraz w pikselach** (G1). Kratki obrazu niosą jego znak i zostają tym, czym były — znakami
-// obrazu, rysowanymi jak dotąd — a spis pamięta bajty. Złożenie przenosi znak razem z kratką, więc
-// to, co obraz zasłoni (okno, menu, cień, brzeg przewijania), po prostu znaku nie ma. Kratki
-// przezroczyste stają się pustym pierwszym planem: tło biorą ze spodu jak dotąd, a znak nieść muszą,
-// bo inaczej obraz z przezroczystym brzegiem nigdy nie byłby widoczny w całości.
+// A pixel picture. The picture's cells carry its mark and stay what they were (characters of the
+// picture, drawn as before), while the list keeps the bytes. Composing carries the mark together
+// with the cell, so whatever covers the picture (a window, a menu, a shadow, a scroll edge) simply
+// has no mark. Transparent cells become an empty foreground: they take their background from below
+// as before, and they must carry the mark, otherwise a picture with a transparent edge would never
+// be visible in full.
 void View::picture(const ui::Area& where, Picture what) {
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
@@ -267,11 +281,12 @@ void View::picture(const ui::Area& where, Picture what) {
     pictures_.push_back(std::move(what));
 }
 
-// Obraz widoczny **w całości** — każda kratka jego prostokąta niesie jego znak i prostokąt leży
-// w `room` — dostaje piksele: jego kratki stają się puste, z tłem, które miały, i ze znakiem obrazu,
-// żeby nigdy nie równały się zwykłej kratce. Dzięki temu porównanie klatek widzi każde przejście
-// między obrazem a znakami i przepisuje kratki, które obraz pokrywał. Obraz zasłonięty choćby
-// w jednej kratce zostaje cały w znakach, a jego kratki tracą znak — z tego samego powodu.
+// A picture visible in full (every cell of its rectangle carries its mark, and the rectangle lies
+// within `room`) gets pixels: its cells become empty, with the background they had and with the
+// picture's mark, so that they never equal an ordinary cell. Thanks to this, comparing frames sees
+// every transition between the picture and characters and rewrites the cells the picture covered.
+// A picture covered in even one cell stays entirely in characters, and its cells lose the mark,
+// for the same reason.
 std::vector<Placement> View::bared(const ui::Area& room) {
     std::vector<Placement> made;
 
@@ -329,6 +344,7 @@ std::vector<Placement> View::bared(const ui::Area& room) {
     return made;
 }
 
+// A copy of the cell at `where`, or an empty cell outside the view.
 Cell View::at(ui::Spot where) const {
     if (!holds(where)) return Cell{};
 

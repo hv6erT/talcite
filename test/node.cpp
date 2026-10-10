@@ -11,38 +11,47 @@ using namespace talcite;
 
 namespace {
 
-// Węzeł z policzalnym życiem i z dostępem do tego, co w Node chronione. Tyle wystarczy, żeby
-// sprawdzić drzewo i to, jak przez nie wędrują zdarzenia.
+// A node with a countable lifetime and with access to what is protected in Node. That is enough to
+// check the tree and how events travel through it.
 class Twig : public ui::Node {
 public:
+    // A node named `named` that records its name in `told` whenever a key reaches it, and counts
+    // itself in `alive` while it lives.
     explicit Twig(std::string named, std::vector<std::string>* told = nullptr,
                   int* alive = nullptr)
         : named_(std::move(named)), told_(told), alive_(alive) {
         if (alive_ != nullptr) ++*alive_;
     }
 
+    // Takes the node off the `alive` count.
     ~Twig() override {
         if (alive_ != nullptr) --*alive_;
     }
 
     using ui::Node::broadcast;
 
+    // Sends the event from this node up the tree; true when someone took it.
     template <typename One>
     bool send(One& what) {
         return trigger(what);
     }
 
+    // How many children the node has.
     [[nodiscard]] std::size_t much() const { return children().many(); }
 
+    // The first child, or null when there are none.
     [[nodiscard]] const ui::Node* first() const {
         return children().empty() ? nullptr : children().front().get();
     }
 
+    // Sets whether the node takes the keys that reach it.
     void eats(bool given) { eats_ = given; }
 
+    // Any number of children, unlike a plain node.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 
 protected:
+    // Records the node's name for the key and takes it when set to by `eats`.
     bool handle(ui::KeyEvent& what) override {
         (void)what;
 
@@ -58,6 +67,7 @@ private:
     bool eats_ = false;
 };
 
+// A shared `Twig`, with the same arguments as its constructor.
 std::shared_ptr<Twig> twig(const std::string& named, std::vector<std::string>* told = nullptr,
                            int* alive = nullptr) {
     return std::make_shared<Twig>(named, told, alive);
@@ -65,7 +75,7 @@ std::shared_ptr<Twig> twig(const std::string& named, std::vector<std::string>* t
 
 }
 
-TRIAL("Node: dopięte dziecko zna rodzica") {
+TRIAL("Node: an attached child knows its parent") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> down = twig("dół");
@@ -77,9 +87,9 @@ TRIAL("Node: dopięte dziecko zna rodzica") {
     ought(up.first() == down.get());
 }
 
-// `index` oddaje numer dziecka wśród dzieci — i pustkę dla węzła, który dzieckiem nie jest,
-// także po odpięciu. Lista, menu i pasek menu liczyły to każde własną pętlą.
-TRIAL("Node: index zna numer dziecka i nie zna obcego") {
+// `find` gives the number of a child among the children, and nothing for a node that is not a
+// child, also after it is detached.
+TRIAL("Node: find knows a child's number and not a stranger's") {
     Twig top{"góra"};
 
     const std::shared_ptr<Twig> first = twig("pierwsze");
@@ -100,20 +110,20 @@ TRIAL("Node: index zna numer dziecka i nie zna obcego") {
     same(top.children().find(*second), std::optional<std::size_t>{0});
 }
 
-TRIAL("Node: świeży węzeł nie ma rodzica ani dzieci") {
+TRIAL("Node: a fresh node has no parent and no children") {
     const Twig one{"sam"};
 
     ought(one.parent() == nullptr);
     same(one.much(), std::size_t{0});
 }
 
-TRIAL("Node: dopięcie pustki odrzuca") {
+TRIAL("Node: attaching nothing is refused") {
     Twig up{"góra"};
 
     threw(up.children().add(nullptr));
 }
 
-TRIAL("Node: węzeł z rodzicem nie da się dopiąć drugi raz") {
+TRIAL("Node: a node with a parent cannot be attached a second time") {
     Twig first{"pierwszy"};
     Twig second{"drugi"};
 
@@ -126,13 +136,13 @@ TRIAL("Node: węzeł z rodzicem nie da się dopiąć drugi raz") {
     same(second.much(), std::size_t{0});
 }
 
-TRIAL("Node: węzeł nie może być własnym dzieckiem") {
+TRIAL("Node: a node cannot be its own child") {
     const std::shared_ptr<Twig> one = twig("sam");
 
     threw(one->children().add(one));
 }
 
-TRIAL("Node: węzeł nie może dostać własnego przodka") {
+TRIAL("Node: a node cannot get its own ancestor") {
     const std::shared_ptr<Twig> top = twig("szczyt");
     const std::shared_ptr<Twig> mid = twig("środek");
     const std::shared_ptr<Twig> low = twig("spód");
@@ -144,7 +154,7 @@ TRIAL("Node: węzeł nie może dostać własnego przodka") {
     threw(low->children().add(mid));
 }
 
-TRIAL("Node: remove oddaje dziecko i zrywa wskazanie na rodzica") {
+TRIAL("Node: remove gives back the child and breaks its pointer to the parent") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> down = twig("dół");
@@ -158,7 +168,7 @@ TRIAL("Node: remove oddaje dziecko i zrywa wskazanie na rodzica") {
     same(up.much(), std::size_t{0});
 }
 
-TRIAL("Node: remove cudzego węzła oddaje pustkę") {
+TRIAL("Node: remove of another's node gives nothing") {
     Twig up{"góra"};
     Twig apart{"obok"};
 
@@ -171,11 +181,11 @@ TRIAL("Node: remove cudzego węzła oddaje pustkę") {
     ought(down->parent() == &apart);
 }
 
-// --- Dzieci hurtem --------------------------------------------------------------------------------
+// --- Children in bulk -----------------------------------------------------------------------------
 
-// Składanie okna to zwykle kilkoro dzieci pod rząd, więc wchodzą jednym wywołaniem — a kolejność
-// zostaje ta, w jakiej je podano.
-TRIAL("Node: hurtowe dopięcie wpuszcza wszystkie i zachowuje kolejność") {
+// Putting a window together usually means several children in a row, so they go in with one call,
+// and the order stays as given.
+TRIAL("Node: a bulk attach lets all in and keeps the order") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -190,9 +200,9 @@ TRIAL("Node: hurtowe dopięcie wpuszcza wszystkie i zachowuje kolejność") {
     ought(up.children()[2].get() == three.get());
 }
 
-// **Albo wszystkie, albo żadne.** Zwykły węzeł przyjmuje jedno dziecko, więc drugie z pary odpada —
-// i wtedy pierwsze też ma wyjść, zamiast zostawić wołającemu drzewo złożone do połowy.
-TRIAL("Node: hurtowe dopięcie przy błędzie nie zostawia połowy") {
+// All or none. A plain node accepts one child, so the second of a pair is refused, and then the
+// first must leave too, instead of leaving the caller a half-built tree.
+TRIAL("Node: a bulk attach that fails leaves no half behind") {
     ui::Node up;
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -205,7 +215,7 @@ TRIAL("Node: hurtowe dopięcie przy błędzie nie zostawia połowy") {
     ought(two->parent() == nullptr);
 }
 
-TRIAL("Node: clear zdejmuje wszystkie dzieci naraz") {
+TRIAL("Node: clear removes all children at once") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -221,8 +231,8 @@ TRIAL("Node: clear zdejmuje wszystkie dzieci naraz") {
     ought(two->parent() == nullptr);
 }
 
-// Zdjęte dziecko ma zginąć tak samo, jak po pojedynczym `remove` — czyli gdy nikt go już nie trzyma.
-TRIAL("Node: clear puszcza dzieci, a nie trzyma ich dalej") {
+// A removed child must die just as after a single `remove`, that is when nobody holds it anymore.
+TRIAL("Node: clear lets the children go instead of holding on to them") {
     int alive = 0;
 
     Twig up{"góra"};
@@ -237,7 +247,7 @@ TRIAL("Node: clear puszcza dzieci, a nie trzyma ich dalej") {
     same(alive, 0);
 }
 
-TRIAL("Node: contains rozpoznaje własne dziecko, a cudzego nie") {
+TRIAL("Node: contains recognizes its own child and not another's") {
     Twig up{"góra"};
     Twig apart{"obok"};
 
@@ -252,9 +262,9 @@ TRIAL("Node: contains rozpoznaje własne dziecko, a cudzego nie") {
     ought(!up.children().contains(nullptr));
 }
 
-// --- Rozdawanie w głąb -----------------------------------------------------------------------------
+// --- Broadcasting down ---------------------------------------------------------------------------
 
-TRIAL("Node: rozdanie schodzi po kolei i kończy się na pierwszym, który weźmie") {
+TRIAL("Node: a broadcast goes down in order and ends at the first that takes it") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -285,10 +295,10 @@ TRIAL("Node: rozdanie schodzi po kolei i kończy się na pierwszym, który weźm
     same(said[1], std::string{"dwa"});
 }
 
-// **Uchwyt ma prawo przebudować drzewo w trakcie rozdawania.** Chodzenie po żywym wektorze kończyło
-// się tu naruszeniem pamięci: dopięcie przenosi bufor, a przejście szło dalej po starym adresie.
-// Chodzimy po migawce, więc przenosiny nie mają na co wpłynąć.
-TRIAL("Node: rozdanie przeżywa przebudowę drzewa w uchwycie") {
+// A handler may rebuild the tree during a broadcast. Walking the live vector would be a memory
+// violation here: attaching moves the buffer while the walk goes on at the old address. The walk
+// goes over a snapshot, so the move has nothing to affect.
+TRIAL("Node: a broadcast survives the tree being rebuilt in a handler") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -319,8 +329,8 @@ TRIAL("Node: rozdanie przeżywa przebudowę drzewa w uchwycie") {
     same(up.much(), std::size_t{66});
 }
 
-// To samo od drugiej strony: uchwyt, który **zdejmuje** rodzeństwo, też nie może wywrócić przejścia.
-TRIAL("Node: rozdanie przeżywa opróżnienie drzewa w uchwycie") {
+// The same from the other side: a handler that removes its siblings must not break the walk either.
+TRIAL("Node: a broadcast survives the tree being emptied in a handler") {
     Twig up{"góra"};
 
     const std::shared_ptr<Twig> one = twig("raz");
@@ -345,15 +355,15 @@ TRIAL("Node: rozdanie przeżywa opróżnienie drzewa w uchwycie") {
 
     ui::KeyEvent what{U'x'};
 
-    // Zdjęte rodzeństwo dostaje zdarzenie mimo wszystko, bo migawka trzyma je przy życiu — tak samo
-    // zachowują się uchwyty w `Handler`.
+    // The removed siblings get the event anyway, because the snapshot keeps them alive; the
+    // handlers in `Handler` behave the same way.
     ought(up.broadcast(what));
 
     same(done, 1);
     ought(up.children().empty());
 }
 
-TRIAL("Node: przeniesienie pod innego rodzica jednym wyrażeniem") {
+TRIAL("Node: moving under another parent in one expression") {
     Twig first{"pierwszy"};
     Twig second{"drugi"};
 
@@ -367,7 +377,7 @@ TRIAL("Node: przeniesienie pod innego rodzica jednym wyrażeniem") {
     same(second.much(), std::size_t{1});
 }
 
-TRIAL("Node: zdjęte dziecko ginie, gdy nikt go nie trzyma") {
+TRIAL("Node: a removed child dies when nobody holds it") {
     int alive = 0;
 
     {
@@ -383,7 +393,7 @@ TRIAL("Node: zdjęte dziecko ginie, gdy nikt go nie trzyma") {
     }
 }
 
-TRIAL("Node: rodzic zabiera dzieci ze sobą") {
+TRIAL("Node: the parent takes its children with it") {
     int alive = 0;
 
     {
@@ -398,7 +408,7 @@ TRIAL("Node: rodzic zabiera dzieci ze sobą") {
     same(alive, 0);
 }
 
-TRIAL("Node: dziecko przeżywające rodzica nie zostaje z wiszącym wskazaniem") {
+TRIAL("Node: a child outliving its parent is not left with a dangling pointer") {
     std::shared_ptr<Twig> down = twig("dół");
 
     {
@@ -412,7 +422,7 @@ TRIAL("Node: dziecko przeżywające rodzica nie zostaje z wiszącym wskazaniem")
     ought(down->parent() == nullptr);
 }
 
-TRIAL("Node: całe poddrzewo ginie razem z korzeniem gałęzi") {
+TRIAL("Node: the whole subtree dies together with the root of the branch") {
     int alive = 0;
 
     {
@@ -430,7 +440,7 @@ TRIAL("Node: całe poddrzewo ginie razem z korzeniem gałęzi") {
     same(alive, 0);
 }
 
-TRIAL("Node: zdarzenie wędruje drzewem w górę") {
+TRIAL("Node: an event travels up the tree") {
     std::vector<std::string> told;
 
     const std::shared_ptr<Twig> top = twig("szczyt", &told);
@@ -449,7 +459,7 @@ TRIAL("Node: zdarzenie wędruje drzewem w górę") {
     ought(what.target() == low.get());
 }
 
-TRIAL("Node: odpięta gałąź nie oddaje zdarzeń dawnemu rodzicowi") {
+TRIAL("Node: a detached branch does not pass events to its former parent") {
     std::vector<std::string> told;
 
     const std::shared_ptr<Twig> top = twig("szczyt", &told);
@@ -466,7 +476,7 @@ TRIAL("Node: odpięta gałąź nie oddaje zdarzeń dawnemu rodzicowi") {
     same(told[0], std::string{"środek"});
 }
 
-TRIAL("Node: uchwyt dopięty do rodzica łapie zdarzenie z dziecka") {
+TRIAL("Node: a handler attached to the parent catches an event from the child") {
     std::vector<std::string> told;
 
     const std::shared_ptr<Twig> up = twig("góra", &told);
@@ -488,7 +498,7 @@ TRIAL("Node: uchwyt dopięty do rodzica łapie zdarzenie z dziecka") {
     ought(seen == down.get());
 }
 
-TRIAL("Node: świeży węzeł nie ma prostokąta") {
+TRIAL("Node: a fresh node has no rectangle") {
     const Twig one{"sam"};
 
     same(one.area().at.x, 0);
@@ -497,9 +507,9 @@ TRIAL("Node: świeży węzeł nie ma prostokąta") {
     same(one.area().size.high, 0);
 }
 
-// Sięgnięcie poza koniec jest błędem wołającego, a nie stanem do przemilczenia — ta sama reguła
-// co w zbiorze klawiszy i w zbiorze opcji.
-TRIAL("Children: sięgnięcie poza koniec rzuca") {
+// Reaching past the end is the caller's error, not a state to keep quiet about; the same rule as in
+// the key set and in the option set.
+TRIAL("Children: reaching past the end throws") {
     const std::shared_ptr<Twig> up = twig("góra");
 
     threw((void)up->children().front());

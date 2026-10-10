@@ -12,8 +12,11 @@ using namespace talcite;
 
 namespace {
 
+// A root to hang the table on.
 class Sheet : public ui::Root {};
 
+// Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
+// dropping trailing spaces.
 std::string said(const View& one, int y) {
     std::string made;
 
@@ -30,8 +33,8 @@ std::string said(const View& one, int y) {
     return made;
 }
 
-// Źródło wierszy: nazwa i numer. Oddaje **najwyżej tyle, ile poproszono**, i zero za końcem —
-// dokładnie ten kontrakt, którego tabela ma się trzymać.
+// A row source: a name and a number. It returns at most as many rows as asked for, and none past
+// the end, which is exactly the contract the table has to keep to.
 ui::TableSource numbered(std::size_t much) {
     return [much](std::size_t which, std::size_t most) {
         std::vector<ui::TableRow> made;
@@ -44,11 +47,13 @@ ui::TableSource numbered(std::size_t much) {
     };
 }
 
+// Two columns: a name that takes the rest of the width and a right-aligned size eight cells wide.
 std::vector<ui::TableColumn> twofold() {
     return {ui::TableColumn{"Nazwa", 0, ui::Justify::left},
             ui::TableColumn{"Rozmiar", 8, ui::Justify::right}};
 }
 
+// A table with the two columns and `much` numbered rows, hung on `sheet`.
 std::shared_ptr<ui::Table> shown(Sheet& sheet, std::size_t much) {
     const auto one = std::make_shared<ui::Table>();
 
@@ -62,9 +67,9 @@ std::shared_ptr<ui::Table> shown(Sheet& sheet, std::size_t much) {
 
 }
 
-// --- Co tabela wie na starcie --------------------------------------------------------------------
+// --- What a table knows at the start -------------------------------------------------------------
 
-TRIAL("Table: pusta nic nie niesie") {
+TRIAL("Table: an empty one carries nothing") {
     const ui::Table one;
 
     ought(!one.sourced());
@@ -73,7 +78,7 @@ TRIAL("Table: pusta nic nie niesie") {
     same(one.first(), std::size_t{0});
 }
 
-TRIAL("Table: po podaniu stoi na pierwszym wierszu") {
+TRIAL("Table: once given a source it stands on the first row") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -84,7 +89,7 @@ TRIAL("Table: po podaniu stoi na pierwszym wierszu") {
     same(one->first(), std::size_t{0});
 }
 
-TRIAL("Table: źródło bez wierszy nie daje bieżącego") {
+TRIAL("Table: a source with no rows gives no current row") {
     Sheet sheet;
 
     const auto one = shown(sheet, 0);
@@ -96,11 +101,11 @@ TRIAL("Table: źródło bez wierszy nie daje bieżącego") {
     same(one->shown(), std::size_t{0});
 }
 
-// --- Kolumny -------------------------------------------------------------------------------------
+// --- Columns -------------------------------------------------------------------------------------
 
-// Kolumna z zerową szerokością bierze resztę okna, a ta ze stałą swoje. Odstęp między nimi jest
-// jeden, więc przy oknie na trzydzieści kratek nazwie zostaje dwadzieścia jeden.
-TRIAL("Table: kolumna z zerem bierze resztę szerokości") {
+// A column of zero width takes the rest of the window, and one with a fixed width takes its own.
+// There is one cell between them, so in a window of thirty cells the name is left with twenty-one.
+TRIAL("Table: a column with zero takes the rest of the width") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -112,7 +117,7 @@ TRIAL("Table: kolumna z zerem bierze resztę szerokości") {
     same(said(made, 2), std::string{"plik1                       10"});
 }
 
-TRIAL("Table: wyrównanie w prawo dopycha od lewej") {
+TRIAL("Table: right alignment pads from the left") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Table>();
@@ -134,9 +139,9 @@ TRIAL("Table: wyrównanie w prawo dopycha od lewej") {
     same(said(sheet.render({{0, 0}, {6, 1}}), 0), std::string{"    ab"});
 }
 
-// Okno węższe niż suma kolumn przycina od prawej — panel nie przewija się w poziomie. Przy
-// czternastu kratkach na nazwę zostaje dokładnie pięć, czyli tyle, ile ma „plik0".
-TRIAL("Table: węższe okno oddaje kolumnie ruchomej mniej") {
+// A window narrower than the sum of the columns clips from the right, since a panel does not scroll
+// horizontally. With fourteen cells the name is left with exactly five, as many as "plik0" has.
+TRIAL("Table: a narrower window gives the flexible column less") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -144,9 +149,9 @@ TRIAL("Table: węższe okno oddaje kolumnie ruchomej mniej") {
     same(said(sheet.render({{0, 0}, {14, 3}}), 1), std::string{"plik0        0"});
 }
 
-// Kolumna o stałej szerokości, która sama nie mieści się w oknie, **nie ma prawa zabrać
-// wszystkiego**: nazwa jest w panelu treścią, więc zostaje jej co najmniej jedna kratka.
-TRIAL("Table: kolumna ruchoma nie znika przy skrajnie wąskim oknie") {
+// A fixed-width column that does not fit in the window by itself must not take everything: the
+// name is the content in a panel, so it keeps at least one cell.
+TRIAL("Table: the flexible column does not vanish in an extremely narrow window") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -156,7 +161,7 @@ TRIAL("Table: kolumna ruchoma nie znika przy skrajnie wąskim oknie") {
     same(made.at({0, 1}).letter, U'p');
 }
 
-TRIAL("Table: bez nagłówka pierwszy wiersz stoi na górze") {
+TRIAL("Table: without a heading the first row stands at the top") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -166,9 +171,9 @@ TRIAL("Table: bez nagłówka pierwszy wiersz stoi na górze") {
     same(said(sheet.render({{0, 0}, {30, 3}}), 0), std::string{"plik0                        0"});
 }
 
-// --- Ruch ----------------------------------------------------------------------------------------
+// --- Movement ------------------------------------------------------------------------------------
 
-TRIAL("Table: krok w dół i w górę chodzi po wierszach") {
+TRIAL("Table: a step down and up moves through the rows") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -191,8 +196,8 @@ TRIAL("Table: krok w dół i w górę chodzi po wierszach") {
     same(*one->which(), std::size_t{9});
 }
 
-// Widok dociąga się za bieżącym wierszem, a nie odwrotnie.
-TRIAL("Table: zejście poniżej ekranu przewija widok") {
+// The view follows the current row, not the other way round.
+TRIAL("Table: going below the screen scrolls the view") {
     Sheet sheet;
 
     const auto one = shown(sheet, 20);
@@ -212,7 +217,7 @@ TRIAL("Table: zejście poniżej ekranu przewija widok") {
     same(said(sheet.render({{0, 0}, {30, 4}}), 1), std::string{"plik1                       10"});
 }
 
-TRIAL("Table: koniec staje na ostatnim wierszu") {
+TRIAL("Table: end stands on the last row") {
     Sheet sheet;
 
     const auto one = shown(sheet, 20);
@@ -225,7 +230,7 @@ TRIAL("Table: koniec staje na ostatnim wierszu") {
     same(one->first(), std::size_t{17});
 }
 
-TRIAL("Table: strona przenosi o ekran") {
+TRIAL("Table: a page moves by one screen") {
     Sheet sheet;
 
     const auto one = shown(sheet, 30);
@@ -248,8 +253,8 @@ TRIAL("Table: strona przenosi o ekran") {
     same(*one->which(), std::size_t{5});
 }
 
-// Kółko przesuwa **sam widok**, a wiersza bieżącego nie rusza — tak samo jak w liście.
-TRIAL("Table: kółko przewija widok, a wiersza nie rusza") {
+// The wheel moves only the view and leaves the current row alone, just as in a list.
+TRIAL("Table: the wheel scrolls the view and leaves the row alone") {
     Sheet sheet;
 
     const auto one = shown(sheet, 30);
@@ -264,7 +269,7 @@ TRIAL("Table: kółko przewija widok, a wiersza nie rusza") {
     same(*one->which(), std::size_t{0});
 }
 
-TRIAL("Table: kółko na końcu przewijania oddaje zdarzenie wyżej") {
+TRIAL("Table: the wheel at the end of scrolling passes the event up") {
     Sheet sheet;
 
     const auto one = shown(sheet, 30);
@@ -276,7 +281,7 @@ TRIAL("Table: kółko na końcu przewijania oddaje zdarzenie wyżej") {
     ought(!sheet.dispatch(up));
 }
 
-TRIAL("Table: ruch zawiadamia zdarzeniem, a nie wywołaniem zwrotnym") {
+TRIAL("Table: movement notifies through an event, not a callback") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -301,9 +306,9 @@ TRIAL("Table: ruch zawiadamia zdarzeniem, a nie wywołaniem zwrotnym") {
     same(moves, 2);
 }
 
-// --- Kliknięcie ----------------------------------------------------------------------------------
+// --- Clicking ------------------------------------------------------------------------------------
 
-TRIAL("Table: kliknięcie stawia wiersz bieżący pod nagłówkiem") {
+TRIAL("Table: a click sets the current row below the heading") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -316,8 +321,8 @@ TRIAL("Table: kliknięcie stawia wiersz bieżący pod nagłówkiem") {
     same(*one->which(), std::size_t{2});
 }
 
-// Kliknięcie w sam nagłówek nie jest kliknięciem w wiersz.
-TRIAL("Table: kliknięcie w nagłówek nie rusza wiersza") {
+// A click on the heading itself is not a click on a row.
+TRIAL("Table: a click on the heading does not move the row") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -332,7 +337,7 @@ TRIAL("Table: kliknięcie w nagłówek nie rusza wiersza") {
     same(*one->which(), std::size_t{4});
 }
 
-TRIAL("Table: kliknięcie poniżej ostatniego wiersza nic nie zmienia") {
+TRIAL("Table: a click below the last row changes nothing") {
     Sheet sheet;
 
     const auto one = shown(sheet, 2);
@@ -345,12 +350,13 @@ TRIAL("Table: kliknięcie poniżej ostatniego wiersza nic nie zmienia") {
     same(*one->which(), std::size_t{0});
 }
 
-// Dwuklik na wierszu stawia go bieżącym i idzie wyżej drogą widżetów — co znaczy, wie aplikacja; na
-// nagłówku i pod ostatnim wierszem tabela go bierze i dalej nie idzie (U5).
-TRIAL("Table: dwuklik na wierszu idzie wyżej, na nagłówku i pustce — nie") {
+// A double click on a row makes it current and goes up the widget path; what it means is up to the
+// application. On the heading and below the last row the table takes it and it goes no further.
+TRIAL("Table: a double click on a row goes up, on the heading and empty space it does not") {
     struct Heard : ui::Root {
         int many = 0;
 
+        // Counts the double clicks that reach the root.
         bool handle(ui::DoubleClickEvent&) override {
             ++many;
 
@@ -384,9 +390,9 @@ TRIAL("Table: dwuklik na wierszu idzie wyżej, na nagłówku i pustce — nie") 
     same(*one->which(), std::size_t{2});
 }
 
-// --- Zaznaczanie ---------------------------------------------------------------------------------
+// --- Selection -----------------------------------------------------------------------------------
 
-TRIAL("Table: zaznaczanie jest czym innym niż wiersz bieżący") {
+TRIAL("Table: selection is something other than the current row") {
     Sheet sheet;
 
     const auto one = shown(sheet, 5);
@@ -410,28 +416,29 @@ TRIAL("Table: zaznaczanie jest czym innym niż wiersz bieżący") {
     ought(one->chosen().all().empty());
 }
 
-TRIAL("Table: zaznaczenie poza zakresem czeka, a rysowanie je przycina") {
+TRIAL("Table: a selection out of range waits, and drawing clips it") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
 
     one->chosen().add(9);
 
-    // **Zbiór nie zna liczby wierszy**, więc zapamiętuje — i to jest zamierzone: zaznaczenie
-    // przeżywa do chwili, w której tabela urośnie na tyle, żeby ten wiersz istniał.
+    // The set does not know the row count, so it remembers, and that is intended: the selection
+    // survives until the table grows enough for that row to exist.
     ought(one->chosen().contains(9));
 
-    // Przycina tabela, przy najbliższym rysowaniu — tą samą leniwą drogą, którą historia przycina
-    // swoją listę, a strona kasuje kursor wędrówki po znacznikach.
+    // The table clips on the next drawing, the same lazy way the history clips its list and a page
+    // drops the cursor of the walk over tags.
     (void)sheet.render({{0, 0}, {30, 5}});
 
     ought(!one->chosen().contains(9));
     ought(one->chosen().all().empty());
 }
 
-// Liczba zaznaczonych idzie obok bitów: drugie dodanie tego samego i zdjęcie niezaznaczonego jej nie
-// ruszają, przycięcie przy rysowaniu zdejmuje tylko to, co odcięło, a `clear` zeruje.
-TRIAL("Table: liczba zaznaczonych nadąża za dodaniem, zdjęciem i przycięciem") {
+// The count of selected rows goes along with the bits: adding the same row twice and removing an
+// unselected one do not change it, clipping on drawing removes only what it cut off, and `clear`
+// sets it to zero.
+TRIAL("Table: the selected count keeps up with adding, removing and clipping") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -464,11 +471,10 @@ TRIAL("Table: liczba zaznaczonych nadąża za dodaniem, zdjęciem i przycięciem
     ought(one->chosen().empty());
 }
 
-// Insert zaznacza i schodzi niżej — odruch z panelu.
-// **Insertu tabela nie bierze.** Stało tu zaznaczanie ze zejściem o wiersz niżej — jedyne miejsce
-// w bibliotece, gdzie `handle` zmieniał dane, a nie tylko przesuwał kursor, i którego wołający nie
-// miał jak odwołać: przechwycenie „wyżej" nie działa, bo tabela leży bliżej ogniska.
-TRIAL("Table: insert przechodzi wyżej, a zaznaczenia nie rusza") {
+// The table does not take Insert. Marking with a step down would be the only place in the library
+// where `handle` changed data rather than just moving the cursor, and the caller would have no way
+// to undo it: intercepting it higher up does not work, because the table lies closer to focus.
+TRIAL("Table: Insert passes up and leaves the selection alone") {
     Sheet sheet;
 
     const auto one = shown(sheet, 5);
@@ -485,9 +491,9 @@ TRIAL("Table: insert przechodzi wyżej, a zaznaczenia nie rusza") {
     same(*one->which(), std::size_t{0});
 }
 
-// Kto chce ten odruch, wiesza uchwyt i woła `mark` sam — i wtedy działa, bo uchwyt widzi klawisz
-// niezależnie od tego, co robi `handle`.
-TRIAL("Table: zaznaczanie Insertem da się dołożyć uchwytem") {
+// Whoever wants that habit from file panels hangs a handler and calls `mark` themselves, and then it
+// works, because the handler sees the key regardless of what `handle` does.
+TRIAL("Table: marking with Insert can be added through a handler") {
     Sheet sheet;
 
     const auto one = shown(sheet, 5);
@@ -525,9 +531,9 @@ TRIAL("Table: zaznaczanie Insertem da się dołożyć uchwytem") {
     same(*one->which(), std::size_t{1});
 }
 
-// --- Role ----------------------------------------------------------------------------------------
+// --- Roles ---------------------------------------------------------------------------------------
 
-TRIAL("Table: wiersz bieżący, zaznaczony i zwykły mają różne role") {
+TRIAL("Table: the current, selected and plain rows have different roles") {
     Sheet sheet;
 
     const auto one = shown(sheet, 4);
@@ -536,7 +542,7 @@ TRIAL("Table: wiersz bieżący, zaznaczony i zwykły mają różne role") {
 
     const View made = sheet.render({{0, 0}, {30, 5}});
 
-    // Nagłówek i wiersz bieżący na odwrót, zaznaczony wytłuszczony, reszta zwykła.
+    // The heading and the current row in reverse video, the selected row bold, the rest plain.
     ought(made.at({0, 0}).style.reverse);
     ought(made.at({0, 1}).style.reverse);
     ought(made.at({0, 2}).style.bold);
@@ -544,7 +550,7 @@ TRIAL("Table: wiersz bieżący, zaznaczony i zwykły mają różne role") {
     ought(!made.at({0, 3}).style.bold);
 }
 
-TRIAL("Table: rola komórki nakłada się na rolę wiersza") {
+TRIAL("Table: a cell's role is laid over the row's role") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Table>();
@@ -566,18 +572,18 @@ TRIAL("Table: rola komórki nakłada się na rolę wiersza") {
 
     const View made = sheet.render({{0, 0}, {9, 1}});
 
-    // Wiersz jest bieżący, więc na odwrót; pierwsza komórka dokłada do tego wytłuszczenie.
+    // The row is current, so it is in reverse video; the first cell adds bold to that.
     ought(made.at({0, 0}).style.reverse);
     ought(made.at({0, 0}).style.bold);
     ought(made.at({5, 0}).style.reverse);
     ought(!made.at({5, 0}).style.bold);
 }
 
-// --- Odświeżenie ---------------------------------------------------------------------------------
+// --- Refreshing ----------------------------------------------------------------------------------
 
-// `again` wyrzuca zapamiętane wiersze i pyta źródło od nowa, ale **zaznaczeń nie czyści**:
-// to wołający wie, czy numery wierszy dalej znaczą to samo.
-TRIAL("Table: again pyta źródło od nowa i zostawia zaznaczenia") {
+// `refresh` throws away the remembered rows and asks the source again, but does not clear the
+// selection: only the caller knows whether the row numbers still mean the same.
+TRIAL("Table: refresh asks the source again and keeps the selection") {
     Sheet sheet;
 
     const auto said = std::make_shared<std::string>("stare");
@@ -617,8 +623,8 @@ TRIAL("Table: again pyta źródło od nowa i zostawia zaznaczenia") {
     same(got, std::string{"nowe"});
 }
 
-// Podanie nowego źródła zaczyna od zera: nowy dokument to nowe zaznaczenia i nowe położenie.
-TRIAL("Table: nowe źródło zeruje położenie i zaznaczenia") {
+// Giving a new source starts from zero: a new document means a new selection and a new position.
+TRIAL("Table: a new source resets the position and the selection") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);
@@ -636,30 +642,30 @@ TRIAL("Table: nowe źródło zeruje położenie i zaznaczenia") {
     same(one->rows(), std::size_t{4});
 }
 
-// --- Pasek ---------------------------------------------------------------------------------------
+// --- Scrollbar -----------------------------------------------------------------------------------
 
-TRIAL("Table: pasek zabiera kolumnę treści") {
+TRIAL("Table: the scrollbar takes a column from the content") {
     Sheet sheet;
 
     const auto one = shown(sheet, 40);
 
     one->heading(false);
 
-    // Bez paska liczba wyrównana do prawej kończy się w ostatniej kolumnie okna.
+    // Without the scrollbar, a right-aligned number ends in the last column of the window.
     same(sheet.render({{0, 0}, {30, 3}}).at({29, 0}).letter, U'0');
 
     one->scrollbar(true);
 
     const View made = sheet.render({{0, 0}, {30, 3}});
 
-    // Z paskiem treść zwęża się o kratkę, a na jej miejscu staje pasek.
+    // With the scrollbar the content narrows by one cell, and the scrollbar stands in its place.
     same(made.at({28, 0}).letter, U'0');
     ought(made.at({29, 0}).letter != U' ');
 }
 
-// Pasek stoi tylko wtedy, gdy wierszy jest więcej, niż widać; kolumna na niego zostaje, żeby
-// kolumny tabeli nie skakały, gdy lista urośnie.
-TRIAL("Table: pasek tylko przy wierszach, których nie widać") {
+// The scrollbar stands only when there are more rows than are visible; the column for it stays, so
+// that the table's columns do not jump when the list grows.
+TRIAL("Table: the scrollbar only with rows that are not visible") {
     Sheet sheet;
 
     const auto one = shown(sheet, 3);
@@ -681,7 +687,7 @@ TRIAL("Table: pasek tylko przy wierszach, których nie widać") {
 
     ought(other.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
 
-    // Nagłówek zabiera wiersz: trzy wiersze pod nagłówkiem w oknie na trzy już się nie mieszczą.
+    // The heading takes a row: three rows under a heading no longer fit in a window of three.
     Sheet headed;
 
     const auto titled = shown(headed, 3);
@@ -691,11 +697,11 @@ TRIAL("Table: pasek tylko przy wierszach, których nie widać") {
     ought(headed.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
 }
 
-// --- Co idzie wyżej ------------------------------------------------------------------------------
+// --- What goes up --------------------------------------------------------------------------------
 
-// Tabela nie zna pojęcia „wybrano wiersz": w panelu Enter wchodzi do katalogu, a w oknie
-// dialogowym naciska przycisk podstawowy. Litery też idą wyżej — do szybkiego szukania.
-TRIAL("Table: enter i litery przechodzą wyżej") {
+// The table has no notion of "a row was chosen": in a panel Enter enters a directory, and in a
+// dialog it presses the default button. Letters go up too, for quick search.
+TRIAL("Table: Enter and letters pass up") {
     Sheet sheet;
 
     const auto one = shown(sheet, 5);
@@ -715,16 +721,15 @@ TRIAL("Table: enter i litery przechodzą wyżej") {
     ought(!sheet.dispatch(f2));
 }
 
-TRIAL("Table: nie przyjmuje dzieci") {
+TRIAL("Table: takes no children") {
     ui::Table one;
 
     same(one.capacity(), 0);
 }
 
-// Reszta słownika zaznaczenia: ile, zdjęcie jednego i pustość. Zaznaczenie było kiedyś bazą
-// ChosenNode „na zapas" dla cudzych widżetów wierszowych; drugi użytkownik się nie pojawił, więc
-// tabela trzyma zbiór wprost, a ta próba sprawdza go na niej.
-TRIAL("Table: zaznaczenie liczy, zdejmuje pojedynczo i wie, że jest puste") {
+// The rest of the selection's vocabulary: the count, removing one, and emptiness. The table holds
+// the set directly, and this trial checks it on the table.
+TRIAL("Table: the selection counts, removes one at a time and knows it is empty") {
     Sheet sheet;
 
     const auto one = shown(sheet, 10);

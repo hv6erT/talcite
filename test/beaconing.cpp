@@ -16,22 +16,24 @@
 
 using namespace talcite;
 
-// **Majak w sieci lokalnej** (S1): udostępniający odpowiada na pytanie o znacznik, który zna,
-// pytający zbiera odpowiedzi. Próby pytają wprost pętlę zwrotną — rozgłoszenie zależy od sieci,
-// w której stoi maszyna, więc ma osobną próbę, która umie się pominąć.
+// A beacon in the local network: the sharing side answers a question about a tag it knows, the
+// asking side collects the answers. The trials ask the loopback directly; broadcast depends on the
+// network the machine stands in, so it has a separate trial that can skip itself.
 namespace {
 
 const net::Patience briefly{400};
 
+// The tag with the given text.
 Bytes tagged(const std::string& said) { return bytes(said); }
 
+// The loopback address of the beacon's port, to ask it directly instead of by broadcast.
 std::vector<net::Address> here(const net::Beacon& one) {
     return {net::Address::loopback(net::Family::four, one.mine().port())};
 }
 
 }
 
-TRIAL("Majak: odpowiada na znacznik, który zna, treścią, którą mu dano") {
+TRIAL("Beacon: answers a tag it knows with the payload it was given") {
     const net::Beacon one{0};
 
     ought(one.held());
@@ -49,7 +51,7 @@ TRIAL("Majak: odpowiada na znacznik, który zna, treścią, którą mu dano") {
     same(text(found.front().payload), std::string{"port 4123"});
     same(found.front().from.port(), one.mine().port());
 
-    // Ten sam majak zapytany dwa razy (dwa adresy prowadzą do niego) liczy się raz.
+    // The same beacon asked twice (two addresses lead to it) counts once.
     const std::vector<net::Sighting> twice = net::Beacon::sought(one.mine().port(), tagged("etykieta"), briefly,
                                                                  {here(one).front(), here(one).front()})
                                                  .await();
@@ -57,8 +59,8 @@ TRIAL("Majak: odpowiada na znacznik, który zna, treścią, którą mu dano") {
     same(twice.size(), std::size_t{1});
 }
 
-// Nieznany znacznik i znacznik wycofany — pusta lista. „Nikogo tu nie ma" to wynik, a nie odmowa.
-TRIAL("Majak: nieznany albo wycofany znacznik — nikt nie odpowiada") {
+// An unknown tag and a withdrawn tag give an empty list. "Nobody here" is a result, not a refusal.
+TRIAL("Beacon: an unknown or withdrawn tag gets no answer") {
     const net::Beacon one{0};
 
     one.offer(tagged("jest"), bytes("x"));
@@ -70,9 +72,9 @@ TRIAL("Majak: nieznany albo wycofany znacznik — nikt nie odpowiada") {
     ought(net::Beacon::sought(one.mine().port(), tagged("jest"), briefly, here(one)).await().empty());
 }
 
-// Obcy datagram na porcie majaka — śmieci, ucięta wiadomość, inna wersja, odpowiedź zamiast
-// pytania — nie zmienia niczego: następne prawdziwe pytanie dostaje odpowiedź.
-TRIAL("Majak: obce datagramy niczego nie psują") {
+// A foreign datagram on the beacon's port (garbage, a truncated message, another version, an
+// answer instead of a question) changes nothing: the next real question gets an answer.
+TRIAL("Beacon: foreign datagrams break nothing") {
     const net::Beacon one{0};
 
     one.offer(tagged("etykieta"), bytes("ok"));
@@ -92,8 +94,8 @@ TRIAL("Majak: obce datagramy niczego nie psują") {
 
     same(found.size(), std::size_t{1});
 
-    // Pytanie dobre we wszystkim poza jednym — znakiem, wersją, rodzajem, nadmiarowym bajtem albo
-    // długością znacznika — nie dostaje odpowiedzi. To samo pytanie poprawne dostaje.
+    // A question right in everything but one thing (the magic, the version, the kind, a surplus
+    // byte or the tag length) gets no answer. The same question done right gets one.
     const std::string luck(8, 'n');
     const std::string asked = std::string{"TLCB\x01\x01"} + luck + "\x08" "etykieta";
 
@@ -114,22 +116,24 @@ TRIAL("Majak: obce datagramy niczego nie psują") {
     ought(answer.bytes.size() > 5 && answer.bytes[5] == std::byte{2});
 }
 
-// Odpowiedź na cudze pytanie — inne bajty losowe — albo z innym znacznikiem nie jest odpowiedzią
-// dla nas. Fałszywy majak odpowiada na wszystko po swojemu; liczy się tylko prawdziwy.
-TRIAL("Majak: odpowiedź z cudzym losem albo cudzym znacznikiem się nie liczy") {
+// An answer to someone else's question (other random bytes) or with another tag is not an answer
+// for us. A fake beacon answers everything its own way; only the real one counts.
+TRIAL("Beacon: an answer with someone else's nonce or tag does not count") {
     const net::Beacon real{0};
 
     real.offer(tagged("etykieta"), bytes("prawdziwy"));
 
     const net::Udp fake{net::Address::loopback(net::Family::four, 0)};
 
-    // Fałszywy słucha jednego pytania i odpowiada dwa razy: z innym losem i z innym znacznikiem.
+    // The fake one listens for one question and answers twice: with another nonce and with
+    // another tag.
     auto heard = fake.receive(256, net::Patience{2000});
 
     auto seeking = net::Beacon::sought(real.mine().port(), tagged("etykieta"), net::Patience{600},
                                        {here(real).front(), fake.mine()});
 
-    // Obietnica łańcucha rusza dopiero na prośbę — tu przed czekaniem na pytanie u fałszywego.
+    // A chained promise starts only on request; here, before waiting for the question at the
+    // fake one.
     seeking.start();
 
     const net::Datagram asked = heard.await();
@@ -155,10 +159,10 @@ TRIAL("Majak: odpowiedź z cudzym losem albo cudzym znacznikiem się nie liczy")
 
         fake.send(asked.from, other_tag, briefly).await();
 
-        // Nasze własne pytanie odbite z powrotem — ten sam los i znacznik, ale to nie odpowiedź.
+        // Our own question bounced back: the same nonce and tag, but it is not an answer.
         fake.send(asked.from, asked.bytes, briefly).await();
 
-        // Odpowiedź na nasze pytanie, ale z długością treści, która nie zgadza się z resztą.
+        // An answer to our question, but with a payload length that does not match the rest.
         Bytes crooked = asked.bytes;
 
         crooked[5] = std::byte{2};
@@ -174,7 +178,7 @@ TRIAL("Majak: odpowiedź z cudzym losem albo cudzym znacznikiem się nie liczy")
     ought(!found.empty() && text(found.front().payload) == "prawdziwy");
 }
 
-TRIAL("Majak: granice znacznika i treści") {
+TRIAL("Beacon: limits of the tag and the payload") {
     const net::Beacon one{0};
 
     threw(one.offer(Bytes{}, bytes("x")));
@@ -193,8 +197,8 @@ TRIAL("Majak: granice znacznika i treści") {
     threw(net::Beacon::sought(one.mine().port(), Bytes(65, std::byte{'t'}), briefly).await());
 }
 
-// Zamknięty majak milczy i nie przyjmuje ofert.
-TRIAL("Majak: zamknięty milczy") {
+// A closed beacon is silent and accepts no offers.
+TRIAL("Beacon: a closed one is silent") {
     net::Beacon one{0};
 
     const std::uint16_t port = one.mine().port();
@@ -209,9 +213,9 @@ TRIAL("Majak: zamknięty milczy") {
               .empty());
 }
 
-// Rozgłoszenie zależy od sieci maszyny: bez trasy rozgłoszeniowej pytanie nie wyjdzie i nikt nie
-// odpowie. Wtedy próba mówi, że się pomija, zamiast udawać porażkę.
-TRIAL("Majak: rozgłoszenie w sieci lokalnej") {
+// Broadcast depends on the machine's network: without a broadcast route the question does not go
+// out and nobody answers. Then the trial says it skips itself instead of posing as a failure.
+TRIAL("Beacon: broadcast in the local network") {
     const net::Beacon one{0};
 
     one.offer(tagged("rozgloszenie"), bytes("tu"));
@@ -220,7 +224,7 @@ TRIAL("Majak: rozgłoszenie w sieci lokalnej") {
         net::Beacon::sought(one.mine().port(), tagged("rozgloszenie"), net::Patience{600}).await();
 
     if (found.empty()) {
-        std::cout << "        rozgłoszenie nie wraca na tej maszynie — próba pominięta\n";
+        std::cout << "        broadcast does not come back on this machine, trial skipped\n";
 
         return;
     }
@@ -228,11 +232,11 @@ TRIAL("Majak: rozgłoszenie w sieci lokalnej") {
     same(text(found.front().payload), std::string{"tu"});
 }
 
-// Majak porzucony bez `close()` nie zostawia w centrali odbioru bez terminu — inaczej czekałby on
-// do końca programu, trzymając gniazdo.
-TRIAL("Majak: porzucony nie zostawia czekania w centrali") {
-    // Najpierw cisza po próbach wcześniejszych: gniazdo, które właśnie schodzi, zmieniłoby licznik
-    // w trakcie i porównanie mówiłoby o nim, a nie o majaku.
+// A beacon abandoned without `close()` leaves no receive without a deadline in the hub;
+// otherwise it would wait until the end of the program, holding the socket.
+TRIAL("Beacon: an abandoned one leaves no wait in the hub") {
+    // First, quiet after the earlier trials: a socket that is just going away would change the
+    // counter meanwhile, and the comparison would speak of it, not of the beacon.
     for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > 0; ++tried)
         Time::later(std::chrono::milliseconds{5}).await();
 
@@ -252,8 +256,8 @@ TRIAL("Majak: porzucony nie zostawia czekania w centrali") {
     ought(net::Exchange::running().waiting() <= before);
 }
 
-// Zalew pytań nie robi z majaka wzmacniacza: w jednej sekundzie najwyżej 32 odpowiedzi.
-TRIAL("Majak: najwyżej 32 odpowiedzi na sekundę") {
+// A flood of questions does not make the beacon an amplifier: at most 32 answers in one second.
+TRIAL("Beacon: at most 32 answers per second") {
     const net::Beacon one{0};
 
     one.offer(tagged("etykieta"), bytes("x"));

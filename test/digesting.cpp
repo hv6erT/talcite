@@ -15,13 +15,16 @@
 
 using namespace talcite;
 
-// Losowość i skróty bierze się **od systemu**, nie z żadnej biblioteki i nie z własnego kodu.
-// Losowość jest wszędzie; skróty potrafi zablokować filtr wywołań systemowych w kontenerze — i tam
-// próby na wektorach pomijają się zamiast wywracać, bo brak systemowej możliwości nie jest wadą
-// biblioteki. `summing()` mówi wprost, którą sytuację mamy.
+// Randomness and digests come from the system, not from any library and not from our own code.
+// Randomness is available everywhere; digests can be blocked by a system-call filter in a
+// container, and there the trials on test vectors skip themselves instead of failing, because a
+// missing system capability is not a defect of the library. `summing()` says plainly which case we
+// are in.
 namespace {
 
 
+// Spells bytes as lowercase hexadecimal, two digits per byte, so that digests compare against the
+// published vectors.
 std::string spelled(const Bytes& what) {
     static const char* signs = "0123456789abcdef";
 
@@ -37,36 +40,37 @@ std::string spelled(const Bytes& what) {
     return made;
 }
 
+// Tells whether this system gives no digests; if so, it prints a note that the trial is skipped.
 bool missing() {
     if (summing()) return false;
 
-    std::cout << "        ten system nie daje skrótów — próba pominięta\n";
+    std::cout << "        this system provides no digests; trial skipped\n";
 
     return true;
 }
 
 }
 
-TRIAL("Losowość: oddaje tyle bajtów, ile poproszono") {
+TRIAL("Randomness: returns as many bytes as requested") {
     same(random(0).size(), static_cast<std::size_t>(0));
     same(random(1).size(), static_cast<std::size_t>(1));
     same(random(12).size(), static_cast<std::size_t>(12));
 
-    // Duża prośba nie może być ucięta: getrandom bez flag oddaje najwyżej 32 MiB naraz i potrafi
-    // oddać mniej, niż poproszono, więc pętla dobierająca resztę musi tam być.
+    // A large request must not be truncated: getrandom without flags returns at most 32 MiB at once
+    // and may return fewer bytes than requested, so the loop that fetches the rest has to be there.
     same(random(70000).size(), static_cast<std::size_t>(70000));
 }
 
-TRIAL("Losowość: dwa wywołania się różnią") {
+TRIAL("Randomness: two calls differ") {
     const Bytes one = random(32);
     const Bytes two = random(32);
 
     ought(!(one == two));
 }
 
-// Nie jest to sprawdzian jakości losowości — tej nie da się sprawdzić testem — tylko tego, że coś
-// w ogóle miesza. Same zera na trzydziestu dwóch bajtach znaczyłyby, że nikt nic nie wpisał.
-TRIAL("Losowość: nie oddaje samych zer") {
+// This is not a test of the quality of the randomness (no test can check that), only that something
+// mixes at all. Thirty-two zero bytes would mean that nobody wrote anything.
+TRIAL("Randomness: does not return only zeros") {
     bool something = false;
 
     for (const std::byte one : random(32))
@@ -75,14 +79,14 @@ TRIAL("Losowość: nie oddaje samych zer") {
     ought(something);
 }
 
-// Wartość kontrolna CRC-32 znana od zawsze: suma z „123456789" wynosi 0xCBF43926. To jest suma
-// kontrolna, nie kryptografia, więc liczymy ją sami i sprawdzamy do końca.
-TRIAL("Suma: CRC-32 zgadza się z wartością kontrolną") {
+// The well-known CRC-32 check value: the checksum of "123456789" is 0xCBF43926. This is a checksum,
+// not cryptography, so we compute it ourselves and check it completely.
+TRIAL("Checksum: CRC-32 matches the check value") {
     same(net::tallied(bytes("123456789"), 9), 0xCBF43926u);
     same(net::tallied(Bytes{}, 0), 0u);
 }
 
-TRIAL("Skrót: SHA-1 zgadza się z wektorem") {
+TRIAL("Digest: SHA-1 matches the test vector") {
     if (missing()) return;
 
     same(spelled(summed(Sum::sha1, bytes("abc"))),
@@ -92,7 +96,7 @@ TRIAL("Skrót: SHA-1 zgadza się z wektorem") {
          std::string{"da39a3ee5e6b4b0d3255bfef95601890afd80709"});
 }
 
-TRIAL("Skrót: MD5 zgadza się z wektorem") {
+TRIAL("Digest: MD5 matches the test vector") {
     if (missing()) return;
 
     same(spelled(summed(Sum::md5, bytes("abc"))), std::string{"900150983cd24fb0d6963f7d28e17f72"});
@@ -100,14 +104,14 @@ TRIAL("Skrót: MD5 zgadza się z wektorem") {
     same(spelled(summed(Sum::md5, Bytes{})), std::string{"d41d8cd98f00b204e9800998ecf8427e"});
 }
 
-TRIAL("Skrót: SHA-256 zgadza się z wektorem") {
+TRIAL("Digest: SHA-256 matches the test vector") {
     if (missing()) return;
 
     same(spelled(summed(Sum::sha256, bytes("abc"))),
          std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
 }
 
-TRIAL("Skrót: SHA-512 zgadza się z wektorem") {
+TRIAL("Digest: SHA-512 matches the test vector") {
     if (missing()) return;
 
     same(spelled(summed(Sum::sha512, bytes("abc"))),
@@ -115,8 +119,8 @@ TRIAL("Skrót: SHA-512 zgadza się z wektorem") {
                      "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"});
 }
 
-// RFC 4231, przypadek drugi.
-TRIAL("Podpis: HMAC-SHA-512 zgadza się z wektorem z RFC 4231") {
+// RFC 4231, test case 2.
+TRIAL("Signature: HMAC-SHA-512 matches the RFC 4231 vector") {
     if (missing()) return;
 
     same(spelled(stamped(Sum::sha512, bytes("Jefe"), bytes("what do ya want for nothing?"))),
@@ -124,8 +128,8 @@ TRIAL("Podpis: HMAC-SHA-512 zgadza się z wektorem z RFC 4231") {
                      "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"});
 }
 
-// RFC 5869, przypadki pierwszy i trzeci: z solą i treścią, potem bez obu (sól to zera).
-TRIAL("Wywód: HKDF zgadza się z wektorami z RFC 5869") {
+// RFC 5869, test cases 1 and 3: with salt and info, then without both (the salt is zeros).
+TRIAL("Derivation: HKDF matches the RFC 5869 vectors") {
     if (missing()) return;
 
     Bytes salt;
@@ -144,7 +148,7 @@ TRIAL("Wywód: HKDF zgadza się z wektorami z RFC 5869") {
          std::string{"8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
                      "9d201395faa4b61a96c8"});
 
-    // Dłuższy wywód zaczyna się krótszym — bloki idą po kolei.
+    // A longer derivation starts with the shorter one: the blocks come in order.
     const Bytes longer = derived(Sum::sha512, {}, bytes("x"), {}, 100);
 
     same(longer.size(), std::size_t{100});
@@ -152,8 +156,8 @@ TRIAL("Wywód: HKDF zgadza się z wektorami z RFC 5869") {
     threw((void)derived(Sum::sha256, {}, bytes("x"), {}, 255 * 32 + 1));
 }
 
-// RFC 2202, przypadki pierwszy i drugi.
-TRIAL("Podpis: HMAC-SHA1 zgadza się z wektorami z RFC 2202") {
+// RFC 2202, test cases 1 and 2.
+TRIAL("Signature: HMAC-SHA1 matches the RFC 2202 vectors") {
     if (missing()) return;
 
     same(spelled(stamped(Sum::sha1, Bytes(20, std::byte{0x0b}), bytes("Hi There"))),
@@ -163,8 +167,8 @@ TRIAL("Podpis: HMAC-SHA1 zgadza się z wektorami z RFC 2202") {
          std::string{"effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"});
 }
 
-// Klucz długoterminowy TURN to skrót z nazwy, dziedziny i hasła sklejonych dwukropkami.
-TRIAL("Podpis: klucz długoterminowy jest skrótem sklejenia") {
+// The TURN long-term key is the digest of the user name, realm and password joined with colons.
+TRIAL("Signature: the long-term key is the digest of the joined parts") {
     if (missing()) return;
 
     same(spelled(net::keyed("user", "realm", "pass")),
@@ -173,10 +177,11 @@ TRIAL("Podpis: klucz długoterminowy jest skrótem sklejenia") {
     same(net::keyed("user", "realm", "pass").size(), static_cast<std::size_t>(16));
 }
 
-// Podpisana wiadomość musi sprawdzić się własnym kluczem i **nie sprawdzić cudzym**. Pułapką jest
-// tu pole długości: podpis liczy się po treści, w której długość już udaje, że atrybut podpisu tam
-// stoi — policzony inaczej nie zgodziłby się z żadną drugą stroną.
-TRIAL("Podpis: wiadomość sprawdza się własnym kluczem") {
+// A signed message must verify with its own key and must not verify with someone else's. The trap
+// here is the length field: the signature is computed over content whose length already pretends
+// that the signature attribute is present. Computed any other way, it would not agree with any
+// peer.
+TRIAL("Signature: a message verifies with its own key") {
     if (missing()) return;
 
     const Bytes key = bytes("tajemnica");
@@ -190,7 +195,7 @@ TRIAL("Podpis: wiadomość sprawdza się własnym kluczem") {
     ought(net::trusted(made, key));
     ought(!net::trusted(made, bytes("inna")));
 
-    // Zmiana choćby jednego bajtu treści unieważnia podpis.
+    // Changing even one byte of the content invalidates the signature.
     Bytes other = made;
 
     other[24] = ~other[24];
@@ -198,7 +203,7 @@ TRIAL("Podpis: wiadomość sprawdza się własnym kluczem") {
     ought(!net::trusted(other, key));
 }
 
-TRIAL("Podpis: wiadomość bez podpisu nie jest zaufana") {
+TRIAL("Signature: a message without a signature is not trusted") {
     if (missing()) return;
 
     const Bytes made = net::asked(net::numbered());
@@ -206,17 +211,17 @@ TRIAL("Podpis: wiadomość bez podpisu nie jest zaufana") {
     ought(!net::trusted(made, bytes("tajemnica")));
 }
 
-// Sam odcisk **nie potrzebuje skrótów** — to suma kontrolna — więc ta próba biegnie wszędzie
-// i pilnuje pułapki z polem długości: liczy się po treści, w której długość już udaje, że atrybut
-// odcisku tam stoi.
-TRIAL("Odcisk: sam odcisk zgadza się bez żadnych skrótów") {
+// The fingerprint itself needs no digests (it is a checksum), so this trial runs everywhere and
+// guards the length-field trap: the fingerprint is computed over content whose length already
+// pretends that the fingerprint attribute is present.
+TRIAL("Fingerprint: the fingerprint alone is correct without any digests") {
     Bytes made = net::asked(net::numbered());
 
     net::printing(made);
 
     same(made.size(), static_cast<std::size_t>(28));
 
-    // Pole długości musi liczyć wszystko po nagłówku, razem z odciskiem.
+    // The length field must count everything after the header, including the fingerprint.
     same(static_cast<unsigned>(std::to_integer<unsigned>(made[2]) << 8 |
                                std::to_integer<unsigned>(made[3])),
          8u);
@@ -236,8 +241,9 @@ TRIAL("Odcisk: sam odcisk zgadza się bez żadnych skrótów") {
     ought(net::understood(made, told));
 }
 
-// Odcisk idzie na sam koniec i obejmuje także podpis, więc obie rzeczy muszą się zgadzać naraz.
-TRIAL("Odcisk: wiadomość z odciskiem i podpisem trzyma się kupy") {
+// The fingerprint goes at the very end and also covers the signature, so both must be correct at
+// once.
+TRIAL("Fingerprint: a message with a fingerprint and a signature is consistent") {
     if (missing()) return;
 
     const Bytes key = bytes("tajemnica");
@@ -253,7 +259,8 @@ TRIAL("Odcisk: wiadomość z odciskiem i podpisem trzyma się kupy") {
 
     ought(net::understood(made, told));
 
-    // Odcisk sprawdza się tak, jak zrobi to druga strona: suma po wszystkim przed nim.
+    // The fingerprint is checked the way the peer will check it: a checksum over everything before
+    // it.
     const std::uint32_t sum = net::tallied(made, made.size() - 8) ^ 0x5354554Eu;
 
     const std::size_t at = made.size() - 4;
@@ -265,9 +272,9 @@ TRIAL("Odcisk: wiadomość z odciskiem i podpisem trzyma się kupy") {
          sum);
 }
 
-// Skrót ratami daje to samo co w całości — dla każdego skrótu, z kluczem i bez, a także wtedy, gdy
-// któraś rata jest pusta albo gdy rat nie ma wcale.
-TRIAL("Skrót: ratami wychodzi to samo co w całości") {
+// A digest fed in parts gives the same result as the whole, for every digest, with and without a
+// key, and also when some part is empty or when there are no parts at all.
+TRIAL("Digest: feeding in parts gives the same as the whole") {
     if (missing()) return;
 
     std::string whole;
@@ -295,9 +302,9 @@ TRIAL("Skrót: ratami wychodzi to samo co w całości") {
     }
 }
 
-// Skończony skrót nie liczy dalej: druga odpowiedź byłaby skrótem czegoś innego niż to, o co
-// pytano. To samo skrót, z którego zabrano stan przeniesieniem.
-TRIAL("Skrót: skończony i przeniesiony odmawiają") {
+// A finished digest does not compute further: a second answer would be the digest of something
+// other than what was asked. The same goes for a digest whose state was taken away by a move.
+TRIAL("Digest: finished and moved-from digests refuse") {
     if (missing()) return;
 
     Digest one{Sum::sha1};
@@ -332,9 +339,10 @@ TRIAL("Skrót: skończony i przeniesiony odmawiają") {
     same(spelled(three.done()), std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
 }
 
-TRIAL("Skrót: gdy system nie daje skrótów, mówi to wprost") {
+TRIAL("Digest: when the system provides no digests, it says so plainly") {
     if (summing()) {
-        // Tam, gdzie skróty są, sprawdzamy odwrotność: nie rzuca i oddaje właściwą długość.
+        // Where digests are available, we check the opposite: it does not throw and returns the
+        // right length.
         same(summed(Sum::sha1, Bytes{}).size(), static_cast<std::size_t>(20));
 
         return;
@@ -353,18 +361,21 @@ TRIAL("Skrót: gdy system nie daje skrótów, mówi to wprost") {
 
 namespace {
 
-// Zapas, który liczy „skrót" po swojemu: same bajty o wartości podanej, w długości, jaką każe —
-// tak widać, kto liczył, i że zła długość nie przechodzi.
+// A spare provider that computes a "digest" its own way: only bytes of the given value, in the
+// length it is told. That shows who computed it, and that a wrong length does not pass.
 class Pretend : public DigestProvider {
 public:
     Pretend(std::byte value, std::size_t wide) : value_(value), wide_(wide) {}
 
+    // The provider's name, as reported to whoever asks which provider is in use.
     [[nodiscard]] std::string_view name() const override { return "pretend digests"; }
 
+    // Starts a digest that yields 0x77 bytes for a keyed digest and the configured value otherwise.
     [[nodiscard]] std::unique_ptr<Digesting> started(Sum, const Bytes* key) override {
         return std::make_unique<Running>(key != nullptr ? std::byte{0x77} : value_, wide_, fed_);
     }
 
+    // How many bytes all digests started by this provider have been fed so far.
     [[nodiscard]] std::size_t fed() const { return *fed_; }
 
 private:
@@ -372,8 +383,10 @@ private:
     public:
         Running(std::byte value, std::size_t wide, std::shared_ptr<std::size_t> fed) : value_(value), wide_(wide), fed_(std::move(fed)) {}
 
+        // Counts the fed bytes in the counter shared with the provider.
         void feed(const Bytes& what) override { *fed_ += what.size(); }
 
+        // Returns the configured number of bytes of the configured value.
         [[nodiscard]] Bytes done() override { return Bytes(wide_, value_); }
 
     private:
@@ -389,10 +402,11 @@ private:
 
 }
 
-// Zapas idzie w ruch tylko wtedy, gdy system skrótów nie daje. Na systemie, który je daje, liczy
-// system i zapas niczego nie zmienia; tam, gdzie nie daje (tak jest na maszynie, na której ta próba
-// powstała), liczy zapas — a skrót o złej długości to wyjątek.
-TRIAL("Skrót: zapas liczy tylko wtedy, gdy system nie daje") {
+// The spare provider takes over only when the system gives no digests. On a system that does, the
+// system computes them and the spare changes nothing; where it does not (as on the machine where
+// this trial was written), the spare computes them, and a digest of the wrong length is an
+// exception.
+TRIAL("Digest: the spare computes only when the system provides none") {
     const bool system = summing();
 
     const auto spare = std::make_shared<Pretend>(std::byte{0x11}, 32);

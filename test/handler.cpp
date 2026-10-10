@@ -9,19 +9,24 @@ using namespace talcite;
 
 namespace {
 
-// Najprostszy możliwy węzeł: umie mieć rodzica i umie wpuścić zdarzenie. Wszystko, czego
-// Handler potrzebuje do wędrówki, i nic ponadto.
+// The simplest possible node: it can have a parent and can let an event in. Everything `Handler`
+// needs for the journey, and nothing more. Each `handle` it receives is written down as
+// "name:kind".
 class Knot : public ui::Handler {
 public:
     explicit Knot(std::vector<std::string>& told, std::string named)
         : told_(told), named_(std::move(named)) {}
 
+    // Hangs this node under the given parent.
     void under(Knot* one) { up_ = one; }
 
+    // The parent set by `under`, or none.
     [[nodiscard]] ui::Handler* parent() const override { return up_; }
 
+    // Sets whether `handle` takes the events it receives.
     void takes(bool given) { takes_ = given; }
 
+    // Starts the event's journey at this node.
     template <typename One>
     bool send(One& what) {
         return trigger(what);
@@ -30,6 +35,7 @@ public:
     using ui::Handler::trigger;
 
 protected:
+    // Records the key event and takes it if told to.
     bool handle(ui::KeyEvent& what) override {
         (void)what;
 
@@ -38,6 +44,7 @@ protected:
         return takes_;
     }
 
+    // Records the mouse event and takes it if told to.
     bool handle(ui::MouseEvent& what) override {
         (void)what;
 
@@ -55,7 +62,7 @@ private:
 
 }
 
-TRIAL("Handler: handle celu dostaje zdarzenie") {
+TRIAL("Handler: the target's handle receives the event") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -66,7 +73,7 @@ TRIAL("Handler: handle celu dostaje zdarzenie") {
     same(told[0], std::string{"jeden:handle"});
 }
 
-TRIAL("Handler: nieobsłużone idzie do rodzica") {
+TRIAL("Handler: an unhandled event goes to the parent") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -82,7 +89,7 @@ TRIAL("Handler: nieobsłużone idzie do rodzica") {
     same(told[1], std::string{"góra:handle"});
 }
 
-TRIAL("Handler: obsłużone nie idzie wyżej") {
+TRIAL("Handler: a handled event goes no higher") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -98,7 +105,7 @@ TRIAL("Handler: obsłużone nie idzie wyżej") {
     same(told[0], std::string{"dół:handle"});
 }
 
-TRIAL("Handler: at wskazuje na pierwszy węzeł, nie na ostatni") {
+TRIAL("Handler: the target is the first node, not the last") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -113,7 +120,7 @@ TRIAL("Handler: at wskazuje na pierwszy węzeł, nie na ostatni") {
     ought(what.target() == &down);
 }
 
-TRIAL("Handler: uchwyt z on dostaje zdarzenie, gdy handle go nie wziął") {
+TRIAL("Handler: a hook from on receives the event when handle did not take it") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -132,12 +139,11 @@ TRIAL("Handler: uchwyt z on dostaje zdarzenie, gdy handle go nie wziął") {
     same(told[1], std::string{"uchwyt"});
 }
 
-// **Dwa kanały, dwa niezależne zatrzymania.** Widżet i wołający wędrują tą samą drogą, ale każdy
-// zamyka wyłącznie swój ruch: prawda z `handle` mówi „dość reagowania w górę", prawda z uchwytu mówi
-// „dość uchwytów w górę", i żadne z tych zdań nie mówi nic o drugim kanale. Wcześniej niosła to
-// jedna wartość i znaczyła dwie rzeczy naraz — stąd brało się to, że widżet zasłaniał wołającemu
-// zdarzenie, którego wołający miał pełne prawo zobaczyć.
-TRIAL("Handler: handle, który wziął, nie ucisza uchwytów") {
+// Two channels, two independent stops. The widget and the caller travel the same way, but each
+// closes only its own path: true from `handle` says "no more reacting upward", true from a hook
+// says "no more hooks upward", and neither says anything about the other channel. So a widget never
+// hides from the caller an event the caller has every right to see.
+TRIAL("Handler: a handle that took the event does not silence the hooks") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -158,7 +164,7 @@ TRIAL("Handler: handle, który wziął, nie ucisza uchwytów") {
     same(told[1], std::string{"uchwyt"});
 }
 
-TRIAL("Handler: wszystkie uchwyty biegną, nawet gdy pierwszy wziął") {
+TRIAL("Handler: all hooks run, even when the first one took the event") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -183,10 +189,10 @@ TRIAL("Handler: wszystkie uchwyty biegną, nawet gdy pierwszy wziął") {
     same(told[2], std::string{"drugi"});
 }
 
-// Prawda z uchwytu zamyka **drogę uchwytów**, a nie całą wędrówkę: `handle` przodka i tak się
-// odezwie. Dzięki temu uchwyt wołającego nigdy nie oślepia widżetu, który stoi nad nim — a to jest
-// dokładnie ten przypadek, przez który przycisk komunikatu potrafił połknąć własne naciśnięcie.
-TRIAL("Handler: uchwyt, który wziął, zatrzymuje tylko swój kanał") {
+// True from a hook closes the path of hooks, not the whole journey: the ancestor's `handle` still
+// speaks. This way a caller's hook never blinds a widget standing above it, so a message's button
+// cannot swallow its own press.
+TRIAL("Handler: a hook that took the event stops only its own channel") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -211,11 +217,11 @@ TRIAL("Handler: uchwyt, który wziął, zatrzymuje tylko swój kanał") {
     same(told[0], std::string{"dół:handle"});
     same(told[1], std::string{"góra:handle"});
 
-    // Uchwyt na górze już nie biegnie — jego kanał zamknął się na dole.
+    // The hook at the top no longer runs: its channel was closed at the bottom.
     same(seen, 0);
 }
 
-TRIAL("Handler: uchwyty innego rodzaju milczą") {
+TRIAL("Handler: hooks of another kind stay silent") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -233,7 +239,7 @@ TRIAL("Handler: uchwyty innego rodzaju milczą") {
     same(told[0], std::string{"jeden:handle"});
 }
 
-TRIAL("Handler: off zdejmuje uchwyt") {
+TRIAL("Handler: off removes a hook") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -252,9 +258,9 @@ TRIAL("Handler: off zdejmuje uchwyt") {
     same(told.size(), std::size_t{1});
 }
 
-// **Uchwyt zna swój typ i wie, czy coś przez niego wisi.** Pomyłki w typie przy odpinaniu już nie
-// ma jak zrobić; pusty jest świeży i odpięty, a dopiero `on` daje niepusty.
-TRIAL("Handler: uchwyt jest pusty świeży i po odpięciu, a pełny po dopięciu") {
+// A hook knows its type and whether something hangs on it. Mixing up the type when detaching is
+// impossible; a hook is empty when fresh and when detached, and only `on` gives a non-empty one.
+TRIAL("Handler: a hook is empty when fresh and after detaching, and full after attaching") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -273,7 +279,7 @@ TRIAL("Handler: uchwyt jest pusty świeży i po odpięciu, a pełny po dopięciu
 
     ought(which.empty());
 
-    // Kopia wskazuje to samo, co już odpięte: jej odpięcie nic nie robi i niczego nie psuje.
+    // The copy points to what is already detached: detaching it does nothing and breaks nothing.
     ought(!copy.empty());
 
     one.off(copy);
@@ -285,9 +291,9 @@ TRIAL("Handler: uchwyt jest pusty świeży i po odpięciu, a pełny po dopięciu
     ought(!one.send(what));
 }
 
-// Uchwyt tego samego numeru przy innym typie nie zdejmuje cudzego — typ jest w uchwycie, nie w
-// wołaniu, więc odpina się dokładnie to, co dopięto.
-TRIAL("Handler: uchwyt odpina tylko swój typ") {
+// A hook with the same number on a different type does not remove someone else's: the type is in
+// the hook, not in the call, so exactly what was attached is detached.
+TRIAL("Handler: a hook detaches only its own type") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -303,7 +309,7 @@ TRIAL("Handler: uchwyt odpina tylko swój typ") {
     ought(one.send(what));
 }
 
-TRIAL("Handler: off zdejmuje jeden, a nie wszystkie") {
+TRIAL("Handler: off removes one hook, not all") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -329,7 +335,7 @@ TRIAL("Handler: off zdejmuje jeden, a nie wszystkie") {
     same(told[1], std::string{"drugi"});
 }
 
-TRIAL("Handler: off na pustym uchwycie niczego nie psuje") {
+TRIAL("Handler: off on an empty hook breaks nothing") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -346,7 +352,7 @@ TRIAL("Handler: off na pustym uchwycie niczego nie psuje") {
     ought(!one.send(what));
 }
 
-TRIAL("Handler: uchwyt widzi cel przez at") {
+TRIAL("Handler: a hook sees the target") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -368,7 +374,7 @@ TRIAL("Handler: uchwyt widzi cel przez at") {
     ought(seen == &down);
 }
 
-TRIAL("Handler: wędrówka przez trzy szczeble") {
+TRIAL("Handler: the journey through three levels") {
     std::vector<std::string> told;
 
     Knot top{told, "szczyt"};
@@ -389,7 +395,7 @@ TRIAL("Handler: wędrówka przez trzy szczeble") {
     same(told[2], std::string{"szczyt:handle"});
 }
 
-TRIAL("Handler: rodzaje wędrują tą samą drogą") {
+TRIAL("Handler: every kind of event travels the same way") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -405,7 +411,7 @@ TRIAL("Handler: rodzaje wędrują tą samą drogą") {
     same(told[1], std::string{"góra:mysz"});
 }
 
-TRIAL("Handler: uchwyt odpięty w trakcie własnego biegu nie wywala pętli") {
+TRIAL("Handler: a hook detached while it runs does not break the loop") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -432,7 +438,7 @@ TRIAL("Handler: uchwyt odpięty w trakcie własnego biegu nie wywala pętli") {
     same(told[2], std::string{"drugi"});
 }
 
-TRIAL("Handler: węzeł odpięty od rodzica w trakcie handle i tak oddaje wyżej") {
+TRIAL("Handler: a node detached from its parent during handle still passes the event up") {
     std::vector<std::string> told;
 
     Knot up{told, "góra"};
@@ -453,19 +459,22 @@ TRIAL("Handler: węzeł odpięty od rodzica w trakcie handle i tak oddaje wyżej
     same(told[1], std::string{"góra:handle"});
 }
 
-// **Zdarzenie programu idzie wyłącznie kanałem wołających.** Kanał widżetu zna tylko zdarzenia
-// biblioteki — dla typu spoza zestawu `carried` go nawet nie otwiera — a uchwyty dostają je
-// jak każde inne: w górę, do pierwszego, który weźmie.
+// An event of the program travels only on the callers' channel. The widget's channel knows only the
+// library's events (for a type outside the set, `carried` does not even open it), and hooks receive
+// such an event like any other: upward, to the first one that takes it.
 namespace {
 
 class Own : public ui::Event {};
 
 class Mute : public ui::Handler {
 public:
+    // Hangs this node under the given parent.
     void under(ui::Handler* one) { up_ = one; }
 
+    // The parent set by `under`, or none.
     [[nodiscard]] ui::Handler* parent() const override { return up_; }
 
+    // Starts the event's journey at this node.
     template <typename One>
     bool send(One& what) {
         return trigger(what);
@@ -477,7 +486,7 @@ private:
 
 }
 
-TRIAL("Handler: zdarzenie programu wędruje w górę do uchwytów") {
+TRIAL("Handler: a program's event travels up to the hooks") {
     Mute under;
     Mute middle;
     Mute above;
@@ -505,7 +514,7 @@ TRIAL("Handler: zdarzenie programu wędruje w górę do uchwytów") {
     same(heard[1], std::string{"góra"});
 }
 
-TRIAL("Handler: zdarzenie programu, którego nikt nie wziął, oddaje fałsz") {
+TRIAL("Handler: a program's event that nobody took returns false") {
     Mute under;
     Mute above;
 

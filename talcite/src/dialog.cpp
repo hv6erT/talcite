@@ -4,27 +4,24 @@ namespace talcite::ui {
 
 Dialog::Dialog(ModalShape shape) : Modal(shape) {}
 
-// **Zasłona formularzowa** — czyli zasłona plus dwie reguły, i obie są regułami okna, nie widżetu.
-// Wszystko inne: pełny ekran, modalność, Esc, wędrówka Tabem, cień i zamykanie — należy do `Modal`
-// i tu się nie powtarza.
+// The form dialog is a modal plus two rules, and both are rules of the window, not of a widget.
+// Everything else (full screen, modality, Esc, moving with Tab, the shadow and closing) belongs to
+// `Modal` and is not repeated here.
 //
-// **Dialog nie wie już, czym jest przycisk.** Enter naciska wyłącznie ten przycisk, który ma
-// ognisko — a robi to sam przycisk, bo Enter dochodzi do niego wcześniej niż tu. Okno nie szuka
-// nikogo po drzewie i nie naciska niczego za wołającego.
-//
-// Wcześniej stała tu wolna funkcja schodząca w głąb z `dynamic_cast` i wybierająca „przycisk
-// podstawowy". Robiła za wołającego coś, o co ten nie prosił, i była jedynym miejscem w bibliotece,
-// gdzie okno rozpoznawało rodzaj swojego dziecka. `Button::primary()` zostaje — ale jest **tylko
-// oznaczeniem**, które rysuje klamrę ze strzałkami.
+// The dialog does not know what a button is. Enter presses only the button that has the focus,
+// and the button does that itself, because Enter reaches it before it reaches the dialog. The
+// window does not search the tree for anyone and presses nothing on the caller's behalf.
+// `Button::primary()` is only a marking, which draws the bracket with arrows.
 bool Dialog::handle(KeyEvent& what) {
     const Code code = what.key().code();
 
-    // **Klawisz aktywny to rozdanie, a nie pytanie o typ.** Okno nie zgaduje, kto na co odpowiada —
-    // podaje zdarzenie w głąb i czeka, aż ktoś je weźmie. Kto chce odpowiadać, przesłania
-    // `handle(ShortcutEvent&)` albo wiesza `on<>` — na równych prawach, jednym mechanizmem.
+    // A shortcut key is a broadcast, not a question about types. The window does not guess who
+    // answers what: it passes the event down and waits until someone takes it. A node that wants
+    // to answer overrides `handle(ShortcutEvent&)` or attaches `on<>`, on equal terms, through one
+    // mechanism.
     //
-    // Robimy to **przed** oddaniem klawisza zasłonie, bo zasłona i tak połknie wszystko, czego nie
-    // rozpoznała. Escape i Tab do rozdania nie trafiają: te dwa zasłona rozstrzyga wcześniej.
+    // This happens before the key is handed to the modal, because the modal swallows everything it
+    // did not recognize. Escape and Tab are not broadcast: the modal settles those two earlier.
     if (code != Code::escape && code != Code::tab) {
         (void)broadcast(what);
 

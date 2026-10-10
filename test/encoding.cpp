@@ -8,7 +8,7 @@
 
 using namespace talcite;
 
-TRIAL("Encoding: bajt wiodący mówi, ile ciągu dalszego") {
+TRIAL("Encoding: the lead byte tells how many continuation bytes follow") {
     same(utf8::trailing(0x41), std::size_t{0});
     same(utf8::trailing(0xC5), std::size_t{1});
     same(utf8::trailing(0xE2), std::size_t{2});
@@ -16,7 +16,7 @@ TRIAL("Encoding: bajt wiodący mówi, ile ciągu dalszego") {
     same(utf8::trailing(0x80), std::size_t{0});
 }
 
-TRIAL("Encoding: znak po znaku przez cały napis") {
+TRIAL("Encoding: character by character through the whole string") {
     const std::string said = "aż💡";
 
     std::size_t at = 0;
@@ -27,7 +27,7 @@ TRIAL("Encoding: znak po znaku przez cały napis") {
     same(at, said.size());
 }
 
-TRIAL("Encoding: bajt nie do przyjęcia daje znak zastępczy i jeden krok") {
+TRIAL("Encoding: an invalid byte gives a replacement character and one step") {
     std::string said = "a";
     said += static_cast<char>(0xFF);
     said += "b";
@@ -38,7 +38,7 @@ TRIAL("Encoding: bajt nie do przyjęcia daje znak zastępczy i jeden krok") {
     same(at, std::size_t{2});
 }
 
-TRIAL("Encoding: ogon urwany w połowie też daje znak zastępczy") {
+TRIAL("Encoding: a sequence cut off halfway also gives a replacement character") {
     std::string said;
     said += static_cast<char>(0xE2);
     said += static_cast<char>(0x9D);
@@ -49,7 +49,7 @@ TRIAL("Encoding: ogon urwany w połowie też daje znak zastępczy") {
     same(at, std::size_t{1});
 }
 
-TRIAL("Encoding: ciąg dalszy bez ciągu dalszego to też śmieć") {
+TRIAL("Encoding: a lead byte without its continuation is garbage too") {
     std::string said;
     said += static_cast<char>(0xC5);
     said += static_cast<char>(0x41);
@@ -60,7 +60,7 @@ TRIAL("Encoding: ciąg dalszy bez ciągu dalszego to też śmieć") {
     same(at, std::size_t{1});
 }
 
-TRIAL("Encoding: koniec napisu oddaje zero i nie rusza wskaźnika") {
+TRIAL("Encoding: the end of the string returns zero and does not move the position") {
     const std::string said = "a";
 
     std::size_t at = 1;
@@ -69,7 +69,7 @@ TRIAL("Encoding: koniec napisu oddaje zero i nie rusza wskaźnika") {
     same(at, std::size_t{1});
 }
 
-TRIAL("Encoding: zapisanie i odczytanie wraca tym samym") {
+TRIAL("Encoding: encoding and decoding round-trips") {
     for (const char32_t one : {U'a', U'ż', U'漢', U'💡'}) {
         const std::string said = utf8::encode(one);
 
@@ -80,7 +80,7 @@ TRIAL("Encoding: zapisanie i odczytanie wraca tym samym") {
     }
 }
 
-TRIAL("Encoding: zapisanie dopisuje, a nie zastępuje") {
+TRIAL("Encoding: encoding appends rather than replaces") {
     std::string said = "a";
 
     utf8::encode(U'ż', said);
@@ -88,14 +88,14 @@ TRIAL("Encoding: zapisanie dopisuje, a nie zastępuje") {
     same(said, std::string{"aż"});
 }
 
-TRIAL("Encoding: długość zapisu zgadza się z regułą") {
+TRIAL("Encoding: the encoded length follows the rule") {
     same(utf8::encode(U'a').size(), std::size_t{1});
     same(utf8::encode(U'ż').size(), std::size_t{2});
     same(utf8::encode(U'漢').size(), std::size_t{3});
     same(utf8::encode(U'💡').size(), std::size_t{4});
 }
 
-TRIAL("Encoding: szerokie są tylko te, które naprawdę zajmują dwie kratki") {
+TRIAL("Encoding: only characters that really take two cells are wide") {
     same(width(U'a'), 1);
     same(width(U'ż'), 1);
     same(width(U'漢'), 2);
@@ -104,39 +104,40 @@ TRIAL("Encoding: szerokie są tylko te, które naprawdę zajmują dwie kratki") 
     same(width(U'→'), 1);
 }
 
-// UTF-8 a natywny napis szeroki. Ta para istnieje po to, żeby z Windows dało się rozmawiać jednym
-// kodowaniem — on mówi UTF-16, reszta biblioteki UTF-8.
-TRIAL("Kodowanie: napis szeroki i UTF-8 przechodzą tam i z powrotem") {
+// UTF-8 and the native wide string. This pair exists so that we can talk to Windows with one
+// encoding: Windows speaks UTF-16, the rest of the library UTF-8.
+TRIAL("Encoding: a wide string and UTF-8 convert there and back") {
     const std::string said = "Zażółć gęślą jaźń";
 
     same(talcite::to_string(talcite::to_wstring(said)), said);
 
-    // Sam ASCII też, bo to najczęstszy przypadek i najłatwiej go zepsuć skrótem.
+    // Plain ASCII too, because it is the most common case and the easiest to break with a shortcut.
     same(talcite::to_string(talcite::to_wstring(std::string{"plain"})), std::string{"plain"});
 
     same(talcite::to_string(std::wstring_view{}), std::string{});
     ought(talcite::to_wstring(std::string_view{}).empty());
 }
 
-// Znak spoza podstawowej płaszczyzny to jedyne miejsce, gdzie te dwie drogi się rozchodzą: na
-// Windows `wchar_t` ma dwa bajty i taki znak wymaga **pary zastępczej**, na POSIX-ie cztery i pary
-// nie ma wcale. Próba pyta o wynik, więc mówi prawdę na obu — ale samego składania pary nie widzi
-// tu nikt, bo zestaw chodzi na POSIX-ie. To jest znana dziura, nie przeoczenie.
-TRIAL("Kodowanie: znak spoza podstawowej płaszczyzny przechodzi tam i z powrotem") {
+// A character outside the Basic Multilingual Plane is the only place where the two paths differ: on
+// Windows `wchar_t` has two bytes and such a character needs a surrogate pair, on POSIX it has four
+// and there is no pair at all. The trial asks about the result, so it tells the truth on both, but
+// nobody sees the pair being assembled here, because the suite runs on POSIX. This is a known gap,
+// not an oversight.
+TRIAL("Encoding: a character outside the Basic Multilingual Plane converts there and back") {
     const std::string said = "a\U0001F600b";
 
     const std::wstring wide = talcite::to_wstring(said);
 
     same(talcite::to_string(wide), said);
 
-    // Na Windows to trzy jednostki (a, para, b), gdzie indziej trzy znaki.
+    // On Windows these are four units (a, the pair, b), elsewhere three characters.
     same(wide.size(), sizeof(wchar_t) == 2 ? std::size_t{4} : std::size_t{3});
 }
 
-// Bajt, który nie jest poprawnym UTF-8, kończy jako znak zastępczy — tak samo jak w `utf8::decode`.
-// **To jest dokładnie ten objaw**, który widać było w panelach twa, gdy nazwa pliku przychodziła
-// w stronie kodowej ANSI zamiast w UTF-8: same znaki zastępcze zamiast polskich liter.
-TRIAL("Kodowanie: bajt spoza UTF-8 staje się znakiem zastępczym, a nie cichym śmieciem") {
+// A byte that is not valid UTF-8 ends up as a replacement character, just as in `utf8::decode`.
+// This is exactly the symptom of a file name that arrives in the ANSI code page instead of UTF-8:
+// replacement characters in place of Polish letters.
+TRIAL("Encoding: a byte outside UTF-8 becomes a replacement character, not silent garbage") {
     const std::string broken = "Za\xbf\xf3\xb3\xe6.txt";
 
     const std::string made = talcite::to_string(talcite::to_wstring(broken));
@@ -145,10 +146,10 @@ TRIAL("Kodowanie: bajt spoza UTF-8 staje się znakiem zastępczym, a nie cichym 
     ought(made.find("\xef\xbf\xbd") != std::string::npos);
 }
 
-// Zero w środku napisu. `std::string_view` zna swoją długość, więc zero jest w nim **znakiem**,
-// a nie końcem — i tak samo musi wyjść po drugiej stronie. Próba pilnuje tego, żeby przepisywanie
-// nie kończyło się na pierwszym zerze i nie gubiło reszty po cichu.
-TRIAL("Kodowanie: zero w środku napisu jest znakiem, a nie końcem") {
+// A zero in the middle of a string. `std::string_view` knows its length, so a zero in it is a
+// character, not the end, and it must come out the same on the other side. The trial guards that
+// the conversion does not stop at the first zero and silently lose the rest.
+TRIAL("Encoding: a zero in the middle of a string is a character, not the end") {
     const std::string said{"a\0b", 3};
 
     const std::wstring wide = talcite::to_wstring(said);
@@ -159,8 +160,9 @@ TRIAL("Kodowanie: zero w środku napisu jest znakiem, a nie końcem") {
     same(talcite::to_string(wide), said);
 }
 
-// Napis ⇄ bajty bajt w bajt: bez kodowania, z bajtem zerowym i znakami spoza ASCII, w obie strony.
-TRIAL("Bytes: bytes i text przepisują bajt w bajt, w obie strony") {
+// String to bytes and back, byte for byte: no encoding, with a zero byte and non-ASCII characters,
+// in both directions.
+TRIAL("Bytes: bytes and text copy byte for byte, in both directions") {
     const std::string said{"za\0\xc5\xbc\xc3\xb3\xc5\x82\xff", 10};
     const Bytes made = bytes(said);
 

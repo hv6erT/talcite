@@ -17,6 +17,7 @@ using namespace talcite;
 
 namespace {
 
+// Reads the first row of a view as text, with trailing spaces removed.
 std::string read(const View& one) {
     std::string made;
 
@@ -31,11 +32,12 @@ std::string read(const View& one) {
     return made;
 }
 
+// Renders the gauge in one row of the given width and reads it back as text.
 std::string drawn(ui::Gauge& one, int wide) { return read(one.render({{0, 0}, {wide, 1}})); }
 
 }
 
-TRIAL("Gauge: chce tyle, ile mu kazano, i zawsze jeden wiersz") {
+TRIAL("Gauge: wants the width it was given, and always one row") {
     ui::Gauge one{20};
 
     same(one.wants({40, 3}), (ui::Size{20, 3 > 1 ? 1 : 3}));
@@ -44,9 +46,9 @@ TRIAL("Gauge: chce tyle, ile mu kazano, i zawsze jeden wiersz") {
     same(one.capacity(), 0);
 }
 
-// Ułamek przycinamy w jednym miejscu — tam, gdzie wchodzi. Porównanie odwrotne łapie przy okazji
-// NaN, który inaczej przeszedłby przez każdy zwykły warunek.
-TRIAL("Gauge: ułamek przycina się do zera i jedynki") {
+// The fraction is clamped in one place, where it comes in. The inverted comparison also catches
+// NaN, which would otherwise pass every ordinary condition.
+TRIAL("Gauge: the fraction is clamped to zero and one") {
     ui::Gauge one{20};
 
     one.part(-3.0);
@@ -62,7 +64,7 @@ TRIAL("Gauge: ułamek przycina się do zera i jedynki") {
     same(one.part(), 0.25);
 }
 
-TRIAL("Gauge: pasek, klamry i procent z prawej") {
+TRIAL("Gauge: bar, brackets and the percentage on the right") {
     ui::Gauge one{20};
 
     same(drawn(one, 20), std::string{"[░░░░░░░░░░░░░]   0%"});
@@ -76,9 +78,9 @@ TRIAL("Gauge: pasek, klamry i procent z prawej") {
     same(drawn(one, 20), std::string{"[█████████████] 100%"});
 }
 
-// **Pełne dopiero po skończeniu.** Obie liczby idą tą samą regułą, więc pasek i procent nigdy nie
-// mówią czegoś innego — a `100%` znaczy „zrobione", a nie „prawie".
-TRIAL("Gauge: sto procent tylko przy dokładnej jedynce") {
+// Full only when finished. Both numbers follow the same rule, so the bar and the percentage never
+// say different things, and `100%` means "done", not "almost".
+TRIAL("Gauge: a hundred percent only at exactly one") {
     ui::Gauge one{20};
 
     one.part(0.999);
@@ -90,7 +92,7 @@ TRIAL("Gauge: sto procent tylko przy dokładnej jedynce") {
     same(drawn(one, 20), std::string{"[█████████████] 100%"});
 }
 
-TRIAL("Gauge: ciasno odpada najpierw procent, potem klamry") {
+TRIAL("Gauge: when tight, the percentage goes first, then the brackets") {
     ui::Gauge one{20};
 
     one.part(0.5);
@@ -98,17 +100,17 @@ TRIAL("Gauge: ciasno odpada najpierw procent, potem klamry") {
     same(drawn(one, 12), std::string{"[███░░]  50%"});
     same(drawn(one, 8), std::string{"[░]  50%"});
 
-    // Poniżej ośmiu kratek procent nie ma się gdzie zmieścić.
+    // Below eight cells the percentage has no room.
     same(drawn(one, 7), std::string{"[███░░]"});
     same(drawn(one, 3), std::string{"[░]"});
 
-    // Poniżej trzech nie ma miejsca na klamry, ale pasek dalej coś mówi.
+    // Below three there is no room for the brackets, but the bar still says something.
     same(drawn(one, 2), std::string{"█░"});
     same(drawn(one, 1), std::string{"░"});
     same(drawn(one, 0), std::string{});
 }
 
-TRIAL("Gauge: bez procentu cała szerokość idzie na pasek") {
+TRIAL("Gauge: without the percentage the whole width goes to the bar") {
     ui::Gauge one{20};
 
     one.percent(false);
@@ -117,9 +119,9 @@ TRIAL("Gauge: bez procentu cała szerokość idzie na pasek") {
     same(drawn(one, 20), std::string{"[█████████░░░░░░░░░]"});
 }
 
-// Nieokreślony: kostka jedzie tam i z powrotem, a procentu nie ma — bo nie ma czego pokazać.
-// Ruch napędza `step()`, więc próba nie musi czekać na zegar.
-TRIAL("Gauge: nieokreślony jedzie i odbija się od krawędzi") {
+// Indeterminate: the block travels back and forth, and there is no percentage, because there is
+// nothing to show. `step()` drives the movement, so the trial does not have to wait for a clock.
+TRIAL("Gauge: an indeterminate gauge travels and bounces off the edges") {
     ui::Gauge one{20};
 
     one.part(0.5);
@@ -133,7 +135,7 @@ TRIAL("Gauge: nieokreślony jedzie i odbija się od krawędzi") {
 
     same(drawn(one, 20), std::string{"[░██░░░░░░░░░░]"});
 
-    // Jedenaście kroków dowozi kostkę do prawej krawędzi.
+    // Eleven steps bring the block to the right edge.
     for (int which = 1; which < 11; ++which) one.step();
 
     same(drawn(one, 20), std::string{"[░░░░░░░░░░░██]"});
@@ -143,7 +145,7 @@ TRIAL("Gauge: nieokreślony jedzie i odbija się od krawędzi") {
     same(drawn(one, 20), std::string{"[░░░░░░░░░░██░]"});
 }
 
-TRIAL("Gauge: powrót z nieokreślonego pokazuje zapamiętany ułamek") {
+TRIAL("Gauge: returning from indeterminate shows the remembered fraction") {
     ui::Gauge one{20};
 
     one.part(0.5);
@@ -157,14 +159,15 @@ TRIAL("Gauge: powrót z nieokreślonego pokazuje zapamiętany ułamek") {
     same(one.part(), 0.5);
     same(drawn(one, 20), std::string{"[███████░░░░░░]  50%"});
 
-    // Ponowne włączenie zaczyna od lewej, a nie od miejsca, w którym stanęło.
+    // Turning it on again starts from the left, not from where it stopped.
     one.busy(true);
 
     same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
-// Pasek bez właściciela i bez pętli po prostu nie chodzi sam — i nie wywraca się przy tym.
-TRIAL("Gauge: nieokreślony bez pętli nie rusza zegara i nie psuje się") {
+// A gauge without an owner and without a loop simply does not move by itself, and does not break
+// either.
+TRIAL("Gauge: an indeterminate gauge without a loop starts no timer and does not break") {
     ui::Gauge one{20};
 
     one.busy(true);
@@ -174,9 +177,10 @@ TRIAL("Gauge: nieokreślony bez pętli nie rusza zegara i nie psuje się") {
     same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
-// **Pasek kręci się sam.** `Time::later` odmierza, `here()` przenosi ciąg dalszy na wątek pętli,
-// a `Loop::turn()` go wykonuje — tu w próbie ręcznie, w programie robi to `Term`.
-TRIAL("Gauge: nieokreślony kręci się sam zegarem biblioteki") {
+// The gauge spins by itself. `Time::later` measures the time, `here()` moves the continuation to
+// the loop's thread, and `Loop::turn()` runs it: here in the trial by hand, in a program `Term`
+// does it.
+TRIAL("Gauge: an indeterminate gauge spins by itself on the library's timer") {
     Loop loop;
 
     const auto one = std::make_shared<ui::Gauge>(20);
@@ -197,7 +201,7 @@ TRIAL("Gauge: nieokreślony kręci się sam zegarem biblioteki") {
 
     ought(drawn(*one, 20) != was);
 
-    // Zatrzymany przestaje tykać: po zgaszeniu pętla nie dostaje już nic do zrobienia.
+    // Once stopped, it stops ticking: after it is turned off, the loop gets nothing more to do.
     one->busy(false);
 
     std::this_thread::sleep_for(std::chrono::milliseconds{300});
@@ -209,9 +213,9 @@ TRIAL("Gauge: nieokreślony kręci się sam zegarem biblioteki") {
     same(loop.turn(), std::size_t{0});
 }
 
-// Wskaźnik miał sześć kluczy skórki wpisanych na sztywno — najwięcej w całej bibliotece. Teraz
-// wszystkie wyrastają z jednego rdzenia, jak wszędzie indziej.
-TRIAL("Gauge: rdzeń roli można podmienić") {
+// All skin keys of the gauge grow from one role root, as everywhere else, so replacing the root
+// restyles the whole gauge.
+TRIAL("Gauge: the role root can be replaced") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Gauge>(8);

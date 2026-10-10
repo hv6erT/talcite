@@ -21,19 +21,25 @@ namespace talcite {
 
 #ifdef _WIN32
 
+// A manual-reset event that starts silent. Throws when Windows cannot create it.
 Bell::Bell() {
     event_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (event_ == nullptr) throw std::runtime_error("talcite::Bell: cannot create the event");
 }
 
+// Closes the event.
 Bell::~Bell() {
     if (event_ != nullptr) CloseHandle(event_);
 }
 
+// Rings the bell: the event stays signaled until `clear`.
 void Bell::ring() { SetEvent(event_); }
 
+// Silences the bell.
 void Bell::clear() { ResetEvent(event_); }
 
+// Waits for the bell at most `patience`, or without limit when it is negative. Returns whether the
+// bell rang.
 bool Bell::wait(std::chrono::milliseconds patience) {
     const DWORD how = WaitForSingleObject(
         event_, patience.count() < 0 ? INFINITE : static_cast<DWORD>(patience.count()));
@@ -43,32 +49,36 @@ bool Bell::wait(std::chrono::milliseconds patience) {
 
 #else
 
-// Rurka, a nie zmienna warunkowa: pętla musi umieć czekać na dzwonek razem z klawiaturą i
-// gniazdami, w jednym poll(), a do tego potrzebny jest deskryptor.
+// A pipe, not a condition variable: the loop has to be able to wait for the bell together with the
+// keyboard and sockets, in one poll(), and that takes a descriptor. Throws when the pipe cannot be
+// created.
 Bell::Bell() {
     int both[2] = {-1, -1};
 
-    // Rurki dzwonka nie mają trafiać do programu potomnego — pula ma ich dwie na robotnika.
+    // The bell's pipe must not leak into a child program; the pool has two of them per worker.
     if (!sealed::piped(both, true)) throw std::runtime_error("talcite::Bell: cannot create the pipe");
 
     heard_ = both[0];
     rung_ = both[1];
 }
 
+// Closes both ends of the pipe.
 Bell::~Bell() {
     if (heard_ >= 0) ::close(heard_);
     if (rung_ >= 0) ::close(rung_);
 }
 
+// Rings the bell by writing one byte into the pipe. A full pipe already rings, so a failed write is
+// ignored.
 void Bell::ring() {
     const unsigned char one = 1;
     const ssize_t wrote = ::write(rung_, &one, 1);
     (void)wrote;
 }
 
-// **Wznawiamy po przerwaniu sygnałem.** Zakończenie pętli z bajtem w rurce sprawia, że następne
-// zadanie w puli widzi dzwonek i uznaje się za anulowane, a wtedy obietnica nie rozstrzyga się
-// wcale i `await` czeka bez końca.
+// Silences the bell by draining the pipe. A read interrupted by a signal is retried: leaving the
+// loop with a byte still in the pipe would make the next task in the pool see the bell and consider
+// itself canceled, and then its promise would never settle and `await` would wait forever.
 void Bell::clear() {
     unsigned char room[64];
 
@@ -83,6 +93,8 @@ void Bell::clear() {
     }
 }
 
+// Waits for the bell at most `patience`, or without limit when it is negative. Returns whether the
+// bell rang.
 bool Bell::wait(std::chrono::milliseconds patience) {
     pollfd watched{};
     watched.fd = heard_;

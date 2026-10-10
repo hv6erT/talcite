@@ -13,9 +13,9 @@
 
 namespace talcite::net {
 
-// Znacznik zdejmuje **śmierć obietnicy**, a nie jej ciało. Wcześniej zerowało go samo ciało, więc
-// pytanie anulowane albo porzucone nieruszone unieruchamiało zwiadowcę na dobre. Teraz znika
-// najpóźniej wtedy, gdy wołający wypuści obietnicę z rąk.
+// The "asking" marker is cleared by the death of the promise, not by its body. If the body cleared
+// it, a question cancelled or abandoned before it ran would block the scout for good. This way it
+// goes at the latest when the caller lets go of the promise.
 struct Asking {
     explicit Asking(std::shared_ptr<StunClient::Held> given) : held(std::move(given)) {}
 
@@ -41,28 +41,33 @@ struct StunClient::Held {
     std::atomic<bool> asking{false};
 };
 
+// Lets the scout ask again.
 Asking::~Asking() { held->asking.store(false); }
 
 namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// The time left until `until`, at least one unit, so that a deadline just reached still gives a
+// valid wait.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
 
-// Jedno pytanie do jednego serwera, razem z powtórkami. **Biegnie na wątku z puli i blokuje go**
-// — świadomie. Przy TLS taki wybór byłby zły, bo tam czekanie jest na połączenie i rośnie razem
-// z ich liczbą; tu pytanie jest jedno na gniazdo, zadawane raz, przed rozmową. A pula dla pracy
-// zwykłej rośnie bez ograniczeń, więc zakończenia z centrali nie mają jak się zagłodzić.
+// One question to one server, retransmissions included; the reflexive address, or an empty one when
+// the deadline passes, and `Trouble` when the server refuses. It runs on a pool thread and blocks it,
+// on purpose. For TLS that choice would be bad, because there the waiting is per connection and
+// grows with their number; here there is one question per socket, asked once, before the
+// conversation. And the pool for ordinary work grows without limit, so the hub's completions cannot
+// starve.
 Address trying(StunClient::Held& held, const Address& where, Clock::time_point until) {
     const Number number = numbered();
     const Bytes what = asked(number);
 
-    // Rozkład z RFC: pół sekundy, potem podwojenie. Terminem na całość jest Patience, więc
-    // wołający nie musi o tym rozkładzie wiedzieć.
+    // The schedule from the RFC: half a second, then doubling. The deadline for the whole is the
+    // `Patience`, so the caller need not know about this schedule.
     Patience wait{500};
 
     while (Clock::now() < until) {
@@ -78,16 +83,16 @@ Address trying(StunClient::Held& held, const Address& where, Clock::time_point u
             } catch (const Overdue&) {
                 break;
             } catch (const Trouble&) {
-                // Za duży datagram albo inny kłopot na gnieździe **nie jest odpowiedzią serwera**
-                // i nie ma prawa wywrócić pytania. To gniazdo niesie potem także ruch rozmówcy,
-                // więc jeden zwykły duży pakiet kończył wcześniej cały zwiad.
+                // A datagram that is too large, or another problem on the socket, is not the
+                // server's answer and must not overturn the question. This socket later carries the
+                // peer's traffic too, so one ordinary large packet must not end the whole scouting.
                 continue;
             }
 
             Message made;
 
-            // Nie STUN albo cudza odpowiedź — czekamy dalej. Numer transakcji jest jedynym
-            // dowodem tożsamości odpowiedzi i tylko on decyduje.
+            // Not STUN, or someone else's answer: we keep waiting. The transaction ID is the only
+            // proof of a response's identity, and it alone decides.
             if (!understood(came.bytes, made)) continue;
 
             if (made.number != number) continue;
@@ -106,9 +111,11 @@ Address trying(StunClient::Held& held, const Address& where, Clock::time_point u
     return {};
 }
 
+// Asks the servers in turn until one gives the reflexive address, within the scout's patience.
+// Throws the first server's `Trouble` when all fail that way, or `Overdue` when none answered.
 Address hunting(StunClient::Held& held) {
-    // Wykaz bierzemy **pod zamkiem i na własność**. Czytany wprost, mógł się przealokować pod
-    // pętlą zakresową, gdyby ktoś równolegle wołał add().
+    // The list is copied under the lock. Read in place, it could be reallocated under the range
+    // loop if someone called add() at the same time.
     std::vector<Address> servers;
 
     {
@@ -121,9 +128,9 @@ Address hunting(StunClient::Held& held) {
 
     const Clock::time_point until = Clock::now() + held.patience;
 
-    // Odmowa albo kłopot na jednym serwerze **nie kończy obchodu**. Wcześniej wystarczył jeden źle
-    // ustawiony albo złośliwy serwer na początku listy, żeby wszystkie następne nie dostały ani
-    // jednego pakietu.
+    // A refusal or a problem on one server does not end the round. Otherwise a single misconfigured
+    // or malicious server at the head of the list would keep every later one from getting a single
+    // packet.
     std::exception_ptr first;
 
     for (const Address& where : servers) {
@@ -143,13 +150,14 @@ Address hunting(StunClient::Held& held) {
 
 }
 
+// A scout that asks through `post` and gives each round `patience`.
 StunClient::StunClient(Udp post, Patience patience) : held_(std::make_shared<Held>()) {
     held_->post = std::move(post);
     held_->patience = patience;
 }
 
-// Pusty zwiad przyjmuje wszystko i nie oddaje nic — zamiast przewracać program. Reszta metod pyta
-// o uchwyt, te zapomniały.
+// Adds a server to ask. An empty scout accepts everything and returns nothing, instead of crashing
+// the program; like the other methods, it checks for the state first.
 void StunClient::add(Address server) {
     if (!held_) return;
 
@@ -158,16 +166,16 @@ void StunClient::add(Address server) {
     held_->servers.push_back(std::move(server));
 }
 
+// The servers to ask, by reference, as the header declares. A caller that adds servers from another
+// thread while reading this reference cannot hold on to it anyway: the same contract as for every
+// value type in talcite.
 const std::vector<Address>& StunClient::servers() const {
     static const std::vector<Address> none;
 
     return held_ ? held_->servers : none;
 }
 
-// Wykaz oddajemy przez referencję, bo tak stoi w nagłówku. Wołający, który dopisuje serwery
-// z drugiego wątku w trakcie czytania tej referencji, i tak jej nie utrzyma — to jest ta sama
-// umowa co przy każdym typie wartościowym w talcite.
-
+// The reflexive address from the last successful question, or an empty one.
 Address StunClient::last() const {
     if (!held_) return {};
 
@@ -176,6 +184,7 @@ Address StunClient::last() const {
     return held_->last;
 }
 
+// The verdict of the last `mapping`, `Mapping::unknown` before one.
 StunClient::Mapping StunClient::known() const {
     if (!held_) return {};
 
@@ -184,8 +193,9 @@ StunClient::Mapping StunClient::known() const {
     return held_->known;
 }
 
-// Wszystkie pytania idą tym samym gniazdem, a poczta odbiera po jednym naraz — więc drugie
-// pytanie zaczęte w trakcie pierwszego zjadłoby cudzą odpowiedź. Odmawiamy, zamiast psuć.
+// Our address as the servers see it. All questions go through the same socket, and the post
+// receives one at a time, so a second question started during the first would eat the other's
+// answer. We refuse instead of corrupting.
 Promise<Address> StunClient::seen() const {
     if (!held_)
         return Promise<Address>{[](auto, auto reject) {
@@ -223,10 +233,10 @@ Promise<Address> StunClient::seen() const {
     return made;
 }
 
-// Dwa pytania do dwóch **różnych** serwerów, z tego samego gniazda. Ten sam adres i port
-// w obu odpowiedziach znaczy, że NAT nadaje odwzorowanie niezależnie od celu — i przebijanie ma
-// sens. Różne znaczy NAT symetryczny: adres poznany od serwera jest dla drugiej strony
-// bezużyteczny i przebijanie nie zadziała **nigdy**, choćby się próbowało bez końca.
+// Two questions to two different servers, from the same socket. The same address and port in both
+// answers mean the NAT assigns the mapping independently of the destination, and hole punching
+// makes sense. Different ones mean a symmetric NAT: the address learned from a server is useless
+// to the other side, and hole punching will never work, however long one tries.
 Promise<StunClient::Mapping> StunClient::mapping() const {
     if (!held_)
         return Promise<Mapping>{[](auto, auto reject) {
@@ -255,9 +265,9 @@ Promise<StunClient::Mapping> StunClient::mapping() const {
                 servers = held->servers;
             }
 
-            // Werdykt wymaga **dwóch różnych** serwerów. Ten sam adres dwa razy dawał dwie
-            // identyczne odpowiedzi, a z nich werdykt „zgodne" — czyli kłamstwo w stronę
-            // niebezpieczną: że przebijanie zadziała, choć NAT może być symetryczny.
+            // The verdict needs two different servers. The same address twice would give two
+            // identical answers and from them the verdict "alike", a lie in the dangerous
+            // direction: that hole punching will work, although the NAT may be symmetric.
             Address first;
             Address other;
 
@@ -275,11 +285,11 @@ Promise<StunClient::Mapping> StunClient::mapping() const {
                 }
             }
 
-            // Przy jednym serwerze „nie wiem" jest prawdziwą odpowiedzią, a nie awarią.
+            // With a single server, "unknown" is a true answer, not a failure.
             if (first.held() && other.held()) {
-                // **Każde pytanie dostaje własną połowę cierpliwości.** Wspólny termin oznaczał,
-                // że milczący pierwszy serwer zjadał go w całości, drugi nie dostawał ani jednego
-                // pakietu, a mapping kończył się pomyślnym „nie wiem".
+                // Each question gets its own half of the patience. With a shared deadline a silent
+                // first server would eat all of it, the second would not get a single packet, and
+                // the mapping would end in a successful "unknown".
                 const Patience half{held->patience.count() / 2 + 1};
 
                 const Address one = trying(*held, first, Clock::now() + half);

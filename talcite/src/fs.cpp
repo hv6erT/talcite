@@ -67,28 +67,27 @@ using namespace core;
 
 namespace core {
 
-// **Wpis, za którym system nie umie podążyć, istnieje mimo to.** `std::filesystem::exists`
-// podąża za punktem ponownej analizy, a gdy trafi na znacznik, którego nie zna, melduje „nie ma".
-// Tak wygląda **plik gniazda uniksowego na Windows**: leży na miejscu, `GetFileAttributesW` go
-// widzi, `DeleteFile` go kasuje, a `exists` odpowiada fałszem z błędem 1920.
+// An entry the system cannot follow exists all the same. `std::filesystem::exists` follows a
+// reparse point, and when it meets a tag it does not know, it reports "not there". This is what a
+// Unix socket file looks like on Windows: it is in place, GetFileAttributesW sees it, DeleteFile
+// deletes it, and `exists` answers false with error 1920 (measured with a separate test program on
+// Windows: attributes visible, reparse tag set, `exists` false, error 1920).
 //
-// Zmierzone, nie zgadnięte: osobny program próbny na Windows pokazał dla tego samego pliku
-// atrybuty widoczne, znacznik ponownej analizy ustawiony, `exists` fałszywe i numer błędu 1920.
+// So we ask about the entry itself, without following anything, but only when the first question
+// reported an error. A plain missing file is not an error: `status` then answers "not there" and
+// clears the error code, so this branch does not even run and costs nothing.
 //
-// Pytamy więc o **sam wpis, bez podążania za czymkolwiek** — ale dopiero wtedy, gdy pierwsze
-// pytanie zgłosiło **błąd**. Zwykły brak pliku błędem nie jest: `status` oddaje wtedy „nie ma"
-// i czyści numer, więc ta gałąź nawet nie rusza i nic nie kosztuje.
-//
-// Wiszące dowiązanie i wiszące złącze dalej odpowiadają „nie ma", bo za nimi `GetFileAttributesW`
-// podąża i też się przewraca — a to jest ta odpowiedź, której się po `exists` spodziewamy.
+// A dangling symlink and a dangling junction still answer "not there", because GetFileAttributesW
+// follows them and fails too, which is the answer we expect from `exists`.
 #ifdef _WIN32
 
-// **Ścieżka za długa dla `std::filesystem`.** Program bez `longPathAware` w manifeście (próby,
-// każdy program na bibliotece, który go nie ma) albo system bez LongPathsEnabled: MSVC woła system
-// bez przedrostka \\?\, a system za 260 znakami odpowiada „nie ma ścieżki" — bez błędu. `exists`
-// i `kind` mówiły więc „nie ma" o pliku, który stoi, a zapis z polityką kolizji brał go za wolne
-// miejsce. Dla takich ścieżek pytamy sami, z przedrostkiem; krótszych nie ruszamy. Granica 248 to
-// granica katalogu, niższa niż pliku.
+// A path too long for `std::filesystem`. In a program without longPathAware in its manifest (the
+// tests, any program on the library that lacks it) or on a system without LongPathsEnabled, MSVC
+// calls the system without the \\?\ prefix, and beyond 260 characters the system answers "no such
+// path", without an error. `exists` and `kind` would then say "not there" about a file that is
+// there, and a write with a collision policy would take it for a free spot. For such paths we ask
+// ourselves, with the prefix; shorter ones are left alone. The limit of 248 is the directory limit,
+// lower than the file one.
 DWORD attributes_beyond(const path& where) {
     std::error_code ignored;
 
@@ -101,6 +100,8 @@ DWORD attributes_beyond(const path& where) {
 
 #endif
 
+// Whether anything exists at the path, including entries the system cannot follow and paths beyond
+// the Windows length limit.
 bool exists_at(const path& where) {
     std::error_code why;
 
@@ -115,6 +116,8 @@ bool exists_at(const path& where) {
 #endif
 }
 
+// The kind of the entry itself, without following a symlink; `Kind::none` when there is nothing or
+// it cannot be asked about.
 Kind kind_at(const path& where) {
     std::error_code trouble;
 
@@ -139,13 +142,14 @@ Kind kind_at(const path& where) {
     if (stood::is_directory(told)) return Kind::folder;
     if (!stood::exists(told)) return Kind::none;
 
-    // Urządzenie znakowe albo blokowe to `device`; potok i gniazdo to `special` — tak samo
-    // rozróżnia je Midnight Commander i tak samo je maluje.
+    // A character or block device is `device`; a pipe and a socket are `special`. Midnight
+    // Commander tells them apart the same way and paints them the same way.
     if (stood::is_character_file(told) || stood::is_block_file(told)) return Kind::device;
 
     return Kind::special;
 }
 
+// The size of the file in bytes; throws when it cannot be read.
 std::uintmax_t size_at(const path& where) {
     std::error_code trouble;
 
@@ -155,9 +159,9 @@ std::uintmax_t size_at(const path& where) {
     return told;
 }
 
-// Na Windows atrybuty są jednym słowem bitowym. Na POSIX ukrycie jest umową o nazwie —
-// kropka na początku — a tylko-do-odczytu odczytujemy z prawa zapisu właściciela. Znacznika
-// systemowego POSIX nie ma i udawać go nie będziemy.
+// On Windows the attributes are one bit word. On POSIX hiding is a naming convention (a leading
+// dot), and read-only is taken from the owner's write permission. POSIX has no system flag, and we
+// do not pretend it has.
 Attributes attributes_at(const path& where) {
     Attributes made;
 
@@ -187,6 +191,8 @@ Attributes attributes_at(const path& where) {
     return made;
 }
 
+// Sets the hidden, read-only and system attributes on Windows. On POSIX only read-only can be set:
+// it removes every write permission, and clearing it gives the owner write permission back.
 void attributed_at(const path& where, Attributes what) {
 #ifdef _WIN32
 
@@ -230,6 +236,7 @@ void attributed_at(const path& where, Attributes what) {
 #endif
 }
 
+// Whether both paths lead to the same file; throws when they cannot be compared.
 bool equivalent_at(const path& one, const path& two) {
     std::error_code trouble;
 
@@ -239,6 +246,7 @@ bool equivalent_at(const path& one, const path& two) {
     return told;
 }
 
+// Where a symlink points; throws "Not a link." when the entry is not one.
 path target_at(const path& where) {
     std::error_code trouble;
 
@@ -248,6 +256,8 @@ path target_at(const path& where) {
     return told;
 }
 
+// Creates a hard link or a symlink at `where` pointing to `onto`; a symlink to a directory is
+// created as a directory symlink, which Windows distinguishes.
 void linking_at(const path& where, const path& onto, bool hard) {
     std::error_code trouble;
 
@@ -260,17 +270,19 @@ void linking_at(const path& where, const path& onto, bool hard) {
 
 #ifdef _WIN32
 
-// Czas plikowy Windows liczy się w setkach nanosekund od roku 1601. Do epoki uniksowej jest
-// 11 644 473 600 sekund. Przeliczamy wprost, bez okrężnej drogi przez różnicę zegarów —
-// tutaj znamy dokładną wartość, a nie tylko odstęp między dwoma „teraz".
+// Windows file time counts hundreds of nanoseconds from the year 1601. The Unix epoch is 11 644 473
+// 600 seconds later. We convert directly, without a detour through the difference of clocks: here
+// the exact value is known, not just the distance between two "now"s.
 constexpr std::int64_t epochs_apart = 11644473600LL * 10000000LL;
 
+// A Windows file time as a nanosecond instant since the Unix epoch.
 Instant instant_of(FILETIME told) {
     const std::uint64_t much = (static_cast<std::uint64_t>(told.dwHighDateTime) << 32) | told.dwLowDateTime;
 
     return Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(much) - epochs_apart) * 100}};
 }
 
+// An instant as a Windows file time, rounded down to the 100 ns tick.
 FILETIME filetime_of(Instant when) {
     const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
         when.time_since_epoch());
@@ -287,8 +299,9 @@ FILETIME filetime_of(Instant when) {
 
 #endif
 
-// Czas zapisu prosto od systemu, bez `std::filesystem`. Tamto szło przez zegar plikowy i odstęp
-// między nim a kalendarzowym mierzony przy starcie — i gubiło wszystko poniżej sekundy.
+// The write time straight from the system, without `std::filesystem`, which goes through the file
+// clock and loses everything below a second. The precision is the system's: nanoseconds on POSIX,
+// hundreds of nanoseconds on Windows, and a copy carries it over whole.
 Instant instant_at(const path& where) {
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA told{};
@@ -312,10 +325,12 @@ Instant instant_at(const path& where) {
 #endif
 }
 
+// The write time rounded down to whole seconds.
 std::chrono::sys_seconds modified_at(const path& where) {
     return std::chrono::floor<std::chrono::seconds>(instant_at(where));
 }
 
+// The total and available space of the volume under the path; throws when it cannot be read.
 Space space_at(const path& where) {
     std::error_code trouble;
 
@@ -325,14 +340,14 @@ Space space_at(const path& where) {
     return Space{told.capacity, told.available};
 }
 
-// Rata zależy od nośnika, bo anulowanie działa między ratami, a nie w ich środku. Na udziale
-// sieciowym krótsza rata to krótsze zawieszenie, gdy udział przestanie odpowiadać; na dysku
-// stałym nie ma czego ratować i liczy się przepustowość.
+// The chunk size depends on the medium, because cancellation works between chunks, not inside them.
+// On a network share a shorter chunk means a shorter hang when the share stops responding; on a
+// fixed disk there is nothing to save, and throughput is what counts.
 [[maybe_unused]] bool afar_at(const path& where);
 
-// Ścieżka zaczynająca się od dwóch ukośników jest sieciowa z definicji — pytanie systemu
-// o rodzaj korzenia UNC bywa zawodne, a od tej odpowiedzi zależą dwie rzeczy naraz: rata
-// i to, czy wolno ufać powiadomieniom. Sprawdzian z definicji jest pewniejszy.
+// A path starting with two slashes is a network path by definition. Asking the system about the
+// kind of a UNC root is unreliable, and two things depend on this answer at once: the chunk size
+// and whether notifications can be trusted. The check by definition is more certain.
 [[maybe_unused]] [[nodiscard]] bool unc_at(const path& where) {
     const auto named = where.native();
 
@@ -349,13 +364,12 @@ Space space_at(const path& where) {
 
 #ifdef _WIN32
 
-// Windows łamie się na ścieżkach dłuższych niż 260 znaków, chyba że poda się je
-// z przedrostkiem \\?\. Przedrostek wyłącza za to wszelkie prostowanie — ścieżka musi być
-// już bezwzględna i bez kropek — a udział sieciowy ma własną postać: \\?\UNC\serwer\udział.
-// std::filesystem pod MSVC robi to tylko w programie z `longPathAware` na systemie
-// z LongPathsEnabled; nasze własne wywołania systemowe muszą to robić jawnie, a jest ich sporo:
-// otwarcie pliku, atrybuty, przejście katalogu i obserwacja (`exists` i `kind` — patrz
-// `attributes_beyond`).
+// Windows breaks on paths longer than 260 characters unless they are given with the \\?\ prefix.
+// The prefix in turn switches off all normalization, so the path must already be absolute and
+// without dots, and a network share has its own form: \\?\UNC\server\share. `std::filesystem` under
+// MSVC does this only in a program with longPathAware on a system with LongPathsEnabled; our own
+// system calls have to do it explicitly, and there are many of them: opening a file, attributes,
+// listing a directory and watching (`exists` and `kind`, see `attributes_beyond`).
 std::wstring longly(const path& where) {
     std::error_code ignored;
 
@@ -369,7 +383,8 @@ std::wstring longly(const path& where) {
     for (wchar_t& one : made)
         if (one == L'/') one = L'\\';
 
-    // Korzeń bez ukośnika na końcu Windows odczytuje jako „katalog bieżący na tym dysku".
+    // Windows reads a drive root without a trailing backslash as "the current directory on this
+    // drive".
     if (made.size() == 2 && made[1] == L':') made += L'\\';
 
     if (made.size() > 1 && made[0] == L'\\' && made[1] == L'\\')
@@ -390,6 +405,7 @@ std::string format_at(const path& where);
 
 path present_at(const path& where);
 
+// What kind of medium the path lies on: a fixed disk, a network share, removable, optical or other.
 Mount mount_at(const path& where) {
 #ifdef _WIN32
 
@@ -419,8 +435,8 @@ Mount mount_at(const path& where) {
 
     if (statfs(asked.c_str(), &told) != 0) return Mount::other;
 
-    // NFS, SMB (stary i nowy), CIFS, Ceph, Lustre, AFS — sieć; ISO 9660 i UDF — płyta. FUSE to
-    // tylko sposób podłączenia, więc o nim mówi nazwa systemu plików z tablicy montowań.
+    // NFS, SMB (old and new), CIFS, Ceph, Lustre, AFS: network; ISO 9660 and UDF: optical. FUSE is
+    // only a way of mounting, so the file system name from the mount table decides.
     switch (static_cast<unsigned long>(told.f_type)) {
         case 0x6969ul:
         case 0x517Bul:
@@ -437,19 +453,20 @@ Mount mount_at(const path& where) {
 
 #elif defined(TALCITE_BSD_FS)
 
-    // macOS i BSD mówią rodzaj nazwą w samym `statfs` — bez tablicy montowań.
+    // macOS and BSD give the kind by name in `statfs` itself, without a mount table.
     return minded(format_at(exists_at(where) ? where : where.parent_path()));
 
 #else
 
-    // Przenośny POSIX nie ma jak zapytać o rodzaj nośnika. Istniejąca ścieżka to dysk: obserwacja
-    // i tak idzie tu odpytywaniem, a rata dysku jest najszybsza.
+    // Portable POSIX has no way to ask about the kind of medium. An existing path is a disk:
+    // watching goes by polling here anyway, and the disk chunk is the fastest.
     return exists_at(present_at(where)) ? Mount::disk : Mount::other;
 
 #endif
 }
 
-// Najbliższa istniejąca ścieżka: cel kopii zwykle jeszcze nie istnieje, a pytamy o jego nośnik.
+// The nearest existing path: the target of a copy usually does not exist yet, and we ask about its
+// medium.
 path present_at(const path& where) {
     std::error_code ignored;
 
@@ -466,19 +483,23 @@ path present_at(const path& where) {
     return made;
 }
 
+// Makes a rename inside the directory durable on POSIX by syncing the directory; on Windows
+// MOVEFILE_WRITE_THROUGH does this.
 void settled_folder([[maybe_unused]] const path& where) {
 #ifndef _WIN32
     const int folder = ::open(where.empty() ? "." : where.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 
     if (folder < 0) return;
 
-    // Udział sieciowy i część systemów plików odmawia utrwalenia katalogu; zmiana nazwy i tak się
-    // stała, więc odmowa nie jest tu błędem.
+    // A network share and some file systems refuse to sync a directory; the rename has happened
+    // anyway, so the refusal is not an error here.
     (void)::fsync(folder);
     ::close(folder);
 #endif
 }
 
+// Whether the medium under the path is FAT (FAT16, FAT32); the check before a copy asks about the 4
+// GiB limit.
 bool fat_at(const path& where) {
     const path here = present_at(where);
 
@@ -492,14 +513,14 @@ bool fat_at(const path& where) {
     if (GetVolumeInformationW(root.data(), nullptr, 0, nullptr, nullptr, nullptr, format.data(), MAX_PATH) == 0)
         return false;
 
-    // `FAT` i `FAT32`; `exFAT` tej granicy nie ma.
+    // "FAT" and "FAT32"; exFAT has no such limit.
     return format.rfind(L"FAT", 0) == 0;
 #elif defined(TALCITE_LINUX_FS)
     struct statfs told {};
 
     return statfs(here.c_str(), &told) == 0 && static_cast<unsigned long>(told.f_type) == 0x4d44ul;
 #elif defined(TALCITE_BSD_FS)
-    // `msdos` na macOS, `msdosfs` na FreeBSD.
+    // "msdos" on macOS, "msdosfs" on FreeBSD.
     return format_at(here).rfind("msdos", 0) == 0;
 #else
     (void)here;
@@ -508,6 +529,7 @@ bool fat_at(const path& where) {
 #endif
 }
 
+// Whether both paths lie on one volume; then a move is a rename and needs no space.
 bool together_at(const path& one, const path& two) {
     const path left = present_at(one);
     const path right = present_at(two);
@@ -531,6 +553,8 @@ bool together_at(const path& one, const path& two) {
 #endif
 }
 
+// How much free space the medium under the path (or under its nearest existing ancestor) has;
+// nothing when the system does not say.
 std::optional<std::uintmax_t> room_at(const path& where) {
     std::error_code trouble;
 
@@ -541,6 +565,8 @@ std::optional<std::uintmax_t> room_at(const path& where) {
     return told.available;
 }
 
+// The read chunk for the medium under the path: smaller on network shares and smaller still on
+// removable and optical media than on a fixed disk.
 std::size_t chunk_at(const path& where) {
     switch (mount_at(where)) {
         case Mount::remote: return afar;
@@ -550,9 +576,9 @@ std::size_t chunk_at(const path& where) {
     }
 }
 
-// Jedyne miejsce, w którym praca pyta, czy jest jeszcze potrzebna. Dzwonek robotnika
-// podnosi drop() z puli, czyli cancel() na obietnicy — a przechodzenie drzewa jest pierwszą
-// operacją w talcite, która trwa na tyle długo, żeby miało to znaczenie.
+// The only place where work asks whether it is still needed. The worker's bell is rung by drop() on
+// the pool, that is by cancel() on the promise, and walking a tree is an operation that takes long
+// enough for this to matter.
 bool stopped() {
     Bell* bell = ringing();
 
@@ -561,8 +587,8 @@ bool stopped() {
 
 #ifndef _WIN32
 
-// Rodzaj wpisu prosto z trybu, jak w `stat(2)`: dowiązanie rozpoznajemy przed wszystkim innym, bo
-// `lstat` mówi o wpisie, a nie o tym, na co wskazuje.
+// The kind of entry straight from the mode, as in stat(2): a symlink is recognized before anything
+// else, because `lstat` describes the entry, not what it points to.
 Kind kinded(::mode_t mode) {
     if (S_ISLNK(mode)) return Kind::link;
     if (S_ISREG(mode)) return Kind::file;
@@ -572,20 +598,18 @@ Kind kinded(::mode_t mode) {
     return Kind::special;
 }
 
-// **Wszystko z jednego pytania.** `std::filesystem` pyta o to samo w kawałkach — osobno o rodzaj,
-// osobno o rozmiar, osobno o prawa, osobno o czas, osobno o istnienie celu — i każdy kawałek idzie
-// do systemu osobno: zmierzone `strace`, trzy `stat`-y na wpis (150 wpisów, 454 wywołania), a z
-// naszym własnym o prawa i właściciela cztery. Jeden `lstat` daje to wszystko naraz.
+// Everything from one question. `std::filesystem` asks about the same things piece by piece: the
+// kind, the size, the permissions, the time and whether the target exists, and each piece goes to
+// the system separately (measured with strace: three stat calls per entry, 150 entries, 454 calls,
+// and four with our own call for permissions and owner). One `lstat` gives it all at once.
 //
-// Dowiązanie kosztuje drugie pytanie — `stat`, czyli **przez** dowiązanie. Płacimy je za trzy
-// rzeczy: czy cel w ogóle jest (`stale`), czym jest (`reach` — po nim panel wie, że w dowiązanie
-// do katalogu da się wejść) i jakie ma prawa. Znaczniki mówią bowiem o tym, na co wpis
-// wskazuje — `readonly` dowiązania do pliku tylko do odczytu ma być prawdą — a `rights` o samym
-// wpisie, więc dowiązanie ma swoje `lrwxrwxrwx`. To rozróżnienie było i zostaje; zmienia się tylko
-// to, że oba biorą się z jednego miejsca zamiast z czterech.
+// A symlink costs a second question, `stat`, that is through the link. It pays for three things:
+// whether the target exists at all (`stale`), what it is (`reach`, by which the panel knows that a
+// symlink to a directory can be entered), and its permissions. The flags describe what the entry
+// points to (`readonly` of a link to a read-only file must be true), while `rights` describe the
+// entry itself, so a symlink has its own lrwxrwxrwx.
 //
-// Wpis, o który nie da się zapytać, wraca z `Kind::none` — tak samo jak dotąd, gdy pytania
-// `std::filesystem` po kolei zawodziły.
+// An entry that cannot be asked about comes back with `Kind::none`.
 Entry noted(const stood::directory_entry& one) {
     Entry made;
     made.where = one.path();
@@ -631,15 +655,16 @@ Entry noted(const stood::directory_entry& one) {
         }
     }
 
-    // Bit wykonywania **którykolwiek**, tak liczy MC.
+    // Executable when any execute bit is set, as MC counts it.
     made.attributes.readonly = (mode & S_IWUSR) == 0;
     made.attributes.executable = (mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0;
 
     return made;
 }
 
-// Jeden wpis tą samą drogą co w wykazie, bez czytania całego katalogu. Wpisu, którego nie ma,
-// nie ma też tutaj: wraca `Kind::none`, jak wpis, o który nie da się zapytać.
+// One entry, the same way as in a listing, without reading the whole directory. An entry that does
+// not exist does not exist here either: it comes back with `Kind::none`, like an entry that cannot
+// be asked about.
 Entry entry_at(const path& where) {
     std::error_code ignored;
 
@@ -648,6 +673,7 @@ Entry entry_at(const path& where) {
 
 #endif
 
+// Sorts the entries by path.
 void sorted(std::vector<Entry>& among) {
     std::sort(among.begin(), among.end(),
               [](const Entry& one, const Entry& two) { return one.where < two.where; });
@@ -655,12 +681,13 @@ void sorted(std::vector<Entry>& among) {
 
 #ifdef _WIN32
 
+// A Windows file time rounded down to whole seconds.
 std::chrono::sys_seconds stamped(FILETIME told) {
     return std::chrono::floor<std::chrono::seconds>(instant_of(told));
 }
 
-// Rozszerzenia, które Windows uruchamia wprost. PATHEXT ma ich więcej, ale te cztery są tym,
-// co człowiek nazywa „programem", a reszta (`.vbs`, `.js`, `.msc`) to skrypty pod cudzy silnik.
+// The extensions Windows runs directly. PATHEXT has more, but these four are what a person calls a
+// "program"; the rest (.vbs, .js, .msc) are scripts for some other engine.
 bool runnable(const path& where) {
     std::wstring ending = where.extension().wstring();
 
@@ -669,16 +696,16 @@ bool runnable(const path& where) {
     return ending == L".exe" || ending == L".com" || ending == L".bat" || ending == L".cmd";
 }
 
-// Punkt ponownej analizy to nie zawsze dowiązanie. Rodzaj mówi znacznik, który `FIND_DATA` niesie
-// w `dwReserved0`. Dowiązanie symboliczne, węzeł montowania (junction), dowiązanie WSL i alias
-// aplikacji ze sklepu — to są dowiązania. Plik OneDrive na żądanie, plik po deduplikacji serwera,
-// plik z obrazu WIM — to zwykłe pliki i katalogi, które system czyta przezroczyście; dawniej szły
-// jako dowiązania, bez rozmiaru, a biblioteka nie widziała w nich filmów. Gniazdo AF_UNIX jest
-// tym, czym na POSIX-ie: czymś szczególnym.
+// A reparse point is not always a link. The kind is told by the tag that FIND_DATA carries in
+// dwReserved0. A symlink, a mount point (junction), a WSL link and an app alias from the store are
+// links. An on-demand OneDrive file, a file after server deduplication and a file from a WIM image
+// are ordinary files and directories that the system reads transparently, so they keep their size.
+// An AF_UNIX socket is what it is on POSIX: something special.
 constexpr DWORD wsl_link = 0xA000001DUL;
 constexpr DWORD app_alias = 0x8000001BUL;
 constexpr DWORD unix_socket = 0x80000023UL;
 
+// The kind of a found entry, from its attributes and reparse tag.
 Kind reparsed(const WIN32_FIND_DATAW& told) {
     const bool folder = (told.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
@@ -694,9 +721,9 @@ Kind reparsed(const WIN32_FIND_DATAW& told) {
     }
 }
 
-// Jedno pytanie do systemu oddaje nazwę, rodzaj, rozmiar, czas i atrybuty razem.
-// directory_iterator nie wystawia atrybutów, więc trzeba było dopytywać o każdy wpis
-// z osobna — przy skanowaniu udziału sieciowego to podwajało liczbę wypraw przez sieć.
+// One question to the system returns the name, kind, size, time and attributes together.
+// directory_iterator does not expose attributes, so every entry would have to be asked about
+// separately, which on a network share doubles the number of round trips.
 Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     Entry made;
 
@@ -714,23 +741,23 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     made.attributes.readonly = (told.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
     made.attributes.system = (told.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
 
-    // Wykonywalny po rozszerzeniu — Windows nie ma bitu. `stale` zostaje fałszem: sprawdzenie
-    // celu punktu ponownej analizy to osobna wyprawa do systemu na każdy wpis, a przy udziale
-    // sieciowym podwajałaby liczbę wypraw — powód, dla którego `noted` czyta z `FIND_DATA`.
+    // Executable by extension, since Windows has no execute bit. `stale` stays false: checking the
+    // target of a reparse point is a separate trip to the system for every entry, and on a network
+    // share it would double the number of trips, which is why `noted` reads from FIND_DATA.
     made.attributes.executable = made.kind == Kind::file && runnable(made.where);
 
-    // Prawa udajemy tak samo, jak robi to `std::filesystem` na tym systemie: wszystko wolno, chyba
-    // że plik jest tylko do odczytu. Liczby dowiązań, właściciela ani grupy `FIND_DATA` nie niesie,
-    // a wyciągnięcie ich wymagałoby otwarcia każdego pliku z osobna — MC na Windows też ich nie
-    // pokazuje, więc zostają puste.
+    // Permissions are faked the same way `std::filesystem` does on this system: everything is
+    // allowed unless the file is read-only. FIND_DATA carries no link count, owner or group, and
+    // getting them would require opening every file separately; MC on Windows does not show them
+    // either, so they stay empty.
     made.rights = made.attributes.readonly ? stood::perms::owner_read | stood::perms::group_read |
                                             stood::perms::others_read | stood::perms::owner_exec |
                                             stood::perms::group_exec | stood::perms::others_exec
                                       : stood::perms::all;
 
-    // Cel dowiązania jak na POSIX-ie, tylko dla dowiązania. `read_symlink` czyta dowiązania
-    // symboliczne, a nie węzły montowania (junction) — dla nich cel zostaje pusty, tak jak `stale`
-    // zostaje fałszem, i z tego samego powodu.
+    // The link target as on POSIX, only for a link. `read_symlink` reads symlinks, not mount points
+    // (junctions); for those the target stays empty, just as `stale` stays false, and for the same
+    // reason.
     made.reach = made.kind;
 
     if (made.kind == Kind::link) {
@@ -752,6 +779,8 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     return made;
 }
 
+// The entries of one directory, without "." and "..". `quiet` turns a directory that cannot be
+// opened into an empty list instead of an error, for walking a tree.
 std::vector<Entry> found_in(const path& where, bool quiet) {
     std::vector<Entry> made;
 
@@ -777,9 +806,9 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
         made.push_back(noted(told, where));
     } while (FindNextFileW(looking, &told) != 0);
 
-    // **Koniec wykazu to tylko `ERROR_NO_MORE_FILES`.** Każdy inny błąd — zerwane połączenie
-    // z udziałem w połowie wykazu — dawniej też kończył pętlę, więc wykaz wychodził ucięty jak
-    // kompletny, a przeniesienie katalogu kasowało to, czego nie zdążyło zobaczyć.
+    // Only ERROR_NO_MORE_FILES ends the listing. Any other error (a connection to the share broken
+    // in the middle of the listing) is an error: a truncated listing must not pass for a complete
+    // one, or moving a directory would delete what it did not get to see.
     const DWORD why = GetLastError();
 
     FindClose(looking);
@@ -789,10 +818,10 @@ std::vector<Entry> found_in(const path& where, bool quiet) {
     return made;
 }
 
-// Jeden wpis: `FIND_DATA` samego wpisu, jak w wykazie, a do tego **liczba nazw** z otwartego
-// uchwytu. W wykazie jej nie ma, bo kosztowałaby otwarcie każdego pliku; przy jednym wpisie to
-// jedno otwarcie, a bez niej zapis „obok i przemianuj" nie wie, że zerwałby twarde dowiązanie.
-// Wpisu, którego nie ma, nie ma też tutaj: wraca `Kind::none`.
+// One entry: the FIND_DATA of the entry itself, as in a listing, plus the link count from an open
+// handle. A listing does not have it, because it would cost opening every file; for one entry it is
+// one open, and without it a "write beside and rename" does not know it would break a hard link. An
+// entry that does not exist does not exist here either: it comes back with `Kind::none`.
 Entry entry_at(const path& where) {
     WIN32_FIND_DATAW told{};
 
@@ -829,12 +858,12 @@ Entry entry_at(const path& where) {
 
 #endif
 
-// Katalog pod ścieżką albo dowiązanie, które do katalogu prowadzi — **tylko u korzenia**. Panel
-// wchodzi przez dowiązanie jak MC, a `kind_at` go nie rozwija, bo wpis dowiązania ma pokazywać
-// dowiązanie. Dawniej obie drogi odmawiały: „Not a directory." na katalogu, do którego człowiek
-// właśnie chciał wejść.
+// A directory at the path, or a symlink leading to a directory, but only at the root. The panel
+// enters through a symlink as MC does, while `kind_at` does not expand it, because the entry of a
+// link has to show the link.
 namespace {
 
+// Whether the path is a directory or a symlink to one.
 bool folder_at(const path& where) {
     const Kind kind = kind_at(where);
 
@@ -849,6 +878,8 @@ bool folder_at(const path& where) {
 
 }
 
+// The entries of the directory (or of the directory a symlink leads to), sorted by path; throws
+// "Not a directory." for anything else. Stops early when the work is cancelled.
 std::vector<Entry> list_at(const path& where) {
     if (!folder_at(where)) amiss("Not a directory.", where);
 
@@ -879,9 +910,10 @@ std::vector<Entry> list_at(const path& where) {
     return made;
 }
 
-// Katalog, do którego nie ma wstępu, pomijamy zamiast przewracać całe przejście. Zabranie
-// prawa do jednego podkatalogu nie może unieważnić skanowania biblioteki. Za dowiązaniem idziemy
-// tylko u korzenia (`folder_at`); w głębi zostaje wpisem, bo dowiązanie do przodka zamknęłoby koło.
+// A directory we have no access to is skipped instead of failing the whole walk: losing the right
+// to one subdirectory must not invalidate the scan of a library. A symlink is followed only at the
+// root (`folder_at`); deeper down it stays an entry, because a link to an ancestor would close a
+// loop.
 std::vector<Entry> walk_at(const path& where) {
     if (!folder_at(where)) amiss("Not a directory.", where);
 
@@ -927,6 +959,7 @@ std::vector<Entry> walk_at(const path& where) {
     return made;
 }
 
+// Creates the directory together with any missing parents; an existing directory is fine.
 void make_folder_at(const path& where) {
     if (kind_at(where) == Kind::folder) return;
 
@@ -936,8 +969,8 @@ void make_folder_at(const path& where) {
     if (trouble) amiss("Cannot create the directory.", where);
 }
 
-// Nazwa obok: `cel.bin` → `cel (2).bin`. Składana na postaci rodzimej ścieżki, nie przez
-// `string()`, które pod MSVC oddaje stronę kodową ANSI i psuje albo odrzuca polskie litery.
+// The name beside: target.bin → target (2).bin. Built on the native form of the path, not through
+// `string()`, which under MSVC returns the ANSI code page and breaks or rejects Polish letters.
 path beside(const path& to, int at) {
     const path::string_type tail = path{" (" + std::to_string(at) + ")"}.native();
 
@@ -947,6 +980,8 @@ path beside(const path& to, int at) {
     return made;
 }
 
+// Where to write given the collision policy: the target itself when free or overwritten, nothing
+// for skip, an error for fail, and the first free name beside it (up to 100) for rename.
 path settled_on(const path& to, Conflict how) {
     if (kind_at(to) == Kind::none) return to;
 
@@ -970,16 +1005,18 @@ namespace {
 
 #if defined(TALCITE_LINUX_FS)
 
+// The RENAME_NOREPLACE flag of renameat2, called through syscall.
 constexpr unsigned noreplace = 1U;
 
 #endif
 
 #ifdef _WIN32
 
-// **Ten sam wpis pod inną pisownią — na Windows.** Ten sam katalog i nazwa równa bez wielkości
-// liter: dowiązania twarde w jednym katalogu różnią się nazwą także bez wielkości liter, a w różnych
-// katalogach — katalogiem. Porównujemy nazwy, nie spis katalogu: `from` podane inną pisownią niż
-// na dysku zostawia w spisie wpis o pisowni `to`, choć to ten sam wpis.
+// The same entry under a different spelling, on Windows: the same directory and a name equal
+// ignoring case. Hard links in one directory differ by name also ignoring case, and in different
+// directories by directory. We compare names, not the directory listing: `from` given in a spelling
+// different from the one on disk leaves an entry with the spelling of `to` in the listing, although
+// it is the same entry.
 bool respelled(const path& from, const path& to) {
     std::error_code trouble;
 
@@ -998,27 +1035,27 @@ bool respelled(const path& from, const path& to) {
 
 #endif
 
-// Wynik jednej próby przeniesienia przez system.
+// The result of one attempt to move through the system.
 enum class Push : std::uint8_t { done, taken, away, refused };
 
-// **Przeniesienie, które nie nadpisuje, niepodzielnie.** Sprawdzenie celu i osobne przeniesienie
-// zostawiały okno, w którym cel mógł się pojawić — a `std::filesystem::rename` na POSIX-ie nadpisuje
-// plik po cichu, pusty katalog też. Dlatego o „cel stoi" pytamy sam system, w tym samym wywołaniu:
-// na Windows `MoveFileExW` bez `MOVEFILE_REPLACE_EXISTING`, na Linuksie `renameat2` z
-// `RENAME_NOREPLACE`. System plików, który tej flagi nie zna (`EINVAL`), dostaje dawną drogę —
-// sprawdzenie i przeniesienie.
+// A move that does not overwrite, atomically. Checking the target and moving separately would leave
+// a window in which the target could appear, and `std::filesystem::rename` on POSIX silently
+// overwrites a file, and an empty directory too. So the system itself is asked whether the target
+// exists, in the same call: on Windows MoveFileExW without MOVEFILE_REPLACE_EXISTING, on Linux
+// renameat2 with RENAME_NOREPLACE. A file system that does not know this flag (EINVAL) gets the
+// plain way: a check and a move.
 //
-// **Odmowa ma powód i od powodu zależy, co dalej.** Zajęty cel rozstrzyga polityka kolizji; inny
-// nośnik (`EXDEV`, `ERROR_NOT_SAME_DEVICE`) to jedyny powód, dla którego `move` wolno kopiować
-// i sprzątać źródło. Każda inna odmowa — plik otwarty w odtwarzaczu, brak praw, za długa nazwa —
-// jest błędem. Dawniej każda kończyła się kopią i kasowaniem źródła, także taka, po której kopia
-// lądowała we wnętrzu samego źródła.
+// A refusal has a reason, and what happens next depends on it. A taken target is decided by the
+// collision policy; a different medium (EXDEV, ERROR_NOT_SAME_DEVICE) is the only reason for which
+// `move` may copy and clean up the source. Any other refusal (a file open in a player, missing
+// rights, a name too long) is an error.
 Push pushed(const path& from, const path& to) {
 #ifdef _WIN32
-    // Przemianowanie na drugie dowiązanie twarde tego samego pliku `MoveFileExW` bez nadpisania
-    // przyjmuje bez słowa, choć to osobny wpis. Pytamy więc najpierw, czy cel stoi — jedno pytanie
-    // o atrybuty — i stojący oddajemy jako zajęty. Do systemu idzie dalej tylko ten sam wpis:
-    // przeniesienie na samego siebie i inna pisownia (`heat` → `Heat`), którą `MoveFileExW` robi sam.
+    // MoveFileExW without overwriting silently accepts a rename onto a second hard link of the same
+    // file, although it is a separate entry. So we first ask whether the target exists (one
+    // question about attributes) and report an existing one as taken. Only the same entry still
+    // goes to the system: a move onto itself and a different spelling (heat → Heat), which
+    // MoveFileExW does by itself.
     if (GetFileAttributesW(longly(to).c_str()) != INVALID_FILE_ATTRIBUTES && !respelled(from, to))
         return Push::taken;
 
@@ -1046,10 +1083,10 @@ Push pushed(const path& from, const path& to) {
     if (errno != ENOTSUP && errno != EINVAL) return Push::refused;
 #endif
 
-    // **Bez przemianowania „bez nadpisania" w systemie** — BSD, przenośny POSIX — plik idzie
-    // dowiązaniem twardym: `linkat` nie nadpisuje nigdy (`EEXIST`), więc nowa nazwa powstaje
-    // niepodzielnie, a stara znika potem. Katalogu tak się nie da, a system plików bez dowiązań
-    // twardych (FAT, część FUSE) odmawia — wtedy zostaje sprawdzenie i przemianowanie.
+    // Without a "rename without overwrite" in the system (BSD, portable POSIX), a file goes through
+    // a hard link: `linkat` never overwrites (EEXIST), so the new name appears atomically and the
+    // old one is removed afterwards. A directory cannot be moved this way, and a file system
+    // without hard links (FAT, some FUSE) refuses; then a check and a rename remain.
     struct stat told {};
 
     if (::lstat(from.c_str(), &told) == 0 && !S_ISDIR(told.st_mode)) {
@@ -1080,17 +1117,17 @@ Push pushed(const path& from, const path& to) {
 #endif
 }
 
-// Przeniesienie, które **zastępuje** cel. Zapis obok i przemianowanie na cel to droga każdego
-// bezpiecznego zapisu, więc przemianowanie ma być trwałe: Windows przepuszcza je przez dysk
-// (`MOVEFILE_WRITE_THROUGH`), a na POSIX-ie utrwalamy katalog, w którym zmieniła się nazwa —
-// inaczej po zaniku zasilania katalog może wciąż wskazywać stary plik albo żaden.
+// A move that replaces the target. Writing beside and renaming onto the target is the way of every
+// safe write, so the rename has to be durable: Windows writes it through the disk
+// (MOVEFILE_WRITE_THROUGH), and on POSIX the directory in which the name changed is synced;
+// otherwise after a power loss the directory may still point to the old file or to none.
 #ifdef _WIN32
 
-// **Zastąpienie z semantyką POSIX** (Windows 10 1709+): cel otwarty przez kogoś innym z
-// `FILE_SHARE_DELETE` — odtwarzacz, indeksowanie, drugie okno twa — zostaje zastąpiony jak na
-// Linuksie, a otwarte uchwyty dalej widzą starą treść. `MoveFileExW` w takiej sytuacji odmawia
-// dostępu i zapis kończył się błędem. System albo nośnik bez tej drogi (starszy Windows, FAT,
-// część udziałów) odpowiada „nie obsługuję", i wtedy idzie `MoveFileExW` jak dawniej.
+// Replacing with POSIX semantics (Windows 10 1709+): a target opened by someone else with
+// FILE_SHARE_DELETE (a player, indexing, a second twa window) is replaced as on Linux, and open
+// handles keep seeing the old content. MoveFileExW refuses access in that situation. A system or
+// medium without this way (older Windows, FAT, some shares) answers "not supported", and then
+// MoveFileExW is used. Nothing means "not supported here".
 std::optional<Push> posix_replaced(const path& from, const path& to) {
     const HANDLE one = CreateFileW(longly(from).c_str(), DELETE | SYNCHRONIZE | GENERIC_WRITE,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
@@ -1111,14 +1148,14 @@ std::optional<Push> posix_replaced(const path& from, const path& to) {
 
     std::memcpy(told->FileName, named.c_str(), named.size() * sizeof(wchar_t));
 
-    // `FileRenameInfoEx` = 22; flagi to `FILE_RENAME_FLAG_REPLACE_IF_EXISTS` i
-    // `FILE_RENAME_FLAG_POSIX_SEMANTICS` — liczbami, bo starsze nagłówki MinGW ich nie mają.
+    // FileRenameInfoEx is 22; the flags are FILE_RENAME_FLAG_REPLACE_IF_EXISTS and
+    // FILE_RENAME_FLAG_POSIX_SEMANTICS, written as numbers because older MinGW headers lack them.
     const BOOL done = SetFileInformationByHandle(one, static_cast<FILE_INFO_BY_HANDLE_CLASS>(22), told,
                                                  static_cast<DWORD>(room));
 
     const DWORD why = done != 0 ? ERROR_SUCCESS : GetLastError();
 
-    // Utrwalenie tego, co zrobiło `MOVEFILE_WRITE_THROUGH`: wpis o nowej nazwie na nośniku.
+    // Makes durable what MOVEFILE_WRITE_THROUGH would: the entry with the new name on the medium.
     if (done != 0) (void)FlushFileBuffers(one);
 
     CloseHandle(one);
@@ -1135,6 +1172,7 @@ std::optional<Push> posix_replaced(const path& from, const path& to) {
 
 #endif
 
+// Moves `from` onto `to`, replacing the target durably (see above).
 Push replaced(const path& from, const path& to) {
 #ifdef _WIN32
     if (const std::optional<Push> made = posix_replaced(from, to)) return *made;
@@ -1152,10 +1190,11 @@ Push replaced(const path& from, const path& to) {
 #endif
 }
 
-// Wpis nie zmieści się we własnym wnętrzu. Wystarczy porównanie ścieżek bezwzględnych: przodka
-// schowanego za dowiązaniem i tak odrzuci sam system (`EINVAL`), a odmowa systemu jest dziś błędem,
-// nie zaproszeniem do kopii. Tu chodzi o zdanie, które mówi, co się stało. O rodzaj wpisu nie
-// pytamy: plik też nie ma wnętrza, a pytanie kosztowałoby zajrzenie do każdego przenoszonego pliku.
+// An entry does not fit inside itself. Comparing absolute paths is enough: an ancestor hidden
+// behind a symlink is rejected by the system itself (EINVAL), and a refusal by the system is an
+// error, not an invitation to copy. This is about a sentence that says what happened. The kind of
+// the entry is not asked: a file has no inside either, and asking would cost a look at every file
+// moved.
 bool within(const path& from, const path& to) {
     std::error_code ignored;
 
@@ -1169,17 +1208,18 @@ bool within(const path& from, const path& to) {
 
 #ifndef _WIN32
 
-// **Ten sam wpis pod inną pisownią.** Na systemie bez wielkości liter `heat` i `Heat` to jeden
-// wpis, więc cel „stoi" — ale zmiana nazwy między nimi jest zwyczajną zmianą nazwy. Dowiązanie
-// twarde też jest `equivalent`, a jest osobnym wpisem, którego nadpisać nie wolno. Rozróżnia je
-// katalog: osobny wpis leży w nim pod dokładnie tą nazwą, inna pisownia tego samego — nie.
+// The same entry under a different spelling. On a case-insensitive system heat and Heat are one
+// entry, so the target "exists", but a rename between them is an ordinary rename. A hard link is
+// `equivalent` too, but it is a separate entry that must not be overwritten. The directory tells
+// them apart: a separate entry lies in it under exactly that name, a different spelling of the same
+// one does not.
 bool same_entry(const path& from, const path& to) {
     std::error_code trouble;
 
     if (!stood::equivalent(from, to, trouble) || trouble) return false;
 
-    // Ta sama ścieżka to ten sam wpis. Sama nazwa nie wystarcza: dowiązanie twarde w innym
-    // katalogu pod tą samą nazwą to osobny wpis, a `rename` między dowiązaniami nic nie robi.
+    // The same path is the same entry. The name alone is not enough: a hard link in another
+    // directory under the same name is a separate entry, and `rename` between links does nothing.
     if (stood::absolute(from, trouble).lexically_normal() == stood::absolute(to, trouble).lexically_normal())
         return true;
 
@@ -1193,6 +1233,7 @@ bool same_entry(const path& from, const path& to) {
 
 }
 
+// Whether the move only changes the letter case of the name (heat → Heat) within one directory.
 bool recased(const path& from, const path& to) {
     const std::string one = to_string(from.filename());
     const std::string two = to_string(to.filename());
@@ -1213,6 +1254,10 @@ bool recased(const path& from, const path& to) {
            stood::absolute(to, trouble).lexically_normal().parent_path();
 }
 
+// A case change that the server accepted silently and did not perform (Samba without case
+// sensitivity, some NAS devices): we check the directory listing (`exact`), and when the name is
+// not there, go in two steps through a name beside it. `move` is `pushed` in a real run and a fake
+// server in tests. False when the second step failed; the first one is then undone.
 bool respelled_twice(const path& from, const path& to, const std::function<bool(const path&, const path&)>& move,
                      const std::function<bool(const path&)>& exact) {
     if (exact(to)) return true;
@@ -1232,7 +1277,8 @@ bool respelled_twice(const path& from, const path& to, const std::function<bool(
 
 namespace {
 
-// Spis katalogu ma wpis dokładnie pod tą nazwą — nie inną pisownią tego samego.
+// The directory listing has an entry under exactly this name, not under a different spelling of the
+// same one.
 bool spelled_exactly(const path& to) {
     std::error_code trouble;
 
@@ -1244,7 +1290,8 @@ bool spelled_exactly(const path& to) {
     return false;
 }
 
-// Po udanej zmianie samej wielkości liter: czy naprawdę się stała.
+// After a successful case-only rename: whether it really happened, and if not, a second attempt in
+// two steps.
 Shift confirmed(const path& from, const path& to, Shift made) {
     if (!made.done || !recased(from, to)) return made;
 
@@ -1257,6 +1304,9 @@ Shift confirmed(const path& from, const path& to, Shift made) {
 
 }
 
+// A move with the collision policy applied. An empty `where` means skipped; `done` false with a
+// non-empty `where` means only a different medium, and the caller copies. Every other refusal is
+// reported here, because only a different medium allows moving by a copy.
 Shift shifted(const path& from, const path& to, Conflict how) {
     if (within(from, to)) amiss("Cannot move an entry into itself.", from);
 
@@ -1282,7 +1332,8 @@ Shift shifted(const path& from, const path& to, Conflict how) {
     if (const std::optional<Shift> made = settled(to)) return confirmed(from, to, *made);
 
 #ifndef _WIN32
-    // Na Windows ten sam wpis rozstrzyga już `pushed` — tu dochodzi tylko cel naprawdę zajęty.
+    // On Windows the same entry is already handled by `pushed`; only a really taken target gets
+    // here.
     if (same_entry(from, to)) {
         std::error_code trouble;
 
@@ -1306,26 +1357,26 @@ Shift shifted(const path& from, const path& to, Conflict how) {
     amiss("No free name beside the target.", to);
 }
 
+// Replaces the target with a rename, durably; false when the system refused.
 bool replaced_at(const path& from, const path& to) { return replaced(from, to) == Push::done; }
 
 }
 
-// Ścieżka jako tekst **zawsze w UTF-8** i z powrotem. Bez tego programy stojące na bibliotece
-// sięgają po `path::string()`, a to pod MSVC oddaje bieżącą stronę kodową ANSI, nie UTF-8 —
-// nazwa pliku z polskimi znakami dochodzi do rysowania już zepsuta i wygląda na ekranie jak
-// ciąg znaków zastępczych, bo dekoder biblioteki odrzuca bajt po bajcie. To samo w drugą stronę:
-// `path{std::string}` czyta bajty jako ANSI, więc katalog założony z pola tekstowego dostaje
-// inną nazwę, niż wpisał człowiek.
+// A path as text, always in UTF-8, and back. Without this, programs on the library reach for the
+// path's `string()`, which under MSVC returns the current ANSI code page, not UTF-8: a file name
+// with Polish letters reaches the drawing already broken and shows on screen as a row of
+// replacement characters, because the library's decoder rejects it byte by byte. The same in the
+// other direction: `path{std::string}` reads the bytes as ANSI, so a directory created from a text
+// field gets a name different from what the person typed.
 //
-// `u8string()` jest UTF-8 z definicji na każdym systemie, więc **nie ma tu ani jednego `#ifdef`**.
-// Przejście przez `std::u8string` to przepisanie bajt w bajt; osobny typ istnieje właśnie po to,
-// żeby kodowania nie dało się pomylić, i dlatego nie da się go po prostu przypisać.
+// `u8string()` is UTF-8 by definition on every system, so there is no #ifdef here. Going through
+// std::u8string is a byte-for-byte copy; the separate type exists precisely so that encodings
+// cannot be confused, which is why it cannot simply be assigned.
 //
-// Wyjątek od tej reguły jest jeden: Windows. Tam `u8string()` przy samotnej połowie pary
-// zastępczej w nazwie (NTFS ją dopuszcza) rzuca albo gubi znaki, zależnie od biblioteki
-// standardowej — a nazwy pliku do pokazania nie wolno wywracać. Dlatego na Windows przepisujemy
-// sami, ze znakiem zastępczym w miejscu zepsutej jednostki. Tekst do przechowania, bez strat,
-// daje `stored`.
+// There is one exception: Windows. There `u8string()` with a lone surrogate in the name (NTFS
+// allows it) throws or loses characters, depending on the standard library, and a file name to be
+// shown must not fail. So on Windows we convert ourselves, with a replacement character in place of
+// the broken unit. Lossless text for storage comes from `stored`.
 std::string to_string(const path& where) {
 #ifdef _WIN32
     return ::talcite::to_string(std::wstring_view{where.native()});
@@ -1336,12 +1387,13 @@ std::string to_string(const path& where) {
 #endif
 }
 
+// A path from UTF-8 text.
 path from_string(std::string_view said) {
     return path{std::u8string{reinterpret_cast<const char8_t*>(said.data()), said.size()}};
 }
 
-// Ścieżka do JSON-u i z powrotem: zawsze poprawny UTF-8, zawsze ta sama ścieżka — opis
-// w `storing.cpp`. `to_string` jest dla ludzi, `stored` dla plików.
+// A path to JSON and back: always valid UTF-8, always the same path; described in `storing.cpp`.
+// `to_string` is for people, `stored` for files.
 std::string stored(const path& where) {
 #ifdef _WIN32
     const std::wstring& native = where.native();
@@ -1352,6 +1404,7 @@ std::string stored(const path& where) {
 #endif
 }
 
+// The path back from the text produced by `stored`.
 path restored(std::string_view said) {
 #ifdef _WIN32
     const std::u16string made = restored_units(said);
@@ -1364,15 +1417,16 @@ path restored(std::string_view said) {
 
 namespace core {
 
-// Udział sieciowy poznajemy tym samym rozpoznaniem, które dobiera ratę — krótsza rata
-// i brak wiarygodnych powiadomień biorą się z tej samej przyczyny.
+// A network share is recognized by the same test that picks the chunk size: a shorter chunk and the
+// lack of reliable notifications have the same cause.
 [[maybe_unused]] bool afar_at(const path& where) { return chunk_at(where) == afar; }
 
 #ifdef _WIN32
 
-// Litery z `GetLogicalDrives`, bez pytania samych nośników: pytanie o etykietę i miejsce potrafi
-// czekać sekundami na odłączony dysk sieciowy albo pusty czytnik kart, a wykaz ma stanąć od razu.
-// Szczegóły każdej litery bierze `volume_at`, osobno — wolny nośnik spowalnia wtedy tylko siebie.
+// Drive letters from GetLogicalDrives, without asking the media themselves: asking for a label and
+// space can wait for seconds on a disconnected network drive or an empty card reader, and the list
+// has to appear at once. The details of each letter come from `volume_at`, separately, so a slow
+// medium slows down only itself.
 std::vector<path> roots_at() {
     std::vector<path> made;
 
@@ -1384,8 +1438,9 @@ std::vector<path> roots_at() {
     return made;
 }
 
-// Jeden nośnik: litera albo udział `\\serwer\zasób`. Korzeń dostaje ukośnik wsteczny na końcu, bo
-// bez niego Windows czyta `C:` jako katalog bieżący na tym dysku, a udziału nie rozpoznaje wcale.
+// One volume: a letter or a share \\server\share. The root gets a trailing backslash, because
+// without it Windows reads C: as the current directory on that drive and does not recognize a share
+// at all.
 Volume volume_at(const path& where) {
     Volume one;
 
@@ -1406,8 +1461,8 @@ Volume volume_at(const path& where) {
         label.resize(std::wcslen(label.c_str()));
         format.resize(std::wcslen(format.c_str()));
 
-        // Przez `to_string`, nie `string()`: etykieta spoza strony kodowej ANSI rzucała
-        // i zabierała cały wykaz nośników.
+        // Through `to_string`, not `string()`: a label outside the ANSI code page would throw and
+        // take down the whole list of volumes.
         one.label = to_string(path{label});
         one.format = to_string(path{format});
     }
@@ -1421,8 +1476,8 @@ Volume volume_at(const path& where) {
         one.space.free = told.available;
     }
 
-    // Dysk mapowany pokazuje się jako litera, ale panel powinien wiedzieć, co za nią stoi. Udział
-    // podany wprost jest swoim własnym źródłem.
+    // A mapped drive shows up as a letter, but the panel should know what stands behind it. A share
+    // given directly is its own source.
     if (one.mount == Mount::remote) {
         if (root.size() == 3 && root[1] == L':') {
             std::wstring behind(1024, L'\0');
@@ -1444,7 +1499,7 @@ Volume volume_at(const path& where) {
 
 #else
 
-// Nazwy w /proc/mounts mają spacje zapisane ósemkowo, bo pola rozdziela spacja.
+// Names in /proc/mounts have spaces written in octal, because spaces separate the fields.
 std::string plainly(const std::string& said) {
     std::string made;
 
@@ -1468,8 +1523,8 @@ std::string plainly(const std::string& said) {
     return made;
 }
 
-// Punkty montowania pod /proc, /sys, /dev i /run to wnętrzności systemu, nie miejsca do
-// oglądania. Sam rodzaj systemu plików nie wystarcza, bo /sys/fs/cgroup jest zwykłym tmpfs.
+// Mount points under /proc, /sys, /dev and /run are the system's innards, not places to look at.
+// The file system kind alone is not enough, because /sys/fs/cgroup is an ordinary tmpfs.
 bool tucked(const std::string& where) {
     static const std::vector<std::string> among{"/proc", "/sys", "/dev", "/run"};
 
@@ -1479,6 +1534,8 @@ bool tucked(const std::string& where) {
     return false;
 }
 
+// Whether the file system kind is a virtual one that holds no user files (proc, sysfs, cgroup and
+// the like).
 bool phony(const std::string& kind) {
     static const std::vector<std::string> among{
         "proc",     "sysfs",     "cgroup",   "cgroup2",     "devpts",  "securityfs",
@@ -1489,10 +1546,9 @@ bool phony(const std::string& kind) {
     return std::find(among.begin(), among.end(), kind) != among.end();
 }
 
-// FUSE bywa dyskiem: `fuseblk` (ntfs-3g, exfat-fuse na dysku USB), mergerfs i bindfs składające
-// lokalne katalogi, szyfrujące nakładki na lokalny katalog. Dawniej każdy `fuse.*` szedł jako sieć —
-// a z tym mniejsza rata i odpytywanie zamiast powiadomień na zwykłym dysku z filmami. Nieznany
-// `fuse.*` zostaje siecią: odpytywanie widzi wszystko, tylko wolniej.
+// FUSE may be a disk: fuseblk (ntfs-3g, exfat-fuse on a USB drive), mergerfs and bindfs combining
+// local directories, encrypting overlays on a local directory. These get the disk chunk and
+// notifications. An unknown fuse.* stays network: polling sees everything, only more slowly.
 bool fused_locally(const std::string& kind) {
     static const std::vector<std::string> among{
         "fuseblk",       "fuse.mergerfs", "fuse.bindfs", "fuse.ntfs-3g",          "fuse.exfat",
@@ -1502,11 +1558,12 @@ bool fused_locally(const std::string& kind) {
     return std::find(among.begin(), among.end(), kind) != among.end();
 }
 
+// The kind of medium from the file system name.
 Mount minded(const std::string& kind) {
     if (fused_locally(kind)) return Mount::disk;
 
-    // Nazwy z Linuksa i z `statfs` macOS i BSD: `afpfs`, `webdav`, `macfuse` po stronie sieci,
-    // `cd9660` i `cddafs` po stronie płyt.
+    // Names from Linux and from the `statfs` of macOS and BSD: afpfs, webdav and macfuse on the
+    // network side, cd9660 and cddafs on the optical side.
     if (kind.rfind("nfs", 0) == 0 || kind == "cifs" || kind == "smbfs" || kind == "smb3" || kind == "ceph" ||
         kind == "lustre" || kind.rfind("fuse", 0) == 0 || kind == "afs" || kind == "9p" || kind == "afpfs" ||
         kind == "webdav" || kind == "macfuse" || kind == "osxfuse")
@@ -1519,8 +1576,8 @@ Mount minded(const std::string& kind) {
 
 #if defined(TALCITE_LINUX_FS)
 
-// Etykiety nośników leżą w /dev/disk/by-label jako dowiązania do urządzeń. Nic lepszego bez
-// dodatkowych bibliotek nie ma, a to wystarcza, żeby panel pokazał nazwę zamiast /dev/sdb1.
+// Volume labels live in /dev/disk/by-label as links to devices. There is nothing better without
+// extra libraries, and it is enough for the panel to show a name instead of /dev/sdb1.
 std::map<path, std::string> labelled() {
     std::map<path, std::string> made;
 
@@ -1541,7 +1598,7 @@ std::map<path, std::string> labelled() {
     return made;
 }
 
-// Nazwa systemu plików pod ścieżką: najdłuższy punkt montowania z tablicy, który jest jej przodkiem.
+// The file system name under the path: the longest mount point from the table that is its ancestor.
 std::string format_at(const path& where) {
     std::error_code ignored;
 
@@ -1571,7 +1628,7 @@ std::string format_at(const path& where) {
 
         const auto depth = static_cast<std::size_t>(std::distance(at.begin(), at.end()));
 
-        // Późniejszy wpis na tym samym miejscu przykrywa wcześniejszy, więc remis wygrywa ostatni.
+        // A later entry at the same place covers an earlier one, so a tie goes to the last.
         if (depth >= deepest) {
             deepest = depth;
             made = kind;
@@ -1581,14 +1638,15 @@ std::string format_at(const path& where) {
     return made;
 }
 
-// Tablica montowań bez wnętrzności systemu. Ten sam punkt montowania może wystąpić kilka razy —
-// liczy się ostatni, bo to on przykrywa poprzednie.
+// One line of the mount table.
 struct Mounted {
     std::string device;
     path where;
     std::string kind;
 };
 
+// The mount table without the system's innards. The same mount point may appear several times; the
+// last one counts, because it covers the previous ones.
 std::vector<Mounted> mounted_at() {
     std::vector<Mounted> made;
 
@@ -1625,8 +1683,8 @@ std::vector<Mounted> mounted_at() {
     return made;
 }
 
-// Same punkty montowania — z tablicy, bez pytania nośników. Martwy udział NFS potrafi zawiesić
-// pytanie o miejsce na zawsze; `volume_at` pyta każdy osobno, więc wisi tylko on.
+// Only the mount points, from the table, without asking the media. A dead NFS share can hang a
+// question about space forever; `volume_at` asks each one separately, so only that one hangs.
 std::vector<path> roots_at() {
     std::vector<path> made;
 
@@ -1635,8 +1693,8 @@ std::vector<path> roots_at() {
     return made;
 }
 
-// Nośnik pod punktem montowania. Ścieżka, która punktem montowania nie jest, dostaje to, co da się
-// o niej powiedzieć bez tablicy: rodzaj i system plików nośnika, na którym leży, i własną nazwę.
+// The volume under a mount point. A path that is not a mount point gets what can be said about it
+// without the table: the kind and file system of the medium it lies on, and its own name.
 Volume volume_at(const path& where) {
     Volume one;
 
@@ -1684,7 +1742,7 @@ Volume volume_at(const path& where) {
 
 #elif defined(TALCITE_BSD_FS)
 
-// Rodzaj systemu plików wprost od `statfs`: `apfs`, `msdos`, `smbfs`, `nfs`, `cd9660`.
+// The file system kind straight from `statfs`: apfs, msdos, smbfs, nfs, cd9660.
 std::string format_at(const path& where) {
     struct statfs told {};
 
@@ -1693,8 +1751,8 @@ std::string format_at(const path& where) {
     return std::string{told.f_fstypename};
 }
 
-// Wykaz nośników z `getmntinfo`: punkt montowania, źródło i rodzaj. Etykiet nie ma — macOS nazywa
-// punkt montowania etykietą, więc zostaje nazwa katalogu.
+// The list of volumes from `getmntinfo`: mount point, source and kind. There are no labels: macOS
+// calls the mount point the label, so the directory name stays.
 std::vector<Volume> mounted_at() {
     std::vector<Volume> made;
 
@@ -1729,7 +1787,8 @@ std::vector<Volume> mounted_at() {
     return made;
 }
 
-// `MNT_NOWAIT` oddaje to, co jądro już wie, bez pytania nośników — więc wykaz jest od razu.
+// MNT_NOWAIT returns what the kernel already knows, without asking the media, so the list comes at
+// once.
 std::vector<path> roots_at() {
     std::vector<path> made;
 
@@ -1738,6 +1797,8 @@ std::vector<path> roots_at() {
     return made;
 }
 
+// The volume under a mount point from `getmntinfo`; any other path gets the kind, file system, name
+// and space of the medium it lies on.
 Volume volume_at(const path& where) {
     for (Volume& one : mounted_at())
         if (one.where == where) return std::move(one);
@@ -1763,11 +1824,13 @@ Volume volume_at(const path& where) {
 
 #else
 
-// Przenośny POSIX: rodzaju nie zna nikt, a wykaz nośników to sam korzeń.
+// Portable POSIX: nobody knows the kind, and the list of volumes is the root alone.
 std::string format_at(const path&) { return {}; }
 
+// The only root of portable POSIX.
 std::vector<path> roots_at() { return {path{"/"}}; }
 
+// The volume at the path: its name, kind of medium and space.
 Volume volume_at(const path& where) {
     Volume one;
 
@@ -1791,7 +1854,7 @@ Volume volume_at(const path& where) {
 
 #endif
 
-// Wykaz nośników to korzenie i nośnik każdego z nich — ta sama droga na każdym systemie.
+// The list of volumes is the roots and the volume of each of them; the same way on every system.
 std::vector<Volume> volumes_at() {
     std::vector<Volume> made;
 
@@ -1800,11 +1863,11 @@ std::vector<Volume> volumes_at() {
     return made;
 }
 
-// **Nośnik, na którym leży ścieżka** — jego korzeń, a nie sama ścieżka: `volume_at` mówi o punkcie
-// montowania albo literze dysku, a Info w twa pyta o plik. Windows wie to sam
-// (`GetVolumePathNameW`, także dla udziału i katalogu zamontowanego w NTFS); gdzie indziej —
-// najdłuższy korzeń z tablicy montowań, który jest początkiem ścieżki. Ścieżka spoza wszystkich
-// korzeni (nie powinno się zdarzyć, ale tablica bywa niepełna) dostaje własny korzeń.
+// The volume a path lies on: its root, not the path itself. `volume_at` speaks about a mount point
+// or a drive letter, while a file manager asks about a file. Windows knows this by itself
+// (GetVolumePathNameW, also for a share and for a directory mounted in NTFS); elsewhere it is the
+// longest root from the mount table that begins the path. A path outside all roots (it should not
+// happen, but the table may be incomplete) gets its own root.
 path mounting_at(const path& where) {
 #ifdef _WIN32
     std::wstring room(32768, L'\0');
@@ -1812,7 +1875,8 @@ path mounting_at(const path& where) {
     if (GetVolumePathNameW(longly(where).c_str(), room.data(), static_cast<DWORD>(room.size())) != 0) {
         room.resize(std::wcslen(room.c_str()));
 
-        // Długi przedrostek `\\?\` od `longly` wraca w odpowiedzi — korzeń ma być taki, jak w wykazie.
+        // The long \\?\ prefix from `longly` comes back in the answer; the root has to look as in
+        // the list.
         if (room.rfind(L"\\\\?\\UNC\\", 0) == 0) room = L"\\\\" + room.substr(8);
         else if (room.rfind(L"\\\\?\\", 0) == 0) room = room.substr(4);
 
@@ -1858,8 +1922,9 @@ path mounting_at(const path& where) {
 #endif
 }
 
-// Przez uchwyt, także dla katalogu: `std::filesystem` z MinGW otwierał katalog bez
-// `FILE_FLAG_BACKUP_SEMANTICS` i czasu katalogu nie ustawiał wcale.
+// Sets the write time through a handle, also for a directory: on Windows a directory is opened with
+// FILE_FLAG_BACKUP_SEMANTICS, which `std::filesystem` from MinGW does not do, so it would not set a
+// directory's time at all.
 void stamp_at(const path& where, Instant when) {
 #ifdef _WIN32
     const HANDLE one = CreateFileW(longly(where).c_str(), FILE_WRITE_ATTRIBUTES,
@@ -1885,6 +1950,7 @@ void stamp_at(const path& where, Instant when) {
 #endif
 }
 
+// The path with symlinks resolved as far as it exists; the path unchanged when that fails.
 path canonical_at(const path& where) {
     std::error_code trouble;
 
@@ -1895,26 +1961,32 @@ path canonical_at(const path& where) {
 
 }
 
+// A file system error with the path it concerns.
 Trouble::Trouble(const std::string& said, path where)
     : talcite::Trouble(said), where_(std::move(where)) {}
 
+// Whether anything exists at the path, checked on the pool.
 Promise<bool> exists(const path& where) {
     return Promise<bool>{[where](auto resolve, auto) { resolve(exists_at(where)); }};
 }
 
+// The kind of the entry at the path, without following a symlink.
 Promise<Kind> kind(const path& where) {
     return Promise<Kind>{[where](auto resolve, auto) { resolve(kind_at(where)); }};
 }
 
+// The size of the file in bytes.
 Promise<std::uintmax_t> size(const path& where) {
     return Promise<std::uintmax_t>{[where](auto resolve, auto) { resolve(size_at(where)); }};
 }
 
+// The write time of the entry, in whole seconds.
 Promise<std::chrono::sys_seconds> modified(const path& where) {
     return Promise<std::chrono::sys_seconds>{
         [where](auto resolve, auto) { resolve(modified_at(where)); }};
 }
 
+// Sets the write time of a file or a directory.
 Promise<void> modified(const path& where, std::chrono::sys_seconds when) {
     return Promise<void>{[where, when](auto resolve, auto) {
         stamp_at(where, Instant{when});
@@ -1922,39 +1994,46 @@ Promise<void> modified(const path& where, std::chrono::sys_seconds when) {
     }};
 }
 
+// The total and available space of the volume under the path.
 Promise<Space> space(const path& where) {
     return Promise<Space>{[where](auto resolve, auto) { resolve(space_at(where)); }};
 }
 
+// The kind of medium the path lies on.
 Promise<Mount> mount(const path& where) {
     return Promise<Mount>{[where](auto resolve, auto) { resolve(mount_at(where)); }};
 }
 
+// The list of volumes with their details.
 Promise<std::vector<Volume>> volumes() {
     return Promise<std::vector<Volume>>{[](auto resolve, auto) { resolve(volumes_at()); }};
 }
 
+// The roots of the volumes only, without asking the media, so the list is fast.
 Promise<std::vector<path>> roots() {
     return Promise<std::vector<path>>{[](auto resolve, auto) { resolve(roots_at()); }};
 }
 
+// The root of the volume the path lies on.
 Promise<path> mounted(const path& where) {
     return Promise<path>{[where](auto resolve, auto) { resolve(mounting_at(where)); }};
 }
 
+// The details of the volume at the given root.
 Promise<Volume> volume(const path& where) {
     return Promise<Volume>{[where](auto resolve, auto) { resolve(volume_at(where)); }};
 }
 
+// The read chunk suited to the medium under the path.
 Promise<std::size_t> chunk(const path& where) {
     return Promise<std::size_t>{[where](auto resolve, auto) { resolve(chunk_at(where)); }};
 }
 
 namespace {
 
-// Nazwy właścicieli i grup pytamy systemu **raz na numer**: odpowiedź jest ta sama przez cały
-// przebieg programu, a katalog potrafi mieć tysiąc plików jednego właściciela. Zamek, bo pytanie
-// pada z puli wątków.
+// Owner and group names are asked from the system once per number: the answer stays the same for
+// the whole run, and a directory may have a thousand files of one owner. The lock is needed because
+// the question comes from the pool's threads.
 std::string cached(std::map<std::uint32_t, std::string>& among, std::mutex& guard,
                    std::uint32_t which, const std::function<std::string(std::uint32_t)>& ask) {
     {
@@ -1974,6 +2053,7 @@ std::string cached(std::map<std::uint32_t, std::string>& among, std::mutex& guar
     return made;
 }
 
+// The user name for a uid; empty on Windows and for a number the system does not know.
 std::string owner_at(std::uint32_t which) {
 #ifdef _WIN32
     (void)which;
@@ -1994,6 +2074,7 @@ std::string owner_at(std::uint32_t which) {
 #endif
 }
 
+// The group name for a gid; empty on Windows and for a number the system does not know.
 std::string group_at(std::uint32_t which) {
 #ifdef _WIN32
     (void)which;
@@ -2016,10 +2097,10 @@ std::string group_at(std::uint32_t which) {
 
 }
 
-// Nazwa właściciela i grupy po numerze — obietnicą, jak wszystko w `fs`, bo na maszynie z nazwami
-// z sieci (LDAP, NIS) pierwsze pytanie o dany numer potrafi się zaciąć. Kto rysuje wykaz, pyta raz
-// na listing, nie raz na wiersz. Numer, którego system nie zna, oddaje pusty napis: pokazujący
-// wypisze wtedy sam numer, jak `ls`.
+// The owner's name by number, as a promise like everything in `fs`, because on a machine with names
+// from the network (LDAP, NIS) the first question about a given number can stall. Whoever draws a
+// listing asks once per listing, not once per row. A number the system does not know gives an empty
+// text, and the caller then shows the number itself, as ls does.
 Promise<std::string> owner(std::uint32_t which) {
     return Promise<std::string>{[which](auto resolve, auto) {
         static std::map<std::uint32_t, std::string> among;
@@ -2029,6 +2110,7 @@ Promise<std::string> owner(std::uint32_t which) {
     }};
 }
 
+// The group's name by number, cached and empty for an unknown number, like `owner`.
 Promise<std::string> group(std::uint32_t which) {
     return Promise<std::string>{[which](auto resolve, auto) {
         static std::map<std::uint32_t, std::string> among;
@@ -2038,10 +2120,12 @@ Promise<std::string> group(std::uint32_t which) {
     }};
 }
 
+// The hidden, read-only and system attributes of the entry.
 Promise<Attributes> attributes(const path& where) {
     return Promise<Attributes>{[where](auto resolve, auto) { resolve(attributes_at(where)); }};
 }
 
+// Sets the attributes of the entry (see `attributed_at` for what POSIX can set).
 Promise<void> attributes(const path& where, Attributes what) {
     return Promise<void>{[where, what](auto resolve, auto) {
         attributed_at(where, what);
@@ -2049,6 +2133,7 @@ Promise<void> attributes(const path& where, Attributes what) {
     }};
 }
 
+// One entry described as in a listing; `Kind::none` when it does not exist.
 Promise<Entry> entry(const path& where) {
     return Promise<Entry>{[where](auto resolve, auto) { resolve(entry_at(where)); }};
 }
@@ -2057,22 +2142,22 @@ Promise<Entry> entry(const path& where) {
 
 namespace {
 
-// Na Windows prawa to **lista dostępu**, a nie bity: `std::filesystem` przekłada bity tylko na
-// atrybut „tylko do odczytu", który niczego nie chroni. Przekład jest więc nasz, i jest wąski,
-// bo bity grupy i innych nie mają na Windows odpowiednika jeden do jednego:
+// On Windows rights are an access list, not bits: `std::filesystem` maps the bits only onto the
+// read-only attribute, which protects nothing. The mapping is therefore ours, and it is narrow,
+// because the group and other bits have no one-to-one counterpart on Windows:
 //
-// - **bez praw grupy i innych** — lista chroniona (bez dziedziczenia po katalogu) z jednym
-//   wpisem: pełny dostęp dla użytkownika, który uruchomił program. Tak leży plik z kluczami;
-// - **z jakimkolwiek prawem grupy albo innych** — lista wraca do dziedziczonej po katalogu, czyli
-//   do tego, co Windows daje każdemu nowemu plikowi.
+//  - no group or other rights: a protected list (no inheritance from the directory) with one entry,
+//    full access for the user who started the program. This is how a file with keys lies;
+//  - any group or other right: the list goes back to the one inherited from the directory, that
+//    is to what Windows gives every new file.
 void guarded(const path& where, stood::perms what) {
     const std::wstring named = longly(where);
 
     constexpr stood::perms shared = stood::perms::group_all | stood::perms::others_all;
 
     if ((what & shared) != stood::perms::none) {
-        // Lista już dziedziczona nie ma czego zdejmować. Ustawiona na nowo straciłaby wpisy dopisane
-        // ręką — komuś dane prawo do odczytu — a `Rewrite` w twa woła to przy każdym zapisie obok.
+        // An already inherited list has nothing to remove. Set anew, it would lose entries added by
+        // hand (a read right given to someone), and a safe save calls this on every write beside.
         PSECURITY_DESCRIPTOR held = nullptr;
         PACL listed = nullptr;
 
@@ -2138,8 +2223,8 @@ void guarded(const path& where, stood::perms what) {
 
 #endif
 
-// Prawa idą **za dowiązaniem**, jak `chmod`: dowiązanie symboliczne praw nie ma. Na Windows bity
-// przekładają się na atrybut „tylko do odczytu" i na listę dostępu (`guarded`).
+// Rights follow a symlink, like chmod: a symlink has no rights of its own. On Windows the bits map
+// onto the read-only attribute and onto the access list (`guarded`).
 Promise<void> rights(const path& where, std::filesystem::perms what) {
     return Promise<void>{[where, what](auto resolve, auto) {
         std::error_code why;
@@ -2156,18 +2241,22 @@ Promise<void> rights(const path& where, std::filesystem::perms what) {
     }};
 }
 
+// Whether both paths lead to the same file.
 Promise<bool> equivalent(const path& one, const path& two) {
     return Promise<bool>{[one, two](auto resolve, auto) { resolve(equivalent_at(one, two)); }};
 }
 
+// Where a symlink points.
 Promise<path> target(const path& where) {
     return Promise<path>{[where](auto resolve, auto) { resolve(target_at(where)); }};
 }
 
+// The path with symlinks resolved as far as it exists.
 Promise<path> canonical(const path& where) {
     return Promise<path>{[where](auto resolve, auto) { resolve(canonical_at(where)); }};
 }
 
+// Creates a hard link or a symlink at `where` pointing to `onto`.
 Promise<void> link(const path& where, const path& onto, bool hard) {
     return Promise<void>{[where, onto, hard](auto resolve, auto) {
         linking_at(where, onto, hard);
@@ -2175,14 +2264,15 @@ Promise<void> link(const path& where, const path& onto, bool hard) {
     }};
 }
 
-// Katalog bieżący jest wspólny dla całego procesu, więc jego zmiana dotyka też wątków puli.
-// Stąd osobna obietnica: zmiana jest zdarzeniem, odczyt tylko zajrzeniem.
+// The current directory, read directly: reading is only a look.
 path current() {
     std::error_code ignored;
 
     return stood::current_path(ignored);
 }
 
+// Changes the current directory. It is shared by the whole process, so changing it also affects the
+// pool's threads; hence a promise of its own: a change is an event.
 Promise<void> current(const path& where) {
     return Promise<void>{[where](auto resolve, auto) {
         std::error_code trouble;
@@ -2194,6 +2284,7 @@ Promise<void> current(const path& where) {
     }};
 }
 
+// The home directory from USERPROFILE on Windows and HOME elsewhere; empty when it is not set.
 path home() {
 #ifdef _WIN32
 
@@ -2208,6 +2299,7 @@ path home() {
     return {};
 }
 
+// The system's directory for temporary files; empty when it cannot be found.
 path temp() {
     std::error_code ignored;
 
@@ -2218,9 +2310,9 @@ namespace {
 
 #ifdef _WIN32
 
-// Identyfikatory folderów znanych wpisane tu, a nie wzięte z `knownfolders.h`: tam są deklaracjami,
-// których definicje MinGW trzyma w osobnej bibliotece uuid. Wartości to stałe Windows — nie
-// zmieniają się między wydaniami, bo od nich zależą programy sprzed lat.
+// The known folder IDs are written here, not taken from knownfolders.h: there they are declarations
+// whose definitions MinGW keeps in a separate uuid library. The values are Windows constants; they
+// do not change between releases, because programs from years ago depend on them.
 GUID known_of(Known which) {
     switch (which) {
         case Known::home: return {0x5e6c858f, 0x0e22, 0x4760, {0x9a, 0xfe, 0xea, 0x33, 0x17, 0xb6, 0x71, 0x73}};
@@ -2235,6 +2327,7 @@ GUID known_of(Known which) {
     return {};
 }
 
+// The path of the known folder, as the shell reports it.
 std::optional<path> asked_folder(Known which) {
     PWSTR told = nullptr;
 
@@ -2251,8 +2344,8 @@ std::optional<path> asked_folder(Known which) {
 
 #else
 
-// Nazwa zmiennej w `user-dirs.dirs` i katalog, który stoi w domu, gdy pliku nie ma albo wpisu
-// w nim brak. macOS nazywa wideo po swojemu.
+// The variable name in user-dirs.dirs and the directory in the home directory used when the file or
+// the entry is missing. macOS names videos its own way.
 std::pair<std::string_view, std::string_view> xdg_of(Known which) {
     switch (which) {
         case Known::home: return {"", ""};
@@ -2271,7 +2364,7 @@ std::pair<std::string_view, std::string_view> xdg_of(Known which) {
     return {"", ""};
 }
 
-// Ścieżka bez ukośników na końcu — `/home/ala/` i `/home/ala` to ten sam katalog.
+// The path without trailing slashes: /home/ala/ and /home/ala are the same directory.
 std::string bared(const path& where) {
     std::string made = where.lexically_normal().string();
 
@@ -2280,10 +2373,11 @@ std::string bared(const path& where) {
     return made;
 }
 
-// Wpis z `user-dirs.dirs` według xdg-user-dirs: `XDG_DOWNLOAD_DIR="$HOME/Pobrane"` — w cudzysłowie,
-// ścieżka bezwzględna albo od `$HOME`. Wpis równy samemu domowi znaczy „wyłączony": wtedy folderu nie
-// ma i nie szukamy zastępczego. Brak wpisu i wpis krzywy (ścieżka względna) to co innego — o folderze
-// nikt nic nie powiedział i zostaje nazwa zwyczajowa. Stąd dwa poziomy: zewnętrzny mówi, czy wpis był.
+// An entry from user-dirs.dirs as xdg-user-dirs writes it: XDG_DOWNLOAD_DIR="$HOME/Pobrane", in
+// quotes, an absolute path or one starting at $HOME. An entry equal to the home directory itself
+// means "disabled": then the folder does not exist and no substitute is looked for. A missing entry
+// and a malformed one (a relative path) are something else: nobody said anything about the folder,
+// and the customary name stays. Hence two levels: the outer one says whether there was an entry.
 std::optional<std::optional<path>> configured(std::string_view key, const path& house) {
     const char* given = std::getenv("XDG_CONFIG_HOME");
 
@@ -2314,6 +2408,8 @@ std::optional<std::optional<path>> configured(std::string_view key, const path& 
     return std::nullopt;
 }
 
+// The known folder from user-dirs.dirs, or the customary name in the home directory when the file
+// says nothing; nothing when the folder is disabled or there is no home directory.
 std::optional<path> asked_folder(Known which) {
     const path house = home();
 
@@ -2332,8 +2428,8 @@ std::optional<path> asked_folder(Known which) {
 
 }
 
-// Folder znany tylko wtedy, gdy naprawdę stoi na dysku: wpis w ustawieniach systemu, którego
-// katalogu nikt nie założył, nie jest miejscem, do którego da się wejść.
+// A known folder only when it really is on disk: an entry in the system settings whose directory
+// nobody created is not a place one can enter.
 Promise<std::optional<path>> folder(Known which) {
     return Promise<std::optional<path>>{[which](auto resolve, auto) {
         std::optional<path> made = asked_folder(which);
@@ -2346,6 +2442,7 @@ Promise<std::optional<path>> folder(Known which) {
     }};
 }
 
+// Creates the directory together with any missing parents.
 Promise<void> make_folder(const path& where) {
     return Promise<void>{[where](auto resolve, auto) {
         make_folder_at(where);
@@ -2353,6 +2450,8 @@ Promise<void> make_folder(const path& where) {
     }};
 }
 
+// Renames within one medium, with the collision policy; moving to another medium is an error here,
+// because that needs a copy.
 Promise<void> rename(const path& from, const path& to, Conflict how) {
     return Promise<void>{[from, to, how](auto resolve, auto) {
         const Shift made = shifted(from, to, how);
@@ -2363,11 +2462,14 @@ Promise<void> rename(const path& from, const path& to, Conflict how) {
     }};
 }
 
+// The entries of the directory, sorted by path.
 Promise<std::vector<Entry>> list(const path& where) {
     return Promise<std::vector<Entry>>{
         [where](auto resolve, auto) { resolve(list_at(where)); }};
 }
 
+// Every entry under the directory, recursively, sorted by path; inaccessible subdirectories are
+// skipped.
 Promise<std::vector<Entry>> walk(const path& where) {
     return Promise<std::vector<Entry>>{
         [where](auto resolve, auto) { resolve(walk_at(where)); }};

@@ -9,10 +9,12 @@ using namespace talcite;
 
 namespace {
 
+// The text of `where` that the hit covers.
 std::string took(std::string_view where, Hit one) {
     return std::string{where.substr(one.from, one.upto - one.from)};
 }
 
+// The texts of all matches of `comb` in `where`, in order.
 std::vector<std::string> every(const Comb& comb, std::string_view where) {
     std::vector<std::string> made;
 
@@ -23,9 +25,9 @@ std::vector<std::string> every(const Comb& comb, std::string_view where) {
 
 }
 
-// --- Co grzebień wie o sobie ---------------------------------------------------------------------
+// --- What the comb knows about itself -----------------------------------------------------------
 
-TRIAL("Comb: pusty nie jest gotowy") {
+TRIAL("Comb: an empty one is not ready") {
     const Comb one;
 
     ought(!one.ready());
@@ -33,14 +35,14 @@ TRIAL("Comb: pusty nie jest gotowy") {
     ought(!one.forth("cokolwiek", 0).has_value());
 }
 
-TRIAL("Comb: pusty wzorzec nie jest gotowy") {
+TRIAL("Comb: an empty pattern is not ready") {
     const Comb one{"", {}};
 
     ought(!one.ready());
 }
 
-// Wzorzec przychodzi z pola tekstowego, więc zły wzorzec to odpowiedź, a nie wyjątek.
-TRIAL("Comb: zły wzorzec nie rzuca, tylko mówi, że jest zły") {
+// The pattern comes from a text field, so a bad pattern is an answer, not an exception.
+TRIAL("Comb: a bad pattern does not throw, it says it is bad") {
     const Comb one{"[", Sift{true, false, false}};
 
     ought(!one.ready());
@@ -48,7 +50,7 @@ TRIAL("Comb: zły wzorzec nie rzuca, tylko mówi, że jest zły") {
     ought(!one.forth("[abc]", 0).has_value());
 }
 
-TRIAL("Comb: pamięta, czego szuka") {
+TRIAL("Comb: remembers what it looks for") {
     const Comb one{"abc", Sift{false, true, false}};
 
     ought(one.ready());
@@ -57,9 +59,9 @@ TRIAL("Comb: pamięta, czego szuka") {
     ought(!one.how().regex);
 }
 
-// --- Zwykłe szukanie -----------------------------------------------------------------------------
+// --- Plain search --------------------------------------------------------------------------------
 
-TRIAL("Comb: znajduje napis i oddaje jego zakres") {
+TRIAL("Comb: finds the text and gives its range") {
     const Comb one{"drugi", {}};
 
     const std::optional<Hit> got = one.forth("pierwszy drugi trzeci", 0);
@@ -69,7 +71,7 @@ TRIAL("Comb: znajduje napis i oddaje jego zakres") {
     same(got->upto, std::size_t{14});
 }
 
-TRIAL("Comb: szuka od podanego miejsca") {
+TRIAL("Comb: searches from the given place") {
     const Comb one{"ab", {}};
 
     same(one.forth("abXab", 0)->from, std::size_t{0});
@@ -77,22 +79,22 @@ TRIAL("Comb: szuka od podanego miejsca") {
     ought(!one.forth("abXab", 4).has_value());
 }
 
-TRIAL("Comb: bez wielkości liter domyślnie") {
+TRIAL("Comb: case-insensitive by default") {
     const Comb one{"ALA", {}};
 
     ought(one.forth("mala ala", 0).has_value());
     same(one.forth("mala ala", 0)->from, std::size_t{1});
 }
 
-TRIAL("Comb: z wielkością liter szuka dokładnie") {
+TRIAL("Comb: case-sensitive searches exactly") {
     const Comb one{"ALA", Sift{false, true, false}};
 
     ought(!one.forth("mala ala", 0).has_value());
     ought(one.forth("mala ALA", 0).has_value());
 }
 
-// Całe wyrazy: „ala" w „mala" to nie wyraz, a „ala" w „ala." już tak.
-TRIAL("Comb: całe wyrazy pomijają dopasowania w środku wyrazu") {
+// Whole words: "ala" in "mala" is not a word, but "ala" in "ala." is.
+TRIAL("Comb: whole words skip matches inside a word") {
     const Comb one{"ala", Sift{false, false, true}};
 
     same(one.forth("mala ala.", 0)->from, std::size_t{5});
@@ -100,15 +102,16 @@ TRIAL("Comb: całe wyrazy pomijają dopasowania w środku wyrazu") {
     same(one.forth("ala", 0)->from, std::size_t{0});
 }
 
-// Bajty spoza ASCII liczymy jako literę, więc „ala" w „alą" nie jest całym wyrazem.
-TRIAL("Comb: ogonek też jest literą") {
+// Bytes outside ASCII count as letters, so "ala" followed by a multibyte letter is not a whole
+// word.
+TRIAL("Comb: a letter with a diacritic is a letter too") {
     const Comb one{"ala", Sift{false, false, true}};
 
     ought(!one.forth("al\xc4\x85", 0).has_value());
     ought(!one.forth("ala\xc4\x85", 0).has_value());
 }
 
-TRIAL("Comb: nie znajduje, czego nie ma") {
+TRIAL("Comb: does not find what is not there") {
     const Comb one{"xyz", {}};
 
     ought(!one.forth("abcdef", 0).has_value());
@@ -116,16 +119,16 @@ TRIAL("Comb: nie znajduje, czego nie ma") {
     ought(one.all("abcdef").empty());
 }
 
-TRIAL("Comb: dłuższy wzorzec niż wiersz nie psuje niczego") {
+TRIAL("Comb: a pattern longer than the line breaks nothing") {
     const Comb one{"abcdef", {}};
 
     ought(!one.forth("abc", 0).has_value());
     ought(!one.forth("", 0).has_value());
 }
 
-// --- Wstecz i wszystkie --------------------------------------------------------------------------
+// --- Backwards and all ---------------------------------------------------------------------------
 
-TRIAL("Comb: wstecz bierze ostatnie dopasowanie przed miejscem") {
+TRIAL("Comb: backwards takes the last match before the place") {
     const Comb one{"ab", {}};
 
     const std::string where = "ab.ab.ab";
@@ -136,7 +139,7 @@ TRIAL("Comb: wstecz bierze ostatnie dopasowanie przed miejscem") {
     ought(!one.back(where, 0).has_value());
 }
 
-TRIAL("Comb: wszystkie dopasowania idą od lewej i się nie zachodzą") {
+TRIAL("Comb: all matches go from the left and do not overlap") {
     const Comb one{"aa", {}};
 
     const std::vector<std::string> want{"aa", "aa"};
@@ -145,9 +148,9 @@ TRIAL("Comb: wszystkie dopasowania idą od lewej i się nie zachodzą") {
     same(every(one, "aaa"), std::vector<std::string>{"aa"});
 }
 
-// --- Wyrażenia regularne -------------------------------------------------------------------------
+// --- Regular expressions -------------------------------------------------------------------------
 
-TRIAL("Comb: wyrażenie regularne znajduje wzór") {
+TRIAL("Comb: a regular expression finds the pattern") {
     const Comb one{"[0-9]+", Sift{true, false, false}};
 
     const std::string where = "rok 2026 i 12 miesiecy";
@@ -158,7 +161,7 @@ TRIAL("Comb: wyrażenie regularne znajduje wzór") {
     same(every(one, where), want);
 }
 
-TRIAL("Comb: wyrażenie regularne bez wielkości liter") {
+TRIAL("Comb: a case-insensitive regular expression") {
     const Comb one{"ala", Sift{true, false, false}};
 
     ought(one.forth("ALA", 0).has_value());
@@ -168,15 +171,15 @@ TRIAL("Comb: wyrażenie regularne bez wielkości liter") {
     ought(!two.forth("ALA", 0).has_value());
 }
 
-// Szukanie od środka wiersza nie może udawać, że wiersz zaczyna się w tym miejscu.
-TRIAL("Comb: daszek nie łapie się w środku wiersza") {
+// Searching from the middle of a line must not pretend that the line starts at that place.
+TRIAL("Comb: the caret does not match in the middle of a line") {
     const Comb one{"^ab", Sift{true, false, false}};
 
     same(one.forth("abXab", 0)->from, std::size_t{0});
     ought(!one.forth("abXab", 1).has_value());
 }
 
-TRIAL("Comb: granica wyrazu widzi bajt przed sobą") {
+TRIAL("Comb: a word boundary sees the byte before it") {
     const Comb one{"\\bab", Sift{true, false, false}};
 
     const std::string where = "xab ab";
@@ -185,15 +188,16 @@ TRIAL("Comb: granica wyrazu widzi bajt przed sobą") {
     same(one.forth(where, 2)->from, std::size_t{4});
 }
 
-// Puste dopasowanie pomijamy: zamiana pustki nie ma sensu, a szukanie w kółko stałoby w miejscu.
-TRIAL("Comb: puste dopasowanie się nie liczy") {
+// An empty match is skipped: replacing emptiness makes no sense, and repeated searching would
+// stand still.
+TRIAL("Comb: an empty match does not count") {
     const Comb one{"x*", Sift{true, false, false}};
 
     ought(!one.forth("abc", 0).has_value());
     same(every(one, "axxb"), std::vector<std::string>{"xx"});
 }
 
-TRIAL("Comb: całe wyrazy działają też przy wyrażeniu") {
+TRIAL("Comb: whole words work with an expression too") {
     const Comb one{"al.", Sift{true, false, true}};
 
     same(one.forth("malaz ala ", 0)->from, std::size_t{6});

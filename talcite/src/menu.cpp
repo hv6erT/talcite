@@ -16,8 +16,8 @@ namespace talcite::ui {
 
 namespace {
 
-// Szerokości boków pudełka. Bez ramki nie ma boków, a z ramką są tak szerokie, jak znaki, którymi
-// skórka ją rysuje — opisane przy `Frame::edges`.
+// The widths of the box's sides. Without a border there are no sides; with one they are as wide
+// as the characters the skin draws it with, as described at `Frame::edges`.
 Sides boxed(const Skin& how, Border border) {
     if (border == Border::none) return {0, 0};
 
@@ -26,38 +26,39 @@ Sides boxed(const Skin& how, Border border) {
 
 }
 
-// **Menu to lista pozycji** — pudełko, które pasek kładzie na treści, gdy jest rozwinięte. Tytuł
-// w pasku jest osobnym węzłem (`MenuTitle`), który to menu zna i otwiera. Przedtem jedno `Menu`
-// zajmowało dwa nieprzyległe prostokąty — pas tytułu i pudełko pod nim — z polem `aside_`
-// wpisywanym przez pasek tuż przed malowaniem: jedyny nie-prostokąt w bibliotece, utrzymywany
-// ręcznie. Teraz każdy z dwóch prostokątów stoi w swoim miejscu drzewa i wie, gdzie jest.
+// A menu is a list of items: the box that the bar lays over the content when it is open. The
+// title in the bar is a separate node (`MenuTitle`), which knows this menu and opens it. Each of
+// the two rectangles, the title and the box, stands in its own place in the tree and knows where
+// it is.
 //
-// Zwinięte menu **nie jest w drzewie**: pasek dopina je przy rozwinięciu i odpina przy zwinięciu.
-// Dlatego „rozwinięte" to jedno pytanie — czy mam rodzica — a nie rachunek na ogniskach.
+// A closed menu is not in the tree: the bar attaches it when it opens and detaches it when it
+// closes. So "open" is a single question, whether the menu has a parent, and not a computation
+// over the focus.
 Menu::Menu(std::string title, MenuShape shape) : title_(std::move(title)), shape_(shape) {
     role("talcite.menubar");
 }
 
+// A menu takes any number of items and separators.
 int Menu::capacity() const { return plenty; }
 
-// Menu składa się z pozycji i rozdzielników — i z niczego więcej. Cokolwiek innego byłoby dla
-// `item()` pustką, po której wędrówka strzałkami przeskakuje, a malowanie rysuje nie wiadomo co.
+// A menu consists of items and separators and nothing else. Anything else would be a hole for
+// `item()` that the arrow keys skip over and that painting draws who knows how.
 bool Menu::accepts(const Node& one) const {
     return dynamic_cast<const MenuItem*>(&one) != nullptr ||
            dynamic_cast<const MenuSeparator*>(&one) != nullptr;
 }
 
-// **Rozwinięte znaczy dopięte do paska.** Jedno źródło prawdy, bez pytania o ognisko: pasek dopina
-// przy `open`, odpina przy zwinięciu, a menu bez pozycji nie jest dopinane nigdy — tytuł bez
-// niczego pod spodem to przycisk w pasku, nie pusta lista.
+// Open means attached to the bar. One source of truth, without asking about the focus: the bar
+// attaches the menu at `open` and detaches it at close, and a menu without items is never
+// attached, because a title with nothing below is a button in the bar, not an empty list.
 bool Menu::opened() const { return parent() != nullptr; }
 
-// Ognisko na menu znaczy „rozwiń": zwinięte jest poza drzewem i nie ma na czym stanąć.
+// Focusing a menu means opening it: a closed menu is outside the tree and has nothing to stand on.
 void Menu::focus() { open(); }
 
-// Rozwinięcie: pasek dopina menu i ognisko schodzi na pozycję — na zapamiętaną, a gdy tej nie ma
-// albo jest wyłączona, na pierwszą dostępną. Menu bez pozycji rozwinąć się nie da: ognisko staje
-// na tytule, czyli pasek jest czynny i zwinięty.
+// Opens the menu: the bar attaches it and the focus goes down to an item, the remembered one, or
+// the first enabled one when there is none or it is disabled. A menu without items cannot open:
+// the focus stays on the title, so the bar is active and folded.
 void Menu::open() {
     if (bar_ == nullptr) return;
 
@@ -79,20 +80,21 @@ void Menu::open() {
         return;
     }
 
-    // Same wyłączone pozycje: pudełko stoi, ale nie ma na czym postawić ogniska — zostaje na menu.
+    // Only disabled items: the box stands, but there is nothing to put the focus on, so it stays
+    // on the menu.
     Node::focus();
 }
 
-// **Zwinięcie odpina menu z paska**, para do `open`. Zamknięte menu zaczyna następnym razem od
-// góry; odpięcie nie posyła `UnfocusEvent`, więc numer gasimy tu wprost. **Ognisko siedzące w menu
-// przechodzi na tytuł, a nie gaśnie**: zwinięcie nie jest wyjściem z paska, a ognisko zgaszone bez
-// zdarzenia w `Root::losing` wracałoby potem „znikąd" — i pasek brałby to za nowe wejście, gubiąc,
-// komu ma oddać ognisko przy wyjściu. Gdy ognisko już wyszło z menu (klik w treść), nie ma czego
-// przenosić. Dawniej robił to pasek, sięgając do numeru pozycji menu; teraz menu robi to samo.
+// Closes the menu by detaching it from the bar, the counterpart of `open`. A closed menu starts at
+// the top next time; detaching sends no `UnfocusEvent`, so the number is cleared here directly. A
+// focus sitting in the menu moves to the title instead of going out: closing is not leaving the
+// bar, and a focus lost without an event in `Root::losing` would later come back "from nowhere",
+// and the bar would take it for a new entry and forget whom to return the focus to on exit. When
+// the focus has already left the menu (a click in the content), there is nothing to move.
 //
-// Menu zwinięte nie ma czego zwijać i **zachowuje zapamiętaną pozycję** — `which(n)` na zwiniętym
-// menu mówi, od czego zacząć przy rozwinięciu. Zgaszenie numeru u rozwiniętego jest strażą: ognisko
-// schodzi z menu przez tytuł, więc `UnfocusEvent` gasi numer i tak, a mutant bez tej linii przeżywa.
+// A closed menu has nothing to close and keeps its remembered item: `which(n)` on a closed menu
+// says where to start when it opens. Clearing the number of an open menu is a safeguard: the focus
+// leaves the menu through the title, so the `UnfocusEvent` clears the number anyway.
 void Menu::close() {
     Node* up = parent();
 
@@ -111,16 +113,19 @@ void Menu::close() {
     (void)up->children().remove(this);
 }
 
+// A menu can always take the focus, which opens it.
 bool Menu::focusable() const { return true; }
 
+// The item at the given position, or `nullptr` when the position is outside the menu or holds a
+// separator.
 MenuItem* Menu::item(int which) const {
     if (which < 0 || which >= static_cast<int>(children().many())) return nullptr;
 
     return dynamic_cast<MenuItem*>(children()[static_cast<std::size_t>(which)].get());
 }
 
-// Wnętrze pudełka: najszersza pozycja i tyle wierszy, ile pozycji. Pytamy o plenty, bo szerokość
-// menu bierze się z jego zawartości, a nie z tego, co akurat zostało na ekranie.
+// The inside of the box: the widest item, and as many rows as items. Items are asked with plenty
+// of room, because the menu's width comes from its content, not from what is left on the screen.
 Size Menu::fold() const {
     int wide = 0;
 
@@ -130,8 +135,8 @@ Size Menu::fold() const {
     return {wide, static_cast<int>(children().many())};
 }
 
-// Pudełko: wnętrze, boki ramki, cień — i co najmniej tak szerokie jak tytuł, żeby nie było węższe
-// od tego, spod czego wychodzi.
+// The box: the inside, the sides of the border, the shadow, and at least as wide as the title, so
+// that it is not narrower than what it comes out of.
 Size Menu::wants(Size room) const {
     const Size inner = fold();
     const Sides side = boxed(skin(), shape_.border);
@@ -145,11 +150,11 @@ Size Menu::wants(Size room) const {
     return {std::min(wide, room.wide), std::min(inner.high + 2 + apart, room.high)};
 }
 
-// **Pod swoim tytułem** — to jest całe pozycjonowanie menu. Miejsce tytułu bierzemy
-// ze `screen_area()`, czyli z prostokątów w górę drzewa, liczonych przy każdej klatce; przesuwamy
-// je do układu paska, bo stos pyta o miejsce we własnych współrzędnych. Gdy pudełko nie mieści się
-// przy prawej krawędzi, dosuwa się w lewo — tytuł stoi, gdzie stał, bo jest osobnym węzłem w swoim
-// rzędzie.
+// Under its title: that is all the positioning of a menu. The title's place comes from
+// `screen_area()`, that is, from the rectangles up the tree, computed every frame; it is shifted
+// into the bar's coordinates, because the stack asks for a place in its own coordinates. When the
+// box does not fit at the right edge, it moves left; the title stays where it was, because it is a
+// separate node in its own row.
 Area Menu::placement(Size room) const {
     const Size wanted = wants(room);
 
@@ -167,20 +172,21 @@ Area Menu::placement(Size room) const {
     return {{x, 1}, wanted};
 }
 
-// **Podświetlona pozycja ma dwie twarze** — jak w liście: `which()` to numer, `current()` to ona
-// sama, którą się naciska, czyta albo porównuje. Pustka znaczy „żadna". W środku numer siedzi
-// jako `int`, bo `nearest` liczy na nim kroki z zawinięciem, a zwinięcie gasi go przez `-1`.
+// The highlighted item has two faces, as in a list: `which()` is its number, `current()` the item
+// itself, which is pressed, read or compared. Empty means none. Inside, the number is kept as an
+// `int`, because `nearest` computes wrapping steps on it and closing clears it with -1.
 std::optional<std::size_t> Menu::which() const {
     if (item(which_) == nullptr) return std::nullopt;
 
     return static_cast<std::size_t>(which_);
 }
 
+// The highlighted item itself, or `nullptr` when there is none.
 MenuItem* Menu::current() const { return item(which_); }
 
-// Numer podświetlonej pozycji trzyma menu, ale samo podświetlenie **jest ogniskiem** — więc
-// przestawienie numeru w otwartym menu przestawia ognisko, a gasnięcie poprzedniej dzieje się samo.
-// W menu zamkniętym numer jest tylko zapamiętany.
+// Sets the highlighted item. The menu keeps the number, but the highlight itself is the focus, so
+// changing the number in an open menu moves the focus, and the previous item goes dark by itself.
+// In a closed menu the number is only remembered.
 void Menu::aim(int given) {
     which_ = given;
 
@@ -189,17 +195,18 @@ void Menu::aim(int given) {
     if (MenuItem* one = item(which_); one != nullptr && one->enabled()) one->focus();
 }
 
+// Sets the highlighted item by number; a number too large for an `int` is cut.
 void Menu::which(std::size_t given) {
     aim(static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX))));
 }
 
-// Pozycja spoza menu nic nie zmienia.
+// Highlights the given item. An item that is not in this menu changes nothing.
 void Menu::current(MenuItem& one) {
     if (const std::optional<std::size_t> at = children().find(one)) which(*at);
 }
 
-// Najbliższa dostępna pozycja w podanym kierunku, z zawinięciem. Kreski i wyszarzone pozycje
-// omijamy tym samym warunkiem, bo kreska to po prostu pozycja niedostępna.
+// The nearest enabled item in the given direction, wrapping around, or -1. Separators and grayed
+// items are skipped by the same condition, because a separator is simply an unavailable item.
 int Menu::nearest(int from, int step) const {
     const int much = static_cast<int>(children().many());
 
@@ -218,9 +225,9 @@ int Menu::nearest(int from, int step) const {
     return -1;
 }
 
-// Kolejność jest tu wszystkim: najpierw zamykamy, dopiero potem wołamy powierzone zadanie.
-// Odwrotnie menu wisiałoby jeszcze na wierzchu, gdyby zadanie otworzyło okno. Menu bez pozycji
-// woła własne zdarzenie — tytuł jest wtedy czynnością.
+// Picks the highlighted item. Order is everything here: first the bar is left, only then the
+// entrusted action runs. The other way round, the menu would still be on top if the action opened
+// a window. A menu without items fires its own `PickEvent`; the title is then the action.
 void Menu::pick() {
     if (children().empty()) {
         if (bar_ != nullptr) bar_->leave();
@@ -239,11 +246,12 @@ void Menu::pick() {
     one->pick();
 }
 
-// **Czynność menu to rozwinięcie** — dla klawisza, który trafi tu wprost, a nie przez tytuł.
+// The action of a menu is opening it, for a key that arrives here directly rather than through the
+// title.
 void Menu::activate() { open(); }
 
-// Samo pudełko: ramka, pozycje, cień. Tytułu tu nie ma — maluje go `MenuTitle` w swoim rzędzie.
-// Prostokąt zaczyna się od ramki, więc pozycje stoją od wiersza pierwszego.
+// Paints the box alone: the border, the items, the shadow. The title is not here; `MenuTitle`
+// paints it in its own row. The rectangle starts with the border, so the items start at row one.
 View Menu::paint(Size, Area seen) {
     View made{seen.size};
 
@@ -285,8 +293,8 @@ View Menu::paint(Size, Area seen) {
 
         made.draw(one->render(where, part - where.at), part.at - seen.at);
 
-        // Kreska dochodzi do ramki, tak jak w Midnight Commanderze. Narożników nie zna sama
-        // kreska, bo jej prostokąt kończy się na wnętrzu — rysuje je więc menu.
+        // A separator reaches the border, as in Midnight Commander. The separator itself does
+        // not know the joints, because its rectangle ends at the inside, so the menu draws them.
         if (shape_.border != Border::none &&
             dynamic_cast<const MenuSeparator*>(one.get()) != nullptr) {
             const Lines lines = how.lines(shape_.border);
@@ -298,8 +306,8 @@ View Menu::paint(Size, Area seen) {
         ++y;
     }
 
-    // Cień pada w prawo i w dół, przesunięty o wiersz i o dwie kolumny — inaczej wyglądałby jak
-    // druga ramka. Litery spod spodu zostają, tylko przygasają.
+    // The shadow falls to the right and down, offset by one row and two columns; otherwise it
+    // would look like a second border. The letters underneath stay and are only dimmed.
     if (shape_.shade) {
         const Style dark = how.style("talcite.shade");
 
@@ -310,19 +318,21 @@ View Menu::paint(Size, Area seen) {
     return made;
 }
 
-// Trzy klawisze są **menu**, reszta należy do pozycji albo do kogoś wyżej. Menu dochodzi tu tylko
-// rozwinięte — zwinięte jest poza drzewem, a jego klawiszami zajmuje się tytuł.
+// Three keys belong to the menu; the rest belong to the items or to someone higher up. Only an
+// open menu gets here; a closed one is outside the tree, and its keys are handled by the title.
 //
-// **Klawisz aktywny to rozdanie, a nie pytanie o typ** — ta sama reguła i ten sam mechanizm, co
-// w dialogu. Menu nie zgaduje, która pozycja na co odpowiada: podaje klawisz swoim dzieciom
-// i czeka, aż któraś go weźmie. Rozdajemy **od siebie**, więc trafia to wyłącznie w pozycje tego
-// menu, a nie w treść pod paskiem.
+// A hotkey is handed out, not decided by asking about types: the same rule and the same mechanism
+// as in a dialog. The menu does not guess which item answers to what; it passes the key to its
+// children and waits for one to take it. The key is handed out from the menu itself, so it reaches
+// only this menu's items and not the content under the bar.
 //
-// Gdy nikt nie weźmie, oddajemy fałsz i klawisz idzie w górę do paska — bo menu jest jego dzieckiem.
+// When nobody takes it, we return false and the key goes up to the bar, because the menu is its
+// child.
 bool Menu::handle(KeyEvent& what) {
-    // Ze sterującym nie łapiemy **niczego** — także strzałek i Entera. Ctrl+Enter i Alt+strzałka
-    // to z założenia inne skróty, a odsianie ich dopiero po rozpoznaniu klawisza zabierało je
-    // aplikacji, ilekroć menu było otwarte. Tak samo odsiewa je przycisk, pole i legenda.
+    // With Ctrl or Alt nothing is caught, not even the arrows and Enter. Ctrl+Enter and Alt+arrow
+    // are different shortcuts by design, and filtering them only after recognizing the key would
+    // take them from the application whenever the menu is open. The button, the text field and
+    // the legend leave them alone the same way.
     const Mods mods = what.mods();
 
     if (mods.ctrl || mods.alt) return false;
@@ -339,16 +349,16 @@ bool Menu::handle(KeyEvent& what) {
     return broadcast(what);
 }
 
-// Numer podświetlonej pozycji dostajemy **bąbelkowaniem**: ognisko postawione na pozycji — strzałką,
-// klikiem, najechaniem myszą czy z programu — przechodzi tędy w drodze w górę, więc wszystkie te
-// drogi schodzą się w jednym miejscu, zamiast każda ustawiać numer po swojemu.
+// The number of the highlighted item arrives by bubbling: a focus placed on an item, by an arrow,
+// a click, hovering or from the program, passes here on its way up, so all these paths meet in one
+// place instead of each setting the number its own way.
 bool Menu::handle(FocusEvent& what) {
     const Node* one = dynamic_cast<const Node*>(what.target());
 
     if (one == nullptr) return false;
 
-    // Ognisko na samym menu znaczy, że nie ma na czym stanąć — same wyłączone pozycje. Numer musi
-    // wtedy zgasnąć, bo inaczej mówiłby o podświetleniu, którego nie widać.
+    // A focus on the menu itself means there is nothing to stand on: only disabled items. The
+    // number must then be cleared, or it would speak of a highlight that is not visible.
     if (one == this) {
         which_ = -1;
 
@@ -365,9 +375,9 @@ bool Menu::handle(FocusEvent& what) {
     return false;
 }
 
-// Zamknięte menu zaczyna następnym razem od góry, a nie od tego, na czym stanęło. Przejście
-// z pozycji na pozycję **nie jest zamknięciem**: ognisko dalej siedzi w menu, więc numeru nie
-// gasimy — inaczej każda strzałka kasowałaby to, co przed chwilą ustawiła.
+// A closed menu starts at the top next time, not where it stopped. Moving from item to item is not
+// closing: the focus still sits in the menu, so the number is not cleared; otherwise every arrow
+// would erase what it had just set.
 bool Menu::handle(UnfocusEvent& what) {
     for (const Node* at = what.other(); at != nullptr; at = at->parent())
         if (at == this) return false;

@@ -10,14 +10,16 @@
 
 namespace talcite::ui {
 
+// A frame with a title, drawn in the `talcite.frame` role.
 Frame::Frame(std::string title, FrameShape shape) : title_(std::move(title)), shape_(shape) {
     role("talcite.frame");
 }
 
-// Która krawędź jest rysowana i ile zabiera. Bez linii nie ma żadnej, a wyłączona krawędź nie
-// zabiera treści ani jednej kratki. Góra i dół to zawsze jeden wiersz, ale **boki są tak szerokie,
-// jak znaki, którymi je rysuje skórka** — dla znaków dwukolumnowych to dwie kratki, i stąd
-// wnętrze zaczyna się o kratkę dalej. Dla zwykłych znaków ramki wszystko wychodzi na jeden.
+// Which edges are drawn and how much each takes. Without a line there are none, and a switched-off
+// edge takes not a single cell from the content. Top and bottom are always one row, but the sides
+// are as wide as the characters the skin draws them with: for double-width characters that is two
+// cells, and so the interior starts one cell further in. For ordinary box-drawing characters it all
+// comes out as one.
 Frame::Edges Frame::edges() const {
     if (shape_.border == Border::none) return {};
 
@@ -27,9 +29,9 @@ Frame::Edges Frame::edges() const {
             shape_.right ? side.right : 0};
 }
 
-// Ramka zabiera po kratce z każdej strony, którą rysuje — tak samo jak pasek w przewijaku
-// i z tego samego powodu: jest częścią ramki, a nie czymś domalowanym na wierzchu treści.
-// Krawędź wyłączona nie zabiera nic.
+// The frame takes a cell from every side it draws, just like the bar in a scroller and for the same
+// reason: it is part of the frame, not something painted over the content. A switched-off edge
+// takes nothing.
 Size Frame::wants(Size room) const {
     const Edges edge = edges();
 
@@ -44,34 +46,36 @@ Size Frame::wants(Size room) const {
     return {std::min(wants.wide + aside, room.wide), std::min(wants.high + apart, room.high)};
 }
 
+// Paints the background, the edges with the title and the footer, the child inside, and the joints
+// where a divider in the content reaches the sides.
 View Frame::paint(Size given, Area seen) {
     View made{seen.size};
 
     const Skin& how = skin();
 
-    // Rdzeń nazwy roli zadaje się z zewnątrz, a **tytuł idzie za rdzeniem**: `talcite.frame.title`,
-    // a dla panelu z rolą `tw.panel.focus` — `tw.panel.focus.title`. Wspólna rola tytułu nie
-    // wystarczała, bo Midnight Commander ma trzy różne barwy tytułu: aktywny panel (`reverse`),
-    // okno dialogowe (`dtitle`), okno błędu (`errdtitle`). Rozdzielnik ma dalej swoją.
+    // The stem of the role name is set from outside, and the title follows the stem:
+    // "talcite.frame.title", and for a panel with the role tw.panel.focus, tw.panel.focus.title. A
+    // shared title role is not enough, because Midnight Commander has three different title colors:
+    // the active panel (reverse), a dialog (dtitle) and an error dialog (errdtitle). The divider
+    // keeps its own.
     //
-    // **Dolny napis idzie w stylu ramki, nie tytułu.** MC maluje wiersz stanu pod listą plików
-    // zwykłą barwą panelu (`display_mini_info` woła `set_colors`), a tytuł czynnego panelu
-    // odwrotnie — gdyby stopka szła za tytułem, byłaby odwrotna razem z nim. Wyrównanie też ma
-    // własne (`footing`), bo tytuł w MC stoi na środku, a wiersz stanu do lewej.
+    // The bottom text is drawn in the frame's style, not the title's. MC paints the status line
+    // under the file list in the plain panel color (display_mini_info calls set_colors) and the
+    // title of the active panel reversed; if the footer followed the title, it would be reversed
+    // along with it. Its alignment is separate too (`footing`), because in MC the title is centered
+    // and the status line is left-aligned.
     const Style look = how.style(role());
     const Style told = how.style(role() + ".title");
 
     const char32_t mark = how.glyph("talcite.elide");
 
-    // **Ramka maluje swoje tło.** Wnętrze zostawało dotąd spacjami w stylu domyślnym, więc pudełko
-    // w barwnej skórce było przezroczyste w każdym miejscu, którego dziecko nie zakryło — a tak nie
-    // wygląda żadne okno w Midnight Commanderze. Odstęp między treścią a krawędzią, prześwit obok
-    // krótszego napisu i wiersz pod ostatnim dzieckiem mają być w kolorze okna, a nie w kolorze
-    // tego, co akurat leżało pod spodem.
+    // The frame paints its own background. The gap between the content and the edge, the space next
+    // to a shorter text and the row under the last child must be in the window's color, not in the
+    // color of whatever lay underneath; no window in Midnight Commander is transparent there.
     //
-    // Pod skórką wbudowaną `talcite.frame` jest pustym stylem, a świeża kartka i tak jest spacjami
-    // w pustym stylu — więc wypełnienie zapisuje dokładnie to, co już tam stało, i klatka nie
-    // zmienia się o ani jedną kratkę. Sprawdzone porównaniem pełnych odcisków, nie na słowo.
+    // Under the built-in skin `talcite.frame` is an empty style, and a fresh sheet is spaces in the
+    // empty style anyway, so the fill writes exactly what was already there and the frame does not
+    // change by a single cell.
     made.fill({{-seen.at.x, -seen.at.y}, given}, look);
 
     const Edges edge = edges();
@@ -79,16 +83,16 @@ View Frame::paint(Size given, Area seen) {
     if (given.wide > 0 && given.high > 0) {
         const Lines lines = how.lines(shape_.border);
 
-        // Prawy bok zaczyna się tam, gdzie kończy się wnętrze — nie na ostatniej kolumnie, bo bok
-        // ze znaku dwukolumnowego zaczyna się o kratkę wcześniej.
+        // The right side starts where the interior ends, not on the last column, because a side
+        // made of a double-width character starts one cell earlier.
         const int right_x = given.wide - edge.right;
         const int last_y = given.high - 1;
 
-        // Napisu nie ma bez krawędzi, w której miałby stać.
+        // There is no text without an edge to stand in.
         const int room = given.wide - edge.left - edge.right;
 
-        // Linia biegnie przez całą szerokość, gdy boku nie ma — narożnik jest tylko tam, gdzie
-        // spotykają się dwie rysowane krawędzie.
+        // The line runs across the whole width when there is no side; a corner exists only where
+        // two drawn edges meet.
         if (edge.top != 0)
             across(made, {edge.left - seen.at.x, -seen.at.y}, room, lines.across, look);
 
@@ -134,14 +138,14 @@ View Frame::paint(Size given, Area seen) {
 
     made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
 
-    // **Rozdzielnik dochodzi do ramki.** Dziecko nigdy nie maluje poza swoim prostokątem, więc
-    // złączkę stawia ramka — i rozpoznaje ją **po złożonym obrazie**, a nie po tym, jaki węzeł
-    // stoi w środku. Tam, gdzie treść dotyka obu boków tym samym znakiem poziomym, którym ramka
-    // rysuje siebie, krawędź zamienia się w złączkę.
+    // A divider reaches the frame. A child never paints outside its rectangle, so the joint is
+    // placed by the frame, which recognizes it from the composed image, not from the kind of node
+    // inside. Where the content touches both sides with the same horizontal character the frame
+    // draws itself with, the edge turns into a joint.
     //
-    // Poznawanie po obrazie zamiast po typie działa przez dowolne zagnieżdżenie i nie wymaga, żeby
-    // ramka znała rozdzielnik. Ceną jest to, że napis złożony z samych takich kresek na całą
-    // szerokość też dostanie złączki — rzadkie, a wygląda tak, jak wyglądać powinno.
+    // Recognizing by image rather than by type works through any nesting and does not require the
+    // frame to know the divider. The price is that a text made only of such dashes across the whole
+    // width also gets joints; that is rare, and it looks the way it should.
     if (shape_.border != Border::none && (edge.left != 0 || edge.right != 0)) {
         const Lines lines = how.lines(shape_.border);
 

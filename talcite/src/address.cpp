@@ -26,14 +26,16 @@ namespace talcite::net {
 
 namespace {
 
-// Ile bajtów mieści ścieżka gniazda lokalnego. Pole `sun_path` ma 108 bajtów na Linuksie i na
-// Windows, ale **104 na macOS**, a jeden zjada zero kończące napis — więc granicą jest najkrótszy
-// z nich bez tego zera. Odmowa przy budowaniu adresu jest lepsza niż odmowa dopiero przy
-// przypisaniu gniazda: tam wychodzi jako goły numer błędu, bez wskazania, co było za długie.
+// How many bytes a local socket path can hold. The `sun_path` field has 108 bytes on Linux and on
+// Windows but 104 on macOS, and one is taken by the terminating zero, so the limit is the shortest
+// of them without that zero. Refusing when the address is built is better than refusing only when
+// the socket is bound: there it comes out as a bare error number, with no hint of what was too
+// long.
 constexpr std::size_t longest = 103;
 
-// Numer łącza po znaku procenta w adresie link-local. Bywa nazwą (`%eth0`) albo liczbą (`%3`) —
-// Windows pisze liczby, systemy uniksowe nazwy, a ten sam adres musi dać się wpisać na obu.
+// The interface number after the percent sign in a link-local address. It is either a name
+// (`%eth0`) or a number (`%3`): Windows writes numbers, Unix systems write names, and the same
+// address has to be accepted on both. Returns 0 for an unknown name.
 std::uint32_t marked(const std::string& said) {
     if (said.empty()) return 0;
 
@@ -48,8 +50,9 @@ std::uint32_t marked(const std::string& said) {
 #endif
 }
 
-// Adres z gniazdowej postaci systemowej. Ta sama zamiana potrzebna jest przy getaddrinfo i przy
-// wykazie kart, więc stoi raz.
+// An address from the system's socket form. The same conversion is needed for getaddrinfo and for
+// the list of interfaces, so it stands in one place. Returns false for a family other than IPv4 and
+// IPv6.
 bool drawn(const sockaddr* from, std::uint16_t port, Address& made) {
     std::array<std::byte, 16> raw{};
 
@@ -80,12 +83,14 @@ bool drawn(const sockaddr* from, std::uint16_t port, Address& made) {
     return false;
 }
 
+// Whether the address belongs to the asked family; `Family::none` accepts every family.
 bool fitting(const Address& one, Family family) {
     return family == Family::none || one.family() == family;
 }
 
-// Numery od getaddrinfo nie są ani errno, ani numerami Winsocka — na systemach uniksowych mają
-// własną tablicę. Na Windows to te same numery co reszta Winsocka, więc tam wystarczy spoken.
+// The numbers from getaddrinfo are neither errno values nor Winsock numbers: on Unix systems they
+// have their own table. On Windows they are the same numbers as the rest of Winsock, so `spoken` is
+// enough there.
 std::string amiss_named(int code) {
 #ifdef _WIN32
     return spoken(code);
@@ -96,25 +101,27 @@ std::string amiss_named(int code) {
 
 }
 
+// An IPv4 or IPv6 address parsed from text, optionally in brackets and with an interface number
+// after `%`. Throws `Trouble` for anything else, including a domain name.
 Address::Address(std::string_view text, std::uint16_t port) {
     starting();
 
     std::string said{text};
 
-    // Zero w środku tekstu **nie jest końcem adresu**. inet_pton bierze wskaźnik na znaki
-    // zakończone zerem, więc widziało sam przedrostek, a reszty nikt nie sprawdzał — i „1.2.3.4"
-    // sklejone z bzdurą budowało się pomyślnie. Kto kroi nazwę z bufora sieciowego, dostawał
-    // poprawnie wyglądający adres z popsutego pola.
+    // A zero inside the text is not the end of the address. inet_pton takes a zero-terminated
+    // string, so it would see only the prefix and nobody would check the rest: "1.2.3.4" glued to
+    // garbage would build successfully, and whoever cuts a name out of a network buffer would get a
+    // valid-looking address from a broken field.
     if (said.find('\0') != std::string::npos)
         throw Trouble{"Not an address: the text has a zero inside."};
 
-    // Nawiasy kwadratowe zdejmujemy **przed** numerem łącza, a nie po nim. Odwrotnie zamykający
-    // nawias wpadał do tekstu numeru, a do rozbioru szło `[fe80::1` — czyli postać, którą sami
-    // wypisujemy przez spelled(), nie dawała się wczytać z powrotem.
+    // The square brackets come off before the interface number, not after it. The other way round,
+    // the closing bracket would fall into the number's text and `[fe80::1` would go to parsing, so
+    // the form we print ourselves through `spelled()` could not be read back.
     if (said.size() >= 2 && said.front() == '[' && said.back() == ']')
         said = said.substr(1, said.size() - 2);
 
-    // Numer łącza odcinamy przed rozbiorem, bo inet_pton go nie zna.
+    // The interface number is cut off before parsing, because inet_pton does not know it.
     std::uint32_t scope = 0;
 
     if (const std::size_t mark = said.find('%'); mark != std::string::npos) {
@@ -122,8 +129,9 @@ Address::Address(std::string_view text, std::uint16_t port) {
 
         scope = marked(tail);
 
-        // Nieznana nazwa łącza cichła do zera, a adres link-local bez numeru jest bezużyteczny:
-        // błąd wychodził dopiero przy połączeniu, daleko od literówki.
+        // An unknown interface name must not fall silently to zero: a link-local address without a
+        // number is useless, and the error would surface only at connection time, far from the
+        // typo.
         if (scope == 0)
             throw Trouble{"Not an interface number: " + tail + "."};
 
@@ -153,27 +161,28 @@ Address::Address(std::string_view text, std::uint16_t port) {
         return;
     }
 
-    // Nazwa domenowa **nie jest** adresem i nie udajemy, że jest — od nazw jest resolve, który
-    // umie zapytać świata. Cichy pusty adres wyszedłby dopiero przy nieudanym połączeniu.
+    // A domain name is not an address, and we do not pretend it is; names are for `resolve`, which
+    // can ask the world. A silent empty address would show up only as a failed connection.
     throw Trouble{"Not an address: " + std::string{text} + "."};
 }
 
-// Adres lokalny nie powstaje z bajtów ani z portu — jest od tego `local()`. Bez tej odmowy dałoby
-// się złożyć adres, który mówi o sobie „lokalny", a niesie szesnaście zer i numer portu; taki
-// przeszedłby przez `held()` i dopiero gniazdo powiedziałoby, że czegoś w nim brakuje.
+// A local address is not made from bytes or a port; `local()` is for that. Without this refusal one
+// could build an address that calls itself local but carries sixteen zeros and a port number; it
+// would pass `held()`, and only the socket would say that something is missing.
 Address::Address(Family family, const std::array<std::byte, 16>& bytes, std::uint16_t port)
     : bytes_(bytes), port_(port), family_(family) {
     if (family == Family::local)
         throw Trouble{"A local address is not built from bytes — use local()."};
 }
 
-// Ścieżkę bierzemy przez wartość i przenosimy: wołający albo ją buduje na miejscu, albo oddaje
-// swoją, a kopiowanie w środku byłoby trzecim egzemplarzem tego samego napisu.
+// A local socket address from a path. The path is taken by value and moved: the caller either
+// builds it in place or gives up its own, and a copy inside would be a third instance of the same
+// string. Throws for an empty path, a zero inside it, or more than `longest` bytes.
 Address Address::local(std::string path) {
     if (path.empty()) throw Trouble{"The local socket path is empty."};
 
-    // Ten sam powód, dla którego zero w środku odrzuca konstruktor tekstowy: ścieżka jedzie do
-    // pola zakończonego zerem, więc reszty i tak nikt by nie zobaczył.
+    // The same reason the text constructor refuses a zero inside: the path goes into a
+    // zero-terminated field, so nobody would see the rest anyway.
     if (path.find('\0') != std::string::npos)
         throw Trouble{"The local socket path has a zero inside."};
 
@@ -189,21 +198,24 @@ Address Address::local(std::string path) {
     return made;
 }
 
-// Port i numer łącza **odmawiają** na adresie lokalnym, zamiast zapisać wartość, której nikt
-// nigdy nie przeczyta. Stan, którego nie da się wyrazić, jest lepszy od stanu, którego nie da się
-// zauważyć — ta sama zasada, na której stoi `Key`.
+// Sets the port. It refuses on a local address instead of storing a value nobody would ever read. A
+// state that cannot be expressed is better than a state that cannot be noticed; it is the same
+// principle `Key` stands on.
 void Address::port(std::uint16_t given) {
     if (family_ == Family::local) throw Trouble{"A local address has no port."};
 
     port_ = given;
 }
 
+// Sets the interface number of an IPv6 address. It refuses on a local address, as `port` does.
 void Address::scope(std::uint32_t given) {
     if (family_ == Family::local) throw Trouble{"A local address has no interface number."};
 
     scope_ = given;
 }
 
+// The wildcard address of the family (all zeros) with the given port, for binding to every
+// interface. A local address has none.
 Address Address::any(Family family, std::uint16_t port) {
     if (family == Family::local)
         throw Trouble{"A local address has no wildcard form — a path is required."};
@@ -216,6 +228,7 @@ Address Address::any(Family family, std::uint16_t port) {
     return made;
 }
 
+// The loopback address of the family (127.0.0.1 or ::1) with the given port.
 Address Address::loopback(Family family, std::uint16_t port) {
     if (family == Family::local)
         throw Trouble{"A local socket is its own loopback — it has no separate address."};
@@ -232,6 +245,8 @@ Address Address::loopback(Family family, std::uint16_t port) {
     return made;
 }
 
+// The address alone, without the port: dotted IPv4, IPv6 with `%` and the interface number when
+// there is one, or the path of a local address. Empty for an address that holds nothing.
 std::string Address::text() const {
     if (!held()) return {};
 
@@ -250,13 +265,14 @@ std::string Address::text() const {
     return said;
 }
 
-// Adres IPv6 z portem zapisuje się w nawiasach kwadratowych, bo inaczej dwukropków nie da się
-// rozdzielić. Trzymamy to w jednym miejscu, żeby nie było sklejane w pięciu.
+// The address with its port, ready to print. An IPv6 address with a port is written in square
+// brackets, because otherwise its colons could not be told apart. This is kept in one place so that
+// it is not glued together in five.
 std::string Address::spelled() const {
     if (!held()) return {};
 
-    // Ścieżka bez doklejonego portu: gniazdo lokalne portu nie ma, a „/run/tw.sock:0" byłoby
-    // kłamstwem o tym, czym ten adres jest.
+    // The path without a port appended: a local socket has no port, and "/run/tw.sock:0" would be a
+    // lie about what this address is.
     if (family_ == Family::local) return path_;
 
     if (family_ == Family::four) return text() + ":" + std::to_string(port_);
@@ -264,8 +280,8 @@ std::string Address::spelled() const {
     return "[" + text() + "]:" + std::to_string(port_);
 }
 
-// IPv4 widziany przez gniazdo podwójne (`::ffff:a.b.c.d`) to zwykły IPv4 — tak go wołać i tak
-// zapisywać. Każdy inny adres zostaje, jaki był.
+// IPv4 seen through a dual-stack socket (`::ffff:a.b.c.d`) is plain IPv4, and that is how it should
+// be addressed and written. Any other address stays as it was.
 Address Address::unmapped() const {
     if (family_ != Family::six) return *this;
 
@@ -281,6 +297,9 @@ Address Address::unmapped() const {
     return made;
 }
 
+// The addresses of a host name, looked up with getaddrinfo on the pool, each with the given port
+// and without duplicates. Fails with `Trouble` when the name is unknown or has no address of the
+// asked family.
 Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Family family) {
     return Promise<std::vector<Address>>{[host, port, family](auto giving, auto amiss) {
         starting();
@@ -303,11 +322,12 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
             return;
         }
 
-        // Wykaz od systemu zwalnia strażnik, nie linia na końcu: zbieranie potrafi rzucić przy
-        // braku pamięci, a wtedy przydział systemowy wyciekał.
+        // A guard frees the system's list, not a line at the end: collecting can throw when memory
+        // runs out, and the system allocation would then leak.
         struct Freeing {
             addrinfo* one;
 
+            // Frees the list from getaddrinfo, however the lambda is left.
             ~Freeing() { ::freeaddrinfo(one); }
         } const freeing{found};
 
@@ -318,7 +338,7 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
 
             if (!drawn(one->ai_addr, port, which)) continue;
 
-            // Ten sam adres potrafi przyjść kilka razy, raz na każdy rodzaj gniazda.
+            // The same address can come several times, once for every socket type.
             if (std::find(made.begin(), made.end(), which) == made.end()) made.push_back(which);
         }
 
@@ -333,13 +353,14 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
 }
 
 
-// Wykaz własnych adresów. Potrzebny przy zbieraniu kandydatów do przebijania NAT: dwie maszyny
-// w jednej sieci lokalnej mają się dogadać przez switcha obok, a nie przez pół internetu.
+// The list of this machine's own addresses. It is needed when gathering candidates for NAT
+// punching: two machines in one local network should talk through the switch next to them, not
+// through half of the internet.
 //
-// **Oddajemy wszystko, co system zgłasza na podniesionych kartach, razem z pętlą zwrotną.** To jest
-// pytanie „jakie mam adresy", a nie „które z nich się do czegoś nadadzą" — odsiewanie należy do
-// wołającego, bo każde zastosowanie odsiewa inaczej. Zbieranie kandydatów wyrzuci pętlę zwrotną,
-// żeby druga strona nie próbowała dobić się do samej siebie.
+// We return everything the system reports on interfaces that are up, loopback included. This is the
+// question "what addresses do I have", not "which of them are good for something"; filtering
+// belongs to the caller, because every use filters differently. Candidate gathering drops the
+// loopback, so that the other side does not try to reach itself.
 Promise<std::vector<Address>> mine(Family family) {
     return Promise<std::vector<Address>>{[family](auto giving, auto amiss) {
         starting();
@@ -347,8 +368,8 @@ Promise<std::vector<Address>> mine(Family family) {
         std::vector<Address> made;
 
 #ifdef _WIN32
-        // Rozmiar bufora zmienia się między pytaniem a odpowiedzią, bo karty potrafią dojść w
-        // międzyczasie. Stąd pętla, a nie jedno wywołanie z odczytanym rozmiarem.
+        // The buffer size can change between the question and the answer, because interfaces can
+        // appear in the meantime. Hence a loop, not a single call with the size read back.
         ULONG much = 16384;
 
         std::vector<std::byte> room;
@@ -368,8 +389,8 @@ Promise<std::vector<Address>> mine(Family family) {
                                           nullptr, first, &much);
         }
 
-        // ERROR_NO_DATA znaczy „nie ma adresów tej rodziny", nie awarię — POSIX oddaje wtedy
-        // pusty wykaz i tak samo ma robić Windows.
+        // ERROR_NO_DATA means "no addresses of this family", not a failure: POSIX returns an empty
+        // list then, and Windows has to do the same.
         if (code != NO_ERROR && code != ERROR_NO_DATA) {
             amiss(std::make_exception_ptr(
                 Trouble{"Cannot list own addresses: " + spoken(static_cast<int>(code)) + ".",
@@ -405,6 +426,7 @@ Promise<std::vector<Address>> mine(Family family) {
         struct Freeing {
             ifaddrs* one;
 
+            // Frees the list from getifaddrs, however the lambda is left.
             ~Freeing() { ::freeifaddrs(one); }
         } const freeing{first};
 
@@ -417,10 +439,10 @@ Promise<std::vector<Address>> mine(Family family) {
 
             if (!fitting(which, family)) continue;
 
-            // Numer łącza **tylko dla link-local** (fe80::/10). Dla reszty zero jest stanem
-            // normalnym — glibc wypełnia to pole wyłącznie przy adresach łączowych — a doklejany
-            // wszystkim robił z pętli zwrotnej `::1%1`, przez co przestawała równać się `::1`
-            // i wychodziła na zewnątrz jako kandydat do przebijania.
+            // The interface number goes only on link-local addresses (fe80::/10). For the rest zero
+            // is the normal state (glibc fills this field only for link addresses), and attaching
+            // it to all of them would turn the loopback into `::1%1`, which would no longer equal
+            // `::1` and would go out as a punching candidate.
             if (which.family() == Family::six && which.scope() == 0 && one->ifa_name != nullptr &&
                 std::to_integer<unsigned>(which.bytes()[0]) == 0xFE &&
                 (std::to_integer<unsigned>(which.bytes()[1]) & 0xC0) == 0x80)
@@ -435,14 +457,15 @@ Promise<std::vector<Address>> mine(Family family) {
     }};
 }
 
-// Kłopot **nie tłumaczy** numeru sam z siebie. Kusiło, ale numery przychodzą z trzech różnych
-// światów — errno, WSA i EAI — i ta sama liczba znaczy w nich co innego. Zdanie składa ten, kto
-// wie, skąd wziął numer; od zamiany numeru na zdanie jest spoken().
+// `Trouble` does not translate the number by itself. The numbers come from three different worlds
+// (errno, WSA and EAI), and the same value means something different in each. The sentence is put
+// together by whoever knows where the number came from; `spoken()` turns a number into a sentence.
 Trouble::Trouble(const std::string& said, int code, Address where)
     : talcite::Trouble(said, code), where_(std::move(where)) {}
 
-// Numer błędu bez zdania obok jest bezużyteczny w dzienniku, a zdanie od systemu jest w jego
-// języku — i tak ma być, bo to system się skarży, nie my.
+// The system's description of an error number; empty for 0. A number without a sentence next to it
+// is useless in a log, and the sentence from the system is in its language, as it should be, since
+// it is the system that complains, not us.
 std::string spoken(int code) {
     if (code == 0) return {};
 

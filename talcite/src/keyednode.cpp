@@ -10,21 +10,23 @@
 
 namespace talcite::ui {
 
-// **Pusty klawisz nie wchodzi**, tak samo jak pusty węzeł nie wchodzi do dzieci: zbiór, w którym
-// leży „nic", odpowiadałby na nic.
+// Adds a key to the set. An empty key is not added, just as an empty node is not added to the
+// children: a set holding "nothing" would answer to nothing.
 //
-// Dokładanie tego samego dwa razy **nie jest błędem, tylko brakiem skutku** — drugi egzemplarz
-// i tak nigdy by nie wygrał, bo pierwszy kończy szukanie. Dlatego cicho pomijamy, zamiast rzucać.
+// Adding the same key twice is not an error, only a no-op: the second copy could never win,
+// because the first one ends the search. So it is silently skipped instead of throwing.
 void Keys::add(Key one) {
     if (one.empty() || contains(one)) return;
 
     inside_.push_back(one);
 }
 
+// Adds several keys, one by one, with the same rules as a single `add`.
 void Keys::add(std::vector<Key> many) {
     for (const Key one : many) add(one);
 }
 
+// Removes the key that matches the given one under `alike`; does nothing when there is none.
 void Keys::remove(Key one) {
     const auto at = std::find_if(inside_.begin(), inside_.end(),
                                  [one](Key mine) { return alike(mine, one); });
@@ -32,10 +34,12 @@ void Keys::remove(Key one) {
     if (at != inside_.end()) inside_.erase(at);
 }
 
+// Empties the set, so it answers to no key.
 void Keys::clear() { inside_.clear(); }
 
-// Dopasowanie to `alike` — reguła stoi przy klawiszu, w `key.cpp`, bo tę samą potrzebują programy,
-// które porównują skróty same, na przykład wczytane z pliku.
+// Whether the set answers to the given key. Matching is `alike`; the rule lives next to the key,
+// in `key.cpp`, because programs that compare shortcuts themselves, for example ones read from a
+// file, need the same rule.
 bool Keys::contains(Key one) const {
     if (one.empty()) return false;
 
@@ -43,41 +47,44 @@ bool Keys::contains(Key one) const {
                        [one](Key mine) { return alike(mine, one); });
 }
 
-// Sięgnięcie poza koniec jest błędem wołającego, a nie stanem do przemilczenia — tak samo jak
-// w zbiorze opcji. Klawisz oddajemy **przez wartość**, bo to jedna liczba: referencja na niego
-// niosłaby tyle samo, a wiązałaby wołającego z układem zbioru w środku.
+// The key at the given position. Reaching past the end is the caller's error, not a state to pass
+// over in silence, just as in the set of options, so it throws std::out_of_range. The key is
+// returned by value because it is a single number: a reference would carry as much and would tie
+// the caller to the layout of the set.
 Key Keys::operator[](std::size_t which) const {
     if (which >= inside_.size()) throw std::out_of_range("talcite::ui::Keys: no such key");
 
     return inside_[which];
 }
 
+// The first key of the set; throws std::out_of_range when the set is empty.
 Key Keys::front() const {
     if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: no keys");
 
     return inside_.front();
 }
 
+// The last key of the set; throws std::out_of_range when the set is empty.
 Key Keys::back() const {
     if (inside_.empty()) throw std::out_of_range("talcite::ui::Keys: no keys");
 
     return inside_.back();
 }
 
-// Kolumna, na której stoi litera do podkreślenia — albo −1, gdy żaden z klawiszy w napisie nie
-// występuje. **To nie jest rozbieranie napisu**: napis jest czysty i rysuje się w całości, a my
-// tylko szukamy w nim litery, którą i tak trzeba by znaleźć, żeby ją podkreślić.
+// The column of the letter to underline, or -1 when none of the keys occurs in the text. This is
+// not parsing of the text: the text is plain and drawn in full, and we only look in it for the
+// letter that would have to be found anyway in order to underline it.
 //
-// Rozstrzyga **pierwszy klawisz, który w napisie występuje**, i jego pierwsze wystąpienie. Przy
-// jednym klawiszu — a tak jest zwykle — nie ma czego rozstrzygać.
+// The first key that occurs in the text decides, at its first occurrence. With one key, which is
+// the usual case, there is nothing to decide.
 //
-// Liczymy w **kratkach**, nie w bajtach, i po napisie **już przyciętym**: litera, której po
-// przycięciu nie widać, nie ma czego podkreślać, a policzona po całym napisie trafiłaby
-// w wielokropek albo w klamrę.
+// The column is counted in cells, not bytes, and on the text already trimmed: a letter that is not
+// visible after trimming has nothing to underline, and a column counted on the whole text would
+// land on the ellipsis or on a bracket.
 //
-// Stoi tu jako wolna funkcja, a nie w ciele szablonu, żeby składanie wielkości liter zostało
-// w `src/`: `KeyedNode` jest szablonem, więc jego składowe muszą siedzieć w nagłówku, a ten
-// nagłówek jest publiczny.
+// This is a free function and not part of the template body so that case folding stays in src/:
+// `KeyedNode` is a template, so its members have to live in the header, and that header is
+// public.
 int shortcut_column(const Keys& these, const std::string& shown) {
     for (const Key one : these) {
         const char32_t which = one.letter();

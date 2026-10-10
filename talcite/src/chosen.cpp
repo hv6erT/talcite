@@ -4,14 +4,14 @@
 
 namespace talcite::ui {
 
-// **Rośnie na żądanie, a przycina ją tabela.** Zbiór nie zna liczby wierszy i nie ma jak jej
-// poznać, więc zaznaczenie wiersza, którego jeszcze nie ma, jest zapamiętywane — a `keep()`
-// wołane przy malowaniu ścina wszystko powyżej. Skutek uboczny jest tu pożądany: zaznaczenie
-// przeżywa do chwili, w której tabela urośnie na tyle, żeby ten wiersz istniał.
+// Marks a row as chosen. The set grows on demand, and the table trims it. The set does not know the
+// number of rows and has no way to learn it, so choosing a row that does not exist yet is
+// remembered, and `keep()`, called while painting, cuts off everything above. The side effect is
+// wanted here: the choice survives until the table grows enough for that row to exist.
 //
-// **Liczba zaznaczonych idzie obok bitów** (`many_`): dawniej `many()` i `empty()` liczyły cały wektor
-// przy każdym pytaniu, a panel pyta przy każdym Insert — przytrzymany na stu tysiącach wierszy
-// kosztował kwadrat.
+// The number of chosen rows is kept next to the bits (`many_`), so that `many()` and `empty()` do
+// not count the whole vector on every question: a panel asks on every Insert, and Insert held down
+// over a hundred thousand rows would take quadratic time.
 void Chosen::add(std::size_t which) {
     if (inside_.size() <= which) inside_.resize(which + 1, false);
 
@@ -20,6 +20,7 @@ void Chosen::add(std::size_t which) {
     inside_[which] = true;
 }
 
+// Unmarks a row; a row that is not chosen is left alone.
 void Chosen::remove(std::size_t which) {
     if (which >= inside_.size() || !inside_[which]) return;
 
@@ -27,19 +28,23 @@ void Chosen::remove(std::size_t which) {
     --many_;
 }
 
+// Unmarks every row.
 void Chosen::clear() {
     inside_.clear();
     many_ = 0;
 }
 
+// Whether the row is chosen.
 bool Chosen::contains(std::size_t which) const {
     return which < inside_.size() && inside_[which];
 }
 
+// How many rows are chosen, kept up to date by every change.
 std::size_t Chosen::many() const { return many_; }
 
-// Składane przy każdym wołaniu, bo w środku leży wektor bitów — wołający robi z tego listę plików
-// do skopiowania, więc jedno przejście na czynność, a nie na klatkę.
+// The chosen rows in ascending order. It is put together on every call, because inside lies a
+// vector of bits; the caller makes a list of files to copy out of it, so it is one pass per action,
+// not per frame.
 std::vector<std::size_t> Chosen::all() const {
     std::vector<std::size_t> made;
 
@@ -49,7 +54,7 @@ std::vector<std::size_t> Chosen::all() const {
     return made;
 }
 
-// Przycięcie zdejmuje z liczby tylko to, co odcina.
+// Forgets every row from `rows` on. The trimming subtracts from the count only what it cuts off.
 void Chosen::keep(std::size_t rows) {
     if (inside_.size() <= rows) return;
 

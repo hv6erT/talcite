@@ -13,18 +13,20 @@
 
 namespace talcite::ui {
 
+// A menu item with the given text, in the role "talcite.menu".
 MenuItem::MenuItem(std::string text) : text_(std::move(text)) { role("talcite.menu"); }
 
+// A menu item with the given text and a hint shown on the right, usually the shortcut.
 MenuItem::MenuItem(std::string text, std::string hint)
     : text_(std::move(text)), hint_(std::move(hint)) {
     role("talcite.menu");
 }
 
-// Pozycja nie ma czego trzymać w środku — tak samo jak napis.
+// An item has nothing to hold inside, just like a label.
 int MenuItem::capacity() const { return 0; }
 
-// Po spacji z każdej strony i dwie między napisem a podpisem skrótu, żeby „Kopiuj" nie kleiło
-// się do „F5". Wysokość zawsze jeden wiersz: pozycja menu, która się zawija, to nie pozycja.
+// One space on each side and two between the text and the shortcut hint, so that "Copy" does not
+// stick to "F5". The height is always one row: a menu item that wraps is not an item.
 Size MenuItem::wants(Size room) const {
     int wide = 2 + measured(text_).wide;
 
@@ -33,15 +35,16 @@ Size MenuItem::wants(Size room) const {
     return {std::min(wide, room.wide), std::min(1, room.high)};
 }
 
-// **Podświetlona pozycja to ta z ogniskiem.** Nie ma osobnego znacznika, bo dwa źródła tej samej
-// prawdy prędzej czy później się rozjeżdżają — dokładnie z tego powodu menu nie ma pola „otwarte".
-// Kreska jest niedostępna, więc sama z siebie ogniska nie weźmie i nic o niej wiedzieć nie trzeba.
+// Paints the item. The highlighted item is the one with the focus. There is no separate flag,
+// because two sources of the same truth drift apart sooner or later; for exactly this reason a
+// menu has no "open" field. A separator never takes the focus, so nothing here needs to know about
+// it.
 //
-// Podświetlenie robimy odwróceniem, a nie kolorem: działa na każdym terminalu i nie wymaga
-// wymyślania barw, o które nikt nie prosił. Niedostępna pozycja gaśnie.
+// The highlight is reverse video, not color: it works on every terminal and does not require
+// inventing colors nobody asked for. A disabled item is dimmed.
 //
-// Rola powstaje ze **rdzenia i końcówki**, tak samo jak w przycisku: rdzeń zadaje ten, kto składa
-// menu, a końcówkę dokłada pozycja, bo tylko ona wie, jakie ma stany.
+// The role is built from a stem and a suffix, as in a button: whoever assembles the menu sets the
+// stem, and the item adds the suffix, because only it knows what states it has.
 View MenuItem::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -60,16 +63,17 @@ View MenuItem::paint(Size given, Area seen) {
         made.put({given.wide - 1 - wide - seen.at.x, -seen.at.y}, hint_, look);
     }
 
-    // Litera aktywna ma własną rolę, nakładaną na wygląd pozycji — jak w przycisku i w ptaszku.
-    // Napis stoi o jedną kratkę od lewej, więc i litera jest o tę kratkę przesunięta.
+    // The hotkey letter has its own role, laid over the item's look, as in a button and a check
+    // box. The text stands one cell from the left, so the letter is shifted by that cell too.
     talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, shortcut_column(text_),
                       look, how.style(role() + ".key"));
 
     return made;
 }
 
-// Klawisz aktywny przychodzi z bazy. Pozycja robi to samo, co przy kliknięciu: najpierw staje się
-// bieżącą, potem idzie wybór — bo inaczej menu wybrałoby tę, po której ostatnio chodziły strzałki.
+// The hotkey arrives from the base class. The item does the same as on a click: it first becomes
+// current, then the pick follows, because otherwise the menu would pick the item the arrows last
+// visited.
 void MenuItem::activate() {
     if (Menu* one = dynamic_cast<Menu*>(parent())) {
         one->current(*this);
@@ -81,19 +85,20 @@ void MenuItem::activate() {
     pick();
 }
 
-// Sam wybór to wywołanie tego, co powierzył budujący. Zamykaniem menu zajmuje się Menu, bo
-// pozycja nie wie, że leży w czymś, co się otwiera.
+// Picks the item by firing a `PickEvent`, unless it is disabled. Closing the menu is the job of
+// `Menu`, because the item does not know that it lies in something that opens.
 void MenuItem::pick() {
     if (!enabled()) return;
 
     (void)trigger(PickEvent{});
 }
 
+// A click picks the item through its menu. A disabled item swallows the click.
 bool MenuItem::handle(ClickEvent&) {
     if (!enabled()) return true;
 
-    // Kliknięta pozycja najpierw staje się podświetloną. Inaczej Menu wybrałoby tę, po której
-    // ostatnio chodziły strzałki, a nie tę pod kursorem.
+    // The clicked item first becomes highlighted. Otherwise the menu would pick the item the
+    // arrows last visited, not the one under the cursor.
     if (Menu* one = dynamic_cast<Menu*>(parent())) {
         one->current(*this);
         one->pick();
@@ -106,8 +111,8 @@ bool MenuItem::handle(ClickEvent&) {
     return true;
 }
 
-// Najechanie myszą przestawia podświetlenie, jak w Midnight Commanderze. Zdarzenie puszczamy
-// dalej, bo ruch myszy nie należy do nikogo na wyłączność.
+// Hovering moves the highlight, as in Midnight Commander. The event is passed on, because mouse
+// movement belongs to nobody exclusively.
 bool MenuItem::handle(MouseEvent& what) {
     if (what.press() != Press::move || !enabled()) return false;
 

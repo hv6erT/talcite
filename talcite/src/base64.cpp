@@ -5,13 +5,13 @@
 
 namespace talcite {
 
-// **Base64 z RFC 4648, alfabet zwykły, z dopełnieniem.** Własny, bez szwu: to kilkadziesiąt
-// wierszy opisanych do bitu, bez niczego zależnego od systemu, a każda biblioteka dałaby te same
-// bajty. Pierwszym wołającym jest obraz kitty (G2), który wysyła piksele terminalowi tekstem.
+// Base64 from RFC 4648, the standard alphabet, with padding. It is our own, with no seam: a few
+// dozen lines specified down to the bit, with nothing system-dependent, and any library would give
+// the same bytes. The first caller is the kitty image, which sends pixels to the terminal as text.
 //
-// Odczyt jest ścisły: długość podzielna przez cztery, dopełnienie tylko na końcu i najwyżej dwa
-// znaki, żadnych odstępów ani końców wierszy. Napis, który tego nie spełnia, nie jest base64 —
-// zgadywanie, co autor miał na myśli, zostawiamy temu, kto napis dostał.
+// Decoding is strict: the length is divisible by four, padding appears only at the end and is at
+// most two characters, and there are no spaces or line breaks. A string that does not meet this is
+// not base64; guessing what its author meant is left to whoever received the string.
 namespace {
 
 constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -31,6 +31,7 @@ constexpr std::array<std::uint8_t, 256> values = [] {
 
 }
 
+// The bytes encoded as base64 text, padded with `=` to a multiple of four characters.
 std::string base64(std::span<const std::byte> given) {
     std::string made;
 
@@ -65,6 +66,7 @@ std::string base64(std::span<const std::byte> given) {
     return made;
 }
 
+// The bytes of strict base64 text, or nothing when the text is not base64.
 std::optional<Bytes> unbase64(std::string_view given) {
     if (given.size() % 4 != 0) return std::nullopt;
 
@@ -75,7 +77,7 @@ std::optional<Bytes> unbase64(std::string_view given) {
     for (std::size_t at = 0; at < given.size(); at += 4) {
         const bool last = at + 4 == given.size();
 
-        // Dopełnienie: tylko w ostatniej czwórce, na jej końcu, jeden albo dwa znaki.
+        // Padding: only in the last group of four, at its end, one or two characters.
         std::size_t padded = 0;
 
         if (last && given[at + 3] == '=') padded = given[at + 2] == '=' ? 2 : 1;

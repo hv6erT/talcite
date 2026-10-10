@@ -6,21 +6,50 @@
 #include <cstdio>
 #include <utility>
 
+// A console without VT sequences (Windows 7, 8, 8.1 and the first releases of 10: conhost before
+// 1511 and the "legacy console" from the settings). The library talks to the terminal in VT
+// sequences and listens for VT sequences; where the console does not know them, the translation
+// happens at the edge, in `Console`. `Term`, the capability probe and the decoder stay the same and
+// do not know what they are talking to.
+//
+// This file is the portable part of the translation, without Win32, so it is tested on every
+// system:
+//
+// - `Screen` is a small terminal: it reads what `Term` writes (UTF-8 text, CUP, SGR, EL, ED, DEC
+//   modes, the title in OSC), keeps a grid of cells in the sixteen console colors and answers the
+//   probe's questions (DECRQM, DSR, DA, OSC 11, 16t) as a terminal would that can do exactly what
+//   the translation can. The glue in `console.cpp` copies the changed rows to the console.
+// - `typed` and `Pointing` go the other way: they turn the console's keyboard and mouse records
+//   into the same bytes that conhost in VT mode would give the decoder.
+//
+// A `Cell` is in console colors: `ink` and `paper` are indexes into the console palette (BGR bits
+// and intensity, as with FOREGROUND_BLUE and the rest), plus the glyph, the underline and whether
+// the cell is the right half of a two-cell character. `Tracking` is the mouse tracking the
+// application turned on (DECSET 1000, 1002, 1003, 1006). A `Palette` holds the sixteen console
+// colors in the console's index order.
+//
+// A `Pressed` is a console keyboard record in portable form: the virtual key code, a UTF-16
+// character (one unit; surrogate pairs come in two records), the state of the control keys as in
+// `dwControlKeyState`, and the repeat count. The glue passes only key presses. A `Pointed` is a
+// mouse record in portable form: the place in the window (not in the buffer), the buttons as in
+// `dwButtonState` (with the wheel in the high word), the flags as in `dwEventFlags`, and the state
+// of the control keys.
 namespace talcite::conhost {
 
 namespace {
 
-// Najdłuższa sekwencja CSI, najwięcej parametrów i najdłuższy napis OSC, jakie trzymamy. To, co
-// pisze `Term`, mieści się w ułamku tego; dłuższe to śmieci i nie mają prawa zjeść pamięci.
+// The longest CSI sequence, the most parameters and the longest OSC string that are kept. What
+// `Term` writes fits in a fraction of that; anything longer is garbage and must not eat memory.
 constexpr std::size_t longest = 64;
 constexpr std::size_t most = 32;
 constexpr std::size_t told_most = 4096;
 
-// Kolejność ANSI ma czerwień w bicie zerowym, konsola — błękit.
+// The ANSI order has red in bit zero, the console has blue there.
 std::uint8_t console_of(int ansi) {
     return static_cast<std::uint8_t>(((ansi & 1) << 2) | (ansi & 2) | ((ansi & 4) >> 2) | (ansi & 8));
 }
 
+// A color component of 0–255 as the four hex digits of an OSC color reply.
 std::string hex(int component) {
     char room[8];
 
@@ -29,7 +58,8 @@ std::string hex(int component) {
     return room;
 }
 
-// Wirtualne klawisze i bity stanu z winuser.h i wincon.h — przepisane, bo ten plik nie ciągnie Win32.
+// Virtual keys and state bits from winuser.h and wincon.h, copied because this file does not pull
+// in Win32.
 constexpr std::uint16_t back = 0x08;
 constexpr std::uint16_t tab = 0x09;
 constexpr std::uint16_t enter = 0x0D;
@@ -59,6 +89,8 @@ constexpr std::uint32_t hwheeled = 0x08;
 
 }
 
+// The palette conhost shipped with up to Windows 10 1709, used when the console does not report
+// its own.
 Palette classic() {
     return {{{0, 0, 0},
              {0, 0, 128},
@@ -78,6 +110,7 @@ Palette classic() {
              {255, 255, 255}}};
 }
 
+// The palette index nearest to an RGB color, for SGR 38;2 and 38;5.
 std::uint8_t nearest(const Palette& among, int red, int green, int blue) {
     std::uint8_t best = 0;
     long closest = -1;
@@ -97,6 +130,8 @@ std::uint8_t nearest(const Palette& among, int red, int green, int blue) {
     return best;
 }
 
+// A screen of the given size, in the console's default colors; `palette` serves the color
+// approximation and the OSC 11 reply.
 Screen::Screen(ui::Size size, std::uint8_t ink, std::uint8_t paper, Palette palette)
     : palette_(palette), ink_(ink), paper_(paper) {
     pen_.ink = ink;
@@ -105,12 +140,13 @@ Screen::Screen(ui::Size size, std::uint8_t ink, std::uint8_t paper, Palette pale
     resize(size);
 }
 
+// Interprets the bytes written by `Term`; a sequence cut between calls continues in the next one.
 void Screen::fed(std::string_view bytes) {
     for (const char one : bytes) taken(static_cast<unsigned char>(one));
 }
 
-// Nowa siatka z tym, co się zmieściło ze starej. Ekran zapasowy przycinamy razem z głównym, bo
-// powrót z niego oddaje główny w nowym rozmiarze.
+// A new grid with what fit from the old one. The alternate screen is cut together with the main
+// one, because returning from it gives back the main one in the new size.
 void Screen::resize(ui::Size size) {
     const ui::Size made{std::max(1, size.wide), std::max(1, size.high)};
 
@@ -141,6 +177,7 @@ void Screen::resize(ui::Size size) {
     dirty_.assign(static_cast<std::size_t>(made.high), true);
 }
 
+// The cell at the given place; outside the grid, a blank default cell.
 const Cell& Screen::at(int x, int y) const {
     static const Cell outside{};
 
@@ -149,6 +186,7 @@ const Cell& Screen::at(int x, int y) const {
     return cells_[static_cast<std::size_t>(y * size_.wide + x)];
 }
 
+// The rows changed since the last question, in ascending order; the question clears them.
 std::vector<int> Screen::dirty() {
     std::vector<int> made;
 
@@ -160,6 +198,8 @@ std::vector<int> Screen::dirty() {
     return made;
 }
 
+// The replies for the probe: the bytes a terminal would send back on the input. The question
+// clears them.
 std::string Screen::answers() {
     std::string made;
 
@@ -168,6 +208,7 @@ std::string Screen::answers() {
     return made;
 }
 
+// The new window title, if one came; the question clears it.
 std::optional<std::string> Screen::title() {
     std::optional<std::string> made;
 
@@ -176,6 +217,8 @@ std::optional<std::string> Screen::title() {
     return made;
 }
 
+// Takes one byte in the current parser state: text and control characters on the ground,
+// otherwise the part of the sequence or string that is being read.
 void Screen::taken(unsigned char byte) {
     switch (mode_) {
         case Mode::ground: break;
@@ -192,14 +235,15 @@ void Screen::taken(unsigned char byte) {
                 return;
             }
 
-            // Esc bez ukośnika przerywa napis i zaczyna nową sekwencję.
+            // Esc without a backslash breaks off the string and starts a new sequence.
             mode_ = Mode::escape;
             escaped(byte);
 
             return;
     }
 
-    // Urwany znak UTF-8 wychodzi jako zastępczy, a bajt, który go urwał, czytamy od nowa.
+    // A cut-off UTF-8 character comes out as the replacement character, and the byte that cut it
+    // off is read anew.
     if (left_ > 0) {
         if ((byte & 0xC0) == 0x80) {
             code_ = (code_ << 6) | (byte & 0x3F);
@@ -243,6 +287,8 @@ void Screen::taken(unsigned char byte) {
     left_ = more;
 }
 
+// The byte after Esc: it opens CSI, OSC or another control string that is swallowed; anything
+// else ends the sequence.
 void Screen::escaped(unsigned char byte) {
     switch (byte) {
         case '[':
@@ -272,7 +318,8 @@ void Screen::escaped(unsigned char byte) {
     }
 }
 
-// Za długa sekwencja nie wychodzi w tekst: połykamy ją do bajtu końcowego, jak xterm.
+// A sequence that is too long does not leak into the text: it is swallowed up to its final byte,
+// as xterm does.
 void Screen::gathered(unsigned char byte) {
     if (++length_ > longest) {
         if (byte == 0x1B) mode_ = Mode::escape;
@@ -318,6 +365,8 @@ void Screen::gathered(unsigned char byte) {
     if (byte == 0x1B) mode_ = Mode::escape;
 }
 
+// The content of a control string. Only OSC is kept, up to `told_most` bytes, and BEL ends it;
+// the other strings are swallowed until ST.
 void Screen::stringed(unsigned char byte) {
     if (byte == 0x1B) {
         mode_ = Mode::ending;
@@ -337,7 +386,7 @@ void Screen::stringed(unsigned char byte) {
     if (string_.size() < told_most) string_ += static_cast<char>(byte);
 }
 
-// OSC: tytuł (0 i 2) i pytanie o tło (11). Resztę połykamy.
+// OSC: the title (0 and 2) and the question about the background (11). The rest is swallowed.
 void Screen::told() {
     const std::size_t semi = string_.find(';');
 
@@ -355,10 +404,13 @@ void Screen::told() {
     }
 }
 
+// The parameter at `which`, or `fallback` when it is missing or zero.
 int Screen::parameter(std::size_t which, int fallback) const {
     return which < parameters_.size() && parameters_[which] != 0 ? parameters_[which] : fallback;
 }
 
+// Carries out a finished CSI sequence: cursor position, erasing, SGR, DSR, DA, the cell size in
+// pixels (16t, answered only when the console knows it) and the private modes.
 void Screen::dispatched(char last) {
     if (marker_ == '?') {
         if (intermediate_ == '$' && last == 'p') asked_mode();
@@ -367,7 +419,8 @@ void Screen::dispatched(char last) {
         return;
     }
 
-    // Wtórne DA i reszta ze znacznikiem: milczymy, jak terminal, który pytania nie zna.
+    // Secondary DA and the rest with a marker: silence, like a terminal that does not know the
+    // question.
     if (marker_ != 0 || intermediate_ != 0) return;
 
     switch (last) {
@@ -387,7 +440,7 @@ void Screen::dispatched(char last) {
 
             return;
         case 'c':
-            // Pierwotne DA: VT220 z kolorem ANSI. Bez czwórki, bo sixela nie ma.
+            // Primary DA: a VT220 with ANSI color. Without 4, because there is no sixel.
             answers_ += "\x1b[?62;22c";
 
             return;
@@ -400,6 +453,8 @@ void Screen::dispatched(char last) {
     }
 }
 
+// Sets or resets the private DEC modes: cursor visibility, autowrap, the alternate screen and
+// mouse tracking.
 void Screen::moded(bool on) {
     for (const int one : parameters_) switch (one) {
             case 25: shown_ = on; break;
@@ -417,9 +472,10 @@ void Screen::moded(bool on) {
         }
 }
 
-// DECRQM: tryby, które tłumaczenie naprawdę obsługuje, odpowiadają stanem (1 — włączony,
-// 2 — wyłączony); reszta zerem, czyli „nie znam". Wklejania w nawiasach, ogniska i synchronizacji
-// nie ma: wklejka przychodzi z konsoli zwykłymi klawiszami, a rysujemy i tak całą klatką naraz.
+// DECRQM: the modes the translation really supports answer with their state (1 for set, 2 for
+// reset); the rest answer zero, meaning "unknown". There is no bracketed paste, focus or
+// synchronization: a paste comes from the console as ordinary keys, and the frame is drawn whole
+// at once anyway.
 void Screen::asked_mode() {
     const int which = parameter(0, 0);
 
@@ -440,9 +496,10 @@ void Screen::asked_mode() {
     answers_ += "\x1b[?" + std::to_string(which) + ";" + std::to_string(state) + "$y";
 }
 
-// **Ekran zapasowy.** Klej trzyma pod nim osobny bufor konsoli, więc wejście czyści siatkę i każe
-// przepisać wszystko, a wyjście oddaje siatkę główną **bez** znaczenia wierszy: bufor główny
-// konsoli stoi nietknięty, a wiersze zmienione na zapasowym nie są jego.
+// The alternate screen. The glue keeps a separate console buffer under it, so entering clears the
+// grid and asks for everything to be copied, and leaving gives back the main grid without marking
+// rows: the console's main buffer stands untouched, and the rows changed on the alternate one are
+// not its own.
 void Screen::switched(bool on, bool cursor) {
     if (on == apart_) return;
 
@@ -469,6 +526,8 @@ void Screen::switched(bool on, bool cursor) {
     apart_ = false;
 }
 
+// SGR: bold, underline, reverse, the eight and sixteen ANSI colors and the extended colors, all
+// mapped to the console palette.
 void Screen::styled() {
     if (parameters_.empty()) parameters_.push_back(0);
 
@@ -492,8 +551,8 @@ void Screen::styled() {
     }
 }
 
-// 38;5;n i 38;2;r;g;b. Pierwsza szesnastka palety to kolory ANSI wprost; sześcian i szarości idą
-// do najbliższego koloru konsoli.
+// 38;5;n and 38;2;r;g;b. The first sixteen of the palette are the ANSI colors directly; the cube
+// and the grays go to the nearest console color.
 void Screen::colored(std::size_t& at, bool foreground) {
     if (at + 1 >= parameters_.size()) return;
 
@@ -530,7 +589,8 @@ void Screen::colored(std::size_t& at, bool foreground) {
     else pen_.paper = *made;
 }
 
-// Kolory komórki z pióra. Wytłuszczenie konsola zna tylko jako jasność, więc rozjaśnia ciemną barwę.
+// The cell's colors from the pen. The console knows bold only as intensity, so bold brightens a
+// dark color.
 Cell Screen::inked(char32_t glyph) const {
     Cell made;
 
@@ -544,6 +604,7 @@ Cell Screen::inked(char32_t glyph) const {
     return made;
 }
 
+// An empty cell in the pen's colors, without underline.
 Cell Screen::blank() const {
     Cell made = inked(U' ');
 
@@ -552,18 +613,19 @@ Cell Screen::blank() const {
     return made;
 }
 
+// The cell at the given place, which must be inside the grid.
 Cell& Screen::cell(int x, int y) {
     return cells_[static_cast<std::size_t>(y * size_.wide + x)];
 }
 
-// **Szerokość mierzymy tak jak `Term`** — inaczej klatka i siatka rozjechałyby się po pierwszym
-// znaku chińskim. Wyjątkiem jest wszystko spoza BMP: komórka konsoli trzyma jedną jednostkę UTF-16,
-// więc taki znak staje jako „?" na dwóch kratkach, tak jak conhost bez VT stawiał parę zastępczą.
-// Dzięki temu sonda dowiaduje się, że sekstantów i oktantów tu nie ma.
+// The width is measured as `Term` measures it; otherwise the frame and the grid would drift apart
+// after the first Chinese character. The exception is everything outside the BMP: a console cell
+// holds one UTF-16 unit, so such a character stands as "?" on two cells, as conhost without VT
+// placed a surrogate pair. That way the probe learns that there are no sextants and octants here.
 //
-// Znak na dwie kratki: lewa niesie znak, prawa jest pusta. Starszy conhost poza stronami kodowymi
-// CJK nie rysuje znaku szerzej niż na kratkę, więc druga kratka zostaje odstępem — układ się zgadza
-// i nic nie wjeżdża na sąsiada.
+// A two-cell character: the left cell carries the glyph, the right one is empty. Outside the CJK
+// code pages the older conhost does not draw a glyph wider than one cell, so the second cell stays
+// a space; the layout is right and nothing runs into the neighbor.
 void Screen::put(char32_t one) {
     if (one >= 0x80 && one <= 0x9F) return;
 
@@ -601,7 +663,8 @@ void Screen::put(char32_t one) {
     }
 }
 
-// Zapis do komórki rozbija znak na dwie kratki, którego połowę przykrywa: druga połowa staje pusta.
+// Writing to a cell breaks up a two-cell character whose half it covers: the other half becomes
+// empty.
 void Screen::written(int x, int y, const Cell& one) {
     Cell& here = cell(x, y);
 
@@ -621,8 +684,10 @@ void Screen::written(int x, int y, const Cell& one) {
     touched(y);
 }
 
+// Marks the row as changed, so that the glue copies it.
 void Screen::touched(int y) { dirty_[static_cast<std::size_t>(y)] = true; }
 
+// Carriage return, line feeds, backspace and tab; the other control characters are ignored.
 void Screen::control(unsigned char one) {
     switch (one) {
         case '\r':
@@ -644,7 +709,7 @@ void Screen::control(unsigned char one) {
     }
 }
 
-// Nowy wiersz; na dole siatka jedzie w górę o jeden.
+// A new line; at the bottom the grid moves up by one.
 void Screen::lined() {
     pending_ = false;
 
@@ -659,10 +724,12 @@ void Screen::lined() {
     std::fill(dirty_.begin(), dirty_.end(), true);
 }
 
+// Blanks `much` cells of a row from `x`, up to the right edge.
 void Screen::cleared(int x, int y, int much) {
     for (int at = x; at < x + much && at < size_.wide; ++at) written(at, y, blank());
 }
 
+// EL: erases to the end of the line (0), to its start (1) or the whole line (2).
 void Screen::erased_line(int how) {
     pending_ = false;
 
@@ -671,6 +738,7 @@ void Screen::erased_line(int how) {
     else if (how == 2) cleared(0, cursor_.y, size_.wide);
 }
 
+// ED: erases to the end of the screen (0), to its start (1) or the whole screen (2).
 void Screen::erased_screen(int how) {
     pending_ = false;
 
@@ -687,10 +755,11 @@ void Screen::erased_screen(int how) {
     }
 }
 
-// Klawisze nazwane idą tak, jak wysyła je conhost w trybie VT i xterm: strzałki, Home i End jako
-// CSI z literą, reszta z tyldą, F1–F4 jako SS3, modyfikatory jako drugi parametr. Znak z Altem
-// dostaje przedrostek Esc — chyba że Alt szedł z Ctrl i dał zwykły znak: to AltGr (Windows zgłasza
-// go jako prawy Alt z lewym Ctrl), czyli po prostu litera z układu, jak „ą".
+// Named keys go as conhost in VT mode and xterm send them: arrows, Home and End as CSI with a
+// letter, the rest with a tilde, F1–F4 as SS3, modifiers as the second parameter. A character
+// with Alt gets the Esc prefix, unless Alt went with Ctrl and gave an ordinary character: that is
+// AltGr (Windows reports it as right Alt with left Ctrl), which is simply a letter of the layout,
+// like "ą". `pending` keeps the high half of a surrogate pair until the next record.
 std::string typed(const Pressed& one, char16_t& pending) {
     const bool ctrl = (one.state & (left_ctrl | right_ctrl)) != 0;
     const bool alt = (one.state & (left_alt | right_alt)) != 0;
@@ -743,7 +812,7 @@ std::string typed(const Pressed& one, char16_t& pending) {
         case back: made = prefix + (ctrl ? "\x08" : "\x7f"); break;
         case escape: made = prefix + "\x1b"; break;
         default: {
-            char32_t code = one.unit;
+            char32_t code = static_cast<char32_t>(one.unit);
 
             if (code == 0) {
                 if (ctrl && one.key == space) code = 0;
@@ -782,10 +851,11 @@ std::string typed(const Pressed& one, char16_t& pending) {
     return repeated;
 }
 
-// Konsola mówi, które przyciski są wciśnięte teraz; dekoder chce wiedzieć, który się wcisnął albo
-// puścił. Stąd pamięć poprzedniego stanu — aktualizowana także wtedy, gdy aplikacja myszy nie chce:
-// przycisk wciśnięty przed włączeniem śledzenia nie wraca potem jako świeże wciśnięcie, tylko jako
-// przeciąganie, a jego puszczenie przychodzi, tak jak w xtermie.
+// Mouse records as SGR (1006) sequences. The console says which buttons are pressed now; the
+// decoder wants to know which one was pressed or released. Hence the memory of the previous
+// state, updated also when the application does not want the mouse: a button pressed before
+// tracking was turned on does not come back later as a fresh press but as a drag, and its release
+// arrives, as in xterm.
 std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
     const bool reporting = (wanted.clicks || wanted.drags || wanted.moves) && wanted.sgr;
 
@@ -817,7 +887,7 @@ std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
 
     if (!reporting) return {};
 
-    // Bity konsoli: lewy, prawy, środkowy; numery xterma: lewy 0, środkowy 1, prawy 2.
+    // Console bits: left, right, middle; xterm numbers: left 0, middle 1, right 2.
     static constexpr std::pair<std::uint32_t, int> buttons[3] = {{0x1, 0}, {0x4, 1}, {0x2, 2}};
 
     std::string made;

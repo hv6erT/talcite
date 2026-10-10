@@ -17,9 +17,12 @@ using namespace talcite;
 
 namespace {
 
-// Rozpoznanie z nagłówka zostaje w talcite — to osiem bajtów, nie dekoder — a dekoder mieszka
-// w talcite-adapters razem ze swoimi próbami (`test/gifting.cpp` tam). Tu szew obrazu sprawdza
-// się na atrapie, która GIF-a nie czyta, tylko oddaje klatki z nagłówka.
+// Recognizing the format from the header stays in talcite, since it is eight bytes and not a
+// decoder; the decoder lives in talcite-adapters together with its trials (test/gifting.cpp
+// there). Here the image seam is checked on a fake that does not read GIF but hands out the frames
+// from the header.
+//
+// Bytes from a string of lowercase hex digits, two digits per byte.
 [[nodiscard]] Bytes lump(std::string_view hex) {
     Bytes made;
 
@@ -49,14 +52,14 @@ constexpr std::string_view leaving =
 
 }
 
-// --- Rozpoznanie ---------------------------------------------------------------------------
+// --- Recognition ---------------------------------------------------------------------------
 
-TRIAL("guessed: GIF poznaje po obu wiekach podpisu") {
+TRIAL("guessed: recognizes GIF by both ages of the signature") {
     same(static_cast<int>(format_of(lump(leaving))), static_cast<int>(Format::gif));
     same(static_cast<int>(format_of(lump("474946383761040004000000003b"))), static_cast<int>(Format::gif));
 }
 
-TRIAL("guessed: PNG, JPEG i BMP poznaje po nagłówku, bez dekodera") {
+TRIAL("guessed: recognizes PNG, JPEG and BMP by the header, without a decoder") {
     same(static_cast<int>(format_of(lump("89504e470d0a1a0a0000000d49484452"))),
          static_cast<int>(Format::png));
     same(static_cast<int>(format_of(lump("ffd8ffe000104a464946"))),
@@ -65,11 +68,11 @@ TRIAL("guessed: PNG, JPEG i BMP poznaje po nagłówku, bez dekodera") {
          static_cast<int>(Format::bmp));
 }
 
-// Wymiary z nagłówka, przed dekoderem: PNG z IHDR, GIF z ekranu logicznego, BMP z nagłówka mapy
-// (wysokość ujemna to „od góry", stary nagłówek OS/2 na dwóch bajtach), JPEG z SOF za blokami
-// APP — po znacznikach, z ich długością. Ucięty nagłówek albo SOF poza podanymi bajtami to pustka,
-// nie zgadywanie.
-TRIAL("shaped: wymiary z nagłówka PNG, GIF, BMP i JPEG, pustka gdy ich nie ma") {
+// Size from the header, before the decoder: PNG from IHDR, GIF from the logical screen, BMP from
+// the bitmap header (a negative height means "top down", the old OS/2 header uses two bytes), JPEG
+// from the SOF after the APP blocks, walking the markers by their lengths. A truncated header or a
+// SOF beyond the given bytes gives nothing, not a guess.
+TRIAL("shaped: size from the PNG, GIF, BMP and JPEG header, nothing when it is missing") {
     const std::optional<ui::Size> png = size_of(lump("89504e470d0a1a0a0000000d49484452000002800000016008060000"));
 
     ought(png.has_value());
@@ -103,7 +106,7 @@ TRIAL("shaped: wymiary z nagłówka PNG, GIF, BMP i JPEG, pustka gdy ich nie ma"
     same(old->wide, 7);
     same(old->high, 9);
 
-    // JPEG: SOI, APP1 (EXIF, długość 16), potem SOF0: długość, głębia, wysokość 16, szerokość 32.
+    // JPEG: SOI, APP1 (EXIF, length 16), then SOF0: length, depth, height 16, width 32.
     const std::optional<ui::Size> jpeg = size_of(lump("ffd8"
                                                      "ffe100104578696600000000000000000000"
                                                      "ffc0001108001000200301220002110103110100"));
@@ -121,20 +124,20 @@ TRIAL("shaped: wymiary z nagłówka PNG, GIF, BMP i JPEG, pustka gdy ich nie ma"
     ought(!size_of(lump("hello")).has_value());
 }
 
-TRIAL("guessed: samo BM bez reszty nagłówka to nie obrazek") {
+TRIAL("guessed: BM alone without the rest of the header is not an image") {
     same(static_cast<int>(format_of(lump("424d"))), static_cast<int>(Format::none));
     same(static_cast<int>(format_of(lump("424d3a000000"))), static_cast<int>(Format::none));
 }
 
-TRIAL("guessed: śmieci i pustka to nie obrazek") {
+TRIAL("guessed: garbage and emptiness are not an image") {
     same(static_cast<int>(format_of(Bytes{})), static_cast<int>(Format::none));
     same(static_cast<int>(format_of(lump("47494638"))), static_cast<int>(Format::none));
     same(static_cast<int>(format_of(lump("474946383861"))), static_cast<int>(Format::none));
 }
 
-// --- Szew obrazu ---------------------------------------------------------------------------------
+// --- Image seam ----------------------------------------------------------------------------------
 
-TRIAL("Obraz: pusty szew odmawia Unbound z nazwą rodzaju") {
+TRIAL("Image: an empty seam refuses with Unbound naming the kind") {
     const Seam<ImageProvider> none;
 
     ought(!none.bound());
@@ -160,8 +163,8 @@ TRIAL("Obraz: pusty szew odmawia Unbound z nazwą rodzaju") {
     ought(amiss);
 }
 
-// Zdanie dostawcy wychodzi jako `Refused` z nazwą rodzaju z przodu — w obu postaciach.
-TRIAL("Obraz: odmowa dostawcy wychodzi jako Refused") {
+// The provider's reason comes out as `Refused` with the kind's name in front, in both forms.
+TRIAL("Image: a provider's refusal comes out as Refused") {
     const Seam<ImageProvider> images = faking::images();
 
     same(std::string{images.provider().name()}, std::string{"fake images"});
@@ -177,7 +180,7 @@ TRIAL("Obraz: odmowa dostawcy wychodzi jako Refused") {
     ought(amiss);
 }
 
-TRIAL("Obraz: zebranie strumienia daje wszystkie klatki z rozmiarem i opóźnieniami") {
+TRIAL("Image: collecting the stream gives all frames with size and delays") {
     const Seam<ImageProvider> images = faking::images();
 
     const Pixels one = images.decoded(lump(leaving));
@@ -191,7 +194,7 @@ TRIAL("Obraz: zebranie strumienia daje wszystkie klatki z rozmiarem i opóźnien
     same(one.stills()[0].bytes.size(), std::size_t{16 * 12 * 4});
 }
 
-TRIAL("Obraz: prośba o mniej klatek zatrzymuje rozwijanie") {
+TRIAL("Image: asking for fewer frames stops the unfolding") {
     const Seam<ImageProvider> images = faking::images();
 
     same(images.decoded(lump(leaving), 1).stills().size(), std::size_t{1});
@@ -199,9 +202,9 @@ TRIAL("Obraz: prośba o mniej klatek zatrzymuje rozwijanie") {
     same(images.decoded(lump(leaving), 9).stills().size(), std::size_t{4});
 }
 
-// **Postać strumieniowa podaje klatkę i zapomina ją.** Fałsz od wołającego znaczy „dosyć"
-// i nie jest błędem — dzięki temu podgląd, który chce tylko pierwszej, nie płaci za resztę.
-TRIAL("Obraz: strumień daje się przerwać, a bez czynności nic nie robi") {
+// The streaming form hands over a frame and forgets it. False from the caller means "enough" and is
+// not an error, so a preview that wants only the first frame does not pay for the rest.
+TRIAL("Image: the stream can be stopped, and without an action it does nothing") {
     const Seam<ImageProvider> images = faking::images();
 
     std::size_t seen = 0;
@@ -222,11 +225,11 @@ TRIAL("Obraz: strumień daje się przerwać, a bez czynności nic nie robi") {
     ought(true);
 }
 
-// Sufit pilnowany jest przez szew, dla każdego dostawcy jednakowo: klatka ponad `ceiling` nie
-// dociera do ujścia i przerywa strumień. Atrapa deklaruje nagłówkowy rozmiar 65535 na 65535 —
-// siedemnaście terabajtów RGBA, gdyby ktoś to przydzielił — z pustym buforem; ujście wołającego
-// nie ma prawa tego zobaczyć.
-TRIAL("Obraz: klatka ponad sufit nie dociera do wołającego") {
+// The ceiling is enforced by the seam, equally for every provider: a frame above `ceiling` does not
+// reach the sink and stops the stream. The fake declares a header size of 65535 by 65535 (seventeen
+// terabytes of RGBA, if anyone allocated it) with an empty buffer; the caller's sink must never see
+// it.
+TRIAL("Image: a frame above the ceiling does not reach the caller") {
     const Seam<ImageProvider> images = faking::images();
 
     std::size_t seen = 0;
@@ -242,11 +245,12 @@ TRIAL("Obraz: klatka ponad sufit nie dociera do wołającego") {
     ought(!images.decoded(lump("474946383961ffffffff000000" "21f9040400000000" "3b")).held());
 }
 
-// --- Obraz jako źródło ----------------------------------------------------------------------------
+// --- Image as a source ----------------------------------------------------------------------------
 
-// `figured` domyka bajty i szew w źródło: rodzaj i kształt od ręki, z nagłówka, a piksele na
-// zamówienie w rozmiarze, o który pyta wołający — już zmniejszone, nigdy w rozmiarze pliku.
-TRIAL("Obraz: figured daje rodzaj i kształt od ręki, a piksele w zadanym rozmiarze") {
+// `figured` ties the bytes and the seam into a source: the kind and shape at once, from the header,
+// and the pixels on request in the size the caller asks for, already reduced, never at the file's
+// size.
+TRIAL("Image: figured gives kind and shape at once, and pixels at the requested size") {
     const Figure one = figured(lump(leaving), faking::images());
 
     same(static_cast<int>(one.format), static_cast<int>(Format::gif));
@@ -264,9 +268,9 @@ TRIAL("Obraz: figured daje rodzaj i kształt od ręki, a piksele w zadanym rozmi
     same(made.stills()[0].bytes.size(), std::size_t{8 * 6 * 4});
 }
 
-// Odmowa dostawcy nie ginie w źródle — obietnica odrzuca się tym samym `Refused`, które rzuca
-// szew; kto chce zdania odmowy, ma je. Rodzaj zostaje z nagłówka także wtedy.
-TRIAL("Obraz: figured przy odmowie dostawcy odrzuca obietnicę") {
+// The provider's refusal is not lost in the source: the promise is rejected with the same `Refused`
+// that the seam throws, so whoever wants the reason has it. The kind still comes from the header.
+TRIAL("Image: figured rejects the promise when the provider refuses") {
     const Figure one = figured(lump("ffd8ffe000104a464946000102000000"), faking::images());
 
     same(static_cast<int>(one.format), static_cast<int>(Format::jpeg));
@@ -282,9 +286,9 @@ TRIAL("Obraz: figured przy odmowie dostawcy odrzuca obietnicę") {
     ought(amiss);
 }
 
-// Bez dostawcy nie ma czego obiecywać: kształt pusty, żeby układ nie prosił o miejsce, a źródło
-// odrzuca `Unbound` — nie udaje, że coś ma.
-TRIAL("Obraz: figured bez dostawcy nie ma kształtu i odrzuca Unbound") {
+// Without a provider there is nothing to promise: the shape is empty, so that the layout asks for no
+// room, and the source rejects with `Unbound` instead of pretending to have something.
+TRIAL("Image: figured without a provider has no shape and rejects with Unbound") {
     const Figure one = figured(lump(leaving), Seam<ImageProvider>{});
 
     same(static_cast<int>(one.format), static_cast<int>(Format::gif));

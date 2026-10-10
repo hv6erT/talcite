@@ -15,8 +15,8 @@ using namespace talcite;
 
 namespace {
 
-// Odczytuje wiersz z narysowanej kartki, żeby przypadki mówiły o tym, co widać, a nie o tym, co
-// policzył układ.
+// Reads a row of the drawn page, so that the cases speak about what is visible and not about what
+// the layout computed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -33,7 +33,7 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("Span: bez zawijania chce tyle, ile ma znaków") {
+TRIAL("Span: without wrapping it wants as many cells as it has characters") {
     const ui::Span one{"kot"};
 
     const ui::Size wants = one.wants({80, 25});
@@ -42,7 +42,7 @@ TRIAL("Span: bez zawijania chce tyle, ile ma znaków") {
     same(wants.high, 1);
 }
 
-TRIAL("Span: pusty nie chce nic, nawet wiersza") {
+TRIAL("Span: an empty one wants nothing, not even a row") {
     const ui::Span one{""};
 
     const ui::Size wants = one.wants({80, 25});
@@ -51,19 +51,19 @@ TRIAL("Span: pusty nie chce nic, nawet wiersza") {
     same(wants.high, 0);
 }
 
-TRIAL("Span: ogonki liczą się jako znaki, nie jako bajty") {
+TRIAL("Span: letters with diacritics count as characters, not bytes") {
     const ui::Span one{"żółw"};
 
     same(one.wants({80, 25}).wide, 4);
 }
 
-TRIAL("Span: znak podwójnej szerokości liczy się za dwa") {
+TRIAL("Span: a double-width character counts as two") {
     const ui::Span one{"漢字"};
 
     same(one.wants({80, 25}).wide, 4);
 }
 
-TRIAL("Span: bez zawijania nie ogląda się na dostępne miejsce") {
+TRIAL("Span: without wrapping it ignores the available room") {
     const ui::Span one{"bardzo długi napis"};
 
     const ui::Size wants = one.wants({5, 25});
@@ -72,7 +72,7 @@ TRIAL("Span: bez zawijania nie ogląda się na dostępne miejsce") {
     same(wants.high, 1);
 }
 
-TRIAL("Span: z zawijaniem łamie się po spacjach") {
+TRIAL("Span: with wrapping it breaks at spaces") {
     ui::Span one{"ala ma kota", ui::SpanShape{true}};
 
     const ui::Size wants = one.wants({7, 25});
@@ -86,7 +86,7 @@ TRIAL("Span: z zawijaniem łamie się po spacjach") {
     same(read(made, 1), std::string{"kota"});
 }
 
-TRIAL("Span: zawijanie przełącza się w locie") {
+TRIAL("Span: wrapping switches on the fly") {
     ui::Span one{"ala ma kota"};
 
     same(one.wants({7, 25}).high, 1);
@@ -97,7 +97,7 @@ TRIAL("Span: zawijanie przełącza się w locie") {
     ought(one.wrapped());
 }
 
-TRIAL("Span: słowo dłuższe niż wiersz łamie się w miejscu") {
+TRIAL("Span: a word longer than the row breaks where it stands") {
     ui::Span one{"nieprzewidywalnie", ui::SpanShape{true}};
 
     const View made = one.render({{0, 0}, {5, 4}});
@@ -108,7 +108,7 @@ TRIAL("Span: słowo dłuższe niż wiersz łamie się w miejscu") {
     same(read(made, 3), std::string{"ie"});
 }
 
-TRIAL("Span: długie słowo nie zjada wiersza, który już stoi") {
+TRIAL("Span: a long word does not swallow a row that already stands") {
     ui::Span one{"do nieprzewidywalnie", ui::SpanShape{true}};
 
     const View made = one.render({{0, 0}, {5, 5}});
@@ -117,33 +117,33 @@ TRIAL("Span: długie słowo nie zjada wiersza, który już stoi") {
     same(read(made, 1), std::string{"niepr"});
 }
 
-TRIAL("Span: łamanie liczy szerokości, nie bajty") {
+TRIAL("Span: breaking counts widths, not bytes") {
     ui::Span one{"żółw żółw", ui::SpanShape{true}};
 
     same(one.wants({9, 25}).high, 1);
     same(one.wants({8, 25}).high, 2);
 }
 
-TRIAL("Span: podwójne znaki też łamią się na kratki, nie na znaki") {
+TRIAL("Span: double-width characters also break by cells, not by characters") {
     ui::Span one{"漢字 漢字", ui::SpanShape{true}};
 
     same(one.wants({9, 25}).high, 1);
     same(one.wants({8, 25}).high, 2);
 }
 
-TRIAL("Span: ciąg spacji nie robi pustych wierszy") {
+TRIAL("Span: a run of spaces makes no empty rows") {
     ui::Span one{"ala   ma", ui::SpanShape{true}};
 
     same(one.wants({3, 25}).high, 2);
 }
 
-TRIAL("Span: zerowa szerokość nie zawiesza łamania") {
+TRIAL("Span: zero width does not hang the breaking") {
     const ui::Span one{"cokolwiek", ui::SpanShape{true}};
 
     same(one.wants({0, 25}).high, 0);
 }
 
-TRIAL("Span: rysuje tylko tyle wierszy, ile dostał") {
+TRIAL("Span: draws only as many rows as it was given") {
     ui::Span one{"ala ma kota i psa", ui::SpanShape{true}};
 
     const View made = one.render({{0, 0}, {6, 2}});
@@ -152,7 +152,7 @@ TRIAL("Span: rysuje tylko tyle wierszy, ile dostał") {
     same(read(made, 1), std::string{"kota i"});
 }
 
-TRIAL("Span: bez zawijania kartka ucina to, co wystaje") {
+TRIAL("Span: without wrapping the page cuts off what sticks out") {
     ui::Span one{"bardzo długi napis"};
 
     const View made = one.render({{0, 0}, {6, 1}});
@@ -160,7 +160,7 @@ TRIAL("Span: bez zawijania kartka ucina to, co wystaje") {
     same(read(made, 0), std::string{"bardzo"});
 }
 
-TRIAL("Span: napis daje się wymienić i pomiar idzie za nim") {
+TRIAL("Span: the text can be replaced and the measurement follows it") {
     ui::Span one{"kot"};
 
     same(one.text(), std::string{"kot"});
@@ -176,7 +176,7 @@ TRIAL("Span: napis daje się wymienić i pomiar idzie za nim") {
     same(read(made, 0), std::string{"kotek"});
 }
 
-TRIAL("Span: wymieniony na pusty przestaje czegokolwiek chcieć") {
+TRIAL("Span: replaced with an empty text it stops wanting anything") {
     ui::Span one{"kot"};
 
     one.text("");
@@ -184,8 +184,8 @@ TRIAL("Span: wymieniony na pusty przestaje czegokolwiek chcieć") {
     same(one.wants({80, 25}).high, 0);
 }
 
-// Kolor przychodzi **z roli w skórce**, a nie z napisu: `Span` nie ma już czego ustawiać.
-TRIAL("Span: kolor roli jedzie razem ze znakami") {
+// The color comes from the role in the skin, not from the span: `Span` has nothing to set.
+TRIAL("Span: the role's color travels with the characters") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Span>("kot");
@@ -203,11 +203,11 @@ TRIAL("Span: kolor roli jedzie razem ze znakami") {
     ought(!made.at({0, 0}).style.foreground.transparent);
     same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(200));
 
-    // Poza napisem nie ma nic — kolor jedzie ze znakami, a nie z prostokątem.
+    // Beyond the text there is nothing: the color travels with the characters, not the rectangle.
     ought(made.at({5, 0}).style.foreground.transparent);
 }
 
-TRIAL("Span: wbudowana skórka zostawia barwę terminala") {
+TRIAL("Span: the built-in skin leaves the terminal's color") {
     ui::Span one{"kot"};
 
     const View made = one.render({{0, 0}, {6, 1}});
@@ -215,7 +215,7 @@ TRIAL("Span: wbudowana skórka zostawia barwę terminala") {
     ought(made.at({0, 0}).style.foreground.transparent);
 }
 
-TRIAL("Span: wyrównanie do prawej odsuwa napis od lewej krawędzi") {
+TRIAL("Span: right alignment moves the text away from the left edge") {
     ui::Span one{"kot"};
 
     one.justify(ui::Justify::right);
@@ -227,7 +227,7 @@ TRIAL("Span: wyrównanie do prawej odsuwa napis od lewej krawędzi") {
     same(one.justify(), ui::Justify::right);
 }
 
-TRIAL("Span: wyśrodkowanie dzieli nadmiar na pół") {
+TRIAL("Span: centering splits the excess in half") {
     ui::Span one{"kot"};
 
     one.justify(ui::Justify::center);
@@ -237,7 +237,7 @@ TRIAL("Span: wyśrodkowanie dzieli nadmiar na pół") {
     same(made.at({2, 0}).letter, U'k');
 }
 
-TRIAL("Span: wyrównanie liczy kratki, nie bajty") {
+TRIAL("Span: alignment counts cells, not bytes") {
     ui::Span one{"żółw"};
 
     one.justify(ui::Justify::right);
@@ -247,7 +247,7 @@ TRIAL("Span: wyrównanie liczy kratki, nie bajty") {
     same(made.at({2, 0}).letter, U'ż');
 }
 
-TRIAL("Span: każdy zawinięty wiersz wyrównuje się osobno") {
+TRIAL("Span: each wrapped row is aligned on its own") {
     ui::Span one{"ala ma kota", ui::SpanShape{true}};
 
     one.justify(ui::Justify::right);
@@ -258,7 +258,7 @@ TRIAL("Span: każdy zawinięty wiersz wyrównuje się osobno") {
     same(read(made, 1), std::string{"   kota"});
 }
 
-TRIAL("Span: bez skracania napis po prostu się urywa") {
+TRIAL("Span: without eliding the text is simply cut off") {
     ui::Span one{"nieprzewidywalnie"};
 
     const View made = one.render({{0, 0}, {6, 1}});
@@ -266,7 +266,7 @@ TRIAL("Span: bez skracania napis po prostu się urywa") {
     same(read(made, 0), std::string{"nieprz"});
 }
 
-TRIAL("Span: skracanie z prawej zostawia początek i wielokropek") {
+TRIAL("Span: eliding on the right keeps the start and an ellipsis") {
     ui::Span one{"nieprzewidywalnie"};
 
     one.elide(ui::Elide::right);
@@ -277,7 +277,7 @@ TRIAL("Span: skracanie z prawej zostawia początek i wielokropek") {
     same(one.elide(), ui::Elide::right);
 }
 
-TRIAL("Span: skracanie z lewej zostawia koniec") {
+TRIAL("Span: eliding on the left keeps the end") {
     ui::Span one{"nieprzewidywalnie"};
 
     one.elide(ui::Elide::left);
@@ -287,7 +287,7 @@ TRIAL("Span: skracanie z lewej zostawia koniec") {
     same(read(made, 0), std::string{"…alnie"});
 }
 
-TRIAL("Span: skracanie w środku zostawia oba końce") {
+TRIAL("Span: eliding in the middle keeps both ends") {
     ui::Span one{"nieprzewidywalnie"};
 
     one.elide(ui::Elide::middle);
@@ -297,7 +297,7 @@ TRIAL("Span: skracanie w środku zostawia oba końce") {
     same(read(made, 0), std::string{"nie…nie"});
 }
 
-TRIAL("Span: napis, który się mieści, nie jest skracany") {
+TRIAL("Span: a text that fits is not elided") {
     ui::Span one{"kot"};
 
     one.elide(ui::Elide::right);
@@ -307,7 +307,7 @@ TRIAL("Span: napis, który się mieści, nie jest skracany") {
     same(read(made, 0), std::string{"kot"});
 }
 
-TRIAL("Span: jedna kratka to sam wielokropek") {
+TRIAL("Span: a single cell is just the ellipsis") {
     ui::Span one{"kotek"};
 
     one.elide(ui::Elide::right);
@@ -317,7 +317,7 @@ TRIAL("Span: jedna kratka to sam wielokropek") {
     same(read(made, 0), std::string{"…"});
 }
 
-TRIAL("Span: skracanie nie zmienia tego, ile napis chce") {
+TRIAL("Span: eliding does not change what the text wants") {
     ui::Span one{"nieprzewidywalnie"};
 
     one.elide(ui::Elide::right);
@@ -325,7 +325,7 @@ TRIAL("Span: skracanie nie zmienia tego, ile napis chce") {
     same(one.wants({6, 1}).wide, 17);
 }
 
-TRIAL("Span: skracanie liczy kratki podwójnych znaków") {
+TRIAL("Span: eliding counts the cells of double-width characters") {
     ui::Span one{"漢字漢字"};
 
     one.elide(ui::Elide::right);
@@ -335,7 +335,7 @@ TRIAL("Span: skracanie liczy kratki podwójnych znaków") {
     same(read(made, 0), std::string{"漢字…"});
 }
 
-TRIAL("Span: w drzewie staje tam, gdzie postawi go rodzic") {
+TRIAL("Span: in a tree it stands where its parent puts it") {
     ui::Column top;
 
     const auto first = std::make_shared<ui::Span>("pierwszy");
@@ -351,12 +351,13 @@ TRIAL("Span: w drzewie staje tam, gdzie postawi go rodzic") {
     same(second->area().at.y, 1);
 }
 
-// --- Twarde końce wiersza ---------------------------------------------------------------------
+// --- Hard line ends ---------------------------------------------------------------------------
 //
-// Dotąd `\n` szedł do kartki jak każdy inny bajt i wychodził z niego znak zastępczy w środku
-// zdania. Komunikaty z dwóch zdań pisze się właśnie tak, więc napis musi je rozumieć.
+// A `\n` breaks the line instead of reaching the page as a byte that would come out as a
+// replacement character in the middle of a sentence. Messages of two sentences are written this
+// way, so the span has to understand them.
 
-TRIAL("Span: twardy koniec wiersza dzieli, także bez zawijania") {
+TRIAL("Span: a hard line end splits, also without wrapping") {
     const ui::Span one{"pierwszy\ndrugi"};
 
     const ui::Size wants = one.wants({80, 25});
@@ -372,7 +373,7 @@ TRIAL("Span: twardy koniec wiersza dzieli, także bez zawijania") {
     same(read(made, 1), std::string{"drugi"});
 }
 
-TRIAL("Span: pusty akapit zostaje pustym wierszem") {
+TRIAL("Span: an empty paragraph stays an empty row") {
     ui::Span one{"nad\n\npod"};
 
     const View made = one.render({{0, 0}, {10, 4}});
@@ -383,13 +384,13 @@ TRIAL("Span: pusty akapit zostaje pustym wierszem") {
     same(one.wants({80, 25}).high, 3);
 }
 
-TRIAL("Span: koniec wiersza na końcu daje pusty wiersz po nim") {
+TRIAL("Span: a line end at the end gives an empty row after it") {
     const ui::Span one{"sam\n"};
 
     same(one.wants({80, 25}).high, 2);
 }
 
-TRIAL("Span: powrót karetki nie zostaje w treści") {
+TRIAL("Span: a carriage return does not stay in the content") {
     ui::Span one{"pierwszy\r\ndrugi"};
 
     const View made = one.render({{0, 0}, {12, 2}});
@@ -399,7 +400,7 @@ TRIAL("Span: powrót karetki nie zostaje w treści") {
     same(one.wants({80, 25}).wide, 8);
 }
 
-TRIAL("Span: każdy akapit zawija się osobno") {
+TRIAL("Span: each paragraph wraps on its own") {
     ui::Span one{"ala ma kota\nas", ui::SpanShape{true}};
 
     const View made = one.render({{0, 0}, {7, 4}});
@@ -410,7 +411,7 @@ TRIAL("Span: każdy akapit zawija się osobno") {
     same(one.wants({7, 25}).high, 3);
 }
 
-TRIAL("Span: wyrównanie liczy się w każdym wierszu osobno") {
+TRIAL("Span: alignment is computed for each hard line separately") {
     ui::Span one{"dluuugi\nkot", ui::SpanShape{false, ui::Justify::center}};
 
     const View made = one.render({{0, 0}, {9, 2}});

@@ -12,19 +12,21 @@
 
 namespace talcite::ui {
 
-// --- Różnica napisów ------------------------------------------------------------------------------
+// --- String difference ---------------------------------------------------------------------------
 
 namespace {
 
-// **Słowo to ciąg liter i cyfr, a każdy inny znak jest osobnym kawałkiem.** Porównanie po znakach
-// rozsypałoby `.1080p.BluRay` na litery pasujące przypadkiem do czegoś po drugiej stronie; po
-// słowach wychodzi jedna usunięta całość. Bajt spoza ASCII liczymy jako literę, bo należy do
-// litery wielobajtowej — polska nazwa nie rozpada się na ogonku.
+// A word is a run of letters and digits, and every other character is a piece of its own.
+// Comparing by characters would scatter `.1080p.BluRay` into letters that happen to match
+// something on the other side; by words, it comes out as one removed whole. A byte outside ASCII
+// counts as a letter, because it belongs to a multibyte letter, so a Polish name does not fall
+// apart at a diacritic.
 bool wordy(unsigned char sign) {
     return (sign >= '0' && sign <= '9') || (sign >= 'a' && sign <= 'z') || (sign >= 'A' && sign <= 'Z') ||
            sign >= 0x80;
 }
 
+// The text cut into pieces: whole words, and every other character on its own.
 std::vector<std::string_view> tokenized(std::string_view text) {
     std::vector<std::string_view> made;
 
@@ -44,18 +46,19 @@ std::vector<std::string_view> tokenized(std::string_view text) {
     return made;
 }
 
-// Ile kroków edycji wolno szukać, zanim uznamy, że napisy są po prostu inne. Dla nazw plików to
-// daleko ponad potrzebę; dla wierszy pliku to granica, za którą podświetlanie różnic przestaje
-// cokolwiek mówić, a pamięć śladu rośnie z kwadratem.
+// How many edit steps may be searched before the strings count as simply different. For file
+// names that is far beyond need; for lines of a file it is the limit past which highlighting the
+// differences stops saying anything, while the memory of the trace grows with its square.
 constexpr int patience = 256;
 
-// Ile kawałków w ogóle porównujemy. Wiersz dłuższy niż tyle słów zaznacza się w całości.
+// How many pieces are compared at all. A line longer than this many words is marked as a whole.
 constexpr std::size_t ample = 4096;
 
-// **Najdłuższy wspólny podciąg algorytmem Myersa** — dla środka bez wspólnego początku: przejście po przekątnych z zapamiętanym
-// śladem, a potem powrót od końca. Koszt rośnie z długością razy liczba różnic, więc dwa prawie
-// równe napisy kosztują tyle, co ich przeczytanie. Oddaje fałsz, gdy różnic jest więcej niż
-// `patience` — wtedy wołający zaznacza całość.
+// The longest common subsequence by Myers' algorithm, for the middle without the common start: a
+// pass over the diagonals with a remembered trace, then the way back from the end. The cost grows
+// with the length times the number of differences, so two nearly equal strings cost as much as
+// reading them. Returns false when there are more than `patience` differences; then the caller
+// marks the whole.
 bool matched(const std::vector<std::string_view>& left, std::size_t from_left, std::size_t upto_left,
              const std::vector<std::string_view>& right, std::size_t from_right, std::size_t upto_right,
              std::vector<bool>& kept_left, std::vector<bool>& kept_right) {
@@ -73,7 +76,7 @@ bool matched(const std::vector<std::string_view>& left, std::size_t from_left, s
 
     std::vector<int> reach(static_cast<std::size_t>(2 * most + 3), 0);
 
-    // Ślad: dla każdego `d` wartości przekątnych od `-d` do `d`, już po kroku `d`.
+    // The trace: for every `d`, the diagonal values from `-d` to `d`, after step `d`.
     std::vector<std::vector<int>> trace;
 
     const int limit = std::min(most, patience);
@@ -94,8 +97,8 @@ bool matched(const std::vector<std::string_view>& left, std::size_t from_left, s
 
             if (x < n || y < m) continue;
 
-            // Powrót: z każdego kroku zostaje jedna edycja i przekątna przed nią, a przekątne to
-            // właśnie wspólne kawałki.
+            // The way back: every step leaves one edit and the diagonal before it, and the
+            // diagonals are exactly the common pieces.
             int bx = n;
             int by = m;
 
@@ -121,8 +124,8 @@ bool matched(const std::vector<std::string_view>& left, std::size_t from_left, s
                 by = py;
             }
 
-            // Przekątnej przed pierwszą edycją nie ma: wspólny początek odciął już wołający, więc
-            // pierwsze kawałki obu stron są różne.
+            // There is no diagonal before the first edit: the caller has already cut off the common
+            // start, so the first pieces of both sides differ.
             return true;
         }
 
@@ -132,7 +135,7 @@ bool matched(const std::vector<std::string_view>& left, std::size_t from_left, s
     return false;
 }
 
-// Zakresy bajtów kawałków niezachowanych, sklejone, gdy stykają się ze sobą.
+// The byte ranges of the pieces not kept, merged where they touch.
 std::vector<DiffSpan> spanned(const std::vector<std::string_view>& tokens, const std::vector<bool>& kept,
                               std::string_view text) {
     std::vector<DiffSpan> made;
@@ -154,10 +157,10 @@ std::vector<DiffSpan> spanned(const std::vector<std::string_view>& tokens, const
 
 }
 
-// **Różnica dwóch napisów po słowach.** Wspólny początek i koniec odcinamy od razu — nazwy plików
-// i wiersze po poprawce różnią się zwykle w środku — a środek porównuje Myers. Gdy różnic jest za
-// dużo albo napis za długi, cały środek jest różnicą: podświetlenie połowy znaków nic by nie
-// powiedziało.
+// The difference of two strings by words. The common start and end are cut off at once (file
+// names and lines after a fix usually differ in the middle), and Myers compares the middle. When
+// there are too many differences or the string is too long, the whole middle is the difference:
+// highlighting half of the characters would say nothing.
 std::pair<DiffSide, DiffSide> diffed(std::string_view left, std::string_view right) {
     std::pair<DiffSide, DiffSide> made;
 
@@ -199,27 +202,27 @@ std::pair<DiffSide, DiffSide> diffed(std::string_view left, std::string_view rig
     return made;
 }
 
-// --- Widżet ---------------------------------------------------------------------------------------
+// --- Widget --------------------------------------------------------------------------------------
 
 namespace {
 
-// Ile kawałków bierzemy ze źródła za jednym razem i ile trzymamy pod ręką.
+// How many hunks are taken from the source at once and kept at hand.
 constexpr std::size_t batch = 128;
 
-// Ile wierszy przeskakuje kółko. Ta sama stała co w liście, tabeli i przewijaku.
+// How many rows the wheel skips. The same constant as in the list, the table and the scroller.
 constexpr int stepping = 3;
 
-// Pole wyboru: `[x] `. Cztery kratki, jak w `Tick`.
+// The checkbox: `[x] `. Four cells, as in `Tick`.
 constexpr int ticking = 4;
 
-// Rozdział stron: spacja, kreska, spacja.
+// The separator between the sides: space, bar, space.
 constexpr int parting = 3;
 
-// Poniżej tylu kratek na stronę widok sam przechodzi na jedną kolumnę.
+// Below this many cells per side the view switches to one column on its own.
 constexpr int narrow = 24;
 
-// Wiersz ekranu w obrębie kawałka: tytuł albo wiersz różnicy — w widoku jednokolumnowym jedna
-// z jego stron albo obie naraz, gdy są równe.
+// A screen row within a hunk: the title or a difference row; in the one-column view one of its
+// sides, or both at once when they are equal.
 enum class Face : std::uint8_t { title, both, left, right };
 
 struct Stripe {
@@ -227,12 +230,14 @@ struct Stripe {
     std::size_t row = 0;
 };
 
+// Whether both sides of the row are present and equal, with nothing marked.
 bool same(const DiffRow& one) {
     return one.left.has_value() && one.right.has_value() && one.left->marked.empty() &&
            one.right->marked.empty() && one.left->text == one.right->text;
 }
 
-// Wiersze ekranu kawałka. Zwinięty pokazuje tytuł i pierwszy wiersz — reszta to „+N" przy nim.
+// The screen rows of a hunk. A folded one shows the title and the first row; the rest is a "+N"
+// next to it.
 std::vector<Stripe> lined(const DiffHunk& hunk, bool open, bool unify) {
     std::vector<Stripe> made;
 
@@ -258,13 +263,15 @@ std::vector<Stripe> lined(const DiffHunk& hunk, bool open, bool unify) {
     return made;
 }
 
-// Znak do narysowania: bajty, szerokość i czy leży w zaznaczonej różnicy.
+// A character to draw: its bytes, its width and whether it lies in a marked difference.
 struct Glyph {
     std::string text;
     int wide = 0;
     bool marked = false;
 };
 
+// The characters of one side, with tabs expanded to spaces and each character marked when it lies
+// in a marked range.
 std::vector<Glyph> glyphed(const DiffSide& side) {
     std::vector<Glyph> made;
 
@@ -299,8 +306,8 @@ std::vector<Glyph> glyphed(const DiffSide& side) {
     return made;
 }
 
-// Przycięcie znaków do szerokości, z wielokropkiem tam, gdzie każe kształt. Tnie się **znaki**,
-// a nie napis, żeby zaznaczenia zostały przy swoich literach także po skróceniu środka.
+// Cutting the characters to a width, with an ellipsis where the shape asks for one. Characters are
+// cut, not the string, so that marks stay with their letters even after the middle is shortened.
 std::vector<Glyph> fitted(std::vector<Glyph> all, int room, Elide how, const std::string& dots) {
     int whole = 0;
 
@@ -373,6 +380,7 @@ std::vector<Glyph> fitted(std::vector<Glyph> all, int room, Elide how, const std
     return made;
 }
 
+// The number of decimal digits of the number.
 int digits(std::size_t number) {
     int made = 1;
 
@@ -390,26 +398,26 @@ struct DiffViewer::Kept {
     std::string left_title;
     std::string right_title;
 
-    // Okno kawałków pod ręką: od `from`, tyle, ile źródło oddało. Pytamy źródło tylko wtedy, gdy
-    // potrzebny kawałek wypadł poza okno.
+    // The window of hunks at hand: from `from`, as many as the source returned. The source is
+    // asked only when a needed hunk falls outside the window.
     std::size_t from = 0;
     std::vector<DiffHunk> cached;
 
     std::vector<bool> open;
 
-    // Pierwszy wiersz ekranu: kawałek i wiersz w nim.
+    // The first screen row: the hunk and the row within it.
     std::size_t top = 0;
     int part = 0;
 
     std::optional<std::size_t> which;
 
-    // Czy widać kolumnę pól wyboru. Raz włączona zostaje do nowego źródła — inaczej przewinięcie do
-    // miejsca bez pól przesuwałoby treść w bok.
+    // Whether the checkbox column is visible. Once on, it stays until a new source; otherwise
+    // scrolling to a place without checkboxes would shift the content sideways.
     bool ticks = false;
 
     std::optional<bool> unify;
 
-    // To, co widać: wiersze ekranu z kopią swojego kawałka. Liczone tylko po zmianie.
+    // What is visible: the screen rows with a copy of their hunk. Computed only after a change.
     struct Shown {
         std::size_t hunk = 0;
         Stripe line;
@@ -419,8 +427,8 @@ struct DiffViewer::Kept {
 
     std::vector<Shown> shown;
 
-    // Czy za ostatnim pokazanym wierszem jest jeszcze coś — reszta kawałka albo następny kawałek.
-    // Bez tego pasek nie ma czego pokazać: cały plan stoi na ekranie.
+    // Whether there is anything past the last shown row: the rest of the hunk or the next hunk.
+    // Without it the bar has nothing to show: the whole plan stands on the screen.
     bool more = false;
 
     bool fresh = true;
@@ -431,11 +439,11 @@ struct DiffViewer::Kept {
 
     std::string scrollbar_role = "talcite.scroll";
 
-    // Pasek z ostatniej klatki — pod mysz (U6 w twa).
+    // The bar from the last frame, for the mouse.
     Grip grip;
 
-    // Kawałek pod numerem albo pustka — za końcem albo gdy źródło każe czekać. Wskaźnik żyje do
-    // następnego pytania: nowe okno zastępuje stare.
+    // The hunk with the given number, or nothing past the end or when the source says to wait.
+    // The pointer lives until the next question: a new window replaces the old one.
     const DiffHunk* fetched(std::size_t which) {
         if (which >= hunks || !source) return nullptr;
 
@@ -458,9 +466,10 @@ struct DiffViewer::Kept {
         return &cached[which - from];
     }
 
+    // Whether the hunk is unfolded.
     [[nodiscard]] bool opened(std::size_t hunk) const { return hunk < open.size() && open[hunk]; }
 
-    // Liczba wierszy ekranu kawałka; pustka, gdy go nie ma.
+    // The number of screen rows of the hunk; nothing when it is not available.
     std::optional<int> height(std::size_t hunk) {
         const DiffHunk* one = fetched(hunk);
 
@@ -469,19 +478,20 @@ struct DiffViewer::Kept {
         return static_cast<int>(lined(*one, opened(hunk), unified_now).size());
     }
 
-    // Kursor staje tylko na kawałkach z wierszami. Sam tytuł to nagłówek sekcji — rozdziela,
-    // a nie jest czymś, co się wybiera.
+    // The cursor stops only on hunks with rows. A title alone is a section header: it separates,
+    // it is not something to choose.
     bool steady(std::size_t hunk) {
         const DiffHunk* one = fetched(hunk);
 
         return one != nullptr && !one->rows.empty();
     }
 
+    // The rows available for hunks: the height without the title row, when there is one.
     [[nodiscard]] int high() const { return sized.high - (left_title.empty() && right_title.empty() ? 0 : 1); }
 
-    // **Ekran nie wychodzi poza koniec**: gdy od pierwszego wiersza do końca zostaje mniej niż
-    // wysokość, cofamy się, aż ostatni wiersz stanie na dole. Kawałek, który czeka, zatrzymuje
-    // cofanie — nie wiadomo, ile ma wierszy.
+    // The screen does not go past the end: when fewer rows than the height remain from the first
+    // row to the end, the view moves back until the last row stands at the bottom. A hunk that is
+    // waiting stops the moving back, because its number of rows is unknown.
     void settle() {
         const int room = high();
 
@@ -513,7 +523,8 @@ struct DiffViewer::Kept {
         }
     }
 
-    // Dociągnięcie widoku do pierwszego wiersza kawałka: wyżej — staje na górze, niżej — na dole.
+    // Brings the view to the first row of the hunk: one above lands at the top, one below at the
+    // bottom.
     void reveal(std::size_t hunk) {
         const int room = high();
 
@@ -546,8 +557,10 @@ struct DiffViewer::Kept {
     }
 };
 
+// An empty diff viewer with the default shape.
 DiffViewer::DiffViewer() : kept_(std::make_unique<Kept>()) { role("talcite.diff"); }
 
+// An empty diff viewer with the given shape.
 DiffViewer::DiffViewer(DiffShape shape) : kept_(std::make_unique<Kept>()) {
     role("talcite.diff");
 
@@ -556,8 +569,8 @@ DiffViewer::DiffViewer(DiffShape shape) : kept_(std::make_unique<Kept>()) {
 
 DiffViewer::~DiffViewer() = default;
 
-// Liczbę kawałków podaje wołający, jak przy tabeli. Kursor staje na pierwszym kawałku z wierszami
-// — o ile źródło go już ma; inaczej przy pierwszym malowaniu.
+// The number of hunks is given by the caller, as with the table. The cursor lands on the first
+// hunk with rows, if the source already has it; otherwise at the first paint.
 void DiffViewer::source(DiffSource given, std::size_t hunks) {
     Kept& kept = *kept_;
 
@@ -586,22 +599,28 @@ void DiffViewer::source(DiffSource given, std::size_t hunks) {
     kept.fresh = true;
 }
 
+// Drops the cached hunks, so that the next paint asks the source again.
 void DiffViewer::refresh() {
     kept_->cached.clear();
     kept_->shown.clear();
     kept_->fresh = true;
 }
 
+// Sets the titles of the two sides, shown in the head row.
 void DiffViewer::titles(std::string left, std::string right) {
     kept_->left_title = std::move(left);
     kept_->right_title = std::move(right);
     kept_->fresh = true;
 }
 
+// The number of hunks given with the source.
 std::size_t DiffViewer::hunks() const { return kept_->hunks; }
 
+// The hunk under the cursor, if any.
 std::optional<std::size_t> DiffViewer::which() const { return kept_->which; }
 
+// Moves the cursor to the hunk (clamped to the last one), brings it into view and triggers a
+// `ScrollEvent`.
 void DiffViewer::which(std::size_t given) {
     Kept& kept = *kept_;
 
@@ -618,8 +637,10 @@ void DiffViewer::which(std::size_t given) {
     (void)trigger(ScrollEvent{});
 }
 
+// Whether the hunk is unfolded.
 bool DiffViewer::opened(std::size_t hunk) const { return kept_->opened(hunk); }
 
+// Unfolds or folds the hunk, keeping the cursor's hunk in view.
 void DiffViewer::opened(std::size_t hunk, bool given) {
     Kept& kept = *kept_;
 
@@ -633,32 +654,41 @@ void DiffViewer::opened(std::size_t hunk, bool given) {
     kept.fresh = true;
 }
 
+// The forced layout: one column, two columns, or nothing when the width decides.
 std::optional<bool> DiffViewer::unified() const { return kept_->unify; }
 
+// Forces one column (true) or two (false); nothing lets the width decide.
 void DiffViewer::unified(std::optional<bool> given) {
     kept_->unify = given;
     kept_->fresh = true;
 }
 
+// Whether the shape asks for a scroll bar.
 bool DiffViewer::scrollbar() const { return kept_->shape.scrollbar; }
 
+// Turns the scroll bar on or off.
 void DiffViewer::scrollbar(bool given) {
     kept_->shape.scrollbar = given;
     kept_->fresh = true;
 }
 
+// The skin role of the scroll bar.
 const std::string& DiffViewer::scrollbar_role() const { return kept_->scrollbar_role; }
 
+// Sets the skin role of the scroll bar.
 void DiffViewer::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
 
+// The viewer takes the focus.
 bool DiffViewer::focusable() const { return true; }
 
+// The viewer has no children.
 int DiffViewer::capacity() const { return 0; }
 
+// The viewer takes all the room it is given.
 Size DiffViewer::wants(Size room) const { return room; }
 
-// Wiersze ekranu od pierwszego widocznego, z kopią kawałka przy każdym — źródło może oddać nowe
-// okno w połowie drogi, a to, co już stoi na ekranie, nie ma prawa się zmienić.
+// The screen rows from the first visible one, with a copy of the hunk at each: the source may
+// return a new window halfway, and what already stands on the screen must not change.
 void DiffViewer::spread(Size given) {
     Kept& kept = *kept_;
 
@@ -688,8 +718,8 @@ void DiffViewer::spread(Size given) {
     for (; one < kept.hunks && static_cast<int>(kept.shown.size()) < room; ++one) {
         const DiffHunk* got = kept.fetched(one);
 
-        // Kawałek, na który źródło każe czekać, zatrzymuje pętlę przed końcem — to, że jest dalej
-        // coś do pokazania, mówi warunek za pętlą.
+        // A hunk the source says to wait for stops the loop before the end; the condition after
+        // the loop says that there is still something to show.
         if (got == nullptr) break;
 
         const DiffHunk data = *got;
@@ -713,6 +743,8 @@ void DiffViewer::spread(Size given) {
     if (one < kept.hunks) kept.more = true;
 }
 
+// Draws the head row with the titles, the visible rows (checkboxes, line numbers, both sides or
+// one column with "-" and "+") and the scroll bar when there is something to scroll.
 View DiffViewer::paint(Size given, Area seen) {
     Kept& kept = *kept_;
 
@@ -741,8 +773,8 @@ View DiffViewer::paint(Size given, Area seen) {
     const int ticks = kept.ticks ? ticking : 0;
     const bool unify = kept.unified_now;
 
-    // Numery wierszy: tyle cyfr, ile ma największy widoczny, a gdy żadna strona numeru nie niesie —
-    // kolumny nie ma wcale.
+    // Line numbers: as many digits as the largest visible one has, and when no side carries a
+    // number, no column at all.
     int number = 0;
 
     for (const Kept::Shown& one : kept.shown) {
@@ -836,7 +868,7 @@ View DiffViewer::paint(Size given, Area seen) {
         const Style came_mark = Style::merge(came, how.style(base + ".came.mark"));
         const Style faint = Style::merge(look, how.style(base + ".number"));
 
-        // „+N" przy pierwszym wierszu zwiniętego kawałka: ile wierszy czeka za rozwinięciem.
+        // "+N" at the first row of a folded hunk: how many rows wait behind unfolding.
         std::string folded;
 
         if (one.line.row == 0 && !kept.opened(one.hunk) && one.data.rows.size() > 1)
@@ -882,7 +914,8 @@ View DiffViewer::paint(Size given, Area seen) {
         ++y;
     }
 
-    // Pasek tylko wtedy, gdy jest czym przewijać; kolumna na niego zostaje, żeby treść nie skakała.
+    // The bar only when there is something to scroll; its column stays, so that the content does
+    // not jump.
     if (aside != 0 && given.high > 0 && kept.more) {
         std::size_t shown = 0;
         std::optional<std::size_t> last;
@@ -915,9 +948,9 @@ View DiffViewer::paint(Size given, Area seen) {
     return made;
 }
 
-// **Klawisze przesuwają kursor po kawałkach, a Spacja, `+` i `-` zmieniają pola.** Tab, Enter
-// i litery idą wyżej: Tab należy do okna, które krąży po swoich kontrolkach, Enter naciska
-// przycisk podstawowy. Skok po sekcjach bierze więc Ctrl ze strzałką, a nie Tab.
+// Keys move the cursor over hunks, and Space, `+` and `-` change the checkboxes. Tab, Enter and
+// letters go up: Tab belongs to the window that cycles through its controls, and Enter presses a
+// button. Jumping between sections therefore takes Ctrl with an arrow, not Tab.
 bool DiffViewer::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 
@@ -925,7 +958,7 @@ bool DiffViewer::handle(KeyEvent& what) {
 
     const std::size_t at = kept.which.value_or(0);
 
-    // Następny kawałek z wierszami w danym kierunku, od `from` wyłącznie; pustka, gdy go nie ma.
+    // The next hunk with rows in the given direction, `from` excluded; nothing when there is none.
     const auto next = [&kept](std::size_t from, int by) -> std::optional<std::size_t> {
         for (std::size_t one = from; by > 0 ? one + 1 < kept.hunks : one > 0;) {
             one = by > 0 ? one + 1 : one - 1;
@@ -936,7 +969,7 @@ bool DiffViewer::handle(KeyEvent& what) {
         return {};
     };
 
-    // Nagłówek sekcji: kawałek z samym tytułem.
+    // A section header: a hunk with a title alone.
     const auto heading = [&kept](std::size_t one) {
         const DiffHunk* got = kept.fetched(one);
 
@@ -948,8 +981,8 @@ bool DiffViewer::handle(KeyEvent& what) {
 
         if (code != Code::down && code != Code::up) return false;
 
-        // Ctrl+↓: pierwszy kawałek za następnym nagłówkiem; Ctrl+↑: pierwszy kawałek sekcji, a gdy
-        // już na nim stoimy — poprzedniej.
+        // Ctrl+↓: the first hunk after the next header; Ctrl+↑: the first hunk of the section, or
+        // of the previous one when the cursor already stands on it.
         if (code == Code::down) {
             for (std::size_t one = at + 1; one < kept.hunks; ++one)
                 if (heading(one))
@@ -1047,7 +1080,7 @@ bool DiffViewer::handle(KeyEvent& what) {
         return true;
     }
 
-    // `+` i `-` przestawiają całą sekcję kursora: od nagłówka przed nim do następnego nagłówka.
+    // `+` and `-` set the whole section of the cursor: from the header before it to the next header.
     if (letter == U'+' || letter == U'-') {
         std::size_t start = at;
 
@@ -1080,11 +1113,11 @@ bool DiffViewer::handle(KeyEvent& what) {
     return false;
 }
 
-// Kółko przesuwa sam widok, kursora nie rusza — jak w tabeli.
+// The wheel moves the view itself and leaves the cursor, as in the table.
 bool DiffViewer::handle(WheelEvent& what) { return slid(-what.steps() * stepping); }
 
-// **Mysz na pasku** (U6 w twa): strzałka — wiersz, tor — strona, suwak — skok na kawałek. Pasek
-// liczy kawałki, więc ciągnięty suwak stawia widok na początku kawałka, jak Home na nim.
+// The mouse on the bar: an arrow scrolls a row, the track a page, the thumb jumps to a hunk. The
+// bar counts hunks, so a dragged thumb puts the view at the start of a hunk, as Home does.
 bool DiffViewer::handle(MouseEvent& what) {
     Kept& kept = *kept_;
 
@@ -1120,7 +1153,8 @@ bool DiffViewer::handle(MouseEvent& what) {
     return true;
 }
 
-// Widok o tyle wierszy, ile kazano — w dół dodatnio — po kawałkach i ich wierszach; kursora nie rusza.
+// Moves the view by the given number of rows (positive is down), over hunks and their rows; the
+// cursor does not move. False when the view stayed.
 bool DiffViewer::slid(int lines) {
     Kept& kept = *kept_;
 
@@ -1168,11 +1202,11 @@ bool DiffViewer::slid(int lines) {
     return true;
 }
 
-// Klik stawia kursor na kawałku pod nim; klik w pole wyboru przestawia je.
+// A click puts the cursor on the hunk under it; a click in the checkbox toggles it.
 bool DiffViewer::handle(ClickEvent& what) {
     Kept& kept = *kept_;
 
-    // Klik na pasku zrobił swoje przy wciśnięciu; kursora nie stawia.
+    // A click on the bar did its job on the press; it does not move the cursor.
     if (kept.grip.over(local(what.where()))) return true;
 
     if (root() != nullptr) focus();

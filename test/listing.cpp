@@ -17,13 +17,13 @@ using namespace talcite;
 
 namespace {
 
-// Korzeń, który liczy klawisze — po to, żeby dało się sprawdzić, co pozycja oddaje wyżej, a co
-// zatrzymuje u siebie.
+// A root that counts keys, so that one can check what an item passes up and what it keeps.
 class Sheet : public ui::Root {
 public:
     int keys = 0;
 
 protected:
+    // Counts every key that reaches the root and takes it.
     bool handle(ui::KeyEvent&) override {
         ++keys;
 
@@ -31,17 +31,21 @@ protected:
     }
 };
 
-// Pojemnik układający dzieci w wiersze, każdemu cała szerokość. Tyle robi z pozycjami lista,
-// a tu wystarczy sam ten kawałek — listy jeszcze nie ma.
+// A container that lays its children out in rows, each with the full width. That is what the list
+// does with its items, and here this piece alone is enough, without the list.
 class Nest : public ui::Node {
 public:
+    // The nest can hold the focus itself.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // Any number of children.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 
+    // All the room offered.
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
+    // Paints each child on its own row, one below the other, clipped to the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -60,14 +64,17 @@ protected:
     }
 };
 
-// Chętny liść do sprawdzania, dokąd ognisko wychodzi i skąd wraca.
+// A willing leaf for checking where the focus goes out to and where it comes back from.
 class Perch : public ui::Node {
 public:
+    // The perch can take the focus.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // One cell.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return {1, 1}; }
 };
 
+// A list of `much` items named "wiersz 0", "wiersz 1"…, asking for `wide` by `high`.
 std::shared_ptr<ui::List> listed(int much, int wide = ui::plenty, int high = ui::plenty) {
     const auto made = std::make_shared<ui::List>(wide, high);
 
@@ -77,6 +84,7 @@ std::shared_ptr<ui::List> listed(int much, int wide = ui::plenty, int high = ui:
     return made;
 }
 
+// The text of row `y` of the view, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -93,19 +101,19 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("ListItem: chce tyle, ile ma napisu, i zawsze jeden wiersz") {
+TRIAL("ListItem: wants as much as its text, and always one row") {
     const auto one = std::make_shared<ui::ListItem>("katalog");
 
     same(one->wants({20, 3}), (ui::Size{7, 1}));
 
-    // Ciasno: przycina się do tego, co dostało.
+    // Tight: it clips to what it got.
     same(one->wants({4, 3}), (ui::Size{4, 1}));
 
-    // Wiersz listy, który się zawija, to nie wiersz listy.
+    // A list row that wraps is not a list row.
     same(one->wants({20, 0}), (ui::Size{7, 0}));
 }
 
-TRIAL("ListItem: napis stoi od pierwszej kratki, bez odstępu") {
+TRIAL("ListItem: the text starts at the first cell, without a gap") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -119,7 +127,7 @@ TRIAL("ListItem: napis stoi od pierwszej kratki, bez odstępu") {
     same(read(made, 0), std::string{"plik"});
 }
 
-TRIAL("ListItem: napis dłuższy niż wiersz przycina się wielokropkiem z prawej") {
+TRIAL("ListItem: a text longer than the row is clipped with an ellipsis on the right") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -133,9 +141,9 @@ TRIAL("ListItem: napis dłuższy niż wiersz przycina się wielokropkiem z prawe
     same(read(made, 0), std::string{"doku…"});
 }
 
-// Podświetlenie idzie przez **całą szerokość wiersza**, a nie tylko pod napisem — inaczej pasek
-// wyboru urywałby się w połowie i wyglądałby jak błąd rysowania.
-TRIAL("ListItem: pod ogniskiem odwraca się cały wiersz") {
+// The highlight goes across the whole width of the row, not only under the text; otherwise the
+// selection bar would break off halfway and look like a drawing bug.
+TRIAL("ListItem: under focus the whole row is reversed") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -157,7 +165,7 @@ TRIAL("ListItem: pod ogniskiem odwraca się cały wiersz") {
     ought(made.at({7, 0}).style.reverse);
 }
 
-TRIAL("ListItem: wyłączona gaśnie i ogniska nie bierze") {
+TRIAL("ListItem: a disabled one dims and does not take the focus") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -172,7 +180,7 @@ TRIAL("ListItem: wyłączona gaśnie i ogniska nie bierze") {
 
     ought(!one->focusable());
 
-    // Wołanie na węźle, który ogniska nie bierze, nic nie robi — po cichu, jak w korzeniu.
+    // Calling it on a node that does not take the focus does nothing, silently, as in the root.
     one->focus();
 
     same(top.focused_node(), static_cast<ui::Node*>(nullptr));
@@ -182,9 +190,9 @@ TRIAL("ListItem: wyłączona gaśnie i ogniska nie bierze") {
     ought(made.at({0, 0}).style.faint);
 }
 
-// Ta sama reguła co w przycisku i w polu: ognisko idzie do najbliższego chętnego przodka, a nie
-// na pustkę — bo na pustce dialog przestaje połykać klawisze.
-TRIAL("ListItem: wyłączenie z ogniskiem oddaje je przodkowi") {
+// The same rule as in the button and in the field: the focus goes to the nearest willing ancestor,
+// not into the void, because in the void the dialog stops swallowing keys.
+TRIAL("ListItem: disabling with the focus hands it to the ancestor") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -202,7 +210,7 @@ TRIAL("ListItem: wyłączenie z ogniskiem oddaje je przodkowi") {
     same(top.focused_node(), static_cast<ui::Node*>(nest.get()));
 }
 
-TRIAL("ListItem: Enter woła zadanie") {
+TRIAL("ListItem: Enter calls the task") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -224,8 +232,8 @@ TRIAL("ListItem: Enter woła zadanie") {
     same(top.keys, 0);
 }
 
-// Enter ze sterującym nie należy do pozycji — tak samo jak w polu i w legendzie.
-TRIAL("ListItem: Enter ze sterującym idzie wyżej") {
+// Enter with Control does not belong to the item, just as in the field and in the legend.
+TRIAL("ListItem: Enter with Control goes up") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -247,8 +255,8 @@ TRIAL("ListItem: Enter ze sterującym idzie wyżej") {
     same(top.keys, 1);
 }
 
-// Strzałki należą do listy, a nie do pozycji, więc pozycja ich nie zatrzymuje.
-TRIAL("ListItem: strzałka idzie wyżej") {
+// The arrows belong to the list, not to the item, so the item does not stop them.
+TRIAL("ListItem: an arrow goes up") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -266,13 +274,13 @@ TRIAL("ListItem: strzałka idzie wyżej") {
     same(top.keys, 1);
 }
 
-// **To jest cały powód, dla którego pozycja bierze ognisko.** Klawisz zaczyna u niej, więc dopięty
-// uchwyt widzi go przed kimkolwiek wyżej — i przed wędrówką po wierszach, gdy dojdzie lista.
+// This is the whole reason the item takes the focus. A key starts at it, so an attached handler
+// sees it before anyone above, and before the walk over the rows once the list is there.
 //
-// „Przed" znaczy tu **wcześniej**, a nie „zamiast": prawda z uchwytu zamyka drogę uchwytów, ale
-// `handle` przodka biegnie swoją. Widać to na liczniku korzenia: w chwili, gdy uchwyt się odzywa,
-// jest jeszcze zerowy, a po wszystkim wynosi jeden.
-TRIAL("ListItem: dopięty uchwyt widzi klawisz przed przodkiem") {
+// "Before" here means earlier, not "instead": true from the handler ends the path of handlers, but
+// the ancestor's `handle` runs its own. The root's counter shows it: at the moment the handler
+// speaks it is still zero, and after everything it is one.
+TRIAL("ListItem: an attached handler sees the key before the ancestor") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -302,7 +310,7 @@ TRIAL("ListItem: dopięty uchwyt widzi klawisz przed przodkiem") {
     same(top.keys, 1);
 }
 
-TRIAL("ListItem: klik bierze ognisko") {
+TRIAL("ListItem: a click takes the focus") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -322,7 +330,7 @@ TRIAL("ListItem: klik bierze ognisko") {
     same(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
-TRIAL("ListItem: dwuklik bierze ognisko i woła zadanie") {
+TRIAL("ListItem: a double click takes the focus and calls the task") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -348,9 +356,9 @@ TRIAL("ListItem: dwuklik bierze ognisko i woła zadanie") {
     same(done, 1);
 }
 
-// Pozycja niedostępna **przepuszcza klik wyżej**: skoro nie odpowiada na swój klawisz, to nie ma
-// powodu, żeby odpowiadała na mysz — a lista pod spodem ma prawo zrobić z tym kliknięciem, co chce.
-TRIAL("ListItem: wyłączona przepuszcza klik i ogniska nie bierze") {
+// An unavailable item lets the click through: since it does not answer its key, there is no reason
+// for it to answer the mouse, and the list underneath may do with that click what it wants.
+TRIAL("ListItem: a disabled one lets the click through and does not take the focus") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -379,7 +387,7 @@ TRIAL("ListItem: wyłączona przepuszcza klik i ogniska nie bierze") {
     same(done, 0);
 }
 
-TRIAL("ListItem: pick na wyłączonej nic nie robi") {
+TRIAL("ListItem: pick on a disabled one does nothing") {
     int done = 0;
 
     const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
@@ -394,7 +402,7 @@ TRIAL("ListItem: pick na wyłączonej nic nie robi") {
     same(done, 1);
 }
 
-TRIAL("ListItem: napis i zadanie da się podmienić po drodze") {
+TRIAL("ListItem: the text and the task can be replaced along the way") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -423,7 +431,7 @@ TRIAL("ListItem: napis i zadanie da się podmienić po drodze") {
     same(done, 1);
 }
 
-TRIAL("ListItem: nie przyjmuje dzieci") {
+TRIAL("ListItem: does not accept children") {
     const auto one = std::make_shared<ui::ListItem>("plik");
 
     same(one->capacity(), 0);
@@ -431,7 +439,7 @@ TRIAL("ListItem: nie przyjmuje dzieci") {
     threw(one->children().add(std::make_shared<ui::ListItem>("inne")));
 }
 
-TRIAL("List: ognisko idzie na pozycję, nie na listę") {
+TRIAL("List: the focus goes to the item, not to the list") {
     Sheet top;
 
     const auto one = listed(3);
@@ -444,7 +452,7 @@ TRIAL("List: ognisko idzie na pozycję, nie na listę") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-TRIAL("List: pusta bierze ognisko sama") {
+TRIAL("List: an empty one takes the focus itself") {
     Sheet top;
 
     const auto one = std::make_shared<ui::List>();
@@ -457,7 +465,7 @@ TRIAL("List: pusta bierze ognisko sama") {
     ought(one->current() == nullptr);
 }
 
-TRIAL("List: strzałki chodzą po wierszach i nie zawijają") {
+TRIAL("List: the arrows walk the rows and do not wrap") {
     Sheet top;
 
     const auto one = listed(3);
@@ -476,7 +484,7 @@ TRIAL("List: strzałki chodzą po wierszach i nie zawijają") {
     ought(top.dispatch(again));
     same(one->which(), std::optional<std::size_t>{2});
 
-    // Na ostatnim wierszu w dół nic nie robi — i **nie wraca na pierwszy**.
+    // On the last row down does nothing, and does not go back to the first.
     ui::KeyEvent past{ui::Code::down};
 
     ought(top.dispatch(past));
@@ -488,7 +496,7 @@ TRIAL("List: strzałki chodzą po wierszach i nie zawijają") {
     same(one->which(), std::optional<std::size_t>{1});
 }
 
-TRIAL("List: Home i End stają na pierwszym i ostatnim") {
+TRIAL("List: Home and End go to the first and the last") {
     Sheet top;
 
     const auto one = listed(5);
@@ -508,8 +516,8 @@ TRIAL("List: Home i End stają na pierwszym i ostatnim") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-// Strona liczy się z **prawdziwej wysokości**, którą lista dostała w poprzedniej klatce.
-TRIAL("List: strona to tyle wierszy, ile widać") {
+// A page is computed from the real height that the list got in the previous frame.
+TRIAL("List: a page is as many rows as are visible") {
     Sheet top;
 
     const auto one = listed(20);
@@ -530,7 +538,7 @@ TRIAL("List: strona to tyle wierszy, ile widać") {
     ought(top.dispatch(up));
     same(one->which(), std::optional<std::size_t>{0});
 
-    // Strona przy końcu zatrzymuje się na ostatnim wierszu, zamiast wyjść poza.
+    // A page near the end stops at the last row instead of going past it.
     ui::KeyEvent last{ui::Code::end};
 
     (void)top.dispatch(last);
@@ -541,7 +549,7 @@ TRIAL("List: strona to tyle wierszy, ile widać") {
     same(one->which(), std::optional<std::size_t>{19});
 }
 
-TRIAL("List: wędrówka omija pozycje niedostępne") {
+TRIAL("List: the walk skips unavailable items") {
     Sheet top;
 
     const auto one = listed(4);
@@ -566,7 +574,7 @@ TRIAL("List: wędrówka omija pozycje niedostępne") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-TRIAL("List: same niedostępne pozycje — ognisko zostaje na liście") {
+TRIAL("List: only unavailable items, the focus stays on the list") {
     Sheet top;
 
     const auto one = listed(2);
@@ -581,8 +589,9 @@ TRIAL("List: same niedostępne pozycje — ognisko zostaje na liście") {
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
-// **Przewinięcie liczy malowanie**, bo dopiero tam znana jest wysokość — ta sama reguła co w polu.
-TRIAL("List: widok dogania bieżący wiersz") {
+// Scrolling is computed in painting, because only there is the height known; the same rule as in
+// the field.
+TRIAL("List: the view catches up with the current row") {
     Sheet top;
 
     const auto one = listed(10);
@@ -600,7 +609,7 @@ TRIAL("List: widok dogania bieżący wiersz") {
     (void)top.dispatch(last);
     (void)top.render({{0, 0}, {12, 3}});
 
-    // Dziesięć wierszy, widać trzy, stoimy na dziewiątym — więc widok zaczyna się od siódmego.
+    // Ten rows, three visible, we stand on the ninth, so the view starts at the seventh.
     same(one->which(), std::optional<std::size_t>{9});
     same(one->first(), 7);
 
@@ -612,8 +621,8 @@ TRIAL("List: widok dogania bieżący wiersz") {
     same(one->first(), 0);
 }
 
-// Kółko przesuwa **sam widok**: bieżący wiersz zostaje, a `moved` się nie odzywa.
-TRIAL("List: kółko przewija widok, a wiersza nie rusza") {
+// The wheel moves only the view: the current row stays, and `moved` stays silent.
+TRIAL("List: the wheel scrolls the view and does not move the row") {
     Sheet top;
 
     const auto one = listed(10);
@@ -640,13 +649,13 @@ TRIAL("List: kółko przewija widok, a wiersza nie rusza") {
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    // Widok się przesunął, więc zdarzenie idzie — ale bieżący wiersz został tam, gdzie stał.
+    // The view moved, so the event goes out, but the current row stayed where it was.
     same(one->first(), 3);
     same(one->which(), std::optional<std::size_t>{0});
     same(moves, 2);
 }
 
-TRIAL("List: kółko na końcu przewijania oddaje zdarzenie wyżej") {
+TRIAL("List: the wheel at the end of scrolling passes the event up") {
     Sheet top;
 
     const auto one = listed(10);
@@ -655,7 +664,8 @@ TRIAL("List: kółko na końcu przewijania oddaje zdarzenie wyżej") {
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    // W górę z zera nie ma dokąd — zdarzenie idzie dalej, żeby dostał je przewijak nad listą.
+    // Up from zero there is nowhere to go; the event goes on, so that a scroller above the list
+    // gets it.
     ui::WheelEvent up{{2, 1}, 1};
 
     ought(!top.dispatch(up));
@@ -665,7 +675,7 @@ TRIAL("List: kółko na końcu przewijania oddaje zdarzenie wyżej") {
     ought(top.dispatch(down));
 }
 
-TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
+TRIAL("List: the event speaks once per change of row") {
     Sheet top;
 
     const auto one = listed(4);
@@ -673,8 +683,8 @@ TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
     int moves = 0;
     std::optional<std::size_t> last;
 
-    // Zdarzenie nie niesie numeru wiersza — słuchacz czyta go z `which()`. Jedna droga
-    // zawiadamiania zamiast dwóch: `on` i `off` jak wszędzie indziej.
+    // The event carries no row number; the listener reads it from `which()`. One way of notifying
+    // instead of two: `on` and `off` as everywhere else.
     const std::weak_ptr<ui::List> weakly = one;
 
     (void)one->on<ui::ScrollEvent>([&moves, &last, weakly](ui::ScrollEvent&) {
@@ -699,7 +709,7 @@ TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
     same(moves, 2);
     same(last, std::optional<std::size_t>{1});
 
-    // Ruch w dół z ostatniego wiersza nie jest zmianą.
+    // A move down from the last row is not a change.
     ui::KeyEvent end{ui::Code::end};
 
     (void)top.dispatch(end);
@@ -713,7 +723,7 @@ TRIAL("List: zdarzenie odzywa się raz na zmianę wiersza") {
     same(moves, 3);
 }
 
-TRIAL("List: wyjście z listy i powrót wracają na ten sam wiersz") {
+TRIAL("List: leaving the list and coming back return to the same row") {
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -744,7 +754,7 @@ TRIAL("List: wyjście z listy i powrót wracają na ten sam wiersz") {
     same(one->which(), std::optional<std::size_t>{2});
 }
 
-TRIAL("List: litera, Tab i Esc idą wyżej") {
+TRIAL("List: a letter, Tab and Esc go up") {
     Sheet top;
 
     const auto one = listed(3);
@@ -768,7 +778,7 @@ TRIAL("List: litera, Tab i Esc idą wyżej") {
     ought(top.dispatch(away));
     same(top.keys, 3);
 
-    // Strzałka ze sterującym też nie należy do listy.
+    // An arrow with Control does not belong to the list either.
     ui::KeyEvent held{ui::Key{ui::Code::down, ui::Mods{true, false, false}}};
 
     ought(top.dispatch(held));
@@ -776,7 +786,7 @@ TRIAL("List: litera, Tab i Esc idą wyżej") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-TRIAL("List: Enter woła zadanie bieżącego wiersza") {
+TRIAL("List: Enter calls the task of the current row") {
     Sheet top;
 
     const auto one = listed(3);
@@ -805,14 +815,14 @@ TRIAL("List: Enter woła zadanie bieżącego wiersza") {
     same(top.keys, 0);
 }
 
-TRIAL("List: which ustawia wiersz z programu i przestawia ognisko") {
+TRIAL("List: which sets the row from the program and moves the focus") {
     Sheet top;
 
     const auto one = listed(6);
 
     top.children().add(one);
 
-    // Bez ogniska numer jest tylko zapamiętany.
+    // Without the focus the number is only remembered.
     one->which(4);
 
     same(one->which(), std::optional<std::size_t>{4});
@@ -822,7 +832,7 @@ TRIAL("List: which ustawia wiersz z programu i przestawia ognisko") {
 
     same(top.focused_node(), static_cast<ui::Node*>(one->children()[4].get()));
 
-    // Z ogniskiem przestawia je od razu, a numer poza zakresem przycina.
+    // With the focus it moves it at once, and a number out of range is clipped.
     one->which(99);
 
     same(one->which(), std::optional<std::size_t>{5});
@@ -834,10 +844,10 @@ TRIAL("List: which ustawia wiersz z programu i przestawia ognisko") {
     same(top.focused_node(), static_cast<ui::Node*>(one->children()[1].get()));
 }
 
-// **`which()` to numer, `current()` to węzeł** — ten sam wiersz pod dwiema nazwami. Kto pyta
-// o węzeł, dostaje wiersz do naciśnięcia albo przeczytania; kto o numer — liczbę do własnej tablicy
-// obok. Pusta lista oddaje pustkę w obu; obcy wiersz w ustawiaczu nic nie robi.
-TRIAL("List: which to numer, current to węzeł, a obcy wiersz nie ustawia niczego") {
+// `which()` is the number, `current()` is the node: the same row under two names. Whoever asks for
+// the node gets a row to press or read; whoever asks for the number gets an index into their own
+// table next to it. An empty list gives nothing in both; a foreign row in the setter does nothing.
+TRIAL("List: which is the number, current the node, and a foreign row sets nothing") {
     Sheet top;
 
     const auto one = listed(3);
@@ -874,14 +884,15 @@ TRIAL("List: which to numer, current to węzeł, a obcy wiersz nie ustawia nicze
     ought(empty->current() == nullptr);
     ought(!empty->which().has_value());
 
-    // Wiersz zdjęty spod numeru: numer nie wskazuje na nic, więc go nie ma — zgodnie z węzłem.
+    // A row removed from under the number: the number points at nothing, so there is none, in
+    // agreement with the node.
     one->which(2);
     (void)one->children().remove(one->children()[2].get());
 
     same(one->which().has_value(), one->current() != nullptr);
 }
 
-TRIAL("List: pasek przewijania zabiera kolumnę z prawej") {
+TRIAL("List: the scrollbar takes a column on the right") {
     Sheet top;
 
     const auto one = listed(10);
@@ -899,8 +910,8 @@ TRIAL("List: pasek przewijania zabiera kolumnę z prawej") {
     same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
 }
 
-// Pasek „gdy trzeba": lista krótsza niż okno oddaje jego kolumnę wierszom.
-TRIAL("List: pasek gdy trzeba tylko przy liście dłuższej niż okno") {
+// The scrollbar "when needed": a list shorter than the window gives its column back to the rows.
+TRIAL("List: the scrollbar when needed only with a list longer than the window") {
     Sheet top;
 
     const auto one = std::make_shared<ui::List>(12, 3, ui::ScrollShape{true, true});
@@ -920,8 +931,8 @@ TRIAL("List: pasek gdy trzeba tylko przy liście dłuższej niż okno") {
     same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
 }
 
-// Wiersz, który zjechał poza widok, **nie może łapać myszą** w miejscu, gdzie stał poprzednio.
-TRIAL("List: wiersz poza widokiem nie łapie myszy") {
+// A row that has moved out of view must not catch the mouse where it stood before.
+TRIAL("List: a row out of view does not catch the mouse") {
     Sheet top;
 
     const auto one = listed(5);
@@ -946,7 +957,7 @@ TRIAL("List: wiersz poza widokiem nie łapie myszy") {
     same(one->which(), std::optional<std::size_t>{3});
 }
 
-TRIAL("List: klik w wiersz czyni go bieżącym") {
+TRIAL("List: a click on a row makes it current") {
     Sheet top;
 
     const auto one = listed(4);
@@ -971,7 +982,7 @@ TRIAL("List: klik w wiersz czyni go bieżącym") {
     same(moves, 1);
 }
 
-TRIAL("List: chce tyle, ile jej kazano") {
+TRIAL("List: wants as much as it was told") {
     const auto one = listed(3, 20, 6);
 
     same(one->wants({40, 10}), (ui::Size{20, 6}));
@@ -982,11 +993,11 @@ TRIAL("List: chce tyle, ile jej kazano") {
     same(other->wants({40, 10}), (ui::Size{40, 10}));
 }
 
-// --- Co lista przyjmuje --------------------------------------------------------------------------
+// --- What the list accepts -----------------------------------------------------------------------
 
-// Numer bieżącego wiersza liczy się **wśród dzieci**, więc obce dziecko rozjechałoby numerację
-// z tym, co widać na ekranie. Odmawiamy raz, przy dopięciu.
-TRIAL("Lista: przyjmuje wiersze, obcego dziecka nie") {
+// The number of the current row counts among the children, so a foreign child would throw the
+// numbering out of step with what is on the screen. We refuse once, at attaching.
+TRIAL("List: accepts rows, not a foreign child") {
     const auto one = std::make_shared<ui::List>();
 
     one->children().add(std::make_shared<ui::ListItem>("plik"));

@@ -12,21 +12,21 @@
 
 namespace talcite::ui {
 
-// **Pasek menu to stos z dwoma piętrami.** Na dole kolumna: rząd tytułów nad wierszem treści.
-// Na górze — tylko gdy menu jest rozwinięte — samo menu, które mówi stosowi, gdzie stanąć:
-// pod swoim tytułem. Malowanie i trafianie myszą robi `Stack`, układanie tytułów robi `Row`;
-// pasek nie liczy już ani szerokości, ani położeń, ani nie maluje niczego na końcu.
+// The menu bar is a stack with two floors. At the bottom a column: the row of titles above the
+// content row. On top, only while a menu is open, the menu itself, which tells the stack where to
+// stand: under its title. Painting and mouse hits are done by `Stack`, laying out the titles by
+// `Row`; the bar computes no widths or positions and paints nothing of its own.
 //
 //     Menubar (Stack)
 //     ├── Column
 //     │   ├── Row  ← MenuTitle × N
-//     │   └── Row  ← gniazdo na treść aplikacji (content)
-//     └── [Menu]  ← dopięte tylko gdy rozwinięte; placed() pod swoim tytułem
+//     │   └── Row  ← slot for the application's content
+//     └── [Menu]  ← attached only while open; placed under its title
 //
-// Rozwinięte menu jest **dzieckiem paska**, więc klawisz od pozycji bąbelkuje pozycja → menu →
-// pasek: strzałki w bok i Esc dochodzą tą samą drogą, co przedtem. Menu nie jest zasłoną, więc
-// klik w sąsiedni tytuł trafia w tytuł, a pasek stoi pod legendą, więc lista nie zakryje paska
-// klawiszy. Trzy koszty, które miałoby menu-zasłona, tu nie powstają wcale.
+// An open menu is a child of the bar, so a key from an item bubbles item → menu → bar, and the
+// side arrows and Esc arrive by that path. The menu is not a curtain, so a click on a neighboring
+// title hits the title, and the bar stands under the legend, so the list does not cover the key
+// bar. The three costs a curtain menu would have do not arise here at all.
 Menubar::Menubar()
     : frame_(std::make_shared<Column>()),
       bar_(std::make_shared<Row>()),
@@ -37,16 +37,17 @@ Menubar::Menubar()
     children().add(frame_);
 }
 
-// Treść pod spodem. Gniazdo opisuje `slot.hpp`.
+// The content underneath, or `nullptr` when there is none. The slot is described in `slot.hpp`.
 Node* Menubar::content() const { return held(*body_); }
 
+// Puts the given node in the content slot, replacing what was there.
 void Menubar::content(std::shared_ptr<Node> given) { hold(*body_, std::move(given)); }
 
-// Dwa miejsca: kolumna i co najwyżej jedno rozwinięte menu.
+// Two places: the column and at most one open menu.
 int Menubar::capacity() const { return 2; }
 
-// Przyjmujemy wyłącznie swoje: kolumnę i własne menu. Obce dziecko nie ma jak tu wejść, bo stos
-// dałby mu miejsce, a pasek nie wiedziałby, co z nim zrobić.
+// Only our own children are accepted: the column and our own menus. A foreign child cannot come
+// in, because the stack would give it a place and the bar would not know what to do with it.
 bool Menubar::accepts(const Node& one) const {
     if (&one == frame_.get()) return true;
 
@@ -56,9 +57,10 @@ bool Menubar::accepts(const Node& one) const {
     return false;
 }
 
-// **Menu robi pasek, a nie wołający.** Tytuł idzie do rzędu tytułów od razu; menu zostaje poza
-// drzewem, dopóki ktoś go nie rozwinie. Oba znają siebie nawzajem przez pasek: tytuł trzyma menu,
-// menu trzyma tytuł i pasek — surowymi wskazaniami, bo wszystkie trzy żyją i umierają razem tutaj.
+// Creates a menu with the given title and returns it. The bar makes the menu, not the caller. The
+// title goes into the row of titles at once; the menu stays outside the tree until someone opens
+// it. The two know each other through the bar: the title holds the menu, the menu holds the title
+// and the bar, by raw pointers, because all three live and die together here.
 std::shared_ptr<Menu> Menubar::add(std::string title, MenuShape shape) {
     auto one = std::make_shared<Menu>(std::move(title), shape);
     auto head = std::make_shared<MenuTitle>(*one);
@@ -79,6 +81,7 @@ std::shared_ptr<Menu> Menubar::add(std::string title, MenuShape shape) {
     return one;
 }
 
+// Closes any open menu and removes all menus and their titles.
 void Menubar::clear() {
     fold();
 
@@ -88,9 +91,10 @@ void Menubar::clear() {
     menus_.clear();
 }
 
-// Menu, na którym stoi pasek: rozwinięte, albo to, którego tytuł ma ognisko — czynne, zwinięte.
-// Publiczne, bo tytuł jest węzłem wewnętrznym i z zewnątrz nie ma go jak zapytać o ognisko —
-// a „które menu jest bieżące" to pytanie, które zadaje i aplikacja, i próba.
+// The menu the bar stands on: the open one, or the one whose title has the focus (active but
+// folded), or `nullptr`. Public, because the title is an internal node that cannot be asked about
+// the focus from outside, and "which menu is current" is a question both the application and the
+// tests ask.
 Menu* Menubar::current() const {
     for (const std::shared_ptr<Menu>& one : menus_)
         if (one->opened()) return one.get();
@@ -101,6 +105,7 @@ Menu* Menubar::current() const {
     return nullptr;
 }
 
+// The position of the given menu in the bar, or -1.
 int Menubar::find(const Menu* one) const {
     for (int at = 0; at < static_cast<int>(menus_.size()); ++at)
         if (menus_[static_cast<std::size_t>(at)].get() == one) return at;
@@ -108,8 +113,9 @@ int Menubar::find(const Menu* one) const {
     return -1;
 }
 
-// Nasze jest wszystko, co siedzi w rzędzie tytułów albo w rozwiniętym menu — pytamy o całą gałąź
-// w górę, bo ognisko siedzi na pozycji albo na tytule, nie na pasku.
+// Whether the node belongs to the bar: everything in the row of titles or in an open menu is
+// ours. The whole branch upward is checked, because the focus sits on an item or a title, not on
+// the bar.
 bool Menubar::ours(const Node* one) const {
     for (const Node* at = one; at != nullptr; at = at->parent()) {
         if (at == bar_.get()) return true;
@@ -121,8 +127,8 @@ bool Menubar::ours(const Node* one) const {
     return false;
 }
 
-// **Rozwinięcie to dopięcie.** Co najwyżej jedno menu naraz — więc najpierw zwijamy to, co stało,
-// a potem dopinamy nowe jako ostatnie dziecko stosu, czyli na wierzch.
+// Opening is attaching. At most one menu is open at a time, so whatever stood open is closed
+// first, and then the new menu is attached as the last child of the stack, that is, on top.
 void Menubar::unfold(Menu& one) {
     if (one.parent() == this) return;
 
@@ -138,19 +144,20 @@ void Menubar::unfold(Menu& one) {
         }
 }
 
-// Zwinięcie rozwiniętego menu robi samo menu (`Menu::close`) — pasek nie sięga już do jego
-// numeru pozycji. Bieżące menu, które jest tylko podświetlonym tytułem, zamknięcie zostawia w spokoju.
+// Closes the current menu. The menu closes itself (`Menu::close`); the bar does not touch its item
+// number. A current menu that is only a highlighted title is left alone by the close.
 void Menubar::fold() {
     if (Menu* one = current()) one->close();
 }
 
-// **Wejście do paska to ognisko na pierwszym tytule, nic nie rozwinięte** — jak w Midnight
-// Commanderze przy `drop_menus` wyłączonym; rozwija dopiero strzałka w dół, Enter, litera albo
-// klik. Z `dropdown()` wejście od razu rozwija pierwsze menu — jak MC z „Drop down menus" — i stawia
-// bit rozwinięcia, więc strzałki w bok idą dalej rozwinięte; to ta sama droga, co strzałka w dół
-// po F9, tylko bez czekania na nią. Pierwsze menu bez pozycji zostaje zwinięte, jak przy strzałce.
-// Publiczne do pary z `leave()`, bo pole paska klawiszy musi wchodzić tą samą drogą, co
-// klawisz — inaczej klik w pole robił co innego niż F9. Pasek już czynny zostaje, jak stoi.
+// Entering the bar puts the focus on the first title with nothing open, as in Midnight Commander
+// with drop_menus off; only the down arrow, Enter, a letter or a click opens a menu. With
+// `dropdown()` entering opens the first menu at once, as MC does with "Drop down menus", and sets
+// the open bit, so the side arrows keep menus open; it is the same path as the down arrow after
+// F9, only without waiting for it. A first menu without items stays folded, as with the arrow.
+// Public, paired with `leave()`, because a key bar field has to enter by the same path as the key;
+// otherwise a click on the field would do something other than F9. A bar already active stays as
+// it is.
 void Menubar::enter() {
     if (menus_.empty() || current() != nullptr) return;
 
@@ -166,7 +173,7 @@ void Menubar::enter() {
     if (Node* head = menus_.front()->head_) head->focus();
 }
 
-// Wyjście z paska: zwinięcie i oddanie ogniska temu, kto je miał przed wejściem.
+// Leaves the bar: closes the menu and gives the focus back to whoever had it before entering.
 void Menubar::leave() {
     fold();
 
@@ -185,13 +192,16 @@ void Menubar::leave() {
     top->move_focus(was.get());
 }
 
-// **Klawisz otwierający podaje wołający**, a nie biblioteka: `keys().add(Code::f9)` przywraca dawne
-// zachowanie, a pusty zbiór znaczy „z klawiatury nie". Czynność jest przełącznikiem.
+// Toggles the bar: enters when it is inactive, leaves when it is active. The opening key is given
+// by the caller, not by the library: adding `Code::f9` to `keys()` gives the Midnight Commander
+// behavior, and an empty set means "not from the keyboard".
 void Menubar::activate() {
     if (current() == nullptr) enter();
     else leave();
 }
 
+// The bar's own keys: the opening key, Esc, the side arrows, and the title letters while the bar
+// is active.
 bool Menubar::handle(KeyEvent& what) {
     if (menus_.empty()) return false;
 
@@ -219,16 +229,17 @@ bool Menubar::handle(KeyEvent& what) {
 
             const int step = what.key().code() == Code::left ? -1 : 1;
 
-            // **Sąsiad przejmuje stan bieżącego**: przy rozwiniętym menu strzałka rozwija następne,
-            // przy zwiniętym tylko przesuwa podświetlenie. Tak chodzi pasek Midnight Commandera.
-            // Pytamy **paska**, a nie bieżącego menu: menu bez pozycji nigdy nie jest rozwinięte,
-            // więc wędrówka przez taki tytuł gubiłaby stan i sąsiad wychodziłby zwinięty.
+            // The neighbor takes over the state of the current menu: with a menu open the arrow
+            // opens the next one, with it folded it only moves the highlight. That is how the
+            // Midnight Commander bar moves. The bar is asked, not the current menu: a menu without
+            // items is never open, so passing through such a title would lose the state and the
+            // neighbor would come out folded.
             const std::shared_ptr<Menu>& next =
                 menus_[static_cast<std::size_t>((find(one) + step + much) % much)];
 
             if (expanded_) {
-                // Zwijamy wprost, bo menu bez pozycji nie rozwija się i samo by nie zwinęło
-                // poprzednika — a stan paska ma przejść dalej mimo to.
+                // Close explicitly, because a menu without items does not open and so would not
+                // close its predecessor itself, and the bar's state has to carry on anyway.
                 fold();
                 next->open();
                 expanded_ = true;
@@ -239,16 +250,17 @@ bool Menubar::handle(KeyEvent& what) {
             return true;
         }
 
-        // **Litera tytułu działa dopiero przy czynnym pasku**, czyli po F9 — tak jak w Midnight
-        // Commanderze. Bez tego warunku zwykła litera naciśnięta nad panelem rozwijałaby menu.
+        // A title letter works only while the bar is active, that is, after F9, as in Midnight
+        // Commander. Without this condition an ordinary letter pressed over a panel would open a
+        // menu.
         //
-        // Pozycje rozwiniętego menu dostają literę **wcześniej**, bo `Menu::handle` leży bliżej
-        // ogniska. Tutaj trafia więc tylko to, czego nie wziął nikt w środku — i wtedy pyta
-        // tytułów. Rozdajemy po migawce, bo uchwyt ma prawo przebudować pasek w reakcji.
+        // The items of an open menu get the letter earlier, because `Menu::handle` lies closer to
+        // the focus. Only what nobody inside took arrives here, and then the titles are asked.
+        // The loop runs over a snapshot, because a handler may rebuild the bar in response.
         //
-        // **Czynny pasek połyka wszystko, czego sam nie obsłużył.** W Midnight Commanderze
-        // rozwinięte menu jest modalne: F5 przy nim nie kopiuje. Legenda stoi wyżej i złapałaby
-        // klawisz, robiąc czynność, o którą nikt nie prosił.
+        // An active bar swallows everything it did not handle itself. In Midnight Commander an
+        // open menu is modal: F5 does not copy while it is open. The legend stands higher up and
+        // would catch the key, performing an action nobody asked for.
         default: {
             if (one == nullptr) return false;
 
@@ -262,9 +274,10 @@ bool Menubar::handle(KeyEvent& what) {
     }
 }
 
-// Ognisko sprzed wejścia zapamiętujemy tu, bo tylko tędy przechodzi każde wejście — klawiszem,
-// klikiem czy strzałką w bok. Przejście z tytułu na tytuł i z tytułu na pozycję nie liczy się:
-// gdybyśmy zapamiętali tytuł, Esc otwierałby poprzednie zamiast wracać do aplikacji.
+// The focus from before entering is remembered here, because every entry passes this way, by a
+// key, a click or a side arrow. Moving from title to title or from a title to an item does not
+// count: if a title were remembered, Esc would open the previous menu instead of returning to the
+// application.
 bool Menubar::handle(FocusEvent& what) {
     if (!ours(dynamic_cast<const Node*>(what.target()))) return false;
 
@@ -277,10 +290,9 @@ bool Menubar::handle(FocusEvent& what) {
     return false;
 }
 
-// **Ognisko wychodzi z paska — pasek się zwija.** Przedtem działo się to samo z siebie, bo
-// „rozwinięte" wynikało z ogniska; teraz rozwinięcie jest dopięciem, więc trzeba je zdjąć wprost.
-// Zdarzenie idzie od starego ogniska w górę, więc dociera tu zawsze, obojętne dokąd ognisko
-// poszło — także do zasłony, która stoi poza paskiem.
+// When the focus leaves the bar, the bar folds. Opening is attaching, so it has to be undone
+// explicitly. The event goes up from the old focus, so it always arrives here, wherever the focus
+// went, including a curtain that stands outside the bar.
 bool Menubar::handle(UnfocusEvent& what) {
     if (ours(what.other())) return false;
 

@@ -11,6 +11,7 @@ using namespace talcite;
 
 namespace {
 
+// Bytes from plain numbers, so that the trials can write pixels as they read.
 Bytes lump(const std::vector<std::uint8_t>& bytes) {
     Bytes made;
 
@@ -21,11 +22,12 @@ Bytes lump(const std::vector<std::uint8_t>& bytes) {
     return made;
 }
 
+// A single-frame image of the given size made of the given RGBA bytes.
 Pixels held(ui::Size size, const std::vector<std::uint8_t>& bytes) {
     return Pixels{size, {Still{lump(bytes), std::chrono::milliseconds{0}}}};
 }
 
-// Jedna kratka, narysowana i oddana do obejrzenia.
+// One cell, drawn and handed back for inspection.
 Cell one(const Pixels& what, ui::Blocks kind, const Style& under = {}) {
     View made{{1, 1}};
 
@@ -34,6 +36,7 @@ Cell one(const Pixels& what, ui::Blocks kind, const Style& under = {}) {
     return made.at({0, 0});
 }
 
+// RGBA bytes of an image of the given size filled with one color.
 std::vector<std::uint8_t> flat(ui::Size size, std::uint8_t red, std::uint8_t green,
                                std::uint8_t blue, std::uint8_t alpha = 255) {
     std::vector<std::uint8_t> made(static_cast<std::size_t>(size.wide) *
@@ -51,47 +54,49 @@ std::vector<std::uint8_t> flat(ui::Size size, std::uint8_t red, std::uint8_t gre
 
 }
 
-// --- Ziarno ---------------------------------------------------------------------------------
+// --- Grain ----------------------------------------------------------------------------------
 
-TRIAL("grain: klocki tną kratkę na osiem na osiem, sekstanty na dwa na trzy") {
+TRIAL("grain: blocks cut a cell into eight by eight, sextants into two by three") {
     same(grain(ui::Blocks::basic).wide, 8);
     same(grain(ui::Blocks::basic).high, 8);
     same(grain(ui::Blocks::sextants).wide, 2);
     same(grain(ui::Blocks::sextants).high, 3);
 }
 
-// Odwzorowanie oktantów jest **tablicą dwustu trzydziestu znaków, a nie wzorem** — dwadzieścia
-// sześć wzorów mieszka w Block Elements i w `U+1FB00`. Tablicy nie wolno zgadywać, więc do czasu
-// jej dodania ścinamy je do sekstantów.
-TRIAL("grain: oktanty ścinają się do sekstantów") {
+// The octant mapping is a table of two hundred and thirty characters, not a formula; twenty-six of
+// the patterns live in Block Elements and at U+1FB00. The table must not be guessed, so until it is
+// added, octants are reduced to sextants.
+TRIAL("grain: octants are reduced to sextants") {
     same(grain(ui::Blocks::octants).wide, grain(ui::Blocks::sextants).wide);
     same(grain(ui::Blocks::octants).high, grain(ui::Blocks::sextants).high);
 }
 
-// --- Jednolitość i przezroczystość ------------------------------------------------------------
+// --- Uniformity and transparency ------------------------------------------------------------
 
-TRIAL("Mosaic: jednolita barwa daje pełny klocek") {
+TRIAL("Mosaic: a uniform color gives a full block") {
     const Cell got = one(held({2, 3}, flat({2, 3}, 30, 160, 90)), ui::Blocks::sextants);
 
     same(got.letter, U'█');
     same(got.style.foreground, (Color{false, 30, 160, 90}));
 
-    // Drugiej barwy nie ma, więc papier zostaje taki, jaki podał wołający — domyślnie przezroczysty,
-    // i wtedy kratka idzie samym pierwszym planem: tło spod spodu także pod pełnym klockiem, bo terminal z odstępem
-    // między wierszami pokazałby tam szew w barwie swojego tła.
+    // There is no second color, so the paper stays as the caller gave it, transparent by default,
+    // and then the cell goes as foreground only: the background from below shows even under a full
+    // block, because a terminal with spacing between rows would show a seam there in its own
+    // background color.
     ought(got.style.background.transparent);
     same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
 }
 
-// **Przezroczystość wpada wprost w model biblioteki.** Kratka bez ani jednej widocznej podkratki
-// wychodzi jako nierysowana, czyli widać przez nią tło rodzica — dokładnie tak, jak przez pojemnik.
-TRIAL("Mosaic: kratka bez treści jest nierysowana") {
+// Transparency maps straight onto the library's model. A cell without a single visible sub-cell
+// comes out as not drawn, so the parent's background shows through it, just as through a
+// container.
+TRIAL("Mosaic: a cell without content is not drawn") {
     const Cell got = one(held({2, 3}, flat({2, 3}, 255, 0, 0, 0)), ui::Blocks::sextants);
 
     same(static_cast<int>(got.shown), static_cast<int>(Shown::none));
 }
 
-TRIAL("Mosaic: kratka pokryta częściowo idzie za sylwetką") {
+TRIAL("Mosaic: a partly covered cell follows the silhouette") {
     std::vector<std::uint8_t> bytes = flat({2, 3}, 0, 0, 0, 0);
 
     for (int y = 0; y < 3; ++y) {
@@ -107,12 +112,14 @@ TRIAL("Mosaic: kratka pokryta częściowo idzie za sylwetką") {
     same(got.style.foreground, (Color{false, 200, 0, 0}));
     ought(got.style.background.transparent);
 
-    // Bez papieru kratka idzie samym pierwszym planem: tło weźmie przy wklejaniu z tego, co pod spodem.
+    // Without paper the cell goes as foreground only: when pasted, it takes the background from
+    // what lies below.
     same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
 }
 
-// Papier dla części niepokrytej podaje wołający, bo tylko on wie, co ma pod sobą ze skórki.
-TRIAL("Mosaic: podany papier trafia pod sylwetkę") {
+// The paper for the uncovered part is given by the caller, because only the caller knows what lies
+// beneath it from the skin.
+TRIAL("Mosaic: the given paper goes under the silhouette") {
     std::vector<std::uint8_t> bytes = flat({2, 3}, 0, 0, 0, 0);
 
     for (int y = 0; y < 3; ++y) {
@@ -132,9 +139,9 @@ TRIAL("Mosaic: podany papier trafia pod sylwetkę") {
     same(static_cast<int>(got.shown), static_cast<int>(Shown::own));
 }
 
-// --- Cięcie ---------------------------------------------------------------------------------
+// --- Cutting --------------------------------------------------------------------------------
 
-TRIAL("Mosaic: poziomy podział daje sekstant górnego wiersza") {
+TRIAL("Mosaic: a horizontal split gives the sextant of the top row") {
     std::vector<std::uint8_t> bytes = flat({2, 3}, 0, 0, 0);
 
     for (int x = 0; x < 2; ++x) {
@@ -150,15 +157,16 @@ TRIAL("Mosaic: poziomy podział daje sekstant górnego wiersza") {
     same(got.style.background, (Color{false, 0, 0, 0}));
 }
 
-// --- Jakość: sekstanty kontra klocki -----------------------------------------------------------
+// --- Quality: sextants versus blocks -----------------------------------------------------------
 //
-// Pas przez **środek** kratki jest tym wzorem, którego znaki blokowe nie wyrażą jednym glifem:
-// mają ósemki dolne i jedną górną, ale pasa w środku nie mają. Sekstanty mają go wprost.
-// Różnicę widać nie w kształcie, tylko w barwach: sekstanty oddają obie czysto, klocki muszą
-// którąś zmieszać.
+// A band through the middle of the cell is the pattern that block characters cannot express with
+// one glyph: they have lower eighths and one upper eighth, but no band in the middle. Sextants have
+// it directly. The difference shows not in the shape but in the colors: sextants render both
+// cleanly, blocks have to mix one of them.
 
 namespace {
 
+// RGBA bytes of an image that is white in rows [`from`, `upto`) and black elsewhere.
 std::vector<std::uint8_t> banded(int wide, int high, int from, int upto) {
     std::vector<std::uint8_t> made(static_cast<std::size_t>(wide) * high * 4);
 
@@ -177,7 +185,7 @@ std::vector<std::uint8_t> banded(int wide, int high, int from, int upto) {
 
 }
 
-TRIAL("Mosaic: sekstanty oddają pas przez środek obiema barwami czysto") {
+TRIAL("Mosaic: sextants render a band through the middle with both colors clean") {
     const Cell got = one(held({2, 3}, banded(2, 3, 1, 2)), ui::Blocks::sextants);
 
     same(static_cast<unsigned>(got.letter), 0x1FB0Bu);
@@ -185,10 +193,10 @@ TRIAL("Mosaic: sekstanty oddają pas przez środek obiema barwami czysto") {
     same(got.style.background, (Color{false, 0, 0, 0}));
 }
 
-TRIAL("Mosaic: klocki tego samego pasa czysto nie oddadzą") {
+TRIAL("Mosaic: blocks cannot render the same band cleanly") {
     const Cell got = one(held({8, 8}, banded(8, 8, 3, 5)), ui::Blocks::basic);
 
-    // Któraś z dwóch barw musi być mieszanką — i jest: papier wychodzi szary.
+    // One of the two colors must be a mixture, and it is: the paper comes out gray.
     const bool pure = (got.style.foreground == Color{false, 255, 255, 255} ||
                        got.style.foreground == Color{false, 0, 0, 0}) &&
                       (got.style.background == Color{false, 255, 255, 255} ||
@@ -198,32 +206,32 @@ TRIAL("Mosaic: klocki tego samego pasa czysto nie oddadzą") {
     same(got.style.background, (Color{false, 170, 170, 170}));
 }
 
-// --- Wariancja ważona percepcyjnie -------------------------------------------------------------
+// --- Perceptually weighted variance -------------------------------------------------------------
 //
-// Oko waży zielony siedmiokrotnie mocniej niż niebieski. Ta kratka jest tak dobrana, że **oba
-// kryteria wybierają co innego**: cięcie kolumnowe ma koszt surowy 86700 wobec 97538 dla
-// wierszowego, a po zważeniu 62007 wobec 7042. Fork wybrałby kolumnę i rozciąłby kratkę tam, gdzie
-// liczby są duże, a nie tam, gdzie różnicę widać.
+// The eye weighs green seven times more than blue. This cell is chosen so that the two criteria
+// pick different cuts: the column cut has a raw cost of 86700 against 97538 for the row cut, and
+// after weighting 62007 against 7042. Unweighted variance would pick the column and cut the cell
+// where the numbers are large, not where the difference is visible.
 
-TRIAL("Mosaic: cięcie idzie za tym, co widać, a nie za surowymi liczbami") {
+TRIAL("Mosaic: the cut follows what is visible, not the raw numbers") {
     const std::vector<std::uint8_t> bytes{0, 0,   0,   255, 0, 0,   255, 255,
                                           0, 255, 0,   255, 0, 255, 255, 255,
                                           0, 255, 0,   255, 0, 255, 255, 255};
 
     const Cell got = one(held({2, 3}, bytes), ui::Blocks::sextants);
 
-    // Wiersz górny, nie kolumna lewa: `🬂`, a nie `▌`.
+    // The top row, not the left column: 🬂, not ▌.
     same(static_cast<unsigned>(got.letter), 0x1FB02u);
     ought(got.letter != U'▌');
 
-    // Średnia liczy się w świetle liniowym: z zera i 255 wychodzi 188.
+    // The average is computed in linear light: zero and 255 give 188.
     same(got.style.foreground, (Color{false, 0, 0, 188}));
     same(got.style.background, (Color{false, 0, 255, 188}));
 }
 
-// --- Rozkład na kratki -------------------------------------------------------------------------
+// --- Splitting into cells ----------------------------------------------------------------------
 
-TRIAL("Mosaic: każda kratka bierze swój kawałek obrazka") {
+TRIAL("Mosaic: each cell takes its own piece of the image") {
     std::vector<std::uint8_t> bytes = flat({4, 3}, 0, 0, 0);
 
     for (int y = 0; y < 3; ++y)
@@ -244,7 +252,7 @@ TRIAL("Mosaic: każda kratka bierze swój kawałek obrazka") {
     same(made.at({1, 0}).style.foreground, (Color{false, 255, 0, 0}));
 }
 
-TRIAL("Mosaic: rysuje od podanego miejsca") {
+TRIAL("Mosaic: draws from the given place") {
     View made{{3, 3}};
 
     drawn(made, {1, 2}, held({2, 3}, flat({2, 3}, 10, 20, 30)), 0, ui::Blocks::sextants);
@@ -254,9 +262,9 @@ TRIAL("Mosaic: rysuje od podanego miejsca") {
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
-// --- Odmowy -------------------------------------------------------------------------------------
+// --- Refusals -----------------------------------------------------------------------------------
 
-TRIAL("Mosaic: pusty obrazek nie rysuje nic") {
+TRIAL("Mosaic: an empty image draws nothing") {
     View made{{2, 2}};
 
     drawn(made, {0, 0}, Pixels{}, 0, ui::Blocks::sextants);
@@ -265,7 +273,7 @@ TRIAL("Mosaic: pusty obrazek nie rysuje nic") {
     same(made.at({0, 0}).letter, U' ');
 }
 
-TRIAL("Mosaic: klatka spoza zakresu nie rysuje nic") {
+TRIAL("Mosaic: a frame out of range draws nothing") {
     View made{{1, 1}};
 
     drawn(made, {0, 0}, held({2, 3}, flat({2, 3}, 255, 0, 0)), 7, ui::Blocks::sextants);
@@ -273,7 +281,7 @@ TRIAL("Mosaic: klatka spoza zakresu nie rysuje nic") {
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
-TRIAL("Mosaic: obrazek mniejszy niż kratka nie rysuje nic") {
+TRIAL("Mosaic: an image smaller than a cell draws nothing") {
     View made{{1, 1}};
 
     drawn(made, {0, 0}, held({1, 1}, flat({1, 1}, 255, 0, 0)), 0, ui::Blocks::sextants);
@@ -281,11 +289,11 @@ TRIAL("Mosaic: obrazek mniejszy niż kratka nie rysuje nic") {
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
-// --- Barwność i znaki -------------------------------------------------------------------------
+// --- Color depth and characters -----------------------------------------------------------------
 
 namespace {
 
-// Kratka narysowana przy podanej barwności i znakach.
+// One cell drawn with the given color depth and character set.
 Cell dressed_as(const Pixels& what, ui::Blocks kind, Colors colors, bool unicode, const Style& under = {}) {
     View made{{1, 1}};
 
@@ -294,8 +302,8 @@ Cell dressed_as(const Pixels& what, ui::Blocks kind, Colors colors, bool unicode
     return made.at({0, 0});
 }
 
-// Obrazek 2×4 (jedna kratka bez Unicode), w którym pierwszych `much` podkratek, wierszami, jest
-// pokryte, a reszta przezroczysta.
+// A 2×4 image (one cell without Unicode) in which the first `much` sub-cells, by rows, are
+// covered and the rest is transparent.
 Pixels covered(int much, std::uint8_t red = 200) {
     std::vector<std::uint8_t> bytes = flat({2, 4}, 0, 0, 0, 0);
 
@@ -309,9 +317,9 @@ Pixels covered(int much, std::uint8_t red = 200) {
 
 }
 
-// Bez Unicode nie ma znaków blokowych: kratka to dwie na cztery podkratki, bez względu na gęstość,
-// jaką terminal umiałby z Unicode.
-TRIAL("grain: bez Unicode dwie na cztery podkratki") {
+// Without Unicode there are no block characters: a cell is two by four sub-cells, whatever density
+// the terminal could do with Unicode.
+TRIAL("grain: without Unicode, two by four sub-cells") {
     for (const ui::Blocks kind : {ui::Blocks::basic, ui::Blocks::sextants, ui::Blocks::octants}) {
         same(grain(kind, false).wide, 2);
         same(grain(kind, false).high, 4);
@@ -320,9 +328,10 @@ TRIAL("grain: bez Unicode dwie na cztery podkratki") {
     same(grain(ui::Blocks::basic, true).wide, 8);
 }
 
-// Bez Unicode znak idzie z drabiny ASCII według pokrycia, w barwie obrazu; kratka pełna w kolorze to
-// tło w barwie obrazu, a w czarno-białym — najgęstszy znak.
-TRIAL("Mosaic: bez Unicode drabina znaków według pokrycia") {
+// Without Unicode the character comes from an ASCII ladder by coverage, in the image's color; a
+// fully covered cell in color is a background in the image's color, and in monochrome the densest
+// character.
+TRIAL("Mosaic: without Unicode, a ladder of characters by coverage") {
     const std::u32string ladder = U".:-=+*%#";
 
     for (int much = 1; much <= 8; ++much) {
@@ -355,11 +364,11 @@ TRIAL("Mosaic: bez Unicode drabina znaków według pokrycia") {
     same(static_cast<int>(none.shown), static_cast<int>(Shown::none));
 }
 
-// Czarno-białe: kratka dwubarwna w pełnych kolorach to dwie barwy, a w czarno-białym straciłaby tło
-// i zrobiła dziurę. Obraz z przezroczystością rysuje więc samą sylwetkę tego, co widać — pełna
-// kratka to pełny klocek, choćby miała dwie barwy.
-TRIAL("Mosaic: czarno-białe z przezroczystością to sylwetka tego, co widać") {
-    // Dwie kratki 2×3: lewa przezroczysta, prawa czerwona u góry, niebieska u dołu.
+// Monochrome: a two-colored cell in full color has two colors, but in monochrome it would lose its
+// background and make a hole. So an image with transparency draws only the silhouette of what is
+// visible; a full cell is a full block, even if it has two colors.
+TRIAL("Mosaic: monochrome with transparency is the silhouette of what is visible") {
+    // Two 2×3 cells: the left one transparent, the right one red at the top and blue at the bottom.
     std::vector<std::uint8_t> bytes = flat({4, 3}, 0, 0, 0, 0);
 
     for (int y = 0; y < 3; ++y)
@@ -381,7 +390,7 @@ TRIAL("Mosaic: czarno-białe z przezroczystością to sylwetka tego, co widać")
     same(mono.at({1, 0}).letter, U'█');
     same(static_cast<int>(mono.at({0, 0}).shown), static_cast<int>(Shown::none));
 
-    // Znaki blokowe tak samo: pełna kratka pełnym klockiem.
+    // Block characters the same way: a full cell is a full block.
     std::vector<std::uint8_t> big = flat({8, 8}, 0, 0, 200, 255);
 
     for (std::size_t at = 0; at < 32 * 4; at += 4) big[at] = 200;
@@ -391,9 +400,9 @@ TRIAL("Mosaic: czarno-białe z przezroczystością to sylwetka tego, co widać")
     same(dressed_as(held({8, 8}, big), ui::Blocks::basic, Colors::mono, true).letter, U'█');
 }
 
-// Czarno-białe bez przezroczystości (zdjęcie): tuszem jest to, co jaśniejsze od średniej jasności
-// obrazu — górna jasna połowa daje górną połówkę klocka.
-TRIAL("Mosaic: czarno-białe bez przezroczystości bierze jaśniejsze od średniej") {
+// Monochrome without transparency (a photo): the ink is whatever is brighter than the image's
+// average brightness, so a bright upper half gives the upper half block.
+TRIAL("Mosaic: monochrome without transparency takes what is brighter than average") {
     std::vector<std::uint8_t> bytes = flat({2, 3}, 20, 20, 20);
 
     for (int x = 0; x < 2; ++x) {
@@ -404,7 +413,7 @@ TRIAL("Mosaic: czarno-białe bez przezroczystości bierze jaśniejsze od średni
 
     same(dressed_as(held({2, 3}, bytes), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB02');
 
-    // Jasna jedna trzecia z trzech wierszy w siatce 2×4 bez Unicode: dwie podkratki z ośmiu.
+    // A bright third of three rows in a 2×4 grid without Unicode: two sub-cells out of eight.
     std::vector<std::uint8_t> tall = flat({2, 4}, 20, 20, 20);
 
     for (int x = 0; x < 2; ++x) {
@@ -415,8 +424,8 @@ TRIAL("Mosaic: czarno-białe bez przezroczystości bierze jaśniejsze od średni
 
     same(dressed_as(held({2, 4}, tall), ui::Blocks::sextants, Colors::mono, false).letter, U':');
 
-    // Jasność waży kanały jak oko: czysta czerwień jest ciemniejsza od średniej zieleni, więc tuszem
-    // są dwa dolne wiersze zieleni, a nie górny czerwieni.
+    // Brightness weighs the channels as the eye does: pure red is darker than the average green, so
+    // the ink is the two lower rows of green, not the upper row of red.
     std::vector<std::uint8_t> hues = flat({2, 3}, 0, 160, 0);
 
     for (int x = 0; x < 2; ++x) {
@@ -428,13 +437,13 @@ TRIAL("Mosaic: czarno-białe bez przezroczystości bierze jaśniejsze od średni
 
     same(dressed_as(held({2, 3}, hues), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB39');
 
-    // Barwa jednolita jest równa średniej, więc cała jest tuszem.
+    // A uniform color equals the average, so all of it is ink.
     same(dressed_as(held({2, 3}, flat({2, 3}, 90, 90, 90)), ui::Blocks::sextants, Colors::mono, true).letter, U'█');
 }
 
-// Palety (256 i 16 kolorów) rysują się jak pełne kolory — do palety terminala barwy sprowadza dopiero
-// wypisanie.
-TRIAL("Mosaic: palety rysują jak pełne kolory") {
+// Palettes (256 and 16 colors) draw like full color; colors are reduced to the terminal's palette
+// only when written out.
+TRIAL("Mosaic: palettes draw like full color") {
     std::vector<std::uint8_t> bytes = flat({2, 3}, 0, 0, 200);
 
     for (int x = 0; x < 2; ++x) bytes[static_cast<std::size_t>(x) * 4] = 200, bytes[static_cast<std::size_t>(x) * 4 + 2] = 0;

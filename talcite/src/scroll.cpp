@@ -12,14 +12,15 @@ namespace talcite::ui {
 
 namespace {
 
-// Trzy wiersze na ząbek kółka — tyle daje większość terminali i tyle wyrabia oko.
+// Three rows per wheel notch: what most terminals do and what the eye can follow.
 constexpr int stepping = 3;
 
-// **Paski: zawsze albo tylko wtedy, gdy trzeba** (`needed`). Pasek „gdy trzeba" stoi na osi, na
-// której treść nie mieści się w oknie; treść pytana jest bez pasków, a gdy jeden stanie, drugi oś
-// sprawdza jeszcze raz — pasek pionowy zabiera kolumnę, więc zawinięta treść może urosnąć i dopiero
-// wtedy nie zmieścić się w poziomie (i odwrotnie). Dwa przejścia wystarczą: pasków są dwa i żaden
-// nie znika, gdy już stanął.
+// Which scrollbars to show, as {column on the right, row at the bottom}: always, or only when
+// needed (`needed`). A bar "when needed" appears on an axis where the content does not fit in the
+// window. The content is first asked without bars; once one bar appears, the other axis is checked
+// again, because a vertical bar takes a column, so wrapped content may grow and only then fail to fit
+// horizontally (and the other way around). Two passes are enough: there are two bars and neither
+// disappears once it has appeared.
 std::pair<int, int> bars(const ScrollShape& shape, bool across, bool down, const Node& child, Size room) {
     if (!shape.scrollbar) return {0, 0};
 
@@ -47,19 +48,19 @@ std::pair<int, int> bars(const ScrollShape& shape, bool across, bool down, const
 
 }
 
-// **Jeden przewijak, trzy osie.** Dawniej były trzy klasy — VScroll, HScroll i Scroll — z nagłówkami
-// identycznymi co do litery i ciałami, które różniły się tylko tym, który wymiar dziecko dostaje
-// dopasowany, a który wolny. Oś otwarta (`across` w poziomie, `down` w pionie) pyta dziecko
-// o `plenty`, zamknięta — o tyle, ile jest; na zamkniętej osi treść jest tak duża jak okno, więc
-// przewinięcie w niej zawsze wychodzi zero i nic osobnego nie trzeba pilnować.
+// One scroller for three axis choices. The axes differ only in which dimension the child gets
+// fitted and which one free. An open axis (`across` horizontally, `down` vertically) asks the child
+// for `plenty`, a closed one for what is there; on a closed axis the content is exactly as large as
+// the window, so the scroll offset along it always comes out zero and needs no special handling.
 
 Scroll::Scroll(Axis axis, ScrollShape shape)
     : axis_(axis), shape_(shape), upright_(std::make_shared<Grip>()), sideways_(std::make_shared<Grip>()) {}
 
-// **Zawiadamiamy tylko o zmianie i tylko stąd.** Przycięcie do bieżącego okna dzieje się
-// w `paint`, więc nadawanie z każdej zmiany `shift_` znaczyłoby podmienianie drzewa w trakcie
-// składania klatki. Skutek jest znany i przyjęty: zwężenie okna, które samo dosunie zawartość,
-// nie zawiadomi nikogo. Składowa zamkniętej osi jest pomijana.
+// Sets the scroll offset (negative parts become zero) and sends a `ScrollEvent` only on a change,
+// and only from here. Clamping to the current window happens in `paint`, so notifying on every
+// change of `shift_` would mean replacing the tree while a frame is being composed. The known and
+// accepted consequence: narrowing the window, which moves the content by itself, notifies nobody.
+// The component of a closed axis is ignored.
 void Scroll::shift(Spot given) {
     const Spot want{across() ? std::max(given.x, 0) : 0, down() ? std::max(given.y, 0) : 0};
 
@@ -70,11 +71,12 @@ void Scroll::shift(Spot given) {
     (void)trigger(ScrollEvent{});
 }
 
-// Pytamy o `plenty` **pomniejszone o pasek**: dziecko oddające to, co dostało — panel, zasłona,
-// okno — oddałoby inaczej `plenty`, a dodanie do tego jedynki przepełnia `int` i rozmiar wychodzi
-// ujemny. Przewijak znikał wtedy z ekranu. Oddajemy co najwyżej tyle, ile sami dostaliśmy: rodzic
-// nie ma skąd wziąć więcej. Napis, który przy wąskim oknie by się zawinął, w przewijaku otwartym
-// w poziomie zostaje jednym długim wierszem — i to jest właśnie to, czego się po nim spodziewamy.
+// The size the scroller wants: the child's size plus the bars, but at most `room`. We ask for
+// `plenty` minus the bar: a child that returns what it was given (a panel, a veil, a window) would
+// otherwise return `plenty`, and adding one to that overflows `int`, so the size would come out
+// negative and the scroller would vanish from the screen. We return at most what we were given:
+// the parent has nowhere to take more from. A label that would wrap in a narrow window stays one
+// long row in a horizontally open scroller, which is exactly what is expected of it.
 Size Scroll::wants(Size room) const {
     if (children().empty()) return {};
 
@@ -88,13 +90,14 @@ Size Scroll::wants(Size room) const {
 
 
 
-// Dziecko stoi u nas w prostokącie przesuniętym o przewinięcie i tak dużym, jak samo chciało na
-// osiach otwartych. Widoczna jest z tego tylko część wspólna z oknem bez pasków — i tylko tę część
-// dziecko w ogóle narysuje, bo dostaje ją jako widoczność.
+// Draws the visible part of the child and the bars. The child sits in a rectangle shifted by the
+// scroll offset and as large as it wanted on the open axes. Only its intersection with the window
+// without bars is visible, and the child draws only that part, because it receives it as its
+// visible area.
 View Scroll::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent wherever nothing is drawn, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
@@ -102,8 +105,8 @@ View Scroll::paint(Size given, Area seen) {
 
     Node& one = *children().front();
 
-    // Pionowy pasek zabiera kolumnę z prawej, poziomy — dolny wiersz. Narożnik między nimi
-    // zostaje pusty, bo nie należy do żadnego z nich.
+    // The vertical bar takes the rightmost column, the horizontal one the bottom row. The corner
+    // between them stays empty, because it belongs to neither.
     const auto [aside, below] = bars(shape_, across(), down(), *children().front(), given);
 
     window_ = {given.wide - aside, given.high - below};
@@ -113,22 +116,23 @@ View Scroll::paint(Size given, Area seen) {
     whole_ = {across() ? std::max(wants.wide, 0) : window_.wide,
               down() ? std::max(wants.high, 0) : window_.high};
 
-    // Treść mogła się skrócić między klatkami — wtedy przewinięcie wisiałoby za jej końcem.
+    // The content may have shrunk between frames; the offset would then point past its end.
     shift_ = {std::clamp(shift_.x, 0, std::max(whole_.wide - window_.wide, 0)),
               std::clamp(shift_.y, 0, std::max(whole_.high - window_.high, 0))};
 
-    // Treść jest większa od okna, a okno mniejsze o paski — dlatego przecinamy dwa razy:
-    // najpierw widocznością, potem samym oknem bez pasków.
+    // The content is larger than the window, and the window is smaller by the bars, so we
+    // intersect twice: first with the visible area, then with the window without bars.
     const Area where{{-shift_.x, -shift_.y}, whole_};
     const Area part = Area::crossed(Area::crossed(seen, {{0, 0}, window_}), where);
 
     made.draw(one.render(where, part - where.at), part.at - seen.at);
 
-    // **Za ogniskiem — w `paint`, jak w liście**, bo dopiero po rozstawieniu dzieci znany jest
-    // prostokąt węzła, który ognisko wziął. Gdy leży poza oknem, dosuwamy przewinięcie i rysujemy
-    // treść drugi raz — raz na zmianę ogniska, nie na klatkę. Kółko przesuwa widok i ogniska nie
-    // rusza, więc oba nie kłócą się o `shift_`. Bez zawiadomienia, jak przy przycięciu: klatka
-    // w toku nie jest porą na podmienianie drzewa. Na osi zamkniętej `followed` przycina do zera.
+    // Following the focus happens in `paint`, as in a list, because only after the children are
+    // laid out is the rectangle of the node that took the focus known. When it lies outside the
+    // window, we move the offset and draw the content a second time: once per focus change, not
+    // per frame. The wheel moves the view and leaves the focus alone, so the two do not fight over
+    // `shift_`. No notification, as with clamping: a frame in progress is no time to replace the
+    // tree. On a closed axis `followed` clamps to zero.
     if (follow_) {
         follow_ = false;
 
@@ -196,19 +200,19 @@ View Scroll::paint(Size given, Area seen) {
     return made;
 }
 
-// Ognisko wzięło któreś z dzieci — zdarzenie bąbelkuje w górę — więc następna klatka ma za nim
-// pójść. Nie trzymamy wskaźnika: węzeł może zginąć przed klatką, a `Root` i tak wie, kto ma
-// ognisko. Zdarzenia nie bierzemy, żeby rodzice też je zobaczyli — przewijak w przewijaku.
+// One of the descendants took the focus (the event bubbles up), so the next frame has to follow it.
+// We keep no pointer: the node may die before the frame, and `Root` knows who has the focus anyway.
+// The event is not consumed, so that parents see it too (a scroller inside a scroller).
 bool Scroll::handle(FocusEvent&) {
     follow_ = true;
 
     return false;
 }
 
-// Kółko przewija w pionie, a z Shiftem w poziomie — tak robi większość programów i tak działa
-// jedyna mysz, która ma tylko jedno kółko. Przewijak tylko poziomy przewija kółkiem w poziomie, bez
-// Shifta. Na końcu przewijania oddajemy false, więc zdarzenie idzie w górę — przewijak
-// w przewijaku przekazuje ruch dalej, zamiast go połykać.
+// The wheel scrolls vertically, and horizontally with Shift: most programs do this, and it is the
+// only way for a mouse with a single wheel. A horizontal-only scroller scrolls horizontally with
+// the wheel, without Shift. At the end of the range we return false, so the event goes up: a
+// scroller inside a scroller passes the motion on instead of swallowing it.
 bool Scroll::handle(WheelEvent& what) {
     const Spot was = shift_;
 
@@ -228,8 +232,9 @@ bool Scroll::handle(WheelEvent& what) {
     return true;
 }
 
-// **Mysz na pasku** (U6 w twa), na każdej osi swoim chwytem: strzałka — kratka, tor — okno,
-// suwak — ciągnięcie. Ruch przy chwycie idzie do paska, który chwycono, gdziekolwiek jest kursor.
+// The mouse on a scrollbar, with a separate grip for each axis: an arrow moves by one cell, the
+// track by one window, the thumb is dragged. While a grip is held, motion goes to the bar that was
+// grabbed, wherever the pointer is.
 bool Scroll::handle(MouseEvent& what) {
     const Spot here = local(what.where());
 

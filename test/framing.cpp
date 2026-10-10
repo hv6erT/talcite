@@ -16,13 +16,16 @@ using namespace talcite;
 
 namespace {
 
+// A node of a fixed size that paints its area with one letter.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // The fixed size, whatever space is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
 protected:
+    // Fills the whole given size with the letter, shifted to the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -38,6 +41,7 @@ private:
     char32_t what_ = U'?';
 };
 
+// Reads one row of a view as text, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -54,7 +58,7 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("Frame: narożniki, boki i wnętrze") {
+TRIAL("Frame: corners, sides and interior") {
     ui::Frame one;
 
     one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'x'));
@@ -67,7 +71,7 @@ TRIAL("Frame: narożniki, boki i wnętrze") {
     same(read(made, 3), std::string{"└────┘"});
 }
 
-TRIAL("Frame: podwójna i gruba linia") {
+TRIAL("Frame: double and thick lines") {
     ui::Frame one;
 
     one.border(ui::Border::twin);
@@ -79,7 +83,7 @@ TRIAL("Frame: podwójna i gruba linia") {
     same(read(one.render({{0, 0}, {4, 2}}), 0), std::string{"┏━━┓"});
 }
 
-TRIAL("Frame: bez linii nie ma ramki i dziecko dostaje wszystko") {
+TRIAL("Frame: without a line there is no frame and the child gets everything") {
     ui::Frame one{"tytuł", ui::FrameShape{ui::Border::none}};
 
     const auto inner = std::make_shared<Box>(ui::Size{4, 2}, U'x');
@@ -93,7 +97,7 @@ TRIAL("Frame: bez linii nie ma ramki i dziecko dostaje wszystko") {
     same(read(made, 0), std::string{"xxxxxx"});
 }
 
-TRIAL("Frame: ramka zabiera dziecku po kratce z każdej strony") {
+TRIAL("Frame: the frame takes one cell from the child on each side") {
     ui::Frame one;
 
     const auto inner = std::make_shared<Box>(ui::Size{10, 10}, U'x');
@@ -108,7 +112,7 @@ TRIAL("Frame: ramka zabiera dziecku po kratce z każdej strony") {
     same(inner->area().size.high, 3);
 }
 
-TRIAL("Frame: chce tyle, co dziecko, plus dwa w obu wymiarach") {
+TRIAL("Frame: wants as much as the child, plus two in both dimensions") {
     ui::Frame one;
 
     one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'x'));
@@ -119,7 +123,7 @@ TRIAL("Frame: chce tyle, co dziecko, plus dwa w obu wymiarach") {
     same(wants.high, 4);
 }
 
-TRIAL("Frame: nie chce więcej, niż dostał od rodzica") {
+TRIAL("Frame: wants no more than it got from the parent") {
     ui::Frame one;
 
     one.children().add(std::make_shared<Box>(ui::Size{40, 40}, U'x'));
@@ -130,7 +134,7 @@ TRIAL("Frame: nie chce więcej, niż dostał od rodzica") {
     same(wants.high, 5);
 }
 
-TRIAL("Frame: tytuł stoi w górnej krawędzi, wyśrodkowany") {
+TRIAL("Frame: the title stands in the top edge, centered") {
     ui::Frame one{"kot"};
 
     const View made = one.render({{0, 0}, {11, 3}});
@@ -138,7 +142,7 @@ TRIAL("Frame: tytuł stoi w górnej krawędzi, wyśrodkowany") {
     same(read(made, 0), std::string{"┌── kot ──┐"});
 }
 
-TRIAL("Frame: tytuł do lewej i do prawej") {
+TRIAL("Frame: the title to the left and to the right") {
     ui::Frame one{"kot"};
 
     one.justify(ui::Justify::left);
@@ -150,9 +154,9 @@ TRIAL("Frame: tytuł do lewej i do prawej") {
     same(read(one.render({{0, 0}, {11, 3}}), 0), std::string{"┌──── kot ┐"});
 }
 
-// Tytuł i stopka mają osobne wyrównania: w MC ścieżka stoi na środku górnej krawędzi, a wiersz
-// stanu do lewej — jedno `justify` na obie nie dawało się tak ustawić.
-TRIAL("Frame: stopka ma własne wyrównanie, niezależne od tytułu") {
+// The title and the footer have separate alignments: in MC the path stands in the middle of the top
+// edge, and the status line to the left, which one `justify` for both could not express.
+TRIAL("Frame: the footer has its own alignment, independent of the title") {
     ui::Frame one{"kot"};
 
     one.footer("pies");
@@ -172,7 +176,7 @@ TRIAL("Frame: stopka ma własne wyrównanie, niezależne od tytułu") {
     same(read(one.render({{0, 0}, {11, 3}}), 2), std::string{"└ pies ───┘"});
 }
 
-TRIAL("Frame: za długi tytuł skraca się wielokropkiem") {
+TRIAL("Frame: a title that is too long is shortened with an ellipsis") {
     ui::Frame one{"bardzo długi tytuł"};
 
     const View made = one.render({{0, 0}, {10, 3}});
@@ -180,7 +184,7 @@ TRIAL("Frame: za długi tytuł skraca się wielokropkiem") {
     same(read(made, 0), std::string{"┌ bardzo…┐"});
 }
 
-TRIAL("Frame: dolny napis stoi w dolnej krawędzi") {
+TRIAL("Frame: the footer stands in the bottom edge") {
     ui::Frame one{"kot"};
 
     one.footer("3 pliki");
@@ -191,7 +195,7 @@ TRIAL("Frame: dolny napis stoi w dolnej krawędzi") {
     same(read(made, 2), std::string{"└─ 3 pliki ─┘"});
 }
 
-TRIAL("Frame: napisy wymieniają się przez gettery i settery") {
+TRIAL("Frame: the texts are exchanged through getters and setters") {
     ui::Frame one{"kot"};
 
     same(one.title(), std::string{"kot"});
@@ -205,9 +209,8 @@ TRIAL("Frame: napisy wymieniają się przez gettery i settery") {
     same(one.border(), ui::Border::thin);
 }
 
-// Linie i tytuł mają **osobne role**, więc skórka rozstrzyga o obu z osobna — i to jest różnica
-// wobec dawnego jednego koloru na całą ramkę.
-TRIAL("Frame: linie i napis biorą kolor z osobnych ról") {
+// The lines and the title have separate roles, so the skin decides about each of them on its own.
+TRIAL("Frame: the lines and the text take their color from separate roles") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Frame>("kot");
@@ -220,7 +223,7 @@ TRIAL("Frame: linie i napis biorą kolor z osobnych ról") {
     edge.foreground = Color{false, 10, 20, 30};
     told.foreground = Color{false, 40, 50, 60};
 
-    // Tytuł idzie za rdzeniem ramki: `talcite.frame.title`, nie wspólne `talcite.title`.
+    // The title follows the frame's role root: `talcite.frame.title`, not a shared `talcite.title`.
     top.skin(ui::Skin{{{"talcite.frame", edge}, {"talcite.frame.title", told}}});
 
     const View made = top.render({{0, 0}, {11, 3}});
@@ -228,7 +231,8 @@ TRIAL("Frame: linie i napis biorą kolor z osobnych ról") {
     same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(10));
     same(made.at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
 
-    // Zmieniony rdzeń przenosi ze sobą tytuł — to jest cały powód tej zmiany.
+    // A changed root takes the title along with it: that is the whole point of deriving the title's
+    // role from the root.
     Style other{};
 
     other.foreground = Color{false, 70, 80, 90};
@@ -239,9 +243,10 @@ TRIAL("Frame: linie i napis biorą kolor z osobnych ról") {
     same(top.render({{0, 0}, {11, 3}}).at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
 }
 
-// Stopka jest w barwie linii, nie tytułu — jak wiersz stanu pod listą plików w MC, który idzie
-// zwykłą barwą panelu, choć tytuł czynnego panelu jest odwrotny.
-TRIAL("Frame: dolny napis bierze kolor linii, nie tytułu") {
+// The footer is in the color of the lines, not of the title, like the status line under the file
+// list in MC, which uses the panel's ordinary color although the title of the active panel is
+// inverted.
+TRIAL("Frame: the footer takes the color of the lines, not of the title") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Frame>("kot");
@@ -265,7 +270,7 @@ TRIAL("Frame: dolny napis bierze kolor linii, nie tytułu") {
     same(made.at({4, 2}).style.foreground.red, static_cast<std::uint8_t>(10));
 }
 
-TRIAL("Frame: ciasny prostokąt niczego nie wywraca") {
+TRIAL("Frame: a tight area breaks nothing") {
     ui::Frame one{"kot"};
 
     one.children().add(std::make_shared<Box>(ui::Size{4, 4}, U'x'));
@@ -280,7 +285,7 @@ TRIAL("Frame: ciasny prostokąt niczego nie wywraca") {
     same(read(second, 1), std::string{"└┘"});
 }
 
-TRIAL("Frame: pusta ramka rysuje się bez dziecka") {
+TRIAL("Frame: an empty frame is drawn without a child") {
     ui::Frame one{"kot"};
 
     const View made = one.render({{0, 0}, {7, 3}});
@@ -289,7 +294,7 @@ TRIAL("Frame: pusta ramka rysuje się bez dziecka") {
     same(one.wants({80, 25}).wide, 2);
 }
 
-TRIAL("Frame: bez górnej krawędzi linia idzie przez całą szerokość") {
+TRIAL("Frame: without the top edge the line runs across the full width") {
     ui::Frame one{"kot"};
 
     one.top(false);
@@ -300,7 +305,7 @@ TRIAL("Frame: bez górnej krawędzi linia idzie przez całą szerokość") {
     same(read(made, 2), std::string{"└────┘"});
 }
 
-TRIAL("Frame: bez górnej krawędzi nie ma tytułu") {
+TRIAL("Frame: without the top edge there is no title") {
     ui::Frame one{"kot"};
 
     one.footer("stopka");
@@ -312,7 +317,7 @@ TRIAL("Frame: bez górnej krawędzi nie ma tytułu") {
     ought(read(made, 2).find("stopka") != std::string::npos);
 }
 
-TRIAL("Frame: bez dolnej krawędzi nie ma dolnego napisu") {
+TRIAL("Frame: without the bottom edge there is no footer") {
     ui::Frame one{"kot"};
 
     one.footer("stopka");
@@ -324,7 +329,7 @@ TRIAL("Frame: bez dolnej krawędzi nie ma dolnego napisu") {
     ought(read(made, 2).find("stopka") == std::string::npos);
 }
 
-TRIAL("Frame: bez boku znika kolumna i narożniki po tej stronie") {
+TRIAL("Frame: without a side, the column and the corners on that side disappear") {
     ui::Frame one;
 
     one.left(false);
@@ -336,7 +341,7 @@ TRIAL("Frame: bez boku znika kolumna i narożniki po tej stronie") {
     same(read(made, 2), std::string{"────┘"});
 }
 
-TRIAL("Frame: wyłączona krawędź nie zabiera treści miejsca") {
+TRIAL("Frame: a disabled edge takes no room from the content") {
     ui::Frame one;
 
     const auto inner = std::make_shared<Box>(ui::Size{10, 10}, U'x');
@@ -359,7 +364,7 @@ TRIAL("Frame: wyłączona krawędź nie zabiera treści miejsca") {
     same(wants.high, 11);
 }
 
-TRIAL("Frame: sama górna krawędź to zwykła kreska z tytułem") {
+TRIAL("Frame: the top edge alone is a plain line with a title") {
     ui::Frame one{"kot"};
 
     one.bottom(false);
@@ -377,7 +382,7 @@ TRIAL("Frame: sama górna krawędź to zwykła kreska z tytułem") {
     same(inner->area().at.y, 1);
 }
 
-TRIAL("Frame: wszystkie krawędzie wyłączone to to samo, co brak linii") {
+TRIAL("Frame: all edges disabled is the same as no line") {
     ui::Frame one{"kot"};
 
     one.top(false);
@@ -395,7 +400,7 @@ TRIAL("Frame: wszystkie krawędzie wyłączone to to samo, co brak linii") {
     same(inner->area().size.wide, 4);
 }
 
-TRIAL("Frame: przewinięta ramka rysuje właściwy kawałek") {
+TRIAL("Frame: a scrolled frame draws the right piece") {
     ui::Scroll scroll{ui::Axis::vertical};
 
     const auto frame = std::make_shared<ui::Frame>("kot");
@@ -412,7 +417,7 @@ TRIAL("Frame: przewinięta ramka rysuje właściwy kawałek") {
     same(read(made, 2), std::string{"│xxxx│"});
 }
 
-TRIAL("Frame: ramka w ramce") {
+TRIAL("Frame: a frame within a frame") {
     ui::Frame outer{"z zewnątrz"};
 
     const auto inner = std::make_shared<ui::Frame>();
@@ -429,7 +434,7 @@ TRIAL("Frame: ramka w ramce") {
     same(read(made, 3), std::string{"│╚════╝│"});
 }
 
-TRIAL("Line: sama linia przez całą daną szerokość") {
+TRIAL("Line: a bare line across the whole given width") {
     ui::Line one;
 
     const View made = one.render({{0, 0}, {8, 1}});
@@ -437,24 +442,24 @@ TRIAL("Line: sama linia przez całą daną szerokość") {
     same(read(made, 0), std::string{"────────"});
 }
 
-// Rozdzielnik **nie rozpycha rodzica**: prosi o szerokość samego napisu, a bez napisu o zero.
-// Rozciąga go kolumna, bo każdemu dziecku daje całą swoją szerokość.
-TRIAL("Line: prosi o napis, a bez napisu o nic") {
+// A separator does not push its parent wider: it asks for the width of its text alone, and without
+// text for zero. The column stretches it, because it gives every child its whole width.
+TRIAL("Line: asks for its text, and without text for nothing") {
     ui::Line bare;
 
     same(bare.wants({20, 3}), (ui::Size{0, 1}));
 
     ui::Line said{"Opcje"};
 
-    // Pięć liter i po spacji z każdej strony.
+    // Five letters and a space on each side.
     same(said.wants({20, 3}), (ui::Size{7, 1}));
     same(said.wants({4, 3}), (ui::Size{4, 1}));
 
-    // Rozdzielnik, który się zawija, to nie rozdzielnik.
+    // A separator that wraps is not a separator.
     same(said.wants({20, 0}), (ui::Size{7, 0}));
 }
 
-TRIAL("Line: napis stoi w linii, domyślnie na środku") {
+TRIAL("Line: the text stands in the line, in the middle by default") {
     ui::Line one{"Opcje"};
 
     View made = one.render({{0, 0}, {13, 1}});
@@ -474,7 +479,7 @@ TRIAL("Line: napis stoi w linii, domyślnie na środku") {
     same(read(made, 0), std::string{"────── Opcje"});
 }
 
-TRIAL("Line: za długi napis przycina się wielokropkiem") {
+TRIAL("Line: a text that is too long is cut with an ellipsis") {
     ui::Line one{"Ustawienia panelu"};
 
     const View made = one.render({{0, 0}, {8, 1}});
@@ -482,7 +487,7 @@ TRIAL("Line: za długi napis przycina się wielokropkiem") {
     same(read(made, 0), std::string{" Ustawi…"});
 }
 
-TRIAL("Line: grubość bierze się ze stylu, a brak linii zostawia sam napis") {
+TRIAL("Line: the weight comes from the style, and no line leaves only the text") {
     ui::Line twin{"Opcje", ui::Border::twin};
 
     same(read(twin.render({{0, 0}, {13, 1}}), 0), std::string{"═══ Opcje ═══"});
@@ -496,15 +501,16 @@ TRIAL("Line: grubość bierze się ze stylu, a brak linii zostawia sam napis") {
     same(read(none.render({{0, 0}, {13, 1}}), 0), std::string{"    Opcje"});
 }
 
-TRIAL("Line: nie przyjmuje dzieci") {
+TRIAL("Line: takes no children") {
     ui::Line one;
 
     same(one.capacity(), 0);
 }
 
-// Rozdzielnik jest kawałkiem ramki: bez roli wygląda jak `talcite.frame`, z rolą — jak ta rola,
-// z napisem w `.title`. Tak kreska nad wierszem stanu panelu idzie za panelem czynnym i biernym.
-TRIAL("Line: kreska i napis biorą kolor z roli, domyślnie z talcite.frame") {
+// A separator is a piece of a frame: without a role it looks like `talcite.frame`, with a role like
+// that role, with the text in `.title`. That is how the line above a panel's status row follows the
+// active and the inactive panel.
+TRIAL("Line: the line and the text take their color from the role, by default talcite.frame") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Line>("kot");
@@ -540,10 +546,10 @@ TRIAL("Line: kreska i napis biorą kolor z roli, domyślnie z talcite.frame") {
     same(second.at({3, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
 }
 
-// **Rozdzielnik dochodzi do ramki.** Dziecko nie maluje poza swoim prostokątem, więc złączkę
-// stawia ramka — poznając rozdzielnik po złożonym obrazie, a nie po typie węzła. Dzięki temu
-// działa to przez dowolne zagnieżdżenie.
-TRIAL("Frame: rozdzielnik w środku dostaje złączki") {
+// A separator reaches the frame. A child does not paint outside its area, so the joint is placed by
+// the frame, which recognizes the separator from the composed picture, not from the node's type.
+// Thanks to that, it works through any nesting.
+TRIAL("Frame: a separator inside gets joints") {
     ui::Frame frame;
 
     const auto column = std::make_shared<ui::Column>();
@@ -563,7 +569,7 @@ TRIAL("Frame: rozdzielnik w środku dostaje złączki") {
     same(read(made, 4), std::string{"└──────┘"});
 }
 
-TRIAL("Frame: złączka wchodzi tylko przy zgodnej grubości") {
+TRIAL("Frame: a joint goes in only when the weights match") {
     ui::Frame frame{{}, ui::FrameShape{ui::Border::twin}};
 
     const auto column = std::make_shared<ui::Column>();
@@ -575,12 +581,12 @@ TRIAL("Frame: złączka wchodzi tylko przy zgodnej grubości") {
 
     const View made = frame.render({{0, 0}, {8, 4}});
 
-    // Cienka kreska w grubej ramce nie łączy się — bo i nie ma z czym.
+    // A thin line in a double frame does not join, as there is nothing to join it with.
     same(read(made, 1), std::string{"║──────║"});
     same(read(made, 2), std::string{"╠══════╣"});
 }
 
-TRIAL("Frame: złączki dostaje tylko treść dotykająca obu boków") {
+TRIAL("Frame: only content touching both sides gets joints") {
     ui::Frame frame;
 
     const auto column = std::make_shared<ui::Column>();
@@ -592,16 +598,16 @@ TRIAL("Frame: złączki dostaje tylko treść dotykająca obu boków") {
 
     const View made = frame.render({{0, 0}, {14, 4}});
 
-    // Napis nie sięga boków, ale kreska sięga — więc złączki są.
+    // The text does not reach the sides, but the line does, so there are joints.
     same(read(made, 1), std::string{"├── Opcje ───┤"});
 
-    // Zwykła treść nie.
+    // Ordinary content does not.
     same(read(made, 2), std::string{"│xxxxxxxxxxxx│"});
 }
 
-// Napis szerszy niż wnętrze zjada kreskę na brzegach — i wtedy złączek nie ma, bo nie ma czego
-// łączyć. To ta sama reguła, tylko widziana od drugiej strony.
-TRIAL("Frame: rozdzielnik wypełniony napisem złączek nie dostaje") {
+// A text wider than the interior eats the line at the edges, and then there are no joints, because
+// there is nothing to join. It is the same rule, seen from the other side.
+TRIAL("Frame: a separator filled with text gets no joints") {
     ui::Frame frame;
 
     const auto column = std::make_shared<ui::Column>();
@@ -615,15 +621,16 @@ TRIAL("Frame: rozdzielnik wypełniony napisem złączek nie dostaje") {
     same(read(made, 1), std::string{"│ Usta…│"});
 }
 
-// --- Tło ramki --------------------------------------------------------------------------------
+// --- Frame background ----------------------------------------------------------------------------
 //
-// Wnętrze zostawało dotąd spacjami w stylu domyślnym, więc pudełko w barwnej skórce było
-// przezroczyste wszędzie tam, gdzie dziecko go nie zakryło. Żadne okno w Midnight Commanderze
-// tak nie wygląda: odstęp przy krawędzi, prześwit obok krótszego napisu i wiersz pod ostatnim
-// dzieckiem są w kolorze okna.
+// The interior takes the background of the frame's role, so a box in a colored skin is not
+// transparent wherever the child does not cover it. Every window in Midnight Commander looks that
+// way: the margin at the edge, the gap beside a shorter text and the row under the last child are
+// in the window's color.
 
 namespace {
 
+// A skin with a navy frame and yellow ordinary text.
 ui::Skin painted() {
     Style frame{};
     Style normal{};
@@ -638,7 +645,7 @@ ui::Skin painted() {
 
 }
 
-TRIAL("Frame: wnętrze bierze barwę roli ramki, także tam, gdzie nic nie stoi") {
+TRIAL("Frame: the interior takes the color of the frame's role, also where nothing stands") {
     ui::Root top;
 
     top.skin(painted());
@@ -653,21 +660,23 @@ TRIAL("Frame: wnętrze bierze barwę roli ramki, także tam, gdzie nic nie stoi"
 
     const Color background = Color{false, 0, 0, 160};
 
-    // Krawędź, prześwit obok krótszego napisu i wiersz pod ostatnim dzieckiem — w tle okna.
+    // The edge, the gap beside the shorter text and the row under the last child: in the window's
+    // background.
     same(made.at({0, 0}).style.background, background);
     same(made.at({8, 1}).style.background, background);
     same(made.at({5, 3}).style.background, background);
 
-    // **Kratka ma jeden styl, nie dwa.** Pod literą napisu stoi rola napisu, a nie tło ramki —
-    // tło jest tym, co widać tam, gdzie nikt nic nie namalował, a nie warstwą pod spodem.
-    // W barwnej skórce to rola napisu musi podać własne tło, i tak właśnie robi skórka z dema.
+    // A cell has one style, not two. Under a letter of the text stands the text's role, not the
+    // frame's background: the background is what is visible where nobody painted anything, not a
+    // layer underneath. In a colored skin the text's role has to give its own background, and the
+    // demo skin does exactly that.
     same(read(made, 1), std::string{"│kot       │"});
     same(made.at({1, 1}).letter, U'k');
     same(made.at({1, 1}).style.foreground, (Color{false, 255, 255, 0}));
     ought(made.at({1, 1}).style.background.transparent);
 }
 
-TRIAL("Frame: bez krawędzi tło i tak jest") {
+TRIAL("Frame: without edges the background is still there") {
     ui::Root top;
 
     top.skin(painted());
@@ -683,8 +692,8 @@ TRIAL("Frame: bez krawędzi tło i tak jest") {
     same(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
 }
 
-// Skórka wbudowana nie ma barw, więc wypełnienie zapisuje dokładnie to, co i tak stało na kartce.
-TRIAL("Frame: pod wbudowaną skórką tło niczego nie zmienia") {
+// The built-in skin has no colors, so the fill writes exactly what was on the sheet anyway.
+TRIAL("Frame: under the built-in skin the background changes nothing") {
     ui::Frame frame;
 
     frame.children().add(std::make_shared<ui::Span>("kot"));
@@ -695,13 +704,13 @@ TRIAL("Frame: pod wbudowaną skórką tło niczego nie zmienia") {
     same(made.at({7, 1}), (Cell{U' ', Style{}, Shown::own}));
 }
 
-// --- Przezroczystość pojemników ---------------------------------------------------------------
+// --- Transparency of containers ------------------------------------------------------------------
 //
-// Pojemnik nie ma własnego wyglądu: układa dzieci i nic poza tym. Zamalowywanie przydzielonego
-// prostokąta własnymi spacjami sprawiało, że tło rodzica ginęło wszędzie tam, gdzie dziecko go
-// nie zakryło — a to jest większość okna.
+// A container has no look of its own: it lays out its children and nothing more. Painting its area
+// with its own spaces would hide the parent's background wherever a child does not cover it, and
+// that is most of the window.
 
-TRIAL("Frame: tło przechodzi przez kolumnę i wiersz do prześwitów") {
+TRIAL("Frame: the background passes through a column and a row into the gaps") {
     ui::Root top;
 
     top.skin(painted());
@@ -719,16 +728,16 @@ TRIAL("Frame: tło przechodzi przez kolumnę i wiersz do prześwitów") {
 
     const Color background = Color{false, 0, 0, 160};
 
-    // Obok krótszego napisu, pod ostatnim dzieckiem i w narożniku wnętrza.
+    // Beside the shorter text, under the last child and in the corner of the interior.
     same(made.at({5, 1}).style.background, background);
     same(made.at({3, 3}).style.background, background);
     same(made.at({8, 4}).style.background, background);
 }
 
-// Pusty węzeł **nie jest odstępem**: bez dzieci chce zera na zero, więc kolumna nie daje mu ani
-// wiersza. Odstęp wymaga węzła, który poprosi o wysokość — i to jest rzecz, której w bibliotece
-// nie ma. Notujemy to tutaj, bo próba jest właściwym miejscem na taką wiedzę.
-TRIAL("Frame: pusty węzeł nie zajmuje miejsca, a tło i tak jest") {
+// An empty node is not a spacer: without children it wants zero by zero, so the column gives it no
+// row. A spacer needs a node that asks for a height, and the library has no such thing. We note
+// this here, because a trial is the right place for such knowledge.
+TRIAL("Frame: an empty node takes no room, and the background is still there") {
     ui::Root top;
 
     top.skin(painted());
@@ -750,20 +759,22 @@ TRIAL("Frame: pusty węzeł nie zajmuje miejsca, a tło i tak jest") {
     same(read(made, 1), std::string{"│ab      │"});
     same(read(made, 2), std::string{"│cd      │"});
 
-    // Prześwit obok napisu i wiersz pod ostatnim dzieckiem — w tle okna.
+    // The gap beside the text and the row under the last child: in the window's background.
     same(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
     same(made.at({3, 3}).style.background, (Color{false, 0, 0, 160}));
 }
 
 
-// --- Znaki dwukolumnowe ------------------------------------------------------------------------
+// --- Double-width characters ---------------------------------------------------------------------
 //
-// Skórka może rysować ramkę znakami CJK, a te zajmują dwie kratki. Bok jest wtedy dwiema kratkami,
-// krawędź pozioma idzie co dwie, a złączki stają na szerokości boku. Dla zwykłych znaków wszystko
-// wychodzi na jeden — i dlatego żaden wcześniejszy odcisk nie ma prawa się zmienić.
+// A skin may draw the frame with CJK characters, and those take two cells. A side is then two
+// cells, the horizontal edge goes every two cells, and the joints stand at the width of the side.
+// For ordinary characters everything comes out as one, which is why no other expected picture in
+// this file may change.
 
 namespace {
 
+// A skin that draws thin lines with double-width CJK characters.
 ui::Skin widened() {
     return ui::Skin{{},
                     {{"talcite.line.thin.upper.left", U'口'},
@@ -778,7 +789,7 @@ ui::Skin widened() {
 
 }
 
-TRIAL("Frame: znaki dwukolumnowe — bok zabiera dwie kratki, wnętrze zaczyna się dalej") {
+TRIAL("Frame: double-width characters, a side takes two cells and the interior starts further in") {
     ui::Root top;
 
     top.skin(widened());
@@ -799,7 +810,7 @@ TRIAL("Frame: znaki dwukolumnowe — bok zabiera dwie kratki, wnętrze zaczyna s
     same(frame->wants({80, 25}).wide, 24);
 }
 
-TRIAL("Frame: znaki dwukolumnowe — krawędź idzie co dwie kratki, reszta zostaje tłem") {
+TRIAL("Frame: double-width characters, the edge goes every two cells and the rest stays background") {
     ui::Root top;
 
     top.skin(widened());
@@ -809,7 +820,8 @@ TRIAL("Frame: znaki dwukolumnowe — krawędź idzie co dwie kratki, reszta zost
     frame->children().add(std::make_shared<Box>(ui::Size{20, 20}, U'x'));
     top.children().add(frame);
 
-    // Wnętrze ma pięć kratek: dwa znaki poziome zajmują cztery, piąta zostaje spacją — nie połówką.
+    // The interior has five cells: two horizontal characters take four, and the fifth stays a
+    // space, not half a character.
     const View made = top.render({{0, 0}, {9, 3}});
 
     same(read(made, 0), std::string{"口一一 口"});
@@ -817,7 +829,7 @@ TRIAL("Frame: znaki dwukolumnowe — krawędź idzie co dwie kratki, reszta zost
     same(read(made, 2), std::string{"口一一 口"});
 }
 
-TRIAL("Frame: znaki dwukolumnowe — złączka staje na szerokości boku") {
+TRIAL("Frame: double-width characters, a joint stands at the width of the side") {
     ui::Root top;
 
     top.skin(widened());
@@ -838,8 +850,8 @@ TRIAL("Frame: znaki dwukolumnowe — złączka staje na szerokości boku") {
     same(read(made, 2), std::string{"卜一一一卜"});
     same(read(made, 3), std::string{"丨yyyyyy丨"});
 
-    // Nieparzyste wnętrze: ostatni znak kreski się nie mieści, a złączka i tak wchodzi — bo kreska
-    // doszła tak daleko, jak mogła.
+    // An odd interior: the last character of the line does not fit, and the joint goes in anyway,
+    // because the line got as far as it could.
     const View odd = top.render({{0, 0}, {9, 5}});
 
     same(read(odd, 2), std::string{"卜一一 卜"});

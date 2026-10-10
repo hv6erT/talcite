@@ -22,27 +22,30 @@
 
 #endif
 
-// **Udziały sieciowe (U4).** Adres w czterech zapisach — `\\NAS\filmy`, `//NAS/filmy`,
-// `smb://NAS/filmy`, `smb://hubert@192.168.1.10/filmy` — rozkłada się na serwer, udział, resztę
-// ścieżki i użytkownika (`addressed`), a dojście do udziału idzie przez system:
+// Network shares. An address in any of four forms (\\NAS\films, //NAS/films, smb://NAS/films,
+// smb://user@192.168.1.10/films) is split into the server, the share, the rest of the path and the
+// user (`addressed`), and the share is reached through the system:
 //
-// - **Windows**: ścieżka UNC wprost. Gdy system odmawia, `WNetAddConnection2W` bez litery dysku
-//   i z `CONNECT_TEMPORARY` — najpierw bez poświadczeń (system bierze zapamiętane), a z oknem
-//   logowania z podanymi. Zapamiętanie (`remember`) to wpis w Menedżerze poświadczeń Windows
-//   (`CredWriteW`, hasło domenowe dla serwera — to samo, co `cmdkey /add`), robiony dopiero po
-//   udanym połączeniu, żeby złe hasło nie zostało w systemie. Wykaz udziałów: `NetShareEnum`.
-// - **POSIX**: GVfs. Zamontowany udział leży w `$XDG_RUNTIME_DIR/gvfs` pod nazwą
-//   `smb-share:server=…,share=…`; niezamontowany montuje `gio mount`, a użytkownik, domena i hasło
-//   idą na jego **wejście**, nie w argumentach — argumenty widać w `ps`. Wykaz: `gio list`.
-//   Zdania `gio` czytamy po angielsku (`LC_ALL=C`), bo inaczej nie dałoby się z nich wyczytać
-//   powodu. Bez `gio`, bez FUSE GVfs albo bez `XDG_RUNTIME_DIR` — `Refused::unsupported`.
+// - Windows: the UNC path directly. When the system refuses, `WNetAddConnection2W` without a drive
+//   letter and with CONNECT_TEMPORARY: first without credentials (the system uses the stored ones),
+//   and with the given ones from the login window. Remembering (`remember`) is an entry in the
+//   Windows Credential Manager (`CredWriteW`, a domain password for the server, the same as
+//   cmdkey /add), made only after a successful connection, so that a wrong password does not stay
+//   in the system. The list of shares comes from `NetShareEnum`.
+// - POSIX: GVfs. A mounted share lies in $XDG_RUNTIME_DIR/gvfs under a name of the form
+//   smb-share:server=...,share=...; an unmounted one is mounted by gio mount, and the user, domain
+//   and password go to its standard input, not into the arguments, because arguments are visible
+//   in ps. The list comes from gio list. The messages of gio are read in English (LC_ALL=C),
+//   because otherwise the reason could not be read from them. Without gio, without GVfs's FUSE or
+//   without XDG_RUNTIME_DIR the answer is `Refused::unsupported`.
 //
-// **Hasło nie zostaje**: każda kopia (napis, szeroki napis, wejście dla `gio`) jest zerowana zaraz
-// po wywołaniu, przez `wiped`, którego kompilator nie wytnie.
+// The password does not stay: every copy (the string, the wide string, the input for gio) is zeroed
+// right after the call, by `wiped`, which the compiler does not optimize away.
 namespace talcite::fs {
 
 namespace {
 
+// The text with ASCII letters made lowercase.
 std::string lowered(std::string_view said) {
     std::string made{said};
 
@@ -52,6 +55,7 @@ std::string lowered(std::string_view said) {
     return made;
 }
 
+// The value of a hexadecimal digit, or -1 for anything else.
 int hexed(char one) {
     if (one >= '0' && one <= '9') return one - '0';
     if (one >= 'a' && one <= 'f') return one - 'a' + 10;
@@ -60,7 +64,8 @@ int hexed(char one) {
     return -1;
 }
 
-// Kody procentowe adresu (`%20` → spacja). Krzywy kod zostaje, jak stoi.
+// Decodes the percent escapes of an address (%20 becomes a space). A malformed escape stays as it
+// is.
 std::string unescaped(std::string_view said) {
     std::string made;
 
@@ -83,6 +88,7 @@ std::string unescaped(std::string_view said) {
     return made;
 }
 
+// The text without leading and trailing whitespace.
 std::string trimmed(std::string_view said) {
     const auto first = said.find_first_not_of(" \t\r\n");
 
@@ -93,7 +99,7 @@ std::string trimmed(std::string_view said) {
     return std::string{said.substr(first, last - first + 1)};
 }
 
-// Człony ścieżki po obu rodzajach ukośnika, bez pustych.
+// The parts of a path split at both kinds of slash, without empty ones.
 std::vector<std::string> pieces(std::string_view said) {
     std::vector<std::string> made;
     std::string one;
@@ -115,6 +121,8 @@ std::vector<std::string> pieces(std::string_view said) {
 
 }
 
+// Splits an address in UNC, //server or smb:// form into a `Share`; `std::nullopt` for anything
+// else or for an address without a server.
 std::optional<Share> addressed(std::string_view said) {
     const std::string whole = trimmed(said);
 
@@ -131,8 +139,8 @@ std::optional<Share> addressed(std::string_view said) {
         return std::nullopt;
     }
 
-    // Użytkownik tylko w URL-u: `smb://hubert@nas/filmy`. Hasło w adresie (`hubert:tajne@`)
-    // odpada bez śladu — twa haseł nie trzyma, a adres trafia do historii.
+    // A user only in a URL: smb://user@nas/films. A password in the address (user:secret@) is
+    // dropped without a trace: twa keeps no passwords, and the address goes into the history.
     if (url) {
         const auto slash = inside.find('/');
         const auto at = inside.substr(0, slash).rfind('@');
@@ -161,7 +169,8 @@ std::optional<Share> addressed(std::string_view said) {
     return made;
 }
 
-// Adres do pokazania i do historii — w zapisie systemu: UNC na Windows, URL gdzie indziej.
+// The address for display and for the history, in the system's notation: UNC on Windows, a URL
+// elsewhere.
 std::string written(const Share& one) {
 #ifdef _WIN32
     std::string made = "\\\\" + one.server;
@@ -187,6 +196,8 @@ std::string written(const Share& one) {
 #endif
 }
 
+// What a Windows or network error code means for the user: a login problem, a missing share, the
+// network, a credential conflict, no support, or something else.
 Refused refused_by_windows(std::uint32_t code) {
     switch (code) {
         case 0: return Refused::none;
@@ -223,9 +234,10 @@ Refused refused_by_windows(std::uint32_t code) {
     }
 }
 
-// Zdanie `gio` po angielsku. Najpierw sieć: „Failed to retrieve share list from server: Connection
-// timed out" mówi o serwerze, choć wspomina wykaz. Potem logowanie — wśród nich „cancelled", bo
-// tak kończy się pytanie o hasło, na które wejście nie miało już odpowiedzi.
+// What an English gio message means. The network comes first: "Failed to retrieve share list from
+// server: Connection timed out" is about the server, although it mentions the list. Then the login,
+// including "cancelled", because that is how a password prompt ends when the input has no more
+// answers.
 Refused refused_by_gio(std::string_view said) {
     const std::string text = lowered(said);
 
@@ -248,9 +260,10 @@ Refused refused_by_gio(std::string_view said) {
     return Refused::other;
 }
 
-// Nazwa katalogu GVfs zamontowanego udziału: `smb-share:server=nas,share=filmy[,user=…][,domain=…]`.
-// Wartości bywają zapisane procentami (`%20`), jak w adresie. Inny katalog GVfs (`sftp:…`,
-// `smb-server:…` — sam serwer, nie udział) udziałem nie jest.
+// The share named by the GVfs directory of a mounted share:
+// smb-share:server=nas,share=films[,user=...][,domain=...]. Values may be percent-encoded (%20), as
+// in an address. Any other GVfs directory (sftp:..., or smb-server:..., a server alone and not a
+// share) is not a share.
 std::optional<Share> gvfs_named(std::string_view name) {
     if (!name.starts_with("smb-share:")) return std::nullopt;
 
@@ -282,9 +295,9 @@ std::optional<Share> gvfs_named(std::string_view name) {
     return made;
 }
 
-// Katalog GVfs danego udziału wśród katalogów zamontowanych. Serwer i udział bez wielkości liter —
-// GVfs zapisuje je małymi, człowiek pisze, jak chce. Gdy adres ma użytkownika, wygrywa montowanie
-// tego użytkownika.
+// The GVfs directory of the given share among the mounted ones. Server and share are compared
+// ignoring case: GVfs writes them in lowercase, people write as they like. When the address has a
+// user, that user's mount wins.
 std::optional<std::string> mounted_as(const std::vector<std::string>& names, const Share& one) {
     std::optional<std::string> found;
 
@@ -303,9 +316,9 @@ std::optional<std::string> mounted_as(const std::vector<std::string>& names, con
     return found;
 }
 
-// Wejście dla `gio mount`: użytkownik, domena i hasło, każde w osobnym wierszu — w tej kolejności
-// pyta `gio`. Domena z zapisu `DOMENA\użytkownik` albo `DOMENA;użytkownik`; bez niej pusta, czyli
-// domyślna.
+// The input for gio mount: user, domain and password, each on its own line, in the order gio asks
+// for them. The domain comes from DOMAIN\user or DOMAIN;user; without one it is empty, which means
+// the default.
 std::string answers(std::string_view user, std::string_view password) {
     std::string_view domain;
 
@@ -323,8 +336,8 @@ std::string answers(std::string_view user, std::string_view password) {
     return made;
 }
 
-// Wykaz z `gio list smb://serwer/`: nazwa w wierszu. Udziały z `$` na końcu (IPC$, ADMIN$, print$)
-// są ukryte i do filmów się nie nadają.
+// The share names from the output of gio list smb://server/, one name per line. Shares ending in $
+// (IPC$, ADMIN$, print$) are hidden ones and are left out.
 std::vector<std::string> listed(std::string_view said) {
     std::vector<std::string> made;
 
@@ -344,7 +357,7 @@ std::vector<std::string> listed(std::string_view said) {
     return made;
 }
 
-// Zerowanie, którego kompilator nie usunie jako zapisu, którego nikt nie czyta.
+// Zeroes and empties the string in a way the compiler cannot remove as a dead store.
 void wiped(std::string& secret) {
     volatile char* at = secret.data();
 
@@ -358,18 +371,20 @@ namespace {
 
 #ifdef _WIN32
 
+// Zeroes and empties a wide string holding a secret.
 void blanked(std::wstring& secret) {
     if (!secret.empty()) SecureZeroMemory(secret.data(), secret.size() * sizeof(wchar_t));
 
     secret.clear();
 }
 
-// Korzeń udziału w UNC; bez udziału — `IPC$`, przez który idzie logowanie do samego serwera
-// (wykaz udziałów).
+// The root of the share in UNC form; without a share, IPC$, through which the login to the server
+// itself goes (for the list of shares).
 std::wstring rooted(const Share& one) {
     return L"\\\\" + to_wstring(one.server) + L"\\" + (one.name.empty() ? std::wstring{L"IPC$"} : to_wstring(one.name));
 }
 
+// The full UNC path: the share's root and the rest of the path.
 path whole(const Share& one) {
     std::string rest = one.rest;
 
@@ -378,12 +393,14 @@ path whole(const Share& one) {
     return path{rooted(one) + (rest.empty() ? std::wstring{} : L"\\" + to_wstring(rest))};
 }
 
+// A failed `Reached` for a Windows error code, with the system's message for it.
 Reached refusal(DWORD code) {
     return Reached{refused_by_windows(code), {}, std::system_category().message(static_cast<int>(code))};
 }
 
-// Udział stoi, gdy system odpowiada o jego korzeń. Odpowiedź o resztę ścieżki nie jest tu
-// pytaniem: katalogu, którego nie ma, szuka potem wołający — wyżej, jak przy każdym wejściu.
+// The share is available when the system answers for its root; returns NO_ERROR or the error
+// code. The rest of the path is not the question here: a directory that does not exist is dealt
+// with later by the caller, higher up, as with any entry.
 DWORD standing(const Share& one) {
     const std::wstring root = rooted(one) + L"\\";
 
@@ -392,6 +409,8 @@ DWORD standing(const Share& one) {
     return GetLastError();
 }
 
+// Connects to the share (or to IPC$ of the server) without a drive letter, for this session only;
+// null credentials mean the stored ones.
 DWORD joined(const Share& one, const wchar_t* user, const wchar_t* password) {
     std::wstring remote = rooted(one);
 
@@ -403,11 +422,12 @@ DWORD joined(const Share& one, const wchar_t* user, const wchar_t* password) {
     return WNetAddConnection2W(&resource, password, user, CONNECT_TEMPORARY);
 }
 
+// Reaches the share without asking for credentials, giving its UNC path or the reason it failed.
 Reached reached_at(const Share& one) {
     DWORD code = standing(one);
 
-    // Odmowę dostępu próbujemy jeszcze połączeniem bez poświadczeń: system bierze wtedy te
-    // z Menedżera poświadczeń, a sama ścieżka UNC nie zawsze to robi.
+    // A refused access is retried with a connection without credentials: the system then uses the
+    // ones from the Credential Manager, which the plain UNC path does not always do.
     if (code != NO_ERROR && refused_by_windows(code) == Refused::login) {
         if (const DWORD tried = joined(one, nullptr, nullptr); tried == NO_ERROR) code = standing(one);
         else code = tried;
@@ -418,6 +438,8 @@ Reached reached_at(const Share& one) {
     return Reached{Refused::none, whole(one), {}};
 }
 
+// Connects with the given user and password (wiping every copy of the password), optionally
+// remembering them, then reaches the share.
 Reached connected_at(const Share& one, std::string& user, std::string& password, bool remember) {
     std::wstring who = to_wstring(user);
     std::wstring secret = to_wstring(password);
@@ -426,8 +448,9 @@ Reached connected_at(const Share& one, std::string& user, std::string& password,
 
     const DWORD code = joined(one, who.c_str(), secret.c_str());
 
-    // Do Menedżera poświadczeń dopiero po udanym połączeniu — złe hasło nie zostaje w systemie.
-    // Nieudany zapis nie psuje połączenia, które już jest; najwyżej następnym razem system zapyta.
+    // Into the Credential Manager only after a successful connection, so a wrong password does not
+    // stay in the system. A failed write does not spoil the existing connection; at worst the system
+    // asks again next time.
     if (code == NO_ERROR && remember) {
         std::wstring target = to_wstring(one.server);
 
@@ -452,6 +475,7 @@ Reached connected_at(const Share& one, std::string& user, std::string& password,
     return reached_at(one);
 }
 
+// The sorted names of the server's ordinary disk shares, from `NetShareEnum`.
 Offered offered_at(const Share& one) {
     std::wstring server = L"\\\\" + to_wstring(one.server);
 
@@ -474,7 +498,7 @@ Offered offered_at(const Share& one) {
     for (DWORD at = 0; at < read; ++at) {
         const DWORD kind = each[at].shi1_type;
 
-        // 0xFF to STYPE_MASK, którego nagłówki MinGW nie mają.
+        // 0xFF is STYPE_MASK, which the MinGW headers lack.
         if ((kind & 0xFFU) != STYPE_DISKTREE || (kind & STYPE_SPECIAL) != 0) continue;
 
         std::string name = to_string(std::wstring_view{each[at].shi1_netname});
@@ -491,13 +515,16 @@ Offered offered_at(const Share& one) {
 
 #else
 
+// What a gio run said: whether it started, its exit code (-1 when it did not end normally), and
+// its standard output and error together.
 struct Said {
     bool started = false;
     int code = -1;
     std::string text;
 };
 
-// `gio` po angielsku; nieuruchomione (brak programu) mówi `started == false`.
+// Runs gio in English with the given arguments and input (which is wiped); when it cannot be
+// started (no such program), `started` is false.
 Said told(std::vector<std::string> arguments, std::string input = {}) {
     Command what;
 
@@ -524,8 +551,10 @@ Said told(std::vector<std::string> arguments, std::string input = {}) {
     return made;
 }
 
+// The smb:// URL of the share, or of the server alone when there is no share name.
 std::string url(const Share& one) { return "smb://" + one.server + "/" + one.name + (one.name.empty() ? "" : "/"); }
 
+// The GVfs mount directory, $XDG_RUNTIME_DIR/gvfs, or `std::nullopt` without XDG_RUNTIME_DIR.
 std::optional<path> gvfs() {
     const char* runtime = std::getenv("XDG_RUNTIME_DIR");
 
@@ -534,6 +563,7 @@ std::optional<path> gvfs() {
     return path{runtime} / "gvfs";
 }
 
+// The local path of a share that is already mounted, with the rest of the address appended.
 std::optional<path> looked(const Share& one) {
     const std::optional<path> under = gvfs();
 
@@ -556,6 +586,7 @@ std::optional<path> looked(const Share& one) {
     return made;
 }
 
+// Turns the outcome of gio mount into a `Reached`: the local path, or the reason it failed.
 Reached settled(const Share& one, const Said& said) {
     if (!said.started) return Reached{Refused::unsupported, {}, {}};
 
@@ -567,10 +598,12 @@ Reached settled(const Share& one, const Said& said) {
 
     if (std::optional<path> found = looked(one)) return Reached{Refused::none, std::move(*found), {}};
 
-    // Zamontowany, a katalogu nie ma: GVfs bez FUSE — przez `gio` tak, ścieżką nie.
+    // Mounted, yet no directory: GVfs without FUSE, reachable through gio but not as a path.
     return Reached{Refused::unsupported, {}, {}};
 }
 
+// Reaches the share: the mounted directory if there is one, otherwise a gio mount without
+// credentials.
 Reached reached_at(const Share& one) {
     if (!gvfs()) return Reached{Refused::unsupported, {}, {}};
 
@@ -579,6 +612,8 @@ Reached reached_at(const Share& one) {
     return settled(one, told({"mount", url(one)}));
 }
 
+// Mounts the share with the given user and password, fed to gio on its input; the password is
+// wiped. Remembering is not supported here.
 Reached connected_at(const Share& one, std::string& user, std::string& password, bool) {
     if (!gvfs()) {
         wiped(password);
@@ -593,12 +628,13 @@ Reached connected_at(const Share& one, std::string& user, std::string& password,
     return settled(one, told({"mount", url(one)}, std::move(input)));
 }
 
+// The sorted names of the server's visible shares, from gio list.
 Offered offered_at(const Share& one) {
     Share server = one;
 
     server.name.clear();
 
-    // Przeglądanie serwera GVfs też montuje — bez tego `gio list` mówi „not mounted".
+    // Browsing a server in GVfs needs a mount too; without it gio list says "not mounted".
     const Said mounted = told({"mount", url(server)});
 
     if (!mounted.started) return Offered{Refused::unsupported, {}, {}};
@@ -624,10 +660,10 @@ Offered offered_at(const Share& one) {
 
 }
 
-// **Na jakim udziale leży ścieżka** — odwrotność `reach`. Na Windows udział ma ścieżkę UNC i mówi
-// sam za siebie; na POSIX ścieżka leży w katalogu GVfs (`$XDG_RUNTIME_DIR/gvfs/smb-share:…`), więc
-// serwer i udział czytamy z nazwy jego katalogu, a resztę — z tego, co pod nim. Twa zapamiętuje
-// dzięki temu udział z Linuksa na „Ten komputer" jak udział z Windows (U6).
+// Which share a path lies on: the inverse of `reach`. On Windows a share has a UNC path and speaks
+// for itself; on POSIX the path lies in a GVfs directory ($XDG_RUNTIME_DIR/gvfs/smb-share:...), so
+// the server and share are read from that directory's name and the rest from what lies below it.
+// This lets twa remember a share on Linux under "This computer" just like a share on Windows.
 std::optional<Share> shared(const path& where) {
 #ifdef _WIN32
     const std::string said = to_string(where);
@@ -668,6 +704,7 @@ std::optional<Share> shared(const path& where) {
 #endif
 }
 
+// Whether the system can remember logins for shares: only Windows, through the Credential Manager.
 bool keeps_logins() {
 #ifdef _WIN32
     return true;
@@ -676,10 +713,13 @@ bool keeps_logins() {
 #endif
 }
 
+// Reaches the share in the background with whatever credentials the system already has.
 Promise<Reached> reach(Share one) {
     return Promise<Reached>{[one = std::move(one)](auto resolve, auto) { resolve(reached_at(one)); }};
 }
 
+// Connects to the share in the background with the given login, optionally remembering it; the
+// password is wiped when done.
 Promise<Reached> connect(Share one, std::string user, std::string password, bool remember) {
     return Promise<Reached>{[one = std::move(one), user = std::move(user), password = std::move(password),
                              remember](auto resolve, auto) mutable {
@@ -691,6 +731,7 @@ Promise<Reached> connect(Share one, std::string user, std::string password, bool
     }};
 }
 
+// Lists the shares of a server in the background.
 Promise<Offered> shares(Share server) {
     return Promise<Offered>{[server = std::move(server)](auto resolve, auto) { resolve(offered_at(server)); }};
 }

@@ -14,12 +14,13 @@ using ui::Code;
 using ui::Key;
 using ui::Mods;
 
-// Zapis klawisza, jaki widzi człowiek — w plikach języków, w podpowiedziach menu i w pomocy. Jeden
-// dla każdego programu na talcite, żeby skrót zapisany w danych i skrót naciśnięty dało się
-// porównać jedną regułą (`alike`).
+// The written form of a key as a person sees it: in language files, in menu hints and in help.
+// There is one form for every program on talcite, so that a shortcut written in data and a shortcut
+// pressed can be compared by one rule (`alike`).
 
 namespace {
 
+// Tells whether the written form parses into exactly the wanted key.
 bool read(const char* written, Key wanted) {
     const std::optional<Key> got = Key::from_string(written);
 
@@ -28,7 +29,7 @@ bool read(const char* written, Key wanted) {
 
 }
 
-TRIAL("Klawisz: każdy kod wraca z zapisu, z każdym zestawem modyfikatorów") {
+TRIAL("Key: every code round-trips through its written form, with every set of modifiers") {
     const std::vector<Mods> sets{{}, {true, false, false}, {false, true, false}, {false, false, true},
                                  {true, true, true}};
 
@@ -43,7 +44,7 @@ TRIAL("Klawisz: każdy kod wraca z zapisu, z każdym zestawem modyfikatorów") {
         }
 }
 
-TRIAL("Klawisz: litera z modyfikatorem, pisana jak na klawiszu") {
+TRIAL("Key: a letter with a modifier, written as on the keycap") {
     ought(read("Alt+K", Key{U'k', Mods{.alt = true}}));
     same(ui::to_string(Key{U'k', Mods{.alt = true}}), std::string{"Alt+K"});
 
@@ -51,27 +52,27 @@ TRIAL("Klawisz: litera z modyfikatorem, pisana jak na klawiszu") {
     same(ui::to_string(Key{U'r', Mods{.ctrl = true}}), std::string{"Ctrl+R"});
 }
 
-TRIAL("Klawisz: wielkość liter w zapisie nie ma znaczenia") {
+TRIAL("Key: letter case in the written form does not matter") {
     ought(read("alt+k", Key{U'k', Mods{.alt = true}}));
     ought(read("CTRL+SHIFT+f7", Key{Code::f7, Mods{.ctrl = true, .shift = true}}));
     ought(read("pgdn", Key{Code::pagedown}));
 }
 
-TRIAL("Klawisz: modyfikatory w dowolnej kolejności, zapis w jednej") {
+TRIAL("Key: modifiers are read in any order and written in one") {
     const Key one{Code::f7, Mods{true, true, true}};
 
     ought(read("Shift+Alt+Ctrl+F7", one));
     same(ui::to_string(one), std::string{"Ctrl+Alt+Shift+F7"});
 }
 
-// Shift przy literze nic nie znaczy — wielką literę robi właśnie on — więc zapis go pomija,
-// a odczyt zdejmuje.
-TRIAL("Klawisz: Shift przy literze znika") {
+// Shift with a letter means nothing (it is what makes the letter uppercase), so writing leaves it
+// out and reading drops it.
+TRIAL("Key: Shift with a letter disappears") {
     ought(read("Shift+K", Key{U'k'}));
     same(ui::to_string(Key{U'k', Mods{.shift = true}}), std::string{"K"});
 }
 
-TRIAL("Klawisz: znak spoza łaciny, spacja i plus") {
+TRIAL("Key: a non-Latin character, space and plus") {
     ought(read("Alt+\xc5\x82", Key{U'ł', Mods{.alt = true}}));
     same(ui::to_string(Key{U'ł', Mods{.alt = true}}), std::string{"Alt+\xc5\x82"});
 
@@ -83,25 +84,26 @@ TRIAL("Klawisz: znak spoza łaciny, spacja i plus") {
     same(ui::to_string(Key{U'+', Mods{.ctrl = true}}), std::string{"Ctrl++"});
 }
 
-// Sam modyfikator nie jest klawiszem, także gdy po nim nic nie ma: `Ctrl+` to zapis urwany.
-TRIAL("Klawisz: modyfikator bez klawisza daje pustkę") {
+// A modifier alone is not a key, also when nothing follows it: `Ctrl+` is a truncated form.
+TRIAL("Key: a modifier without a key gives nothing") {
     ought(!Key::from_string("Alt+").has_value());
     ought(!Key::from_string("Ctrl+Alt+").has_value());
 }
 
-// Pół skrótu byłoby innym skrótem, więc wszystko, czego nie da się przeczytać w całości, daje pustkę.
-TRIAL("Klawisz: zapis krzywy daje pustkę") {
+// Half a shortcut would be a different shortcut, so anything that cannot be read in full gives
+// nothing.
+TRIAL("Key: a malformed written form gives nothing") {
     for (const char* bad : {"", "Ctrl+", "Alt+Alt+K", "Alt+KK", "Insert", "Foo", "Ctrl+\x80", "Alt+\x01"})
         ought(!Key::from_string(bad).has_value());
 }
 
-// Plus to też klawisz — w panelu zaznacza po wzorcu — więc sam jest zapisem, a nie resztką po
-// modyfikatorze.
-TRIAL("Klawisz: sam plus jest klawiszem") { ought(read("+", Key{U'+'})); }
+// Plus is a key too (in a panel it selects by pattern), so on its own it is a written form, not a
+// leftover after a modifier.
+TRIAL("Key: a plus alone is a key") { ought(read("+", Key{U'+'})); }
 
-TRIAL("Klawisz: pusty nie ma zapisu") { same(ui::to_string(Key{}), std::string{}); }
+TRIAL("Key: an empty key has no written form") { same(ui::to_string(Key{}), std::string{}); }
 
-TRIAL("Klawisz: alike — litera bez wielkości i Shift, kod razem z Shift") {
+TRIAL("Key: alike compares a letter without case and Shift, a code together with Shift") {
     ought(ui::alike(Key{U'k', Mods{.alt = true}}, Key{U'K', Mods{.alt = true, .shift = true}}));
     ought(!ui::alike(Key{U'k', Mods{.alt = true}}, Key{U'k', Mods{.ctrl = true}}));
     ought(!ui::alike(Key{U'k', Mods{.alt = true}}, Key{U'k'}));
@@ -113,10 +115,10 @@ TRIAL("Klawisz: alike — litera bez wielkości i Shift, kod razem z Shift") {
     ought(!ui::alike(Key{}, Key{}));
 }
 
-// **Składanie proste z Unicode**, w blokach, z których pliki języków biorą litery: łacina z Latin-1
-// i Latin Extended-A, greka, cyrylica. Wielka idzie w małą, mała zostaje, a litery, których złożenie
-// to dwa znaki („ß", „İ", „ŉ"), zostają same sobą.
-TRIAL("Klawisz: folded składa wielkość w łacinie, grece i cyrylicy") {
+// Simple Unicode case folding, in the blocks from which language files take their letters: Latin
+// from Latin-1 and Latin Extended-A, Greek, Cyrillic. An uppercase letter becomes lowercase, a
+// lowercase one stays, and letters whose folding is two characters ("ß", "İ", "ŉ") stay themselves.
+TRIAL("Key: folded folds case in Latin, Greek and Cyrillic") {
     const std::vector<std::pair<char32_t, char32_t>> pairs{
         {U'K', U'k'}, {U'Ä', U'ä'}, {U'Þ', U'þ'}, {U'Ą', U'ą'}, {U'Ł', U'ł'}, {U'Ž', U'ž'},
         {U'Ÿ', U'ÿ'}, {U'ſ', U's'}, {U'µ', U'μ'}, {U'Σ', U'σ'}, {U'ς', U'σ'}, {U'Ά', U'ά'},
@@ -128,7 +130,7 @@ TRIAL("Klawisz: folded składa wielkość w łacinie, grece i cyrylicy") {
         same(ui::folded(lower), lower);
     }
 
-    // Oba końce każdego zakresu tablicy — przesunięty koniec zakresu inaczej przeszedłby niezauważony.
+    // Both ends of every range of the table: a shifted range end would otherwise go unnoticed.
     const std::vector<std::pair<char32_t, char32_t>> edges{
         {0x00C0, 0x00E0}, {0x00D6, 0x00F6}, {0x00D8, 0x00F8}, {0x0100, 0x0101}, {0x012E, 0x012F},
         {0x0132, 0x0133}, {0x0136, 0x0137}, {0x0139, 0x013A}, {0x0147, 0x0148}, {0x014A, 0x014B},
@@ -153,12 +155,13 @@ TRIAL("Klawisz: folded składa wielkość w łacinie, grece i cyrylicy") {
         same(ui::folded(kept), kept);
 }
 
-// Złożone jest już złożone: drugie przejście nic nie zmienia, w żadnym punkcie badanych bloków.
-TRIAL("Klawisz: folded drugi raz niczego nie zmienia") {
+// Folded is already folded: a second pass changes nothing, at any code point of the blocks
+// examined.
+TRIAL("Key: folding a second time changes nothing") {
     for (char32_t one = 0; one < 0x600; ++one) same(ui::folded(ui::folded(one)), ui::folded(one));
 }
 
-TRIAL("Klawisz: skrót z cyrylicą — zapis, odczyt i alike") {
+TRIAL("Key: a Cyrillic shortcut, written, read and compared with alike") {
     ought(read("Alt+\xd0\x9b", Key{U'л', Mods{.alt = true}}));
     ought(read("Alt+\xd0\xbb", Key{U'л', Mods{.alt = true}}));
     same(ui::to_string(Key{U'л', Mods{.alt = true}}), std::string{"Alt+\xd0\xbb"});

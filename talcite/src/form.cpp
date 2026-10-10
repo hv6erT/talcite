@@ -15,18 +15,22 @@ namespace talcite::ui {
 
 namespace {
 
-// **Przyciski najpierw.** Rząd przycisków i odstęp nad nim odkładamy z pokoju, zanim zapytamy
-// treść — tak samo przy pytaniu o rozmiar i przy malowaniu. Kolumna pytała treść pierwszą: przy
-// pytaniu o rozmiar dawała jej pokój razem z miejscem na przyciski, a przy malowaniu już tylko
-// tyle, ile treść wcześniej chciała. Treść, która ma wypełnić wysokość — przewijana strona
-// w pudełku z życzeniem „ile chcę, ale zostaw miejsce na to, co pode mną" — dostawała wtedy dwa
-// różne pokoje, dwie różne odpowiedzi, i pod nią zostawały puste wiersze.
+// Buttons first. The button row and the gap above it are taken out of the room before the content
+// is asked, both when asked for the size and when painting. Asking the content first would give it
+// the room including the place for the buttons when sizing, but only what it wanted earlier when
+// painting. Content that is meant to fill the height (a scrolled page in a box asking "as much as I
+// want, but leave room for what is below me") would then get two different rooms, give two
+// different answers, and leave empty rows below it.
 //
-// Dzieci: treść, odstęp, przyciski — w tej kolejności, jak w kolumnie; tylko pokój liczy się od dołu.
+// Children: content, gap, buttons, in this order, as in a column; only the room is computed from
+// the bottom.
 class Footed : public Node {
 public:
+    // Content, gap and button row.
     [[nodiscard]] int capacity() const override { return 3; }
 
+    // The content's wish within what the buttons leave, plus the footing; as wide as the wider of
+    // the two.
     [[nodiscard]] Size wants(Size room) const override {
         const Size foot = footing(room);
         const Size body = children()[0]->wants({room.wide, std::max(room.high - foot.high, 0)});
@@ -35,6 +39,7 @@ public:
     }
 
 protected:
+    // Stacks content, gap and buttons, giving the content only what remains after the footing.
     View paint(Size given, Area seen) override {
         View made{seen.size};
 
@@ -61,7 +66,7 @@ protected:
     }
 
 private:
-    // Odstęp i przyciski razem: wysokość obu, szerokość rzędu.
+    // The gap and the buttons together: the height of both and the width of the row.
     [[nodiscard]] Size footing(Size room) const {
         const int gap = children()[1]->wants(room).high;
         const Size row = children()[2]->wants({room.wide, std::max(room.high - gap, 0)});
@@ -72,26 +77,26 @@ private:
 
 }
 
-// **Formularz to rodzeństwo komunikatu**: tytuł, treść, rząd przycisków — tylko treść nie jest
-// napisem, a gniazdem, w które wołający wkłada pola, przełączniki i listy. Tak wyglądają okna
-// porządku, filtru, wyglądu czy nazwy katalogu w Midnight Commanderze i tak je składało twa —
-// pięć razy tym samym kodem, zanim ten węzeł powstał.
+// A form is a sibling of the message box: a title, content and a row of buttons, except that the
+// content is not text but a slot where the caller puts fields, switches and lists. This is what the
+// sort, filter, appearance or directory name dialogs in Midnight Commander look like.
 //
-// Układ:
+// Layout:
 //
-//     Frame(tytuł, ramka)
-//     └── Titled                ← nie węższy niż tytuł
-//         └── Footed            ← pokój liczony od dołu: najpierw przyciski, reszta dla treści
-//             ├── Column(body)  ← gniazdo wołającego
-//             ├── Gap           ← pusty wiersz; znika, gdy nie ma treści albo przycisków
-//             └── Amid → Row(1) ← przyciski pośrodku, jak w komunikacie
+//     Frame(title, border)
+//     └── Titled                ← not narrower than the title
+//         └── Footed            ← room counted from the bottom: buttons first, the rest to content
+//             ├── Column(body)  ← the caller's slot
+//             ├── Gap           ← an empty row; vanishes when there is no content or no buttons
+//             └── Amid → Row(1) ← buttons centered, as in the message box
 //
-// **Bez własnych ról.** Ramka rysuje się jako ramka, przycisk jako przycisk — skórka, która zna
-// `talcite.frame` i `talcite.button`, zna już cały formularz. Komunikat ma rodzinę ról, bo ma
-// odmiany (błąd, pytanie); formularz odmian nie ma i nie udaje, że ma.
+// No roles of its own. The frame draws as a frame and a button as a button, so a skin that knows
+// `talcite.frame` and `talcite.button` already knows the whole form. The message box has a family
+// of roles because it has variants (error, question); a form has no variants and does not pretend
+// to.
 //
-// Escape **nie zamyka** — talcite świadomie oddał to wołającemu razem z domyślnym przyciskiem
-// (opisane przy `Modal`), a formularz tej decyzji nie odwraca.
+// Escape does not close it: talcite leaves that to the caller, together with the default button
+// (described at `Modal`), and the form does not reverse that decision.
 Form::Form(std::string title, FormShape shape) : Dialog(ModalShape{shape.shade}), shape_(shape) {
     frame_ = std::make_shared<Frame>(std::move(title), FrameShape{shape_.border});
     body_ = std::make_shared<Column>();
@@ -112,8 +117,10 @@ Form::Form(std::string title, FormShape shape) : Dialog(ModalShape{shape.shade})
     children().add(frame_);
 }
 
+// The title shown in the frame.
 const std::string& Form::title() const { return frame_->title(); }
 
+// Replaces the title shown in the frame.
 void Form::title(std::string given) { frame_->title(std::move(given)); }
 
 }

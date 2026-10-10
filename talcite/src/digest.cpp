@@ -32,8 +32,8 @@ namespace talcite {
 
 namespace {
 
-// Ile bajtów oddaje każdy skrót. Jedyna liczba o kryptografii, jaka stoi w tym pliku — reszta to
-// wołania do systemu.
+// How many bytes each digest produces. The only cryptographic number in this file; the rest is
+// calls to the system.
 std::size_t wide(Sum which) {
     switch (which) {
         case Sum::md5: return 16;
@@ -49,6 +49,7 @@ std::size_t wide(Sum which) {
 
 namespace {
 
+// The kernel's name of the algorithm, plain or as HMAC.
 const char* named(Sum which, bool keyed) {
     switch (which) {
         case Sum::md5: return keyed ? "hmac(md5)" : "md5";
@@ -60,16 +61,17 @@ const char* named(Sum which, bool keyed) {
 
 }
 
-// Jądro Linuksa wystawia swoją kryptografię **jako gniazdo**: rodzina AF_ALG, nazwa algorytmu
-// w adresie, klucz przez setsockopt, treść przez write, skrót przez read. Dla biblioteki sieciowej
-// to wyjątkowo naturalne — pytamy jądro tak samo jak o każde inne gniazdo, i nie piszemy ani jednej
-// linii samego algorytmu.
+// The Linux kernel exposes its cryptography as a socket: the AF_ALG family, the algorithm name in
+// the address, the key through setsockopt, the content through write and the digest through read.
+// For a network library this is unusually natural: the kernel is asked just as for any other
+// socket, and not a single line of the algorithm itself is written here.
 //
-// Rodzinę AF_ALG potrafi zablokować filtr wywołań systemowych w kontenerze, i wtedy skrótów po
-// prostu nie ma. Mówimy o tym wprost przez summing(), zamiast udawać.
+// A system call filter in a container can block the AF_ALG family, and then there are simply no
+// digests. summing() says so plainly instead of pretending.
 //
-// Skrót ratami: gniazdo żyje tyle, co `Digest`, każda rata idzie z `MSG_MORE`, a koniec to pusta
-// wysyłka bez tej flagi. Plik 40 GB liczy się więc kawałkami, a nie po wczytaniu w całości.
+// A digest in installments: the socket lives as long as the `Digest`, every installment goes with
+// `MSG_MORE`, and the end is an empty send without that flag. A 40 GB file is thus digested in
+// pieces, not after being read in whole.
 struct Digest::Held {
     Sum which = Sum::sha256;
     int one = -1;
@@ -84,11 +86,13 @@ struct Digest::Held {
     Held(Held&&) = delete;
     Held& operator=(Held&&) = delete;
 
+    // Closes the operation socket and the algorithm socket.
     ~Held() {
         if (two >= 0) ::close(two);
         if (one >= 0) ::close(one);
     }
 
+    // Sends all `much` bytes, repeating after short sends and EINTR; throws `Trouble` on failure.
     void sent(const std::byte* from, std::size_t much, int flags) const {
         std::size_t at = 0;
 
@@ -108,6 +112,9 @@ struct Digest::Held {
 
 namespace {
 
+// Opens the algorithm socket for the digest (as HMAC with `key`, when one is given) and accepts
+// the operation socket from it. Throws `Trouble` when the kernel has no AF_ALG or does not know
+// the algorithm.
 std::unique_ptr<Digest::Held> begun(Sum which, const Bytes* key) {
     auto made = std::make_unique<Digest::Held>();
 
@@ -121,7 +128,7 @@ std::unique_ptr<Digest::Held> begun(Sum which, const Bytes* key) {
     std::strncpy(reinterpret_cast<char*>(where.salg_name), named(which, key != nullptr),
                  sizeof where.salg_name - 1);
 
-    // Gniazda liczące skrót nie mają trafiać do programu potomnego.
+    // The digest sockets must not leak into a child program.
     made->one = ::socket(AF_ALG, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
 
     if (made->one < 0) throw Trouble{"The system provides no digests.", errno};
@@ -140,10 +147,12 @@ std::unique_ptr<Digest::Held> begun(Sum which, const Bytes* key) {
     return made;
 }
 
+// Feeds one installment, with `MSG_MORE` so that the kernel waits for more.
 void fed(Digest::Held& held, const Bytes& what) {
     if (!what.empty()) held.sent(what.data(), what.size(), MSG_MORE);
 }
 
+// Ends the content with an empty send and reads the whole digest back.
 Bytes finished(Digest::Held& held) {
     held.sent(nullptr, 0, 0);
 
@@ -174,15 +183,17 @@ Bytes finished(Digest::Held& held) {
 
 namespace {
 
-// CNG każe otworzyć dostawcę algorytmu, a to jest drogie — więc otwieramy osiem uchwytów raz
-// i trzymamy do końca programu. Same uchwyty są bezstanowe i wolno ich używać z wielu wątków;
-// stan liczenia siedzi w osobnym obiekcie skrótu, tworzonym na każdy `Digest`.
+// CNG requires opening an algorithm provider, and that is expensive, so the eight handles are
+// opened once and kept until the program ends. The handles themselves are stateless and may be
+// used from many threads; the state of a computation lives in a separate hash object, created for
+// every `Digest`.
 struct Providers {
     BCRYPT_ALG_HANDLE plain[4]{};
     BCRYPT_ALG_HANDLE keyed[4]{};
     bool ready = false;
 };
 
+// The provider handles, opened on first use; `ready` is false when any of them failed to open.
 Providers& providers() {
     static Providers only;
     static std::once_flag once;
@@ -223,6 +234,7 @@ struct Digest::Held {
     Held(Held&&) = delete;
     Held& operator=(Held&&) = delete;
 
+    // Destroys the CNG hash object.
     ~Held() {
         if (hash != nullptr) ::BCryptDestroyHash(hash);
     }
@@ -230,6 +242,8 @@ struct Digest::Held {
 
 namespace {
 
+// Creates a CNG hash object for the digest (as HMAC with `key`, when one is given). Throws
+// `Trouble` when the providers could not be opened or the object cannot be created.
 std::unique_ptr<Digest::Held> begun(Sum which, const Bytes* key) {
     Providers& how = providers();
 
@@ -256,7 +270,7 @@ std::unique_ptr<Digest::Held> begun(Sum which, const Bytes* key) {
     return made;
 }
 
-// `ULONG` na długość — rata ponad 4 GB idzie w kilku podejściach.
+// The length is a `ULONG`, so an installment over 4 GB goes in several calls.
 void fed(Digest::Held& held, const Bytes& what) {
     for (std::size_t at = 0; at < what.size();) {
         const auto much = static_cast<ULONG>(std::min<std::size_t>(what.size() - at, 0x40000000u));
@@ -270,6 +284,7 @@ void fed(Digest::Held& held, const Bytes& what) {
     }
 }
 
+// Finishes the hash object and returns the digest.
 Bytes finished(Digest::Held& held) {
     Bytes made(wide(held.which));
 
@@ -293,10 +308,12 @@ struct Digest::Held {
 
 namespace {
 
+// Without a system source of digests there are none; always throws `Trouble`.
 std::unique_ptr<Digest::Held> begun(Sum, const Bytes*) { throw Trouble{"The system provides no digests."}; }
 
 void fed(Digest::Held&, const Bytes&) {}
 
+// Never reached, because `begun` always throws; returns zeros of the digest's length.
 Bytes finished(Digest::Held& held) { return Bytes(wide(held.which)); }
 
 }
@@ -305,19 +322,22 @@ Bytes finished(Digest::Held& held) { return Bytes(wide(held.which)); }
 
 namespace {
 
-// **Zapas, gdy system skrótów nie daje** (`spared`). Jądro Linuksa bywa bez AF_ALG — okrojone jądro
-// maszyny wirtualnej, filtr wywołań w kontenerze — i wtedy program, który składa aplikację, może
-// podać skróty z innego źródła systemu, zwykle z libcrypto, która i tak niesie jego TLS
-// (przejściówka `openssl`). Zapas idzie w ruch tylko wtedy, gdy system odmówił — system pytamy raz.
+// A spare for when the system gives no digests (`spared`). The Linux kernel is sometimes without
+// AF_ALG (a stripped-down virtual machine kernel, a system call filter in a container), and then
+// the program that assembles the application can supply digests from another system source,
+// usually libcrypto, which carries its TLS anyway (the openssl adapter). The spare is used only
+// when the system refused; the system is asked once.
 std::mutex spare_guard;
 std::shared_ptr<DigestProvider> spare_held;
 
+// The spare digest provider given to `spared`, or null.
 std::shared_ptr<DigestProvider> spare() {
     const std::lock_guard<std::mutex> kept{spare_guard};
 
     return spare_held;
 }
 
+// Whether the system digests work, checked once with a trial SHA-1 of nothing.
 bool system_ready() {
     static const bool once = [] {
         try {
@@ -332,6 +352,8 @@ bool system_ready() {
     return once;
 }
 
+// The state of a new digest: from the system when it works, otherwise from the spare. Throws
+// `Trouble` when neither can compute it.
 std::unique_ptr<Digest::Held> made(Sum which, const Bytes* key) {
     if (system_ready()) return begun(which, key);
 
@@ -351,14 +373,17 @@ std::unique_ptr<Digest::Held> made(Sum which, const Bytes* key) {
 
 }
 
+// Sets the spare digest provider used when the system has none; null removes it.
 void spared(std::shared_ptr<DigestProvider> one) {
     const std::lock_guard<std::mutex> kept{spare_guard};
 
     spare_held = std::move(one);
 }
 
+// Starts a plain digest of the given kind.
 Digest::Digest(Sum which) : held_(made(which, nullptr)) {}
 
+// Starts an HMAC of the given kind, with `key`.
 Digest::Digest(Sum which, const Bytes& key) : held_(made(which, &key)) {}
 
 Digest::~Digest() = default;
@@ -367,6 +392,7 @@ Digest::Digest(Digest&& other) noexcept = default;
 
 Digest& Digest::operator=(Digest&& other) noexcept = default;
 
+// Feeds the next installment of the content; throws `Trouble` once the digest is finished.
 void Digest::feed(const Bytes& what) {
     if (!held_ || held_->over) throw Trouble{"The digest is finished."};
 
@@ -374,6 +400,8 @@ void Digest::feed(const Bytes& what) {
     else fed(*held_, what);
 }
 
+// Finishes the digest and returns it; after that the digest takes nothing more. Throws `Trouble`
+// when called twice or when the spare gives a result of the wrong length.
 Bytes Digest::done() {
     if (!held_ || held_->over) throw Trouble{"The digest is finished."};
 
@@ -390,10 +418,12 @@ Bytes Digest::done() {
     return finished(*held_);
 }
 
-// Czy skróty w ogóle są: od systemu (pytanego raz — na Linuksie odpowiedź zależy od jądra i filtra
-// wywołań, a te się w trakcie biegu nie zmieniają) albo z zapasu, jeśli go podano.
+// Whether digests exist at all: from the system (asked once; on Linux the answer depends on the
+// kernel and the system call filter, and those do not change while the program runs) or from the
+// spare, if one was given.
 bool summing() { return system_ready() || spare() != nullptr; }
 
+// The digest of `what`, in one call.
 Bytes summed(Sum which, const Bytes& what) {
     Digest made{which};
 
@@ -402,6 +432,7 @@ Bytes summed(Sum which, const Bytes& what) {
     return made.done();
 }
 
+// The HMAC of `what` with `key`, in one call.
 Bytes stamped(Sum which, const Bytes& key, const Bytes& what) {
     Digest made{which, key};
 
@@ -410,11 +441,12 @@ Bytes stamped(Sum which, const Bytes& key, const Bytes& what) {
     return made.done();
 }
 
-// **HKDF** (RFC 5869) na HMAC z systemu: wyciągnięcie (`salt` jako klucz, sekret jako treść) i
-// rozwinięcie blokami `T(i) = HMAC(PRK, T(i-1) | info | i)`. Algorytmu nie piszemy — to trzy
-// wołania `stamped` w pętli; liczba bajtów ograniczona jak w RFC do 255 bloków skrótu. Pustą sól RFC
-// każe zastąpić zerami o długości skrótu — HMAC dopełnia klucz zerami do długości bloku, więc pusta
-// sól i te zera to ten sam klucz i nic tu podmieniać nie trzeba.
+// HKDF (RFC 5869) on the system's HMAC: extraction (`salt` as the key, the secret as the content)
+// and expansion in blocks T(i) = HMAC(PRK, T(i-1) | info | i). The algorithm is not written here:
+// it is calls to `stamped` in a loop, and the byte count is limited, as in the RFC, to 255 digest
+// blocks. The RFC says to replace an empty salt with zeros of the digest's length; HMAC pads the
+// key with zeros to the block length, so an empty salt and those zeros are the same key and
+// nothing needs replacing here.
 Bytes derived(Sum which, const Bytes& salt, const Bytes& secret, const Bytes& info, std::size_t much) {
     const std::size_t block = wide(which);
 

@@ -12,30 +12,34 @@ namespace talcite {
 
 namespace {
 
+// How long the probe waits for the terminal's answers on a local terminal.
 constexpr std::chrono::milliseconds patience{250};
 
-// Przez SSH odpowiedź wraca po pełnym obiegu sieci, a ten bywa dłuższy niż ćwierć sekundy —
-// wtedy odpowiedzi przychodziły po sondzie. Czekamy dłużej; wartownik i tak kończy czekanie, gdy
-// tylko terminal odpowie, więc szybki terminal nie traci nic.
+// Over SSH the answer comes back after a full network round trip, and that can take longer than a
+// quarter of a second, so the answers would arrive after the probe ended. We wait longer; the
+// sentinel ends the wait as soon as the terminal answers anyway, so a fast terminal loses nothing.
 constexpr std::chrono::milliseconds afar{1000};
 
-// Zmienna środowiska **z konsoli**, nie z procesu. Pustka i brak znaczą tu to samo, bo tak je
-// dotąd czytała cała podłoga.
+// An environment variable from the console, not from the process. Empty and missing mean the same
+// thing here.
 std::string named_of(const Console& from, std::string_view what) {
     return from.variable(what).value_or(std::string{});
 }
 
+// Whether `what` occurs anywhere in `where`.
 bool holds(std::string_view where, std::string_view what) {
     return where.find(what) != std::string_view::npos;
 }
 
-// Tryb surowy na czas badania, zdjęty także wtedy, gdy rozbiór odpowiedzi rzuci. Badanie odpala
-// się samo, więc nie może zakładać, że ktoś już ten tryb ustawił — a konsola liczy włączenia,
-// więc nie zdejmie go też komuś, kto ustawił go wcześniej.
+// Raw mode for the time of the probe, taken off also when parsing the answer throws. The probe
+// starts by itself, so it cannot assume someone has already set the mode, and the console counts
+// the requests, so it does not take raw mode away from someone who set it earlier.
 class Rawly {
 public:
+    // Puts the console into raw mode for as long as this object lives.
     explicit Rawly(Console& given) : console_(given) { console_.raw(true); }
 
+    // Takes back this object's request for raw mode.
     ~Rawly() { console_.raw(false); }
 
     Rawly(const Rawly&) = delete;
@@ -47,9 +51,9 @@ private:
     Console& console_;
 };
 
-// Sekwencja pytań. Na końcu Primary DA, bo odpowiada na nie każdy terminal od VT100 wzwyż —
-// kiedy przyjdzie jego odpowiedź, wiemy, że wszystko wcześniejsze jest już albo odpowiedziane,
-// albo zignorowane, i nie ma na co dłużej czekać.
+// The sequence of questions. Primary DA comes last, because every terminal from the VT100 up
+// answers it: when its answer arrives, we know that everything before it has been either answered
+// or ignored, and there is nothing more to wait for.
 std::string asking() {
     std::string made;
 
@@ -61,29 +65,29 @@ std::string asking() {
     made += "\x1b[?2026$p";
     made += "\x1b[?1049$p";
 
-    // Rozmiar kratki w pikselach. Bez niego obrazek musiałby zgadywać proporcję, a kratka bywa
-    // od 1:1,8 do 1:2,4 — i to widać na każdym kole.
+    // The cell size in pixels. Without it a picture would have to guess the proportion, and a cell
+    // ranges from 1:1.8 to 1:2.4, which shows on every circle.
     made += "\x1b[16t";
 
-    // Zapytanie protokołu kitty: **prześlij jeden piksel i powiedz, czy się udało**. Terminal,
-    // który tego nie zna, ma połknąć całą sekwencję APC w milczeniu; ten, który nie połknie,
-    // wypluje śmieci — a te i tak wracają do wołającego jako naciśnięte klawisze.
+    // The kitty protocol query: send one pixel and say whether it worked. A terminal that does not
+    // know it should swallow the whole APC sequence silently; one that does not swallow it will
+    // spit out junk, and that goes back to the caller as pressed keys anyway.
     made += "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\";
 
     made += "\x1bP+q5463;524742\x1b\\";
     made += "\x1b]11;?\x1b\\";
 
-    // Pomiary szerokości. Zaczynamy od kolumny pierwszej, więc odpowiedź o położeniu kursora
-    // jest wprost szerokością, i nie musimy wiedzieć, w którym wierszu jesteśmy.
+    // Width measurements. We start from the first column, so the cursor position report is the
+    // width itself, and we do not need to know which row we are on.
     made += "\r\xe4\xbd\xa0\x1b[6n\r\x1b[K";
     made += "\r\xe2\x9d\xa4\xef\xb8\x8f\x1b[6n\r\x1b[K";
     made += "\r\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x92\xbb\x1b[6n\r\x1b[K";
 
-    // Sekstant (U+1FB00) i oktant (U+1CD00) — znaki, którymi rysujemy obrazek w kratkach.
-    // **Ten pomiar odpowiada wyłącznie na pytanie, czy znak zajmuje jedną kratkę.** Czy font go
-    // w ogóle ma, nie da się zmierzyć: brakujący glif rysuje się jako pusty prostokąt i zajmuje
-    // dokładnie tyle samo miejsca. Rozważaliśmy `DECRQCRA`, ale ono liczy sumę **znaków**, nie
-    // pikseli, więc na pustym prostokącie daje to samo co na prawdziwym glifie.
+    // A sextant (U+1FB00) and an octant (U+1CD00), the characters we draw pictures in cells with.
+    // This measurement answers only whether the character takes one cell. Whether the font has it
+    // at all cannot be measured: a missing glyph is drawn as an empty rectangle and takes exactly
+    // the same room. DECRQCRA does not help either, because it sums characters, not pixels, so on
+    // an empty rectangle it gives the same as on a real glyph.
     made += "\r\xf0\x9f\xac\x80\x1b[6n\r\x1b[K";
     made += "\r\xf0\x9c\xb4\x80\x1b[6n\r\x1b[K";
 
@@ -97,15 +101,16 @@ std::string asking() {
 struct Capabilities::Held {
     explicit Held(Seam<Console> with) : console(std::move(with)) {}
 
-    // Szew rozmowy z terminalem. Próby podstawiają tu atrapę, więc badanie i podłoga sprawdzają się
-    // bez terminala i bez przestawiania środowiska procesu.
+    // The seam for talking to the terminal. Tests put a fake here, so the probe and the floor are
+    // checked without a terminal and without changing the process environment.
     Seam<Console> console;
 
     Colors colors = Colors::mono;
 
-    // `NO_COLOR` to **pomiar**, a nie życzenie aplikacji: mówi o środowisku, w którym program
-    // stoi. Dlatego nie blokuje sondy — sonda podnosi `colors` swoim trybem — tylko przykrywa
-    // wynik przy odczycie. Kto chce koloru mimo zmiennej, mówi to przez `Setup`.
+    // `NO_COLOR` is a measurement, not the application's wish: it speaks about the environment the
+    // program stands in. So it does not block the probe (the probe raises `colors` its own way) but
+    // covers the result when it is read. Whoever wants color despite the variable says so through
+    // `Setup`.
     bool colorless = false;
 
     Mouse mouse = Mouse::none;
@@ -124,13 +129,13 @@ struct Capabilities::Held {
 
     Graphics graphics = Graphics::none;
 
-    // W tmuxie albo w screenie — patrz `ground`.
+    // Inside tmux or screen; see `ground`.
     bool muxed = false;
 
-    // Zero znaczy „nie wiadomo", a nie „zero pikseli". Terminale mają prawo nie odpowiedzieć.
+    // Zero means "unknown", not "zero pixels". Terminals are allowed not to answer.
     ui::Size cell;
 
-    // Zmierzone szerokości znaków, którymi chcemy rysować. Zero znaczy brak odpowiedzi.
+    // The measured widths of the characters we want to draw with. Zero means no answer.
     int sextant = 0;
     int octant = 0;
 
@@ -146,12 +151,13 @@ struct Capabilities::Held {
     bool done = false;
 };
 
+// A probe of the terminal behind the console; nothing is asked until the first question.
 Capabilities::Capabilities(Seam<Console> with) : held_(std::make_unique<Held>(std::move(with))) {}
 
 Capabilities::~Capabilities() = default;
 
-// Podłoga ze środowiska. To jest stan, w którym zostajemy, gdy terminal nie odpowie na nic —
-// i dlatego jest zachowawcza. Odpowiedzi, które przyjdą, tylko ją podnoszą.
+// The floor from the environment. This is the state we stay in when the terminal answers nothing,
+// and that is why it is conservative. The answers that arrive only raise it.
 void Capabilities::ground() const {
     Held& held = *held_;
 
@@ -161,9 +167,8 @@ void Capabilities::ground() const {
     const std::string rich = named_of(from, "COLORTERM");
     const std::string lang = named_of(from, "LANG") + named_of(from, "LC_ALL") + named_of(from, "LC_CTYPE");
 
-    // Pusty TERM to na Windows stan **normalny** — system go nie ustawia. Traktowanie pustki
-    // jak terminala bez możliwości było przeniesieniem nawyku z POSIX i kosztowało cały kolor
-    // w Windows Terminalu.
+    // An empty TERM is the normal state on Windows: the system does not set it. Treating it as a
+    // terminal without capabilities would cost all color in Windows Terminal.
 #ifdef _WIN32
     const bool console = term != "dumb";
 #else
@@ -172,10 +177,11 @@ void Capabilities::ground() const {
 
     held.colorless = !named_of(from, "NO_COLOR").empty();
 
-    // **W tmuxie albo w screenie zmienne zewnętrznego terminala kłamią.** Sesja założona w kitty
-    // albo w Windows Terminalu niesie `KITTY_WINDOW_ID`, `WT_SESSION` i jego `TERM_PROGRAM` do
-    // każdego okna — także wtedy, gdy klient siedzi już w zupełnie innym terminalu — a sam
-    // multiplekser obrazów kitty nie przepuszcza. O tym, co umie, mówi tu tylko `TERM` i sonda.
+    // Inside tmux or screen the outer terminal's variables lie. A session started in kitty or in
+    // Windows Terminal carries `KITTY_WINDOW_ID`, `WT_SESSION` and its `TERM_PROGRAM` into every
+    // window, even when the client already sits in a completely different terminal, and the
+    // multiplexer itself does not pass kitty images through. Only `TERM` and the probe tell what it
+    // can do here.
     const bool muxed = !named_of(from, "TMUX").empty() || !named_of(from, "STY").empty() ||
                        term.rfind("tmux", 0) == 0 || term.rfind("screen", 0) == 0;
 
@@ -195,9 +201,9 @@ void Capabilities::ground() const {
     held.unicode = holds(lang, "UTF-8") || holds(lang, "utf8") || holds(lang, "UTF8");
 #endif
 
-    // Kitty i ghostty mówią o sobie w `TERM`, a kitty dokłada jeszcze własną zmienną. Sonda
-    // i tak to potwierdzi, ale zgadnięcie ze środowiska działa również tam, gdzie sondy nie ma —
-    // w potoku, w próbie, przy przekierowanym wyjściu.
+    // Kitty and ghostty name themselves in `TERM`, and kitty adds a variable of its own. The probe
+    // confirms it anyway, but the guess from the environment also works where there is no probe: in
+    // a pipe, in a test, with redirected output.
     if (holds(term, "kitty") || holds(term, "ghostty") ||
         (!muxed && !named_of(from, "KITTY_WINDOW_ID").empty()))
         held.graphics = Graphics::kitty;
@@ -213,6 +219,8 @@ void Capabilities::ground() const {
     }
 }
 
+// Sets the floor and runs the probe once, before the first answer is read. A console that is not
+// live gets only the floor.
 void Capabilities::ready() const {
     if (held_->asked) return;
 
@@ -225,6 +233,8 @@ void Capabilities::ready() const {
     probe();
 }
 
+// Asks the terminal every question in raw mode and reads the answers until Primary DA arrives or
+// the patience runs out, then stores the measured widths.
 void Capabilities::probe() const {
     Console& console = held_->console.provider();
 
@@ -245,15 +255,15 @@ void Capabilities::probe() const {
 
         const std::string given = console.hear(waited - spent, nullptr);
 
-        // Pustka znaczy, że czas minął — kręcenie się dalej byłoby jałowym obiegiem.
+        // Empty means the time ran out; going around again would be an idle loop.
         if (given.empty()) break;
 
         fed(given);
     }
 
-    // Bajty, których nie rozpoznaliśmy, to najpewniej klawisze naciśnięte w trakcie startu.
-    // Muszą zostać oddane wołającemu, nie wyrzucone — inaczej pierwszy klawisz po uruchomieniu
-    // czasem by przepadał, w sposób nie do powtórzenia.
+    // Bytes we did not recognize are most likely keys pressed during startup. They have to be
+    // handed to the caller, not thrown away; otherwise the first key after starting would sometimes
+    // get lost, in a way that cannot be reproduced.
     held_->rest += held_->tail;
     held_->tail.clear();
 
@@ -266,14 +276,13 @@ void Capabilities::probe() const {
 
 namespace {
 
-// Stan trybu z DECRPM: zero znaczy „nie znam takiego trybu", cokolwiek innego — że terminal
-// go zna. To jest właśnie ta różnica, której zgadywanie po nazwie terminala nigdy nie daje.
+// A mode state from DECRPM: zero means "I do not know such a mode", anything else that the terminal
+// knows it. This is exactly the difference that guessing from the terminal's name never gives.
 bool knowing(int state) { return state != 0; }
 
-// Wtórne DA oddaje liczbę rodziny, nie nazwę. Tablica jest krótka i celowo zachowawcza —
-// nieznany numer zostawia nazwę ze środowiska, bo zmyślona byłaby gorsza niż żadna.
-// Kolor tła przychodzi szesnastkowo i w zmiennej liczbie cyfr: rgb:R/G/B, rgb:RR/GG/BB, aż
-// do czterech cyfr na składową. Każdą sprowadzamy więc do ułamka jej własnym zakresem.
+// A color component from the background report, as a fraction from 0 to 1, or -1 when there are no
+// hex digits. The background color comes in hex with a varying number of digits (rgb:R/G/B,
+// rgb:RR/GG/BB, up to four digits per component), so each one is scaled by its own range.
 double parted(std::string_view said) {
     std::uint32_t made = 0;
     int digits = 0;
@@ -297,8 +306,9 @@ double parted(std::string_view said) {
     return static_cast<double>(made) / most;
 }
 
-// Jasność liczymy wagami widzenia, nie sumą — oko widzi zieleń kilkakrotnie mocniej niż błękit,
-// a tło o składowych 0,0,255 jest ciemne mimo niemałej sumy.
+// Whether the background reported by OSC 11 is light or dark. Brightness is computed with
+// perceptual weights, not as a sum: the eye sees green several times more strongly than blue, and a
+// background of 0,0,255 is dark despite a sizable sum.
 Shade shading(std::string_view body) {
     const std::size_t at = body.find("rgb");
     if (at == std::string_view::npos) return Shade::neutral;
@@ -327,6 +337,9 @@ Shade shading(std::string_view body) {
     return light > 0.5 ? Shade::light : Shade::dark;
 }
 
+// The terminal family named by the first number of Secondary DA, or empty. The table is short and
+// deliberately conservative: an unknown number leaves the name from the environment, because a
+// made-up one would be worse than none.
 std::string calling(int family) {
     switch (family) {
         case 0: return "xterm";
@@ -343,6 +356,7 @@ std::string calling(int family) {
     }
 }
 
+// Every decimal number in the text, in order; any other character separates them.
 std::vector<int> numbers(std::string_view body) {
     std::vector<int> made;
 
@@ -370,8 +384,8 @@ std::vector<int> numbers(std::string_view body) {
 
 }
 
-// Rozbiór odpowiedzi. Skanujemy od początku: co rozpoznane — zabieramy, co niedokończone —
-// zostawiamy na później, co obce — odkładamy jako cudze bajty.
+// Parsing the answers. We scan from the start: what is recognized is taken, what is unfinished is
+// left for later, and what is foreign is set aside as someone else's bytes.
 void Capabilities::fed(std::string_view bytes) const {
     Held& held = *held_;
 
@@ -433,21 +447,21 @@ void Capabilities::fed(std::string_view bytes) const {
                     if (!mine.empty()) held.named = mine;
                 }
             } else if (last == 't') {
-                // Odpowiedź na `16t` brzmi `6;wysokość;szerokość` — inne raporty okna zaczynają
-                // się inną liczbą i nie są nasze.
+                // The answer to `16t` reads `6;height;width`; other window reports start with
+                // another number and are not ours.
                 const std::vector<int> among = numbers(body);
 
                 if (among.size() >= 3 && among[0] == 6)
                     held.cell = ui::Size{among[2], among[1]};
             } else if (last == 'c') {
-                // **Sixel poznajemy z odpowiedzi, którą i tak dostajemy.** Pierwotne DA wysyłamy
-                // jako terminator sondy, a czwórka na jego liście znaczy „umiem sixel". Dotąd
-                // parametry szły do kosza.
+                // Sixel is recognized from an answer we get anyway. Primary DA is sent as the
+                // probe's terminator, and a 4 in its list means "I can do sixel".
                 //
-                // **Poza multiplekserem.** tmux od wersji 3.4 przyjmuje sixel i odpowiada czwórką, ale
-                // obraz trzyma po swojemu: gubi go przy przełączaniu okien i przewijaniu, a przy
-                // podziale ekranu potrafi narysować go w sąsiednim panelu. Piksele w tmuxie to więc
-                // jawne życzenie aplikacji (`Setup::graphics`), nie wniosek z sondy.
+                // Outside a multiplexer only. tmux accepts sixel since version 3.4 and answers with
+                // a 4, but it keeps the picture its own way: it loses it when switching windows and
+                // scrolling, and with a split screen it can draw it in the neighboring pane. Pixels
+                // in tmux are therefore an explicit wish of the application (`Setup::graphics`),
+                // not a conclusion from the probe.
                 const std::vector<int> among = numbers(body);
 
                 if (!held.muxed && std::find(among.begin(), among.end(), 4) != among.end() &&
@@ -459,8 +473,8 @@ void Capabilities::fed(std::string_view bytes) const {
                 known = false;
             }
 
-            // Nierozpoznana sekwencja jest kompletna, ale to nie znaczy, że jest nasza —
-            // strzałka naciśnięta w trakcie startu wygląda tak samo. Oddajemy ją w całości.
+            // An unrecognized sequence is complete, but that does not mean it is ours: an arrow
+            // pressed during startup looks the same. We hand it back whole.
             if (!known) held.rest.append(held.tail, at, end + 1 - at);
 
             at = end + 1;
@@ -468,8 +482,8 @@ void Capabilities::fed(std::string_view bytes) const {
             continue;
         }
 
-        // Protokół kitty odpowiada w APC. Tylko po to tu jest — żadna inna sekwencja, której
-        // oczekujemy, nie zaczyna się od `ESC _`.
+        // The kitty protocol answers in APC. That is the only reason this is here: no other
+        // sequence we expect starts with `ESC _`.
         if (lead == '_') {
             std::size_t end = at + 2;
 
@@ -542,41 +556,46 @@ void Capabilities::fed(std::string_view bytes) const {
     held.tail.erase(0, at);
 }
 
+// How many colors the terminal shows; `NO_COLOR` makes it monochrome.
 Colors Capabilities::colors() const {
     ready();
 
     return held_->colorless ? Colors::mono : held_->colors;
 }
 
+// Which mouse reporting the terminal supports.
 Mouse Capabilities::mouse() const {
     ready();
 
     return held_->mouse;
 }
 
+// Which alternate screen the terminal has.
 Screen Capabilities::screen() const {
     ready();
 
     return held_->screen;
 }
 
+// Which pixel graphics protocol the terminal speaks, if any.
 Graphics Capabilities::graphics() const {
     ready();
 
     return held_->graphics;
 }
 
-// **Sufit, nie wybór.** Metoda mówi, jak gęstej siatki terminal nie rozsypie — nie jaką siatką
-// mamy rysować. Wyboru dokonuje `Term`, biorąc mniejszą z dwóch: życzenia i tego sufitu.
+// A ceiling, not a choice. The method says how dense a grid the terminal will not scatter, not
+// which grid we should draw with. `Term` makes the choice, taking the smaller of the two: the wish
+// and this ceiling.
 //
-// Sonda odpowiada wyłącznie na pytanie „czy ten znak zajmuje jedną kratkę". Nie odpowiada na
-// pytanie „czy font go ma", bo brakujący glif rysuje się jako pusty prostokąt i zajmuje dokładnie
-// tyle samo miejsca. Dlatego sufit **niczego nie obiecuje**: podniesiony bez życzenia dałby
-// połowie użytkowników obrazek złożony z pustych ramek, a domyślnie i tak zostajemy przy znakach
-// blokowych, które są w Unicode od 1.1 i ma je każdy font terminalowy.
+// The probe answers only the question "does this character take one cell". It does not answer "does
+// the font have it", because a missing glyph is drawn as an empty rectangle and takes exactly the
+// same room. That is why the ceiling promises nothing: raised without a wish, it would give half of
+// the users a picture made of empty frames, and by default we stay with block characters anyway,
+// which have been in Unicode since 1.1 and which every terminal font has.
 //
-// Brak pomiaru — zero — nie obniża. Milczący terminal niczego nie obalił, a to co innego niż
-// terminal mówiący „ten znak zajmuje dwie kratki".
+// A missing measurement (zero) does not lower it. A silent terminal has disproved nothing, and that
+// is different from a terminal saying "this character takes two cells".
 ui::Blocks Capabilities::blocks() const {
     ready();
 
@@ -587,82 +606,91 @@ ui::Blocks Capabilities::blocks() const {
     return ui::Blocks::octants;
 }
 
+// The size of a cell in pixels; zero in either dimension means the terminal did not say.
 ui::Size Capabilities::cell() const {
     ready();
 
     return held_->cell;
 }
 
+// Whether the terminal's background is light or dark, or neutral when it did not say.
 Shade Capabilities::shade() const {
     ready();
 
     return held_->shade;
 }
 
+// Whether the terminal knows bracketed paste (mode 2004).
 bool Capabilities::bracketed_paste() const {
     ready();
 
     return held_->bracketed_paste;
 }
 
+// Whether the terminal reports focus changes (mode 1004).
 bool Capabilities::focus_events() const {
     ready();
 
     return held_->focus_events;
 }
 
+// Whether the terminal knows synchronized output (mode 2026).
 bool Capabilities::synchronized() const {
     ready();
 
     return held_->synchronized;
 }
 
+// Whether the terminal takes UTF-8: always on Windows, from the locale variables elsewhere.
 bool Capabilities::unicode() const {
     ready();
 
     return held_->unicode;
 }
 
+// Whether the terminal takes a window title.
 bool Capabilities::titles() const {
     ready();
 
     return held_->titles;
 }
 
-// Trzy **zmierzone szerokości** znaków próbnych: chińskiego, emoji ze znacznikiem wariantu
-// i emoji złożonego spójnikiem. Nazywały się `broad`, `marked` i `joined` — z czego `marked`
-// znaczyło w tej bibliotece „zaznaczony", a żadna z trzech nie mówiła, że chodzi o szerokość.
+// The measured width, in columns, of a Chinese character, the first of three test characters.
 int Capabilities::wide() const {
     ready();
 
     return held_->wide;
 }
 
+// The measured width, in columns, of an emoji with a variation selector.
 int Capabilities::varied() const {
     ready();
 
     return held_->varied;
 }
 
+// The measured width, in columns, of an emoji joined with a zero-width joiner.
 int Capabilities::joined() const {
     ready();
 
     return held_->joined;
 }
 
+// The terminal's name: from Secondary DA when the family is known, else from the environment.
 const std::string& Capabilities::named() const {
     ready();
 
     return held_->named;
 }
 
+// The terminal's version from Secondary DA, or zero.
 int Capabilities::version() const {
     ready();
 
     return held_->version;
 }
 
-// Bajty, które przyszły przy starcie i nie były odpowiedzią — czyli **resztki**, a nie zapas.
+// Bytes that arrived during startup and were not an answer: leftovers, not a buffer.
 const std::string& Capabilities::rest() const {
     ready();
 

@@ -17,20 +17,22 @@ namespace {
 using showing::known;
 using showing::Server;
 
+// What the NAT mapping means for hole punching, in words.
 std::string named(talcite::net::StunClient::Mapping what) {
     switch (what) {
-        case talcite::net::StunClient::Mapping::alike: return "zgodne — przebijanie ma sens";
+        case talcite::net::StunClient::Mapping::alike: return "consistent — punching makes sense";
         case talcite::net::StunClient::Mapping::symmetric:
-            return "symetryczne — przebijanie nie zadziała";
-        default: return "nieznane";
+            return "symmetric — punching will not work";
+        default: return "unknown";
     }
 }
 
-// Adres serwera podaje się jako gospodarz:port albo sam gospodarz — wtedy port 3478, jak każe RFC.
+// A server address is given as host:port or as a bare host, which then gets port 3478, as the RFC
+// says. Returns false for an empty host or port, or a port above 65535.
 bool taken(const std::string& said, Server& made) {
     const std::size_t colon = said.rfind(':');
 
-    // Dwukropek w środku IPv6 nie jest rozdzielnikiem portu; tam trzeba nawiasów albo nic.
+    // A colon inside IPv6 is not a port separator; there it takes brackets or nothing.
     if (colon == std::string::npos || said.find(':') != colon) {
         made = Server{said, 3478};
 
@@ -42,8 +44,8 @@ bool taken(const std::string& said, Server& made) {
 
     if (host.empty() || rest.empty()) return false;
 
-    // Numer portu **nie zawija się po cichu**: 99999 stawało się portem 34463, a wpisany minus
-    // jeden — portem 65535.
+    // The port number does not wrap silently: without the check, 99999 would become port 34463, and
+    // a typed minus one port 65535.
     const unsigned long which = std::stoul(rest);
 
     if (which > 65535) return false;
@@ -55,18 +57,18 @@ bool taken(const std::string& said, Server& made) {
 
 }
 
-// Testy sprawdzają kodek wobec udawanego serwera złożonego bajt po bajcie. Tego, czy prawdziwy
-// serwer w internecie odpowiada tak, jak myślimy, żaden test w piaskownicy nie sprawdzi — od tego
-// jest ten program. Bez argumentów bierze serwery wbudowane; z argumentami pyta podanych, na
-// przykład:
+// The tests check the codec against a fake server assembled byte by byte. Whether a real server on
+// the internet answers the way we think, no sandboxed test can check; that is what this program is
+// for. Without arguments it takes the built-in servers; with arguments it asks the given ones, for
+// example:
 //
 //     talcite-stunning stun.l.google.com:19302 stun.cloudflare.com:3478
 //
-// Dwa serwery albo więcej dają dodatkowo werdykt o odwzorowaniu NAT; jeden daje sam adres.
+// Two or more servers also give a verdict on the NAT mapping; one gives only the address.
 int main(int count, char** given) {
     using namespace talcite;
 
-    // Konsola Windows domyślnie nie jest w UTF-8, a my piszemy w UTF-8.
+    // The Windows console is not in UTF-8 by default, and we write UTF-8.
     const showing::Speaking speaking;
 
     const net::Patience soon{8000};
@@ -77,13 +79,13 @@ int main(int count, char** given) {
         if (count < 2) {
             asking = known();
 
-            std::cout << "biorę serwery wbudowane; własne podaje się w wierszu poleceń.\n";
+            std::cout << "using the built-in servers; your own go on the command line.\n";
         } else {
             for (int at = 1; at < count; ++at) {
                 Server one;
 
                 if (!taken(given[at], one)) {
-                    std::cout << "nie rozumiem adresu: " << given[at] << "\n";
+                    std::cout << "cannot understand the address: " << given[at] << "\n";
 
                     return 2;
                 }
@@ -94,7 +96,7 @@ int main(int count, char** given) {
 
         net::Udp mine{net::Address::any(net::Family::four, 0)};
 
-        std::cout << "gniazdo stoi na " << mine.mine().spelled() << "\n";
+        std::cout << "socket up at " << mine.mine().spelled() << "\n";
 
         net::StunClient scout{mine, soon};
 
@@ -104,46 +106,46 @@ int main(int count, char** given) {
             try {
                 found = net::resolve(one.first, one.second, net::Family::four).await();
             } catch (const net::Trouble& why) {
-                std::cout << "nie rozwiązałem " << one.first << ": " << why.what() << "\n";
+                std::cout << "could not resolve " << one.first << ": " << why.what() << "\n";
 
                 continue;
             }
 
             if (found.empty()) {
-                std::cout << "nic nie znalazłem pod " << one.first << "\n";
+                std::cout << "found nothing under " << one.first << "\n";
 
                 continue;
             }
 
-            std::cout << "serwer " << one.first << " to " << found.front().spelled() << "\n";
+            std::cout << "server " << one.first << " is " << found.front().spelled() << "\n";
 
             scout.add(found.front());
         }
 
         if (scout.servers().empty()) {
-            std::cout << "żadnego serwera nie udało się rozwiązać.\n";
+            std::cout << "no server could be resolved.\n";
 
             return 1;
         }
 
         const net::Address seen = scout.seen().await();
 
-        std::cout << "widzą mnie jako " << seen.spelled() << "\n";
+        std::cout << "they see me as " << seen.spelled() << "\n";
 
         if (scout.servers().size() >= 2)
-            std::cout << "odwzorowanie: " << named(scout.mapping().await()) << "\n";
+            std::cout << "mapping: " << named(scout.mapping().await()) << "\n";
         else
-            std::cout << "o odwzorowaniu nic nie powiem — trzeba dwóch serwerów.\n";
+            std::cout << "nothing to say about the mapping — it takes two servers.\n";
     } catch (const Overdue&) {
-        std::cout << "żaden serwer nie odpowiedział na czas.\n";
+        std::cout << "no server answered in time.\n";
 
         return 1;
     } catch (const net::Trouble& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     } catch (const std::exception& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     }

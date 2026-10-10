@@ -4,38 +4,41 @@
 
 namespace talcite::ui {
 
-// **Jedyny pojemnik, w którym dzieci leżą na sobie.** `Row` i `Column` kładą obok; `Frame` owija;
-// wszystko, co ma leżeć **na** czymś — zasłona na treści, rozwinięta lista na panelach — leży tu.
-// Przedtem robiły to trzy ramy, każda po swojemu: pasek menu malował rozwinięte menu na końcu
-// własnego `paint`, okno zasłon malowało zasłony na końcu własnego, a próby układu miały czwartą
-// kopię z sortowaniem po numerze warstwy, którego biblioteka nie znała.
+// The only container whose children lie on top of each other. `Row` and `Column` place them side by
+// side, `Frame` wraps; everything that has to lie on something (a veil over the content, an opened
+// list over the panels) lies here.
 //
-// **Warstwa to kolejność dzieci i nic więcej.** Ostatnie dopięte jest na wierzchu — tak maluje ten
-// pojemnik i tak trafia mysz w `Root::under`, z tej samej listy. Numeru warstwy nie ma, bo byłby
-// drugim źródłem tej samej prawdy; był, i był martwy.
+// A layer is the order of the children and nothing more. The last one attached is on top: this is
+// how the container paints and how the mouse hits in `Root::under`, from the same list. There is no
+// layer number, because it would be a second source of the same truth.
 //
-// **Gdzie leży dziecko, mówi ono samo** przez `placement(room)`. Domyślnie cały pokój — tyle bierze
-// zasłona (żeby łapać mysz wszędzie) i tyle bierze treść. Mniej bierze to, co ma stać w jednym
-// miejscu na treści, i wtedy samo liczy, gdzie — zwykle z `standing()` tego, pod czym stoi. To jest
-// całe pozycjonowanie w bibliotece: jedno pytanie, w jednym pojemniku, zamiast trybów na każdym
-// węźle i pojemników, które musiałyby te tryby rozumieć.
+// Where a child lies is said by the child itself, through `placement(room)`. By default it is the
+// whole room: a veil takes that much (to catch the mouse everywhere) and so does the content.
+// Something that has to stand in one spot over the content takes less, and computes where itself,
+// usually from the `standing()` of what it stands under. That is all the positioning in the
+// library: one question, in one container, instead of modes on every node and containers that would
+// have to understand them.
+
+// A stack takes any number of children.
 int Stack::capacity() const { return plenty; }
 
+// A stack wants all the room it is offered.
 Size Stack::wants(Size room) const { return room; }
 
+// Paints the children in order, each in its own placement, so later children cover earlier ones.
 View Stack::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`. Dziecko, które
-    // bierze mniej niż cały pokój, nie zamalowuje reszty, więc spod niego widać niższe warstwy.
+    // Transparent wherever nothing is drawn, the rule described at `Node::paint`. A child that
+    // takes less than the whole room does not paint over the rest, so lower layers show around it.
     made.clear({{0, 0}, seen.size});
 
     for (const std::shared_ptr<Node>& one : children()) {
         Area where = one->placement(given);
 
-        // Dziecko może wejść na rodzeństwo, ale nie może wyjść poza rodzica — tej granicy pilnuje
-        // pojemnik, nie każde dziecko z osobna, bo tu jest jedno miejsce, a tam byłoby ich tyle,
-        // ile klas.
+        // A child may cover its siblings but may not leave its parent. The container guards that
+        // boundary, not every child on its own, because here it is one place, and there it would be
+        // as many places as there are classes.
         where.at.x = std::clamp(where.at.x, 0, std::max(given.wide, 0));
         where.at.y = std::clamp(where.at.y, 0, std::max(given.high, 0));
         where.size.wide = std::clamp(where.size.wide, 0, given.wide - where.at.x);

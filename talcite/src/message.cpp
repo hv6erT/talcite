@@ -16,24 +16,25 @@ namespace talcite::ui {
 
 namespace {
 
-// Ile kratek zostawiamy wokół pudełka, żeby nie kleiło się do krawędzi ekranu. Cztery, bo dwie
-// z każdej strony czytają się jak margines, a jedna wygląda jak niedoróbka.
+// How many cells are left around the box so it does not stick to the screen edge. Four, because
+// two on each side read as a margin, while one looks like a mistake.
 constexpr int loose = 4;
 
-// **Pudełko, które znika razem ze swoją treścią.** Sama ramka tego nie potrafi: `Frame::wants`
-// dolicza krawędzie także wokół dziecka, które nic nie chce, więc pusty napis w pudełku to nie
-// pustka, tylko obwódka dwa na dwa. Ten węzeł pyta więc **treść**, nie ramkę, i gdy treść chce
-// zera wierszy, sam też chce zera — a kolumna nie daje mu ani jednej kratki.
+// A box that disappears together with its content. A frame alone cannot do that: `Frame::wants`
+// adds the edges even around a child that wants nothing, so an empty text in a box is not
+// emptiness but a two-by-two outline. This node therefore asks the content, not the frame, and
+// when the content wants zero rows, it wants zero too, and the column gives it not a single cell.
 //
-// Dzięki temu kształt kolumny jest **stały**: tytuł, pudełko treści, odstęp, pudełko odpowiedzi
-// stoją w niej od początku i na zawsze. `text()` i `buttons().add()` są zwykłymi ustawiaczami —
-// niczego nie dopinają, nie wstawiają i nie przebudowują — a to, czy pudełko widać, wychodzi
-// z rozmiarów przy najbliższej klatce.
+// This keeps the shape of the column fixed: the title, the text box, the gap and the answer box
+// stand in it from the start and for good. `text()` and adding buttons are plain setters that
+// attach, insert and rebuild nothing, and whether a box is visible follows from the sizes at the
+// next frame.
 //
-// Zgaszone `boxed` znaczy brak ramki, a nie brak pudełka: węzeł zostaje i dalej znika razem
-// z treścią, więc gołe komunikaty zachowują się dokładnie tak samo.
+// With `boxed` off there is no frame, but the node stays and still disappears together with its
+// content, so bare messages behave exactly the same.
 class Boxed : public Node {
 public:
+    // Puts the content into the frame, or straight into this node when there is no frame.
     Boxed(std::shared_ptr<Node> inside, const std::shared_ptr<Frame>& box)
         : inside_(std::move(inside)) {
         if (box == nullptr) {
@@ -47,6 +48,7 @@ public:
         children().add(box);
     }
 
+    // Nothing when the content wants no rows; otherwise what the frame around it wants.
     [[nodiscard]] Size wants(Size room) const override {
         if (inside_->wants(room).high == 0) return {};
 
@@ -57,38 +59,44 @@ private:
     std::shared_ptr<Node> inside_;
 };
 
-// **Szerokość pudełka rozstrzyga się tutaj.** Dialog pyta swoje jedyne dziecko, ile chce, i tyle mu
-// daje — więc gdyby pytał ramkę wprost, komunikat z jednym długim zdaniem rozciągnąłby się na cały
-// ekran. Ten węzeł zwęża pytanie, a nie odpowiedź: napis dostaje mniej miejsca, więc **zawija się**,
-// zamiast zostać uciętym. Krótki komunikat nadal chce dokładnie tyle, ile ma znaków.
+// The width of the box is decided here. The dialog asks its only child how much it wants and gives
+// it that much, so if it asked the frame directly, a message with one long sentence would stretch
+// across the whole screen. This node narrows the question, not the answer: the text gets less room
+// and so wraps instead of being cut. A short message still wants exactly as much as its characters.
 class Capped : public Node {
 public:
+    // What the content wants when asked with the room narrowed by the margin.
     [[nodiscard]] Size wants(Size room) const override {
         if (children().empty()) return {};
 
-        // Na ekranie węższym niż dwa marginesy oddechu nie ma — lepiej pokazać treść ciasno niż
-        // ładny odstęp wokół jednej kolumny.
+        // On a screen narrower than two margins there is no breathing room: better to show the
+        // content tightly than a nice gap around a single column.
         const int wide = room.wide > loose * 2 ? room.wide - loose : room.wide;
 
         return children().front()->wants({std::max(wide, 1), room.high});
     }
 };
 
-// **Kratka oddechu po obu stronach treści** — w komunikacie bez pudełek. Pudełko dawało ją swoją
-// krawędzią; bez niego napis stykałby się z ramką okna. Pyta treść o pokój węższy o dwie kratki i chce
-// tyle, ile ona, plus te dwie — wysokość treści, więc pusta treść to zero wierszy i `Gap` widzi pustkę.
+// One cell of breathing room on each side of the content, in a message without boxes. A box gives
+// it with its edge; without one the text would touch the window frame. It asks the content with
+// room two cells narrower and wants what the content wants plus those two, at the content's
+// height, so empty content is zero rows and `Gap` sees emptiness.
 class Aired : public Node {
 public:
+    // Holds the given content as its only child.
     explicit Aired(std::shared_ptr<Node> inside) { children().add(std::move(inside)); }
 
+    // The content's wish for room two cells narrower, widened by those two cells.
     [[nodiscard]] Size wants(Size room) const override {
         const Size inside = children().front()->wants({std::max(room.wide - 2, 0), room.high});
 
-        // Ponad pokój wyjdzie tylko na ekranie węższym niż sam oddech, a tam przycina ramka okna.
+        // This exceeds the room only on a screen narrower than the breathing room itself, and
+        // there the window frame cuts it.
         return {inside.wide + 2, inside.high};
     }
 
 protected:
+    // Paints the content one cell in from the left, transparent elsewhere.
     View paint(Size given, Area seen) override {
         View made{seen.size};
 
@@ -105,38 +113,41 @@ protected:
 
 }
 
-// Komunikat **nie maluje nic własnego**. Jest złożeniem części, które już stoją: ramka daje tło
-// i oddech, kolumna układa, napis mówi, rząd przycisków pyta. Cały jego kod to budowa drzewa,
-// rozdanie ról i przekazanie odpowiedzi dalej.
+// A message box with a title, a text and buttons. A message paints nothing of its own. It is an
+// assembly of parts that already exist: the frame gives the background and the breathing room,
+// the column lays out, the text speaks, the row of buttons asks. All its code is building the
+// tree, handing out the roles and passing the answer on.
 //
-// Układ, od zewnątrz:
+// The layout, from the outside:
 //
-//     Capped → Frame(rdzeń)          ← tło i obwódka; jej krawędź **jest** marginesem
+//     Capped → Frame(stem)           ← background and outline; its edge is the margin
 //              └── Column
-//                  ├── Span(tytuł)   ← wyśrodkowany, rola `<rdzeń>.title`
-//                  ├── Boxed         ← pudełko treści; znika, gdy treści nie ma
-//                  │   └── Frame(.box) → Span(treść)
-//                  ├── Gap           ← pusty wiersz; znika, gdy któregoś pudełka nie ma
-//                  └── Boxed         ← pudełko odpowiedzi; znika, gdy nie ma przycisków
-//                      └── Frame(.box) → Amid → Row(odstęp 1) → przyciski
+//                  ├── Span(title)   ← centered, role <stem>.title
+//                  ├── Boxed         ← the text box; disappears when there is no text
+//                  │   └── Frame(.box) → Span(text)
+//                  ├── Gap           ← an empty row; disappears when either box is missing
+//                  └── Boxed         ← the answer box; disappears when there are no buttons
+//                      └── Frame(.box) → Amid → Row(spacing 1) → buttons
 //
-// **Kolumna jest złożona raz i nie zmienia się nigdy.** Wszystko, co widać albo czego nie widać,
-// wychodzi z `wants` — więc `text()` i `buttons().add()` wolno wołać kiedykolwiek, także na oknie
-// już otwartym, i nic nie trzeba przy tym przestawiać.
+// The column is assembled once and never changes. Everything that is or is not visible follows
+// from `wants`, so `text()` and adding buttons may be called at any time, also on a window that
+// is already open, and nothing has to be rearranged.
 //
-// **Bez pudełek** (`boxed` zgaszone) komunikat wygląda jak formularz: tytuł stoi na górnej krawędzi
-// ramki, treść ma kratkę oddechu z obu stron, a przyciski stoją pośrodku pod pustym wierszem:
+// Without boxes (`boxed` off) the message looks like a form: the title stands on the top edge of
+// the frame, the text has a cell of breathing room on both sides, and the buttons stand centered
+// under an empty row:
 //
-//     Capped → Frame(tytuł, rdzeń)
-//              └── Titled          ← nie węższy niż tytuł, jak w formularzu
+//     Capped → Frame(title, stem)
+//              └── Titled          ← no narrower than the title, as in a form
 //                  └── Column
-//                      ├── Aired → Span(treść)
+//                      ├── Aired → Span(text)
 //                      ├── Gap
-//                      └── Amid → Row(odstęp 1) → przyciski
+//                      └── Amid → Row(spacing 1) → buttons
 //
-// Krawędź zewnętrznej ramki pełni podwójną służbę: rysuje się rolą `<rdzeń>`, więc skórka decyduje,
-// czy widać z niej kreskę, czy sam kolor tła. W Midnight Commanderze pudełko błędu ma ją niewidoczną
-// i wygląda to jak kolumna oddechu — a to jest dokładnie ta sama kratka.
+// The edge of the outer frame does double duty: it is drawn with the role <stem>, so the skin
+// decides whether a line shows in it or only the background color. In Midnight Commander the
+// error box has it invisible, and it looks like a column of breathing room, which is exactly the
+// same cell. The curtain takes only the shadow from the message's shape.
 Message::Message(std::string title, std::string text, MessageShape shape)
     : Dialog(ModalShape{shape.shade}), shape_(shape) {
     const auto capped = std::make_shared<Capped>();
@@ -151,14 +162,15 @@ Message::Message(std::string title, std::string text, MessageShape shape)
     text_ = std::make_shared<Span>(std::move(text),
                                    SpanShape{true, Justify::center, Elide::none});
 
-    // Odstęp między przyciskami należy do wiersza, nie do treści — przycisk zgaszony
-    // do zera nie zostawia po sobie dziury.
+    // The spacing between buttons belongs to the row, not to the content, so a button shrunk to
+    // zero leaves no hole behind.
     const auto amid = std::make_shared<Amid>();
 
     amid->children().add(row_);
 
-    // Pudełko wokół treści i wokół przycisków — tak wygląda komunikat w Midnight Commanderze.
-    // Kto woli gołą treść, gasi `boxed` i dostaje samą kolumnę w ramce.
+    // A box around the text and around the buttons: that is how a message looks in Midnight
+    // Commander. Whoever prefers bare content turns `boxed` off and gets just the column in a
+    // frame.
     const auto boxing = [this]() -> std::shared_ptr<Frame> {
         if (!shape_.boxed) return nullptr;
 
@@ -203,25 +215,30 @@ Message::Message(std::string title, std::string text, MessageShape shape)
 
     children().add(capped);
 
-    // Rdzeń wchodzi na końcu, gdy części już stoją — ustawiacz rozdaje go im wszystkim.
+    // The stem is set last, once the parts are in place, and the setter hands it to all of them.
     role("talcite.message");
 }
 
+// The message's title.
 const std::string& Message::title() const { return title_->text(); }
 
+// Changes the title; without boxes it also stands on the frame's top edge.
 void Message::title(std::string given) {
     title_->text(std::move(given));
 
     if (!shape_.boxed) frame_->title(title_->text());
 }
 
+// The message's text.
 const std::string& Message::text() const { return text_->text(); }
 
+// Changes the text; the text box appears or disappears with it at the next frame.
 void Message::text(std::string given) { text_->text(std::move(given)); }
 
-// Rdzeń rozdaje się **po zbudowaniu i po każdej zmianie**, bo dzieci trzymają go u siebie. Rodzina
-// jest pięcioczłonowa: samo okno, tytuł, pudełka w środku, treść i przyciski. Skórka opisuje więc
-// jeden komunikat pięcioma wpisami i nie musi niczego zgadywać.
+// Sets the role stem and hands it out to the parts, after building and after every change,
+// because the children keep it themselves. The family has five members: the window itself, the
+// title, the boxes inside, the text and the buttons. The skin thus describes one message with five
+// entries and does not have to guess anything.
 void Message::role(std::string given) {
     Node::role(std::move(given));
 

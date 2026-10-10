@@ -20,6 +20,7 @@ using namespace talcite;
 
 namespace {
 
+// Reads one row of a view as text, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -34,6 +35,7 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// Tells whether the text appears in any row of the view.
 bool shown(const View& one, const std::string& what) {
     for (int y = 0; y < one.size().high; ++y)
         if (read(one, y).find(what) != std::string::npos) return true;
@@ -41,8 +43,9 @@ bool shown(const View& one, const std::string& what) {
     return false;
 }
 
-// Zasłona stawia pudełko pośrodku ekranu, więc próby liczą wiersze od górnej krawędzi ramki
-// i porównują bez odstępu z lewej — kształt, nie miejsce.
+// The veil puts the box in the middle of the screen, so the trials count rows from the top edge of
+// the frame and compare without the left margin: shape, not position. This returns the row of the
+// frame's top edge, or -1 when there is no frame.
 int framed(const View& one) {
     for (int y = 0; y < one.size().high; ++y) {
         const std::string row = read(one, y);
@@ -53,6 +56,7 @@ int framed(const View& one) {
     return -1;
 }
 
+// Reads one row of a view as text, without the leading and trailing spaces.
 std::string lined(const View& one, int y) {
     std::string made = read(one, y);
 
@@ -61,37 +65,43 @@ std::string lined(const View& one, int y) {
     return made;
 }
 
+// Dispatches one key press to the root.
 void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
     ui::KeyEvent one{ui::Key{code, mods}};
 
     (void)top.dispatch(one);
 }
 
-// Okno z otwartym formularzem: treść i przyciski **przed otwarciem**, bo ognisko stawia się
-// w chwili otwarcia.
+// A window with an open form. The content and the buttons go in before opening, because the focus
+// is placed at the moment of opening.
 struct Opened {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Form> one;
 
+    // Puts the window in the root and creates the form with the given title and shape, not opened
+    // yet.
     explicit Opened(std::string title, ui::FormShape style = {}) {
         top.children().add(window);
 
         one = std::make_shared<ui::Form>(std::move(title), style);
     }
 
+    // Opens the form in the window.
     void open() { window->open(one); }
 
+    // Renders the whole root in an area of the given size.
     View drawn(ui::Size size) { return top.render({{0, 0}, size}); }
 };
 
 }
 
-// --- Kształt ----------------------------------------------------------------------------------
+// --- Shape ---------------------------------------------------------------------------------------
 
-// Tytuł w ramce, treść pod nim, pusty wiersz, przyciski pośrodku — jak okno porządku w Midnight
-// Commanderze. Formularz nie maluje nic własnego; wszystko, co widać, to ramka, kolumna, rząd.
-TRIAL("Form: tytuł w ramce, treść, odstęp i przyciski pośrodku") {
+// The title in the frame, the content below it, an empty row, the buttons in the middle, like the
+// sort dialog in Midnight Commander. The form paints nothing of its own; everything visible is a
+// frame, a column and a row.
+TRIAL("Form: title in the frame, content, a gap and the buttons in the middle") {
     Opened made{"Sort"};
 
     made.one->body()->children().add(std::make_shared<ui::Span>("Name"));
@@ -112,7 +122,7 @@ TRIAL("Form: tytuł w ramce, treść, odstęp i przyciski pośrodku") {
     same(lined(seen, at + 5), std::string{"╚═════════════════╝"});
 }
 
-TRIAL("Form: przyciski stoją pośrodku, gdy treść jest szersza") {
+TRIAL("Form: the buttons stand in the middle when the content is wider") {
     Opened made{"Filter"};
 
     made.one->body()->children().add(std::make_shared<ui::Span>("A long line of text here"));
@@ -126,8 +136,8 @@ TRIAL("Form: przyciski stoją pośrodku, gdy treść jest szersza") {
     same(lined(seen, at + 3), std::string{"║         [ OK ]         ║"});
 }
 
-// Przycisków więcej, niż zmieści szerokość: rząd łamie się na dwie linie i żaden nie znika.
-TRIAL("Form: przyciski, które się nie mieszczą, schodzą do następnej linii") {
+// More buttons than the width can hold: the row breaks into two lines and none disappears.
+TRIAL("Form: buttons that do not fit move down to the next line") {
     Opened made{"Many"};
 
     made.one->body()->children().add(std::make_shared<ui::Span>("Text"));
@@ -145,12 +155,11 @@ TRIAL("Form: przyciski, które się nie mieszczą, schodzą do następnej linii"
     same(lined(seen, at + 6), std::string{"╚════════════════════╝"});
 }
 
-// **Treść, która wypełnia wysokość**, dostaje ten sam pokój przy pytaniu o rozmiar i przy
-// malowaniu: formularz odkłada najpierw odstęp i przyciski. Pudełko z życzeniem „ile chcę, ale
-// zostaw wiersz na to, co pode mną" stoi wtedy tuż nad wierszem stanu, a ten tuż nad odstępem —
-// bez pustych wierszy. Dawniej treść pytana była pierwsza, z pokojem razem z przyciskami, a przy
-// malowaniu dostawała tylko to, co wcześniej chciała, i pudełko kurczyło się drugi raz.
-TRIAL("Form: treść wypełniająca wysokość stoi tuż nad przyciskami, bez pustych wierszy") {
+// Content that fills the height gets the same room when asked for its size and when painted: the
+// form sets aside the gap and the buttons first. A box that wants "as much as I need, but leave a
+// row for what is below me" then stands right above the status row, and that right above the gap,
+// with no empty rows.
+TRIAL("Form: content filling the height stands right above the buttons, with no empty rows") {
     Opened made{"Card"};
 
     const auto lines = std::make_shared<ui::Column>();
@@ -176,8 +185,8 @@ TRIAL("Form: treść wypełniająca wysokość stoi tuż nad przyciskami, bez pu
     const View seen = made.drawn({30, 12});
     const int at = framed(seen);
 
-    // Pokój ma dwanaście wierszy, cień bierze jeden: ramka, sześć wierszy treści, stan, odstęp,
-    // przyciski, ramka.
+    // The room has twelve rows and the shadow takes one: the frame, six rows of content, the
+    // status, the gap, the buttons, the frame.
     same(at, 0);
     ought(lined(seen, at + 1).starts_with("║line 0"));
     ought(lined(seen, at + 6).starts_with("║line 5"));
@@ -187,8 +196,8 @@ TRIAL("Form: treść wypełniająca wysokość stoi tuż nad przyciskami, bez pu
     ought(lined(seen, at + 10).starts_with("╚"));
 }
 
-// Bez przycisków nie ma ani ich wiersza, ani odstępu przed nimi — `Gap` pyta obu sąsiadów.
-TRIAL("Form: bez przycisków nie ma odstępu ani wiersza przycisków") {
+// Without buttons there is neither their row nor the gap before them: `Gap` asks both neighbors.
+TRIAL("Form: without buttons there is no gap and no button row") {
     Opened made{"Note"};
 
     made.one->body()->children().add(std::make_shared<ui::Span>("Just this"));
@@ -202,7 +211,7 @@ TRIAL("Form: bez przycisków nie ma odstępu ani wiersza przycisków") {
     same(lined(seen, at + 2), std::string{"╚═════════╝"});
 }
 
-TRIAL("Form: bez treści nie ma odstępu, same przyciski") {
+TRIAL("Form: without content there is no gap, only the buttons") {
     Opened made{"Ask"};
 
     (void)made.one->buttons().add("Yes");
@@ -216,7 +225,7 @@ TRIAL("Form: bez treści nie ma odstępu, same przyciski") {
     same(lined(seen, at + 2), std::string{"╚══════════════╝"});
 }
 
-TRIAL("Form: tytuł, styl ramki i cień idą z wołającego") {
+TRIAL("Form: the title, frame style and shadow come from the caller") {
     Opened made{"Thin", ui::FormShape{ui::Border::thin, false}};
 
     (void)made.one->buttons().add("OK");
@@ -235,9 +244,10 @@ TRIAL("Form: tytuł, styl ramki i cień idą z wołającego") {
     ought(!shown(seen, "Thin"));
 }
 
-// Ramka liczy szerokość z treści i tytuł rysuje w tym, co zostało — okno z samym `[ OK ]`
-// i tytułem `Make directory` obcinałoby tytuł. Formularz chce nie mniej, niż tytuł potrzebuje.
-TRIAL("Form: okno nie jest węższe niż jego tytuł") {
+// The frame computes its width from the content and draws the title in what is left, so a window
+// with only `[ OK ]` and the title `Make directory` would cut the title. The form wants no less
+// than the title needs.
+TRIAL("Form: the window is not narrower than its title") {
     Opened made{"Make directory"};
 
     (void)made.one->buttons().add("OK");
@@ -250,11 +260,11 @@ TRIAL("Form: okno nie jest węższe niż jego tytuł") {
     same(lined(seen, at + 1), std::string{"║      [ OK ]      ║"});
 }
 
-// --- Przyciski --------------------------------------------------------------------------------
+// --- Buttons -------------------------------------------------------------------------------------
 
-// `add` oddaje pełny przycisk: własne `on<PickEvent>`, `primary`, `keys`. Formularz nie wiesza
-// na nim niczego i sam się nie zamyka — zamknięcie jest częścią czynności wołającego.
-TRIAL("Form: przycisk robi to, co dopiął wołający, i okno samo się nie zamyka") {
+// `add` returns a full button: its own `on<PickEvent>`, `primary`, `keys`. The form hangs nothing
+// on it and does not close by itself; closing is part of the caller's action.
+TRIAL("Form: a button does what the caller attached, and the window does not close by itself") {
     Opened made{"Ask"};
 
     int said = 0;
@@ -285,16 +295,17 @@ TRIAL("Form: przycisk robi to, co dopiął wołający, i okno samo się nie zamy
     ought(shown(made.drawn({30, 10}), "[< OK >]"));
 }
 
-// Formularz nie ma własnych ról, więc jego przycisk zostaje zwykłym przyciskiem — rolę rozdaje
-// dopiero komunikat, który ma rodzinę ról.
-TRIAL("Form: przycisk zostaje przy roli zwykłego przycisku") {
+// The form has no roles of its own, so its button stays an ordinary button; roles are handed out
+// only by a message, which has a family of roles.
+TRIAL("Form: a button keeps the role of an ordinary button") {
     Opened made{"Ask"};
 
     same(made.one->buttons().add("OK")->role(), std::string{"talcite.button"});
 }
 
-// Przyciski sięga się numerem, jak dzieci węzła; numer spoza rzędu to błąd wołającego.
-TRIAL("Form: przycisk sięga się numerem, a spoza rzędu rzuca") {
+// Buttons are reached by number, like the children of a node; a number outside the row is the
+// caller's error.
+TRIAL("Form: a button is reached by number, and one outside the row throws") {
     Opened made{"Ask"};
 
     const std::shared_ptr<ui::Button> yes = made.one->buttons().add("Yes");
@@ -314,7 +325,7 @@ TRIAL("Form: przycisk sięga się numerem, a spoza rzędu rzuca") {
     ought(threw);
 }
 
-TRIAL("Form: clear zabiera przyciski razem z wierszem") {
+TRIAL("Form: clear removes the buttons together with their row") {
     Opened made{"Ask"};
 
     (void)made.one->buttons().add("Yes");
@@ -329,11 +340,11 @@ TRIAL("Form: clear zabiera przyciski razem z wierszem") {
     ought(!shown(made.drawn({30, 10}), "[ Yes ]"));
 }
 
-// --- Ognisko ----------------------------------------------------------------------------------
+// --- Focus ---------------------------------------------------------------------------------------
 
-// Ognisko wchodzi na pierwsze, co je bierze — pole w treści — a Tab chodzi po treści i po
-// przyciskach jednym kołem, bo to jedna zasłona.
-TRIAL("Form: Tab chodzi po treści i przyciskach jednym kołem") {
+// The focus goes to the first thing that takes it (a field in the content), and Tab goes around the
+// content and the buttons in one circle, because it is one veil.
+TRIAL("Form: Tab goes around the content and the buttons in one circle") {
     Opened made{"Name"};
 
     const auto field = std::make_shared<ui::Field>(10);
@@ -364,8 +375,8 @@ TRIAL("Form: Tab chodzi po treści i przyciskach jednym kołem") {
     ought(field->focused());
 }
 
-// Escape nie zamyka sam z siebie — jak w komunikacie i w każdej zasłonie.
-TRIAL("Form: Esc zamyka dopiero z uchwytem") {
+// Escape does not close on its own, as in a message and in every veil.
+TRIAL("Form: Esc closes only with a handler") {
     Opened made{"Ask"};
 
     (void)made.one->buttons().add("OK");

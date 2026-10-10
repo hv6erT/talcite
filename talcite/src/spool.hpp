@@ -13,24 +13,6 @@
 
 namespace talcite {
 
-// **Szpula: źródło bajtowe podane jako wiersze.** Przewija się w przód i w tył po dokumencie,
-// którego nie da się mieć całego naraz, i nigdy go nie indeksuje — pamięta tylko okno bajtów,
-// miejsce, w którym stoi, i garść kotwic.
-//
-// Nie zna szerokości okna, skórki ani drzewa. Nie rozwija tabulatorów i nie zawija: oddaje surowy
-// wiersz bez `\n` i bez `\r` na końcu. Wszystko, co dotyczy rysowania, zostaje w `Viewer`.
-//
-// **Na bajty nie czeka.** `Feed` oddaje obietnicę: okno, którego nie ma pod ręką, szpula
-// zamawia i odpowiada tym, co ma — mniej wierszy albo pustką — a `stalled()` mówi, że odpowiedź
-// jest niepełna, bo czeka na dysk. Okno dochodzi na wątek główny i wtedy wołany jest uchwyt
-// `awoken`; kto pytał, pyta drugi raz. Dokument podany bajtami nie stoi nigdy.
-//
-// `Peek` to szew **wewnętrzny**, nie część API biblioteki: zerknięcie w bajty, które już są —
-// edytor czyta przez kołdrę, która leży w pamięci i odpowiada od ręki, a szpula edytora nie ma
-// prawa stawać na kursorze. To nie źródło, tylko wartość w kawałkach, której nie da się podać
-// jednym wskaźnikiem. Żadne wejście publiczne nie przyjmuje `Peek` — źródło poza pamięcią jest
-// w talcite zawsze obietnicą (`Feed`), a publiczny `talcite::Fetch` to źródło pikseli, też
-// obietnica.
 class Spool : public std::enable_shared_from_this<Spool> {
 public:
     using Peek = std::function<Bytes(std::size_t at, std::size_t most)>;

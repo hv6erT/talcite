@@ -11,6 +11,7 @@
 
 namespace {
 
+// The bytes of a string, one per character.
 talcite::Bytes spelt(const std::string& what) {
     talcite::Bytes made(what.size());
 
@@ -19,6 +20,7 @@ talcite::Bytes spelt(const std::string& what) {
     return made;
 }
 
+// The bytes as a string, one character per byte.
 std::string read(const talcite::Bytes& what) {
     std::string made;
 
@@ -29,13 +31,14 @@ std::string read(const talcite::Bytes& what) {
 
 }
 
-// Najkrótszy dowód, że sieć w talcite działa na tej maszynie: brama, połączenie do samego siebie,
-// odbicie napisu i koniec. Nic tu nie wymaga drugiego programu ani internetu.
+// The shortest proof that networking in talcite works on this machine: a listener, a connection to
+// itself, an echoed text, and the end. Nothing here needs a second program or the internet.
 int main() {
     using namespace talcite;
 
-    // Konsola Windows domyślnie nie jest w UTF-8, a my piszemy w UTF-8. Bez tego cały wypis
-    // wychodzi zniekształcony — polskie znaki rozpadają się na pary krzaków.
+    // The Windows console is not in UTF-8 by default, and we write UTF-8. Without this the whole
+    // output comes out garbled, with every non-ASCII letter falling apart into a pair of junk
+    // characters.
     const showing::Speaking speaking;
 
     const net::Patience soon{5000};
@@ -43,7 +46,7 @@ int main() {
     try {
         const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
-        std::cout << "brama stoi na " << gate.mine().spelled() << "\n";
+        std::cout << "listener up at " << gate.mine().spelled() << "\n";
 
         auto meeting = gate.accept(soon);
         auto joining = net::Stream::connect(gate.mine(), soon);
@@ -51,43 +54,43 @@ int main() {
         net::Stream server = meeting.await();
         net::Stream client = joining.await();
 
-        std::cout << "klient " << client.mine().spelled() << " rozmawia z "
+        std::cout << "client " << client.mine().spelled() << " talks to "
                   << client.peer().spelled() << "\n";
 
-        client.write(spelt("witaj, świecie"), soon).await();
+        client.write(spelt("hello, world"), soon).await();
 
         const std::string heard = read(server.read(1024, soon).await());
 
-        std::cout << "serwer usłyszał: " << heard << "\n";
+        std::cout << "server heard: " << heard << "\n";
 
-        server.write(spelt(heard + " — i wzajemnie"), soon).await();
+        server.write(spelt(heard + " — and to you too"), soon).await();
 
-        std::cout << "klient usłyszał: " << read(client.read(1024, soon).await()) << "\n";
+        std::cout << "client heard: " << read(client.read(1024, soon).await()) << "\n";
 
         client.close();
 
-        std::cout << "po zamknięciu serwer czyta: " << server.read(1024, soon).await().size()
-                  << " bajtów\n";
+        std::cout << "after the close the server reads: " << server.read(1024, soon).await().size()
+                  << " bytes\n";
 
         const net::Udp here{net::Address::loopback(net::Family::four, 0)};
         const net::Udp there{net::Address::loopback(net::Family::four, 0)};
 
-        std::cout << "poczta stoi na " << here.mine().spelled() << "\n";
+        std::cout << "mailbox up at " << here.mine().spelled() << "\n";
 
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), spelt("kartka bez połączenia"), soon).await();
+        there.send(here.mine(), spelt("a note without a connection"), soon).await();
 
         const net::Datagram came = waiting.await();
 
-        std::cout << "poczta dostała od " << came.from.spelled() << ": " << read(came.bytes)
+        std::cout << "mailbox got from " << came.from.spelled() << ": " << read(came.bytes)
                   << "\n";
     } catch (const net::Trouble& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     } catch (const std::exception& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     }

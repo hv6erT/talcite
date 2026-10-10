@@ -9,6 +9,7 @@ using namespace talcite;
 
 namespace {
 
+// One event as the recording root saw it.
 struct Told {
     enum class What : int { key, mouse, wheel, paste };
 
@@ -22,15 +23,18 @@ struct Told {
     std::string said;
 };
 
-// Korzeń zapisujący. Dekoder karmi prawdziwe drzewo, więc przypadki sprawdzają całą drogę
-// od bajtu do handle, a nie sam rozbiór.
+// A recording root. The decoder feeds a real tree, so the cases check the whole way from a byte
+// to handle, not the parsing alone.
 class Sheet : public ui::Root {
 public:
+    // Everything recorded so far, in order.
     [[nodiscard]] const std::vector<Told>& among() const { return among_; }
 
+    // How many events were recorded.
     [[nodiscard]] std::size_t much() const { return among_.size(); }
 
 protected:
+    // Records a key with its modifiers.
     bool handle(ui::KeyEvent& what) override {
         Told one;
         one.what = Told::What::key;
@@ -42,6 +46,7 @@ protected:
         return true;
     }
 
+    // Records a mouse event with its cell, press, button and modifiers.
     bool handle(ui::MouseEvent& what) override {
         Told one;
         one.what = Told::What::mouse;
@@ -55,6 +60,7 @@ protected:
         return true;
     }
 
+    // Records a wheel event with its cell, steps and modifiers.
     bool handle(ui::WheelEvent& what) override {
         Told one;
         one.what = Told::What::wheel;
@@ -67,6 +73,7 @@ protected:
         return true;
     }
 
+    // Records a paste with its text.
     bool handle(ui::PasteEvent& what) override {
         Told one;
         one.what = Told::What::paste;
@@ -83,7 +90,7 @@ private:
 
 }
 
-TRIAL("Decoder: zwykła litera") {
+TRIAL("Decoder: a plain letter") {
     Sheet sheet;
     Decoder decoder;
 
@@ -95,7 +102,7 @@ TRIAL("Decoder: zwykła litera") {
     ought(!decoder.pending());
 }
 
-TRIAL("Decoder: kilka liter po kolei") {
+TRIAL("Decoder: several letters in a row") {
     Sheet sheet;
     Decoder decoder;
 
@@ -106,7 +113,7 @@ TRIAL("Decoder: kilka liter po kolei") {
     ought(sheet.among()[2].key.letter() == U'c');
 }
 
-TRIAL("Decoder: znak sterujący staje się literą z ctrl") {
+TRIAL("Decoder: a control character becomes a letter with ctrl") {
     Sheet sheet;
     Decoder decoder;
 
@@ -116,7 +123,7 @@ TRIAL("Decoder: znak sterujący staje się literą z ctrl") {
     ought(sheet.among()[0].mods.ctrl);
 }
 
-TRIAL("Decoder: tab, enter i backspace mają własne kody, nie ctrl") {
+TRIAL("Decoder: tab, enter and backspace have their own codes, not ctrl") {
     Sheet sheet;
     Decoder decoder;
 
@@ -131,7 +138,7 @@ TRIAL("Decoder: tab, enter i backspace mają własne kody, nie ctrl") {
     ought(!sheet.among()[1].mods.ctrl);
 }
 
-TRIAL("Decoder: UTF-8 składa się w jeden znak") {
+TRIAL("Decoder: UTF-8 is put together into one character") {
     Sheet sheet;
     Decoder decoder;
 
@@ -141,7 +148,7 @@ TRIAL("Decoder: UTF-8 składa się w jeden znak") {
     ought(sheet.among()[0].key.letter() == U'ł');
 }
 
-TRIAL("Decoder: znak pocięty między karmieniami składa się w całość") {
+TRIAL("Decoder: a character split between feeds is put back together") {
     Sheet sheet;
     Decoder decoder;
 
@@ -157,7 +164,7 @@ TRIAL("Decoder: znak pocięty między karmieniami składa się w całość") {
     ought(sheet.among()[0].key.letter() == U'ł');
 }
 
-TRIAL("Decoder: emoji poza podstawową płaszczyzną") {
+TRIAL("Decoder: an emoji outside the basic plane") {
     Sheet sheet;
     Decoder decoder;
 
@@ -167,7 +174,7 @@ TRIAL("Decoder: emoji poza podstawową płaszczyzną") {
     ought(sheet.among()[0].key.letter() == U'🙂');
 }
 
-TRIAL("Decoder: strzałki") {
+TRIAL("Decoder: arrows") {
     Sheet sheet;
     Decoder decoder;
 
@@ -180,7 +187,7 @@ TRIAL("Decoder: strzałki") {
     ought(sheet.among()[3].key.code() == ui::Code::left);
 }
 
-TRIAL("Decoder: strzałka z modyfikatorem") {
+TRIAL("Decoder: an arrow with a modifier") {
     Sheet sheet;
     Decoder decoder;
 
@@ -192,7 +199,7 @@ TRIAL("Decoder: strzałka z modyfikatorem") {
     ought(!sheet.among()[0].mods.shift);
 }
 
-TRIAL("Decoder: maska modyfikatorów rozkłada się na trzy") {
+TRIAL("Decoder: the modifier mask splits into three") {
     Sheet sheet;
     Decoder decoder;
 
@@ -203,7 +210,7 @@ TRIAL("Decoder: maska modyfikatorów rozkłada się na trzy") {
     ought(sheet.among()[0].mods.ctrl);
 }
 
-TRIAL("Decoder: klawisze z tyldą") {
+TRIAL("Decoder: keys with a tilde") {
     Sheet sheet;
     Decoder decoder;
 
@@ -216,7 +223,7 @@ TRIAL("Decoder: klawisze z tyldą") {
     ought(sheet.among()[3].key.code() == ui::Code::pagedown);
 }
 
-TRIAL("Decoder: F1 do F4 w obu zapisach") {
+TRIAL("Decoder: F1 to F4 in both encodings") {
     Sheet sheet;
     Decoder decoder;
 
@@ -229,7 +236,7 @@ TRIAL("Decoder: F1 do F4 w obu zapisach") {
     ought(sheet.among()[3].key.code() == ui::Code::f4);
 }
 
-TRIAL("Decoder: F5 do F12") {
+TRIAL("Decoder: F5 to F12") {
     Sheet sheet;
     Decoder decoder;
 
@@ -241,7 +248,7 @@ TRIAL("Decoder: F5 do F12") {
     ought(sheet.among()[3].key.code() == ui::Code::f12);
 }
 
-TRIAL("Decoder: home i end w obu zapisach") {
+TRIAL("Decoder: home and end in both encodings") {
     Sheet sheet;
     Decoder decoder;
 
@@ -253,7 +260,7 @@ TRIAL("Decoder: home i end w obu zapisach") {
     ought(sheet.among()[3].key.code() == ui::Code::end);
 }
 
-TRIAL("Decoder: sekwencja pocięta między karmieniami") {
+TRIAL("Decoder: a sequence split between feeds") {
     Sheet sheet;
     Decoder decoder;
 
@@ -270,7 +277,7 @@ TRIAL("Decoder: sekwencja pocięta między karmieniami") {
     ought(!decoder.pending());
 }
 
-TRIAL("Decoder: samotny Esc czeka, aż ktoś rozstrzygnie") {
+TRIAL("Decoder: a lone Esc waits until someone decides") {
     Sheet sheet;
     Decoder decoder;
 
@@ -286,7 +293,7 @@ TRIAL("Decoder: samotny Esc czeka, aż ktoś rozstrzygnie") {
     ought(!decoder.pending());
 }
 
-TRIAL("Decoder: flush bez wiszącego Esc niczego nie robi") {
+TRIAL("Decoder: flush without a pending Esc does nothing") {
     Sheet sheet;
     Decoder decoder;
 
@@ -297,7 +304,7 @@ TRIAL("Decoder: flush bez wiszącego Esc niczego nie robi") {
     same(sheet.much(), std::size_t{1});
 }
 
-TRIAL("Decoder: flush na niedomkniętej sekwencji oddaje Esc i resztę") {
+TRIAL("Decoder: flush on an unfinished sequence gives Esc and the rest") {
     Sheet sheet;
     Decoder decoder;
 
@@ -312,7 +319,7 @@ TRIAL("Decoder: flush na niedomkniętej sekwencji oddaje Esc i resztę") {
     ought(sheet.among()[1].key.letter() == U'[');
 }
 
-TRIAL("Decoder: Esc z literą to Alt") {
+TRIAL("Decoder: Esc with a letter is Alt") {
     Sheet sheet;
     Decoder decoder;
 
@@ -323,7 +330,7 @@ TRIAL("Decoder: Esc z literą to Alt") {
     ought(sheet.among()[0].mods.alt);
 }
 
-TRIAL("Decoder: Esc po Escu to dwa naciśnięcia") {
+TRIAL("Decoder: Esc after Esc is two presses") {
     Sheet sheet;
     Decoder decoder;
 
@@ -339,7 +346,7 @@ TRIAL("Decoder: Esc po Escu to dwa naciśnięcia") {
     ought(sheet.among()[1].key.code() == ui::Code::escape);
 }
 
-TRIAL("Decoder: mysz wciśnięta i puszczona") {
+TRIAL("Decoder: mouse pressed and released") {
     Sheet sheet;
     Decoder decoder;
 
@@ -356,7 +363,7 @@ TRIAL("Decoder: mysz wciśnięta i puszczona") {
     same(static_cast<int>(sheet.among()[1].press), static_cast<int>(ui::Press::up));
 }
 
-TRIAL("Decoder: przyciski myszy") {
+TRIAL("Decoder: mouse buttons") {
     Sheet sheet;
     Decoder decoder;
 
@@ -367,10 +374,10 @@ TRIAL("Decoder: przyciski myszy") {
     same(static_cast<int>(sheet.among()[2].button), static_cast<int>(ui::Mouse::right));
 }
 
-// Maska 35 to ruch **bez wciśniętego przycisku** — dokładnie to, co przysyła terminal po `?1003`.
-// Brak przycisku jest tu równie ważny jak sam znacznik ruchu: po nim widżet poznaje najechanie
-// i odróżnia je od ciągnięcia, które ma ten sam znacznik, ale przycisk już niesie.
-TRIAL("Decoder: ruch myszy niesie znacznik ruchu") {
+// Mask 35 is motion without a pressed button, exactly what the terminal sends after ?1003. The
+// missing button matters here as much as the motion flag itself: by it a widget recognizes hovering
+// and tells it apart from a drag, which has the same flag but carries a button.
+TRIAL("Decoder: mouse motion carries the motion flag") {
     Sheet sheet;
     Decoder decoder;
 
@@ -382,7 +389,7 @@ TRIAL("Decoder: ruch myszy niesie znacznik ruchu") {
     same(sheet.among()[0].where.y, 8);
 }
 
-TRIAL("Decoder: ciągnięcie niesie ruch razem z przyciskiem") {
+TRIAL("Decoder: a drag carries motion together with the button") {
     Sheet sheet;
     Decoder decoder;
 
@@ -392,7 +399,7 @@ TRIAL("Decoder: ciągnięcie niesie ruch razem z przyciskiem") {
     same(static_cast<int>(sheet.among()[0].button), static_cast<int>(ui::Mouse::left));
 }
 
-TRIAL("Decoder: kółko w obie strony") {
+TRIAL("Decoder: the wheel both ways") {
     Sheet sheet;
     Decoder decoder;
 
@@ -403,7 +410,7 @@ TRIAL("Decoder: kółko w obie strony") {
     same(sheet.among()[1].steps, -1);
 }
 
-TRIAL("Decoder: modyfikatory myszy") {
+TRIAL("Decoder: mouse modifiers") {
     Sheet sheet;
     Decoder decoder;
 
@@ -413,7 +420,7 @@ TRIAL("Decoder: modyfikatory myszy") {
     ought(!sheet.among()[0].mods.shift);
 }
 
-TRIAL("Decoder: wklejenie staje się jednym zdarzeniem") {
+TRIAL("Decoder: a paste becomes one event") {
     Sheet sheet;
     Decoder decoder;
 
@@ -424,7 +431,7 @@ TRIAL("Decoder: wklejenie staje się jednym zdarzeniem") {
     same(sheet.among()[0].said, std::string{"ala ma kota"});
 }
 
-TRIAL("Decoder: wklejenie pocięte między karmieniami") {
+TRIAL("Decoder: a paste split between feeds") {
     Sheet sheet;
     Decoder decoder;
 
@@ -442,7 +449,7 @@ TRIAL("Decoder: wklejenie pocięte między karmieniami") {
     same(sheet.among()[0].said, std::string{"ala ma kota"});
 }
 
-TRIAL("Decoder: wklejenie z nową linią nie staje się Enterem") {
+TRIAL("Decoder: a paste with a newline does not become Enter") {
     Sheet sheet;
     Decoder decoder;
 
@@ -452,7 +459,7 @@ TRIAL("Decoder: wklejenie z nową linią nie staje się Enterem") {
     same(sheet.among()[0].said, std::string{"dwa\nwiersze"});
 }
 
-TRIAL("Decoder: klawisze po wklejeniu wracają do normy") {
+TRIAL("Decoder: keys after a paste go back to normal") {
     Sheet sheet;
     Decoder decoder;
 
@@ -463,7 +470,7 @@ TRIAL("Decoder: klawisze po wklejeniu wracają do normy") {
     ought(sheet.among()[1].key.letter() == U'q');
 }
 
-TRIAL("Decoder: nieznana sekwencja nie psuje tego, co po niej") {
+TRIAL("Decoder: an unknown sequence does not spoil what follows it") {
     Sheet sheet;
     Decoder decoder;
 
@@ -473,7 +480,7 @@ TRIAL("Decoder: nieznana sekwencja nie psuje tego, co po niej") {
     ought(sheet.among()[0].key.letter() == U'q');
 }
 
-TRIAL("Decoder: zepsute wejście nie rośnie w buforze bez końca") {
+TRIAL("Decoder: broken input does not grow in the buffer without end") {
     Sheet sheet;
     Decoder decoder;
 
@@ -484,7 +491,7 @@ TRIAL("Decoder: zepsute wejście nie rośnie w buforze bez końca") {
     ought(sheet.much() >= 1);
 }
 
-TRIAL("Decoder: dwa korzenie dostają swoje, jeden dekoder wystarcza") {
+TRIAL("Decoder: two roots get their own, one decoder is enough") {
     Sheet first;
     Sheet second;
 
@@ -499,7 +506,7 @@ TRIAL("Decoder: dwa korzenie dostają swoje, jeden dekoder wystarcza") {
     ought(second.among()[0].key == U'b');
 }
 
-TRIAL("Decoder: znak pocięty między korzeniami trafia do tego drugiego") {
+TRIAL("Decoder: a character split between roots goes to the second one") {
     Sheet first;
     Sheet second;
 
@@ -515,12 +522,12 @@ TRIAL("Decoder: znak pocięty między korzeniami trafia do tego drugiego") {
     ought(second.among()[0].key == U'ł');
 }
 
-// **Po bajcie to samo, co całością.** `Term` karmi dekoder bajt po bajcie i przy każdym bierze
-// bieżący korzeń — bo klawisz w środku odczytanego kawałka może przełączyć ekran (`Term::show`),
-// a klawisze wpisane z wyprzedzeniem mają trafić już do nowego. To działa tylko wtedy, gdy dla
-// dekodera granica karmienia nic nie znaczy: litery, UTF-8, klawisze z sekwencji, Alt, mysz,
-// kółko i wklejenie w nawiasach wychodzą te same, w tej samej kolejności.
-TRIAL("Decoder: karmienie po bajcie daje te same zdarzenia, co całością") {
+// Byte by byte gives the same as whole. `Term` feeds the decoder byte by byte and takes the current
+// root for each one, because a key in the middle of a chunk that was read can switch the screen
+// (`Term::show`), and keys typed ahead must already go to the new one. This works only if the feed
+// boundary means nothing to the decoder: letters, UTF-8, keys from sequences, Alt, the mouse, the
+// wheel and a bracketed paste come out the same, in the same order.
+TRIAL("Decoder: feeding byte by byte gives the same events as feeding whole") {
     const std::string said = std::string{"aż"} + "\x1b[A" + "\x1b[1;5C" + "\x1bx" + "\x1b[15~" +
                              "\x1b[<0;10;5M" + "\x1b[<0;10;5m" + "\x1b[<64;3;4M" +
                              "\x1b[200~wklej\nto\x1b[201~" + "🙂" + "\t";
@@ -558,9 +565,9 @@ TRIAL("Decoder: karmienie po bajcie daje te same zdarzenia, co całością") {
     }
 }
 
-// Przełączenie korzenia w środku kawałka: uchwyt pierwszego klawisza przestawia cel, a reszta
-// — karmiona po bajcie, jak robi to `Term` — idzie już do drugiego korzenia.
-TRIAL("Decoder: po bajcie reszta kawałka idzie do korzenia przełączonego w jego środku") {
+// Switching the root in the middle of a chunk: the handler of the first key changes the target,
+// and the rest, fed byte by byte as `Term` does it, already goes to the second root.
+TRIAL("Decoder: byte by byte the rest of a chunk goes to the root switched in its middle") {
     Sheet first;
     Sheet second;
 
@@ -585,10 +592,10 @@ TRIAL("Decoder: po bajcie reszta kawałka idzie do korzenia przełączonego w je
 }
 
 
-// Odpowiedzi terminala, które przyszły po czasie — po sondzie możliwości, przez SSH — nie są
-// klawiszami. Dawniej kolor tła stawał się Alt+] i ciągiem liter, raport położenia kursora —
-// Ctrl+F3, a odpowiedź XTGETTCAP — Alt+P z resztą wpisaną w pole.
-TRIAL("Decoder: spóźnione odpowiedzi terminala nie są klawiszami") {
+// Terminal answers that arrive late (after the capability probe, over SSH) are not keys.
+// Otherwise the background color would become Alt+] and a string of letters, a cursor position
+// report Ctrl+F3, and an XTGETTCAP answer Alt+P with the rest typed into a field.
+TRIAL("Decoder: late terminal answers are not keys") {
     const std::string late =
         "\x1b]11;rgb:0000/0000/0000\x1b\\"
         "\x1bP1+r5463=787465726d\x1b\\"
@@ -612,7 +619,7 @@ TRIAL("Decoder: spóźnione odpowiedzi terminala nie są klawiszami") {
     ought(whole.among()[0].key.letter() == U'q');
     ought(!once.pending());
 
-    // Po bajcie, tak jak karmi `Term` — to samo.
+    // Byte by byte, as `Term` feeds it: the same.
     Sheet piece;
     Decoder slowly;
 
@@ -622,8 +629,9 @@ TRIAL("Decoder: spóźnione odpowiedzi terminala nie są klawiszami") {
     ought(piece.among()[0].key.letter() == U'q');
 }
 
-// F3 z modyfikatorem ma kształt raportu położenia, ale z jedynką na przedzie — zostaje klawiszem.
-TRIAL("Decoder: Ctrl+F3 zostaje klawiszem") {
+// F3 with a modifier has the shape of a position report, but with a one in front, so it stays a
+// key.
+TRIAL("Decoder: Ctrl+F3 stays a key") {
     Sheet sheet;
     Decoder decoder;
 
@@ -634,9 +642,9 @@ TRIAL("Decoder: Ctrl+F3 zostaje klawiszem") {
     ought(sheet.among()[0].mods.ctrl);
 }
 
-// Esc z literą, którą zaczyna się napis sterujący, czeka na zegar: domknięty — znika, a niedomknięty
-// to Alt z tą literą i zwykłe znaki za nim.
-TRIAL("Decoder: Alt z literą zaczynającą napis rozstrzyga zegar") {
+// Esc with a letter that starts a control string waits for the timer: a finished string vanishes,
+// an unfinished one is Alt with that letter and plain characters after it.
+TRIAL("Decoder: the timer decides Alt with a letter that starts a string") {
     Sheet sheet;
     Decoder decoder;
 

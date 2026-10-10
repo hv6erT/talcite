@@ -15,38 +15,41 @@ namespace talcite::ui {
 
 namespace {
 
-// Jedno tyknięcie na dziesiątą sekundy: oko widzi ruch, a bezczynny program budzi się dziesięć
-// razy na sekundę i tylko wtedy, gdy naprawdę coś się kręci.
+// One tick per tenth of a second: the eye sees motion, and an idle program wakes ten times a
+// second, and only while something is really spinning.
 constexpr std::chrono::milliseconds pacing{100};
 
-// Procent zajmuje cztery kratki na `100%` i piątą na odstęp od paska.
+// The percentage takes four cells for "100%" and a fifth for the gap before the bar.
 constexpr int telling = 5;
 
 }
 
+// A progress bar `wide` cells wide, drawn in the `talcite.gauge` role.
 Gauge::Gauge(int wide, GaugeShape shape) : shape_(shape), wide_(wide) { role("talcite.gauge"); }
 
+// A gauge holds no children.
 int Gauge::capacity() const { return 0; }
 
-// Szerokość podaje wołający, tak jak w polu: pasek w oknie ma być tak szeroki, jak zdecydował
-// budujący okno. Wysokość zawsze jeden wiersz.
+// The caller gives the width, as with a field: a bar in a window is as wide as whoever builds the
+// window decides. The height is always one row.
 Size Gauge::wants(Size room) const {
     return {std::min(wide_, room.wide), std::min(1, room.high)};
 }
 
-// Ułamek przycinamy **tutaj**, bo to jedyne miejsce, którym wchodzi do widżetu. Porównanie
-// odwrotne łapie przy okazji NaN: nie jest większe ani równe zeru, więc idzie na zero.
+// The fraction is clamped here, because this is the only way it enters the widget. The inverted
+// comparison also catches NaN: it is neither greater than nor equal to zero, so it becomes zero.
 void Gauge::part(double given) {
     if (!(given >= 0.0)) given = 0.0;
 
     part_ = std::min(given, 1.0);
 }
 
+// Moves the indeterminate block one position on.
 void Gauge::step() { ++at_; }
 
-// Przejście na nieokreślony i z powrotem. Numer obrotu rośnie przy każdej zmianie, więc tyknięcie
-// wysłane przed nią nie ożywi paska, który już się zatrzymał — i dwa włączenia pod rząd nie
-// puszczą dwóch łańcuchów naraz.
+// Switches to indeterminate mode and back. The turn number grows with every change, so a tick sent
+// before it does not revive a bar that has already stopped, and two switches on in a row do not
+// start two chains at once.
 void Gauge::busy(bool given) {
     if (busy_ == given) return;
 
@@ -59,14 +62,16 @@ void Gauge::busy(bool given) {
     else beat_.reset();
 }
 
-// **Pasek kręci się sam, zegarem biblioteki.** `Time::later` odmierza, `here()` przenosi ciąg
-// dalszy na wątek pętli, a `Loop::post` w środku pętli budzi terminal i wymusza klatkę.
+// The bar spins by itself, on the library's clock. `Time::later` measures the interval, `here()`
+// moves the continuation to the loop's thread, and `Loop::post` inside the loop wakes the terminal
+// and forces a frame.
 //
-// Dwa warunki muszą być spełnione, inaczej nie ruszamy wcale. Bez pętli nie ma na co przenieść
-// ciągu dalszego, a dotknięcie drzewa węzłów z wątku puli to wyścig o dane. Bez właściciela —
-// czyli gdy nikt nie trzyma paska wskaźnikiem dzielonym — słaby wskaźnik jest od razu wygasły
-// i tyknięcie nie miałoby czego obudzić; w drzewie tak nie bywa, bo `Node::add` bierze wskaźnik
-// dzielony, ale pasek na stosie w próbie tak właśnie wygląda i ma prawo po prostu nie chodzić.
+// Two conditions must hold, otherwise nothing starts. Without a loop there is nowhere to move the
+// continuation, and touching the node tree from a pool thread is a data race. Without an owner,
+// that is when nobody holds the bar through a shared pointer, the weak pointer is expired at once
+// and a tick would have nothing to wake. In a tree that does not happen, because `Children::add`
+// takes a shared pointer, but a bar on the stack in a test looks exactly like that and may simply
+// not move.
 void Gauge::beating() {
     if (Loop::current() == nullptr) return;
 
@@ -76,15 +81,14 @@ void Gauge::beating() {
 
     const int mine = turn_;
 
-    // **Obietnicę trzeba trzymać.** Ogniwo wisi na obietnicy słabym wskazaniem, więc porzucone
-    // `then(...).start()` po prostu nigdy nie zadziała — to jest ta sama reguła, dzięki której
-    // śmierć właściciela odcina wywołania i dzięki której nie ma metody `clear()`. Typ chowamy
-    // za `shared_ptr<void>`, żeby nagłówek widżetu nie wciągał całej maszynerii obietnic; tę samą
-    // sztuczkę robi u siebie `Carry`.
+    // The promise has to be kept. A link hangs on its promise through a weak reference, so an
+    // abandoned then(...).start() simply never runs; this is the same rule by which an owner's
+    // death cuts off its calls, and the reason there is no clear() method. The type is hidden
+    // behind shared_ptr<void> so that the widget's header does not pull in the whole promise
+    // machinery; `Carry` does the same trick.
     //
-    // Podmiana w środku wywołania zwrotnego jest bezpieczna: `Carry` na czas przeniesienia na
-    // pętlę trzyma sam siebie, więc puszczenie naszego uchwytu nie zabija kodu, który właśnie
-    // biegnie.
+    // Replacing it inside the callback is safe: `Carry` holds itself while it moves to the loop, so
+    // releasing our handle does not kill the code that is running.
     beat_ = std::make_shared<Promise<void>>(Time::later(pacing).here().then([weak, mine] {
         const std::shared_ptr<Node> one = weak.lock();
 
@@ -101,10 +105,12 @@ void Gauge::beating() {
     std::static_pointer_cast<Promise<void>>(beat_)->start();
 }
 
+// Draws the brackets, the bar (filled part or the bouncing block) and, when there is room, the
+// percentage.
 View Gauge::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent where nothing is drawn; the rule is described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
@@ -118,8 +124,8 @@ View Gauge::paint(Size given, Area seen) {
     const char32_t block = how.glyph(role() + ".done");
     const char32_t empty = how.glyph(role() + ".rest");
 
-    // Procent odpada pierwszy, gdy jest ciasno, a klamry drugie — pasek na jedną kratkę dalej
-    // coś mówi, sama klamra nie mówi nic.
+    // When space is tight the percentage goes first and the brackets second: a one-cell bar still
+    // says something, a bracket alone says nothing.
     const bool told = shape_.percent && given.wide >= telling + 3;
     const int room = told ? given.wide - telling : given.wide;
 
@@ -135,8 +141,8 @@ View Gauge::paint(Size given, Area seen) {
 
     if (bar <= 0) return made;
 
-    // Nieokreślony: kostka jedzie tam i z powrotem. Odbicie zamiast zawinięcia, bo skok z prawej
-    // krawędzi na lewą czyta się jak mrugnięcie, a nie jak ruch.
+    // Indeterminate: a block travels back and forth. Bouncing instead of wrapping, because a jump
+    // from the right edge to the left reads as a blink, not as motion.
     if (busy_) {
         const int much = std::max(bar / 5, 1);
         const int travel = bar - much;
@@ -152,9 +158,9 @@ View Gauge::paint(Size given, Area seen) {
         return made;
     }
 
-    // **Pełne dopiero po skończeniu.** Zaokrąglamy, ale setki i pełnego paska nie pokazujemy,
-    // dopóki ułamek nie jest dokładnie jedynką — a że obie liczby idą tą samą regułą, pasek
-    // i procent nigdy nie mówią czegoś innego.
+    // Full only when finished. We round, but neither 100 nor a full bar is shown until the fraction
+    // is exactly one; since both numbers follow the same rule, the bar and the percentage never
+    // disagree.
     int done = static_cast<int>(std::lround(part_ * bar));
 
     if (done >= bar && part_ < 1.0) done = bar - 1;

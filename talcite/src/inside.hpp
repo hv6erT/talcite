@@ -10,9 +10,6 @@
 #include "talcite/bytes.hpp"
 #include "talcite/stream.hpp"
 
-// Wybór zaplecza stoi tu, żeby wszystkie pliki zgadzały się co do jednego. TALCITE_POLL wymusza
-// drogę przenośną wszędzie — bez tego zaplecze zapasowe nie miałoby jak przejść testów na
-// maszynie, na której akurat jest coś lepszego.
 #if !defined(TALCITE_POLL)
 #if defined(_WIN32)
 #define TALCITE_IOCP 1
@@ -35,10 +32,6 @@ inline constexpr Handle nothing = -1;
 
 enum class Kind : std::uint8_t { joining, meeting, getting, putting, fetching, sending };
 
-// Zgłoszenie leżące w centrali. Centrala **wykonuje** jego krok — sama wie, jak to zrobić na
-// danym systemie — a zgłoszenie tylko odbiera wynik: tyle bajtów, ten numer błędu. Dzięki temu
-// czytanie, przyjmowanie i wysyłanie nie wiedzą nic o poll, epoll ani IOCP, a nowe zaplecze
-// dokłada się bez ruszania ani jednej z nich.
 struct Doing : std::enable_shared_from_this<Doing> {
     virtual ~Doing() = default;
 
@@ -60,10 +53,6 @@ struct Doing : std::enable_shared_from_this<Doing> {
 
 void submit(std::shared_ptr<Doing> one);
 
-// Zdjęcie **jednego** zgłoszenia, bez tykania gniazda i bez tykania drugiego kierunku. To nie jest
-// forget: tamten zdejmuje gniazdo w całości, zrywa rozmowę i odrzuca wszystko, co na nim wisiało.
-// Prawda znaczy „naprawdę wyszło i done() ani late() już na nim nie pobiegnie" — i tylko wtedy
-// wołający ma prawo posprzątać po sobie sam.
 [[nodiscard]] bool withdraw(const std::shared_ptr<Doing>& one);
 
 void forget(Handle one);

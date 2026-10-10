@@ -12,64 +12,69 @@
 
 namespace talcite::ui {
 
-// Pojemnik zasłon to `Layers` z treścią pod spodem i z **modalnym ogniskiem**. Treść jest pierwszym
-// dzieckiem, zasłony kolejnymi — na wierzchu ostatnia — i to `Stack` je maluje i z jego kolejności
-// trafia mysz. Otwieranie, zamykanie i pamięć ogniska są wspólne z oknami w `Layers`; tu zostaje
-// to, czym zasłona różni się od okna: ognisko wchodzi w nią przy otwarciu, prośba o ognisko spod
-// niej czeka na jej zamknięcie, a po zamknięciu ognisko wraca tam, skąd przyszło.
+// The curtain container is a `Layers` with content underneath and with a modal focus. The content
+// is the first child and the curtains the following ones, the last on top; `Stack` paints them,
+// and mouse hits follow its order. Opening, closing and remembering the focus are shared with
+// windows in `Layers`; what is left here is how a curtain differs from a window: the focus goes
+// into it on opening, a focus request from beneath it waits until it closes, and after closing
+// the focus returns where it came from.
 //
-// **Stoi najbardziej na zewnątrz ze wszystkich trzech ram.** W Midnight Commanderze okno zakrywa
-// i pasek klawiszy, i pasek menu, więc musi być ich przodkiem. Kolejność zagnieżdżenia to nie jest
-// upodobanie: wynika z tego, co ma leżeć na czym — i z tego, którędy idzie klawisz, bo zasłona
-// połyka go, zanim dojdzie do legendy.
+// It stands outermost of all three frames. In Midnight Commander a window covers both the key bar
+// and the menu bar, so it has to be their ancestor. The nesting order is not a matter of taste: it
+// follows from what has to lie on top of what, and from the path a key takes, because the curtain
+// swallows it before it reaches the legend.
 Modals::Modals() : body_(std::make_shared<Row>()) { children().add(body_); }
 
-// Treść pod spodem. Gniazdo opisuje `slot.hpp`.
+// The content underneath, or `nullptr` when there is none. The slot is described in `slot.hpp`.
 Node* Modals::content() const { return held(*body_); }
 
+// Puts the given node in the content slot, replacing what was there.
 void Modals::content(std::shared_ptr<Node> given) { hold(*body_, std::move(given)); }
 
-// Z zewnątrz przyjmuje dokładnie jedno dziecko — treść — a każda otwarta zasłona otwiera dokładnie
-// jedno miejsce, które sama zajmuje.
+// From outside it accepts exactly one child, the content, and every open curtain opens exactly one
+// more place, which it takes itself.
 int Modals::capacity() const { return 1 + static_cast<int>(many()); }
 
-// Wierzchnia zasłona. Wszystko, co pojemnik przyjmuje poza treścią, jest zasłoną, więc rzutowanie
-// jest pewne.
+// The topmost curtain, or `nullptr`. Everything the container takes in besides the content is a
+// curtain, so the cast is safe.
 Modal* Modals::current() const { return static_cast<Modal*>(top()); }
 
+// Opens a curtain on top and moves the focus into it.
 void Modals::open(std::shared_ptr<Modal> given) {
     Modal* one = given.get();
 
     adopt(std::move(given));
 
-    // **Ognisko sprzed otwarcia pamięta sama zasłona**, nie pojemnik. Przy stosie zasłon każda
-    // pamięta swoje, więc zamknięcie wierzchniej oddaje ognisko tej pod nią, a zamknięcie ostatniej —
-    // aplikacji. Jedno pole w pojemniku musiałoby wybrać, które z nich zapamiętać.
+    // The focus from before opening is remembered by the curtain itself, not by the container.
+    // With a stack of curtains each remembers its own, so closing the top one gives the focus to
+    // the one beneath, and closing the last one to the application. A single field in the
+    // container would have to choose which of them to remember.
     if (Root* top = root()) {
         remember(*one, top->focused_node());
 
-        // Ognisko idzie **w głąb zasłony**, na pierwszy chętny przystanek. Gdy w środku nie ma nic
-        // chętnego, zostaje na samej zasłonie — i wtedy to ona połyka klawisze. Tylko przy
-        // otwarciu: ognisko postawione na zasłonie później (choćby przez oddanie go najbliższemu
-        // chętnemu przodkowi) zostaje na niej, żeby Enter nie nacisnął czegoś, czego nikt nie wybrał.
+        // The focus goes deep into the curtain, to the first focusable stop. When there is
+        // nothing focusable inside, it stays on the curtain itself, which then swallows the keys.
+        // Only on opening: a focus put on the curtain later (say, by handing it to the nearest
+        // focusable ancestor) stays on it, so that Enter does not press something nobody chose.
         one->focus();
 
         if (const std::vector<Node*> these = stops(*one); !these.empty()) these.front()->focus();
     }
 }
 
-// **Zasłona jest modalna także dla ogniska.** Węzeł pod wierzchnią zasłoną — w treści albo
-// w niższej zasłonie — może poprosić o ognisko w każdej chwili: robi to kartka podglądu, gdy plik
-// dojdzie z puli, choć nad nią wisi już komunikat o błędzie. Gdyby prośbę spełnić, klawisze szłyby
-// pod okno, którego nie da się wtedy zamknąć ani Enterem, ani Escapem, bo do niego nie docierają.
+// Whether a focus request from the given node is held back. The curtain is modal for the focus
+// too. A node beneath the top curtain, in the content or in a lower curtain, may ask for the focus
+// at any moment: a preview sheet does so when its file arrives from the pool, even though an error
+// message is already hanging over it. If the request were granted, keys would go under a window
+// that could then be closed neither with Enter nor with Escape, because they would not reach it.
 //
-// Dlatego prośba nie ginie, tylko **staje się „tam wrócić po zamknięciu"**: zapisujemy ją jako
-// zapamiętane ognisko wierzchniej zasłony, a `Root` ogniska nie przestawia. Przykryty węzeł nie
-// dostaje przy tym żadnego zdarzenia — mignięcie `FocusEvent` i `UnfocusEvent` przestawiłoby
-// panelom czynny panel, bo one śledzą go właśnie tak.
+// So the request is not lost but becomes "return there after closing": it is recorded as the
+// remembered focus of the top curtain, and `Root` does not move the focus. The covered node gets
+// no event in the process; a flicker of `FocusEvent` and `UnfocusEvent` would switch the active
+// panel, because panels track it exactly that way.
 //
-// Pytamy o wierzchnią zasłonę tego okna, nie o zasłonę-przodka proszącego: to ona zejdzie
-// pierwsza i to ona odda ognisko.
+// We ask about the top curtain of this container, not about the requester's curtain ancestor: the
+// top one goes first and gives the focus back.
 bool Modals::withheld(Node& one) {
     Modal* top = current();
 
@@ -83,9 +88,10 @@ bool Modals::withheld(Node& one) {
     return true;
 }
 
-// Ognisko oddajemy dopiero po zdjęciu. Wcześniej `Root::losing` i tak by je zgasiło, bo gaśnie na
-// każdym zdejmowanym węźle i wszystkim pod nim. Gdy ognisko dalej gdzieś stoi — w zasłonie otwartej
-// z uchwytu albo w wierzchniej, gdy zdjęto niższą — zostaje tam.
+// Gives the focus back after a curtain is removed, and only then: before that `Root::losing` would
+// clear it anyway, because it clears on every removed node and everything beneath it. When the
+// focus still stands somewhere (in a curtain opened from a handler, or in the top one when a lower
+// one was removed), it stays there.
 void Modals::restore(std::weak_ptr<Node> was) {
     if (Root* top = root(); top != nullptr && top->focused_node() != nullptr) return;
 
@@ -93,10 +99,10 @@ void Modals::restore(std::weak_ptr<Node> was) {
 
     if (!back || back->root() == nullptr) return;
 
-    // Zapamiętany węzeł mógł w międzyczasie przestać brać ognisko — najprościej tak, że wyłączono
-    // wybór, którego lista właśnie się zamyka. Wtedy ognisko idzie do **najbliższego chętnego
-    // przodka**, tą samą regułą co przy wyłączeniu. Bez tego w dialogu nie zostawało nigdzie,
-    // a dialog połyka klawisze i rozdaje klawisze aktywne tylko z ogniskiem w sobie.
+    // The remembered node may have stopped taking the focus in the meantime, most simply because
+    // the choice whose list is just closing was disabled. The focus then goes to the nearest
+    // focusable ancestor, by the same rule as on disabling. Otherwise it would be nowhere in the
+    // dialog, and a dialog swallows keys and hands out hotkeys only with the focus inside it.
     for (Node* at = back.get(); at != nullptr; at = at->parent())
         if (at->focusable()) {
             at->focus();

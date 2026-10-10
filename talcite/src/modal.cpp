@@ -12,9 +12,10 @@ namespace talcite::ui {
 
 namespace {
 
-// Ognisko mogło zejść głębiej, niż sięga wędrówka — lista oddaje je swojej bieżącej pozycji.
-// Przystankiem jest wtedy ten przodek, który na liście przystanków stoi. Węzeł spoza tej listy
-// daje pustkę, czyli to samo co brak ogniska: krok naprzód zaczyna wtedy od początku.
+// The stop the focus is at. The focus may have gone deeper than the traversal reaches: a list
+// hands it to its current item. The stop is then the ancestor that is on the list of stops. A node
+// outside that list gives nothing, the same as no focus, and a step forward then starts from the
+// beginning.
 Node* landed(const std::vector<Node*>& these, Node* one) {
     for (Node* at = one; at != nullptr; at = at->parent())
         if (std::find(these.begin(), these.end(), at) != these.end()) return at;
@@ -26,26 +27,27 @@ Node* landed(const std::vector<Node*>& these, Node* one) {
 
 Modal::Modal(ModalShape shape) : shape_(shape) {}
 
-// Zasłona **jest ekranem**, choć rysuje na nim samo pudełko. Stąd bierze się cała modalność:
-// `Root::under` wybiera po prostokącie i warstwie, więc kliknięcie obok pudełka trafia w zasłonę,
-// bo nie ma tam głębszego dziecka. Nie trzeba do tego żadnej blokady w korzeniu.
+// The curtain is the whole screen, although it draws only the box on it. All the modality comes
+// from this: `Root::under` picks by rectangle and layer, so a click beside the box hits the
+// curtain, because there is no deeper child there. No lock in the root is needed for it.
 Size Modal::wants(Size room) const { return room; }
 
-// Jedno dziecko: pudełko. Ramkę i tytuł rysuje `Frame`, którego wkłada aplikacja — powielanie
-// rysowania ramki w drugim miejscu drzewa byłoby drugą prawdą o tym, jak wygląda pudełko.
+// One child: the box. The border and the title are drawn by the `Frame` the application puts in;
+// drawing a border again in another place of the tree would be a second truth about how the box
+// looks.
 int Modal::capacity() const { return 1; }
 
-// Zasłona bierze ognisko sama, gdy w środku nie ma nic, co by je wzięło — i wtedy połyka klawisze
-// jako ona sama, zamiast zostawiać je aplikacji pod spodem.
+// The curtain takes the focus itself when there is nothing inside to take it, and then swallows
+// the keys itself instead of leaving them to the application underneath.
 bool Modal::focusable() const { return true; }
 
-// **Gdzie stanie pudełko — i to jest jedyne, czym zasłony różnią się między sobą.** Domyślnie na
-// środku, bo tak stoi okno dialogowe.
+// Where the box will stand, and this is the only thing in which curtains differ from one another.
+// By default in the middle, because that is where a dialog stands.
 //
-// Miejsce na cień odejmujemy **przed** ustaleniem położenia, żeby cień nie wychodził poza ekran
-// i żeby pudełko stało na środku tego, co naprawdę zostaje. Ta część jest wspólna dla wszystkich
-// zasłon, bo dotyczy cienia, a nie tego, kto gdzie stoi — dlatego siedzi tutaj, a nie u tych,
-// które położenie liczą inaczej.
+// The room for the shadow is subtracted before the position is computed, so that the shadow does
+// not go off the screen and the box stands in the middle of what is really left. This part is
+// shared by all curtains, because it concerns the shadow, not who stands where, so it sits here
+// and not in those that compute the position differently.
 Area Modal::seat(Size given) const {
     if (children().empty()) return {};
 
@@ -63,12 +65,13 @@ Area Modal::seat(Size given) const {
             wants};
 }
 
+// Paints the box at its seat with its shadow; the rest of the curtain is transparent.
 View Modal::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // **Zaczynamy od pustki.** Świeża kartka jest wypełniona spacjami, które należą do rysującego,
-    // więc zasłona wielkości ekranu zamalowałaby wszystko pod sobą — a ona ma być prostokątem
-    // z pudełkiem, przez który resztę widać. Ta sama sztuczka co w menu i z tego samego powodu.
+    // Start from emptiness. A fresh sheet is filled with spaces that belong to whoever draws, so a
+    // screen-sized curtain would paint over everything beneath it, while it should be a rectangle
+    // with a box through which the rest shows. The same trick as in the menu, for the same reason.
     made.clear({{0, 0}, seen.size});
 
     if (children().empty()) return made;
@@ -81,9 +84,9 @@ View Modal::paint(Size given, Area seen) {
 
     made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
 
-    // Cień pada w prawo i w dół, przesunięty o wiersz i o dwie kolumny — ta sama reguła co pod
-    // menu, bo w Midnight Commanderze jest to ten sam cień. Litery spod spodu zostają, tylko
-    // przygasają.
+    // The shadow falls to the right and down, offset by one row and two columns, the same rule as
+    // under a menu, because in Midnight Commander it is the same shadow. The letters underneath
+    // stay and are only dimmed.
     if (!shape_.shade) return made;
 
     const int last_x = where.at.x + where.size.wide - 1;
@@ -99,14 +102,15 @@ View Modal::paint(Size given, Area seen) {
     return made;
 }
 
-// **Granica wędrówki wychodzi z modalności, a nie z osobnego pojęcia.** Tab bąbelkuje jak każdy
-// klawisz, a obsługuje go ten, kto przestawia ognisko wśród swoich chętnych potomków. Skoro zasłona
-// i tak połyka wszystko, Tab nigdy z niej nie ucieka i nie trzeba tego osobno pilnować.
+// Moves the focus by the given number of stops, wrapping around. The traversal boundary follows
+// from modality, not from a separate notion. Tab bubbles like any key and is handled by whoever
+// moves the focus among their focusable descendants. Since the curtain swallows everything anyway,
+// Tab never escapes it and nothing extra has to guard that.
 //
-// Bez ogniska w środku krok naprzód staje na **pierwszym chętnym**, krok wstecz na ostatnim.
-// Nie na przycisku podstawowym: w oknie, które zaczyna się polem tekstowym, pierwsza wpisana litera
-// bywa wtedy klawiszem aktywnym przycisku i okno zamyka się z pustym polem. Zasłona nie musi przy
-// tym wiedzieć nic ani o polach, ani o przyciskach — kolejność ustala ten, kto składa okno.
+// Without a focus inside, a step forward lands on the first focusable stop, a step back on the
+// last. Not on the default button: in a window that starts with a text field, the first letter
+// typed may be the button's hotkey, and the window would close with an empty field. The curtain
+// needs to know nothing about fields or buttons; the order is set by whoever assembles the window.
 void Modal::step(int by) {
     const std::vector<Node*> these = stops(*this);
 
@@ -133,19 +137,20 @@ void Modal::step(int by) {
     these[static_cast<std::size_t>(((which + by) % much + much) % much)]->focus();
 }
 
-// **Tu jest modalność klawiatury.** Ognisko siedzi w zasłonie, więc klawisz, którego nikt po drodze
-// nie wziął, dochodzi tutaj i dalej nie idzie. Nie ma w tym nic nowego: dokładnie tak zachowuje się
-// otwarte menu.
+// Keyboard modality is here. The focus sits in the curtain, so a key nobody took on the way
+// arrives here and goes no further. There is nothing new in this: an open menu behaves exactly
+// the same.
 //
-// Zamknięcie zdejmuje zasłonę z drzewa w środku doręczania, ale węzeł przeżywa je dzięki `linger`
-// w korzeniu — dlatego wolno tu wrócić prawdą po `close()`.
-// **Escape'a zasłona nie bierze.** Zamykał okno — czyli wykonywał czynność, której wołający nie
-// miał jak odwołać, a to jest dokładnie ta sama decyzja, którą podjęliśmy, usuwając z dialogu
-// domyślne naciskanie przycisku podstawowego. Kto chce „Esc zamyka", wiesza `on<KeyEvent>` na
-// swojej zasłonie i woła `close()` sam.
+// Closing removes the curtain from the tree in the middle of delivery, but the node survives it
+// thanks to `linger` in the root, so returning true after `close()` is allowed here.
 //
-// Połykanie reszty zostaje, bo połykanie **niczego nie robi** — jest całym zadaniem zasłony
-// i jedynym sposobem, w jaki modalność da się w ogóle wyrazić.
+// The curtain does not act on Escape. Closing the window on Esc would be an action the caller
+// could not revoke, for the same reason the dialog does not press its default button by itself.
+// Whoever wants "Esc closes" attaches a key handler with `on` to their curtain and calls `close()`
+// themselves.
+//
+// The rest is swallowed, because swallowing does nothing: it is the curtain's whole job and the
+// only way modality can be expressed at all. Tab and Shift+Tab move between the stops.
 bool Modal::handle(KeyEvent& what) {
     const Code code = what.key().code();
 
@@ -158,14 +163,16 @@ bool Modal::handle(KeyEvent& what) {
     return true;
 }
 
-// Kliknięcie obok pudełka **połykamy i nic więcej**. Midnight Commander nie zamyka okna klikiem
-// w tło; zamyka je Esc albo przycisk. Klik w samo pudełko tu nie dochodzi — bierze go dziecko.
+// A click beside the box is swallowed and nothing more. Midnight Commander does not close a window
+// on a click in the background; Esc or a button closes it. A click on the box itself does not get
+// here, because the child takes it.
 bool Modal::handle(ClickEvent&) { return true; }
 
-// Surowe zdarzenie myszy i kółko też, żeby zaznaczanie ciągnięciem i przewijanie panelu pod spodem
-// nie działały przez zamknięte okno.
+// The raw mouse event is swallowed too, so that drag selection in the panel underneath does not
+// work through the window.
 bool Modal::handle(MouseEvent&) { return true; }
 
+// The wheel is swallowed too, so the panel underneath does not scroll through the window.
 bool Modal::handle(WheelEvent&) { return true; }
 
 }

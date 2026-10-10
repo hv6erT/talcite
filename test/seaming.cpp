@@ -23,14 +23,17 @@ namespace {
 
 
 
-// Atrapa przekształcenia: **nie parsuje XML-a** i nie udaje, że to robi. Bajty `<a/>` oddaje
-// jako ustalone drzewo z jednym elementem `a`, `refuse` jako odmowę, resztę jako pusty dokument;
-// koduje nazwę korzenia albo odmawia, gdy korzenia nie ma. Tyle wystarcza, żeby szew sprawdził
-// się bez żadnej biblioteki: brak dostawcy, odmowa, przejście w obie strony.
+// A fake codec: it does not parse XML and does not pretend to. It turns the bytes `<a/>` into a
+// fixed tree with one element `a`, `refuse` into a refusal, and anything else into an empty
+// document; it encodes the root's name, or refuses when there is no root. That is enough to check
+// the seam without any library: no provider, a refusal, a round trip.
 class Fake : public Codec<xml::Document> {
 public:
+    // The provider name that the seam reports.
     [[nodiscard]] std::string_view name() const override { return "fake 0.1"; }
 
+    // Turns `<a/>` into a document with one element `a`, refuses `refuse`, and leaves anything else
+    // empty; returns the refusal reason, or an empty string on success.
     [[nodiscard]] std::string decode(const Bytes& given, xml::Document& into) override {
         const std::string said = text(given);
 
@@ -47,6 +50,7 @@ public:
         return {};
     }
 
+    // Writes the root element as `<name/>`, or returns "no root" when the document has none.
     [[nodiscard]] std::string encode(const xml::Document& given, Bytes& into) override {
         const xml::Node* top = xml::root(given);
 
@@ -60,9 +64,9 @@ public:
 
 }
 
-// --- Szew przekształcenia ---------------------------------------------------------------------
+// --- Codec seam -------------------------------------------------------------------------------
 
-TRIAL("Szew: pusty szew przekształcenia odmawia Unbound na wejściu i wyjściu") {
+TRIAL("Seam: an empty codec seam refuses with Unbound on input and output") {
     const Seam<Codec<xml::Document>> none;
 
     ought(!none.bound());
@@ -88,7 +92,7 @@ TRIAL("Szew: pusty szew przekształcenia odmawia Unbound na wejściu i wyjściu"
     ought(amiss);
 }
 
-TRIAL("Szew: przekształcenie idzie w obie strony przez dostawcę") {
+TRIAL("Seam: the codec goes both ways through the provider") {
     const Seam<Codec<xml::Document>> codec{std::make_shared<Fake>()};
 
     ought(codec.bound());
@@ -102,9 +106,9 @@ TRIAL("Szew: przekształcenie idzie w obie strony przez dostawcę") {
     ought(codec.decoded(bytes("")).nodes.empty());
 }
 
-// Odmowa dostawcy wraca zdaniem przez szew i wychodzi z talcite wyjątkiem — z nazwą rodzaju
-// z przodu, żeby `what()` mówił, który szew odmówił, zanim powie dlaczego.
-TRIAL("Szew: odmowa dostawcy wychodzi jako Refused ze zdaniem") {
+// A provider's refusal comes back through the seam as a reason and leaves talcite as an exception,
+// with the kind's name in front, so that `what()` says which seam refused before it says why.
+TRIAL("Seam: a provider's refusal comes out as Refused with the reason") {
     const Seam<Codec<xml::Document>> codec{std::make_shared<Fake>()};
 
     bool amiss = false;
@@ -138,10 +142,11 @@ TRIAL("Szew: odmowa dostawcy wychodzi jako Refused ze zdaniem") {
     ought(amiss);
 }
 
-// --- Drzewo XML -------------------------------------------------------------------------------
+// --- XML tree ---------------------------------------------------------------------------------
 
 namespace {
 
+// An element with the given name and, when `text` is not empty, a single text child.
 xml::Node element(std::string name, std::string text = {}) {
     xml::Node made;
 
@@ -154,7 +159,7 @@ xml::Node element(std::string name, std::string text = {}) {
 
 }
 
-TRIAL("XML: korzeń to pierwszy element wśród węzłów dokumentu") {
+TRIAL("XML: the root is the first element among the document's nodes") {
     xml::Document one;
 
     ought(xml::root(one) == nullptr);
@@ -181,7 +186,7 @@ TRIAL("XML: korzeń to pierwszy element wśród węzłów dokumentu") {
     same(xml::root(std::as_const(one))->name, std::string{"movie"});
 }
 
-TRIAL("XML: child i children biorą tylko elementy o nazwie, w kolejności") {
+TRIAL("XML: child and children take only elements with the name, in order") {
     xml::Node top = element("movie");
 
     top.children.push_back(element("genre", "Crime"));
@@ -208,9 +213,9 @@ TRIAL("XML: child i children biorą tylko elementy o nazwie, w kolejności") {
     ought(xml::children(top, "none").empty());
 }
 
-// Tekst to dzieci tekstowe i CDATA sklejone po kolei; ustawienie zdejmuje je i stawia jeden
-// tekst na początku, dzieci-elementy zostawiając na miejscu; pusty tekst niczego nie dokłada.
-TRIAL("XML: text skleja tekst z CDATA, a ustawienie zostawia elementy") {
+// The text is the text and CDATA children joined in order; setting it removes them and puts one
+// text at the start, leaving element children in place; an empty text adds nothing.
+TRIAL("XML: text joins text with CDATA, and setting it keeps the elements") {
     xml::Node top = element("plot");
 
     xml::Node a;
@@ -242,7 +247,7 @@ TRIAL("XML: text skleja tekst z CDATA, a ustawienie zostawia elementy") {
     same(xml::text(top), std::string{});
 }
 
-TRIAL("XML: atrybut po nazwie, ustawienie zastępuje albo dokłada") {
+TRIAL("XML: attribute by name, setting replaces or adds") {
     xml::Node top = element("uniqueid");
 
     ought(xml::attribute(top, "type") == nullptr);
@@ -260,7 +265,7 @@ TRIAL("XML: atrybut po nazwie, ustawienie zastępuje albo dokłada") {
     same(top.attributes.front().name, std::string{"type"});
 }
 
-TRIAL("XML: dokumenty i węzły porównują się po treści") {
+TRIAL("XML: documents and nodes compare by content") {
     xml::Document left;
     xml::Document right;
 
@@ -274,16 +279,19 @@ TRIAL("XML: dokumenty i węzły porównują się po treści") {
     ought(!(left == right));
 }
 
-// --- Wartość JSON -----------------------------------------------------------------------------
+// --- JSON value -------------------------------------------------------------------------------
 
 namespace {
 
-// Atrapa jak wyżej: **nie parsuje JSON-a**. Bajty `{}` oddaje jako pusty obiekt, `1` jako
-// całkowitą jedynkę, `refuse` jako odmowę; koduje typ wartości jednym słowem.
+// A fake as above: it does not parse JSON. It turns the bytes `{}` into an empty object, `1` into
+// the integer one, `refuse` into a refusal; it encodes the value's type as one word.
 class FakeJson : public Codec<json::Value> {
 public:
+    // The provider name that the seam reports.
     [[nodiscard]] std::string_view name() const override { return "fake json"; }
 
+    // Turns `{}` into an empty object and `1` into the integer one, refuses `refuse`, and leaves
+    // anything else null; returns the refusal reason, or an empty string on success.
     [[nodiscard]] std::string decode(const Bytes& given, json::Value& into) override {
         const std::string said = text(given);
 
@@ -296,6 +304,7 @@ public:
         return {};
     }
 
+    // Writes the name of the value's type for null, object and integer, and refuses any other type.
     [[nodiscard]] std::string encode(const json::Value& given, Bytes& into) override {
         switch (given.type()) {
         case json::Type::null: into = bytes("null"); break;
@@ -310,7 +319,7 @@ public:
 
 }
 
-TRIAL("JSON: pusty szew odmawia Unbound z nazwą rodzaju, związany idzie w obie strony") {
+TRIAL("JSON: an empty seam refuses with Unbound naming the kind, a bound one goes both ways") {
     const Seam<Codec<json::Value>> none;
 
     bool amiss = false;
@@ -351,10 +360,10 @@ TRIAL("JSON: pusty szew odmawia Unbound z nazwą rodzaju, związany idzie w obie
     ought(amiss);
 }
 
-// Każdy konstruktor trafia do swojego typu — także `"x"`, które bez osobnego konstruktora od
-// `const char*` poszłoby do bool, i każda szerokość liczby całkowitej, która bez konceptu byłaby
-// dwuznaczna między int64, double i bool.
-TRIAL("JSON: konstruktory wybierają typ jednoznacznie") {
+// Each constructor lands in its own type: also `"x"`, which without a separate constructor from
+// `const char*` would go to bool, and every width of integer, which without a concept would be
+// ambiguous between int64, double and bool.
+TRIAL("JSON: constructors pick the type unambiguously") {
     same(json::Value{}.type(), json::Type::null);
     same(json::Value{nullptr}.type(), json::Type::null);
     same(json::Value{true}.type(), json::Type::boolean);
@@ -375,8 +384,9 @@ TRIAL("JSON: konstruktory wybierają typ jednoznacznie") {
     same(*json::Value{0.5}.real(), 0.5);
 }
 
-// Dostęp typowany: wskaźnik na swój typ, `nullptr` na każdy inny; `number()` łączy obie liczby.
-TRIAL("JSON: dostęp oddaje nullptr na cudzy typ, a number łączy liczby") {
+// Typed access: a pointer to its own type, `nullptr` for any other; `number()` combines both kinds
+// of number.
+TRIAL("JSON: access gives nullptr for another type, and number combines the numbers") {
     const json::Value one{2};
 
     ought(one.integer() != nullptr);
@@ -403,10 +413,10 @@ TRIAL("JSON: dostęp oddaje nullptr na cudzy typ, a number łączy liczby") {
     same(list.array()->size(), std::size_t{1});
 }
 
-// Obiekt trzyma klucze w kolejności wstawienia: `insert` dopisuje na końcu i oddaje istniejący
-// wpis bez zmiany miejsca; `erase` usuwa; na innym typie `member` i `erase` mówią „nie ma",
-// a `insert` rzuca, bo to pomyłka programisty.
-TRIAL("JSON: obiekt w porządku wstawienia, insert oddaje istniejący wpis") {
+// An object keeps its keys in insertion order: `insert` appends at the end and returns an existing
+// entry without moving it; `erase` removes; on another type `member` and `erase` say "not there",
+// and `insert` throws, because that is a programmer's mistake.
+TRIAL("JSON: an object in insertion order, insert returns the existing entry") {
     json::Value one{json::Object{}};
 
     json::insert(one, "b") = 1;
@@ -439,8 +449,8 @@ TRIAL("JSON: obiekt w porządku wstawienia, insert oddaje istniejący wpis") {
     ought(amiss);
 }
 
-// Równość po treści, w głąb; porządek kluczy jest treścią, bo wartość go zachowuje.
-TRIAL("JSON: wartości porównują się po treści, z porządkiem kluczy") {
+// Equality by content, deep; the order of keys is content, because the value preserves it.
+TRIAL("JSON: values compare by content, including the order of keys") {
     json::Value left{json::Object{}};
     json::Value right{json::Object{}};
 
@@ -465,12 +475,13 @@ TRIAL("JSON: wartości porównują się po treści, z porządkiem kluczy") {
     ought(!(json::Value{1} == json::Value{1.0}));
 }
 
-// --- Trzeci kształt: dekoder strumieniowy ------------------------------------------------------
+// --- Third shape: a streaming decoder ------------------------------------------------------
 
-// `Seam<ImageProvider>` ma to samo wejście i wyjście w języku talcite, co szew przekształcenia
-// (`Unbound`, `Refused`), ale zamiast `Made` oddaje klatki do ujścia. Mechanika strumienia,
-// sufitu i zbierania w `Pixels` jest w `picturing.cpp`; tu tylko to, co wspólne ze standardem.
-TRIAL("Szew: dekoder strumieniowy mówi tym samym językiem — Unbound, Refused, name") {
+// `Seam<ImageProvider>` has the same input and output in talcite's language as the codec seam
+// (`Unbound`, `Refused`), but instead of `Made` it hands frames to a sink. The mechanics of the
+// stream, the ceiling and collecting into `Pixels` are in picturing.cpp; here only what it shares
+// with the standard.
+TRIAL("Seam: the streaming decoder speaks the same language: Unbound, Refused, name") {
     const Seam<ImageProvider> none;
 
     bool amiss = false;

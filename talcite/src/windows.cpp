@@ -14,18 +14,21 @@
 
 namespace talcite::ui {
 
-// **Okna niemodalne w jednym miejscu**, jak zasłony w `Modals`: otwieranie, zamykanie i bieżące
-// okno są wspólne w `Layers`. Różnice wobec zasłon biorą się z tego, że tu nie ma modalności:
+// Modeless windows in one place, like modals in `Modals`: opening, closing and the current
+// window are shared in `Layers`. The differences from modals come from there being no modality
+// here:
 //
-// - **kolejność ułożenia to nie kolejność otwarcia.** Ułożenie mówi, co na czym leży, i zmienia je
-//   każde podniesienie; lista warstw trzyma kolejność otwarcia i to po niej chodzą `next`
-//   i `previous` — inaczej „następne okno" skakałoby po historii patrzenia, a nie po plikach,
-//   i dwa naciśnięcia wracałyby w to samo miejsce;
-// - **ognisko pamięta okno, nie pojemnik.** Powrót do okna stawia kursor tam, gdzie był, a nie na
-//   pierwszym chętnym — plik, po którym się chodziło, ma zostać tam, gdzie się go zostawiło.
+// - the stacking order is not the opening order. Stacking says what lies on what, and every raise
+//   changes it; the list of layers keeps the opening order, and `next` and `previous` walk that,
+//   otherwise "next window" would jump through the history of looking rather than through the
+//   files, and two presses would come back to the same place;
+// - the focus is remembered by the window, not by the container. Coming back to a window puts the
+//   cursor where it was, not on the first focusable node: a file one was moving through should
+//   stay where it was left.
 
 namespace {
 
+// Whether `one` is `under` or lies somewhere below it.
 [[nodiscard]] bool inside(const Node* one, const Node& under) {
     for (; one != nullptr; one = one->parent())
         if (one == &under) return true;
@@ -33,7 +36,8 @@ namespace {
     return false;
 }
 
-// Sąsiad bieżącego okna w kolejności otwarcia, w kółko. Jedno okno albo żadne — nie ma sąsiada.
+// The neighbor of the current window in opening order, wrapping around. With one window or none
+// there is no neighbor.
 [[nodiscard]] Window* beside(const std::vector<std::shared_ptr<Layer>>& all, const Window* now, int by) {
     if (all.size() < 2) return nullptr;
 
@@ -50,6 +54,7 @@ namespace {
 
 }
 
+// Adds a window and brings it to the top with the focus.
 void Windows::open(std::shared_ptr<Window> given) {
     Window* one = given.get();
 
@@ -58,17 +63,18 @@ void Windows::open(std::shared_ptr<Window> given) {
     raise(*one);
 }
 
-// Wszystko, co pojemnik trzyma, jest oknem — przyjmuje je tylko `open` — więc rzutowanie jest pewne.
+// The window on top. Everything the container holds is a window (only `open` accepts them), so
+// the cast is safe.
 Window* Windows::current() const { return static_cast<Window*>(top()); }
 
-// Podniesienie to **przeniesienie na koniec dzieci** — warstwa jest ich kolejnością i niczym
-// więcej. Ognisko zapamiętujemy w oknie, **w którym ono siedzi**, zanim zejdzie z drzewa razem
-// z przepinanym węzłem; potem oddajemy je temu, co podnoszone pamięta, a gdy nie pamięta nic (albo
-// tamten węzeł już zszedł), pierwszemu chętnemu w środku.
+// Raising is moving the window to the end of the children; the layering is their order and
+// nothing more. The focus is remembered in the window it sits in, before it leaves the tree
+// together with the node being moved; then it goes to what the raised window remembers, and when
+// that remembers nothing (or that node has left), to the first focusable node inside.
 //
-// Okno szukamy po ognisku, a nie jako bieżące: przy `open` nowe okno stoi już na wierzchu, zanim
-// dojdzie tutaj, więc „bieżące" byłoby nim samym i pamięć poprzedniego przepadałaby — tak było
-// w pierwszej wersji, a próba tego nie widziała, bo pamiętany węzeł był zarazem pierwszym chętnym.
+// The window is found by the focus, not as the current one: on `open` the new window already
+// stands on top before it gets here, so "current" would be the new window itself and the memory
+// of the previous one would be lost.
 void Windows::raise(Window& one) {
     const auto at = std::find_if(opened().begin(), opened().end(),
                                  [&one](const std::shared_ptr<Layer>& mine) { return mine.get() == &one; });
@@ -100,18 +106,19 @@ void Windows::raise(Window& one) {
     if (!these.empty()) these.front()->focus();
 }
 
-// Po zamknięciu ognisko idzie do nowego wierzchniego okna — z jego własną pamięcią, jak przy każdym
-// podniesieniu. Pamięć zamkniętego nie ma tu nic do powiedzenia: w niemodalnych oknach ognisko
-// wraca do okna, a nie do tego, kto je miał przed otwarciem.
+// After closing, the focus goes to the new top window, with its own memory, as on every raise.
+// The memory of the closed one has no say here: with modeless windows the focus returns to a
+// window, not to whoever had it before the closed one opened.
 void Windows::restore(std::weak_ptr<Node>) {
     if (Window* now = current(); now != nullptr) raise(*now);
 }
 
-// Po kolei otwarcia, w kółko — jak `Window → Next` w mcedicie.
+// Raises the next window in opening order, wrapping around, like Window > Next in mcedit.
 void Windows::next() {
     if (Window* one = beside(opened(), current(), 1)) raise(*one);
 }
 
+// Raises the previous window in opening order, wrapping around.
 void Windows::previous() {
     if (Window* one = beside(opened(), current(), -1)) raise(*one);
 }

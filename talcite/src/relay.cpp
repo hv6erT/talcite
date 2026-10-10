@@ -17,15 +17,8 @@
 
 namespace talcite::net {
 
-// To, co widzi pętla odbioru — ten sam podział co w rozmówcy i z tego samego powodu: zadanie z puli,
-// które przeżyje swojego właściciela i zawiśnie na centrali, zakleszcza program przy wyjściu.
-//
-// Nazwa **nie brzmi Living**, choć rola jest ta sama: tamto stoi w peer.cpp, też w przestrzeni
-// talcite::net i też na jej poziomie. Dwie różne struktury o jednej nazwie w jednej przestrzeni to
-// naruszenie zasady jednej definicji — konsolidator wybiera dowolną z nich, a niszczyciel jednej
-// biegnie po polach drugiej. Objawiło się naruszeniem pamięci przy pierwszym uruchomieniu.
-// Kanał związany z jednym rozmówcą. `ready` mówi, że serwer go potwierdził; do tej chwili wysyłka
-// idzie oznajmieniem, bo kanał nieuznany przez serwer po prostu przepada.
+// A channel bound to one peer. `ready` says that the server has confirmed it; until then sending
+// goes by indication, because a channel the server has not acknowledged is simply lost.
 struct Bound {
     Address peer;
     std::uint16_t number = 0;
@@ -35,6 +28,13 @@ struct Bound {
     bool binding = false;
 };
 
+// What the receive loop sees: the same split as in the peer and for the same reason. A pool task
+// that outlives its owner and hangs on the hub deadlocks the program at exit.
+//
+// The name is not `Living`, although the role is the same: that one stands in peer.cpp, also in
+// the talcite::net namespace and also at its top level. Two different structures with one name in
+// one namespace violate the one definition rule: the linker picks either of them, and the
+// destructor of one runs over the fields of the other.
 struct Lasting {
     Udp post;
     Address server;
@@ -53,8 +53,9 @@ struct Lasting {
 
     std::deque<Datagram> spare;
 
-    // Trwające zapytanie. Przekaźnik prowadzi **jedną rozmowę naraz** — przydział, odświeżenie,
-    // pozwolenie — więc zamiast tablicy wystarczy jedno miejsce na numer i jedno na odpowiedź.
+    // The request in progress. The relay conducts one conversation at a time (allocation, refresh,
+    // permission), so instead of a table one place for the number and one for the answer are
+    // enough.
     Number number{};
     Message answer;
     bool waiting = false;
@@ -66,15 +67,15 @@ struct Lasting {
     bool renewing = false;
     bool lost = false;
 
-    // Pozwolenia **wygasają osobno od przydziału** — serwer trzyma je pięć minut od ostatniego
-    // nadania i ruch ich nie przedłuża. Trzymamy więc listę adresów, którym pozwoliliśmy, żeby
-    // odnawiać je razem, jednym zapytaniem.
+    // Permissions expire separately from the allocation: the server keeps them five minutes from
+    // the last grant, and traffic does not extend them. So we keep a list of the addresses we have
+    // permitted, to renew them together, with one request.
     std::vector<Address> allowed;
     std::chrono::steady_clock::time_point granted{};
     bool permitting = false;
 
-    // Kanały. Numer jest **naszym** wyborem, nie serwera: prosimy o niego i od tej chwili obie
-    // strony rozumieją cztery bajty zamiast trzydziestu sześciu.
+    // Channels. The number is our choice, not the server's: we ask for it, and from then on both
+    // sides understand four bytes instead of thirty-six.
     std::vector<Bound> bound;
     std::uint16_t next = 0x4000;
 
@@ -88,9 +89,11 @@ struct Lasting {
 struct Relay::Held {
     std::shared_ptr<Lasting> alive;
 
-    // Własna kopia poczty, wyłącznie do zamykania — kopie dzielą gniazdo, ale nie dzielą obiektu.
+    // Our own copy of the post, used only for closing: copies share the socket but not the object.
     Udp closing;
 
+    // Shuts the relay down: marks it as shutting under the lock the waiters hold, closes the
+    // socket and wakes everyone who waits.
     ~Held() {
         {
             const std::lock_guard<std::mutex> kept{alive->guard};
@@ -111,43 +114,47 @@ constexpr std::size_t roomy = 65535;
 
 constexpr Patience listening{1000};
 
-// Ile życia prosimy dla przydziału i ile przed jego końcem odnawiamy. Serwer może dać mniej, niż
-// prosimy, i wtedy liczy się jego słowo — dlatego czas końca bierzemy z odpowiedzi, nie z prośby.
+// How much life we ask for the allocation (seconds) and how long before its end we renew it. The
+// server may give less than we ask, and then its word counts, which is why the end time is taken
+// from the answer, not from the request.
 constexpr int living_for = 600;
 
 constexpr int early = 60;
 
-// Ile czekamy przed powtórką nieudanego odświeżenia. Bez tego odstępu każdy obrót pętli — czyli
-// **co sekundę** — zaczynał kolejną próbę, bo warunek „pora odnawiać" jest od chwili nieudanej
-// próby prawdziwy już zawsze. Zadania piętrzyły się na zamku rozmowy aż do końca przydziału.
+// How many seconds we wait before repeating a failed refresh. Without this gap every round of the
+// loop, that is, every second, would start another attempt, because the condition "time to renew"
+// stays true forever from the moment of a failed attempt, and tasks would pile up on the
+// conversation lock until the end of the allocation.
 constexpr int again = 10;
 
-// Serwer trzyma pozwolenie pięć minut. Odnawiamy z minutą zapasu.
+// The server keeps a permission for five minutes. We renew it with a minute to spare.
 constexpr int allowing = 240;
 
-// Co ile stukamy do serwera, żeby droga do niego nie zarosła.
+// How often (seconds) we knock on the server, so that the path to it does not close up.
 constexpr int beating = 15;
 
-// Serwer trzyma kanał dziesięć minut. Odnawiamy z minutą zapasu.
+// The server keeps a channel for ten minutes. We renew it with a minute to spare.
 constexpr int holding = 600;
 
 constexpr int sooner = 60;
 
-// Ile kanałów naraz. Rozmówca ma jedną drogę, więc jeden kanał starcza; zapas jest na wypadek,
-// gdyby jedno gniazdo obsługiwało kilku rozmówców.
+// How many channels at once. A peer has one path, so one channel is enough; the margin is for the
+// case of one socket serving several peers.
 constexpr std::size_t roomiest = 16;
 
 constexpr std::size_t plenty = 256;
 
-// Ilu rozmówcom pamiętamy pozwolenie, żeby je odnawiać. Powyżej tej granicy pozwolenie nadaje się
-// raz i wygasa po pięciu minutach — bez granicy sama lista byłaby miejscem, do którego wołający
-// mógłby wlać ile chce, a każdy wpis rośnie w każdym zapytaniu odnawiającym.
+// For how many peers we remember a permission in order to renew it. Above this limit a permission
+// is granted once and expires after five minutes. Without a limit the list itself would be a place
+// into which the caller could pour as much as it liked, and every entry adds to every renewing
+// request.
 constexpr std::size_t roomier = 64;
 
-// **Próby i podtrzymanie wolno zgubić** — ta sama reguła i ten sam powód co w `Peer`, gdzie stoi
-// to od dawna. Bez tego jedno odrzucenie od poczty (choćby „Poczta już wysyła") wywracało całe
-// zapytanie zamiast doczekać następnej rundy powtórek — i zostawiało przekaźnik w stanie
-// oczekiwania, w którym przyjąłby obcą odpowiedź na stary numer.
+// Sends a datagram to `to`, swallowing any failure. Requests and keepalives may be lost: the same
+// rule and the same reason as in `Peer`. Otherwise a single rejection from the post (even "the post
+// is already sending") would overturn the whole request instead of waiting for the next round of
+// retries, and would leave the relay in a waiting state in which it would accept a stranger's
+// answer to an old number.
 void posting(const std::shared_ptr<Lasting>& held, const Address& to, Bytes what,
              Patience patience) {
     try {
@@ -160,6 +167,7 @@ void posting(const std::shared_ptr<Lasting>& held, const Address& to, Bytes what
     }
 }
 
+// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
@@ -176,6 +184,10 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to);
 
 void channeling(const std::shared_ptr<Lasting>& held);
 
+// One round of the receive loop. A quiet second runs the periodic work (keepalive, refreshing the
+// allocation, permissions and channels); a datagram from the server is sorted into channel data,
+// indicated data or an answer to the request in progress. Returns false when the socket has
+// closed.
 bool turning(const std::shared_ptr<Lasting>& held) {
     Datagram came;
 
@@ -194,13 +206,13 @@ bool turning(const std::shared_ptr<Lasting>& held) {
         return false;
     }
 
-    // Odpowiedź przychodzi **tylko od serwera**. Cudzy datagram na tym gnieździe nie ma prawa ani
-    // udawać odpowiedzi, ani podać się za treść od rozmówcy — od tego jest atrybut adresu w środku
-    // wiadomości, a nie to, skąd pakiet przyszedł.
+    // An answer comes only from the server. A foreign datagram on this socket may neither pose as
+    // an answer nor pass itself off as content from a peer; that is what the address attribute
+    // inside the message is for, not where the packet came from.
     if (!(came.from == held->server)) return true;
 
-    // Kanał sprawdzamy **przed** wiadomością, bo rozstrzygają o tym te same dwa bity: STUN ma je
-    // zerowe, kanał ma tam `01`. Nie ma tu żadnego zgadywania.
+    // The channel is checked before the message, because the same two bits decide it: STUN has them
+    // zero, a channel has 01 there. There is no guessing here.
     {
         std::uint16_t channel = 0;
 
@@ -212,8 +224,9 @@ bool turning(const std::shared_ptr<Lasting>& held) {
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                // Numer kanału **my** nadaliśmy, więc bierzemy go także wtedy, gdy potwierdzenie
-                // jeszcze nie wróciło: serwer ma prawo zacząć nim mówić wcześniej niż odpowiedzieć.
+                // We assigned the channel number ourselves, so we take it even when the
+                // confirmation has not come back yet: the server may start speaking on it before it
+                // answers.
                 for (const Bound& one : held->bound)
                     if (one.number == channel) whom = one.peer;
 
@@ -266,6 +279,8 @@ bool turning(const std::shared_ptr<Lasting>& held) {
     return true;
 }
 
+// The receive loop. It holds a weak handle and takes a strong one only for a single round, so an
+// abandoned relay ends the loop by itself within a second.
 void minding(std::weak_ptr<Lasting> weak) {
     for (;;) {
         const std::shared_ptr<Lasting> held = weak.lock();
@@ -282,6 +297,7 @@ void minding(std::weak_ptr<Lasting> weak) {
     }
 }
 
+// Starts the receive loop on a pool thread, unless it already runs.
 void waking(const std::shared_ptr<Lasting>& held) {
     bool was = false;
 
@@ -296,9 +312,10 @@ void waking(const std::shared_ptr<Lasting>& held) {
     made.start();
 }
 
-// Jedno zapytanie z powtórkami, rozkład jak w STUN: pół sekundy, potem podwojenie. Biegnie na wątku
-// z puli i blokuje go — tak samo jak zwiad i z tego samego powodu: zapytań jest garść na cały czas
-// życia przydziału, nie jedno na pakiet.
+// One request with retries, on the STUN schedule: half a second, then doubling. Returns the
+// answer; throws `Overdue` when the patience runs out and `Trouble` when the relay closes. It runs
+// on a pool thread and blocks it, just like the scout and for the same reason: there is a handful
+// of requests for the whole life of an allocation, not one per packet.
 Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Number& number,
                Patience patience) {
     const std::lock_guard<std::mutex> alone{held->talking};
@@ -351,8 +368,9 @@ Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Nu
     throw Overdue{};
 }
 
-// Dopisanie tożsamości do zapytania. Bez poświadczeń nie dopisujemy nic — część serwerów, w tym
-// wszystkie udawane w testach, przydziela bez uwierzytelniania.
+// Adds the identity (USERNAME, REALM, NONCE and MESSAGE-INTEGRITY) to a request. Without
+// credentials nothing is added: some servers, including all the fake ones in the tests, allocate
+// without authentication.
 void naming(const std::shared_ptr<Lasting>& held, Bytes& made) {
     const std::lock_guard<std::mutex> kept{held->guard};
 
@@ -365,9 +383,10 @@ void naming(const std::shared_ptr<Lasting>& held, Bytes& made) {
     stamping(made, held->key);
 }
 
-// Przydział wygasa, jeśli nikt go nie odnowi — zwykle po dziesięciu minutach. Odnawiamy z minutą
-// zapasu, **na osobnym zadaniu z puli**, a nie tu: odświeżenie jest zapytaniem, a na odpowiedź czeka
-// właśnie ta pętla. Odświeżanie z jej wnętrza zakleszczyłoby ją na sobie samej.
+// Refreshes the allocation when it is due. An allocation expires if nobody renews it, usually
+// after ten minutes. We renew it with a minute to spare, on a separate pool task, not here: a
+// refresh is a request, and it is exactly this loop that waits for the answer. Refreshing from
+// inside the loop would deadlock it on itself.
 void renewed(const std::shared_ptr<Lasting>& held) {
     bool gone = false;
 
@@ -376,15 +395,15 @@ void renewed(const std::shared_ptr<Lasting>& held) {
 
         if (held->until == Clock::time_point{}) return;
 
-        // Odświeżenie w biegu **wyklucza drugie**. Wcześniej pilnowało tego przesunięcie czasu
-        // końca, ale tamto kłamało o stanie przydziału i po pierwszej nieudanej próbie zostawiało
-        // warunek „pora odnawiać" prawdziwy na zawsze.
+        // A refresh in progress excludes a second one. A flag is used rather than moving the end
+        // time, because the end time has to tell the truth about the allocation.
         if (held->renewing) return;
 
         if (Clock::now() < held->until - std::chrono::seconds{early}) return;
 
-        // Przydział, którego nie udało się odnowić do jego własnego końca, przepadł. Nadawanie
-        // przez niego dalej to nadawanie w próżnię, więc mówimy to wprost zamiast milczeć.
+        // An allocation that could not be renewed before its own end is lost. Sending through it
+        // any further would be sending into the void, so we say so plainly instead of staying
+        // silent.
         if (Clock::now() >= held->until) {
             held->until = Clock::time_point{};
             held->lost = true;
@@ -427,8 +446,8 @@ void renewed(const std::shared_ptr<Lasting>& held) {
         {
             const std::lock_guard<std::mutex> kept{held->guard};
 
-            // **Czas końca bierzemy z odpowiedzi, nie z prośby.** Po nieudanej próbie zostaje
-            // stary — bo to on mówi prawdę o tym, kiedy serwer nas wyrzuci.
+            // The end time is taken from the answer, not from the request. After a failed attempt
+            // the old one stays, because it tells the truth about when the server will drop us.
             if (lasting > 0) {
                 held->until = Clock::now() + std::chrono::seconds{lasting};
                 held->tried = Clock::time_point{};
@@ -443,9 +462,10 @@ void renewed(const std::shared_ptr<Lasting>& held) {
     made.start();
 }
 
-// Pozwolenia odnawiamy **wszystkie naraz**: jedno zapytanie niesie tyle adresów rozmówców, ile
-// trzeba, a serwer każdemu z nich liczy pięć minut od nowa. Ruch pozwolenia nie przedłuża — cicha
-// rozmowa umierała po pięciu minutach i wyglądało to na wadę sieci, nie na wygasły wpis.
+// Renews the permissions when they are due, all at once: one request carries as many peer
+// addresses as needed, and the server restarts five minutes for each of them. Traffic does not
+// extend a permission; without renewal a quiet conversation would die after five minutes, and it
+// would look like a network fault, not an expired entry.
 void granting(const std::shared_ptr<Lasting>& held) {
     std::vector<Address> whom;
 
@@ -481,8 +501,8 @@ void granting(const std::shared_ptr<Lasting>& held) {
         {
             const std::lock_guard<std::mutex> kept{held->guard};
 
-            // Nieudane odnowienie powtarzamy za chwilę, a nie za cały okres — inaczej jedno zgubione
-            // zapytanie kosztowałoby resztę pozwolenia.
+            // A failed renewal is repeated shortly, not after the whole period; otherwise one lost
+            // request would cost the rest of the permission.
             if (!done)
                 held->granted = Clock::now() - std::chrono::seconds{allowing - again};
 
@@ -495,11 +515,12 @@ void granting(const std::shared_ptr<Lasting>& held) {
     made.start();
 }
 
-// Związanie kanału z rozmówcą. Numer wybieramy sami i **trzymamy go od razu**, jeszcze przed
-// odpowiedzią: dzięki temu treść, którą serwer zdąży nim przysłać, ma już do kogo należeć.
+// Binds a channel to peer `to`, or renews its binding, in the background. We choose the number
+// ourselves and keep it at once, even before the answer: thanks to that, content the server
+// manages to send on it already has someone to belong to.
 //
-// Kanał wiąże się z adresem **razem z portem**, inaczej niż pozwolenie. Dlatego nie robi się tego
-// przy `allow`, tylko przy pierwszej wysyłce — dopiero wtedy port jest znany i prawdziwy.
+// A channel binds to an address together with its port, unlike a permission. That is why this is
+// not done in `allow` but at the first send: only then is the port known and real.
 void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
     std::uint16_t number = 0;
 
@@ -518,8 +539,9 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
 
                 if (one.ready && Clock::now() < one.until - std::chrono::seconds{sooner}) return;
 
-                // Nieudane wiązanie powtarzamy co chwilę, a nie przy każdej wysyłce — inaczej
-                // rozmowa z serwerem, który kanałów nie daje, wysyłałaby po zapytaniu na datagram.
+                // A failed binding is repeated every few seconds, not at every send; otherwise a
+                // conversation with a server that gives no channels would send a request per
+                // datagram.
                 if (Clock::now() - one.tried < std::chrono::seconds{again}) return;
 
                 one.binding = true;
@@ -578,8 +600,9 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
     made.start();
 }
 
-// Kanał żyje dziesięć minut i **ruch go nie przedłuża** — tak samo jak pozwolenie. Przeterminowany
-// przestaje działać po cichu, więc odnawiamy go zawczasu.
+// Renews the channels that are close to expiring. A channel lives ten minutes and traffic does not
+// extend it, just like a permission. An expired one stops working silently, so we renew it in
+// advance.
 void channeling(const std::shared_ptr<Lasting>& held) {
     std::vector<Address> whom;
 
@@ -596,11 +619,12 @@ void channeling(const std::shared_ptr<Lasting>& held) {
     for (const Address& one : whom) binding(held, one);
 }
 
-// Odwzorowanie na NAT-cie między nami a serwerem żyje zwykle trzydzieści sekund od ostatniego ruchu,
-// a odświeżenia przydziału chodzą raz na dziewięć minut. Bez tego stukania serwer po pół minuty
-// ciszy nie miałby już czym do nas wrócić i dane od rozmówcy przepadałyby po drodze — przydział
-// byłby żywy, a mimo to głuchy. Oznajmienie wiążące jest do tego stworzone: nikt na nie nie
-// odpowiada, więc nie ma na co czekać ani czego dopasowywać.
+// Knocks on the server every `beating` seconds. The NAT mapping between us and the server usually
+// lives thirty seconds from the last traffic, and allocation refreshes go once every nine minutes.
+// Without this knocking, after half a minute of silence the server would have no way back to us
+// and data from a peer would be lost on the way: the allocation would be alive and yet deaf. A
+// Binding indication is made for this: nobody answers it, so there is nothing to wait for and
+// nothing to match.
 void keeping(const std::shared_ptr<Lasting>& held) {
     {
         const std::lock_guard<std::mutex> kept{held->guard};
@@ -618,6 +642,7 @@ void keeping(const std::shared_ptr<Lasting>& held) {
     }
 }
 
+// A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said) {
     return Promise<T>{
@@ -626,6 +651,8 @@ Promise<T> amiss_now(const std::string& said) {
 
 }
 
+// A relay talking over `post` to the TURN `server`, with the given user name and password (empty
+// for a server without authentication). Nothing is sent until `open`.
 Relay::Relay(Udp post, Address server, std::string user, std::string word)
     : held_(std::make_shared<Held>()) {
     held_->alive = std::make_shared<Lasting>();
@@ -636,8 +663,9 @@ Relay::Relay(Udp post, Address server, std::string user, std::string word)
     held_->closing = std::move(post);
 }
 
-// Pusty przekaźnik oddaje pusty adres. Reszta metod pyta o uchwyt, te dwie pytać zapomniały —
-// a przekaźnik ma konstruktor domyślny i `held()`, więc wołanie na pustym jest przewidziane.
+// The relayed address the server lent us; empty before `open`. An empty relay returns an empty
+// address: the relay has a default constructor and `held()`, so calling it on an empty one is
+// expected.
 Address Relay::lent() const {
     if (!held_) return {};
 
@@ -646,6 +674,8 @@ Address Relay::lent() const {
     return held_->alive->lent;
 }
 
+// Our address as the server sees it (the reflexive address from the allocation); empty before
+// `open` and for an empty relay.
 Address Relay::seen() const {
     if (!held_) return {};
 
@@ -654,9 +684,10 @@ Address Relay::seen() const {
     return held_->alive->seen;
 }
 
-// Przydział. Serwer, który wymaga uwierzytelnienia, odpowiada najpierw odmową 401 z dziedziną
-// i jednorazowym znacznikiem — i **dopiero z nich da się policzyć klucz**, więc pierwsze zapytanie
-// zawsze idzie bez podpisu, a drugie z podpisem. Tak każe RFC i tak działa każdy serwer TURN.
+// Allocates a relayed address and resolves with it. A server that requires authentication first
+// answers with a 401 refusal carrying a realm and a nonce, and only from them can the key be
+// computed, so the first request always goes unsigned and the second signed. That is what the RFC
+// prescribes and how every TURN server works.
 Promise<Address> Relay::open(Patience patience) {
     if (!held_) return amiss_now<Address>("The relay is empty.");
 
@@ -672,7 +703,7 @@ Promise<Address> Relay::open(Patience patience) {
 
             Bytes what = begun(Task::allocate, Sort::asking, number);
 
-            // Przekaźnik ma nam podać adres dla UDP; siedemnastka to numer tego protokołu.
+            // The relay has to give us an address for UDP; 17 is the number of that protocol.
             wording(what, 0x0019, 17u << 24);
 
             Message told = asking(held, what, number, left(until));
@@ -713,8 +744,9 @@ Promise<Address> Relay::open(Patience patience) {
                 held->lent = told.lent;
                 held->seen = told.seen;
 
-                // **Czas końca bierzemy z odpowiedzi, nie z prośby.** Serwer ma prawo dać mniej,
-                // a odświeżanie liczone od tego, o co prosiliśmy, spóźniłoby się o tę różnicę.
+                // The end time is taken from the answer, not from the request. The server may give
+                // less, and a refresh counted from what we asked for would be late by the
+                // difference.
                 held->until =
                     Clock::now() +
                     std::chrono::seconds{told.lifetime > 0 ? told.lifetime : living_for};
@@ -733,8 +765,9 @@ Promise<Address> Relay::open(Patience patience) {
     return made;
 }
 
-// Przekaźnik nie przepuści ani jednego bajtu od kogoś, o kim mu nie powiedziano. To nie jest
-// grzeczność, tylko obrona samego przekaźnika przed staniem się otwartym wzmacniaczem.
+// Grants a permission for `peer`. The relay does not let through a single byte from someone it has
+// not been told about. That is not politeness but the relay's own defense against becoming an open
+// amplifier.
 Promise<void> Relay::allow(Address peer, Patience patience) {
     if (!held_) return amiss_now<void>("The relay is empty.");
 
@@ -744,9 +777,10 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
 
     Promise<void> made{[held, peer, patience](auto resolve, auto reject) {
         try {
-            // Pozwolenie jest zapytaniem, a odpowiedź na nie rozpoznaje **pętla odbioru** — więc
-            // musi chodzić. Zwykle chodzi już od przydziału, ale nie wolno na to liczyć: bez tego
-            // pozwolenie nadane pierwszym ruchem czekałoby na odpowiedź, której nikt nie czyta.
+            // A permission is a request, and the receive loop recognizes the answer to it, so the
+            // loop has to run. It usually runs since the allocation, but that cannot be relied on:
+            // otherwise a permission granted as the first move would wait for an answer nobody
+            // reads.
             waking(held);
 
             {
@@ -778,11 +812,11 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
                 for (const Address& one : held->allowed)
                     if (one.family() == peer.family() && one.bytes() == peer.bytes()) known = true;
 
-                // Pozwolenie sięga **adresu, nie portu** — tak każe RFC. Dlatego pamiętamy je po
-                // adresie: drugi port tego samego gospodarza jest już przepuszczony.
+                // A permission covers an address, not a port, as the RFC prescribes. That is why it
+                // is remembered by address: a second port of the same host is already let through.
                 if (!known && held->allowed.size() < roomier) {
-                    // Zegar odnawiania rusza dopiero od pierwszego wpisu. Przestawianie go przy
-                    // każdym kolejnym odsuwałoby odnowienie tych, które czekają już dawno.
+                    // The renewal clock starts only from the first entry. Resetting it at every
+                    // following one would postpone the renewal of those that have waited long.
                     if (held->allowed.empty()) held->granted = Clock::now();
 
                     held->allowed.push_back(peer);
@@ -800,8 +834,9 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
     return made;
 }
 
-// Wysyłka idzie **oznajmieniem**, nie zapytaniem: nie ma na nią odpowiedzi i nie ma czego czekać.
-// Gubi się tak samo jak zwykły datagram, bo to jest zwykły datagram, tylko opakowany.
+// Sends `what` to `to` through the relay, on a channel when one is bound. Sending goes by
+// indication, not by request: there is no answer to it and nothing to wait for. It gets lost just
+// like an ordinary datagram, because it is an ordinary datagram, only wrapped.
 Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
     if (!held_) return amiss_now<void>("The relay is empty.");
 
@@ -836,9 +871,9 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
                 return;
             }
 
-            // Kanału jeszcze nie ma, więc ta przesyłka idzie **oznajmieniem**, a kanał zamawiamy
-            // w tle. Czekanie na niego kosztowałoby całą rozmowę tyle, ile jedno zapytanie do
-            // serwera — a oznajmienie działa od pierwszego bajtu.
+            // There is no channel yet, so this parcel goes by indication, and the channel is
+            // ordered in the background. Waiting for it would cost the whole conversation as much
+            // as one request to the server, while an indication works from the first byte.
             binding(held, to);
 
             Bytes one = begun(Task::sending, Sort::telling, numbered());
@@ -860,6 +895,9 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
     return made;
 }
 
+// Receives the next datagram relayed from a peer, at most `most` bytes; rejects with `Overdue`
+// when nothing arrives within the patience, and with `Trouble` when the allocation is lost, the
+// relay is closed or the datagram does not fit.
 Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
     if (!held_) return amiss_now<Datagram>("The relay is empty.");
 
@@ -877,8 +915,8 @@ Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
                 }))
                 throw Overdue{};
 
-            // Odebrane wcześniej oddajemy nawet wtedy, gdy przydział już przepadł — te bajty
-            // naprawdę przyszły i nikt ich nie unieważnił.
+            // What was received earlier is handed over even when the allocation is already lost:
+            // those bytes really arrived and nobody invalidated them.
             if (held->spare.empty() && held->lost) throw Trouble{"The allocation is lost."};
 
             if (held->spare.empty()) throw Trouble{"The relay is closed."};
@@ -903,6 +941,7 @@ Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
     return made;
 }
 
+// Closes the relay; the destructor of `Held` does the work, as when the last handle lets go.
 void Relay::close() { held_.reset(); }
 
 }

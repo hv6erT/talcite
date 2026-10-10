@@ -12,7 +12,7 @@
 
 using namespace talcite;
 
-TRIAL("Loop: turn wykonuje odłożone i zwraca ile") {
+TRIAL("Loop: turn runs the posted work and returns how much") {
     Loop loop;
 
     int counted = 0;
@@ -26,7 +26,7 @@ TRIAL("Loop: turn wykonuje odłożone i zwraca ile") {
     same(loop.turn(), std::size_t{0});
 }
 
-TRIAL("Loop: current widzi tylko własny wątek") {
+TRIAL("Loop: current sees only its own thread") {
     Loop loop;
 
     ought(Loop::current() == &loop);
@@ -39,7 +39,7 @@ TRIAL("Loop: current widzi tylko własny wątek") {
     ought(!seen.load());
 }
 
-TRIAL("Loop: dzwonek budzi czekającego") {
+TRIAL("Loop: the bell wakes the waiter") {
     Loop loop;
 
     ought(!loop.bell().wait(std::chrono::milliseconds{0}));
@@ -53,7 +53,7 @@ TRIAL("Loop: dzwonek budzi czekającego") {
     ought(!loop.bell().wait(std::chrono::milliseconds{0}));
 }
 
-TRIAL("Promise: here przenosi resztę łańcucha na wątek pętli") {
+TRIAL("Promise: here moves the rest of the chain to the loop's thread") {
     Loop loop;
 
     const std::thread::id mine = std::this_thread::get_id();
@@ -90,10 +90,10 @@ TRIAL("Promise: here przenosi resztę łańcucha na wątek pętli") {
     ought(done.load());
 }
 
-// `on(pętla)` wskazuje pętlę wprost, więc łańcuch zbudowany na jednym wątku może skończyć się na
-// pętli innego — na przykład pętli sieci albo podglądu, gdy będzie ich więcej. Wątek budujący nie
-// ma tu pętli wcale, a ciąg dalszy i tak ląduje tam, gdzie kazano.
-TRIAL("Promise: on przenosi resztę łańcucha na wskazaną pętlę") {
+// `on(loop)` names the loop directly, so a chain built on one thread can finish on another
+// thread's loop, for example the network loop or the preview loop once there are more of them. The
+// building thread has no loop at all here, and the continuation still lands where it was told to.
+TRIAL("Promise: on moves the rest of the chain to the given loop") {
     std::atomic<Loop*> other{nullptr};
     std::atomic<bool> stop{false};
     std::thread::id theirs;
@@ -132,11 +132,11 @@ TRIAL("Promise: on przenosi resztę łańcucha na wskazaną pętlę") {
     aside.join();
 }
 
-// **`here()` bez pętli to błąd wołającego**, zgłoszony od razu, przy budowaniu łańcucha. Dawniej
-// było cichym przejściem: ciąg dalszy biegł wtedy na wątku, który przyniósł wynik — dokładnie ten
-// wyścig o drzewo węzłów, przed którym `here()` ma chronić. Kod, który ma prawo działać bez pętli,
-// sprawdza ją sam, zanim zbuduje łańcuch (tak robi pasek postępu).
-TRIAL("Promise: bez pętli here rzuca, zanim cokolwiek ruszy") {
+// `here()` without a loop is the caller's error, reported at once, while the chain is built.
+// Silently passing through would run the continuation on the thread that delivered the result,
+// which is exactly the race on the node tree that `here()` is meant to prevent. Code that may run
+// without a loop checks for one itself before building the chain (the progress bar does so).
+TRIAL("Promise: without a loop here throws before anything starts") {
     std::atomic<bool> ran{false};
 
     Promise<int> source{[&ran](auto resolve, auto) {
@@ -148,7 +148,7 @@ TRIAL("Promise: bez pętli here rzuca, zanim cokolwiek ruszy") {
     ought(!ran.load());
 }
 
-TRIAL("then: na rozstrzygniętej z here czeka na turn, a nie odpala od razu") {
+TRIAL("then: on a settled promise with here, waits for turn instead of running at once") {
     Loop loop;
 
     Promise<int> done{[](auto resolve, auto) { resolve(4); }};
@@ -176,12 +176,11 @@ TRIAL("then: na rozstrzygniętej z here czeka na turn, a nie odpala od razu") {
     ought(ran.load());
 }
 
-// **Praca puli, która skończy się po pętli, nie sięga do niej.** Ogniwo `here` trzymało gołe
-// wskazanie na pętlę i po jej zniszczeniu wołało `post` na martwym obiekcie. W programie pętla żyje
-// do końca, ale w próbach ginie z końcem próby — sanitizer złapał to kiedyś w twa. Tu widać to bez
-// sanitizera: nowa pętla staje w tym samym miejscu pamięci co martwa, więc stare wskazanie trafiało
-// do niej, a ciąg dalszy obiecany martwej pętli wykonywał się na cudzej.
-TRIAL("Loop: ciąg dalszy obiecany martwej pętli przepada, a nie trafia do następnej") {
+// Pool work that finishes after the loop is gone does not reach it. In the program the loop lives
+// to the end, but in trials it dies with the trial, so the `here` link must not keep a bare pointer
+// to it. This shows without a sanitizer: the new loop takes the same memory as the dead one, so a
+// stale pointer would reach it and the continuation promised to the dead loop would run on another.
+TRIAL("Loop: a continuation promised to a dead loop is dropped, not sent to the next one") {
     std::atomic<bool> go{false};
     std::atomic<bool> ran{false};
 

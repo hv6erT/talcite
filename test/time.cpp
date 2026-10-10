@@ -14,7 +14,7 @@
 using namespace talcite;
 using namespace std::chrono_literals;
 
-TRIAL("Time: stoper mierzy, co minęło") {
+TRIAL("Time: the stopwatch measures what has passed") {
     Stopwatch held;
 
     std::this_thread::sleep_for(60ms);
@@ -27,7 +27,7 @@ TRIAL("Time: stoper mierzy, co minęło") {
     ought(held.spent() < 50ms);
 }
 
-TRIAL("Time: later spełnia się po czasie, nie wcześniej") {
+TRIAL("Time: later is fulfilled after the time, not before") {
     Stopwatch held;
 
     Time::later(120ms).await();
@@ -36,7 +36,7 @@ TRIAL("Time: later spełnia się po czasie, nie wcześniej") {
     ought(held.spent() < 600ms);
 }
 
-TRIAL("Time: later jest leniwe") {
+TRIAL("Time: later is lazy") {
     Promise<void> waiting = Time::later(40ms);
 
     std::this_thread::sleep_for(120ms);
@@ -49,7 +49,7 @@ TRIAL("Time: later jest leniwe") {
     ought(held.spent() >= 30ms);
 }
 
-TRIAL("Time: postęp odliczania rośnie") {
+TRIAL("Time: the countdown's progress grows") {
     Promise<void> waiting = Time::later(200ms);
 
     waiting.start();
@@ -66,7 +66,7 @@ TRIAL("Time: postęp odliczania rośnie") {
     same(waiting.progress(), 1.0);
 }
 
-TRIAL("Time: limit przewraca się wyjątkiem Overdue") {
+TRIAL("Time: limit fails with an Overdue exception") {
     bool caught = false;
 
     try {
@@ -78,12 +78,12 @@ TRIAL("Time: limit przewraca się wyjątkiem Overdue") {
     ought(caught);
 }
 
-TRIAL("Time: stoper nie jest zegarem") {
+TRIAL("Time: a stopwatch is not a clock") {
     static_assert(!std::is_default_constructible_v<Time>);
     static_assert(std::is_default_constructible_v<Stopwatch>);
 }
 
-TRIAL("timeout: praca, która zdążyła, oddaje swoją wartość") {
+TRIAL("timeout: work that made it in time gives its value") {
     Promise<int> quick{[](auto resolve, auto) {
         std::this_thread::sleep_for(20ms);
         resolve(7);
@@ -92,7 +92,7 @@ TRIAL("timeout: praca, która zdążyła, oddaje swoją wartość") {
     same(quick.timeout(800ms).await(), 7);
 }
 
-TRIAL("timeout: praca, która nie zdążyła, przewraca się wyjątkiem Overdue") {
+TRIAL("timeout: work that did not make it in time fails with an Overdue exception") {
     Promise<int> slow{[](auto resolve, auto) {
         std::this_thread::sleep_for(600ms);
         resolve(1);
@@ -111,7 +111,7 @@ TRIAL("timeout: praca, która nie zdążyła, przewraca się wyjątkiem Overdue"
     ought(held.spent() < 500ms);
 }
 
-TRIAL("timeout: po przekroczeniu praca jest anulowana") {
+TRIAL("timeout: once the time is exceeded the work is cancelled") {
     Promise<void> slow = Time::later(60000ms);
 
     Promise<void> bounded = slow.timeout(40ms);
@@ -129,7 +129,7 @@ TRIAL("timeout: po przekroczeniu praca jest anulowana") {
     ought(cancelled);
 }
 
-TRIAL("timeout: odrzucenie pracy przechodzi takie, jakie jest") {
+TRIAL("timeout: the work's rejection passes through as it is") {
     Promise<int> broken{[](auto, auto reject) { reject("zepsute"); }};
 
     std::string said;
@@ -145,7 +145,7 @@ TRIAL("timeout: odrzucenie pracy przechodzi takie, jakie jest") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("timeout: termin liczy się od uruchomienia, nie od złożenia") {
+TRIAL("timeout: the deadline counts from starting, not from composing") {
     Promise<int> quick{[](auto resolve, auto) { resolve(3); }};
 
     Promise<int> bounded = quick.timeout(40ms);
@@ -155,7 +155,7 @@ TRIAL("timeout: termin liczy się od uruchomienia, nie od złożenia") {
     same(bounded.await(), 3);
 }
 
-TRIAL("timeout: anulowanie wyniku anuluje pracę") {
+TRIAL("timeout: cancelling the result cancels the work") {
     Promise<void> slow = Time::later(60000ms);
 
     Promise<void> bounded = slow.timeout(60000ms);
@@ -174,7 +174,7 @@ TRIAL("timeout: anulowanie wyniku anuluje pracę") {
     ought(cancelled);
 }
 
-TRIAL("timeout: spełniona praca zdejmuje termin, który już nie przewróci wyniku") {
+TRIAL("timeout: fulfilled work removes the deadline, which no longer upsets the result") {
     Promise<int> quick{[](auto resolve, auto) { resolve(5); }};
 
     Promise<int> bounded = quick.timeout(40ms);
@@ -186,7 +186,7 @@ TRIAL("timeout: spełniona praca zdejmuje termin, który już nie przewróci wyn
     same(bounded.await(), 5);
 }
 
-TRIAL("timeout: działa na ogniwie łańcucha i anuluje je aż do źródła") {
+TRIAL("timeout: works on a link of a chain and cancels it all the way to the source") {
     Promise<void> source = Time::later(60000ms);
 
     Promise<int> chained = source.then([] { return 1; });
@@ -204,7 +204,7 @@ TRIAL("timeout: działa na ogniwie łańcucha i anuluje je aż do źródła") {
     ought(cancelled);
 }
 
-TRIAL("Time: sto oczekiwań nie kosztuje stu wątków") {
+TRIAL("Time: a hundred waits do not cost a hundred threads") {
     std::vector<Promise<void>> among;
     among.reserve(100);
 
@@ -214,12 +214,12 @@ TRIAL("Time: sto oczekiwań nie kosztuje stu wątków") {
 
     Promise<void>::all(among).await();
 
-    // Gdyby każde oczekiwanie spało we własnym zadaniu, sto z nich przy dwóch rdzeniach
-    // ciągnęłoby się o wiele dłużej niż jedno.
+    // If every wait slept in its own task, a hundred of them on two cores would drag on much longer
+    // than one.
     ought(held.spent() < 900ms);
 }
 
-TRIAL("Time: anulowane oczekiwanie znika z zegara") {
+TRIAL("Time: a cancelled wait disappears from the clock") {
     Promise<void> waiting = Time::later(60000ms);
 
     waiting.start();
@@ -230,12 +230,12 @@ TRIAL("Time: anulowane oczekiwanie znika z zegara") {
 
     threw(waiting.await());
 
-    // Zegar ma zdjąć wpis od razu, a nie trzymać go przez minutę — jeśli tego nie zrobi,
-    // zakończenie procesu i tak przejdzie, ale wpis leżałby do terminu.
+    // The clock has to remove the entry at once rather than hold it for a minute; if it does not,
+    // ending the process still goes through, but the entry would lie there until its deadline.
     Time::later(30ms).await();
 }
 
-TRIAL("Time: znacznik kalendarzowy idzie do przodu") {
+TRIAL("Time: the calendar stamp moves forward") {
     const std::chrono::sys_seconds one = Time::stamp();
 
     ought(one.time_since_epoch().count() > 1700000000);

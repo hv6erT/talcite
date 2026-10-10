@@ -22,29 +22,31 @@
 
 using namespace talcite;
 
-// Klient HTTP przeciw serwerowi z próby: brama na pętli zwrotnej, a po drugiej stronie próba sama
-// czyta żądanie i pisze odpowiedź bajt w bajt — tak widać dokładnie, co klient wysyła i jak czyta
-// to, co dostaje, łącznie z odpowiedziami krzywymi, których prawdziwy serwer by nie dał. HTTPS
-// idzie przez atrapę szwu TLS z `faking.hpp`.
+// The HTTP client against a server in the trial: a listener on the loopback, and on the other side
+// the trial itself reads the request and writes the response byte for byte. That shows exactly what
+// the client sends and how it reads what it gets, including malformed responses that a real server
+// would not give. HTTPS goes through the fake TLS seam from `faking.hpp`.
 
 namespace {
 
 const net::Patience soon{8000};
 
+// A listener on an IPv4 loopback port chosen by the system.
 net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
-// Druga strona jednego połączenia: zwykła albo za atrapą TLS.
+// The other side of one connection: plain or behind the fake TLS.
 struct Desk {
     net::Stream plain;
     net::TlsStream secure;
     std::string kept;
 
+    // Writes the text to the client and waits until it is written.
     void wrote(const std::string& what) {
         if (secure.held()) secure.write(bytes(what), soon).await();
         else plain.write(bytes(what), soon).await();
     }
 
-    // Głowa żądania do pustego wiersza.
+    // The request head up to the empty line, or nothing when the client closed first.
     std::string heard() {
         for (;;) {
             if (const std::size_t at = kept.find("\r\n\r\n"); at != std::string::npos) {
@@ -63,8 +65,8 @@ struct Desk {
         }
     }
 
-    // Czy klient zamknął swoją stronę — czytanie oddaje pustkę. Cisza dłuższa niż `patience` to
-    // „nie zamknął".
+    // Whether the client closed its side: reading returns nothing. Silence longer than `patience`
+    // means "did not close".
     bool ended(net::Patience patience = soon) {
         try {
             const Bytes got = secure.held() ? secure.read(64, patience).await() : plain.read(64, patience).await();
@@ -75,7 +77,8 @@ struct Desk {
         }
     }
 
-    // Treść żądania o podanej długości — po głowie, z tego, co już przyszło, i z dalszego czytania.
+    // The request body of the given length: after the head, from what has already arrived and from
+    // further reading.
     std::string taken(std::size_t much) {
         while (kept.size() < much) {
             const Bytes got = secure.held() ? secure.read(4096, soon).await() : plain.read(4096, soon).await();
@@ -92,12 +95,14 @@ struct Desk {
         return made;
     }
 
+    // Closes whichever streams this side holds.
     void close() {
         if (secure.held()) secure.close();
         if (plain.held()) plain.close();
     }
 };
 
+// Accepts the next plain connection on the listener.
 Desk accepted(const net::Listener& gate) {
     Desk made;
 
@@ -106,6 +111,8 @@ Desk accepted(const net::Listener& gate) {
     return made;
 }
 
+// Accepts the next connection on the listener and performs the server side of the fake TLS
+// handshake.
 Desk accepted(const net::Listener& gate, const Seam<net::TlsProvider>& tls) {
     Desk made;
 
@@ -114,17 +121,21 @@ Desk accepted(const net::Listener& gate, const Seam<net::TlsProvider>& tls) {
     return made;
 }
 
+// The URL of the target on the listener's loopback port, with the given scheme.
 std::string at(const net::Listener& gate, const std::string& target, const char* scheme = "http") {
     return std::string{scheme} + "://127.0.0.1:" + std::to_string(gate.mine().port()) + target;
 }
 
+// A request for the URL with the given headers; the URL must parse.
 net::Request asked(const std::string& url, std::vector<net::Header> headers = {}) {
     return net::Request{net::Url::from_string(url).value(), std::move(headers)};
 }
 
+// The response body as text.
 std::string body(const net::Response& one) { return text(one.body); }
 
-// Powód odrzucenia klienta HTTP, a gdy odrzucił czymś innym — pustka.
+// The reason the HTTP client refused, or nothing when it refused with something else (or did not
+// refuse).
 std::optional<net::HttpTrouble::Why> why(Promise<net::Response>& one) {
     try {
         (void)one.await();
@@ -137,6 +148,7 @@ std::optional<net::HttpTrouble::Why> why(Promise<net::Response>& one) {
     return std::nullopt;
 }
 
+// Whether the request ended with any exception.
 bool refused(Promise<net::Response>& one) {
     try {
         (void)one.await();
@@ -153,10 +165,11 @@ const Seam<net::TlsProvider> nothing{};
 
 // --- Url -----------------------------------------------------------------------------------------
 
-// Adres rozbiera się na schemat, host, port i cel: port domyślny ze schematu, cel co najmniej „/",
-// zapytanie bez ścieżki dostaje ukośnik, kotwica odpada, schemat i host małymi literami, IPv6
-// w nawiasach traci nawiasy. Zapis wraca do tekstu bez portu domyślnego.
-TRIAL("HTTP: adres rozbiera się i składa z powrotem") {
+// A URL breaks down into the scheme, host, port and target: the default port comes from the scheme,
+// the target is at least "/", a query without a path gets a slash, the fragment is dropped, the
+// scheme and host are lowercased, and IPv6 in brackets loses the brackets. Written back as text, it
+// leaves out a default port.
+TRIAL("HTTP: a URL breaks down and is put back together") {
     const auto plain = net::Url::from_string("http://Example.COM");
 
     ought(plain.has_value());
@@ -194,10 +207,10 @@ TRIAL("HTTP: adres rozbiera się i składa z powrotem") {
     same(net::to_string(*net::Url::from_string("https://a:80/")), std::string{"https://a:80/"});
 }
 
-// Czego adres nie przyjmuje: innego schematu, braku schematu, użytkownika w adresie, pustego hosta,
-// portu zerowego, za dużego albo nie liczbowego, pustego po dwukropku, IPv6 bez nawiasów, spacji,
-// znaków sterujących i bajtów spoza ASCII w celu — te koduje wołający.
-TRIAL("HTTP: krzywy adres nie jest adresem") {
+// What a URL does not accept: another scheme, no scheme, a user in the URL, an empty host, port
+// zero, a port too large or not numeric, an empty one after the colon, IPv6 without brackets,
+// spaces, control characters and non-ASCII bytes in the target (the caller encodes those).
+TRIAL("HTTP: a malformed URL is not a URL") {
     for (const char* bad : {"ftp://a/", "a/b", "//a/b", "http://user@a/", "http:///x", "http://a:0/", "http://a:65536/",
                             "http://a:x/", "http://a:/", "http://[::1/", "http://[::1]x/", "http://[::1]:/", "http://::1/",
                             "http://a/b c", "http://a/\x01", "http://a/\x7f", "http://a/zażółć", "http://a b/",
@@ -208,13 +221,13 @@ TRIAL("HTTP: krzywy adres nie jest adresem") {
     ought(net::Url::from_string("http://a:65535/").has_value());
 }
 
-// --- Rozmowa -------------------------------------------------------------------------------------
+// --- Conversation --------------------------------------------------------------------------------
 
-// Zwykłe GET: wiersz żądania z celem, `Host` z portem, gdy nie jest domyślny, nagłówki wołającego —
-// poza `Host`, `Connection` i `Accept-Encoding`, które klient stawia sam — i prośba o treść bez
-// kompresji. Odpowiedź niesie status, nagłówki, treść o podanej długości i adres, z którego przyszła;
-// nagłówek szuka się bez wielkości liter.
-TRIAL("HTTP: GET wysyła żądanie i czyta odpowiedź o podanej długości") {
+// A plain GET: the request line with the target, Host with the port when it is not the default, the
+// caller's headers (except Host, Connection and Accept-Encoding, which the client sets itself) and
+// a request for an uncompressed body. The response carries the status, the headers, a body of the
+// stated length and the URL it came from; a header is looked up regardless of case.
+TRIAL("HTTP: GET sends the request and reads a response of the stated length") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -242,11 +255,11 @@ TRIAL("HTTP: GET wysyła żądanie i czyta odpowiedź o podanej długości") {
     same(net::to_string(one.url), at(gate, "/3/movie/550?language=pl-PL"));
 }
 
-// POST (dla SOAP w UPnP): metoda, długość treści od klienta, nie od wołającego, i sama treść.
-// Idzie zawsze nowym połączeniem — żądanie, które coś zmienia, nie może trafić na połączenie
-// z zapasu, które padło w pół drogi, bo po cichu poszłoby drugi raz. Po odpowiedzi połączenie
-// i tak wraca do zapasu i niesie następny GET.
-TRIAL("HTTP: POST wysyła treść, zawsze nowym połączeniem") {
+// POST (for SOAP in UPnP): the method, the body length from the client rather than from the caller,
+// and the body itself. It always goes over a new connection: a request that changes something must
+// not land on a pooled connection that dies halfway, because it would silently be sent a second
+// time. After the response the connection still goes back to the pool and carries the next GET.
+TRIAL("HTTP: POST sends a body, always over a new connection") {
     const net::Listener gate = standing();
     const std::string port = std::to_string(gate.mine().port());
 
@@ -274,7 +287,8 @@ TRIAL("HTTP: POST wysyła treść, zawsze nowym połączeniem") {
 
     same(second.await().status, 500);
 
-    // Pole metody i treści w żądaniu nic nie znaczy dla `get` — zawsze GET bez treści.
+    // The method and body fields of the request mean nothing to `get`: it is always a GET without a
+    // body.
     net::Request odd = asked(at(gate, "/x"));
 
     odd.method = "DELETE";
@@ -282,7 +296,7 @@ TRIAL("HTTP: POST wysyła treść, zawsze nowym połączeniem") {
 
     auto third = client.get(odd);
 
-    // Zapas trzyma jedno połączenie na serwer — ostatnie, które wróciło.
+    // The pool keeps one connection per server: the last one that came back.
     const std::string head = other.heard();
 
     same(head.substr(0, 11), std::string{"GET /x HTTP"});
@@ -293,8 +307,9 @@ TRIAL("HTTP: POST wysyła treść, zawsze nowym połączeniem") {
     same(third.await().status, 204);
 }
 
-// 307 i 308 powtarzają POST razem z treścią; 301, 302 i 303 zamieniają go w GET bez treści.
-TRIAL("HTTP: przekierowanie POST — 307 z treścią, 303 już jako GET") {
+// 307 and 308 repeat a POST together with its body; 301, 302 and 303 turn it into a GET without a
+// body.
+TRIAL("HTTP: redirecting a POST, 307 with the body, 303 as a GET") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -325,10 +340,10 @@ TRIAL("HTTP: przekierowanie POST — 307 z treścią, 303 już jako GET") {
     same(got.await().status, 200);
 }
 
-// Status nie jest błędem: 404 i 429 wracają jako odpowiedź, a nagłówek `Retry-After` razem z nią.
-// Wartość nagłówka traci otaczające spacje i tabulatory; nazwa bywa z cyframi i znakami tokenu;
-// linia statusu może nie mieć opisu.
-TRIAL("HTTP: 404 i 429 to odpowiedzi, a nie błędy") {
+// A status is not an error: 404 and 429 come back as a response, with the Retry-After header along
+// with it. A header value loses surrounding spaces and tabs; a name may have digits and token
+// characters; a status line may have no reason phrase.
+TRIAL("HTTP: 404 and 429 are responses, not errors") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -355,10 +370,10 @@ TRIAL("HTTP: 404 i 429 to odpowiedzi, a nie błędy") {
     ought(two.header("x.dziwna_nazwa!#") != nullptr);
 }
 
-// Treść kawałkami: długości szesnastkowo, rozszerzenia po średniku, kawałek zerowy i przyczepka.
-// Wielkie litery i puste pozycje listy w nazwie kodowania nic nie zmieniają. Po przyczepce
-// połączenie jest czyste i niesie następne żądanie.
-TRIAL("HTTP: treść kawałkami skleja się w całość") {
+// A chunked body: lengths in hexadecimal, extensions after a semicolon, the zero chunk and the
+// trailer. Uppercase letters and empty list entries in the coding name change nothing. After the
+// trailer the connection is clean and carries the next request.
+TRIAL("HTTP: a chunked body is joined into a whole") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -384,9 +399,10 @@ TRIAL("HTTP: treść kawałkami skleja się w całość") {
     same(body(again.await()), std::string{"ok"});
 }
 
-// Odpowiedź bez długości i bez kawałków trwa do zamknięcia — i tego połączenia nie da się użyć
-// drugi raz, więc następne żądanie idzie nowym. Tak samo HTTP/1.0 i `Connection: close`.
-TRIAL("HTTP: treść do zamknięcia, HTTP/1.0 i Connection: close nie wracają do zapasu") {
+// A response without a length and without chunks lasts until the connection closes, and that
+// connection cannot be used a second time, so the next request goes over a new one. The same goes
+// for HTTP/1.0 and Connection: close.
+TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to the pool") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -431,10 +447,10 @@ TRIAL("HTTP: treść do zamknięcia, HTTP/1.0 i Connection: close nie wracają d
     same(fourth.await().status, 204);
 }
 
-// **Jedno połączenie na serwer**: po odpowiedzi z granicą połączenie czeka w zapasie i następne
-// żądanie idzie nim — brama nie przyjmuje drugiego. Odpowiedzi 204 i 304 nie mają treści, choćby
-// nie było długości.
-TRIAL("HTTP: połączenie wraca do zapasu i niesie następne żądania") {
+// One connection per server: after a response with a known end the connection waits in the pool and
+// the next request goes over it, so the listener does not accept a second one. Responses 204 and
+// 304 have no body, even without a length.
+TRIAL("HTTP: a connection returns to the pool and carries the next requests") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -463,9 +479,9 @@ TRIAL("HTTP: połączenie wraca do zapasu i niesie następne żądania") {
     same(body(third.await()), std::string{"tak"});
 }
 
-// Bajty ponad zapowiedzianą długość to nie następna odpowiedź — połączenie z nimi nie wraca do
-// zapasu, a następne żądanie idzie nowym.
-TRIAL("HTTP: nadmiarowe bajty zamykają połączenie") {
+// Bytes beyond the announced length are not the next response: a connection with them does not
+// return to the pool, and the next request goes over a new one.
+TRIAL("HTTP: excess bytes close the connection") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -490,9 +506,10 @@ TRIAL("HTTP: nadmiarowe bajty zamykają połączenie") {
     ought(one.ended());
 }
 
-// Połączenie z zapasu, które serwer zamknął w bezczynności, pada przed pierwszym bajtem odpowiedzi —
-// żądanie idzie wtedy jeszcze raz, nowym połączeniem, i człowiek niczego nie zauważa.
-TRIAL("HTTP: połączenie zamknięte w bezczynności zastępuje nowe") {
+// A pooled connection that the server closed while idle fails before the first byte of the
+// response: the request is then sent once more, over a new connection, and the user notices
+// nothing.
+TRIAL("HTTP: a connection closed while idle is replaced by a new one") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -518,9 +535,9 @@ TRIAL("HTTP: połączenie zamknięte w bezczynności zastępuje nowe") {
     same(body(second.await()), std::string{"b"});
 }
 
-// Połączenie z zapasu, które padło **w środku** odpowiedzi, nie jest bezczynnym: żądanie się nie
-// powtarza, bo serwer mógł je już wykonać.
-TRIAL("HTTP: połączenie urwane w środku odpowiedzi nie ponawia żądania") {
+// A pooled connection that died in the middle of a response is not an idle one: the request is not
+// repeated, because the server may already have carried it out.
+TRIAL("HTTP: a connection cut in the middle of a response does not repeat the request") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -543,8 +560,8 @@ TRIAL("HTTP: połączenie urwane w środku odpowiedzi nie ponawia żądania") {
     same(why(second), std::optional{net::HttpTrouble::Why::malformed});
 }
 
-// Odpowiedzi 1xx przed właściwą się pomija.
-TRIAL("HTTP: odpowiedź tymczasowa 1xx przepuszcza właściwą") {
+// 1xx responses before the real one are skipped.
+TRIAL("HTTP: an interim 1xx response lets the real one through") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -562,11 +579,11 @@ TRIAL("HTTP: odpowiedź tymczasowa 1xx przepuszcza właściwą") {
     same(body(one), std::string{"ok"});
 }
 
-// --- Granice -------------------------------------------------------------------------------------
+// --- Limits --------------------------------------------------------------------------------------
 
-// Głowa ponad granicę, treść ponad granicę — zapowiedziana długością (odmowa zanim cokolwiek
-// przyjdzie), kawałkami i do zamknięcia.
-TRIAL("HTTP: granice głowy i treści") {
+// A head over the limit, a body over the limit: announced by the length (refused before anything
+// arrives), chunked, and until close.
+TRIAL("HTTP: limits of the head and the body") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing, net::Limits{64, 10, 5, soon}};
@@ -604,11 +621,11 @@ TRIAL("HTTP: granice głowy i treści") {
     same(body(exact.await()), std::string{"0123456789"});
 }
 
-// Odpowiedzi, których nie da się czytać: linia statusu nie z HTTP/1.x, kod nie liczbą, nagłówek bez
-// dwukropka, zawinięty nagłówek, sprzeczne długości, kodowanie inne niż `chunked`, długość kawałka
-// nie liczbą, kawałek dłuższy niż zapowiedziany, za długi wiersz kawałka, połączenie zamknięte
-// w głowie i w treści, dwie odpowiedzi tymczasowe pod rząd.
-TRIAL("HTTP: krzywa odpowiedź to złamany protokół") {
+// Responses that cannot be read: a status line not from HTTP/1.x, a code that is not a number, a
+// header without a colon, a folded header, conflicting lengths, a coding other than chunked, a
+// chunk length that is not a number, a chunk longer than announced, a chunk line that is too long,
+// a connection closed in the head and in the body, two interim responses in a row.
+TRIAL("HTTP: a malformed response is a protocol violation") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -657,8 +674,8 @@ TRIAL("HTTP: krzywa odpowiedź to złamany protokół") {
     same(tried("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\n\r\n"), bad);
 }
 
-// Cisza serwera kończy się po `patience` odmową, a nie wiecznym czekaniem.
-TRIAL("HTTP: milczący serwer kończy się terminem") {
+// Silence from the server ends after `patience` with a refusal, not with waiting forever.
+TRIAL("HTTP: a silent server ends with a timeout") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing, net::Limits{1024, 1024, 5, net::Patience{200}}};
@@ -673,11 +690,12 @@ TRIAL("HTTP: milczący serwer kończy się terminem") {
     ought(!why(got).has_value());
 }
 
-// --- Przekierowania ------------------------------------------------------------------------------
+// --- Redirects -----------------------------------------------------------------------------------
 
-// Przekierowania wszystkich pięciu rodzajów, z adresem od korzenia, względnym (ukośnik w zapytaniu
-// nie jest ścieżką), bez schematu i pełnym; odpowiedź mówi, gdzie się skończyło. Poświadczenia idą dalej tylko do tego samego serwera.
-TRIAL("HTTP: przekierowania prowadzą do celu, a poświadczenia zostają przy swoim serwerze") {
+// Redirects of all five kinds, with a URL from the root, a relative one (a slash in the query is
+// not a path), one without a scheme and a full one; the response says where it ended. Credentials
+// go on only to the same server.
+TRIAL("HTTP: redirects lead to the target, and credentials stay with their server") {
     const net::Listener gate = standing();
 
     const std::string port = std::to_string(gate.mine().port());
@@ -722,9 +740,9 @@ TRIAL("HTTP: przekierowania prowadzą do celu, a poświadczenia zostają przy sw
     same(net::to_string(one.url), "http://localhost:" + port + "/h");
 }
 
-// Przekierowanie bez `Location` to zwykła odpowiedź; `Location`, który nie jest adresem, to złamany
-// protokół; więcej przekierowań niż w granicy — odmowa.
-TRIAL("HTTP: przekierowanie bez celu, z krzywym celem i ponad granicę") {
+// A redirect without Location is an ordinary response; a Location that is not a URL is a protocol
+// violation; more redirects than the limit allows is a refusal.
+TRIAL("HTTP: a redirect without a target, with a malformed target and over the limit") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing, net::Limits{64 * 1024, 1024, 1, soon}};
@@ -771,10 +789,11 @@ TRIAL("HTTP: przekierowanie bez celu, z krzywym celem i ponad granicę") {
 
 // --- HTTPS ---------------------------------------------------------------------------------------
 
-// HTTPS idzie przez szew TLS: bez dostawcy odmowa, zanim cokolwiek pójdzie w sieć; z dostawcą —
-// ta sama rozmowa po szyfrowanym połączeniu, które też wraca do zapasu, a przekierowanie bez
-// schematu zostaje przy HTTPS. Przekierowanie z HTTPS na zwykłe HTTP to odmowa.
-TRIAL("HTTP: HTTPS przez szew TLS, bez niego odmowa, a zejście na HTTP zatrzymane") {
+// HTTPS goes through the TLS seam: without a provider it is refused before anything goes out on the
+// network; with a provider it is the same conversation over an encrypted connection, which also
+// returns to the pool, and a redirect without a scheme stays on HTTPS. A redirect from HTTPS to
+// plain HTTP is refused.
+TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to HTTP stopped") {
     const net::Listener gate = standing();
 
     net::HttpClient bare{nothing};
@@ -826,9 +845,10 @@ TRIAL("HTTP: HTTPS przez szew TLS, bez niego odmowa, a zejście na HTTP zatrzyma
     same(why(upward), std::optional{net::HttpTrouble::Why::insecure});
 }
 
-// Odmowa uścisku z powodem przechodzi przez klienta HTTP nietknięta: wołający dostaje `TlsTrouble`
-// z powodem od przejściówki i z nazwą serwera z adresu, a nie sam napis.
-TRIAL("HTTP: odmowa uścisku TLS dochodzi do wołającego z powodem i nazwą serwera") {
+// A handshake refusal with a reason passes through the HTTP client untouched: the caller gets a
+// `TlsTrouble` with the reason from the adapter and the server name from the URL, not just a
+// message.
+TRIAL("HTTP: a TLS handshake refusal reaches the caller with the reason and the server name") {
     const net::Listener gate = standing();
 
     const Seam<net::TlsProvider> tls{std::make_shared<faking::Watching>(false, net::TlsTrouble::Why::untrusted)};
@@ -851,11 +871,12 @@ TRIAL("HTTP: odmowa uścisku TLS dochodzi do wołającego z powodem i nazwą ser
     ought(refused);
 }
 
-// --- Wołający ------------------------------------------------------------------------------------
+// --- The caller ----------------------------------------------------------------------------------
 
-// Nagłówek wołającego, który łamie wiersz albo ma nazwę spoza tokenu, nie wychodzi w sieć — to byłoby
-// wstrzyknięcie drugiego żądania. Pusty klient odmawia, a zamknięty port to odmowa sieci.
-TRIAL("HTTP: nagłówek łamiący wiersz, pusty klient i zamknięty port") {
+// A caller's header that breaks the line or has a name outside the token characters does not go out
+// on the network: that would inject a second request. An empty client refuses, and a closed port is
+// a network refusal.
+TRIAL("HTTP: a header that breaks the line, an empty client and a closed port") {
     net::HttpClient client{nothing};
 
     for (const net::Header& bad : {net::Header{"X-A", "1\r\nGET /inne HTTP/1.1"}, net::Header{"X-A", "a\nb"}, net::Header{"X-A", "a\rb"},
@@ -887,9 +908,9 @@ TRIAL("HTTP: nagłówek łamiący wiersz, pusty klient i zamknięty port") {
     ought(!why(closed).has_value());
 }
 
-// Dwa żądania naraz do jednego serwera idą dwoma połączeniami; do zapasu wraca jedno, a drugie się
-// zamyka — zapas trzyma jedno połączenie na serwer.
-TRIAL("HTTP: dwa żądania naraz, jedno połączenie w zapasie") {
+// Two requests at once to one server go over two connections; one returns to the pool and the other
+// is closed, since the pool keeps one connection per server.
+TRIAL("HTTP: two requests at once, one connection in the pool") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing};
@@ -900,7 +921,7 @@ TRIAL("HTTP: dwa żądania naraz, jedno połączenie w zapasie") {
     Desk one = accepted(gate);
     Desk two = accepted(gate);
 
-    // Które połączenie niesie które żądanie, wie tylko system; odpowiedź powtarza ścieżkę.
+    // Only the system knows which connection carries which request; the response repeats the path.
     for (Desk* desk : {&one, &two}) {
         const std::string path = desk->heard().substr(4, 2);
 
@@ -915,12 +936,13 @@ TRIAL("HTTP: dwa żądania naraz, jedno połączenie w zapasie") {
     same(closed, 1);
 }
 
-// --- Pośrednik -----------------------------------------------------------------------------------
+// --- Proxy ---------------------------------------------------------------------------------------
 
-// Zapis pośrednika jak w zmiennych środowiska: bez schematu to HTTP, użytkownik i hasło przed `@`
-// z kodowaniem procentowym, ścieżka nic nie znaczy; SOCKS i zapis krzywy dają brak. Wyjątki:
-// po przecinkach i spacjach, małymi literami, bez portu, `*.` jak `.`.
-TRIAL("Pośrednik: zapis ze środowiska rozbiera się na adres, podpis i wyjątki") {
+// A proxy written as in the environment variables: without a scheme it is HTTP, the user and
+// password before `@` with percent-encoding, the path means nothing; SOCKS and a malformed form
+// give none. Exceptions: separated by commas and spaces, lowercased, without the port, `*.` the
+// same as `.`.
+TRIAL("Proxy: the form from the environment breaks down into the address, credentials and exceptions") {
     const net::Proxy made = net::Proxy::from_strings("Pośrednik", "ala:ma%40kota@Proxy.Example:3128/cokolwiek",
                                                      " .Wewn.Example, localhost:8080  *.lan,,[::1]:80 ");
 
@@ -950,9 +972,11 @@ TRIAL("Pośrednik: zapis ze środowiska rozbiera się na adres, podpis i wyjątk
 
 namespace {
 
-// Zmienna środowiska podstawiona na czas próby i przywrócona po niej. Pusty napis to „nie ma jej".
+// An environment variable replaced for the duration of the trial and restored after it. An empty
+// string means it is not set.
 class Planted {
 public:
+    // Remembers the variable's current value and sets the new one.
     Planted(const char* name, const char* value) : name_(name) {
         if (const char* was = std::getenv(name)) was_ = was;
 
@@ -962,9 +986,11 @@ public:
     Planted(const Planted&) = delete;
     Planted& operator=(const Planted&) = delete;
 
+    // Restores the remembered value, or unsets the variable if it had none.
     ~Planted() { put(was_ ? was_->c_str() : ""); }
 
 private:
+    // Sets the variable to the value, or unsets it when the value is empty.
     void put(const char* value) const {
 #ifdef _WIN32
         (void)::_putenv_s(name_, value);
@@ -980,9 +1006,9 @@ private:
 
 }
 
-// Na każdym systemie: pośrednik HTTPS ze swojej zmiennej, `all_proxy` dla HTTP, gdy osobnej nie ma,
-// i wyjątki z `no_proxy`.
-TRIAL("Pośrednik: środowisko daje pośrednika, zapasowego i wyjątki") {
+// On every system: the HTTPS proxy from its own variable, all_proxy for HTTP when there is no
+// separate one, and the exceptions from no_proxy.
+TRIAL("Proxy: the environment gives the proxy, the fallback and the exceptions") {
     const Planted plain{"http_proxy", ""};
     const Planted secure{"https_proxy", "http://male:2"};
     const Planted all{"all_proxy", "http://wszystkie:4"};
@@ -999,10 +1025,10 @@ TRIAL("Pośrednik: środowisko daje pośrednika, zapasowego i wyjątki") {
 
 #ifndef _WIN32
 
-// Zmienne jak u curl: małe litery przed wielkimi, `all_proxy` tam, gdzie osobnej nie ma, i bez
-// `HTTP_PROXY` wielkimi literami — pod CGI ustawia ją cudze żądanie. Na Windows wielkość liter
-// w nazwach zmiennych nic nie znaczy, więc tam tej próby nie ma.
-TRIAL("Pośrednik: środowisko jak u curl") {
+// Variables as in curl: lowercase before uppercase, all_proxy where there is no separate one, and
+// no uppercase HTTP_PROXY, because under CGI it is set by someone else's request. On Windows the
+// case of variable names means nothing, so there is no such trial there.
+TRIAL("Proxy: the environment as in curl") {
     const Planted plain_low{"http_proxy", ""};
     const Planted plain_high{"HTTP_PROXY", "http://wielkie:1"};
     const Planted secure_low{"https_proxy", "http://male:2"};
@@ -1033,9 +1059,9 @@ TRIAL("Pośrednik: środowisko jak u curl") {
 
 #endif
 
-// Wyjątek obejmuje nazwę i jej poddomeny, ale nie nazwę, która tylko kończy się tymi samymi
-// literami; `*` obejmuje wszystko. HTTP i HTTPS biorą każde swojego pośrednika.
-TRIAL("Pośrednik: wyjątki omijają pośrednika, reszta idzie do właściwego") {
+// An exception covers the name and its subdomains, but not a name that merely ends with the same
+// letters; `*` covers everything. HTTP and HTTPS each take their own proxy.
+TRIAL("Proxy: exceptions bypass the proxy, the rest goes to the right one") {
     const net::Proxy made = net::Proxy::from_strings("http://jeden:1", "http://dwa:2", "example.com,.lan");
 
     const auto via = [&made](const char* url) -> std::string {
@@ -1058,9 +1084,9 @@ TRIAL("Pośrednik: wyjątki omijają pośrednika, reszta idzie do właściwego")
     ought(net::Proxy{}.chosen(*net::Url::from_string("http://inny.pl/")) == nullptr);
 }
 
-// Zwykłe HTTP przez pośrednika: pełny adres w wierszu żądania, `Host` serwera i podpis `Basic`
-// dla pośrednika — a podpis podany przez wołającego nie wychodzi.
-TRIAL("Pośrednik: zwykłe HTTP idzie z pełnym adresem i podpisem") {
+// Plain HTTP through a proxy: the full URL in the request line, the server's Host and Basic
+// credentials for the proxy, while credentials given by the caller do not go out.
+TRIAL("Proxy: plain HTTP goes with the full URL and credentials") {
     const net::Listener gate = standing();
 
     const std::string proxy = "ala:ma%40kota@127.0.0.1:" + std::to_string(gate.mine().port());
@@ -1079,9 +1105,10 @@ TRIAL("Pośrednik: zwykłe HTTP idzie z pełnym adresem i podpisem") {
     same(body(got.await()), std::string{"ok"});
 }
 
-// HTTPS przez pośrednika: `CONNECT` z nazwą i portem, odpowiedź 200 i TLS z serwerem w tunelu —
-// pośrednik nie widzi żądania. Odmowa tunelu (407) to kłopot pośrednika, a nie odpowiedź.
-TRIAL("Pośrednik: HTTPS idzie tunelem CONNECT, a odmowa tunelu jest kłopotem pośrednika") {
+// HTTPS through a proxy: CONNECT with the name and port, a 200 response and TLS with the server
+// inside the tunnel, so the proxy does not see the request. A refusal of the tunnel (407) is a
+// proxy trouble, not a response.
+TRIAL("Proxy: HTTPS goes through a CONNECT tunnel, and a refused tunnel is a proxy trouble") {
     const net::Listener gate = standing();
     const Seam<net::TlsProvider> tls{std::make_shared<faking::Watching>()};
 
@@ -1122,8 +1149,9 @@ TRIAL("Pośrednik: HTTPS idzie tunelem CONNECT, a odmowa tunelu jest kłopotem p
     same(why(tls_proxy), std::optional{net::HttpTrouble::Why::proxy});
 }
 
-// Pośrednik, który po 200 dosyła cokolwiek przed powitaniem TLS, łamie protokół — tunel nie rusza.
-TRIAL("Pośrednik: bajty po zgodzie na tunel to złamany protokół") {
+// A proxy that sends anything after the 200 before the TLS greeting violates the protocol: the
+// tunnel does not start.
+TRIAL("Proxy: bytes after the tunnel is granted are a protocol violation") {
     const net::Listener gate = standing();
     const Seam<net::TlsProvider> tls{std::make_shared<faking::Watching>()};
 
@@ -1139,9 +1167,9 @@ TRIAL("Pośrednik: bajty po zgodzie na tunel to złamany protokół") {
     same(why(got), std::optional{net::HttpTrouble::Why::malformed});
 }
 
-// Adres w wyjątkach idzie wprost, choćby pośrednik był podany — tu pośrednik to zamknięty port, więc
-// żądanie przez niego by odmówiło.
-TRIAL("Pośrednik: wyjątek idzie wprost do serwera") {
+// A URL in the exceptions goes directly, even when a proxy is given; here the proxy is a closed
+// port, so a request through it would be refused.
+TRIAL("Proxy: an exception goes directly to the server") {
     const net::Listener gate = standing();
 
     net::HttpClient client{nothing, {}, net::Proxy::from_strings("127.0.0.1:9", "", "127.0.0.1")};
@@ -1156,10 +1184,11 @@ TRIAL("Pośrednik: wyjątek idzie wprost do serwera") {
     same(body(got.await()), std::string{"ok"});
 }
 
-// --- Wyścig adresów ------------------------------------------------------------------------------
+// --- Address race --------------------------------------------------------------------------------
 
-// Rodziny na przemian, zaczynając od tej, którą system dał pierwszą; kolejność w rodzinie zostaje.
-TRIAL("Wyścig: adresy idą rodzinami na przemian") {
+// The families alternate, starting with the one the system gave first; the order within a family
+// stays.
+TRIAL("Race: addresses alternate by family") {
     const net::Address six_a{"::1", 1};
     const net::Address six_b{"::2", 2};
     const net::Address six_c{"::3", 3};
@@ -1172,9 +1201,9 @@ TRIAL("Wyścig: adresy idą rodzinami na przemian") {
     ought(net::interleaved({}).empty());
 }
 
-// Port, który odmawia od razu, nie czeka na zegar: następny adres rusza zaraz po odmowie. Odstęp
-// jest tu długi, więc gdyby czekał, próba trwałaby dłużej niż jej granica.
-TRIAL("Wyścig: odmowa od razu przepuszcza następny adres") {
+// A port that refuses at once does not wait for the timer: the next address starts right after the
+// refusal. The delay is long here, so if it waited, the trial would take longer than its limit.
+TRIAL("Race: an immediate refusal lets the next address through") {
     std::uint16_t closed = 0;
 
     {
@@ -1200,9 +1229,10 @@ TRIAL("Wyścig: odmowa od razu przepuszcza następny adres") {
     won.close();
 }
 
-// Adres, który milczy — brama z pełną kolejką połączeń gubi każde następne — nie trzyma wyścigu do
-// końca cierpliwości: po odstępie rusza następny i wygrywa, a milczący zostaje przerwany.
-TRIAL("Wyścig: milczący adres oddaje pierwszeństwo po odstępie") {
+// An address that stays silent (a listener with a full backlog drops every further connection) does
+// not hold the race until the patience runs out: after the delay the next one starts and wins, and
+// the silent one is cancelled.
+TRIAL("Race: a silent address gives way after the delay") {
     const net::Listener full{net::Address::loopback(net::Family::four, 0), 0};
 
     std::vector<Promise<net::Stream>> filled;
@@ -1236,9 +1266,9 @@ TRIAL("Wyścig: milczący adres oddaje pierwszeństwo po odstępie") {
     }
 }
 
-// Wszystkie adresy odmawiają: wyścig odrzuca, i to błędem sieci, a nie przerwaniem. Pusty wykaz
-// odrzuca od razu.
-TRIAL("Wyścig: porażka wszystkich jest porażką całości") {
+// All addresses refuse: the race rejects, with a network error rather than a cancellation. An empty
+// list rejects at once.
+TRIAL("Race: the failure of all is the failure of the whole") {
     std::uint16_t first = 0;
     std::uint16_t second = 0;
 
@@ -1277,10 +1307,10 @@ TRIAL("Wyścig: porażka wszystkich jest porażką całości") {
     ought(empty);
 }
 
-// Adres, którego nie da się nawet zacząć (pusty — gniazda nie ma jak otworzyć), odmawia od razu,
-// jeszcze w chwili budowania ogniw próby. Wyścig nie może przy tym stanąć na własnym zamku, tylko
-// idzie dalej, do następnego adresu.
-TRIAL("Wyścig: adres odrzucony od razu nie zatrzymuje wyścigu") {
+// An address that cannot even be started (an empty one, for which no socket can be opened) refuses
+// at once, while the trial's attempts are still being built. The race must not deadlock on its own
+// lock then, but goes on to the next address.
+TRIAL("Race: an address refused at once does not stop the race") {
     const net::Listener gate = standing();
 
     auto got = net::raced({net::Address{}, gate.mine()}, soon, std::chrono::milliseconds{6000});

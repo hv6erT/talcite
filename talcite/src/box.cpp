@@ -6,53 +6,53 @@
 
 namespace talcite::ui {
 
-// **Węzeł, który rozmiar zadaje, zamiast go negocjować.** Dotąd robiło to pięć różnych rzeczy:
-// `List` dwiema liczbami z `plenty` jako brakiem granicy, `Pane` wartością logiczną `full`,
-// `Capped` w `message.cpp` zwężaniem pytania, `Frame` dodawaniem grubości krawędzi — a do tego
-// **dziewięć prób** trzymało własną atrapę o tej samej nazwie i tym samym ciele (`menuing`,
-// `legending`, `layering`, `layout`, `clicking`, `buttoning`, `rows`, `framing`, `dialoging`).
-// Nazwa nie jest więc wymyślona, tylko zastana.
+// A node that sets its size instead of negotiating it.
 //
-// **Życzeniem jest funkcja, nie liczba.** Liczba nie umie powiedzieć „najwyżej osiemdziesiąt
-// kolumn, ale zostaw po osiem z każdej strony" — a to jest zwyczajny sposób wymierzania okna,
-// nie osobliwość. Funkcja dostaje pokój i liczy, więc stały rozmiar jest jej podprzypadkiem;
-// odwrotnie się nie da. Koszt zmierzony, nie oszacowany: `std::function` z funkcją w osobnej
-// jednostce przekładu wypada tyle samo, co odczyt pola — różnica ginie w szumie przy dwudziestu
-// milionach wywołań, a `wants` woła się rzędu setek razy na klatkę.
+// The wish is a function, not a number. A number cannot say "at most eighty columns, but leave
+// eight on each side", and that is an ordinary way of sizing a window, not an oddity. The function
+// gets the room and computes, so a fixed size is a special case of it; the other way round is
+// impossible. The cost is measured, not estimated: a `std::function` with the function in a
+// separate translation unit costs as much as reading a field (the difference disappears in the
+// noise over twenty million calls), and `wants` is called on the order of hundreds of times per
+// frame.
 //
-// **Drugiego trybu nie ma, bo robi go brak `Box`-a.** „Chcę tyle, ile chce dziecko" to domyślne
-// `Node::wants`, więc kto tego chce, po prostu nie owija. Dlatego nie ma tu wyliczenia trybów ani
-// pytania dziecka: `Box` **nie pyta go wcale**. Gdyby pytał, byłby tym samym, co `Frame` bez ramki,
-// a zadany rozmiar przestałby być zadany.
+// There is no second mode, because leaving out the `Box` provides it. "I want as much as the child
+// wants" is the default `Node::wants`, so whoever wants that simply does not wrap. That is why
+// there is no enumeration of modes here and no asking the child: `Box` does not ask it at all. If
+// it did, it would be the same as a `Frame` without a border, and the set size would stop being
+// set.
 //
-// **Pokój to nie ekran.** Funkcja dostaje tyle, ile rodzic jej zostawił — a `Modal::placed` odejmuje
-// miejsce na cień, dwie kolumny i wiersz, **zanim** zapyta dziecko o życzenie. „Zostaw szesnaście"
-// znaczy więc „szesnaście z tego, co dostałem", nie „z ekranu"; kto przepisuje rachunek liczony od
-// szerokości terminala, dokłada sobie te dwie kolumny i ten wiersz we własnej funkcji. Osobnych
-// rodzajów pozycjonowania to nie wymaga: różnica jest stała i znana, a pozycjonowanie jest
-// odrębnym pytaniem od rozmiaru — tym zajmuje się `Modal::placed`.
-// Stała jako podprzypadek funkcji: **drugie wejście, nie drugi stan**. Pole zostaje jedno, więc
-// `wants` nie ma czego rozgałęziać, a `Box{{68, 20}}` czyta się lepiej niż domknięcie oddające
-// dwie liczby — i to będzie najczęstszy przypadek.
+// The room is not the screen. The function gets what the parent left for it, and a `Modal`
+// subtracts room for the shadow, two columns and a row, before it asks the child for its wish.
+// "Leave sixteen" therefore means "sixteen of what I got", not "of the screen"; whoever ports a
+// calculation made from the terminal width adds those two columns and that row in their own
+// function. This needs no separate kinds of positioning: the difference is constant and known, and
+// positioning is a separate question from size, which `Modal::seat` answers.
 //
-// `plenty` nie wymaga tu osobnej gałęzi: życzenie idzie dalej takie, jakie jest, a przycięcie
-// w `wants` zamienia je na cały pokój. Rozpoznawanie go w tym miejscu byłoby drugą prawdą o tym,
-// co znaczy brak granicy.
+// This constructor takes a constant as a special case of the function: a second entry point, not a
+// second state. There is still one field, so `wants` has nothing to branch on, and `Box{{68, 20}}`
+// reads better than a closure returning two numbers; this will be the most common case.
+//
+// `plenty` needs no separate branch here: the wish goes on as it is, and the clipping in `wants`
+// turns it into the whole room. Recognizing it in this place would be a second truth about what an
+// unbounded size means.
 Box::Box(Size given) : wish_([given](Size) { return given; }) {}
 
-// Pusta funkcja rzuciłaby `bad_function_call` z wnętrza układu, przy pierwszej klatce i w miejscu,
-// które o niczym nie mówi. Odrzucamy ją tam, gdzie powstała.
+// A box whose size the function computes from the room. An empty function would throw
+// std::bad_function_call from inside the layout, on the first frame and in a place that says
+// nothing, so we reject it where it was made.
 Box::Box(Wish wish) : wish_(std::move(wish)) {
     if (!wish_) throw std::logic_error("talcite::ui::Box: the wish is empty");
 }
 
-// Przycięcie zostaje **tutaj**, choć funkcja mogłaby je zrobić sama — bo inaczej każdy, kto ją
-// pisze, musiałby o nim pamiętać, a zapomnienie oddałoby rodzicowi życzenie większe niż miejsce,
-// czyli kłamstwo wobec tego, kto je potem rozdziela.
+// The wish clipped to the room and to zero from below. The clipping stays here, even though the
+// function could do it itself, because otherwise everyone who writes one would have to remember it,
+// and forgetting would give the parent a wish larger than the room: a lie to whoever divides the
+// room afterwards.
 //
-// Od dołu do zera nie jest ostrożnością na wyrost: pokój bywa ujemny sam z siebie, bo rodzic
-// odejmuje krawędzie i marginesy od tego, co ma. Ujemne życzenie ma się zatrzymać w miejscu,
-// w którym powstało, zamiast wędrować w górę i mnożyć się w rachunkach układu.
+// Clipping to zero from below is not excess caution: the room is sometimes negative by itself,
+// because a parent subtracts borders and margins from what it has. A negative wish should stop
+// where it arose instead of traveling up and multiplying in the layout's calculations.
 Size Box::wants(Size room) const {
     const Size wish = wish_(room);
 

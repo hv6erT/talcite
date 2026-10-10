@@ -20,6 +20,7 @@ using namespace talcite;
 
 namespace {
 
+// Reads one row of a view as text, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -34,8 +35,8 @@ std::string read(const View& one, int y) {
     return made;
 }
 
-// Wpisywanie idzie **klawiszami**, bo tak wpisuje użytkownik: próba sprawdza wtedy tę samą drogę,
-// która naprawdę biegnie, a nie skrót obok niej.
+// Typing goes through keys, because that is how the user types: the trial then checks the same path
+// that really runs, not a shortcut next to it.
 void typed(ui::Root& top, const std::string& what) {
     std::size_t at = 0;
 
@@ -46,6 +47,7 @@ void typed(ui::Root& top, const std::string& what) {
     }
 }
 
+// Dispatches one key press to the root.
 void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
     ui::KeyEvent one{ui::Key{code, mods}};
 
@@ -54,7 +56,7 @@ void pressed(ui::Root& top, ui::Code code, ui::Mods mods = {}) {
 
 }
 
-TRIAL("Pole: wpisywanie stawia znaki przy kursorze") {
+TRIAL("Field: typing puts characters at the cursor") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10);
@@ -79,7 +81,7 @@ TRIAL("Pole: wpisywanie stawia znaki przy kursorze") {
     same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"aXbc"});
 }
 
-TRIAL("Pole: Backspace kasuje przed kursorem, Delete pod nim") {
+TRIAL("Field: Backspace deletes before the cursor, Delete under it") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "abcd");
@@ -98,7 +100,7 @@ TRIAL("Pole: Backspace kasuje przed kursorem, Delete pod nim") {
     same(one->text(), std::string{"bc"});
     same(one->cursor(), static_cast<std::size_t>(0));
 
-    // Na krawędziach nie ma czego kasować i nic się nie dzieje.
+    // At the edges there is nothing to delete and nothing happens.
     pressed(top, ui::Code::backspace);
 
     same(one->text(), std::string{"bc"});
@@ -109,7 +111,7 @@ TRIAL("Pole: Backspace kasuje przed kursorem, Delete pod nim") {
     same(one->text(), std::string{"bc"});
 }
 
-TRIAL("Pole: kursor liczy się w znakach, nie w bajtach") {
+TRIAL("Field: the cursor counts characters, not bytes") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "zażółć");
@@ -118,7 +120,7 @@ TRIAL("Pole: kursor liczy się w znakach, nie w bajtach") {
 
     one->focus();
 
-    // Sześć znaków, choć bajtów więcej.
+    // Six characters, though more bytes.
     same(one->cursor(), static_cast<std::size_t>(6));
 
     pressed(top, ui::Code::left);
@@ -138,7 +140,7 @@ TRIAL("Pole: kursor liczy się w znakach, nie w bajtach") {
     same(one->text(), std::string{"zaXżóć"});
 }
 
-TRIAL("Pole: wklejenie wchodzi przy kursorze, końce wierszy jako odstępy") {
+TRIAL("Field: a paste goes in at the cursor, with line ends as spaces") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(20, "ab");
@@ -155,9 +157,9 @@ TRIAL("Pole: wklejenie wchodzi przy kursorze, końce wierszy jako odstępy") {
     same(one->cursor(), static_cast<std::size_t>(9));
 }
 
-// Pole **się przewija, nie ucina**: wielokropek w treści, którą się właśnie pisze, byłby kłamstwem
-// o tym, co w niej stoi.
-TRIAL("Pole: przewija się tak, żeby kursor był widoczny") {
+// A field scrolls rather than cuts: an ellipsis in the text being typed would be a lie about what
+// it contains.
+TRIAL("Field: scrolls so that the cursor is visible") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(5, "abcdefgh");
@@ -173,7 +175,7 @@ TRIAL("Pole: przewija się tak, żeby kursor był widoczny") {
     ought(top.caret().has_value());
     same(*top.caret(), (ui::Spot{4, 0}));
 
-    // Powrót na początek przewija z powrotem.
+    // Going back to the start scrolls back.
     pressed(top, ui::Code::home);
 
     const View other = top.render({{0, 0}, {5, 1}});
@@ -182,7 +184,7 @@ TRIAL("Pole: przewija się tak, żeby kursor był widoczny") {
     same(*top.caret(), (ui::Spot{0, 0}));
 }
 
-TRIAL("Pole: znak dwukolumnowy zajmuje dwie kratki") {
+TRIAL("Field: a double-width character takes two cells") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(6, "日本ab");
@@ -193,12 +195,13 @@ TRIAL("Pole: znak dwukolumnowy zajmuje dwie kratki") {
 
     const View made = top.render({{0, 0}, {6, 1}});
 
-    // Sześć kratek treści nie mieści kursora za nią, więc pierwszy znak wychodzi z widoku.
+    // Six cells of content leave no room for the cursor after it, so the first character leaves the
+    // view.
     same(read(made, 0), std::string{"本ab"});
     same(*top.caret(), (ui::Spot{4, 0}));
 }
 
-TRIAL("Pole: kursor widać tylko pod ogniskiem") {
+TRIAL("Field: the cursor is visible only with the focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(6, "ab");
@@ -216,10 +219,10 @@ TRIAL("Pole: kursor widać tylko pod ogniskiem") {
     ought(top.caret().has_value());
 }
 
-// **Zdarzenie myszy niesie kratkę ekranu, a nie własną.** Odjęcie samego `area().at` liczyło tylko
-// jedno piętro, więc pole w ramce w ramce — czyli w każdym oknie dialogowym — stawiało kursor o tyle
-// kratek obok, ile wynosiło przesunięcie przodków.
-TRIAL("Pole: klik trafia we właściwy znak także w głębi drzewa") {
+// A mouse event carries a screen cell, not the node's own. Subtracting only `area().at` would count
+// one level only, so a field in a frame in a frame (that is, in every dialog) would put the cursor
+// as many cells off as the ancestors are offset.
+TRIAL("Field: a click hits the right character also deep in the tree") {
     ui::Root top;
 
     const auto outer = std::make_shared<ui::Frame>("A");
@@ -232,7 +235,7 @@ TRIAL("Pole: klik trafia we właściwy znak także w głębi drzewa") {
 
     (void)top.render({{0, 0}, {30, 8}});
 
-    // Dwie ramki po jednej kratce z każdej strony, więc znak nr 3 stoi w ekranowej kolumnie 5.
+    // Two frames of one cell on each side, so character number 3 stands in screen column 5.
     same(one->area().at, (ui::Spot{1, 1}));
 
     ui::ClickEvent what{{5, 2}, ui::Mouse::left};
@@ -241,7 +244,7 @@ TRIAL("Pole: klik trafia we właściwy znak także w głębi drzewa") {
     same(one->cursor(), static_cast<std::size_t>(3));
 }
 
-TRIAL("Pole: klik stawia kursor tam, gdzie kliknięto") {
+TRIAL("Field: a click puts the cursor where it clicked") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "abcdef");
@@ -257,7 +260,7 @@ TRIAL("Pole: klik stawia kursor tam, gdzie kliknięto") {
     same(one->cursor(), static_cast<std::size_t>(3));
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
-    // Klik za treścią stawia kursor na jej końcu.
+    // A click past the content puts the cursor at its end.
     ui::ClickEvent aside{{9, 0}, ui::Mouse::left};
 
     ought(top.dispatch(aside));
@@ -265,7 +268,7 @@ TRIAL("Pole: klik stawia kursor tam, gdzie kliknięto") {
     same(one->cursor(), static_cast<std::size_t>(6));
 }
 
-TRIAL("Pole: wyłączone nie bierze ogniska i nie przyjmuje znaków") {
+TRIAL("Field: a disabled field takes neither the focus nor characters") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "ab");
@@ -285,9 +288,9 @@ TRIAL("Pole: wyłączone nie bierze ogniska i nie przyjmuje znaków") {
     same(one->text(), std::string{"ab"});
 }
 
-// Podpowiedź jest **wyszarzonym dopiskiem za treścią** i nie należy do treści, dopóki jej ktoś
-// nie przyjmie.
-TRIAL("Podpowiedź: rysuje się wyszarzona i nie wchodzi do treści") {
+// A suggestion is a grayed-out addition after the content and does not belong to the content until
+// someone accepts it.
+TRIAL("Suggestion: drawn grayed out and not part of the content") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(12);
@@ -309,16 +312,16 @@ TRIAL("Podpowiedź: rysuje się wyszarzona i nie wchodzi do treści") {
 
     same(read(made, 0), std::string{"katalog"});
 
-    // Treść zwykła, dopisek przygaszony.
+    // The content is normal, the addition faint.
     ought(!made.at({1, 0}).style.faint);
     ought(made.at({2, 0}).style.faint);
     ought(made.at({6, 0}).style.faint);
 
-    // Kursor stoi na końcu **treści**, a nie podpowiedzi.
+    // The cursor stands at the end of the content, not of the suggestion.
     same(*top.caret(), (ui::Spot{2, 0}));
 }
 
-TRIAL("Podpowiedź: strzałka w prawo dobiera jedną literę") {
+TRIAL("Suggestion: the right arrow accepts one letter") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(12);
@@ -341,10 +344,10 @@ TRIAL("Podpowiedź: strzałka w prawo dobiera jedną literę") {
     same(one->text(), std::string{"kata"});
 }
 
-// **Taba pole nie bierze.** Dobierał całą podpowiedź, ale tylko wtedy, gdy podpowiedź była — więc
-// ten sam klawisz raz przechodził do następnego widżetu, a raz nie, zależnie od treści pola.
-// Klawisz wędrówki nie może znikać zależnie od zawartości.
-TRIAL("Podpowiedź: Tab jej nie uzupełnia i idzie wyżej") {
+// A field does not take Tab. If it completed the suggestion only when there was one, the same key
+// would sometimes move to the next widget and sometimes not, depending on the field's content. A
+// navigation key must not disappear depending on the content.
+TRIAL("Suggestion: Tab does not complete it and goes up") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(12);
@@ -365,7 +368,7 @@ TRIAL("Podpowiedź: Tab jej nie uzupełnia i idzie wyżej") {
     same(one->guessed(), std::string{"talog"});
 }
 
-TRIAL("Podpowiedź: pojawia się tylko z kursorem na końcu") {
+TRIAL("Suggestion: appears only with the cursor at the end") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(12);
@@ -389,12 +392,12 @@ TRIAL("Podpowiedź: pojawia się tylko z kursorem na końcu") {
     ought(!one->guessed().empty());
 }
 
-TRIAL("Podpowiedź: niepasująca do treści odpada") {
+TRIAL("Suggestion: one that does not match the content is dropped") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(12);
 
-    // Podpowiedź, która nie zaczyna się od tego, co napisano, nie ma jak zostać dopisana.
+    // A suggestion that does not start with what was typed cannot be appended.
     one->guess([](const std::string&) { return std::string{"inne"}; });
 
     top.children().add(one);
@@ -407,12 +410,13 @@ TRIAL("Podpowiedź: niepasująca do treści odpada") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    // Bez podpowiedzi Tab do pola nie należy.
+    // Without a suggestion, Tab does not belong to the field either.
     ought(!top.dispatch(tab));
 }
 
 namespace {
 
+// The parts of the naming dialog that the trials reach into.
 struct Asked {
     std::shared_ptr<ui::Modals> window;
     std::shared_ptr<ui::Dialog> dialog;
@@ -421,6 +425,8 @@ struct Asked {
     std::shared_ptr<ui::Button> no;
 };
 
+// Opens a dialog with a field and two buttons, "Tak" (primary, hot key T, counting its presses in
+// `done`) and "Nie" (hot key N), puts the focus in the field and renders it once.
 Asked naming(ui::Root& top, int* done) {
     Asked made;
 
@@ -453,10 +459,10 @@ Asked naming(ui::Root& top, int* done) {
 
 }
 
-// **To jest zderzenie, dla którego pole powstało teraz, a nie później.** Litera w dialogu naciska
-// przycisk, który ma ją w klawiszach aktywnych — ale pole z ogniskiem musi ją wpisać. Bąbelkowanie
-// rozstrzyga to samo, bo pole leży bliżej ogniska, ale reguła musi być sprawdzona.
-TRIAL("Dialog: litera w polu wpisuje się, a nie naciska przycisku") {
+// This is the collision that matters most for a field. A letter in a dialog presses the button that
+// has it among its hot keys, but a field with the focus must type it. Bubbling settles this by
+// itself, because the field lies closer to the focus, but the rule has to be checked.
+TRIAL("Dialog: a letter in a field is typed, not pressing a button") {
     ui::Root top;
 
     int done = 0;
@@ -468,7 +474,7 @@ TRIAL("Dialog: litera w polu wpisuje się, a nie naciska przycisku") {
     same(asked.field->text(), std::string{"t"});
     same(done, 0);
 
-    // Bez ogniska w polu ta sama litera naciska przycisk.
+    // Without the focus in the field, the same letter presses the button.
     asked.no->focus();
 
     typed(top, "t");
@@ -477,10 +483,10 @@ TRIAL("Dialog: litera w polu wpisuje się, a nie naciska przycisku") {
     same(done, 1);
 }
 
-// **Pole przepuszcza Enter, a okno go nie przechwytuje.** Nikt więc nie zatwierdza formularza za
-// wołającego — kto tego chce, słucha `SubmitEvent` i sam decyduje, co znaczy „gotowe". Zasłona
-// klawisz połyka, bo jest modalna, ale nic nim nie naciska.
-TRIAL("Dialog: Enter w polu nie naciska żadnego przycisku") {
+// The field lets Enter through, and the window does not intercept it. So nobody confirms the form
+// for the caller: whoever wants that listens for `SubmitEvent` and decides alone what "done" means.
+// The veil swallows the key, because it is modal, but presses nothing with it.
+TRIAL("Dialog: Enter in a field presses no button") {
     ui::Root top;
 
     int done = 0;
@@ -497,10 +503,11 @@ TRIAL("Dialog: Enter w polu nie naciska żadnego przycisku") {
     same(asked.field->text(), std::string{"nazwa"});
 }
 
-// Enter w polu to `SubmitEvent`, a zdarzenie idzie w górę: jeden uchwyt na oknie słyszy każde pole
-// i naciska to, co wołający uzna za OK. Pole nie zna przycisku. Enter na przycisku z ogniskiem
-// naciska ten przycisk i `SubmitEvent` nie powstaje — inaczej Enter na „Nie" zatwierdzałby okno.
-TRIAL("Dialog: Enter w polu ogłasza SubmitEvent, który słyszy okno") {
+// Enter in a field is a `SubmitEvent`, and the event goes up: one hook on the window hears every
+// field and presses whatever the caller deems OK. The field does not know the button. Enter on a
+// button with the focus presses that button and no `SubmitEvent` arises; otherwise Enter on "Nie"
+// would confirm the window.
+TRIAL("Dialog: Enter in a field announces a SubmitEvent that the window hears") {
     ui::Root top;
 
     int done = 0;
@@ -546,9 +553,9 @@ TRIAL("Dialog: Enter w polu ogłasza SubmitEvent, który słyszy okno") {
     same(done, 1);
 }
 
-// Esc w polu **nie zamyka okna** — pole go nie bierze, a zasłona tylko połyka. Kto chce zamykanie,
-// wiesza uchwyt na swoim oknie.
-TRIAL("Dialog: Esc w polu okna nie zamyka") {
+// Esc in a field does not close the window: the field does not take it, and the veil only swallows
+// it. Whoever wants closing attaches a hook to their own window.
+TRIAL("Dialog: Esc in a field does not close the window") {
     ui::Root top;
 
     int done = 0;
@@ -562,9 +569,9 @@ TRIAL("Dialog: Esc w polu okna nie zamyka") {
     ought(!asked.window->empty());
 }
 
-// Tab należy do wędrówki ogniska i tylko do niej — pole przestało go brać, więc nie ma już
-// miejsca, w którym te dwa znaczenia Taba się spotykają.
-TRIAL("Dialog: Tab w polu bez podpowiedzi przechodzi do przycisku") {
+// Tab belongs to focus navigation and only to it: the field does not take it, so there is no place
+// where the two meanings of Tab meet.
+TRIAL("Dialog: Tab in a field without a suggestion moves to the button") {
     ui::Root top;
 
     int done = 0;
@@ -578,9 +585,9 @@ TRIAL("Dialog: Tab w polu bez podpowiedzi przechodzi do przycisku") {
     same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
-// Tab **zawsze** przenosi ognisko, także wtedy, gdy pole ma co uzupełniać. Wcześniej pierwszy Tab
-// uzupełniał, a dopiero drugi wędrował — czyli wędrówka po oknie zależała od treści pola.
-TRIAL("Dialog: Tab w polu z podpowiedzią przenosi ognisko od razu") {
+// Tab always moves the focus, also when the field has something to complete. Otherwise navigation
+// through the window would depend on the field's content.
+TRIAL("Dialog: Tab in a field with a suggestion moves the focus at once") {
     ui::Root top;
 
     int done = 0;
@@ -599,9 +606,9 @@ TRIAL("Dialog: Tab w polu z podpowiedzią przenosi ognisko od razu") {
     same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
-// **Pole liczbowe to jedna lambda, a nie osobny widżet.** Midnight Commander nie ma widżetu
-// liczbowego — liczby wpisuje w zwykłe `input` — więc nie ma tu czego naśladować.
-TRIAL("Pole: filtr odsiewa znaki przy pisaniu") {
+// A numeric field is one lambda, not a separate widget. Midnight Commander has no numeric widget
+// (numbers are typed into its ordinary input widget), so there is nothing to imitate here.
+TRIAL("Field: the filter drops characters while typing") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10);
@@ -618,7 +625,7 @@ TRIAL("Pole: filtr odsiewa znaki przy pisaniu") {
     same(one->cursor(), static_cast<std::size_t>(3));
 }
 
-TRIAL("Pole: filtr odsiewa przy wklejaniu, resztę wpuszcza") {
+TRIAL("Field: the filter drops characters on paste and lets the rest in") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10);
@@ -633,12 +640,13 @@ TRIAL("Pole: filtr odsiewa przy wklejaniu, resztę wpuszcza") {
 
     ought(top.dispatch(what));
 
-    // Jeden zły znak w środku nie unieważnia całego wklejenia.
+    // One bad character in the middle does not invalidate the whole paste.
     same(one->text(), std::string{"1234"});
 }
 
-// Bez filtra pole przyjmuje wszystko — filtr jest dodatkiem, nie warunkiem działania.
-TRIAL("Pole: bez filtra wchodzi wszystko") {
+// Without a filter the field accepts everything: the filter is an addition, not a condition for
+// working.
+TRIAL("Field: without a filter everything goes in") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10);
@@ -652,9 +660,9 @@ TRIAL("Pole: bez filtra wchodzi wszystko") {
     same(one->text(), std::string{"a1b2"});
 }
 
-// Ustawienie treści programem **filtra nie pyta**: wołający wie, co robi, a odsiew jest po to,
-// żeby pilnować tego, co wpisuje użytkownik.
-TRIAL("Pole: filtr nie rusza treści ustawionej programem") {
+// Setting the content from the program does not ask the filter: the caller knows what it does, and
+// the filtering is there to guard what the user types.
+TRIAL("Field: the filter leaves content set by the program alone") {
     const auto one = std::make_shared<ui::Field>(10);
 
     one->allows([](char32_t which) { return which >= U'0' && which <= U'9'; });
@@ -664,9 +672,9 @@ TRIAL("Pole: filtr nie rusza treści ustawionej programem") {
     same(one->text(), std::string{"abc"});
 }
 
-// Znak odsiany **nie idzie wyżej**. Inaczej „t" odrzucone w polu na cyfry naciskałoby w dialogu
-// przycisk, który ma tę literę w klawiszach aktywnych.
-TRIAL("Dialog: znak odsiany przez filtr nie naciska przycisku") {
+// A filtered-out character does not go up. Otherwise a "t" rejected in a digits-only field would
+// press the dialog's button that has this letter among its hot keys.
+TRIAL("Dialog: a character dropped by the filter does not press a button") {
     ui::Root top;
 
     int done = 0;
@@ -685,14 +693,13 @@ TRIAL("Dialog: znak odsiany przez filtr nie naciska przycisku") {
     same(asked.field->text(), std::string{"7"});
 }
 
-// --- Kursor -----------------------------------------------------------------------------------
+// --- Caret ---------------------------------------------------------------------------------------
 //
-// Kursor wyszedł z kartki i należy do korzenia: widżet mówi, gdzie go chce, we własnych
-// współrzędnych, a korzeń składa położenie przejściem w górę po prostokątach. Dopóki jechał
-// razem z wklejeniem, przycinał się sam przez to, że węzeł spoza widoku w ogóle nie malował —
-// teraz przycina go korzeń i to jest dokładnie to, co sprawdzają poniższe przypadki.
+// The caret is not part of the sheet; it belongs to the root: the widget says where it wants it, in
+// its own coordinates, and the root composes the position by walking up through the areas. The root
+// also clips it, and that is exactly what the cases below check.
 
-TRIAL("Kursor: zagnieżdżone pole składa położenie z prostokątów") {
+TRIAL("Caret: a nested field composes its position from the areas") {
     ui::Root top;
 
     const auto frame = std::make_shared<ui::Frame>();
@@ -709,13 +716,13 @@ TRIAL("Kursor: zagnieżdżone pole składa położenie z prostokątów") {
 
     (void)top.render({{0, 0}, {12, 5}});
 
-    // Ramka odsuwa treść o kratkę w każdą stronę, kolumna kładzie drugie pole w następnym
-    // wierszu, a kursor stoi za trzecią literą.
+    // The frame moves the content one cell in from every side, the column puts the second field in
+    // the next row, and the caret stands after the third letter.
     ought(top.caret().has_value());
     same(*top.caret(), (ui::Spot{4, 2}));
 }
 
-TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
+TRIAL("Caret: a field scrolled out of the viewport reports no caret") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::both, ui::ScrollShape{false});
@@ -731,9 +738,9 @@ TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
 
     away->focus();
 
-    // Pierwsza klatka po zmianie ogniska idzie za nim — przewijak dosuwa pole do dolnej krawędzi
-    // i kursor stoi na niej. Potem przewinięcie odjeżdża (jak kółkiem), pole zostaje w ognisku
-    // poza oknem i kursora nie ma.
+    // The first frame after the focus changes follows it: the scroller brings the field to the
+    // bottom edge and the caret stands on it. Then the scroll position moves away (as with the
+    // wheel), the field keeps the focus outside the viewport and there is no caret.
     (void)top.render({{0, 0}, {8, 3}});
 
     ought(top.caret().has_value());
@@ -745,7 +752,7 @@ TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
 
     ought(!top.caret().has_value());
 
-    // Przewinięcie do niego przywraca kursor — i to na krawędzi okna, a nie gdzieś dalej.
+    // Scrolling to it brings the caret back, at the edge of the viewport and not somewhere further.
     scroll->shift({0, 8});
 
     (void)top.render({{0, 0}, {8, 3}});
@@ -754,7 +761,7 @@ TRIAL("Kursor: pole zjechane poza okno przewijania nie zgłasza kursora") {
     same(*top.caret(), (ui::Spot{2, 2}));
 }
 
-TRIAL("Kursor: pole bez ogniska go nie zgłasza, nawet gdy widać") {
+TRIAL("Caret: a field without the focus reports none, even when visible") {
     ui::Root top;
 
     const auto column = std::make_shared<ui::Column>();
@@ -778,9 +785,8 @@ TRIAL("Kursor: pole bez ogniska go nie zgłasza, nawet gdy widać") {
     same(*top.caret(), (ui::Spot{2, 0}));
 }
 
-// Rdzeń roli daje się podmienić, tak samo jak w przycisku, w pozycji menu i w polu legendy —
-// pole tekstowe było jednym z ostatnich, które sięgały do skórki po napisie wpisanym na sztywno.
-TRIAL("Field: rdzeń roli można podmienić") {
+// The role root can be replaced, just as in a button, a menu item and a legend item.
+TRIAL("Field: the role root can be replaced") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(6, "abc");
@@ -805,7 +811,7 @@ TRIAL("Field: rdzeń roli można podmienić") {
     same(made.at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
-TRIAL("Pole ukryte: kropki zamiast znaków, treść bez zmian") {
+TRIAL("Hidden field: dots instead of characters, content unchanged") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "tajne");
@@ -827,7 +833,7 @@ TRIAL("Pole ukryte: kropki zamiast znaków, treść bez zmian") {
     same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"tajne!"});
 }
 
-TRIAL("Pole ukryte: znak szeroki to jedna kropka") {
+TRIAL("Hidden field: a wide character is one dot") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "日本ab");
@@ -842,7 +848,7 @@ TRIAL("Pole ukryte: znak szeroki to jedna kropka") {
     same(*top.caret(), (ui::Spot{4, 0}));
 }
 
-TRIAL("Pole ukryte: przewija się po kropkach") {
+TRIAL("Hidden field: scrolls by dots") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(4, "日本日本");
@@ -857,7 +863,7 @@ TRIAL("Pole ukryte: przewija się po kropkach") {
     same(*top.caret(), (ui::Spot{3, 0}));
 }
 
-TRIAL("Pole ukryte: klik liczy kratki kropkami") {
+TRIAL("Hidden field: a click counts cells in dots") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "日本日本");
@@ -874,7 +880,7 @@ TRIAL("Pole ukryte: klik liczy kratki kropkami") {
     same(one->cursor(), static_cast<std::size_t>(2));
 }
 
-TRIAL("Pole ukryte: bez podpowiedzi") {
+TRIAL("Hidden field: no suggestion") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Field>(10, "ka");

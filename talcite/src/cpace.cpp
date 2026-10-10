@@ -14,21 +14,22 @@
 
 #include "curving.hpp"
 
-// **CPace** (draft-irtf-cfrg-cpace-21, zestaw X25519 + SHA-512) — droga uzgodnienia klucza na
-// krótkim, wspólnym haśle: kod do podyktowania. Hasła nie da się sprawdzać poza siecią — kto
-// podsłuchał rozmowę, nie zgadnie z niej kodu; zgadywać można tylko w rozmowie, po jednej próbie na
-// rozmowę (twa liczy nieudane i wstrzymuje etykietę).
+// CPace (draft-irtf-cfrg-cpace-21, the X25519 + SHA-512 suite) is a key agreement on a short shared
+// password: a code to be read out. The password cannot be checked offline: whoever overheard the
+// conversation cannot guess the code from it. Guessing is possible only inside a conversation, one
+// attempt per conversation (twa counts the failed ones and suspends the label).
 //
-// Z systemu bierzemy X25519 (szew szyfrów), SHA-512, HMAC i HKDF (skróty talcite). Sami piszemy tylko
-// to, czego systemy nie dają: odwzorowanie Elligator2 skrótu na punkt krzywej (RFC 9380), na
-// arytmetyce ciała 2²⁵⁵ − 19 w czasie stałym (`curving`, wspólnej z zapasowym X25519). Wynik
-// sprawdzają wektory z dodatku B.1 dokumentu.
+// X25519 comes from the system (the cipher seam), and SHA-512, HMAC and HKDF from the talcite
+// digests. Only what systems do not provide is written here: the Elligator2 mapping of a hash to a
+// curve point (RFC 9380), on constant-time arithmetic in the field 2²⁵⁵ − 19 (`curving`, shared
+// with the fallback X25519). The vectors from appendix B.1 of the draft check the result.
 //
-// Rozmowa: dzwoniący wysyła Ya, odbierający Yb i swój znacznik potwierdzenia, dzwoniący swój znacznik
-// — jawne potwierdzenie z §10.4, więc złe hasło to odmowa, zanim popłynie choć bajt treści. Wspólny
-// punkt zerowy (punkt małego rzędu, także zapisany niekanonicznie) to przerwanie (§9). CI to kontekst
-// od wołającego (u twa: wersja rozmowy i etykieta zaproszenia), sid pusty, ADa i ADb puste. Klucze
-// kanału z HKDF-SHA-512 po ISK, z etykietą drogi i kontekstem.
+// The conversation: the caller sends Ya, the answerer sends Yb and its confirmation tag, and the
+// caller sends its own tag. That is the explicit confirmation from §10.4, so a wrong password is a
+// refusal before a single byte of content flows. A shared point of zero (a low-order point, also
+// one written non-canonically) aborts the handshake (§9). CI is the context from the caller (in
+// twa: the conversation version and the invitation label); sid, ADa and ADb are empty. The channel
+// keys come from HKDF-SHA-512 over ISK, with the label of this path and the context.
 namespace talcite::net::cpacing {
 
 namespace {
@@ -37,6 +38,7 @@ constexpr std::size_t wide = 32;
 
 constexpr std::size_t block = 128;
 
+// The bytes of a string, one by one.
 Bytes bytes_of(std::string_view said) {
     Bytes made;
 
@@ -45,14 +47,17 @@ Bytes bytes_of(std::string_view said) {
     return made;
 }
 
+// Appends `what` to the end of `into`.
 void appended(Bytes& into, const Bytes& what) { into.insert(into.end(), what.begin(), what.end()); }
 
+// Zeroing that the compiler does not remove, for secrets and what is derived from them.
 void wiped(Bytes& one) {
     volatile std::byte* at = one.data();
 
     for (std::size_t i = 0; i < one.size(); ++i) at[i] = std::byte{0};
 }
 
+// Equality in constant time: the time does not depend on where the bytes differ.
 bool alike(const Bytes& one, const Bytes& two) {
     if (one.size() != two.size()) return false;
 
@@ -63,6 +68,7 @@ bool alike(const Bytes& one, const Bytes& two) {
     return differ == std::byte{0};
 }
 
+// Appends `what` preceded by its length as four big-endian bytes.
 void framed(Bytes& into, const Bytes& what) {
     const auto much = static_cast<std::uint32_t>(what.size());
 
@@ -73,6 +79,8 @@ void framed(Bytes& into, const Bytes& what) {
 
 class Cpace : public Handshake {
 public:
+    // Computes this side's share from the password and the context right away and wipes the
+    // password. Throws `Trouble` when the given scalar is not 32 bytes long or the share is zero.
     Cpace(Side side, Bytes prs, std::string context, Seam<CipherProvider> cipher, std::optional<Bytes> scalar)
         : side_(side), context_(std::move(context)), cipher_(std::move(cipher)),
           scalar_(scalar ? std::move(*scalar) : random(wide)) {
@@ -89,6 +97,7 @@ public:
         mine_ = *share;
     }
 
+    // Wipes the scalar and the confirmation key.
     ~Cpace() override {
         wiped(scalar_);
         wiped(mac_key_);
@@ -99,6 +108,8 @@ public:
     Cpace(Cpace&&) = delete;
     Cpace& operator=(Cpace&&) = delete;
 
+    // The next message of this side, or nothing when it is the other side's turn: Ya from the
+    // caller, then Yb with the answerer's tag, then the caller's tag.
     std::optional<Bytes> said() override {
         if (side_ == Side::calling && step_ == 0) {
             step_ = 1;
@@ -126,6 +137,8 @@ public:
         return std::nullopt;
     }
 
+    // Takes the other side's message for the current step. A message of the wrong size, a tag
+    // that does not match or a message out of turn throws `Trouble`, as a wrong password does.
     void heard(const Bytes& one) override {
         if (side_ == Side::answering && step_ == 0) {
             if (one.size() != wide) refused();
@@ -165,8 +178,10 @@ public:
         refused();
     }
 
+    // True once both confirmation tags have been checked.
     [[nodiscard]] bool ready() const override { return ready_; }
 
+    // The channel keys; throws `Trouble` before the handshake is finished.
     [[nodiscard]] const Keying& keys() const override {
         if (!ready_) throw Trouble{"The handshake is not finished."};
 
@@ -174,9 +189,10 @@ public:
     }
 
 private:
+    // Throws the refusal; every failure of the handshake looks like a wrong password.
     [[noreturn]] static void refused() { throw Trouble{"The other side does not share the password."}; }
 
-    // K, ISK, klucz potwierdzenia i klucze kanału. K nie wychodzi nigdzie (§10.3).
+    // K, ISK, the confirmation key and the channel keys. K never leaves this function (§10.3).
     void derived(const Bytes& told) {
         std::optional<Bytes> k = multiplied(cipher_, scalar_, theirs_);
 
@@ -208,7 +224,7 @@ private:
         keys_ = side_ == Side::calling ? Keying{calling, answering} : Keying{answering, calling};
     }
 
-    // Znacznik potwierdzenia (§10.4): HMAC po wiadomości strony, kluczem z ISK.
+    // The confirmation tag (§10.4): HMAC over the side's message, with the key derived from ISK.
     [[nodiscard]] Bytes tag(const Bytes& y) const {
         Bytes message = prepended(y);
 
@@ -231,7 +247,7 @@ private:
 
 }
 
-// Długość przed danymi w LEB128 (§A.1).
+// The length before the data, in LEB128 (§A.1).
 Bytes prepended(const Bytes& data) {
     Bytes made;
 
@@ -250,7 +266,7 @@ Bytes prepended(const Bytes& data) {
     return made;
 }
 
-// DSI, hasło, zera do pełnego pierwszego bloku skrótu, CI i sid — każde z długością (§8.1).
+// DSI, the password, zeros up to a full first hash block, CI and sid, each with its length (§8.1).
 Bytes generator_string(const Bytes& dsi, const Bytes& prs, const Bytes& ci, const Bytes& sid, std::size_t block_size) {
     const std::size_t taken = prepended(prs).size() + prepended(dsi).size() + 1;
     const std::size_t padding = block_size > taken ? block_size - taken : 0;
@@ -265,8 +281,9 @@ Bytes generator_string(const Bytes& dsi, const Bytes& prs, const Bytes& ci, cons
     return made;
 }
 
-// Elligator2 dla Curve25519 (RFC 9380, Z = 2): u → v = −A / (1 + Z·u²), ε = χ(v³ + A·v² + v),
-// x = ε·v − (1 − ε)·A/2. Odwrotność zera to zero, więc i ten przypadek idzie wzorem, bez gałęzi.
+// Elligator2 for Curve25519 (RFC 9380, Z = 2): u → v = −A / (1 + Z·u²), ε = χ(v³ + A·v² + v),
+// x = ε·v − (1 − ε)·A/2. The inverse of zero is zero, so that case too goes through the formula,
+// without a branch.
 Bytes elligator2(const Bytes& u) {
     using namespace curving;
 
@@ -290,7 +307,8 @@ Bytes elligator2(const Bytes& u) {
     return packed(x);
 }
 
-// Generator z hasła, CI i sid: skrót SHA-512 ciągu generatora, pierwsze 32 bajty jako u (§8.2).
+// The generator from the password, CI and sid: the SHA-512 hash of the generator string, with the
+// first 32 bytes taken as u (§8.2).
 Bytes generator(const Bytes& prs, const Bytes& ci, const Bytes& sid) {
     Bytes text = generator_string(bytes_of("CPace255"), prs, ci, sid, block);
 
@@ -307,13 +325,15 @@ Bytes generator(const Bytes& prs, const Bytes& ci, const Bytes& sid) {
     return made;
 }
 
-// X25519(scalar, point) przez szew szyfrów — pustka, gdy wynikiem jest punkt zerowy (§8.2, §9).
+// X25519(scalar, point) through the cipher seam; nothing when the result is the zero point
+// (§8.2, §9).
 std::optional<Bytes> multiplied(const Seam<CipherProvider>& cipher, const Bytes& scalar, const Bytes& point) {
     const std::unique_ptr<Agreement> mine = cipher.provider().agreement(scalar);
 
     return mine->shared(point);
 }
 
+// The transcript of the two messages and their associated data, each with its length.
 Bytes transcript(const Bytes& ya, const Bytes& ada, const Bytes& yb, const Bytes& adb) {
     Bytes made = prepended(ya);
 
@@ -324,7 +344,7 @@ Bytes transcript(const Bytes& ya, const Bytes& ada, const Bytes& yb, const Bytes
     return made;
 }
 
-// ISK = H(lv_cat(DSI ‖ "_ISK", sid, K) ‖ transkrypt) (§7.2).
+// ISK = H(lv_cat(DSI ‖ "_ISK", sid, K) ‖ transcript) (§7.2).
 Bytes intermediate(const Bytes& sid, const Bytes& k, const Bytes& told) {
     Bytes input = prepended(bytes_of("CPace255_ISK"));
 
@@ -339,6 +359,7 @@ Bytes intermediate(const Bytes& sid, const Bytes& k, const Bytes& told) {
     return made;
 }
 
+// A CPace handshake for one side; the scalar is given only by tests, otherwise it is random.
 std::shared_ptr<Handshake> made(Side side, Bytes prs, std::string context, Seam<CipherProvider> cipher,
                                 std::optional<Bytes> scalar) {
     return std::make_shared<Cpace>(side, std::move(prs), std::move(context), std::move(cipher), std::move(scalar));
@@ -348,6 +369,7 @@ std::shared_ptr<Handshake> made(Side side, Bytes prs, std::string context, Seam<
 
 namespace talcite::net {
 
+// A CPace handshake for one side, on the given password and context, with a random scalar.
 std::shared_ptr<Handshake> cpace(Side side, Bytes password, std::string context, Seam<CipherProvider> cipher) {
     return cpacing::made(side, std::move(password), std::move(context), std::move(cipher), std::nullopt);
 }

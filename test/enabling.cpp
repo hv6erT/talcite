@@ -12,13 +12,14 @@
 
 using namespace talcite;
 
-// **Dostępność to jedna domieszka, a jej zmiana — zdarzenie.** `EnabledNode` trzyma znacznik,
-// z niego liczy `focusable()` i przy wyłączeniu oddaje ognisko. Kto chce na zmianę odpowiedzieć —
-// widżet przez `handle`, wołający przez `on<>` — słucha `EnableEvent` i `DisableEvent`.
+// Being enabled is one mixin, and a change of it is an event. `EnabledNode` holds the flag, derives
+// `focusable()` from it and gives up the focus when disabled. Whoever wants to react to the change
+// (a widget through `handle`, a caller through `on<>`) listens for `EnableEvent` and
+// `DisableEvent`.
 
 namespace {
 
-// Klawisze aktywne rozdaje dialog, więc przyciski stoją w dialogu, jak w każdym oknie.
+// Hot keys are handed out by the dialog, so the buttons stand in a dialog, as in any window.
 struct Stage {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
@@ -27,6 +28,7 @@ struct Stage {
     std::shared_ptr<ui::Button> one = std::make_shared<ui::Button>("Tak");
     std::shared_ptr<ui::Button> other = std::make_shared<ui::Button>("Nie");
 
+    // Builds the window with the dialog and its two buttons, and renders it once.
     Stage() {
         column->children().add(one);
         column->children().add(other);
@@ -39,7 +41,7 @@ struct Stage {
 
 }
 
-TRIAL("EnabledNode: zmiana ogłasza się raz, ta sama wartość nie ogłasza nic") {
+TRIAL("EnabledNode: a change is announced once, the same value announces nothing") {
     Stage stage;
 
     int off = 0;
@@ -73,7 +75,7 @@ TRIAL("EnabledNode: zmiana ogłasza się raz, ta sama wartość nie ogłasza nic
     ought(stage.one->enabled());
 }
 
-TRIAL("EnabledNode: wyłączony nie jest do wzięcia, włączony znów jest") {
+TRIAL("EnabledNode: a disabled node is not focusable, an enabled one is again") {
     Stage stage;
 
     ought(stage.one->focusable());
@@ -87,7 +89,7 @@ TRIAL("EnabledNode: wyłączony nie jest do wzięcia, włączony znów jest") {
     ought(stage.one->focusable());
 }
 
-TRIAL("EnabledNode: wyłączenie bąbelkuje i mówi, skąd przyszło") {
+TRIAL("EnabledNode: disabling bubbles up and tells where it came from") {
     Stage stage;
 
     const ui::Handler* from = nullptr;
@@ -103,9 +105,9 @@ TRIAL("EnabledNode: wyłączenie bąbelkuje i mówi, skąd przyszło") {
     same(static_cast<const void*>(from), static_cast<const void*>(stage.other.get()));
 }
 
-// Kolejność jest umową, na której stoi `Select`: zdarzenie przychodzi, **póki ognisko jeszcze jest**
-// na wyłączanym węźle, a oddanie ogniska przychodzi po nim.
-TRIAL("EnabledNode: zdarzenie przychodzi, zanim ognisko odejdzie") {
+// The order is a contract that `Select` relies on: the event arrives while the focus is still on
+// the node being disabled, and giving up the focus comes after it.
+TRIAL("EnabledNode: the event arrives before the focus leaves") {
     Stage stage;
 
     stage.one->focus();
@@ -124,9 +126,9 @@ TRIAL("EnabledNode: zdarzenie przychodzi, zanim ognisko odejdzie") {
     ought(!stage.one->focused());
 }
 
-// Uchwyt, który w odpowiedzi włącza z powrotem, wygrywa: ognisko zostaje, bo węzeł znów jest
-// do wzięcia.
-TRIAL("EnabledNode: przywrócony w uchwycie zostaje z ogniskiem") {
+// A handler that enables the node again in response wins: the focus stays, because the node is
+// focusable again.
+TRIAL("EnabledNode: re-enabled in a handler, it keeps the focus") {
     Stage stage;
 
     stage.one->focus();
@@ -151,7 +153,7 @@ TRIAL("EnabledNode: przywrócony w uchwycie zostaje z ogniskiem") {
     same(on, 1);
 }
 
-TRIAL("EnabledNode: wyłączony nie bierze klawisza aktywnego, włączony bierze") {
+TRIAL("EnabledNode: a disabled node does not take its hot key, an enabled one does") {
     Stage stage;
 
     int picked = 0;

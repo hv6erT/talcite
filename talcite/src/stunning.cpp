@@ -5,39 +5,55 @@
 #include "talcite/digest.hpp"
 #include "talcite/random.hpp"
 
+// Building and reading STUN messages (RFC 5389), with the TURN attributes and ChannelData framing.
+//
+// A `Number` is a 12-byte transaction ID. `Sort` is the message class (request, success response,
+// error response, indication). `Task` is the method, what the message is meant to do. The message
+// type is made of the method and the class, and the two are interleaved bit by bit inside the
+// number, hence a separate enumeration instead of bare numbers. `Message` is everything we read
+// from a message: the class, the method, the transaction ID, the reflexive address (`seen`), the
+// relayed address (`lent`), the peer address, the data, the error code and reason (`said`), the
+// lifetime, the realm and the nonce.
 namespace talcite::net {
 
 namespace {
 
-// Ciasteczko jest stałe i to ono odróżnia STUN od czasów, gdy STUN wyglądał inaczej. Bez niego
-// nie da się też odkłamać adresu, bo to nim jest przekłamany.
+// The magic cookie is fixed, and it is what tells STUN apart from the older form of STUN. It is
+// also the mask of the XOR-ed address, so without it the address cannot be decoded.
 constexpr std::uint32_t cookie = 0x2112A442u;
 
+// The big-endian 16-bit number at `at`.
 std::uint16_t whole(const Bytes& what, std::size_t at) {
     return static_cast<std::uint16_t>((std::to_integer<unsigned>(what[at]) << 8) |
                                       std::to_integer<unsigned>(what[at + 1]));
 }
 
+// The big-endian 32-bit number at `at`.
 std::uint32_t wider(const Bytes& what, std::size_t at) {
     return (static_cast<std::uint32_t>(whole(what, at)) << 16) | whole(what, at + 2);
 }
 
+// Appends a big-endian 16-bit number.
 void pushed(Bytes& into, std::uint16_t what) {
     into.push_back(static_cast<std::byte>(what >> 8));
     into.push_back(static_cast<std::byte>(what & 0xFF));
 }
 
-// Pole długości siedzi w trzecim i czwartym bajcie i liczy **wszystko po nagłówku**.
+// Writes the length field, which sits in the third and fourth bytes and counts everything after the
+// 20-byte header.
 void written(Bytes& into, std::uint16_t much) {
     into[2] = static_cast<std::byte>(much >> 8);
     into[3] = static_cast<std::byte>(much & 0xFF);
 }
 
+// Updates the length field to the message as built so far.
 void minded(Bytes& into) { written(into, static_cast<std::uint16_t>(into.size() - 20)); }
 
-// Adres w STUN ma bajt pusty, bajt rodziny, port i tyle bajtów, ile rodzina każe. W postaci
-// przekłamanej port jest odwrócony górną połową ciasteczka, adres całym ciasteczkiem, a przy
-// IPv6 jeszcze numerem transakcji — bo szesnaście bajtów potrzebuje szesnastu bajtów maski.
+// Reads an address attribute of `much` bytes at `at`; an empty address when it is malformed. An
+// address in STUN has an empty byte, a family byte, the port, and as many bytes as the family
+// requires. In the XOR-ed form the port is XOR-ed with the upper half of the cookie, the address
+// with the whole cookie and, for IPv6, also with the transaction ID, because sixteen bytes need
+// sixteen bytes of mask.
 Address placed(const Bytes& what, std::size_t at, std::uint16_t much, const Number& number,
                bool xored) {
     if (much < 4) return {};
@@ -71,9 +87,8 @@ Address placed(const Bytes& what, std::size_t at, std::uint16_t much, const Numb
 
 }
 
-// Numer transakcji jest **jedynym dowodem tożsamości odpowiedzi**, więc musi być nie do zgadnięcia
-// przez kogoś z boku. Bierzemy go wprost od systemu. Wcześniej stał tu mt19937 zasiany zegarem
-// i było to zapisane jako dług — spłacony.
+// A new transaction ID. It is the only proof of a response's identity, so it must be impossible to
+// guess for someone on the side; it comes straight from the system's random generator.
 Number numbered() {
     const Bytes given = random(12);
 
@@ -84,9 +99,9 @@ Number numbered() {
     return made;
 }
 
-// Rodzaj wiadomości to sprawa i klasa **przemieszane bitami**: sprawa rozbita na trzy kawałki,
-// a klasa wciśnięta w bity piąty i dziewiąty. Tak to wymyślono, żeby stare i nowe wiadomości dało
-// się odróżnić po dwóch zerach na początku.
+// The message type: the method and the class interleaved bit by bit, the method split into three
+// pieces and the class squeezed into bits 4 and 8. It was designed this way so that the two zero
+// bits at the front still tell the messages apart.
 std::uint16_t merged(Task task, Sort sort) {
     const std::uint16_t one = static_cast<std::uint16_t>(task);
 
@@ -101,7 +116,7 @@ std::uint16_t merged(Task task, Sort sort) {
     }
 }
 
-// I z powrotem: klasa z dwóch bitów, sprawa ze zlepionych kawałków.
+// And back: the class from its two bits, the method from the pieces put together.
 void parted(std::uint16_t kind, Message& made) {
     const std::uint16_t one = static_cast<std::uint16_t>(((kind & 0x3E00) >> 2) |
                                                           ((kind & 0x00E0) >> 1) | (kind & 0x000F));
@@ -116,6 +131,7 @@ void parted(std::uint16_t kind, Message& made) {
     }
 }
 
+// A message header with zero length: type, length, cookie and transaction ID.
 Bytes begun(Task task, Sort sort, const Number& number) {
     Bytes made;
 
@@ -131,7 +147,8 @@ Bytes begun(Task task, Sort sort, const Number& number) {
     return made;
 }
 
-// Adres w atrybucie — w postaci przekłamanej albo gołej, zależnie od tego, czego żąda atrybut.
+// Appends an address attribute, XOR-ed or plain depending on what the attribute requires; the mask
+// takes the transaction ID from the header already in `made`.
 void placing(Bytes& made, std::uint16_t kind, const Address& where, bool xored) {
     const bool four = where.family() == Family::four;
 
@@ -162,6 +179,7 @@ void placing(Bytes& made, std::uint16_t kind, const Address& where, bool xored) 
     minded(made);
 }
 
+// Appends a 32-bit attribute, such as LIFETIME or REQUESTED-TRANSPORT.
 void wording(Bytes& made, std::uint16_t kind, std::uint32_t what) {
     pushed(made, kind);
     pushed(made, 4);
@@ -172,6 +190,7 @@ void wording(Bytes& made, std::uint16_t kind, std::uint32_t what) {
     minded(made);
 }
 
+// Appends a DATA attribute (0x0013), padded to four bytes.
 void giving(Bytes& made, const Bytes& what) {
     pushed(made, 0x0013);
     pushed(made, static_cast<std::uint16_t>(what.size()));
@@ -183,13 +202,13 @@ void giving(Bytes& made, const Bytes& what) {
     minded(made);
 }
 
-// Kanał, czyli ta sama treść w czterech bajtach zamiast trzydziestu sześciu: numer kanału zamiast
-// nagłówka STUN, ciasteczka, numeru transakcji i atrybutu z adresem rozmówcy. Adres siedzi
-// w numerze — serwer wie, komu ten numer przypisał.
+// Wraps data for a channel: the same content in four bytes of overhead instead of thirty-six, a
+// channel number instead of the STUN header, cookie, transaction ID and peer address attribute.
+// The address lives in the number: the server knows whom it assigned that number to.
 //
-// Po dwóch najstarszych bitach pierwszego bajtu **poznaje się, co przyszło**: zerowe znaczą STUN,
-// `01` znaczy kanał. Numery kanałów zaczynają się dlatego od 0x4000. Dopełnienia do czterech bajtów
-// po UDP nie ma — datagram sam wyznacza koniec treści, a tu każdy bajt jest oszczędzany celowo.
+// The two top bits of the first byte tell what has arrived: zeros mean STUN, 01 means a channel.
+// That is why channel numbers start at 0x4000. There is no padding to four bytes over UDP: the
+// datagram itself marks the end of the content, and every byte is saved on purpose here.
 Bytes wrapped(std::uint16_t channel, const Bytes& what) {
     Bytes made;
 
@@ -203,11 +222,12 @@ Bytes wrapped(std::uint16_t channel, const Bytes& what) {
     return made;
 }
 
+// Reads channel data into `channel` and `data`; false when it is not channel data or is cut short.
 bool unwrapped(const Bytes& what, std::uint16_t& channel, Bytes& data) {
     if (what.size() < 4) return false;
 
-    // Te dwa bity **są** zakresem numerów kanałów: `01` na początku to dokładnie 0x4000 do 0x7FFF.
-    // Osobne sprawdzanie granic byłoby martwym kodem.
+    // These two bits are the range of channel numbers: 01 at the front is exactly 0x4000 to
+    // 0x7FFF. A separate range check would be dead code.
     if ((std::to_integer<unsigned>(what[0]) & 0xC0) != 0x40) return false;
 
     const std::uint16_t much = whole(what, 2);
@@ -221,6 +241,7 @@ bool unwrapped(const Bytes& what, std::uint16_t& channel, Bytes& data) {
     return true;
 }
 
+// A Binding request with no attributes.
 Bytes asked(const Number& number) {
     Bytes made;
 
@@ -236,9 +257,9 @@ Bytes asked(const Number& number) {
     return made;
 }
 
-// Odpowiedź na sprawdzenie łączności: ten sam numer transakcji co w pytaniu i jeden atrybut —
-// przekłamany adres, z którego pytanie przyszło. Tyle wystarczy, żeby druga strona wiedziała, że
-// dziura w NAT-cie stoi, i przy okazji poznała swój adres zewnętrzny.
+// The answer to a connectivity check: the same transaction ID as in the request and one attribute,
+// the XOR-ed address the request came from. That is enough for the other side to know the hole in
+// the NAT is open, and to learn its external address on the way.
 Bytes told(const Number& number, const Address& seen) {
     const bool four = seen.family() == Family::four;
 
@@ -279,10 +300,11 @@ Bytes told(const Number& number, const Address& seen) {
     return made;
 }
 
+// Reads a STUN message into `made`; false when it is not one. Unknown attributes are skipped.
 bool understood(const Bytes& what, Message& made) {
     if (what.size() < 20) return false;
 
-    // Dwa najstarsze bity zerowe — po tym i tylko po tym poznaje się STUN na wspólnym gnieździe.
+    // The two top bits are zero: by this, and only this, STUN is recognized on a shared socket.
     if ((std::to_integer<unsigned>(what[0]) & 0xC0) != 0) return false;
 
     if (wider(what, 4) != cookie) return false;
@@ -315,26 +337,26 @@ bool understood(const Bytes& what, Message& made) {
 
         at += 4;
 
-        // Atrybut musi mieścić się w **zadeklarowanej** wiadomości, nie tylko w buforze. Inaczej
-        // nadawca deklarował długość 4 i kazał nam czytać dalej, spoza tego, co sam nazwał.
+        // An attribute must fit in the declared message, not just in the buffer. Otherwise a
+        // sender could declare a length of 4 and make us read further, beyond what it named.
         if (at + wide > 20u + much) break;
 
         if (at + wide > what.size()) break;
 
         if (kind == 0x0020) {
-            // Popsuty atrybut **nie kasuje dobrego**. Wcześniej przypisanie było bezwarunkowe, więc
-            // wystarczył jeden zły bajt rodziny za poprawnym adresem, żeby odpowiedź stała się
-            // pusta — i to razem z zamknięciem drogi staremu atrybutowi.
+            // A broken attribute does not erase a good one: with an unconditional assignment, one
+            // bad family byte after a valid address would empty the answer and also shut out the
+            // old attribute.
             if (const Address one = placed(what, at, wide, made.number, true); one.held()) {
                 made.seen = one;
                 xored = true;
             }
         } else if (kind == 0x0001 && !xored) {
-            // Stary atrybut bierzemy tylko wtedy, gdy nowego nie było — część serwerów wysyła oba.
+            // The old attribute is taken only when the new one was absent; some servers send both.
             if (const Address one = placed(what, at, wide, made.number, false); one.held())
                 made.seen = one;
         } else if (kind == 0x0016) {
-            // Adres użyczony przez przekaźnik: to na niego piszą do nas obcy.
+            // The address lent by the relay: strangers write to us at this one.
             made.lent = placed(what, at, wide, made.number, true);
         } else if (kind == 0x0012) {
             made.peer = placed(what, at, wide, made.number, true);
@@ -352,18 +374,19 @@ bool understood(const Bytes& what, Message& made) {
                 said += sign < 0x20 || sign == 0x7F ? '?' : static_cast<char>(sign);
             }
 
-            // Dziedzina i jednorazowy znacznik przychodzą od serwera i wracają do niego bez zmian
-            // przy uwierzytelnianiu długoterminowym. Też są tekstem od obcego, więc też bez
-            // znaków sterujących.
+            // The realm and the nonce come from the server and go back to it unchanged in
+            // long-term authentication. They are text from a stranger too, so they also lose their
+            // control characters.
             (kind == 0x0014 ? made.realm : made.nonce) = said;
         } else if (kind == 0x0009 && wide >= 4) {
             const unsigned sort = std::to_integer<unsigned>(what[at + 2]) & 0x07;
 
             made.code = static_cast<int>(sort * 100 + std::to_integer<unsigned>(what[at + 3]) % 100);
 
-            // Powód pisze obcy i **nie ma prawa nieść znaków sterujących**: to zdanie trafia
-            // wprost do komunikatu, a ten na terminal. Sekwencje ucieczki z cudzej sieci
-            // przemalowałyby ekran albo podmieniły tytuł okna. Bierzemy też skończenie wiele.
+            // A stranger writes the reason, and it must not carry control characters: the sentence
+            // goes straight into a message and from there to the terminal. Escape sequences from
+            // someone else's network could repaint the screen or replace the window title. We also
+            // take only a bounded amount.
             for (std::size_t one = 4; one < wide && made.said.size() < 128; ++one) {
                 const unsigned sign = std::to_integer<unsigned>(what[at + one]);
 
@@ -379,9 +402,9 @@ bool understood(const Bytes& what, Message& made) {
 }
 
 
-// CRC-32 z wielomianem IEEE. **To nie jest kryptografia** — to suma kontrolna, taka sama jak
-// w archiwach, i piszemy ją sami, bo żaden system jej nie wystawia, a tu jest potrzebna tylko po
-// to, żeby odróżnić wiadomość STUN od czegokolwiek innego na tym samym gnieździe.
+// CRC-32 with the IEEE polynomial over the first `much` bytes. This is not cryptography but a
+// checksum, the same as in archives, and we write it ourselves because no system exposes it; here
+// it is needed only to tell a STUN message apart from anything else on the same socket.
 std::uint32_t tallied(const Bytes& what, std::size_t much) {
     static const std::array<std::uint32_t, 256> table = [] {
         std::array<std::uint32_t, 256> made{};
@@ -406,6 +429,7 @@ std::uint32_t tallied(const Bytes& what, std::size_t much) {
     return made ^ 0xFFFFFFFFu;
 }
 
+// Appends a text attribute (USERNAME, REALM, NONCE), padded to four bytes.
 void texting(Bytes& made, std::uint16_t kind, const std::string& said) {
     pushed(made, kind);
     pushed(made, static_cast<std::uint16_t>(said.size()));
@@ -417,9 +441,10 @@ void texting(Bytes& made, std::uint16_t kind, const std::string& said) {
     minded(made);
 }
 
-// **Podpis liczy się po treści, w której pole długości już udaje, że atrybut podpisu tam jest.**
-// To jest miejsce, w którym implementacje mylą się najczęściej: gdyby liczyć po długości sprzed
-// dopisania, druga strona policzyłaby co innego i każda wiadomość byłaby odrzucona.
+// Appends MESSAGE-INTEGRITY, the HMAC-SHA1 of the message under `key`. It is computed over content
+// whose length field already pretends the integrity attribute is there. This is where
+// implementations go wrong most often: computed with the length from before appending, the other
+// side would get something else and reject every message.
 void stamping(Bytes& made, const Bytes& key) {
     written(made, static_cast<std::uint16_t>(made.size() - 20 + 24));
 
@@ -431,11 +456,9 @@ void stamping(Bytes& made, const Bytes& key) {
     for (const std::byte one : sign) made.push_back(one);
 }
 
-// Ta sama sztuczka z długością, tylko że odciskiem jest suma kontrolna, a nie podpis. Odcisk idzie
-// **na sam koniec**, po podpisie, bo obejmuje także jego.
-//
-// Nazywało się to `marking` — słowem, które w tej bibliotece znaczy literę aktywną. `summing` też
-// odpadło, bo `talcite::summing()` z `digest.hpp` znaczy „czy ten system daje skróty". Zostaje odcisk.
+// Appends FINGERPRINT with the same length trick, except that the print is a checksum rather than a
+// signature. The fingerprint goes at the very end, after the integrity attribute, because it covers
+// that too.
 void printing(Bytes& made) {
     written(made, static_cast<std::uint16_t>(made.size() - 20 + 8));
 
@@ -448,8 +471,9 @@ void printing(Bytes& made) {
     pushed(made, static_cast<std::uint16_t>(sum & 0xFFFF));
 }
 
-// Sprawdzenie podpisu wymaga odtworzenia dokładnie tej treści, po której liczyła go druga strona:
-// wiadomości uciętej przed atrybutem podpisu i z długością udającą, że podpis już tam stoi.
+// Whether the message carries a valid MESSAGE-INTEGRITY under `key`. Checking it requires
+// rebuilding exactly the content the other side computed it over: the message cut before the
+// integrity attribute, with a length pretending the attribute is already there.
 bool trusted(const Bytes& what, const Bytes& key) {
     if (what.size() < 20) return false;
 
@@ -474,8 +498,8 @@ bool trusted(const Bytes& what, const Bytes& key) {
 
             if (sign.size() != 20) return false;
 
-            // Porównanie **do końca, bez skracania na pierwszej różnicy**. Wychodzenie wcześniej
-            // mówiłoby czasem odpytującemu, ile bajtów zgadło.
+            // The comparison runs to the end, without stopping at the first difference. Leaving
+            // early could tell a prober how many bytes it guessed.
             unsigned apart = 0;
 
             for (std::size_t one = 0; one < 20; ++one)
@@ -492,8 +516,8 @@ bool trusted(const Bytes& what, const Bytes& key) {
     return false;
 }
 
-// Klucz uwierzytelniania długoterminowego jest skrótem z nazwy, dziedziny i hasła sklejonych
-// dwukropkami. Tak każe RFC i tak liczą go serwery TURN.
+// The long-term authentication key is the MD5 of the user name, realm and password joined by
+// colons. The RFC says so, and that is how TURN servers compute it.
 Bytes keyed(const std::string& user, const std::string& realm, const std::string& word) {
     const std::string said = user + ":" + realm + ":" + word;
 

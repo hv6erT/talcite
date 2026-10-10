@@ -16,18 +16,19 @@ namespace {
 
 
 
+// The quilt's whole current text as a string.
 std::string whole(Quilt& one) { return text(one.bytes(0, one.whole())); }
 
 }
 
-TRIAL("Quilt: pusty nic nie niesie") {
+TRIAL("Quilt: an empty one carries nothing") {
     Quilt one{bytes("")};
 
     same(one.whole(), std::size_t{0});
     same(whole(one), std::string{});
 }
 
-TRIAL("Quilt: nietknięty oddaje oryginał") {
+TRIAL("Quilt: untouched, it gives back the original") {
     Quilt one{bytes("abcdef")};
 
     same(one.whole(), std::size_t{6});
@@ -36,7 +37,7 @@ TRIAL("Quilt: nietknięty oddaje oryginał") {
     same(text(one.bytes(4, 100)), std::string{"ef"});
 }
 
-TRIAL("Quilt: wstawianie na początku, w środku i na końcu") {
+TRIAL("Quilt: inserting at the start, in the middle and at the end") {
     Quilt one{bytes("abc")};
 
     one.insert(0, "X");
@@ -50,7 +51,7 @@ TRIAL("Quilt: wstawianie na początku, w środku i na końcu") {
 
 }
 
-TRIAL("Quilt: kasowanie na początku, w środku i na końcu") {
+TRIAL("Quilt: erasing at the start, in the middle and at the end") {
     Quilt one{bytes("abcdef")};
 
     one.erase(0, 1);
@@ -63,7 +64,7 @@ TRIAL("Quilt: kasowanie na początku, w środku i na końcu") {
     same(whole(one), std::string{"bc"});
 }
 
-TRIAL("Quilt: wstawienie i skasowanie wraca do oryginału") {
+TRIAL("Quilt: inserting and erasing returns to the original") {
     Quilt one{bytes("abcdef")};
 
     one.insert(3, "XYZ");
@@ -73,9 +74,9 @@ TRIAL("Quilt: wstawienie i skasowanie wraca do oryginału") {
     same(whole(one), std::string{"abcdef"});
 }
 
-// Pisanie w ciągu przedłuża ostatni odcinek zamiast robić nowy. Gdyby tego nie robiło, pięć tysięcy
-// znaków dałoby pięć tysięcy odcinków — i to jest ta próba, która by to złapała czasem.
-TRIAL("Quilt: pięć tysięcy znaków po jednym") {
+// Typing in a row extends the last piece instead of making a new one. Without that, five thousand
+// characters would make five thousand pieces, and this trial is the one that would catch it.
+TRIAL("Quilt: five thousand characters one at a time") {
     Quilt one{bytes("")};
 
     std::string want;
@@ -89,9 +90,9 @@ TRIAL("Quilt: pięć tysięcy znaków po jednym") {
     same(whole(one), want);
 }
 
-// Porównanie z `std::string` na losowym ciągu zmian — to jedyny sposób, żeby złapać błąd
-// w rozcinaniu odcinków, którego nie widać na żadnym pojedynczym przypadku.
-TRIAL("Quilt: losowe zmiany zgadzają się ze wzorcem") {
+// Comparison with `std::string` on a random series of changes; it is the only way to catch a bug in
+// splitting pieces that no single case shows.
+TRIAL("Quilt: random changes agree with the model") {
     std::mt19937 gen(7);
 
     for (int round = 0; round < 200; ++round) {
@@ -131,11 +132,11 @@ TRIAL("Quilt: losowe zmiany zgadzają się ze wzorcem") {
     }
 }
 
-// **Wiele cięć naraz** zgadza się z tym samym zrobionym na napisie — cięcia na początku, na końcu,
-// tuż obok siebie, samo wstawienie (nic nie znika), samo skasowanie (nic nie przychodzi), ten sam
-// tekst w wielu miejscach. Kołdra jest przed tym pocięta zwykłymi zmianami, żeby cięcia trafiały
-// w środki odcinków obu rodzajów.
-TRIAL("Quilt: wiele cięć naraz zgadza się ze wzorcem") {
+// Many cuts at once agree with the same done on a string: cuts at the start, at the end, right next
+// to each other, a pure insertion (nothing goes away), a pure erasure (nothing comes in), the same
+// text in many places. The quilt is first cut up by ordinary changes, so that the cuts hit the
+// middles of pieces of both kinds.
+TRIAL("Quilt: many cuts at once agree with the model") {
     std::mt19937 gen{7};
 
     for (int round = 0; round < 200; ++round) {
@@ -193,9 +194,9 @@ TRIAL("Quilt: wiele cięć naraz zgadza się ze wzorcem") {
     }
 }
 
-// Ten sam tekst w wielu cięciach z rzędu ląduje w dopiskach raz: pisanie dalej za ostatnim z nich
-// przedłuża tylko jego odcinek, a pozostałe miejsca zostają, jakie były.
-TRIAL("Quilt: wspólny tekst cięć nie przecieka do sąsiadów przy dalszym pisaniu") {
+// The same text in many cuts in a row lands in the additions once: typing on after the last of them
+// extends only its piece, and the other places stay as they were.
+TRIAL("Quilt: the shared text of cuts does not leak to neighbors when typing on") {
     Quilt one{bytes("a-b-c")};
 
     const std::string with = "XX";
@@ -210,12 +211,12 @@ TRIAL("Quilt: wspólny tekst cięć nie przecieka do sąsiadów przy dalszym pis
     same(whole(one), std::string{"aXX?bXX!c"});
 }
 
-// **Skrawki zgadzają się ze wzorcem.** Losowe wstawienia, skasowania i przeniesienia skrawkami:
-// wyjęty skrawek ma tekst zakresu, ten sam skrawek wstawiony gdzie indziej (także dwa razy) daje to,
-// co wstawienie jego tekstu, a sklejanie z przodu i z tyłu daje sklejony tekst. Końce wierszy
-// i ostatni bajt liczą się w źródłach. Wszystko na kołdrze pociętej zwykłymi zmianami, żeby skrawki
-// łapały odcinki obu rodzajów.
-TRIAL("Quilt: skrawki zgadzają się ze wzorcem") {
+// Scraps agree with the model. Random insertions, erasures and moves by scraps: a taken scrap has
+// the text of the range, the same scrap put elsewhere (also twice) gives what inserting its text
+// does, and joining at the front and at the back gives the joined text. Line ends and the last byte
+// are counted from the sources. All on a quilt cut up by ordinary changes, so that scraps catch
+// pieces of both kinds.
+TRIAL("Quilt: scraps agree with the model") {
     std::mt19937 gen(11);
 
     const auto drawn = [&gen](int most) {
@@ -298,12 +299,12 @@ TRIAL("Quilt: skrawki zgadzają się ze wzorcem") {
     same(none.taken(1, 100).much, std::size_t{2});
 }
 
-// **Skasowanie i jego cofnięcie nie kopiują tekstu i zszywają dokument z powrotem.** Dopiski nie
-// rosną ani przy wyjmowaniu, ani przy wstawianiu skrawka, choćby sto razy; a po wstawieniu
-// wyjętego skrawka na to samo miejsce dokument znowu jest jednym odcinkiem — cofanie nie zostawia
-// po sobie pociętej kołdry. Tak samo dopisany tekst: wyjęty i wstawiony z powrotem zlewa się
-// z sąsiadami w jeden odcinek dopisków.
-TRIAL("Quilt: skrawek wraca bez kopii i zszywa odcinki") {
+// Erasing and undoing it copy no text and stitch the document back together. The additions do not
+// grow when a scrap is taken or put, even a hundred times; and after the taken scrap is put back in
+// the same place, the document is a single piece again, so undo does not leave a cut-up quilt
+// behind. The same for added text: taken and put back, it merges with its neighbors into one piece
+// of additions.
+TRIAL("Quilt: a scrap returns without a copy and stitches the pieces") {
     std::string doc;
 
     for (int line = 0; line < 20000; ++line) doc += "wiersz " + std::to_string(line) + "\n";
@@ -336,11 +337,12 @@ TRIAL("Quilt: skrawek wraca bez kopii i zszywa odcinki") {
     same(text(one.bytes(498, 10)), doc.substr(498, 2) + "abcdef" + doc.substr(500, 2));
 }
 
-// **Odcinki zlewają się na każdym styku.** Pisanie po znaku na końcu i w środku przedłuża jeden
-// odcinek dopisków; skrawek wyjęty z początku i wstawiony z powrotem zlewa się z prawym sąsiadem;
-// sklejanie skrawków z przodu i z tyłu zlewa przylegające odcinki, a pusty skrawek nie zmienia
-// niczego. Tekst byłby ten sam i bez zlewania — ale od liczby odcinków zależy koszt wszystkiego.
-TRIAL("Quilt: odcinki zlewają się na stykach") {
+// Pieces merge at every seam. Typing one character at a time at the end and in the middle extends
+// one piece of additions; a scrap taken from the start and put back merges with its right neighbor;
+// joining scraps at the front and at the back merges adjacent pieces, and an empty scrap changes
+// nothing. The text would be the same without merging, but the cost of everything depends on the
+// number of pieces.
+TRIAL("Quilt: pieces merge at the seams") {
     Quilt one{bytes("abcdef")};
 
     const auto pieces = [&one] { return one.taken(0, one.whole()).pieces.size(); };

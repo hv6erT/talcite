@@ -12,8 +12,9 @@ namespace talcite::ui {
 
 namespace {
 
-// Krok w tył po UTF-8: schodzimy z bajtów ciągłych, aż staniemy na początku znaku. W przód robi to
-// `utf8::decode`, w tył trzeba samemu — kodowanie czyta się tylko w jedną stronę.
+// One step back in UTF-8: we walk back over continuation bytes until we stand at the start of a
+// character. Forward, `utf8::decode` does this; backward we have to do it ourselves, because the
+// encoding reads in one direction only.
 std::size_t before(const std::string& text, std::size_t at) {
     if (at == 0) return 0;
 
@@ -24,6 +25,8 @@ std::size_t before(const std::string& text, std::size_t at) {
     return at;
 }
 
+// One character forward from byte offset `at`; the end of the text when there is nothing left to
+// decode.
 std::size_t after(const std::string& text, std::size_t at) {
     if (at >= text.size()) return text.size();
 
@@ -36,9 +39,10 @@ std::size_t after(const std::string& text, std::size_t at) {
 
 }
 
-// Ile kratek zajmuje kawałek napisu. Liczymy **szerokościami**, nie bajtami i nie znakami —
-// inaczej pierwszy znak dwukolumnowy rozjechałby i kursor, i przewijanie. Pole ukryte rysuje
-// każdy znak jedną kropką, więc tam kratka to znak; szerokość zdradzałaby, jakie znaki wpisano.
+// How many cells a piece of the text takes. We count widths, not bytes and not characters;
+// otherwise the first double-width character would throw off both the cursor and the scrolling. A
+// concealed field draws every character as one dot, so there a cell is a character; the width would
+// reveal which characters were typed.
 int Field::spanned(std::size_t from, std::size_t upto) const {
     int made = 0;
 
@@ -56,29 +60,33 @@ int Field::spanned(std::size_t from, std::size_t upto) const {
     return made;
 }
 
+// A single-line input field `wide` cells wide, with the cursor placed after the initial text.
 Field::Field(int wide, std::string text) : text_(std::move(text)), wide_(wide) {
     role("talcite.input");
 
     at_ = text_.size();
 }
 
+// A field holds no children.
 int Field::capacity() const { return 0; }
 
 
+// Asks for its configured width and one row, within the room offered.
 Size Field::wants(Size room) const {
     return {std::min(std::max(wide_, 0), room.wide), std::min(1, room.high)};
 }
 
-// Pole jest jedynym widżetem, który ma co powiedzieć o kursorze — i mówi to **we własnych
-// współrzędnych**, bez oglądania się na widoczny kawałek: od przycięcia jest korzeń. Odpowiedź
-// jest prawdziwa dopiero po złożeniu klatki, bo `from_` — czyli o ile treść jest przewinięta —
-// wylicza się w `paint`, gdy znana jest szerokość, którą pole naprawdę dostało.
+// The field is the only widget that has something to say about the cursor, and it says it in its
+// own coordinates, without looking at the visible part: clipping is the root's job. The answer is
+// true only after the frame is composed, because `from_` (how far the content is scrolled) is
+// computed in `paint`, once the width the field really got is known.
 std::optional<Spot> Field::caret() const {
     if (!focused()) return {};
 
     return Spot{spanned(from_, at_), 0};
 }
 
+// The cursor position in characters, counted from the start of the text.
 std::size_t Field::cursor() const {
     std::size_t made = 0;
     std::size_t at = 0;
@@ -96,8 +104,8 @@ std::size_t Field::cursor() const {
     return made;
 }
 
-// Na zewnątrz kursor liczy się **w znakach**, w środku w bajtach. Wołający nie ma powodu wiedzieć
-// ani o UTF-8, ani o kratkach; obie te miary są tu i tak potrzebne, ale należą do pola.
+// Outside, the cursor counts in characters; inside, in bytes. The caller has no reason to know
+// about UTF-8 or about cells; both measures are needed here, but they belong to the field.
 void Field::cursor(std::size_t given) {
     at_ = 0;
 
@@ -107,6 +115,7 @@ void Field::cursor(std::size_t given) {
     guessing();
 }
 
+// Replaces the content, puts the cursor at its end and scrolls back to the start.
 void Field::text(std::string given) {
     text_ = std::move(given);
     at_ = text_.size();
@@ -115,22 +124,23 @@ void Field::text(std::string given) {
     guessing();
 }
 
+// Sets the completion source: given the current text, it returns the full suggested text.
 void Field::guess(std::function<std::string(const std::string& what)> given) {
     guess_ = std::move(given);
 
     guessing();
 }
 
-// Podpowiedź liczy się **przy zmianie treści, nie przy malowaniu**. Wołający ma prawo szukać jej
-// w katalogu albo w historii, a to potrafi kosztować — malowanie dzieje się przy każdej klatce
-// i nie jest miejscem na taką pracę.
+// The suggestion is computed when the content changes, not when painting. The caller may look it up
+// in a directory or in a history, which can be costly, while painting happens on every frame and is
+// no place for such work.
 //
-// Podpowiadamy tylko, gdy kursor stoi **na końcu**: w środku napisu dopisek za kursorem byłby
-// kłamstwem o tym, co się stanie po naciśnięciu klawisza. Podpowiedź, która nie zaczyna się od
-// tego, co już napisano, jest odrzucana — nie ma jak jej dopisać.
+// We suggest only when the cursor stands at the end: in the middle of the text, an addition after
+// the cursor would lie about what a key press will do. A suggestion that does not start with what
+// has already been typed is rejected, because it cannot be appended.
 //
-// Pole ukryte nie podpowiada wcale: podpowiedź pokazuje tekst jawnie, a jej źródło — historia,
-// katalog — mogłoby zdradzić dawny sekret albo jego początek.
+// A concealed field does not suggest at all: a suggestion shows text openly, and its source (a
+// history, a directory) could reveal an old secret or its beginning.
 void Field::guessing() {
     ahead_.clear();
 
@@ -145,20 +155,22 @@ void Field::guessing() {
     ahead_ = whole.substr(text_.size());
 }
 
-// Co wolno wpisać. **Pole liczbowe to jedna lambda, a nie osobny widżet** — Midnight Commander nie
-// ma widżetu liczbowego i liczby wpisuje w zwykłe `input`, więc nie ma czego naśladować. Ta sama
-// furtka służy do zakazu ukośników w nazwie pliku czy do samych cyfr szesnastkowych.
+// What may be typed. A numeric field is one lambda, not a separate widget: Midnight Commander has
+// no numeric widget and enters numbers in an ordinary input, so there is nothing to imitate. The
+// same hook serves to forbid slashes in a file name or to allow only hexadecimal digits.
 void Field::allows(std::function<bool(char32_t one)> given) { allows_ = std::move(given); }
 
-// **Pole ukryte** — na klucze i hasła: każdy znak rysuje się kropką, a podpowiedzi nie ma. Treść
-// zostaje ta sama i `text()` oddaje ją jawnie; ukryty jest tylko ekran. Kopiowania pole i tak
-// nie ma, więc nie ma czego wyłączać.
+// A concealed field, for keys and passwords: every character is drawn as a dot and there are no
+// suggestions. The content stays the same and `text()` returns it in the clear; only the screen is
+// hidden. The field has no copying anyway, so there is nothing to switch off.
 void Field::concealed(bool on) {
     concealed_ = on;
 
     guessing();
 }
 
+// Inserts text at the cursor, as typed or pasted: line breaks become spaces and characters the
+// filter refuses are dropped one by one.
 void Field::insert(const std::string& what) {
     std::string clean;
 
@@ -172,13 +184,14 @@ void Field::insert(const std::string& what) {
 
         if (began == at) break;
 
-        // Pole jest jednowierszowe, więc końce wierszy z wklejenia zamieniamy na odstępy zamiast
-        // wpuszczać do napisu znak, którego nie umiemy narysować.
+        // The field has a single line, so line breaks from a paste become spaces instead of letting
+        // into the text a character we cannot draw.
         const char32_t which = (one == U'\n' || one == U'\r') ? U' ' : one;
 
-        // Odsiew działa **i przy pisaniu, i przy wklejaniu**: wklejone „12ab34" w polu na cyfry
-        // zostawia „1234", zamiast odrzucać całość. Odrzucenie wszystkiego karałoby za jeden zły
-        // znak w środku, a przepuszczenie kłamałoby o tym, co pole przyjmuje.
+        // The filter works both when typing and when pasting: "12ab34" pasted into a digits-only
+        // field leaves "1234" instead of rejecting the whole. Rejecting everything would punish one
+        // bad character in the middle, and letting it through would lie about what the field
+        // accepts.
         if (allows_ && !allows_(which)) continue;
 
         utf8::encode(which, clean);
@@ -192,31 +205,34 @@ void Field::insert(const std::string& what) {
     guessing();
 }
 
+// Draws the visible part of the content (or dots, when concealed) and the dimmed suggestion after
+// it.
 View Field::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
+    // Transparent where nothing is drawn; the same rule and the same reason as in the button.
     made.clear({{0, 0}, seen.size});
 
     const int room = std::max(given.wide, 0);
 
-    // **Przewinięcie liczy się tutaj**, bo dopiero tu znana jest szerokość, którą pole naprawdę
-    // dostało — rodzic ma prawo dać mniej, niż prosiło. To jedyne miejsce, gdzie malowanie zmienia
-    // stan, i dzieje się tak świadomie: inaczej kursor potrafiłby wyjechać poza widoczny kawałek.
+    // The scroll offset is computed here, because only here is the width the field really got
+    // known; the parent may give less than was asked for. This is the only place where painting
+    // changes state, and it does so on purpose: otherwise the cursor could move out of the visible
+    // part.
     if (at_ < from_) from_ = at_;
 
     while (room > 0 && spanned(from_, at_) >= room) from_ = after(text_, from_);
 
     const Skin& how = skin();
 
-    // **Podkreślenie nie jest już tutaj** — siedzi we wbudowanej skórce, w roli `talcite.input`.
-    // W Midnight Commanderze pole wyróżnia sam kolor tła, więc gdy dojdą barwy, wystarczy podmienić
-    // wpis w skórce i z kodu nie ubędzie ani nie przybędzie ani jedna linijka.
+    // The underline comes from the built-in skin, in the `talcite.input` role. In Midnight
+    // Commander a field is marked by its background color alone, so once colors arrive it is enough
+    // to replace the skin entry; not a single line of code is added or removed.
     const Style look = how.style(enabled() ? role() : role() + ".disabled");
 
     made.fill({{-seen.at.x, -seen.at.y}, {room, 1}}, look);
 
-    // Widoczny kawałek treści, przycięty do szerokości.
+    // The visible part of the content, clipped to the width.
     std::size_t upto = from_;
     int wide = 0;
 
@@ -245,8 +261,8 @@ View Field::paint(Size given, Area seen) {
         made.put({-seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
     }
 
-    // Podpowiedź **wyszarzona**, za treścią, na tyle, ile zostało miejsca. Nie jest częścią napisu
-    // i nie wchodzi do `text()` — dopóki nikt jej nie przyjmie.
+    // The suggestion is dimmed, after the content, as far as room allows. It is not part of the
+    // text and does not enter `text()` until someone accepts it.
     if (!ahead_.empty() && wide < room) {
         const Style dim = Style::merge(look, how.style(role() + ".guess"));
 
@@ -256,32 +272,29 @@ View Field::paint(Size given, Area seen) {
     return made;
 }
 
-// **Enter pole ogłasza jako `SubmitEvent`** — „wpis zatwierdzony" — i nic poza tym nie robi: nie
-// zna okna ani jego przycisków. Kto chce, żeby Enter w polu zatwierdzał formularz, wiesza uchwyt na
-// formularzu (zdarzenie idzie w górę, więc jeden uchwyt obejmuje każde pole) i tam naciska swoje
-// OK. Klawisz bierzemy tylko wtedy, gdy ktoś zdarzenie wziął; inaczej idzie dalej jak dawniej.
-// Dawniej ten komentarz mówił, że samo oddanie Entera zatwierdza dialog — prawdą przestało to być,
-// gdy okno przestało szukać przycisku podstawowego, i aplikacja musiała łatać to po swojemu.
+// Enter is announced by the field as a `SubmitEvent` ("entry confirmed") and the field does nothing
+// more: it knows neither the window nor its buttons. Whoever wants Enter in a field to confirm the
+// form hangs a handler on the form (the event bubbles up, so one handler covers every field) and
+// presses its own OK there. The key is taken only when someone took the event; otherwise it travels
+// on.
 //
-// Esc i klawisze funkcyjne **oddajemy dalej** — to dzięki temu Esc w polu zamyka dialog, jak
-// w Midnight Commanderze. Zwykłe litery bierzemy **zawsze**: bez tego „t" w polu naciskałoby
-// przycisk, który ma tę literę w klawiszach aktywnych.
+// Esc and function keys are passed on, which is how Esc in a field closes the dialog, as in
+// Midnight Commander. Ordinary letters are always taken: otherwise a "t" typed in a field would
+// press a button that has that letter among its hotkeys.
 //
-// Tab bierzemy **tylko wtedy, gdy jest co uzupełnić**. W innym razie oddajemy go dalej i ognisko
-// przechodzi do następnego — tak samo rozstrzygają to powłoki.
+// Tab is never taken, so it always moves focus to the next widget.
 bool Field::handle(KeyEvent& what) {
     if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
     switch (what.key().code()) {
-        // **Taba nie bierzemy.** Dobierał całą podpowiedź, ale tylko wtedy, gdy podpowiedź była —
-        // więc ten sam klawisz raz przechodził do następnego widżetu, a raz nie, zależnie od
-        // treści pola. Klawisz wędrówki nie może znikać zależnie od zawartości. Dobieranie
-        // zostaje pod strzałką w prawo, która jest ruchem po własnej treści i niczego nie zabiera.
+        // Tab is not taken here. A navigation key must not disappear depending on the field's
+        // content, so completing the suggestion stays under the right arrow, which moves within the
+        // field's own content and takes nothing away.
 
         case Code::right:
-            // Na końcu treści strzałka w prawo **dobiera jedną literę podpowiedzi**.
+            // At the end of the content, the right arrow takes one letter of the suggestion.
             if (at_ == text_.size() && !ahead_.empty()) {
                 const std::size_t much = after(ahead_, 0);
 
@@ -341,14 +354,15 @@ bool Field::handle(KeyEvent& what) {
 
     utf8::encode(one, said);
 
-    // Znak odsiany **połykamy**, a nie oddajemy wyżej. Klawisz był skierowany do pola i to, że pole
-    // go nie chce, nie znaczy, że ma go dostać ktoś inny — inaczej „t" odrzucone w polu na cyfry
-    // naciskałoby w dialogu przycisk „Tak".
+    // A filtered-out character is swallowed, not passed up. The key was meant for the field, and
+    // the field not wanting it does not mean someone else should get it; otherwise a "t" rejected
+    // in a digits-only field would press the "Yes" button in a dialog.
     insert(said);
 
     return true;
 }
 
+// A paste goes into the text through the same filter as typing.
 bool Field::handle(PasteEvent& what) {
     if (!enabled()) return false;
 
@@ -357,8 +371,8 @@ bool Field::handle(PasteEvent& what) {
     return true;
 }
 
-// Klik stawia kursor tam, gdzie kliknięto, i bierze ognisko. Kolumnę przeliczamy tą samą miarą,
-// którą maluje `paint` — inaczej kursor lądowałby obok miejsca, w które celowano.
+// A click puts the cursor where it landed and takes focus. The column is converted with the same
+// measure that `paint` uses; otherwise the cursor would land next to the spot that was aimed at.
 bool Field::handle(ClickEvent& what) {
     if (!enabled()) return true;
 
@@ -375,9 +389,7 @@ bool Field::handle(ClickEvent& what) {
 
         if (wide + much > wanted) break;
 
-        // Bez postępu przerywamy — ten sam strażnik, co przy każdym innym przejściu po napisie.
-        // Wcześniej stało tu porównanie `next == at` **po** przypisaniu, czyli warunek zawsze
-        // prawdziwy, a właściwe zabezpieczenie nie istniało.
+        // Stop when there is no progress; the same guard as in every other walk over the text.
         if (next == at) break;
 
         wide += much;

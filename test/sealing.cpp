@@ -24,25 +24,28 @@
 
 using namespace talcite;
 
-// **Uzgodnienie i kanał szyfrowany** (S1 w twa). Rdzeń talcite nie linkuje adapterów, więc szyfry
-// daje tu atrapa, która **nie jest kryptografią** i nie udaje, że nią jest: Diffie-Hellman w ciele
-// modulo 2^61−1 i „pieczęć" z mieszania splitmix i FNV. Atrapa ma tylko te własności, których
-// sprawdzają próby — obie strony dochodzą do tego samego sekretu, inny klucz albo zmieniony bajt
-// łamie pieczęć — a prawdziwe X25519 i AES-GCM sprawdzają wektory w talcite-adapters.
+// The handshake and the encrypted channel. The talcite core does not link the adapters, so the
+// ciphers here come from a fake that is not cryptography and does not pretend to be: Diffie-Hellman
+// in the field modulo 2^61−1 and a "seal" made by mixing splitmix and FNV. The fake has only the
+// properties the trials check (both sides reach the same secret, another key or a changed byte
+// breaks the seal), and the real X25519 and AES-GCM are checked against vectors in
+// talcite-adapters.
 //
-// Kanał sprawdzamy na atrapie uzgodnienia ze stałymi kluczami, więc te próby biegną wszędzie.
-// Drogę z długim kluczem liczy HKDF z systemowych skrótów — tam, gdzie system ich nie daje, jej
-// próby pomijają się tak samo jak próby skrótów.
+// The channel is checked on a fake handshake with fixed keys, so these trials run everywhere. The
+// long-key path is computed by HKDF from the system's digests; where the system does not provide
+// them, its trials are skipped just like the digest trials.
 namespace {
 
 const net::Patience soon{4000};
 
 constexpr std::uint64_t prime = (std::uint64_t{1} << 61) - 1;
 
+// The product of two numbers modulo `prime`.
 std::uint64_t times(std::uint64_t one, std::uint64_t two) {
     return static_cast<std::uint64_t>((static_cast<unsigned __int128>(one) * two) % prime);
 }
 
+// `base` raised to `exponent` modulo `prime`, by square and multiply.
 std::uint64_t power(std::uint64_t base, std::uint64_t exponent) {
     std::uint64_t made = 1;
 
@@ -55,6 +58,7 @@ std::uint64_t power(std::uint64_t base, std::uint64_t exponent) {
     return made;
 }
 
+// The value as 32 bytes, little-endian in the first eight and zero in the rest.
 Bytes spread(std::uint64_t value) {
     Bytes made(32);
 
@@ -63,6 +67,8 @@ Bytes spread(std::uint64_t value) {
     return made;
 }
 
+// The value back from the 32 bytes made by `spread`, or nothing when the length is wrong or a byte
+// past the eighth is not zero.
 std::optional<std::uint64_t> gathered(const Bytes& one) {
     if (one.size() != 32) return std::nullopt;
 
@@ -81,6 +87,7 @@ std::optional<std::uint64_t> gathered(const Bytes& one) {
 
 class Agreeing : public Agreement {
 public:
+    // Takes the private exponent from the first eight bytes of `secret`, kept within [2, prime − 2].
     explicit Agreeing(const Bytes& secret) {
         for (std::size_t at = 0; at < 8 && at < secret.size(); ++at)
             secret_ |= std::to_integer<std::uint64_t>(secret[at]) << (8 * at);
@@ -88,8 +95,11 @@ public:
         secret_ = secret_ % (prime - 3) + 2;
     }
 
+    // The public value, 3 to the power of the secret.
     [[nodiscard]] Bytes mine() const override { return spread(power(3, secret_)); }
 
+    // The shared secret from the other side's public value, or nothing when that value is malformed
+    // or outside [2, prime − 2].
     [[nodiscard]] std::optional<Bytes> shared(const Bytes& theirs) const override {
         const std::optional<std::uint64_t> value = gathered(theirs);
 
@@ -102,6 +112,7 @@ private:
     std::uint64_t secret_ = 0;
 };
 
+// The splitmix64 finalizer: scrambles the state into a well-mixed 64-bit value.
 std::uint64_t mixed(std::uint64_t state) {
     state += 0x9e3779b97f4a7c15ULL;
     state = (state ^ (state >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -110,6 +121,7 @@ std::uint64_t mixed(std::uint64_t state) {
     return state ^ (state >> 31);
 }
 
+// Pours the bytes into the state FNV-style and mixes in their length.
 void poured(std::uint64_t& into, const Bytes& what) {
     for (const std::byte one : what) into = (into ^ std::to_integer<std::uint64_t>(one)) * 0x100000001b3ULL;
 
@@ -118,14 +130,18 @@ void poured(std::uint64_t& into, const Bytes& what) {
 
 class Ciphers : public CipherProvider {
 public:
+    // The provider name that the seam reports.
     [[nodiscard]] std::string_view name() const override { return "fake ciphers"; }
 
+    // An agreement with a random ephemeral secret.
     [[nodiscard]] std::unique_ptr<Agreement> agreement() override { return std::make_unique<Agreeing>(random(8)); }
 
+    // An agreement with the given secret.
     [[nodiscard]] std::unique_ptr<Agreement> agreement(const Bytes& secret) override {
         return std::make_unique<Agreeing>(secret);
     }
 
+    // The plain text XOR-ed with the key stream, followed by a 16-byte stamp over everything.
     [[nodiscard]] Bytes sealed(const Bytes& key, const Bytes& nonce, const Bytes& extra, const Bytes& plain) override {
         Bytes made = streamed(key, nonce, plain);
         const Bytes stamp = stamped(key, nonce, extra, made);
@@ -135,6 +151,8 @@ public:
         return made;
     }
 
+    // The plain text back, or nothing when the sealed text is shorter than the stamp or the stamp
+    // does not match.
     [[nodiscard]] std::optional<Bytes> opened(const Bytes& key, const Bytes& nonce, const Bytes& extra,
                                               const Bytes& sealed) override {
         if (sealed.size() < 16) return std::nullopt;
@@ -147,10 +165,12 @@ public:
     }
 
 private:
+    // Throws unless the key has 32 bytes and the nonce 12, as a real AEAD would require.
     static void sized(const Bytes& key, const Bytes& nonce) {
         if (key.size() != 32 || nonce.size() != 12) throw Trouble{"fake ciphers want a 32-byte key and a 12-byte nonce"};
     }
 
+    // The bytes XOR-ed with a key stream derived from the key and the nonce; the same call undoes it.
     static Bytes streamed(const Bytes& key, const Bytes& nonce, const Bytes& what) {
         sized(key, nonce);
 
@@ -167,6 +187,7 @@ private:
         return made;
     }
 
+    // A 16-byte stamp over the key, the nonce, the extra data and the body.
     static Bytes stamped(const Bytes& key, const Bytes& nonce, const Bytes& extra, const Bytes& body) {
         sized(key, nonce);
 
@@ -187,36 +208,42 @@ private:
     }
 };
 
+// A seam with the fake ciphers.
 Seam<CipherProvider> ciphers() { return Seam<CipherProvider>{std::make_shared<Ciphers>()}; }
 
-// Atrapa z ustalonym sekretem efemerycznym — żeby próba mogła policzyć wiadomości i klucze sama,
-// z opisu drogi, i porównać bajt w bajt.
+// A fake with a fixed ephemeral secret, so that a trial can compute the messages and keys itself,
+// from the description of the protocol, and compare them byte for byte.
 class Fixed : public Ciphers {
 public:
+    // A provider whose ephemeral secret is always `secret`.
     explicit Fixed(std::byte secret) : secret_(secret) {}
 
+    // An agreement with the fixed secret instead of a random one.
     [[nodiscard]] std::unique_ptr<Agreement> agreement() override { return std::make_unique<Agreeing>(Bytes{secret_}); }
 
 private:
     std::byte secret_;
 };
 
+// A seam with the fake ciphers whose ephemeral secret is fixed to `secret`.
 Seam<CipherProvider> fixed(int secret) {
     return Seam<CipherProvider>{std::make_shared<Fixed>(static_cast<std::byte>(secret))};
 }
 
-// Atrapa uzgodnienia: dzwoniący pyta „talcite?", odbierający odpowiada „talcite!", klucze stałe.
-// Cokolwiek innego to odmowa — tak sprawdzamy, że nieudane uzgodnienie zamyka kanał.
+// A fake handshake: the caller asks "talcite?", the answerer replies "talcite!", the keys are fixed.
+// Anything else is a refusal; that is how we check that a failed handshake closes the channel.
 const Bytes calling_key(32, std::byte{'c'});
 const Bytes answering_key(32, std::byte{'a'});
 
 class Greeting : public net::Handshake {
 public:
+    // A handshake for the given side, with the fixed keys in that side's order.
     explicit Greeting(net::Side side) : side_(side) {
         keys_ = side == net::Side::calling ? net::Keying{calling_key, answering_key}
                                            : net::Keying{answering_key, calling_key};
     }
 
+    // The caller's question at the start, the answerer's reply after hearing it, and nothing else.
     std::optional<Bytes> said() override {
         if (side_ == net::Side::calling && step_ == 0) {
             step_ = 1;
@@ -234,6 +261,7 @@ public:
         return std::nullopt;
     }
 
+    // Accepts only the expected message for the side and step; anything else throws.
     void heard(const Bytes& one) override {
         if (side_ == net::Side::answering && step_ == 0 && one == bytes("talcite?")) {
             step_ = 1;
@@ -251,8 +279,10 @@ public:
         throw Trouble{"fake handshake heard something else"};
     }
 
+    // Whether the exchange is finished.
     [[nodiscard]] bool ready() const override { return ready_; }
 
+    // The fixed keys of this side.
     [[nodiscard]] const net::Keying& keys() const override { return keys_; }
 
 private:
@@ -262,9 +292,11 @@ private:
     bool ready_ = false;
 };
 
-// Uzgodnienie, które nigdy się nie kończy: co turę mówi i słucha — kanał ma je przerwać sam.
+// A handshake that never ends: every turn it speaks and listens, and the channel has to stop it by
+// itself.
 class Endless : public net::Handshake {
 public:
+    // Says something once after each thing it hears.
     std::optional<Bytes> said() override {
         if (spoke_) return std::nullopt;
 
@@ -273,10 +305,13 @@ public:
         return bytes("jeszcze");
     }
 
+    // Hearing anything makes it ready to speak again.
     void heard(const Bytes&) override { spoke_ = false; }
 
+    // Never ready.
     [[nodiscard]] bool ready() const override { return false; }
 
+    // Throws, since there are never any keys.
     [[nodiscard]] const net::Keying& keys() const override { throw Trouble{"never ready"}; }
 
 private:
@@ -288,6 +323,7 @@ struct Pair {
     net::Stream calling;
 };
 
+// Accepts one connection on `gate` while connecting to it, and returns both ends.
 Pair joined(const net::Listener& gate) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
@@ -298,6 +334,7 @@ Pair joined(const net::Listener& gate) {
     return Pair{std::move(answering), std::move(calling)};
 }
 
+// A listener on an IPv4 loopback address with a port chosen by the system.
 net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
 struct Ends {
@@ -305,6 +342,7 @@ struct Ends {
     net::Channel calling;
 };
 
+// Two channels opened with the fake handshake and fake ciphers over a fresh connection.
 Ends greeted(const net::Listener& gate) {
     Pair pair = joined(gate);
 
@@ -316,6 +354,7 @@ Ends greeted(const net::Listener& gate) {
     return Ends{answering.await(), calling.await()};
 }
 
+// The 4-byte big-endian length that starts a frame.
 Bytes header(std::size_t much) {
     Bytes made(4);
 
@@ -324,6 +363,7 @@ Bytes header(std::size_t much) {
     return made;
 }
 
+// The bytes with their length header in front, as an unencrypted handshake frame.
 Bytes frame(const Bytes& what) {
     Bytes made = header(what.size());
 
@@ -332,6 +372,7 @@ Bytes frame(const Bytes& what) {
     return made;
 }
 
+// The 12-byte nonce for a frame counter: four zero bytes, then the counter big-endian.
 Bytes counted(std::uint64_t counter) {
     Bytes made(12);
 
@@ -340,7 +381,7 @@ Bytes counted(std::uint64_t counter) {
     return made;
 }
 
-// Ramka danych tak, jak ją pieczętuje kanał — tak udaje drugą stronę surowy strumień.
+// A data frame as the channel seals it; this is how the raw stream plays the other side.
 Bytes sealed_frame(const Bytes& key, std::uint64_t counter, const Bytes& plain) {
     Ciphers one;
 
@@ -353,7 +394,7 @@ Bytes sealed_frame(const Bytes& key, std::uint64_t counter, const Bytes& plain) 
     return made;
 }
 
-// Surowy strumień odbiera wszystko, aż do końca — tyle, ile mu wysłano przed zamknięciem.
+// The raw stream takes in everything, up to the end: as much as was sent to it before closing.
 Bytes drained(const net::Stream& one) {
     Bytes made;
 
@@ -366,12 +407,14 @@ Bytes drained(const net::Stream& one) {
     }
 }
 
-// Surowy odbierający: przyjmuje „talcite?", odpowiada „talcite!" — dalej rozmawia ramkami.
+// A raw answerer: it takes "talcite?", replies "talcite!", and then talks in frames.
 struct Raw {
     net::Stream raw;
     net::Channel calling;
 };
 
+// Opens the calling channel against a raw stream that plays the answering side of the fake
+// handshake, and returns both.
 Raw half(const net::Listener& gate) {
     Pair pair = joined(gate);
 
@@ -391,6 +434,7 @@ Raw half(const net::Listener& gate) {
     return Raw{std::move(pair.answering), calling.await()};
 }
 
+// Whether `what` occurs anywhere in `in`.
 bool found(const Bytes& in, const Bytes& what) {
     for (std::size_t at = 0; at + what.size() <= in.size(); ++at)
         if (Bytes(in.begin() + static_cast<std::ptrdiff_t>(at), in.begin() + static_cast<std::ptrdiff_t>(at + what.size())) ==
@@ -400,17 +444,19 @@ bool found(const Bytes& in, const Bytes& what) {
     return false;
 }
 
+// Whether this system lacks the digests; if so, prints a note that the trial is skipped.
 bool missing() {
     if (summing()) return false;
 
-    std::cout << "        ten system nie daje skrótów — próba pominięta\n";
+    std::cout << "        this system provides no digests; trial skipped\n";
 
     return true;
 }
 
+// The shared long key of the long-key handshake trials.
 Bytes long_key() { return Bytes(32, std::byte{7}); }
 
-// Uzgodnienie w pamięci: wiadomości z jednej strony prosto do drugiej, bez sieci.
+// A handshake in memory: messages from one side straight to the other, without a network.
 void talked(net::Handshake& calling, net::Handshake& answering) {
     for (int turn = 0; turn < 8 && !(calling.ready() && answering.ready()); ++turn) {
         while (const std::optional<Bytes> one = calling.said()) answering.heard(*one);
@@ -420,7 +466,7 @@ void talked(net::Handshake& calling, net::Handshake& answering) {
 
 }
 
-TRIAL("Kanał: wiadomości idą w obie strony, po kolei i bez zmian") {
+TRIAL("Channel: messages go both ways, in order and unchanged") {
     const net::Listener gate = standing();
     const Ends ends = greeted(gate);
 
@@ -437,7 +483,7 @@ TRIAL("Kanał: wiadomości idą w obie strony, po kolei i bez zmian") {
     ought(ends.calling.receive(soon).await() == bytes("odpowiedź"));
 }
 
-TRIAL("Kanał: wiele wysłań naraz dochodzi w kolejności") {
+TRIAL("Channel: many sends at once arrive in order") {
     const net::Listener gate = standing();
     const Ends ends = greeted(gate);
 
@@ -450,7 +496,7 @@ TRIAL("Kanał: wiele wysłań naraz dochodzi w kolejności") {
     for (auto& one : sending) one.await();
 }
 
-TRIAL("Kanał: na drucie nie ma treści jawnej") {
+TRIAL("Channel: there is no plain text on the wire") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -466,7 +512,7 @@ TRIAL("Kanał: na drucie nie ma treści jawnej") {
     ought(wire == sealed_frame(calling_key, 0, secret));
 }
 
-TRIAL("Kanał: ramka od drugiej strony otwiera się kluczem odbierania") {
+TRIAL("Channel: a frame from the other side opens with the receiving key") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -477,7 +523,7 @@ TRIAL("Kanał: ramka od drugiej strony otwiera się kluczem odbierania") {
     ought(raw.calling.receive(soon).await() == bytes("dwa"));
 }
 
-TRIAL("Kanał: podrobiona ramka to odmowa i zamknięcie") {
+TRIAL("Channel: a forged frame is a refusal and a close") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -492,7 +538,7 @@ TRIAL("Kanał: podrobiona ramka to odmowa i zamknięcie") {
     ought(drained(raw.raw).empty());
 }
 
-TRIAL("Kanał: powtórzona albo przestawiona ramka to odmowa") {
+TRIAL("Channel: a repeated or reordered frame is a refusal") {
     {
         const net::Listener gate = standing();
         Raw raw = half(gate);
@@ -515,7 +561,7 @@ TRIAL("Kanał: powtórzona albo przestawiona ramka to odmowa") {
     }
 }
 
-TRIAL("Kanał: ramka zapieczętowana kluczem tej samej strony to odmowa") {
+TRIAL("Channel: a frame sealed with the same side's key is a refusal") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -524,7 +570,7 @@ TRIAL("Kanał: ramka zapieczętowana kluczem tej samej strony to odmowa") {
     threw(raw.calling.receive(soon).await());
 }
 
-TRIAL("Kanał: zapowiedź za długiej ramki to odmowa") {
+TRIAL("Channel: announcing a too long frame is a refusal") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -535,7 +581,7 @@ TRIAL("Kanał: zapowiedź za długiej ramki to odmowa") {
     ought(drained(raw.raw).empty());
 }
 
-TRIAL("Kanał: najdłuższa wiadomość przechodzi, dłuższa odmawia") {
+TRIAL("Channel: the longest message passes, a longer one is refused") {
     const net::Listener gate = standing();
     const Ends ends = greeted(gate);
 
@@ -550,7 +596,7 @@ TRIAL("Kanał: najdłuższa wiadomość przechodzi, dłuższa odmawia") {
     threw(ends.calling.send(Bytes((4u << 20) + 1), soon).await());
 }
 
-TRIAL("Kanał: koniec strumienia w środku ramki to kłopot") {
+TRIAL("Channel: the end of the stream in the middle of a frame is trouble") {
     const net::Listener gate = standing();
     Raw raw = half(gate);
 
@@ -562,9 +608,9 @@ TRIAL("Kanał: koniec strumienia w środku ramki to kłopot") {
     threw(raw.calling.receive(soon).await());
 }
 
-// Odmowa od razu, nie po upływie cierpliwości — druga strona milczy, więc tylko sprawdzenie na
-// wejściu może skończyć sprawę szybko.
-TRIAL("Kanał: bez uzgodnienia albo szyfru odmawia od razu") {
+// A refusal at once, not after the patience runs out: the other side is silent, so only the check
+// on entry can end the matter quickly.
+TRIAL("Channel: without a handshake or a cipher it refuses at once") {
     const net::Listener gate = standing();
     const net::Patience long_enough{60000};
     const auto started = std::chrono::steady_clock::now();
@@ -585,7 +631,7 @@ TRIAL("Kanał: bez uzgodnienia albo szyfru odmawia od razu") {
     ought(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
 }
 
-TRIAL("Kanał: nieudane uzgodnienie zamyka strumień") {
+TRIAL("Channel: a failed handshake closes the stream") {
     const net::Listener gate = standing();
     Pair pair = joined(gate);
 
@@ -609,11 +655,11 @@ TRIAL("Kanał: nieudane uzgodnienie zamyka strumień") {
     ought(drained(pair.answering).empty());
 }
 
-TRIAL("Kanał: uzgodnienie bez końca przerywa się samo") {
+TRIAL("Channel: an endless handshake stops by itself") {
     const net::Listener gate = standing();
     Pair pair = joined(gate);
 
-    // Cierpliwość długa — przerwać ma limit tur, a nie upływ czasu.
+    // A long patience: the limit on turns has to stop it, not the passing of time.
     const net::Patience long_enough{60000};
     const auto started = std::chrono::steady_clock::now();
 
@@ -627,7 +673,7 @@ TRIAL("Kanał: uzgodnienie bez końca przerywa się samo") {
     ought(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
 }
 
-TRIAL("Kanał: zamknięty odmawia i nie ma adresu") {
+TRIAL("Channel: a closed one refuses and has no address") {
     const net::Listener gate = standing();
     Ends ends = greeted(gate);
 
@@ -643,7 +689,7 @@ TRIAL("Kanał: zamknięty odmawia i nie ma adresu") {
     threw(ends.answering.receive(soon).await());
 }
 
-TRIAL("Uzgodnienie z długim kluczem: obie strony mają te same klucze, na krzyż") {
+TRIAL("Long-key handshake: both sides have the same keys, crosswise") {
     if (missing()) return;
 
     const auto calling = net::keyed(net::Side::calling, long_key(), "twa 1", ciphers());
@@ -660,11 +706,12 @@ TRIAL("Uzgodnienie z długim kluczem: obie strony mają te same klucze, na krzy�
     ought(!(calling->keys().sending == long_key()));
 }
 
-// Wiadomości i klucze policzone tu wprost z opisu drogi: HKDF-SHA-512 z solą — długim kluczem,
-// sekretem — wynikiem uzgodnienia, treścią — etykietą, kontekstem i obiema wiadomościami e, każde
-// z długością przed sobą; potwierdzenia to HMAC-SHA-256 etykiety strony. Zmiana któregokolwiek
-// szczegółu to inny protokół — dwie wersje twa przestałyby się dogadywać, więc próba ma to widzieć.
-TRIAL("Uzgodnienie z długim kluczem: bajty zgodne z opisem drogi") {
+// Messages and keys computed here straight from the description of the protocol: HKDF-SHA-512 with
+// the long key as the salt, the result of the agreement as the secret, and as the info the label,
+// the context and both e messages, each with its length in front; the confirmations are
+// HMAC-SHA-256 of the side's label. A change to any detail makes a different protocol, and two
+// versions of twa would stop understanding each other, so the trial has to see it.
+TRIAL("Long-key handshake: bytes agree with the description of the protocol") {
     if (missing()) return;
 
     const auto calling = net::keyed(net::Side::calling, long_key(), "twa 1", fixed(5));
@@ -712,7 +759,7 @@ TRIAL("Uzgodnienie z długim kluczem: bajty zgodne z opisem drogi") {
     ought(calling->keys().receiving == part(1));
 }
 
-TRIAL("Uzgodnienie z długim kluczem: trzy wiadomości i nic więcej") {
+TRIAL("Long-key handshake: three messages and nothing more") {
     if (missing()) return;
 
     const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
@@ -751,7 +798,7 @@ TRIAL("Uzgodnienie z długim kluczem: trzy wiadomości i nic więcej") {
     ought(!answering->said());
 }
 
-TRIAL("Uzgodnienie z długim kluczem: za każdym razem klucze świeże") {
+TRIAL("Long-key handshake: fresh keys every time") {
     if (missing()) return;
 
     const auto one = net::keyed(net::Side::calling, long_key(), "twa 1", ciphers());
@@ -766,7 +813,7 @@ TRIAL("Uzgodnienie z długim kluczem: za każdym razem klucze świeże") {
     ought(!(one->keys().sending == three->keys().sending));
 }
 
-TRIAL("Uzgodnienie z długim kluczem: inny klucz albo kontekst to odmowa") {
+TRIAL("Long-key handshake: another key or context is a refusal") {
     if (missing()) return;
 
     Bytes other = long_key();
@@ -793,7 +840,7 @@ TRIAL("Uzgodnienie z długim kluczem: inny klucz albo kontekst to odmowa") {
     }
 }
 
-TRIAL("Uzgodnienie z długim kluczem: zmieniony bajt w każdej wiadomości to odmowa") {
+TRIAL("Long-key handshake: a changed byte in any message is a refusal") {
     if (missing()) return;
 
     for (int which = 0; which < 3; ++which) {
@@ -829,7 +876,7 @@ TRIAL("Uzgodnienie z długim kluczem: zmieniony bajt w każdej wiadomości to od
     }
 }
 
-TRIAL("Uzgodnienie z długim kluczem: krótki klucz, zła długość, zły punkt i zła kolej to odmowa") {
+TRIAL("Long-key handshake: a short key, a wrong length, a bad point and a wrong turn are refusals") {
     if (missing()) return;
 
     threw((void)net::keyed(net::Side::calling, Bytes(31, std::byte{7}), "", ciphers()));
@@ -888,7 +935,7 @@ TRIAL("Uzgodnienie z długim kluczem: krótki klucz, zła długość, zły punkt
     }
 }
 
-TRIAL("Kanał z długim kluczem: przez sieć rozmawia, z innym kluczem nie rusza") {
+TRIAL("Long-key channel: talks over the network, does not start with another key") {
     if (missing()) return;
 
     const net::Listener gate = standing();

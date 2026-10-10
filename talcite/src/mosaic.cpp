@@ -15,18 +15,18 @@ namespace {
 
 constexpr std::size_t bands = 4;
 
-// **Oko waży kanały bardzo różnie** — zielony siedmiokrotnie mocniej niż niebieski. Fork sumuje
-// wariancje surowego RGB i przez to potrafi rozciąć kratkę tam, gdzie liczby są duże, a nie tam,
-// gdzie różnicę widać. Te trzy współczynniki to cały koszt poprawki.
+// The eye weighs the channels very differently: green seven times more than blue. Summing the
+// variances of raw RGB can cut a cell where the numbers are large rather than where the difference
+// is visible. These three coefficients are the whole cost of doing it right.
 constexpr double weights[3] = {0.2126, 0.7152, 0.0722};
 
-// Podkratka liczy się za pokrytą, gdy jest bardziej widoczna niż przezroczysta. Ostrzejszego
-// progu nie ma po co szukać: kratka niesie dwie barwy i żadnej półprzezroczystości nie wyrazi.
+// A subcell counts as covered when it is more visible than transparent. There is no point in a
+// finer threshold: a cell carries two colors and cannot express any translucency.
 constexpr std::uint8_t solid = 128;
 
-// Rozstrzyga remisy na korzyść jednej barwy. **Nie jest regulatorem** — wariancja chodzi w setkach
-// tysięcy, więc pół jednostki znaczy dokładnie tyle, ile ma znaczyć: gdy dwa cięcia są tak samo
-// dobre, wygrywa to bez drugiej barwy.
+// Breaks ties in favor of a single color. It is not a regularizer: the variance runs in the
+// hundreds of thousands, so half a unit means exactly what it should: when two cuts are equally
+// good, the one without a second color wins.
 constexpr double lonely = 0.5;
 
 enum class Family : std::uint8_t { quarters, rows, columns };
@@ -37,13 +37,13 @@ struct Shape {
     std::uint8_t keys;
 };
 
-// Znaki blokowe z Unicode 1.1 — ma je każdy font terminalowy. Ćwiartki opisują wszystkie szesnaście
-// wzorów 2x2; ósemki tną kratkę poziomo i pionowo w ośmiu miejscach.
+// Block characters from Unicode 1.1, which every terminal font has. The quadrants describe all
+// sixteen 2x2 patterns; the eighths cut the cell horizontally and vertically at eight places.
 //
-// **Tablica jest niesymetryczna i taka być musi**: ósemek „górnych" i „prawych" poza połówkami
-// w Block Elements po prostu nie ma — mieszkają dopiero w `U+1FB00`, czyli tam, gdzie już są
-// sekstanty. Wzory dopełniające i tak wychodzą, bo dopełnienie ósemki dolnej jest ósemką dolną
-// o innej wysokości, a atrament z papierem zamieniają się rolami same.
+// The table is asymmetric and has to be: apart from the halves, there are no "upper" and "right"
+// eighths in Block Elements; they live only at U+1FB00, where the sextants already are. The
+// complementary patterns come out anyway, because the complement of a lower eighth is a lower
+// eighth of another height, and ink and paper swap roles by themselves.
 constexpr std::array<Shape, 28> shapes{{
     {0x2598, Family::quarters, 0b0001},
     {0x259D, Family::quarters, 0b0010},
@@ -77,9 +77,9 @@ constexpr std::array<Shape, 28> shapes{{
     {0x2589, Family::columns, 0b01111111},
 }};
 
-// Sekstant z sześciu bitów, liczonych od lewej-górnej. Cztery wzory mieszkają poza swoim blokiem:
-// pustka i pełnia to spacja i `█`, a same kolumny to `▌` i `▐` — dlatego `U+1FB00` liczy sześćdziesiąt
-// znaków, a nie sześćdziesiąt cztery, i dlatego trzeba te trzy dziury po drodze przeskoczyć.
+// The sextant for six bits, counted from the top left. Four patterns live outside their block:
+// empty and full are the space and █, and the bare columns are ▌ and ▐. That is why the block at
+// U+1FB00 has sixty characters, not sixty-four, and why the holes on the way have to be skipped.
 [[nodiscard]] char32_t sextant(unsigned bits) {
     if (bits == 0) return U' ';
     if (bits == 63) return U'█';
@@ -94,15 +94,16 @@ constexpr std::array<Shape, 28> shapes{{
     return static_cast<char32_t>(0x1FB00 + at);
 }
 
-// Kupka statystyk. Trzyma **dwie sumy naraz i to jest rozmyślne**: średnią liczymy w świetle
-// liniowym, bo tam mieszka jasność, a wariancję na bajtach sRGB, bo tam mieszka wrażenie. Każda
-// z nich jest właściwa do swojej roboty i żadna do obu.
+// A heap of statistics. It keeps two sums at once, deliberately: the mean is computed in linear
+// light, because that is where brightness lives, and the variance on sRGB bytes, because that is
+// where perception lives. Each is right for its own job and neither for both.
 struct Heap {
     double straightly[3] = {};
     double plain[3] = {};
     double squares[3] = {};
     int taken = 0;
 
+    // Adds the statistics of another heap to this one.
     void operator+=(const Heap& other) {
         for (std::size_t band = 0; band < 3; ++band) {
             straightly[band] += other.straightly[band];
@@ -113,6 +114,7 @@ struct Heap {
         taken += other.taken;
     }
 
+    // The perceptually weighted variance of the heap: how far it is from a single color.
     [[nodiscard]] double cost() const {
         if (taken == 0) return 0.0;
 
@@ -127,6 +129,7 @@ struct Heap {
         return made;
     }
 
+    // The mean color of the heap, averaged in linear light and bent back to sRGB.
     [[nodiscard]] Color tone() const {
         if (taken == 0) return {};
 
@@ -135,6 +138,7 @@ struct Heap {
     }
 };
 
+// The heap of a single pixel.
 [[nodiscard]] Heap gathered(const std::byte* at) {
     Heap made;
 
@@ -154,6 +158,7 @@ struct Heap {
     return made;
 }
 
+// A style with only the given foreground and background.
 [[nodiscard]] Style dressed(Color foreground, Color background) {
     Style made{};
 
@@ -163,18 +168,18 @@ struct Heap {
     return made;
 }
 
-// Kratka w pełni pokryta: szukamy cięcia, po którym obie połówki są najbardziej jednolite. To jest
-// najlepszy pomysł forka i zostaje — kratka niesie dwie barwy, więc pytanie brzmi dokładnie tak.
+// A fully covered cell: we look for the cut after which both parts are most uniform. A cell
+// carries two colors, so this is exactly the right question.
 struct Split {
     char32_t glyph = U' ';
     Heap kept;
     Heap rest;
 };
 
+// The best block-character cut of a fully covered 8x8 cell, with the statistics of both parts.
 [[nodiscard]] Split blocked(const std::array<Heap, 64>& parts, const Heap& whole) {
-    // Cztery ćwiartki, osiem wierszy i osiem kolumn — zbierane **raz na kratkę**, nie raz na
-    // kształt. Bez tego dwadzieścia osiem kształtów przechodziłoby po sześćdziesięciu czterech
-    // podkratkach każdy.
+    // Four quadrants, eight rows and eight columns, gathered once per cell, not once per shape.
+    // Otherwise each of the twenty-eight shapes would walk over all sixty-four subcells.
     std::array<Heap, 4> quarters;
     std::array<Heap, 8> rows;
     std::array<Heap, 8> columns;
@@ -230,10 +235,11 @@ struct Split {
     return made;
 }
 
-// Sekstanty stać na **przegląd wyczerpujący** — sześćdziesiąt trzy wzory po sześć podkratek to
-// trzysta osiemdziesiąt działań na kratkę. Wyczerpujący znaczy optymalny, więc żadna heurystyka
-// nie ma tu czego poprawiać; sprytniejszy dobór kandydatów przez sortowanie po jasności gubiłby
-// krawędź czerwone-zielone o równej jasności, a nic by nie oszczędził.
+// The best sextant cut of a fully covered 2x3 cell. Sextants can afford an exhaustive search:
+// sixty-three patterns of six subcells are about three hundred eighty operations per cell.
+// Exhaustive means optimal, so no heuristic has anything to improve here; a cleverer choice of
+// candidates by sorting on brightness would lose a red-green edge of equal brightness and save
+// nothing.
 [[nodiscard]] Split sexted(const std::array<Heap, 64>& parts, const Heap& whole) {
     Split made;
 
@@ -270,8 +276,9 @@ struct Split {
     return made;
 }
 
-// Kratka pokryta częściowo: kształt idzie **za sylwetką, nie za barwą**. Wycięty brzeg ma wyjść
-// tam, gdzie naprawdę jest, a barwa i tak jest jedna, bo widocznych podkratek jest garstka.
+// The glyph for a partly covered cell: the shape follows the silhouette, not the color. The cut
+// edge has to come out where it really is, and there is only one color anyway, because the
+// visible subcells are a handful.
 [[nodiscard]] char32_t shaped(const std::array<bool, 64>& covered, int filled, ui::Blocks kind) {
     if (kind >= ui::Blocks::sextants) {
         unsigned bits = 0;
@@ -316,7 +323,8 @@ struct Split {
             held += weight;
         }
 
-        // Różnica symetryczna: ile podkratek kształt zajmuje nadmiarowo plus ile pokrytych pomija.
+        // The symmetric difference: how many subcells the shape covers in excess plus how many
+        // covered ones it misses.
         const int wrong = held + filled - 2 * shared;
 
         if (wrong >= wrongest) continue;
@@ -328,23 +336,28 @@ struct Split {
     return made;
 }
 
-// Znaki ASCII od najrzadszego do najgęstszego — ile z ośmiu podkratek pokrywa tusz.
+// ASCII characters from the sparsest to the densest, by how many of the eight subcells the ink
+// covers.
 constexpr std::string_view ramp = ".:-=+*%#";
 
-// Tusz w czarno-białym: terminal nie ma barw, więc zostaje sama sylwetka. Obraz z przezroczystością
-// (logo, ikona) ma ją w kanale alfa — tuszem jest to, co widać. Obraz pełny (zdjęcie) sylwetki nie
-// ma, więc tuszem jest to, co jaśniejsze od średniej jasności obrazu.
+// Ink in monochrome: the terminal has no colors, so only the silhouette remains. An image with
+// transparency (a logo, an icon) has it in the alpha channel, and the ink is what is visible. An
+// opaque image (a photo) has no silhouette, so the ink is what is brighter than the image's mean
+// lightness.
 struct Ink {
     bool clear = false;
     double middle = 0.0;
 };
 
+// The perceptual lightness of a pixel, in linear light.
 [[nodiscard]] double lightness(const std::byte* at) {
     const std::array<double, 256>& tone = straight();
 
     return weights[0] * tone[sample(at[0])] + weights[1] * tone[sample(at[1])] + weights[2] * tone[sample(at[2])];
 }
 
+// Decides what counts as ink in a monochrome picture: whether the image has any transparency,
+// and its mean lightness.
 [[nodiscard]] Ink inked(const Bytes& bytes) {
     Ink made;
 
@@ -365,33 +378,36 @@ struct Ink {
 
 }
 
-// Ile podkratek przypada na kratkę. Znaki blokowe potrzebują ośmiu na osiem, bo tyle miejsc tnie
-// ósemka; sekstanty dwóch na trzy; bez Unicode dwóch na cztery — tyle, ile liczy drabina znaków ASCII.
+// How many subcells make up one cell. Block characters need eight by eight, because an eighth
+// cuts at that many places; sextants two by three; without Unicode two by four, as many as the
+// ramp of ASCII characters counts.
 //
-// **Oktanty ścinamy do sekstantów i to jest świadome.** Znaków jest dwieście trzydzieści, a nie
-// dwieście pięćdziesiąt sześć — dwadzieścia sześć wzorów mieszka w Block Elements i w `U+1FB00` —
-// więc odwzorowanie jest tablicą, a nie wzorem. Tablicy nie wolno zgadywać: pomyłka to śmieci na
-// ekranie, a nie gorszy obraz. Wejdą osobno, gdy dojdziemy do właściwego wykazu.
+// Octants are cut down to sextants deliberately. There are two hundred thirty characters, not two
+// hundred fifty-six, because twenty-six patterns live in Block Elements and at U+1FB00, so the
+// mapping is a table, not a formula. The table must not be guessed: a mistake means garbage on
+// the screen, not a worse picture. Octants can come separately, with a verified table.
 ui::Size grain(ui::Blocks kind, bool unicode) {
     if (!unicode) return {2, 4};
 
     return kind >= ui::Blocks::sextants ? ui::Size{2, 3} : ui::Size{8, 8};
 }
 
-// Obrazek musi być **już przeskalowany** do siatki podkratek — liczbę kratek wyprowadzamy z jego
-// rozmiaru, więc nie da się podać jednego, a mieć na myśli drugie.
+// Draws one still of a picture into the view as a mosaic of characters, starting at the given
+// spot. The picture must already be scaled to the grid of subcells: the number of cells is derived
+// from its size, so one cannot be given while the other is meant.
 //
-// Przezroczystość wpada tu wprost w model biblioteki: kratka bez ani jednej pokrytej podkratki
-// wychodzi jako `bare()`, czyli **widać przez nią tło rodzica**. Kratka pokryta częściowo dostaje
-// papier od wołającego, gdy ten go poda (tło roli obrazu w skórce); bez niego idzie **samym pierwszym
-// planem** (`View::foreground`) — tło weźmie przy wklejaniu z tego, co leży pod spodem. Dawniej zostawało
-// przezroczyste aż do terminala, który malował tam swoje tło: czarne kratki wokół logo w oknie.
+// Transparency fits straight into the library's model: a cell without a single covered subcell
+// comes out as `bare()`, so the parent's background shows through it. A partly covered cell gets
+// the paper from the caller when one is given (the background of the image role in the skin);
+// without it, it goes as foreground only (`View::foreground`) and takes its background, when
+// pasted, from what lies underneath. Left transparent all the way to the terminal, it would get
+// the terminal's own background: black cells around a logo in a window.
 //
-// **Najlepiej, jak się da.** W pełnych kolorach i w palecie kratka niesie dwie barwy, a do palety
-// terminala sprowadza je dopiero wypisanie. W czarno-białym barw nie ma, więc kratka dwubarwna
-// straciłaby tło i zrobiłaby dziurę — rysujemy samą sylwetkę tuszu (`Ink`). Bez Unicode nie ma znaków
-// blokowych: kratka to znak z drabiny ASCII według pokrycia, a w kolorze kratka pełna to tło w barwie
-// obrazu.
+// As well as possible: in full color and in a palette a cell carries two colors, and only the
+// output reduces them to the terminal's palette. In monochrome there are no colors, so a
+// two-color cell would lose its background and make a hole; only the ink silhouette (`Ink`) is
+// drawn. Without Unicode there are no block characters: a cell is a character from the ASCII ramp
+// by coverage, and in color a full cell is a background in the image's color.
 void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Blocks kind,
            const Style& under, Colors colors, bool unicode) {
     if (!one.held() || still >= one.stills().size()) return;

@@ -29,17 +29,33 @@
 #include <unistd.h>
 #endif
 
+// The system side of the network layer. inside.hpp picks the backend, so that every file agrees on
+// the same one: IOCP on Windows, epoll on Linux, and the portable poll path elsewhere.
+// `TALCITE_POLL` forces the portable path everywhere; without it the fallback backend could not be
+// tested on a machine that happens to have something better.
+//
+// A `Doing` is a request waiting in the hub. The hub performs its step (it alone knows how to do
+// that on the given system) and the request only receives the result: so many bytes, this error
+// number. Reading, accepting and sending therefore know nothing about poll, epoll or IOCP, and a
+// new backend is added without touching any of them.
+//
+// `withdraw` (defined by each backend) removes exactly one request, without touching the socket or
+// the other direction. It is not `forget`, which removes the whole socket, breaks the conversation
+// and drops everything that was pending on it. True means the request really left and neither
+// `done` nor `late` will run on it any more; only then may the caller clean up after itself.
 namespace talcite::net {
 
-// Ile bajtów wolno podać jednym wywołaniem tam, gdzie system bierze długość jako int.
+// The largest byte count that may be passed in one call where the system takes the length as an
+// int.
 constexpr int brimful = 1 << 30;
 
 
 namespace {
 
-// Adres talcite ma szesnaście gołych bajtów, a system chce swojej struktury. Zamiana jest w jednym
-// miejscu, żeby nikt jej nie przepisywał po swojemu — a przy okazji tylko ten plik wie, jak
-// wygląda sockaddr.
+// A talcite address holds sixteen raw bytes, while the system wants its own structure. The
+// conversion lives in one place so that nobody rewrites it their own way, and so that only this
+// file knows what a sockaddr looks like. Returns the length of the filled structure, or 0 for an
+// empty address.
 int filled(const Address& from, sockaddr_storage& into) {
     std::memset(&into, 0, sizeof into);
 
@@ -54,9 +70,10 @@ int filled(const Address& from, sockaddr_storage& into) {
         return static_cast<int>(sizeof(sockaddr_in));
     }
 
-    // Gniazdo lokalne nie ma ani adresu, ani portu — ma ścieżkę, a długość struktury liczy się
-    // z jej długości, nie z rozmiaru pola. Ścieżka mieści się razem z zerem, bo `Address::local`
-    // pilnuje tego już przy budowaniu adresu i nie ma tu czego sprawdzać drugi raz.
+    // A local socket has neither an address nor a port but a path, and the structure length is
+    // computed from the path length, not from the field size. The path fits together with its zero
+    // terminator, because `Address::local` enforces that when the address is built, so there is
+    // nothing to check here a second time.
     if (from.family() == Family::local) {
         auto* nearby = reinterpret_cast<sockaddr_un*>(&into);
 
@@ -69,8 +86,8 @@ int filled(const Address& from, sockaddr_storage& into) {
         return static_cast<int>(offsetof(sockaddr_un, sun_path) + said.size() + 1);
     }
 
-    // Pusty adres **nie jest szóstką**. Bez tego domyślnie skonstruowany Address budował poprawny
-    // sockaddr_in6 dla [::]:0 i wiązanie na nim się udawało, zamiast odmówić.
+    // An empty address is not IPv6. A default-constructed Address must not turn into a valid
+    // sockaddr_in6 for [::]:0, on which binding would succeed instead of being refused.
     if (from.family() != Family::six) return 0;
 
     auto* six = reinterpret_cast<sockaddr_in6*>(&into);
@@ -84,6 +101,8 @@ int filled(const Address& from, sockaddr_storage& into) {
     return static_cast<int>(sizeof(sockaddr_in6));
 }
 
+// The reverse of `filled`: turns a system address into a talcite one. An unknown family gives an
+// empty address.
 Address seen(const sockaddr_storage& from) {
     std::array<std::byte, 16> raw{};
 
@@ -95,8 +114,8 @@ Address seen(const sockaddr_storage& from) {
         return Address{Family::four, raw, ntohs(four->sin_port)};
     }
 
-    // Nasz koniec połączenia lokalnego **nie ma nazwy** — `getsockname` oddaje wtedy puste
-    // `sun_path` i pusty adres jest tu prawdą, a nie awarią.
+    // Our end of a local connection has no name: `getsockname` then returns an empty `sun_path`,
+    // and an empty address is the truth here, not a failure.
     if (from.ss_family == AF_UNIX) {
         const auto* nearby = reinterpret_cast<const sockaddr_un*>(&from);
 
@@ -106,9 +125,9 @@ Address seen(const sockaddr_storage& from) {
 
         if (much == 0) return {};
 
-        // Linux dopuszcza ścieżkę o kilka bajtów dłuższą, niż nasz adres umie unieść. Cudzego
-        // gniazda o takiej ścieżce nie mamy jak wyrazić, więc oddajemy pustkę zamiast rzucać
-        // z pomocnika, który stoi na drodze każdego zakończenia.
+        // Linux allows a path a few bytes longer than our address can hold. We cannot express
+        // someone else's socket with such a path, so we return an empty address instead of throwing
+        // from a helper that sits on the path of every completion.
         try {
             return Address::local(std::string{nearby->sun_path, much});
         } catch (const Trouble&) {
@@ -133,23 +152,25 @@ Address seen(const sockaddr_storage& from) {
 
 }
 
-// Te dwie wystawiamy, bo zaplecze windowsowe składa i rozbiera adresy u siebie — a nie chcemy
-// drugiej kopii tej wiedzy.
+// The Windows backend builds and takes apart addresses on its own, so these two are exported rather
+// than keeping a second copy of that knowledge. `filling` fills a sockaddr_storage and returns its
+// length.
 int filling(const Address& from, void* into) {
     return filled(from, *static_cast<sockaddr_storage*>(into));
 }
 
+// Reads a sockaddr_storage given as an untyped pointer into a talcite address.
 Address facing(const void* from) { return seen(*static_cast<const sockaddr_storage*>(from)); }
 
-// Która strona gniazda interesuje daną operację. Nawiązanie kończy się gotowością **do pisania**
-// — to jedyna rzecz w tej tablicy, która nie jest oczywista.
+// Which side of the socket the given operation waits for. Connecting completes when the socket is
+// ready for writing, which is the only non-obvious entry in this table.
 bool outward(Kind kind) {
     return kind == Kind::joining || kind == Kind::putting || kind == Kind::sending;
 }
 
-// Krok operacji. To jedyne miejsce, które wie, jak wygląda praca na tym systemie — zgłoszenie
-// dostaje z niej wyłącznie liczbę bajtów i numer błędu. Zwraca prawdę, gdy operacja się
-// skończyła; fałsz znaczy „system jeszcze nie mógł, czekaj dalej".
+// One step of an operation. This is the only place that knows what the work looks like on this
+// system; the request gets nothing from it but a byte count and an error number. Returns true when
+// the operation has finished; false means "the system could not do it yet, keep waiting".
 bool stepped(Doing& one) {
     switch (one.kind) {
         case Kind::joining: one.done(0, settling(one.held)); return true;
@@ -191,8 +212,8 @@ bool stepped(Doing& one) {
             return true;
         }
 
-        // Pisanie kończy się dopiero wtedy, gdy zeszło wszystko — a między jednym a drugim
-        // obrotem pamięta, ile już poszło.
+        // Writing finishes only once everything has gone out; between one turn and the next the
+        // request remembers how much has been sent.
         case Kind::putting: {
             while (one.much < one.buffer.size()) {
                 const long much =
@@ -255,14 +276,14 @@ bool stepped(Doing& one) {
     return true;
 }
 
-// Gniazda są od początku nieblokujące, bo centrala nigdy nie chce czekać w wywołaniu systemowym
-// — od czekania jest jedno miejsce i to ono pilnuje wszystkich naraz.
+// Opens a socket of the given family, stream or datagram, or returns `nothing`. Sockets are
+// non-blocking from the start, because the hub never wants to wait inside a system call: waiting
+// happens in one place, which watches all sockets at once.
 Handle opened(Family family, bool stream) {
     starting();
 
-    // **Gniazdo lokalne jest wyłącznie strumieniowe.** Windows nie ma dla niego datagramów wcale,
-    // a rodzina, która na jednym systemie umie więcej niż na drugim, jest gorsza od rodziny, która
-    // wszędzie umie tyle samo.
+    // A local socket is stream-only. Windows has no datagrams for it at all, and a family that can
+    // do more on one system than on another is worse than one that can do the same everywhere.
     if (family == Family::local && !stream) return nothing;
 
     const int which = family == Family::local  ? AF_UNIX
@@ -278,11 +299,11 @@ Handle opened(Family family, bool stream) {
 
     ::ioctlsocket(static_cast<SOCKET>(made), FIONBIO, &yes);
 
-    // **ICMP „port nieosiągalny" nie zamyka gniazda UDP.** Windows zgłasza go następnemu odczytowi
-    // jako WSAECONNRESET — jedna paczka wysłana pod martwy adres (sąsiad, który już odszedł, stary
-    // serwer STUN) zrywała odbiór od wszystkich pozostałych. Na POSIX-ie gniazdo niepołączone tego
-    // nie dostaje wcale. `SIO_UDP_CONNRESET` = `_WSAIOW(IOC_VENDOR, 12)`, liczbą, bo siedzi
-    // w mswsock.h, którego nic poza tym nie potrzebuje.
+    // An ICMP "port unreachable" must not break a UDP socket. Windows reports it to the next read
+    // as WSAECONNRESET, so a single packet sent to a dead address (a peer that has left, an old
+    // STUN server) would cut off reception from everyone else. On POSIX an unconnected socket never
+    // gets it. SIO_UDP_CONNRESET is _WSAIOW(IOC_VENDOR, 12), written as a number because it lives
+    // in mswsock.h, which nothing else needs.
     if (!stream) {
         BOOL off = FALSE;
         DWORD given = 0;
@@ -291,22 +312,22 @@ Handle opened(Family family, bool stream) {
                          nullptr);
     }
 #else
-    // **Zamykane przy uruchomieniu programu potomnego.** Bez tego dziecko dziedziczy wszystkie
-    // nasze gniazda i trzyma zajęty port długo po tym, jak my go zamkniemy — dokładnie ten sam
-    // powód, dla którego gałąź windowsowa buduje listę uchwytów do przekazania.
+    // Closed when a child program is started. Otherwise the child inherits all our sockets and
+    // keeps the port busy long after we close it; this is the same reason the Windows branch builds
+    // a list of handles to pass on.
     const Handle made = sealed::socketed(which, stream ? SOCK_STREAM : SOCK_DGRAM);
 
     if (made < 0) return nothing;
 
-    // **Zapis w gniazdo, którego druga strona już zamknęła, nie ma prawa zabić naszego procesu.**
-    // Domyślną reakcją na SIGPIPE jest śmierć — a biblioteka sieciowa, która ubija program
-    // wołającego, dlatego że rozmówca się rozłączył, jest nie do użycia. Tam, gdzie jest
-    // `MSG_NOSIGNAL`, wyłączamy to przy każdym wysłaniu; BSD i macOS znaku przy wysyłaniu nie
-    // mają, więc dostają znacznik na gnieździe.
+    // Writing to a socket whose other side has already closed must not kill our process. The
+    // default reaction to SIGPIPE is death, and a network library that kills the caller's program
+    // because the peer hung up is unusable. Where MSG_NOSIGNAL exists, we switch it off on every
+    // send; BSD and macOS have no such send flag, so they get an option on the socket.
     //
-    // Znacznika procesowego nie ruszamy: `SIG_IGN` na SIGPIPE byłoby cichą zmianą warunków całej
-    // aplikacji, o którą nikt nas nie prosił — ta sama zasada, co przy rurach programu potomnego,
-    // gdzie sygnał blokujemy tylko na czas pisania i tylko na swoim wątku.
+    // The process-wide setting stays untouched: SIG_IGN for SIGPIPE would silently change the
+    // conditions of the whole application, which nobody asked for. The same rule holds for the
+    // pipes of a child program, where the signal is blocked only while writing and only on our own
+    // thread.
 #ifdef SO_NOSIGPIPE
     {
         int yes = 1;
@@ -316,8 +337,8 @@ Handle opened(Family family, bool stream) {
 #endif
 #endif
 
-    // Nasłuchiwanie na `::` ma łapać także klientów po IPv4. Windows domyślnie tego nie robi,
-    // więc ten sam kod na dwóch systemach słuchałby na dwóch różnych zbiorach adresów.
+    // Listening on `::` must also accept IPv4 clients. Windows does not do this by default, so the
+    // same code would listen on two different sets of addresses on two systems.
     if (family == Family::six) {
         int off = 0;
 
@@ -328,6 +349,7 @@ Handle opened(Family family, bool stream) {
     return made;
 }
 
+// Closes a socket or a named pipe; `nothing` is ignored.
 void ending(Handle one) {
     if (one == nothing) return;
 
@@ -340,6 +362,8 @@ void ending(Handle one) {
 #endif
 }
 
+// Starts connecting to the given address. Returns true only when the connection completed at once;
+// otherwise the caller asks `underway` whether it is still in progress.
 bool joined(Handle one, const Address& where) {
     sockaddr_storage told{};
 
@@ -347,12 +371,13 @@ bool joined(Handle one, const Address& where) {
 
     const int made = ::connect(static_cast<int>(one), reinterpret_cast<sockaddr*>(&told), much);
 
-    // Zero znaczy, że zdążyło od razu — na pętli zwrotnej to reguła, a nie wyjątek.
+    // Zero means it completed immediately, which is the rule on loopback, not the exception.
     return made == 0;
 }
 
-// Nieblokujące nawiązanie kończy się gotowością do pisania, a **czy się udało**, mówi dopiero
-// SO_ERROR. Bez tego pytania nieudane połączenie wygląda jak udane.
+// A non-blocking connect completes with readiness for writing, but only SO_ERROR tells whether it
+// succeeded. Without this question a failed connection looks like a successful one. Returns the
+// error number, 0 on success.
 int settling(Handle one) {
     int why = 0;
 
@@ -369,6 +394,8 @@ int settling(Handle one) {
     return why;
 }
 
+// The address of our end (`peer` false) or of the other end (`peer` true); empty when the system
+// cannot tell. Named pipes answer through `pipes::named`.
 Address named(Handle one, bool peer) {
     if (pipes::piped(one)) return pipes::named(one, peer);
 
@@ -390,6 +417,7 @@ Address named(Handle one, bool peer) {
     return seen(told);
 }
 
+// Turns Nagle's algorithm on or off (TCP_NODELAY); a no-op for named pipes.
 void nagling(Handle one, bool given) {
     if (pipes::piped(one)) return;
 
@@ -399,8 +427,9 @@ void nagling(Handle one, bool given) {
                  reinterpret_cast<const char*>(&off), sizeof off);
 }
 
-// Bez tego serwer po zamknięciu nie wstaje przez minutę, bo port siedzi w TIME_WAIT. Na Windows
-// SO_REUSEADDR znaczy co innego — tam pozwala **odebrać** cudzy port — więc go nie ustawiamy.
+// Without this a server cannot start again for a minute after closing, because the port sits in
+// TIME_WAIT. On Windows SO_REUSEADDR means something else (it allows taking over someone else's
+// port), so it is not set there.
 void sharing(Handle one) {
 #ifndef _WIN32
     const int yes = 1;
@@ -411,8 +440,8 @@ void sharing(Handle one) {
 #endif
 }
 
-// Wysyłka na adres rozgłoszeniowy (majak w sieci lokalnej). Bez tej zgody system odmawia wysyłki na
-// 255.255.255.255, żeby nikt nie rozgłaszał przypadkiem.
+// Allows sending to the broadcast address (a beacon in the local network). Without this permission
+// the system refuses to send to 255.255.255.255, so that nobody broadcasts by accident.
 void broadcasting(Handle one, bool given) {
     const int yes = given ? 1 : 0;
 
@@ -423,11 +452,6 @@ void broadcasting(Handle one, bool given) {
 #endif
 }
 
-// **Czy po drugiej stronie gniazda lokalnego jest ten sam użytkownik.** Gniazdo leży w katalogu,
-// do którego nikt inny nie ma prawa (`fs::runtime`), ale demon pytany o udostępnienia nie powinien
-// polegać na jednej zaporze: pyta system, kto naprawdę łączy. Linux i BSD mówią to wprost;
-// Windows daje numer procesu, a użytkownika bierzemy z jego żetonu. Pustka — system nie umie
-// powiedzieć (nie gniazdo lokalne, stary system); wołający decyduje, czy to odmowa.
 #ifdef _WIN32
 
 #ifndef SIO_AF_UNIX_GETPEERPID
@@ -436,7 +460,8 @@ void broadcasting(Handle one, bool given) {
 
 namespace {
 
-// Użytkownik żetonu procesu — kopia identyfikatora, bo bufor żetonu żyje tylko w tej funkcji.
+// The user of a process token, as a copy of the SID, because the token buffer lives only inside
+// this function. Empty when the token cannot be read.
 std::vector<unsigned char> user_of(HANDLE process) {
     HANDLE token = nullptr;
 
@@ -465,6 +490,11 @@ std::vector<unsigned char> user_of(HANDLE process) {
 
 }
 
+// Whether the other side of a local socket is the same user. The socket lives in a directory no one
+// else may access (`fs::runtime`), but a daemon asked about shares should not rely on a single
+// barrier, so it asks the system who is really connecting. Windows gives the process number, and
+// the user is taken from its token. Empty means the system cannot tell (not a local socket, an old
+// system); the caller decides whether that is a refusal.
 std::optional<bool> kindred(Handle one) {
     ULONG pid = 0;
     DWORD got = 0;
@@ -480,7 +510,7 @@ std::optional<bool> kindred(Handle one) {
         return std::nullopt;
     }
 
-    // Proces, którego nie wolno nam nawet obejrzeć, należy do kogoś innego.
+    // A process we may not even inspect belongs to someone else.
     HANDLE theirs = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 
     if (theirs == nullptr) return false;
@@ -495,6 +525,9 @@ std::optional<bool> kindred(Handle one) {
 
 #else
 
+// Whether the other side of a local socket is the same user. Linux (SO_PEERCRED) and the BSDs
+// (getpeereid) say so directly; elsewhere the answer is empty and the caller decides whether that
+// is a refusal.
 std::optional<bool> kindred(Handle one) {
 #if defined(SO_PEERCRED)
     ucred told{};
@@ -521,13 +554,13 @@ std::optional<bool> kindred(Handle one) {
 
 namespace {
 
-// Gniazdo lokalne **zostawia po sobie plik**, a przypisanie do istniejącego kończy się odmową —
-// więc po programie, który padł, zostaje plik, przez który nie wstanie następny.
+// A local socket leaves a file behind, and binding to an existing one is refused, so a program that
+// crashed leaves a file that keeps the next one from starting.
 //
-// Kasujemy go **wyłącznie wtedy, gdy nikt pod nim nie słucha**, a dowodem na to jest odmowa
-// połączenia. Udane połączenie znaczy, że ktoś tam już stoi, i wtedy to my mamy ustąpić, a nie
-// kasować cudze gniazdo. Każda inna odpowiedź systemu jest niejednoznaczna, więc przy niej też
-// nie ruszamy pliku: przypisanie odmówi za chwilę samo i powie o tym wołającemu.
+// The file is removed only when nobody listens on it, and the proof of that is a refused
+// connection. A successful connection means someone is already there, and then we must step aside
+// rather than remove someone else's socket. Any other answer from the system is ambiguous, so the
+// file is left alone then too: the bind will fail in a moment by itself and tell the caller.
 void reaping(const Address& where) {
     sockaddr_storage told{};
 
@@ -555,6 +588,8 @@ void reaping(const Address& where) {
 
 }
 
+// Binds the socket to the address and starts listening with a backlog of `waiting`. For a local
+// socket a stale file is reaped first and the file is restricted to its owner afterwards.
 bool listening(Handle one, const Address& where, int waiting) {
     sockaddr_storage told{};
 
@@ -565,13 +600,13 @@ bool listening(Handle one, const Address& where, int waiting) {
     if (::bind(static_cast<int>(one), reinterpret_cast<sockaddr*>(&told), much) != 0)
         return false;
 
-    // **Zawężenie, nie zapora.** Plik gniazda powstaje z prawami wziętymi z maski procesu, czyli
-    // zwykle dostępny dla wszystkich na maszynie — a gniazdo, do którego może się dobić każdy
-    // użytkownik, jest dziurą. Zdejmujemy więc prawa obcym zaraz po przypisaniu.
+    // Narrowing, not a barrier. The socket file is created with permissions taken from the process
+    // umask, so usually accessible to everyone on the machine, and a socket any user can reach is a
+    // hole. Permissions of others are therefore removed right after binding.
     //
-    // Szpary między przypisaniem a tą zmianą nie da się domknąć od środka i nie udajemy, że się
-    // da: prawdziwą osłoną jest katalog, w którym gniazdo stoi. Kto trzyma je w katalogu dostępnym
-    // tylko dla siebie, ma to zamknięte od pierwszej chwili.
+    // The gap between the bind and this change cannot be closed from inside, and we do not pretend
+    // it can: the real protection is the directory the socket lives in. Whoever keeps it in a
+    // directory accessible only to themselves has it closed from the first moment.
 #ifndef _WIN32
     if (where.family() == Family::local) (void)::chmod(where.path().c_str(), S_IRUSR | S_IWUSR);
 #endif
@@ -579,6 +614,7 @@ bool listening(Handle one, const Address& where, int waiting) {
     return ::listen(static_cast<int>(one), waiting) == 0;
 }
 
+// Binds a socket to an address without listening (for datagram sockets).
 bool bound(Handle one, const Address& where) {
     sockaddr_storage told{};
 
@@ -587,9 +623,10 @@ bool bound(Handle one, const Address& where) {
     return ::bind(static_cast<int>(one), reinterpret_cast<sockaddr*>(&told), much) == 0;
 }
 
-// Datagram większy niż bufor jest **po cichu obcinany** i to jest jedna z najbrzydszych pułapek
-// UDP. Da się ją wykryć: Linux z MSG_TRUNC oddaje prawdziwą długość, a Windows odmawia całkiem
-// z WSAEMSGSIZE. Obcięcie zgłaszamy jako kłopot, zamiast oddać kawałek udający całość.
+// A datagram larger than the buffer is silently truncated, which is one of the nastiest traps of
+// UDP. It can be detected: Linux with MSG_TRUNC returns the real length, and Windows refuses
+// outright with WSAEMSGSIZE. The truncation is reported through `cut` instead of handing over a
+// piece that pretends to be the whole.
 long fetching(Handle one, void* into, std::size_t much, Address& from, bool& cut) {
     sockaddr_storage told{};
 
@@ -633,7 +670,7 @@ long fetching(Handle one, void* into, std::size_t much, Address& from, bool& cut
     return made;
 }
 
-// Datagram wychodzi w całości albo wcale — nie ma tu czego dopisywać w pętli, jak przy strumieniu.
+// A datagram goes out whole or not at all; unlike a stream, there is nothing to finish in a loop.
 long sending(Handle one, const void* from, std::size_t much, const Address& to) {
     sockaddr_storage told{};
 
@@ -650,11 +687,11 @@ long sending(Handle one, const void* from, std::size_t much, const Address& to) 
 #endif
 }
 
-// Windows bierze długość jako int, uniksy jako size_t. Zwężanie robione wszędzie dawało na
-// uniksach zero dla każdej długości będącej wielokrotnością cztero­gigabajtowej granicy — a zero
-// przy pisaniu nie posuwało licznika, więc pętla kroku kręciła się w nieskończoność na pełnym
-// rdzeniu, a przy czytaniu wyglądało jak koniec strumienia. Tam, gdzie zwężać trzeba, **ucinamy
-// zamiast przekręcać**: krótki zapis i tak dokończy się następnym zgłoszeniem.
+// Windows takes the length as int, Unix systems as size_t. Narrowing on every system would give
+// zero on Unix for every length that is a multiple of the four-gigabyte boundary, and a zero write
+// would not advance the counter, so the step loop would spin forever on a full core, while a zero
+// read would look like the end of the stream. Where narrowing is needed, the length is clamped
+// instead of wrapped: a short write is finished by the next request anyway.
 long getting(Handle one, void* into, std::size_t much) {
 #ifdef _WIN32
     const int wide = much > static_cast<std::size_t>(brimful) ? brimful : static_cast<int>(much);
@@ -665,6 +702,8 @@ long getting(Handle one, void* into, std::size_t much) {
 #endif
 }
 
+// Writes up to `much` bytes to a stream socket; returns the count written or a negative value on
+// error. The length is clamped on Windows like in `getting`.
 long putting(Handle one, const void* from, std::size_t much) {
 #ifdef _WIN32
     const int wide = much > static_cast<std::size_t>(brimful) ? brimful : static_cast<int>(much);
@@ -672,7 +711,8 @@ long putting(Handle one, const void* from, std::size_t much) {
     return static_cast<long>(
         ::send(static_cast<SOCKET>(one), static_cast<const char*>(from), wide, 0));
 #else
-    // Patrz `making`: bez tego znaku zapis w gniazdo po rozłączeniu zabija proces wołającego.
+    // See `opened`: without this flag, writing to a socket after disconnection kills the caller's
+    // process.
 #ifdef MSG_NOSIGNAL
     return static_cast<long>(::send(one, from, much, MSG_NOSIGNAL));
 #else
@@ -681,8 +721,8 @@ long putting(Handle one, const void* from, std::size_t much) {
 #endif
 }
 
-// „Jeszcze nie teraz" nie jest błędem, tylko zaproszeniem do ponownego czekania. Na Windows ma
-// inny numer niż na uniksach, więc pytanie stoi tu, a nie w pięciu miejscach.
+// "Not yet" is not an error but an invitation to wait again. Windows uses a different number for it
+// than Unix systems, so the question lives here rather than in five places.
 bool again() {
 #ifdef _WIN32
     return amiss() == WSAEWOULDBLOCK;
@@ -691,8 +731,8 @@ bool again() {
 #endif
 }
 
-// Nieblokujące nawiązanie prawie nigdy nie kończy się od razu — mówi „zacząłem" i to nie jest
-// błąd. Numer tej odpowiedzi jest inny na każdym systemie, więc pytanie stoi w jednym miejscu.
+// A non-blocking connect almost never completes at once; it says "started", which is not an error.
+// The number of that answer differs on every system, so the question lives in one place.
 bool underway() {
 #ifdef _WIN32
     return amiss() == WSAEWOULDBLOCK || amiss() == WSAEINPROGRESS;
@@ -701,8 +741,9 @@ bool underway() {
 #endif
 }
 
-// Rury nie zamykamy w pół: `DisconnectNamedPipe` wyrzuca to, czego druga strona jeszcze nie
-// przeczytała. Koniec zobaczy przy zamknięciu uchwytu, gdy zejdzie ostatnie zgłoszenie.
+// Shuts both directions of a socket. A named pipe is not half-closed: DisconnectNamedPipe throws
+// away what the other side has not read yet. The other side sees the end when the handle is closed,
+// once the last request is gone.
 void shutting(Handle one) {
     if (one == nothing || pipes::piped(one)) return;
 
@@ -713,6 +754,8 @@ void shutting(Handle one) {
 #endif
 }
 
+// Accepts one connection: `made` receives the new non-blocking socket (or `nothing`) and the result
+// is the peer's address.
 Address taken(Handle one, Handle& made) {
     sockaddr_storage told{};
 
@@ -729,7 +772,7 @@ Address taken(Handle one, Handle& made) {
 #else
     socklen_t much = sizeof told;
 
-    // Przyjęte gniazdo też nie ma trafić do programu potomnego.
+    // The accepted socket must not reach a child program either.
     made = sealed::accepted(one, reinterpret_cast<sockaddr*>(&told), &much);
 
     if (made < 0) {

@@ -14,14 +14,16 @@ namespace talcite::ui {
 
 namespace {
 
-// Spacja przed znakiem rozwinięcia i sam znak. Dwie kratki, zawsze — napis ustępuje im pierwszy,
-// bo to znak rozwinięcia czyni z tego wiersza wybór, a nie zwykły tekst.
+// The space before the drop-down mark and the mark itself. Always two cells: the text gives way to
+// them first, because the mark is what makes this row a selection rather than plain text.
 constexpr int aside = 2;
 
 }
 
+// An empty selection with the "talcite.select" role and its drop-down list.
 Select::Select() : OptionsNode("talcite.select"), popup_(std::make_unique<Popup>(*this)) {}
 
+// A selection with the given options, the one at `which` chosen.
 Select::Select(std::vector<std::string> options, std::size_t which) : Select() {
     this->options().all(std::move(options));
 
@@ -30,26 +32,32 @@ Select::Select(std::vector<std::string> options, std::size_t which) : Select() {
 
 Select::~Select() = default;
 
-// Rozwinięta lista mieszka w `Popup` — tam jest i liczba wierszy, i to, czyja jest zasłona.
+// How many rows the opened list shows. The opened list lives in `Popup`, which holds both the row
+// count and the knowledge of whose veil it is.
 int Select::rows() const { return popup_->rows(); }
 
+// Sets how many rows the opened list shows.
 void Select::rows(int given) { popup_->rows(given); }
 
+// Whether the list is open right now.
 bool Select::opened() const { return popup_->opened(); }
 
+// Closes the list if it is open.
 void Select::close() { popup_->close(); }
 
+// Opens the list of options with the current one marked; does nothing when disabled or empty.
 void Select::open() {
     if (!enabled() || options().empty()) return;
 
-    // **Wybór wraca wartością, a nie numerem wiersza.** Lista powstała przy otwarciu, a numer
-    // rozwiązałby się dopiero przy naciśnięciu — więc gdyby ktoś w międzyczasie zmienił opcje,
-    // do pola trafiłby inny napis, niż widać było. Migawka napisów siedzi w domknięciu, a napisy
-    // są jednoznaczne, bo zbiór nie dopuszcza powtórek.
+    // The choice comes back as a value, not a row number. The list is made when it opens, while a
+    // number would be resolved only at the press, so if someone changed the options in between,
+    // a different string from the one shown would land in the field. A snapshot of the strings sits
+    // in the closure, and the strings are unambiguous, because the set allows no duplicates.
     popup_->open(options().all(), *which(),
                  [this, these = options().all()](std::size_t at) { chose(these[at]); });
 }
 
+// One row, as wide as the longest option plus the mark, but at most `room`.
 Size Select::wants(Size room) const {
     int wide = 0;
 
@@ -58,6 +66,7 @@ Size Select::wants(Size room) const {
     return {std::min(wide + aside, room.wide), std::min(1, room.high)};
 }
 
+// Makes `given` the value and sends a `PickEvent`, unless it is not an option or already chosen.
 void Select::chose(const std::string& given) {
     const std::optional<std::size_t> made = options().find(given);
 
@@ -68,25 +77,26 @@ void Select::chose(const std::string& given) {
     (void)trigger(PickEvent{});
 }
 
+// Draws the row: the value elided on the right and the drop-down mark at the right edge.
 View Select::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
+    // Transparent wherever nothing is drawn: the same rule and the same reason as in the button.
     made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
-    // Rodzina ról na stan, złożona z rdzenia i końcówki — ta sama umowa co w przycisku i w polu
-    // wyboru, żeby autor skórki opisywał `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.disabled` i niczego
-    // nie zgadywał.
+    // A family of roles per state, made of a stem and a suffix: the same contract as in the button
+    // and the check box, so that a skin author describes <stem>, <stem>.focus and <stem>.disabled
+    // and has nothing to guess.
     const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
 
     if (given.wide <= 0) return made;
 
-    // Znak rozwinięcia stoi przy **prawej krawędzi**, cokolwiek by nam dano — tak jak w oknie
-    // ustawień, gdzie wybór ciągnie się przez całą szerokość kolumny.
+    // The drop-down mark stands at the right edge, however wide we are made, as in the settings
+    // window, where a selection stretches across the whole column.
     made.put({given.wide - 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".mark"), look);
 
     const int room = std::max(given.wide - aside, 0);
@@ -101,12 +111,12 @@ View Select::paint(Size given, Area seen) {
     return made;
 }
 
-// Enter i spacja rozwijają. Strzałki przestawiają wartość **bez rozwijania** i zawiadamiają — tak
-// samo jak w grupie opcji, gdzie już to ustaliliśmy.
+// Enter opens the list. The arrows (and Home, End) change the value without opening and notify, the
+// same as in an option group.
 //
-// Na krańcu strzałka **idzie wyżej**, żeby w oknie przeszła do następnego widżetu zamiast utknąć.
-// Litery, Tab i F-klawisze oddajemy zawsze: gdyby wybór je łykał, przycisk „Anuluj" przestałby
-// odpowiadać na swoją literę, ilekroć ognisko stoi tutaj.
+// At either end an arrow goes up the tree, so that in a window it moves to the next widget instead
+// of getting stuck. Letters, Tab and function keys are always passed on: if the selection swallowed
+// them, a "Cancel" button would stop answering to its letter whenever the focus is here.
 bool Select::handle(KeyEvent& what) {
     if (!enabled() || options().empty()) return false;
 
@@ -114,7 +124,7 @@ bool Select::handle(KeyEvent& what) {
 
     const Code code = what.key().code();
 
-    // Sam Enter, bez spacji — tak samo jak w przycisku i z tego samego powodu.
+    // Enter alone, not space: the same as in the button and for the same reason.
     if (code == Code::enter) {
         open();
 
@@ -157,6 +167,7 @@ bool Select::handle(KeyEvent& what) {
     }
 }
 
+// A click takes the focus and opens the list; it is consumed even when disabled.
 bool Select::handle(ClickEvent&) {
     if (!enabled()) return true;
 
@@ -167,18 +178,19 @@ bool Select::handle(ClickEvent&) {
     return true;
 }
 
-// **Gasnący wybór zwija swoją listę.** Wyłączone nie wybiera, a rozwinięta lista wisiałaby nad
-// polem, które już nie odpowiada. Ognisko siedzi wtedy w liście, a zamknięcie zasłony oddaje je
-// wyborowi przez `focus()` — który wyłączonego nie weźmie, więc ognisko idzie dalej samo.
+// A selection being disabled closes its list. A disabled selection does not choose, and an open
+// list would hang over a field that no longer answers. The focus is in the list then, and closing
+// the veil returns it to the selection through `focus()`, which a disabled node does not take, so
+// the focus moves on by itself.
 //
-// Pusty wybór **dalej bierze ognisko**, choć pusta grupa opcji go nie bierze, więc `takes_focus` nie
-// jest przesłonięte. Pusta grupa zajmuje zero wierszy i nie widać jej wcale, a pusty wybór zajmuje
-// wiersz i widać go razem ze znakiem rozwinięcia. Wędrówka, która omija coś widocznego, wygląda na
-// zepsutą.
+// An empty selection still takes the focus, although an empty option group does not, so
+// `takes_focus` is not overridden. An empty group takes zero rows and cannot be seen at all, while
+// an empty selection takes a row and is seen together with its drop-down mark. Focus travel that
+// skips something visible looks broken.
 //
-// Zdarzenie bąbelkuje, ale wybór nie ma dzieci, więc każde, które tu dochodzi, jest jego własne.
-// Zwinięcie listy to porządek po sobie, a nie odpowiedź na zdarzenie, więc wybór go nie bierze:
-// przodek, który słucha wyłączeń w swoim poddrzewie, dostaje i to.
+// The event bubbles, but a selection has no children, so every one that arrives here is its own.
+// Closing the list is tidying up, not an answer to the event, so the selection does not consume it:
+// an ancestor that listens for disabling in its subtree gets this one too.
 bool Select::handle(DisableEvent&) {
     close();
 

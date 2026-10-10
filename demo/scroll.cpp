@@ -9,13 +9,14 @@
 
 namespace {
 
-// Dwieście wierszy w przewijaku, w ramce. Kółko przewija, F10 kończy. Rysuje się tylko to, co
-// widać — reszta nie kosztuje ani jednej komórki.
+// Two hundred rows in a scroller, in a frame. The wheel scrolls, F10 quits. Only what is visible
+// gets drawn; the rest does not cost a single cell.
 class Sheet : public talcite::ui::Root {
 public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -28,6 +29,7 @@ private:
 
 }
 
+// Two hundred numbered rows in a framed vertical scroller.
 int main() {
     talcite::Term term;
 
@@ -37,19 +39,19 @@ int main() {
     const auto column = std::make_shared<talcite::ui::Column>();
 
     for (int which = 0; which < 200; ++which)
-        column->children().add(std::make_shared<talcite::ui::Span>("wiersz numer " + std::to_string(which)));
+        column->children().add(std::make_shared<talcite::ui::Span>("row number " + std::to_string(which)));
 
     scroll->children().add(column);
 
-    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — przewijanie");
+    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — scrolling");
 
-    frame->footer("F10 kończy");
+    frame->footer("F10 quits");
     frame->children().add(scroll);
 
     sheet.children().add(frame);
 
     term.show(sheet);
-    term.title("talcite — przewijanie");
+    term.title("talcite — scrolling");
 
     term.run();
 

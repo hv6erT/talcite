@@ -23,59 +23,63 @@ namespace talcite::ui {
 
 namespace {
 
-// Rola zaznaczenia. Zaznaczenie **nie jest znacznikiem** — ma kotwicę i głowę, których znacznik
-// nie ma — ale rysuje się nim, bo malowanie zakresu to dokładnie ta sama robota.
+// The selection's role. The selection is not a tag (it has an anchor and a head, which a tag does
+// not have), but it is drawn with one, because painting a range is exactly the same work.
 constexpr const char* selecting = "talcite.editor.select";
 
+// The number of line feeds in the text.
 std::size_t counted(std::string_view what) {
     return static_cast<std::size_t>(std::count(what.begin(), what.end(), '\n'));
 }
 
 
-// Kończy grupę cofania. Spacja, tabulator i enter zamykają wyraz — dzięki temu jedno cofnięcie
-// zabiera cały wyraz, a nie literę, i nie przeskakuje przy tym przez koniec wiersza.
+// Ends an undo group. Space, tab and enter close a word, so one undo takes away the whole word,
+// not a letter, and does not jump over the end of a line in doing so.
 bool sealed(char last) { return last == '\n' || last == ' ' || last == '\t'; }
 
 }
 
 struct Editor::Kept {
-    // Jedna zmiana dokumentu: **co zniknęło, co przyszło i gdzie stał wtedy kursor**. Kołdra sama
-    // się nie cofnie, więc odwrotność każdej zmiany trzeba zapamiętać osobno — ale jako skrawki
-    // kołdry, nie bajty. Dawniej wpis trzymał kopię skasowanego tekstu, a cofnięcie wstawiało ją do
-    // dopisków, które nigdy się nie kurczą: skasowanie gigabajtowego bloku z logu to był gigabajt
-    // w dzienniku i kolejny przy każdej parze cofnij–ponów. Skrawek to kilka odcinków, więc pamięć
-    // rośnie z liczbą zmian, nie z ich długością, a cofnięcie zszywa dokument z tych samych odcinków.
-    // Jedno cięcie „zamień wszystkie": miejsce w dokumencie **sprzed** całej zmiany.
+    // One cut of "replace all": its place in the document from before the whole change.
     struct Splice {
         std::size_t at = 0;
         std::string gone;
     };
 
+    // One change of the document: what disappeared, what came and where the cursor stood then. The
+    // quilt does not undo itself, so the inverse of every change has to be remembered separately,
+    // but as quilt scraps, not bytes. A copy of the deleted text would end up in the additions,
+    // which never shrink: deleting a gigabyte block from a log would mean a gigabyte in the log of
+    // changes and another one with every undo–redo pair. A scrap is a few spans, so memory grows
+    // with the number of changes, not with their length, and undo stitches the document from the
+    // same spans.
     struct Change {
         std::size_t at = 0;
         Quilt::Scrap gone;
         Quilt::Scrap came;
         std::size_t was = 0;
 
-        // „Zamień wszystkie" jednym wpisem: cięcia rosnąco, każde z tym, co zniknęło, a na każdym
-        // miejscu przychodzi `with`. Pusty wektor znaczy zwykłą zmianę w jednym miejscu.
+        // "Replace all" as one entry: the cuts in ascending order, each with what disappeared, and
+        // `with` comes in every place. An empty vector means an ordinary change in one place.
         std::vector<Splice> many;
         std::string with;
 
-        // Cofa się razem z poprzednim wpisem. Stąd „zamień wszystkie" wraca jednym ruchem, choć
-        // zmian było sto — bez trzymania w pamięci całego dokumentu sprzed zamiany.
+        // Undone together with the previous entry. That is how "replace all" comes back in one
+        // move, although there were a hundred changes, without keeping the whole document from
+        // before the replacement in memory.
         bool tied = false;
 
-        // Blok mcedit sprzed zmiany i po niej: cofnięcie przywraca blok tam, gdzie był — także
-        // po `erase()`, po którym bloku nie ma — a ponowienie tam, gdzie zmiana go zostawiła.
+        // The mcedit block before and after the change: undo puts the block back where it was
+        // (also after `erase()`, after which there is no block), and redo where the change left
+        // it.
         std::optional<std::pair<std::size_t, std::size_t>> before;
         std::optional<std::pair<std::size_t, std::size_t>> after;
     };
 
     using Block = std::optional<std::pair<std::size_t, std::size_t>>;
 
-    // Schowek podany z zewnątrz, żeby próby nie sięgały do systemowego, a program z kilkoma
-    // edytorami dawał im jeden wspólny.
+    // A clipboard given from outside, so that trials do not reach the system one and a program
+    // with several editors gives them one shared clipboard.
     Seam<Clipboard> clipboard;
 
     std::shared_ptr<Quilt> quilt;
@@ -83,52 +87,53 @@ struct Editor::Kept {
     std::size_t cursor = 0;
     std::size_t anchor = 0;
 
-    // **Blok mcedit** — trwały odcinek dokumentu obok zaznaczenia i schowka. W trakcie
-    // rozciągania (`marking`) drugi koniec jest kursorem, więc `block->second` nie znaczy wtedy nic;
-    // po zakończeniu oba końce stoją i idą tylko za zmianami dokumentu (`apply`). `held` to stan
-    // sprzed bieżącej zmiany, przechwycony w `apply` dla `note`.
+    // The mcedit block: a lasting span of the document next to the selection and the clipboard.
+    // While it is being stretched (`marking`) the other end is the cursor, so `block->second` means
+    // nothing then; once finished, both ends stand and follow only the document's changes
+    // (`apply`). `held` is the state from before the current change, captured in `apply` for
+    // `note`.
     Block block;
     bool marking = false;
     Block held;
 
-    // Zapamiętane miejsce w wierszu dla strzałek w pionie. Trzymamy **bajt**, nie kolumnę: kolumna
-    // wymagałaby powtórzenia tu reguły tabulatorów, którą zna już cięcie na kawałki. Skutek jest
-    // taki, że przy wierszach z tabulatorami kursor w pionie potrafi się przesunąć — do poprawienia
-    // wtedy, gdy zacznie przeszkadzać.
+    // The remembered place in the line for vertical arrows. A byte is kept, not a column: a column
+    // would need the tab rule repeated here, which the cutting into pieces already knows. As a
+    // result, on lines with tabs the cursor can drift when moving vertically; to be fixed when it
+    // gets in the way.
     std::size_t offset = 0;
 
     bool readonly = false;
 
-    // Czy trwa zapis. Treść nie ma prawa zmienić się pod kawałkami, które właśnie płyną do ujścia,
-    // więc do końca zapisu edytor jest tylko do czytania — ale bez ruszania `readonly`, które
-    // należy do wołającego.
+    // Whether a save is in progress. The content must not change under the pieces that are just
+    // flowing to the sink, so until the save ends the editor is read-only, but without touching
+    // `readonly`, which belongs to the caller.
     bool saving = false;
 
-    // Czy trwa ciągnięcie myszą. Ruch bez wciśniętego przycisku przychodzi tylko przy `?1003`,
-    // którego nie włączamy, ale flaga i tak jest potrzebna: ruch po puszczeniu nad edytorem
-    // nie ma prawa rozciągać zaznaczenia.
+    // Whether a mouse drag is in progress. Motion without a pressed button comes only with
+    // `?1003`, which is not turned on, but the flag is needed anyway: motion over the editor after
+    // the release must not stretch the selection.
     bool dragging = false;
 
     std::vector<Change> log;
 
-    // Ile wpisów z dziennika jest **wykonanych**. Wszystko za tym to gałąź do ponowienia, którą
-    // pierwsza nowa zmiana utnie.
+    // How many log entries are done. Everything past that is the redo branch, which the first new
+    // change cuts off.
     std::size_t done = 0;
 
-    // Ile ich było przy ostatnim zapisie. Stąd `dirty()`: cofnięcie wszystkiego z powrotem daje
-    // dokument czysty, bo wraca do tego samego miejsca w dzienniku. Dwie pułapki tego rachunku:
-    // wyraz pisany dalej po zapisie przedłużałby ten sam wpis, nie zmieniając numeru — dlatego
-    // zapis pieczętuje wpis (`joining` gaśnie); a nowa zmiana po cofnięciu poniżej zapisanego
-    // miejsca ucina gałąź, na której to miejsce leżało — wtedy numer idzie na `SIZE_MAX`, bo
-    // zapisany stan nie jest już osiągalny żadnym cofaniem.
+    // How many there were at the last save. Hence `dirty()`: undoing everything back gives a clean
+    // document, because it returns to the same place in the log. Two traps of this count: a word
+    // typed on after the save would extend the same entry without changing the number, so saving
+    // seals the entry (`joining` goes off); and a new change after undoing below the saved place
+    // cuts off the branch that place lay on, so the number goes to `SIZE_MAX`, because the saved
+    // state is no longer reachable by any undo.
     std::size_t washed = 0;
 
-    // Czy kolejny znak może przedłużyć ostatni wpis. Gaśnie przy każdym ruchu kursora, przy
-    // cofaniu i przy ponawianiu — inaczej wyraz wpisany po przeskoku w inne miejsce dokleiłby się
-    // do wyrazu sprzed przeskoku.
+    // Whether the next character may extend the last entry. It goes off with every cursor move,
+    // with undo and with redo; otherwise a word typed after a jump to another place would stick to
+    // the word from before the jump.
     bool joining = false;
 
-    // Czy następny wpis ma być przywiązany do poprzedniego.
+    // Whether the next entry is to be tied to the previous one.
     bool tying = false;
 
     [[nodiscard]] std::string text(std::size_t from, std::size_t upto) const;
@@ -144,8 +149,9 @@ struct Editor::Kept {
     void blocked();
 };
 
-// Zakończenie rozciągania bloku: końce w porządku, blok zerowej długości znika — pusty blok
-// byłby tylko śmieciem na ekranie. Wołane przez drugie F3 i przez każdą z trzech czynności.
+// Ends stretching the block: the ends in order, and a block of zero length disappears, since an
+// empty block would only be garbage on the screen. Called by the second F3 and by each of the
+// three block actions.
 void Editor::Kept::blocked() {
     if (!marking) return;
 
@@ -160,6 +166,7 @@ void Editor::Kept::blocked() {
     else block = std::pair{from, upto};
 }
 
+// The document's text between two bytes; empty without a document.
 std::string Editor::Kept::text(std::size_t from, std::size_t upto) const {
     if (!quilt || upto <= from) return {};
 
@@ -168,10 +175,11 @@ std::string Editor::Kept::text(std::size_t from, std::size_t upto) const {
 
 namespace {
 
-// Koniec bloku po zmianie [at, at + gone) → came. Początek: zmiana przed nim albo dokładnie
-// w nim przesuwa go (tekst wstawiony na początku bloku idzie **przed** blok), zmiana w środku
-// stawia go za wstawionym. Koniec: zmiana za nim albo dokładnie w nim nic (tekst wstawiony na
-// końcu bloku nie wchodzi do bloku), zmiana przed nim przesuwa, w środku przycina do `at`.
+// A block bound after the change [at, at + gone) → came. The start: a change before it or exactly
+// at it moves it (text inserted at the start of the block goes before the block), a change inside
+// puts it after the inserted text. The end: a change after it or exactly at it does nothing (text
+// inserted at the end of the block does not enter the block), a change before it moves it, one
+// inside cuts it to `at`.
 [[nodiscard]] std::size_t shifted(std::size_t bound, bool start, std::size_t at, std::size_t gone,
                                   std::size_t came) {
     if (start ? bound < at : bound <= at) return bound;
@@ -183,12 +191,12 @@ namespace {
 
 }
 
-// **Jedyne miejsce, w którym dokument naprawdę się zmienia.** Wpisanie, kasowanie, cofnięcie
-// i ponowienie sprowadzają się tutaj, więc poprawka dla szpuli jest napisana raz — a to ona
-// decyduje, czy ekran po zmianie pokaże nową treść.
+// The only place where the document really changes. Typing, deleting, undo and redo all come down
+// to this, so the correction for the spool is written once, and it decides whether the screen
+// shows the new content after the change.
 void Editor::Kept::apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone, const Quilt::Scrap& came) {
-    // Blok idzie za dokumentem: oba końce według `shifted`, a gdy nic z niego nie zostało —
-    // znika. W trakcie rozciągania przesuwa się tylko początek, koniec jest kursorem.
+    // The block follows the document: both ends by `shifted`, and when nothing of it is left, it
+    // disappears. While it is being stretched only the start moves; the end is the cursor.
     held = block;
 
     if (block.has_value()) {
@@ -201,9 +209,9 @@ void Editor::Kept::apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone,
         }
     }
 
-    // Ostatni bajt dokumentu rozstrzyga, czy ostatni wiersz w ogóle istnieje: „abc" to jeden
-    // wiersz, „abc\n" **też jeden**, a pusty dokument nie ma żadnego. Sama liczba enterów tego
-    // nie powie, więc trzeba zajrzeć na koniec przed zmianą i po niej.
+    // The last byte of the document decides whether the last line exists at all: "abc" is one
+    // line, "abc\n" is also one, and an empty document has none. The number of line feeds alone
+    // does not say that, so the end has to be looked at before and after the change.
     const auto ending = [this](std::size_t much) {
         if (much == 0) return '\0';
 
@@ -231,8 +239,8 @@ void Editor::Kept::apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone,
     spool.changed(at, gone.much, came.much, lines);
 }
 
-// Koniec ostatniej wstawki po całej zmianie: jej miejsce sprzed zmiany przesunięte o wszystkie
-// wcześniejsze cięcia.
+// The end of the last insertion after the whole change: its place from before the change moved
+// by all the earlier cuts.
 std::size_t Editor::Kept::ended(const std::vector<Splice>& many, const std::string& came) {
     std::ptrdiff_t moved = 0;
 
@@ -242,12 +250,12 @@ std::size_t Editor::Kept::ended(const std::vector<Splice>& many, const std::stri
     return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(many.back().at) + moved) + came.size();
 }
 
-// **Wiele miejsc naraz** — „zamień wszystkie" i jego cofnięcie w jednym przejściu po dokumencie.
-// W przód: na miejscu każdego `gone` staje `came`; wstecz: na miejscu każdego `came` (już
-// przesuniętego o zmiany przed nim) wraca jego `gone`. W przód blok idzie za wszystkimi cięciami po
-// kolei, od lewej, każde w miejscu już przesuniętym przez poprzednie — tak, jakby szły jedno po
-// drugim; wstecz bloku nie liczymy, bo cofnięcie i tak stawia go z wpisu tam, gdzie był. Szpula
-// dostaje jedno zawiadomienie od pierwszego cięcia, bo dalej każde przesuwa inaczej.
+// Many places at once: "replace all" and its undo in one pass over the document. Forward: in the
+// place of every `gone` stands `came`; backward: in the place of every `came` (already moved by
+// the changes before it) its `gone` returns. Forward, the block follows all the cuts in turn, from
+// the left, each at a place already moved by the previous ones, as if they went one after
+// another; backward the block is not computed, because undo puts it back from the entry anyway.
+// The spool gets one notice from the first cut, because further on each one shifts differently.
 void Editor::Kept::splice(Spool& spool, const std::vector<Splice>& many, const std::string& came, bool back) {
     if (many.empty()) return;
 
@@ -268,8 +276,8 @@ void Editor::Kept::splice(Spool& spool, const std::vector<Splice>& many, const s
 
         cuts.push_back(Quilt::Cut{now, gone, back ? std::string_view{one.gone} : std::string_view{came}});
 
-        // Cięcia po kolei od lewej, w dokumencie zmienianym na bieżąco: każde stoi o sumę
-        // wcześniejszych różnic dalej niż przed zmianą.
+        // The cuts in turn from the left, in a document changed as we go: each stands further than
+        // before the change by the sum of the earlier differences.
         if (block.has_value() && !back) {
             const std::size_t here = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(one.at) + moved);
 
@@ -312,10 +320,10 @@ void Editor::Kept::splice(Spool& spool, const std::vector<Splice>& many, const s
     spool.rewritten(cuts.front().at, static_cast<std::ptrdiff_t>(now) - static_cast<std::ptrdiff_t>(was), lines);
 }
 
-// Nowa zmiana ucina gałąź ponowienia — po cofnięciu i wpisaniu czegoś innego nie ma już dokąd
-// ponawiać. Poza tym **pisany wyraz zbiera się w jeden wpis**: znak dopisany dokładnie tam, gdzie
-// skończył się poprzedni, przedłuża ostatni zamiast robić nowy. Bez tego cofanie chodziłoby po
-// literze i pięć tysięcy znaków dałoby pięć tysięcy kroków.
+// A new change cuts off the redo branch: after undoing and typing something else there is nowhere
+// to redo to. Besides, a typed word gathers into one entry: a character added exactly where the
+// previous one ended extends the last entry instead of making a new one. Without this, undo would
+// go letter by letter, and five thousand characters would make five thousand steps.
 void Editor::Kept::note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, std::size_t was) {
     if (washed > done) washed = SIZE_MAX;
 
@@ -337,10 +345,10 @@ void Editor::Kept::note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, st
 
         const bool erasing = came.much == 0 && gone.much > 0 && last.came.much == 0 && last.gone.much > 0;
 
-        // Trzymany Backspace zbiera się tak samo, tyle że od tyłu: każdy kolejny znak znika
-        // **przed** poprzednim, więc początek wpisu się cofa, a skrawek rośnie z przodu — w źródle
-        // znak leży tuż przed poprzednim, więc odcinek się wydłuża. Dawniej wpis trzymał bajty
-        // i trzeba było je dopisywać odwrócone, żeby nie przepisywać wpisu przy każdym znaku.
+        // A held Backspace gathers the same way, only from the back: every next character vanishes
+        // before the previous one, so the entry's start moves back and the scrap grows at the
+        // front; in the source the character lies just before the previous one, so the span gets
+        // longer.
         if (erasing && at + gone.much == last.at && quilt->lines(gone) == 0) {
             Quilt::joined(last.gone, gone, true);
             last.at = at;
@@ -349,7 +357,7 @@ void Editor::Kept::note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, st
             return;
         }
 
-        // Trzymany Delete zbiera od przodu: kasowany bajt jest wciąż ten sam.
+        // A held Delete gathers from the front: the deleted byte is still the same one.
         if (erasing && at == last.at && quilt->lines(gone) == 0) {
             Quilt::joined(last.gone, gone, false);
             last.after = block;
@@ -373,14 +381,17 @@ void Editor::Kept::note(std::size_t at, Quilt::Scrap gone, Quilt::Scrap came, st
     joining = true;
 }
 
+// An editor with the system clipboard.
 Editor::Editor() : Editor(clipboard()) {}
 
+// An editor with the given clipboard.
 Editor::Editor(Seam<Clipboard> with) : kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
     kept_->clipboard = std::move(with);
 
     role("talcite.editor");
 }
 
+// An editor with the given scroll shape and clipboard.
 Editor::Editor(ScrollShape shape, Seam<Clipboard> with)
     : Page(shape), kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
     kept_->clipboard = std::move(with);
@@ -392,17 +403,17 @@ Editor::~Editor() = default;
 
 namespace {
 
-// Kołdra jest w pamięci i odpowiada od ręki, więc szpula edytora dostaje jej wewnętrzny szew
-// `Spool::Peek`, nie `Feed`: edytor czyta bajty przy każdym ruchu kursora i nie ma jak czekać
-// na okno. Dlatego też edytor przyjmuje dokument tylko bajtami.
+// The quilt is in memory and answers at once, so the editor's spool gets its internal seam
+// `Spool::Peek`, not `Feed`: the editor reads bytes at every cursor move and cannot wait for a
+// window. That is also why the editor takes a document only as bytes.
 Spool::Peek fed(const std::shared_ptr<Quilt>& quilt) {
     return [quilt](std::size_t at, std::size_t most) { return quilt->bytes(at, most); };
 }
 
 }
 
-// **Kołdra pod szpulą.** Szpula czyta bajty przez tablicę kawałków, więc widzi dokument razem
-// ze zmianami, a oryginału nikt nie wczytuje.
+// The quilt under the spool. The spool reads bytes through the piece table, so it sees the
+// document together with the changes, and nobody reads the original in again.
 void Editor::hold(Bytes given) {
     kept_->quilt = std::make_shared<Quilt>(std::move(given));
 
@@ -412,8 +423,8 @@ void Editor::hold(Bytes given) {
     kept_->block.reset();
     kept_->marking = false;
 
-    // Nowy dokument to nowy dziennik: cofnięcie do stanu poprzedniego pliku nie miałoby sensu,
-    // a `dirty()` musi zacząć od czystego.
+    // A new document is a new log: undoing to the state of the previous file would make no sense,
+    // and `dirty()` has to start from clean.
     kept_->log.clear();
     kept_->done = 0;
     kept_->washed = 0;
@@ -423,22 +434,26 @@ void Editor::hold(Bytes given) {
 
     Page::hold(std::make_shared<Spool>(fed(kept_->quilt), kept_->quilt->whole()));
 
-    // Dokument w pamięci liczymy od razu — to przejście po tym, co i tak trzymamy.
+    // A document in memory is counted at once; it is a pass over what is held anyway.
     spool()->counting();
 }
 
+// Whether the caller made the editor read-only.
 bool Editor::readonly() const { return kept_->readonly; }
 
+// Makes the editor read-only or editable again; a save in progress keeps it read-only anyway.
 void Editor::readonly(bool given) { kept_->readonly = given; }
 
+// The cursor as a byte of the document.
 std::size_t Editor::cursor() const { return kept_->cursor; }
 
-// Kursor jako bajt dokumentu, a wiersz i przesunięcie w nim wylicza szpula. Odwrotnie byłoby
-// gorzej: zmiany adresuje się bajtem, a wiersze zmieniają numerację przy każdym enterze.
+// The cursor is a byte of the document, and the spool works out the line and the offset in it.
+// The other way would be worse: changes are addressed by byte, and lines change their numbering
+// with every enter.
 //
-// Postawienie kursora **zabiera ze sobą kotwicę** — czyli gasi zaznaczenie. Ruch z klawiszem
-// Shift kotwicy nie rusza i dlatego idzie przez `Selection::extend`; poza tym jednym obie drogi są
-// tą samą robotą, więc jedna woła drugą.
+// Placing the cursor takes the anchor with it, which turns the selection off. A move with Shift
+// does not touch the anchor and therefore goes through `Selection::extend`; apart from that one
+// thing both ways are the same work, so one calls the other.
 void Editor::cursor(std::size_t given) {
     Kept& kept = *kept_;
 
@@ -449,23 +464,27 @@ void Editor::cursor(std::size_t given) {
     selection_.extend(given);
 }
 
-// --- Zaznaczenie ---------------------------------------------------------------------------------
+// --- Selection -----------------------------------------------------------------------------------
 //
-// **Zaznaczenie to odcinek od kotwicy do kursora**, i nic więcej: kursor jest jego końcem, więc
-// ruch kursora rusza zaznaczenie, a postawienie kursora (`Editor::cursor`) je gasi. Podobiekt nic
-// nie trzyma — patrzy w `Kept` edytora przez właściciela, tak samo jak blok. Dawniej było to siedem
-// metod edytora (`anchor`, `selected`, `select`, `stretch`, `unselect`, `selection`) i kasowanie
-// ukryte w `back_erase(0)`, którego zero po cichu znaczyło „zaznaczenie".
+// The selection is the span from the anchor to the cursor, and nothing more: the cursor is its
+// end, so moving the cursor moves the selection, and placing the cursor (`Editor::cursor`) turns it
+// off. The subobject holds nothing; it looks into the editor's `Kept` through its owner, just as
+// the block does.
 Editor::Selection::Selection(Editor& owner) : owner_(owner) {}
 
+// Where the selection started; equal to the cursor when nothing is selected.
 std::size_t Editor::Selection::anchor() const { return owner_.kept_->anchor; }
 
+// The start of the selection, whichever way it was made.
 std::size_t Editor::Selection::from() const { return std::min(owner_.kept_->anchor, owner_.kept_->cursor); }
 
+// The end of the selection, whichever way it was made.
 std::size_t Editor::Selection::upto() const { return std::max(owner_.kept_->anchor, owner_.kept_->cursor); }
 
+// True when nothing is selected.
 bool Editor::Selection::empty() const { return owner_.kept_->cursor == owner_.kept_->anchor; }
 
+// The selected text; empty when nothing is selected.
 std::string Editor::Selection::text() const {
     const Kept& kept = *owner_.kept_;
 
@@ -474,8 +493,8 @@ std::string Editor::Selection::text() const {
     return talcite::text(kept.quilt->bytes(from(), upto() - from()));
 }
 
-// Parametry nazwane tym, czym są: `set(5, 2)` zaznacza wstecz, kursor staje na dwójce, a `from()`
-// i `upto()` i tak oddają 2 i 5.
+// The parameters are named for what they are: `set(5, 2)` selects backward, the cursor lands on 2,
+// and `from()` and `upto()` still return 2 and 5.
 void Editor::Selection::set(std::size_t anchor, std::size_t cursor) {
     Kept& kept = *owner_.kept_;
 
@@ -491,14 +510,15 @@ void Editor::Selection::set(std::size_t anchor, std::size_t cursor) {
     (void)owner_.trigger(ScrollEvent{});
 }
 
+// Turns the selection off without moving the cursor.
 void Editor::Selection::clear() {
     owner_.kept_->anchor = owner_.kept_->cursor;
 
     owner_.invalidate();
 }
 
-// Kasowanie zaznaczenia jako **jedna zmiana w dzienniku**, i tak samo dla Backspace, Delete, wycięcia
-// i zamiany na nic. Fałsz, gdy nie ma czego kasować albo nie wolno.
+// Deleting the selection as one change in the log, the same for Backspace, Delete, cutting and
+// replacing with nothing. False when there is nothing to delete or it is not allowed.
 bool Editor::Selection::erase() {
     Kept& kept = *owner_.kept_;
 
@@ -515,7 +535,7 @@ bool Editor::Selection::erase() {
     return true;
 }
 
-// Kursor idzie, kotwica stoi — ruch z klawiszem Shift i ciągnięcie myszą.
+// The cursor moves and the anchor stays: a move with Shift and a mouse drag.
 void Editor::Selection::extend(std::size_t to) {
     Editor& owner = owner_;
     Kept& kept = *owner.kept_;
@@ -526,8 +546,8 @@ void Editor::Selection::extend(std::size_t to) {
 
     kept.cursor = want;
 
-    // Ruch kursora zamyka grupę cofania: wyraz wpisany po przeskoku w inne miejsce nie ma nic
-    // wspólnego z wyrazem sprzed przeskoku.
+    // A cursor move closes the undo group: a word typed after a jump to another place has nothing
+    // in common with the word from before the jump.
     kept.joining = false;
 
     const std::size_t which = owner.spool()->found(want);
@@ -536,22 +556,24 @@ void Editor::Selection::extend(std::size_t to) {
 
     (void)owner.reveal(which);
 
-    // Zaznaczenie rysuje się znacznikami składanymi przy każdym malowaniu, ale sam obraz trzeba
-    // złożyć od nowa — inaczej przesunięty kursor nie zmieniłby nic na ekranie.
+    // The selection is drawn with tags assembled at every paint, but the picture itself has to be
+    // assembled anew; otherwise a moved cursor would change nothing on the screen.
     owner.invalidate();
     (void)owner.trigger(ScrollEvent{});
 }
 
+// The line of the cursor, from zero.
 std::size_t Editor::line() const {
     if (!spool()) return 0;
 
     return spool()->found(kept_->cursor);
 }
 
-// Skok do wiersza — para do `line()`: kursor na początek wiersza `which` (od zera), zaznaczenie
-// gaśnie, widok go pokazuje. Za ostatnim wierszem staje na ostatnim, bo „idź do 9999" w pliku
-// na sto wierszy ma dojść do końca, a nie odmówić. Kursor liczy się w bajtach, a bajt początku
-// wiersza zna tylko szpula — stąd metoda tutaj, nie w wołającym.
+// A jump to a line, the pair of `line()`: the cursor goes to the start of line `which` (from
+// zero), the selection goes off and the view shows it. Past the last line it lands on the last
+// one, because "go to 9999" in a file of a hundred lines has to reach the end, not refuse. The
+// cursor counts in bytes, and only the spool knows the byte where a line starts, hence the method
+// here and not in the caller.
 void Editor::line(std::size_t which) {
     Kept& kept = *kept_;
 
@@ -564,9 +586,9 @@ void Editor::line(std::size_t which) {
     cursor(spool()->at(which).value_or(spool()->whole()));
 }
 
-// Kolumna liczona w **kratkach**, nie w bajtach: pasek stanu pokazuje to, co widać, a tabulator
-// widać jako osiem miejsc. Bajt oddaje `cursor()`, więc obie miary są do wzięcia — tak samo jak
-// przy pasku przewijania, który chodzi raz po wierszach, a raz po bajtach.
+// The column counted in cells, not in bytes: the status bar shows what is visible, and a tab is
+// visible as eight places. `cursor()` returns the byte, so both measures are available, just as
+// with the scroll bar, which goes by lines at one time and by bytes at another.
 std::size_t Editor::column() const {
     Kept& kept = *kept_;
 
@@ -584,8 +606,7 @@ std::size_t Editor::column() const {
     return static_cast<std::size_t>(columns(got->front(), kept.cursor - *began));
 }
 
-// **Cały dokument wprost.** Dawniej wołający zaznaczał wszystko, czytał zaznaczenie i przywracał
-// kursor — trzy miejsca, dwa z nich w twa.
+// The whole document directly.
 std::string Editor::text() const {
     const Kept& kept = *kept_;
 
@@ -594,28 +615,30 @@ std::string Editor::text() const {
     return kept.text(0, kept.quilt->whole());
 }
 
-// --- Schowek -------------------------------------------------------------------------------------
+// --- Clipboard -----------------------------------------------------------------------------------
 
-// **Schowek nie jest edytora.** Edytor nie trzyma tu żadnej treści — dostaje `Clipboard` przy
-// budowie, a domyślny `clipboard()` to drzwi do schowka systemu, na POSIX-ie do schowka maszyny,
-// przy której siedzi użytkownik, przez terminal.
+// The clipboard does not belong to the editor. The editor holds no content here: it gets a
+// `Clipboard` when built, and the default `clipboard()` is the door to the system clipboard, on
+// POSIX to the clipboard of the machine the user sits at, through the terminal.
 //
-// Kopiowanie wolno także w dokumencie tylko do odczytu: niczego nie zmienia.
+// Copying is allowed in a read-only document too: it changes nothing.
 bool Editor::copy() {
     if (selection_.empty()) return false;
 
     return kept_->clipboard.provider().copy(selection_.text());
 }
 
-// Wycięcie idzie przez to samo kasowanie zaznaczenia, co Backspace, więc jest **jedną zmianą
-// w dzienniku** i wraca jednym cofnięciem. Gdy skopiowanie się nie uda, nie kasujemy: dokument
-// zostałby bez tekstu, którego nie ma dokąd wkleić.
+// Cutting goes through the same deletion of the selection as Backspace, so it is one change in the
+// log and comes back with one undo. When copying fails, nothing is deleted: the document would be
+// left without text that has nowhere to be pasted from.
 bool Editor::cut() {
     if (kept_->readonly || kept_->saving || selection_.empty() || !copy()) return false;
 
     return selection_.erase();
 }
 
+// Inserts the clipboard's text at the cursor, over the selection if there is one. False when the
+// editor is read-only or the clipboard is empty.
 bool Editor::paste() {
     if (kept_->readonly || kept_->saving) return false;
 
@@ -630,9 +653,9 @@ bool Editor::paste() {
 
 namespace {
 
-// Zaznaczenie rozpisane na znaczniki — po jednym na wiersz, bo znacznik żyje w jednym wierszu.
-// Liczymy je **tylko dla tego, co widać**: zaznaczenie całego dwugigabajtowego pliku ma tyle
-// wierszy, ile plik, a na ekranie i tak widać kilkadziesiąt.
+// The selection broken into tags, one per line, because a tag lives in one line. They are computed
+// only for what is visible: a selection of a whole two-gigabyte file has as many lines as the
+// file, and the screen shows a few dozen anyway.
 std::vector<Mark> spanned(Spool& spool, std::size_t from, std::size_t upto, std::size_t top,
                            std::size_t many) {
     std::vector<Mark> made;
@@ -661,9 +684,9 @@ std::vector<Mark> spanned(Spool& spool, std::size_t from, std::size_t upto, std:
 
 }
 
-// Znaczniki zaznaczenia składamy **przed** każdym złożeniem obrazu, a nie przy zmianie zaznaczenia:
-// zakres widocznych wierszy zmienia też przewinięcie i zmiana rozmiaru okna, a te nie przechodzą
-// przez `select`.
+// The selection tags are assembled before every assembly of the picture, not when the selection
+// changes: the range of visible lines also changes with scrolling and with resizing the window,
+// and those do not go through `select`.
 View Editor::paint(Size given, Area seen) {
     Kept& kept = *kept_;
 
@@ -672,7 +695,8 @@ View Editor::paint(Size given, Area seen) {
     if (spool()) {
         const std::size_t many = static_cast<std::size_t>(std::max(given.high, 1));
 
-        // Blok tą samą rolą, co zaznaczenie — w trakcie rozciągania widać go rosnącego z kursorem.
+        // The block with the same role as the selection; while it is being stretched it is seen
+        // growing with the cursor.
         if (!block_.empty()) {
             const std::size_t from = std::min(block_.from(), block_.upto());
             const std::size_t upto = std::max(block_.from(), block_.upto());
@@ -694,6 +718,7 @@ View Editor::paint(Size given, Area seen) {
     return Page::paint(given, seen);
 }
 
+// The cursor's place on the screen, or nothing without a document.
 std::optional<Spot> Editor::caret() const {
     Kept& kept = *kept_;
 
@@ -707,8 +732,9 @@ std::optional<Spot> Editor::caret() const {
     return spot_of(Place{which, kept.cursor - *began});
 }
 
-// Kursor po zmianie: wiersz przelicza szpula, a obraz i tak trzeba złożyć od nowa. Osobno, bo
-// robią to wszystkie cztery drogi zmiany — wpisanie, oba kasowania, cofnięcie i ponowienie.
+// The cursor after a change: the spool recomputes the line, and the picture has to be assembled
+// anew anyway. Separate, because all four ways of changing do it: typing, both deletions, undo
+// and redo.
 void Editor::settled(std::size_t where) {
     Kept& kept = *kept_;
 
@@ -725,8 +751,8 @@ void Editor::settled(std::size_t where) {
     (void)trigger(ScrollEvent{});
 }
 
-// Wpisanie **na zaznaczeniu jest jedną zmianą**, nie kasowaniem i wpisaniem po nim: inaczej jedno
-// cofnięcie oddawałoby pusty dokument zamiast tego, co było zaznaczone.
+// Typing over a selection is one change, not a deletion followed by typing; otherwise one undo
+// would give back an empty document instead of what was selected.
 void Editor::insert(std::string what) {
     Kept& kept = *kept_;
 
@@ -745,12 +771,13 @@ void Editor::insert(std::string what) {
     settled(from + what.size());
 }
 
+// Deletes `much` bytes before the cursor, or the selection when there is one.
 void Editor::back_erase(std::size_t much) {
     Kept& kept = *kept_;
 
     if (kept.readonly || kept.saving || !kept.quilt) return;
 
-    // Przy zaznaczeniu Backspace kasuje zaznaczenie, ile by nie kazano.
+    // With a selection Backspace deletes the selection, however much it was told.
     if (selection_.erase()) return;
 
     const std::size_t upto = kept.cursor;
@@ -766,6 +793,7 @@ void Editor::back_erase(std::size_t much) {
     settled(from);
 }
 
+// Deletes `much` bytes after the cursor, or the selection when there is one.
 void Editor::front_erase(std::size_t much) {
     Kept& kept = *kept_;
 
@@ -790,21 +818,23 @@ void Editor::front_erase(std::size_t much) {
     settled(at);
 }
 
-// --- Szukanie ------------------------------------------------------------------------------------
+// --- Search --------------------------------------------------------------------------------------
 
 namespace {
 
-// Ile wierszy bierzemy ze szpuli za jednym razem. Bajt początku pytamy tylko o pierwszy z nich,
-// a dalej doliczamy — pytanie o każdy z osobna kosztowałoby przejście od kotwicy raz na wiersz.
+// How many lines are taken from the spool at once. The starting byte is asked only for the first
+// of them, and the rest are counted on; asking for each one would cost a walk from the anchor once
+// per line.
 constexpr std::size_t combing = 64;
 
 }
 
-// **Szuka grzebień, ale po dokumencie chodzi edytor** — bo tylko on wie, gdzie zaczyna się wiersz.
-// Znalezione miejsce od razu się zaznacza i pokazuje; kto chce samo pytanie bez ruszania widoku,
-// niech pyta grzebienia o wiersz, który sam sobie weźmie.
+// The comb searches, but the editor walks the document, because only the editor knows where a
+// line starts. The place found is selected and shown at once; whoever wants the question alone,
+// without moving the view, can ask the comb about a line taken on their own.
 //
-// Nie zawijamy na koniec dokumentu: kolejne wołanie od zera jest decyzją aplikacji, nie widżetu.
+// The search does not wrap at the end of the document: calling again from zero is a decision of
+// the application, not of the widget.
 std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     Kept& kept = *kept_;
 
@@ -813,7 +843,7 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     const std::size_t at = std::min(from, spool()->whole());
     const std::size_t which = spool()->found(at);
 
-    // Wiersze od podanego numeru razem z bajtem, na którym każdy się zaczyna.
+    // The lines from the given number, together with the byte each one starts at.
     const auto batch = [this](std::size_t first, std::size_t most) {
         std::vector<std::pair<std::size_t, std::string>> made;
 
@@ -897,7 +927,7 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
 
 namespace {
 
-// Wpisanie pustki nie jest zmianą, więc zamiana na nic idzie przez kasowanie zaznaczenia.
+// Typing nothing is not a change, so replacing with nothing goes through deleting the selection.
 void put(Editor& one, const std::string& with) {
     if (with.empty())
         (void)one.selection().erase();
@@ -907,10 +937,9 @@ void put(Editor& one, const std::string& with) {
 
 }
 
-// **Zamiana jednego trafienia**: bieżące zaznaczenie, jeśli samo jest dopasowaniem, i pokazanie
-// następnego — tak, jak robi to każdy edytor: raz naciśnięty klawisz zamienia to, co świeci,
-// i przechodzi dalej. Gdy zaznaczenie nie jest trafieniem, tylko szuka następnego. Prawda, gdy
-// coś zamieniło. Dawniej był to jeden `replace(…, bool all)` z dwoma algorytmami za przełącznikiem.
+// Replacing one hit: the current selection, if it is a match itself, and showing the next one, as
+// every editor does: one press of the key replaces what is lit and moves on. When the selection is
+// not a hit, it only searches for the next one. True when something was replaced.
 bool Editor::replace(const Comb& how, const std::string& with) {
     Kept& kept = *kept_;
 
@@ -936,13 +965,13 @@ bool Editor::replace(const Comb& how, const std::string& with) {
     return false;
 }
 
-// **Zamiana wszystkich**: trafienia zbiera jedno przejście po dokumencie sprzed zamiany — bez
-// zaznaczania i bez zdarzeń — a potem jedna zmiana stawia `with` na miejscu każdego z nich, jednym
-// wpisem, który cofa się jednym ruchem. Dawniej każde trafienie szło osobno przez szukanie,
-// zaznaczenie, wstawienie i zawiadomienie szpuli, a kołdra przebudowywała się przy każdym — przy stu
-// tysiącach trafień był to kwadrat, i tak samo przy cofnięciu. Szuka się w tekście sprzed zamiany,
-// więc wstawka nigdy nie jest przeszukiwana: wzorzec ukryty w niej nie zapętli zamiany. Oddaje, ile
-// zamieniło.
+// Replacing all: one pass over the document from before the replacement collects the hits
+// (without selecting and without events), and then one change puts `with` in the place of each of
+// them, as one entry that is undone in one move. Handling every hit separately through searching,
+// selecting, inserting and notifying the spool would rebuild the quilt each time, which is
+// quadratic for a hundred thousand hits, and so would its undo. The search runs in the text from
+// before the replacement, so the inserted text is never searched: a pattern hidden in it does not
+// loop the replacement. Returns how many were replaced.
 std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
     Kept& kept = *kept_;
 
@@ -961,8 +990,8 @@ std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
 
         std::size_t where = *began;
 
-        // Grzebień pustych trafień nie oddaje nigdy (pomija je sam), więc każde trafienie przesuwa
-        // szukanie naprzód.
+        // The comb never returns empty hits (it skips them itself), so every hit moves the search
+        // forward.
         for (const std::string& text : got) {
             for (std::size_t start = 0; start <= text.size();) {
                 const std::optional<Hit> one = how.forth(text, start);
@@ -1011,13 +1040,14 @@ std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
     return count;
 }
 
-// --- Cofanie -------------------------------------------------------------------------------------
+// --- Undo ----------------------------------------------------------------------------------------
 
+// Whether the document differs from the last save, judged by the place in the log of changes.
 bool Editor::dirty() const { return kept_->done != kept_->washed; }
 
-// Czysty od teraz — i zapieczętowany: znak wpisany po zapisie zaczyna nowy wpis, inaczej
-// dokładałby się do ostatniego, nie zmieniając numeru, i `dirty()` mówiłoby „czysty" o tekście,
-// który jest inny niż na dysku.
+// Clean from now on, and sealed: a character typed after the save starts a new entry; otherwise it
+// would be added to the last one without changing the number, and `dirty()` would say "clean"
+// about text that differs from what is on the disk.
 void Editor::clean() {
     kept_->washed = kept_->done;
     kept_->joining = false;
@@ -1025,32 +1055,32 @@ void Editor::clean() {
 
 namespace {
 
-// Ile bajtów naraz idzie do ujścia. Tyle samo, co okno szpuli — dokument bywa większy od pamięci,
-// więc przez zapis też musi przepłynąć kawałkami.
+// How many bytes go to the sink at once. As many as the spool's window: a document can be larger
+// than memory, so it has to flow through saving in pieces too.
 constexpr std::size_t pouring = 64 * 1024;
 
 }
 
-// **Biblioteka nie dotyka plików.** Ujście daje aplikacja, a edytor daje treść — kawałkami przez
-// pulę. Każdy kawałek czyta się z kołdry na wątku głównym (to pamięć, mikrosekundy) i idzie do
-// ujścia obietnicą; następny czyta się dopiero po jej spełnieniu, więc przez cały zapis biegnie
-// jedno pisanie, w kolejności. **Koniec dokumentu ujście widzi jako pusty kawałek** — ostatnie
-// wołanie, po którym nic już nie przyjdzie; pusty dokument to samo jedno wołanie. Ujście domyka
-// wtedy to, co ma domknąć — plik, przemianowanie — a dziennik pierze się dopiero po spełnieniu
-// **tej** obietnicy: „czysty" znaczy wtedy „naprawdę na dysku", a nie „oddane ujściu". Dawny
-// zapis prał dziennik przy oddaniu treści, a gdy ujście obiecywało zamiast pisać, edytor mówił
-// „czysty" o pliku, którego jeszcze nie było. Odmowa ujścia w dowolnym miejscu zostawia dziennik
-// brudny, `busy()` gaśnie, a wołający dostaje odrzucenie ze zdaniem ujścia — niedokończony
-// zapis nie jest zapisem.
+// The library does not touch files. The application gives the sink and the editor gives the
+// content, in pieces through the pool. Every piece is read from the quilt on the main thread (it is
+// memory, microseconds) and goes to the sink as a promise; the next one is read only after that
+// promise is fulfilled, so during the whole save one write runs at a time, in order. The sink sees
+// the end of the document as an empty piece: the last call, after which nothing more comes; an
+// empty document is that one call alone. The sink then closes what it has to close (the file, the
+// rename), and the log is washed only after that promise is fulfilled: "clean" then means "really
+// on the disk", not "handed to the sink". A sink that promises instead of writing would otherwise
+// let the editor say "clean" about a file that does not exist yet. A refusal by the sink at any
+// point leaves the log dirty, `busy()` goes off, and the caller gets a rejection with the sink's
+// sentence: an unfinished save is not a save.
 //
-// W trakcie edytor jest zajęty: klawisze zmieniające treść odbijają się, żeby kawałki, które już
-// popłynęły, i te, które dopiero pójdą, były jednym dokumentem. Drugi zapis w trakcie pierwszego
-// i zapis bez ujścia są odrzucane od razu — to pomyłka wołającego, nie kłopot z dyskiem.
-// Aplikacja pisze obok i przemianowuje, jak zawsze.
+// Meanwhile the editor is busy: keys that change the content bounce off, so that the pieces that
+// have already flowed and those still to go are one document. A second save during the first one
+// and a save without a sink are rejected at once; that is the caller's mistake, not a disk problem.
+// The application writes beside the file and renames, as always.
 //
-// Łańcuch trzyma edytor słabo: gdy edytor zginie w trakcie, kawałek, który właśnie wrócił, nie
-// ma już skąd czytać następnego i zapis kończy się odrzuceniem, a nie dotknięciem zwolnionej
-// pamięci.
+// The chain holds the editor weakly: when the editor dies in the middle, the piece that has just
+// come back has nowhere to read the next one from, and the save ends with a rejection, not with a
+// touch of freed memory.
 Promise<void> Editor::save(Drain into) {
     Kept& kept = *kept_;
 
@@ -1064,11 +1094,11 @@ Promise<void> Editor::save(Drain into) {
     const std::size_t whole = kept.quilt->whole();
     const std::weak_ptr<Node> weak = weak_from_this();
 
-    // Ogniwo wołające samo siebie: `then` spłaszcza obietnicę oddaną z ciągu dalszego, więc
-    // każde ogniwo oddaje obietnicę reszty zapisu, a pierwsze — obietnicę całości. **Ogniwo trzyma
-    // siebie słabo**; mocno trzyma je tylko ciąg dalszy czekającego kawałka. Mocne wskazanie na
-    // samego siebie byłoby cyklem, który nie pęka — i każdy zapis zostawiałby w pamięci ujście
-    // razem ze wszystkim, co ono trzyma.
+    // A link that calls itself: `then` flattens a promise returned from the continuation, so every
+    // link returns the promise of the rest of the save, and the first one the promise of the
+    // whole. The link holds itself weakly; only the continuation of the waiting piece holds it
+    // strongly. A strong pointer to itself would be a cycle that never breaks, and every save would
+    // leave the sink in memory, together with everything it holds.
     const auto step = std::make_shared<std::function<Promise<void>(std::size_t)>>();
     const std::weak_ptr<std::function<Promise<void>(std::size_t)>> self = step;
 
@@ -1085,7 +1115,7 @@ Promise<void> Editor::save(Drain into) {
 
         Bytes got = mine->kept_->quilt->bytes(at, pouring);
 
-        // Kołdra obiecała więcej, niż oddaje. Lepiej powiedzieć „nie zapisano" niż zapisać ogryzek.
+        // The quilt promised more than it gives. Better to say "not saved" than to save a stub.
         if (got.empty())
             return Promise<void>{[](auto, auto reject) {
                 reject(std::make_exception_ptr(std::runtime_error{"The document ended early."}));
@@ -1096,8 +1126,8 @@ Promise<void> Editor::save(Drain into) {
         return into(std::move(got)).here().then([step = self.lock(), next] { return (*step)(next); });
     };
 
-    // Pierwszy kawałek idzie na wątku wołającego: kołdra albo ujście, które rzuci, zanim odda
-    // obietnicę, nie może zostawić edytora zajętym na zawsze — wyjątek staje się odrzuceniem.
+    // The first piece goes on the caller's thread: a quilt or a sink that throws before it returns
+    // a promise must not leave the editor busy forever, so the exception becomes a rejection.
     std::optional<Promise<void>> first;
 
     try {
@@ -1122,14 +1152,18 @@ Promise<void> Editor::save(Drain into) {
         });
 }
 
+// Whether a save is in progress.
 bool Editor::busy() const { return kept_->saving; }
 
+// Whether there is something to undo and the editor allows changes now.
 bool Editor::undoable() const { return !kept_->readonly && !kept_->saving && kept_->done > 0; }
 
+// Whether there is something to redo and the editor allows changes now.
 bool Editor::redoable() const { return !kept_->readonly && !kept_->saving && kept_->done < kept_->log.size(); }
 
-// Cofnięcie to ta sama zmiana czytana od tyłu: wraca to, co zniknęło, znika to, co przyszło.
-// Kursor staje tam, gdzie stał **przed** zmianą — bo to miejsce, do którego wraca dokument.
+// Undo is the same change read backward: what disappeared comes back, what came disappears. The
+// cursor lands where it stood before the change, because that is the place the document returns
+// to.
 void Editor::undo() {
     Kept& kept = *kept_;
 
@@ -1137,7 +1171,7 @@ void Editor::undo() {
 
     std::size_t where = kept.cursor;
 
-    // Wpisy przywiązane cofają się razem — „zamień wszystkie" ma wracać jednym ruchem.
+    // Tied entries are undone together: "replace all" has to come back in one move.
     kept.marking = false;
 
     while (kept.done > 0) {
@@ -1158,6 +1192,8 @@ void Editor::undo() {
     settled(where);
 }
 
+// Redo applies the next change again, with the tied entries after it; the cursor lands at the end
+// of what came.
 void Editor::redo() {
     Kept& kept = *kept_;
 
@@ -1188,8 +1224,9 @@ void Editor::redo() {
 
 namespace {
 
-// Ile bajtów ma znak **przed** tym miejscem. Kasowanie liczy się w bajtach, a wpisany znak bywa
-// wielobajtowy — bez tego Backspace rozcinałby ogonek na pół i zostawiał śmieć.
+// How many bytes the character before this place has. Deleting counts in bytes, and a typed
+// character can be multibyte; without this Backspace would cut a diacritic in half and leave
+// garbage.
 std::size_t behind(Quilt& quilt, std::size_t at) {
     if (at == 0) return 0;
 
@@ -1205,6 +1242,7 @@ std::size_t behind(Quilt& quilt, std::size_t at) {
     return much;
 }
 
+// How many bytes the character at this place has, so that Delete and the arrow take it whole.
 std::size_t ahead(Quilt& quilt, std::size_t at) {
     const std::string what = talcite::text(quilt.bytes(at, 4));
 
@@ -1215,13 +1253,14 @@ std::size_t ahead(Quilt& quilt, std::size_t at) {
     return std::min(much, what.size());
 }
 
-// **Skok po wyrazach.** Regułę „bajt wyrazu" bierzemy z `encoding.hpp` — tę samą, po której
-// grzebień szuka całych wyrazów i po której dwuklik bierze wyraz.
+// A jump by words. The "word byte" rule comes from `encoding.hpp`, the same one by which the comb
+// searches for whole words and a double click takes a word.
 //
-// W przód: przeskocz ciąg tego samego rodzaju, na którym stoisz, a potem to, co wyrazem nie jest —
-// czyli stań na **początku następnego wyrazu**. W tył symetrycznie: przeskocz to, co wyrazem nie
-// jest, a potem sam wyraz — czyli stań na **początku tego albo poprzedniego**. Na krańcu wiersza
-// przechodzimy do sąsiedniego; szukamy w wierszu, bo wierszami mówi zwój.
+// Forward: skip the run of the same kind you stand on, then what is not a word, that is, land at
+// the start of the next word. Backward, symmetrically: skip what is not a word, then the word
+// itself, that is, land at the start of this word or the previous one. At the edge of a line the
+// jump goes to the neighboring line; the search is within a line, because the spool speaks in
+// lines.
 std::size_t worded(Spool& spool, std::size_t at, bool forth) {
     const std::size_t which = spool.found(at);
     const std::optional<std::size_t> began = spool.at(which);
@@ -1270,6 +1309,9 @@ std::size_t worded(Spool& spool, std::size_t at, bool forth) {
 
 }
 
+// The editor's keys: the clipboard keys of Midnight Commander, typing, Enter, Backspace and Delete,
+// and movement by characters, words, lines and pages, Home and End. Other keys go to `Page`, and
+// a move past the first or the last line goes up to an ancestor.
 bool Editor::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 
@@ -1277,14 +1319,14 @@ bool Editor::handle(KeyEvent& what) {
 
     const Mods mods = what.mods();
 
-    // **Jeden komplet klawiszy schowka, nie dwa** — ten z Midnight Commandera, bo to jest wzorzec
-    // tej biblioteki. Stał tu obok drugi, Ctrl+C/X/V, i to on był kłopotem: w trybie surowym Ctrl+C
-    // nie jest przerwaniem, tylko zwykłym klawiszem, więc edytor połykał go, ilekroć miał ognisko —
-    // i aplikacja, która chciała go na wyjście, przestawała go widzieć, nie mogąc tego odwołać.
-    // Po usunięciu tamtego kompletu Ctrl+C przechodzi wyżej jak każdy inny klawisz.
+    // One set of clipboard keys, not two: the one from Midnight Commander, because that is the
+    // model of this library. A second set, Ctrl+C/X/V, would be trouble: in raw mode Ctrl+C is not
+    // an interrupt but an ordinary key, so the editor would swallow it whenever it had the focus,
+    // and an application that wants it for quitting would stop seeing it, with no way to undo
+    // that. So Ctrl+C goes up like any other key.
     //
-    // Kto woli odruch z reszty świata, wiesza `on<KeyEvent>` i woła `copy`, `cut` i `paste` sam —
-    // uchwyt widzi klawisz niezależnie od tego, co robi `handle`.
+    // Whoever prefers the reflex from the rest of the world attaches `on<KeyEvent>` and calls
+    // `copy`, `cut` and `paste` themselves; the handler sees the key whatever `handle` does.
     if (what.key().code() == Code::insert && !mods.alt) {
         if (mods.ctrl) {
             (void)copy();
@@ -1311,8 +1353,9 @@ bool Editor::handle(KeyEvent& what) {
         return true;
     }
 
-    // Ruch z Shiftem ciągnie zaznaczenie, bez Shiftu je gasi. Rozgałęzienie stoi w jednym miejscu,
-    // bo docelowy bajt każdy ruch liczy sam, a różnica między nimi jest tylko taka jedna.
+    // A move with Shift stretches the selection, without Shift it turns it off. The branch stands
+    // in one place, because every move computes its target byte itself, and this is the only
+    // difference between them.
     const auto went = [this, &mods](std::size_t where) {
         if (mods.shift)
             selection_.extend(where);
@@ -1320,8 +1363,8 @@ bool Editor::handle(KeyEvent& what) {
             cursor(where);
     };
 
-    // Wiersz o zadanym numerze i jego początek — potrzebne i pionowym strzałkom, i klawiszom
-    // stronicowym, i Home z End.
+    // The line with the given number and its start, needed by the vertical arrows, the page keys,
+    // and Home and End.
     const auto along = [this](std::size_t which, std::size_t offset) {
         const std::optional<std::size_t> began = spool()->at(which);
 
@@ -1340,8 +1383,8 @@ bool Editor::handle(KeyEvent& what) {
 
         case Code::remove: front_erase(ahead(*kept.quilt, kept.cursor)); return true;
 
-        // Z klawiszem Ctrl strzałka idzie wyrazami, bez niego znakami. Znak, nie bajt: inaczej
-        // strzałka stawałaby w środku ogonka.
+        // With Ctrl the arrow goes by words, without it by characters. A character, not a byte:
+        // otherwise the arrow would stop in the middle of a diacritic.
         case Code::left:
             went(mods.ctrl ? worded(*spool(), kept.cursor, false)
                            : kept.cursor - behind(*kept.quilt, kept.cursor));
@@ -1366,8 +1409,8 @@ bool Editor::handle(KeyEvent& what) {
 
             const std::size_t which = spool()->found(kept.cursor);
 
-            // Wyżej niż pierwszy wiersz i niżej niż ostatni nie ma dokąd iść. **Oddajemy wtedy
-            // klawisz przodkowi** zamiast go zjadać: karta albo lista wyżej ma prawo go użyć.
+            // There is nowhere to go above the first line or below the last one. The key is then
+            // handed to an ancestor instead of being eaten: a tab or a list above may use it.
             if (upwards && which == 0) return false;
 
             const std::size_t want = upwards ? (much > which ? 0 : which - much) : which + much;
@@ -1375,8 +1418,8 @@ bool Editor::handle(KeyEvent& what) {
 
             std::optional<std::size_t> where = along(want, offset);
 
-            // Stronicowanie w dół pod koniec dokumentu ma dojść do ostatniego wiersza, a nie
-            // odmówić ruchu — inaczej PageDown przestawałby działać na przedostatniej stronie.
+            // Paging down near the end of the document has to reach the last line, not refuse to
+            // move; otherwise PageDown would stop working on the second-to-last page.
             if (!where.has_value() && !upwards && much > 1) {
                 const std::optional<std::size_t> lines = this->lines();
 
@@ -1388,8 +1431,8 @@ bool Editor::handle(KeyEvent& what) {
 
             went(*where);
 
-            // `stretch` zapisało nowe przesunięcie, a my chcemy pamiętać stare — inaczej kursor
-            // schodząc po krótkim wierszu gubiłby swoją kolumnę na stałe.
+            // `extend` stored the new offset, and the old one has to be remembered; otherwise the
+            // cursor going down past a short line would lose its column for good.
             kept.offset = offset;
 
             return true;
@@ -1420,10 +1463,10 @@ bool Editor::handle(KeyEvent& what) {
     return Page::handle(what);
 }
 
-// Kliknięcie stawia kursor tam, gdzie się kliknęło — a nie tylko bierze ognisko, jak w podglądzie.
-// Rząd i kolumnę na wiersz i bajt przelicza kartka: rząd ekranu nie jest numerem wiersza, bo przy
-// zawijaniu jeden wiersz zajmuje ich kilka, a kolumna nie jest bajtem, bo tabulator zajmuje osiem
-// kratek. Liczone tu na piechotę dawało kursor w zupełnie innym miejscu.
+// A click puts the cursor where the click was, rather than only taking the focus, as in the
+// viewer. The page converts the row and column into a line and a byte: a screen row is not a line
+// number, because with wrapping one line takes several rows, and a column is not a byte, because a
+// tab takes eight cells. Computing it here by hand would put the cursor somewhere else entirely.
 bool Editor::handle(ClickEvent& what) {
     Kept& kept = *kept_;
 
@@ -1444,26 +1487,26 @@ bool Editor::handle(ClickEvent& what) {
     return true;
 }
 
-// **Zaznaczanie ciągnięciem.** Wciśnięcie stawia kursor razem z kotwicą, ruch z wciśniętym
-// przyciskiem rozciąga zaznaczenie kotwicą w miejscu — to jest cała różnica między `cursor`
-// a `stretch`. Terminal przysyła ruch z wciśniętym przyciskiem sam, bo `?1002` jest włączone;
-// `?1003` byłby potrzebny dopiero do ruchu **bez** przycisku, czyli do podświetlania pod kursorem.
+// Selecting by dragging. The press places the cursor together with the anchor, and motion with
+// the button held stretches the selection with the anchor in place; that is the whole difference
+// between `cursor` and `Selection::extend`. The terminal sends motion with a held button by
+// itself, because `?1002` is on; `?1003` would be needed only for motion without a button, that
+// is, for highlighting under the pointer.
 //
-// `ClickEvent` zostaje bez zmian i nie kłóci się z tym: korzeń wystawia go tylko wtedy, gdy
-// puszczenie padło w tej samej kratce co wciśnięcie — przy prawdziwym ciągnięciu nie powstaje
-// wcale, a przy zwykłym kliknięciu stawia ten sam kursor, który już postawiło wciśnięcie.
+// `ClickEvent` stays as it is and does not conflict with this: the root raises it only when the
+// release fell in the same cell as the press. With a real drag it does not arise at all, and with
+// an ordinary click it places the same cursor that the press has already placed.
 //
-// **Samoprzewijanie chodzi zdarzeniami, nie zegarem.** Ruch w skrajnym rzędzie przewija o wiersz,
-// więc szybkość schodzenia bierze się z tego, ile użytkownik naprawdę rusza myszą — kiedy stanie,
-// przewijanie staje razem z nim. Zegar dałby szybkość zależną od czasu i przewijałby dalej mimo
-// nieruchomej myszy.
+// Autoscrolling runs on events, not on a timer. Motion in the edge row scrolls by a line, so the
+// speed of going down comes from how much the user really moves the mouse; when the mouse stops,
+// scrolling stops with it. A timer would give a speed that depends on time and would keep
+// scrolling with the mouse standing still.
 //
-// **Ciągnięcie wychodzi poza edytor.** Wciśnięcie prosi korzeń o przytrzymanie, więc ruch
-// i puszczenie wracają tu także spoza edytora. Ruch nad nim albo pod nim przewija o wiersz jak na
-// skrajnym rzędzie, a zaznaczenie sięga do pierwszego albo ostatniego widocznego wiersza — rząd
-// przycinamy tutaj, bo `place_of` poza obszarem oddaje pustkę; w bok przycina już ono samo. Dawniej
-// korzeń rozsyłał ruch po położeniu, skrajny rząd był ostatnim miejscem, do którego cokolwiek
-// dochodziło, a puszczenie poza edytorem zostawiało ciągnięcie zapalone do następnego wciśnięcia.
+// The drag goes beyond the editor. The press asks the root to capture the mouse, so motion and
+// the release come back here from outside the editor too. Motion above or below it scrolls by a
+// line as on the edge row, and the selection reaches the first or the last visible line; the row
+// is clamped here, because `place_of` returns nothing outside the area, while sideways it clamps
+// on its own.
 bool Editor::handle(MouseEvent& what) {
     Kept& kept = *kept_;
 
@@ -1509,8 +1552,8 @@ bool Editor::handle(MouseEvent& what) {
 
     if (!kept.dragging || what.button() == Mouse::none) return true;
 
-    // Skrajny rząd przewija o wiersz, a dopiero potem czytamy, co pod myszą — bo po przewinięciu
-    // stoi tam już co innego.
+    // The edge row scrolls by a line, and only then is what lies under the mouse read, because
+    // after scrolling something else stands there.
     const int high = area().size.high;
 
     if (high > 1) {
@@ -1525,11 +1568,12 @@ bool Editor::handle(MouseEvent& what) {
     return true;
 }
 
-// Dwuklik bierze wyraz. **Regułę „bajt wyrazu" bierzemy z `encoding.hpp`**, tę samą, po której
-// grzebień szuka całych wyrazów — inaczej dwuklik i szukanie zaczęłyby się różnić na ogonkach.
+// A double click takes a word. The "word byte" rule comes from `encoding.hpp`, the same one by
+// which the comb searches for whole words; otherwise double click and search would start to
+// differ on diacritics.
 //
-// Klik w miejsce, które wyrazem nie jest, bierze ciąg takich samych: same spacje albo same znaki
-// przestankowe. Zawsze coś zaznacza, więc dwuklik nigdy nie wygląda na zignorowany.
+// A click on a place that is not a word takes a run of the same kind: spaces only or punctuation
+// only. It always selects something, so a double click never looks ignored.
 bool Editor::handle(DoubleClickEvent& what) {
     Kept& kept = *kept_;
 
@@ -1571,35 +1615,40 @@ bool Editor::handle(DoubleClickEvent& what) {
     return true;
 }
 
+// A bracketed paste goes in as one insertion at the cursor.
 bool Editor::handle(PasteEvent& what) {
     insert(what.text());
 
     return true;
 }
 
-// --- Blok mcedit -------------------------------------------------------------------------------------
+// --- The mcedit block ----------------------------------------------------------------------------
 //
-// Trwały odcinek dokumentu, niezależny od zaznaczenia (`anchor..cursor`) i od schowka — jak
-// w mcedit, gdzie blok i schowek też są osobno. F3 zaczyna go w kursorze, ruch rozciąga, drugie
-// F3 kończy i blok zostaje podświetlony, choć kursor pójdzie dalej; dopiero wtedy F5 wstawia go
-// przy kursorze, F6 przenosi, F8 usuwa. Blok jest trzecią pozycją, nie zaznaczeniem, bo `insert`
-// zastępuje zaznaczenie, a kursor **jest** jego końcem — „skopiuj blok do kursora" nie miałoby
-// w tym modelu sensu. Nic własnego nie trzyma: patrzy w `Kept` edytora przez właściciela.
+// A lasting span of the document, independent of the selection (`anchor..cursor`) and of the
+// clipboard, as in mcedit, where the block and the clipboard are separate too. F3 starts it at the
+// cursor, movement stretches it, the second F3 ends it, and the block stays highlighted although
+// the cursor goes on; only then F5 inserts it at the cursor, F6 moves it and F8 deletes it. The
+// block is a third position, not the selection, because `insert` replaces the selection, and the
+// cursor is its end: "copy the block to the cursor" would make no sense in that model. It holds
+// nothing of its own: it looks into the editor's `Kept` through its owner.
 
 Editor::Block::Block(Editor& owner) : owner_(owner) {}
 
+// True when there is no block, finished or being stretched.
 bool Editor::Block::empty() const { return !owner_.kept_->block.has_value(); }
 
+// True while the block is being stretched, between the two presses of F3.
 bool Editor::Block::pending() const { return owner_.kept_->marking; }
 
+// The start of the block; zero without a block.
 std::size_t Editor::Block::from() const {
     const Kept& kept = *owner_.kept_;
 
     return kept.block.has_value() ? kept.block->first : 0;
 }
 
-// W trakcie rozciągania koniec jest kursorem — może stać przed początkiem, gdy blok idzie w tył;
-// `text()` i malowanie porządkują min/max.
+// While stretching, the end is the cursor; it can stand before the start when the block goes
+// backward, and `text()` and painting put min and max in order.
 std::size_t Editor::Block::upto() const {
     const Kept& kept = *owner_.kept_;
 
@@ -1608,6 +1657,7 @@ std::size_t Editor::Block::upto() const {
     return kept.marking ? kept.cursor : kept.block->second;
 }
 
+// The text of the block; empty without a block.
 std::string Editor::Block::text() const {
     if (empty()) return {};
 
@@ -1615,8 +1665,8 @@ std::string Editor::Block::text() const {
 }
 
 
-// F3, trzy stany: bez bloku zaczyna go w kursorze; w trakcie kończy; przy bloku gotowym zdejmuje
-// stary i zaczyna nowy w kursorze.
+// F3, three states: without a block it starts one at the cursor; during stretching it ends it;
+// with a finished block it drops the old one and starts a new one at the cursor.
 void Editor::Block::mark() {
     Kept& kept = *owner_.kept_;
 
@@ -1632,7 +1682,8 @@ void Editor::Block::mark() {
     owner_.invalidate();
 }
 
-// Zdjęcie bloku bez śladu w dokumencie — nie idzie do dziennika, bo treść się nie zmienia.
+// Removing the block without a trace in the document; it does not go to the log, because the
+// content does not change.
 void Editor::Block::clear() {
     Kept& kept = *owner_.kept_;
 
@@ -1642,9 +1693,9 @@ void Editor::Block::clear() {
     owner_.invalidate();
 }
 
-// F5: treść bloku wchodzi w kursorze, blok zostaje, gdzie był — a gdy leżał za kursorem,
-// przesuwa się o swoją długość zwykłą regułą „zmiana przed blokiem". Jedna zmiana w dzienniku,
-// zapieczętowana: znak wpisany zaraz potem nie ma prawa się do niej dokleić.
+// F5: the block's content goes in at the cursor, and the block stays where it was; when it lay
+// after the cursor, it moves by its length by the ordinary "change before the block" rule. One
+// change in the log, sealed: a character typed right after it must not stick to it.
 bool Editor::Block::copy() {
     Kept& kept = *owner_.kept_;
 
@@ -1668,11 +1719,11 @@ bool Editor::Block::copy() {
     return true;
 }
 
-// F6: blok wychodzi ze swojego miejsca i wchodzi tam, gdzie stał kursor **po** wycięciu — gdy
-// leżał przed kursorem, cel cofa się o jego długość. Kursor w bloku albo na jego brzegu to
-// „przenieś do siebie": nic. Dwa wpisy dziennika związane w jeden — cofnięcie przywraca i tekst,
-// i blok tam, skąd wyszedł. Po przeniesieniu blok obejmuje wstawiony tekst, żeby dało się
-// przenosić dalej.
+// F6: the block leaves its place and goes in where the cursor stood after the cut; when it lay
+// before the cursor, the target moves back by its length. A cursor in the block or on its edge is
+// "move to itself": nothing. Two log entries tied into one, so undo restores both the text and the
+// block where it came from. After the move the block covers the inserted text, so that it can be
+// moved further.
 bool Editor::Block::move() {
     Kept& kept = *owner_.kept_;
 
@@ -1706,8 +1757,9 @@ bool Editor::Block::move() {
     return true;
 }
 
-// F8: blok znika z dokumentu razem ze sobą. Kursor za blokiem cofa się o jego długość, w bloku
-// staje na jego początku, przed — zostaje. Jedna zmiana; cofnięcie przywraca tekst i blok.
+// F8: the block disappears from the document together with its text. A cursor after the block
+// moves back by its length, one inside lands at its start, one before it stays. One change; undo
+// restores the text and the block.
 bool Editor::Block::erase() {
     Kept& kept = *owner_.kept_;
 

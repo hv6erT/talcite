@@ -14,28 +14,31 @@
 namespace talcite::net {
 
 struct Udp::Held {
+    // Closes the socket if it is still open and only then retires its number.
     ~Held() {
         close();
 
         retiring(numbered);
     }
 
+    // Takes the handle away, so that no new work starts on it, and tells the hub to forget it.
     void close() {
         if (const Handle one = which.exchange(nothing); one != nothing) forget(one);
     }
 
-    // **Numer przeżywa zamknięcie i ginie dopiero razem z uchwytem.** Zgłoszenia w locie trzymają
-    // uchwyt przez `kept`, więc deskryptor zamyka się dopiero wtedy, gdy nikt nie może już ani go
-    // zgłosić, ani na nim czytać. Zamykany wcześniej wracał jako numer świeżo otwartego gniazda —
-    // i wtedy ktoś czytał z cudzego połączenia.
+    // The number outlives closing and goes away only together with the handle. Requests in
+    // flight hold the handle through `kept`, so the descriptor is closed only when nobody can
+    // submit it or read from it any more. Closed earlier, the number could come back as that of a
+    // freshly opened socket, and someone would read from another connection.
     Handle numbered = nothing;
 
     std::atomic<Handle> which{nothing};
     Address mine;
 
-    // **Kto** trzyma dany kierunek, a nie „czy ktoś go trzyma" — powód i cały wzór opisane przy
-    // zdejmowaniu w strumieniu. Gołe wskaźniki, bo to są wyłącznie znaczniki tożsamości: nigdy nie
-    // sięgamy przez nie do obiektu. Zgłoszenia żyją własnym uchwytem w centrali i przez `kept`.
+    // Who holds each direction, not whether someone holds it; the reason and the whole pattern
+    // are described with withdrawal in the stream. Raw pointers, because these are only identity
+    // markers: we never reach the object through them. The requests live by their own handle in
+    // the hub and through `kept`.
     std::mutex guard;
     const void* fetching = nullptr;
     const void* sending = nullptr;
@@ -43,6 +46,7 @@ struct Udp::Held {
 
 namespace {
 
+// A promise of `T` that has already failed with `Trouble`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) {
     auto made = std::make_shared<detail::Result<T>>();
@@ -52,23 +56,27 @@ Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) 
     return HandPromise<T>{made};
 }
 
+// A receive request: the hub fills `buffer` and `where`, and the promise gets the datagram.
 struct FetchPromise : Doing, detail::Result<Datagram> {
     std::shared_ptr<Udp::Held> mine;
 
+    // Frees the receiving direction, if this request still holds it.
     void yielded() {
         const std::lock_guard<std::mutex> kept{mine->guard};
 
         if (mine->fetching == this) mine->fetching = nullptr;
     }
 
-    // Wzór zdejmowania, tożsamość znacznika i zasłona `quitted` — opisane przy nawiązaniu
-    // w strumieniu.
+    // Withdraws the request from the hub and frees the direction. The withdrawal pattern, the
+    // marker identity and the `quitted` guard are described with connecting in the stream.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
         yielded();
     }
 
+    // The hub has received `much` bytes, or failed with `code`: settles the promise with the
+    // datagram or with the trouble.
     void done(std::size_t much, int code) override {
         yielded();
 
@@ -82,7 +90,7 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
             return;
         }
 
-        // Obcięcie zgłaszamy jako kłopot, zamiast oddać kawałek udający całość.
+        // Truncation is reported as a trouble instead of handing out a piece posing as the whole.
         if (cut) {
             spoiled(*this, std::make_exception_ptr(
                                Trouble{"The datagram did not fit in the buffer.", 0, where}));
@@ -99,6 +107,7 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
         settled(*this, std::move(made));
     }
 
+    // The patience ran out: the promise fails with `Overdue`.
     void late() override {
         yielded();
 
@@ -108,21 +117,25 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
     }
 };
 
+// A send request: the hub sends `buffer` to `where`.
 struct SendPromise : Doing, detail::Result<void> {
     std::shared_ptr<Udp::Held> mine;
 
+    // Frees the sending direction, if this request still holds it.
     void yielded() {
         const std::lock_guard<std::mutex> kept{mine->guard};
 
         if (mine->sending == this) mine->sending = nullptr;
     }
 
+    // Withdraws the request from the hub and frees the direction, as in `FetchPromise`.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
         yielded();
     }
 
+    // The hub has sent `much` bytes, or failed with `code`: settles the promise accordingly.
     void done(std::size_t much, int code) override {
         yielded();
 
@@ -135,8 +148,8 @@ struct SendPromise : Doing, detail::Result<void> {
             return;
         }
 
-        // Krótszy datagram niż podany nie zdarza się — a gdyby się zdarzył, znaczyłby, że poszła
-        // paczka, której nikt nie zamawiał. Lepiej powiedzieć o tym wprost.
+        // A datagram shorter than the one given does not happen; if it did, it would mean that a
+        // packet nobody asked for went out. Better to say so plainly.
         if (much != buffer.size()) {
             spoiled(*this, std::make_exception_ptr(Trouble{"The datagram went out truncated.", 0, where}));
 
@@ -146,6 +159,7 @@ struct SendPromise : Doing, detail::Result<void> {
         settled(*this);
     }
 
+    // The patience ran out: the promise fails with `Overdue`.
     void late() override {
         yielded();
 
@@ -157,14 +171,16 @@ struct SendPromise : Doing, detail::Result<void> {
 
 }
 
-// Poczta, tak jak brama, nie oddaje obietnicy: otwarcie gniazda i przypisanie portu kończą się
-// od razu. Adres bez portu znaczy „daj mi jakikolwiek" — tak robi się stronę wysyłającą.
+// Opens a datagram socket bound to `where`. Like the gate, the post returns no promise: opening
+// the socket and binding the port finish at once. An address without a port means "give me any",
+// which is how a sending side is made.
 Udp::Udp(Address where) : held_(std::make_shared<Held>()) {
     if (!where.held()) throw Trouble{"An empty address is no place for post."};
 
-    // Poczta jest datagramowa, a gniazdo lokalne datagramów nie ma — Windows nie daje ich wcale,
-    // więc nie dajemy ich nigdzie. Odmawiamy wprost, zamiast oddawać numer błędu systemu, z
-    // którego nie widać, że rzecz jest niemożliwa z założenia, a nie nieudana tym razem.
+    // The post works with datagrams, and a local socket has none here: Windows does not offer
+    // them at all, so we offer them nowhere. We refuse plainly instead of passing on a system
+    // error number, which would not show that the thing is impossible by design rather than
+    // failed this time.
     if (where.family() == Family::local)
         throw Trouble{"Udp does not work on a local socket — it is stream-only."};
 
@@ -190,11 +206,11 @@ Udp::Udp(Address where) : held_(std::make_shared<Held>()) {
     held_->mine = named(one, false);
 }
 
-// Pusty adres oddawany wtedy, gdy uchwytu już nie ma. Wszystkie pozostałe metody odpowiadają po
-// zamknięciu grzecznie, więc te też muszą — sięganie po nieistniejący uchwyt kończyło się
-// naruszeniem pamięci, a klasa wyraźnie zamierza być używalna po close().
 namespace {
 
+// The empty address returned when there is no handle any more. All the other methods answer
+// politely after closing, so these must too: reaching for a missing handle would be a memory
+// violation, and the class is meant to stay usable after close().
 const Address& nowhere() {
     static const Address one;
 
@@ -203,20 +219,23 @@ const Address& nowhere() {
 
 }
 
+// The local address the socket is bound to, or an empty one after closing.
 const Address& Udp::mine() const { return held_ ? held_->mine : nowhere(); }
 
+// Receives one datagram of at most `most` bytes within `patience`. Only one receive may be in
+// progress at a time; a larger datagram fails instead of arriving truncated.
 Promise<Datagram> Udp::receive(std::size_t most, Patience patience) const {
     if (!held_) return amiss_now<Datagram>("The post is closed.");
 
-    // Przydział bufora idzie **przed** zajęciem znacznika. Rozmiar podaje wołający, więc resize
-    // potrafi rzucić — a wyjątek rzucony po zajęciu zostawiał znacznik ustawiony na zawsze i
-    // gniazdo już nigdy nie czytało, bo nie powstawało zgłoszenie, które by go zdjęło.
+    // The buffer is allocated before the marker is taken. The caller gives the size, so resize
+    // can throw, and an exception thrown after taking the marker would leave it set forever: the
+    // socket would never read again, since no request would exist to clear it.
     auto one = std::make_shared<FetchPromise>();
 
     one->buffer.resize(most);
 
-    // Zajęcie kierunku i zapamiętanie, czyj on jest, pod jednym zamkiem: inaczej dwa odbierania
-    // zaczęte naraz zapisałyby się jedno po drugim.
+    // Taking the direction and remembering whose it is happen under one lock; otherwise two
+    // receives started at once would both record themselves, one after the other.
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
 
@@ -237,6 +256,8 @@ Promise<Datagram> Udp::receive(std::size_t most, Patience patience) const {
     return HandPromise<Datagram>{one};
 }
 
+// Sends `what` as one datagram to `to` within `patience`. Only one send may be in progress at a
+// time.
 Promise<void> Udp::send(Address to, Bytes what, Patience patience) const {
     if (!held_) return amiss_now<void>("The post is closed.");
 
@@ -266,14 +287,15 @@ Promise<void> Udp::send(Address to, Bytes what, Patience patience) const {
     return HandPromise<void>{one};
 }
 
-// Zgoda na wysyłkę rozgłoszeniową — tylko dla tego gniazda, wyłącznie na prośbę (majak w sieci
-// lokalnej). Bez niej wysyłka na 255.255.255.255 dostaje odmowę systemu.
+// Allows broadcast sending, only for this socket and only on request (a beacon in the local
+// network). Without it, sending to 255.255.255.255 is refused by the system.
 void Udp::broadcast(bool given) const {
     if (!held_) return;
 
     broadcasting(held_->which.load(), given);
 }
 
+// Closes the socket; afterwards every method answers as on a closed post.
 void Udp::close() {
     if (!held_) return;
 

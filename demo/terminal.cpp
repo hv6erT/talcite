@@ -8,72 +8,79 @@
 
 namespace {
 
+// How many colors the terminal shows, in words.
 std::string named(talcite::Colors given) {
     switch (given) {
-        case talcite::Colors::mono: return "brak";
-        case talcite::Colors::ansi: return "16 kolorów";
-        case talcite::Colors::palette: return "256 kolorów";
-        case talcite::Colors::rgb: return "pełna paleta";
+        case talcite::Colors::mono: return "none";
+        case talcite::Colors::ansi: return "16 colors";
+        case talcite::Colors::palette: return "256 colors";
+        case talcite::Colors::rgb: return "true color";
     }
 
     return "?";
 }
 
+// Which mouse reporting the terminal offers, in words.
 std::string named(talcite::Mouse given) {
     switch (given) {
-        case talcite::Mouse::none: return "brak";
-        case talcite::Mouse::basic: return "zwykła";
+        case talcite::Mouse::none: return "none";
+        case talcite::Mouse::basic: return "basic";
         case talcite::Mouse::sgr: return "SGR";
     }
 
     return "?";
 }
 
+// Which alternate screen the terminal has, with its private mode number.
 std::string named(talcite::Screen given) {
     switch (given) {
-        case talcite::Screen::none: return "brak";
-        case talcite::Screen::older: return "stary (47)";
-        case talcite::Screen::apart: return "zapasowy (1049)";
+        case talcite::Screen::none: return "none";
+        case talcite::Screen::older: return "old (47)";
+        case talcite::Screen::apart: return "alternate (1049)";
     }
 
     return "?";
 }
 
+// Whether the terminal's background is light or dark, in words.
 std::string named(talcite::Shade given) {
     switch (given) {
-        case talcite::Shade::neutral: return "nie wiadomo";
-        case talcite::Shade::light: return "jasne";
-        case talcite::Shade::dark: return "ciemne";
+        case talcite::Shade::neutral: return "unknown";
+        case talcite::Shade::light: return "light";
+        case talcite::Shade::dark: return "dark";
     }
 
     return "?";
 }
 
+// Which pixel graphics protocol the terminal speaks, in words.
 std::string named(talcite::Graphics given) {
     switch (given) {
-        case talcite::Graphics::none: return "brak";
+        case talcite::Graphics::none: return "none";
         case talcite::Graphics::sixel: return "sixel";
-        case talcite::Graphics::kitty: return "protokół kitty";
+        case talcite::Graphics::kitty: return "kitty protocol";
     }
 
     return "?";
 }
 
+// The densest block characters the terminal can show, with their grid.
 std::string named(talcite::ui::Blocks given) {
     switch (given) {
-        case talcite::ui::Blocks::basic: return "znaki blokowe";
-        case talcite::ui::Blocks::sextants: return "sekstanty (2x3)";
-        case talcite::ui::Blocks::octants: return "oktanty (2x4)";
+        case talcite::ui::Blocks::basic: return "block characters";
+        case talcite::ui::Blocks::sextants: return "sextants (2x3)";
+        case talcite::ui::Blocks::octants: return "octants (2x4)";
     }
 
     return "?";
 }
 
-std::string named(bool given) { return given ? "tak" : "nie"; }
+// A yes or a no.
+std::string named(bool given) { return given ? "yes" : "no"; }
 
-// Liczymy znaki, nie bajty. Pierwsza wersja wyrównywała po rozmiarze napisu i kolumny
-// rozjeżdżały się na polskich literach — czyli dokładnie ten kłopot, dla którego cała ta
-// klasa mierzy szerokości.
+// The number of characters in UTF-8 text: we count characters, not bytes. Aligning by the size of
+// the string would misalign the columns on non-ASCII letters, which is exactly the problem this
+// whole class measures widths for.
 std::size_t letters(const std::string& said) {
     std::size_t made = 0;
 
@@ -83,12 +90,15 @@ std::size_t letters(const std::string& said) {
     return made;
 }
 
+// Prints one line of the report: the label padded to 22 characters, then the value.
 void shown(const std::string& what, const std::string& told) {
     const std::size_t much = letters(what);
 
     std::cout << "  " << what << std::string(much < 22 ? 22 - much : 1, ' ') << told << "\n";
 }
 
+// The text with ESC written as \e and other control bytes as \x escapes, so that it can be printed
+// safely.
 std::string plainly(const std::string& given) {
     std::string made;
 
@@ -113,6 +123,7 @@ std::string plainly(const std::string& given) {
 
 }
 
+// Probes the terminal and prints everything `Capabilities` learned, with the time the probe took.
 int main() {
     const showing::Speaking speaking;
 
@@ -120,52 +131,52 @@ int main() {
 
     talcite::Capabilities compat;
 
-    // Pierwsze pytanie odpala badanie; reszta jest już buforowana.
+    // The first question starts the probe; the rest are already cached.
     const talcite::Colors colors = compat.colors();
 
     const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - began);
 
-    std::cout << "\nCo mówi terminal\n\n";
+    std::cout << "\nWhat the terminal says\n\n";
 
-    shown("nazwa", compat.named().empty() ? "(nie podał)" : compat.named());
-    shown("wersja", std::to_string(compat.version()));
-    shown("kolor", named(colors));
-    shown("mysz", named(compat.mouse()));
-    shown("ekran zapasowy", named(compat.screen()));
-    shown("tło", named(compat.shade()));
-    shown("wklejanie w nawiasach", named(compat.bracketed_paste()));
-    shown("zgłaszanie ogniska", named(compat.focus_events()));
-    shown("rysowanie uzgodnione", named(compat.synchronized()));
+    shown("name", compat.named().empty() ? "(not given)" : compat.named());
+    shown("version", std::to_string(compat.version()));
+    shown("color", named(colors));
+    shown("mouse", named(compat.mouse()));
+    shown("alternate screen", named(compat.screen()));
+    shown("background", named(compat.shade()));
+    shown("bracketed paste", named(compat.bracketed_paste()));
+    shown("focus reporting", named(compat.focus_events()));
+    shown("synchronized output", named(compat.synchronized()));
     shown("Unicode", named(compat.unicode()));
-    shown("tytuł okna", named(compat.titles()));
+    shown("window title", named(compat.titles()));
 
-    std::cout << "\nObrazy\n\n";
+    std::cout << "\nImages\n\n";
 
-    shown("protokół pikselowy", named(compat.graphics()));
+    shown("pixel protocol", named(compat.graphics()));
 
     const talcite::ui::Size cell = compat.cell();
 
-    shown("kratka w pikselach", cell.wide == 0 || cell.high == 0
-                                    ? std::string{"(nie podał)"}
+    shown("cell in pixels", cell.wide == 0 || cell.high == 0
+                                    ? std::string{"(not given)"}
                                     : std::to_string(cell.wide) + " x " +
                                           std::to_string(cell.high));
 
-    // **Pomiar mówi tylko, czy znak zajmuje jedną kratkę** — nie czy font go ma. Dlatego to jest
-    // sufit: gęstość, której terminal jeszcze nie rozsypie. Wyboru dokonuje aplikacja przez
-    // `Setup`, a `Term` bierze mniejszą z dwóch.
-    shown("znaki rysunkowe", named(compat.blocks()));
+    // The measurement only tells whether a character takes one cell, not whether the font has it.
+    // So this is a ceiling: the densest grid the terminal will not scatter. The application makes
+    // the choice through `Setup`, and `Term` takes the smaller of the two.
+    shown("block drawing", named(compat.blocks()));
 
-    std::cout << "\nSzerokości w kolumnach\n\n";
+    std::cout << "\nWidths in columns\n\n";
 
-    shown("znak chiński", std::to_string(compat.wide()));
-    shown("emoji ze znacznikiem", std::to_string(compat.varied()));
-    shown("emoji złożone", std::to_string(compat.joined()));
+    shown("Chinese character", std::to_string(compat.wide()));
+    shown("emoji with selector", std::to_string(compat.varied()));
+    shown("joined emoji", std::to_string(compat.joined()));
 
-    std::cout << "\nBadanie trwało " << spent.count() << " ms\n";
+    std::cout << "\nThe probe took " << spent.count() << " ms\n";
 
     if (!compat.rest().empty())
-        std::cout << "Bajty nie od nas: " << plainly(compat.rest()) << "\n";
+        std::cout << "Bytes not for us: " << plainly(compat.rest()) << "\n";
 
     std::cout << "\n";
 

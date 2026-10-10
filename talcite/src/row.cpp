@@ -8,22 +8,23 @@ Row::Row(int gap) : gap_(std::max(gap, 0)) {}
 
 Row::Row(RowShape shape) : gap_(std::max(shape.gap, 0)), wrapping_(shape.wrapping) {}
 
+// Sets the gap between children, in columns; a negative gap counts as zero.
 void Row::gap(int given) { gap_ = std::max(given, 0); }
 
+// A row takes any number of children.
 int Row::capacity() const { return plenty; }
 
-// **Odstęp należy się między dziećmi, które coś zajmują.** Dziecko o zerowej szerokości — pusty
-// napis, wyłączony przycisk, węzeł bez treści — nie otwiera odstępu, bo zostawiłby po sobie dziurę
-// w miejscu, w którym nic nie widać. Dlatego pamiętamy nie „które to z kolei dziecko", tylko „czy
-// coś już stoi".
+// Splits the children into lines for a wrapping row of size `room`. A gap is due only between
+// children that occupy something. A child of zero width (an empty label, a disabled button, a node
+// without content) opens no gap, because it would leave a hole where nothing is visible. That is
+// why we remember not "which child in turn this is" but "whether something already stands here".
+// This is a matter of layout, not of content: otherwise every window would have to separate its
+// buttons with empty nodes and fix them at every removal.
 //
-// To jest sprawa układu, nie treści: rozdzielanie przycisków pustymi węzłami było robotą, którą
-// każde okno musiało powtarzać u siebie i przy każdym zdejmowaniu poprawiać.
-//
-// **Wiersz, który się łamie** (`wrapping`): dziecko, które nie mieści się w tym, co zostało z linii,
-// zaczyna następną; każda linia stoi pośrodku. Tak rząd przycisków okna nie gubi ostatnich, gdy jest
-// ich więcej, niż zmieści ekran — w 80 kolumnach i w języku z długimi napisami. Dziecko szersze niż
-// cały wiersz dostaje linię dla siebie, przycięte.
+// A row that wraps (`wrapping`): a child that does not fit in what is left of the line starts the
+// next one; each line is centered. That way a window's row of buttons does not lose the last ones
+// when there are more than the screen can hold, in 80 columns and in a language with long labels.
+// A child wider than the whole row gets a line to itself, trimmed.
 std::vector<Row::Line> Row::laid(Size room) const {
     std::vector<Line> made(1);
 
@@ -45,6 +46,8 @@ std::vector<Row::Line> Row::laid(Size room) const {
     return made;
 }
 
+// The size the children want side by side, with gaps, or line under line when the row wraps,
+// clamped to `room`.
 Size Row::wants(Size room) const {
     if (wrapping_) {
         Size made;
@@ -73,17 +76,18 @@ Size Row::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
+// Lays the children out left to right, or in centered lines when the row wraps, and draws them.
 View Row::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent where it draws nothing, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
     if (wrapping_) {
         const std::vector<Line> lines = laid(given);
 
-        // Dziecko, które nic nie zajmuje, i tak dostaje prostokąt zerowy — jak w wierszu bez łamania.
+        // A child that occupies nothing still gets a zero rectangle, as in a row without wrapping.
         for (const std::shared_ptr<Node>& one : children()) {
             const bool placed = std::any_of(lines.begin(), lines.end(), [&one](const Line& line) {
                 return std::any_of(line.placed.begin(), line.placed.end(), [&one](const auto& each) { return each.first == one.get(); });
@@ -120,9 +124,9 @@ View Row::paint(Size given, Area seen) {
         const Size wants = one->wants({left, given.high});
         const Size gets{std::min(wants.wide, left), given.high};
 
-        // Nikt nie wypada z pętli, nawet gdy miejsce się skończyło: węzeł, którego nie widać,
-        // dostaje prostokąt o zerowej szerokości i dzięki temu jego area() mówi prawdę o tej
-        // klatce. Ale odstępu przed sobą nie otwiera.
+        // Nobody drops out of the loop, even when the room has run out: a node that is not
+        // visible gets a rectangle of zero width, so that its area() tells the truth about this
+        // frame. But it opens no gap before itself.
         const int from = gets.wide > 0 ? x + apart : x;
 
         const Area where{{from, 0}, gets};

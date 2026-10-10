@@ -29,6 +29,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -39,10 +40,12 @@ private:
     talcite::Term& term_;
 };
 
+// A true-color value from its three components.
 talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
+// A style with the given foreground and background and nothing else set.
 talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
@@ -52,8 +55,8 @@ talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     return made;
 }
 
-// Paleta odtwarzająca Midnight Commandera: granatowe panele, morski pasek menu, czerwone pudełko
-// błędu. **Kod widżetów nie wie o niej nic** — pyta o role i dostaje to, co ta paleta mówi.
+// A palette that recreates Midnight Commander: navy panels, a teal menu bar, a red error box. The
+// widget code knows nothing about it; it asks for roles and gets what this palette says.
 talcite::ui::Skin coloured() {
     const talcite::Color blue = tinted(0, 0, 160);
     const talcite::Color light = tinted(200, 200, 200);
@@ -80,7 +83,7 @@ talcite::ui::Skin coloured() {
         {"talcite.legend.key", painted(light, black)},
         {"talcite.legend.text", painted(black, cyan)},
 
-        // Zwykły komunikat: to samo okno co panel, tylko z własną rodziną ról.
+        // An ordinary message: the same window as a panel, only with its own family of roles.
         {"talcite.message", painted(light, blue)},
         {"talcite.message.title", painted(yellow, blue)},
         {"talcite.message.text", painted(white, blue)},
@@ -89,9 +92,9 @@ talcite::ui::Skin coloured() {
         {"talcite.message.button.focus", painted(black, light)},
         {"talcite.message.button.key", painted(yellow, cyan)},
 
-        // **Pudełko błędu.** Atrament równy papierowi w roli `talcite.error` gasi kreskę zewnętrznej
-        // ramki — i to, co zostaje, jest kolumną oddechu wokół treści. Nie ma tu żadnego marginesu
-        // w kodzie; jest krawędź ramki, której nie widać.
+        // The error box. Ink equal to the paper in the role `talcite.error` hides the line of the
+        // outer frame, and what remains is a column of breathing space around the content. There is
+        // no margin in the code; there is a frame edge that cannot be seen.
         {"talcite.error", painted(red, red)},
         {"talcite.error.title", painted(yellow, red)},
         {"talcite.error.text", painted(white, red)},
@@ -104,9 +107,9 @@ talcite::ui::Skin coloured() {
 
 }
 
-// Powiadomienia jak w Midnight Commanderze. **Jedna klasa, cztery kształty**: komunikat z jednym
-// przyciskiem, pytanie z kilkoma odpowiedziami, pudełko błędu i pudełko bez przycisków pokazywane
-// na czas roboty. Różnicę robi liczba odpowiedzi i rdzeń roli — nic poza tym.
+// Notifications as in Midnight Commander. One class, four shapes: a message with one button, a
+// question with several answers, an error box, and a box without buttons shown while work goes on.
+// The number of answers and the role stem make the difference, nothing else.
 int main() {
     talcite::Term term;
 
@@ -115,7 +118,7 @@ int main() {
     const auto legend = std::make_shared<talcite::ui::Legend>();
     const auto menus = std::make_shared<talcite::ui::Menubar>();
 
-    // **Klawisz otwierający podaje aplikacja** — biblioteka żadnego sobie nie przypisuje.
+    // The application gives the key that opens the menus; the library assigns none by itself.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
 
     const auto dialogs = std::make_shared<talcite::ui::Modals>();
@@ -123,8 +126,8 @@ int main() {
     const auto frame = std::make_shared<talcite::ui::Frame>("/etc");
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    const auto told = std::make_shared<talcite::ui::Span>("F2 komunikat  F3 pytanie  F4 błąd  "
-                                                       "F5 czekanie  F6 skórka");
+    const auto told = std::make_shared<talcite::ui::Span>("F2 message  F3 question  F4 error  "
+                                                       "F5 waiting  F6 skin");
 
     const auto list = std::make_shared<talcite::ui::List>(talcite::ui::plenty, talcite::ui::plenty,
                                                        talcite::ui::ScrollShape{true});
@@ -143,28 +146,29 @@ int main() {
     menus->content(dialogs);
     legend->content(menus);
 
-    const auto file = menus->add("Plik");
+    const auto file = menus->add("File");
 
-    file->children().add(std::make_shared<talcite::ui::MenuItem>("Kopiuj", "F5"));
+    file->children().add(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Wyjście", "F10"),
+    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
-    (void)menus->add("Widok");
+    (void)menus->add("View");
 
-    // **Czynność odpowiedzi siedzi na przycisku** — dokładnie tak samo jak w polu legendy i w
-    // pozycji menu. Komunikat nie numeruje odpowiedzi i nie oddaje ich wołającemu; po naciśnięciu
-    // po prostu się zamyka.
+    // The action of an answer sits on its button, exactly as in a legend field and in a menu item.
+    // The message does not number the answers and does not hand them back to the caller; after a
+    // press it simply closes.
     //
-    // „Zamknięto **bez** odpowiedzi" to osobna wiadomość, bo Esc nie ma przycisku, na którym
-    // mogłaby wisieć czynność. Znacznik odróżnia jedno od drugiego, bo odpowiedź też kończy okno.
+    // "Closed without an answer" is a separate notice, because Esc has no button on which an action
+    // could hang. A flag tells one from the other, because an answer also ends the window.
     const auto answering = [told](const std::shared_ptr<talcite::ui::Message>& one,
                                   std::vector<std::pair<std::string, char32_t>> these) {
         const auto answered = std::make_shared<bool>(false);
 
-        // **Zamknięcie woła wołający**, bo jest częścią czynności odpowiedzi — komunikat sam
-        // z ekranu nie schodzi. Uchwyt trzyma **słabe** wskazanie na okno: mocne zrobiłoby pętlę,
-        // bo okno trzyma przycisk, a przycisk ten uchwyt.
+        // The caller does the closing, because it is part of the answer's action: a message does
+        // not leave the screen by itself. The handler holds a weak pointer to the window, since a
+        // strong one would make a cycle: the window holds the button, and the button holds this
+        // handler.
         const std::weak_ptr<talcite::ui::Message> weak = one;
 
         for (const std::pair<std::string, char32_t>& what : these) {
@@ -175,44 +179,44 @@ int main() {
             (void)demo::doing(made, [told, answered, weak, name = what.first] {
                 *answered = true;
 
-                told->text("odpowiedź: " + name);
+                told->text("answer: " + name);
 
                 if (const auto kept = weak.lock()) kept->close();
             });
         }
 
         (void)one->on<talcite::ui::CloseEvent>([told, answered](talcite::ui::CloseEvent&) {
-            if (!*answered) told->text("odpowiedź: Esc");
+            if (!*answered) told->text("answer: Esc");
 
             return true;
         });
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Komun"), [dialogs, answering] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Msg"), [dialogs, answering] {
         const auto one =
-            std::make_shared<talcite::ui::Message>("Uwaga", "Zapisano wszystkie zmiany.");
+            std::make_shared<talcite::ui::Message>("Notice", "All changes have been saved.");
 
         answering(one, {{"OK", U'O'}});
 
         dialogs->open(demo::closing(one));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Pytanie"), [dialogs, answering] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Ask"), [dialogs, answering] {
         const auto one = std::make_shared<talcite::ui::Message>(
-            "Plik istnieje",
-            "Plik „ca-certificates"
-            "” już istnieje.\nCo z nim zrobić?");
+            "File exists",
+            "The file “ca-certificates"
+            "” already exists.\nWhat should be done with it?");
 
-        answering(one, {{"Nadpisz", U'N'}, {"Pomiń", U'P'}, {"Przerwij", U'z'}});
+        answering(one, {{"Overwrite", U'O'}, {"Skip", U'P'}, {"Abort", U'a'}});
 
         one->buttons()[0]->primary(true);
 
         dialogs->open(demo::closing(one));
     });
 
-    // **Błąd to ten sam widżet z innym rdzeniem.** Żadnej osobnej klasy, żadnej flagi w kodzie —
-    // jedno wywołanie, a resztę mówi paleta.
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Błąd"), [dialogs, answering] {
+    // An error is the same widget with a different stem. No separate class, no flag in the code:
+    // one call, and the palette says the rest.
+    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Error"), [dialogs, answering] {
         const auto one =
             std::make_shared<talcite::ui::Message>("Error", "Cannot operate on “..”!");
 
@@ -223,25 +227,26 @@ int main() {
         dialogs->open(demo::closing(one));
     });
 
-    // Bez odpowiedzi: pudełko, które zamyka program, a nie użytkownik. Esc też je zamknie, bo to
-    // wciąż dialog — od tego, żeby nie dało się go zamknąć, talcite nie ma i mieć nie będzie.
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Czekaj"), [dialogs] {
-        dialogs->open(demo::closing(std::make_shared<talcite::ui::Message>("Czekaj", "Przeglądam katalog…")));
+    // Without answers: a box that the program closes, not the user. Esc closes it too, because it
+    // is still a dialog; talcite has no means to make a dialog impossible to close, and will not
+    // have one.
+    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Wait"), [dialogs] {
+        dialogs->open(demo::closing(std::make_shared<talcite::ui::Message>("Wait", "Scanning the directory…")));
     });
 
     const auto plain = std::make_shared<bool>(false);
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Skórka"), [&sheet, plain] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Skin"), [&sheet, plain] {
         *plain = !*plain;
 
         sheet.skin(*plain ? talcite::ui::Skin{} : coloured());
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "MenuGr"), [menus] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());
@@ -249,7 +254,7 @@ int main() {
     list->focus();
 
     term.show(sheet);
-    term.title("talcite — powiadomienia");
+    term.title("talcite — notifications");
 
     term.run();
 

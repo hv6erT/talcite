@@ -38,11 +38,13 @@ namespace talcite::net {
 
 namespace {
 
-// Budzik centrali. Na uniksach wystarczy potok, ale WSAPoll przyjmuje **wyłącznie gniazda**, więc
-// na Windows budzikiem jest para gniazd na pętli zwrotnej. To jest ta sama sztuczka, którą robi
-// każda biblioteka sieciowa na tym systemie, i jedyna, która tam działa.
+// The exchange's wake-up call. On Unix a pipe is enough, but WSAPoll accepts only sockets, so on
+// Windows the wake-up is a pair of sockets on the loopback. It is the same trick that every
+// network library does on that system, and the only one that works there.
 class Waking {
 public:
+    // Opens both ends of the wake-up: a connected loopback socket pair on Windows, a pipe
+    // elsewhere. When that fails, both ends stay `nothing`.
     Waking() {
 #ifdef _WIN32
         starting();
@@ -75,9 +77,9 @@ public:
 #else
         int both[2] = {-1, -1};
 
-        // Oba końce nieblokujące, bo opróżnianie budzika czyta aż do pustki — a czytanie blokujące
-        // z pustego potoku zatrzymałoby centralę na zawsze. Budzik nie ma trafiać do programu
-        // potomnego.
+        // Both ends are non-blocking, because draining the wake-up reads until it is empty, and a
+        // blocking read from an empty pipe would stop the exchange forever. The wake-up must not
+        // leak into a child program.
         if (sealed::piped(both, true)) {
             heard_ = both[0];
             told_ = both[1];
@@ -85,6 +87,7 @@ public:
 #endif
     }
 
+    // Closes both ends of the wake-up.
     ~Waking() {
         ending(heard_);
         ending(told_);
@@ -93,8 +96,10 @@ public:
     Waking(const Waking&) = delete;
     Waking& operator=(const Waking&) = delete;
 
+    // The end the exchange waits on; it becomes readable when someone rings.
     [[nodiscard]] Handle heard() const { return heard_; }
 
+    // Wakes the exchange thread from its wait by writing one byte.
     void ring() const {
         const char one = 'x';
 
@@ -107,6 +112,7 @@ public:
 #endif
     }
 
+    // Reads everything the wake-up has collected, so that the next wait blocks again.
     void drain() const {
         char much[64];
 
@@ -118,8 +124,8 @@ public:
 
             if (got > 0) continue;
 
-            // Przerwanie sygnałem nie znaczy „pusto" — inaczej zostaje bajt i budzik dzwoni
-            // jałowo w kółko.
+            // An interruption by a signal does not mean "empty"; otherwise a byte stays behind
+            // and the wake-up keeps ringing idly.
             if (got < 0 && errno == EINTR) continue;
 
             return;
@@ -132,7 +138,8 @@ private:
     Handle told_ = nothing;
 };
 
-// Zgłoszenie gotowe do oddania puli: co, z jakim numerem i czy gotowość niosła flagę błędu.
+// A request ready to be handed to the pool: what it is, with which code, and whether readiness
+// carried the error flag.
 struct Given {
     std::shared_ptr<Doing> what;
     int code = 0;
@@ -157,9 +164,9 @@ struct Exchange::Held {
     mutable std::mutex guard;
     std::unordered_map<Handle, Watching> watching;
 
-    // Gniazda oddane do zamknięcia. Zamyka je wątek centrali, a nie ten, kto oddał — deskryptor
-    // zamknięty pod czekającym poll potrafi wrócić jako numer świeżo otwartego gniazda i wtedy
-    // centrala pilnuje nie tego, co myśli.
+    // Sockets handed over to be closed. The exchange thread closes them, not the one who handed
+    // them over: a descriptor closed under a waiting poll can come back as the number of a freshly
+    // opened socket, and then the exchange watches something other than it thinks.
     std::vector<Handle> ending;
     Waking waking;
 #ifdef TALCITE_EPOLL
@@ -175,13 +182,13 @@ std::atomic<Exchange::Held*> standing{nullptr};
 
 #ifdef TALCITE_EPOLL
 
-// Uzbrajamy na **jeden raz** (EPOLLONESHOT): po zgłoszeniu gotowości jądro samo wyłącza gniazdo
-// i milczy, dopóki go nie uzbroimy z powrotem. Bez tego poziomowy epoll kręciłby się w kółko —
-// zgłasza gotowość tak długo, jak długo nikt danych nie odebrał, a odebrać ma je dopiero
-// zgłoszenie, które właśnie wypisaliśmy.
+// Arming is one-shot (EPOLLONESHOT): after reporting readiness the kernel disables the socket on
+// its own and stays silent until it is armed again. Without it a level-triggered epoll would spin:
+// it reports readiness for as long as nobody has taken the data, and the data is to be taken only
+// by the request that has just been removed.
 //
-// Dzięki temu zdjęcie zgłoszenia **nie kosztuje ani jednego wywołania systemowego**: gniazdo jest
-// już wyłączone. Płacimy jedno wywołanie przy zgłaszaniu i nic przy kończeniu.
+// As a result removing a request costs no system call at all: the socket is already disabled.
+// One call is paid when a request is made and nothing when it ends.
 bool tuned(Exchange::Held& held, Handle one) {
     const auto found = held.watching.find(one);
 
@@ -199,20 +206,23 @@ bool tuned(Exchange::Held& held, Handle one) {
     what.events = wanted | EPOLLONESHOT;
     what.data.fd = static_cast<int>(one);
 
-    // Zmiana najpierw, dopisanie dopiero gdy gniazda jeszcze nie było — tak jest o jedno
-    // wywołanie taniej w przypadku częstszym.
+    // Modify first, add only when the socket was not there yet: that is one call cheaper in the
+    // more frequent case.
     if (::epoll_ctl(held.rings, EPOLL_CTL_MOD, static_cast<int>(one), &what) == 0) return true;
 
-    // **Nieudane uzbrojenie nie ma prawa przepaść.** Przy wyczerpanym limicie obserwacji jądro
-    // nigdy nie zgłosi gotowości tego gniazda, a zgłoszenie zostawione w mapie wisiałoby do
-    // terminu — albo bez końca, gdy cierpliwość jest zerowa.
+    // A failed arming must not get lost. With the watch limit exhausted the kernel never reports
+    // this socket ready, and a request left in the map would hang until its deadline, or without
+    // end when the patience is zero.
     return ::epoll_ctl(held.rings, EPOLL_CTL_ADD, static_cast<int>(one), &what) == 0;
 }
 
+// Removes the socket from the epoll set.
 void untuned(Exchange::Held& held, Handle one) {
     (void)::epoll_ctl(held.rings, EPOLL_CTL_DEL, static_cast<int>(one), nullptr);
 }
 
+// Waits up to `patience` milliseconds (-1 without limit) for the sockets that are ready. The
+// wake-up is drained here and does not show in the result.
 std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
     epoll_event seen[256];
 
@@ -230,7 +240,7 @@ std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
             continue;
         }
 
-        // Zerwanie i błąd budzą obie strony, bo obie i tak się już nie doczekają.
+        // A hangup and an error wake both directions, because neither will get what it waits for.
         const bool over = (what & (EPOLLERR | EPOLLHUP)) != 0;
 
         made.push_back(Stirred{which, (what & EPOLLIN) != 0 || over,
@@ -242,10 +252,13 @@ std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
 
 #else
 
+// With poll there is nothing to arm: the set is built anew before every wait.
 bool tuned(Exchange::Held&, Handle) { return true; }
 
 void untuned(Exchange::Held&, Handle) {}
 
+// Waits up to `patience` milliseconds (-1 without limit) for the sockets that are ready, building
+// the poll set from the watched map. The wake-up is drained here and does not show in the result.
 std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
     std::vector<pollfd> watched;
 
@@ -296,15 +309,16 @@ std::vector<Stirred> awaited(Exchange::Held& held, int patience) {
 
 #endif
 
-// Odmowa dla zgłoszenia na gnieździe, którego już nie ma. Idzie przez pulę, a nie wprost, bo
-// done() budzi czekającego i wywołuje jego ciąg dalszy — a tego nie robimy na wątku wołającego.
+// A refusal for a request on a socket that no longer exists. It goes through the pool, not
+// directly, because done() wakes the waiting caller and runs its continuation, and that is not
+// done on the caller's thread.
 void aborted(std::shared_ptr<Doing> one) {
     pooling().post([one = std::move(one)] { one->done(0, ECONNABORTED); });
 }
 
-// Krok i zakończenie idą **na wątek z puli**, nie na wątek centrali. Ciąg dalszy obietnicy to
-// cudzy kod — gdyby pobiegł na jedynym wątku, który pilnuje wszystkich gniazd, jeden powolny then
-// zatrzymałby całą sieć. Wątek centrali nie robi więc nic poza czekaniem.
+// The step and the completion go to a pool thread, not to the exchange thread. The continuation of
+// a promise is someone else's code: if it ran on the only thread that watches all the sockets, one
+// slow then would stop the whole network. So the exchange thread does nothing but wait.
 void handed(std::shared_ptr<Doing> one, int what, bool amiss = false) {
     pooling().post([one = std::move(one), what, amiss]() mutable {
         if (what > 0) {
@@ -319,11 +333,11 @@ void handed(std::shared_ptr<Doing> one, int what, bool amiss = false) {
             return;
         }
 
-        // System powiedział „gotowe", a mimo to nie dał rady — zdarza się, gdy zdarzenie było
-        // fałszywe albo ktoś inny zdążył pierwszy. Wtedy po prostu czekamy dalej.
+        // The system said "ready", and yet the step could not proceed. It happens when the event
+        // was spurious or someone else was first. Then the request simply waits again.
         //
-        // Chyba że gotowość przyszła z flagą błędu: wtedy czekanie dalej byłoby kręceniem się
-        // w kółko, bo popsute gniazdo zgłasza się natychmiast i bez końca.
+        // Unless readiness came with the error flag: then waiting again would be spinning, because
+        // a broken socket reports itself at once and without end.
         if (!stepped(*one)) {
             if (amiss) one->done(0, EPIPE);
             else submit(std::move(one));
@@ -333,17 +347,19 @@ void handed(std::shared_ptr<Doing> one, int what, bool amiss = false) {
 
 }
 
+// Starts the exchange thread, which waits for readiness and deadlines and hands the requests that
+// are due to the pool.
 Exchange::Exchange() : held_(std::make_unique<Held>()) {
-    // Pula **musi** powstać przed centralą, choć nic jej tu nie potrzebuje. Obiekty statyczne
-    // giną w kolejności odwrotnej do powstawania, a wątek centrali oddaje pracę do puli — więc
-    // gdyby pula powstała później, zginęłaby wcześniej i wątek sięgałby do zwolnionej pamięci.
-    // Program, który zaczyna od sieci, trafiał na to za każdym razem; testy nie, bo one dotykają
-    // puli wcześniej. Znalazł to dopiero pomiar wydajności.
+    // The pool must exist before the exchange, although nothing here needs it. Static objects are
+    // destroyed in reverse order of construction, and the exchange thread hands work to the pool,
+    // so if the pool were created later, it would be destroyed earlier and the thread would reach
+    // into freed memory. Tests touch the pool earlier, so only a program that starts with the
+    // network would show it.
     (void)pooling();
 
-    // Wskazanie ustawiamy w konstruktorze, a nie przy każdym running(): jednorazowe utworzenie
-    // obiektu statycznego jest bezpieczne wątkowo, a powtarzany zapis tej samej wartości z kilku
-    // wątków byłby wyścigiem — nawet gdy wartość się nie zmienia.
+    // The pointer is set in the constructor and not at every running(): the one-time creation of a
+    // static object is thread-safe, while repeated writes of the same value from several threads
+    // would be a race, even when the value does not change.
     standing = held_.get();
 
 #ifdef TALCITE_EPOLL
@@ -384,16 +400,16 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
             int patience = -1;
 
             if (timed) {
-                // **W górę, nie w dół.** Ucięcie do zera przy terminie bliższym niż milisekunda
-                // sprawiało, że poll wracał natychmiast, przegląd nie znajdował nic przeterminowanego
-                // i pętla kręciła się w kółko — przy zapleczu poll odbudowując za każdym razem całą
-                // tablicę deskryptorów.
+                // Round up, not down. Truncating to zero for a deadline closer than a millisecond
+                // would make poll return at once, the sweep would find nothing expired, and the
+                // loop would spin, rebuilding the whole descriptor array each time with the poll
+                // backend.
                 const auto left = std::chrono::ceil<std::chrono::milliseconds>(
                     soonest - std::chrono::steady_clock::now());
 
-                // I **z ograniczeniem do zakresu**: cierpliwość podaje wołający, a powyżej mniej
-                // więcej dwudziestu pięciu dni liczba przekręcała się na ujemną, którą poll czyta
-                // jako „czekaj bez końca" — czyli taki termin nie zadziałałby nigdy.
+                // And clamp to the range: the patience comes from the caller, and above roughly
+                // twenty-five days the number would wrap to a negative one, which poll reads as
+                // "wait forever", so such a deadline would never fire.
                 const std::int64_t much =
                     std::min<std::int64_t>(std::max<std::int64_t>(left.count(), 0),
                                            std::numeric_limits<int>::max());
@@ -421,11 +437,11 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
 
                     Held::Watching& pair = found->second;
 
-                    // Flaga błędu **nie skraca drogi**. Wcześniej zgłoszenie kończyło się wtedy
-                    // wymyślonym EPIPE, a krok nie biegł w ogóle — więc bajty odebrane przed
-                    // zerwaniem przepadały, choć jądro wciąż pozwalało je przeczytać, a każdy powód
-                    // nieudanego nawiązania zwijał się do tego samego numeru. Prawdziwy powód
-                    // wyciąga dopiero krok: recv przy czytaniu, SO_ERROR przy łączeniu.
+                    // The error flag does not cut the way short. The step still runs, so bytes
+                    // received before the hangup are not lost while the kernel still lets them be
+                    // read, and every reason for a failed connect does not collapse into the same
+                    // code. Only the step gets the real reason: recv when reading, SO_ERROR when
+                    // connecting.
                     if (pair.reading && one.reading) {
                         giving.push_back(Given{std::move(pair.reading), 0, one.amiss});
                         pair.reading.reset();
@@ -439,8 +455,8 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
                     touched.push_back(one.which);
                 }
 
-                // Przeterminowane zbieramy osobno, bo termin mija także wtedy, gdy na gnieździe
-                // nic się nie dzieje — a wtedy nikt o nim nie powie.
+                // Expired requests are collected separately, because a deadline also passes when
+                // nothing happens on the socket, and then nobody reports it.
                 for (auto& [which, pair] : held.watching)
                     for (std::shared_ptr<Doing>* one : {&pair.reading, &pair.writing})
                         if (*one && (*one)->ever && (*one)->until <= now) {
@@ -450,9 +466,9 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
                             touched.push_back(which);
                         }
 
-                // Poprawiamy **wyłącznie te gniazda, które ruszyliśmy**. Pierwsza wersja
-                // przechodziła po całej mapie co obrót — czyli przy tysiącu połączeń tysiąc
-                // wywołań systemowych na każde jedno zdarzenie. Pomiar to pokazał od razu.
+                // Only the sockets touched in this turn are re-armed. Going over the whole map on
+                // every turn would mean, with a thousand connections, a thousand system calls for
+                // every single event.
                 for (const Handle which : touched) {
                     const auto found = held.watching.find(which);
 
@@ -479,7 +495,7 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
     }};
 }
 
-// Rozbiórka ma kolejność i każdy jej krok ma powód.
+// Teardown has an order, and every step of it has a reason.
 Exchange::~Exchange() {
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
@@ -489,24 +505,25 @@ Exchange::~Exchange() {
 
     held_->waking.ring();
 
-    // 1. Wątek centrali staje — od tej chwili nikt już nie odda pracy do puli.
+    // 1. The exchange thread stops; from now on nobody hands work to the pool.
     if (held_->staff.joinable()) held_->staff.join();
 
-    // 2. Centrala przestaje istnieć dla świata — **przed** opróżnieniem puli. Zadanie kończone
-    //    w puli potrafi zgłosić się z powrotem, a zgłoszenie przyjęte po tym, jak wątek centrali
-    //    już stanął, nie miałoby kogo obsłużyć i wisiałoby do końca programu.
+    // 2. The exchange ceases to exist for the world, before the pool is drained. A task finishing
+    //    in the pool can submit itself again, and a request accepted after the exchange thread has
+    //    stopped would have no one to serve it and would hang until the program ends.
     standing.store(nullptr);
 
-    // 3. Pula kończy to, co dostała — inaczej zakończenie w locie sięgnęłoby tu za chwilę.
+    // 3. The pool finishes what it was given; otherwise a completion in flight would reach in here
+    //    a moment later.
     pooling().drain();
 
-    // 4. Dopiero teraz zgłoszenia, które jeszcze wiszą. Każde z nich trzyma gniazdo i w
-    //    destruktorze woła forget() — gdyby ginęły razem z mapą, sięgałyby do centrali w trakcie
-    //    jej własnego niszczenia. To był prawdziwy błąd, znaleziony pomiarem, a nie testami.
+    // 4. Only now the requests that still hang. Each of them holds the socket and calls forget()
+    //    in its destructor; if they died together with the map, they would reach into the exchange
+    //    in the middle of its own destruction.
     //
-    //    **Odrzucamy je, zamiast po cichu porzucić.** Zgłoszenie jest zarazem wynikiem obietnicy
-    //    wołającego: porzucone zostawało w stanie świeżym, a wątek stojący na `await` nie budził
-    //    się nigdy i program nie kończył się wcale.
+    //    They are refused, not silently abandoned. A request is also the result of the caller's
+    //    promise: an abandoned one would stay fresh, a thread standing on `await` would never wake
+    //    up, and the program would never end.
     for (auto& [which, pair] : held_->watching)
         for (const std::shared_ptr<Doing>& one : {pair.reading, pair.writing})
             if (one) one->done(0, ECONNABORTED);
@@ -522,14 +539,15 @@ Exchange::~Exchange() {
 #endif
 }
 
+// The number of sockets the exchange is watching right now.
 std::size_t Exchange::waiting() const {
     const std::lock_guard<std::mutex> kept{held_->guard};
 
     return held_->watching.size();
 }
 
-// Centrala jest jedna na program i budzi się przy pierwszym gnieździe. Wątku, który pilnuje
-// wszystkich połączeń, nie stawia się na zapas.
+// The exchange is one per program and starts with the first socket. The thread that watches all
+// connections is not started in advance.
 Exchange& Exchange::running() {
     static Exchange one;
 
@@ -538,12 +556,12 @@ Exchange& Exchange::running() {
 
 namespace {
 
-// Rozpoczęcie operacji. Przy zapleczach gotowościowych ruszać trzeba tylko nawiązanie — reszta
-// czeka na sygnał od systemu i dopiero wtedy woła stepped(). Fałsz znaczy „już po wszystkim".
+// Starting an operation. With readiness backends only a connect needs to be started; the rest
+// waits for the signal from the system and only then calls stepped(). False means "already over".
 bool began(Doing& one) {
     if (one.kind != Kind::joining) return true;
 
-    // Na pętli zwrotnej nawiązanie kończy się od razu i nie ma na co czekać.
+    // On the loopback a connect finishes at once and there is nothing to wait for.
     if (joined(one.held, one.where)) {
         one.done(0, 0);
 
@@ -561,6 +579,9 @@ bool began(Doing& one) {
 
 }
 
+// Hands a request to the exchange: it is watched until its socket is ready or its deadline
+// passes. Without a running exchange or on a closed socket the request is refused with
+// ECONNABORTED.
 void submit(std::shared_ptr<Doing> one) {
     (void)Exchange::running();
 
@@ -574,9 +595,10 @@ void submit(std::shared_ptr<Doing> one) {
 
     const Handle which = one->held;
 
-    // Zgłoszenie na gnieździe, które wołający zdążył zamknąć. Uchwyt jest wtedy zużyty, a bez tej
-    // odmowy zgłoszenie **wisiałoby na zawsze**: centrala trzymałaby je pod numerem, którego nikt
-    // nigdy nie ruszy, a wątek czekający na obietnicę stałby do końca programu.
+    // A request on a socket that the caller has already closed. The handle is spent then, and
+    // without this refusal the request would hang forever: the exchange would keep it under a
+    // number nobody ever touches, and the thread waiting on the promise would stand until the
+    // program ends.
     if (which == nothing) {
         aborted(std::move(one));
 
@@ -616,13 +638,14 @@ void submit(std::shared_ptr<Doing> one) {
     held->waking.ring();
 }
 
-// Zdjęcie jednego zgłoszenia — to, czego potrzebuje anulowana obietnica. Bez tego przerwane
-// czytanie zostawało w centrali z zajętym kierunkiem: wołający przestawał czekać, ale gniazdo do
-// końca programu odpowiadało „zajęty", a `kept` trzymało otwarty deskryptor.
+// Withdrawing one request is what a cancelled promise needs. Without it an interrupted read would
+// stay in the exchange with its direction taken: the caller would stop waiting, but the socket
+// would answer "busy" until the program ends, and `kept` would hold the descriptor open.
 //
-// Całość stoi na **sprawdzeniu tożsamości pod zamkiem**. Wątek centrali wyjmuje zgłoszenie z mapy
-// pod tym samym zamkiem, zanim odda je puli, więc albo zastaniemy je w gnieździe, albo on je już
-// zabrał i zaraz pobiegnie done() — trzeciej możliwości nie ma i nie ma czego ścigać.
+// It all rests on an identity check under the lock. The exchange thread takes a request out of
+// the map under the same lock before it hands it to the pool, so either the request is still at
+// the socket or the thread has already taken it and is about to run done(). There is no third
+// possibility and no race to chase.
 bool withdraw(const std::shared_ptr<Doing>& one) {
     Exchange::Held* held = standing.load();
 
@@ -644,9 +667,9 @@ bool withdraw(const std::shared_ptr<Doing>& one) {
 
         slot.reset();
 
-        // Nieudanego przezbrojenia **nie zamieniamy tu na odmowę**. Drugi kierunek jest cudzym
-        // zgłoszeniem, a anulowanie jednego czytania nie jest miejscem, w którym wolno zerwać
-        // trwający zapis — zostanie w mapie i skończy się terminem albo tak jak zawsze.
+        // A failed re-arm is not turned into a refusal here. The other direction is someone
+        // else's request, and cancelling one read is no place to break off a write in progress:
+        // it stays in the map and ends with its deadline or as it always does.
         if (found->second.reading || found->second.writing) {
             (void)tuned(*held, which);
         } else {
@@ -661,18 +684,18 @@ bool withdraw(const std::shared_ptr<Doing>& one) {
     return true;
 }
 
-// Zamknięcie deskryptora, oddane centrali. **Woła się je dopiero wtedy, gdy ginie ostatni uchwyt
-// do gniazda** — nie wtedy, gdy ktoś je zamyka. Powód jest taki, że numer zamkniętego gniazda
-// system natychmiast oddaje następnemu: gdyby ktoś jeszcze mógł ten numer zgłosić albo na nim
-// czytać, sięgnąłby do cudzego połączenia. Zgłoszenia w locie trzymają uchwyt przez `kept`, więc
-// dopóki którekolwiek żyje, tu nie trafiamy.
+// Closing a descriptor, handed to the exchange. It is called only when the last handle to the
+// socket dies, not when someone closes it. The reason is that the system hands the number of a
+// closed socket to the next one at once: if anyone could still submit that number or read on it,
+// they would reach into someone else's connection. Requests in flight hold the handle through
+// `kept`, so while any of them lives, this is not reached.
 void retiring(Handle one) {
     if (one == nothing) return;
 
     Exchange::Held* held = standing.load();
 
-    // Przed pierwszym gniazdem i po rozbiórce centrali nie ma komu oddać numeru — a zamknąć go
-    // i tak trzeba.
+    // Before the first socket and after the exchange is torn down there is no one to hand the
+    // number to, and it has to be closed anyway.
     if (held == nullptr) {
         ending(one);
 
@@ -688,12 +711,12 @@ void retiring(Handle one) {
     held->waking.ring();
 }
 
-// Zapomnienie zdejmuje gniazdo z pilnowania i odrzuca wszystko, co na nim wisiało. **Deskryptora
-// nie zamyka** — od tego jest retiring.
+// Forgetting removes the socket from watching and refuses everything that hung on it. It does
+// not close the descriptor; that is what retiring is for.
 void forget(Handle one) {
     Exchange::Held* held = standing.load();
 
-    // Zanim centrala wstała i po tym, jak zeszła, nie ma z czego zdejmować.
+    // Before the exchange has started and after it has gone there is nothing to remove.
     if (held == nullptr) return;
 
     std::shared_ptr<Doing> reading;
@@ -712,9 +735,9 @@ void forget(Handle one) {
         untuned(*held, one);
     }
 
-    // Zerwanie rozmowy jest bezpieczne od razu — **nie oddaje numeru systemowi**, więc nikt nie
-    // przejmie deskryptora spod biegnącego kroku. Zamknięcie przychodzi osobno, przez retiring,
-    // i dopiero wtedy, gdy zniknie ostatni uchwyt do gniazda.
+    // Shutting the conversation down is safe at once: it does not give the number back to the
+    // system, so nobody can take the descriptor from under a running step. The close comes
+    // separately, through retiring, and only when the last handle to the socket is gone.
     shutting(one);
 
     held->waking.ring();

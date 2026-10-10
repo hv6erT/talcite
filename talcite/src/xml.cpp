@@ -5,10 +5,11 @@
 
 namespace talcite::xml {
 
-// Drzewo jest danymi — struktury bez metod — a to, czego potrzebuje każdy, kto po nim chodzi,
-// stoi obok jako wolne funkcje. Wskaźnik: `nullptr` znaczy „nie ma" i to jest cały język błędów
-// tego pliku; drzewo nie rzuca, bo nie ma czym zawieść.
+// The tree is data (structures without methods), and what everyone walking it needs stands
+// beside it as free functions. A pointer: `nullptr` means "not there", and that is the whole
+// error language of this file; the tree does not throw, because it has nothing to fail at.
 
+// The first element of the document, or `nullptr` when it has none.
 Node* root(Document& one) {
     for (Node& node : one.nodes)
         if (node.kind == Kind::element) return &node;
@@ -16,8 +17,10 @@ Node* root(Document& one) {
     return nullptr;
 }
 
+// The first element of a read-only document.
 const Node* root(const Document& one) { return root(const_cast<Document&>(one)); }
 
+// The first child element called `name`, or `nullptr`.
 Node* child(Node& one, std::string_view name) {
     for (Node& node : one.children)
         if (node.kind == Kind::element && node.name == name) return &node;
@@ -25,8 +28,10 @@ Node* child(Node& one, std::string_view name) {
     return nullptr;
 }
 
+// The first child element called `name` of a read-only node.
 const Node* child(const Node& one, std::string_view name) { return child(const_cast<Node&>(one), name); }
 
+// All child elements called `name`, in document order.
 std::vector<Node*> children(Node& one, std::string_view name) {
     std::vector<Node*> made;
 
@@ -36,8 +41,8 @@ std::vector<Node*> children(Node& one, std::string_view name) {
     return made;
 }
 
-// Tekst elementu to jego dzieci tekstowe i CDATA sklejone po kolei — tak jak stoją w pliku,
-// bo `<plot>a<![CDATA[b]]>c</plot>` znaczy `abc`.
+// The text of an element is its text and CDATA children joined in order, as they stand in the
+// file, because <plot>a<![CDATA[b]]>c</plot> means abc.
 std::string text(const Node& one) {
     std::string made;
 
@@ -47,9 +52,9 @@ std::string text(const Node& one) {
     return made;
 }
 
-// Ustawienie tekstu zdejmuje wszystkie dzieci tekstowe i CDATA, a dzieci-elementy zostawia na
-// miejscu; nowy tekst staje na początku, jak w `<actor>Nazwisko<role>…</role></actor>`. Pusty
-// tekst niczego nie dokłada — element bez tekstu jest elementem pustym, nie z pustym dzieckiem.
+// Setting the text removes all text and CDATA children and leaves child elements in place; the
+// new text goes first, as in <actor>Name<role>…</role></actor>. An empty text adds nothing: an
+// element without text is an empty element, not one with an empty child.
 void text(Node& one, std::string given) {
     std::erase_if(one.children, [](const Node& node) {
         return node.kind == Kind::text || node.kind == Kind::cdata;
@@ -65,6 +70,7 @@ void text(Node& one, std::string given) {
     one.children.insert(one.children.begin(), std::move(made));
 }
 
+// The value of the attribute `name`, or `nullptr` when the element does not have it.
 const std::string* attribute(const Node& one, std::string_view name) {
     for (const Attribute& each : one.attributes)
         if (each.name == name) return &each.value;
@@ -72,6 +78,7 @@ const std::string* attribute(const Node& one, std::string_view name) {
     return nullptr;
 }
 
+// Sets the attribute `name`, replacing its value or adding it at the end.
 void attribute(Node& one, std::string_view name, std::string value) {
     for (Attribute& each : one.attributes)
         if (each.name == name) {

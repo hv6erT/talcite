@@ -10,7 +10,7 @@
 
 using namespace talcite;
 
-TRIAL("Adres: świeży nic nie trzyma") {
+TRIAL("Address: a fresh one holds nothing") {
     const net::Address one;
 
     ought(!one.held());
@@ -20,7 +20,7 @@ TRIAL("Adres: świeży nic nie trzyma") {
     same(one.spelled(), std::string{});
 }
 
-TRIAL("Adres: czwórka rozbiera się i składa z powrotem") {
+TRIAL("Address: IPv4 parses and formats back") {
     const net::Address one{"192.0.2.17", 8080};
 
     ought(one.held());
@@ -30,7 +30,7 @@ TRIAL("Adres: czwórka rozbiera się i składa z powrotem") {
     same(one.spelled(), std::string{"192.0.2.17:8080"});
 }
 
-TRIAL("Adres: szóstka staje w nawiasach dopiero z portem") {
+TRIAL("Address: IPv6 goes in brackets only with a port") {
     const net::Address one{"2001:db8::1", 443};
 
     same(one.family(), net::Family::six);
@@ -38,7 +38,7 @@ TRIAL("Adres: szóstka staje w nawiasach dopiero z portem") {
     same(one.spelled(), std::string{"[2001:db8::1]:443"});
 }
 
-TRIAL("Adres: nawiasy kwadratowe wolno podać") {
+TRIAL("Address: square brackets may be given") {
     const net::Address one{"[::1]", 22};
 
     same(one.family(), net::Family::six);
@@ -46,7 +46,7 @@ TRIAL("Adres: nawiasy kwadratowe wolno podać") {
     same(one.spelled(), std::string{"[::1]:22"});
 }
 
-TRIAL("Adres: numer łącza przeżywa rozbiór i zapis") {
+TRIAL("Address: the scope id survives parsing and formatting") {
     const net::Address one{"fe80::1%7", 100};
 
     same(one.family(), net::Family::six);
@@ -55,7 +55,7 @@ TRIAL("Adres: numer łącza przeżywa rozbiór i zapis") {
     same(one.spelled(), std::string{"[fe80::1%7]:100"});
 }
 
-TRIAL("Adres: nazwa domenowa to nie adres") {
+TRIAL("Address: a domain name is not an address") {
     bool threw = false;
 
     try {
@@ -71,7 +71,7 @@ TRIAL("Adres: nazwa domenowa to nie adres") {
     ought(threw);
 }
 
-TRIAL("Adres: śmieć nie staje się pustym adresem po cichu") {
+TRIAL("Address: garbage does not silently become an empty address") {
     bool threw = false;
 
     try {
@@ -85,7 +85,7 @@ TRIAL("Adres: śmieć nie staje się pustym adresem po cichu") {
     ought(threw);
 }
 
-TRIAL("Adres: dowolny i pętla zwrotna") {
+TRIAL("Address: any and loopback") {
     const net::Address four = net::Address::any(net::Family::four, 1234);
     const net::Address six = net::Address::any(net::Family::six, 1234);
 
@@ -96,7 +96,7 @@ TRIAL("Adres: dowolny i pętla zwrotna") {
     same(net::Address::loopback(net::Family::six, 80).text(), std::string{"::1"});
 }
 
-TRIAL("Adres: porównanie patrzy na bajty, rodzinę i port") {
+TRIAL("Address: comparison looks at the bytes, family and port") {
     const net::Address one{"192.0.2.1", 80};
     const net::Address two{"192.0.2.1", 80};
     const net::Address three{"192.0.2.1", 81};
@@ -107,7 +107,7 @@ TRIAL("Adres: porównanie patrzy na bajty, rodzinę i port") {
     ought(!(one == four));
 }
 
-TRIAL("Adres: port da się przestawić po fakcie") {
+TRIAL("Address: the port can be changed afterwards") {
     net::Address one{"::1", 0};
 
     one.port(9000);
@@ -115,7 +115,7 @@ TRIAL("Adres: port da się przestawić po fakcie") {
     same(one.spelled(), std::string{"[::1]:9000"});
 }
 
-TRIAL("Adres: da się zbudować z gołych bajtów") {
+TRIAL("Address: can be built from raw bytes") {
     std::array<std::byte, 16> raw{};
 
     raw[0] = std::byte{10};
@@ -127,7 +127,7 @@ TRIAL("Adres: da się zbudować z gołych bajtów") {
     same(one.port(), static_cast<std::uint16_t>(25));
 }
 
-TRIAL("Nazwy: pętla zwrotna ma adres") {
+TRIAL("Names: loopback has an address") {
     const std::vector<net::Address> made = net::resolve("localhost", 80).await();
 
     ought(!made.empty());
@@ -138,7 +138,7 @@ TRIAL("Nazwy: pętla zwrotna ma adres") {
     }
 }
 
-TRIAL("Nazwy: adres wpisany wprost też przechodzi") {
+TRIAL("Names: an address written directly passes too") {
     const std::vector<net::Address> made = net::resolve("127.0.0.1", 443).await();
 
     same(static_cast<int>(made.size()), 1);
@@ -146,14 +146,14 @@ TRIAL("Nazwy: adres wpisany wprost też przechodzi") {
     same(made.front().port(), static_cast<std::uint16_t>(443));
 }
 
-TRIAL("Nazwy: można poprosić o jedną rodzinę") {
+TRIAL("Names: one family can be requested") {
     const std::vector<net::Address> made =
         net::resolve("localhost", 80, net::Family::four).await();
 
     for (const net::Address& one : made) same(one.family(), net::Family::four);
 }
 
-TRIAL("Nazwy: nieznana nazwa odrzuca obietnicę") {
+TRIAL("Names: an unknown name rejects the promise") {
     bool threw = false;
 
     try {
@@ -167,7 +167,7 @@ TRIAL("Nazwy: nieznana nazwa odrzuca obietnicę") {
     ought(threw);
 }
 
-TRIAL("Własne: wykaz nie jest pusty i ma pętlę zwrotną") {
+TRIAL("Own: the list is not empty and has loopback") {
     const std::vector<net::Address> made = net::mine().await();
 
     ought(!made.empty());
@@ -183,12 +183,12 @@ TRIAL("Własne: wykaz nie jest pusty i ma pętlę zwrotną") {
     ought(loopback);
 }
 
-TRIAL("Własne: wykaz nie ma portów") {
+TRIAL("Own: the list has no ports") {
     for (const net::Address& one : net::mine().await())
         same(one.port(), static_cast<std::uint16_t>(0));
 }
 
-TRIAL("Własne: można poprosić o jedną rodzinę") {
+TRIAL("Own: one family can be requested") {
     const std::vector<net::Address> made = net::mine(net::Family::four).await();
 
     ought(!made.empty());
@@ -196,7 +196,7 @@ TRIAL("Własne: można poprosić o jedną rodzinę") {
     for (const net::Address& one : made) same(one.family(), net::Family::four);
 }
 
-TRIAL("Własne: ten sam adres nie powtarza się dwa razy") {
+TRIAL("Own: the same address does not appear twice") {
     const std::vector<net::Address> made = net::mine().await();
 
     for (std::size_t at = 0; at < made.size(); ++at)
@@ -204,10 +204,10 @@ TRIAL("Własne: ten sam adres nie powtarza się dwa razy") {
             ought(!(made[at] == made[which]));
 }
 
-TRIAL("Własne: każdy adres daje się wypisać i wczytać z powrotem") {
+TRIAL("Own: every address can be written and read back") {
     for (const net::Address& one : net::mine().await()) {
-        // Link-local niesie numer łącza po procencie, a ten wraca tylko na systemach, które go
-        // nazywają — dlatego porównujemy sam adres, bez numeru.
+        // A link-local address carries the scope id after the percent sign, and it comes back only
+        // on systems that name it, so only the address itself is compared, without the id.
         const net::Address again{one.text(), one.port()};
 
         same(again.family(), one.family());
@@ -215,9 +215,9 @@ TRIAL("Własne: każdy adres daje się wypisać i wczytać z powrotem") {
     }
 }
 
-// Postać, którą sami wypisujemy, musi dać się wczytać z powrotem. Rozcięcie po procencie szło
-// przed zdjęciem nawiasów, więc zamykający nawias wpadał do tekstu numeru łącza.
-TRIAL("Adres: nawiasy razem z numerem łącza") {
+// The form we write ourselves must read back. The brackets have to come off before the split at
+// the percent sign, otherwise the closing bracket ends up in the text of the scope id.
+TRIAL("Address: brackets together with a scope id") {
     const net::Address made{"[fe80::1%1]", 546};
 
     same(made.family(), net::Family::six);
@@ -229,8 +229,9 @@ TRIAL("Adres: nawiasy razem z numerem łącza") {
     same(again.bytes(), made.bytes());
 }
 
-// Zero w środku ucinało wejście po cichu i „1.2.3.4" sklejone z bzdurą budowało się pomyślnie.
-TRIAL("Adres: zero w środku tekstu nie ucina wejścia") {
+// A zero in the middle must not silently cut the input, or "1.2.3.4" glued to garbage would be
+// built successfully.
+TRIAL("Address: a zero inside the text does not cut the input") {
     bool threw = false;
 
     try {
@@ -244,9 +245,9 @@ TRIAL("Adres: zero w środku tekstu nie ucina wejścia") {
     ought(threw);
 }
 
-// Nieznana nazwa łącza cichła do zera, a adres link-local bez numeru jest bezużyteczny — błąd
-// wychodził dopiero przy połączeniu, daleko od literówki.
-TRIAL("Adres: nieznana nazwa łącza jest kłopotem, nie zerem") {
+// An unknown interface name must not quietly become zero: a link-local address without a scope
+// id is useless, and the error would show up only when connecting, far from the typo.
+TRIAL("Address: an unknown interface name is a trouble, not zero") {
     bool threw = false;
 
     try {
@@ -260,9 +261,10 @@ TRIAL("Adres: nieznana nazwa łącza jest kłopotem, nie zerem") {
     ought(threw);
 }
 
-// Numer łącza należy się wyłącznie adresom łączowym. Doklejany wszystkim robił z pętli zwrotnej
-// `::1%1`, a ta przestawała równać się `::1` i wychodziła jako kandydat do przebijania.
-TRIAL("Własne: numer łącza tylko przy adresach łączowych") {
+// A scope id belongs only to link-local addresses. Attached to all of them, it would turn
+// loopback into ::1%1, which no longer equals ::1 and would come out as a candidate for hole
+// punching.
+TRIAL("Own: a scope id only on link-local addresses") {
     for (const net::Address& one : net::mine().await()) {
         if (one.family() != net::Family::six) continue;
 
@@ -275,9 +277,9 @@ TRIAL("Własne: numer łącza tylko przy adresach łączowych") {
     }
 }
 
-// --- gniazdo lokalne ---------------------------------------------------------------------------
+// --- local socket ------------------------------------------------------------------------------
 
-TRIAL("Adres lokalny: ścieżka zamiast adresu i portu") {
+TRIAL("Local address: a path instead of an address and port") {
     const net::Address one = net::Address::local("/tmp/talcite-proba.sock");
 
     ought(one.held());
@@ -286,13 +288,13 @@ TRIAL("Adres lokalny: ścieżka zamiast adresu i portu") {
     same(one.port(), static_cast<std::uint16_t>(0));
     same(one.scope(), 0u);
 
-    // Ani text(), ani spelled() nie doklejają portu: gniazdo lokalne go nie ma, a "…sock:0"
-    // byłoby kłamstwem o tym, czym ten adres jest.
+    // Neither text() nor spelled() appends a port: a local socket has none, and "…sock:0" would
+    // be a lie about what this address is.
     same(one.text(), std::string{"/tmp/talcite-proba.sock"});
     same(one.spelled(), std::string{"/tmp/talcite-proba.sock"});
 }
 
-TRIAL("Adres lokalny: równość idzie po ścieżce") {
+TRIAL("Local address: equality goes by path") {
     const net::Address one = net::Address::local("/tmp/a.sock");
     const net::Address two = net::Address::local("/tmp/a.sock");
     const net::Address three = net::Address::local("/tmp/b.sock");
@@ -301,7 +303,7 @@ TRIAL("Adres lokalny: równość idzie po ścieżce") {
     ought(!(one == three));
 }
 
-TRIAL("Adres lokalny: pusta ścieżka odmawia") {
+TRIAL("Local address: an empty path is refused") {
     bool told = false;
 
     try {
@@ -313,7 +315,7 @@ TRIAL("Adres lokalny: pusta ścieżka odmawia") {
     ought(told);
 }
 
-TRIAL("Adres lokalny: zero w środku ścieżki odmawia") {
+TRIAL("Local address: a zero inside the path is refused") {
     bool told = false;
 
     try {
@@ -325,7 +327,7 @@ TRIAL("Adres lokalny: zero w środku ścieżki odmawia") {
     ought(told);
 }
 
-TRIAL("Adres lokalny: za długa ścieżka odmawia przy budowaniu, nie przy gnieździe") {
+TRIAL("Local address: a too long path is refused when built, not at the socket") {
     bool told = false;
 
     try {
@@ -337,7 +339,7 @@ TRIAL("Adres lokalny: za długa ścieżka odmawia przy budowaniu, nie przy gnie�
     ought(told);
 }
 
-TRIAL("Adres lokalny: port i numer łącza odmawiają") {
+TRIAL("Local address: port and scope id are refused") {
     net::Address one = net::Address::local("/tmp/a.sock");
 
     bool port = false;
@@ -358,12 +360,12 @@ TRIAL("Adres lokalny: port i numer łącza odmawiają") {
     ought(port);
     ought(scope);
 
-    // Odmowa nie zostawia po sobie połowicznego stanu.
+    // A refusal leaves no half-changed state behind.
     same(one.port(), static_cast<std::uint16_t>(0));
     same(one.scope(), 0u);
 }
 
-TRIAL("Adres lokalny: nie powstaje żadną z pozostałych dróg") {
+TRIAL("Local address: none of the other ways makes one") {
     const std::array<std::byte, 16> raw{};
 
     bool bytes = false;
@@ -393,7 +395,7 @@ TRIAL("Adres lokalny: nie powstaje żadną z pozostałych dróg") {
     ought(loop);
 }
 
-TRIAL("Adres: IPv4 z gniazda podwójnego wraca jako IPv4, reszta zostaje") {
+TRIAL("Address: IPv4 from a dual-stack socket comes back as IPv4, the rest stays") {
     const net::Address mapped = net::Address{"::ffff:192.0.2.7", 4242}.unmapped();
 
     same(mapped.family(), net::Family::four);

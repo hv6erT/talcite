@@ -22,10 +22,11 @@ public:
     int clicks = 0;
 
 protected:
-    // Korzeń pochłania każdy klawisz — tak jak w każdym demie i tak jak zrobi to aplikacja.
-    // Dzięki temu widać, że legenda dostaje swoje **od dołu**, a nie stąd.
+    // The root swallows every key, as in every demo and as the application will. This shows that
+    // the legend gets its keys from below, not from here.
     bool handle(ui::KeyEvent&) override { return true; }
 
+    // Counts the clicks that reach the root and takes each of them.
     bool handle(ui::ClickEvent&) override {
         ++clicks;
 
@@ -33,18 +34,21 @@ protected:
     }
 };
 
-// Dziecko liczące kliknięcia i mówiące, czy je bierze. Zajmuje całe miejsce, więc **stoi bliżej
-// kursora niż pojemnik** — a to jest sedno wędrówki myszy: zdarzenie zaczyna się u najgłębszego
-// węzła pod kursorem i idzie w górę, więc pojemnik widzi tylko to, czego dziecko nie wzięło.
+// A child that counts clicks and says whether it takes them. It fills all the room, so it stands
+// closer to the cursor than the container, and that is the heart of the mouse's path: the event
+// starts at the deepest node under the cursor and goes up, so the container sees only what the
+// child did not take.
 class Noted : public ui::Node {
 public:
     explicit Noted(bool takes) : takes_(takes) {}
 
     int clicks = 0;
 
+    // All the room offered, so that the child covers the whole container.
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
+    // Counts the click and takes it or not, as set in the constructor.
     bool handle(ui::ClickEvent&) override {
         ++clicks;
 
@@ -55,8 +59,8 @@ private:
     bool takes_ = true;
 };
 
-// Każde kliknięcie o sekundę po poprzednim, więc dwa z rzędu w tę samą kratkę nie składają się
-// w dwuklik — próby pytają o pojedyncze.
+// Each click comes a second after the previous one, so two in a row on the same cell do not make a
+// double click; the trials ask about single ones.
 void clicked(ui::Root& onto, ui::Spot where) {
     static std::chrono::steady_clock::time_point moment{};
 
@@ -71,9 +75,9 @@ void clicked(ui::Root& onto, ui::Spot where) {
 
 }
 
-// --- Ognisko ------------------------------------------------------------------------------------
+// --- Focus --------------------------------------------------------------------------------------
 
-TRIAL("Pane: domyślnie bierze ognisko, bo po to jest") {
+TRIAL("Pane: takes focus by default, since that is what it is for") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -89,7 +93,7 @@ TRIAL("Pane: domyślnie bierze ognisko, bo po to jest") {
     ought(one->focused());
 }
 
-TRIAL("Pane: wyłączony ogniska nie bierze") {
+TRIAL("Pane: a disabled one does not take focus") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -106,10 +110,10 @@ TRIAL("Pane: wyłączony ogniska nie bierze") {
     same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
-// **Pojemnik nie zabiera kliknięć swoim dzieciom.** Mysz wędruje od najgłębszego węzła pod kursorem
-// w górę, więc dziecko jest pierwsze; kto je weźmie, ten kończy wędrówkę. Pojemnik dostaje tylko
-// to, czego nikt niżej nie chciał — i wtedy dopiero bierze ognisko.
-TRIAL("Pane: kliknięcie wzięte przez dziecko do pojemnika nie dochodzi") {
+// The container does not take clicks away from its children. The mouse goes from the deepest node
+// under the cursor upward, so the child comes first; whoever takes the click ends the path. The
+// container gets only what nobody below wanted, and only then takes focus.
+TRIAL("Pane: a click taken by the child does not reach the container") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -126,7 +130,7 @@ TRIAL("Pane: kliknięcie wzięte przez dziecko do pojemnika nie dochodzi") {
     same(top.clicks, 0);
 }
 
-TRIAL("Pane: kliknięcie odrzucone przez dziecko zabiera ognisko pojemnikowi") {
+TRIAL("Pane: a click refused by the child gives focus to the container") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -143,9 +147,9 @@ TRIAL("Pane: kliknięcie odrzucone przez dziecko zabiera ognisko pojemnikowi") {
     same(top.clicks, 0);
 }
 
-// Pojemnik wyłączony jest przezroczysty **także dla myszy**: kliknięcie idzie dalej w górę, tak
-// jakby go tu nie było.
-TRIAL("Pane: wyłączony oddaje kliknięcie dalej w górę") {
+// A disabled container is transparent to the mouse too: the click goes further up, as if the
+// container were not there.
+TRIAL("Pane: a disabled one passes the click further up") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -163,11 +167,11 @@ TRIAL("Pane: wyłączony oddaje kliknięcie dalej w górę") {
     same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
-// **To jest prawdziwy powód, dla którego ten element istnieje.** Klawisz idzie bąbelkiem od ogniska
-// w górę, a legenda jest przodkiem treści — więc bez czegoś, co potrzyma ognisko, `Root::dispatch`
-// podaje klawisz korzeniowi i tam wędrówka się kończy. Okno bez przycisku i bez pola tekstowego nie
-// ma wtedy działających F-klawiszy.
-TRIAL("Pane: dopiero z ogniskiem legenda dostaje klawisze") {
+// This is the real reason this element exists. A key bubbles up from the focus, and the legend is
+// an ancestor of the content, so without something to hold the focus `Root::dispatch` hands the key
+// to the root and the path ends there. A window without a button and without a text field would
+// then have no working F keys.
+TRIAL("Pane: the legend gets keys only with focus") {
     Sheet top;
 
     const auto legend = std::make_shared<ui::Legend>();
@@ -198,12 +202,11 @@ TRIAL("Pane: dopiero z ogniskiem legenda dostaje klawisze") {
     same(hits, 1);
 }
 
-// --- Miejsce ------------------------------------------------------------------------------------
+// --- Room ---------------------------------------------------------------------------------------
 
-// **Cały pokój, także gdy dziecko chce mniej** — i to jest cały rozmiarowy udział pojemnika.
-// Stała, nie ustawienie: pole `full_` z parą ustawiaczy nie miało ani jednego wołającego poza
-// próbami, które sprawdzały je same. Od zadawania rozmiaru jest `Box`.
-TRIAL("Pane: prosi o całe miejsce, choćby dziecko chciało mniej") {
+// The whole room, even when the child wants less, and that is the container's entire part in
+// sizing. It is fixed, not a setting; setting a size is what `Box` is for.
+TRIAL("Pane: asks for all the room, even if the child wants less") {
     const auto one = std::make_shared<ui::Pane>();
     const auto said = std::make_shared<ui::Span>(std::string{"trzy"});
 
@@ -215,19 +218,19 @@ TRIAL("Pane: prosi o całe miejsce, choćby dziecko chciało mniej") {
     same(one->wants({20, 10}).high, 10);
 }
 
-// Pusty też bierze wszystko — inaczej niż `Node`, który bez dziecka nie prosi o nic.
-TRIAL("Pane: pusty prosi o całe miejsce") {
+// An empty one takes everything too, unlike `Node`, which asks for nothing without a child.
+TRIAL("Pane: an empty one asks for all the room") {
     const auto one = std::make_shared<ui::Pane>();
 
     same(one->wants({20, 10}).wide, 20);
     same(one->wants({20, 10}).high, 10);
 }
 
-// --- Malowanie ----------------------------------------------------------------------------------
+// --- Painting -----------------------------------------------------------------------------------
 
-// Pojemnik **nie maluje nic od siebie** — dziedziczy przezroczyste przepuszczenie dziecka i tym
-// samym regułę „maluj to, czym jesteś, a nie prostokąt, który dostałeś".
-TRIAL("Pane: pusty nie zostawia śladu na kartce") {
+// The container paints nothing of its own: it inherits the transparent pass-through of a child and
+// with it the rule "paint what you are, not the rectangle you were given".
+TRIAL("Pane: an empty one leaves no trace on the sheet") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -244,7 +247,7 @@ TRIAL("Pane: pusty nie zostawia śladu na kartce") {
     ought(held);
 }
 
-TRIAL("Pane: dziecko dostaje cały przydzielony prostokąt") {
+TRIAL("Pane: the child gets the whole assigned rectangle") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();
@@ -259,9 +262,9 @@ TRIAL("Pane: dziecko dostaje cały przydzielony prostokąt") {
     same(made.at({2, 0}).letter, U'c');
 }
 
-// **Wyłączenie oddaje ognisko**, tak jak w przycisku, polu i wierszu listy — pojemnik był jedynym,
-// który zostawał z ogniskiem na węźle mówiącym o sobie, że chętny nie jest.
-TRIAL("Pane: wyłączony pod ogniskiem oddaje je przodkowi") {
+// Disabling gives up the focus, as in the button, the field and the list row; a node that says it
+// is not willing must not keep the focus.
+TRIAL("Pane: a disabled one under focus hands it to the ancestor") {
     Sheet top;
 
     const auto up = std::make_shared<ui::Pane>();
@@ -282,7 +285,7 @@ TRIAL("Pane: wyłączony pod ogniskiem oddaje je przodkowi") {
     ought(up->focused());
 }
 
-TRIAL("Pane: wyłączony bez chętnego przodka gasi ognisko") {
+TRIAL("Pane: a disabled one without a willing ancestor clears the focus") {
     Sheet top;
 
     const auto one = std::make_shared<ui::Pane>();

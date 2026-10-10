@@ -15,10 +15,10 @@ namespace {
 
 constexpr std::size_t bands = 4;
 
-// Prostokąt w źródle, który przypada na jedną kratkę celu. Co najmniej jeden piksel, bo przy
-// powiększaniu podział wychodziłby pusty — i wtedy zamiast rozmycia dostajemy najbliższego sąsiada,
-// czyli ostre kwadraty. Dla ikony i pikselowej grafiki to jest **właściwa** odpowiedź, a nie
-// zaniedbanie: rozmyty piksel-art wygląda gorzej niż powiększony.
+// The span of source pixels that falls on target cell `at`, as [near, far). At least one pixel,
+// because when enlarging the division would come out empty, and then instead of blurring we get
+// the nearest neighbor, that is, sharp squares. For an icon and pixel art that is the right
+// answer, not negligence: blurred pixel art looks worse than enlarged pixel art.
 [[nodiscard]] std::pair<int, int> spanned(int at, int from, int upto) {
     const int near = static_cast<int>(static_cast<std::int64_t>(at) * from / upto);
     const int far = static_cast<int>(static_cast<std::int64_t>(at + 1) * from / upto);
@@ -28,6 +28,9 @@ constexpr std::size_t bands = 4;
 
 }
 
+// An image of size `given` made of RGBA frames. Throws `std::logic_error` when there are frames
+// without dimensions or a frame whose length does not match them. Negative dimensions are
+// clamped to zero.
 Pixels::Pixels(ui::Size given, std::vector<Still> stills)
     : size_{std::max(given.wide, 0), std::max(given.high, 0)}, stills_(std::move(stills)) {
     if (size_.wide == 0 || size_.high == 0) {
@@ -44,16 +47,19 @@ Pixels::Pixels(ui::Size given, std::vector<Still> stills)
             throw std::logic_error("talcite::Pixels: the frame does not match the dimensions");
 }
 
+// Whether there is anything to show: nonzero dimensions and at least one frame.
 bool Pixels::held() const { return size_.wide > 0 && size_.high > 0 && !stills_.empty(); }
 
-// Filtr pudełkowy: każda kratka celu jest średnią z prostokąta źródła, który na nią przypada.
-// Przy zmniejszaniu to jest odpowiedź poprawna i najtańsza z poprawnych — bierze **wszystkie**
-// piksele, więc cienka kreska nie znika przez to, że akurat nie trafiła w próbkę.
+// Every frame resampled to `given`, with a box filter: each target cell is the average of the
+// source rectangle that falls on it. When shrinking this is the correct answer and the cheapest of
+// the correct ones; it takes all the pixels, so a thin line does not vanish just because it missed
+// a sample.
 //
-// Uśredniamy w świetle liniowym i **z alfą wmnożoną**. To drugie jest równie ważne co pierwsze:
-// piksel przezroczysty niesie w pliku jakąś barwę, zwykle czarną, i wliczony na równi z widocznymi
-// robi ciemną obwódkę wokół każdego wyciętego kształtu. Dlatego barwę ważymy alfą, a na końcu
-// przez nią dzielimy — kratka bez ani jednego widocznego piksela zostaje po prostu pusta.
+// We average in linear light and with premultiplied alpha. The second matters as much as the
+// first: a transparent pixel carries some color in the file, usually black, and counted equally
+// with the visible ones it makes a dark outline around every cut-out shape. That is why the color
+// is weighted by alpha and divided by it at the end; a cell without a single visible pixel simply
+// stays empty.
 Pixels Pixels::scaled(ui::Size given) const {
     const ui::Size want{std::max(given.wide, 0), std::max(given.high, 0)};
 
@@ -130,13 +136,14 @@ Pixels Pixels::scaled(ui::Size given) const {
     return Pixels{want, std::move(made)};
 }
 
-// Ile kratek zająć, żeby obrazek zachował proporcje. **Kratka nie jest kwadratem** — u jednych
-// jest 10 na 20 pikseli, u innych 9 na 21 — więc bez jej wymiaru koło wychodzi jajkiem. Zero
-// znaczy „terminal nie powiedział": przyjmujemy wtedy 1:2, bo tak wygląda przytłaczająca większość.
+// How many cells to occupy so that the image keeps its proportions. A cell is not a square: on some
+// terminals it is 10 by 20 pixels, on others 9 by 21, so without its size a circle comes out as an
+// egg. Zero means "the terminal did not say", and then 1:2 is assumed, because that is what the
+// overwhelming majority looks like.
 //
-// Najpierw próbujemy zająć całą szerokość i liczymy wysokość; gdy ta nie mieści się w miejscu,
-// zaczynamy od wysokości i liczymy szerokość. Zawsze co najmniej jedna kratka, bo obrazek zajmujący
-// zero kratek to obrazek, którego nie widać, a wołający prosił o podgląd.
+// First we try to take the whole width and compute the height; when that does not fit into the
+// room, we start from the height and compute the width. Always at least one cell, because an image
+// occupying zero cells is an image that cannot be seen, and the caller asked for a preview.
 ui::Size fitting(ui::Size image, ui::Size room, ui::Size cell) {
     if (image.wide <= 0 || image.high <= 0 || room.wide <= 0 || room.high <= 0) return {};
 

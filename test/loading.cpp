@@ -13,16 +13,17 @@
 
 using namespace talcite;
 
-// Te przypadki celują w miejsca, w których zaplecza najbardziej się różnią: przyjmowanie
-// połączeń, nawiązywanie, dwie operacje naraz na jednym gnieździe, przerwanie jednej z nich
-// i pisanie większe niż bufor jądra. Na uniksach sprawdzają poll i epoll, na Windows — IOCP,
-// gdzie każda z tych rzeczy jest zupełnie innym wywołaniem systemowym.
+// These cases aim at the places where the backends differ most: accepting connections, connecting,
+// two operations at once on one socket, cancelling one of them, and writes larger than the kernel
+// buffer. On Unix systems they exercise poll and epoll, on Windows IOCP, where each of these things
+// is an entirely different system call.
 namespace {
 
 const net::Patience soon{15000};
 
 
 
+// A listener on an IPv4 loopback address with a port chosen by the system.
 net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
 struct Pair {
@@ -30,6 +31,7 @@ struct Pair {
     net::Stream client;
 };
 
+// Accepts one connection on `gate` while connecting to it, and returns both ends.
 Pair joined(const net::Listener& gate) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
@@ -42,7 +44,7 @@ Pair joined(const net::Listener& gate) {
 
 }
 
-TRIAL("Obciążenie: pięćdziesiąt połączeń po kolei") {
+TRIAL("Load: fifty connections one after another") {
     const net::Listener gate = standing();
 
     for (int which = 0; which < 50; ++which) {
@@ -54,7 +56,7 @@ TRIAL("Obciążenie: pięćdziesiąt połączeń po kolei") {
     }
 }
 
-TRIAL("Obciążenie: pięćdziesiąt połączeń naraz") {
+TRIAL("Load: fifty connections at once") {
     const net::Listener gate = standing();
 
     std::vector<net::Stream> servers;
@@ -79,7 +81,7 @@ TRIAL("Obciążenie: pięćdziesiąt połączeń naraz") {
         same(text(reading[static_cast<std::size_t>(which)].await()), std::to_string(which));
 }
 
-TRIAL("Obciążenie: czytanie i pisanie naraz na jednym strumieniu") {
+TRIAL("Load: reading and writing at once on one stream") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -93,10 +95,10 @@ TRIAL("Obciążenie: czytanie i pisanie naraz na jednym strumieniu") {
     same(text(both.server.read(64, soon).await()), std::string{"i z tej"});
 }
 
-// Najważniejszy przypadek dla IOCP: przerwanie **jednej** operacji, a nie całego gniazda.
-// Na jednym strumieniu wisi czytanie z terminem i pisanie bez — po upływie terminu czytanie ma
-// paść, a pisanie dojść do końca.
-TRIAL("Obciążenie: termin przerywa jedną operację, nie gniazdo") {
+// The most important case for IOCP: cancelling one operation, not the whole socket. One stream has
+// a read with a deadline and a write without one pending; when the deadline passes the read must
+// fail and the write must complete.
+TRIAL("Load: a deadline cancels one operation, not the socket") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -130,13 +132,13 @@ TRIAL("Obciążenie: termin przerywa jedną operację, nie gniazdo") {
 
     same(made.size(), much.size());
 
-    // Strumień żyje dalej: przerwane czytanie nie zabrało ze sobą połączenia.
+    // The stream lives on: the cancelled read did not take the connection with it.
     both.server.write(bytes("dalej stoję"), soon).await();
 
     same(text(both.client.read(64, soon).await()), std::string{"dalej stoję"});
 }
 
-TRIAL("Obciążenie: pusty zapis nic nie psuje") {
+TRIAL("Load: an empty write breaks nothing") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -147,7 +149,7 @@ TRIAL("Obciążenie: pusty zapis nic nie psuje") {
     same(text(both.server.read(64, soon).await()), std::string{"po pustym"});
 }
 
-TRIAL("Obciążenie: czytanie mniejsze niż to, co przyszło") {
+TRIAL("Load: reading less than what arrived") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -159,7 +161,7 @@ TRIAL("Obciążenie: czytanie mniejsze niż to, co przyszło") {
     same(text(both.server.read(3, soon).await()), std::string{"gh"});
 }
 
-TRIAL("Obciążenie: zamknięcie przerywa obie strony naraz") {
+TRIAL("Load: closing cancels both directions at once") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -185,12 +187,12 @@ TRIAL("Obciążenie: zamknięcie przerywa obie strony naraz") {
         ++amiss;
     }
 
-    // Pisanie mogło zdążyć zejść do bufora jądra przed zamknięciem, więc wymagamy tylko, żeby
-    // czytanie padło — i żeby nic nie zawisło.
+    // The write may have reached the kernel buffer before the close, so we only require that the
+    // read fails and that nothing hangs.
     ought(amiss >= 1);
 }
 
-TRIAL("Obciążenie: brama zamknięta w trakcie czekania na połączenie") {
+TRIAL("Load: listener closed while waiting for a connection") {
     net::Listener gate = standing();
 
     auto meeting = gate.accept(soon);
@@ -208,7 +210,7 @@ TRIAL("Obciążenie: brama zamknięta w trakcie czekania na połączenie") {
     ought(amiss);
 }
 
-TRIAL("Obciążenie: nawiązanie do martwego portu pada, a nie wisi") {
+TRIAL("Load: connecting to a dead port fails instead of hanging") {
     net::Address where;
 
     {
@@ -228,7 +230,7 @@ TRIAL("Obciążenie: nawiązanie do martwego portu pada, a nie wisi") {
     ought(amiss);
 }
 
-TRIAL("Obciążenie: dwadzieścia datagramów pod rząd") {
+TRIAL("Load: twenty datagrams in a row") {
     const net::Udp here{net::Address::loopback(net::Family::four, 0)};
     const net::Udp there{net::Address::loopback(net::Family::four, 0)};
 
@@ -241,7 +243,7 @@ TRIAL("Obciążenie: dwadzieścia datagramów pod rząd") {
     }
 }
 
-TRIAL("Obciążenie: po wszystkim centrala nie trzyma gniazd") {
+TRIAL("Load: afterwards the exchange holds no sockets") {
     {
         const net::Listener gate = standing();
 

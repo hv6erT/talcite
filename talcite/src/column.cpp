@@ -6,15 +6,19 @@ namespace talcite::ui {
 
 Column::Column(int gap) : gap_(std::max(gap, 0)) {}
 
+// Sets the gap between children, in rows; a negative value becomes zero.
 void Column::gap(int given) { gap_ = std::max(given, 0); }
 
+// A column lays out any number of children, one under another.
 int Column::capacity() const { return plenty; }
 
-// Wysokości dzieci sumujemy, szerokość bierzemy z najszerszego — ale oddajemy **co najwyżej
-// tyle, ile dostaliśmy**. Kolumna nie ma prawa powiedzieć rodzicowi, że potrzebuje stu wierszy,
-// bo rodzic i tak nie ma ich skąd wziąć; od pokazywania tego, co się nie mieści, będzie `Scroll`.
+// The children's heights add up and the width is that of the widest child, but the column asks
+// for at most as much as it was given. It may not tell its parent that it needs a hundred rows,
+// because the parent has nowhere to take them from; showing what does not fit is the job of
+// `Scroll`.
 //
-// Odstęp należy się między dziećmi, które coś zajmują — reguła i powód opisane przy wierszu.
+// The gap goes only between children that take up space; the rule and its reason are described
+// with `Row`.
 Size Column::wants(Size room) const {
     Size made;
 
@@ -32,13 +36,14 @@ Size Column::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Nikt nie wypada z pętli, nawet gdy miejsce się skończyło: węzeł, którego nie widać, dostaje
-// prostokąt o zerowej wysokości i dzięki temu jego area() mówi prawdę o tej klatce, zamiast
-// pamiętać poprzednią. Odstępu przed sobą taki węzeł nie otwiera.
+// Draws the children one under another. No child drops out of the loop, even when the room has
+// run out: a node that cannot be seen gets a rectangle of zero height, so its area() tells the
+// truth about this frame instead of remembering the previous one. Such a node opens no gap
+// before itself.
 View Column::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent wherever nothing is drawn; the rule is described with `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 

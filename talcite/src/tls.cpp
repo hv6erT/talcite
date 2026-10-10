@@ -19,19 +19,19 @@ struct TlsStream::Held {
     Stream one;
     std::unique_ptr<TlsSession> how;
 
-    // Nazwa, pod którą klient pytał serwer — do kłopotu z uściskiem, bo człowiek zna serwer po nazwie,
-    // a nie po adresie. Po stronie serwera pusta.
+    // The name under which the client asked for the server, for handshake troubles, because a
+    // person knows a server by its name, not by its address. Empty on the server side.
     std::string host;
 
-    // Zabezpieczenie nie jest bezpieczne wątkowo i nie ma powodu, żeby było — dotykamy go
-    // wyłącznie krótkimi, całymi porcjami: „wepchnij i zabierz", „zapisz i zabierz". Zamek
-    // trzymamy tylko na czas takiej porcji, nigdy przez krok asynchroniczny.
+    // The session is not thread-safe and has no reason to be: we touch it only in short, whole
+    // portions ("push and take", "write and take"). The lock is held only for such a portion,
+    // never across an asynchronous step.
     std::mutex minding;
 
     Bytes spare;
 
-    // Wszystko, co wychodzi na gniazdo, ustawia się w jednej kolejce — bo strumień przyjmuje
-    // jedno pisanie naraz, a uścisk dłoni potrafi pisać w środku czytania.
+    // Everything that goes out to the socket lines up in one queue, because the stream accepts
+    // one write at a time, and the handshake can write in the middle of a read.
     std::mutex sending;
     Promise<void> tail{[](auto resolve, auto) { resolve(); }};
     int queued = 0;
@@ -42,16 +42,18 @@ struct TlsStream::Held {
 
 namespace {
 
+// A promise that is settled already.
 Promise<void> already() {
     return Promise<void>{[](auto resolve, auto) { resolve(); }};
 }
 
+// A promise that already holds `what`.
 Promise<Bytes> already(Bytes what) {
     return Promise<Bytes>{
         [what = std::move(what)](auto resolve, auto) mutable { resolve(std::move(what)); }};
 }
 
-// Zabezpieczenie oddaje szyfrogram porcjami, więc zabieramy wszystko, co ma.
+// The session hands out ciphertext in portions, so we take everything it has.
 Bytes drained(TlsSession& how) {
     Bytes made;
 
@@ -64,39 +66,40 @@ Bytes drained(TlsSession& how) {
     }
 }
 
-// Kłopot zabezpieczenia wychodzi jako `TlsTrouble`: z powodem, który rozpoznała przejściówka
-// (szyfry, zaufanie, termin, nazwa), z nazwą serwera i z adresem drugiej strony. Woła się pod
-// `minding`, więc i strumień czytamy bezpiecznie.
+// Throws the session's trouble as `TlsTrouble`: with the reason the adapter recognized (ciphers,
+// trust, expiry, name), the server name and the address of the other side. It is called under
+// `minding`, so reading the stream here is safe too.
 void amiss(const TlsStream::Held& held) {
     if (const std::string said = held.how->error(); !said.empty())
         throw TlsTrouble{held.how->why(), said, held.host, held.one.peer()};
 }
 
-// **Kopia strumienia spod zamka.** Sam `Stream` to wartość trzymająca `shared_ptr`, więc kopia
-// wskazuje na ten sam byt, a kosztuje jedno podbicie licznika. Po co: `TlsStream::close()` woła na
-// składowej `held->one` metodę, która przestawia jej `shared_ptr` — a to zwykły wskaźnik, nie
-// atomowy. Robotnik puli czytający tę samą składową w tej samej chwili to niesynchronizowany
-// odczyt obok zapisu, czyli UB: przerwany odczyt wskazania albo dekrementacja licznika bloku,
-// który drugi wątek właśnie zwalnia.
+// A copy of the stream taken under the lock. `Stream` itself is a value holding a `shared_ptr`,
+// so the copy points at the same object and costs one counter increment. The reason:
+// `TlsStream::close()` calls a method on the member `held->one` that reassigns its `shared_ptr`,
+// and that is a plain pointer, not an atomic one. A pool worker reading the same member at the
+// same moment would be an unsynchronized read next to a write, which is UB: a torn read of the
+// pointer, or a decrement of the counter of a block that the other thread is just freeing.
 //
-// Odkąd **każde** dotknięcie składowej idzie pod `minding`, praca asynchroniczna biegnie na
-// prywatnej kopii i zamka nie trzymamy przez żaden krok asynchroniczny — reguła spisana nad
-// `minding` zostaje nienaruszona. Zamknięcie oryginału i tak dosięga kopii, bo obie dzielą jeden
-// `Stream::Held`: uchwyt zostaje wymieniony na pusty, więc kopia dostaje przy następnym użyciu
-// czyste odrzucenie, a nie zawieszenie.
+// Since every touch of the member goes under `minding`, asynchronous work runs on a private copy
+// and the lock is not held across any asynchronous step, so the rule written above `minding`
+// holds. Closing the original still reaches the copy, because both share one `Stream::Held`: the
+// handle is swapped for an empty one, so the copy gets a clean rejection on its next use, not a
+// hang.
 Stream borrowed(const std::shared_ptr<TlsStream::Held>& held) {
     const std::lock_guard<std::mutex> kept{held->minding};
 
     return held->one;
 }
 
-// Kolejka jest łańcuchem: każde nowe pisanie doczepia się do poprzedniego, więc na gniazdo
-// nigdy nie idą dwa naraz.
+// The queue is a chain: every new write is attached to the previous one, so two never go to the
+// socket at once.
 //
-// **Ale łańcuch trzyma całą swoją historię.** `then` zapisuje w dziecku kopię rodzica (przez
-// upstream_), więc ogon po tysiącu zapisów trzymałby tysiąc obietnic razem z ich buforami —
-// wykrył to dopiero ASan, bo testy przechodziły. Dlatego liczymy, ile zapisów jest w drodze, i
-// gdy ostatni schodzi, ogon wraca do świeżej, rozstrzygniętej obietnicy. Historia się ucina.
+// But the chain keeps its whole history. `then` stores a copy of the parent in the child (through
+// upstream_), so the tail after a thousand writes would hold a thousand promises together with
+// their buffers; only ASan shows this, the tests pass. So we count how many writes are on the
+// way, and when the last one finishes, the tail goes back to a fresh, settled promise. The
+// history is cut off.
 Promise<void> posting(const std::shared_ptr<TlsStream::Held>& held, Bytes what, Patience patience) {
     const std::lock_guard<std::mutex> kept{held->sending};
 
@@ -119,6 +122,7 @@ Promise<void> posting(const std::shared_ptr<TlsStream::Held>& held, Bytes what, 
     return made;
 }
 
+// Takes at most `most` bytes of the plaintext already decrypted and kept in `spare`.
 Bytes taken(TlsStream::Held& held, std::size_t most) {
     Bytes made;
 
@@ -139,24 +143,26 @@ Bytes taken(TlsStream::Held& held, std::size_t most) {
 
 using Clock = std::chrono::steady_clock;
 
+// The time left until `until`, at least one millisecond, so that a deadline just passed still
+// gives a valid patience.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
 
-// Ile rund uścisku dłoni wolno przeprowadzić. Prawdziwy uścisk mieści się w kilku; setka jest
-// z ogromnym zapasem. Granica jest tu dlatego, że **każda runda zatrzymuje poprzednią**: łańcuch
-// then trzyma całą swoją historię, więc rozmówca odpowiadający w kółko tuż przed terminem
-// dokładał po kilkadziesiąt kilobajtów na rundę, bez końca.
+// How many handshake rounds may run. A real handshake fits in a few; a hundred leaves a huge
+// margin. The limit exists because every round keeps the previous one alive: a then chain holds
+// its whole history, so a peer that kept answering just before the deadline would add tens of
+// kilobytes per round, without end.
 constexpr int rounds = 100;
 
-// Uścisk dłoni. Pytamy zabezpieczenie, co ma do wysłania, wysyłamy, czytamy odpowiedź, wpychamy
-// — i od początku, aż powie, że gotowe. Wołanie pull() jest tym, co uścisk **napędza**: to jego
-// pierwsze pytanie rusza całą wymianę.
+// The handshake. We ask the session what it has to send, send it, read the answer, push it in,
+// and start over until the session says it is ready. Calling pull() is what drives the handshake:
+// its first question starts the whole exchange.
 //
-// Terminem jest **chwila**, nie cierpliwość. Cierpliwość podawana każdej rundzie z osobna była
-// terminem na operację, odnawialnym w nieskończoność — więc uścisk jako całość nie miał końca.
+// The deadline is a moment, not a patience. A patience given to each round separately would be a
+// per-operation deadline, renewable forever, so the handshake as a whole would have no end.
 Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_point until,
                       int turn) {
     Bytes out;
@@ -194,6 +200,9 @@ Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_
     });
 }
 
+// Reads at most `most` bytes of plaintext: first what is left over, then what the session can
+// decrypt, and only then from the socket, sending on the way whatever the session wants to send.
+// An empty result means the other side has closed.
 Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t most,
                        Patience patience) {
     Bytes out;
@@ -224,7 +233,7 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
 
     return sent.then([held, most, patience] {
         return borrowed(held).read(65536, patience).then([held, most, patience](const Bytes& came) {
-            // Pustka znaczy to samo, co na gołym strumieniu: druga strona zamknęła.
+            // Emptiness means the same as on a bare stream: the other side has closed.
             if (came.empty()) return already(Bytes{});
 
             {
@@ -240,11 +249,11 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
     });
 }
 
-// Zabiera strumień przez wartość i już go nie oddaje. Po opakowaniu nikt nie ma prawa dotknąć
-// gniazda pod spodem — uścisk dłoni wpisałby się w środek cudzych danych.
+// Takes the stream by value and never gives it back. Once it is wrapped, nobody may touch the
+// socket underneath; the handshake would end up in the middle of someone else's data.
 //
-// Pusty strażnik i strażnik oddający pustkę kończą się **odmową z powodem**. Wcześniej puste
-// zabezpieczenie szło prosto do uścisku dłoni i program sięgał przez pusty wskaźnik.
+// A missing session ends in a rejection with a reason, so that an empty session never reaches
+// the handshake through a null pointer.
 Promise<TlsStream> opened(Stream one, std::unique_ptr<TlsSession> how, std::string host, Patience patience) {
     if (!how)
         return Promise<TlsStream>{[](auto, auto reject) {
@@ -266,8 +275,9 @@ Promise<TlsStream> opened(Stream one, std::unique_ptr<TlsSession> how, std::stri
     return made;
 }
 
-// Brak dostawcy odrzuca obietnicę, zamiast rzucać wołającemu w twarz — funkcja oddająca obietnicę
-// zgłasza błędy tą samą drogą, co reszta modułu. Typ jest ten sam, który rzuca `Seam::provider()`.
+// A missing provider rejects the promise instead of throwing at the caller: a function that
+// returns a promise reports errors the same way as the rest of the module. The type is the same
+// one `Seam::provider()` throws.
 Promise<TlsStream> unbound() {
     return Promise<TlsStream>{[](auto, auto reject) {
         reject(std::make_exception_ptr(Unbound{TlsProvider::kind()}));
@@ -276,6 +286,8 @@ Promise<TlsStream> unbound() {
 
 }
 
+// Wraps `one` as the client side of a TLS connection to `host` and runs the handshake within
+// `patience`.
 Promise<TlsStream> TlsStream::client(Stream one, Seam<TlsProvider> tls, std::string host, Patience patience) {
     if (!tls.bound()) return unbound();
 
@@ -284,16 +296,18 @@ Promise<TlsStream> TlsStream::client(Stream one, Seam<TlsProvider> tls, std::str
     return opened(std::move(one), std::move(how), std::move(host), patience);
 }
 
+// Wraps `one` as the server side of a TLS connection and runs the handshake within `patience`.
 Promise<TlsStream> TlsStream::server(Stream one, Seam<TlsProvider> tls, Patience patience) {
     if (!tls.bound()) return unbound();
 
     return opened(std::move(one), tls.provider().server(), {}, patience);
 }
 
-// Pusty uchwyt oddaje pusty adres, a nie naruszenie pamięci — ta sama reguła i ten sam powód co
-// w strumieniu: `close()` zeruje uchwyt, a klasa wyraźnie zamierza być używalna po zamknięciu.
 namespace {
 
+// An empty handle gives an empty address, not a memory violation: the same rule and the same
+// reason as in the stream. `close()` clears the handle, and the class is meant to stay usable
+// after closing.
 const Address& nowhere() {
     static const Address one;
 
@@ -302,8 +316,9 @@ const Address& nowhere() {
 
 }
 
-// Czytelnicy tej samej składowej, więc też pod zamkiem. Oddawane wskazanie prowadzi w głąb
-// `Stream::Held`, który żyje tak długo, jak nasz `Held` — a ten trzyma wołający.
+// The address of the other side. These readers touch the same member, so they work under the
+// lock too. The returned reference leads into `Stream::Held`, which lives as long as our `Held`,
+// and the caller holds that.
 const Address& TlsStream::peer() const {
     if (!held_) return nowhere();
 
@@ -312,6 +327,7 @@ const Address& TlsStream::peer() const {
     return held_->one.peer();
 }
 
+// The local address of the connection, under the same lock and with the same lifetime as `peer`.
 const Address& TlsStream::mine() const {
     if (!held_) return nowhere();
 
@@ -320,6 +336,8 @@ const Address& TlsStream::mine() const {
     return held_->one.mine();
 }
 
+// Reads at most `most` bytes of plaintext within `patience`. Only one read may be in progress at
+// a time; an empty result means the other side has closed.
 Promise<Bytes> TlsStream::read(std::size_t most, Patience patience) const {
     if (!held_)
         return Promise<Bytes>{
@@ -337,9 +355,10 @@ Promise<Bytes> TlsStream::read(std::size_t most, Patience patience) const {
 
     auto held = held_;
 
-    // `reading` potrafi rzucić synchronicznie — robi to zawsze, gdy zabezpieczenie ma już zapisany
-    // kłopot. Wyjątek wypuszczony stąd omijał `finally`, zostawiał znacznik ustawiony i połączenie
-    // już nigdy nie czytało. Funkcja oddająca obietnicę ma zgłaszać błędy obietnicą, nie rzutem.
+    // `reading` can throw synchronously; it always does when the session already has a trouble
+    // recorded. An exception let out from here would skip `finally`, leave the flag set, and the
+    // connection would never read again. A function that returns a promise reports errors through
+    // the promise, not by throwing.
     try {
         Promise<Bytes> made = reading(held, most, patience).finally([held] {
             held->reading.store(false);
@@ -357,6 +376,8 @@ Promise<Bytes> TlsStream::read(std::size_t most, Patience patience) const {
     }
 }
 
+// Encrypts `what` and sends it within `patience`. Only one write may be in progress at a time;
+// the ciphertext joins the common queue, so it never interleaves with the handshake.
 Promise<void> TlsStream::write(Bytes what, Patience patience) const {
     if (!held_)
         return Promise<void>{
@@ -399,10 +420,10 @@ Promise<void> TlsStream::write(Bytes what, Patience patience) const {
     return made;
 }
 
-// Strumień zamykamy **pod tym samym zamkiem, co zabezpieczenie** — nie dlatego, że zamknięcie
-// samo w sobie jest niebezpieczne, tylko dlatego, że przestawia `shared_ptr` w składowej, którą
-// w tej samej chwili może czytać robotnik puli. Odkąd czytelnicy biorą kopię spod `minding`,
-// wystarczy, że zapis też jest pod nim.
+// Closes the session and the stream under the same lock as the session, not because closing is
+// dangerous in itself, but because it reassigns a `shared_ptr` in a member that a pool worker may
+// be reading at the same moment. Since readers take their copy under `minding`, it is enough that
+// the write happens under it too.
 void TlsStream::close() {
     if (!held_) return;
 

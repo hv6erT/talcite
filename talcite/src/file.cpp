@@ -48,16 +48,14 @@ namespace talcite::fs {
 
 using namespace core;
 
-// Uchwyt jest wspólny, a nie kopiowany: File to typ wartościowy tak samo jak Promise, więc
-// kopie dzielą ten sam otwarty plik. Dzięki temu File przechodzi przez obietnicę bez sztuczek
-// z wskaźnikami.
+// The handle is shared, not copied: File is a value type just like Promise, so copies share the
+// same open file. This lets a File pass through a promise without pointer tricks.
 //
-// **`close()` zamyka plik, a nie tylko swoją kopię.** Kopia zostaje w każdej obietnicy, przez którą
-// File przeszedł — wynik `open` trzyma ją tak długo, jak żyje łańcuch — więc zamknięcie samej
-// kopii zostawiało uchwyt otwarty. Na Linuksie nikt tego nie widział; na Windows zastąpienie pliku,
-// który ktoś trzyma otwartym, odmawia, i twa padała „Cannot rename." przy drugim zapisie historii
-// albo spisu biblioteki. Zamknięcie czeka na wywołania w toku (`busy`): numer deskryptora zwolniony
-// spod biegnącego zapisu system oddałby komuś innemu.
+// `close()` closes the file, not just its own copy. A copy stays in every promise the File has
+// passed through (the result of `open` keeps one as long as the chain lives), so closing only the
+// copy would leave the handle open. On Windows, replacing a file that someone holds open is
+// refused, so a later rename of that file would fail. Closing waits for calls in progress (`busy`):
+// a descriptor number released under a running write would be handed by the system to someone else.
 struct File::Held {
     path where;
 
@@ -68,6 +66,7 @@ struct File::Held {
 #ifdef _WIN32
     void* handle = nullptr;
 
+    // Closes the Windows handle, if any, and forgets it.
     void released() {
         if (handle != nullptr && handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
 
@@ -76,6 +75,7 @@ struct File::Held {
 #else
     int handle = -1;
 
+    // Closes the descriptor, if any, and forgets it.
     void released() {
         if (handle >= 0) ::close(handle);
 
@@ -83,6 +83,7 @@ struct File::Held {
     }
 #endif
 
+    // The last copy of a File closes the file.
     ~Held() { released(); }
 
     Held() = default;
@@ -95,15 +96,18 @@ struct File::Held {
 
 namespace core {
 
+// Opens or creates the file in the given mode and returns its shared handle; throws "The file
+// already exists." for an exclusive create of an existing file and "Cannot open the file." for any
+// other failure.
 std::shared_ptr<File::Held> open_at(const path& where, Mode how) {
     auto made = std::make_shared<File::Held>();
     made->where = where;
 
 #ifdef _WIN32
-    // **Ucinanie przez `OPEN_ALWAYS` i `SetEndOfFile`, nie przez `CREATE_ALWAYS`.** To drugie z
-    // atrybutem zwykłym odmawia dostępu do istniejącego pliku ukrytego albo systemowego — tak
-    // padało nadpisanie ukrytego `.nfo`. `FILE_SHARE_DELETE` pozwala zmienić nazwę albo usunąć
-    // plik, który akurat kopiujemy albo liczymy, zamiast blokować go w Eksploratorze.
+    // Truncation goes through OPEN_ALWAYS and `SetEndOfFile`, not through CREATE_ALWAYS. The
+    // latter, with the normal attribute, denies access to an existing hidden or system file, so
+    // overwriting a hidden `.nfo` would fail. FILE_SHARE_DELETE allows renaming or deleting a file
+    // that we are copying or hashing at the moment, instead of locking it in Explorer.
     const DWORD reach = how == Mode::read ? GENERIC_READ : GENERIC_READ | GENERIC_WRITE;
     const DWORD shared = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     const DWORD when = how == Mode::read ? OPEN_EXISTING : how == Mode::exclusive ? CREATE_NEW : OPEN_ALWAYS;
@@ -127,8 +131,8 @@ std::shared_ptr<File::Held> open_at(const path& where, Mode how) {
     if (how == Mode::truncate) flags |= O_CREAT | O_TRUNC;
     if (how == Mode::exclusive) flags |= O_CREAT | O_EXCL;
 
-    // **Zamykany przy uruchomieniu programu potomnego** — inaczej dziecko dziedziczy każdy plik,
-    // który akurat mamy otwarty, i trzyma go po naszym `close()`.
+    // Closed when a child program is started; otherwise the child inherits every file we have open
+    // at that moment and keeps it after our `close()`.
     made->handle = ::open(where.c_str(), flags | O_CLOEXEC, 0644);
 
     if (made->handle < 0) {
@@ -141,6 +145,8 @@ std::shared_ptr<File::Held> open_at(const path& where, Mode how) {
     return made;
 }
 
+// Reads up to `much` bytes from offset `at`, looping over short reads; the result is shorter only
+// at the end of the file. Windows reads at most 1 GiB per call.
 Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
     Bytes made(much);
 
@@ -177,6 +183,7 @@ Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
     return made;
 }
 
+// Writes all of `what` at offset `at`, looping over short writes, and returns the byte count.
 std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what) {
     std::size_t put = 0;
 
@@ -199,9 +206,9 @@ std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& wha
         if (given < 0) amiss("Cannot write the file.", held.where);
 #endif
 
-        // **Zerowy zapis to brak postępu**, a nie koniec pracy: wołający kręci pętlę warunkiem na
-        // przesunięciu, więc oddanie zera przy niepustym kawałku zapętliłoby kopiowanie na pełnym
-        // rdzeniu. Mówimy o tym wprost, zamiast milczeć.
+        // A zero-byte write means no progress, not the end of the work: the caller loops on the
+        // offset, so returning zero for a non-empty chunk would make copying spin on a full core.
+        // We say so openly instead of staying silent.
         if (given == 0) amiss("Cannot write the file.", held.where);
 
         put += static_cast<std::size_t>(given);
@@ -210,11 +217,11 @@ std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& wha
     return put;
 }
 
-// **Utrwalenie.** Zapis kończy się w pamięci systemu; dopiero to wywołanie czeka, aż dane leżą na
-// nośniku — także na udziale sieciowym, gdzie `FlushFileBuffers` staje się poleceniem FLUSH dla
-// serwera. Bez tego zanik zasilania tuż po zapisie zostawiał plik pusty albo stary, a kopia
-// przenoszona między nośnikami kasowała źródło, zanim cel naprawdę istniał. Na macOS `fsync`
-// nie opróżnia pamięci samego dysku; robi to dopiero `F_FULLFSYNC`.
+// Making the data durable. A write ends in the system's memory; only this call waits until the data
+// is on the medium, also on a network share, where `FlushFileBuffers` becomes a FLUSH command to
+// the server. Without it a power loss right after a write can leave the file empty or old, and a
+// copy moved between media could delete the source before the target really existed. On macOS
+// `fsync` does not flush the disk's own cache; only F_FULLFSYNC does.
 void sync_at(const File::Held& held) {
 #ifdef _WIN32
     if (FlushFileBuffers(held.handle) == 0) amiss("Cannot flush the file.", held.where);
@@ -227,6 +234,8 @@ void sync_at(const File::Held& held) {
 #endif
 }
 
+// Sets the file's last write time, to the 100 ns tick on Windows and to the nanosecond on POSIX;
+// the access time is left alone.
 void stamp_on(const File::Held& held, Instant when) {
 #ifdef _WIN32
     const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
@@ -251,9 +260,10 @@ void stamp_on(const File::Held& held, Instant when) {
 #endif
 }
 
-// Reflink: cel dostaje te same bloki co źródło, a osobne dopiero przy pierwszym zapisie. Na
-// Btrfs i XFS kopia 40 GB trwa chwilę i nie zajmuje miejsca. Gdzie indziej system odmawia
-// (`EOPNOTSUPP`, `EXDEV`, `EINVAL`) i kopiujemy dalej zwykłą drogą.
+// Reflink: the target gets the same blocks as the source, and its own only on the first write. On
+// Btrfs and XFS a 40 GB copy takes a moment and uses no space. Elsewhere the system refuses
+// (EOPNOTSUPP, EXDEV, EINVAL) and copying continues the ordinary way. Returns true when the clone
+// succeeded.
 bool cloned_on([[maybe_unused]] const File::Held& from, [[maybe_unused]] const File::Held& to) {
 #if defined(TALCITE_LINUX_FS) && defined(FICLONE)
     return ::ioctl(to.handle, FICLONE, from.handle) == 0;
@@ -262,11 +272,11 @@ bool cloned_on([[maybe_unused]] const File::Held& from, [[maybe_unused]] const F
 #endif
 }
 
-// `copy_file_range` przenosi dane w jądrze, bez kopiowania przez naszą pamięć; na NFS 4.2 i na
-// udziale SMB (cifs) serwer kopiuje u siebie i nic nie idzie przez sieć. Starsze jądro, para
-// nośników, której nie obsługuje, albo system plików bez tej operacji mówią „nie umiem"
-// (`ENOSYS`, `EXDEV`, `EOPNOTSUPP`, `EINVAL`) — wtedy wraca brak i czytamy sami. Inny błąd jest
-// prawdziwym błędem zapisu.
+// `copy_file_range` moves the data inside the kernel, without copying through our memory; on NFS
+// 4.2 and on an SMB share (cifs) the server copies on its own side and nothing goes over the
+// network. An older kernel, a pair of file systems it does not support, or a file system without
+// this operation says "cannot do" (ENOSYS, EXDEV, EOPNOTSUPP, EINVAL); then the result is empty and
+// we read ourselves. Any other error is a real write error.
 std::optional<std::size_t> spliced_on([[maybe_unused]] const File::Held& from,
                                       [[maybe_unused]] const File::Held& to, [[maybe_unused]] std::uintmax_t at,
                                       [[maybe_unused]] std::size_t much) {
@@ -290,6 +300,7 @@ std::optional<std::size_t> spliced_on([[maybe_unused]] const File::Held& from,
 #endif
 }
 
+// The current size of the open file in bytes.
 std::uintmax_t sized(const File::Held& held) {
 #ifdef _WIN32
     LARGE_INTEGER told{};
@@ -311,10 +322,11 @@ std::uintmax_t sized(const File::Held& held) {
 
 namespace {
 
-// Uchwyt w użyciu na czas jednego wywołania. Zamknięty plik odmawia; zamknięcie w trakcie
-// zamyka uchwyt dopiero, gdy wyjdzie ostatni.
+// Keeps the handle in use for the duration of one call. A closed file refuses; a close during the
+// call releases the handle only when the last call leaves.
 class Lease {
 public:
+    // Enters the call, or throws "The file is not open." when the file was closed.
     explicit Lease(File::Held& held) : held_(held) {
         const std::lock_guard<std::mutex> kept{held_.guard};
 
@@ -323,6 +335,7 @@ public:
         ++held_.busy;
     }
 
+    // Leaves the call; the last one out releases a handle that was closed in the meantime.
     ~Lease() {
         const std::lock_guard<std::mutex> kept{held_.guard};
 
@@ -340,6 +353,8 @@ private:
 
 }
 
+// Closes the file for every copy of this File. A call in progress keeps the handle until it
+// finishes; this copy forgets the file at once.
 void File::close() {
     if (!held_) return;
 
@@ -354,12 +369,14 @@ void File::close() {
     held_.reset();
 }
 
+// The path the file was opened with; empty for a File that holds nothing.
 const path& File::where() const {
     static const path nowhere;
 
     return held_ ? held_->where : nowhere;
 }
 
+// Reads up to `much` bytes from offset `at` on the pool; a short result means the end of the file.
 Promise<Bytes> File::read(std::uintmax_t at, std::size_t much) const {
     auto held = held_;
 
@@ -378,6 +395,7 @@ Promise<Bytes> File::read(std::uintmax_t at, std::size_t much) const {
     }};
 }
 
+// Writes all of `what` at offset `at` on the pool and resolves with the byte count.
 Promise<std::size_t> File::write(std::uintmax_t at, Bytes what) const {
     auto held = held_;
 
@@ -404,14 +422,15 @@ struct Cursor::Held {
 
 namespace {
 
-// Zajętość bierzemy w chwili tworzenia obietnicy, nie w chwili jej wykonania — obietnice są
-// leniwe, więc dwa odczyty utworzone przed uruchomieniem któregokolwiek wystartowałyby
-// z tej samej pozycji, a który padnie, zależałoby od kolejności w puli. Strażnik zwalnia
-// strumień, gdy operacja się kończy — także wyjątkiem — i gdy obietnica ginie nieruszona.
+// The busy flag is taken when the promise is created, not when it runs. Promises are lazy, so two
+// reads created before either of them starts would begin at the same position, and which of them
+// fails would depend on the order in the pool. The guard releases the stream when the operation
+// ends (also with an exception) and when the promise dies untouched.
 class Claim {
 public:
     explicit Claim(std::shared_ptr<Cursor::Held> held) : held_(std::move(held)) {}
 
+    // A promise that dies without running still releases the stream.
     ~Claim() { free(); }
 
     Claim(const Claim&) = delete;
@@ -419,6 +438,7 @@ public:
     Claim(Claim&&) = delete;
     Claim& operator=(Claim&&) = delete;
 
+    // Releases the stream's busy flag; calling it again does nothing.
     void free() {
         if (!held_) return;
 
@@ -430,10 +450,12 @@ private:
     std::shared_ptr<Cursor::Held> held_;
 };
 
+// Releases a `Claim` when the scope of an operation ends, whether normally or by an exception.
 class Freeing {
 public:
     explicit Freeing(std::shared_ptr<Claim> claim) : claim_(std::move(claim)) {}
 
+    // Releases the claim when the operation leaves its scope.
     ~Freeing() { claim_->free(); }
 
     Freeing(const Freeing&) = delete;
@@ -445,15 +467,17 @@ private:
     std::shared_ptr<Claim> claim_;
 };
 
-// Funkcja oddająca obietnicę nie powinna rzucać w twarz wołającemu — wszystko, co się nie
-// udało, ma przyjść tą samą drogą co reszta błędów modułu. Stąd zamiast wyjątku wracamy
-// z pustym strażnikiem i powodem, a wołający robi z tego obietnicę, która odrzuci.
+// A function that returns a promise should not throw in the caller's face; everything that failed
+// has to arrive the same way as the module's other errors. So instead of an exception we return an
+// empty guard with the reason, and the caller turns it into a promise that rejects.
 struct Claiming {
     std::shared_ptr<Claim> claim;
     std::string said;
     path where;
 };
 
+// Marks the stream busy; when it is closed or already busy, returns an empty claim with the reason
+// and the path.
 Claiming claimed(const std::shared_ptr<Cursor::Held>& held) {
     if (!held) return {nullptr, "The stream is closed.", path{}};
 
@@ -467,6 +491,7 @@ Claiming claimed(const std::shared_ptr<Cursor::Held>& held) {
 
 }
 
+// A new sequential stream over this file, starting at offset 0; throws when the file is not open.
 Cursor File::cursor() const {
     if (!held_) amiss("The file is not open.", path{});
 
@@ -476,14 +501,17 @@ Cursor File::cursor() const {
     return Cursor{made};
 }
 
+// The path of the file under the stream; empty for an empty stream.
 const path& Cursor::where() const {
     static const path nowhere;
 
     return held_ ? held_->file->where : nowhere;
 }
 
+// The current position of the stream; 0 for an empty stream.
 std::uintmax_t Cursor::at() const { return held_ ? held_->at.load() : 0; }
 
+// Moves the stream to offset `at`; throws when the stream is closed or an operation is running.
 void Cursor::seek(std::uintmax_t at) {
     if (!held_) amiss("The stream is closed.", path{});
 
@@ -492,6 +520,8 @@ void Cursor::seek(std::uintmax_t at) {
     held_->at.store(at);
 }
 
+// Reads up to `much` bytes from the current position and advances it by what was read. One
+// operation at a time: a second one rejects with "The stream is busy.".
 Promise<Bytes> Cursor::read(std::size_t much) {
     auto held = held_;
     Claiming got = claimed(held);
@@ -505,9 +535,9 @@ Promise<Bytes> Cursor::read(std::size_t much) {
     return Promise<Bytes>{[held, claim = std::move(got.claim), much](auto resolve, auto) {
         Bytes made;
 
-        // Zwolnienie musi wypaść przed rozstrzygnięciem, nie po nim: resolve budzi wątek
-        // czekający na await, a ten natychmiast sięga po następny odczyt. Zwalnianie po
-        // resolve zostawiało szparę, w której kolejne czytanie z pętli słyszało „zajęty".
+        // The release must happen before resolving, not after it: resolve wakes the thread waiting
+        // in await, and that thread immediately goes for the next read. Releasing after resolve
+        // would leave a gap in which the next read of a loop is told "busy".
         {
             const Freeing freeing{claim};
 
@@ -524,6 +554,8 @@ Promise<Bytes> Cursor::read(std::size_t much) {
     }};
 }
 
+// Writes all of `what` at the current position and advances it. One operation at a time, as in
+// `read`.
 Promise<std::size_t> Cursor::write(Bytes what) {
     auto held = held_;
     Claiming got = claimed(held);
@@ -554,6 +586,7 @@ Promise<std::size_t> Cursor::write(Bytes what) {
         }};
 }
 
+// Waits on the pool until the written data is on the medium (see `sync_at`).
 Promise<void> File::sync() const {
     auto held = held_;
 
@@ -570,6 +603,7 @@ Promise<void> File::sync() const {
     }};
 }
 
+// The current size of the file, read on the pool.
 Promise<std::uintmax_t> File::size() const {
     auto held = held_;
 
@@ -588,6 +622,7 @@ Promise<std::uintmax_t> File::size() const {
     }};
 }
 
+// Opens the file on the pool in the given mode.
 Promise<File> open(const path& where, Mode how) {
     return Promise<File>{
         [where, how](auto resolve, auto) { resolve(File{open_at(where, how)}); }};

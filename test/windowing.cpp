@@ -15,19 +15,22 @@ using namespace talcite;
 
 namespace {
 
-// Pudełko, które bierze ognisko i wie, że w nie kliknięto — tyle wystarczy, żeby sprawdzić
-// warstwy, ognisko i mysz.
+// A box that takes focus and knows it was clicked, which is enough to check layers, focus and the
+// mouse.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // Always accepts focus.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // Wants the size it was built with, whatever the room.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int hit = 0;
 
 protected:
+    // Fills the given size with the box's character.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -38,6 +41,7 @@ protected:
         return made;
     }
 
+    // Counts the click and consumes it.
     bool handle(ui::ClickEvent&) override {
         ++hit;
 
@@ -49,13 +53,15 @@ private:
     char32_t what_ = U'?';
 };
 
-// Najmniejsze potrzebne otoczenie: korzeń z oknami w środku.
+// The smallest surroundings needed: a root with windows inside.
 struct Stage {
     ui::Root top;
     std::shared_ptr<ui::Windows> window = std::make_shared<ui::Windows>();
 
+    // Hangs the window container on the root.
     Stage() { top.children().add(window); }
 
+    // Opens a full window holding a 10x3 box of `what` and returns it.
     std::shared_ptr<ui::Window> opened(char32_t what) {
         const auto one = std::make_shared<ui::Window>();
 
@@ -66,6 +72,7 @@ struct Stage {
     }
 };
 
+// Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -75,15 +82,16 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// The first child of a window, or null when it has none.
 ui::Node* inside(const ui::Window& one) { return one.children().empty() ? nullptr : one.children()[0].get(); }
 
 }
 
-// --- Warstwa i bieżące okno ----------------------------------------------------------------------
+// --- Layer and current window --------------------------------------------------------------------
 
-// Okno niemodalne nie zasłania niczego samo z siebie: pełne bierze cały pokój, postawione tylko
-// swój prostokąt, a ostatnie otwarte jest **bieżące** — czyli na wierzchu i z ogniskiem.
-TRIAL("Window: ostatnie otwarte jest bieżące, ognisko idzie w nie") {
+// A non-modal window covers nothing by itself: a full one takes the whole room, a seated one only
+// its rectangle, and the last one opened is current, that is, on top and with focus.
+TRIAL("Window: the last one opened is current, and focus goes into it") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -101,9 +109,9 @@ TRIAL("Window: ostatnie otwarte jest bieżące, ognisko idzie w nie") {
     same(stage.window->many(), std::size_t{2});
 }
 
-// Pełne okno maluje na całym pokoju; postawione stoi tam, gdzie mu kazano, i spod niego widać to,
-// co niżej.
-TRIAL("Window: pełne bierze cały pokój, postawione swój prostokąt") {
+// A full window paints over the whole room; a seated one stands where it was told, and what lies
+// below shows from under it.
+TRIAL("Window: a full one takes the whole room, a seated one its rectangle") {
     Stage stage;
 
     const auto under = stage.opened(U'a');
@@ -122,21 +130,21 @@ TRIAL("Window: pełne bierze cały pokój, postawione swój prostokąt") {
     same(read(made, 1), std::string{"aabbbbaaaa"});
     same(read(made, 2), std::string{"aabbbbaaaa"});
 
-    // Z powrotem na pełne: znów cały pokój.
+    // Back to full: the whole room again.
     over->full(true);
 
     same(read(stage.top.render({{0, 0}, {10, 3}}), 0), std::string{"bbbbbbbbbb"});
 }
 
-// Podniesienie przenosi okno na wierzch **i oddaje mu ognisko tam, gdzie było** — plik, po którym
-// się chodziło, zostaje tam, gdzie się go zostawiło.
-TRIAL("Window: podniesienie wraca z ogniskiem tam, gdzie było") {
+// Raising brings a window to the top and gives focus back to where it was: the file one was walking
+// over stays where it was left.
+TRIAL("Window: raising comes back with focus where it was") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
 
-    // Dwa chętne pudełka w pierwszym oknie; ognisko stawiamy na **drugim**, żeby powrót do
-    // pierwszego chętnego nie mógł udawać pamięci.
+    // Two focusable boxes in the first window; focus goes on the second, so that returning to the
+    // first focusable one cannot pass for memory.
     const auto first = std::make_shared<Box>(ui::Size{4, 1}, U'd');
     const auto other = std::make_shared<Box>(ui::Size{4, 1}, U'c');
 
@@ -164,11 +172,11 @@ TRIAL("Window: podniesienie wraca z ogniskiem tam, gdzie było") {
     same(stage.top.focused_node(), inside(*two));
 }
 
-// --- Kolejność i zamykanie -----------------------------------------------------------------------
+// --- Order and closing ---------------------------------------------------------------------------
 
-// `next` i `previous` chodzą po **kolejności otwarcia**, nie po warstwach: inaczej „następne okno"
-// skakałoby po historii patrzenia i dwa naciśnięcia wracałyby w to samo miejsce.
-TRIAL("Window: next i previous chodzą po kolejności otwarcia, w kółko") {
+// `next` and `previous` walk the opening order, not the layers: otherwise "the next window" would
+// jump through the viewing history and two presses would return to the same place.
+TRIAL("Window: next and previous walk the opening order, round and round") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -189,15 +197,15 @@ TRIAL("Window: next i previous chodzą po kolejności otwarcia, w kółko") {
     stage.window->previous();
     ought(three->current());
 
-    // Po podniesieniu ręką kolejność chodzenia się nie zmienia.
+    // Raising by hand does not change the walking order.
     one->raise();
     stage.window->next();
     ought(two->current());
 }
 
-// Zamknięcie ogłasza się, **póki okno jeszcze stoi w drzewie**, a po nim bieżące staje się to,
-// co zostało na wierzchu — razem z ogniskiem. Jedno okno w kółko to ono samo.
-TRIAL("Window: zamknięcie ogłasza się i oddaje ognisko wierzchniemu") {
+// Closing announces itself while the window still stands in the tree, and after it whatever was
+// left on top becomes current, together with focus. One window round and round is itself.
+TRIAL("Window: closing announces itself and gives focus to the top one") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -206,8 +214,8 @@ TRIAL("Window: zamknięcie ogłasza się i oddaje ognisko wierzchniemu") {
     int said = 0;
     bool stood = false;
 
-    // Okno w uchwycie gołym wskazaniem: uchwyt mieszka w samym oknie, więc mocne wskazanie
-    // trzymałoby je przy życiu na zawsze (sanitizer: wyciek z tej próby).
+    // The window is held in the handler by a plain pointer: the handler lives in the window itself,
+    // so a strong pointer would keep it alive forever and leak it.
     (void)two->on<ui::CloseEvent>([&said, &stood, window = two.get()](ui::CloseEvent&) {
         ++said;
         stood = window->root() != nullptr;
@@ -223,7 +231,7 @@ TRIAL("Window: zamknięcie ogłasza się i oddaje ognisko wierzchniemu") {
     ought(one->current());
     same(stage.top.focused_node(), inside(*one));
 
-    // Jeden — `next` nie ma dokąd pójść.
+    // Just one: `next` has nowhere to go.
     stage.window->next();
     ought(one->current());
 
@@ -233,11 +241,12 @@ TRIAL("Window: zamknięcie ogłasza się i oddaje ognisko wierzchniemu") {
     ought(stage.window->current() == nullptr);
 }
 
-// Kliknięcie w okno podnosi je, ale go **nie połyka**. Dochodzi przy tym tylko to, czego nie
-// wzięła treść: kliknięcie w ramkę albo w margines podnosi, a kliknięcie w sam tekst obsługuje
-// tekst i okno o nim nie wie. Po to okno oddaje fałsz: gdyby brało, klik w tle podnosiłby okno
-// **zamiast** stawiać kursor.
-TRIAL("Window: kliknięcie w ramkę podnosi, a treść i tak dostaje swoje") {
+// A click on a window raises it but does not swallow it. Only what the content did not take
+// arrives here: a click on the frame or the margin raises, and a click on the text itself is
+// handled by the text and the window does not know about it. That is why the window returns false:
+// if it took the click, a click in the background would raise the window instead of placing the
+// cursor.
+TRIAL("Window: a click on the frame raises, and the content still gets its own") {
     Stage stage;
 
     const auto one = std::make_shared<ui::Window>();
@@ -256,7 +265,7 @@ TRIAL("Window: kliknięcie w ramkę podnosi, a treść i tak dostaje swoje") {
 
     ought(two->current());
 
-    // Klik w ramkę pierwszego okna: ramka niczego nie bierze, więc dochodzi do okna.
+    // A click on the first window's frame: the frame takes nothing, so it reaches the window.
     ui::ClickEvent edge{{0, 0}, ui::Mouse::left};
 
     (void)stage.top.dispatch(edge);
@@ -264,7 +273,7 @@ TRIAL("Window: kliknięcie w ramkę podnosi, a treść i tak dostaje swoje") {
     ought(one->current());
     same(box->hit, 0);
 
-    // Klik w treść: bierze ją treść, a okno o nim nie wie.
+    // A click on the content: the content takes it, and the window does not know about it.
     two->raise();
 
     ui::ClickEvent mine{{1, 1}, ui::Mouse::left};
@@ -275,11 +284,11 @@ TRIAL("Window: kliknięcie w ramkę podnosi, a treść i tak dostaje swoje") {
     ought(two->current());
 }
 
-// --- Przesuwanie i zmiana rozmiaru ---------------------------------------------------------------
+// --- Moving and resizing -------------------------------------------------------------------------
 
-// Przesunięcie jak `WindowMove` w mcedicie: górny wiersz zostaje w pokoju, a z każdej strony
-// zostaje choć jedna kolumna. Pokój bierze się z ostatniej klatki pojemnika.
-TRIAL("Window: przesunięcie trzyma górny wiersz i jedną kolumnę w pokoju") {
+// Moving works like WindowMove in mcedit: the top row stays in the room, and at least one column
+// stays on each side. The room is taken from the container's last frame.
+TRIAL("Window: moving keeps the top row and one column in the room") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -292,24 +301,24 @@ TRIAL("Window: przesunięcie trzyma górny wiersz i jedną kolumnę w pokoju") {
     same(one->seat().at.x, 5);
     same(one->seat().at.y, 3);
 
-    // W prawo do ostatniej kolumny, w dół do ostatniego wiersza — i ani kratki dalej.
+    // Right to the last column, down to the last row, and not one cell further.
     one->move(100, 100);
     same(one->seat().at.x, 9);
     same(one->seat().at.y, 4);
 
-    // W lewo tak daleko, że z okna zostaje jedna kolumna; w górę do pierwszego wiersza.
+    // Left so far that one column of the window is left; up to the first row.
     one->move(-100, -100);
     same(one->seat().at.x, -3);
     same(one->seat().at.y, 0);
 
-    // Rozmiar przy przesuwaniu stoi.
+    // The size stays while moving.
     same(one->seat().size.wide, 4);
     same(one->seat().size.high, 2);
 }
 
-// Zmiana rozmiaru jak `WindowResize`: lewy górny róg stoi, okno rośnie tylko do prawego i dolnego
-// brzegu, a maleje najwyżej do `least`.
-TRIAL("Window: zmiana rozmiaru do brzegu pokoju i nie mniej niż least") {
+// Resizing works like WindowResize: the upper left corner stays, the window grows only up to the
+// right and bottom edges, and shrinks at most down to `least`.
+TRIAL("Window: resizing up to the room's edge and no less than least") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -333,20 +342,21 @@ TRIAL("Window: zmiana rozmiaru do brzegu pokoju i nie mniej niż least") {
     same(one->seat().size.wide, 3);
     same(one->seat().size.high, 2);
 
-    // Róg stoi.
+    // The corner stays.
     same(one->seat().at.x, 2);
     same(one->seat().at.y, 1);
 
-    // Najmniejsze okno ma choć jedną kratkę.
+    // The smallest window has at least one cell.
     one->least({0, -4});
     same(one->least().wide, 1);
     same(one->least().high, 1);
 }
 
-// Okno, które już stoi za granicą — bo terminal zwęził się pod nim — **nie skacze do niej**:
-// krok na zewnątrz nie robi nic, a krok do środka idzie o jedną kratkę. Tak liczy mcedit: warunek
-// pyta o miejsce, w którym okno stoi, a nie przycina wyniku.
-TRIAL("Window: okno za granicą nie skacze, tylko wraca krok po kroku") {
+// A window that already stands beyond the limit, because the terminal narrowed under it, does not
+// jump to the limit: a step outward does nothing, and a step inward moves by one cell. That is how
+// mcedit counts: the condition asks about the place where the window stands rather than clipping
+// the result.
+TRIAL("Window: a window beyond the limit does not jump, it comes back step by step") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -363,7 +373,7 @@ TRIAL("Window: okno za granicą nie skacze, tylko wraca krok po kroku") {
     same(one->seat().at.x, 14);
     same(one->seat().at.y, 7);
 
-    // Za szerokie i za wysokie: rosnąć nie może, maleć może o krok.
+    // Too wide and too tall: it cannot grow, but it can shrink by a step.
     one->resize(1, 1);
     same(one->seat().size.wide, 12);
     same(one->seat().size.high, 6);
@@ -372,8 +382,8 @@ TRIAL("Window: okno za granicą nie skacze, tylko wraca krok po kroku") {
     same(one->seat().size.wide, 11);
     same(one->seat().size.high, 5);
 
-    // Tak samo z drugiej strony: nad górnym brzegiem i węższe niż `least`. W górę i w lewo nie
-    // idzie dalej, maleć nie maleje — ale też nie skacze do granicy.
+    // The same on the other side: above the top edge and narrower than `least`. It goes no further
+    // up or left and does not shrink, but it does not jump to the limit either.
     one->seat({-20, -2}, {2, 1});
     one->least({3, 2});
 
@@ -386,9 +396,9 @@ TRIAL("Window: okno za granicą nie skacze, tylko wraca krok po kroku") {
     same(one->seat().size.high, 1);
 }
 
-// Pełne okno nie ma czego przesuwać, a okno bez pokoju — jeszcze nie rysowane — nie ma względem
-// czego liczyć granic. Oba stoją.
-TRIAL("Window: pełne i nierysowane stoją") {
+// A full window has nothing to move, and a window without a room (not drawn yet) has nothing to
+// compute limits against. Both stay.
+TRIAL("Window: full and undrawn windows stay") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -414,7 +424,7 @@ TRIAL("Window: pełne i nierysowane stoją") {
     same(one->seat().size.wide, 4);
     same(one->seat().size.high, 2);
 
-    // Okno poza pojemnikiem też stoi.
+    // A window outside a container stays too.
     ui::Window alone;
 
     alone.seat({1, 1}, {2, 2});
@@ -424,8 +434,8 @@ TRIAL("Window: pełne i nierysowane stoją") {
     same(alone.seat().size.wide, 2);
 }
 
-// Pełne okno chce całego pokoju, postawione — swojego miejsca, niezależnie od pokoju.
-TRIAL("Window: pełne chce pokoju, postawione swojego rozmiaru") {
+// A full window wants the whole room, a seated one its own place, regardless of the room.
+TRIAL("Window: a full one wants the room, a seated one its own size") {
     ui::Window one;
 
     same(one.wants({10, 5}).wide, 10);
@@ -439,12 +449,13 @@ TRIAL("Window: pełne chce pokoju, postawione swojego rozmiaru") {
 
 namespace {
 
-// Węzeł, który liczy kliknięcia, jakie do niego doszły — żeby sprawdzić, że okno ich nie połyka.
+// A node that counts the clicks reaching it, to check that the window does not swallow them.
 class Catcher : public ui::Node {
 public:
     int hit = 0;
 
 protected:
+    // Counts the click and consumes it.
     bool handle(ui::ClickEvent&) override {
         ++hit;
 
@@ -454,9 +465,9 @@ protected:
 
 }
 
-// **Okno kliknięcia nie połyka**: podnosi się i puszcza je dalej, w górę drzewa — niemodalne okno
-// nie ma prawa zjadać myszy temu, co stoi nad nim.
-TRIAL("Window: kliknięcie w okno idzie dalej w górę") {
+// A window does not swallow a click: it raises itself and passes the click on up the tree, since a
+// non-modal window must not eat the mouse of whatever stands above it.
+TRIAL("Window: a click on a window goes on up") {
     ui::Root top;
 
     const auto catcher = std::make_shared<Catcher>();
@@ -479,10 +490,11 @@ TRIAL("Window: kliknięcie w okno idzie dalej w górę") {
     same(catcher->hit, 1);
 }
 
-// --- Ciągnięcie myszą ----------------------------------------------------------------------------
+// --- Dragging with the mouse ---------------------------------------------------------------------
 
 namespace {
 
+// Sends one mouse event of the given kind at `where` to the root.
 void mouse(ui::Root& top, ui::Spot where, ui::Press press, ui::Mouse which = ui::Mouse::left) {
     ui::MouseEvent what{where, press, which};
 
@@ -491,10 +503,11 @@ void mouse(ui::Root& top, ui::Spot where, ui::Press press, ui::Mouse which = ui:
 
 }
 
-// Wciśnięcie na górnym wierszu chwyta położenie, a okno idzie za kursorem **w tym samym miejscu
-// chwytu**. Kursor za granicą ciągnie okno do granicy, a wracając — z powrotem tam, gdzie je
-// trzyma; mysz dochodzi przy tym do okna także spoza niego, bo okno prosi o przytrzymanie.
-TRIAL("Window: ciągnięcie za górny wiersz przesuwa okno, chwyt zostaje na miejscu") {
+// A press on the top row grabs the position, and the window follows the cursor at the same grab
+// point. A cursor beyond the limit pulls the window up to the limit, and when it comes back, back to
+// where it holds it; the mouse reaches the window from outside it too, because the window asks for a
+// hold.
+TRIAL("Window: dragging by the top row moves the window, and the grab stays in place") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -519,7 +532,7 @@ TRIAL("Window: ciągnięcie za górny wiersz przesuwa okno, chwyt zostaje na mie
     same(one->seat().at.x, 8);
     same(one->seat().at.y, 5);
 
-    // Rozmiar przy przesuwaniu stoi.
+    // The size stays while moving.
     same(one->seat().size.wide, 6);
     same(one->seat().size.high, 3);
 
@@ -532,8 +545,9 @@ TRIAL("Window: ciągnięcie za górny wiersz przesuwa okno, chwyt zostaje na mie
     same(one->seat().at.y, 5);
 }
 
-// Wciśnięcie w prawym dolnym rogu chwyta rozmiar: róg idzie za kursorem, nie mniej niż `least`.
-TRIAL("Window: ciągnięcie za prawy dolny róg zmienia rozmiar") {
+// A press in the lower right corner grabs the size: the corner follows the cursor, no less than
+// `least`.
+TRIAL("Window: dragging by the lower right corner resizes") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -555,7 +569,7 @@ TRIAL("Window: ciągnięcie za prawy dolny róg zmienia rozmiar") {
     same(one->seat().size.wide, 3);
     same(one->seat().size.high, 2);
 
-    // Róg lewy górny stoi.
+    // The upper left corner stays.
     same(one->seat().at.x, 2);
     same(one->seat().at.y, 1);
 
@@ -564,9 +578,9 @@ TRIAL("Window: ciągnięcie za prawy dolny róg zmienia rozmiar") {
     ought(!one->dragged());
 }
 
-// Wciśnięcie gdzie indziej podnosi okno, ale go nie chwyta; prawy przycisk nie chwyta wcale,
-// pełne okno — też nie.
-TRIAL("Window: środek podnosi bez chwytu, prawy przycisk i pełne okno nie chwytają") {
+// A press elsewhere raises the window but does not grab it; the right button does not grab at all,
+// and neither does a full window.
+TRIAL("Window: the middle raises without grabbing, the right button and a full window do not grab") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -590,7 +604,7 @@ TRIAL("Window: środek podnosi bez chwytu, prawy przycisk i pełne okno nie chwy
 
     mouse(stage.top, {5, 5}, ui::Press::up);
 
-    // Prawa krawędź i dolna krawędź to jeszcze nie róg.
+    // The right edge and the bottom edge are not yet the corner.
     mouse(stage.top, {5, 2}, ui::Press::down);
     ought(!one->dragged());
     mouse(stage.top, {5, 2}, ui::Press::up);
@@ -616,9 +630,9 @@ TRIAL("Window: środek podnosi bez chwytu, prawy przycisk i pełne okno nie chwy
     ought(!two->dragged());
 }
 
-// Zgubione puszczenie nie zostawia okna chwyconego: nowe wciśnięcie gdzie indziej zaczyna od nowa
-// i ruch już okna nie niesie.
-TRIAL("Window: nowe wciśnięcie po zgubionym puszczeniu nie ciągnie dalej") {
+// A lost release does not leave the window grabbed: a new press elsewhere starts over, and a move
+// no longer carries the window.
+TRIAL("Window: a new press after a lost release does not drag on") {
     Stage stage;
 
     const auto one = stage.opened(U'a');
@@ -643,12 +657,13 @@ TRIAL("Window: nowe wciśnięcie po zgubionym puszczeniu nie ciągnie dalej") {
 
 namespace {
 
-// Węzeł nad oknami, który liczy surowe zdarzenia myszy, jakie do niego doszły.
+// A node above the windows that counts the raw mouse events reaching it.
 class Watcher : public ui::Node {
 public:
     int heard = 0;
 
 protected:
+    // Counts the mouse event and consumes it.
     bool handle(ui::MouseEvent&) override {
         ++heard;
 
@@ -658,9 +673,9 @@ protected:
 
 }
 
-// Ciągnięcie należy do okna: wciśnięcie, ruch i puszczenie nie idą wyżej. Wciśnięcie, którego okno
-// nie chwyciło, idzie dalej, jak kliknięcie.
-TRIAL("Window: ciągnięcie nie wychodzi poza okno") {
+// Dragging belongs to the window: the press, the moves and the release do not go up. A press the
+// window did not grab goes on, like a click.
+TRIAL("Window: dragging does not leave the window") {
     ui::Root top;
 
     const auto watcher = std::make_shared<Watcher>();
@@ -686,7 +701,8 @@ TRIAL("Window: ciągnięcie nie wychodzi poza okno") {
 
     (void)top.render({{0, 0}, {20, 10}});
 
-    // Środek okna, które stoi teraz w (6, 1): okno go nie chwyta, więc wciśnięcie idzie wyżej.
+    // The middle of the window, which now stands at (6, 1): the window does not grab it, so the
+    // press goes up.
     mouse(top, {8, 2}, ui::Press::down);
 
     ought(!one->dragged());

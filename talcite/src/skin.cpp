@@ -10,6 +10,7 @@ namespace talcite::ui {
 
 namespace {
 
+// Faint text: the built-in mark of anything disabled or secondary.
 Style faded() {
     Style made{};
 
@@ -18,6 +19,7 @@ Style faded() {
     return made;
 }
 
+// Reverse video: the built-in mark of focus and selection.
 Style turned() {
     Style made{};
 
@@ -26,6 +28,7 @@ Style turned() {
     return made;
 }
 
+// Underlined text: the built-in mark of hot keys and input fields.
 Style lined() {
     Style made{};
 
@@ -34,8 +37,8 @@ Style lined() {
     return made;
 }
 
-// Wytłuszczenie jako znak zaznaczenia. W Midnight Commanderze zaznaczony plik jest żółty, ale
-// wbudowana skórka nie ma kolorów — a wytłuszczenie widać także na monochromatycznym terminalu.
+// Bold as the mark of a marked item. In Midnight Commander a marked file is yellow, but the built-in
+// skin has no colors, and bold shows even on a monochrome terminal.
 Style bolded() {
     Style made{};
 
@@ -44,6 +47,7 @@ Style bolded() {
     return made;
 }
 
+// Bold and reversed: a marked item under the cursor.
 Style boldly() {
     Style made{};
 
@@ -53,6 +57,7 @@ Style boldly() {
     return made;
 }
 
+// Reversed and underlined: the current item among several reversed ones.
 Style pointed() {
     Style made{};
 
@@ -62,18 +67,17 @@ Style pointed() {
     return made;
 }
 
-// **Wbudowana skórka odtwarza dzisiejszy wygląd co do kratki.** Odwrócenie zostaje odwróceniem,
-// przygaszenie przygaszeniem — dzięki temu przeniesienie widżetów na role da się sprawdzić twardym
-// kryterium: żadna istniejąca próba nie ma prawa się zmienić.
+// The built-in style table. It reproduces the colorless look cell for cell: reverse stays reverse,
+// faint stays faint, so the screens the tests expect do not depend on the skin.
 //
-// Dwa wpisy są **zastępnikami czekającymi na kolory** i stąd, a nie z kodu, mają kiedyś zniknąć:
-// `talcite.input` niesie podkreślenie, bo w Midnight Commanderze pole wyróżnia sam kolor tła,
-// a `talcite.list.mark` jest pusty, bo nieaktywny panel MC nie pokazuje kursora — w oknie dialogowym
-// pokazuje go innym kolorem, którego jeszcze nie mamy.
+// Two entries are placeholders waiting for colors, and they are meant to disappear from here, not
+// from the code: talcite.input carries an underline, because in Midnight Commander a field is set
+// apart by its background color alone, and talcite.list.mark is empty, because an inactive MC panel
+// shows no cursor (in a dialog it shows it in another color, which we do not have yet).
 //
-// **Wszystkie nazwy biblioteki zaczynają się od `talcite.`** — i to nie jest ozdoba. Klucz jest nazwą,
-// więc aplikacja może wymyślić dowolną; bez przedrostka jej własne `input` przykryłoby rolę
-// biblioteki i nikt by o tym nie wiedział. Cudze nazwy zaczynają się od nazwy programu.
+// All of the library's names start with "talcite.", and that is not decoration. The key is a name,
+// so an application may invent any; without the prefix its own "input" would cover the library's
+// role and nobody would know. Other names start with the program's name.
 Styles building() {
     return {
         {"talcite.normal", Style{}},
@@ -82,23 +86,23 @@ Styles building() {
         {"talcite.frame.title", Style{}},
         {"talcite.title", Style{}},
 
-        // Papier pod kratkami obrazka pokrytymi tylko częściowo — brzeg wyciętego kształtu.
-        // Wbudowana zostawia go przezroczystym, więc widać przez niego rodzica.
+        // The paper under image cells that are only partly covered: the edge of a cut-out shape.
+        // The built-in skin leaves it transparent, so the parent shows through.
         {"talcite.image", Style{}},
 
-        // Podgląd tekstu rysuje samą treść, więc wbudowana zostawia go bez wyróżnienia — tak samo
-        // jak zwykły napis.
+        // The text viewer draws only the content, so the built-in skin leaves it plain, the same as
+        // an ordinary label.
         {"talcite.viewer", Style{}},
 
-        // Zaznaczenie w podglądzie: wbudowana odwraca, bo barw jeszcze nie ma, a odwrócenie widać
-        // na każdym terminalu. Bieżące — to, na którym stoi skok — ma **własną rolę**, żeby dało
-        // się je odróżnić od pozostałych; wbudowana dokłada mu podkreślenie, bo drugiego wyróżnika
-        // bez barw nie ma.
+        // Matches in the viewer: the built-in skin reverses them, because there are no colors yet
+        // and reverse shows on every terminal. The current one (where the jump stands) has its own
+        // role, so it can be told apart from the rest; the built-in skin adds an underline, because
+        // without colors there is no other distinction.
         {"talcite.viewer.mark", turned()},
         {"talcite.viewer.mark.focus", pointed()},
 
-        // Edytor rysuje tę samą treść co podgląd, więc wbudowana nie wyróżnia go niczym.
-        // Zaznaczenie odwraca — jak wszystko, co bez barw ma być widoczne.
+        // The editor draws the same content as the viewer, so the built-in skin does not set it
+        // apart. The selection is reversed, like everything that has to be visible without colors.
         {"talcite.editor", Style{}},
         {"talcite.editor.select", turned()},
 
@@ -111,10 +115,10 @@ Styles building() {
         {"talcite.button.key", lined()},
         {"talcite.button.disabled", faded()},
 
-        // Komunikat ma **własną rodzinę ról**, a nie te same, co reszta okna: pudełko błędu
-        // wygląda inaczej niż zwykłe okno, a jedna rola nie umie być naraz czerwona i granatowa.
-        // Przyciski w komunikacie powtarzają wartości zwykłych, żeby wbudowana skórka pokazywała
-        // je tak samo — różnicę wnosi dopiero skórka barwna.
+        // A message has its own family of roles, not the same as the rest of the window: an error
+        // box looks different from an ordinary window, and one role cannot be red and navy at once.
+        // The buttons in a message repeat the values of ordinary ones, so the built-in skin shows
+        // them the same; only a color skin makes the difference.
         {"talcite.message", Style{}},
         {"talcite.message.title", Style{}},
         {"talcite.message.text", Style{}},
@@ -124,9 +128,10 @@ Styles building() {
         {"talcite.message.button.key", lined()},
         {"talcite.message.button.disabled", faded()},
 
-        // Błąd to **ten sam widżet z innym rdzeniem**, więc i rodzina ról jest ta sama. Bez barw
-        // niczym się nie różni i tak ma być: mono-skórka Midnight Commandera też nie odróżnia
-        // pudełka błędu od zwykłego okna. Różnicę wnosi paleta, a nie kod.
+        // An error is the same widget with a different stem, so its family of roles is the same
+        // too. Without colors it differs in nothing, and that is intended: Midnight Commander's mono
+        // skin does not tell an error box from an ordinary window either. The palette makes the
+        // difference, not the code.
         {"talcite.error", Style{}},
         {"talcite.error.title", Style{}},
         {"talcite.error.text", Style{}},
@@ -160,9 +165,9 @@ Styles building() {
         {"talcite.table.mark", bolded()},
         {"talcite.table.mark.focus", boldly()},
 
-        // Widok różnic. Bez barw strony nie różnią się niczym — różnicę wnosi paleta — ale
-        // zaznaczone części napisu muszą być widać i na monochromatycznym terminalu: usunięte
-        // podkreśla, dodane wytłuszcza. Kursor odwraca, jak w tabeli.
+        // The diff view. Without colors the two sides look the same (the palette makes the
+        // difference), but the marked parts of a line must show even on a monochrome terminal:
+        // removed parts are underlined, added parts bold. The cursor is reversed, as in the table.
         {"talcite.diff", Style{}},
         {"talcite.diff.head", turned()},
         {"talcite.diff.title", bolded()},
@@ -199,8 +204,9 @@ Styles building() {
     };
 }
 
-// Znaki ramek leżą pojedynczo, tak jak w pliku skórki Midnight Commandera — komplet składa się
-// z nich dopiero w konstruktorze.
+// Adds the eight frame glyphs of `how` under the names `named`.across, .upright, .upper.left and so
+// on. Frame glyphs are stored one by one, as in a Midnight Commander skin file; the set is put
+// together from them only in the constructor.
 void ruled(Glyphs& into, std::string_view named, Border how) {
     const Lines one = drawn(how);
     const std::string prefix{named};
@@ -215,9 +221,7 @@ void ruled(Glyphs& into, std::string_view named, Border how) {
     into.emplace(prefix + ".right.joint", one.right_joint);
 }
 
-// Wbudowana tablica znaków, w parze z `building()`, które składa style. Nazywała się wcześniej
-// `marking` — słowem, które w tej bibliotece znaczy literę aktywną i nie ma z tablicą znaków nic
-// wspólnego.
+// The built-in glyph table, the counterpart of `building()`, which assembles the styles.
 Glyphs glyphing() {
     Glyphs made{
         {"talcite.scroll.up", U'▲'},   {"talcite.scroll.down", U'▼'}, {"talcite.scroll.left", U'◀'},
@@ -240,8 +244,8 @@ Glyphs glyphing() {
     return made;
 }
 
-// Znak dla poziomu; gdy skórka nie ma go na tym poziomie — wbudowany, a gdy i tego nie ma — `?`,
-// nigdy zero (powód przy `Skin::style`).
+// The glyph for the level (`unicode` or not): from the skin, else from the built-in table `spare`,
+// else '?', never zero (the reason is at `Skin::style`).
 char32_t glyphed(const Glyphs& among, const Glyphs& spare, const std::string& named,
                  bool unicode) {
     if (const auto at = among.find(named); at != among.end())
@@ -253,8 +257,8 @@ char32_t glyphed(const Glyphs& among, const Glyphs& spare, const std::string& na
     return U'?';
 }
 
-// Komplet składa się przy budowaniu i po każdej zmianie poziomu znaków — `Lines` bierze się osiem
-// razy na ramkę i nie ma być składane przy każdym malowaniu.
+// The frame set `named` for the level. It is assembled at construction and after each change of the
+// glyph level: `Lines` is asked for eight times per frame and must not be assembled at every paint.
 Lines gathered(const Glyphs& among, const Glyphs& spare, std::string_view named, bool unicode) {
     const std::string prefix{named};
 
@@ -268,8 +272,8 @@ Lines gathered(const Glyphs& among, const Glyphs& spare, std::string_view named,
             glyphed(among, spare, prefix + ".right.joint", unicode)};
 }
 
-// Wbudowana tablica znaków, zbudowana raz — komplety ramek sięgają do niej, gdy skórka nie ma
-// znaku na bieżącym poziomie.
+// The built-in glyph table, built once; frame sets fall back to it when the skin has no glyph at the
+// current level.
 const Glyphs& glyphed() {
     static const Glyphs one = glyphing();
 
@@ -278,12 +282,11 @@ const Glyphs& glyphed() {
 
 }
 
-// **Skórka jest kompletna od urodzenia.** Konstruktor zaczyna od wbudowanych wartości i nadpisuje
-// je tym, co dał wołający — to jest `spare` plus `held`, tylko scalone raz, a nie przy każdym
-// odczycie. Wbudowane wchodzą jako jedna wartość na każdy poziom, więc rola biblioteki ma zawsze
-// co pokazać; rola podana z zewnątrz **zastępuje** wbudowaną w całości, a to, jakiego poziomu jej
-// brakuje, rozstrzyga się dopiero przy odczycie — bo dopiero wtedy wiadomo, na jakim terminalu
-// skórka stoi.
+// A skin is complete from birth. The constructor starts from the built-in values and overwrites
+// them with what the caller gave: the built-in table plus the caller's entries, merged once rather
+// than at every lookup. Built-in values come as one value for every level, so a library role always
+// has something to show; a role given from outside replaces the built-in one entirely, and which
+// level it lacks is settled only at lookup, because only then is the terminal known.
 Skin::Skin(Styles styles, Glyphs glyphs) : styles_(building()), glyphs_(glyphing()) {
     for (auto& [named, one] : styles) styles_.insert_or_assign(named, one);
 
@@ -294,26 +297,28 @@ Skin::Skin(Styles styles, Glyphs glyphs) : styles_(building()), glyphs_(glyphing
 
 Skin::Skin() : Skin(Styles{}, Glyphs{}) {}
 
-// Jeden egzemplarz na cały program — bo `Node::skin()` bez korzenia musi oddać **referencję**,
-// a nie wartość. Statyczna zmienna w funkcji zbuduje się przy pierwszym pytaniu i ani razu więcej.
+// The built-in skin, one instance for the whole program, because `Node::skin()` without a root has
+// to return a reference, not a value. A function-local static is built at the first call and never
+// again.
 const Skin& Skin::plain() {
     static const Skin one;
 
     return one;
 }
 
-// **Odczyt nigdy nie rzuca**, bo woła się go z malowania. Literówka w nazwie roli albo rola
-// wymyślona przez aplikację i nieustawiona wywracałyby program w środku składania klatki, i to
-// nie w miejscu błędu, tylko przy pierwszym odmalowaniu.
+// The style of a role. A lookup never throws, because it is called from painting. A typo in a role
+// name, or a role an application invented and never set, would crash the program in the middle of
+// composing a frame, and not where the mistake is but at the first repaint.
 //
-// Poziom rozstrzyga się **tu**, nie przy budowaniu: skórka niesie warianty na wszystkie poziomy,
-// a to, na jakim terminalu stoi, mówi jej korzeń przez `colors` i `unicode`. Wariantu brak na tym
-// poziomie — bierze się wbudowany dla tej samej roli, bez zgadywania i bez przybliżania barw.
-// Skórka z samym `rgb` na terminalu `ansi` pokazuje więc to, co skórka wbudowana.
+// The level is settled here, not at construction: the skin carries variants for every level, and
+// the root tells it which terminal it is on through `colors` and `unicode`. When there is no
+// variant at this level, the built-in one for the same role is used, without guessing and without
+// approximating colors. A skin with only `rgb` on an `ansi` terminal therefore shows what the
+// built-in skin shows.
 //
-// Nieznany znak oddaje `U'?'`, a **nigdy zera**: w `View` zero znaczy dalszy ciąg znaku
-// dwukolumnowego i składanie klatki takie kratki pomija, więc zero zrobiłoby dziurę w obrazie
-// zamiast widocznego błędu.
+// An unknown glyph gives '?', never zero: in `View` zero means the continuation of a double-width
+// character, and composing a frame skips such cells, so zero would leave a hole in the picture
+// instead of a visible error.
 Style Skin::style(std::string_view key) const {
     if (const auto at = styles_.find(key); at != styles_.end())
         if (const std::optional<Style> one = at->second.fitted(colors_)) return *one;
@@ -323,31 +328,35 @@ Style Skin::style(std::string_view key) const {
     return plain().style(key);
 }
 
+// The glyph of a role at the current level, with the same fallbacks as `style`.
 char32_t Skin::glyph(std::string_view key) const {
     return glyphed(glyphs_, glyphed(), std::string{key}, unicode_);
 }
 
-// Komplet leży gotowy, złożony przy budowaniu i po każdej zmianie poziomu znaków (`framed`).
-// `Border::none` oddaje cienki: widżet bez ramki o znaki nie pyta, a gdyby zapytał, dostaje
-// komplet, który da się narysować, a nie spacje udające brak.
+// The frame set for a border style, ready-made at construction and after each change of the glyph
+// level (`framed`). `Border::none` gives the thin set: a widget without a frame does not ask for
+// glyphs, and if it did, it gets a set that can be drawn rather than spaces pretending to be none.
 Lines Skin::lines(Border border) const { return lines_[static_cast<std::size_t>(border)]; }
 
+// Sets the color level of the terminal the skin is shown on.
 void Skin::colors(Colors given) { colors_ = given; }
 
+// Sets whether the terminal shows Unicode, and reassembles the frame sets for it.
 void Skin::unicode(bool given) {
     unicode_ = given;
 
     framed();
 }
 
+// Assembles the frame sets of all border styles for the current glyph level.
 void Skin::framed() {
     for (const Border one : {Border::none, Border::thin, Border::twin, Border::thick})
         lines_[static_cast<std::size_t>(one)] = gathered(glyphs_, glyphed(), named(one), unicode_);
 }
 
-// Wariant o poziomie najwyższym nieprzekraczającym podanego. Skórka z samym `rgb` na terminalu
-// `ansi` nie ma czego pokazać — i oddaje pustkę, a nie przybliżenie: co wtedy rysować, rozstrzyga
-// `Skin::style`, sięgając do wbudowanej.
+// The variant at the highest level not above `level`. A skin with only `rgb` on an `ansi` terminal
+// has nothing to show, and returns nothing rather than an approximation: what to draw then is
+// decided by `Skin::style`, which falls back to the built-in skin.
 std::optional<Style> Shades::fitted(Colors level) const {
     const std::array<const std::optional<Style>*, 4> by{&mono, &ansi, &palette, &rgb};
 
@@ -359,8 +368,8 @@ std::optional<Style> Shades::fitted(Colors level) const {
 
 Shades::Shades(Style same) : mono(same), ansi(same), palette(same), rgb(same) {}
 
-// Terminal z unicode bierze znak unicode, a gdy go nie ma — ASCII; terminal bez unicode bierze
-// tylko ASCII, bo znak spoza niego wyszedłby jako śmieć.
+// A Unicode terminal takes the Unicode glyph, or the ASCII one when there is none; a terminal
+// without Unicode takes only ASCII, because anything outside it would come out as garbage.
 std::optional<char32_t> Signs::fitted(bool wanted) const {
     if (wanted && unicode.has_value()) return unicode;
 

@@ -15,6 +15,7 @@ using namespace talcite;
 
 namespace {
 
+// The text of row `y` of the view, without trailing spaces.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -31,8 +32,10 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// Three options to choose from.
 std::vector<std::string> three() { return {"Nazwa", "Rozszerzenie", "Rozmiar"}; }
 
+// Counts in `done` every time `one` notifies about a pick.
 void counted(const std::shared_ptr<ui::Choice>& one, int& done) {
     (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
@@ -43,9 +46,9 @@ void counted(const std::shared_ptr<ui::Choice>& one, int& done) {
 
 }
 
-// --- Co grupa wie o sobie ------------------------------------------------------------------------
+// --- What the group knows about itself ----------------------------------------------------------
 
-TRIAL("Choice: pusta nie jest chętna na ognisko") {
+TRIAL("Choice: an empty one does not want the focus") {
     const ui::Choice one;
 
     same(one.options().many(), std::size_t{0});
@@ -53,7 +56,7 @@ TRIAL("Choice: pusta nie jest chętna na ognisko") {
     same(one.capacity(), 0);
 }
 
-TRIAL("Choice: świeża stoi na pierwszej opcji") {
+TRIAL("Choice: a fresh one stands on the first option") {
     const ui::Choice one{three()};
 
     same(one.options().many(), std::size_t{3});
@@ -61,14 +64,14 @@ TRIAL("Choice: świeża stoi na pierwszej opcji") {
     ought(one.focusable());
 }
 
-TRIAL("Choice: wybór można podać przy tworzeniu i przyciąć") {
+TRIAL("Choice: the choice can be given at creation and is clamped") {
     same(*ui::Choice(three(), 2).value(), std::string{"Rozmiar"});
     same(*ui::Choice(three(), 9).value(), std::string{"Rozmiar"});
 }
 
-// **`which` to numer, `value` to napis** — ta sama wybrana opcja pod dwiema nazwami, tak jak
-// numer i węzeł w liście. Ustawiacz numeru przycina, ustawiacz napisu pomija nieznany.
-TRIAL("Choice: which to numer wybranej opcji, value to jej napis") {
+// `which` is the index, `value` is the text: the same chosen option under two names, like the index
+// and the node in a list. The index setter clamps, the text setter ignores an unknown text.
+TRIAL("Choice: which is the index of the chosen option, value its text") {
     ui::Choice one{three()};
 
     same(one.which(), std::optional<std::size_t>{0});
@@ -98,16 +101,16 @@ TRIAL("Choice: which to numer wybranej opcji, value to jej napis") {
     ought(!empty.which().has_value());
     ought(!empty.value().has_value());
 
-    // Numer spoza pustej grupy nie zostaje zapamiętany na później.
+    // An index beyond an empty group is not remembered for later.
     empty.options().add("raz");
     empty.options().add("dwa");
 
     same(empty.which(), std::optional<std::size_t>{0});
 }
 
-// Przycięty numer jest zapamiętany przycięty, a zbiór, który zmalał pod wybraną opcją, oddaje
-// ostatnią — nie numer spoza zbioru.
-TRIAL("Choice: numer przycina się przy ustawieniu i przy czytaniu") {
+// A clamped index is remembered clamped, and a set that shrank under the chosen option gives the
+// last one, not an index beyond the set.
+TRIAL("Choice: the index is clamped when set and when read") {
     ui::Choice one{three()};
 
     one.which(9);
@@ -122,17 +125,18 @@ TRIAL("Choice: numer przycina się przy ustawieniu i przy czytaniu") {
     same(*one.value(), std::string{"Rozmiar"});
 }
 
-// Cztery kratki na klamrę i spację plus najdłuższy napis; wysokość to liczba opcji.
-TRIAL("Choice: chce klamry, najdłuższego napisu i wiersza na opcję") {
+// Four cells for the bracket and the space plus the longest text; the height is the number of
+// options.
+TRIAL("Choice: wants the bracket, the longest text and a row per option") {
     const ui::Choice one{three()};
 
     same(one.wants({40, 10}), (ui::Size{16, 3}));
     same(one.wants({8, 2}), (ui::Size{8, 2}));
 }
 
-// --- Rysowanie -----------------------------------------------------------------------------------
+// --- Drawing -------------------------------------------------------------------------------------
 
-TRIAL("Choice: kropka stoi przy wybranej opcji") {
+TRIAL("Choice: the dot stands at the chosen option") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three(), 1);
@@ -146,9 +150,9 @@ TRIAL("Choice: kropka stoi przy wybranej opcji") {
     same(read(made, 2), std::string{"( ) Rozmiar"});
 }
 
-// **Podświetlenie tylko przy ognisku**: okno bez ogniska w grupie wyglądałoby inaczej, jakby na
-// niej stało.
-TRIAL("Choice: podświetlenie pokazuje się dopiero z ogniskiem") {
+// The highlight only with the focus: otherwise a window without the focus in the group would look
+// as if the focus were on it.
+TRIAL("Choice: the highlight shows only with the focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three(), 1);
@@ -166,10 +170,10 @@ TRIAL("Choice: podświetlenie pokazuje się dopiero z ogniskiem") {
     ought(!made.at({0, 2}).style.reverse);
 }
 
-// --- Ruch ----------------------------------------------------------------------------------------
+// --- Movement ------------------------------------------------------------------------------------
 
-// **Ruch jest wyborem** — strzałka od razu przestawia zaznaczenie, a nie osobny kursor.
-TRIAL("Choice: strzałki przestawiają wybór i zawiadamiają") {
+// Movement is choosing: an arrow moves the selection at once, not a separate cursor.
+TRIAL("Choice: the arrows change the choice and notify") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -198,9 +202,9 @@ TRIAL("Choice: strzałki przestawiają wybór i zawiadamiają") {
     same(done, 3);
 }
 
-// Na krańcu grupy klawisz **idzie wyżej**: w oknie strzałka ma wtedy przejść do następnego widżetu,
-// a nie utknąć.
-TRIAL("Choice: na krańcu oddaje strzałkę wyżej") {
+// At the edge of the group the key goes up: in a window the arrow should then move to the next
+// widget, not get stuck.
+TRIAL("Choice: at the edge it passes the arrow up") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -221,7 +225,7 @@ TRIAL("Choice: na krańcu oddaje strzałkę wyżej") {
     same(*one->value(), std::string{"Rozmiar"});
 }
 
-TRIAL("Choice: Home i End skaczą na krańce") {
+TRIAL("Choice: Home and End jump to the edges") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -240,8 +244,8 @@ TRIAL("Choice: Home i End skaczą na krańce") {
     same(*one->value(), std::string{"Nazwa"});
 }
 
-// **Ustawienie z programu nie zawiadamia** — tak samo jak w polu wyboru.
-TRIAL("Choice: podanie wyboru milczy") {
+// Setting from the program does not notify, just as in a check box.
+TRIAL("Choice: setting the choice is silent") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -258,7 +262,7 @@ TRIAL("Choice: podanie wyboru milczy") {
     same(done, 0);
 }
 
-TRIAL("Choice: enter i litery idą wyżej") {
+TRIAL("Choice: Enter and letters go up") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -275,9 +279,9 @@ TRIAL("Choice: enter i litery idą wyżej") {
     ought(!top.dispatch(letter));
 }
 
-// --- Kliknięcie ----------------------------------------------------------------------------------
+// --- Click ---------------------------------------------------------------------------------------
 
-TRIAL("Choice: kliknięcie wybiera swoją opcję i bierze ognisko") {
+TRIAL("Choice: a click chooses its option and takes the focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -297,16 +301,16 @@ TRIAL("Choice: kliknięcie wybiera swoją opcję i bierze ognisko") {
     same(done, 1);
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
-    // Kliknięcie w już wybraną nie jest zmianą.
+    // A click on the option already chosen is not a change.
     ought(top.dispatch(what));
     same(done, 1);
 }
 
-// --- W oknie -------------------------------------------------------------------------------------
+// --- In a window ---------------------------------------------------------------------------------
 
-// Grupa jest **jednym przystankiem** wędrówki: Tab wchodzi do niej raz i raz z niej wychodzi,
-// a strzałki chodzą w środku.
-TRIAL("Choice: w oknie jest jednym przystankiem Taba") {
+// The group is one stop of the walk: Tab enters it once and leaves it once, and the arrows move
+// inside.
+TRIAL("Choice: in a window it is one Tab stop") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -333,7 +337,7 @@ TRIAL("Choice: w oknie jest jednym przystankiem Taba") {
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
-TRIAL("Choice: wyłączona nie wybiera i oddaje ognisko") {
+TRIAL("Choice: a disabled one does not choose and gives up the focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());
@@ -353,9 +357,9 @@ TRIAL("Choice: wyłączona nie wybiera i oddaje ognisko") {
     same(*one->value(), std::string{"Nazwa"});
 }
 
-// Zbiór opcji nie ma wskazania na właściciela, więc opróżnienie go nie ma jak zawiadomić grupy.
-// Ognisko schodzi więc przy najbliższym rysowaniu — ale schodzi.
-TRIAL("Choice: opróżniona pod ogniskiem oddaje je przy rysowaniu") {
+// The set of options has no pointer to its owner, so emptying it cannot notify the group. The
+// focus therefore leaves at the next drawing, but it does leave.
+TRIAL("Choice: emptied while focused, it gives up the focus when drawn") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Choice>(three());

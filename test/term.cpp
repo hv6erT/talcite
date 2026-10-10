@@ -13,14 +13,16 @@
 
 using namespace talcite;
 
-// `Term` rozmawia z terminalem wyłącznie przez `Console`, więc z atrapą widać każdy bajt: klatkę,
-// ubranie terminala i jego zdjęcie, tytuł — a także to, co przychodzi: klawisze, rozmiar i tryb.
+// `Term` talks to the terminal only through `Console`, so with a fake every byte is visible: the
+// frame, dressing the terminal and undressing it, the title, and also what comes in: keys, size and
+// mode.
 
 namespace {
 
-// Korzeń, który w lewym górnym rogu ma jedną literę w czystej czerwieni.
+// A root that has a single letter in pure red in its upper left corner.
 class Red : public ui::Root {
 protected:
+    // Draws the red `x` at (0, 0) on an otherwise empty page.
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
 
@@ -35,8 +37,8 @@ protected:
     }
 };
 
-// To, co poszło na terminal po badaniu: badanie mówi swoje przez tę samą konsolę, a tu chodzi
-// o to, co pisze sam `Term`.
+// What went to the terminal after the probe: the probe says its piece through the same console, and
+// what matters here is what `Term` itself writes.
 std::string drawn(const std::shared_ptr<faking::Terminal>& line, Setup given = {}) {
     Red root;
 
@@ -51,15 +53,17 @@ std::string drawn(const std::shared_ptr<faking::Terminal>& line, Setup given = {
     return line->written;
 }
 
+// Whether `what` occurs anywhere in `where`.
 bool holds(const std::string& where, const std::string& what) {
     return where.find(what) != std::string::npos;
 }
 
 }
 
-// Korzeń, który pisze tekst z sekwencją ucieczki — tak, jak przyszłaby w nazwie pliku.
+// A root that writes text with an escape sequence in it, as it could arrive in a file name.
 class Hostile : public ui::Root {
 protected:
+    // Puts the text with the escape sequences at (0, 0).
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
 
@@ -71,15 +75,15 @@ protected:
     }
 };
 
-// --- Barwy ---------------------------------------------------------------------------------------
+// --- Colors --------------------------------------------------------------------------------------
 
-TRIAL("Term: paleta 256 wychodzi jako 38;5") {
+TRIAL("Term: the 256-color palette comes out as 38;5") {
     const std::string said = drawn(faking::terminal());
 
     ought(holds(said, "\x1b[0;38;5;196mx"));
 }
 
-TRIAL("Term: szesnaście kolorów wychodzi jako jasna czerwień") {
+TRIAL("Term: sixteen colors come out as bright red") {
     auto line = faking::terminal();
 
     line->environment["TERM"] = "vt220";
@@ -87,7 +91,7 @@ TRIAL("Term: szesnaście kolorów wychodzi jako jasna czerwień") {
     ought(holds(drawn(line), "\x1b[0;91mx"));
 }
 
-TRIAL("Term: NO_COLOR zostawia sam znak bez barwy") {
+TRIAL("Term: NO_COLOR leaves the character alone without color") {
     auto line = faking::terminal();
 
     line->environment["NO_COLOR"] = "1";
@@ -98,15 +102,15 @@ TRIAL("Term: NO_COLOR zostawia sam znak bez barwy") {
     ought(!holds(said, "38;"));
 }
 
-// Życzenie wygrywa z pomiarem: `Setup` mówi, czym rysować, choćby konsola twierdziła inaczej.
-TRIAL("Term: Setup przykrywa wykryte barwy") {
+// A wish beats a measurement: `Setup` says what to draw with, whatever the console claims.
+TRIAL("Term: Setup overrides the detected colors") {
     Setup given;
     given.colors = Colors::rgb;
 
     ought(holds(drawn(faking::terminal(), given), "\x1b[0;38;2;255;0;0mx"));
 }
 
-TRIAL("Term: badanie idzie przez tę samą konsolę") {
+TRIAL("Term: the probe goes through the same console") {
     auto line = faking::terminal();
 
     Term term{Setup{}, Seam<Console>{line}};
@@ -114,10 +118,11 @@ TRIAL("Term: badanie idzie przez tę samą konsolę") {
     ought(line->written.rfind("\x1b[>c", 0) == 0);
 }
 
-// --- Ubranie terminala ---------------------------------------------------------------------------
+// --- Dressing the terminal -----------------------------------------------------------------------
 
 namespace {
 
+// A setup that asks for the alternate screen, SGR mouse reports and bracketed paste.
 Setup dressy() {
     Setup made;
     made.screen = Screen::apart;
@@ -129,9 +134,9 @@ Setup dressy() {
 
 }
 
-// Ekran zapasowy idzie pierwszy przy ubieraniu i ostatni przy zdejmowaniu: inaczej sekwencje
-// myszy i wklejania trafiłyby na inny bufor niż ten, na którym zostaną.
-TRIAL("Term: ubranie i zdjęcie idą w odwrotnej kolejności") {
+// The alternate screen goes first when dressing and last when undressing; otherwise the mouse and
+// paste sequences would land on a different buffer from the one where they stay.
+TRIAL("Term: dressing and undressing go in opposite order") {
     auto line = faking::terminal();
 
     std::string on;
@@ -154,7 +159,7 @@ TRIAL("Term: ubranie i zdjęcie idą w odwrotnej kolejności") {
     ought(holds(off, "\x1b[?25h"));
 }
 
-TRIAL("Term: bez życzeń mysz i ekran idą za pomiarem") {
+TRIAL("Term: without wishes the mouse and the screen follow the measurement") {
     auto line = faking::terminal();
 
     line->environment["TERM"] = "dumb";
@@ -166,9 +171,9 @@ TRIAL("Term: bez życzeń mysz i ekran idą za pomiarem") {
     ought(!holds(line->written, "\x1b[?1049h"));
 }
 
-// Zejście z drogi zdejmuje wszystko, powrót zakłada z powrotem, a zagnieżdżone zejście nie wysyła
-// drugiego kompletu.
-TRIAL("Term: Pause zdejmuje raz i raz zakłada") {
+// Stepping aside takes everything off, coming back puts it on again, and a nested step aside does
+// not send a second set.
+TRIAL("Term: Pause takes off once and puts on once") {
     auto line = faking::terminal();
 
     Term term{dressy(), Seam<Console>{line}};
@@ -194,7 +199,7 @@ TRIAL("Term: Pause zdejmuje raz i raz zakłada") {
     ought(back.find("\x1b[?1049h") == back.rfind("\x1b[?1049h"));
 }
 
-TRIAL("Term: w trakcie zejścia nic nie rysuje") {
+TRIAL("Term: draws nothing while stepped aside") {
     auto line = faking::terminal();
 
     Red root;
@@ -212,9 +217,9 @@ TRIAL("Term: w trakcie zejścia nic nie rysuje") {
     same(line->written, std::string{});
 }
 
-// --- Klatka --------------------------------------------------------------------------------------
+// --- Frame ---------------------------------------------------------------------------------------
 
-TRIAL("Term: druga taka sama klatka nie wysyła ani bajtu") {
+TRIAL("Term: a second identical frame sends not a single byte") {
     auto line = faking::terminal();
 
     Red root;
@@ -231,7 +236,7 @@ TRIAL("Term: druga taka sama klatka nie wysyła ani bajtu") {
     same(line->written, std::string{});
 }
 
-TRIAL("Term: klatka w synchronizacji, gdy wolno") {
+TRIAL("Term: the frame is synchronized when allowed") {
     Setup given;
     given.synchronized = true;
 
@@ -241,9 +246,9 @@ TRIAL("Term: klatka w synchronizacji, gdy wolno") {
     ought(said.size() >= 8 && said.compare(said.size() - 8, 8, "\x1b[?2026l") == 0);
 }
 
-// --- Tytuł ---------------------------------------------------------------------------------------
+// --- Title ---------------------------------------------------------------------------------------
 
-TRIAL("Term: tytuł idzie jako OSC 0") {
+TRIAL("Term: the title goes out as OSC 0") {
     auto line = faking::terminal();
 
     Term term{Setup{}, Seam<Console>{line}};
@@ -255,7 +260,7 @@ TRIAL("Term: tytuł idzie jako OSC 0") {
     same(line->written, std::string{"\x1b]0;abc\x1b\\"});
 }
 
-TRIAL("Term: tytuł zakazany w Setup nie wychodzi") {
+TRIAL("Term: a title forbidden in Setup does not go out") {
     auto line = faking::terminal();
 
     Setup given;
@@ -270,8 +275,8 @@ TRIAL("Term: tytuł zakazany w Setup nie wychodzi") {
     same(line->written, std::string{});
 }
 
-// Zmiana idzie przez pętlę, więc dopiero obrót ją wykonuje — i wysyła samą różnicę.
-TRIAL("Term: reconfigure wysyła samą różnicę") {
+// The change goes through the loop, so only a turn carries it out, and it sends just the difference.
+TRIAL("Term: reconfigure sends just the difference") {
     auto line = faking::terminal();
 
     Term term{dressy(), Seam<Console>{line}};
@@ -288,31 +293,34 @@ TRIAL("Term: reconfigure wysyła samą różnicę") {
     same(line->written, std::string{"\x1b[?2004l"});
 }
 
-// --- Tryb surowy, wejście i rozmiar --------------------------------------------------------------
+// --- Raw mode, input and size --------------------------------------------------------------------
 //
-// Także to idzie przez konsolę: `Term` nie ma kodu systemowego, więc atrapa odpowiada za
-// wszystko, co terminal robi — i próba sprawdza obrót od klawisza do klatki bez terminala.
+// This also goes through the console: `Term` has no system code, so the fake answers for everything
+// the terminal does, and the trial checks a turn from key to frame without a terminal.
 
 namespace {
 
-// Korzeń, który zapisuje, co do niego doszło, a o obrót prosi wtedy, gdy mu to ustawić.
+// A root that records what reached it, and asks for a turn when told to.
 class Heard : public Red {
 public:
     std::u32string keys;
     std::vector<ui::Size> sizes;
     std::optional<std::chrono::milliseconds> wanted;
 
+    // The turn the root asks for, as set by the trial.
     [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override { return wanted; }
 
 protected:
     using Red::handle;
 
+    // Records the key, with Esc written as ⎋, and consumes it.
     bool handle(ui::KeyEvent& what) override {
         keys += what.key().code() == ui::Code::escape ? U'⎋' : what.key().letter();
 
         return true;
     }
 
+    // Records the new size and lets the event go on.
     bool handle(ui::SizeEvent& what) override {
         sizes.push_back({what.wide(), what.high()});
 
@@ -322,7 +330,7 @@ protected:
 
 }
 
-TRIAL("Term: tryb surowy od budowy do końca, badanie w nim zagnieżdżone") {
+TRIAL("Term: raw mode from construction to the end, the probe nested inside it") {
     auto line = faking::terminal();
 
     {
@@ -335,7 +343,7 @@ TRIAL("Term: tryb surowy od budowy do końca, badanie w nim zagnieżdżone") {
     same(line->depth, 0);
 }
 
-TRIAL("Term: Pause zdejmuje tryb surowy, powrót zakłada go i mierzy okno od nowa") {
+TRIAL("Term: Pause takes off raw mode, coming back puts it on and measures the window again") {
     auto line = faking::terminal();
 
     line->window = ui::Size{100, 30};
@@ -356,7 +364,7 @@ TRIAL("Term: Pause zdejmuje tryb surowy, powrót zakłada go i mierzy okno od no
     same(term.size().high, 20);
 }
 
-TRIAL("Term: w trakcie zejścia konsola nie słucha") {
+TRIAL("Term: the console does not listen while stepped aside") {
     auto line = faking::terminal();
 
     Heard root;
@@ -377,7 +385,7 @@ TRIAL("Term: w trakcie zejścia konsola nie słucha") {
     ought(root.keys.empty());
 }
 
-TRIAL("Term: klawisz z konsoli trafia do korzenia") {
+TRIAL("Term: a key from the console reaches the root") {
     auto line = faking::terminal();
 
     Heard root;
@@ -393,9 +401,9 @@ TRIAL("Term: klawisz z konsoli trafia do korzenia") {
     ought(root.keys == U"ab");
 }
 
-// Bajty, które przyszły w trakcie badania i nie były odpowiedzią, to klawisze naciśnięte przy
-// starcie. Idą pierwsze, przed czymkolwiek świeżym.
-TRIAL("Term: klawisze z badania idą przed świeżymi") {
+// Bytes that arrived during the probe and were not an answer are keys pressed at startup. They go
+// first, before anything fresh.
+TRIAL("Term: keys from the probe go before fresh ones") {
     auto line = faking::terminal("q\x1b[?62;1c");
 
     Heard root;
@@ -411,7 +419,7 @@ TRIAL("Term: klawisze z badania idą przed świeżymi") {
     ought(root.keys == U"qa");
 }
 
-TRIAL("Term: samotny Esc czeka pięćdziesiąt milisekund i rozstrzyga się sam") {
+TRIAL("Term: a lone Esc waits fifty milliseconds and resolves by itself") {
     auto line = faking::terminal();
 
     Heard root;
@@ -432,9 +440,9 @@ TRIAL("Term: samotny Esc czeka pięćdziesiąt milisekund i rozstrzyga się sam"
     ought(root.keys == U"⎋");
 }
 
-// Bez Esc w dekoderze i bez prośby drzewa nie ma czego rozstrzygać, więc konsola czeka bez końca —
-// na klawisz albo na dzwonek pętli, który przynosi jej `Term`.
-TRIAL("Term: bez powodu czeka się bez ogranicznika, ale z dzwonkiem") {
+// With no Esc in the decoder and no request from the tree there is nothing to resolve, so the
+// console waits without end, for a key or for the loop's bell that `Term` brings it.
+TRIAL("Term: with no reason it waits without a limit, but with the bell") {
     auto line = faking::terminal();
 
     Heard root;
@@ -451,7 +459,7 @@ TRIAL("Term: bez powodu czeka się bez ogranicznika, ale z dzwonkiem") {
     same(line->belled, before + 1);
 }
 
-TRIAL("Term: prośba drzewa o obrót idzie do konsoli jako cierpliwość") {
+TRIAL("Term: the tree's request for a turn goes to the console as patience") {
     auto line = faking::terminal();
 
     Heard root;
@@ -467,7 +475,7 @@ TRIAL("Term: prośba drzewa o obrót idzie do konsoli jako cierpliwość") {
     ought(line->patience.back() == std::chrono::milliseconds{30});
 }
 
-TRIAL("Term: rozmiar od startu z konsoli, a bez niego 80×25") {
+TRIAL("Term: the size from the console at startup, and 80×25 without it") {
     auto sized = faking::terminal();
     auto blind = faking::terminal();
 
@@ -482,7 +490,7 @@ TRIAL("Term: rozmiar od startu z konsoli, a bez niego 80×25") {
     same(two.size().high, 25);
 }
 
-TRIAL("Term: zmiana rozmiaru przychodzi jako SizeEvent i odmalowuje wszystko") {
+TRIAL("Term: a size change arrives as SizeEvent and repaints everything") {
     auto line = faking::terminal();
 
     line->window = ui::Size{40, 10};
@@ -512,9 +520,9 @@ TRIAL("Term: zmiana rozmiaru przychodzi jako SizeEvent i odmalowuje wszystko") {
     same(root.sizes.size(), std::size_t{1});
 }
 
-// Wznowiony po zatrzymaniu: powłoka miała w tym czasie terminal, zdjęła z niego nasze ubranie
-// i pisała po ekranie. Ubranie wraca i klatka maluje się cała, raz.
-TRIAL("Term: wznowienie po zatrzymaniu ubiera terminal i maluje wszystko") {
+// Resumed after being stopped: the shell had the terminal meanwhile, took our dressing off it and
+// wrote over the screen. The dressing comes back and the frame is painted whole, once.
+TRIAL("Term: resuming after a stop dresses the terminal and paints everything") {
     auto line = faking::terminal();
 
     Red root;
@@ -546,7 +554,7 @@ TRIAL("Term: wznowienie po zatrzymaniu ubiera terminal i maluje wszystko") {
     same(line->written, std::string{});
 }
 
-TRIAL("Term: czas dwukliku daje konsola") {
+TRIAL("Term: the double-click time comes from the console") {
     auto line = faking::terminal();
 
     line->twice = std::chrono::milliseconds{777};
@@ -562,7 +570,7 @@ TRIAL("Term: czas dwukliku daje konsola") {
 
 namespace {
 
-// Korzeń, który na `x` przestawia terminal na inny — tak twa przełącza ekrany.
+// A root that switches the terminal to another root on `x`, the way twa switches screens.
 class Switching : public Heard {
 public:
     Switching(Term& term, ui::Root& next) : term_(term), next_(next) {}
@@ -570,6 +578,7 @@ public:
 protected:
     using Heard::handle;
 
+    // Records the key like `Heard`, and on `x` shows the other root.
     bool handle(ui::KeyEvent& what) override {
         (void)Heard::handle(what);
 
@@ -585,9 +594,9 @@ private:
 
 }
 
-// Klawisz przełączający w środku odczytanego kawałka: reszta, wpisana z wyprzedzeniem, należy już
-// do nowego korzenia. Dawniej sprawdzała to tylko sonda na pseudoterminalu.
-TRIAL("Term: klawisze po przełączeniu korzenia w środku kawałka idą do nowego") {
+// A switching key in the middle of a chunk that was read: the rest, typed ahead, already belongs to
+// the new root.
+TRIAL("Term: keys after switching the root in the middle of a chunk go to the new one") {
     auto line = faking::terminal();
 
     Term term{Setup{}, Seam<Console>{line}};
@@ -605,10 +614,10 @@ TRIAL("Term: klawisze po przełączeniu korzenia w środku kawałka idą do nowe
     ought(second.keys == U"yz");
 }
 
-// Sekwencja ucieczki w tekście nie dochodzi do terminala: ani zapis do schowka (OSC 52), ani
-// prośba o przedstawienie się (DECID, na którą terminal odpowiada na wejściu), ani jednoznakowy
-// CSI z C1. Z terminala wychodzą tylko nasze sekwencje.
-TRIAL("Term: tekst z sekwencją ucieczki nie rozkazuje terminalowi") {
+// An escape sequence in text does not reach the terminal: not a write to the clipboard (OSC 52),
+// not a request to identify itself (DECID, which the terminal answers on input), not a
+// single-character CSI from C1. Only our own sequences leave for the terminal.
+TRIAL("Term: text with an escape sequence does not command the terminal") {
     auto line = faking::terminal();
     Hostile root;
     Term term{Setup{}, Seam<Console>{line}};

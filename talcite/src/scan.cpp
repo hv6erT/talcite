@@ -17,22 +17,26 @@
 
 #endif
 
-// **Skan pliku programem antywirusowym systemu** — bez instalowania czegokolwiek przez nas.
+// Scanning a file with the system's antivirus program, without installing anything ourselves.
 //
-// Na Windows pytamy usługę załączników (`IAttachmentExecute`): to ona woła zarejestrowany program
-// antywirusowy — Defender albo inny — i przy okazji zapisuje znak pochodzenia pliku. Odmowa usługi
-// znaczy, że plik został uznany za groźny (program antywirusowy mógł go już usunąć). Gdy usługi nie
-// ma albo zawiedzie inaczej, zapasowo Defender z wiersza poleceń (`MpCmdRun -Scan`).
+// On Windows we ask the attachment service (`IAttachmentExecute`): it calls the registered
+// antivirus program (Defender or another one) and also records the file's mark of origin. A refusal
+// from the service means the file was judged dangerous (the antivirus may already have removed it).
+// When the service is missing or fails in some other way, the fallback is Defender's command line
+// (MpCmdRun -Scan).
 //
-// Na Linuksie i innych POSIX — ClamAV, gdy jest: najpierw `clamdscan` (demon, szybko), potem
-// `clamscan`. Kod wyjścia 0 to czysto, 1 to zagrożenie, reszta (brak bazy, brak demona) — nie wiadomo.
+// On Linux and other POSIX systems we use ClamAV when present: first clamdscan (the daemon, fast),
+// then clamscan. Exit code 0 means clean, 1 means a threat, anything else (no database, no daemon)
+// means unknown.
 //
-// Bez programu antywirusowego wynik to `unknown` z pustym `by`: wołający wie, że skanu nie było, i sam
-// decyduje, co dalej. macOS sprawdza pliki sam przy uruchomieniu (XProtect), więc tu niczego nie woła.
+// Without an antivirus program the result is `unknown` with an empty `by`: the caller knows no scan
+// took place and decides what to do next. macOS checks files itself when they are launched
+// (XProtect), so nothing is called there.
 namespace talcite::scan {
 
 namespace {
 
+// The program's output as text, with trailing line breaks removed.
 std::string text_of(const Bytes& got) {
     std::string made;
 
@@ -43,11 +47,13 @@ std::string text_of(const Bytes& got) {
     return made;
 }
 
+// A promise that resolves at once with a result already known.
 Promise<Scanned> ready(Scanned one) {
     return Promise<Scanned>{[one = std::move(one)](auto resolve, auto) mutable { resolve(std::move(one)); }};
 }
 
-// Program z wiersza poleceń, którego kod wyjścia mówi wynik; programu, którego nie ma, nie ma.
+// Runs a command-line scanner whose exit code gives the verdict (`clean` and `infected` are the
+// codes for the two definite answers). A program that does not exist yields `std::nullopt`.
 Promise<std::optional<Scanned>> asked(fs::path program, std::vector<std::string> arguments, int clean, int infected, std::string by) {
     Command what;
 
@@ -69,7 +75,8 @@ Promise<std::optional<Scanned>> asked(fs::path program, std::vector<std::string>
         if (got.exit.ended != Ended::normal) return Scanned{Verdict::unknown, by, text_of(got.out)};
 
 #ifndef _WIN32
-        // Program, którego nie dało się uruchomić (nie ma go), kończy dziecko kodem 127, jak w powłoce.
+        // When the program cannot be started (it does not exist), the child exits with code 127, as
+        // in a shell.
         if (got.exit.code == 127) return std::nullopt;
 #endif
 
@@ -83,13 +90,15 @@ Promise<std::optional<Scanned>> asked(fs::path program, std::vector<std::string>
 
 #ifdef _WIN32
 
-// Stałe usługi załączników podane wprost — bez biblioteki uuid, której MinGW i MSVC mają różne.
+// The attachment service's identifiers spelled out here, so we do not need the uuid library, which
+// differs between MinGW and MSVC.
 constexpr CLSID attachment_services{0x4125dd96, 0xe03a, 0x4103, {0x8f, 0x70, 0xe0, 0x59, 0x7d, 0x80, 0x3b, 0x9c}};
 constexpr IID attachment_execute{0x73db1241, 0x1e85, 0x4581, {0x8e, 0x4f, 0xa8, 0x1e, 0x1d, 0x0f, 0x8c, 0x57}};
 
-// Znak tej biblioteki dla usługi — usługa pamięta po nim ustawienia „pytaj / nie pytaj".
+// This library's identity for the service; the service keys its "ask / don't ask" settings by it.
 constexpr GUID talcite_client{0x6f1d3c2a, 0x8b4e, 0x4f61, {0x9a, 0x2d, 0x5c, 0x7e, 0x13, 0x40, 0xb8, 0x21}};
 
+// Converts UTF-8 text to UTF-16 for the Windows API.
 std::wstring wide(const std::string& one) {
     if (one.empty()) return {};
 
@@ -102,6 +111,9 @@ std::wstring wide(const std::string& one) {
     return made;
 }
 
+// Asks the attachment service to check the file (`source` is where it came from, possibly empty).
+// Success means clean; a security refusal means infected; `std::nullopt` when COM or the service is
+// unavailable or fails in some other way.
 std::optional<Scanned> attached(const fs::path& where, const std::string& source) {
     const HRESULT began = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
@@ -132,6 +144,8 @@ std::optional<Scanned> attached(const fs::path& where, const std::string& source
     return made;
 }
 
+// Scans the file with Defender's MpCmdRun.exe from %ProgramFiles% (exit 0 is clean, 2 is a threat);
+// `std::nullopt` when the folder cannot be found or the program does not run.
 Promise<std::optional<Scanned>> defended(const fs::path& where) {
     std::vector<wchar_t> folder(MAX_PATH);
 
@@ -149,9 +163,12 @@ Promise<std::optional<Scanned>> defended(const fs::path& where) {
 
 }
 
+// Scans one file with whatever antivirus the system offers (see the top of this file); the result
+// is `unknown` with an empty `by` when there is none.
 Promise<Scanned> scanned(fs::path where, std::string source) {
 #ifdef _WIN32
-    // Usługa załączników działa wprost, w wątku puli; zawiodła — Defender z wiersza poleceń.
+    // The attachment service is called directly, on a pool thread; if it fails, Defender's command
+    // line is tried.
     return Promise<std::optional<Scanned>>{[where, source = std::move(source)](auto resolve, auto) { resolve(attached(where, source)); }}
         .then([where](std::optional<Scanned> one) -> Promise<Scanned> {
             if (one) return ready(std::move(*one));

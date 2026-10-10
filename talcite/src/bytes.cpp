@@ -1,11 +1,11 @@
 #include "talcite/bytes.hpp"
 
-// **Napis ⇄ bajty, bajt w bajt.** Bez kodowania i bez sprawdzania: napis w talcite i w twa to
-// UTF-8, a bajty to te same bajty — tyle, ile trzeba, żeby tekst z pamięci poszedł do dekodera,
-// pliku albo edytora, i żeby bajty wróciły jako napis. Dawniej ta sama pętla stała w kilkudziesięciu
-// miejscach, po obu stronach biblioteki i w próbach.
+// String to bytes and back, byte for byte. No encoding and no checking: a string in talcite and in
+// twa is UTF-8, and the bytes are the same bytes. That is all it takes for text in memory to go to
+// a decoder, a file or an editor, and for bytes to come back as a string.
 namespace talcite {
 
+// The bytes of the string, unchanged.
 Bytes bytes(std::string_view text) {
     Bytes made(text.size());
 
@@ -14,6 +14,7 @@ Bytes bytes(std::string_view text) {
     return made;
 }
 
+// The bytes as a string, unchanged.
 std::string text(std::span<const std::byte> given) {
     std::string made(given.size(), '\0');
 

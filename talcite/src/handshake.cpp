@@ -12,33 +12,37 @@
 
 namespace talcite::net {
 
-// **Uzgodnienie klucza jako szew** (S1 w twa): wymiana wiadomości, a na końcu dwa klucze — do
-// wysyłania i do odbierania. Kanał szyfrowany (`Channel`) nie wie, która to droga, więc drogi da się
-// dokładać bez ruszania kanału — Hubert: talcite ma być uniwersalne, CPace to jedna z opcji.
-// Interfejs jest maszyną stanów, jak `TlsSession`: kto prowadzi rozmowę, pyta `said()` o następną
-// wiadomość, podaje `heard()` to, co przyszło, i patrzy na `ready()`. Ramkowanie i gniazda należą do
-// kanału — uzgodnienie da się więc sprawdzić w pamięci, bez sieci.
+// Key agreement as a seam: an exchange of messages that ends with two keys, one for sending and one
+// for receiving. The encrypted channel (`Channel`) does not know which method produced them, so new
+// methods can be added without touching the channel; talcite is meant to be general, and CPace is
+// one of the options. The interface is a state machine, like `TlsSession`: whoever drives the
+// conversation asks `said()` for the next message, passes what arrived to `heard()`, and watches
+// `ready()`. Framing and sockets belong to the channel, so a handshake can be tested in memory,
+// without a network.
 //
-// **Droga z długim kluczem** (`keyed`): oba końce znają ten sam klucz o pełnej entropii (32 bajty
-// losowe — kod do wklejenia, nie do podyktowania) i dokładają do niego efemeryczne X25519, więc
-// klucze sesji są świeże za każdym razem, a ujawnienie długiego klucza później nie odsłania rozmów
-// sprzed niego. Wzór: Noise NNpsk0, uproszczony do trzech wiadomości z jawnym potwierdzeniem:
+// The long-key method (`keyed`): both ends know the same full-entropy key (32 random bytes, a code
+// to paste, not to dictate) and add ephemeral X25519 to it, so the session keys are fresh every
+// time, and revealing the long key later does not expose conversations from before. The pattern is
+// Noise NNpsk0, simplified to three messages with explicit confirmation:
 //
-//     dzwoniący → e_c
-//     odbierający → e_r, potwierdzenie odbierającego
-//     dzwoniący → potwierdzenie dzwoniącego
+//     caller → e_c
+//     answerer → e_r, the answerer's confirmation
+//     caller → the caller's confirmation
 //
-// Klucze z HKDF-SHA-512: sól — długi klucz, sekret — wynik X25519, treść — etykieta drogi, kontekst
-// (np. nazwa protokołu i etykieta zaproszenia) i obie wiadomości. Potwierdzenie to HMAC-SHA-256 po
-// etykiecie strony kluczem potwierdzenia tej strony. Klucz zły albo kontekst inny — potwierdzenie się
-// nie zgadza i uzgodnienie odmawia, zanim popłynie choć bajt treści.
+// The keys come from HKDF-SHA-512: the salt is the long key, the secret is the X25519 result, and
+// the info is the method label, the context (for example the protocol name and the invitation
+// label) and both messages. A confirmation is HMAC-SHA-256 over the side's label, keyed with that
+// side's confirmation key. With a wrong key or a different context the confirmation does not match
+// and the handshake refuses before a single byte of content flows.
 //
-// Klucz **musi** mieć pełną entropię: potwierdzenie pozwala sprawdzać zgadywane klucze poza siecią,
-// więc krótki kod do podyktowania idzie drogą PAKE (CPace), nie tą.
+// The key must have full entropy: the confirmation allows guessed keys to be checked offline, so a
+// short code to dictate goes through PAKE (CPace), not this method.
 namespace {
 
+// The size of an X25519 public value, of each session key and of each confirmation, in bytes.
 constexpr std::size_t wide = 32;
 
+// The bytes of a text, one per char, for labels and the context.
 Bytes bytes_of(std::string_view said) {
     Bytes made;
 
@@ -47,9 +51,11 @@ Bytes bytes_of(std::string_view said) {
     return made;
 }
 
+// Appends `what` to the end of `into`.
 void appended(Bytes& into, const Bytes& what) { into.insert(into.end(), what.begin(), what.end()); }
 
-// Napis z długością przed nim — dwa różne podziały tej samej sklejki dają różne wejścia HKDF.
+// Appends a text preceded by its 32-bit big-endian length, so that two different splits of the same
+// concatenation give different HKDF inputs.
 void framed(Bytes& into, const Bytes& what) {
     const auto much = static_cast<std::uint32_t>(what.size());
 
@@ -58,15 +64,16 @@ void framed(Bytes& into, const Bytes& what) {
     appended(into, what);
 }
 
-// Kawałek wiadomości — za krótka wiadomość to odmowa, nie czytanie za końcem.
+// A piece of a message; a message that is too short is a refusal, not a read past its end.
 Bytes slice(const Bytes& from, std::size_t at, std::size_t much) {
     if (at + much > from.size()) throw Trouble{"The other side does not share the key."};
 
     return Bytes(from.begin() + static_cast<std::ptrdiff_t>(at), from.begin() + static_cast<std::ptrdiff_t>(at + much));
 }
 
-// Porównanie w czasie stałym — potwierdzenie to sekret, którego bajtów nie zgaduje się po czasie.
-// Długość pierwszej wiadomości sprawdza `Agreement::shared` — zły rozmiar to tam odmowa.
+// Constant-time comparison: a confirmation is a secret whose bytes must not be guessable from
+// timing. The length of the first message is checked by `Agreement::shared`, where a wrong size is
+// a refusal.
 bool alike(const Bytes& one, const Bytes& two) {
     if (one.size() != two.size()) return false;
 
@@ -77,8 +84,11 @@ bool alike(const Bytes& one, const Bytes& two) {
     return differ == std::byte{0};
 }
 
+// The long-key handshake described at the top of this file.
 class Keyed : public Handshake {
 public:
+    // Takes the side, the long key (at least 32 bytes, otherwise it throws), the context and the
+    // cipher provider, and creates the ephemeral X25519 key pair.
     Keyed(Side side, Bytes key, std::string context, Seam<CipherProvider> cipher)
         : side_(side), key_(std::move(key)), context_(std::move(context)), cipher_(std::move(cipher)) {
         if (key_.size() < wide) throw Trouble{"A long key has at least 32 bytes."};
@@ -86,6 +96,7 @@ public:
         mine_ = cipher_.provider().agreement();
     }
 
+    // Overwrites the long key before the memory is released.
     ~Keyed() override { wiped(key_); }
 
     Keyed(const Keyed&) = delete;
@@ -93,6 +104,8 @@ public:
     Keyed(Keyed&&) = delete;
     Keyed& operator=(Keyed&&) = delete;
 
+    // The next message this side has to send, or nothing when it is the other side's turn or the
+    // handshake is over. The caller becomes ready once its confirmation is out.
     std::optional<Bytes> said() override {
         if (side_ == Side::calling && step_ == 0) {
             step_ = 1;
@@ -123,6 +136,9 @@ public:
         return std::nullopt;
     }
 
+    // Takes a message from the other side: derives the keys from the ephemeral values and checks
+    // the confirmation. Anything out of order, malformed or not confirmed throws "The other side
+    // does not share the key.".
     void heard(const Bytes& one) override {
         if (side_ == Side::answering && step_ == 0) {
             calling_ = one;
@@ -161,8 +177,10 @@ public:
         refused();
     }
 
+    // Whether the handshake has finished and `keys()` may be read.
     [[nodiscard]] bool ready() const override { return ready_; }
 
+    // The sending and receiving keys; throws until the handshake has finished.
     [[nodiscard]] const Keying& keys() const override {
         if (!ready_) throw Trouble{"The handshake is not finished."};
 
@@ -170,9 +188,12 @@ public:
     }
 
 private:
+    // Throws the single refusal shown for every failure, so that the other side learns nothing
+    // about what went wrong.
     [[noreturn]] static void refused() { throw Trouble{"The other side does not share the key."}; }
 
-    // Klucze z obu wiadomości e: wynik X25519, sól — długi klucz, treść — etykieta, kontekst i transkrypt.
+    // Derives the keys from both e messages: the X25519 result as the secret, the long key as the
+    // salt, and the label, the context and the transcript as the info.
     void derived_from(const Bytes& theirs) {
         const std::optional<Bytes> shared = mine_->shared(theirs);
 
@@ -195,6 +216,7 @@ private:
         confirm_calling_ = stamped(Sum::sha256, slice(made, 3 * wide, wide), bytes_of("calling"));
     }
 
+    // Zeroes the bytes through a volatile pointer, so that the compiler cannot drop the writes.
     static void wiped(Bytes& one) {
         volatile std::byte* at = one.data();
 
@@ -217,6 +239,7 @@ private:
 
 }
 
+// A handshake by the long-key method for the given side.
 std::shared_ptr<Handshake> keyed(Side side, Bytes key, std::string context, Seam<CipherProvider> cipher) {
     return std::make_shared<Keyed>(side, std::move(key), std::move(context), std::move(cipher));
 }

@@ -18,9 +18,11 @@ namespace {
 
 namespace stood = std::filesystem;
 
-// Zmienna środowiska podstawiona na czas jednej próby i oddana po niej — pusta wartość to brak.
+// An environment variable replaced for the duration of one trial and restored after it; an empty
+// value means unset.
 class Planted {
 public:
+    // Remembers the variable's current value and sets the new one.
     Planted(const char* name, const char* value) : name_(name) {
         if (const char* was = std::getenv(name)) was_ = was;
 
@@ -30,9 +32,11 @@ public:
     Planted(const Planted&) = delete;
     Planted& operator=(const Planted&) = delete;
 
+    // Restores the remembered value, or unsets the variable if it had none.
     ~Planted() { put(was_ ? was_->c_str() : ""); }
 
 private:
+    // Sets the variable to the value, or unsets it when the value is empty.
     void put(const char* value) const {
 #ifdef _WIN32
         (void)::_putenv_s(name_, value);
@@ -46,9 +50,10 @@ private:
     std::optional<std::string> was_;
 };
 
-// Katalog na czas jednej próby, sprzątany po sobie.
+// A directory for the duration of one trial, which cleans up after itself.
 class Nook {
 public:
+    // Creates a fresh, empty directory with a name unique to this process and object.
     Nook() {
         static std::atomic<int> counted{0};
 
@@ -61,6 +66,7 @@ public:
         stood::create_directories(where_, ignored);
     }
 
+    // Removes the directory with everything in it, ignoring errors.
     ~Nook() {
         std::error_code ignored;
         stood::remove_all(where_, ignored);
@@ -69,6 +75,7 @@ public:
     Nook(const Nook&) = delete;
     Nook& operator=(const Nook&) = delete;
 
+    // The path of the directory.
     [[nodiscard]] const stood::path& where() const { return where_; }
 
 private:
@@ -77,8 +84,9 @@ private:
 
 }
 
-// Zapis POSIX-owy na znacznik: kodowanie i odmiana odpadają, podkreślnik staje się łącznikiem.
-TRIAL("Język: zapis POSIX na znacznik") {
+// A POSIX locale name to a tag: the encoding and the modifier are dropped, the underscore becomes a
+// hyphen.
+TRIAL("Language: a POSIX locale name to a tag") {
     same(language_of("pl_PL.UTF-8"), std::string{"pl-PL"});
     same(language_of("de_DE@euro"), std::string{"de-DE"});
     same(language_of("pt_BR"), std::string{"pt-BR"});
@@ -87,8 +95,9 @@ TRIAL("Język: zapis POSIX na znacznik") {
     same(language_of("en"), std::string{"en"});
 }
 
-// `C` i `POSIX` to brak języka, nie angielski; to, co na język nie wygląda, też jest brakiem.
-TRIAL("Język: C, POSIX i napisy obce to brak języka") {
+// `C` and `POSIX` mean no language, not English; anything that does not look like a language means
+// none as well.
+TRIAL("Language: C, POSIX and foreign strings mean no language") {
     same(language_of(""), std::string{});
     same(language_of("C"), std::string{});
     same(language_of("C.UTF-8"), std::string{});
@@ -104,8 +113,8 @@ TRIAL("Język: C, POSIX i napisy obce to brak języka") {
 
 #ifndef _WIN32
 
-// Pierwsza ustawiona wygrywa, w porządku biblioteki C: LC_ALL, LC_MESSAGES, LANG.
-TRIAL("Język: LC_ALL przed LC_MESSAGES przed LANG") {
+// The first variable that is set wins, in the order of the C library: LC_ALL, LC_MESSAGES, LANG.
+TRIAL("Language: LC_ALL before LC_MESSAGES before LANG") {
     const Planted all{"LC_ALL", ""};
     const Planted messages{"LC_MESSAGES", ""};
     const Planted lang{"LANG", "pl_PL.UTF-8"};
@@ -123,8 +132,8 @@ TRIAL("Język: LC_ALL przed LC_MESSAGES przed LANG") {
     }
 }
 
-// Zmienna ustawiona, ale pusta, to jak nieustawiona — POSIX każe wtedy pytać następnej.
-TRIAL("Język: pusta zmienna przepuszcza do następnej") {
+// A variable that is set but empty counts as unset: POSIX says to ask the next one then.
+TRIAL("Language: an empty variable passes on to the next one") {
     const Planted all{"LC_ALL", ""};
     const Planted messages{"LC_MESSAGES", ""};
     const Planted lang{"LANG", "pl_PL.UTF-8"};
@@ -135,7 +144,7 @@ TRIAL("Język: pusta zmienna przepuszcza do następnej") {
     same(language(), std::string{"pl-PL"});
 }
 
-TRIAL("Język: bez zmiennych nie ma języka") {
+TRIAL("Language: without the variables there is no language") {
     const Planted all{"LC_ALL", ""};
     const Planted messages{"LC_MESSAGES", ""};
     const Planted lang{"LANG", ""};
@@ -143,8 +152,8 @@ TRIAL("Język: bez zmiennych nie ma języka") {
     same(language(), std::string{});
 }
 
-// Poza Windows argumenty to po prostu `argv`, w tej samej kolejności.
-TRIAL("Argumenty: poza Windows to argv") {
+// Outside Windows the arguments are simply `argv`, in the same order.
+TRIAL("Arguments: outside Windows they are argv") {
     char first[] = "twa";
     char second[] = "Filmy Ździśka";
     char* given[] = {first, second};
@@ -155,8 +164,8 @@ TRIAL("Argumenty: poza Windows to argv") {
     same(made[1], std::string{"Filmy Ździśka"});
 }
 
-// Folder znany z `user-dirs.dirs`: od `$HOME` i bezwzględny, w cudzysłowie albo bez.
-TRIAL("Foldery: wpisy z user-dirs.dirs") {
+// A folder known from user-dirs.dirs: relative to `$HOME` and absolute, quoted or not.
+TRIAL("Folders: entries from user-dirs.dirs") {
     const Nook nook;
 
     const stood::path house = nook.where() / "dom";
@@ -181,9 +190,9 @@ TRIAL("Foldery: wpisy z user-dirs.dirs") {
     same(fs::folder(fs::Known::music).await(), std::optional<stood::path>{nook.where() / "muzyka"});
 }
 
-// Wpis równy domowi znaczy „wyłączony"; bez wpisu i przy wpisie krzywym zostaje nazwa zwyczajowa
-// w domu — o ile stoi.
-TRIAL("Foldery: wyłączony, zwyczajowy i nieistniejący") {
+// An entry equal to the home directory means "disabled"; without an entry, and with a malformed
+// one, the customary name in the home directory applies, provided it exists.
+TRIAL("Folders: disabled, customary and missing") {
     const Nook nook;
 
     const stood::path house = nook.where() / "dom";
@@ -209,8 +218,8 @@ TRIAL("Foldery: wyłączony, zwyczajowy i nieistniejący") {
     same(fs::folder(fs::Known::music).await(), std::optional<stood::path>{});
 }
 
-// XDG_CONFIG_HOME względna nie liczy się — specyfikacja każe ją wtedy pominąć.
-TRIAL("Foldery: względna XDG_CONFIG_HOME jest pominięta") {
+// A relative XDG_CONFIG_HOME does not count: the specification says to ignore it then.
+TRIAL("Folders: a relative XDG_CONFIG_HOME is ignored") {
     const Nook nook;
 
     const stood::path house = nook.where() / "dom";
@@ -226,9 +235,9 @@ TRIAL("Foldery: względna XDG_CONFIG_HOME jest pominięta") {
     same(fs::folder(fs::Known::videos).await(), std::optional<stood::path>{house / "Kino"});
 }
 
-// Bez domu nie ma żadnego — także wtedy, gdy w katalogu bieżącym stoi `Downloads`: nazwa zwyczajowa
-// liczy się od domu, a nie od miejsca, w którym program akurat stoi.
-TRIAL("Foldery: bez domu nie ma żadnego") {
+// Without a home directory there is no folder at all, also when `Downloads` exists in the current
+// directory: the customary name counts from home, not from wherever the program happens to be.
+TRIAL("Folders: without a home directory there are none") {
     const Nook nook;
 
     stood::create_directories(nook.where() / "Downloads");
@@ -253,20 +262,20 @@ TRIAL("Foldery: bez domu nie ma żadnego") {
 
 #else
 
-TRIAL("Język: Windows mówi znacznikiem z łącznikiem") {
+TRIAL("Language: Windows gives a tag with a hyphen") {
     const std::string made = language();
 
     ought(made.empty() || made.find('-') != std::string::npos);
 }
 
-TRIAL("Foldery: dom to profil użytkownika") {
+TRIAL("Folders: home is the user profile") {
     same(fs::folder(fs::Known::home).await(), std::optional<stood::path>{fs::home()});
 }
 
 #endif
 
-// Folder znany zawsze jest katalogiem, jeśli w ogóle jest.
-TRIAL("Foldery: każdy podany folder to katalog") {
+// A known folder is always a directory, if it exists at all.
+TRIAL("Folders: every folder returned is a directory") {
     for (const fs::Known one : {fs::Known::home, fs::Known::desktop, fs::Known::documents, fs::Known::downloads,
                                 fs::Known::music, fs::Known::pictures, fs::Known::videos}) {
         const std::optional<stood::path> made = fs::folder(one).await();

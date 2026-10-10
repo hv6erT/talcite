@@ -14,23 +14,28 @@
 
 using namespace talcite;
 
-// Legenda jest oknem zewnętrznym, a wszystko inne siedzi w jej treści — więc prawie każda próba
-// zaczyna się tak samo: korzeń, okno, coś w środku, co bierze ognisko.
+// The legend is the outer window and everything else sits in its content, so almost every trial
+// starts the same way: a root, a window, something inside that takes the focus.
 #include "doing.hpp"
 
 namespace {
 
+// A focusable node of a fixed size that paints its area with one letter and counts the clicks it
+// receives.
 class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // Always focusable, so that it can hold the focus while the legend's keys are pressed.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // The fixed size, whatever space is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
     int hit = 0;
 
 protected:
+    // Fills the whole given size with the letter, shifted to the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -41,6 +46,7 @@ protected:
         return made;
     }
 
+    // Counts a click that reached this box.
     bool handle(ui::ClickEvent&) override {
         ++hit;
 
@@ -52,6 +58,7 @@ private:
     char32_t what_ = U'?';
 };
 
+// Reads one row of a view as text, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -68,7 +75,7 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("Legenda: pola dzielą wiersz i stykają się bokami") {
+TRIAL("Legend: the items share the row and touch side by side") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -81,14 +88,14 @@ TRIAL("Legenda: pola dzielą wiersz i stykają się bokami") {
 
     same(read(made, 3), std::string{"1Kopiuj 2Wyjdź"});
 
-    // Pola dzielą szerokość po równo i stoją jedno przy drugim.
+    // The items share the width equally and stand one next to another.
     same(window->items()[0]->area(), (ui::Area{{0, 3}, {8, 1}}));
     same(window->items()[1]->area(), (ui::Area{{8, 3}, {8, 1}}));
 }
 
-// Reszta z dzielenia idzie do pól od lewej, więc pasek wypełnia wiersz co do kratki i nie zostaje
-// ogryzek przy prawej krawędzi.
-TRIAL("Legenda: reszta z dzielenia idzie do pól od lewej") {
+// The remainder of the division goes to the items from the left, so the bar fills the row to the
+// cell and no stub is left at the right edge.
+TRIAL("Legend: the remainder of the division goes to the items from the left") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -104,9 +111,9 @@ TRIAL("Legenda: reszta z dzielenia idzie do pól od lewej") {
     same(window->items()[2]->area(), (ui::Area{{8, 3}, {3, 1}}));
 }
 
-// Etykietka wyprowadza się z klawisza, a nie stoi obok niego w osobnym polu — inaczej dałoby się
-// napisać legendę, która kłamie o tym, co nacisnąć.
-TRIAL("Legenda: pole nie bierze ogniska, także włączone") {
+// The tag is derived from the key rather than standing next to it in a separate field; otherwise
+// one could write a legend that lies about what to press.
+TRIAL("Legend: an item does not take the focus, even when enabled") {
     ui::Legend window;
 
     const auto one = window.add(ui::Code::f5, "Kopiuj");
@@ -115,19 +122,19 @@ TRIAL("Legenda: pole nie bierze ogniska, także włączone") {
     ought(!one->focusable());
 }
 
-TRIAL("Legenda: etykietka bierze się z klawisza") {
+TRIAL("Legend: the tag comes from the key") {
     same((ui::LegendItem{ui::Code::f1, ""}.tag()), std::string{"1"});
     same((ui::LegendItem{ui::Code::f5, ""}.tag()), std::string{"5"});
     same((ui::LegendItem{ui::Code::f10, ""}.tag()), std::string{"10"});
     same((ui::LegendItem{ui::Code::f12, ""}.tag()), std::string{"12"});
     same((ui::LegendItem{U'q', ""}.tag()), std::string{"q"});
 
-    // Escape i reszta nazwanych klawiszy nie mają w Midnight Commanderze etykietki.
+    // Escape and the other named keys have no tag in Midnight Commander.
     same((ui::LegendItem{ui::Code::escape, ""}.tag()), std::string{});
     same((ui::LegendItem{ui::Key{}, ""}.tag()), std::string{});
 }
 
-TRIAL("Legenda: klawisz dochodzi bąbelkiem od ogniska") {
+TRIAL("Legend: the key bubbles up from the focus") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -148,16 +155,16 @@ TRIAL("Legenda: klawisz dochodzi bąbelkiem od ogniska") {
     ought(top.dispatch(what));
     same(done, 1);
 
-    // Klawisz, którego legenda nie trzyma, nie jest jej sprawą.
+    // A key the legend does not hold is none of its business.
     ui::KeyEvent other{ui::Code::f6};
 
     ought(!top.dispatch(other));
     same(done, 1);
 }
 
-// Ctrl+F5 i Alt+F5 to z założenia inne skróty niż F5, a legenda nie modeluje warstw pod
-// modyfikatorami — więc ich nie bierze, zamiast udawać, że to to samo.
-TRIAL("Legenda: ze sterującym nie łapie") {
+// Ctrl+F5 and Alt+F5 are by design different shortcuts from F5, and the legend does not model
+// layers under modifiers, so it does not take them instead of pretending they are the same.
+TRIAL("Legend: does not catch a key with a modifier") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -184,9 +191,9 @@ TRIAL("Legenda: ze sterującym nie łapie") {
     same(done, 0);
 }
 
-// Kliknięcie robi to samo, co klawisz, i **nie zabiera ogniska**: po kliknięciu „Kopiuj" kopiować
-// ma się to, co było zaznaczone, a nie to, co akurat dostało ognisko.
-TRIAL("Legenda: kliknięcie robi to samo i nie zabiera ogniska") {
+// A click does the same as the key and does not take the focus: after clicking "Kopiuj" (copy),
+// what was selected is to be copied, not whatever happened to get the focus.
+TRIAL("Legend: a click does the same and does not take the focus") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -209,7 +216,7 @@ TRIAL("Legenda: kliknięcie robi to samo i nie zabiera ogniska") {
     same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
-TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
+TRIAL("Legend: a disabled item stays silent on a key and on a click") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -237,13 +244,13 @@ TRIAL("Legenda: pole niedostępne milczy na klawisz i na klik") {
 
     ui::ClickEvent where{{3, 3}, ui::Mouse::left};
 
-    // Klik pole bierze — bo w nie trafiono — ale czynu nie robi.
+    // The item takes the click (because it was hit), but does not perform its action.
     ought(top.dispatch(where));
 
     same(done, 0);
 }
 
-TRIAL("Legenda: treść dostaje wszystkie wiersze poza ostatnim") {
+TRIAL("Legend: the content gets all rows but the last") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -260,8 +267,8 @@ TRIAL("Legenda: treść dostaje wszystkie wiersze poza ostatnim") {
     same(read(made, 2), std::string{"1Raz"});
 }
 
-// Pusty pasek to pasek, którego nie ma, a nie pusta krecha na dole ekranu.
-TRIAL("Legenda: bez pól nie zabiera wiersza") {
+// An empty bar is a bar that is not there, not an empty strip at the bottom of the screen.
+TRIAL("Legend: without items it takes no row") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -275,7 +282,7 @@ TRIAL("Legenda: bez pól nie zabiera wiersza") {
     same(read(made, 2), std::string{"xxxxxx"});
 }
 
-TRIAL("Legenda: za wąskie pole ucina nazwę, a potem etykietkę") {
+TRIAL("Legend: an item that is too narrow cuts the name, then the tag") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -286,18 +293,18 @@ TRIAL("Legenda: za wąskie pole ucina nazwę, a potem etykietkę") {
 
     const View made = top.render({{0, 0}, {8, 2}});
 
-    // Cztery kratki na pole: etykietka i trzy na nazwę, z wielokropkiem.
+    // Four cells per item: the tag and three for the name, with an ellipsis.
     same(read(made, 1), std::string{"1Ko…2Wy…"});
 
-    // Przy jednej kratce na pole zostaje sama etykietka i nic poza swój prostokąt nie wychodzi.
+    // With one cell per item only the tag remains, and nothing goes outside its own area.
     const View tight = top.render({{0, 0}, {2, 2}});
 
     same(read(tight, 1), std::string{"12"});
 }
 
-// Litera bez różnicy wielkości — ta sama reguła, co w przycisku i w menu. Przy F-klawiszach nie ma
-// czego zwijać, ale pole zgłoszone literą ma odpowiadać na obie jej postacie.
-TRIAL("Legenda: litera odpowiada bez różnicy wielkości") {
+// A letter regardless of case: the same rule as in a button and in a menu. With F keys there is
+// nothing to fold, but an item registered with a letter is to answer to both its forms.
+TRIAL("Legend: a letter answers regardless of case") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -329,7 +336,7 @@ TRIAL("Legenda: litera odpowiada bez różnicy wielkości") {
     same(said, 2);
 }
 
-TRIAL("Legenda: opróżnienie pozwala złożyć pasek od nowa") {
+TRIAL("Legend: clearing lets the bar be put together again") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -353,10 +360,10 @@ TRIAL("Legenda: opróżnienie pozwala złożyć pasek od nowa") {
     same(read(made, 1), std::string{"3Trzy"});
 }
 
-// Legenda jest oknem **zewnętrznym**, a pasek menu siedzi w jej treści. Dzięki temu rozwinięte menu
-// dostaje wiersze do przedostatniego i nie ma jak zamalować paska klawiszy — jak w Midnight
-// Commanderze.
-TRIAL("Legenda: rozwinięte menu nie zamalowuje paska klawiszy") {
+// The legend is the outer window, and the menu bar sits in its content. Thanks to that, an open
+// menu gets the rows down to the second to last and has no way to paint over the key bar, as in
+// Midnight Commander.
+TRIAL("Legend: an open menu does not paint over the key bar") {
     ui::Root top;
 
     const auto legend = std::make_shared<ui::Legend>();
@@ -379,13 +386,13 @@ TRIAL("Legenda: rozwinięte menu nie zamalowuje paska klawiszy") {
 
     ought(one->opened());
 
-    // Ostatni wiersz należy do legendy i nic go nie dotyka.
+    // The last row belongs to the legend and nothing touches it.
     same(read(made, 6), std::string{"5Kopiuj"});
 }
 
-// Otwarte menu jest modalne: klawisz, którego samo nie obsłuży, nie ma iść dalej w górę. Bez tego
-// F5 przy rozwiniętym menu wywołałoby kopiowanie.
-TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
+// An open menu is modal: a key it does not handle itself is not to go further up. Without that, F5
+// with an open menu would start copying.
+TRIAL("Legend: with a menu open, the legend's key does not work") {
     ui::Root top;
 
     const auto legend = std::make_shared<ui::Legend>();
@@ -408,13 +415,13 @@ TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
 
     (void)top.render({{0, 0}, {16, 7}});
 
-    // Przy zamkniętym menu legenda działa.
+    // With the menu closed, the legend works.
     ui::KeyEvent first{ui::Code::f5};
 
     ought(top.dispatch(first));
     same(done, 1);
 
-    // F9 bierze pasek, rozwinięcie wybiera się osobno — dopiero rozwinięte menu jest modalne.
+    // F9 takes the bar, and opening a menu is chosen separately; only an open menu is modal.
     ui::KeyEvent open{ui::Code::f9};
 
     ought(top.dispatch(open));
@@ -430,11 +437,11 @@ TRIAL("Legenda: przy otwartym menu klawisz legendy nie działa") {
     same(done, 1);
 }
 
-// --- Grupa ------------------------------------------------------------------------------------
+// --- Group ---------------------------------------------------------------------------------------
 
-// Pole robi **pasek**, a nie wołający: wtedy rola, miejsce w drzewie i miejsce w capacity() biorą się
-// z jednego wywołania i nie ma jak ich rozjechać.
-TRIAL("Legenda: zdjęte pole znika też z drzewa") {
+// The item is made by the bar, not by the caller: then the role, the place in the tree and the
+// place in capacity() all come from one call and cannot drift apart.
+TRIAL("Legend: a removed item also leaves the tree") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -452,7 +459,7 @@ TRIAL("Legenda: zdjęte pole znika też z drzewa") {
     ought(!window->children().contains(two.get()));
     ought(!window->children().contains(one.get()));
 
-    // Opróżniony pasek składa się od nowa, a stare pola nie mają już z nim nic wspólnego.
+    // A cleared bar is put together again, and the old items no longer have anything to do with it.
     const auto again = window->add(ui::Code::f1, "Kopiuj");
 
     ought(window->children().contains(again.get()));
@@ -460,7 +467,7 @@ TRIAL("Legenda: zdjęte pole znika też z drzewa") {
     same(read(top.render({{0, 0}, {16, 4}}), 3), std::string{"1Kopiuj"});
 }
 
-TRIAL("Legenda: rdzeń roli pola można podmienić") {
+TRIAL("Legend: the role root of an item can be replaced") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -490,9 +497,9 @@ TRIAL("Legenda: rdzeń roli pola można podmienić") {
     same(made.at({1, 3}).style.foreground, (Color{false, 2, 2, 2}));
 }
 
-// Pole ma **zbiór** klawiszy, nie jeden klawisz: etykietkę rysuje pierwszy z nich, ale odpowiada
-// każdy. To ta sama zdolność, co w pozycji menu, i bierze się z tego samego miejsca.
-TRIAL("Legenda: pole odpowiada na każdy ze swoich klawiszy") {
+// An item has a set of keys, not one key: the first of them draws the tag, but every one answers.
+// This is the same ability as in a menu item, and it comes from the same place.
+TRIAL("Legend: an item answers to each of its keys") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -528,10 +535,9 @@ TRIAL("Legenda: pole odpowiada na każdy ze swoich klawiszy") {
     same(said, 2);
 }
 
-// Pasek rozdaje pola **zdarzeniem aktywnym**, więc uchwyt zawieszony z zewnątrz odpowiada na
-// równych prawach z `handle` — tak samo jak w oknie dialogowym i w menu. Wcześniej pasek wołał
-// `pick()` wprost i uchwyt na klawiszu aktywnym nie miał jak dojść.
-TRIAL("Legenda: pole odpowiada na klawisz uchwytem zawieszonym z zewnątrz") {
+// The bar hands out items with a shortcut event, so a hook attached from outside answers on equal
+// terms with `handle`, just as in a dialog and in a menu.
+TRIAL("Legend: an item answers a key through a hook attached from outside") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -558,9 +564,9 @@ TRIAL("Legenda: pole odpowiada na klawisz uchwytem zawieszonym z zewnątrz") {
     same(said, 1);
 }
 
-// Rozdanie idzie **wyłącznie po polach paska**: treść nie ma prawa dostać klawisza aktywnego od
-// legendy, bo pasek jest z boku układu, a nie nad treścią.
-TRIAL("Legenda: rozdanie nie wchodzi w treść") {
+// The handing out goes only over the bar's items: the content has no right to get a shortcut from
+// the legend, because the bar is beside the layout, not above the content.
+TRIAL("Legend: the handing out does not enter the content") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -587,9 +593,9 @@ TRIAL("Legenda: rozdanie nie wchodzi w treść") {
     same(said, 0);
 }
 
-// **Litera aktywna zastępuje etykietkę**, a nie staje obok niej: pole z klawiszem-literą obecną
-// w nazwie rysuje samą nazwę i podkreśla w niej tę literę, jak pozycja menu.
-TRIAL("Legenda: klawisz-litera podkreśla się w nazwie zamiast etykietki") {
+// A hot letter replaces the tag rather than standing next to it: an item whose key is a letter
+// present in its name draws only the name and underlines that letter in it, like a menu item.
+TRIAL("Legend: a letter key is underlined in the name instead of a tag") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -604,9 +610,9 @@ TRIAL("Legenda: klawisz-litera podkreśla się w nazwie zamiast etykietki") {
     ought(!made.at({1, 1}).style.under);
 }
 
-// Litera, której w nazwie nie ma, nie ma czego podkreślać — więc wraca etykietka, bo inaczej
-// byłby to skrót, o którym nikt się nie dowie.
-TRIAL("Legenda: klawisz-litera spoza nazwy zostaje etykietką") {
+// A letter that is not in the name has nothing to underline, so the tag comes back; otherwise it
+// would be a shortcut nobody learns about.
+TRIAL("Legend: a letter key not in the name stays a tag") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -621,8 +627,8 @@ TRIAL("Legenda: klawisz-litera spoza nazwy zostaje etykietką") {
     same(read(made, 1), std::string{"qWyjdź"});
 }
 
-// Klawisz funkcyjny nie ma litery, więc etykietka zostaje zawsze — tak jak w Midnight Commanderze.
-TRIAL("Legenda: klawisz funkcyjny zostaje przy cyfrze") {
+// A function key has no letter, so the tag always stays, as in Midnight Commander.
+TRIAL("Legend: a function key keeps its digit") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -636,10 +642,11 @@ TRIAL("Legenda: klawisz funkcyjny zostaje przy cyfrze") {
     same(read(made, 1), std::string{"5Kopiuj"});
 }
 
-// Pole zgłoszone klawiszem funkcyjnym **zatrzymuje cyfrę**, nawet gdy ma w zapasie także literę:
-// pasek czyta się jako ciąg numerów i dziura w tym ciągu byłaby gorsza niż brak podkreślenia.
-// Litera i tak działa, i tak samo się podkreśla — tylko nie kosztuje cyfry.
-TRIAL("Legenda: cyfra zostaje, choć pole ma też literę") {
+// An item registered with a function key keeps its digit, even when it also has a letter in
+// reserve: the bar reads as a sequence of numbers, and a gap in the sequence would be worse than a
+// missing underline. The letter still works and is underlined the same way; it just does not cost
+// the digit.
+TRIAL("Legend: the digit stays, though the item also has a letter") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -656,10 +663,9 @@ TRIAL("Legenda: cyfra zostaje, choć pole ma też literę") {
     ought(!made.at({2, 1}).style.under);
 }
 
-// **Modyfikatory są częścią klawisza**, więc pasek nie musi ich odsiewać: pole zgłoszone na F5 nie
-// odpowiada na Ctrl+F5, a pole zgłoszone na Ctrl+F5 odpowiada wyłącznie na nie. Stał tu wcześniej
-// ręczny odsiew, bo zbiór klawiszy nie umiał tego wyrazić.
-TRIAL("Legenda: pole ze sterującym odpowiada tylko na swoją kombinację") {
+// Modifiers are part of the key, so the bar does not have to filter them: an item registered for F5
+// does not answer Ctrl+F5, and an item registered for Ctrl+F5 answers only to it.
+TRIAL("Legend: an item with a modifier answers only to its own combination") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -695,9 +701,9 @@ TRIAL("Legenda: pole ze sterującym odpowiada tylko na swoją kombinację") {
     same(held, 1);
 }
 
-// Treść jest jedna: nowa wypiera starą, a pusty wskaźnik opróżnia gniazdo. Stara treść wychodzi
-// z drzewa całkiem, więc można ją włożyć gdzie indziej.
-TRIAL("Legenda: nowa treść wypiera starą, a pusta opróżnia gniazdo") {
+// There is one content: a new one displaces the old, and a null pointer empties the slot. The old
+// content leaves the tree completely, so it can be put somewhere else.
+TRIAL("Legend: new content displaces the old, and an empty one empties the slot") {
     ui::Legend window;
 
     const auto one = std::make_shared<Box>(ui::Size{4, 1}, U'a');

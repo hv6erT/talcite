@@ -4,36 +4,34 @@
 
 namespace talcite::ui {
 
-// **Pojemnik nieogniskowalny już istnieje** — to zwykły `Node`: przepuszcza jedyne dziecko, oddaje
-// jego życzenie i nie maluje nic od siebie. Jedyne, co `Pane` do tego dokłada, to **ognisko**
-// i **wypełnianie miejsca**, i dlatego oba są domyślnie włączone. Gdyby były domyślnie wyłączone,
-// element nie różniłby się od tego, co już mamy.
+// A non-focusable container already exists: it is a plain `Node`, which passes its only child
+// through, returns that child's wish and paints nothing of its own. All that `Pane` adds is focus
+// and filling the space, which is why both are on by default. If they were off by default, the
+// element would not differ from what we already have.
 //
-// Powód, dla którego on w ogóle musi istnieć, jest jeden i mało oczywisty: **klawisz idzie bąbelkiem
-// od ogniska w górę**. Legenda i pasek menu są przodkami treści, więc dopóki ogniska nie ma nigdzie,
-// `Root::dispatch` podaje klawisz korzeniowi i tam wędrówka się kończy — F-klawisze milczą. Okno bez
-// żadnego przycisku i bez pola tekstowego musi więc mieć **coś**, co to ognisko potrzyma. Cztery
-// dema miały na to własną atrapę; teraz mają jedną wspólną.
+// The reason it has to exist at all is single and not obvious: a key bubbles up from the focus.
+// The legend and the menu bar are ancestors of the content, so as long as there is no focus
+// anywhere, `Root::dispatch` hands the key to the root and the journey ends there, so the F-keys
+// stay silent. A window without any button and without a text field must therefore have something
+// that holds the focus. Demos share this one widget for that purpose.
 
-// **Bierze cały pokój i tylko tyle.** Panel i podgląd mają zająć swoją część okna niezależnie od
-// tego, jak duża jest treść, i po to `Pane` to nadpisuje — bez tego `Node::wants` zszedłby do
-// życzenia dziecka i cztery dema zmieniłyby wygląd.
-//
-// Stała, nie ustawienie. Stało tu pole `full_` z parą ustawiaczy, które **nie miały ani jednego
-// wołającego** poza trzema próbami sprawdzającymi je same; rozmiar wszedł tu przy okazji i zastygł.
-// Teraz od zadawania rozmiaru jest `Box`, a `Pane` został przy tym, po co powstał — przy ognisku.
+// Takes the whole room and only that. A panel or a preview has to occupy its part of the window
+// however large its content is, and that is why `Pane` overrides this; without it `Node::wants`
+// would descend to the child's wish. This is a constant, not a setting: setting a size is the job
+// of `Box`, and `Pane` stays with what it exists for, the focus.
 Size Pane::wants(Size room) const { return room; }
 
-// **Pojemnik nie zabiera kliknięć swoim dzieciom.** Mysz wędruje od najgłębszego węzła pod kursorem
-// w górę, więc dziecko jest pierwsze i kto je weźmie, ten kończy wędrówkę; tutaj dochodzi tylko to,
-// czego nikt niżej nie chciał. Wtedy pochłonięcie jest częścią zabrania ogniska: skoro to my je
-// bierzemy, to my jesteśmy odpowiedzią na ten klik.
+// Takes the focus on a click that no child wanted. A container does not take clicks from its
+// children: the mouse travels from the deepest node under the cursor upward, so a child comes
+// first, and whoever takes the click ends the journey; only what nobody below wanted arrives here.
+// Then absorbing the click is part of taking the focus: since we take it, we are the answer to
+// this click.
 //
-// Pojemnik nieogniskowalny oddaje fałsz i **jest przezroczysty także dla myszy** — kliknięcie idzie
-// dalej w górę, tak jakby go tu nie było.
+// A container that is not focusable (disabled) returns false and is transparent for the mouse too:
+// the click goes further up, as if the container were not there.
 //
-// Straż na korzeniu jest ta sama co w `Field`: `Node::focus()` rzuca na węźle poza drzewem, a widżet
-// bywa renderowany w próbie bez korzenia.
+// The guard on the root is the same as in `Field`: `Node::focus()` throws on a node outside a
+// tree, and a widget is sometimes rendered in a test without a root.
 bool Pane::handle(ClickEvent&) {
     if (!enabled()) return false;
 

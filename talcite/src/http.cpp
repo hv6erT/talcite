@@ -14,30 +14,35 @@
 
 #include "raced.hpp"
 
-// **Klient HTTP/1.1** — tyle, ile potrzeba, żeby rozmawiać z usługami w rodzaju TMDB i pobierać
-// obrazy: GET, nagłówki, treść z `Content-Length`, kawałkami (`chunked`) albo do zamknięcia,
-// przekierowania i jedno bezczynne połączenie na serwer. POST dla usług w rodzaju UPnP (SOAP) —
-// zawsze na nowym połączeniu, bo żądania, które coś zmienia, nie wolno po cichu powtórzyć na
-// połączeniu z zapasu, które padło w pół drogi. Wszystko idzie obietnicami na `Stream`
-// i `TlsStream`; kryptografia zostaje za szwem `TlsProvider`, jak wszędzie w talcite.
+// An HTTP/1.1 client, as much as is needed to talk to services such as TMDB and to download images:
+// GET, headers, a body framed by Content-Length, in chunks (chunked) or until close, redirects, and
+// one idle connection per server. POST serves services such as UPnP (SOAP); it always goes on a new
+// connection, because a request that changes something must not be silently repeated on a pooled
+// connection that failed halfway. Everything runs on promises over `Stream` and `TlsStream`;
+// cryptography stays behind the `TlsProvider` seam, as everywhere in talcite.
 //
-// **Pośrednik** (`Proxy`): zwykłe HTTP idzie do niego z pełnym adresem w wierszu żądania, HTTPS
-// przez tunel `CONNECT`, w którym TLS rozmawia już wprost z serwerem — pośrednik widzi tylko nazwę
-// i port. Sam pośrednik mówi zwykłym HTTP; pośrednik za TLS i SOCKS nie są obsługiwane.
+// A proxy (`Proxy`): plain HTTP goes to it with the full address in the request line, HTTPS through
+// a CONNECT tunnel, in which TLS talks directly to the server, so the proxy sees only the name and
+// the port. The proxy itself speaks plain HTTP; a proxy behind TLS and SOCKS are not supported.
 //
-// Status odpowiedzi nie jest błędem: 404 i 429 wracają jako `Response`, bo co z nimi zrobić, wie
-// wołający. `HttpTrouble` znaczy wyłącznie złamanie protokołu albo przekroczenie granicy z `Limits`.
+// A response status is not an error: 404 and 429 come back as a `Response`, because the caller
+// knows what to do with them. `HttpTrouble` means only a protocol violation or a limit from
+// `Limits` being exceeded.
 namespace talcite::net {
 
 namespace {
 
+// How many bytes one read asks the connection for.
 constexpr std::size_t piece = 64 * 1024;
 
-// Wiersz nagłówka kawałka (`chunked`) i wiersz przyczepki — dłuższy nie jest już rozmową.
+// The longest chunk header line (chunked) or trailer line; anything longer is no longer a
+// conversation.
 constexpr std::size_t line_most = 4096;
 
+// An ASCII letter in lowercase; other bytes stay as they are.
 char lowered(char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; }
 
+// The text with its ASCII letters in lowercase.
 std::string lowered(std::string_view text) {
     std::string made{text};
 
@@ -46,11 +51,13 @@ std::string lowered(std::string_view text) {
     return made;
 }
 
+// Whether two texts are equal ignoring ASCII case, as header names are compared.
 bool alike(std::string_view one, std::string_view two) {
     return one.size() == two.size() &&
            std::equal(one.begin(), one.end(), two.begin(), [](char a, char b) { return lowered(a) == lowered(b); });
 }
 
+// The text without leading and trailing spaces and tabs.
 std::string_view trimmed(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
@@ -58,18 +65,21 @@ std::string_view trimmed(std::string_view text) {
     return text;
 }
 
-// Znak, który może stać w nazwie nagłówka (`token` z RFC 9110).
+// A character that may appear in a header name (token in RFC 9110).
 bool tokenish(char one) {
     if ((one >= 'a' && one <= 'z') || (one >= 'A' && one <= 'Z') || (one >= '0' && one <= '9')) return true;
 
     return std::string_view{"!#$%&'*+-.^_`|~"}.find(one) != std::string_view::npos;
 }
 
-// Znak celu żądania: widoczny ASCII. Spację, sterujące i bajty spoza ASCII koduje wołający (%20).
+// A character of a request target: visible ASCII. Spaces, control characters and bytes outside
+// ASCII are encoded by the caller (%20).
 bool visible(char one) { return one > ' ' && one < 0x7F; }
 
+// The default port of the scheme: 443 for HTTPS, 80 for HTTP.
 std::uint16_t fallback(bool secure) { return secure ? 443 : 80; }
 
+// A port number from decimal digits, 1 to 65535; nothing for anything else.
 std::optional<std::uint16_t> ported(std::string_view digits) {
     unsigned made = 0;
 
@@ -81,7 +91,8 @@ std::optional<std::uint16_t> ported(std::string_view digits) {
     return static_cast<std::uint16_t>(made);
 }
 
-// Host w zapisie adresu: nazwa albo IPv4 z liter, cyfr, kropek i myślników; IPv6 w nawiasach.
+// A host as written in an address: a name or IPv4 from lowercase letters, digits, dots and hyphens
+// (and underscores); IPv6 inside brackets.
 bool hosted(std::string_view host, bool bracketed) {
     if (host.empty()) return false;
 
@@ -92,6 +103,8 @@ bool hosted(std::string_view host, bool bracketed) {
     });
 }
 
+// The host for the Host header and for printing: IPv6 in brackets, the port only when it is not the
+// scheme's default.
 std::string authority(const Url& one) {
     std::string made = one.host.find(':') != std::string::npos ? "[" + one.host + "]" : one.host;
 
@@ -100,32 +113,39 @@ std::string authority(const Url& one) {
     return made;
 }
 
+// A promise that is already fulfilled.
 Promise<void> ready() {
     return Promise<void>{[](auto resolve, auto) { resolve(); }};
 }
 
+// A promise that resolves with the given value.
 template <typename T>
 Promise<T> given(T value) {
     return Promise<T>{[value = std::move(value)](auto resolve, auto) mutable { resolve(std::move(value)); }};
 }
 
+// A promise that rejects with the given exception.
 template <typename T>
 Promise<T> refused(std::exception_ptr why) {
     return Promise<T>{[why](auto, auto reject) { reject(why); }};
 }
 
+// A protocol violation with the given message.
 HttpTrouble malformed(const std::string& said) { return HttpTrouble{HttpTrouble::Why::malformed, said}; }
 
+// A limit from `Limits` exceeded, with the given message.
 HttpTrouble oversized(const std::string& said) { return HttpTrouble{HttpTrouble::Why::oversized, said}; }
 
-// Wynik obietnicy, która już nie odrzuca: wartość albo przechwycony wyjątek. Tak łapie się porażkę,
-// żeby coś po niej zrobić — ponowić na świeżym połączeniu albo spróbować następnego adresu.
+// The result of a promise that no longer rejects: a value or a captured exception. This is how a
+// failure is caught in order to do something after it: retry on a fresh connection or try the next
+// address.
 template <typename T>
 struct Outcome {
     std::optional<T> value;
     std::exception_ptr why;
 };
 
+// Turns a promise into one that always resolves, carrying either the value or the exception.
 template <typename T>
 Promise<Outcome<T>> caught(Promise<T> one) {
     auto slot = std::make_shared<Outcome<T>>();
@@ -136,9 +156,9 @@ Promise<Outcome<T>> caught(Promise<T> one) {
     return Promise<void>::all_settled(std::move(tried)).then([slot] { return std::move(*slot); });
 }
 
-// **Jedno połączenie**: zwykłe albo szyfrowane, z bajtami przeczytanymi, a jeszcze nie zużytymi.
-// `heard` mówi, czy przyszedł już choć bajt odpowiedzi — połączenie wzięte z zapasu, które padło
-// przed pierwszym bajtem, serwer po prostu zamknął w bezczynności i żądanie idzie jeszcze raz.
+// One connection: plain or encrypted, with bytes already read but not yet consumed. `heard` tells
+// whether at least one byte of the response has arrived: a pooled connection that failed before the
+// first byte was simply closed by the server while idle, and the request is sent again.
 struct Line {
     Stream plain;
     TlsStream secure;
@@ -147,14 +167,17 @@ struct Line {
     bool forwarded = false;
     std::string login;
 
+    // Reads up to `most` bytes through whichever stream the line holds.
     [[nodiscard]] Promise<Bytes> read(std::size_t most, Patience patience) const {
         return secure.held() ? secure.read(most, patience) : plain.read(most, patience);
     }
 
+    // Writes the bytes through whichever stream the line holds.
     [[nodiscard]] Promise<void> write(Bytes what, Patience patience) const {
         return secure.held() ? secure.write(std::move(what), patience) : plain.write(std::move(what), patience);
     }
 
+    // Closes both the encrypted and the plain stream, whichever are held.
     void close() {
         if (secure.held()) secure.close();
         if (plain.held()) plain.close();
@@ -165,9 +188,10 @@ using Wire = std::shared_ptr<Line>;
 
 using Place = std::tuple<bool, std::string, std::uint16_t>;
 
+// The key of the idle pool: scheme, host and port.
 Place place_of(const Url& one) { return Place{one.secure, one.host, one.port}; }
 
-// Dołożenie do zapasu bajtów; `false`, gdy druga strona zamknęła.
+// Adds more bytes to the buffer; false when the other side has closed.
 Promise<bool> more(const Wire& wire, Patience patience) {
     return wire->read(piece, patience).then([wire](Bytes got) {
         if (got.empty()) return false;
@@ -179,6 +203,7 @@ Promise<bool> more(const Wire& wire, Patience patience) {
     });
 }
 
+// The offset of `what` in the bytes, or npos.
 std::size_t found(const Bytes& in, std::string_view what) {
     const Bytes wanted = bytes(what);
 
@@ -187,8 +212,9 @@ std::size_t found(const Bytes& in, std::string_view what) {
     return at == in.end() ? std::string::npos : static_cast<std::size_t>(at - in.begin());
 }
 
-// Bajty od początku zapasu aż do znacznika (bez niego), zdjęte razem ze znacznikiem. Znacznik
-// dalej niż `most` od początku to przekroczona granica — zanim przyjdzie reszta.
+// The bytes from the start of the buffer up to the mark (without it), removed together with the
+// mark. A mark further than `most` from the start is an exceeded limit, reported before the rest
+// arrives.
 Promise<std::string> until(const Wire& wire, std::string_view mark, std::size_t most, Patience patience,
                            bool head) {
     if (const std::size_t at = found(wire->kept, mark); at != std::string::npos) {
@@ -211,7 +237,7 @@ Promise<std::string> until(const Wire& wire, std::string_view mark, std::size_t 
     });
 }
 
-// Dokładnie `much` bajtów treści, dopisanych do `into`.
+// Exactly `much` bytes of the body, appended to `into`.
 Promise<void> exact(const Wire& wire, std::size_t much, std::shared_ptr<Bytes> into, Patience patience) {
     if (wire->kept.size() >= much) {
         into->insert(into->end(), wire->kept.begin(), wire->kept.begin() + static_cast<std::ptrdiff_t>(much));
@@ -227,7 +253,7 @@ Promise<void> exact(const Wire& wire, std::size_t much, std::shared_ptr<Bytes> i
     });
 }
 
-// Treść do zamknięcia połączenia — odpowiedź bez długości i bez kawałków.
+// The body until the connection closes: a response without a length and without chunks.
 Promise<void> drained(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t most, Patience patience) {
     into->insert(into->end(), wire->kept.begin(), wire->kept.end());
     wire->kept.clear();
@@ -241,6 +267,7 @@ Promise<void> drained(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t
     });
 }
 
+// A chunk size from hexadecimal digits; nothing when the text is not entirely such a number.
 std::optional<std::size_t> hexed(std::string_view text) {
     std::size_t made = 0;
 
@@ -253,8 +280,9 @@ std::optional<std::size_t> hexed(std::string_view text) {
 
 Promise<void> trailed(const Wire& wire, Patience patience);
 
-// Treść kawałkami: wiersz z długością szesnastkowo (rozszerzenia po średniku się pomija), kawałek,
-// CRLF; kawałek zerowy kończy, a po nim przyczepka do pustego wiersza — czytana i odrzucana.
+// A chunked body: a line with the size in hexadecimal (extensions after a semicolon are skipped),
+// the chunk, CRLF; a zero chunk ends it, followed by a trailer up to an empty line, which is read
+// and discarded.
 Promise<void> chunked(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t most, Patience patience) {
     return until(wire, "\r\n", line_most, patience, false)
         .then([wire, into, most, patience](std::string line) -> Promise<void> {
@@ -267,13 +295,14 @@ Promise<void> chunked(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t
 
             if (*much > most || into->size() > most - *much) throw oversized("The response body is too large.");
 
-            // Po kawałku od razu CRLF: granica zero odrzuca każdy bajt przed nim.
+            // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
             return exact(wire, *much, into, patience)
                 .then([wire, patience] { return until(wire, "\r\n", 0, patience, false); })
                 .then([wire, into, most, patience](const std::string&) { return chunked(wire, into, most, patience); });
         });
 }
 
+// Reads and discards the trailer lines up to the empty line that ends the response.
 Promise<void> trailed(const Wire& wire, Patience patience) {
     return until(wire, "\r\n", line_most, patience, false).then([wire, patience](const std::string& line) -> Promise<void> {
         if (line.empty()) return ready();
@@ -282,13 +311,15 @@ Promise<void> trailed(const Wire& wire, Patience patience) {
     });
 }
 
-// Głowa odpowiedzi rozebrana: wersja, status, nagłówki.
+// The response head taken apart: version, status, headers.
 struct Head {
     bool eleven = true;
     int status = 0;
     std::vector<Header> headers;
 };
 
+// Parses the status line and the header lines of a response head (without the final empty line);
+// throws a malformed-response error for anything that is not HTTP/1.x.
 Head parsed(const std::string& head) {
     Head made;
 
@@ -316,8 +347,8 @@ Head parsed(const std::string& head) {
 
         const std::string_view line = std::string_view{head}.substr(from, at == std::string::npos ? std::string::npos : at - from);
 
-        // Pustego wiersza tu nie ma — głowa kończy się na pierwszym. Zawinięty nagłówek (obs-fold)
-        // RFC 9112 każe odrzucić albo skleić; odrzucamy.
+        // There is no empty line here: the head ends at the first one. A folded header (obs-fold)
+        // must be rejected or joined according to RFC 9112; we reject it.
         const std::size_t colon = line.find(':');
 
         if (colon == std::string_view::npos || colon == 0 ||
@@ -330,7 +361,7 @@ Head parsed(const std::string& head) {
     return made;
 }
 
-// Słowa listy nagłówka (`Connection`, `Transfer-Encoding`) małymi literami.
+// The words of a list header (Connection, Transfer-Encoding) in lowercase.
 std::vector<std::string> worded(const std::vector<Header>& headers, std::string_view name) {
     std::vector<std::string> made;
 
@@ -352,7 +383,7 @@ std::vector<std::string> worded(const std::vector<Header>& headers, std::string_
     return made;
 }
 
-// Jak odczytać treść: bez niej, dokładna długość, kawałkami albo do zamknięcia.
+// How to read the body: none, an exact length, in chunks, or until close.
 enum class Framing : std::uint8_t { none, sized, pieces, closing };
 
 struct Frame {
@@ -360,6 +391,9 @@ struct Frame {
     std::size_t size = 0;
 };
 
+// Decides how the body is framed: none for 204 and 304, chunked when Transfer-Encoding says so (any
+// other coding is refused), otherwise Content-Length, which must be one number within `most`, and
+// until close without it.
 Frame framed(const Head& head, std::size_t most) {
     if (head.status == 204 || head.status == 304) return {Framing::none, 0};
 
@@ -391,8 +425,8 @@ Frame framed(const Head& head, std::size_t most) {
     return {Framing::sized, *size};
 }
 
-// Czy połączenie wolno wziąć do następnego żądania: HTTP/1.1, bez `Connection: close`, treść
-// z granicą i nic nadmiarowego w zapasie.
+// Whether the connection may be taken for the next request: HTTP/1.1, no "Connection: close", a
+// body with a boundary, and nothing extra left in the buffer.
 bool reusable(const Head& head, Framing how, const Wire& wire) {
     if (!head.eleven || how == Framing::closing || !wire->kept.empty()) return false;
 
@@ -401,7 +435,7 @@ bool reusable(const Head& head, Framing how, const Wire& wire) {
     return std::find(words.begin(), words.end(), "close") == words.end();
 }
 
-// Podpis dla pośrednika: `Basic` z parą „użytkownik:hasło" w base64 (RFC 7617).
+// The proxy credential: Basic with the "user:password" pair in base64 (RFC 7617).
 std::string based(std::string_view text) {
     static constexpr std::string_view letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -422,12 +456,13 @@ std::string based(std::string_view text) {
     return made;
 }
 
+// The Proxy-Authorization header line for the login, or nothing without one.
 std::string authorized(const std::string& login) {
     return login.empty() ? std::string{} : "Proxy-Authorization: Basic " + based(login) + "\r\n";
 }
 
-// Żądanie do serwera albo — przez pośrednika, zwykłym HTTP — z pełnym adresem w wierszu żądania
-// (RFC 9112, 3.2.2) i podpisem dla pośrednika.
+// The request for the server or, through a proxy over plain HTTP, with the full address in the
+// request line (RFC 9112, 3.2.2) and the proxy credential.
 Bytes requested(const Request& request, const Line& line) {
     const std::string target = line.forwarded ? to_string(request.url) : request.url.target;
 
@@ -455,6 +490,8 @@ Bytes requested(const Request& request, const Line& line) {
     return whole;
 }
 
+// Refuses a request whose header names are not tokens or whose values contain CR, LF or NUL, which
+// would let a caller inject lines.
 void checked(const Request& request) {
     for (const Header& one : request.headers) {
         if (one.name.empty() || !std::all_of(one.name.begin(), one.name.end(), tokenish))
@@ -465,8 +502,8 @@ void checked(const Request& request) {
     }
 }
 
-// Adres przekierowania względem bieżącego: pełny, bez schematu (`//host/...`), od korzenia
-// (`/...`) albo względny — ten ostatni zastępuje ostatni odcinek ścieżki.
+// A redirect address relative to the current one: full, without a scheme (//host/...), from the
+// root (/...) or relative, where the last one replaces the last segment of the path.
 std::optional<Url> joined(const Url& base, std::string_view location) {
     if (location.find("://") != std::string_view::npos) return Url::from_string(location);
 
@@ -493,9 +530,12 @@ std::optional<Url> joined(const Url& base, std::string_view location) {
 
 // --- Url -----------------------------------------------------------------------------------------
 
-// Adres względem tego — jak cel przekierowania; tak samo rozwiązuje się adresy z opisów urządzeń.
+// An address relative to this one, like a redirect target; addresses from device descriptions are
+// resolved the same way.
 std::optional<Url> Url::resolved(std::string_view location) const { return joined(*this, location); }
 
+// Parses an http or https address; nothing for any other scheme or a malformed host, port or
+// target. The fragment is dropped and an empty target becomes "/".
 std::optional<Url> Url::from_string(std::string_view text) {
     const std::size_t scheme_end = text.find("://");
 
@@ -573,12 +613,14 @@ std::optional<Url> Url::from_string(std::string_view text) {
     return made;
 }
 
+// The address written out again, with the port only when it is not the default.
 std::string to_string(const Url& one) { return std::string{one.secure ? "https://" : "http://"} + authority(one) + one.target; }
 
 // --- Proxy ---------------------------------------------------------------------------------------
 
 namespace {
 
+// The value of one hexadecimal digit, or -1.
 int nibble(char one) {
     if (one >= '0' && one <= '9') return one - '0';
     if (one >= 'a' && one <= 'f') return one - 'a' + 10;
@@ -587,8 +629,8 @@ int nibble(char one) {
     return -1;
 }
 
-// `%40` i podobne w użytkowniku i haśle — w zmiennej środowiska `@` i `:` w haśle muszą być
-// zakodowane, a pośrednik dostaje je jawnie.
+// %40 and similar in the user and the password: in an environment variable, @ and : in a password
+// must be encoded, and the proxy receives them in the clear.
 std::string unescaped(std::string_view text) {
     std::string made;
 
@@ -605,8 +647,9 @@ std::string unescaped(std::string_view text) {
     return made;
 }
 
-// Pośrednik z zapisu w rodzaju `http://użytkownik:hasło@pośrednik:3128/`; bez schematu to HTTP,
-// jak u curl i wget. Schemat inny niż HTTP(S) — SOCKS — i zapis krzywy dają brak.
+// A proxy from a notation such as http://user:password@proxy:3128/; without a scheme it is HTTP, as
+// in curl and wget. A scheme other than HTTP(S), such as SOCKS, and a malformed notation give
+// nothing.
 std::optional<Gateway> gated(std::string_view text) {
     text = trimmed(text);
 
@@ -635,6 +678,8 @@ std::optional<Gateway> gated(std::string_view text) {
     return made;
 }
 
+// The exception list of no_proxy: names separated by commas or spaces, lowercase, "*." shortened to
+// ".".
 std::vector<std::string> bypassed(std::string_view text) {
     std::vector<std::string> made;
 
@@ -648,7 +693,8 @@ std::vector<std::string> bypassed(std::string_view text) {
 
         if (one.rfind("*.", 0) == 0) one.erase(0, 1);
 
-        // Port przy nazwie nie zawęża — pomijamy go; adres IPv6 w nawiasach traci nawiasy.
+        // A port next to a name does not narrow anything, so it is dropped; an IPv6 address in
+        // brackets loses the brackets.
         if (one.front() == '[') {
             one = one.substr(1, one.find(']') - 1);
         } else if (std::count(one.begin(), one.end(), ':') == 1) {
@@ -661,6 +707,7 @@ std::vector<std::string> bypassed(std::string_view text) {
     return made;
 }
 
+// The first of the two environment variables that is set and not empty, or an empty text.
 std::string environment(const char* one, const char* two) {
     for (const char* name : {one, two}) {
         if (name == nullptr) continue;
@@ -673,6 +720,7 @@ std::string environment(const char* one, const char* two) {
 
 }
 
+// A proxy configuration from the three texts: for plain HTTP, for HTTPS and the exception list.
 Proxy Proxy::from_strings(std::string_view plain, std::string_view secure, std::string_view bypass) {
     Proxy made;
 
@@ -683,9 +731,9 @@ Proxy Proxy::from_strings(std::string_view plain, std::string_view secure, std::
     return made;
 }
 
-// Zmienne jak u curl: małe litery przed wielkimi, `ALL_PROXY` dla obu, gdy osobnej nie ma.
-// `HTTP_PROXY` wielkimi literami świadomie pomijamy: pod CGI ustawia ją nagłówek `Proxy:` z cudzego
-// żądania (httpoxy), więc curl też jej nie czyta.
+// Variables as in curl: lowercase before uppercase, ALL_PROXY for both when a separate one is
+// missing. Uppercase HTTP_PROXY is deliberately skipped: under CGI it is set by the Proxy: header
+// of someone else's request (httpoxy), so curl does not read it either.
 Proxy Proxy::from_environment() {
     std::string plain = environment("http_proxy", nullptr);
     std::string secure = environment("https_proxy", "HTTPS_PROXY");
@@ -697,12 +745,13 @@ Proxy Proxy::from_environment() {
     return from_strings(plain, secure, environment("no_proxy", "NO_PROXY"));
 }
 
-// Pośrednik dla adresu albo brak, gdy adres stoi w wyjątkach: `*` to wszystkie, nazwa to ona sama
-// i jej poddomeny, `.nazwa` — tak samo.
+// The proxy for the address, or nothing when the address is in the exceptions: "*" means all, a
+// name means itself and its subdomains, and ".name" the same.
 const Gateway* Proxy::chosen(const Url& target) const {
     for (const std::string& one : bypass) {
         if (one == "*") return nullptr;
 
+        // A leading dot means the same as the bare name.
         const std::string_view name = one.front() == '.' ? std::string_view{one}.substr(1) : std::string_view{one};
 
         if (name.empty()) continue;
@@ -721,6 +770,7 @@ const Gateway* Proxy::chosen(const Url& target) const {
 
 // --- Response ------------------------------------------------------------------------------------
 
+// The value of the first header with this name, ignoring case, or null.
 const std::string* Response::header(std::string_view name) const {
     for (const Header& one : headers)
         if (alike(one.name, name)) return &one.value;
@@ -735,10 +785,10 @@ HttpTrouble::HttpTrouble(Why why, const std::string& said, Address where)
 
 // --- HttpClient ----------------------------------------------------------------------------------
 
-// Stan klienta: szew TLS, granice i zapas bezczynnych połączeń — **jedno na serwer**. Drugie
-// połączenie oddane do tego samego serwera zamyka poprzednie: przy usłudze w rodzaju TMDB żądania
-// idą po kolei z kolejki, a zapas na każde równoległe żądanie trzymałby gniazda, których nikt nie
-// użyje.
+// The client's state: the TLS seam, the limits and the pool of idle connections, one per server. A
+// second connection returned for the same server closes the previous one: with a service such as
+// TMDB, requests go one after another from a queue, and a pool entry for every parallel request
+// would hold sockets nobody uses.
 struct HttpClient::Held {
     Seam<TlsProvider> tls;
     Limits limits;
@@ -747,8 +797,8 @@ struct HttpClient::Held {
     std::mutex guard;
     std::map<Place, Wire> idle;
 
-    // Miejsce po wziętym połączeniu zostaje puste, nie znika: serwerów, z którymi się rozmawia, jest
-    // kilka, a nie tysiące.
+    // The slot of a taken connection stays empty and does not disappear: the servers one talks to
+    // are a few, not thousands.
     [[nodiscard]] Wire taken(const Place& where) {
         const std::lock_guard<std::mutex> held{guard};
 
@@ -757,6 +807,8 @@ struct HttpClient::Held {
         return one == idle.end() ? nullptr : std::exchange(one->second, nullptr);
     }
 
+    // Puts the connection into the pool for its server and closes the one it replaces, outside the
+    // lock.
     void returned(const Place& where, Wire wire) {
         Wire old;
 
@@ -777,12 +829,14 @@ namespace {
 
 using Kept = std::shared_ptr<HttpClient::Held>;
 
-// Połączenie z hostem i portem: nazwa rozwiązana, adresy w wyścigu (`raced`) — pierwszy, który się
-// połączy, wygrywa. `resolve` nie oddaje pustego wykazu: nazwa bez adresów odrzuca.
+// A connection to the host and port: the name is resolved and the addresses race (`raced`); the
+// first one to connect wins. `resolve` does not return an empty list: a name without addresses
+// rejects.
 Promise<Stream> reached(const std::string& host, std::uint16_t port, Patience patience) {
     return resolve(host, port).then([patience](std::vector<Address> found) { return raced(std::move(found), patience); });
 }
 
+// Wraps the stream into a line: as it is for HTTP, after a TLS client handshake for HTTPS.
 Promise<Wire> wrapped(Stream stream, const Url& url, const Seam<TlsProvider>& tls, Patience patience) {
     if (!url.secure) {
         auto made = std::make_shared<Line>();
@@ -801,10 +855,11 @@ Promise<Wire> wrapped(Stream stream, const Url& url, const Seam<TlsProvider>& tl
     });
 }
 
-// Tunel przez pośrednika: `CONNECT host:port`, odpowiedź 2xx i od tej chwili bajty idą wprost do
-// serwera. Odmowa — 407 bez podpisu, 403 dla zakazanego portu — jest kłopotem pośrednika, nie
-// odpowiedzią serwera, więc nie wraca jako `Response`. Pośrednik nie może po 2xx dosłać niczego
-// przed powitaniem TLS; bajty w zapasie to złamany protokół.
+// A tunnel through the proxy: CONNECT host:port, a 2xx answer, and from then on the bytes go
+// straight to the server. A refusal (407 without a credential, 403 for a forbidden port) is the
+// proxy's trouble, not the server's answer, so it does not come back as a `Response`. After 2xx the
+// proxy must not send anything before the TLS greeting; bytes in the buffer are a protocol
+// violation.
 Promise<Stream> tunneled(Stream stream, const Gateway& via, const Url& url, std::size_t head, Patience patience) {
     const std::string place = (url.host.find(':') != std::string::npos ? "[" + url.host + "]" : url.host) + ":" +
                               std::to_string(url.port);
@@ -837,6 +892,8 @@ Promise<Stream> tunneled(Stream stream, const Gateway& via, const Url& url, std:
         });
 }
 
+// A new line to the address: directly, through a proxy with the full address for HTTP, or through a
+// CONNECT tunnel for HTTPS. A proxy reached over HTTPS is refused.
 Promise<Wire> dialed(const Kept& held, const Url& url) {
     const Patience patience = held->limits.patience;
     const Seam<TlsProvider> tls = held->tls;
@@ -871,8 +928,8 @@ Promise<Wire> dialed(const Kept& held, const Url& url) {
     });
 }
 
-// Jedna wymiana na danym połączeniu: żądanie, głowa (z pominięciem odpowiedzi 1xx), treść. Na koniec
-// połączenie wraca do zapasu, jeśli można go użyć jeszcze raz, a inaczej się zamyka.
+// One exchange on the given connection: the request, the head (skipping 1xx responses), the body.
+// At the end the connection goes back to the pool if it can be used again, otherwise it is closed.
 Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
     const Patience patience = held->limits.patience;
     const Place where = place_of(request.url);
@@ -914,8 +971,9 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
         });
 }
 
-// Wymiana z połączeniem z zapasu albo nowym. Połączenie z zapasu, które padło przed pierwszym bajtem
-// odpowiedzi, serwer zamknął w bezczynności — żądanie idzie wtedy jeszcze raz, na nowym.
+// An exchange on a pooled connection or a new one. A pooled connection that failed before the first
+// byte of the response was closed by the server while idle, and the request is then sent again on a
+// new one.
 Promise<Response> attempted(const Kept& held, const Request& request) {
     if (Wire idle = request.method == "GET" ? held->taken(place_of(request.url)) : Wire{}) {
         return caught(exchanged(held, request, idle)).then([held, request, idle](Outcome<Response> got) -> Promise<Response> {
@@ -932,10 +990,12 @@ Promise<Response> attempted(const Kept& held, const Request& request) {
     return dialed(held, request.url).then([held, request](Wire wire) { return exchanged(held, request, wire); });
 }
 
+// Whether the status is a redirect that is followed: 301, 302, 303, 307 or 308.
 bool redirecting(int status) {
     return status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
 }
 
+// Sends the request and follows redirects up to the limit, refusing a downgrade from HTTPS to HTTP.
 Promise<Response> fetched(const Kept& held, Request request, int hops) {
     checked(request);
 
@@ -956,8 +1016,8 @@ Promise<Response> fetched(const Kept& held, Request request, int hops) {
         if (request.url.secure && !next->secure)
             throw HttpTrouble{HttpTrouble::Why::downgraded, "A redirect leaves HTTPS for plain HTTP."};
 
-        // Poświadczenia nie idą za przekierowaniem do innego serwera. 307 i 308 powtarzają żądanie
-        // razem z treścią, reszta przekierowań to już GET bez treści.
+        // Credentials do not follow a redirect to another server. 307 and 308 repeat the request
+        // together with its body; the other redirects become a GET without a body.
         Request again{*next, {}};
 
         if (got.status == 307 || got.status == 308) {
@@ -975,6 +1035,7 @@ Promise<Response> fetched(const Kept& held, Request request, int hops) {
 
 }
 
+// A client with the TLS seam, the limits and the proxy configuration.
 HttpClient::HttpClient(Seam<TlsProvider> tls, Limits limits, Proxy proxy) : held_(std::make_shared<Held>()) {
     held_->tls = std::move(tls);
     held_->limits = limits;
@@ -983,7 +1044,7 @@ HttpClient::HttpClient(Seam<TlsProvider> tls, Limits limits, Proxy proxy) : held
 
 namespace {
 
-// Jak każda obietnica sieci — rusza od razu, a nie przy pierwszym czekaniu.
+// Like every network promise, it starts at once, not at the first wait.
 Promise<Response> sent(const Kept& held, Request request) {
     if (!held) return refused<Response>(std::make_exception_ptr(Trouble{"The HTTP client is empty."}));
 
@@ -996,6 +1057,7 @@ Promise<Response> sent(const Kept& held, Request request) {
 
 }
 
+// Sends a GET request; any body in the request is dropped.
 Promise<Response> HttpClient::get(Request request) const {
     request.method = "GET";
     request.body.clear();
@@ -1003,6 +1065,7 @@ Promise<Response> HttpClient::get(Request request) const {
     return sent(held_, std::move(request));
 }
 
+// Sends a POST request with the given body, always on a new connection.
 Promise<Response> HttpClient::post(Request request, Bytes body) const {
     request.method = "POST";
     request.body = std::move(body);

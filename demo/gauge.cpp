@@ -24,6 +24,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -36,18 +37,18 @@ private:
 
 }
 
-// Dwa paski: jeden wie, ile zrobił, drugi tylko tyle, że coś się dzieje. Ten drugi kręci się sam
-// — zegarem biblioteki, bez ani jednej linijki po stronie programu.
+// Two bars: one knows how much it has done, the other only that something is happening. The second
+// one spins by itself, on the library's clock, without a single line on the program's side.
 int main() {
     talcite::Term term;
 
     Sheet sheet{term};
 
     const auto legend = std::make_shared<talcite::ui::Legend>();
-    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — pasek postępu");
+    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — progress bar");
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    const auto told = std::make_shared<talcite::ui::Span>("F5 zaczyna, F6 przełącza nieokreślony");
+    const auto told = std::make_shared<talcite::ui::Span>("F5 starts, F6 toggles the indeterminate bar");
 
     const auto known = std::make_shared<talcite::ui::Gauge>(46);
     const auto guess = std::make_shared<talcite::ui::Gauge>(46);
@@ -55,22 +56,23 @@ int main() {
     guess->busy(true);
 
     column->children().add(told);
-    column->children().add(std::make_shared<talcite::ui::Line>("Kopiowanie"));
+    column->children().add(std::make_shared<talcite::ui::Line>("Copying"));
     column->children().add(known);
-    column->children().add(std::make_shared<talcite::ui::Line>("Czekanie"));
+    column->children().add(std::make_shared<talcite::ui::Line>("Waiting"));
     column->children().add(guess);
 
     frame->children().add(column);
     legend->content(frame);
 
-    // Postęp udawany: co pięćdziesiąt milisekund o krok dalej. W prawdziwym programie zamiast
-    // licznika stoi tu `one.progress()` z obietnicy kopiowania — ta sama liczba, ten sam ułamek.
+    // Pretend progress: one step further every fifty milliseconds. In a real program, instead of
+    // the counter, this would be `one.progress()` from the copy promise: the same number, the same
+    // fraction.
     const auto running = std::make_shared<bool>(false);
     const auto again = std::make_shared<std::function<void()>>();
 
-    // **Obietnicę trzeba trzymać do rozstrzygnięcia.** Porzucone `then(...).start()` nigdy nie
-    // zadziała, bo ogniwo wisi na obietnicy słabym wskazaniem — to ta sama reguła, dzięki której
-    // śmierć właściciela odcina wywołania zwrotne.
+    // The promise has to be kept until it settles. An abandoned `then(...).start()` never fires,
+    // because the chain hangs on the promise through a weak pointer; it is the same rule that cuts
+    // off the callbacks when their owner dies.
     const auto beat = std::make_shared<std::optional<talcite::Promise<void>>>();
 
     *again = [known, told, running, again, beat] {
@@ -83,7 +85,7 @@ int main() {
         if (next >= 1.0) {
             *running = false;
 
-            told->text("skończone");
+            told->text("done");
 
             return;
         }
@@ -94,10 +96,10 @@ int main() {
         (*beat)->start();
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Zacznij"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Start"),
                       [known, told, running, again] {
                           known->part(0.0);
-                          told->text("kopiowanie…");
+                          told->text("copying…");
 
                           if (*running) return;
 
@@ -106,15 +108,15 @@ int main() {
                           (*again)();
                       });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Czekaj"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Wait"),
                       [guess] { guess->busy(!guess->busy()); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 
     term.show(sheet);
-    term.title("talcite — pasek postępu");
+    term.title("talcite — progress bar");
 
     term.run();
 

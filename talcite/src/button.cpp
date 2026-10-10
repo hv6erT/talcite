@@ -16,47 +16,52 @@ namespace talcite::ui {
 
 namespace {
 
-// Klamry wokół napisu: zwykły przycisk ma ich cztery kratki, podstawowy sześć — `[ Tak ]`
-// i `[< Tak >]`, dokładnie jak w Midnight Commanderze.
+// The brackets around the label: a normal button has four cells of them, a primary one six, `[ Yes
+// ]` and `[< Yes >]`, exactly as in Midnight Commander.
 int around(bool primary) { return primary ? 6 : 4; }
 
 }
 
+// A button with the given label, drawn in the role `talcite.button`.
 Button::Button(std::string text) : text_(std::move(text)) { role("talcite.button"); }
 
+// A button has no children.
 int Button::capacity() const { return 0; }
 
+// The label's width plus the brackets, one row high, within the room.
 Size Button::wants(Size room) const {
     const int wide = measured(text_).wide + around(primary_);
 
     return {std::min(wide, room.wide), std::min(1, room.high)};
 }
 
+// One row: the brackets, the label cut to fit between them, and the hot letter underlined.
 View Button::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // **Przezroczysty tam, gdzie nic nie rysuje** — reguła opisana przy `Node::paint`. Przycisk
-    // maluje jeden wiersz, a wiersz układu daje mu swoją wysokość, więc bez tego reszta prostokąta
-    // szła do rodzica jako nieprzezroczyste spacje i zakrywała jego tło.
+    // Transparent where it draws nothing, the rule described at `Node::paint`. The button paints
+    // one row, and a layout row gives it its own height, so without this the rest of the rectangle
+    // would go to the parent as opaque spaces and cover its background.
     made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
-    // Rola na stan, a nie jedna rola z doklejanymi znacznikami: autor skórki chce powiedzieć, jak
-    // wygląda **przycisk z ogniskiem**, a nie zgadywać, co biblioteka do niego dorobi.
-    // Rola na stan powstaje z **rdzenia i końcówki**: rdzeń zadaje ten, kto buduje przycisk,
-    // a końcówkę dokłada przycisk, bo tylko on wie, jakie ma stany. Skórka opisuje więc rodzinę
-    // `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.key`, `<rdzeń>.off` i nie musi nic zgadywać.
+    // A role per state, not one role with markers glued on: a skin author wants to say what a
+    // focused button looks like, not guess what the library will add to it. The role per state is
+    // made of a stem and a suffix: whoever builds the button sets the stem, and the button adds the
+    // suffix, because only it knows what states it has. So the skin describes the family `<stem>`,
+    // `<stem>.focus`, `<stem>.key`, `<stem>.disabled` and does not have to guess anything.
     //
-    // Sklejenie nazwy przydziela pamięć raz na stan i raz na klatkę. Przy trzech przyciskach
-    // w oknie to jest nic, a trzymanie czterech gotowych napisów w każdym przycisku kosztowałoby
-    // więcej i przy każdej zmianie rdzenia trzeba by je odświeżać.
+    // Gluing the name together allocates memory once per state and once per frame. With three
+    // buttons in a window that is nothing, while keeping four ready strings in every button would
+    // cost more and would need refreshing on every change of the stem.
     const Style look = how.style(!enabled()      ? role() + ".disabled"
                                       : focused() ? role() + ".focus"
                                                   : role());
 
-    // **Jeden wiersz, nie tyle, ile dano.** Przycisk zgłasza w `wants()` wysokość jeden, a wiersz
-    // daje dzieciom swoją własną wysokość — bez tego negatyw rozlewałby się na cały wiersz.
+    // One row, not as many as given. The button reports a height of one in `wants()`, but a row
+    // gives its children its own height; without this the reverse video would spill over the whole
+    // row.
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
 
     const std::string first = primary_ ? "[< " : "[ ";
@@ -65,8 +70,8 @@ View Button::paint(Size given, Area seen) {
     const int aside = measured(first).wide;
     const int apart = measured(after).wide;
 
-    // Za wąski przycisk ucina **napis**, a nie klamrę zamykającą. Klamra jest tym, co czyni go
-    // przyciskiem; urwana zostawiała po sobie coś, co wyglądało jak zwykły tekst.
+    // A button that is too narrow cuts the label, not the closing bracket. The bracket is what
+    // makes it a button; cut off, it would leave behind something that looks like plain text.
     const int room = std::max(given.wide - aside - apart, 0);
 
     const std::string shown =
@@ -78,40 +83,41 @@ View Button::paint(Size given, Area seen) {
     made.put({aside - seen.at.x, -seen.at.y}, shown, look);
     made.put({aside + inner - seen.at.x, -seen.at.y}, after, look);
 
-    // Znakowanie liczymy po **przyciętym** napisie: litera, której po przycięciu nie widać, nie ma
-    // czego podkreślać, a policzona po całym napisie trafiłaby w wielokropek albo w klamrę.
-    // Litera aktywna ma własną rolę, nakładaną na wygląd przycisku — dzięki temu skórka może dać
-    // jej barwę, a wbudowana zostaje przy podkreśleniu, które widać na każdym terminalu.
+    // The marking is computed on the clipped label: a letter that is not visible after clipping has
+    // nothing to underline, and computed on the whole label it would land on the ellipsis or the
+    // bracket. The hot letter has its own role, laid over the button's look, so a skin can give it
+    // a color, while the built-in skin stays with an underline, which shows on every terminal.
     talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
                       look, how.style(role() + ".key"));
 
     return made;
 }
 
-// **Naciśnięcie idzie przez `trigger`**, a nie prosto do wywołania zwrotnego. Dzięki temu jedno
-// zdarzenie zobaczy i sam widżet, i wszystko nad nim, a `on<PickEvent>` łapie naciśnięcie
-// niezależnie od tego, czym je wywołano — Enterem, myszą czy klawiszem aktywnym. Wywołanie
-// zwrotne omijało cały mechanizm i było jedynym miejscem w talcite, gdzie zdarzenia nie było widać.
+// Presses the button, unless it is disabled. A press goes through `trigger`, not straight to a
+// callback. This way one event is seen both by the widget itself and by everything above it, and
+// `on<PickEvent>` catches the press regardless of what caused it: Enter, the mouse or a hot key. A
+// callback would bypass the whole mechanism and be the only place in talcite where the event cannot
+// be seen.
 void Button::pick() {
     if (!enabled()) return;
 
     (void)trigger(PickEvent{});
 }
 
-// Enter i spacja naciskają ten przycisk, który ma ognisko — tak jest w Midnight Commanderze
-// i nie zależy to od klawiszy aktywnych. Przyciskiem podstawowym i klawiszami aktywnymi
-// z dowolnego miejsca zajmuje się dialog, bo to są zachowania okna, a nie przycisku.
+// Enter presses the button that has the focus, as in Midnight Commander, regardless of hot keys.
+// The dialog takes care of the primary button and of hot keys from anywhere in the window, because
+// those are the window's behaviors, not the button's.
 //
-// Ze sterującym nie łapiemy: Ctrl+Enter i Alt+spacja to z założenia inne skróty. Tak samo odsiewa
-// je legenda.
+// Nothing is caught with a modifier: Ctrl+Enter and Alt+space are meant as other shortcuts. The
+// legend filters them the same way.
 bool Button::handle(KeyEvent& what) {
     if (!enabled()) return false;
 
     if (what.mods().ctrl || what.mods().alt) return false;
 
-    // **Sam Enter, bez spacji.** Spacja jest odruchem z innego świata niż Midnight Commander,
-    // a każdy klawisz zabrany przez widżet to jeden, którego aplikacja nie może użyć — w oknie
-    // z polem tekstowym spacja i tak należy do pisania.
+    // Enter alone, without space. Space is a reflex from a world other than Midnight Commander, and
+    // every key a widget takes is one the application cannot use; in a window with a text field,
+    // space belongs to typing anyway.
     if (what.key().code() != Code::enter) return false;
 
     pick();
@@ -119,12 +125,12 @@ bool Button::handle(KeyEvent& what) {
     return true;
 }
 
-// Klawisz aktywny przychodzi z bazy — ona sprawdziła, że jest nasz. Zostaje powiedzieć, co robimy,
-// a przycisk robi to samo, co przy Enterze i przy kliknięciu.
+// A hot key comes from the base, which has checked that it is ours. What remains is to say what we
+// do, and the button does the same as on Enter and on a click.
 void Button::activate() { pick(); }
 
-// Klik w przycisk **bierze ognisko** — inaczej niż pole legendy, które go nie rusza. Tam liczyło
-// się to, co zaznaczone w panelu; tutaj kliknięty przycisk staje się tym, na którym stoisz.
+// A click on the button takes the focus, unlike a legend field, which leaves it alone. There what
+// mattered was the selection in the panel; here the clicked button becomes the one you stand on.
 bool Button::handle(ClickEvent&) {
     if (!enabled()) return true;
 

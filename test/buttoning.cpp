@@ -18,15 +18,19 @@ using namespace talcite;
 
 namespace {
 
+// A focusable node of a fixed size that fills itself with x.
 class Box : public ui::Node {
 public:
     explicit Box(ui::Size wants) : wants_(wants) {}
 
+    // Always takes the focus.
     [[nodiscard]] bool focusable() const override { return true; }
 
+    // Always the size it was made with.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
 protected:
+    // Fills the given size with x.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -41,6 +45,7 @@ private:
     ui::Size wants_;
 };
 
+// The text of row `y` of the view, without trailing spaces.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -57,9 +62,9 @@ std::string read(const View& one, int y) {
 
 }
 
-// **Napis jest czysty i rysuje się w całości.** Nie ma żadnej umowy o znakach w środku, więc
-// ampersand, nawias czy cokolwiek innego są zwykłymi literami i nic nie znaczą.
-TRIAL("Przycisk: napis rysuje się w całości, bez umów o znakach") {
+// The label is plain and is drawn in full. There is no convention about characters inside it, so
+// an ampersand, a bracket or anything else is an ordinary letter and means nothing.
+TRIAL("Button: the label is drawn in full, with no conventions about characters") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Tak & nie");
@@ -76,15 +81,15 @@ TRIAL("Przycisk: napis rysuje się w całości, bez umów o znakach") {
 
 namespace {
 
-// Korzeń, który rozsyła klawisz aktywny sam — w programie robi to dialog, legenda albo menu, ale
-// rozsyłanie jest chronione, więc próba potrzebuje własnego wejścia.
+// A root that broadcasts a shortcut key itself. In a program a dialog, the legend or a menu does
+// this, but broadcasting is protected, so the trial needs its own way in.
 class Top : public ui::Root {
 public:
     using ui::Root::broadcast;
 };
 
-// Czy przycisk odpowie na ten klawisz aktywny. Pytamy **drogą, którą chodzi okno** — podaniem
-// zdarzenia — a nie osobną metodą do pytania, bo takiej już nie ma i nie ma jej celowo.
+// Whether the button answers this shortcut key. We ask the way a window does, by delivering the
+// event, not through a separate query method, because there deliberately is none.
 bool hotly(Top& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
     int done = 0;
 
@@ -105,47 +110,47 @@ bool hotly(Top& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
 
 }
 
-TRIAL("Przycisk: klawisze aktywne podaje wołający") {
+TRIAL("Button: the caller gives the shortcut keys") {
     Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
 
     top.children().add(one);
 
-    // Bez klawiszy przycisk nie odpowiada na nic.
+    // Without keys the button answers nothing.
     ought(!hotly(top, one, ui::Key{U'T'}));
 
     one->keys().add(U'T');
 
     ought(hotly(top, one, ui::Key{U'T'}));
 
-    // Litery bez różnicy wielkości.
+    // Letters regardless of case.
     ought(hotly(top, one, ui::Key{U't'}));
 
     ought(!hotly(top, one, ui::Key{U'n'}));
 
-    // Klawiszy może być kilka i nie muszą być literami.
+    // There may be several keys, and they need not be letters.
     one->keys().add(std::vector<ui::Key>{U'T', ui::Code::f2});
 
     ought(hotly(top, one, ui::Key{U't'}));
     ought(hotly(top, one, ui::Key{ui::Code::f2}));
     ought(!hotly(top, one, ui::Key{ui::Code::f3}));
 
-    // Zestaw się czyści.
+    // The set clears.
     one->keys().clear();
 
     ought(one->keys().empty());
     ought(!hotly(top, one, ui::Key{U't'}));
 
-    // Pusty klawisz nie jest klawiszem.
+    // An empty key is not a key.
     one->keys().add(U'T');
 
     ought(!hotly(top, one, ui::Key{}));
 }
 
-// Zbiór klawiszy odpowiada na te same cztery słowa, co dzieci węzła — i zwija wielkość liter
-// wszędzie, nie tylko przy trafianiu.
-TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
+// The key set answers the same four words as a node's children, and it folds case everywhere,
+// not only when matching.
+TRIAL("Button: the key set adds, removes and clears") {
     const auto one = std::make_shared<ui::Button>("Tak");
 
     ought(one->keys().empty());
@@ -161,8 +166,8 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
     ought(!one->keys().contains(ui::Key{U'n'}));
     ought(!one->keys().contains(ui::Key{}));
 
-    // Litera nie patrzy na Shift (wielkość składa się), klawisz kodowany patrzy: Shift+F2 to inny
-    // klawisz niż F2 — jak w MC, gdzie Shift+F7 powtarza szukanie, a F7 je zaczyna.
+    // A letter ignores Shift (case folds), a coded key does not: Shift+F2 is a different key from
+    // F2, as in MC, where Shift+F7 repeats a search and F7 starts one.
     ought(one->keys().contains(ui::Key{U't', ui::Mods{.shift = true}}));
     ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
     ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.ctrl = true}}));
@@ -174,24 +179,24 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
 
     one->keys().remove(ui::Key{ui::Code::f2, ui::Mods{.shift = true}});
 
-    // Pusty klawisz nie wchodzi, a ten sam drugi raz nie dokłada się bez skutku.
+    // An empty key does not go in, and the same key a second time adds nothing.
     one->keys().add(ui::Key{});
     one->keys().add(U't');
 
     same(one->keys().many(), std::size_t{2});
 
-    // Zdejmowanie też nie patrzy na wielkość litery.
+    // Removing ignores case too.
     one->keys().remove(ui::Key{U't'});
 
     same(one->keys().many(), std::size_t{1});
     ought(!one->keys().contains(ui::Key{U'T'}));
 
-    // Zdjęcie czegoś, czego nie ma, jest bez skutku.
+    // Removing something that is not there has no effect.
     one->keys().remove(ui::Key{U'z'});
 
     same(one->keys().many(), std::size_t{1});
 
-    // Po zbiorze da się chodzić.
+    // The set can be iterated.
     int much = 0;
 
     for (const ui::Key which : one->keys()) {
@@ -205,7 +210,7 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
     same(one->keys().front(), one->keys().back());
     same(one->keys()[0], one->keys().front());
 
-    // Sięgnięcie poza koniec jest błędem wołającego — tak samo jak w zbiorze opcji.
+    // Reaching past the end is the caller's error, just as in the set of options.
     threw((void)one->keys()[1]);
 
     one->keys().clear();
@@ -215,7 +220,7 @@ TRIAL("Przycisk: zbiór klawiszy dokłada, zdejmuje i czyści") {
     ought(one->keys().empty());
 }
 
-TRIAL("Przycisk: wyłączony nie odpowiada na swoje klawisze") {
+TRIAL("Button: a disabled one does not answer its keys") {
     Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
@@ -228,9 +233,9 @@ TRIAL("Przycisk: wyłączony nie odpowiada na swoje klawisze") {
     ought(!hotly(top, one, ui::Key{U'T'}));
 }
 
-// Znakowanie jest **skutkiem**, nie osobnym ustawieniem: jeśli litera klawisza w napisie
-// występuje, zostaje podkreślona; jeśli nie — przycisk i tak na ten klawisz odpowiada.
-TRIAL("Przycisk: litera klawisza podkreśla się w napisie") {
+// The marking is a consequence, not a separate setting: if the key's letter occurs in the label,
+// it is underlined; if not, the button still answers that key.
+TRIAL("Button: the key's letter is underlined in the label") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Przerwij");
@@ -243,7 +248,7 @@ TRIAL("Przycisk: litera klawisza podkreśla się w napisie") {
 
     same(read(made, 0), std::string{"[ Przerwij ]"});
 
-    // „[ " to dwie kratki, a „w" stoi na piątej literze napisu.
+    // "[ " is two cells, and "w" is the sixth letter of the label.
     ought(made.at({7, 0}).style.under);
     same(made.at({7, 0}).letter, U'w');
 
@@ -251,12 +256,12 @@ TRIAL("Przycisk: litera klawisza podkreśla się w napisie") {
     ought(!made.at({8, 0}).style.under);
 }
 
-TRIAL("Przycisk: podkreśla się pierwsze wystąpienie, bez różnicy wielkości") {
+TRIAL("Button: the first occurrence is underlined, regardless of case") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Przerwij");
 
-    // Wielka litera klawisza, mała w napisie — i tak się znajdzie, na pierwszym „r".
+    // An upper-case key letter, a lower-case one in the label: it is still found, on the first "r".
     one->keys().add(U'R');
 
     top.children().add(one);
@@ -266,13 +271,14 @@ TRIAL("Przycisk: podkreśla się pierwsze wystąpienie, bez różnicy wielkości
     ought(made.at({3, 0}).style.under);
     same(made.at({3, 0}).letter, U'r');
 
-    // Drugie „r" zostaje zwykłe.
+    // The second "r" stays plain.
     ought(!made.at({6, 0}).style.under);
 }
 
-// Wielkość składa się także poza łaciną podstawową — rosyjskie i ukraińskie menu twa podkreślają
-// litery cyrylicy, a skrót z wielką literą ma znaleźć małą w napisie i odpowiadać na obie.
-TRIAL("Przycisk: wielkość składa się w cyrylicy i w łacinie z ogonkami") {
+// Case folds beyond basic Latin too: the Russian and Ukrainian menus of twa underline Cyrillic
+// letters, and a shortcut with an upper-case letter must find the lower-case one in the label and
+// answer both.
+TRIAL("Button: case folds in Cyrillic and in Latin with diacritics") {
     Top top;
 
     const auto one = std::make_shared<ui::Button>("Карта");
@@ -304,7 +310,7 @@ TRIAL("Przycisk: wielkość składa się w cyrylicy i w łacinie z ogonkami") {
     ought(hotly(top, two, ui::Key{U'ż'}));
 }
 
-TRIAL("Przycisk: klawisz spoza napisu nie znakuje niczego") {
+TRIAL("Button: a key not in the label marks nothing") {
     Top top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
@@ -317,17 +323,17 @@ TRIAL("Przycisk: klawisz spoza napisu nie znakuje niczego") {
 
     for (int x = 0; x < 7; ++x) ought(!made.at({x, 0}).style.under);
 
-    // Ale odpowiada na oba.
+    // But it answers both.
     ought(hotly(top, one, ui::Key{ui::Code::f2}));
     ought(hotly(top, one, ui::Key{U'z'}));
 }
 
-TRIAL("Przycisk: rozstrzyga pierwszy klawisz, który w napisie występuje") {
+TRIAL("Button: the first key that occurs in the label decides") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Przerwij");
 
-    // „q" w napisie nie ma, więc znakuje dopiero „i".
+    // There is no "q" in the label, so only "i" is marked.
     one->keys().add(std::vector<ui::Key>{U'q', U'i'});
 
     top.children().add(one);
@@ -338,7 +344,7 @@ TRIAL("Przycisk: rozstrzyga pierwszy klawisz, który w napisie występuje") {
     ought(made.at({8, 0}).style.under);
 }
 
-TRIAL("Przycisk: podstawowy ma szersze klamry") {
+TRIAL("Button: the default one has wider brackets") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
@@ -354,7 +360,7 @@ TRIAL("Przycisk: podstawowy ma szersze klamry") {
     same(read(top.render({{0, 0}, {9, 1}}), 0), std::string{"[< Tak >]"});
 }
 
-TRIAL("Przycisk: pod ogniskiem cały w negatywie") {
+TRIAL("Button: with the focus it is all in reverse video") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
@@ -372,13 +378,13 @@ TRIAL("Przycisk: pod ogniskiem cały w negatywie") {
     ought(made.at({0, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
 
-    // Podkreślenie zostaje także pod ogniskiem.
+    // The underline stays with the focus too.
     ought(made.at({2, 0}).style.under);
 }
 
-// Przycisk zgłasza wysokość jeden, a wiersz daje dzieciom **swoją** wysokość — więc malowanie
-// musi trzymać się jednego wiersza samo, inaczej negatyw rozlewa się na cały wiersz układu.
-TRIAL("Przycisk: maluje jeden wiersz, nie tyle, ile mu dano") {
+// A button reports a height of one, and a row gives its children its own height, so painting
+// must keep to one row by itself; otherwise the reverse video spreads over the whole layout row.
+TRIAL("Button: paints one row, not as many as it is given") {
     ui::Root top;
 
     const auto row = std::make_shared<ui::Row>();
@@ -395,14 +401,14 @@ TRIAL("Przycisk: maluje jeden wiersz, nie tyle, ile mu dano") {
 
     ought(made.at({0, 0}).style.reverse);
 
-    // Drugi i trzeci wiersz nad przyciskiem nie należą do niego.
+    // The second and third rows at the button's column do not belong to it.
     ought(!made.at({0, 1}).style.reverse);
     ought(!made.at({0, 2}).style.reverse);
 }
 
-// Klamra jest tym, co czyni przycisk przyciskiem. Za wąski ucina **napis**, a nie klamrę —
-// urwana zostawiała po sobie coś, co wyglądało jak zwykły tekst.
-TRIAL("Przycisk: za wąski ucina napis, a nie klamrę") {
+// The bracket is what makes a button a button. When too narrow it cuts the label, not the
+// bracket; a cut bracket would leave behind something that looks like plain text.
+TRIAL("Button: when too narrow it cuts the label, not the bracket") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Przerwij");
@@ -413,7 +419,7 @@ TRIAL("Przycisk: za wąski ucina napis, a nie klamrę") {
     same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"[ … ]"});
 }
 
-TRIAL("Przycisk: Enter naciska ten z ogniskiem, spacja nie") {
+TRIAL("Button: Enter presses the focused one, space does not") {
     ui::Root top;
 
     int done = 0;
@@ -429,22 +435,24 @@ TRIAL("Przycisk: Enter naciska ten z ogniskiem, spacja nie") {
     ought(top.dispatch(enter));
     same(done, 1);
 
-    // **Spacja nie jest sprawą przycisku.** Była nią kiedyś — odruch z innego świata niż Midnight
-    // Commander — i zabierała aplikacji klawisz, który w oknie z polem tekstowym należy do pisania.
+    // Space is not the button's business. That habit comes from a world other than Midnight
+    // Commander, and it would take from the application a key that, in a window with a text field,
+    // belongs to typing.
     ui::KeyEvent space{U' '};
 
     ought(!top.dispatch(space));
     same(done, 1);
 
-    // Zwykła litera nie jest sprawą przycisku — tym zajmuje się dialog.
+    // A plain letter is not the button's business; the dialog takes care of that.
     ui::KeyEvent other{U'z'};
 
     ought(!top.dispatch(other));
     same(done, 1);
 }
 
-// Ctrl+Enter i Alt+spacja to z założenia inne skróty. Tak samo odsiewa je legenda.
-TRIAL("Przycisk: ze sterującym nie łapie") {
+// Ctrl+Enter and Alt+Space are other shortcuts by design. The legend filters them out the same
+// way.
+TRIAL("Button: does not catch keys with a modifier") {
     ui::Root top;
 
     int done = 0;
@@ -466,7 +474,7 @@ TRIAL("Przycisk: ze sterującym nie łapie") {
     same(done, 0);
 }
 
-TRIAL("Przycisk: niedostępny nie bierze ogniska i nie odpowiada") {
+TRIAL("Button: a disabled one takes no focus and does not answer") {
     ui::Root top;
 
     int done = 0;
@@ -490,9 +498,9 @@ TRIAL("Przycisk: niedostępny nie bierze ogniska i nie odpowiada") {
     same(done, 0);
 }
 
-// Wyłączenie **oddaje ognisko**. Bez tego zostawałoby na węźle, który już nie jest chętny —
-// czyli łamałoby niezmiennik, dla którego ten znacznik powstał.
-TRIAL("Przycisk: wyłączenie oddaje ognisko") {
+// Disabling gives up the focus. Without this the focus would stay on a node that is no longer
+// focusable, breaking the very invariant this flag exists for.
+TRIAL("Button: disabling gives up the focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Button>("Tak");
@@ -505,10 +513,11 @@ TRIAL("Przycisk: wyłączenie oddaje ognisko") {
 
     one->enabled(false);
 
-    // Poza dialogiem nie ma chętnego przodka — korzeń ogniska nie bierze — więc gaśnie zupełnie.
+    // Outside a dialog there is no focusable ancestor (the root takes no focus), so the focus
+    // goes out entirely.
     same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
-    // Wyłączenie przycisku bez ogniska niczego nie rusza.
+    // Disabling a button without the focus changes nothing.
     const auto other = std::make_shared<ui::Button>("Nie");
 
     top.children().remove(one.get());
@@ -520,7 +529,7 @@ TRIAL("Przycisk: wyłączenie oddaje ognisko") {
     same(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
-TRIAL("Przycisk: klik bierze ognisko i naciska") {
+TRIAL("Button: a click takes the focus and presses") {
     ui::Root top;
 
     int done = 0;
@@ -541,6 +550,7 @@ TRIAL("Przycisk: klik bierze ognisko i naciska") {
 
 namespace {
 
+// A dialog in a modal with two buttons, "Tak" with the key T and "Nie" with the key N.
 struct Both {
     std::shared_ptr<ui::Modals> window;
     std::shared_ptr<ui::Dialog> dialog;
@@ -548,6 +558,7 @@ struct Both {
     std::shared_ptr<ui::Button> second;
 };
 
+// Opens a `Both` dialog in `top`; pressing the first button increments `*done`.
 Both asking(ui::Root& top, int* done) {
     Both made;
 
@@ -575,9 +586,9 @@ Both asking(ui::Root& top, int* done) {
 
 }
 
-// **Granica wędrówki wychodzi z modalności.** Tab bąbelkuje jak każdy klawisz, a obsługuje go
-// dialog — więc nigdy z niego nie ucieka.
-TRIAL("Dialog: Tab chodzi po chętnych i zawija") {
+// The limit of the walk comes from modality. Tab bubbles up like every key, and the dialog
+// handles it, so it never escapes the dialog.
+TRIAL("Dialog: Tab walks the focusable nodes and wraps") {
     ui::Root top;
 
     int done = 0;
@@ -595,7 +606,7 @@ TRIAL("Dialog: Tab chodzi po chętnych i zawija") {
     same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
-TRIAL("Dialog: Tab z przesuwnikiem chodzi wstecz") {
+TRIAL("Dialog: Shift+Tab walks backwards") {
     ui::Root top;
 
     int done = 0;
@@ -611,7 +622,7 @@ TRIAL("Dialog: Tab z przesuwnikiem chodzi wstecz") {
     same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
-TRIAL("Dialog: Tab nie wychodzi poza dialog") {
+TRIAL("Dialog: Tab does not leave the dialog") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -631,17 +642,17 @@ TRIAL("Dialog: Tab nie wychodzi poza dialog") {
     for (int turn = 0; turn < 4; ++turn) {
         ought(top.dispatch(tab));
 
-        // Jedyny chętny w dialogu, więc ognisko z niego nie schodzi — a już na pewno nie na to,
-        // co leży pod spodem.
+        // The only focusable node in the dialog, so the focus does not leave it, and certainly
+        // not for what lies below.
         same(top.focused_node(), static_cast<ui::Node*>(one.get()));
     }
 }
 
-// **Oznaczenie podstawowego jest tylko rysunkiem.** Okno nie szuka nikogo po drzewie i nie naciska
-// niczego za wołającego: Enter należy do tego, kto ma ognisko, a jak ognisko stoi poza przyciskami,
-// to Enter nie naciska nic. Kto chce „Enter zatwierdza formularz", wiesza uchwyt tam, gdzie ognisko
-// naprawdę stoi — na polu — i sam wie, co ma się wtedy stać.
-TRIAL("Dialog: Enter nie naciska podstawowego, gdy ognisko stoi poza przyciskiem") {
+// Marking a button as the default one is only drawing. The window searches the tree for nobody
+// and presses nothing on the caller's behalf: Enter belongs to whoever has the focus, and when the
+// focus is off the buttons, Enter presses nothing. Whoever wants "Enter submits the form" hangs a
+// handler where the focus really is, on the field, and knows what should happen then.
+TRIAL("Dialog: Enter does not press the default button when the focus is off the buttons") {
     ui::Root top;
 
     int done = 0;
@@ -662,19 +673,19 @@ TRIAL("Dialog: Enter nie naciska podstawowego, gdy ognisko stoi poza przyciskiem
     top.children().add(window);
     window->open(dialog);
 
-    // Ognisko stawiamy poza przyciskami — tak jak stoi w polu tekstowym.
+    // The focus is put off the buttons, as it stands in a text field.
     aside->focus();
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    // Zasłona i tak połyka wszystko, czego nikt nie wziął — modalność zostaje.
+    // The modal still swallows everything nobody took; modality stays.
     ought(top.dispatch(enter));
     same(done, 0);
 }
 
-// A gdy ognisko stoi **na przycisku**, Enter naciska ten przycisk. Przycisk bierze klawisz
-// pierwszy, bo leży bliżej ogniska — i to jest jedyna droga, którą Enter kogokolwiek naciska.
-TRIAL("Dialog: Enter na przycisku naciska jego, nie podstawowy") {
+// And when the focus is on a button, Enter presses that button. The button takes the key first,
+// because it lies nearer the focus, and that is the only way Enter presses anything.
+TRIAL("Dialog: Enter on a button presses that one, not the default") {
     ui::Root top;
 
     int done = 0;
@@ -700,11 +711,11 @@ TRIAL("Dialog: Enter na przycisku naciska jego, nie podstawowy") {
     same(done, 0);
 }
 
-// Otwarcie stawia ognisko na **pierwszym chętnym**, a nie na przycisku podstawowym. W oknie
-// zaczynającym się polem tekstowym pierwsza wpisana litera bywała inaczej klawiszem aktywnym
-// przycisku i zamykała okno z pustym polem. Enter dalej naciska podstawowy — to osobna sprawa
-// i pilnuje jej próba obok.
-TRIAL("Dialog: otwarcie staje na pierwszym chętnym") {
+// Opening puts the focus on the first focusable node, not on the default button. Otherwise, in a
+// window that starts with a text field, the first letter typed could be a button's shortcut key
+// and close the window with an empty field. What Enter presses is a separate matter, guarded by
+// the trials nearby.
+TRIAL("Dialog: opening lands on the first focusable node") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -726,9 +737,9 @@ TRIAL("Dialog: otwarcie staje na pierwszym chętnym") {
     same(top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
-// Po to ta reguła jest: okno z polem tekstowym ma zaczynać z ogniskiem w polu, choćby przycisk
-// podstawowy stał tuż obok.
-TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
+// This is what the rule is for: a window with a text field must start with the focus in the
+// field, even with the default button right beside it.
+TRIAL("Dialog: opening with a text field lands on the field") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -749,7 +760,7 @@ TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
 
     same(top.focused_node(), static_cast<ui::Node*>(field.get()));
 
-    // Enter zostaje przy ognisku: przycisk oznaczony jako podstawowy nie jest przez to naciskany.
+    // Enter stays with the focus: the button marked as default is not pressed because of it.
     int done = 0;
 
     (void)yes->on<ui::PickEvent>([&done](ui::PickEvent&) {
@@ -764,14 +775,14 @@ TRIAL("Dialog: otwarcie z polem tekstowym staje na polu") {
     same(done, 0);
 }
 
-TRIAL("Dialog: klawisz aktywny naciska z dowolnego miejsca okna") {
+TRIAL("Dialog: a shortcut key presses from anywhere in the window") {
     ui::Root top;
 
     int done = 0;
 
     const Both both = asking(top, &done);
 
-    // Ognisko stoi na „Tak", a naciskamy jego klawisz małą literą.
+    // The focus is on "Tak", and its key is pressed as a lower-case letter.
     ui::KeyEvent small{U't'};
 
     ought(top.dispatch(small));
@@ -782,14 +793,14 @@ TRIAL("Dialog: klawisz aktywny naciska z dowolnego miejsca okna") {
     ought(top.dispatch(large));
     same(done, 2);
 
-    // Klawisz, którego żaden przycisk nie ma, nic nie robi — ale dialog i tak go połyka.
+    // A key no button has does nothing, but the dialog swallows it anyway.
     ui::KeyEvent other{U'z'};
 
     ought(top.dispatch(other));
     same(done, 2);
 }
 
-TRIAL("Dialog: niedostępny przycisk wypada z wędrówki i z klawiszy") {
+TRIAL("Dialog: a disabled button drops out of the walk and the keys") {
     ui::Root top;
 
     int done = 0;
@@ -798,9 +809,9 @@ TRIAL("Dialog: niedostępny przycisk wypada z wędrówki i z klawiszy") {
 
     both.first->enabled(false);
 
-    // Ognisko zeszło z wyłączonego przycisku na **najbliższego chętnego przodka**, czyli na sam
-    // dialog. Gdyby zgasło zupełnie, klawisz szedłby prosto do korzenia i zamknięte okno
-    // przestałoby być zamknięte.
+    // The focus moved from the disabled button to the nearest focusable ancestor, the dialog
+    // itself. If it went out entirely, keys would go straight to the root, and the modal window
+    // would stop being modal.
     same(top.focused_node(), static_cast<ui::Node*>(both.dialog.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
@@ -814,9 +825,9 @@ TRIAL("Dialog: niedostępny przycisk wypada z wędrówki i z klawiszy") {
     same(done, 0);
 }
 
-// Gdy w dialogu nie ma nic, co bierze ognisko, bierze je sam dialog — i wtedy to on połyka
-// klawisze, zamiast zostawiać je aplikacji pod spodem.
-TRIAL("Dialog: bez chętnych w środku ognisko zostaje na dialogu") {
+// When nothing in the dialog takes the focus, the dialog takes it itself, and then it swallows
+// the keys instead of leaving them to the application below.
+TRIAL("Dialog: with nothing focusable inside, the focus stays on the dialog") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();

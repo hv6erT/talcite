@@ -11,23 +11,24 @@
 
 namespace talcite::ui {
 
+// A label with the given text and shape, in the "talcite.normal" role until told otherwise.
 Span::Span(std::string text, SpanShape shape) : text_(std::move(text)), shape_(shape) {
     role("talcite.normal");
 }
 
-// Napis nie ma czego trzymać w środku.
+// A label holds no children.
 int Span::capacity() const { return 0; }
 
 namespace {
 
-// **Twardy koniec wiersza dzieli zawsze**, także bez zawijania. Wcześniej `\n` szedł do kartki
-// jak każdy inny bajt i wychodził z niego znak zastępczy w środku zdania — a komunikaty z dwóch
-// zdań pisze się właśnie tak. Dzielenie daje o jeden kawałek więcej, niż jest końców: „a\nb" to
-// dwa wiersze, a „a\n" to wiersz i pusty wiersz po nim. Reguła bez wyjątków czyta się lepiej niż
-// zgadywanie, czy autor chciał tego pustego.
+// Splits the text at hard line breaks. A hard line break always splits, also without wrapping:
+// sent to the view like any other byte, it would come out as a replacement character in the middle
+// of a sentence, and two-sentence messages are written exactly that way. Splitting gives one piece
+// more than there are breaks: "a\nb" is two rows, and "a\n" is a row and an empty row after it. A
+// rule without exceptions reads better than guessing whether the author wanted that empty one.
 //
-// Powrót karetki zdejmujemy z końca kawałka, bo tekst spod Windows niesie „\r\n" i sam „\r"
-// zostawiony w napisie wyszedłby na ekranie jako śmieć.
+// A carriage return is removed from the end of each piece, because text from Windows carries
+// "\r\n", and a lone "\r" left in the text would show up on screen as garbage.
 std::vector<std::string> parted(const std::string& what) {
     std::vector<std::string> made;
 
@@ -49,12 +50,13 @@ std::vector<std::string> parted(const std::string& what) {
     return made;
 }
 
-// Z zawijaniem łamiemy po spacjach, a słowo dłuższe niż wiersz — w miejscu, bo jedyną alternatywą
-// byłoby wyjechanie poza kartkę, a tego View i tak nie wypuści. **Każdy akapit zawija się osobno**,
-// więc twardy koniec wiersza nigdy się nie skleja z sąsiednim zdaniem.
+// Wraps one paragraph to `wide` columns, appending the rows to `into`. It breaks at spaces, and a
+// word longer than a row is broken in place, because the only alternative would be running off the
+// view, which `View` would not let out anyway. Each paragraph wraps separately, so a hard line
+// break never merges with the neighboring sentence.
 //
-// Funkcja plikowa, a nie metoda: nie sięga do niczego, co należy do napisu, a nagłówek publiczny
-// nie ma powodu wiedzieć, że w środku jest jeszcze jeden krok.
+// A file-local function rather than a method: it touches nothing that belongs to the label, and
+// the public header has no reason to know there is one more step inside.
 void wrap_into(const std::string& what, int wide, std::vector<std::string>& into) {
     std::vector<std::string> words;
 
@@ -75,9 +77,9 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
     for (std::string word : words) {
         int room = measured(word).wide;
 
-        // Słowo dłuższe niż cały wiersz urywamy tyle razy, ile trzeba. Jeśli nie mieści się nawet
-        // jeden znak — bo wiersz ma jedną kratkę, a znak jest podwójny — zostawiamy je w całości
-        // i przytnie je kartka; udawanie, że coś się zmieściło, byłoby gorsze.
+        // A word longer than the whole row is cut as many times as needed. If not even one
+        // character fits (the row is one cell wide and the character is double-width), the word is
+        // left whole and the view clips it; pretending that something fitted would be worse.
         while (room > wide) {
             if (!line.empty()) {
                 into.push_back(std::move(line));
@@ -119,7 +121,8 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
 
 }
 
-// Akapit pusty zostaje pustym wierszem, a nie znika: to jest odstęp, który ktoś napisał świadomie.
+// The rows of the label for a width of `wide`, wrapped when the shape says so. An empty paragraph
+// stays an empty row instead of vanishing: it is a gap someone wrote on purpose.
 std::vector<std::string> Span::lines(int wide) const {
     if (text_.empty()) return {};
 
@@ -144,7 +147,8 @@ std::vector<std::string> Span::lines(int wide) const {
     return made;
 }
 
-// Wysokość liczy się teraz z wierszy, nie z zawijania — bo wierszy bywa więcej także bez niego.
+// The widest row and the number of rows. The height comes from the rows, not from wrapping,
+// because there can be more rows than one even without it.
 Size Span::wants(Size room) const {
     if (text_.empty()) return {};
 
@@ -157,22 +161,21 @@ Size Span::wants(Size room) const {
     return want;
 }
 
-// Skracanie i wyrównanie robimy dopiero tutaj, przy rysowaniu. wants mówi, ile napis chce
-// naprawdę — gdyby oddawało długość po skróceniu, rodzic nigdy by się nie dowiedział, że jest za
-// ciasno, i skrócony napis zostałby skrócony na zawsze.
+// Draws the rows, elided and justified. Eliding and justifying happen only here, when drawing:
+// `wants` says how much the label really wants; if it returned the length after eliding, the
+// parent would never learn that space is too tight, and an elided label would stay elided forever.
 View Span::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent wherever nothing is drawn, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
-    // **Rdzeń nazwy roli zadaje się z zewnątrz.** Domyślnie `talcite.normal`, więc nic się nie
-    // zmienia; ale napis postawiony w czerwonym pudełku błędu ma być czerwony, a jedna rola dla
-    // wszystkich napisów w programie nie umie być naraz czerwona i granatowa. Kto buduje takie
-    // pudełko, ten wie, co w nim stoi, i mówi to wprost.
+    // The role name is set from outside. By default it is talcite.normal, but a label placed in a
+    // red error box has to be red, and one role for every label in a program cannot be red and
+    // navy at once. Whoever builds such a box knows what stands in it and says so directly.
     const Style look = how.style(role());
     const char32_t mark = how.glyph("talcite.elide");
 
@@ -183,8 +186,8 @@ View Span::paint(Size given, Area seen) {
     for (const std::string& one : said) {
         if (y >= given.high || y - seen.at.y >= seen.size.high) break;
 
-        // Wiersz ponad oknem pomijamy bez rysowania — przy przewiniętym napisie to jest
-        // różnica między dwudziestoma wierszami a wszystkimi.
+        // A row above the visible area is skipped without drawing; for a scrolled label this is
+        // the difference between twenty rows and all of them.
         if (y < seen.at.y) {
             ++y;
 

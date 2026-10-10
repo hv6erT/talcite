@@ -44,7 +44,7 @@ template <typename Held>
 
         return into.str();
     } else {
-        return "<nie do pokazania>";
+        return "<not printable>";
     }
 }
 
@@ -56,8 +56,8 @@ void matched(std::string_view file, int line, std::string_view shown, const Left
     if (left == right) return;
 
     fell(file, line,
-         std::string{shown} + "\n        po lewej:  " + spelled(left) +
-             "\n        po prawej: " + spelled(right));
+         std::string{shown} + "\n        left:  " + spelled(left) +
+             "\n        right: " + spelled(right));
 }
 
 }
@@ -74,11 +74,11 @@ void matched(std::string_view file, int line, std::string_view shown, const Left
 #define ought(...)                                                                       \
     do {                                                                                 \
         if (!(__VA_ARGS__))                                                              \
-            ::proving::fell(__FILE__, __LINE__, "nie zaszło: " #__VA_ARGS__);             \
+            ::proving::fell(__FILE__, __LINE__, "not true: " #__VA_ARGS__);             \
     } while (false)
 
 #define same(given, wanted)                                                              \
-    ::proving::matched(__FILE__, __LINE__, "różne: " #given " vs " #wanted, (given), (wanted))
+    ::proving::matched(__FILE__, __LINE__, "differ: " #given " vs " #wanted, (given), (wanted))
 
 #define threw(...)                                                                       \
     do {                                                                                 \
@@ -89,5 +89,5 @@ void matched(std::string_view file, int line, std::string_view shown, const Left
             thrown = true;                                                               \
         }                                                                                \
         if (!thrown)                                                                     \
-            ::proving::fell(__FILE__, __LINE__, "nie rzuciło: " #__VA_ARGS__);            \
+            ::proving::fell(__FILE__, __LINE__, "did not throw: " #__VA_ARGS__);            \
     } while (false)

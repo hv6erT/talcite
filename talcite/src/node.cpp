@@ -11,47 +11,50 @@ namespace talcite::ui {
 
 Node::Node() : inside_(*this) {}
 
-// Dziecko może żyć dłużej niż rodzic, jeśli ktoś trzyma na nie wskaźnik dzielony. Wskazanie
-// na rodzica trzeba wtedy zerwać, inaczej zostałby wskaźnik na zmarłego — a po nim sięga
-// wędrówka zdarzeń.
+// A child may outlive its parent if someone holds a shared pointer to it. The link to the parent
+// then has to be cut, or a pointer to the dead would remain, and event bubbling follows it. The
+// cut is made by the destructor of `Children`.
 Node::~Node() = default;
 
-// Rola to rdzeń nazwy w skórce, z którego węzeł składa swoje warianty: `.focus`, `.key`, `.off`,
-// `.title`. Mieszka w `Node`, a nie w każdym widżecie z osobna, bo jest cechą **węzła, który
-// maluje** — a które węzły malują, rozstrzyga `paint`, nie typ. Pojemniki niosą pusty napis
-// i nic z tego nie mają; koszt to 32 bajty na węzeł. Ustawiacz jest wirtualny, bo węzeł złożony
-// z innych — okno komunikatu — musi przekazać rdzeń swoim częściom.
+// Sets the role: the stem of the name in the skin from which the node builds its variants, such
+// as .focus, .key, .off, .title. It lives in `Node` rather than in each widget, because it is a
+// property of a node that paints, and which nodes paint is decided by `paint`, not by the type.
+// Containers carry an empty string and get nothing from it; the cost is 32 bytes per node. The
+// setter is virtual, because a node made of others, such as a message window, has to pass the
+// stem on to its parts.
 void Node::role(std::string given) { role_ = std::move(given); }
 
-// Zrywanie więzi należy do dzieci, bo to one je trzymają. `Node` ginie razem ze swoim polem, więc
-// wykonuje się to dokładnie raz i dokładnie wtedy, kiedy trzeba.
+// Cuts the children's links to the dying parent. This belongs to the children, because they hold
+// the links. A `Node` dies together with this member, so it runs exactly once and exactly when it
+// should.
 Children::~Children() {
     for (const std::shared_ptr<Node>& one : inside_) one->up_ = nullptr;
 }
 
-// Ile dzieci węzeł przyjmuje, wie tylko on sam. Domyślnie jedno: zwykły węzeł jest opakowaniem,
-// a nie układem — układanie kilkorga obok siebie należy do Row i Column, i tylko one oddają tu
-// plenty. Napis oddaje zero, bo nie ma czego trzymać w środku.
+// How many children a node accepts; only the node itself knows. One by default: a plain node is
+// a wrapper, not a layout. Laying out several side by side belongs to `Row` and `Column`, and only
+// they return plenty here. A label returns zero, because it has nothing to hold.
 int Node::capacity() const { return 1; }
 
-// **`capacity()` mówi ile, `accepts()` mówi czego.** Zwykły węzeł nie zna się na rodzajach i bierze,
-// co dadzą — układ, ramka i zasłona układają wszystko tak samo. Przesłania to ten, kto ma wśród
-// dzieci **rolę do obsadzenia**: menu ma pozycje, lista ma wiersze, i obie potem po tych dzieciach
-// chodzą, zakładając, czym są.
+// `capacity()` says how many, `accepts()` says what kind. A plain node knows nothing about kinds
+// and takes what it is given: a layout, a frame and a curtain arrange everything the same way. It
+// is overridden by those whose children have a role to fill: a menu has items, a list has rows,
+// and both later walk over these children assuming what they are.
 //
-// Bez tego założenie było tylko wypowiedziane. `Menu::item()` sięga po `dynamic_cast<MenuItem*>`
-// przy każdym dostępie — z wędrówki strzałkami, z malowania, z naciśnięcia — i oddaje pustkę dla
-// obcego dziecka, którego nikt nie zabronił dopiąć. Sprawdzenie **raz, przy dopięciu**, jest
-// tańsze i uczciwsze niż pustka oddawana w kółko.
+// Without this the assumption would only be stated. `Menu::item()` casts to `MenuItem` on every
+// access (from arrow traversal, from painting, from a press) and gives nothing for a foreign child
+// that nobody forbade attaching. Checking once, at attachment, is cheaper and more honest than
+// returning nothing over and over.
 bool Node::accepts(const Node&) const { return true; }
 
-// **Ognisko oddajemy najbliższemu chętnemu przodkowi**, a dopiero gdy takiego nie ma — nikomu.
-// Gaszenie na amen wyglądało niewinnie i psuło modalność: dialog połyka klawisze **jako ognisko**,
-// więc bez ogniska klawisz szedł prosto do korzenia, a zamknięte okno przestawało być zamknięte.
+// Gives the focus away from this node: to the nearest focusable ancestor, and only when there is
+// none, to nobody. Clearing it outright would break modality: a dialog swallows keys as the focus,
+// so without the focus a key would go straight to the root, and a modal window would stop being
+// modal.
 //
-// Woła to każdy widżet, który gaśnie pod ogniskiem — przycisk, pole, wiersz listy, pozycja menu,
-// pole wyboru, grupa opcji i wybór. Stało to w każdym z nich **słowo w słowo**, razem z tym
-// komentarzem; siedem kopii jednej reguły to siedem miejsc, w których może się rozjechać.
+// Every widget that becomes unfocusable while holding the focus calls this: a button, a text
+// field, a list row, a menu item, a check box, a group of options and a choice. One rule in one
+// place cannot drift apart.
 void Node::unfocus() {
     if (!focused()) return;
 
@@ -69,6 +72,8 @@ void Node::unfocus() {
     top->move_focus(nullptr);
 }
 
+// Attaches a child. A null node, a node that already has a parent, one more child than
+// `capacity()` allows, a kind the parent does not accept, and a cycle all throw std::logic_error.
 void Children::add(std::shared_ptr<Node> given) {
     if (!given) throw std::logic_error("talcite::ui::Node: nothing to attach");
 
@@ -80,8 +85,8 @@ void Children::add(std::shared_ptr<Node> given) {
     if (!whose_->accepts(*given))
         throw std::logic_error("talcite::ui::Node: a node of the wrong kind");
 
-    // Cykl w tym drzewie znaczy, że wędrówka zdarzenia kręci się w kółko bez końca. Sprawdzenie
-    // kosztuje przejście o głębokość drzewa, czyli nic, a łapie też dopięcie węzła do siebie.
+    // A cycle in this tree would make event bubbling go round forever. The check costs a walk of
+    // the tree's depth, that is, nothing, and it also catches attaching a node to itself.
     for (const Node* at = whose_; at != nullptr; at = at->up_)
         if (at == given.get())
             throw std::logic_error("talcite::ui::Node: a node cannot be its own ancestor");
@@ -91,8 +96,9 @@ void Children::add(std::shared_ptr<Node> given) {
     inside_.push_back(std::move(given));
 }
 
-// **Albo wszystkie, albo żadne.** Przy błędzie w połowie zdejmujemy to, co już weszło, i rzucamy
-// dalej — inaczej wołający zostawałby z drzewem złożonym do połowy i bez wiedzy, do której.
+// Attaches several children: all or none. On an error halfway, what has already gone in is
+// removed and the exception is rethrown; otherwise the caller would be left with a half-built tree
+// without knowing which half.
 void Children::add(std::vector<std::shared_ptr<Node>> given) {
     const std::size_t was = inside_.size();
 
@@ -105,9 +111,9 @@ void Children::add(std::vector<std::shared_ptr<Node>> given) {
     }
 }
 
-// Oddaje to, co zdjęło, więc przeniesienie węzła pod innego rodzica jest jednym wyrażeniem.
-// Cudzy węzeł daje pustkę, a nie wyjątek — kto tego nie sprawdzi, dostanie i tak wyraźny błąd
-// przy najbliższym add, bo dopięcie pustki jest zabronione.
+// Detaches a child and returns it, so moving a node under another parent is a single expression.
+// A node that is not a child gives null, not an exception; whoever does not check will still get
+// a clear error at the next add, because attaching null is forbidden.
 std::shared_ptr<Node> Children::remove(Node* one) {
     const auto at = std::find_if(inside_.begin(), inside_.end(),
                                  [one](const std::shared_ptr<Node>& mine) {
@@ -122,8 +128,9 @@ std::shared_ptr<Node> Children::remove(Node* one) {
 
     made->up_ = nullptr;
 
-    // Korzeń zdejmuje ognisko i najechanie, a potem trzyma węzeł przy życiu do końca doręczania —
-    // bo zdejmowanie bywa wołane ze środka zdarzenia, które właśnie przez ten węzeł idzie.
+    // The root drops the focus and the hover, and then keeps the node alive until the end of the
+    // delivery, because removal is sometimes called from inside an event passing through this
+    // very node.
     if (Root* top = whose_->root()) {
         top->losing(made.get());
         top->linger(made);
@@ -132,8 +139,8 @@ std::shared_ptr<Node> Children::remove(Node* one) {
     return made;
 }
 
-// Zdejmujemy od końca, bo wtedy wektor nie przesuwa nikogo, a korzeń dostaje węzły w kolejności
-// odwrotnej do dopinania — czyli tak, jak przy niszczeniu drzewa.
+// Detaches all children. They are removed from the end, so the vector shifts nobody, and the root
+// gets the nodes in the reverse order of attaching, as when the tree is destroyed.
 void Children::clear() {
     Root* top = whose_->root();
 
@@ -151,14 +158,14 @@ void Children::clear() {
     }
 }
 
+// Whether the given node is one of these children.
 bool Children::contains(const Node* one) const {
     return std::any_of(inside_.begin(), inside_.end(),
                        [one](const std::shared_ptr<Node>& mine) { return mine.get() == one; });
 }
 
-// Numer węzła wśród dzieci — pustka, gdy to nie jest dziecko. Lista, menu i pasek menu liczyły to
-// każde własną pętlą; kto ma wskaźnik na wiersz, a potrzebuje numeru (żeby sięgnąć do własnej
-// tablicy obok), pyta tutaj.
+// The position of a node among the children, or nothing when it is not a child. Whoever has a
+// pointer to a row but needs its number (to reach into an array of their own alongside) asks here.
 std::optional<std::size_t> Children::find(const Node& one) const {
     for (std::size_t at = 0; at < inside_.size(); ++at)
         if (inside_[at].get() == &one) return at;
@@ -166,10 +173,10 @@ std::optional<std::size_t> Children::find(const Node& one) const {
     return std::nullopt;
 }
 
-// Korzeń liczymy przejściem w górę, a nie zapamiętujemy. Głębokość drzewa jest rzędu pięciu,
-// a zapamiętane pole trzeba by pilnować przy każdym dopięciu i odpięciu — i wisiałoby po
-// śmierci korzenia. Przejście jest przy okazji bardziej prawdomówne: węzeł odpięty od drzewa
-// nie ma korzenia i to właśnie oddaje.
+// The root of the tree, or `nullptr` for a node not in a tree with a `Root`. It is found by
+// walking up, not remembered. The tree is about five deep, and a remembered field would have to be
+// maintained on every attach and detach, and would dangle after the root died. The walk is also
+// more truthful: a node detached from the tree has no root, and that is exactly what it returns.
 Root* Node::root() const {
     const Node* at = this;
 
@@ -178,34 +185,36 @@ Root* Node::root() const {
     return const_cast<Root*>(dynamic_cast<const Root*>(at));
 }
 
-// **Jeden znacznik, jedno znaczenie.** Ognisko bierze tylko ten, kto się do tego przyznaje — i po
-// tych samych węzłach chodzi Tab. Gdyby `focus()` działało na czymkolwiek, a znacznik rządził samą
-// wędrówką, ognisko mogłoby wylądować tam, gdzie Tab nigdy nie dojdzie: dwa pojęcia pod jedną
-// nazwą. Domyślnie fałsz, bo węzeł układający albo malujący nie ma czego robić z klawiaturą.
+// One flag, one meaning. Only a node that admits to it takes the focus, and Tab walks over the
+// same nodes. If `focus()` worked on anything while the flag governed only the traversal, the
+// focus could land where Tab never goes: two notions under one name. False by default, because a
+// node that only lays out or paints has nothing to do with the keyboard.
 bool Node::focusable() const { return false; }
 
-// Skórkę trzyma korzeń, a węzeł dochodzi do niej tym samym przejściem w górę, którym dochodzi do
-// wszystkiego innego. Bez korzenia — węzeł jeszcze niedopięty albo poddrzewo odpięte — zostaje
-// wbudowana, więc **pytanie o wygląd nigdy nie zawodzi**.
+// The skin in effect. The root holds the skin, and the node reaches it by the same walk up by
+// which it reaches everything else. Without a root (a node not yet attached, or a detached
+// subtree) the built-in skin is used, so asking about looks never fails.
 //
-// Wołać raz na `paint`, do zmiennej lokalnej: każde wywołanie to przejście w górę i `dynamic_cast`
-// na szczycie.
+// Call it once per `paint`, into a local variable: every call is a walk up and a dynamic_cast at
+// the top.
 const Skin& Node::skin() const {
     const Root* top = root();
 
     return top != nullptr ? top->skin() : Skin::plain();
 }
 
+// Whether this node holds the focus of its root.
 bool Node::focused() const {
     const Root* top = root();
 
     return top != nullptr && top->focused_node() == this;
 }
 
-// Wirtualne, bo są widżety, które ogniska nie biorą **same**, tylko oddają je swojemu wnętrzu:
-// lista stawia je na bieżącej pozycji, a nie na sobie. Wędrówka Tabem trzyma zwykłe `Node*`
-// i woła `focus()` na przystanku, więc bez wirtualności ognisko lądowałoby na widżecie zamiast
-// tam, gdzie ma być. `Root::focus(Node*)` zostaje niewirtualne: ono ustawia, a to tylko wskazuje.
+// Moves the focus to this node; a node outside a tree throws std::logic_error. It is virtual,
+// because some widgets do not take the focus themselves but hand it to their inside: a list puts
+// it on its current item, not on itself. Tab traversal holds plain `Node*` pointers and calls
+// `focus()` on a stop, so without virtuality the focus would land on the widget instead of where
+// it belongs. The root's own focus setter stays non-virtual: it sets, while this only points.
 void Node::focus() {
     Root* top = root();
 
@@ -215,17 +224,18 @@ void Node::focus() {
     top->move_focus(this);
 }
 
-// Niewirtualne z tego samego powodu, dla którego niewirtualny jest trigger: zapisanie
-// przydzielonego prostokąta musi się zdarzyć zawsze, bo od niego zależy trafianie myszą, a nie
-// widać po widżecie, że autor o tym zapomniał. Widżety nadpisują paint.
+// Renders the node fully visible in the given rectangle. Non-virtual for the same reason trigger
+// is non-virtual: recording the assigned rectangle must always happen, because mouse hits depend
+// on it, and a widget does not show that its author forgot it. Widgets override paint.
 //
-// Widoczność podaje się we współrzędnych **własnych** węzła, więc „widać wszystko" to
-// {{0, 0}, where.size}, a nie where — ten jest wyrażony w układzie rodzica.
+// Visibility is given in the node's own coordinates, so "all visible" is {{0, 0}, where.size}, not
+// where, which is expressed in the parent's coordinates.
 View Node::render(const Area& where) { return render(where, {{0, 0}, where.size}); }
 
-// Węzeł, z którego nic nie widać, nie rysuje nic — i to jest cała oszczędność przy przewijaniu.
-// Prostokąt zapisujemy mimo to, bo od niego zależy trafianie myszą, a węzeł niewidoczny w tej
-// klatce nie może pamiętać, gdzie stał w poprzedniej.
+// Renders the visible part of the node in the given rectangle. A node of which nothing is visible
+// draws nothing, and that is all the saving in scrolling. The rectangle is recorded anyway,
+// because mouse hits depend on it, and a node invisible in this frame must not remember where it
+// stood in the previous one.
 View Node::render(const Area& where, const Area& seen) {
     area_ = where;
     seen_ = seen;
@@ -235,53 +245,54 @@ View Node::render(const Area& where, const Area& seen) {
     return paint(where.size, seen);
 }
 
-// **Kursor nie jest własnością kartki.** Jest jeden na całą klatkę i należy do korzenia, tak samo
-// jak skórka — a w `View` siedział tylko dlatego, że dziecko robi własny odklejony bufor i kursor
-// musiał przyjechać w górę razem z wklejeniem. To kosztowało przenoszenie go w każdym `draw`,
-// pole w każdej kartce i przeliczanie współrzędnych w miejscu, które o współrzędnych nie wie nic.
+// Where this node wants the cursor, in its own coordinates, or nothing. The cursor is not a
+// property of a sheet. There is one per frame and it belongs to the root, like the skin; keeping
+// it in `View` would mean carrying it through every `draw`, a field in every sheet, and coordinate
+// arithmetic in a place that knows nothing about coordinates.
 //
-// Widżet nie stawia więc kursora nigdzie — **mówi, gdzie go chce**, we własnych współrzędnych.
-// Pytanie zadaje korzeń i tylko ognisku, bo migający daszek jest dokładnie jeden. Domyślnie brak:
-// przytłaczająca większość widżetów nie ma czego pokazywać.
+// So a widget places the cursor nowhere; it says where it wants it. The root asks the question,
+// and only of the focus, because there is exactly one blinking caret. None by default: the vast
+// majority of widgets have nothing to show.
 std::optional<Spot> Node::caret() const { return {}; }
 
-// „Obudź mnie najpóźniej za tyle." Pusto znaczy **nigdy** — i to jest odpowiedź przytłaczającej
-// większości węzłów, bo obraz zmienia się zwykle od zdarzenia, nie od zegara.
+// "Wake me up in this much time at the latest." Empty means never, and that is the answer of the
+// vast majority of nodes, because the picture usually changes on an event, not on the clock.
 //
-// Umowa jest jednostronna i trzeba jej pilnować po stronie węzła: **czas ma być dodatni**. Węzeł
-// oddający wciąż zero każe pętli kręcić się bez końca, a pętla nie ma jak odróżnić tego od
-// prawdziwej potrzeby. Węzeł liczący klatkę z zegara robi to sam z siebie — oddaje resztę bieżącej
-// klatki, która zerem nie bywa.
+// The contract is one-sided and the node has to keep it: the time must be positive. A node that
+// keeps returning zero makes the loop spin forever, and the loop cannot tell that from a real
+// need. A node that computes its frame from the clock does this naturally: it returns the rest of
+// the current frame, which is never zero.
 std::optional<std::chrono::milliseconds> Node::due() const { return {}; }
 
-// Zwykły węzeł chce tyle, co jego jedyne dziecko, i oddaje mu cały swój prostokąt. Układanie
-// kilkorga jest sprawą Row i Column.
+// A plain node wants as much as its only child and gives it its whole rectangle. Laying out
+// several children is the business of `Row` and `Column`.
 Size Node::wants(Size room) const {
     if (inside_.empty()) return {};
 
     return inside_.front()->wants(room);
 }
 
-// **Gdzie stoję u rodzica, który kładzie dzieci na sobie.** Pyta o to wyłącznie `Stack`; `Row`,
-// `Column` i `Frame` układają po swojemu i tej odpowiedzi nie czytają. Domyślnie cały pokój — tyle
-// bierze zasłona, bo ma łapać mysz wszędzie, i tyle bierze treść aplikacji. Mniej bierze to, co
-// leży **na** treści w jednym miejscu: rozwinięta lista pod tytułem.
+// Where this node stands in a parent that lays its children on top of each other. Only `Stack`
+// asks this; `Row`, `Column` and `Frame` lay out their own way and do not read the answer. The
+// whole room by default: a curtain takes that much, because it has to catch the mouse everywhere,
+// and so does the application's content. Less is taken by what lies on the content in one place:
+// an open list under its title.
 //
-// Wynik jest we współrzędnych rodzica i nie ma prawa wyjść poza pokój — tego pilnuje `Stack`,
-// nie każdy węzeł z osobna.
+// The result is in the parent's coordinates and must not leave the room; `Stack` enforces that,
+// not each node separately.
 Area Node::placement(Size room) const { return {{0, 0}, room}; }
 
-// Miejsce węzła na ekranie, złożone przejściem w górę po prostokątach — tym samym, którym korzeń
-// składa położenie kursora w zagnieżdżonym polu i którym mysz schodzi w dół.
+// The node's place on the screen, assembled by walking up over the rectangles, the same walk by
+// which the root assembles the cursor position in a nested field and by which the mouse goes down.
 //
-// **Liczone przy każdym pytaniu**, nie zapamiętywane: współrzędna zapisana przy rozwinięciu
-// zestarzałaby się przy pierwszej zmianie rozmiaru okna, przy przewinięciu i przy urośnięciu
-// czegokolwiek powyżej — a wtedy pudełko zostawałoby tam, gdzie widżet *był*. Pusto, gdy węzeł
-// nie ma jeszcze prostokąta, bo nikt go nie rozstawił.
+// Computed on every question, not remembered: a coordinate recorded at opening would go stale at
+// the first window resize, at a scroll, and when anything above grows, and then a box would stay
+// where the widget used to be. Empty when the node has no rectangle yet, because nobody laid it
+// out.
 //
-// Potrzebuje tego każdy, kto staje **pod** innym węzłem — rozwinięta lista wyboru, rozwinięte menu,
-// okno przesuwane po ekranie. Było wolną funkcją standing obok klasy; teraz jest pytaniem do węzła,
-// jak `area()`, i mówi, o jaki układ chodzi (przegląd, krok 5e).
+// Everyone who stands under another node needs this: an open choice list, an open menu, a window
+// moved around the screen. It is a question to the node, like `area()`, and its name says which
+// coordinate system it means.
 std::optional<Area> Node::screen_area() const {
     Area made = area_;
 
@@ -295,15 +306,16 @@ std::optional<Area> Node::screen_area() const {
     return made;
 }
 
-// **Prostokąt węzła w układzie przodka `top`** — sumą `area().at` od węzła w górę, aż do dziecka
-// `top` (bez niego: w przewijaku jego własne `at` to przewinięcie, a chcemy współrzędnych treści,
-// które od przewinięcia nie zależą). Węzeł bez prostokąta — nikt go nie rozstawił, bo cały jego
-// pojemnik leżał poza oknem i `render` nie doszedł do dzieci — zastępuje **najbliższy rozstawiony
-// przodek**: dosunięcie do niego wciąga pojemnik w okno, następna klatka rozstawia dzieci
-// i wołający pyta drugi raz, głębiej. Pustka, gdy węzeł nie leży pod `top` wcale.
+// The node's rectangle in the coordinates of the ancestor `top`: the sum of `area().at` from the
+// node up to the child of `top` (excluding `top` itself: in a scroller its own `at` is the scroll
+// offset, and we want content coordinates that do not depend on scrolling). A node without a
+// rectangle (nobody laid it out, because its whole container lay outside the window and `render`
+// never reached the children) is replaced by the nearest laid-out ancestor: scrolling to it pulls
+// the container into the window, the next frame lays out the children, and the caller asks again,
+// deeper. Nothing when the node does not lie under `top` at all.
 //
-// Trzy przewijaki liczyły to wewnętrzną funkcją located; to jest to samo pytanie co
-// `screen_area()`, tylko o inny układ odniesienia, więc stoi obok niego.
+// It is the same question as `screen_area()`, only about another frame of reference, so it stands
+// next to it.
 std::optional<Area> Node::area_in(const Node& top) const {
     const Node* from = this;
 
@@ -325,29 +337,30 @@ std::optional<Area> Node::area_in(const Node& top) const {
     return std::nullopt;
 }
 
-// **Zdarzenie myszy niesie kratkę ekranu, a `area().at` mówi tylko o jednym piętrze.** Odjęcie
-// samego `area().at` daje dobry wynik wyłącznie wtedy, gdy suma przesunięć wszystkich przodków
-// jest zerowa — czyli w próbie, gdzie widżet stoi wprost pod korzeniem. W dialogu, w ramce albo
-// w wierszu klik trafiał o tyle kratek obok, ile wynosiło przesunięcie przodków.
+// Converts a screen cell into this node's own coordinates. A mouse event carries a screen cell,
+// and `area().at` speaks of one level only. Subtracting `area().at` alone gives the right result
+// only when the offsets of all ancestors sum to zero, as in a test where the widget stands
+// directly under the root. In a dialog, a frame or a row a click would land as many cells off as
+// the ancestors' offset.
 //
-// Przejście w górę to ta sama arytmetyka, którą robi `Root::under` schodząc w dół. Głębokość drzewa
-// jest rzędu kilku, więc kosztuje to tyle, co nic — a liczyć trzeba przy zdarzeniu, nie przy
-// klatce, bo drzewo mogło się w międzyczasie przesunąć. Dawniej wewnętrzna funkcja own; teraz
-// odwrotność `screen_area()` dla jednej kratki.
+// The walk up is the same arithmetic that `Root::under` does going down. The tree is a few levels
+// deep, so it costs next to nothing, and it has to be computed at the event, not at the frame,
+// because the tree may have moved in the meantime. It is the inverse of `screen_area()` for a
+// single cell.
 Spot Node::local(Spot where) const {
     for (const Node* at = this; at != nullptr; at = at->up_) where = where - at->area_.at;
 
     return where;
 }
 
+// Paints the only child over the whole rectangle; the rest stays transparent.
 View Node::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // **Przezroczysty tam, gdzie nic nie rysuje.** Świeża kartka to własne spacje, więc każdy węzeł
-    // zamalowywał cały przydzielony prostokąt — także prześwit obok krótszego napisu i wiersz pod
-    // ostatnim dzieckiem — i tło rodzica ginęło pod stylem domyślnym. Regułą jest: **maluj to,
-    // czym jesteś, a nie prostokąt, który dostałeś.** `Dialog` i `Menu` robiły tak od zawsze; tu
-    // jest reszta biblioteki doprowadzona do tej samej zasady.
+    // Transparent where nothing is drawn. A fresh sheet consists of its own spaces, so a node
+    // that left it as is would paint over its whole assigned rectangle, including the gap beside
+    // a shorter text and the row under the last child, and the parent's background would vanish
+    // under the default style. The rule is: paint what you are, not the rectangle you were given.
 
     made.clear({{0, 0}, seen.size});
 

@@ -4,14 +4,15 @@
 
 namespace talcite {
 
-// Brak dostawcy to błąd po stronie talcite, więc idzie językiem talcite — wyjątkiem, nie napisem.
-// Jeden typ na każdy brak: `catch (const Unbound&)` łapie każdy, a `catch (const runtime_error&)`
-// razem z resztą. Napis nie dałby się złapać, a odrzucenie obietnicy zrobione z napisu wychodziło
-// kiedyś jako inny typ niż wszystkie pozostałe odmowy w bibliotece — lekcja z `secured.cpp`.
+// A missing provider is an error on talcite's side, so it is reported in talcite's terms: as an
+// exception, not as a string. One type for every missing provider: `catch (const Unbound&)` catches
+// each of them, and catch (const runtime_error&) catches them together with everything else. A
+// string could not be caught that way, and a promise rejected with a string would have a different
+// type from every other refusal in the library.
 Unbound::Unbound(std::string_view kind) : Trouble{"No provider for " + std::string{kind} + "."} {}
 
-// Odmowa dostawcy: zdanie z `decode`/`encode` przetłumaczone na wyjątek talcite w jednym miejscu.
-// Nazwa rodzaju z przodu, żeby `what()` mówił, który szew odmówił, zanim powie dlaczego.
+// A provider's refusal: the sentence from `decode`/`encode` turned into a talcite exception in one
+// place. The kind's name comes first, so that what() says which seam refused before it says why.
 Refused::Refused(std::string_view kind, std::string_view said)
     : Trouble{std::string{kind} + " provider refused: " + std::string{said}} {}
 

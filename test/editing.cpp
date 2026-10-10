@@ -25,6 +25,7 @@ namespace {
 class Sheet : public ui::Root {};
 
 
+// Reads one row of a view as text, with trailing spaces removed.
 std::string said(const View& one, int y) {
     std::string made;
 
@@ -42,6 +43,7 @@ std::string said(const View& one, int y) {
 }
 
 
+// A document of the given number of lines, "l0" to "l<n-1>", without a final newline.
 std::string many(int lines) {
     std::string made;
 
@@ -52,8 +54,8 @@ std::string many(int lines) {
     return made;
 }
 
-// Edytor na atrapie schowka, żeby żadna próba nie sięgała do systemowego — na Windows dawniej
-// nadpisywała użytkownikowi to, co miał skopiowane.
+// An editor on a fake clipboard, so that no trial reaches the system one; on Windows that would
+// overwrite what the user has copied. It holds the given text and stands in the sheet.
 std::shared_ptr<ui::Editor> shown(Sheet& sheet, const std::string& what,
                                   const std::shared_ptr<faking::Clipboard>& kept = faking::clipboard()) {
     const auto one = std::make_shared<ui::Editor>(Seam<Clipboard>{kept});
@@ -67,9 +69,9 @@ std::shared_ptr<ui::Editor> shown(Sheet& sheet, const std::string& what,
 
 }
 
-// --- Co edytor wie na starcie --------------------------------------------------------------------
+// --- What the editor knows at the start ----------------------------------------------------------
 
-TRIAL("Editor: pusty nic nie niesie") {
+TRIAL("Editor: an empty one holds nothing") {
     const ui::Editor one;
 
     ought(!one.held());
@@ -78,7 +80,7 @@ TRIAL("Editor: pusty nic nie niesie") {
     same(one.cursor(), std::size_t{0});
 }
 
-TRIAL("Editor: po podaniu zna wiersze i stoi na początku") {
+TRIAL("Editor: once given text, it knows the lines and stands at the start") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -91,9 +93,9 @@ TRIAL("Editor: po podaniu zna wiersze i stoi na początku") {
     same(one->text(), std::string{"a\nbb\nccc"});
 }
 
-// --- Zmiany --------------------------------------------------------------------------------------
+// --- Changes -------------------------------------------------------------------------------------
 
-TRIAL("Editor: wpisanie znaku przesuwa kursor i brudzi dokument") {
+TRIAL("Editor: typing a character moves the cursor and makes the document dirty") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -106,9 +108,9 @@ TRIAL("Editor: wpisanie znaku przesuwa kursor i brudzi dokument") {
     ought(one->dirty());
 }
 
-// Enter dzieli wiersz, więc liczba wierszy rośnie — i to jest ta poprawka, którą szpula dostaje
-// z `changed`, zamiast liczyć dokument od nowa.
-TRIAL("Editor: enter dokłada wiersz") {
+// Enter splits a line, so the number of lines grows, and that is the adjustment the spool gets from
+// `changed` instead of counting the document again.
+TRIAL("Editor: enter adds a line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -122,7 +124,7 @@ TRIAL("Editor: enter dokłada wiersz") {
     same(one->text(), std::string{"abc\ndef"});
 }
 
-TRIAL("Editor: kasowanie wstecz zabiera znak przed kursorem") {
+TRIAL("Editor: deleting backward removes the character before the cursor") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcd");
@@ -134,7 +136,7 @@ TRIAL("Editor: kasowanie wstecz zabiera znak przed kursorem") {
     same(one->cursor(), std::size_t{2});
 }
 
-TRIAL("Editor: kasowanie w przód zabiera znak za kursorem") {
+TRIAL("Editor: deleting forward removes the character after the cursor") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcd");
@@ -146,7 +148,7 @@ TRIAL("Editor: kasowanie w przód zabiera znak za kursorem") {
     same(one->cursor(), std::size_t{1});
 }
 
-TRIAL("Editor: skasowanie entera scala wiersze") {
+TRIAL("Editor: deleting a newline joins the lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -160,7 +162,7 @@ TRIAL("Editor: skasowanie entera scala wiersze") {
     same(one->text(), std::string{"abcdef"});
 }
 
-TRIAL("Editor: tylko do odczytu nie przyjmuje zmian") {
+TRIAL("Editor: read-only accepts no changes") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -173,9 +175,9 @@ TRIAL("Editor: tylko do odczytu nie przyjmuje zmian") {
     ought(!one->dirty());
 }
 
-// --- Zaznaczenie ---------------------------------------------------------------------------------
+// --- Selection -----------------------------------------------------------------------------------
 
-TRIAL("Editor: zaznaczenie oddaje swój tekst") {
+TRIAL("Editor: the selection returns its text") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -190,7 +192,7 @@ TRIAL("Editor: zaznaczenie oddaje swój tekst") {
     same(one->cursor(), std::size_t{5});
 }
 
-TRIAL("Editor: wpisanie na zaznaczeniu zastępuje je") {
+TRIAL("Editor: typing over a selection replaces it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -202,7 +204,7 @@ TRIAL("Editor: wpisanie na zaznaczeniu zastępuje je") {
     ought(one->selection().empty());
 }
 
-TRIAL("Editor: kasowanie na zaznaczeniu zabiera całe") {
+TRIAL("Editor: deleting on a selection removes all of it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -214,10 +216,10 @@ TRIAL("Editor: kasowanie na zaznaczeniu zabiera całe") {
     same(one->cursor(), std::size_t{1});
 }
 
-// **Zaznaczenie to podobiekt**: kotwica i kursor pod jednym dachem. Parametry `set` nazywają się
-// tym, czym są, więc zaznaczenie wstecz to po prostu kotwica za kursorem — a `from` i `upto`
-// i tak oddają je po kolei.
-TRIAL("Selection: wstecz, rozciągnięcie i zgaszenie") {
+// The selection is a subobject: the anchor and the cursor under one roof. The parameters of `set`
+// are named for what they are, so a backward selection is simply an anchor after the cursor, while
+// `from` and `upto` return them in order anyway.
+TRIAL("Selection: backward, extending and clearing") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -243,7 +245,7 @@ TRIAL("Selection: wstecz, rozciągnięcie i zgaszenie") {
     same(one->selection().anchor(), std::size_t{0});
     same(one->selection().text(), std::string{});
 
-    // Poza dokumentem przycina, a kursor postawiony wprost gasi zaznaczenie.
+    // Outside the document it clamps, and a cursor set directly clears the selection.
     one->selection().set(99, 1);
 
     same(one->selection().anchor(), std::size_t{6});
@@ -253,7 +255,7 @@ TRIAL("Selection: wstecz, rozciągnięcie i zgaszenie") {
     ought(one->selection().empty());
 }
 
-TRIAL("Selection: kasowanie zabiera zaznaczenie jedną zmianą, a puste nic nie robi") {
+TRIAL("Selection: erasing removes the selection in one change, and an empty one does nothing") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -279,8 +281,9 @@ TRIAL("Selection: kasowanie zabiera zaznaczenie jedną zmianą, a puste nic nie 
     same(one->text(), std::string{"abcdef"});
 }
 
-// Delete przy zaznaczeniu kasuje zaznaczenie, a nie znaki za kursorem — tak samo jak Backspace.
-TRIAL("Editor: kasowanie w przód na zaznaczeniu zabiera całe") {
+// Delete with a selection deletes the selection, not the characters after the cursor, just like
+// Backspace.
+TRIAL("Editor: deleting forward on a selection removes all of it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -292,9 +295,8 @@ TRIAL("Editor: kasowanie w przód na zaznaczeniu zabiera całe") {
     same(one->cursor(), std::size_t{1});
 }
 
-// **Cały dokument wprost**, bez ruszania kursora i zaznaczenia — dawniej wołający zaznaczał
-// wszystko, czytał i przywracał.
-TRIAL("Editor: text oddaje cały dokument i niczego nie rusza") {
+// The whole document directly, without touching the cursor and the selection.
+TRIAL("Editor: text returns the whole document and touches nothing") {
     Sheet sheet;
 
     const auto empty = std::make_shared<ui::Editor>();
@@ -310,8 +312,8 @@ TRIAL("Editor: text oddaje cały dokument i niczego nie rusza") {
     same(one->cursor(), std::size_t{3});
 }
 
-// Zaznaczenie rysuje się znacznikami, po jednym na wiersz — ale tylko dla tego, co widać.
-TRIAL("Editor: zaznaczenie widać na ekranie") {
+// The selection is drawn with marks, one per line, but only for what is visible.
+TRIAL("Editor: the selection is visible on the screen") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -326,7 +328,7 @@ TRIAL("Editor: zaznaczenie widać na ekranie") {
     ought(!made.at({5, 0}).style.reverse);
 }
 
-TRIAL("Editor: zaznaczenie przez dwa wiersze daje znacznik na każdym") {
+TRIAL("Editor: a selection across two lines gives a mark on each") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -343,12 +345,12 @@ TRIAL("Editor: zaznaczenie przez dwa wiersze daje znacznik na każdym") {
     ought(!made.at({2, 1}).style.reverse);
 }
 
-// --- Skok do wiersza ------------------------------------------------------------------------------
+// --- Going to a line -----------------------------------------------------------------------------
 
-// `line(n)` stawia kursor na początku wiersza n (od zera) i gasi zaznaczenie; za końcem — na
-// ostatnim wierszu; widok idzie za kursorem. Para do `line()`, więc to, co jedno oddaje, drugie
-// przyjmuje.
-TRIAL("Editor: line(n) skacze na początek wiersza, za końcem na ostatni, gasi zaznaczenie") {
+// `line(n)` puts the cursor at the start of line n (counted from zero) and clears the selection;
+// past the end, on the last line; the view follows the cursor. It pairs with `line()`, so what one
+// returns the other accepts.
+TRIAL("Editor: line(n) jumps to the start of a line, past the end to the last, and clears the selection") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -380,7 +382,7 @@ TRIAL("Editor: line(n) skacze na początek wiersza, za końcem na ostatni, gasi 
 
     same(one->cursor(), std::size_t{0});
 
-    // Pusty dokument: zero i nic więcej.
+    // An empty document: zero and nothing more.
     const auto empty = std::make_shared<ui::Editor>();
 
     empty->hold(bytes(""));
@@ -389,12 +391,12 @@ TRIAL("Editor: line(n) skacze na początek wiersza, za końcem na ostatni, gasi 
     same(empty->cursor(), std::size_t{0});
 }
 
-// --- Blok mcedit ---------------------------------------------------------------------------------
+// --- The mcedit block ----------------------------------------------------------------------------
 
-// F3 zaczyna blok w kursorze, ruch rozciąga, drugie F3 kończy — i blok zostaje, choć kursor
-// pójdzie dalej. Trzecie F3 zdejmuje stary i zaczyna nowy. Blok w tył porządkuje się min/max,
-// zerowej długości znika.
-TRIAL("Editor: mark zaczyna, kończy i zaczyna od nowa; blok trwa po ruchu kursora") {
+// F3 starts a block at the cursor, movement extends it, a second F3 ends it, and the block stays
+// although the cursor moves on. A third F3 removes the old one and starts a new one. A backward
+// block is ordered by min/max; one of zero length disappears.
+TRIAL("Editor: mark starts, ends and starts again; the block stays after the cursor moves") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -412,7 +414,7 @@ TRIAL("Editor: mark zaczyna, kończy i zaczyna od nowa; blok trwa po ruchu kurso
     same(block.from(), std::size_t{2});
     same(block.upto(), std::size_t{2});
 
-    // Rozciąganie: koniec jest kursorem — także klawiszem, bez Shift.
+    // Extending: the end is the cursor, also with a key, without Shift.
     one->focus();
     (void)sheet.render({{0, 0}, {20, 2}});
 
@@ -436,13 +438,13 @@ TRIAL("Editor: mark zaczyna, kończy i zaczyna od nowa; blok trwa po ruchu kurso
     same(block.upto(), std::size_t{5});
     same(block.text(), std::string{"cde"});
 
-    // Trzecie F3: nowy blok w kursorze, stary znika.
+    // A third F3: a new block at the cursor, the old one disappears.
     block.mark();
 
     ought(block.pending());
     same(block.from(), std::size_t{0});
 
-    // W tył: kursor przed początkiem, tekst i tak w porządku.
+    // Backward: the cursor before the start, and the text is in order anyway.
     block.clear();
     one->cursor(5);
     block.mark();
@@ -455,16 +457,16 @@ TRIAL("Editor: mark zaczyna, kończy i zaczyna od nowa; blok trwa po ruchu kurso
     same(block.from(), std::size_t{2});
     same(block.upto(), std::size_t{5});
 
-    // Zerowej długości: znika.
+    // Zero length: it disappears.
     block.mark();
     block.mark();
 
     ought(block.empty());
 }
 
-// F5: treść bloku wchodzi w kursorze, blok zostaje — a gdy leżał za kursorem, przesuwa się
-// o swoją długość. Jedno cofnięcie, jedno ponowienie, blok wraca razem z tekstem.
-TRIAL("Editor: copy wstawia blok przy kursorze i zostawia go, undo wraca jednym krokiem") {
+// F5: the block's content goes in at the cursor and the block stays; when it lay after the cursor,
+// it moves by its own length. One undo, one redo, and the block comes back together with the text.
+TRIAL("Editor: copy inserts the block at the cursor and keeps it, undo goes back in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -498,7 +500,7 @@ TRIAL("Editor: copy wstawia blok przy kursorze i zostawia go, undo wraca jednym 
     same(one->text(), std::string{"cdeabcdef"});
     same(block.from(), std::size_t{5});
 
-    // Za blokiem: blok nie rusza się.
+    // After the block: the block does not move.
     one->undo();
     one->cursor(6);
 
@@ -507,7 +509,7 @@ TRIAL("Editor: copy wstawia blok przy kursorze i zostawia go, undo wraca jednym 
     same(block.from(), std::size_t{2});
     same(block.upto(), std::size_t{5});
 
-    // W trakcie rozciągania F5 najpierw kończy blok.
+    // While extending, F5 first ends the block.
     one->undo();
     one->cursor(0);
     block.mark();
@@ -516,9 +518,10 @@ TRIAL("Editor: copy wstawia blok przy kursorze i zostawia go, undo wraca jednym 
     ought(block.copy());
     ought(!block.pending());
 
-    // Wpis skopiowania jest zapieczętowany: znak wpisany zaraz potem cofa się osobno. Między
-    // skopiowaniem a znakiem nie może stać nic, co rusza kursorem — ruch kursora sam zamyka grupę
-    // cofania i próba nie pytałaby wtedy o pieczęć. `text()` kursora nie rusza.
+    // The copy's journal entry is sealed: a character typed right after it is undone separately.
+    // Nothing that moves the cursor may stand between the copy and the character, because moving
+    // the cursor closes the undo group by itself and the trial would then not ask about the seal.
+    // `text()` does not move the cursor.
     one->focus();
     (void)sheet.render({{0, 0}, {20, 2}});
 
@@ -532,9 +535,10 @@ TRIAL("Editor: copy wstawia blok przy kursorze i zostawia go, undo wraca jednym 
     same(one->text(), std::string{"ababcdef"});
 }
 
-// F6: blok wychodzi i wchodzi tam, gdzie stał kursor po wycięciu — przed blokiem cel jest ten sam,
-// za blokiem cofa się o długość. W bloku i na brzegu nic. Dwa wpisy dziennika związane w jeden.
-TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jednym krokiem") {
+// F6: the block goes out and comes in where the cursor stood after the cut; before the block the
+// target is the same, after the block it moves back by the length. In the block and at its edges,
+// nothing. Two journal entries bound into one.
+TRIAL("Editor: move carries the block before and after the cursor, refuses inside the block, undo in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -547,7 +551,7 @@ TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jedny
     one->cursor(5);
     block.mark();
 
-    // Przed blok.
+    // Before the block.
     one->cursor(0);
 
     ought(block.move());
@@ -563,7 +567,7 @@ TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jedny
     same(block.upto(), std::size_t{5});
     ought(!one->undoable());
 
-    // Za blok: na koniec.
+    // After the block: to the end.
     one->cursor(6);
 
     ought(block.move());
@@ -576,7 +580,7 @@ TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jedny
 
     same(one->text(), std::string{"abcdef"});
 
-    // Ponowienie odtwarza i tekst, i blok.
+    // Redo restores both the text and the block.
     one->redo();
 
     same(one->text(), std::string{"abfcde"});
@@ -584,7 +588,7 @@ TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jedny
 
     one->undo();
 
-    // W bloku i na obu brzegach: nic.
+    // In the block and at both edges: nothing.
     for (const std::size_t at : {std::size_t{2}, std::size_t{3}, std::size_t{5}}) {
         one->cursor(at);
 
@@ -594,9 +598,10 @@ TRIAL("Editor: move przenosi blok przed i za kursor, w bloku odmawia, undo jedny
     }
 }
 
-// F8: blok znika z dokumentu i sam ze sobą. Kursor za blokiem cofa się, w bloku staje na jego
-// początku, przed — zostaje. Cofnięcie przywraca tekst i blok.
-TRIAL("Editor: erase usuwa blok i zdejmuje go, kursor według położenia, undo przywraca oba") {
+// F8: the block disappears from the document and is removed itself. A cursor after the block moves
+// back, one inside the block stands at its start, one before it stays. Undo restores the text and
+// the block.
+TRIAL("Editor: erase deletes the block and removes it, the cursor by position, undo restores both") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -636,9 +641,9 @@ TRIAL("Editor: erase usuwa blok i zdejmuje go, kursor według położenia, undo 
     same(one->text(), std::string{"abf"});
 }
 
-// Blok idzie za dokumentem: zmiana przed nim przesuwa, za nim nic, w środku wydłuża albo
-// przycina, a wycięcie całego zdejmuje go.
-TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
+// The block follows the document: a change before it shifts it, one after it does nothing, one
+// inside lengthens or trims it, and cutting the whole of it removes it.
+TRIAL("Editor: the block shifts and trims with changes to the document") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -649,7 +654,7 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     one->cursor(5);
     block.mark();
 
-    // Przed: przesunięcie.
+    // Before: a shift.
     one->cursor(0);
     one->insert("XY");
 
@@ -658,7 +663,7 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.upto(), std::size_t{7});
     same(block.text(), std::string{"cde"});
 
-    // Za: nic.
+    // After: nothing.
     one->cursor(8);
     one->back_erase(1);
 
@@ -666,7 +671,8 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.from(), std::size_t{4});
     same(block.upto(), std::size_t{7});
 
-    // Dokładnie na początku: tekst idzie przed blok; dokładnie na końcu: nie wchodzi do bloku.
+    // Exactly at the start: the text goes before the block; exactly at the end: it does not enter
+    // the block.
     one->cursor(4);
     one->insert("-");
 
@@ -679,13 +685,13 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.text(), std::string{"cde"});
     same(one->text(), std::string{"XYab-cde+"});
 
-    // W środku: wydłuża.
+    // Inside: it lengthens.
     one->cursor(6);
     one->insert("Z");
 
     same(block.text(), std::string{"cZde"});
 
-    // Nachodząca na początek: przycina do tego, co zostało.
+    // Overlapping the start: trims to what is left.
     one->selection().set(4, 7);
     one->selection().erase();
 
@@ -694,21 +700,21 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.from(), std::size_t{4});
     same(block.upto(), std::size_t{6});
 
-    // Cały blok wycięty: znika.
+    // The whole block cut: it disappears.
     one->selection().set(3, 7);
     one->selection().erase();
 
     ought(block.empty());
 
-    // Cofnięcie przywraca go.
+    // Undo restores it.
     one->undo();
 
     ought(!block.empty());
     same(block.text(), std::string{"de"});
 
-    // Zamiana nachodząca na początek stawia początek **za** wstawionym; nachodząca na koniec
-    // przycina koniec **do** miejsca zmiany — wstawiony tekst nie wchodzi do bloku ani z jednej,
-    // ani z drugiej strony.
+    // A replacement overlapping the start puts the start after the inserted text; one overlapping
+    // the end trims the end to the place of the change, so the inserted text enters the block from
+    // neither side.
     one->hold(bytes("abcdef"));
     one->cursor(2);
     block.mark();
@@ -735,7 +741,7 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.text(), std::string{"cd"});
     same(block.upto(), std::size_t{4});
 
-    // W trakcie rozciągania początek też idzie za zmianą przed nim.
+    // While extending, the start also follows a change before it.
     one->hold(bytes("abcdef"));
     one->cursor(2);
     block.mark();
@@ -747,7 +753,7 @@ TRIAL("Editor: blok przesuwa się i przycina za zmianami dokumentu") {
     same(block.text(), std::string{"ab"});
 }
 
-TRIAL("Editor: blok widać na ekranie, także w trakcie rozciągania; readonly i hold") {
+TRIAL("Editor: the block is visible on the screen, also while extending; readonly and hold") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -766,7 +772,7 @@ TRIAL("Editor: blok widać na ekranie, także w trakcie rozciągania; readonly i
     ought(made.at({4, 0}).style.reverse);
     ought(!made.at({5, 0}).style.reverse);
 
-    // W trakcie: rośnie z kursorem.
+    // While extending: it grows with the cursor.
     block.clear();
 
     made = sheet.render({{0, 0}, {20, 2}});
@@ -786,7 +792,7 @@ TRIAL("Editor: blok widać na ekranie, także w trakcie rozciągania; readonly i
 
     block.mark();
 
-    // Tylko do odczytu: czynności odmawiają, blok można stawiać.
+    // Read-only: the actions refuse, but a block can be set.
     one->readonly(true);
 
     ought(!block.copy());
@@ -797,16 +803,16 @@ TRIAL("Editor: blok widać na ekranie, także w trakcie rozciągania; readonly i
 
     one->readonly(false);
 
-    // Nowy dokument zdejmuje blok.
+    // A new document removes the block.
     one->hold(bytes("xyz"));
 
     ought(block.empty());
     ought(!block.pending());
 }
 
-// --- Kursor na ekranie ---------------------------------------------------------------------------
+// --- The cursor on the screen --------------------------------------------------------------------
 
-TRIAL("Editor: kursor stoi tam, gdzie wskazuje bajt") {
+TRIAL("Editor: the cursor stands where the byte points") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -822,7 +828,7 @@ TRIAL("Editor: kursor stoi tam, gdzie wskazuje bajt") {
     same(at->y, 1);
 }
 
-TRIAL("Editor: kursor za ostatnim znakiem wiersza też ma miejsce") {
+TRIAL("Editor: a cursor after the last character of a line also has a place") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -838,9 +844,9 @@ TRIAL("Editor: kursor za ostatnim znakiem wiersza też ma miejsce") {
     same(at->y, 0);
 }
 
-// --- Klawisze ------------------------------------------------------------------------------------
+// --- Keys ----------------------------------------------------------------------------------------
 
-TRIAL("Editor: litera trafia do dokumentu") {
+TRIAL("Editor: a letter goes into the document") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ab");
@@ -853,7 +859,7 @@ TRIAL("Editor: litera trafia do dokumentu") {
     same(one->text(), std::string{"Xab"});
 }
 
-TRIAL("Editor: strzałki chodzą po znakach i po wierszach") {
+TRIAL("Editor: the arrows move by characters and by lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -878,9 +884,9 @@ TRIAL("Editor: strzałki chodzą po znakach i po wierszach") {
     same(one->cursor(), std::size_t{4});
 }
 
-// Znak wielobajtowy kasuje się w całości — inaczej Backspace rozcinałby ogonek na pół i zostawiał
-// śmieć, którego nie da się już wpisać z powrotem.
-TRIAL("Editor: kasowanie zabiera cały znak, nie jeden bajt") {
+// A multibyte character is deleted as a whole; otherwise Backspace would cut it in half and leave
+// garbage that can no longer be typed back.
+TRIAL("Editor: deleting removes a whole character, not one byte") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\xc4\x85"
@@ -897,9 +903,9 @@ TRIAL("Editor: kasowanie zabiera cały znak, nie jeden bajt") {
     same(one->cursor(), std::size_t{1});
 }
 
-// --- Cofanie -------------------------------------------------------------------------------------
+// --- Undo ----------------------------------------------------------------------------------------
 
-TRIAL("Editor: świeży dokument nie ma czego cofać") {
+TRIAL("Editor: a fresh document has nothing to undo") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -914,7 +920,7 @@ TRIAL("Editor: świeży dokument nie ma czego cofać") {
     same(one->text(), std::string{"abc"});
 }
 
-TRIAL("Editor: cofnięcie oddaje dokument sprzed zmiany, ponowienie go przywraca") {
+TRIAL("Editor: undo returns the document from before the change, redo restores it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -939,9 +945,9 @@ TRIAL("Editor: cofnięcie oddaje dokument sprzed zmiany, ponowienie go przywraca
     ought(!one->redoable());
 }
 
-// Pisany wyraz zbiera się w jeden wpis — inaczej cofanie chodziłoby po literze, a pięć tysięcy
-// znaków dałoby pięć tysięcy kroków.
-TRIAL("Editor: wpisany wyraz cofa się w całości") {
+// A typed word is gathered into one entry; otherwise undo would go letter by letter, and five
+// thousand characters would make five thousand steps.
+TRIAL("Editor: a typed word is undone as a whole") {
     Sheet sheet;
 
     const auto one = shown(sheet, "");
@@ -958,7 +964,7 @@ TRIAL("Editor: wpisany wyraz cofa się w całości") {
     ought(!one->undoable());
 }
 
-TRIAL("Editor: spacja kończy wyraz, więc cofa się osobno") {
+TRIAL("Editor: a space ends a word, so it is undone separately") {
     Sheet sheet;
 
     const auto one = shown(sheet, "");
@@ -977,7 +983,7 @@ TRIAL("Editor: spacja kończy wyraz, więc cofa się osobno") {
     same(one->text(), std::string{});
 }
 
-TRIAL("Editor: ruch kursora zamyka wyraz") {
+TRIAL("Editor: moving the cursor closes the word") {
     Sheet sheet;
 
     const auto one = shown(sheet, "xy");
@@ -1000,7 +1006,7 @@ TRIAL("Editor: ruch kursora zamyka wyraz") {
     same(one->text(), std::string{"xy"});
 }
 
-TRIAL("Editor: enter jest osobnym krokiem") {
+TRIAL("Editor: enter is a separate step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "");
@@ -1021,9 +1027,9 @@ TRIAL("Editor: enter jest osobnym krokiem") {
     same(*one->lines(), std::size_t{1});
 }
 
-// Wpisanie na zaznaczeniu to **jedna** zmiana. Gdyby było kasowaniem i wpisaniem po nim, jedno
-// cofnięcie oddałoby dokument bez zaznaczonego kawałka zamiast tego, co w nim stało.
-TRIAL("Editor: wpisanie na zaznaczeniu cofa się jednym ruchem") {
+// Typing over a selection is one change. If it were a deletion followed by typing, one undo would
+// return the document without the selected piece instead of with what stood in it.
+TRIAL("Editor: typing over a selection is undone in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1039,7 +1045,7 @@ TRIAL("Editor: wpisanie na zaznaczeniu cofa się jednym ruchem") {
     ought(!one->undoable());
 }
 
-TRIAL("Editor: trzymany backspace zbiera się w jeden krok") {
+TRIAL("Editor: a held backspace is gathered into one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1057,10 +1063,10 @@ TRIAL("Editor: trzymany backspace zbiera się w jeden krok") {
     same(one->cursor(), std::size_t{6});
 }
 
-// **Długi trzymany Backspace.** Znikające znaki zbierają się od tyłu; dawniej każdy następny stawał
-// przed poprzednimi, więc wpis przepisywał się w całości przy każdym znaku — przy dużym pliku
-// kwadrat. Znaki wielobajtowe wracają przy cofnięciu całe.
-TRIAL("Editor: długi trzymany backspace cofa się jednym ruchem w całości") {
+// A long held Backspace. The deleted characters are collected from the back; putting each new one
+// before the previous ones would rewrite the entry in full on every character, which is quadratic
+// for a large file. Multibyte characters come back whole on undo.
+TRIAL("Editor: a long held backspace is undone in full in one step") {
     Sheet sheet;
 
     std::string was;
@@ -1085,8 +1091,8 @@ TRIAL("Editor: długi trzymany backspace cofa się jednym ruchem w całości") {
     same(one->text(), std::string{});
 }
 
-// Trzymany Backspace po kilka bajtów naraz — każdy kawałek wraca w swojej kolejności.
-TRIAL("Editor: backspace po kilka bajtów wraca w kolejności") {
+// A held Backspace a few bytes at a time: every piece comes back in its own order.
+TRIAL("Editor: a backspace of several bytes comes back in order") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdefghi");
@@ -1103,9 +1109,9 @@ TRIAL("Editor: backspace po kilka bajtów wraca w kolejności") {
     same(one->text(), std::string{"abcdefghi"});
 }
 
-// Trzymany Backspace, a za nim trzymany Delete w tym samym miejscu, to jeden wpis — i wraca w dobrej
-// kolejności: najpierw to, co było przed kursorem, potem to, co za nim.
-TRIAL("Editor: backspace i delete w tym samym miejscu wracają w kolejności") {
+// A held Backspace followed by a held Delete at the same place is one entry, and it comes back in
+// the right order: first what was before the cursor, then what was after it.
+TRIAL("Editor: backspace and delete at the same place come back in order") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1124,7 +1130,7 @@ TRIAL("Editor: backspace i delete w tym samym miejscu wracają w kolejności") {
     ought(!one->undoable());
 }
 
-TRIAL("Editor: trzymany delete zbiera się w jeden krok") {
+TRIAL("Editor: a held delete is gathered into one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1140,8 +1146,8 @@ TRIAL("Editor: trzymany delete zbiera się w jeden krok") {
     same(one->text(), std::string{"abcdef"});
 }
 
-// Nowa zmiana po cofnięciu ucina gałąź ponowienia — nie ma już dokąd ponawiać.
-TRIAL("Editor: zmiana po cofnięciu ucina ponowienie") {
+// A new change after an undo cuts off the redo branch: there is nothing left to redo.
+TRIAL("Editor: a change after an undo cuts off redo") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1159,9 +1165,9 @@ TRIAL("Editor: zmiana po cofnięciu ucina ponowienie") {
     same(one->text(), std::string{"Yabc"});
 }
 
-// Brudny liczy się z dziennika, nie z kołdry: cofnięcie wszystkiego wraca do tego samego miejsca
-// w dzienniku, więc dokument jest znowu czysty.
-TRIAL("Editor: cofnięcie wszystkiego czyści dokument") {
+// Dirtiness is computed from the journal, not from the quilt: undoing everything returns to the
+// same place in the journal, so the document is clean again.
+TRIAL("Editor: undoing everything makes the document clean") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1188,7 +1194,7 @@ TRIAL("Editor: cofnięcie wszystkiego czyści dokument") {
     ought(one->dirty());
 }
 
-TRIAL("Editor: cofnięcie stawia kursor tam, gdzie stał przed zmianą") {
+TRIAL("Editor: undo puts the cursor where it stood before the change") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1203,7 +1209,7 @@ TRIAL("Editor: cofnięcie stawia kursor tam, gdzie stał przed zmianą") {
     same(one->cursor(), std::size_t{4});
 }
 
-TRIAL("Editor: cofnięcie odtwarza liczbę wierszy") {
+TRIAL("Editor: undo restores the number of lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef\nghi");
@@ -1227,10 +1233,10 @@ TRIAL("Editor: cofnięcie odtwarza liczbę wierszy") {
     same(one->text(), std::string{"ab\ndef\nghi"});
 }
 
-// Wiersz nie bierze się z entera, tylko z tego, czy po nim coś jest: „abc" i „abc\n" to jeden
-// wiersz, a pusty dokument nie ma żadnego. Liczona samymi enterami poprawka rozjeżdżała się
-// na obu tych krańcach.
-TRIAL("Editor: enter na końcu dokumentu nie dokłada wiersza") {
+// A line does not come from a newline but from whether something follows it: "abc" and "abc\n" are
+// one line, and an empty document has none. An adjustment counted from newlines alone would go
+// wrong at both of these ends.
+TRIAL("Editor: enter at the end of the document adds no line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1253,7 +1259,7 @@ TRIAL("Editor: enter na końcu dokumentu nie dokłada wiersza") {
     same(one->text(), std::string{"abc"});
 }
 
-TRIAL("Editor: pusty dokument nie ma wiersza, a jeden znak już ma") {
+TRIAL("Editor: an empty document has no line, and one character already has one") {
     Sheet sheet;
 
     const auto one = shown(sheet, "");
@@ -1269,7 +1275,7 @@ TRIAL("Editor: pusty dokument nie ma wiersza, a jeden znak już ma") {
     same(*one->lines(), std::size_t{0});
 }
 
-TRIAL("Editor: tylko do odczytu nie cofa") {
+TRIAL("Editor: read-only does not undo") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1285,9 +1291,9 @@ TRIAL("Editor: tylko do odczytu nie cofa") {
     same(one->text(), std::string{"aXbc"});
 }
 
-// Losowy ciąg zmian cofnięty do końca musi dać oryginał co do bajtu — to jedyny sposób, żeby
-// złapać błąd w odwracaniu zmiany, którego nie widać na żadnym pojedynczym przypadku.
-TRIAL("Editor: losowy ciąg zmian cofa się do oryginału") {
+// A random sequence of changes undone to the end must give the original to the byte: it is the only
+// way to catch an error in reversing a change that does not show in any single case.
+TRIAL("Editor: a random sequence of changes is undone to the original") {
     std::mt19937 gen(11);
 
     for (int round = 0; round < 60; ++round) {
@@ -1321,8 +1327,8 @@ TRIAL("Editor: losowy ciąg zmian cofa się do oryginału") {
                 one->front_erase(1 + gen() % 3);
             }
 
-            // Krok, który niczego nie zmienił — kasowanie na krańcu — nie zostawia wpisu
-            // w dzienniku, więc nie ma go też czym cofać.
+            // A step that changed nothing (deleting at an end) leaves no entry in the journal, so
+            // there is nothing to undo for it either.
             if (one->text() != before) steps.push_back(before);
         }
 
@@ -1340,9 +1346,9 @@ TRIAL("Editor: losowy ciąg zmian cofa się do oryginału") {
     }
 }
 
-// Skok po wyrazach chodzi ta sama regula, co szukanie calych wyrazow i dwuklik — jedna definicja
-// wyrazu w calej bibliotece.
-TRIAL("Editor: ctrl ze strzałką idzie po wyrazach") {
+// Jumping by words follows the same rule as whole-word search and double-click: one definition of a
+// word in the whole library.
+TRIAL("Editor: ctrl with an arrow moves by words") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1372,7 +1378,7 @@ TRIAL("Editor: ctrl ze strzałką idzie po wyrazach") {
     same(one->cursor(), std::size_t{0});
 }
 
-TRIAL("Editor: skok po wyrazach przechodzi między wierszami") {
+TRIAL("Editor: jumping by words crosses between lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -1392,7 +1398,7 @@ TRIAL("Editor: skok po wyrazach przechodzi między wierszami") {
     same(one->cursor(), std::size_t{3});
 }
 
-TRIAL("Editor: skok po wyrazach nie rozcina ogonka") {
+TRIAL("Editor: jumping by words does not split a multibyte character") {
     Sheet sheet;
 
     const auto one = shown(sheet, "k\xc4\x85t ma");
@@ -1405,7 +1411,7 @@ TRIAL("Editor: skok po wyrazach nie rozcina ogonka") {
     same(one->cursor(), std::size_t{5});
 }
 
-TRIAL("Editor: ctrl ze strzałką i shiftem ciągnie zaznaczenie") {
+TRIAL("Editor: ctrl with an arrow and shift extends the selection") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1421,7 +1427,7 @@ TRIAL("Editor: ctrl ze strzałką i shiftem ciągnie zaznaczenie") {
     same(one->selection().text(), std::string{"ala ma "});
 }
 
-TRIAL("Editor: skok po wyrazach na krańcach stoi w miejscu") {
+TRIAL("Editor: jumping by words at the ends stays in place") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala");
@@ -1441,9 +1447,9 @@ TRIAL("Editor: skok po wyrazach na krańcach stoi w miejscu") {
     same(one->cursor(), std::size_t{3});
 }
 
-// --- Schowek -------------------------------------------------------------------------------------
+// --- Clipboard -----------------------------------------------------------------------------------
 
-TRIAL("Editor: kopiowanie i wklejanie chodzą przez schowek") {
+TRIAL("Editor: copy and paste go through the clipboard") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1460,7 +1466,7 @@ TRIAL("Editor: kopiowanie i wklejanie chodzą przez schowek") {
     same(one->text(), std::string{"ala ma kota ala"});
 }
 
-TRIAL("Editor: kopiowanie bez zaznaczenia niczego nie rusza") {
+TRIAL("Editor: copying without a selection touches nothing") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1468,9 +1474,9 @@ TRIAL("Editor: kopiowanie bez zaznaczenia niczego nie rusza") {
     ought(!one->copy());
 }
 
-// Wyciecie idzie przez to samo kasowanie zaznaczenia, co Backspace, wiec jest jedna zmiana
-// w dzienniku i wraca jednym cofnieciem.
-TRIAL("Editor: wycięcie zabiera tekst i cofa się jednym ruchem") {
+// Cutting goes through the same deletion of the selection as Backspace, so it is one change in the
+// journal and comes back with one undo.
+TRIAL("Editor: cutting removes the text and is undone in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1487,7 +1493,7 @@ TRIAL("Editor: wycięcie zabiera tekst i cofa się jednym ruchem") {
     ought(!one->undoable());
 }
 
-TRIAL("Editor: wklejenie na zaznaczeniu zastępuje je") {
+TRIAL("Editor: pasting over a selection replaces it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1503,7 +1509,7 @@ TRIAL("Editor: wklejenie na zaznaczeniu zastępuje je") {
     same(one->text(), std::string{"abcdab"});
 }
 
-TRIAL("Editor: tylko do odczytu kopiuje, ale nie wycina i nie wkleja") {
+TRIAL("Editor: read-only copies, but does not cut or paste") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1521,7 +1527,7 @@ TRIAL("Editor: tylko do odczytu kopiuje, ale nie wycina i nie wkleja") {
     ought(!one->dirty());
 }
 
-TRIAL("Editor: kopia idzie do podanego schowka") {
+TRIAL("Editor: a copy goes to the given clipboard") {
     Sheet sheet;
 
     const auto kept = faking::clipboard();
@@ -1533,9 +1539,9 @@ TRIAL("Editor: kopia idzie do podanego schowka") {
     same(kept->kept.value_or(""), std::string{"ala"});
 }
 
-// Gdy schowek odmówi, wycięcie nie kasuje: dokument zostałby bez tekstu, którego nie ma dokąd
-// wkleić.
-TRIAL("Editor: odmowa schowka nie wycina") {
+// When the clipboard refuses, cutting does not delete: the document would be left without text that
+// has nowhere to be pasted from.
+TRIAL("Editor: a clipboard refusal does not cut") {
     Sheet sheet;
 
     const auto kept = faking::clipboard();
@@ -1552,7 +1558,7 @@ TRIAL("Editor: odmowa schowka nie wycina") {
     ought(!one->dirty());
 }
 
-TRIAL("Editor: dwa edytory na jednym schowku wymieniają tekst") {
+TRIAL("Editor: two editors on one clipboard exchange text") {
     Sheet first;
     Sheet second;
 
@@ -1570,13 +1576,11 @@ TRIAL("Editor: dwa edytory na jednym schowku wymieniają tekst") {
     same(two->text(), std::string{"piesma"});
 }
 
-// Oba komplety klawiszy robia to samo: Ctrl z litera z reszty swiata, Insert z Deletem
-// z Midnight Commandera.
-// **Ctrl z literą nie jest sprawą edytora.** Stał tu drugi komplet klawiszy schowka obok tego
-// z Midnight Commandera, i to on był kłopotem: w trybie surowym Ctrl+C nie jest przerwaniem, tylko
-// zwykłym klawiszem, więc edytor połykał go, ilekroć miał ognisko — a aplikacja, która chciała go
-// na wyjście, przestawała go widzieć i nie mogła tego odwołać.
-TRIAL("Editor: ctrl z literą przechodzi wyżej, schowka nie rusza") {
+// Ctrl with a letter is not the editor's business: its clipboard keys are those of Midnight
+// Commander. In raw mode Ctrl+C is not an interrupt but an ordinary key, so an editor that took it
+// whenever it had the focus would hide it from an application that wants it for quitting, with no
+// way for the application to undo that.
+TRIAL("Editor: ctrl with a letter goes up and leaves the clipboard alone") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1601,9 +1605,9 @@ TRIAL("Editor: ctrl z literą przechodzi wyżej, schowka nie rusza") {
     same(one->text(), std::string{"ala ma kota"});
 }
 
-// Kto woli odruch z reszty świata, dokłada go uchwytem — i wtedy działa, bo uchwyt widzi klawisz
-// niezależnie od tego, co robi `handle`.
-TRIAL("Editor: schowek pod ctrl da się dołożyć uchwytem") {
+// Whoever prefers the habit from the rest of the world adds it with a hook, and then it works,
+// because a hook sees the key regardless of what `handle` does.
+TRIAL("Editor: clipboard on ctrl can be added with a hook") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1628,7 +1632,7 @@ TRIAL("Editor: schowek pod ctrl da się dołożyć uchwytem") {
     same(one->selection().text(), std::string{"ala "});
 }
 
-TRIAL("Editor: insert i delete z modyfikatorami obsługują schowek") {
+TRIAL("Editor: insert and delete with modifiers work the clipboard") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -1656,8 +1660,8 @@ TRIAL("Editor: insert i delete z modyfikatorami obsługują schowek") {
     same(one->text(), std::string{"ma kotaala "});
 }
 
-// Sam Delete bez shiftu ma dalej kasowac znak, a nie wycinac.
-TRIAL("Editor: sam delete kasuje znak, a nie wycina") {
+// Delete alone, without Shift, still deletes a character rather than cutting.
+TRIAL("Editor: delete alone deletes a character, it does not cut") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -1671,9 +1675,9 @@ TRIAL("Editor: sam delete kasuje znak, a nie wycina") {
     same(one->text(), std::string{"bcdef"});
 }
 
-// --- Mysz ----------------------------------------------------------------------------------------
+// --- Mouse ---------------------------------------------------------------------------------------
 
-TRIAL("Editor: dwuklik bierze wyraz") {
+TRIAL("Editor: a double click takes a word") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota\ndrugi");
@@ -1688,9 +1692,9 @@ TRIAL("Editor: dwuklik bierze wyraz") {
     same(one->cursor(), std::size_t{6});
 }
 
-// Ogonek jest literą tą samą regułą, po której grzebień szuka całych wyrazów — inaczej dwuklik
-// i szukanie zaczęłyby się różnić.
-TRIAL("Editor: dwuklik nie rozcina wyrazu z ogonkiem") {
+// A letter with a diacritic is a letter by the same rule by which the comb searches for whole
+// words; otherwise double-click and search would start to differ.
+TRIAL("Editor: a double click does not split a word with a diacritic") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ma k\xc4\x85t tam");
@@ -1703,9 +1707,9 @@ TRIAL("Editor: dwuklik nie rozcina wyrazu z ogonkiem") {
     same(one->selection().text(), std::string{"k\xc4\x85t"});
 }
 
-// Klik w miejsce, ktore wyrazem nie jest, bierze ciag takich samych — dwuklik nigdy nie wyglada
-// na zignorowany.
-TRIAL("Editor: dwuklik poza wyrazem bierze ciąg znaków tego samego rodzaju") {
+// A click on a place that is not a word takes a run of characters of the same kind, so a double
+// click never looks ignored.
+TRIAL("Editor: a double click outside a word takes a run of characters of the same kind") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala   ma");
@@ -1718,7 +1722,7 @@ TRIAL("Editor: dwuklik poza wyrazem bierze ciąg znaków tego samego rodzaju") {
     same(one->selection().text(), std::string{"   "});
 }
 
-TRIAL("Editor: dwuklik za tabulatorem bierze wyraz po nim") {
+TRIAL("Editor: a double click after a tab takes the word after it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "\tala ma");
@@ -1731,8 +1735,9 @@ TRIAL("Editor: dwuklik za tabulatorem bierze wyraz po nim") {
     same(one->selection().text(), std::string{"ala"});
 }
 
-// Wcisniecie stawia kursor razem z kotwica, ruch z wcisnietym przyciskiem rozciaga zaznaczenie.
-TRIAL("Editor: ciągnięcie myszą rozciąga zaznaczenie") {
+// A press sets the cursor together with the anchor; movement with the button held extends the
+// selection.
+TRIAL("Editor: dragging with the mouse extends the selection") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef\nghijkl");
@@ -1760,16 +1765,16 @@ TRIAL("Editor: ciągnięcie myszą rozciąga zaznaczenie") {
 
     ought(sheet.dispatch(up));
 
-    // Po puszczeniu ruch nad edytorem nie ma juz prawa niczego rozciagac.
+    // After release, movement over the editor has no right to extend anything.
     ui::MouseEvent after{{5, 1}, ui::Press::move, ui::Mouse::none};
 
     ought(sheet.dispatch(after));
     same(one->selection().text(), std::string{"cdef\nghi"});
 }
 
-// Skrajny rzad przewija o wiersz, a szybkosc bierze sie z tego, ile uzytkownik naprawde rusza
-// mysza — kiedy stanie, przewijanie staje razem z nim. Zegara do tego nie trzeba.
-TRIAL("Editor: ciągnięcie w skrajnym rzędzie przewija") {
+// The edge row scrolls by one line, and the speed comes from how much the user really moves the
+// mouse: when it stops, scrolling stops with it. No timer is needed for that.
+TRIAL("Editor: dragging in the edge row scrolls") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(20));
@@ -1801,10 +1806,10 @@ TRIAL("Editor: ciągnięcie w skrajnym rzędzie przewija") {
     same(*one->first(), std::size_t{1});
 }
 
-// Ciagniecie wychodzi poza edytor: wcisniecie prosi o przytrzymanie, wiec ruch pod edytorem
-// i nad nim dochodzi dalej, przewija o wiersz i rozciaga zaznaczenie do skrajnego widocznego
-// wiersza — poza obszarem nie ma kratki, w ktora mozna by trafic.
-TRIAL("Editor: ciągnięcie poza edytor przewija i zaznacza do skrajnego wiersza") {
+// A drag goes outside the editor: the press asks for capture, so movement below and above the
+// editor still arrives, scrolls by one line and extends the selection to the outermost visible
+// line, since outside the area there is no cell to hit.
+TRIAL("Editor: dragging outside the editor scrolls and selects to the outermost line") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(20));
@@ -1838,9 +1843,9 @@ TRIAL("Editor: ciągnięcie poza edytor przewija i zaznacza do skrajnego wiersza
     same(*one->first(), std::size_t{1});
 }
 
-// Puszczenie poza edytorem tez do niego wraca i konczy ciagniecie — dawniej szlo do tego, co
-// lezalo pod kursorem, a zaznaczanie zostawalo zapalone do nastepnego wcisniecia.
-TRIAL("Editor: puszczenie poza edytorem kończy ciągnięcie") {
+// A release outside the editor also comes back to it and ends the drag; otherwise it would go to
+// whatever lies under the pointer, and selecting would stay on until the next press.
+TRIAL("Editor: releasing outside the editor ends the drag") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef\nghijkl");
@@ -1864,9 +1869,9 @@ TRIAL("Editor: puszczenie poza edytorem kończy ciągnięcie") {
     same(one->selection().text(), std::string{"bcd"});
 }
 
-// `at()` znaczy w edytorze to samo, co w podglądzie: bajt, od którego zaczyna się pierwszy widoczny
-// wiersz. Dawniej był to bajt wiersza **kursora** — tej wersji nikt nie wołał.
-TRIAL("Editor: at to bajt pierwszego widocznego wiersza, nie wiersza kursora") {
+// `at()` means in the editor what it means in the viewer: the byte at which the first visible line
+// starts.
+TRIAL("Editor: at is the byte of the first visible line, not of the cursor's line") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(20));
@@ -1881,9 +1886,9 @@ TRIAL("Editor: at to bajt pierwszego widocznego wiersza, nie wiersza kursora") {
     same(*one->whole(), many(20).size());
 }
 
-// --- Szukanie ------------------------------------------------------------------------------------
+// --- Search --------------------------------------------------------------------------------------
 
-TRIAL("Editor: szukanie znajduje i zaznacza") {
+TRIAL("Editor: search finds and selects") {
     Sheet sheet;
 
     const auto one = shown(sheet, "pierwszy\ndrugi\ntrzeci drugi");
@@ -1899,7 +1904,7 @@ TRIAL("Editor: szukanie znajduje i zaznacza") {
     same(one->line(), std::size_t{1});
 }
 
-TRIAL("Editor: szukanie idzie dalej od podanego miejsca") {
+TRIAL("Editor: search goes on from the given place") {
     Sheet sheet;
 
     const auto one = shown(sheet, "pierwszy\ndrugi\ntrzeci drugi");
@@ -1910,7 +1915,7 @@ TRIAL("Editor: szukanie idzie dalej od podanego miejsca") {
     ought(!one->find(how, 23, false).has_value());
 }
 
-TRIAL("Editor: szukanie wstecz bierze poprzednie dopasowanie") {
+TRIAL("Editor: backward search takes the previous match") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala\nma\nala\nkota\nala");
@@ -1923,7 +1928,7 @@ TRIAL("Editor: szukanie wstecz bierze poprzednie dopasowanie") {
     ought(!one->find(how, 0, true).has_value());
 }
 
-TRIAL("Editor: szukanie nie znajduje, czego nie ma") {
+TRIAL("Editor: search does not find what is not there") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -1934,9 +1939,9 @@ TRIAL("Editor: szukanie nie znajduje, czego nie ma") {
     ought(!one->find(how, 7, true).has_value());
 }
 
-// Zamiana bierze zaznaczenie tylko wtedy, gdy **całe** jest trafieniem. Zaznaczenie, które trafienie
-// tylko zawiera, zostaje nietknięte, a zamiana idzie szukać następnego.
-TRIAL("Editor: zamiana nie bierze zaznaczenia, które trafienie tylko zawiera") {
+// Replacing takes the selection only when the whole of it is a hit. A selection that merely
+// contains a hit stays untouched, and replacing goes on to look for the next one.
+TRIAL("Editor: replacing does not take a selection that merely contains a hit") {
     Sheet sheet;
 
     const auto one = shown(sheet, "xala ala");
@@ -1951,8 +1956,8 @@ TRIAL("Editor: zamiana nie bierze zaznaczenia, które trafienie tylko zawiera") 
     same(one->selection().upto(), std::size_t{8});
 }
 
-// Zly wzorzec nie ma prawa niczego zrobic — ani znalezc, ani rzucic.
-TRIAL("Editor: niegotowy grzebień nic nie znajduje") {
+// A bad pattern has no right to do anything: neither find nor throw.
+TRIAL("Editor: a comb that is not ready finds nothing") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -1962,7 +1967,7 @@ TRIAL("Editor: niegotowy grzebień nic nie znajduje") {
     ought(!one->find(how, 0, false).has_value());
 }
 
-TRIAL("Editor: szukanie wyrażeniem chodzi po wierszach") {
+TRIAL("Editor: a regular expression search goes line by line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "rok 2026\nbez liczb\nmiesiac 12");
@@ -1978,8 +1983,9 @@ TRIAL("Editor: szukanie wyrażeniem chodzi po wierszach") {
     same(one->selection().text(), std::string{"12"});
 }
 
-// Wzorzec nie przekracza konca wiersza — szukamy wierszami, bo wierszami mowi zwoj.
-TRIAL("Editor: wzorzec nie przechodzi przez koniec wiersza") {
+// A pattern does not cross the end of a line: we search by lines, because the document is served in
+// lines.
+TRIAL("Editor: a pattern does not cross the end of a line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ab\ncd");
@@ -1989,9 +1995,9 @@ TRIAL("Editor: wzorzec nie przechodzi przez koniec wiersza") {
     ought(!one->find(how, 0, false).has_value());
 }
 
-// Szukanie w dokumencie dluzszym niz jedna porcja wierszy — porcje licza bajt poczatku same,
-// wiec pomylka o jeden wyszlaby dopiero za granica porcji.
-TRIAL("Editor: szukanie przechodzi przez granicę porcji") {
+// Searching a document longer than one batch of lines: the batches compute their starting byte
+// themselves, so an off-by-one error would show only past a batch boundary.
+TRIAL("Editor: search crosses a batch boundary") {
     Sheet sheet;
 
     std::string big;
@@ -2013,9 +2019,9 @@ TRIAL("Editor: szukanie przechodzi przez granicę porcji") {
     same(one->find(how, big.size(), true)->from, big.size() - 4);
 }
 
-// --- Zamiana -------------------------------------------------------------------------------------
+// --- Replace -------------------------------------------------------------------------------------
 
-TRIAL("Editor: zamiana bez zaznaczenia najpierw pokazuje dopasowanie") {
+TRIAL("Editor: replacing without a selection first shows the match") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala");
@@ -2027,7 +2033,7 @@ TRIAL("Editor: zamiana bez zaznaczenia najpierw pokazuje dopasowanie") {
     same(one->text(), std::string{"ala ma ala"});
 }
 
-TRIAL("Editor: zamiana bierze zaznaczone dopasowanie i pokazuje następne") {
+TRIAL("Editor: replacing takes the selected match and shows the next one") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala");
@@ -2036,8 +2042,8 @@ TRIAL("Editor: zamiana bierze zaznaczone dopasowanie i pokazuje następne") {
 
     (void)one->find(how, 0, false);
 
-    // Zamiana zostawia zaznaczone **nastepne** dopasowanie, wiec drugie wolanie zamienia je bez
-    // szukania. Pomocnicze `whole` po drodze by to zepsulo — ono zaznacza caly dokument.
+    // Replacing leaves the next match selected, so a second call replaces it without searching. A
+    // helper `whole` along the way would break that, since it selects the whole document.
     ought(one->replace(how, "ola"));
     same(one->selection().text(), std::string{"ala"});
 
@@ -2047,7 +2053,7 @@ TRIAL("Editor: zamiana bierze zaznaczone dopasowanie i pokazuje następne") {
     same(one->text(), std::string{"ola ma ola"});
 }
 
-TRIAL("Editor: zamiana nie rusza zaznaczenia, które nie jest dopasowaniem") {
+TRIAL("Editor: replacing leaves alone a selection that is not a match") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma kota");
@@ -2060,7 +2066,7 @@ TRIAL("Editor: zamiana nie rusza zaznaczenia, które nie jest dopasowaniem") {
     same(one->text(), std::string{"ala ma kota"});
 }
 
-TRIAL("Editor: zamiana wszystkich bierze każde dopasowanie") {
+TRIAL("Editor: replacing all takes every match") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala\nala kot");
@@ -2071,8 +2077,8 @@ TRIAL("Editor: zamiana wszystkich bierze każde dopasowanie") {
     same(one->text(), std::string{"ola ma ola\nola kot"});
 }
 
-// Wszystkie zamiany sa przywiazane do pierwszej, wiec cofaja sie jednym ruchem.
-TRIAL("Editor: zamiana wszystkich cofa się jednym ruchem") {
+// All the replacements are tied to the first, so they are undone in one step.
+TRIAL("Editor: replacing all is undone in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala\nala kot");
@@ -2091,8 +2097,8 @@ TRIAL("Editor: zamiana wszystkich cofa się jednym ruchem") {
     same(one->text(), std::string{"ola ma ola\nola kot"});
 }
 
-// Wstawka niosaca w sobie wzorzec nie ma prawa zapetlic zamiany.
-TRIAL("Editor: zamiana na tekst ze wzorcem w środku się nie zapętla") {
+// A replacement that contains the pattern has no right to make replacing loop.
+TRIAL("Editor: replacing with text containing the pattern does not loop") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ala");
@@ -2103,7 +2109,7 @@ TRIAL("Editor: zamiana na tekst ze wzorcem w środku się nie zapętla") {
     same(one->text(), std::string{"alala alala"});
 }
 
-TRIAL("Editor: zamiana na nic kasuje dopasowania") {
+TRIAL("Editor: replacing with nothing deletes the matches") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a1b22c333d");
@@ -2114,7 +2120,7 @@ TRIAL("Editor: zamiana na nic kasuje dopasowania") {
     same(one->text(), std::string{"abcd"});
 }
 
-TRIAL("Editor: zamiana po całych wyrazach") {
+TRIAL("Editor: replacing whole words") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala alama ala");
@@ -2125,9 +2131,9 @@ TRIAL("Editor: zamiana po całych wyrazach") {
     same(one->text(), std::string{"ola alama ola"});
 }
 
-// Zamiana wszystkich przesuwa blok razem z tekstem, stawia kursor za ostatnią wstawką, a cofnięcie
-// oddaje i tekst, i blok, i kursor sprzed zamiany.
-TRIAL("Editor: zamiana wszystkich przesuwa blok, stawia kursor i cofa się w całości") {
+// Replacing all shifts the block together with the text and puts the cursor after the last
+// replacement, and undo restores the text, the block and the cursor from before.
+TRIAL("Editor: replacing all shifts the block, places the cursor and is undone in full") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala i ala");
@@ -2163,9 +2169,9 @@ TRIAL("Editor: zamiana wszystkich przesuwa blok, stawia kursor i cofa się w ca�
     same(one->cursor(), std::size_t{22});
 }
 
-// Wzorzec, który pasuje także do niczego, nie zapętla zamiany: puste trafienie nie zamienia nic
-// i przesuwa szukanie o znak.
-TRIAL("Editor: puste trafienie nie zapętla zamiany wszystkich") {
+// A pattern that also matches nothing does not make replacing loop: an empty hit replaces nothing
+// and moves the search on by one character.
+TRIAL("Editor: an empty hit does not make replacing all loop") {
     Sheet sheet;
 
     const auto one = shown(sheet, "axxbx");
@@ -2176,9 +2182,9 @@ TRIAL("Editor: puste trafienie nie zapętla zamiany wszystkich") {
     same(one->text(), std::string{"ayby"});
 }
 
-// **Dwadzieścia tysięcy trafień zamienia się i cofa od razu.** Dawniej każde szło osobno przez
-// szukanie, zaznaczenie i wstawienie, a kołdra przebudowywała się przy każdym — kwadrat.
-TRIAL("Editor: dwadzieścia tysięcy trafień zamienia się i cofa jednym ruchem") {
+// Twenty thousand hits are replaced and undone at once. Going separately through search, selection
+// and insertion for each, with the quilt rebuilt every time, would be quadratic.
+TRIAL("Editor: twenty thousand hits are replaced and undone in one step") {
     Sheet sheet;
 
     const std::string was = many(20000);
@@ -2200,8 +2206,9 @@ TRIAL("Editor: dwadzieścia tysięcy trafień zamienia się i cofa jednym ruchem
     same(one->text().size(), was.size() + 20000 * 6);
 }
 
-// Wstawki z końcami wierszy zmieniają liczbę wierszy — skok do wiersza za dawnym końcem trafia.
-TRIAL("Editor: zamiana wszystkich na wiersze poprawia liczbę wierszy") {
+// Replacements with line ends change the number of lines, so going to a line past the old end
+// lands.
+TRIAL("Editor: replacing all with lines adjusts the number of lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\na\na");
@@ -2220,9 +2227,9 @@ TRIAL("Editor: zamiana wszystkich na wiersze poprawia liczbę wierszy") {
     same(one->cursor(), std::size_t{10});
 }
 
-// Zamiana po cofnięciu poniżej zapisanego miejsca ucina gałąź, na której ono leżało — dokument jest
-// brudny, choćby liczba wpisów wróciła do tej przy zapisie.
-TRIAL("Editor: zamiana wszystkich po cofnięciu za zapis zostawia dokument brudny") {
+// Replacing after undoing past the saved point cuts off the branch it lay on: the document is
+// dirty, even if the number of entries is back to what it was at saving.
+TRIAL("Editor: replacing all after undoing past the save leaves the document dirty") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala");
@@ -2238,7 +2245,7 @@ TRIAL("Editor: zamiana wszystkich po cofnięciu za zapis zostawia dokument brudn
     ought(one->dirty());
 }
 
-TRIAL("Editor: tylko do odczytu nie zamienia") {
+TRIAL("Editor: read-only does not replace") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ala ma ala");
@@ -2251,13 +2258,14 @@ TRIAL("Editor: tylko do odczytu nie zamienia") {
     same(one->text(), std::string{"ala ma ala"});
 }
 
-// --- Zapis ---------------------------------------------------------------------------------------
+// --- Saving --------------------------------------------------------------------------------------
 
 namespace {
 
-// Ujście zbierające wszystko do napisu, z licznikiem kawałków — bo dokument większy od pamięci ma
-// przepłynąć kawałkami, a nie jednym kęsem. Oddaje obietnicę spełnianą na puli, jak `File::write`.
-// Pusty kawałek to koniec: liczy się osobno, bo to on domyka zapis.
+// A drain that collects everything into a string, with a counter of chunks, because a document
+// larger than memory has to flow in chunks, not in one bite. It returns a promise resolved on the
+// pool, like `File::write`. An empty chunk is the end: it is counted separately, because it is what
+// closes the write.
 Drain into(std::string& what, int& much, int* ended = nullptr) {
     return [&what, &much, ended](Bytes got) {
         if (got.empty() && ended != nullptr) ++*ended;
@@ -2270,9 +2278,10 @@ Drain into(std::string& what, int& much, int* ended = nullptr) {
     };
 }
 
-// Obraca pętlę, aż obietnica zapisu się rozstrzygnie; oddaje, czy się spełniła. Ciąg dalszy
-// idzie **na pętlę** (`on`): zapis kończy się na wątku puli, a zmienną czyta ten wątek. Bez tego
-// odrzucony zapis wpisywał wynik z puli i sanitizer wątków łapał wyścig.
+// Turns the loop until the write's promise settles; returns whether it was fulfilled. The
+// continuation goes onto the loop (`on`): the write finishes on a pool thread, and the variable is
+// read by this thread. Otherwise a rejected write would store the result from the pool thread, a
+// data race that the thread sanitizer reports.
 bool saved(Loop& loop, Promise<void> made) {
     std::optional<bool> went;
 
@@ -2291,7 +2300,7 @@ bool saved(Loop& loop, Promise<void> made) {
 
 }
 
-TRIAL("Editor: zapis oddaje całą treść, kończy pustym kawałkiem i czyści dokument") {
+TRIAL("Editor: saving gives the whole content, ends with an empty chunk and makes the document clean") {
     Loop loop;
     Sheet sheet;
 
@@ -2308,7 +2317,7 @@ TRIAL("Editor: zapis oddaje całą treść, kończy pustym kawałkiem i czyści 
 
     Promise<void> made = one->save(into(got, much, &ended));
 
-    // Do spełnienia edytor jest zajęty i brudny — pierze się dopiero po całości.
+    // Until fulfilled, the editor is busy and dirty: it becomes clean only after the whole.
     ought(one->busy());
     ought(one->dirty());
 
@@ -2321,8 +2330,9 @@ TRIAL("Editor: zapis oddaje całą treść, kończy pustym kawałkiem i czyści 
     ought(!one->busy());
 }
 
-// Pusty dokument to samo jedno wołanie końca: ujście ma co domknąć, choć nie ma czego pisać.
-TRIAL("Editor: zapis pustego dokumentu oddaje tylko koniec") {
+// An empty document is a single call for the end: the drain has something to close, though nothing
+// to write.
+TRIAL("Editor: saving an empty document gives only the end") {
     Loop loop;
     Sheet sheet;
 
@@ -2339,9 +2349,9 @@ TRIAL("Editor: zapis pustego dokumentu oddaje tylko koniec") {
     same(ended, 1);
 }
 
-// „Czysty" znaczy „na dysku": ujście, które odmawia dopiero przy końcu — bo nie dało się domknąć
-// pliku — zostawia dokument brudny, choć wszystkie kawałki przyjęło.
-TRIAL("Editor: odmowa przy końcu zostawia dokument brudny") {
+// "Clean" means "on disk": a drain that refuses only at the end, because the file could not be
+// closed, leaves the document dirty, though it accepted all the chunks.
+TRIAL("Editor: a refusal at the end leaves the document dirty") {
     Loop loop;
     Sheet sheet;
 
@@ -2366,10 +2376,10 @@ TRIAL("Editor: odmowa przy końcu zostawia dokument brudny") {
     ought(!one->busy());
 }
 
-// Niedokończony zapis nie jest zapisem: dokument zostaje brudny, żeby aplikacja nie uznała go
-// za odłożony na dysk. Ujście bez obietnicy i drugi zapis w trakcie pierwszego są odrzucane od
-// razu.
-TRIAL("Editor: ujście, które odmówi, przerywa zapis") {
+// An unfinished save is not a save: the document stays dirty, so that the application does not
+// consider it stored on disk. A drain without a promise and a second save during the first are
+// rejected at once.
+TRIAL("Editor: a drain that refuses interrupts the save") {
     Loop loop;
     Sheet sheet;
 
@@ -2396,9 +2406,10 @@ TRIAL("Editor: ujście, które odmówi, przerywa zapis") {
     ought(!one->dirty());
 }
 
-// Ujście, które rzuca, zanim odda obietnicę: zapis jest odrzucony, a edytor nie zostaje zajęty — inaczej
-// każdy następny zapis byłby odrzucany jako „drugi w trakcie", a wyjście z edytora czekało bez końca.
-TRIAL("Editor: ujście rzucające przed obietnicą nie zostawia edytora zajętym") {
+// A drain that throws before it returns a promise: the save is rejected and the editor does not
+// stay busy; otherwise every later save would be rejected as "a second one in progress", and
+// leaving the editor would wait forever.
+TRIAL("Editor: a drain that throws before its promise does not leave the editor busy") {
     Loop loop;
     Sheet sheet;
 
@@ -2428,9 +2439,9 @@ TRIAL("Editor: ujście rzucające przed obietnicą nie zostawia edytora zajętym
     same(got, std::string{"Xabcdef"});
 }
 
-// W trakcie zapisu treść stoi: klawisze zmieniające ją odbijają się, cofanie też, a po
-// spełnieniu wszystko wraca.
-TRIAL("Editor: w trakcie zapisu treść nie zmienia się") {
+// During a save the content stands still: keys that change it bounce off, so does undo, and after
+// fulfillment everything comes back.
+TRIAL("Editor: the content does not change during a save") {
     Loop loop;
     Sheet sheet;
 
@@ -2459,7 +2470,7 @@ TRIAL("Editor: w trakcie zapisu treść nie zmienia się") {
     ought(one->undoable());
 }
 
-TRIAL("Editor: duży dokument płynie kawałkami") {
+TRIAL("Editor: a large document flows in chunks") {
     Loop loop;
     Sheet sheet;
 
@@ -2478,12 +2489,13 @@ TRIAL("Editor: duży dokument płynie kawałkami") {
     ought(much > 1);
 }
 
-// --- Czysty czy brudny --------------------------------------------------------------------------
+// --- Clean or dirty ------------------------------------------------------------------------------
 
-// Dwa kłamstwa `dirty()`, które liczyło same numery wpisów: wyraz pisany dalej po zapisie
-// przedłużał ten sam wpis, a nowa zmiana po cofnięciu poniżej zapisanego miejsca dostawała ten sam
-// numer, co zapisane. Zapis pieczętuje wpis, ucięcie gałęzi unieważnia zapamiętany numer.
-TRIAL("Editor: pisanie dalej po zapisie brudzi dokument") {
+// Two ways in which a `dirty()` that counted only entry numbers would lie: a word typed on after
+// saving would extend the same entry, and a new change after undoing past the saved point would get
+// the same number as the saved one. Saving seals the entry, and cutting off a branch invalidates
+// the remembered number.
+TRIAL("Editor: typing on after saving makes the document dirty") {
     Loop loop;
     Sheet sheet;
 
@@ -2503,14 +2515,14 @@ TRIAL("Editor: pisanie dalej po zapisie brudzi dokument") {
     ought(one->dirty());
     same(one->text(), std::string{"abcxy"});
 
-    // Cofnięcie samego `y` wraca do zapisanego — bo `y` zaczęło własny wpis.
+    // Undoing just the `y` returns to the saved state, because the `y` started its own entry.
     one->undo();
 
     ought(!one->dirty());
     same(one->text(), std::string{"abcx"});
 }
 
-TRIAL("Editor: nowa zmiana po cofnięciu poniżej zapisu brudzi dokument na zawsze") {
+TRIAL("Editor: a new change after undoing past the save makes the document dirty for good") {
     Loop loop;
     Sheet sheet;
 
@@ -2537,16 +2549,16 @@ TRIAL("Editor: nowa zmiana po cofnięciu poniżej zapisu brudzi dokument na zaws
     ought(one->dirty());
     same(one->text(), std::string{"qabcx"});
 
-    // Żadne cofanie nie wraca już do zapisanego stanu.
+    // No undo returns to the saved state any more.
     one->undo();
     one->undo();
 
     ought(one->dirty());
 }
 
-// --- Kliknięcie ----------------------------------------------------------------------------------
+// --- Clicking ------------------------------------------------------------------------------------
 
-TRIAL("Editor: kliknięcie stawia kursor w klikniętej kratce") {
+TRIAL("Editor: a click puts the cursor in the clicked cell") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -2559,10 +2571,10 @@ TRIAL("Editor: kliknięcie stawia kursor w klikniętej kratce") {
     same(one->cursor(), std::size_t{6});
 }
 
-// Rząd ekranu **nie jest** numerem wiersza: przy zawijaniu jeden wiersz zajmuje ich kilka.
-// Liczone dodawaniem rzędu do górnego wiersza kliknięcie w drugą połowę zawiniętego wiersza
-// lądowało w wierszu następnym.
-TRIAL("Editor: kliknięcie w zawinięty wiersz trafia we właściwy wiersz") {
+// A screen row is not a line number: with wrapping, one line takes several rows. Computed by adding
+// the row to the top line, a click on the second half of a wrapped line would land on the next
+// line.
+TRIAL("Editor: a click on a wrapped line hits the right line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdefgh\nxy");
@@ -2576,8 +2588,8 @@ TRIAL("Editor: kliknięcie w zawinięty wiersz trafia we właściwy wiersz") {
     same(one->line(), std::size_t{0});
 }
 
-// Kolumna nie jest bajtem: tabulator zajmuje osiem kratek, a wszystkie wskazują ten sam bajt.
-TRIAL("Editor: kliknięcie za tabulatorem trafia we właściwy bajt") {
+// A column is not a byte: a tab takes eight cells, and all of them point to the same byte.
+TRIAL("Editor: a click after a tab hits the right byte") {
     Sheet sheet;
 
     const auto one = shown(sheet, "\tab");
@@ -2595,7 +2607,7 @@ TRIAL("Editor: kliknięcie za tabulatorem trafia we właściwy bajt") {
     same(one->cursor(), std::size_t{0});
 }
 
-TRIAL("Editor: kliknięcie za końcem wiersza staje na jego końcu") {
+TRIAL("Editor: a click past the end of a line stops at its end") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -2608,9 +2620,9 @@ TRIAL("Editor: kliknięcie za końcem wiersza staje na jego końcu") {
     same(one->cursor(), std::size_t{3});
 }
 
-// --- Wiersz i kolumna ----------------------------------------------------------------------------
+// --- Line and column -----------------------------------------------------------------------------
 
-TRIAL("Editor: miejsce kursora liczy się wierszem i kratką") {
+TRIAL("Editor: the cursor's place is counted in lines and cells") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -2621,7 +2633,7 @@ TRIAL("Editor: miejsce kursora liczy się wierszem i kratką") {
     same(one->column(), std::size_t{1});
 }
 
-TRIAL("Editor: kolumna liczy tabulator jak ekran, a nie jak bajt") {
+TRIAL("Editor: the column counts a tab as the screen does, not as a byte") {
     Sheet sheet;
 
     const auto one = shown(sheet, "\tab");
@@ -2635,9 +2647,9 @@ TRIAL("Editor: kolumna liczy tabulator jak ekran, a nie jak bajt") {
     same(one->column(), std::size_t{9});
 }
 
-// --- Zaznaczanie klawiszami ----------------------------------------------------------------------
+// --- Selecting with keys -------------------------------------------------------------------------
 
-TRIAL("Editor: kursor gasi zaznaczenie, a stretch je ciągnie") {
+TRIAL("Editor: the cursor clears the selection, and extend drags it") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -2658,7 +2670,7 @@ TRIAL("Editor: kursor gasi zaznaczenie, a stretch je ciągnie") {
     ought(one->selection().empty());
 }
 
-TRIAL("Editor: shift ze strzałką rozszerza zaznaczenie") {
+TRIAL("Editor: shift with an arrow extends the selection") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -2676,7 +2688,7 @@ TRIAL("Editor: shift ze strzałką rozszerza zaznaczenie") {
     same(one->selection().text(), std::string{"cd"});
 }
 
-TRIAL("Editor: shift z ruchem w dół bierze zaznaczenie przez wiersze") {
+TRIAL("Editor: shift with moving down selects across lines") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -2693,7 +2705,7 @@ TRIAL("Editor: shift z ruchem w dół bierze zaznaczenie przez wiersze") {
     same(one->selection().text(), std::string{"bc\nd"});
 }
 
-TRIAL("Editor: shift z Home bierze początek wiersza") {
+TRIAL("Editor: shift with Home takes the start of the line") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -2708,9 +2720,9 @@ TRIAL("Editor: shift z Home bierze początek wiersza") {
     same(one->selection().anchor(), std::size_t{4});
 }
 
-// --- Stronicowanie -------------------------------------------------------------------------------
+// --- Paging --------------------------------------------------------------------------------------
 
-TRIAL("Editor: klawisz strony przenosi kursor o ekran") {
+TRIAL("Editor: a page key moves the cursor by a screen") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -2733,8 +2745,8 @@ TRIAL("Editor: klawisz strony przenosi kursor o ekran") {
     same(one->line(), std::size_t{3});
 }
 
-// Pod koniec dokumentu strona ma dojść do ostatniego wiersza, a nie odmówić ruchu.
-TRIAL("Editor: strona pod koniec dokumentu staje na ostatnim wierszu") {
+// Near the end of the document a page should reach the last line, not refuse to move.
+TRIAL("Editor: a page near the end of the document stops on the last line") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -2756,8 +2768,8 @@ TRIAL("Editor: strona pod koniec dokumentu staje na ostatnim wierszu") {
     same(one->line(), std::size_t{9});
 }
 
-// Klawisz, którego edytor nie użył, ma iść wyżej — zjadanie go blokuje przodka.
-TRIAL("Editor: strzałka bez dokąd oddaje klawisz wyżej") {
+// A key the editor did not use is to go up; eating it blocks the ancestor.
+TRIAL("Editor: an arrow with nowhere to go passes the key up") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc\ndef");
@@ -2779,7 +2791,7 @@ TRIAL("Editor: strzałka bez dokąd oddaje klawisz wyżej") {
     ought(!sheet.dispatch(down));
 }
 
-TRIAL("Editor: F-klawisze przechodzą wyżej") {
+TRIAL("Editor: F keys go up") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abc");
@@ -2791,11 +2803,11 @@ TRIAL("Editor: F-klawisze przechodzą wyżej") {
     ought(!sheet.dispatch(f2));
 }
 
-// --- Po zmianie ----------------------------------------------------------------------------------
+// --- After a change ------------------------------------------------------------------------------
 
-// Szpula czyta bajty przez tablicę kawałków, więc po zmianie **widzi nową treść** — a jej kotwice
-// za miejscem zmiany idą do kosza, żeby nie wskazywały w stare miejsca.
-TRIAL("Editor: ekran pokazuje treść po zmianie") {
+// The spool reads bytes through the piece table, so after a change it sees the new content, and its
+// anchors after the place of the change go to the bin, so that they do not point to old places.
+TRIAL("Editor: the screen shows the content after a change") {
     Sheet sheet;
 
     const auto one = shown(sheet, "pierwszy\ndrugi");
@@ -2811,7 +2823,7 @@ TRIAL("Editor: ekran pokazuje treść po zmianie") {
     same(said(made, 1), std::string{"drugi"});
 }
 
-TRIAL("Editor: wiele zmian w różnych miejscach nie gubi treści") {
+TRIAL("Editor: many changes in different places lose no content") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaa\nbbb\nccc\nddd");
@@ -2829,10 +2841,10 @@ TRIAL("Editor: wiele zmian w różnych miejscach nie gubi treści") {
     same(*one->lines(), std::size_t{4});
 }
 
-// **Trzymany Backspace i Delete przez granicę wpisanego tekstu.** Kasowane znaki leżą raz
-// w dopiskach, raz w oryginale, więc wpis zbiera odcinki z dwóch źródeł — i dalej jest jednym
-// wpisem, który wraca w dobrej kolejności.
-TRIAL("Editor: kasowanie przez granicę wpisanego tekstu cofa się jednym ruchem") {
+// A held Backspace and Delete across the boundary of typed text. The deleted characters lie partly
+// in the additions and partly in the original, so the entry collects pieces from two sources, and
+// it is still one entry that comes back in the right order.
+TRIAL("Editor: deleting across the boundary of typed text is undone in one step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdef");
@@ -2870,11 +2882,11 @@ TRIAL("Editor: kasowanie przez granicę wpisanego tekstu cofa się jednym ruchem
     ought(!one->undoable());
 }
 
-// **Wpisy dziennika to skrawki kołdry.** Losowe wpisywanie, kasowanie w obie strony i bloki (F5,
-// F6, F8), a potem cofnięcie wszystkiego krok po kroku i ponowienie wszystkiego — po każdym kroku
-// tekst taki, jaki był. Skrawki kopiowanego i przenoszonego bloku wskazują te same odcinki co
-// dokument, więc gdyby któraś zmiana je psuła, wyszłoby to przy cofaniu.
-TRIAL("Editor: losowe bloki i kasowania cofają się i ponawiają") {
+// Journal entries are scraps of the quilt. Random typing, deleting in both directions and blocks
+// (F5, F6, F8), then undoing everything step by step and redoing everything: after each step the
+// text is as it was. The scraps of a copied and moved block point to the same pieces as the
+// document, so if any change damaged them, it would show on undo.
+TRIAL("Editor: random blocks and deletions are undone and redone") {
     std::mt19937 gen(5);
 
     const auto drawn = [&gen](std::size_t much) { return much == 0 ? 0 : gen() % (much + 1); };
@@ -2948,10 +2960,10 @@ TRIAL("Editor: losowe bloki i kasowania cofają się i ponawiają") {
     }
 }
 
-// Duży blok skasowany, przeniesiony i skopiowany, a potem wiele razy cofnięty i ponowiony: tekst
-// wraca co do bajtu. Dawniej każde cofnięcie wstawiało kopię bloku do dopisków kołdry, które nigdy
-// się nie kurczą.
-TRIAL("Editor: duży blok cofa się i ponawia wiele razy") {
+// A large block deleted, moved and copied, then undone and redone many times: the text comes back
+// to the byte. Undo must not insert a copy of the block into the quilt's additions, which never
+// shrink.
+TRIAL("Editor: a large block is undone and redone many times") {
     Sheet sheet;
 
     const std::string was = many(100000);
@@ -2993,9 +3005,9 @@ TRIAL("Editor: duży blok cofa się i ponawia wiele razy") {
     }
 }
 
-// Enter skasowany Backspace'em albo Delete'em zaczyna nowy krok cofania — tak samo jak wpisany.
-// Cofnięcie zabiera wtedy najpierw połączenie wierszy, a dopiero potem znaki przed nim.
-TRIAL("Editor: skasowany koniec wiersza jest osobnym krokiem") {
+// A newline deleted with Backspace or Delete starts a new undo step, just like a typed one. Undo
+// then first takes back the joining of the lines, and only then the characters before it.
+TRIAL("Editor: a deleted line end is a separate step") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ab\ncd");

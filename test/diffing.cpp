@@ -18,6 +18,7 @@ namespace {
 
 class Sheet : public ui::Root {};
 
+// The text of row `y` of the view, without trailing spaces.
 std::string said(const View& one, int y) {
     std::string made;
 
@@ -34,7 +35,7 @@ std::string said(const View& one, int y) {
     return made;
 }
 
-// Tekst strony poza zaznaczeniami i sam tekst zaznaczeń.
+// The text of a side outside its marks.
 std::string kept(const ui::DiffSide& one) {
     std::string made;
     std::size_t at = 0;
@@ -47,6 +48,7 @@ std::string kept(const ui::DiffSide& one) {
     return made + one.text.substr(at);
 }
 
+// The text of each mark of a side, in brackets.
 std::string marked(const ui::DiffSide& one) {
     std::string made;
 
@@ -55,8 +57,8 @@ std::string marked(const ui::DiffSide& one) {
     return made;
 }
 
-// Te same słowa, co w bibliotece — próba liczy najdłuższy wspólny podciąg zwykłą tablicą i sprawdza,
-// że Myers go znalazł.
+// The same words as in the library: the trial computes the longest common subsequence with a
+// plain table and checks that Myers found it.
 std::vector<std::string> words(std::string_view text) {
     const auto wordy = [](unsigned char sign) {
         return (sign >= '0' && sign <= '9') || (sign >= 'a' && sign <= 'z') || (sign >= 'A' && sign <= 'Z') ||
@@ -78,6 +80,7 @@ std::vector<std::string> words(std::string_view text) {
     return made;
 }
 
+// The length of the longest common subsequence of two word lists, by dynamic programming.
 std::size_t common(const std::vector<std::string>& one, const std::vector<std::string>& two) {
     std::vector<std::vector<std::size_t>> made(one.size() + 1, std::vector<std::size_t>(two.size() + 1, 0));
 
@@ -88,18 +91,22 @@ std::size_t common(const std::vector<std::string>& one, const std::vector<std::s
     return made[one.size()][two.size()];
 }
 
+// A row comparing `left` with `right`, with the marks the library computes.
 ui::DiffRow row(std::string_view left, std::string_view right) {
     auto [one, two] = ui::diffed(left, right);
 
     return ui::DiffRow{std::move(one), std::move(two)};
 }
 
+// A hunk without a title from the given rows, with a check box when `tickable`.
 ui::DiffHunk hunk(std::vector<ui::DiffRow> rows, bool tickable = true) {
     return ui::DiffHunk{{}, std::move(rows), tickable, {}};
 }
 
+// A section heading: a hunk with a title, no rows and no check box.
 ui::DiffHunk heading(std::string title) { return ui::DiffHunk{std::move(title), {}, false, {}}; }
 
+// A source that hands out the given hunks at once, at most `most` from `from` on.
 ui::DiffSource sourced(std::vector<ui::DiffHunk> all) {
     return [all = std::move(all)](std::size_t from, std::size_t most) {
         std::vector<ui::DiffHunk> made;
@@ -110,7 +117,7 @@ ui::DiffSource sourced(std::vector<ui::DiffHunk> all) {
     };
 }
 
-// Dwie sekcje: dwa kawałki pod pierwszym nagłówkiem, jeden pod drugim.
+// Two sections: two hunks under the first heading, one under the second.
 std::vector<ui::DiffHunk> planned() {
     return {heading("Pewne (2)"),
             hunk({row("a.mkv", "A (2000)/A (2000).mkv"), row("a.srt", "A (2000)/A (2000).srt")}),
@@ -119,6 +126,7 @@ std::vector<ui::DiffHunk> planned() {
             hunk({row("c.mkv", "C (2002)/")}, false)};
 }
 
+// A two-column viewer of the given hunks, added to `sheet`.
 std::shared_ptr<ui::DiffViewer> shown(Sheet& sheet, std::vector<ui::DiffHunk> all) {
     const auto one = std::make_shared<ui::DiffViewer>(ui::DiffShape{false, ui::Elide::middle});
 
@@ -131,6 +139,7 @@ std::shared_ptr<ui::DiffViewer> shown(Sheet& sheet, std::vector<ui::DiffHunk> al
     return one;
 }
 
+// Sends a key to the sheet; whether anybody took it.
 bool pressed(Sheet& sheet, ui::Key key) {
     ui::KeyEvent what{key};
 
@@ -139,9 +148,9 @@ bool pressed(Sheet& sheet, ui::Key key) {
 
 }
 
-// --- Różnica napisów -----------------------------------------------------------------------------
+// --- Difference of texts -------------------------------------------------------------------------
 
-TRIAL("Diff: równe napisy nie mają różnic") {
+TRIAL("Diff: equal texts have no differences") {
     const auto [one, two] = ui::diffed("Heat (1995).mkv", "Heat (1995).mkv");
 
     ought(one.marked.empty());
@@ -149,14 +158,14 @@ TRIAL("Diff: równe napisy nie mają różnic") {
     same(one.text, std::string{"Heat (1995).mkv"});
 }
 
-TRIAL("Diff: przeniesienie do katalogu świeci tylko katalogiem") {
+TRIAL("Diff: a move into a directory highlights only the directory") {
     const auto [one, two] = ui::diffed("a.mkv", "Dir/a.mkv");
 
     ought(one.marked.empty());
     same(marked(two), std::string{"[Dir/]"});
 }
 
-TRIAL("Diff: różnica idzie po słowach, a nie po literach") {
+TRIAL("Diff: the difference goes by words, not by letters") {
     const auto [one, two] = ui::diffed("The.Matrix.1999.1080p.BluRay.mkv", "The Matrix (1999).mkv");
 
     same(kept(one), kept(two));
@@ -165,14 +174,14 @@ TRIAL("Diff: różnica idzie po słowach, a nie po literach") {
     ought(kept(one).find("1999") != std::string::npos);
 }
 
-TRIAL("Diff: ogonki należą do słowa") {
+TRIAL("Diff: letters with diacritics belong to the word") {
     const auto [one, two] = ui::diffed("zażółć", "zażółć gęślą");
 
     ought(one.marked.empty());
     same(marked(two), std::string{"[ gęślą]"});
 }
 
-TRIAL("Diff: pusta strona to całość po drugiej") {
+TRIAL("Diff: an empty side means all of the other one") {
     const auto [one, two] = ui::diffed("", "abc def");
 
     ought(one.marked.empty());
@@ -184,10 +193,10 @@ TRIAL("Diff: pusta strona to całość po drugiej") {
     ought(four.marked.empty());
 }
 
-// **Myers znajduje najdłuższy wspólny podciąg**: na losowych napisach z kilku słów niezaznaczone
-// części obu stron są równe, a liczba zachowanych słów to dokładnie długość wspólnego podciągu
-// policzona tablicą.
-TRIAL("Diff: zachowane słowa to najdłuższy wspólny podciąg") {
+// Myers finds the longest common subsequence: on random texts of a few words the unmarked parts
+// of both sides are equal, and the number of kept words is exactly the length of the common
+// subsequence computed with a table.
+TRIAL("Diff: the kept words are the longest common subsequence") {
     std::mt19937 gen(3);
 
     const std::vector<std::string> pieces{"a", "b", "cd", "ef", ".", " ", "(", ")", "1999", "ż"};
@@ -214,8 +223,8 @@ TRIAL("Diff: zachowane słowa to najdłuższy wspólny podciąg") {
     }
 }
 
-// Za dużo różnic: środek między wspólnym początkiem a końcem zaznacza się w całości.
-TRIAL("Diff: przy wielu różnicach zaznacza cały środek") {
+// Too many differences: the middle between the common start and end is marked in full.
+TRIAL("Diff: with many differences the whole middle is marked") {
     std::string left = "X ";
     std::string right = "X ";
 
@@ -236,9 +245,9 @@ TRIAL("Diff: przy wielu różnicach zaznacza cały środek") {
     same(kept(one), std::string{"X  Y"});
 }
 
-// --- Widok ---------------------------------------------------------------------------------------
+// --- View ----------------------------------------------------------------------------------------
 
-TRIAL("DiffViewer: pusty nic nie niesie") {
+TRIAL("DiffViewer: an empty one carries nothing") {
     const ui::DiffViewer one;
 
     same(one.hunks(), std::size_t{0});
@@ -247,9 +256,9 @@ TRIAL("DiffViewer: pusty nic nie niesie") {
     ought(one.scrollbar());
 }
 
-// Pasek stoi tylko wtedy, gdy jest czym przewijać: plan, który mieści się cały, go nie ma; plan
-// o wiersz dłuższy — ma. Kolumna na pasek zostaje, żeby strony nie skakały.
-TRIAL("DiffViewer: pasek tylko wtedy, gdy plan się nie mieści") {
+// The scroll bar is there only when there is something to scroll: a plan that fits entirely has
+// none; a plan one row longer has one. The column for the bar stays, so that the sides do not jump.
+TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
     const auto barred = [](std::vector<ui::DiffHunk> all, int high) {
         Sheet sheet;
 
@@ -267,7 +276,7 @@ TRIAL("DiffViewer: pasek tylko wtedy, gdy plan się nie mieści") {
         return false;
     };
 
-    // Plan: dwa nagłówki sekcji i trzy kawałki (pierwszy zwinięty) — pięć wierszy.
+    // The plan: two section headings and three hunks (the first folded), five rows.
     ought(!barred(planned(), 5));
     ought(!barred(planned(), 12));
     ought(barred(planned(), 4));
@@ -278,7 +287,8 @@ TRIAL("DiffViewer: pasek tylko wtedy, gdy plan się nie mieści") {
 
     ought(barred(long_plan, 10));
 
-    // Na końcu długiego planu reszta się mieści, ale początek jest nad oknem — pasek zostaje.
+    // At the end of a long plan the rest fits, but the start is above the window, so the bar
+    // stays.
     {
         Sheet sheet;
 
@@ -303,7 +313,7 @@ TRIAL("DiffViewer: pasek tylko wtedy, gdy plan się nie mieści") {
         ought(bar);
     }
 
-    // Źródło, które każe czekać na dalsze kawałki, też daje pasek.
+    // A source that makes us wait for further hunks gives a bar too.
     {
         Sheet sheet;
 
@@ -328,10 +338,10 @@ TRIAL("DiffViewer: pasek tylko wtedy, gdy plan się nie mieści") {
     }
 }
 
-// Nagłówek z tytułami stron, tytuł sekcji we własnym wierszu, pola wyboru przy kawałkach, które je
-// mają, i „+N" przy zwiniętym kawałku z kilkoma wierszami. Kursor stoi na pierwszym kawałku
-// z wierszami, a nie na nagłówku sekcji.
-TRIAL("DiffViewer: dwie strony, sekcje, pola wyboru i zwinięcie") {
+// A header with the sides' titles, a section title in its own row, check boxes at the hunks that
+// have them, and "+N" at a folded hunk with several rows. The cursor stands on the first hunk with
+// rows, not on a section heading.
+TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
     Sheet sheet;
 
     const auto one = shown(sheet, planned());
@@ -364,9 +374,9 @@ TRIAL("DiffViewer: dwie strony, sekcje, pola wyboru i zwinięcie") {
     ought(!one->opened(2));
 }
 
-// Wąsko: widok sam przechodzi na jedną kolumnę — strona usunięta z minusem, dodana z plusem, wiersz
-// równy raz, bez znaku. Na życzenie da się wymusić każdy z widoków.
-TRIAL("DiffViewer: wąski widok przechodzi na jedną kolumnę") {
+// When narrow, the view switches to one column by itself: the removed side with a minus, the added
+// one with a plus, an equal row once, without a sign. Either view can be forced on request.
+TRIAL("DiffViewer: a narrow view switches to one column") {
     Sheet sheet;
 
     const auto one = shown(sheet, {hunk({row("a.mkv", "A/a.mkv"), row("same.txt", "same.txt")}, false)});
@@ -399,9 +409,9 @@ TRIAL("DiffViewer: wąski widok przechodzi na jedną kolumnę") {
     ought(said(sheet.render({{0, 0}, {120, 5}}), 0).find("A/a.mkv") != std::string::npos);
 }
 
-// Spacja przestawia pole kawałka pod kursorem i zawiadamia; na kawałku bez pola nic nie robi.
-// `+` i `-` przestawiają całą sekcję kursora — i tylko ją.
-TRIAL("DiffViewer: spacja, plus i minus przestawiają pola") {
+// Space toggles the box of the hunk under the cursor and notifies; on a hunk without a box it does
+// nothing. + and - set the whole section of the cursor, and only that one.
+TRIAL("DiffViewer: space, plus and minus toggle the boxes") {
     Sheet sheet;
 
     std::vector<ui::DiffHunk> all = planned();
@@ -454,9 +464,9 @@ TRIAL("DiffViewer: spacja, plus i minus przestawiają pola") {
     ought(said(sheet.render({{0, 0}, {70, 10}}), 5).rfind("[x] d.mkv", 0) == 0);
 }
 
-// Strzałki chodzą po kawałkach z wierszami, nagłówki przeskakują; Ctrl ze strzałką skacze po
-// sekcjach; strzałki w bok zwijają i rozwijają. Tab i Enter idą wyżej.
-TRIAL("DiffViewer: klawisze chodzą po kawałkach i sekcjach") {
+// The arrows move through hunks with rows, skipping headings; Ctrl with an arrow jumps through
+// sections; the side arrows fold and unfold. Tab and Enter go up.
+TRIAL("DiffViewer: keys move through hunks and sections") {
     Sheet sheet;
 
     std::vector<ui::DiffHunk> all = planned();
@@ -518,9 +528,9 @@ TRIAL("DiffViewer: klawisze chodzą po kawałkach i sekcjach") {
     ought(!pressed(sheet, ui::Key{U'x', ui::Mods{.alt = true}}));
 }
 
-// Długa lista: kursor w dół ciągnie widok, a koniec staje na dole ekranu, nie na górze z pustką
-// pod nim. Kółko przesuwa sam widok.
-TRIAL("DiffViewer: widok idzie za kursorem i nie wychodzi za koniec") {
+// A long list: the cursor going down drags the view along, and the end lands at the bottom of the
+// screen, not at the top with emptiness below. The wheel moves the view alone.
+TRIAL("DiffViewer: the view follows the cursor and does not go past the end") {
     Sheet sheet;
 
     std::vector<ui::DiffHunk> all;
@@ -566,9 +576,9 @@ TRIAL("DiffViewer: widok idzie za kursorem i nie wychodzi za koniec") {
     ought(!sheet.dispatch(more));
 }
 
-// Numery wierszy stoją przy stronach, które je niosą, wyrównane do największego widocznego.
-// Strona pusta — wiersz dodany albo usunięty — zostaje pusta.
-TRIAL("DiffViewer: numery wierszy i strony puste") {
+// Line numbers stand at the sides that carry them, aligned to the largest visible one. An empty
+// side (a row added or removed) stays empty.
+TRIAL("DiffViewer: line numbers and empty sides") {
     Sheet sheet;
 
     ui::DiffSide nine{"dziewięć", {}, 9};
@@ -598,9 +608,9 @@ TRIAL("DiffViewer: numery wierszy i strony puste") {
     same(said(flat, 2), std::string{"   11 + nowy"});
 }
 
-// Skrót w środku zostawia zaznaczenia przy swoich literach: ogon po skróceniu dalej świeci jako
-// dodany, a początek, wspólny z drugą stroną, nie.
-TRIAL("DiffViewer: skrót w środku zostawia zaznaczenia przy literach") {
+// Eliding in the middle keeps the marks with their letters: after eliding, the tail still shows as
+// added, and the start, shared with the other side, does not.
+TRIAL("DiffViewer: eliding in the middle keeps the marks with their letters") {
     Sheet sheet;
 
     const std::string long_one = "wspolny/poczatek/bardzo/dlugiej/sciezki/az/do/pliku.mkv";
@@ -616,7 +626,8 @@ TRIAL("DiffViewer: skrót w środku zostawia zaznaczenia przy literach") {
     ought(line.find("…") != std::string::npos || line.find("~") != std::string::npos);
     ought(line.find("pliku.mkv") != std::string::npos);
 
-    // Początek dodanej ścieżki świeci, bo pierwszej strony tam nie ma; ogon nie, bo jest wspólny.
+    // The start of the added path is highlighted, because the first side has nothing there; the
+    // tail is not, because it is shared.
     const Cell head = made.at({2, 1});
     const Cell tail = made.at({23, 1});
 
@@ -624,8 +635,8 @@ TRIAL("DiffViewer: skrót w środku zostawia zaznaczenia przy literach") {
     ought(!tail.style.bold);
 }
 
-// Źródło, które każe czekać, zostawia pusty widok; po `refresh()` widać to, co doszło.
-TRIAL("DiffViewer: źródło, które czeka, i odświeżenie") {
+// A source that makes us wait leaves an empty view; after `refresh()` what arrived is visible.
+TRIAL("DiffViewer: a source that waits, and refreshing") {
     Sheet sheet;
 
     bool ready = false;
@@ -653,8 +664,9 @@ TRIAL("DiffViewer: źródło, które czeka, i odświeżenie") {
     same(one->which(), std::optional<std::size_t>{0});
 }
 
-// Klik stawia kursor na kawałku pod nim, a klik w pole przestawia je. Klik w nagłówek sekcji nic.
-TRIAL("DiffViewer: klik stawia kursor i przestawia pole") {
+// A click puts the cursor on the hunk under it, and a click on the box toggles it. A click on a
+// section heading does nothing.
+TRIAL("DiffViewer: a click moves the cursor and toggles the box") {
     Sheet sheet;
 
     const auto one = shown(sheet, planned());
@@ -679,8 +691,8 @@ TRIAL("DiffViewer: klik stawia kursor i przestawia pole") {
     same(one->which(), std::optional<std::size_t>{1});
 }
 
-// Nowe źródło czyści zaznaczenia i zwinięcia; mniej kawałków przycina zaznaczenia przy malowaniu.
-TRIAL("DiffViewer: nowe źródło zaczyna od czystego") {
+// A new source clears the choices and the unfolding; fewer hunks trim the choices when painting.
+TRIAL("DiffViewer: a new source starts clean") {
     Sheet sheet;
 
     const auto one = shown(sheet, planned());
@@ -705,18 +717,18 @@ TRIAL("DiffViewer: nowe źródło zaczyna od czystego") {
     same(one->hunks(), std::size_t{1});
 }
 
-// Litera, której drugi bajt to 0x80 (`Ā`), dalej należy do słowa — słowo różne w całości świeci
-// w całości, a nie od połowy litery.
-TRIAL("Diff: litera z bajtem 0x80 nie rozcina słowa") {
+// A letter whose second byte is 0x80 (U+0100) still belongs to the word: a word that differs
+// entirely is highlighted entirely, not from the middle of a letter.
+TRIAL("Diff: a letter with the byte 0x80 does not split a word") {
     const auto [one, two] = ui::diffed("\xc4\x80" "a", "\xc4\x80" "b");
 
     same(marked(one), std::string{"[\xc4\x80" "a]"});
     same(marked(two), std::string{"[\xc4\x80" "b]"});
 }
 
-// Środek dłuższy niż granica zaznacza się w całości, choćby różnic było mało — tu różnią się
-// tylko pierwsze i ostatnie słowo, więc wspólnego początku ani końca nie ma.
-TRIAL("Diff: bardzo długi środek zaznacza się w całości") {
+// A middle longer than the limit is marked in full, however few differences there are; here only
+// the first and the last words differ, so there is no common start or end.
+TRIAL("Diff: a very long middle is marked in full") {
     std::string middle;
 
     for (int one = 0; one < 3000; ++one) middle += " w" + std::to_string(one);
@@ -733,11 +745,11 @@ TRIAL("Diff: bardzo długi środek zaznacza się w całości") {
     same(marked(four), std::string{"[C][D]"});
 }
 
-// Kawałek z tytułem i wierszami (tak wygląda kawałek porównania plików: `@@ ... @@` i wiersze pod
-// nim) pokazuje tytuł we własnym wierszu; kawałek zupełnie pusty to pusty wiersz, przez który
-// kursor przechodzi; tabulator rozwija się do ósemki; zaznaczenie w środku napisu świeci tylko
-// tam, gdzie jest.
-TRIAL("DiffViewer: tytuł nad wierszami, pusty kawałek, tabulator i zaznaczenie w środku") {
+// A hunk with a title and rows (this is how a hunk of a file comparison looks: @@ ... @@ and rows
+// under it) shows the title in its own row; an entirely empty hunk is an empty row the cursor
+// passes over; a tab expands to the next multiple of eight; a mark in the middle of a text is
+// highlighted only where it is.
+TRIAL("DiffViewer: a title above rows, an empty hunk, a tab and a mark in the middle") {
     Sheet sheet;
 
     ui::DiffHunk titled{"@@ -1,2 +1,2 @@", {row("x a", "x b a"), row("t\tu", "t\tu")}, false, {}};
@@ -768,9 +780,9 @@ TRIAL("DiffViewer: tytuł nad wierszami, pusty kawałek, tabulator i zaznaczenie
     same(one->which(), std::optional<std::size_t>{2});
 }
 
-// Kawałek przewinięty kółkiem do połowy: skok kursora na niego stawia jego początek na górze.
-// Klik w miejscu pola przy kawałku bez pola niczego nie zaznacza.
-TRIAL("DiffViewer: skok na kawałek przewinięty do połowy i klik obok pola") {
+// A hunk scrolled halfway by the wheel: moving the cursor onto it puts its start at the top. A
+// click where the box would be, at a hunk without one, selects nothing.
+TRIAL("DiffViewer: a jump to a hunk scrolled halfway, and a click beside the box") {
     Sheet sheet;
 
     std::vector<ui::DiffRow> rows;
@@ -801,9 +813,10 @@ TRIAL("DiffViewer: skok na kawałek przewinięty do połowy i klik obok pola") {
     ought(one->chosen().empty());
 }
 
-// Mysz na pasku różnic (U6 w twa): strzałka o wiersz, tor o stronę, suwak na kawałek — widok się
-// rusza, kursor nie. Klik na pasku nie stawia kursora na wierszu pod nim.
-TRIAL("DiffViewer: mysz na pasku przewija widok, kursora nie rusza") {
+// The mouse on the diff scroll bar: an arrow scrolls by a row, the track by a page, the thumb to
+// a hunk; the view moves, the cursor does not. A click on the bar does not put the cursor on the
+// row under it.
+TRIAL("DiffViewer: the mouse on the scroll bar scrolls the view, not the cursor") {
     Sheet sheet;
 
     std::vector<ui::DiffHunk> all;

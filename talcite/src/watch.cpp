@@ -48,8 +48,8 @@ namespace talcite::fs {
 using namespace core;
 
 // ---------------------------------------------------------------------------------------
-// Obserwowanie katalogów. Jeden wątek na całą bibliotekę, tak samo jak zegar w Time: sto
-// obserwowanych katalogów nie może kosztować stu wątków.
+// Watching directories. One thread for the whole library, just like the timer in Time: a hundred
+// watched directories must not cost a hundred threads.
 // ---------------------------------------------------------------------------------------
 
 struct Watch::Held {
@@ -84,16 +84,17 @@ class Watching;
 
 Watching& watching();
 
-// Wspólne ujście dla obu dróg. Zaplecze nie wie, komu służy — oddaje zmiany pod numerem,
-// a rozdzielacz wie, czy to zwykła obserwacja, czy plik pilnowany przez katalog nadrzędny.
+// The common outlet of both paths. A backend does not know whom it serves: it hands over changes
+// under a number, and the dispatcher knows whether that is a plain watch or a file guarded through
+// its parent directory.
 void reached(std::uint64_t which, std::vector<Change> among);
 
-// Zaplecze zdarzeń straciło słuch dla tej obserwacji — brak deskryptorów, zerwany udział, korzeń
-// zniknął — i oddaje ją zaglądaniu.
+// The event backend has lost hearing for this watch (no descriptors left, a broken share, the
+// root gone) and hands it over to polling.
 void forsaken(std::uint64_t which);
 
-// Obietnica sięgająca po chroniony konstruktor, żeby podstawić bilet, który rozstrzygnie
-// wątek obserwatora, a nie własne wywołanie.
+// A promise that reaches for the protected constructor to supply a ticket that the watcher
+// thread settles, not the promise's own callback.
 class Nexting : public Promise<std::vector<Change>> {
 public:
     Nexting(Promise<std::vector<Change>>::Callback given,
@@ -101,13 +102,15 @@ public:
         : Promise<std::vector<Change>>(std::move(given), std::move(made)) {}
 };
 
-// Anulowane zgłoszenie musi zniknąć z kolejki czekających, inaczej pierwsza paczka poszłaby
-// do nikogo. To samo ogniwo co Dropping w zegarze.
+// A cancelled request must disappear from the queue of waiting ones, otherwise the first batch
+// would go to nobody. The same kind of watcher as Dropping in the timer.
 class Forgetting : public detail::Waiter {
 public:
     Forgetting(std::weak_ptr<Watch::Held> whose, detail::Result<std::vector<Change>>* which)
         : whose_(std::move(whose)), which_(which) {}
 
+    // The ticket has settled or been cancelled: removes it from the waiting queue, if the watch
+    // still exists.
     void woke() override {
         const std::shared_ptr<Watch::Held> held = whose_.lock();
         if (!held) return;
@@ -126,8 +129,8 @@ private:
     detail::Result<std::vector<Change>>* which_;
 };
 
-// Powtórzone „zmieniony" dla tej samej ścieżki scalamy — system plików produkuje serie, a
-// panel i tak odrysuje się raz. Po przepełnieniu zostaje jeden wpis: zgubiłem rachubę.
+// Repeated "modified" for the same path are merged: the file system produces bursts, and the
+// panel redraws once anyway. On overflow a single entry remains: count lost.
 void noting(Watch::Held& held, Change made) {
     if (made.kind == Change::Kind::modified) {
         std::size_t looked = 0;
@@ -149,6 +152,8 @@ void noting(Watch::Held& held, Change made) {
     held.pending.push_back(Change{held.where, path{}, Change::Kind::overflow});
 }
 
+// Adds the changes to the watch's pending ones and, if someone is waiting, hands all pending
+// changes to the first waiting request.
 void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among) {
     std::shared_ptr<detail::Result<std::vector<Change>>> lucky;
     std::vector<Change> giving;
@@ -168,7 +173,7 @@ void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among)
         }
     }
 
-    // Poza zamkiem: rozstrzygnięcie budzi obserwatorów, a wśród nich nasze własne ogniwo.
+    // Outside the lock: settling wakes the watchers, among them our own one.
     if (lucky) detail::settled(*lucky, std::move(giving));
 }
 
@@ -187,8 +192,8 @@ struct Post {
     std::vector<int> spots;
 };
 
-// Katalogi pod korzeniem zbieramy własnym przejściem, a nie przez walk_at — tamto pyta
-// dzwonek bieżącego zadania, a wątek obserwatora żadnego zadania nie ma.
+// The directories under the root are collected by our own walk, not by walk_at: that one asks
+// the bell of the current task, and the watcher thread has no task.
 std::vector<path> under(const path& where) {
     std::vector<path> made;
     std::vector<path> waiting{where};
@@ -216,19 +221,23 @@ std::vector<path> under(const path& where) {
     return made;
 }
 
+// The event backend on Linux: one inotify descriptor, read by one thread.
 class Prompt {
 public:
+    // Opens the inotify descriptor and starts the reading thread.
     void begin() {
         fd_ = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
 
         keeper_ = std::thread{[this] { serve(); }};
     }
 
+    // Whether inotify could be opened.
     [[nodiscard]] bool ready() const { return fd_ >= 0; }
 
-    // Fałsz — systemowi skończyły się deskryptory (`ENOSPC`: granica `max_user_watches`, albo
-    // `ENOMEM`) i obserwacja idzie odpytywaniem. Dziurawa, bez części podkatalogów, byłaby gorsza
-    // niż wolniejsza: milczałaby o zmianach w miejscach, które panel pokazuje.
+    // Adds the watch `which` on `where` (and, when `deep`, on every directory below). False means
+    // the system ran out of watch descriptors (ENOSPC, the max_user_watches limit, or ENOMEM) and
+    // the watch goes to polling. A watch with holes, missing some subdirectories, would be worse
+    // than a slower one: it would stay silent about changes in places the panel shows.
     [[nodiscard]] bool add(std::uint64_t which, const path& where, bool deep) {
         auto post = std::make_shared<Post>();
 
@@ -272,9 +281,9 @@ public:
         return true;
     }
 
-    // inotify na to samo miejsce oddaje ten sam deskryptor i tylko scala maski — dwie
-    // obserwacje jednego katalogu dzielą więc jeden wpis. Zdejmujemy go dopiero wtedy, gdy
-    // nikt już z niego nie korzysta.
+    // Removes the watch `which`. inotify returns the same descriptor for the same place and only
+    // merges the masks, so two watches of one directory share one entry. It is removed only when
+    // nobody uses it any more.
     void drop(std::uint64_t which) {
         std::vector<int> spare;
 
@@ -300,10 +309,11 @@ private:
         path where;
     };
 
+    // Whether the last inotify error means that the system ran out of watches or memory.
     static bool spent() { return errno == ENOSPC || errno == ENOMEM; }
 
-    // Zdejmuje wpisy jednej obserwacji z deskryptora; prawda, gdy nikt już z niego nie korzysta.
-    // Wołane pod zamkiem.
+    // Removes the entries of one watch from a descriptor; true when nobody uses it any more.
+    // Called under the lock.
     bool released(int spot, std::uint64_t which) {
         const auto found = spots_.find(spot);
         if (found == spots_.end()) return false;
@@ -320,7 +330,7 @@ private:
         return true;
     }
 
-    // Wycofanie nieudanego dopisania: deskryptory, których nie dzieli żadna inna obserwacja.
+    // Rolls back a failed addition: removes the descriptors that no other watch shares.
     void unwatched(const std::vector<std::pair<int, path>>& made) {
         std::vector<int> spare;
 
@@ -334,6 +344,8 @@ private:
         for (const int one : spare) inotify_rm_watch(fd_, one);
     }
 
+    // The loop of the reading thread: waits up to a second for events and passes each batch to
+    // `take`.
     void serve() {
         std::vector<char> room(64 * 1024);
 
@@ -351,10 +363,10 @@ private:
         }
     }
 
-    // Korzeń obserwacji ma osobne prawa: tylko o nim zgłaszamy „zniknął" z jego własnego
-    // zdarzenia. Podkatalog głębokiej obserwacji zgłasza jego rodzic (`IN_DELETE`,
-    // `IN_MOVED_FROM`) — dawniej przychodziło to podwójnie, a do tego jako trzecie „zmieniony"
-    // z `IN_IGNORED`, które po usunięciu dostaje każdy deskryptor.
+    // Whether `where` is the root of the watch `which`. The root has its own rules: only for it
+    // is "removed" reported from its own event. A subdirectory of a deep watch is reported by its
+    // parent (`IN_DELETE`, `IN_MOVED_FROM`), so it must not also be reported from its own event,
+    // nor as "modified" from `IN_IGNORED`, which every descriptor gets after removal.
     bool rooted(std::uint64_t which, const path& where) {
         const std::lock_guard<std::mutex> kept{guard_};
 
@@ -363,6 +375,9 @@ private:
         return at != posts_.end() && at->second->where == where;
     }
 
+    // Turns a batch of `much` bytes of inotify events into changes for each watch, pairs moves
+    // into renames, follows directories that appear and leave, and hands watches that went deaf
+    // over to polling.
     void take(const char* room, std::size_t much) {
         std::unordered_map<std::uint64_t, std::vector<Change>> among;
         std::map<std::pair<std::uint64_t, std::uint32_t>, path> moving;
@@ -389,8 +404,8 @@ private:
 
                 spots = found->second;
 
-                // Deskryptor po `IN_IGNORED` już nie istnieje, a jądro może dać jego numer
-                // komuś nowemu — zostawiony wpis przypisałby cudze zdarzenia nam.
+                // After `IN_IGNORED` the descriptor no longer exists, and the kernel may give its
+                // number to someone new; an entry left behind would assign their events to us.
                 if ((told->mask & IN_IGNORED) != 0) {
                     for (const Spot& one : spots) {
                         const auto post = posts_.find(one.which);
@@ -406,8 +421,8 @@ private:
                 }
             }
 
-            // Ten sam deskryptor może należeć do kilku obserwacji naraz, więc jedno
-            // zdarzenie rozchodzi się do każdej z nich osobno.
+            // The same descriptor can belong to several watches at once, so one event goes to
+            // each of them separately.
             for (const Spot& spot : spots) {
                 const std::uint64_t which = spot.which;
                 const path where = told->len > 0 ? spot.where / path{told->name} : spot.where;
@@ -415,8 +430,8 @@ private:
                 std::vector<Change>& mine = among[which];
 
                 if ((told->mask & IN_IGNORED) != 0) {
-                    // Korzeń bez deskryptora — usunięty, odmontowany — nic już nie usłyszy.
-                    // Zostaje zaglądanie, które zobaczy też, gdy wróci.
+                    // A root without a descriptor (removed, unmounted) will not hear anything
+                    // any more. Polling remains, and it will also see the root come back.
                     if (rooted(which, spot.where)) blind.push_back(which);
 
                     continue;
@@ -443,8 +458,8 @@ private:
                     if (paired == moving.end()) {
                         mine.push_back(Change{where, path{}, Change::Kind::created});
                     } else {
-                        // Para „wyszło stąd" i „weszło tam" to jedno przemianowanie, więc
-                        // zdejmujemy zgłoszone przed chwilą zniknięcie.
+                        // A pair of "moved out of here" and "moved in there" is one rename, so the
+                        // removal reported a moment ago is taken back.
                         const auto stale =
                             std::find_if(mine.begin(), mine.end(), [&paired](const Change& one) {
                                 return one.kind == Change::Kind::removed && one.where == paired->second;
@@ -497,16 +512,16 @@ private:
         }
     }
 
-    // Nowy podkatalog pod obserwacją w głąb trzeba dopisać z osobna — inotify nie zna
-    // obserwowania drzewa, zna tylko pojedyncze katalogi. To jest cena, o której mowa
-    // w CLAUDE.md: przy dużym drzewie to tysiące deskryptorów.
+    // A new subdirectory under a deep watch has to be added separately: inotify does not know how
+    // to watch a tree, only single directories. That is the price of inotify: a large tree costs
+    // thousands of descriptors.
     //
-    // Katalog przemianowany w obrębie drzewa ma już deskryptory — jądro odda te same numery.
-    // Wtedy **tylko poprawiamy ścieżki**: dopisane drugi raz dawały każde zdarzenie podwójnie,
-    // a stare zostawały przy starej nazwie, więc plik w przemianowanym katalogu zgłaszał się
-    // pod ścieżką, której już nie ma.
+    // A directory renamed within the tree already has descriptors, and the kernel returns the
+    // same numbers. Then we only correct the paths: adding them a second time would deliver every
+    // event twice, and the old entries would keep the old name, so a file in the renamed directory
+    // would be reported under a path that no longer exists.
     //
-    // Fałsz — skończyły się deskryptory i obserwacja musi przejść na odpytywanie.
+    // False means the descriptors ran out and the watch has to switch to polling.
     bool sprout(std::uint64_t which, const path& where) {
         std::vector<path> among{where};
 
@@ -553,8 +568,8 @@ private:
         return true;
     }
 
-    // Katalog wyniesiony poza obserwowane drzewo dalej ma nasze deskryptory — jego i-węzeł żyje
-    // gdzie indziej. Zostawione, zgłaszałyby tamte zmiany pod ścieżką w naszym drzewie.
+    // A directory moved out of the watched tree still has our descriptors, since its inode lives
+    // on elsewhere. Left in place, they would report changes there under a path in our tree.
     void pruned(std::uint64_t which, const path& where) {
         std::vector<int> spare;
 
@@ -594,6 +609,8 @@ private:
         for (const int one : spare) inotify_rm_watch(fd_, one);
     }
 
+    // The kernel's event queue overflowed: every watch gets an overflow change, since anything
+    // may have been lost.
     void spilled() {
         std::vector<std::pair<std::uint64_t, path>> among;
 
@@ -637,19 +654,24 @@ struct Post {
     bool going = false;
 };
 
+// The event backend on Windows: ReadDirectoryChangesW on each directory, completed through one
+// I/O completion port served by one thread.
 class Prompt {
 public:
+    // Creates the completion port and starts the thread that serves it.
     void begin() {
         port_ = CreateIoCompletionPort(INVALID_HANDLE_VALUE, nullptr, 0, 1);
 
         keeper_ = std::thread{[this] { serve(); }};
     }
 
+    // Whether the completion port could be created.
     [[nodiscard]] bool ready() const { return port_ != nullptr; }
 
-    // Fałsz — katalog jest, ale system nie umie o nim mówić: udział na serwerze bez powiadomień
-    // (część NAS-ów, WebDAV, systemy FUSE pod WinFsp) odpowiada `ERROR_INVALID_FUNCTION` albo
-    // `ERROR_NOT_SUPPORTED`. Wtedy zaglądamy sami, zamiast odmawiać obserwacji.
+    // Adds the watch `which` on `where`. False means the directory exists but the system cannot
+    // report on it: a share on a server without notifications (some NAS devices, WebDAV, FUSE file
+    // systems under WinFsp) answers ERROR_INVALID_FUNCTION or ERROR_NOT_SUPPORTED. Then we poll
+    // ourselves instead of refusing to watch.
     [[nodiscard]] bool add(std::uint64_t which, const path& where, bool deep) {
         auto post = std::make_shared<Post>();
 
@@ -679,7 +701,7 @@ public:
 
         if (armed(*post)) return true;
 
-        // Uzbrojenie się nie udało, więc w locie nic nie ma i uchwyt wolno zamknąć od razu.
+        // Arming failed, so nothing is in flight and the handle may be closed at once.
         {
             const std::lock_guard<std::mutex> kept{guard_};
 
@@ -691,9 +713,10 @@ public:
         return false;
     }
 
-    // Uchwytu nie zamykamy tutaj. Odczyt jest w locie i system trzyma bufor oraz OVERLAPPED
-    // aż do zakończenia; zamknięcie spod ręki zostawiłoby zapis do zwolnionej pamięci.
-    // Znaczymy więc wpis i czekamy, aż zerwane zakończenie wróci do wątku obserwatora.
+    // Removes the watch `which`, but does not close the handle here. A read is in flight, and the
+    // system holds the buffer and the OVERLAPPED until it completes; closing it underneath would
+    // leave a write into freed memory. So we mark the entry and wait until the cancelled
+    // completion comes back to the watcher thread.
     void drop(std::uint64_t which) {
         const std::lock_guard<std::mutex> kept{guard_};
 
@@ -706,6 +729,7 @@ public:
     }
 
 private:
+    // Starts the next asynchronous read of changes on the directory; false when it is refused.
     static bool armed(Post& post) {
         DWORD given = 0;
 
@@ -715,6 +739,8 @@ private:
                                      nullptr) != 0;
     }
 
+    // The loop of the completion port thread: takes each completed read, hands its changes on and
+    // arms the next one, and closes the entries that ended.
     void serve() {
         while (true) {
             DWORD given = 0;
@@ -744,24 +770,24 @@ private:
                 }
             }
 
-            // Nie my zerwaliśmy odczyt, tylko system: udział się rozłączył (`ERROR_NETNAME_DELETED`),
-            // katalog zniknął. Obserwacja nie może po prostu zamilknąć — przechodzi na zaglądanie
-            // i mówi, że zgubiła rachubę.
+            // The read was broken off by the system, not by us: the share disconnected
+            // (ERROR_NETNAME_DELETED), the directory disappeared. The watch must not simply fall
+            // silent; it switches to polling and says that it lost count.
             if (ended) {
                 if (!post->going) forsaken(post->which);
 
                 continue;
             }
 
-            // Zerowy odczyt znaczy, że systemowi zabrakło miejsca na zdarzenia. Nie ma czego
-            // odzyskiwać — zostaje przyznanie się i prośba o ponowne przeczytanie katalogu.
+            // A read of zero bytes means the system ran out of room for events. There is nothing
+            // to recover; what remains is to admit it and ask for the directory to be read again.
             if (given == 0)
                 reached(post->which,
                         std::vector<Change>{Change{post->where, path{}, Change::Kind::overflow}});
             else reached(post->which, take(*post, given));
 
-            // Ponowne uzbrojenie odmówiło — w locie nic nie ma, więc uchwyt zamykamy tu, bez
-            // czekania na zakończenie, które nie przyjdzie.
+            // Re-arming was refused: nothing is in flight, so the handle is closed here, without
+            // waiting for a completion that will not come.
             if (!armed(*post)) {
                 {
                     const std::lock_guard<std::mutex> kept{guard_};
@@ -776,6 +802,8 @@ private:
         }
     }
 
+    // Turns `much` bytes of FILE_NOTIFY_INFORMATION records into changes, pairing the old and
+    // the new name of a rename.
     static std::vector<Change> take(const Post& post, DWORD much) {
         std::vector<Change> among;
 
@@ -830,19 +858,20 @@ private:
 
 #endif
 
-// Odpytywanie. Tam, gdzie system nie umie powiedzieć sam — a także tam, gdzie umie, ale
-// kłamie — zaglądamy do katalogu co jakiś czas i porównujemy z tym, co widzieliśmy poprzednio.
-// Nie ma tu przemianowań: znika stara nazwa, pojawia się nowa, i tyle da się uczciwie
-// powiedzieć bez pomocy systemu.
+// Polling. Where the system cannot tell by itself (and also where it can, but lies), we look into
+// the directory every so often and compare with what we saw the previous time. There are no
+// renames here: the old name disappears, a new one appears, and that is all that can honestly be
+// said without the system's help.
 //
-// Wykaz niesie czas w sekundach, a zapis tej samej długości w tej samej sekundzie, co poprzednie
-// spojrzenie, nie zmienia ani sekundy, ani rozmiaru — zmiana by przepadła. Dlatego plik zmieniony
-// w ostatniej minucie (`fresh`) pytamy osobno o czas dokładny. Starszych nie: dodatkowe pytanie
-// o każdy plik na udziale sieciowym kosztowałoby drugie tyle, a dla nich sekunda wystarcza.
-// Minuta, nie dwie sekundy, bo zegar serwera potrafi się rozjechać z naszym.
+// A listing carries times in seconds, and a write of the same length within the same second as
+// the previous look changes neither the second nor the size, so the change would be lost. That is
+// why a file modified within the last minute (`fresh`) is asked separately for its exact time.
+// Older ones are not: an extra question for every file on a network share would cost as much
+// again, and for them a second is enough. A minute rather than two seconds, because the server's
+// clock can drift from ours.
 //
-// Sam korzeń stoi w spojrzeniu bez rozmiaru i czasu: jego zniknięcie i powrót są zmianą, a nowy
-// plik w środku — nie, tak samo jak w powiadomieniach systemu.
+// The root itself stands in a look without size and time: its disappearance and return are a
+// change, and a new file inside is not, just as in the system's notifications.
 struct Sight {
     Kind kind = Kind::none;
     std::uintmax_t size = 0;
@@ -852,6 +881,8 @@ struct Sight {
 
 constexpr std::chrono::seconds fresh{60};
 
+// The exact modification time of a file changed within `fresh` of `now`, or an empty instant for
+// anything else or when it cannot be read.
 Instant finely(const path& where, Kind kind, std::chrono::sys_seconds modified,
                std::chrono::system_clock::time_point now) {
     if (kind != Kind::file) return Instant{};
@@ -867,6 +898,8 @@ Instant finely(const path& where, Kind kind, std::chrono::sys_seconds modified,
     }
 }
 
+// One look at `where`: the root and, for a directory, its entries (the whole tree when `deep`).
+// Empty when `where` does not exist.
 std::map<path, Sight> sighted(const path& where, bool deep) {
     std::map<path, Sight> made;
 
@@ -910,6 +943,7 @@ std::map<path, Sight> sighted(const path& where, bool deep) {
     return made;
 }
 
+// The changes between two looks: created, modified and removed entries.
 std::vector<Change> apart(const std::map<path, Sight>& was, const std::map<path, Sight>& now) {
     std::vector<Change> made;
 
@@ -921,8 +955,8 @@ std::vector<Change> apart(const std::map<path, Sight>& was, const std::map<path,
             continue;
         }
 
-        // Czas dokładny porównujemy tylko wtedy, gdy oba spojrzenia go mają — plik, który właśnie
-        // wypadł z ostatniej minuty, nie może udawać zmiany.
+        // The exact time is compared only when both looks have it: a file that has just dropped
+        // out of the last minute must not pose as a change.
         const bool finer = at->second.fine != Instant{} && mine.fine != Instant{} && at->second.fine != mine.fine;
 
         if (at->second.kind != mine.kind || at->second.size != mine.size ||
@@ -936,13 +970,15 @@ std::vector<Change> apart(const std::map<path, Sight>& was, const std::map<path,
     return made;
 }
 
+// The polling backend: one thread that looks into every polled watch in turn.
 class Polling {
 public:
+    // Starts the polling thread.
     void begin() { keeper_ = std::thread{[this] { serve(); }}; }
 
-    // Pierwsze spojrzenie bierzemy tutaj, w wątku wołającego, żeby zmiany zaraz po powrocie
-    // z watch() nie przepadły. Od tej chwili `seen` należy już wyłącznie do wątku
-    // odpytującego, a przekazanie idzie przez ten zamek.
+    // Adds the watch `which`. The first look is taken here, in the caller's thread, so that
+    // changes right after watch() returns are not lost. From then on `seen` belongs only to the
+    // polling thread, and the handover goes through this lock.
     void add(std::uint64_t which, const path& where, bool deep) {
         auto post = std::make_shared<Post>();
 
@@ -959,6 +995,7 @@ public:
         stirred_.notify_all();
     }
 
+    // Stops polling the watch `which`.
     void drop(std::uint64_t which) {
         const std::lock_guard<std::mutex> kept{guard_};
 
@@ -972,10 +1009,10 @@ private:
         std::map<path, Sight> seen;
     };
 
-    // Nigdy nie zjadamy więcej niż dziesiątej części rdzenia: przerwa jest dziesięciokrotnie
-    // dłuższa od samego zaglądania, nie krótsza niż pół sekundy i nie dłuższa niż dziesięć.
-    // Mały katalog odpytuje się więc dwa razy na sekundę, a wielkie drzewo — rzadko, bo samo
-    // przejście po nim kosztuje. Stała częstotliwość byłaby albo za wolna, albo za droga.
+    // The loop of the polling thread. It never uses more than a tenth of a core: the pause is ten
+    // times longer than the looking itself, no shorter than half a second and no longer than ten.
+    // A small directory is thus polled twice a second, and a huge tree rarely, because walking it
+    // costs. A fixed rate would be either too slow or too expensive.
     void serve() {
         while (true) {
             std::vector<std::pair<std::uint64_t, std::shared_ptr<Post>>> among;
@@ -1020,13 +1057,13 @@ private:
     std::thread keeper_;
 };
 
-// Rozdzielacz. Zdarzenia z systemu są tańsze i szybsze, więc bierzemy je wszędzie, gdzie
-// są wiarygodne — a na udziale sieciowym wiarygodne nie są. inotify nie widzi zmian
-// zrobionych przez inną maszynę, bo jądro nie ma o nich pojęcia; polegać można tylko na
-// własnym zaglądaniu. Dlatego o wyborze rozstrzyga to samo rozpoznanie nośnika, które daje
-// ratę w `slice`.
+// The dispatcher. Events from the system are cheaper and faster, so we use them wherever they are
+// reliable, and on a network share they are not. inotify does not see changes made by another
+// machine, because the kernel knows nothing of them; only our own polling can be relied on. So
+// the choice is made by the same medium detection that gives the rate in `slice`.
 class Watching {
 public:
+    // Starts the polling thread and, where the build has one, the event backend.
     void begin() {
         polling_.begin();
 
@@ -1035,6 +1072,8 @@ public:
 #endif
     }
 
+    // Registers a new watch and returns its number. It goes to events when they are reliable for
+    // the place and available, otherwise to polling.
     std::uint64_t add(const std::shared_ptr<Watch::Held>& held) {
         Kept kept;
 
@@ -1042,10 +1081,10 @@ public:
 
         bool polled = asking(held->where);
 
-        // Pojedynczego pliku nie obserwujemy wprost. ReadDirectoryChangesW w ogóle tego nie
-        // umie, a inotify przywiązuje się do i-węzła, nie do nazwy — zapis przez podmianę
-        // zostawiłby obserwację przy usuniętej treści. Pilnujemy więc katalogu nadrzędnego
-        // i przy każdym drgnięciu naszej nazwy zaglądamy do samego pliku.
+        // A single file is not watched directly. ReadDirectoryChangesW cannot do it at all, and
+        // inotify binds to the inode, not to the name, so a write by replacement would leave the
+        // watch on the removed content. So we guard the parent directory and look at the file
+        // itself whenever something stirs at our name.
         if (!polled && kind_at(held->where) != Kind::folder) {
             kept.peering = true;
             kept.only = held->where;
@@ -1072,7 +1111,7 @@ public:
 
         if (polled) polling_.add(which, where, deep);
 
-        // Dopiero po udanym dopisaniu — nieudane nie zostawia po sobie wpisu do zdejmowania.
+        // Only after a successful addition, so a failed one leaves no entry to remove.
         const std::lock_guard<std::mutex> held_{guard_};
 
         among_[which] = std::move(kept);
@@ -1080,8 +1119,8 @@ public:
         return which;
     }
 
-    // Zdejmujemy z obu dróg: obserwacja mogła zacząć na zdarzeniach i przejść na zaglądanie
-    // (`forsaken`), a zdjęcie z drogi, na której jej nie ma, nic nie robi.
+    // Removes the watch `which` from both paths: it may have started on events and switched to
+    // polling (`forsaken`), and removing it from a path it is not on does nothing.
     void drop(std::uint64_t which) {
         {
             const std::lock_guard<std::mutex> kept{guard_};
@@ -1096,8 +1135,9 @@ public:
 #endif
     }
 
-    // Zaplecze zdarzeń oddało obserwację: od teraz zagląda się do niej. Zgłoszenie przepełnienia
-    // mówi czekającemu, że coś mogło przepaść w chwili zmiany drogi i warto przeczytać od nowa.
+    // The event backend gave up the watch: from now on it is polled. An overflow change tells
+    // the waiting side that something may have been lost while switching paths and it is worth
+    // reading again.
     void forsaken(std::uint64_t which) {
         path where;
         bool deep = false;
@@ -1114,7 +1154,7 @@ public:
 
         polling_.add(which, where, deep);
 
-        // Obserwację zamknięto w trakcie — `drop` szukał jej jeszcze po drodze zdarzeń.
+        // The watch was closed meanwhile, while `drop` was still looking for it on the event path.
         bool gone = false;
 
         {
@@ -1131,6 +1171,8 @@ public:
         reached(which, std::vector<Change>{Change{where, path{}, Change::Kind::overflow}});
     }
 
+    // Delivers changes for the watch `which`: directly for a plain watch, and for a file
+    // guarded through its parent only after looking at the file itself.
     void reached(std::uint64_t which, std::vector<Change> among) {
         std::shared_ptr<Watch::Held> held;
         bool peering = false;
@@ -1156,8 +1198,8 @@ public:
 
         if (!touched(among, only)) return;
 
-        // Katalog powiedział tylko, że coś drgnęło przy naszej nazwie. Co dokładnie — mówi
-        // dopiero spojrzenie na sam plik, porównane z poprzednim.
+        // The directory only said that something stirred at our name. What exactly is told only
+        // by a look at the file itself, compared with the previous one.
         std::map<path, Sight> now = sighted(only, false);
         std::vector<Change> mine;
 
@@ -1184,6 +1226,7 @@ private:
         std::map<path, Sight> seen;
     };
 
+    // Whether the changes concern the file `only`, or overflowed and so may concern it.
     static bool touched(const std::vector<Change>& among, const path& only) {
         for (const Change& one : among) {
             if (one.kind == Change::Kind::overflow) return true;
@@ -1193,11 +1236,11 @@ private:
         return false;
     }
 
-    // Zdarzenia z systemu są tańsze i szybsze, więc bierzemy je wszędzie, gdzie są
-    // wiarygodne. Na udziale sieciowym pod Linuksem wiarygodne nie są: inotify nie widzi
-    // zmian zrobionych przez inną maszynę, bo jądro nie ma o nich pojęcia — a to jest
-    // dokładnie przypadek NAS-a. Rozstrzyga to samo rozpoznanie nośnika, co przy racie.
-    // Windows na udziale radzi sobie sam, bo powiadomienia przychodzą z serwera.
+    // Whether `where` must be polled. Events from the system are cheaper and faster, so we use
+    // them wherever they are reliable. On a network share under Linux they are not: inotify does
+    // not see changes made by another machine, because the kernel knows nothing of them, and that
+    // is exactly the case of a NAS. The same medium detection as for the rate decides. Windows
+    // copes on a share by itself, because the notifications come from the server.
     static bool asking(const path& where) {
 #if defined(TALCITE_WATCH_POLLING)
         (void)where;
@@ -1227,8 +1270,8 @@ private:
 #endif
 };
 
-// Obserwator jest celowo nieusuwany, z tego samego powodu co zegar: powstaje później niż
-// pula, więc zniknąłby pierwszy, w chwili gdy robotnicy jeszcze biegną.
+// The watcher is deliberately never destroyed, for the same reason as the timer: it is created
+// later than the pool, so it would go first, while the workers are still running.
 Watching& watching() {
     static Watching* only = [] {
         auto* made = new Watching;
@@ -1240,24 +1283,30 @@ Watching& watching() {
     return *only;
 }
 
+// Passes changes from a backend to the dispatcher.
 void reached(std::uint64_t which, std::vector<Change> among) {
     watching().reached(which, std::move(among));
 }
 
+// Passes a watch that a backend gave up to the dispatcher, which moves it to polling.
 void forsaken(std::uint64_t which) { watching().forsaken(which); }
 
 }
 
+// Unregisters the watch when the last handle to it goes away.
 Watch::Held::~Held() {
     if (which != 0) watching().drop(which);
 }
 
+// The watched path, or an empty path for a closed watch.
 const path& Watch::where() const {
     static const path nowhere;
 
     return held_ ? held_->where : nowhere;
 }
 
+// Starts watching a directory (the whole tree below it when `deep`) or a single file. Fails
+// when there is nothing at `where`.
 Promise<Watch> watch(const path& where, bool deep) {
     return Promise<Watch>{[where, deep](auto resolve, auto) {
         if (kind_at(where) != Kind::folder && kind_at(where) != Kind::file)
@@ -1273,6 +1322,7 @@ Promise<Watch> watch(const path& where, bool deep) {
     }};
 }
 
+// The next batch of changes: everything pending at once, or the first batch that arrives.
 Promise<std::vector<Change>> Watch::next() {
     auto held = held_;
 
@@ -1283,9 +1333,9 @@ Promise<std::vector<Change>> Watch::next() {
     auto made = std::make_shared<detail::Result<std::vector<Change>>>();
 
     return Nexting{[held, made](auto, auto) {
-                       // Bilet trzyma obserwatorów słabo, więc ogniwo musi mieć właściciela
-                       // z tej strony — inaczej ginie zaraz po powrocie stąd, a anulowane
-                       // zgłoszenie zostaje w kolejce i połyka pierwszą paczkę.
+                       // The ticket holds its watchers weakly, so the watcher needs an owner on
+                       // this side; otherwise it dies right after returning from here, and a
+                       // cancelled request stays in the queue and swallows the first batch.
                        const std::shared_ptr<detail::Waiter> gone =
                            std::make_shared<Forgetting>(held, made.get());
 
@@ -1308,8 +1358,9 @@ Promise<std::vector<Change>> Watch::next() {
                            return;
                        }
 
-                       // Poza zamkiem, tak samo jak w zegarze: bilet już rozstrzygnięty
-                       // zawoła ogniwo od razu, a ono wraca tutaj po ten sam zamek.
+                       // Outside the lock, just as in the timer: a ticket that is already
+                       // settled calls the watcher at once, and it comes back here for the same
+                       // lock.
                        if (hooked(*made, gone)) gone->woke();
                    },
                    made};

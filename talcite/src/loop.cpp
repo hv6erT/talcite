@@ -7,12 +7,14 @@ namespace talcite {
 
 namespace {
 
-// Pętla należy do wątku, a nie do procesu. Dzięki temu drugi ekran albo wątek z własnym
-// obiegiem jest możliwy, a testy nie dzielą stanu między sobą.
+// A loop belongs to a thread, not to the process. That makes a second screen or a thread with its
+// own cycle possible, and tests share no state with each other.
 thread_local Loop* standing = nullptr;
 
 }
 
+// Makes this the loop of the current thread; a second loop on the same thread throws
+// std::logic_error.
 Loop::Loop() {
     if (standing != nullptr)
         throw std::logic_error("talcite::Loop: a loop already stands on this thread");
@@ -20,17 +22,20 @@ Loop::Loop() {
     standing = this;
 }
 
+// Frees the thread's place for another loop.
 Loop::~Loop() {
     if (standing == this) standing = nullptr;
 }
 
+// The loop of the current thread, or `nullptr` when none stands on it.
 Loop* Loop::current() { return standing; }
 
-// **Kolejka i dzwonek mieszkają w drzwiach (`detail::Door`), nie w samej pętli.** Pętla trzyma
-// je mocno, ciąg dalszy obietnicy (`here`, `on`) — słabo. Dawniej ogniwo trzymało gołe wskazanie
-// na pętlę, a praca puli, która kończyła się po jej zniszczeniu, wołała `post` na martwym obiekcie;
-// gdy w tym samym miejscu pamięci stanęła nowa pętla, ciąg dalszy wykonywał się na cudzej. Dziś
-// drzwi giną razem z pętlą, a wszystko, co po nich przyjdzie, przepada — i nie ma gdzie trafić.
+// Queues work for the loop and rings its bell. The queue and the bell live in the door
+// (`detail::Door`), not in the loop itself. The loop holds the door strongly, and promise
+// continuations (`here`, `on`) hold it weakly. With a raw pointer to the loop, pool work finishing
+// after the loop was destroyed would call `post` on a dead object, and if a new loop stood at the
+// same address, the continuation would run on someone else's loop. The door dies with the loop,
+// and anything that arrives after it is dropped, with nowhere to go.
 void detail::Door::post(std::function<void()> what) {
     {
         const std::lock_guard<std::mutex> held{guard_};
@@ -40,6 +45,7 @@ void detail::Door::post(std::function<void()> what) {
     bell_.ring();
 }
 
+// Takes the whole queue at once, leaving it empty.
 std::vector<std::function<void()>> detail::Door::taken() {
     std::vector<std::function<void()>> made;
 
@@ -50,24 +56,28 @@ std::vector<std::function<void()>> detail::Door::taken() {
     return made;
 }
 
+// The number of queued pieces of work.
 std::size_t detail::Door::waiting() const {
     const std::lock_guard<std::mutex> held{guard_};
 
     return queued_.size();
 }
 
+// Queues work to run on this loop's thread at its next turn. Safe to call from any thread.
 void Loop::post(std::function<void()> what) { door_->post(std::move(what)); }
 
+// The number of pieces of work waiting for the next turn.
 std::size_t Loop::waiting() const { return door_->waiting(); }
 
-// Kolejkę zabieramy w całości i oddajemy zamek przed wykonaniem. Inaczej wywołanie, które samo
-// czegoś dopisze, zakleszczyłoby się na własnej pętli — a to najzwyklejszy przypadek, jaki jest.
+// Runs the queued work and returns how much ran. The queue is taken whole and the lock released
+// before running anything; otherwise a call that queues something itself would deadlock on its
+// own loop, and that is the most ordinary case there is.
 //
-// **Dzwonek opróżniamy przed zabraniem kolejki, nie po.** Odwrotna kolejność gubiła przebudzenie:
-// `post` dopisuje pod zamkiem i dopiero potem dzwoni, więc wywołanie wciśnięte między zabranie
-// a opróżnienie zostawiało pracę w kolejce, a jego dzwonek szedł do kosza — i pętla stawała na
-// `poll` bez terminu, aż do najbliższego klawisza. Przy tej kolejności najgorsze, co się zdarzy,
-// to jeden jałowy obrót.
+// The bell is cleared before the queue is taken, not after. The reverse order would lose a
+// wake-up: `post` appends under the lock and only then rings, so a call squeezed in between taking
+// and clearing would leave its work in the queue while its ring went to waste, and the loop would
+// stop in poll with no deadline until the next key. In this order the worst that can happen is
+// one idle turn.
 std::size_t Loop::turn() {
     door_->bell().clear();
 

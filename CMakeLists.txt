@@ -1,5 +1,6 @@
-# 3.21: `PROJECT_IS_TOP_LEVEL` i polityki do tej wersji włącznie — w tym CMP0091, czyli wybór
-# biblioteki uruchomieniowej MSVC przez CMAKE_MSVC_RUNTIME_LIBRARY. Visual Studio 2022 ma nowszy.
+# 3.21 gives PROJECT_IS_TOP_LEVEL and the policies up to that version, including CMP0091, which
+# selects the MSVC runtime library through CMAKE_MSVC_RUNTIME_LIBRARY. Visual Studio 2022 ships a
+# newer CMake.
 cmake_minimum_required(VERSION 3.21)
 
 if(POLICY CMP0141)
@@ -11,13 +12,14 @@ endif()
 
 project(talcite CXX)
 
-# Generator jednokonfiguracyjny (Make, Ninja) bez podanego typu budował bez optymalizacji i bez
-# symboli — ani wydanie, ani próba. Domyślnie Release; tylko gdy projekt buduje się sam, bo jako
-# podkatalog bierze typ od tego, kto go włącza.
+# A single-configuration generator (Make, Ninja) without a build type builds with neither
+# optimization nor symbols, which suits neither a release nor a test run. The default is Release,
+# but only when the project is built on its own; as a subdirectory it takes the type from the
+# project that includes it.
 get_property(multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
 if(PROJECT_IS_TOP_LEVEL AND NOT multi AND NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Typ budowania" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -39,18 +41,18 @@ foreach(chosen IN LISTS CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${loud} "${CMAKE_BINARY_DIR}/bin")
 endforeach()
 
-option(TALCITE_TESTS "Buduj przypadki testowe" OFF)
-option(TALCITE_DEMOS "Buduj programy pokazowe" ON)
+option(TALCITE_TESTS "Build the tests" OFF)
+option(TALCITE_DEMOS "Build the demo programs" ON)
 
-# Konsola Windows tłumaczona tak, jakby VT nie przyjmowała (Windows 7, 8.1, „starsza konsola") —
-# żeby tę drogę dało się sprawdzić na Windows 10 i 11. Poza Windows nic nie zmienia.
-option(TALCITE_LEGACY_CONSOLE "Tłumacz konsolę Windows także wtedy, gdy przyjmuje VT" OFF)
+# Translates the Windows console as if it did not accept VT sequences (Windows 7, 8.1, the legacy
+# console), so that this path can be checked on Windows 10 and 11. Outside Windows it changes nothing.
+option(TALCITE_LEGACY_CONSOLE "Translate the Windows console even when it accepts VT" OFF)
 add_subdirectory(talcite)
 
-# Przejściówek tu **nie ma** — ani w bibliotece, ani obok niej. talcite kompiluje się i linkuje bez
-# OpenSSL, a bez wstrzykniętego Seam<TlsProvider> nie da się zbudować połączenia szyfrowanego —
-# dzięki temu „nie piszemy kryptografii" jest faktem, a nie obietnicą. Przejściówki mieszkają
-# w osobnym projekcie talcite-adapters (dawniej extra/openssl tutaj).
+# There are no adapters here, neither in the library nor next to it. talcite compiles and links
+# without OpenSSL, and without an injected Seam<TlsProvider> no encrypted connection can be made, so
+# "talcite does not implement TLS" is a fact rather than a promise. The adapters live in the
+# separate project talcite-adapters.
 
 if(TALCITE_DEMOS)
   add_subdirectory(demo)

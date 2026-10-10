@@ -24,11 +24,12 @@ using namespace talcite;
 
 namespace {
 
+// A root to hang the viewer on.
 class Sheet : public ui::Root {};
 
 
-// Wiersz kartki jako napis, z obciętymi spacjami z prawej — inaczej każde porównanie musiałoby
-// dopisywać dopełnienie do szerokości okna.
+// A row of the page as a string, with spaces trimmed on the right; otherwise every comparison would
+// have to add padding up to the width of the window.
 std::string said(const View& one, int y) {
     std::string made;
 
@@ -45,6 +46,7 @@ std::string said(const View& one, int y) {
     return made;
 }
 
+// A viewer holding `what` in memory, hung on `sheet`.
 std::shared_ptr<ui::Viewer> shown(Sheet& sheet, const std::string& what) {
     const auto one = std::make_shared<ui::Viewer>();
 
@@ -55,7 +57,7 @@ std::shared_ptr<ui::Viewer> shown(Sheet& sheet, const std::string& what) {
     return one;
 }
 
-// Źródło asynchroniczne z pamięci — jak `File::read`, tylko bez dysku.
+// An asynchronous source in memory, like `File::read`, only without a disk.
 Feed fed(const Bytes& raw) {
     return [raw](std::size_t at, std::size_t most) {
         Bytes made;
@@ -66,7 +68,8 @@ Feed fed(const Bytes& raw) {
     };
 }
 
-// Obraca pętlę i maluje, aż warunek stanie się prawdą — tak, jak robi to `Term` między klatkami.
+// Turns the loop and paints until the condition becomes true, as `Term` does between frames;
+// false if it does not within 4000 turns.
 template <typename Fn>
 bool turned(Loop& loop, Sheet& sheet, ui::Size size, Fn until) {
     for (int tries = 0; tries < 4000; ++tries) {
@@ -81,6 +84,7 @@ bool turned(Loop& loop, Sheet& sheet, ui::Size size, Fn until) {
     return false;
 }
 
+// A text of `much` numbered lines.
 std::string many(int much) {
     std::string made;
 
@@ -91,9 +95,9 @@ std::string many(int much) {
 
 }
 
-// --- Co widżet wie przed układem -----------------------------------------------------------------
+// --- What the widget knows before layout ---------------------------------------------------------
 
-TRIAL("Viewer: pusty nic nie niesie") {
+TRIAL("Viewer: an empty one carries nothing") {
     const ui::Viewer one;
 
     ought(!one.held());
@@ -103,7 +107,7 @@ TRIAL("Viewer: pusty nic nie niesie") {
     ought(!one.whole().has_value());
 }
 
-TRIAL("Viewer: dokument w pamięci daje komplet wartości od razu") {
+TRIAL("Viewer: a document in memory gives the full set of values at once") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -115,9 +119,9 @@ TRIAL("Viewer: dokument w pamięci daje komplet wartości od razu") {
     same(*one->whole(), std::size_t{8});
 }
 
-// Źródło wierszowe bajtami nie myśli, więc `at` i `whole` zostają puste. To nie jest brak, tylko
-// prawda o tym, co podano.
-TRIAL("Viewer: źródło wierszowe nie zna bajtów") {
+// A row source does not think in bytes, so `at` and `whole` stay empty. That is not something
+// missing but the truth about what was given.
+TRIAL("Viewer: a row source does not know bytes") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Viewer>();
@@ -141,9 +145,9 @@ TRIAL("Viewer: źródło wierszowe nie zna bajtów") {
     ought(!one->whole().has_value());
 }
 
-// **Dokument trzyma strona i nowy zastępuje poprzedni w całości.** Dawniej podgląd trzymał
-// własną szpulę i po przejściu z bajtów na zwój odpowiadał liczbą wierszy starego dokumentu.
-TRIAL("Viewer: zwój po bajtach zastępuje dokument w całości") {
+// The page holds the document, and a new one replaces the previous one entirely, including its row
+// count.
+TRIAL("Viewer: a roll after bytes replaces the document entirely") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -170,8 +174,9 @@ TRIAL("Viewer: zwój po bajtach zastępuje dokument w całości") {
     same(*one->whole(), std::size_t{3});
 }
 
-// Skok po bajcie stoi w stronie, więc zwój — który bajtów nie zna — go ignoruje, a szpula wykonuje.
-TRIAL("Viewer: skok po bajcie działa przy bajtach, przy zwoju nic") {
+// A jump by byte lives in the page, so a roll, which does not know bytes, ignores it, and a spool
+// carries it out.
+TRIAL("Viewer: a jump by byte works with bytes and does nothing with a roll") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -195,8 +200,8 @@ TRIAL("Viewer: skok po bajcie działa przy bajtach, przy zwoju nic") {
     same(*one->first(), std::size_t{0});
 }
 
-// Czego już nie da się napisać: gołej strony, zwoju w edytorze — który umie edytować tylko to,
-// co sam trzyma w kołdrze — i dokumentu podanego stronie z zewnątrz.
+// What can no longer be written: a bare page, a roll in the editor (which can edit only what it
+// holds in its own quilt), and a document given to the page from outside.
 namespace {
 
 template <typename One>
@@ -209,9 +214,9 @@ static_assert(!rolled<ui::Editor>);
 static_assert(!rolled<ui::Page>);
 static_assert(rolled<ui::Viewer>);
 
-// --- Rysowanie -----------------------------------------------------------------------------------
+// --- Drawing -------------------------------------------------------------------------------------
 
-TRIAL("Viewer: wiersze lądują jeden pod drugim") {
+TRIAL("Viewer: rows land one below another") {
     Sheet sheet;
 
     const auto one = shown(sheet, "pierwszy\ndrugi\ntrzeci");
@@ -224,7 +229,7 @@ TRIAL("Viewer: wiersze lądują jeden pod drugim") {
     same(said(made, 3), std::string{});
 }
 
-TRIAL("Viewer: tabulator rozwija się do ośmiu kolumn") {
+TRIAL("Viewer: a tab expands to eight columns") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ab\tc");
@@ -234,8 +239,8 @@ TRIAL("Viewer: tabulator rozwija się do ośmiu kolumn") {
     same(said(made, 0), std::string{"ab      c"});
 }
 
-// Zawijanie jest domyślne, więc długi wiersz zajmuje kilka wierszy ekranu.
-TRIAL("Viewer: zawijanie dzieli długi wiersz po kolumnach") {
+// Wrapping is the default, so a long row takes several rows of the screen.
+TRIAL("Viewer: wrapping splits a long row by columns") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbbcccc");
@@ -249,7 +254,7 @@ TRIAL("Viewer: zawijanie dzieli długi wiersz po kolumnach") {
     same(said(made, 2), std::string{"cccc"});
 }
 
-TRIAL("Viewer: bez zawijania wiersz się urywa") {
+TRIAL("Viewer: without wrapping a row is cut off") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbbcccc\ndrugi");
@@ -262,9 +267,9 @@ TRIAL("Viewer: bez zawijania wiersz się urywa") {
     same(said(made, 1), std::string{"drug"});
 }
 
-// Znak chiński zajmuje dwie kratki, więc cięcie po bajtach albo po znakach wypuściłoby go poza
-// kartkę. Przy szerokości pięciu mieszczą się dwa i zostaje jedna kolumna.
-TRIAL("Viewer: cięcie liczy kolumny, nie znaki") {
+// A Chinese character takes two cells, so cutting by bytes or by characters would let it out of the
+// page. At a width of five two of them fit and one column is left.
+TRIAL("Viewer: cutting counts columns, not characters") {
     Sheet sheet;
 
     const auto one = shown(sheet, "\xe4\xbd\xa0\xe4\xbd\xa0\xe4\xbd\xa0");
@@ -275,9 +280,9 @@ TRIAL("Viewer: cięcie liczy kolumny, nie znaki") {
     same(said(made, 1), std::string{"\xe4\xbd\xa0"});
 }
 
-// --- Przewijanie ---------------------------------------------------------------------------------
+// --- Scrolling -----------------------------------------------------------------------------------
 
-TRIAL("Viewer: krok w dół i w górę wraca w to samo miejsce") {
+TRIAL("Viewer: a step down and up returns to the same place") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -291,7 +296,7 @@ TRIAL("Viewer: krok w dół i w górę wraca w to samo miejsce") {
     same(*one->first(), std::size_t{0});
 }
 
-TRIAL("Viewer: na początku nie da się cofnąć") {
+TRIAL("Viewer: at the start one cannot go back") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -303,10 +308,10 @@ TRIAL("Viewer: na początku nie da się cofnąć") {
     same(*one->first(), std::size_t{0});
 }
 
-// Krok w dół zatrzymuje się, gdy ostatni wiersz stoi **na dole** ekranu — nie na górze z pustką
-// pod nim, jak przedtem, gdy pomoc dawała się zsunąć do jednego wiersza. Dokument krótszy niż
-// ekran nie przewija się wcale, a skok do wiersza za końcem ląduje na ostatniej stronie.
-TRIAL("Viewer: za ostatnią stronę nie wychodzimy") {
+// A step down stops when the last row stands at the bottom of the screen, not at the top with
+// emptiness below it. A document shorter than the screen does not scroll at all, and a jump to a
+// row past the end lands on the last page.
+TRIAL("Viewer: we do not go past the last page") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -332,9 +337,9 @@ TRIAL("Viewer: za ostatnią stronę nie wychodzimy") {
     same(*brief->first(), std::size_t{0});
 }
 
-// Przy zawijaniu jeden wiersz dokumentu to kilka kroków ekranu, więc krok nie przesuwa numeru
-// wiersza za każdym razem.
-TRIAL("Viewer: przy zawijaniu krok idzie po kawałkach") {
+// With wrapping one row of the document is several steps of the screen, so a step does not move
+// the row number every time.
+TRIAL("Viewer: with wrapping a step goes by pieces") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbbcccc\ndrugi");
@@ -350,12 +355,12 @@ TRIAL("Viewer: przy zawijaniu krok idzie po kawałkach") {
     one->slide(1);
     same(*one->first(), std::size_t{1});
 
-    // Pięć kawałków na dwóch wierszach ekranu: dalej już nie ma dokąd.
+    // Five pieces on two screen rows: there is nowhere further to go.
     one->slide(1);
     same(*one->first(), std::size_t{1});
 }
 
-TRIAL("Viewer: strona przesuwa o wysokość okna") {
+TRIAL("Viewer: a page moves by the window's height") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -371,9 +376,9 @@ TRIAL("Viewer: strona przesuwa o wysokość okna") {
     same(*one->first(), std::size_t{10});
 }
 
-// `slide` mówi, czy obraz się ruszył, i zawiadamia tylko wtedy. Na końcu dokumentu i przy zerze
-// nie ma czego zgłaszać.
-TRIAL("Viewer: slide oddaje, czy się ruszyło, i tylko wtedy zawiadamia") {
+// `slide` says whether the picture moved, and notifies only then. At the end of the document and
+// with zero there is nothing to report.
+TRIAL("Viewer: slide returns whether it moved, and notifies only then") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -408,7 +413,7 @@ TRIAL("Viewer: slide oddaje, czy się ruszyło, i tylko wtedy zawiadamia") {
     same(heard, 0);
 }
 
-TRIAL("Viewer: koniec pokazuje ostatnią stronę") {
+TRIAL("Viewer: end shows the last page") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -424,7 +429,7 @@ TRIAL("Viewer: koniec pokazuje ostatnią stronę") {
     same(said(made, 9), std::string{"wiersz 99"});
 }
 
-TRIAL("Viewer: skok do wiersza przycina się do dokumentu") {
+TRIAL("Viewer: a jump to a row is clipped to the document") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -434,7 +439,7 @@ TRIAL("Viewer: skok do wiersza przycina się do dokumentu") {
     same(*one->first(), std::size_t{9});
 }
 
-TRIAL("Viewer: skok po bajcie ląduje we właściwym wierszu") {
+TRIAL("Viewer: a jump by byte lands in the right row") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -445,9 +450,9 @@ TRIAL("Viewer: skok po bajcie ląduje we właściwym wierszu") {
     same(*one->at(), std::size_t{5});
 }
 
-// Ten sam bajt znaczy co innego w obu trybach, więc przełączenie musi zostać w tym samym wierszu
-// dokumentu, a nie przeskoczyć w losowe miejsce.
-TRIAL("Viewer: przełączenie zawijania nie rusza wiersza") {
+// The same byte means something different in the two modes, so switching has to stay in the same
+// row of the document rather than jump to a random place.
+TRIAL("Viewer: switching wrapping does not move the row") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbbcccc\ndrugi\ntrzeci");
@@ -464,12 +469,12 @@ TRIAL("Viewer: przełączenie zawijania nie rusza wiersza") {
     same(said(made, 0), std::string{"drug"});
 }
 
-// **Przewijanie liczy kawałki, rysowanie je buduje — jednym chodzikiem.** Losowe dokumenty
-// z tabulatorami, znakami podwójnymi, łączącymi i wierszami równymi wielokrotności szerokości:
-// po każdym kroku ekran krótki musi pokazywać ten sam odcinek, co wysoki od góry. Gdyby liczenie
-// rozjechało się z cięciem choćby o jeden kawałek, krok lądowałby o wiersz obok, a koniec
-// dokumentu nie stałby na dole.
-TRIAL("Viewer: krok po kawałkach zgadza się z tym, co narysowane") {
+// Scrolling counts the pieces and drawing builds them, with one walker. Random documents with tabs,
+// double-width and combining characters and rows that are multiples of the width: after every
+// step a short screen has to show the same stretch as a tall one from the top. If the counting
+// drifted from the cutting by even one piece, a step would land one row off, and the end of the
+// document would not stand at the bottom.
+TRIAL("Viewer: stepping by pieces agrees with what is drawn") {
     std::mt19937 random{7};
 
     const std::vector<std::string> signs{"a", "b", " ", "\t", "\xe4\xbd\xa0", "e\xcc\x81", "\xcc\x81"};
@@ -547,10 +552,10 @@ TRIAL("Viewer: krok po kawałkach zgadza się z tym, co narysowane") {
     }
 }
 
-// **Ruch ogląda każdy wiersz dokumentu raz.** Dawniej krok w obrębie zawiniętego wiersza ciął go
-// od nowa za każdym wierszem ekranu, a przycięcie do końca przechodziło ekran od nowa po każdym
-// cofnięciu — strona w dół przy końcu pobierała te same wiersze po kilkadziesiąt razy.
-TRIAL("Viewer: ruch pyta o każdy wiersz najwyżej raz") {
+// Movement looks at every row of the document once. A step within a wrapped row must not cut it
+// again for every screen row, and clipping to the end must not walk the screen again after every
+// step back; otherwise a page down near the end would fetch the same rows dozens of times.
+TRIAL("Viewer: movement asks for each row at most once") {
     std::map<std::size_t, int> asked;
 
     Sheet sheet;
@@ -601,10 +606,10 @@ TRIAL("Viewer: ruch pyta o każdy wiersz najwyżej raz") {
     for (const auto& [line, much] : asked) same(much, 1);
 }
 
-// Wiersz, który czeka na okno, zatrzymuje przycięcie do końca w obie strony: przejście ekranu
-// natrafiające na niego nie wie, gdzie koniec, więc niczego nie przycina, a cofanie się, które na
-// niego wchodzi, staje na nim.
-TRIAL("Viewer: przycięcie do końca staje na wierszu, który czeka") {
+// A row that waits for its window stops clipping to the end in both directions: a walk of the
+// screen that runs into it does not know where the end is, so it clips nothing, and a step back
+// that enters it stops on it.
+TRIAL("Viewer: clipping to the end stops on a row that waits") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Viewer>();
@@ -632,8 +637,8 @@ TRIAL("Viewer: przycięcie do końca staje na wierszu, który czeka") {
 
     same(*one->first(), std::size_t{3});
 
-    // Cofnięcie na wiersz, który czeka, staje na jego początku — kawałków nie zna, więc krok
-    // w przód idzie od razu do następnego wiersza. Niski ekran, żeby przycięcie nie ruszało.
+    // A step back onto a row that waits stops at its start; its pieces are unknown, so a step
+    // forward goes straight to the next row. A low screen, so that clipping does not move anything.
     (void)sheet.render({{0, 0}, {10, 2}});
 
     one->first(6);
@@ -649,9 +654,9 @@ TRIAL("Viewer: przycięcie do końca staje na wierszu, który czeka") {
     same(*one->first(), std::size_t{6});
 }
 
-// Tabulator za cięciem, sam na końcu wiersza, to wiersz ekranu ze spacjami — nie pustka, której
-// można nie liczyć. Przy szerokości dziesięciu rozwija się do ósmej kolumny i zostaje ogonem.
-TRIAL("Viewer: tabulator za cięciem zajmuje własny wiersz ekranu") {
+// A tab after the cut, alone at the end of a row, is a screen row of spaces, not emptiness that can
+// be left uncounted. At a width of ten it expands to the eighth column and stays as a tail.
+TRIAL("Viewer: a tab after the cut takes its own screen row") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaaaaaaaa\t\nZ");
@@ -668,9 +673,9 @@ TRIAL("Viewer: tabulator za cięciem zajmuje własny wiersz ekranu") {
     same(*one->first(), std::size_t{0});
 }
 
-// `End` staje na **ostatnim kawałku** ostatniego wiersza: zawinięty ogon dokumentu stoi na dole
-// ekranu, a nie jego początek na górze.
-TRIAL("Viewer: koniec przy zawiniętym ostatnim wierszu pokazuje jego ogon") {
+// `End` stands on the last piece of the last row: the wrapped tail of the document stands at the
+// bottom of the screen, not its start at the top.
+TRIAL("Viewer: end with a wrapped last row shows its tail") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nabcdefghijkl");
@@ -685,9 +690,9 @@ TRIAL("Viewer: koniec przy zawiniętym ostatnim wierszu pokazuje jego ogon") {
     same(said(made, 1), std::string{"ijkl"});
 }
 
-// Zanim strona dostanie przydział, szerokości nie ma i nie ma czego ciąć: krok idzie po wierszach
-// dokumentu, jak bez zawijania.
-TRIAL("Viewer: przed układem krok idzie po wierszach dokumentu") {
+// Before the page gets its allotment there is no width and nothing to cut: a step goes by rows of
+// the document, as without wrapping.
+TRIAL("Viewer: before layout a step goes by rows of the document") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaaaaaa\nb\nc");
@@ -697,11 +702,11 @@ TRIAL("Viewer: przed układem krok idzie po wierszach dokumentu") {
     same(*one->first(), std::size_t{1});
 }
 
-// --- Pasek przewijania ---------------------------------------------------------------------------
+// --- Scrollbar -----------------------------------------------------------------------------------
 
-// Pasek zabiera jedną kolumnę z prawej, więc treść dostaje o tyle mniej — i to widać po zawijaniu,
-// bo długi wiersz łamie się o kratkę wcześniej.
-TRIAL("Viewer: pasek zabiera kolumnę treści") {
+// The scrollbar takes one column on the right, so the content gets that much less, and that shows
+// in wrapping, because a long row breaks one cell earlier.
+TRIAL("Viewer: the scrollbar takes a column from the content") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbb");
@@ -712,13 +717,13 @@ TRIAL("Viewer: pasek zabiera kolumnę treści") {
 
     const View made = sheet.render({{0, 0}, {5, 4}});
 
-    // Ostatnia kolumna należy do paska, więc porównujemy sam początek wiersza.
+    // The last column belongs to the scrollbar, so we compare only the start of the row.
     same(said(made, 0).substr(0, 4), std::string{"aaaa"});
     same(said(made, 1).substr(0, 4), std::string{"bbbb"});
 }
 
-// Bez paska ta sama treść mieści się w pięciu kolumnach.
-TRIAL("Viewer: bez paska treść dostaje całą szerokość") {
+// Without the scrollbar the same content fits in five columns.
+TRIAL("Viewer: without the scrollbar the content gets the whole width") {
     Sheet sheet;
 
     const auto one = shown(sheet, "aaaabbbb");
@@ -731,9 +736,9 @@ TRIAL("Viewer: bez paska treść dostaje całą szerokość") {
     same(said(made, 1), std::string{"bbb"});
 }
 
-// Pasek „gdy trzeba": strona, która mieści się cała, nie ma paska i zawija się na całą szerokość;
-// strona dłuższa niż okno — także przez zawinięcie albo o jeden wiersz — ma go.
-TRIAL("Viewer: pasek gdy trzeba tylko przy stronie dłuższej niż okno") {
+// A scrollbar "when needed": a page that fits whole has no scrollbar and wraps to the whole width;
+// a page longer than the window, also through wrapping or by a single row, has one.
+TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the window") {
     const auto barred = [](const std::string& text, ui::Size size) {
         Sheet sheet;
 
@@ -756,7 +761,8 @@ TRIAL("Viewer: pasek gdy trzeba tylko przy stronie dłuższej niż okno") {
     ought(barred("a\nb\nc\nd\ne", {5, 4}).first);
     ought(barred("aaaabbbbccccdddde", {5, 4}).first);
 
-    // Przewinięta do końca strona dalej ma pasek — reszta się mieści, ale początek jest nad oknem.
+    // A page scrolled to the end still has the scrollbar: the rest fits, but the start is above the
+    // window.
     {
         Sheet sheet;
 
@@ -778,8 +784,8 @@ TRIAL("Viewer: pasek gdy trzeba tylko przy stronie dłuższej niż okno") {
         same(made.at({4, 0}).letter, U'▲');
     }
 
-    // Źródło, które dalszych wierszy jeszcze nie ma, też daje pasek: strona nie wie, że to koniec,
-    // choć cztery wiersze, które już przyszły, wypełniają okno co do jednego.
+    // A source that does not yet have the later rows also gives a scrollbar: the page does not know
+    // it is the end, though the four rows that have arrived fill the window exactly.
     {
         Sheet sheet;
 
@@ -802,8 +808,8 @@ TRIAL("Viewer: pasek gdy trzeba tylko przy stronie dłuższej niż okno") {
     }
 }
 
-// Strzałki paska stoją w ostatniej kolumnie, u góry i u dołu.
-TRIAL("Viewer: pasek stoi przy prawej krawędzi") {
+// The scrollbar's arrows stand in the last column, at the top and at the bottom.
+TRIAL("Viewer: the scrollbar stands at the right edge") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -816,10 +822,10 @@ TRIAL("Viewer: pasek stoi przy prawej krawędzi") {
     ought(made.at({19, 4}).letter != U' ');
 }
 
-// Póki liczba wierszy jest nieznana, pasek chodzi po bajtach, a jego okno to rozpiętość tego, co
-// stoi na ekranie: od początku pierwszego widocznego wiersza do początku wiersza **za** ostatnim.
-// Dziesięć wierszy po dziesięć tysięcy bajtów z dwudziestu to połowa dokumentu — i połowa toru.
-TRIAL("Viewer: pasek po bajtach mierzy okno tym, co widać") {
+// While the row count is unknown, the scrollbar goes by bytes, and its window is the span of what
+// stands on the screen: from the start of the first visible row to the start of the row after the
+// last. Ten rows of ten thousand bytes out of twenty is half the document, and half the track.
+TRIAL("Viewer: a byte scrollbar measures its window by what is visible") {
     Loop loop;
     Sheet sheet;
 
@@ -849,10 +855,11 @@ TRIAL("Viewer: pasek po bajtach mierzy okno tym, co widać") {
     ought(thumb >= 3);
 }
 
-// Zamiary czekające na okno należą do dokumentu, nie do strony: nowy dokument ich nie dziedziczy.
-// Bez tego skok po bajcie wydany na starym pliku wykonałby się na nowym, gdy tylko doszłoby jego
-// pierwsze okno — tu na bajcie daleko za końcem nowego dokumentu, czyli na jego ostatnich wierszach.
-TRIAL("Viewer: nowy dokument nie dziedziczy zamiarów starego") {
+// Intentions waiting for a window belong to the document, not to the page: a new document does
+// not inherit them. Otherwise a jump by byte issued on the old file would be carried out on the new
+// one as soon as its first window arrived, here at a byte far past the end of the new document,
+// that is, on its last rows.
+TRIAL("Viewer: a new document does not inherit the old one's intentions") {
     Loop loop;
     Sheet sheet;
 
@@ -885,11 +892,11 @@ TRIAL("Viewer: nowy dokument nie dziedziczy zamiarów starego") {
     same(*one->first(), std::size_t{0});
 }
 
-// --- Zaznaczenia ---------------------------------------------------------------------------------
+// --- Marks ---------------------------------------------------------------------------------------
 
-// Znacznik to zakres bajtów **w wierszu** i rola ze skórki. Wbudowana rola `talcite.viewer.mark`
-// odwraca, więc widać ją bez żadnych barw.
-TRIAL("Viewer: znacznik przemalowuje dokładnie swój zakres") {
+// A mark is a range of bytes within a row and a role from the skin. The built-in role
+// `talcite.viewer.mark` reverses, so it is visible without any colors.
+TRIAL("Viewer: a mark repaints exactly its range") {
     Sheet sheet;
 
     const auto one = shown(sheet, "abcdefgh");
@@ -903,13 +910,13 @@ TRIAL("Viewer: znacznik przemalowuje dokładnie swój zakres") {
     ought(made.at({4, 0}).style.reverse);
     ought(!made.at({5, 0}).style.reverse);
 
-    // Litery zostają na miejscu — zmienia się sam styl.
+    // The letters stay in place; only the style changes.
     same(said(made, 0), std::string{"abcdefgh"});
 }
 
-// Znak dwukolumnowy zajmuje dwie kratki, a w wierszu jest jednym trójbajtowym znakiem. Zakres
-// obejmujący go musi przemalować obie kolumny.
-TRIAL("Viewer: znacznik na znaku podwójnym bierze obie kolumny") {
+// A two-column character takes two cells, and in the row it is one three-byte character. A range
+// covering it has to repaint both columns.
+TRIAL("Viewer: a mark on a double-width character takes both columns") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\xe4\xbd\xa0" "b");
@@ -924,8 +931,8 @@ TRIAL("Viewer: znacznik na znaku podwójnym bierze obie kolumny") {
     ought(!made.at({3, 0}).style.reverse);
 }
 
-// Tabulator jest jednym bajtem, ale zajmuje kilka kolumn — wszystkie dzielą jego los.
-TRIAL("Viewer: znacznik na tabulatorze bierze całe rozwinięcie") {
+// A tab is a single byte but takes several columns, and they all share its fate.
+TRIAL("Viewer: a mark on a tab takes the whole expansion") {
     Sheet sheet;
 
     const auto one = shown(sheet, "ab\tc");
@@ -940,8 +947,8 @@ TRIAL("Viewer: znacznik na tabulatorze bierze całe rozwinięcie") {
     ought(!made.at({8, 0}).style.reverse);
 }
 
-// Zbiór musi być uporządkowany, bo inaczej `next` nie wie, który jest następny.
-TRIAL("Viewer: znaczniki układają się po wierszu i po początku") {
+// The set has to be ordered, or else `next` does not know which one is next.
+TRIAL("Viewer: marks are ordered by row and by start") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -956,7 +963,7 @@ TRIAL("Viewer: znaczniki układają się po wierszu i po początku") {
     same(one->marks()[2].role, std::string{"a"});
 }
 
-TRIAL("Viewer: podmiana całości sortuje i czyści bieżący") {
+TRIAL("Viewer: replacing the whole set sorts and clears the current one") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -972,9 +979,9 @@ TRIAL("Viewer: podmiana całości sortuje i czyści bieżący") {
     same(one->marks().many(), std::size_t{0});
 }
 
-// --- Przewijanie po zaznaczonych -----------------------------------------------------------------
+// --- Stepping through marks ----------------------------------------------------------------------
 
-TRIAL("Viewer: bez znaczników nie ma dokąd skakać") {
+TRIAL("Viewer: without marks there is nowhere to jump") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(10));
@@ -984,7 +991,7 @@ TRIAL("Viewer: bez znaczników nie ma dokąd skakać") {
     ought(!one->which().has_value());
 }
 
-TRIAL("Viewer: skok bierze pierwszy znacznik niebędący przed ekranem") {
+TRIAL("Viewer: a jump takes the first mark not before the screen") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -996,11 +1003,11 @@ TRIAL("Viewer: skok bierze pierwszy znacznik niebędący przed ekranem") {
     ought(one->step(1));
     same(*one->which(), std::size_t{0});
 
-    // Wiersz 3 był widoczny, więc obraz się nie ruszył.
+    // Row 3 was visible, so the picture did not move.
     same(*one->first(), std::size_t{0});
 }
 
-TRIAL("Viewer: skok do znacznika spoza ekranu przewija na dół") {
+TRIAL("Viewer: a jump to a mark off the screen scrolls down") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1014,7 +1021,7 @@ TRIAL("Viewer: skok do znacznika spoza ekranu przewija na dół") {
     same(*one->first(), std::size_t{41});
 }
 
-TRIAL("Viewer: za ostatnim znacznikiem nie ma następnego") {
+TRIAL("Viewer: after the last mark there is no next one") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1030,7 +1037,7 @@ TRIAL("Viewer: za ostatnim znacznikiem nie ma następnego") {
     same(*one->which(), std::size_t{1});
 }
 
-TRIAL("Viewer: wstecz wraca po tych samych znacznikach") {
+TRIAL("Viewer: backward returns through the same marks") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1048,8 +1055,8 @@ TRIAL("Viewer: wstecz wraca po tych samych znacznikach") {
     ought(!one->step(-1));
 }
 
-// Skok przewijający ma zawiadomić **raz**, choćby ruch składał się z dwóch części.
-TRIAL("Viewer: skok zawiadamia jednym zdarzeniem") {
+// A scrolling jump has to notify once, even if the movement consists of two parts.
+TRIAL("Viewer: a jump notifies with a single event") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1071,11 +1078,11 @@ TRIAL("Viewer: skok zawiadamia jednym zdarzeniem") {
     same(heard, 1);
 }
 
-// --- Widoczny zakres -----------------------------------------------------------------------------
+// --- Visible range -------------------------------------------------------------------------------
 
-// `shown()` mówi, ile **wierszy dokumentu** widać — i to nie jest wysokość okna, gdy zawijanie
-// rozkłada jeden wiersz na kilka ekranowych.
-TRIAL("Viewer: widoczny zakres liczy wiersze dokumentu, nie ekranu") {
+// `shown()` tells how many rows of the document are visible, and that is not the window's height
+// when wrapping spreads one row over several screen rows.
+TRIAL("Viewer: the visible range counts rows of the document, not of the screen") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1093,9 +1100,9 @@ TRIAL("Viewer: widoczny zakres liczy wiersze dokumentu, nie ekranu") {
     same(two->shown(), std::size_t{2});
 }
 
-// --- Klawisze i zdarzenia ------------------------------------------------------------------------
+// --- Keys and events -----------------------------------------------------------------------------
 
-TRIAL("Viewer: bierze ognisko i strzałki, a F-klawisze przepuszcza") {
+TRIAL("Viewer: takes focus and arrows, and lets function keys through") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1116,9 +1123,9 @@ TRIAL("Viewer: bierze ognisko i strzałki, a F-klawisze przepuszcza") {
     ought(!sheet.dispatch(f2));
 }
 
-// Zdarzenie idzie w górę, więc nasłuch na przodku łapie ruch podglądu. Tak właśnie górny pasek
-// dowiaduje się, że ma się przerysować.
-TRIAL("Viewer: przesunięcie zawiadamia przodka") {
+// The event goes up, so a listener on an ancestor catches the viewer's movement. That is exactly
+// how the top bar learns that it has to redraw.
+TRIAL("Viewer: a shift notifies the ancestor") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(100));
@@ -1142,8 +1149,8 @@ TRIAL("Viewer: przesunięcie zawiadamia przodka") {
     same(heard, 2);
 }
 
-// Stanie w miejscu nie jest ruchem: na końcu dokumentu kółko nie ma czego zgłaszać.
-TRIAL("Viewer: brak ruchu nie zawiadamia nikogo") {
+// Standing still is not movement: at the end of the document the wheel has nothing to report.
+TRIAL("Viewer: no movement notifies nobody") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(3));
@@ -1163,11 +1170,11 @@ TRIAL("Viewer: brak ruchu nie zawiadamia nikogo") {
     same(heard, 0);
 }
 
-// **Kursor wędrówki schodzi leniwie.** Zbiór znaczników nie ma wskazania na stronę, więc nie ma
-// jak jej powiedzieć, że się zmienił — po zmianie „następny znacznik" znaczy co innego, więc
-// kursor przestaje mieć sens. Sprawdza to strona przy najbliższym pytaniu, tą samą drogą, którą
-// historia przycina swoją listę.
-TRIAL("Viewer: dopisanie znacznika kasuje kursor wędrówki") {
+// The walk cursor is dropped lazily. The set of marks has no pointer to the page, so it has no way
+// to tell it that it changed; after a change "the next mark" means something else, so the cursor
+// stops making sense. The page checks this at the next question, the same way the history clips
+// its list.
+TRIAL("Viewer: adding a mark drops the walk cursor") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(40));
@@ -1185,9 +1192,9 @@ TRIAL("Viewer: dopisanie znacznika kasuje kursor wędrówki") {
     ought(!one->which().has_value());
 }
 
-// Zbiór trzyma znaczniki **uporządkowane po miejscu w dokumencie**, niezależnie od tego, w jakiej
-// kolejności przyszły — inaczej „następny" nie miałby jak powiedzieć, który jest następny.
-TRIAL("Viewer: znaczniki układają się po miejscu, nie po kolejności dodania") {
+// The set keeps marks ordered by their place in the document, whatever order they arrived in;
+// otherwise "next" would have no way to tell which one is next.
+TRIAL("Viewer: marks are ordered by place, not by the order of adding") {
     Sheet sheet;
 
     const auto one = shown(sheet, many(40));
@@ -1213,14 +1220,14 @@ TRIAL("Viewer: znaczniki układają się po miejscu, nie po kolejności dodania"
     same(counted, std::size_t{3});
 }
 
-// **`MarkedNode` jest bazą, nie tylko polem strony.** Cudzy widżet dokumentowy dostaje i zbiór
-// znaczników, i kursor wędrówki razem z jego leniwym kasowaniem — nie pisząc ani linijki.
-TRIAL("MarkedNode: cudzy widżet dostaje znaczniki i kursor bez pisania czegokolwiek") {
+// `MarkedNode` is a base, not just a field of the page. A foreign document widget gets both the set
+// of marks and the walk cursor with its lazy dropping, without writing a single line.
+TRIAL("MarkedNode: a foreign widget gets marks and a cursor without writing anything") {
     class Mine : public ui::MarkedNode<ui::Node> {
     public:
-        // Jedyne, co widżet dokłada: własny sposób wskazywania bieżącego znacznika. `topmost()`
-        // i `reach()` mają w bazie zachowanie domyślne — widżet, który niczego nie przewija,
-        // dostaje wędrówkę po znacznikach bez pisania czegokolwiek.
+        // The only thing the widget adds: its own way of pointing at the current mark. `topmost()`
+        // and `reach()` have default behavior in the base, so a widget that scrolls nothing gets
+        // the walk through marks without writing anything.
         void stand(std::size_t given) { which(given); }
 
         using ui::MarkedNode<ui::Node>::step;
@@ -1240,14 +1247,14 @@ TRIAL("MarkedNode: cudzy widżet dostaje znaczniki i kursor bez pisania czegokol
 
     same(*one.which(), std::size_t{1});
 
-    // Zmiana zbioru kasuje kursor — leniwie, przy najbliższym pytaniu.
+    // Changing the set drops the cursor, lazily, at the next question.
     one.marks().add(ui::Mark{20, 0, 3, "moja"});
 
     ought(!one.which().has_value());
 
-    // **Wędrówka też jest w bazie.** Bez kursora `step` naprzód bierze pierwszy znacznik, który
-    // nie leży przed ekranem — a widżet, który niczego nie przewija, ma ekran od wiersza zero,
-    // więc bierze pierwszy w ogóle.
+    // The walk is in the base too. Without a cursor, `step` forward takes the first mark that does
+    // not lie before the screen, and a widget that scrolls nothing has its screen from row zero, so
+    // it takes the very first one.
     ought(one.step(1));
     same(*one.which(), std::size_t{0});
 
@@ -1257,21 +1264,21 @@ TRIAL("MarkedNode: cudzy widżet dostaje znaczniki i kursor bez pisania czegokol
     ought(one.step(-1));
     same(*one.which(), std::size_t{0});
 
-    // Poza zbiór się nie wychodzi i nic się przy tym nie rusza.
+    // It does not go outside the set, and nothing moves when it tries.
     ought(!one.step(-1));
     same(*one.which(), std::size_t{0});
 
-    // Krok większy niż jeden przeskakuje po znacznikach, a nie po wierszach.
+    // A step larger than one skips over marks, not rows.
     ought(one.step(2));
     same(*one.which(), std::size_t{2});
 }
 
-// --- Źródło asynchroniczne -----------------------------------------------------------------------
+// --- Asynchronous source -------------------------------------------------------------------------
 
-// Podgląd na `Feed` nie czeka na bajty: pierwsza klatka jest pusta, bo okno jest dopiero w drodze,
-// a po obrocie pętli wiersze są — bez żadnego „odśwież mnie", bo `Term` maluje po każdym wywołaniu
-// zwrotnym z pętli.
-TRIAL("Viewer: źródło asynchroniczne maluje pustkę, a po obrocie pętli wiersze") {
+// A viewer on a `Feed` does not wait for bytes: the first frame is empty, because the window is
+// still on its way, and after a turn of the loop the rows are there, with no "refresh me", because
+// `Term` paints after every callback from the loop.
+TRIAL("Viewer: an asynchronous source paints emptiness, and rows after a turn of the loop") {
     Loop loop;
     Sheet sheet;
 
@@ -1295,12 +1302,12 @@ TRIAL("Viewer: źródło asynchroniczne maluje pustkę, a po obrocie pętli wier
     same(*one->whole(), raw.size());
 }
 
-// **Rozgrzana szpula.** Kto czytał nagłówek, ma już pierwsze okno — podane ze źródłem, pierwsza
-// klatka ma wiersze od razu, bez obrotu pętli (obietnica źródła nie ma jak wrócić przed nim, więc
-// wiersze w pierwszej klatce mogły przyjść tylko z głowy). Źródło pyta się wyłącznie o to, czego
-// w głowie nie ma — od jej końca wzwyż, dociąganiem z góry i przy przewinięciu; liczba wierszy
-// i tak jest nieznana, bo dokument jest dłuższy niż to, co mamy.
-TRIAL("Viewer: źródło z głową maluje wiersze od razu, a źródło pyta tylko za głowę") {
+// A warmed-up spool. Whoever read the header already has the first window: given with the source,
+// it lets the first frame have rows at once, without a turn of the loop (the source's promise has
+// no way to return before one, so rows in the first frame can only come from the head). The source
+// is asked only for what the head does not have, from its end upward, by fetching ahead and when
+// scrolling; the row count stays unknown, because the document is longer than what we have.
+TRIAL("Viewer: a source with a head paints rows at once, and the source is asked only past the head") {
     Loop loop;
     Sheet sheet;
 
@@ -1314,7 +1321,7 @@ TRIAL("Viewer: źródło z głową maluje wiersze od razu, a źródło pyta tylk
         return fed(raw)(at, most);
     };
 
-    // Głowa: pierwsze 40 bajtów — cztery wiersze i kawałek piątego.
+    // The head: the first 40 bytes, four rows and a bit of the fifth.
     const Bytes head(raw.begin(), raw.begin() + 40);
 
     one->hold(feed, raw.size(), head);
@@ -1327,8 +1334,8 @@ TRIAL("Viewer: źródło z głową maluje wiersze od razu, a źródło pyta tylk
     ought(!one->lines().has_value());
     same(*one->whole(), raw.size());
 
-    // Za głową: przewijanie wiersz po wierszu staje na końcu głowy, aż okno dojdzie z pętli —
-    // a każde pytanie do źródła zaczyna się za głową.
+    // Past the head: scrolling row by row stops at the end of the head until the window arrives from
+    // the loop, and every question to the source starts past the head.
     ought(turned(loop, sheet, {40, 2}, [&] {
         one->slide(1);
 
@@ -1338,7 +1345,7 @@ TRIAL("Viewer: źródło z głową maluje wiersze od razu, a źródło pyta tylk
 
     for (const std::size_t at : *asked) ought(at >= 40);
 
-    // Głowa dłuższa niż dokument nie kłamie o długości: obcina się do dokumentu.
+    // A head longer than the document does not lie about the length: it is cut to the document.
     Sheet second;
 
     const auto other = std::make_shared<ui::Viewer>();
@@ -1357,9 +1364,10 @@ TRIAL("Viewer: źródło z głową maluje wiersze od razu, a źródło pyta tylk
     same(*other->lines(), std::size_t{2});
 }
 
-// `End` na źródle, którego nikt jeszcze nie przeszedł, jest zamiarem: liczba wierszy dochodzi okno
-// po oknie, a gdy jest, skok dokańcza się sam — z uchwytu szpuli, nie z drugiego naciśnięcia.
-TRIAL("Viewer: End na źródle asynchronicznym dokańcza się, gdy liczba wierszy dojdzie") {
+// `End` on a source nobody has walked through yet is an intention: the row count arrives window by
+// window, and once it is there the jump finishes by itself, from the spool's handle, not from a
+// second press.
+TRIAL("Viewer: End on an asynchronous source finishes once the row count arrives") {
     Loop loop;
     Sheet sheet;
 
@@ -1380,9 +1388,9 @@ TRIAL("Viewer: End na źródle asynchronicznym dokańcza się, gdy liczba wiersz
     ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == "wiersz 29999"; }));
 }
 
-// Skok po bajcie daleko za oknem też jest zamiarem — szpula dochodzi do bajtu, gdy ma okna, a
-// podgląd staje na właściwym wierszu bez ponownego wołania.
-TRIAL("Viewer: skok po bajcie na źródle asynchronicznym dokańcza się z uchwytu") {
+// A jump by byte far beyond the window is also an intention: the spool reaches the byte once it has
+// the windows, and the viewer stands on the right row without being called again.
+TRIAL("Viewer: a jump by byte on an asynchronous source finishes from the handle") {
     Loop loop;
     Sheet sheet;
 
@@ -1404,10 +1412,10 @@ TRIAL("Viewer: skok po bajcie na źródle asynchronicznym dokańcza się z uchwy
     same(*one->at(), byte);
 }
 
-// Pasek strony liczonej bajtami (U6 w twa): dokument ze źródła, którego wierszy jeszcze nikt nie
-// policzył, ma pasek po bajtach — i suwak ciągnięty na koniec skacze na bajt, a nie na wiersz o tym
-// numerze.
-TRIAL("Viewer: suwak paska po bajtach skacze na bajt") {
+// The scrollbar of a page counted in bytes: a document from a source whose rows nobody has counted
+// yet has a byte scrollbar, and a thumb dragged to the end jumps to a byte, not to the row with that
+// number.
+TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     Loop loop;
     Sheet sheet;
 

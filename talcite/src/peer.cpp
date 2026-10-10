@@ -16,14 +16,14 @@
 
 namespace talcite::net {
 
-// To, co widzi pętla odbioru. **Nie to samo, co trzyma wołający** — patrz Held niżej.
+// What the receive loop sees. This is not the same object the caller holds; see `Held` below.
 struct Living {
     Udp post;
 
-    // Przekaźnik jest **cudzą własnością**: rozmówca go używa, ale nigdy nie zamyka. Ten sam
-    // egzemplarz dotykają trzy wątki — pętla poczty przy odpowiadaniu, pętla przekaźnika przy
-    // odbiorze i wołający przy wysyłce — i wolno im, bo żaden nie woła na nim `close`. To `close`
-    // zeruje uchwyt, i to on był wyścigiem w poczcie, a nie samo czytanie.
+    // The relay is someone else's property: the peer uses it but never closes it. Three threads
+    // touch the same instance (the post loop when answering, the relay loop when receiving and the
+    // caller when sending), and they may, because none of them calls `close` on it. It is `close`
+    // that clears the handle, and that would be the race, not the reading itself.
     Relay relay;
 
     mutable std::mutex guard;
@@ -33,21 +33,22 @@ struct Living {
     std::vector<Candidate> theirs;
     Address met;
 
-    // Którym kanałem poszła zwycięska droga. **Kanał jest częścią tożsamości rozmowy**: ten sam
-    // adres widziany przez przekaźnik i wprost to dwie różne drogi, a dane bierzemy tylko tą,
-    // która wygrała.
+    // Which channel the winning path went through. The channel is part of the conversation's
+    // identity: the same address seen through the relay and directly are two different paths, and
+    // data is taken only from the one that won.
     bool relayed = false;
 
-    // Adresy, którym już nadaliśmy pozwolenie na własnym przekaźniku — bez portów, bo pozwolenie
-    // sięga adresu. Bez tej pamięci każdy obrót przebijania nadawałby je od nowa.
+    // Addresses we have already granted a permission on our own relay, without ports, because a
+    // permission covers an address. Without this memory every punching round would grant them
+    // again.
     std::vector<Address> allowed;
 
     Number number{};
     std::deque<Bytes> spare;
 
-    // Poczta przyjmuje **jedną wysyłkę naraz** i drugą odrzuca. A wysyłają tu trzy rzeczy: próby
-    // z reach, odpowiedzi i podtrzymanie z pętli odbioru oraz dane od wołającego. Bez tego zamka
-    // deptałyby sobie po piętach i gubiły datagramy.
+    // The post accepts one send at a time and rejects a second one. Three things send here: probes
+    // from reach, answers and keepalives from the receive loop, and data from the caller. Without
+    // this lock they would step on each other and lose datagrams.
     std::mutex speaking;
 
     std::atomic<bool> reaching{false};
@@ -56,27 +57,30 @@ struct Living {
     std::atomic<bool> shutting{false};
 };
 
-// Wołający trzyma **osobny** obiekt, którego pętla nie trzyma nigdy. Dzięki temu wypuszczenie
-// ostatniego rozmówcy z rąk zamyka gniazdo **natychmiast**, a nie dopiero wtedy, gdy pętla sama
-// zajrzy na słaby uchwyt.
+// The caller holds a separate object, which the loop never holds. Thanks to that, letting go of
+// the last peer closes the socket immediately, not only when the loop itself looks at its weak
+// handle.
 //
-// To nie jest ozdoba. Zadanie z puli, które przeżyje swojego właściciela i zawiśnie na centrali,
-// **zakleszcza cały program przy wyjściu**: rozbiórka centrali czeka na opróżnienie puli, a
-// zadanie w puli czeka na centralę, której już nie ma. Złapało to pierwsze uruchomienie testów.
+// This is not decoration. A pool task that outlives its owner and hangs on the hub deadlocks the
+// whole program at exit: tearing down the hub waits for the pool to drain, and the task in the pool
+// waits for a hub that no longer exists.
 struct Peer::Held {
     std::shared_ptr<Living> alive;
 
-    // **Własna kopia poczty, wyłącznie do zamykania.** Kopie dzielą gniazdo, ale nie dzielą
-    // obiektu — a `Udp`, jak każdy typ wartościowy w talcite, nie znosi dotykania tego samego
-    // egzemplarza z dwóch wątków naraz. Zamykanie tej, z której czyta pętla, było wyścigiem
-    // na jej własnym uchwycie.
+    // Our own copy of the post, used only for closing. Copies share the socket but not the object,
+    // and `Udp`, like every value type in talcite, does not tolerate the same instance being
+    // touched from two threads at once. Closing the copy the loop reads from would race on the
+    // loop's own handle.
     Udp closing;
 
+    // Shuts the conversation down: marks it as shutting, closes the socket and wakes everyone who
+    // waits, so that both loops and any pending receive end promptly.
     ~Held() {
         {
-            // Znacznik stawiamy **pod tym samym zamkiem**, który trzyma czekający przy sprawdzaniu
-            // warunku. Postawiony obok, mógł trafić w szparę między sprawdzeniem a zaśnięciem —
-            // a wtedy powiadomienie przepadało i czekający przesypiał całą cierpliwość.
+            // The flag is set under the same lock the waiter holds while checking its condition.
+            // Set outside it, it could fall into the gap between the check and falling asleep, and
+            // then the notification would be lost and the waiter would sleep through its whole
+            // patience.
             const std::lock_guard<std::mutex> kept{alive->guard};
 
             alive->shutting.store(true);
@@ -99,25 +103,26 @@ constexpr Patience pausing{250};
 
 constexpr Patience listening{1000};
 
-// Kolejka odebranych przesyłek, których nikt jeszcze nie odebrał. Bez granicy rozmówca nadający
-// szybciej, niż wołający czyta, doprowadzał proces do wyczerpania pamięci. Po przepełnieniu ginie
-// **najstarsza** — przy datagramach starsza treść jest mniej warta niż świeża.
+// The queue of received parcels nobody has collected yet. Without a bound, a peer sending faster
+// than the caller reads would drive the process out of memory. On overflow the oldest one is
+// dropped: with datagrams older content is worth less than fresh.
 constexpr std::size_t plenty = 256;
 
+// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
 
-// Ile czekamy na jedno pozwolenie od własnego przekaźnika.
+// How long we wait for one permission from our own relay.
 constexpr Patience granting{1000};
 
-// Wysyłka wybranym kanałem. Próby i podtrzymanie **wolno zgubić** — to jest sieć, a od powtarzania
-// jest pętla wyżej. Dlatego kłopot tu nie wychodzi na zewnątrz.
+// Sends through the chosen channel. Probes and keepalives may be lost: this is a network, and the
+// loop above does the repeating. That is why a failure here does not leave this function.
 //
-// Przez przekaźnik idzie się bez naszego zamka: on pilnuje swojej poczty sam, a tamten zamek broni
-// **naszego** gniazda przed drugą wysyłką w tej samej chwili.
+// Sending through the relay goes without our lock: the relay guards its own post, while our lock
+// protects our socket against a second send at the same moment.
 void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what, Patience patience,
              bool through = false) {
     try {
@@ -138,11 +143,12 @@ void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what,
     }
 }
 
-// Ile obcych adresów wolno dopisać z samych prób. NAT zwykle nadaje drugiej stronie jeden inny
-// port, czasem kilka — kilkanaście z zapasem starcza, a bez granicy sama lista była miejscem, do
-// którego dowolny nadawca mógł wlać ile chciał.
+// How many foreign addresses may be added from probes alone. A NAT usually gives the other side
+// one different port, sometimes a few; sixteen leaves room to spare, and without a bound the list
+// itself would be a place into which any sender could pour as much as it liked.
 constexpr std::size_t roomier = 16;
 
+// Whether `where` is already among the other side's paths. The caller holds `guard`.
 bool knowing(const Living& held, const Address& where) {
     for (const Candidate& one : held.theirs)
         if (one.where == where) return true;
@@ -150,10 +156,11 @@ bool knowing(const Living& held, const Address& where) {
     return false;
 }
 
-// Droga, o której dowiadujemy się dopiero z cudzej próby. Zdarza się zawsze, gdy NAT nadał drugiej
-// stronie port inny niż ten, który zdążyła zgłosić — a to jest reguła, nie wyjątek. **Dopisujemy
-// tylko adres, którego gospodarza już znamy z drogi podanej przez sygnalizację**: przed naprawą
-// wystarczyło jedno nieproszone zapytanie, żeby obcy trafił na listę i dostał od nas odzew.
+// Adds a path we learn about only from the other side's probe. This always happens when the NAT
+// gave the other side a port different from the one it managed to announce, and that is the rule,
+// not the exception. Only an address whose host we already know from a path given by signaling is
+// added; otherwise a single unsolicited request would put a stranger on the list and earn it a
+// reply from us.
 void noted(const std::shared_ptr<Living>& held, const Address& where) {
     const std::lock_guard<std::mutex> kept{held->guard};
 
@@ -169,15 +176,14 @@ void noted(const std::shared_ptr<Living>& held, const Address& where) {
         }
 }
 
-// Co zrobić z jednym odebranym datagramem. `through` mówi, którym kanałem przyszedł: naszym
-// gniazdem czy naszym przekaźnikiem — i tym samym kanałem idzie odpowiedź, bo tylko on jest
-// dowiedziony jako przechodni.
+// Handles one received datagram. `through` says which channel it came by, our socket or our relay,
+// and the answer goes back the same channel, because only that one is proven to pass.
 void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
     Message made;
 
     if (understood(came.bytes, made)) {
-        // Cudza próba jest dowodem, że dziura z tamtej strony stoi. Odpowiadamy od razu
-        // i odpytujemy zwrotnie, bo przejście musi się udać w **obie** strony.
+        // The other side's probe proves that the hole on its side is open. We answer at once and
+        // probe back, because the passage has to work in both directions.
         if (made.sort == Sort::asking) {
             posting(held, came.from, told(made.number, came.from), listening, through);
 
@@ -197,13 +203,13 @@ void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
                 known = knowing(*held, came.from);
             }
 
-            // Odpytujemy zwrotnie tylko dopóki nie mamy zwycięskiej drogi — później każda cudza
-            // próba mnożyłaby ruch bez powodu — i **wyłącznie drogę, którą znamy**. Nasz numer
-            // transakcji jest jedynym dowodem tożsamości odpowiedzi; odesłany komukolwiek, kto
-            // się odezwał, pozwalał obcemu odpowiedzieć nim i wygrać przebijanie.
+            // We probe back only until we have a winning path (later every foreign probe would
+            // multiply traffic for no reason) and only a path we know. Our transaction number is
+            // the only proof of an answer's identity; sent back to anyone who spoke up, it would
+            // let a stranger answer with it and win the punching.
             //
-            // To jest zarazem jedyne miejsce, w którym wychodzimy własnym przekaźnikiem: nie
-            // dobijamy się nim z siebie, tylko odpowiadamy temu, kto sam pod niego przyszedł.
+            // This is also the only place where we go out through our own relay: we do not knock
+            // with it on our own, we only answer whoever came to it by themselves.
             if (!met && known) posting(held, came.from, asked(number), listening, through);
 
             return;
@@ -215,8 +221,8 @@ void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                // Sam numer transakcji nie wystarczy: musi jeszcze przyjść z drogi, którą
-                // sami zaproponowaliśmy albo poznaliśmy od gospodarza, którego znamy.
+                // The transaction number alone is not enough: the answer must also come from a
+                // path we proposed ourselves or learned from a host we know.
                 if (made.number == held->number && !held->met.held() &&
                     knowing(*held, came.from)) {
                     held->met = came.from;
@@ -229,17 +235,17 @@ void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
             if (won) held->stirring.notify_all();
         }
 
-        // Wiadomość STUN **nigdy** nie trafia do danych wołającego. To jest cała treść
-        // rozdzielania: jedno gniazdo niesie i sprawdzanie łączności, i rozmowę.
+        // A STUN message never reaches the caller's data. That is the whole point of
+        // demultiplexing: one socket carries both the connectivity checks and the conversation.
         return;
     }
 
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
-        // **Dane bierzemy wyłącznie od tego, z kim się przebiliśmy, i wyłącznie tym kanałem.**
-        // Wcześniej pętla wrzucała do kolejki każdy datagram, a wołający dostawał gołe bajty bez
-        // nadawcy — więc każdy, kto poznał adres i port, wstrzykiwał treść w rozmowę.
+        // Data is taken only from the side we punched through to, and only by that channel.
+        // The caller gets bare bytes without a sender, so otherwise anyone who learned the address
+        // and port could inject content into the conversation.
         if (!held->met.held() || !(came.from == held->met) || held->relayed != through) return;
 
         if (held->spare.size() >= plenty) held->spare.pop_front();
@@ -250,7 +256,8 @@ void taking(const std::shared_ptr<Living>& held, Datagram came, bool through) {
     held->stirring.notify_all();
 }
 
-// Jeden obrót pętli odbioru. Oddaje fałsz, gdy gniazdo się zamknęło i nie ma po co kręcić dalej.
+// One round of the receive loop. Returns false when the socket has closed and there is no point in
+// going on; on a quiet second it sends the keepalive when one is due.
 bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
     Datagram came;
 
@@ -270,10 +277,10 @@ bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
             through = held->relayed;
         }
 
-        // Odwzorowanie na NAT-cie żyje zwykle trzydzieści sekund od ostatniego ruchu.
-        // Podtrzymanie nie jest ozdobą, tylko warunkiem, żeby cisza nie zerwała połączenia.
-        // Idzie **kanałem rozmowy**: przy drodze przez przekaźnik podtrzymywać trzeba tamtą
-        // stronę, a nie odwzorowanie, którego rozmowa wcale nie używa.
+        // A NAT mapping usually lives thirty seconds from the last traffic. The keepalive is not
+        // decoration but the condition for silence not to break the connection. It goes through
+        // the conversation's channel: on a relayed path it is the other side that has to be kept
+        // alive, not a mapping the conversation does not use at all.
         if (met.held() && Clock::now() - beat >= beating) {
             Number number;
 
@@ -298,8 +305,8 @@ bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
     return true;
 }
 
-// Jeden obrót pętli od przekaźnika. Osobna, bo obie czekają blokująco, a jeden wątek nie umie
-// czekać na dwa gniazda naraz.
+// One round of the loop that reads from the relay; returns false when the relay has failed. It is
+// separate because both loops wait blocking, and one thread cannot wait on two sockets at once.
 bool drawing(const std::shared_ptr<Living>& held) {
     Datagram came;
 
@@ -318,13 +325,13 @@ bool drawing(const std::shared_ptr<Living>& held) {
     return true;
 }
 
-// Pętla odbioru. **Trzyma wątek z puli przez całe życie połączenia** — świadomie, bo pula dla pracy
-// zwykłej rośnie bez ograniczeń, a rozmówca jest jeden. Przy tysiącu rozmówców trzeba by to
-// przepisać na łańcuch obietnic.
+// The receive loop. It holds a pool thread for the whole life of the connection, deliberately,
+// because the pool for ordinary work grows without limit and there is one peer. With a thousand
+// peers this would have to be rewritten as a chain of promises.
 //
-// Trzyma **słaby** uchwyt i bierze mocny tylko na jeden obrót. Dzięki temu porzucony rozmówca —
-// taki, którego nikt nie zamknął, tylko wypuścił z rąk — kończy pętlę sam, najdalej po sekundzie,
-// zamiast kręcić się bez końca i trzymać przy życiu zarówno wątek, jak i gniazdo.
+// It holds a weak handle and takes a strong one only for a single round. Thanks to that, an
+// abandoned peer (one nobody closed but only let go of) ends the loop by itself within a second,
+// instead of spinning forever and keeping both the thread and the socket alive.
 void minding(std::weak_ptr<Living> weak) {
     Clock::time_point beat = Clock::now();
 
@@ -343,9 +350,9 @@ void minding(std::weak_ptr<Living> weak) {
     }
 }
 
-// Pętla od przekaźnika — ten sam słaby uchwyt i ta sama zasada co wyżej. Rozmówca **nie zamyka
-// przekaźnika**, bo go nie posiada; ta pętla kończy się najdalej sekundę po zamknięciu rozmówcy,
-// a przekaźnik gaśnie wtedy, gdy puści go ostatni uchwyt — także ten trzymany tutaj.
+// The relay loop, with the same weak handle and the same rule as above. The peer does not close
+// the relay, because it does not own it; this loop ends at most a second after the peer is closed,
+// and the relay goes away when its last handle lets go of it, including the one held here.
 void watching(std::weak_ptr<Living> weak) {
     for (;;) {
         const std::shared_ptr<Living> held = weak.lock();
@@ -362,6 +369,7 @@ void watching(std::weak_ptr<Living> weak) {
     }
 }
 
+// Starts the receive loop, and the relay loop when there is a relay, unless they already run.
 void waking(const std::shared_ptr<Living>& held) {
     bool was = false;
 
@@ -390,18 +398,19 @@ void waking(const std::shared_ptr<Living>& held) {
     }
 }
 
-// Pozwolenia na własnym przekaźniku. Bez nich jego serwer wyrzuci każdy datagram od drugiej strony
-// i nasz użyczony adres byłby ogłoszony na darmo. Pozwolenie sięga **adresu, nie portu**, więc
-// jedno starczy na wszystkie porty, które NAT tamtej stronie nada — i dlatego pamiętamy je
-// z wyzerowanym portem.
+// Grants permissions on our own relay. Without them its server drops every datagram from the other
+// side and our lent address would be announced in vain. A permission covers an address, not a
+// port, so one is enough for all the ports the NAT gives the other side, and that is why they are
+// remembered with the port set to zero.
 //
-// Odmowa nie przerywa przebijania: drogi bezpośrednie działają bez przekaźnika i to one mają
-// pierwszeństwo.
+// A refusal does not stop the punching: direct paths work without the relay and they take
+// precedence.
 void letting(const std::shared_ptr<Living>& held) {
     if (!held->relay.held()) return;
 
-    // Pozwolenie bez przydziału jest bez sensu: nie ma czego pilnować i prawdziwy serwer odpowie
-    // odmową. Przekaźnik, którego nie udało się otworzyć przy zbieraniu, po prostu nie istnieje.
+    // A permission without an allocation makes no sense: there is nothing to guard and a real
+    // server answers with a refusal. A relay that could not be opened while gathering simply does
+    // not exist.
     if (!held->relay.lent().held()) return;
 
     std::vector<Address> whom;
@@ -432,14 +441,15 @@ void letting(const std::shared_ptr<Living>& held) {
         } catch (const std::exception&) {
         }
 
-        // Zapisujemy także po odmowie. Powtarzanie nieudanego pozwolenia w każdym obrocie
-        // przebijania zjadałoby jego cierpliwość na drodze, która i tak nie działa.
+        // The address is recorded even after a refusal. Repeating a failed permission in every
+        // punching round would eat the punching's patience on a path that does not work anyway.
         const std::lock_guard<std::mutex> kept{held->guard};
 
         held->allowed.push_back(one);
     }
 }
 
+// A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said) {
     return Promise<T>{
@@ -448,6 +458,7 @@ Promise<T> amiss_now(const std::string& said) {
 
 }
 
+// A peer talking over `post`, without a relay, with a fresh transaction number.
 Peer::Peer(Udp post) : held_(std::make_shared<Held>()) {
     held_->alive = std::make_shared<Living>();
     held_->alive->post = post;
@@ -455,12 +466,14 @@ Peer::Peer(Udp post) : held_(std::make_shared<Held>()) {
     held_->closing = std::move(post);
 }
 
-// Przekaźnik podaje się **przy powstaniu albo wcale**. Wpięty później zostawiałby chwilę, w której
-// zebrane już drogi milczą o użyczonym adresie, a druga strona nie ma pod co się dobijać.
+// A peer that can also be reached through `relay`. The relay is given at creation or not at all.
+// Plugged in later, it would leave a moment in which the paths already gathered say nothing about
+// the lent address and the other side has nothing to knock on.
 Peer::Peer(Udp post, Relay relay) : Peer(std::move(post)) {
     held_->alive->relay = std::move(relay);
 }
 
+// Our own paths found by `gather`; empty for an empty peer.
 std::vector<Candidate> Peer::candidates() const {
     if (!held_) return {};
 
@@ -469,6 +482,7 @@ std::vector<Candidate> Peer::candidates() const {
     return held_->alive->mine;
 }
 
+// The other side's known paths, in the order they are tried.
 std::vector<Candidate> Peer::theirs() const {
     if (!held_) return {};
 
@@ -477,6 +491,7 @@ std::vector<Candidate> Peer::theirs() const {
     return held_->alive->theirs;
 }
 
+// The other side's address on the winning path; empty until punching succeeds.
 Address Peer::met() const {
     if (!held_) return {};
 
@@ -485,6 +500,7 @@ Address Peer::met() const {
     return held_->alive->met;
 }
 
+// Whether the winning path goes through our relay.
 bool Peer::relayed() const {
     if (!held_) return false;
 
@@ -493,9 +509,11 @@ bool Peer::relayed() const {
     return held_->alive->relayed;
 }
 
-// Drogi próbujemy w kolejności, w jakiej leżą, a leżą wedle rodzaju: własna karta przed odbiciem
-// od serwera, odbicie przed przekaźnikiem. Dwie maszyny w jednej sieci nie mają po co wychodzić
-// na świat, a przekaźnik kosztuje cudze pasmo i jest ostatecznością.
+// Adds a path to the other side, as received through signaling. Paths are tried in the order in
+// which they lie, and they lie by kind: one's own network card before the reflection from the
+// server, the reflection before the relay. Two machines in one network have no reason to go out to
+// the world, and a relay costs someone else's bandwidth and is the last resort. Empty addresses,
+// our own socket's address and duplicates are ignored.
 void Peer::add(Candidate one) {
     if (!held_) return;
 
@@ -518,9 +536,10 @@ void Peer::add(Candidate one) {
     theirs.insert(at, one);
 }
 
-// Zbieranie kandydatów. Adresy własnych kart dostają port **naszego gniazda**, bo to jego szuka
-// druga strona. Pętla zwrotna wypada: wysłana drugiej stronie kazałaby jej dobijać się do samej
-// siebie, a odpowiedź od własnego gniazda wyglądałaby jak udane przebicie.
+// Gathers our own candidates. The addresses of our own network cards get the port of our socket,
+// because that is what the other side looks for. Loopback is left out: sent to the other side it
+// would make it knock on itself, and an answer from its own socket would look like a successful
+// punch.
 Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience) {
     if (!held_) return amiss_now<std::vector<Candidate>>("The peer is empty.");
 
@@ -545,10 +564,11 @@ Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience
                 found.push_back(Candidate{one, Candidate::Sort::here});
             }
 
-            // Odbicia od serwera może nie być — bez zwiadowcy, bez odpowiedzi albo po terminie. To nie
-            // jest powód, żeby wywrócić zbieranie: w jednej sieci lokalnej same karty wystarczą.
-            // **Termin jest nasz**, nie zwiadowcy: ten ma własną cierpliwość z konstruktora,
-            // zwykle o rząd wielkości dłuższą, i bez tego pilnowania zjadał ją w całości.
+            // The reflection from the server may be missing: no scout, no answer or past the
+            // deadline. That is no reason to fail the gathering, since within one local network
+            // the cards alone are enough. The deadline is ours, not the scout's: the scout has its
+            // own patience from its constructor, usually an order of magnitude longer, and without
+            // this check it would use all of it.
             if (scout.held() && Clock::now() < until) {
                 try {
                     if (const Address seen = scout.seen().timeout(left(until)).await(); seen.held())
@@ -557,10 +577,10 @@ Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience
                 }
             }
 
-            // Przekaźnik jest **ostatecznością**, więc pytamy o niego na końcu, a jego adres trafia
-            // do listy jako droga `lent` — czyli za wszystkimi innymi. Otwieramy go tylko wtedy,
-            // gdy nie jest jeszcze otwarty: wołający ma prawo zrobić to sam i podać go gotowego.
-            // Nieudany przekaźnik nie wywraca zbierania, tak samo jak nieudany zwiad.
+            // The relay is the last resort, so it is asked last, and its address goes to the list
+            // as a `lent` path, that is, after all the others. It is opened only when it is not
+            // open yet: the caller has the right to do that itself and hand it over ready. A failed
+            // relay does not fail the gathering, just like a failed scout.
             if (held->relay.held() && Clock::now() < until) {
                 try {
                     Address lent = held->relay.lent();
@@ -589,9 +609,10 @@ Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience
     return made;
 }
 
-// Przebijanie. Obie strony robią to samo i **muszą robić to naraz**: mój datagram ginie na cudzym
-// NAT-cie, ale otwiera dziurę w moim, a cudzy ginie na moim, otwierając dziurę w jego. Dopiero
-// drugi datagram każdej ze stron trafia na otwarte przejście.
+// Punches through to the other side; resolves with the address on the winning path, or rejects
+// with `Overdue` when the patience runs out. Both sides do the same thing and must do it at the
+// same time: my datagram dies on the other NAT but opens a hole in mine, and theirs dies on mine,
+// opening a hole in theirs. Only the second datagram of each side meets an open passage.
 Promise<Address> Peer::reach(Patience patience) {
     if (!held_) return amiss_now<Address>("The peer is empty.");
 
@@ -616,8 +637,9 @@ Promise<Address> Peer::reach(Patience patience) {
             const Clock::time_point until = Clock::now() + patience;
 
             while (Clock::now() < until && !held->shutting.load()) {
-                // Pozwolenia nadajemy w każdym obrocie, bo drogi mogą dojść z sygnalizacji już
-                // w trakcie przebijania. Adres raz załatwiony nie kosztuje tu nic.
+                // Permissions are granted in every round, because paths may arrive from signaling
+                // while the punching is already under way. An address already handled costs
+                // nothing here.
                 letting(held);
 
                 std::vector<Candidate> ways;
@@ -634,9 +656,9 @@ Promise<Address> Peer::reach(Patience patience) {
                 for (const Candidate& one : ways) {
                     if (held->shutting.load()) break;
 
-                    // Termin sprawdzamy **przy każdej drodze**, nie raz na obrót. Przy kilkunastu
-                    // drogach jeden obrót trwał kilkanaście ćwierci sekundy, więc reach przekraczał
-                    // własną cierpliwość o rząd wielkości.
+                    // The deadline is checked at every path, not once per round. With a dozen or
+                    // so paths one round takes a dozen quarter-seconds, so reach would otherwise
+                    // overrun its own patience by an order of magnitude.
                     if (Clock::now() >= until) break;
 
                     posting(held, one.where, asked(number), pausing);
@@ -671,6 +693,8 @@ Promise<Address> Peer::reach(Patience patience) {
     return made;
 }
 
+// Sends one parcel to the other side on the winning path; rejects when no path has won yet or the
+// peer is closed.
 Promise<void> Peer::send(Bytes what, Patience patience) {
     if (!held_) return amiss_now<void>("The peer is empty.");
 
@@ -694,8 +718,8 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
         try {
             if (held->shutting.load()) throw Trouble{"The peer is closed."};
 
-            // Mówimy **tym kanałem, którym się przebiliśmy**. Wysyłka wprost pod adres, który
-            // odezwał się przez przekaźnik, trafiłaby w NAT drugiej strony i przepadła.
+            // We speak through the channel we punched through. Sending directly to an address that
+            // spoke up through the relay would hit the other side's NAT and be lost.
             if (through) {
                 held->relay.send(met, std::move(what), patience).await();
 
@@ -721,6 +745,9 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
     return made;
 }
 
+// Receives the next parcel from the other side, at most `most` bytes; rejects with `Overdue` when
+// nothing arrives within the patience, and with `Trouble` when the peer is closed or the parcel
+// does not fit.
 Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
     if (!held_) return amiss_now<Bytes>("The peer is empty.");
 
@@ -732,11 +759,12 @@ Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
 
             std::unique_lock<std::mutex> kept{held->guard};
 
-            // Śmierć pętli też budzi. Bez tego warunku powiadomienie o zamkniętym gnieździe nie
-            // miało jak stać się prawdą, więc wołający przesypiał całą cierpliwość i dostawał
-            // termin zamiast prawdziwego powodu — trzymając przy tym wątek z puli.
-            // Budzi też śmierć **każdej** z pętli — a przy przekaźniku są dwie. Dopóki choć jedna
-            // żyje, cisza jest tylko ciszą i wołający ma czekać dalej.
+            // The death of the loops wakes the waiter too. Without this condition a notification
+            // about a closed socket could never become true, so the caller would sleep through its
+            // whole patience and get a timeout instead of the real reason, holding a pool thread
+            // all the while. It takes the death of both loops, and with a relay there are two: as
+            // long as one of them lives, silence is only silence and the caller has to keep
+            // waiting.
             if (!held->stirring.wait_for(kept, patience, [&held] {
                     return !held->spare.empty() || held->shutting.load() ||
                            (!held->living.load() && !held->fetching.load());
@@ -745,9 +773,10 @@ Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
 
             if (held->spare.empty()) throw Trouble{"The peer is closed."};
 
-            // Datagram jest całością. Oddanie kawałka udającego całość byłoby gorsze niż odmowa —
-            // tak samo rozstrzyga to Udp. Ale **odmowa nie ma prawa go zjeść**: sprawdzamy rozmiar
-            // przed zdjęciem z kolejki, więc powtórzenie z większym miejscem jeszcze go zastanie.
+            // A datagram is a whole. Handing over a piece pretending to be the whole would be worse
+            // than refusing, and `Udp` decides it the same way. But the refusal must not eat the
+            // datagram: the size is checked before it is taken off the queue, so a retry with more
+            // room still finds it.
             if (held->spare.front().size() > most)
                 throw Trouble{"The parcel does not fit in the given space."};
 
@@ -768,8 +797,8 @@ Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
     return made;
 }
 
-// Zamknięcie wprost robi dokładnie to, co wypuszczenie ostatniego rozmówcy z rąk — całą robotę
-// wykonuje niszczyciel Held. Dwie drogi, jedno miejsce.
+// Closes the peer. Closing explicitly does exactly what letting go of the last peer does: the
+// destructor of `Held` does all the work. Two ways, one place.
 void Peer::close() { held_.reset(); }
 
 }

@@ -12,12 +12,13 @@ Root::Root() = default;
 
 Root::~Root() = default;
 
-// **Podmiana całej palety jest całą zmianą wyglądu w locie.** Skórki nie da się zmienić po
-// zbudowaniu, więc nie ma stanu, w którym połowa ról jest z nowej, a połowa ze starej; następna
-// klatka po prostu czyta co innego. Nie ma powiadamiania ani obchodzenia drzewa.
-// Skórka przychodzi z wariantami na wszystkie poziomy i **od razu staje na faktach korzenia**:
-// poziom, który korzeń już zna, przechodzi na nową skórkę, a nie odwrotnie. Dzięki temu podmiana
-// skórki — także na próbę, w oknie ustawień — nie wymaga powtarzania faktów o terminalu.
+// Replaces the skin. Replacing the whole palette is the whole of changing the look on the fly. A
+// skin cannot be changed after it is built, so there is no state in which half the roles come from
+// the new one and half from the old; the next frame simply reads something else. There is no
+// notification and no walk over the tree. A skin comes with variants for all levels and at once
+// adopts the root's facts: the level the root already knows passes to the new skin, not the other
+// way around. Thanks to that, replacing the skin (also as a trial, in a settings window) does not
+// require repeating the facts about the terminal.
 void Root::skin(Skin given) {
     given.colors(skin_.colors());
     given.unicode(skin_.unicode());
@@ -25,41 +26,49 @@ void Root::skin(Skin given) {
     skin_ = std::move(given);
 }
 
-// Barwność i unicode to fakty o terminalu, jak `blocks` i `cell` niżej — kładzie je ten, kto
-// pogania drzewo. Korzeń nie trzyma ich osobno: **mieszkają w skórce**, bo to ona z nich korzysta
-// przy każdym odczycie, a drugie miejsce prędzej czy później by się rozjechało.
+// Sets the terminal's color level. Colors and unicode are facts about the terminal, like `blocks`
+// and `cell` below, set by whoever drives the tree. The root does not keep them separately: they
+// live in the skin, because the skin uses them at every lookup, and a second place would sooner or
+// later drift apart.
 void Root::colors(Colors given) { skin_.colors(given); }
 
+// Sets whether the terminal shows unicode; like the colors, the fact lives in the skin.
 void Root::unicode(bool given) { skin_.unicode(given); }
 
-// **Fakty o kratce kładzie tu ten, kto pogania drzewo** — zwykle `Term`, w `show()` i przy każdym
-// `reconfigure`. Drzewo nie wie, skąd się wzięły, i dlatego równie dobrze może je postawić próba
-// albo druga warstwa renderowania. Powiadamiania znów nie ma: widżet czyta je przy malowaniu, więc
-// najbliższa klatka po prostu wychodzi inna.
+// Sets which block characters the terminal can draw. The facts about the cell are set here by
+// whoever drives the tree, usually `Term`, in `show()` and at every `reconfigure`. The tree does
+// not know where they came from, so a test or a second rendering layer can set them just as well.
+// Again there is no notification: a widget reads them while painting, so the next frame simply
+// comes out different.
 void Root::blocks(Blocks given) { blocks_ = given; }
 
+// Sets the size of one cell in pixels; zero means the terminal did not say.
 void Root::cell(Size given) { cell_ = given; }
 
+// Sets which graphics protocol the terminal supports.
 void Root::graphics(Graphics given) { graphics_ = given; }
 
-// Pole przestawiamy przed wysłaniem obu zdarzeń, nie pomiędzy. Uchwyt, który w reakcji na
-// utratę zapyta focused(), ma dostać odpowiedź już nową, a nie z połowy operacji.
+// Moves the focus to `one` (null clears it) and sends `UnfocusEvent` and `FocusEvent`; throws
+// `std::logic_error` for a node from another tree. The field is changed before both events are
+// sent, not between them: a handler that asks focused() in reaction to losing the focus has to get
+// the new answer, not one from the middle of the operation.
 void Root::move_focus(Node* one) {
     if (one != nullptr && one->root() != this)
         throw std::logic_error("talcite::ui::Root: the node does not belong to this tree");
 
-    // **Zasłona przykrywa też ognisko.** Prośba węzła spod otwartej zasłony nie jest spełniana od
-    // razu — zasłona zapisuje ją jako to, dokąd ognisko ma wrócić po jej zamknięciu (`withheld`).
-    // Idziemy od węzła w górę i pytamy pierwsze okno zasłon, które go przykrywa.
+    // A veil covers the focus too. A request from a node under an open veil is not granted at
+    // once: the veil records it as where the focus should return after it closes (`withheld`). We
+    // go up from the node and ask the first veil window that covers it.
     if (one != nullptr)
         for (Node* each = one; each != nullptr; each = each->parent())
             if (auto* modals = dynamic_cast<Modals*>(each->parent()); modals != nullptr && modals->withheld(*one))
                 return;
 
-    // Wołanie na węźle, który ogniska nie bierze, **nic nie robi** — i to nie jest przeoczenie.
-    // Ognisko oddaje się także temu, kto je miał wcześniej: tak wracają do aplikacji i pasek menu,
-    // i dialog. Ten ktoś mógł w międzyczasie zostać wyłączony albo zniknąć z drzewa, a wyjątek
-    // w tej ścieżce wywracałby program za cudzy stan.
+    // A call on a node that does not take the focus does nothing, and that is not an oversight. The
+    // focus is also handed back to whoever had it before: that is how both the menu bar and a
+    // dialog return to the application. That node may have been disabled or have left the tree in
+    // the meantime, and an exception on this path would bring the program down for someone else's
+    // state.
     if (one != nullptr && !one->focusable()) return;
 
     if (one == focus_) return;
@@ -81,13 +90,15 @@ void Root::move_focus(Node* one) {
     }
 }
 
-// Klawisz i wklejenie idą do ogniska, a gdy ogniska nie ma — do korzenia. Inaczej skrót
-// obsługiwany przez aplikację milczałby, dopóki użytkownik czegoś nie wskaże.
+// Delivers a key. A key and a paste go to the focus, and when there is no focus, to the root.
+// Otherwise a shortcut handled by the application would stay silent until the user pointed at
+// something.
 //
-// **Korzeń widzi klawisz pierwszy, jeśli chce** (`foresee`): klawisz po przedrostku (Ctrl+X w MC)
-// należy do przedrostka, a nie do ogniska — litera po Ctrl+X nie może trafić do szukania w panelu
-// ani do pola. Domyślnie korzeń nie chce niczego i klawisz idzie zwykłą drogą, od ogniska w górę.
-// Wołamy pod tą samą strażą co `sent`, bo przewidujący może zamknąć węzeł albo przestawić ognisko.
+// The root sees the key first if it wants to (`foresee`): a key after a prefix (Ctrl+X in
+// Midnight Commander) belongs to the prefix, not to the focus; the letter after Ctrl+X must not
+// reach the panel's search or a field. By default the root wants nothing and the key goes the
+// ordinary way, from the focus up. `foresee` is called under the same guard as `sent`, because it
+// may close a node or move the focus.
 bool Root::dispatch(KeyEvent& what) {
     ++busy_;
 
@@ -108,21 +119,25 @@ bool Root::dispatch(KeyEvent& what) {
     return sent(focus_ != nullptr ? *focus_ : *this, what);
 }
 
+// Lets the root take a key before the focus does; by default it takes none.
 bool Root::foresee(KeyEvent&) { return false; }
 
+// Delivers a paste to the focus, or to the root when there is no focus.
 bool Root::dispatch(PasteEvent& what) { return sent(focus_ != nullptr ? *focus_ : *this, what); }
 
+// Delivers a terminal resize to the root.
 bool Root::dispatch(SizeEvent& what) { return sent(*this, what); }
 
-// Mysz celuje w najgłębszy węzeł pod kursorem, a nie w ognisko: klika się to, co się widzi.
-// Surowe zdarzenie idzie pierwsze i zawsze — kto zaznacza ciągnięciem, nie może czekać na
-// werdykt w sprawie kliknięcia.
+// Delivers a raw mouse event and then derives clicks and double clicks from it. The mouse aims at
+// the deepest node under the cursor, not at the focus: one clicks what one sees. The raw event
+// goes first and always, because whoever selects by dragging cannot wait for the verdict on a
+// click.
 //
-// **Wyjątkiem jest przytrzymanie** (`hold`): ruch i puszczenie idą wtedy do węzła, który o nie
-// poprosił, gdziekolwiek jest kursor — inaczej okno ciągnięte za krawędź gubiłoby mysz przy
-// pierwszym szybszym ruchu. Wciśnięcie zaczyna od nowa i zawsze idzie pod kursor, a puszczenie
-// przytrzymanie zdejmuje, więc zgubione puszczenie nie zostawia myszy przywiązanej na zawsze.
-// Przytrzymany węzeł, który zszedł z drzewa, nie dostaje już nic.
+// The exception is a capture (`capture`): movement and release then go to the node that asked for
+// them, wherever the cursor is; otherwise a window dragged by its edge would lose the mouse at the
+// first quicker move. A press starts anew and always goes under the cursor, and a release removes
+// the capture, so a lost release does not leave the mouse tied forever. A captured node that has
+// left the tree gets nothing more.
 bool Root::dispatch(MouseEvent& what) {
     if (what.press() == Press::down) held_.reset();
 
@@ -139,34 +154,35 @@ bool Root::dispatch(MouseEvent& what) {
     return made;
 }
 
-// Przytrzymanie prosi węzeł, który dostał wciśnięcie — na życzenie, a nie dla każdego, bo
-// najechanie myszą na pozycje menu ma dalej iść pod kursor. Trzymamy słabo: przytrzymany może
-// zejść z drzewa w trakcie ciągnięcia.
+// Captures the mouse for `one` until the button is released. The node that got the press asks for
+// it, on request and not for everyone, because moving the mouse over menu items still has to go
+// under the cursor. It is held weakly: the captured node may leave the tree during the drag.
 void Root::capture(Node& one) { held_ = one.weak_from_this(); }
 
+// Delivers a wheel step to the node under the cursor.
 bool Root::dispatch(WheelEvent& what) { return sent(*under(what.where()), what); }
 
+// Delivers a click to the node under the cursor.
 bool Root::dispatch(ClickEvent& what) { return sent(*under(what.where()), what); }
 
+// Delivers a double click to the node under the cursor.
 bool Root::dispatch(DoubleClickEvent& what) { return sent(*under(what.where()), what); }
 
-// **Kliknięcie idzie od razu, dwuklik jest zdarzeniem dodatkowym** — tak robi Windows
-// (`WM_LBUTTONDOWN` natychmiast, `WM_LBUTTONDBLCLK` zamiast drugiego wciśnięcia), X11
-// i przeglądarki. Poprzednio pojedyncze czekało na ciszę po oknie dwukliku, żeby wykluczyć się
-// z podwójnym — i każdy przycisk, tytuł menu i pole paska klawiszy działały z opóźnieniem 400 ms
-// na POSIX, a na Windows tyle, ile ktoś ustawił w systemie, do 900. Wykluczanie nie było do
-// niczego potrzebne: odbiorcy dwukliku znoszą kliknięcie przed nim (lista stawia ognisko, potem
-// wybiera; edytor stawia kursor, potem zaznacza wyraz).
+// Turns presses and releases into clicks and double clicks. A click goes at once, and a double
+// click is an additional event; that is what Windows does (WM_LBUTTONDOWN at once, WM_LBUTTONDBLCLK
+// instead of the second press), and X11 and browsers too. A single click does not wait for the
+// double-click window to pass, so buttons, menu titles and key bar fields react without delay;
+// the receivers of a double click tolerate the click before it (a list sets the focus, then
+// chooses; an editor places the cursor, then selects a word).
 //
-// Drugie puszczenie w tej samej kratce, tym samym przyciskiem i **nie później niż
-// `double_click()` po pierwszym** daje sam `DoubleClickEvent` — bez drugiego `ClickEvent`, tak jak
-// w Windows. Okno mierzymy chwilami, które niosą same zdarzenia (`MouseEvent::when`), więc korzeń
-// nie potrzebuje zegara, a nikt z zewnątrz nie musi mu mówić, że czas minął: przeterminowane
-// pierwsze kliknięcie po prostu nie pasuje do drugiego. Dawniej `Term` odliczał okno sam i gasił
-// czekanie publicznym settle, a korzeń wystawiał mu clicking — protokół, którego już nie ma.
+// A second release in the same cell, with the same button and no later than `double_click()` after
+// the first gives a `DoubleClickEvent` alone, without a second `ClickEvent`, as in Windows. The
+// window is measured with the moments the events themselves carry (`MouseEvent::when`), so the root
+// needs no clock, and nobody outside has to tell it that the time is up: an expired first click
+// simply does not match the second.
 //
-// Każdy korzeń czeka na swoje: klik na jednym ekranie i klik na drugim nie składają się
-// w dwuklik, bo to są dwa różne korzenie.
+// Each root waits for its own: a click on one screen and a click on another do not combine into a
+// double click, because those are two different roots.
 void Root::minded(const MouseEvent& what) {
     if (what.press() == Press::down) {
         began_ = what.where();
@@ -181,8 +197,8 @@ void Root::minded(const MouseEvent& what) {
 
     pressing_ = Mouse::none;
 
-    // Puszczenie w innej kratce niż wciśnięcie to ciągnięcie, a nie kliknięcie. Kliknięcie,
-    // które czeka na swoje drugie, zostawiamy w spokoju — zamknie je czas.
+    // A release in a different cell than the press is a drag, not a click. A click waiting for its
+    // second is left alone; time will close it.
     if (which == Mouse::none || which != what.button() || !(began_ == what.where())) return;
 
     if (first_click_.has_value() && clicked_ == what.button() && waiting_ == what.where() &&
@@ -205,16 +221,14 @@ void Root::minded(const MouseEvent& what) {
     (void)dispatch(one);
 }
 
-// Schodzimy piętro po piętrze, odejmując przesunięcie każdego wejścia, bo prostokąt węzła jest
-// wyrażony względem rodzica — tak zapisuje go render. Z rodzeństwa wygrywa **ostatnie** pasujące,
-// bo składanie idzie po kolei i ostatnie leży na wierzchu. Węzeł, pod którym nic nie ma, jest
-// celem; dopóki nikt nic nie rozstawił, wszystkie prostokąty są zerowe i celem zostaje korzeń.
+// The deepest visible node under the spot `where`. We descend floor by floor, subtracting the
+// offset of each step, because a node's rectangle is expressed relative to its parent; that is how
+// rendering records it. Among siblings the last matching one wins, because composing goes in order
+// and the last one lies on top. A node with nothing under the spot is the target; until someone
+// has laid things out, all rectangles are zero and the root stays the target.
 //
-// **„Na wierzchu" ma jedno źródło: kolejność dzieci.** Stał tu jeszcze numer warstwy (`layer()`),
-// nadpisywany przez zasłonę i otwarte menu — i nie rozstrzygał niczego, bo każdy pojemnik
-// dopina nakładkę **po** treści, a przy równej warstwie i tak wygrywało późniejsze. Opis przy
-// nim obiecywał, że pojemniki malują „najpierw niższe warstwy, potem wyższe"; żaden tego nie
-// robił. Dwa źródła jednej prawdy, z których drugie było martwe — zdjęte.
+// "On top" has one source: the order of children. Every container attaches its overlay after the
+// content, so a veil or an open menu is on top because it comes later.
 Node* Root::under(Spot where) {
     Node* at = this;
 
@@ -228,9 +242,10 @@ Node* Root::under(Spot where) {
                 where.y >= box.at.y + box.size.high)
                 continue;
 
-            // **Tylko to, co widać.** Dziecko przewijaka stoi w prostokącie większym niż okno —
-            // wiersz przewinięty pod pasek albo za dolną krawędź ma tam swój prostokąt, choć nie
-            // narysował ani kratki. Bez tego klik w pasek przewijaka trafiał w wiersz pod nim (U6).
+            // Only what is visible. A scroller's child stands in a rectangle larger than the
+            // window: a row scrolled under the bar or past the bottom edge has its rectangle there,
+            // although it has not drawn a single cell. Without this check, a click on the
+            // scroller's bar would hit the row under it.
             const Area& seen = one->seen_;
             const Spot inner{where.x - box.at.x, where.y - box.at.y};
 
@@ -250,38 +265,30 @@ Node* Root::under(Spot where) {
     }
 }
 
-// **Doręczanie liczy się**, bo w jego trakcie nie wolno nikogo zwolnić: zdjęty węzeł czeka
-// w `dying_`, aż ostatnie doręczenie się skończy. **Licznik, a nie znacznik**, bo uchwyt ma prawo
-// doręczyć kolejne zdarzenie w środku pierwszego. Podnosi go szablon `sent` w nagłówku, a opuszcza
-// ta funkcja — także przy wyjątku z uchwytu. Całość w `CLAUDE.md`, „Odkładane usuwanie".
+// Ends one delivery and, when it was the last, releases the nodes removed in the meantime.
+// Deliveries are counted, because no node may be released during one: a removed node waits in
+// `dying_` until the last delivery ends. A counter, not a flag, because a handler may deliver
+// another event in the middle of the first. The `sent` template in the header raises it, and this
+// function lowers it, also when a handler throws.
 void Root::released() {
     if (--busy_ > 0) return;
 
-    // Zwolnienie może pociągnąć kolejne zdejmowania w destruktorach, więc lista musi być
-    // najpierw odczepiona, a dopiero potem opróżniona.
+    // Releasing may trigger further removals in destructors, so the list has to be detached first
+    // and only then emptied.
     const std::vector<std::shared_ptr<Node>> taken = std::move(dying_);
 
     dying_.clear();
 }
 
+// Keeps a removed node alive until the current delivery ends; outside a delivery it does nothing.
 void Root::linger(std::shared_ptr<Node> one) {
     if (busy_ > 0) dying_.push_back(std::move(one));
 }
 
-// Kursor składamy przejściem w górę po `area_` — tym samym, którym trafia mysz, więc przewinięcie
-// i zagnieżdżenie liczą się same z siebie i nie ma czego pamiętać osobno.
-//
-// Po drodze **sprawdzamy przynależność na każdym piętrze**, zanim przeliczymy współrzędne wyżej.
-// To zastępuje to, co dotąd wychodziło samo z siebie: węzeł, którego nie widać, w ogóle nie
-// malował, więc nie zgłaszał kursora. Teraz odpowiada zawsze, więc pytamy, czy jego odpowiedź
-// mieści się w tym, co dostał — a że każdy przodek sprawdza się osobno, pole zjechane pod krawędź
-// przewijanego okna wypada tam, gdzie powinno, a nie dopiero na krawędzi ekranu.
-//
-// Wołać **po** złożeniu klatki: `area_` i przewinięcie w polu ustawiają się dopiero przy malowaniu.
 namespace {
 
-// Najbliższa prośba w poddrzewie. Chodzimy po całym drzewie, bo węzeł zasłonięty albo o zerowym
-// polu też ma prawo się animować — a drzewo interfejsu liczy dziesiątki węzłów, nie tysiące.
+// The nearest repaint request in the subtree. We walk the whole tree, because a covered node or one
+// with a zero area may animate too, and a user interface tree has dozens of nodes, not thousands.
 [[nodiscard]] std::optional<std::chrono::milliseconds> soonest(const Node& one) {
     std::optional<std::chrono::milliseconds> made = one.due();
 
@@ -298,8 +305,9 @@ namespace {
 
 }
 
-// Korzeń **nie ma własnej prośby** — zbiera cudze. Dzięki temu `Term` pyta jedno miejsce i nie musi
-// wiedzieć, że w środku siedzi obrazek.
+// How soon the tree wants to be repainted, or nothing. The root has no request of its own; it
+// collects the others'. Thanks to that, `Term` asks one place and does not need to know that there
+// is an image inside.
 std::optional<std::chrono::milliseconds> Root::due() const {
     std::optional<std::chrono::milliseconds> made;
 
@@ -314,6 +322,17 @@ std::optional<std::chrono::milliseconds> Root::due() const {
     return made;
 }
 
+// The cursor of the focused node on the screen, or nothing. The cursor is assembled by walking up
+// over `area_`, the same way the mouse hits, so scrolling and nesting count by themselves and
+// there is nothing to remember separately.
+//
+// On the way, membership is checked on every floor before the coordinates are carried up. A node
+// answers even when it is not visible, so we ask whether its answer fits in what it got, and since
+// every ancestor is checked separately, a field scrolled past the edge of a scrolled window drops
+// out where it should, not only at the edge of the screen.
+//
+// Call it after the frame is composed: `area_` and the scrolling within a field are set only
+// while painting.
 std::optional<Spot> Root::caret() const {
     if (focus_ == nullptr) return {};
 
@@ -334,8 +353,8 @@ std::optional<Spot> Root::caret() const {
     return at;
 }
 
-// Ognisko na zdejmowanym węźle albo gdziekolwiek pod nim gaśnie. Bez tego wskazywałoby na
-// zmarłego, a wyszłoby to dopiero przy najbliższym klawiszu.
+// Clears the focus when it is on the node being removed or anywhere under it. Otherwise it would
+// point at a dead node, and that would come out only at the next key.
 void Root::losing(const Node* one) {
     for (const Node* at = focus_; at != nullptr; at = at->parent())
         if (at == one) {

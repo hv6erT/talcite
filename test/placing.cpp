@@ -18,14 +18,16 @@
 
 using namespace talcite;
 
-// Obraz w pikselach (G1): kratki obrazu niosą jego znak, złożenie przenosi znak w górę, a `Term`
-// dostaje piksele tylko dla obrazu widocznego w całości. Atrapa terminala pokazuje każdy bajt,
-// więc widać, kiedy sixel idzie, a kiedy nie.
+// Images in pixels: the cells of an image carry its mark, composition carries the mark upward, and
+// `Term` gets pixels only for an image that is visible as a whole. The fake terminal shows every
+// byte, so one can see when a sixel goes out and when it does not.
 
 namespace {
 
+// The text as shared encoded bytes of a picture.
 std::shared_ptr<const std::string> encoded(std::string said) { return std::make_shared<const std::string>(std::move(said)); }
 
+// A style with only the given background color.
 Style paper(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Style made;
 
@@ -34,8 +36,8 @@ Style paper(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return made;
 }
 
-// Kartka 6×4 na niebieskim tle, w niej obraz 2×2 w (1, 1): dwie kratki z literą, jedna
-// przezroczysta (pierwszy plan) i jedna pusta.
+// A 6×4 sheet on a blue background, with a 2×2 image at (1, 1) in it: two cells with a letter, one
+// transparent (foreground only) and one empty.
 View sheet(std::uint32_t mark = 7) {
     View made{{6, 4}};
 
@@ -54,8 +56,10 @@ View sheet(std::uint32_t mark = 7) {
     return made;
 }
 
+// Whether `what` occurs in `where`.
 bool holds(const std::string& where, const std::string& what) { return where.find(what) != std::string::npos; }
 
+// How many times `what` occurs in `where`, overlaps included.
 std::size_t counted(const std::string& where, const std::string& what) {
     std::size_t made = 0;
 
@@ -64,7 +68,7 @@ std::size_t counted(const std::string& where, const std::string& what) {
     return made;
 }
 
-// Piksele obrazu: każda klatka ma inne bajty, żeby było widać, którą wysłano.
+// The pixels of an image: each frame has different bytes, so that one can see which was sent.
 std::shared_ptr<const Pixels> dotted(ui::Size size, int stills = 1) {
     std::vector<Still> made;
 
@@ -79,7 +83,7 @@ std::shared_ptr<const Pixels> dotted(ui::Size size, int stills = 1) {
     return std::make_shared<const Pixels>(size, std::move(made));
 }
 
-// Korzeń, który rysuje kartkę z obrazem; obraz można przesunąć, zasłonić albo podmienić.
+// A root that draws a sheet with an image; the image can be moved, covered or replaced.
 class Framed : public ui::Root {
 public:
     ui::Spot at{2, 1};
@@ -93,6 +97,8 @@ public:
     std::size_t still = 0;
 
 protected:
+    // Fills the background, puts the extra letter, fills the image's cells and marks them with the
+    // picture, and covers one of them when `covered` is set.
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
 
@@ -113,6 +119,7 @@ protected:
     }
 };
 
+// Terminal settings with graphics of the given kind and the given cell size in pixels.
 Setup pixeled(ui::Size cell = {10, 20}, Graphics kind = Graphics::sixel) {
     Setup made;
 
@@ -122,6 +129,7 @@ Setup pixeled(ui::Size cell = {10, 20}, Graphics kind = Graphics::sixel) {
     return made;
 }
 
+// Terminal settings with kitty graphics and a 10×20 cell.
 Setup kittied() { return pixeled({10, 20}, Graphics::kitty); }
 
 struct Rig {
@@ -129,12 +137,14 @@ struct Rig {
     Framed root;
     std::unique_ptr<Term> term;
 
+    // A terminal on the fake console with the given settings and window, showing `root`.
     explicit Rig(Setup given = pixeled(), ui::Size window = {12, 6}) {
         line->window = window;
         term = std::make_unique<Term>(std::move(given), Seam<Console>{line});
         term->show(root);
     }
 
+    // Draws once and returns everything written to the console by that draw.
     std::string drawn() {
         line->written.clear();
         term->draw();
@@ -147,9 +157,9 @@ const std::string sixel_head = "\x1bP0;1;0q";
 
 }
 
-// --- Kartka --------------------------------------------------------------------------------------
+// --- Sheet ---------------------------------------------------------------------------------------
 
-TRIAL("View: kratki obrazu niosą jego znak, przezroczysta staje się pustym pierwszym planem") {
+TRIAL("View: an image's cells carry its mark, a transparent one becomes an empty foreground") {
     View made{{3, 1}};
 
     made.clear({{0, 0}, {3, 1}});
@@ -166,7 +176,7 @@ TRIAL("View: kratki obrazu niosą jego znak, przezroczysta staje się pustym pie
     same(made.pictures().size(), std::size_t{1});
 }
 
-TRIAL("View: ten sam znak drugi raz zastępuje wpis, a nie dokłada drugiego") {
+TRIAL("View: the same mark a second time replaces the entry instead of adding another") {
     View made{{2, 1}};
 
     made.picture({{0, 0}, {2, 1}}, Picture{3, {2, 1}, encoded("a")});
@@ -176,7 +186,7 @@ TRIAL("View: ten sam znak drugi raz zastępuje wpis, a nie dokłada drugiego") {
     same(*made.pictures().front().sixel, std::string{"b"});
 }
 
-TRIAL("View: obraz jedzie w górę razem z kratkami i staje tam, gdzie go wklejono") {
+TRIAL("View: an image travels up with its cells and stands where it was pasted") {
     View made = sheet();
 
     same(made.pictures().size(), std::size_t{1});
@@ -184,7 +194,7 @@ TRIAL("View: obraz jedzie w górę razem z kratkami i staje tam, gdzie go wklejo
     same(made.at({2, 2}).picture, std::uint32_t{7});
     same(made.at({0, 0}).picture, std::uint32_t{0});
 
-    // Przezroczysta kratka wzięła tło spodu przy wklejeniu.
+    // The transparent cell took the background from below when pasted.
     ought(made.at({1, 2}).style.background == paper(0, 0, 200).background);
 
     const std::vector<Placement> found = made.bared({{0, 0}, {6, 4}});
@@ -194,7 +204,7 @@ TRIAL("View: obraz jedzie w górę razem z kratkami i staje tam, gdzie go wklejo
     same(*found.front().picture.sixel, std::string{"SIX"});
 }
 
-TRIAL("View: obraz widoczny w całości ma puste kratki z ich tłem i ze swoim znakiem") {
+TRIAL("View: an image visible as a whole has empty cells with their background and its mark") {
     View made = sheet();
 
     (void)made.bared({{0, 0}, {6, 4}});
@@ -204,11 +214,11 @@ TRIAL("View: obraz widoczny w całości ma puste kratki z ich tłem i ze swoim z
     same(made.at({1, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
     same(made.at({2, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
 
-    // Pusta kratka obrazu i zwykła pusta kratka z tym samym tłem nie są sobie równe.
+    // An empty image cell and an ordinary empty cell with the same background are not equal.
     ought(!(made.at({2, 2}) == made.at({0, 0})));
 }
 
-TRIAL("View: obraz zasłonięty choćby w jednej kratce zostaje w znakach i traci znak") {
+TRIAL("View: an image covered in even one cell stays in characters and loses its mark") {
     View made = sheet();
     View dialog{{1, 1}};
 
@@ -221,7 +231,7 @@ TRIAL("View: obraz zasłonięty choćby w jednej kratce zostaje w znakach i trac
     same(made.at({2, 1}).picture, std::uint32_t{0});
 }
 
-TRIAL("View: cień nad obrazem zasłania go — pikseli nie da się przygasić") {
+TRIAL("View: a shadow over an image covers it, since pixels cannot be dimmed") {
     View made = sheet();
     View shadow{{1, 1}};
 
@@ -232,8 +242,8 @@ TRIAL("View: cień nad obrazem zasłania go — pikseli nie da się przygasić")
     same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
 }
 
-TRIAL("View: obraz przycięty brzegiem wklejenia albo wystający poza pole nie dostaje pikseli") {
-    // Przycięty: tylko lewa kolumna obrazu weszła do kartki.
+TRIAL("View: an image clipped by the paste edge or sticking out of the field gets no pixels") {
+    // Clipped: only the left column of the image made it into the sheet.
     View narrow{{2, 4}};
 
     narrow.draw(sheet(), {0, 0});
@@ -242,7 +252,7 @@ TRIAL("View: obraz przycięty brzegiem wklejenia albo wystający poza pole nie d
     same(narrow.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
     same(narrow.at({1, 1}).picture, std::uint32_t{0});
 
-    // Cały, ale pole kończy się wierszem wcześniej.
+    // Whole, but the field ends one row earlier.
     View whole = sheet();
 
     same(whole.bared({{0, 0}, {6, 2}}).size(), std::size_t{0});
@@ -251,7 +261,7 @@ TRIAL("View: obraz przycięty brzegiem wklejenia albo wystający poza pole nie d
 
     same(fits.bared({{0, 0}, {6, 3}}).size(), std::size_t{1});
 
-    // Pole kończy się kolumnę wcześniej, i pole zaczyna się kolumnę później.
+    // The field ends one column earlier, and the field starts one column later.
     View right = sheet();
 
     same(right.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
@@ -261,15 +271,15 @@ TRIAL("View: obraz przycięty brzegiem wklejenia albo wystający poza pole nie d
     same(left.bared({{2, 0}, {4, 4}}).size(), std::size_t{0});
 }
 
-TRIAL("View: obraz bez widocznej kratki i obraz bez znaku nie dają nic") {
+TRIAL("View: an image without a visible cell and an image without a mark give nothing") {
     View away{{4, 4}};
 
     away.picture({{10, 10}, {2, 2}}, Picture{4, {2, 2}, encoded("a")});
 
     same(away.bared({{0, 0}, {4, 4}}).size(), std::size_t{0});
 
-    // Zero to „żaden obraz" — niesie je każda zwykła kratka, więc kartka akurat w rozmiarze obrazu
-    // wyglądałaby na obraz w całości.
+    // Zero means "no image"; every ordinary cell carries it, so a sheet that happens to be the size
+    // of the image would look like an image as a whole.
     View plain{{2, 2}};
 
     plain.picture({{0, 0}, {2, 2}}, Picture{0, {2, 2}, encoded("b")});
@@ -277,7 +287,7 @@ TRIAL("View: obraz bez widocznej kratki i obraz bez znaku nie dają nic") {
     same(plain.bared({{0, 0}, {2, 2}}).size(), std::size_t{0});
 }
 
-TRIAL("View: ten sam obraz wklejony dwa razy jest w spisie raz") {
+TRIAL("View: the same image pasted twice is listed once") {
     View made{{8, 4}};
 
     made.draw(sheet(), {0, 0});
@@ -287,7 +297,7 @@ TRIAL("View: ten sam obraz wklejony dwa razy jest w spisie raz") {
     same(made.bared({{0, 0}, {8, 4}}).size(), std::size_t{1});
 }
 
-TRIAL("View: kratki w innym kształcie niż obraz to nie obraz w całości") {
+TRIAL("View: cells in a shape other than the image's are not an image as a whole") {
     View made{{3, 3}};
 
     made.picture({{0, 0}, {3, 1}}, Picture{8, {1, 3}, encoded("a")});
@@ -295,7 +305,7 @@ TRIAL("View: kratki w innym kształcie niż obraz to nie obraz w całości") {
     same(made.bared({{0, 0}, {3, 3}}).size(), std::size_t{0});
 }
 
-TRIAL("View: dwa obrazy obok siebie — oba w całości, każdy na swoim miejscu") {
+TRIAL("View: two images side by side, both whole, each in its place") {
     View made{{8, 3}};
 
     made.draw(sheet(1), {0, 0});
@@ -318,7 +328,7 @@ TRIAL("View: dwa obrazy obok siebie — oba w całości, każdy na swoim miejscu
 
 // --- Terminal ------------------------------------------------------------------------------------
 
-TRIAL("Term: obraz widoczny w całości idzie sixelem, po kratkach, w swoim miejscu") {
+TRIAL("Term: an image visible as a whole goes as a sixel, after the cells, in its place") {
     Rig rig;
 
     const std::string said = rig.drawn();
@@ -327,13 +337,13 @@ TRIAL("Term: obraz widoczny w całości idzie sixelem, po kratkach, w swoim miej
     ought(at != std::string::npos);
     ought(said.compare(at - 6, 6, "\x1b[2;3H") == 0);
 
-    // Kratki obrazu wyszły puste, z tłem znaku, i przed obrazem.
+    // The image's cells went out empty, with the mark's background, and before the image.
     ought(said.find("\x1b[0;48;5;") < at);
     same(said.find(std::string{"▒"}), std::string::npos);
     same(counted(said, sixel_head), std::size_t{1});
 }
 
-TRIAL("Term: obraz bez zmian nie idzie drugi raz, zmiana obok też go nie wysyła") {
+TRIAL("Term: an unchanged image does not go a second time, and a change beside it does not send it") {
     Rig rig;
 
     (void)rig.drawn();
@@ -348,7 +358,7 @@ TRIAL("Term: obraz bez zmian nie idzie drugi raz, zmiana obok też go nie wysył
     ought(!holds(said, sixel_head));
 }
 
-TRIAL("Term: zasłonięty obraz wraca do znaków, odsłonięty dostaje piksele od nowa") {
+TRIAL("Term: a covered image goes back to characters, an uncovered one gets its pixels anew") {
     Rig rig;
 
     (void)rig.drawn();
@@ -360,7 +370,7 @@ TRIAL("Term: zasłonięty obraz wraca do znaków, odsłonięty dostaje piksele o
     ought(!holds(hidden, sixel_head));
     ought(holds(hidden, "x"));
 
-    // Wszystkie kratki obrazu przepisane znakami — inaczej piksele zostałyby pod nimi.
+    // All the image's cells rewritten with characters; otherwise the pixels would stay under them.
     same(counted(hidden, std::string{"▒"}), std::size_t{5});
 
     rig.root.covered = false;
@@ -371,7 +381,7 @@ TRIAL("Term: zasłonięty obraz wraca do znaków, odsłonięty dostaje piksele o
     ought(!holds(back, std::string{"▒"}));
 }
 
-TRIAL("Term: inny znak w tym samym miejscu — inna klatka animacji — idzie od nowa") {
+TRIAL("Term: another mark in the same place, another animation frame, goes anew") {
     Rig rig;
 
     (void)rig.drawn();
@@ -381,7 +391,7 @@ TRIAL("Term: inny znak w tym samym miejscu — inna klatka animacji — idzie od
     same(counted(rig.drawn(), sixel_head), std::size_t{1});
 }
 
-TRIAL("Term: przesunięty obraz idzie w nowe miejsce, stare kratki wracają do tła") {
+TRIAL("Term: a moved image goes to the new place, the old cells go back to the background") {
     Rig rig;
 
     (void)rig.drawn();
@@ -394,9 +404,9 @@ TRIAL("Term: przesunięty obraz idzie w nowe miejsce, stare kratki wracają do t
     ought(holds(said, "\x1b[2;3H"));
 }
 
-// Po obrazie kursor stoi tam, gdzie postawił go terminal: kratka tuż za obrazem dostaje własny skok,
-// choć przed obrazem kursor stał właśnie przy niej.
-TRIAL("Term: po obrazie następny znak idzie z własnym skokiem") {
+// After an image the cursor stands where the terminal put it: the cell right after the image gets
+// its own jump, even though before the image the cursor stood right at it.
+TRIAL("Term: after an image the next character goes with its own jump") {
     Rig rig;
 
     (void)rig.drawn();
@@ -413,7 +423,7 @@ TRIAL("Term: po obrazie następny znak idzie z własnym skokiem") {
     ought(holds(rig.drawn(), "\x1b[3;6H"));
 }
 
-TRIAL("Term: obraz bez bajtów ma puste kratki i nic nie wysyła") {
+TRIAL("Term: an image without bytes has empty cells and sends nothing") {
     Rig rig;
 
     rig.root.bare = true;
@@ -424,10 +434,11 @@ TRIAL("Term: obraz bez bajtów ma puste kratki i nic nie wysyła") {
     ought(!holds(said, std::string{"▒"}));
 }
 
-// Obraz bez bajtów — przed nim w spisie — nie zatrzymuje następnych.
-TRIAL("Term: obraz bez bajtów nie zatrzymuje obrazu za nim") {
+// An image without bytes, before another in the list, does not stop the ones after it.
+TRIAL("Term: an image without bytes does not stop the image after it") {
     class Two : public ui::Root {
     protected:
+        // A background with an image without bytes, followed by an image with a sixel.
         View paint(ui::Size given, ui::Area seen) override {
             (void)seen;
 
@@ -455,7 +466,7 @@ TRIAL("Term: obraz bez bajtów nie zatrzymuje obrazu za nim") {
     ought(holds(line->written, "\x1b[2;5H\x1bP0;1;0qSECOND"));
 }
 
-TRIAL("Term: obraz sięgający ostatniego wiersza zostaje w znakach") {
+TRIAL("Term: an image reaching the last row stays in characters") {
     Rig rig{pixeled(), {12, 3}};
 
     const std::string said = rig.drawn();
@@ -464,7 +475,7 @@ TRIAL("Term: obraz sięgający ostatniego wiersza zostaje w znakach") {
     ought(holds(said, std::string{"▒"}));
 }
 
-TRIAL("Term: bez sixela, bez wymiaru kratki albo z życzeniem bez grafiki — same znaki") {
+TRIAL("Term: without sixel, without a cell size, or with a wish for no graphics, characters only") {
     Setup plain;
 
     plain.cell = ui::Size{10, 20};
@@ -490,7 +501,7 @@ TRIAL("Term: bez sixela, bez wymiaru kratki albo z życzeniem bez grafiki — sa
     ought(!holds(other.drawn(), sixel_head));
 }
 
-TRIAL("Term: korzeń dostaje grafikę z terminala, także po zmianie konfiguracji") {
+TRIAL("Term: the root gets its graphics from the terminal, also after a configuration change") {
     Rig rig;
 
     same(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::sixel));
@@ -504,14 +515,14 @@ TRIAL("Term: korzeń dostaje grafikę z terminala, także po zmianie konfiguracj
 
     same(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::none));
 
-    // Po zmianie konfiguracji ekran rysuje się od nowa — już bez obrazu.
+    // After a configuration change the screen is redrawn, now without the image.
     const std::string said = rig.drawn();
 
     ought(!holds(said, sixel_head));
     ought(holds(said, std::string{"▒"}));
 }
 
-TRIAL("Term: odświeżenie całego ekranu wysyła obraz jeszcze raz") {
+TRIAL("Term: refreshing the whole screen sends the image again") {
     Rig rig;
 
     (void)rig.drawn();
@@ -522,10 +533,11 @@ TRIAL("Term: odświeżenie całego ekranu wysyła obraz jeszcze raz") {
     same(counted(rig.drawn(), sixel_head), std::size_t{1});
 }
 
-// --- Widżet --------------------------------------------------------------------------------------
+// --- Widget --------------------------------------------------------------------------------------
 
 namespace {
 
+// An opaque image of the given size in a single color with the given red.
 Pixels square(ui::Size size, std::uint8_t red) {
     Bytes made;
 
@@ -535,12 +547,14 @@ Pixels square(ui::Size size, std::uint8_t red) {
     return Pixels{size, {Still{made, std::chrono::milliseconds{0}}}};
 }
 
-// Korzeń jak terminal z sixelem: kratka 10×20, sekstanty. Obraz dostaje pole 20×5, więc pod nim
-// zostaje wiersz — ostatni wiersz ekranu i tak nie bierze pikseli.
+// A root like a terminal with sixel: a 10×20 cell, sextants. The image gets a 20×5 field, so a row
+// is left below it; the last row of the screen does not take pixels anyway.
 class Sheet : public ui::Root {
 public:
     std::shared_ptr<ui::Image> image = std::make_shared<ui::Image>();
 
+    // A root with the given graphics and cell size, sextants, full color and Unicode, holding the
+    // image.
     explicit Sheet(Graphics given = Graphics::sixel, ui::Size grid = {10, 20}) {
         cell(grid);
         blocks(ui::Blocks::sextants);
@@ -551,6 +565,7 @@ public:
     }
 
 protected:
+    // Paints a black background and the image in a 20×5 field at the top.
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
 
@@ -563,6 +578,8 @@ protected:
     }
 };
 
+// Renders and turns the loop until the image is no longer busy; false when it did not settle in
+// 500 tries.
 bool settled(Loop& loop, ui::Root& top, const ui::Image& one) {
     for (int tries = 0; tries < 500; ++tries) {
         (void)top.render({{0, 0}, {20, 6}});
@@ -576,6 +593,7 @@ bool settled(Loop& loop, ui::Root& top, const ui::Image& one) {
     return false;
 }
 
+// The raster attributes of a sixel, from the quote up to the first color.
 std::string raster(const std::string& said) {
     const std::size_t at = said.find('"');
 
@@ -586,7 +604,7 @@ std::string raster(const std::string& said) {
 
 }
 
-TRIAL("Image: przy sixelu zamawia piksele pola, a kratki znaczy swoim obrazem") {
+TRIAL("Image: with sixel it orders the field's pixels and marks the cells with its image") {
     Loop loop;
     Sheet top;
 
@@ -600,7 +618,7 @@ TRIAL("Image: przy sixelu zamawia piksele pola, a kratki znaczy swoim obrazem") 
 
     const Picture& one = made.pictures().front();
 
-    // Pole 20×5 kratek po 10×20 pikseli: kwadrat ma pięć wierszy i dziesięć kolumn.
+    // A 20×5 field of 10×20-pixel cells: the square has five rows and ten columns.
     ought(one.size == (ui::Size{10, 5}));
     same(raster(*one.sixel), std::string{"\"1;1;100;96"});
     same(made.at({5, 0}).picture, one.mark);
@@ -608,11 +626,11 @@ TRIAL("Image: przy sixelu zamawia piksele pola, a kratki znaczy swoim obrazem") 
     same(made.at({4, 0}).picture, std::uint32_t{0});
     same(made.at({15, 0}).picture, std::uint32_t{0});
 
-    // Znaki obrazu policzone z pikseli: czerwień, a nie pustka.
+    // The image's characters are computed from the pixels: red, not emptiness.
     ought(made.at({5, 0}).style.foreground.red > 150 || made.at({5, 0}).style.background.red > 150);
 }
 
-TRIAL("Image: bez sixela obraz jest w znakach i nie zostawia żadnego znaku obrazu") {
+TRIAL("Image: without sixel the image is in characters and leaves no image mark") {
     Loop loop;
     Sheet top{Graphics::none};
 
@@ -627,7 +645,7 @@ TRIAL("Image: bez sixela obraz jest w znakach i nie zostawia żadnego znaku obra
     ought(made.at({5, 0}).shown != Shown::none);
 }
 
-TRIAL("Image: nieznany wymiar kratki to znaki, przy sixelu i przy kitty") {
+TRIAL("Image: an unknown cell size means characters, with sixel and with kitty") {
     for (const auto& [given, grid] : std::vector<std::pair<Graphics, ui::Size>>{
              {Graphics::kitty, {0, 20}}, {Graphics::sixel, {0, 20}}, {Graphics::sixel, {10, 0}}}) {
         Loop loop;
@@ -641,7 +659,7 @@ TRIAL("Image: nieznany wymiar kratki to znaki, przy sixelu i przy kitty") {
 
         same(made.pictures().size(), std::size_t{0});
 
-        // Obraz jest — w znakach.
+        // The image is there, in characters.
         bool red = false;
 
         for (int x = 0; x < 20; ++x) red = red || made.at({x, 2}).style.foreground.red > 150;
@@ -650,8 +668,9 @@ TRIAL("Image: nieznany wymiar kratki to znaki, przy sixelu i przy kitty") {
     }
 }
 
-// Znaki obrazu przy pikselach liczą się z pikseli pola, zmniejszonych do siatki — nie z ich rogu.
-TRIAL("Image: znaki zastępcze to cały obraz, zmniejszony") {
+// The image's characters next to pixels are computed from the field's pixels, reduced to the grid,
+// not from their corner.
+TRIAL("Image: the fallback characters are the whole image, reduced") {
     Loop loop;
     Sheet top;
 
@@ -674,8 +693,9 @@ TRIAL("Image: znaki zastępcze to cały obraz, zmniejszony") {
     ought(right.style.foreground.blue > 200 && right.style.foreground.red < 50);
 }
 
-// Wynik kodowania dla obrazu, którego już nie ma, nie wchodzi — pozna się go po numerze kolejnym.
-TRIAL("Image: spóźniony sixel poprzedniego obrazu przepada") {
+// An encoding result for an image that is gone does not get in; it is recognized by its sequence
+// number.
+TRIAL("Image: a late sixel of the previous image is dropped") {
     Loop loop;
     Sheet top;
 
@@ -692,7 +712,7 @@ TRIAL("Image: spóźniony sixel poprzedniego obrazu przepada") {
     ought(holds(*made.pictures().front().sixel, "#0;2;20;0;0"));
 }
 
-TRIAL("Image: przejście na sixel w biegu przelicza obraz, powrót go zdejmuje") {
+TRIAL("Image: switching to sixel while running recomputes the image, switching back removes it") {
     Loop loop;
     Sheet top{Graphics::none};
 
@@ -711,7 +731,7 @@ TRIAL("Image: przejście na sixel w biegu przelicza obraz, powrót go zdejmuje")
     same(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{0});
 }
 
-TRIAL("Image: nowy obraz dostaje nowy znak") {
+TRIAL("Image: a new image gets a new mark") {
     Loop loop;
     Sheet top;
 
@@ -731,7 +751,7 @@ TRIAL("Image: nowy obraz dostaje nowy znak") {
     ought(made.pictures().front().mark != first);
 }
 
-TRIAL("Image: obraz z pliku przy sixelu też zamawia piksele pola") {
+TRIAL("Image: an image from a file with sixel also orders the field's pixels") {
     Loop loop;
     Sheet top;
 
@@ -755,7 +775,7 @@ TRIAL("Image: obraz z pliku przy sixelu też zamawia piksele pola") {
     same(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
 }
 
-TRIAL("Image: przez terminal — znaki, a gdy sixel gotów, obraz") {
+TRIAL("Image: through the terminal, characters, and once the sixel is ready, the image") {
     auto line = faking::terminal();
 
     line->window = ui::Size{20, 6};
@@ -783,28 +803,31 @@ TRIAL("Image: przez terminal — znaki, a gdy sixel gotów, obraz") {
     ought(holds(line->written, "\x1b[1;6H" + sixel_head + "\"1;1;100;96"));
 }
 
-// --- Kitty (G2) ----------------------------------------------------------------------------------
+// --- Kitty ---------------------------------------------------------------------------------------
 
 namespace {
 
 const std::string kitty_send = "\x1b_Ga=t,";
 
+// The kitty command that transmits frame `still` of the pixels in one piece under id `mark`.
 std::string sent_whole(std::uint32_t mark, const Pixels& pixels, std::size_t still) {
     return "\x1b_Ga=t,f=32,s=" + std::to_string(pixels.size().wide) + ",v=" + std::to_string(pixels.size().high) +
            ",i=" + std::to_string(mark) + ",q=2,m=0;" + base64(pixels.stills()[still].bytes) + "\x1b\\";
 }
 
+// The cursor jump to `spot` followed by the kitty command that places image `mark` in 3×2 cells.
 std::string stood_at(std::string spot, std::uint32_t mark) {
     return "\x1b[" + spot + "H\x1b_Ga=p,i=" + std::to_string(mark) + ",c=3,r=2,C=1,q=2\x1b\\";
 }
 
+// The kitty command that deletes image `mark`: placements only with `i`, the data too with `I`.
 std::string taken(std::uint32_t mark, char how = 'i') {
     return "\x1b_Ga=d,d=" + std::string(1, how) + ",i=" + std::to_string(mark) + ",q=2\x1b\\";
 }
 
 }
 
-TRIAL("Term: kitty wysyła obraz raz, a stawia go w jego kratkach") {
+TRIAL("Term: kitty sends the image once and places it in its cells") {
     Rig rig{kittied()};
 
     const std::string said = rig.drawn();
@@ -820,7 +843,7 @@ TRIAL("Term: kitty wysyła obraz raz, a stawia go w jego kratkach") {
     same(rig.drawn(), std::string{});
 }
 
-TRIAL("Term: zasłonięty obraz kitty schodzi przed znakami, odsłonięty wraca bez wysyłania") {
+TRIAL("Term: a covered kitty image is removed before the characters, an uncovered one comes back without sending") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -844,7 +867,7 @@ TRIAL("Term: zasłonięty obraz kitty schodzi przed znakami, odsłonięty wraca 
     ought(!holds(back, "a=d"));
 }
 
-TRIAL("Term: przesunięty obraz kitty schodzi i staje w nowym miejscu, bez wysyłania") {
+TRIAL("Term: a moved kitty image is removed and placed in the new place, without sending") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -858,7 +881,7 @@ TRIAL("Term: przesunięty obraz kitty schodzi i staje w nowym miejscu, bez wysy�
     ought(!holds(said, kitty_send));
 }
 
-TRIAL("Term: klatki animacji kitty wysyłają się raz, potem tylko się przestawiają") {
+TRIAL("Term: kitty animation frames are sent once, then only switched") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -883,7 +906,7 @@ TRIAL("Term: klatki animacji kitty wysyłają się raz, potem tylko się przesta
     ought(!holds(again, kitty_send));
 }
 
-TRIAL("Term: obraz kitty, którego pikseli nikt nie trzyma, terminal zapomina od razu") {
+TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the terminal at once") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -897,13 +920,13 @@ TRIAL("Term: obraz kitty, którego pikseli nikt nie trzyma, terminal zapomina od
     ought(holds(said, taken(5, 'I')));
     ought(holds(said, sent_whole(8, *rig.root.pixels, 0)));
 
-    // Zasłonięty nie jest zapominany: jego piksele wciąż ktoś trzyma.
+    // A covered one is not forgotten: someone still holds its pixels.
     rig.root.covered = true;
 
     ought(!holds(rig.drawn(), taken(8, 'I')));
 }
 
-TRIAL("Term: duży obraz kitty idzie porcjami po 4096 znaków, m=0 tylko na końcu") {
+TRIAL("Term: a large kitty image goes in chunks of 4096 characters, m=0 only at the end") {
     Rig rig{kittied()};
 
     rig.root.pixels = dotted({40, 40});
@@ -921,7 +944,7 @@ TRIAL("Term: duży obraz kitty idzie porcjami po 4096 znaków, m=0 tylko na koń
     same(counted(said, "m=0;"), std::size_t{1});
 }
 
-TRIAL("Term: base64 dzielony równo na porcje nie dostaje pustej porcji na końcu") {
+TRIAL("Term: base64 that splits evenly into chunks gets no empty chunk at the end") {
     Rig rig{kittied()};
 
     rig.root.pixels = dotted({48, 32});
@@ -934,7 +957,7 @@ TRIAL("Term: base64 dzielony równo na porcje nie dostaje pustej porcji na końc
     same(counted(said, "\x1b_G"), std::size_t{3});
 }
 
-TRIAL("Term: klatka spoza pikseli obrazu nie idzie do kitty") {
+TRIAL("Term: a frame beyond the image's pixels does not go to kitty") {
     Rig rig{kittied()};
 
     rig.root.still = 5;
@@ -945,13 +968,13 @@ TRIAL("Term: klatka spoza pikseli obrazu nie idzie do kitty") {
     ought(!holds(said, std::string{"▒"}));
 }
 
-TRIAL("Term: kitty stawia obraz także w ostatnim wierszu") {
+TRIAL("Term: kitty places an image in the last row too") {
     Rig rig{kittied(), {12, 3}};
 
     ought(holds(rig.drawn(), stood_at("2;3", 5)));
 }
 
-TRIAL("Term: odświeżenie ekranu zdejmuje obrazy kitty i stawia je bez wysyłania") {
+TRIAL("Term: refreshing the screen removes kitty images and places them without sending") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -967,7 +990,7 @@ TRIAL("Term: odświeżenie ekranu zdejmuje obrazy kitty i stawia je bez wysyłan
     ought(!holds(said, kitty_send));
 }
 
-TRIAL("Term: przejście z kitty na znaki zdejmuje obraz, a terminal zapomina go, gdy piksele odejdą") {
+TRIAL("Term: switching from kitty to characters removes the image, and the terminal forgets it when the pixels go") {
     Rig rig{kittied()};
 
     (void)rig.drawn();
@@ -990,7 +1013,7 @@ TRIAL("Term: przejście z kitty na znaki zdejmuje obraz, a terminal zapomina go,
     ought(holds(rig.drawn(), taken(5, 'I')));
 }
 
-TRIAL("Term: wyjście i oddanie terminala zwalniają wszystkie obrazy kitty") {
+TRIAL("Term: leaving and handing over the terminal free all kitty images") {
     auto line = faking::terminal();
 
     line->window = ui::Size{12, 6};
@@ -1014,7 +1037,7 @@ TRIAL("Term: wyjście i oddanie terminala zwalniają wszystkie obrazy kitty") {
         line->written.clear();
         term.draw();
 
-        // Po powrocie obraz idzie od nowa — terminal go zapomniał.
+        // After coming back the image goes anew: the terminal forgot it.
         ought(holds(line->written, sent_whole(5, *root.pixels, 0)));
 
         line->written.clear();
@@ -1023,7 +1046,7 @@ TRIAL("Term: wyjście i oddanie terminala zwalniają wszystkie obrazy kitty") {
     ought(holds(line->written, "\x1b_Ga=d,d=A,q=2\x1b\\"));
 }
 
-TRIAL("Term: bez obrazów kitty wyjście nie wysyła nic o grafice") {
+TRIAL("Term: without kitty images, leaving sends nothing about graphics") {
     auto line = faking::terminal();
 
     {
@@ -1035,7 +1058,7 @@ TRIAL("Term: bez obrazów kitty wyjście nie wysyła nic o grafice") {
     ought(!holds(line->written, "\x1b_G"));
 }
 
-TRIAL("Image: przy kitty obrazy są gotowe od razu, z pikselami pola, po jednym na klatkę") {
+TRIAL("Image: with kitty the images are ready at once, with the field's pixels, one per frame") {
     Loop loop;
     Sheet top{Graphics::kitty};
 
@@ -1060,7 +1083,7 @@ TRIAL("Image: przy kitty obrazy są gotowe od razu, z pikselami pola, po jednym 
     same(one.pixels->stills().size(), std::size_t{2});
     ought(one.size == (ui::Size{10, 5}));
 
-    // Druga klatka to inny znak na tych samych pikselach.
+    // The second frame is another mark on the same pixels.
     top.image->play(false);
     top.image->still(1);
 
@@ -1074,7 +1097,7 @@ TRIAL("Image: przy kitty obrazy są gotowe od razu, z pikselami pola, po jednym 
     (void)loop;
 }
 
-TRIAL("Image: przejście sixel ↔ kitty w biegu przelicza obraz") {
+TRIAL("Image: switching sixel ↔ kitty while running recomputes the image") {
     Loop loop;
     Sheet top{Graphics::sixel};
 

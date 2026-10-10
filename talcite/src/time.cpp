@@ -17,17 +17,19 @@ using Moment = std::chrono::steady_clock::time_point;
 
 class Timing;
 
-// Bilet oczekiwania. Postęp jest tu znany dokładnie — minęło tyle z tylu — więc odliczanie
-// rysuje pasek za darmo. Chwila startu zapisuje się dopiero przy start(), bo obietnica jest
-// leniwa i przed uruchomieniem nie ma czego liczyć.
+// The ticket of a wait. Its progress is known exactly (so much of so much has passed), so a
+// countdown draws a progress bar for free. The start moment is recorded only at start(), because
+// the promise is lazy and there is nothing to count before it runs.
 class Waiting : public detail::Result<void> {
 public:
     explicit Waiting(std::chrono::milliseconds whole) : whole_(whole) {}
 
+    // Records the moment the wait started; until then progress stays at zero.
     void begun(Moment when) {
         began_.store(when.time_since_epoch().count(), std::memory_order_relaxed);
     }
 
+    // The share of the wait that has passed, from 0 to 1; 1 once the ticket is settled.
     [[nodiscard]] double progress() const override {
         if (over(*this)) return 1.0;
 
@@ -47,13 +49,15 @@ private:
     std::chrono::milliseconds whole_;
 };
 
-// Obietnica, która sięga po chroniony konstruktor Promise, żeby podstawić własny bilet.
+// A promise that reaches for the protected constructor of Promise to supply its own ticket.
 class Awaiting : public Promise<void> {
 public:
     Awaiting(Promise<void>::Callback given, std::shared_ptr<Waiting> made)
         : Promise<void>(std::move(given), std::move(made)) {}
 };
 
+// The watcher hooked on a ticket: when the ticket settles by other means, it removes the entry
+// from the timer.
 class Dropping : public detail::Waiter {
 public:
     Dropping(Timing& whose, std::uint64_t which) : whose_(whose), which_(which) {}
@@ -65,8 +69,9 @@ private:
     std::uint64_t which_;
 };
 
-// Jeden wątek na całą bibliotekę. Śpi do najbliższego terminu; nowy termin bliższy niż
-// obecny budzi go zmienną warunkową. Sto oczekiwań to dalej jeden wątek, a nie sto.
+// One thread for the whole library. It sleeps until the nearest deadline; a new deadline nearer
+// than the current one wakes it through the condition variable. A hundred waits are still one
+// thread, not a hundred.
 class Timing {
 public:
     Timing() = default;
@@ -78,8 +83,11 @@ public:
     Timing(Timing&&) = delete;
     Timing& operator=(Timing&&) = delete;
 
+    // Starts the timer thread.
     void begin() { keeper_ = std::thread{[this] { serve(); }}; }
 
+    // Settles `result` at `when`: with success, or with `Overdue` when `bad` is set. If the
+    // promise settles earlier by itself, the entry is dropped.
     void after(Moment when, std::shared_ptr<detail::Result<void>> result, bool bad) {
         std::shared_ptr<detail::Waiter> watch;
         std::uint64_t which = 0;
@@ -95,11 +103,14 @@ public:
 
         stirred_.notify_all();
 
-        // Poza zamkiem, bo obietnica już rozstrzygnięta zawoła ogniwo od razu, a ono wraca
-        // tutaj po drop() — pod zamkiem byłoby to zakleszczenie na własnym wątku.
+        // Outside the lock, because a promise that is already settled calls the watcher at once,
+        // and the watcher comes back here through drop(); under the lock that would deadlock on
+        // our own thread.
         if (detail::hooked(*result, watch)) drop(which);
     }
 
+    // Removes the entry `which`, if it is still waiting. The entry is moved out and destroyed
+    // only after the lock is released.
     void drop(std::uint64_t which) {
         Entry taken;
 
@@ -127,6 +138,8 @@ private:
         bool bad = false;
     };
 
+    // The loop of the timer thread: sleeps until the nearest deadline, then settles every entry
+    // that is due.
     void serve() {
         while (true) {
             std::vector<Entry> due;
@@ -164,8 +177,8 @@ private:
                 }
             }
 
-            // Rozstrzyganie poza zamkiem: budzi ono obserwatorów, a wśród nich nasze własne
-            // ogniwo zdejmujące wpis, które wraca tu po zamek.
+            // Settling happens outside the lock: it wakes the watchers, among them our own
+            // watcher that removes the entry and comes back here for the lock.
             for (Entry& one : due) {
                 if (one.bad) detail::spoiled(*one.result, std::make_exception_ptr(Overdue{}));
                 else detail::settled(*one.result);
@@ -180,10 +193,10 @@ private:
     std::thread keeper_;
 };
 
-// Zegar jest celowo nieusuwany. Kolejność niszczenia obiektów statycznych jest odwrotna do
-// kolejności powstawania, a `Timing` powstaje później niż `Pool` — więc zniknąłby pierwszy,
-// w chwili gdy robotnicy puli jeszcze biegną i mogą go zawołać. Zamiast układać zależność
-// między dwoma singletonami, zegar po prostu przeżywa program.
+// The timer is deliberately never destroyed. Static objects are destroyed in the reverse order of
+// their creation, and `Timing` is created later than `Pool`, so it would go first, while the
+// pool's workers are still running and may call it. Instead of arranging a dependency between
+// two singletons, the timer simply outlives the program.
 Timing& timing() {
     static Timing* only = [] {
         auto* made = new Timing;
@@ -195,8 +208,11 @@ Timing& timing() {
     return *only;
 }
 
+// The ticket has settled: the timer forgets the entry.
 void Dropping::woke() { whose_.drop(which_); }
 
+// A lazy promise that settles `patience` after it is started: with success, or with `Overdue`
+// when `bad` is set.
 Promise<void> counted(std::chrono::milliseconds patience, bool bad) {
     auto held = std::make_shared<Waiting>(patience);
 
@@ -215,25 +231,31 @@ Overdue::Overdue() : Trouble("Timed out.") {}
 
 Stopwatch::Stopwatch() : began_(std::chrono::steady_clock::now()) {}
 
+// The time since the stopwatch was made or last reset.
 std::chrono::milliseconds Stopwatch::spent() const {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - began_);
 }
 
+// Starts counting again from now.
 void Stopwatch::reset() { began_ = std::chrono::steady_clock::now(); }
 
+// The current moment of the monotonic clock.
 std::chrono::steady_clock::time_point Time::now() { return std::chrono::steady_clock::now(); }
 
+// The current wall-clock time, truncated to whole seconds.
 std::chrono::sys_seconds Time::stamp() {
     return std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
 }
 
+// A promise that succeeds after `patience`.
 Promise<void> Time::later(std::chrono::milliseconds patience) { return counted(patience, false); }
 
+// A promise that fails with `Overdue` after `patience`.
 Promise<void> Time::limit(std::chrono::milliseconds patience) { return counted(patience, true); }
 
-// Termin dla `Promise::timeout`. Nagłówek obietnicy nie może sięgnąć po `time.hpp`, bo ten
-// sięga po niego — więc deklaracja stoi w `detail`, a ciało tutaj, przy zegarze.
+// The deadline for `Promise::timeout`. The promise header cannot include `time.hpp`, because
+// that one includes it, so the declaration stands in `detail` and the body here, next to the timer.
 Promise<void> detail::deadline(std::chrono::milliseconds patience) {
     return counted(patience, true);
 }

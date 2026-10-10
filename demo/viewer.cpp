@@ -33,14 +33,15 @@ public:
     std::function<void()> sized;
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
         return true;
     }
 
-    // Górny pasek dopełnia się do szerokości okna, więc po zmianie rozmiaru trzeba go złożyć
-    // od nowa. Zdarzenie i tak przechodzi przez korzeń, więc nie ma czego dokładać.
+    // The top bar is padded to the width of the window, so after a resize it has to be put together
+    // again. The event passes through the root anyway, so there is nothing else to add.
     bool handle(talcite::ui::SizeEvent&) override {
         if (sized) sized();
 
@@ -51,70 +52,71 @@ private:
     talcite::Term& term_;
 };
 
-// **Tekst wbudowany w program.** Podgląd ma pokazywać sam siebie także wtedy, gdy nikt nie podał
-// ścieżki — a przy okazji jest tu wszystko, co potrafi się zepsuć: akapit dłuższy niż okno,
-// tabulatory, pusty wiersz i jeden wiersz bardzo długi.
+// Text built into the program. The viewer has something to show even when no path is given, and the
+// text holds everything that tends to break: a paragraph longer than the window, tabs, an empty
+// line and one very long line.
 constexpr const char* sample =
-    "talcite — podgląd tekstu\n"
+    "talcite — text viewer\n"
     "\n"
-    "Ten tekst jest wbudowany w demo. Uruchomienie z argumentem otwiera podany plik, i wtedy\n"
-    "podgląd bierze go **strumieniowo**: czyta tylko te kawałki, które akurat są potrzebne, więc\n"
-    "otwarcie dziennika na dwa gigabajty kosztuje tyle samo, co otwarcie tej notki.\n"
+    "This text is built into the demo. Running it with an argument opens the given file, and then\n"
+    "the viewer takes it as a stream: it reads only the pieces that are needed at the moment, so\n"
+    "opening a two-gigabyte log costs as much as opening this note.\n"
     "\n"
-    "Klawisze\n"
-    "\tF2\tzawijanie wierszy\n"
-    "\tF3\tnastępne zaznaczenie\n"
-    "\tF4\tpozycja w wierszach albo w bajtach\n"
-    "\tF5\tpoprzednie zaznaczenie\n"
-    "\tF10\twyjście\n"
+    "Keys\n"
+    "\tF2\tline wrapping\n"
+    "\tF3\tnext mark\n"
+    "\tF4\tposition in lines or in bytes\n"
+    "\tF5\tprevious mark\n"
+    "\tF10\texit\n"
     "\n"
-    "Strzałki, PageUp, PageDown, Home i End przewijają. Kółko myszy też.\n"
+    "Arrows, PageUp, PageDown, Home and End scroll. So does the mouse wheel.\n"
     "\n"
-    "Co widać na górnym pasku\n"
+    "What the top bar shows\n"
     "\n"
-    "Po lewej źródło, po prawej położenie. Przy tekście wbudowanym liczba wierszy jest znana od\n"
-    "razu, bo dokument leży w pamięci i policzenie go kosztuje mikrosekundy. Przy pliku czytanym\n"
-    "strumieniowo liczba wierszy jest **nieznana** i pasek pokazuje pytajnik — dopóki nie "
-    "dojdziesz\n"
-    "do końca, choćby klawiszem End. Wtedy pytajnik znika i już nie wraca. To jest dokładnie to\n"
-    "samo, co znaczy plus w Midnight Commanderze.\n"
+    "On the left the source, on the right the position. With the built-in text the number of\n"
+    "lines is known at once, because the document lies in memory and counting it takes microseconds.\n"
+    "With a file read as a stream the number of lines is unknown, and the bar shows a question mark "
+    "until\n"
+    "you reach the end, if only with the End key. Then the question mark disappears and never comes\n"
+    "back. This is exactly what the plus means in Midnight Commander.\n"
     "\n"
-    "Pozycja bajtowa jest znana zawsze, bo obie drogi prowadzą przez bajty. Gdyby podgląd dostał\n"
-    "źródło wierszowe — takie, które samo oddaje gotowe wiersze i o bajtach nic nie wie — pozycja\n"
-    "bajtowa byłaby pusta, a pasek pokazywałby wtedy tylko wiersze.\n"
+    "The byte position is always known, because both ways go through bytes. If the viewer got a\n"
+    "line source (one that hands over ready lines and knows nothing about bytes), the byte position\n"
+    "would be empty, and the bar would then show only lines.\n"
     "\n"
-    "Zawijanie\n"
+    "Wrapping\n"
     "\n"
-    "Poniżej jest jeden wiersz dłuższy niż jakiekolwiek okno. Przy włączonym zawijaniu rozłoży "
-    "się\n"
-    "na kilka wierszy ekranu, a strzałka w dół przejdzie przez nie po kolei, nie przeskakując od\n"
-    "razu do następnego wiersza dokumentu. Po wyłączeniu zawijania ten sam wiersz urwie się na\n"
-    "krawędzi, a numer wiersza zostanie ten sam — przełączenie nigdy nie przenosi w inne miejsce\n"
-    "dokumentu.\n"
+    "Below is one line longer than any window. With wrapping on, it spreads "
+    "over\n"
+    "several screen rows, and the down arrow goes through them in turn instead of jumping straight\n"
+    "to the next line of the document. With wrapping off, the same line is cut at the edge, and\n"
+    "the line number stays the same — switching never moves you to another place in the\n"
+    "document.\n"
     "\n"
-    "Raz dwa trzy cztery pięć sześć siedem osiem dziewięć dziesięć jedenaście dwanaście trzynaście "
-    "czternaście piętnaście szesnaście siedemnaście osiemnaście dziewiętnaście dwadzieścia "
-    "dwadzieścia jeden dwadzieścia dwa dwadzieścia trzy dwadzieścia cztery dwadzieścia pięć "
-    "dwadzieścia sześć dwadzieścia siedem dwadzieścia osiem dwadzieścia dziewięć trzydzieści.\n"
+    "One two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty "
+    "twenty-one twenty-two twenty-three twenty-four twenty-five "
+    "twenty-six twenty-seven twenty-eight twenty-nine thirty.\n"
     "\n"
-    "Tabulatory\n"
+    "Tabs\n"
     "\n"
-    "kolumna\tdruga\ttrzecia\n"
+    "column\tsecond\tthird\n"
     "a\tbb\tccc\n"
-    "dłuższe\tpole\tobok\n"
+    "longer\tfield\tbeside\n"
     "\n"
-    "Tabulator rozwija się do ośmiu kolumn dopiero przy rysowaniu. W treści zostaje jednym bajtem "
+    "A tab expands to eight columns only when drawn. In the content it stays a single byte "
     "—\n"
-    "inaczej pozycja bajtowa przestałaby się zgadzać z plikiem na dysku.\n"
+    "otherwise the byte position would stop matching the file on the disk.\n"
     "\n"
-    "Znaki szersze niż kratka\n"
+    "Characters wider than a cell\n"
     "\n"
-    "你好世界 — każdy z tych znaków zajmuje dwie kolumny, więc cięcie wiersza liczy kolumny, a "
-    "nie\n"
-    "znaki ani bajty. Przy wąskim oknie widać, że żaden z nich nie wystaje poza krawędź.\n"
+    "你好世界 — each of these characters takes two columns, so cutting a line counts columns, "
+    "not\n"
+    "characters or bytes. In a narrow window you can see that none of them sticks out past the edge.\n"
     "\n"
-    "Koniec.\n";
+    "The end.\n";
 
+// The bytes of a string, as the viewer takes its content.
 talcite::Bytes lump(const std::string& what) {
     talcite::Bytes made;
 
@@ -125,10 +127,10 @@ talcite::Bytes lump(const std::string& what) {
     return made;
 }
 
-// **Szukanie robi aplikacja, nie podgląd.** Widżet dostaje gotowe zakresy i tylko je maluje —
-// tak samo, jak `Decoration.mark` w CodeMirror nic nie wie o tym, skąd się wziął. Numeracja
-// wierszy musi się zgadzać ze `Spool`: koniec wiersza na końcu tekstu nie robi pustego wiersza
-// po sobie.
+// The application does the searching, not the viewer. The widget gets ready ranges and only paints
+// them, just as Decoration.mark in CodeMirror knows nothing about where it came from. The line
+// numbering has to agree with `Spool`: a line ending at the end of the text does not make an empty
+// line after itself.
 std::vector<talcite::ui::Mark> hunted(const std::string& what, const std::string& word) {
     std::vector<talcite::ui::Mark> made;
 
@@ -156,6 +158,7 @@ std::vector<talcite::ui::Mark> hunted(const std::string& what, const std::string
     return made;
 }
 
+// A reversed style, for the status bar.
 talcite::Style turned() {
     talcite::Style made{};
 
@@ -166,14 +169,16 @@ talcite::Style turned() {
 
 }
 
+// A viewer over the file named on the command line, read as a stream, or over the built-in text
+// with every occurrence of one word marked.
 int main(int argc, char** argv) {
     talcite::Term term;
 
     Sheet sheet{term};
 
-    // Jedna własna rola ponad wbudowaną skórkę: konstruktor `Skin` **dokłada** do wartości
-    // wbudowanych, więc reszta wyglądu zostaje nietknięta. Przedrostek `demo.`, bo nazwy
-    // biblioteki zaczynają się od `talcite.` i cudze nie mają prawa ich przykrywać.
+    // One role of our own on top of the built-in skin: the `Skin` constructor adds to the built-in
+    // values, so the rest of the look stays untouched. The prefix is `demo.`, because the library's
+    // names begin with `talcite.` and nobody else's may cover them.
     sheet.skin(talcite::ui::Skin{{{"demo.bar", turned()}}});
 
     const auto legend = std::make_shared<talcite::ui::Legend>();
@@ -192,21 +197,21 @@ int main(int argc, char** argv) {
 
     sheet.children().add(legend);
 
-    const auto source = std::make_shared<std::string>("tekst wbudowany");
+    const auto source = std::make_shared<std::string>("built-in text");
     const auto counted = std::make_shared<bool>(false);
 
-    // Położenie w wierszach albo w bajtach — jedno i drugie podgląd oddaje, a wybór należy do
-    // aplikacji. Pytajnik znaczy „jeszcze nie wiem", nie „nie ma".
+    // The position in lines or in bytes: the viewer gives both, and the choice belongs to the
+    // application. A question mark means "not known yet", not "none".
     const auto placed = [shown, counted] {
         if (*counted) {
-            if (!shown->at().has_value()) return std::string{"bajty nieznane"};
+            if (!shown->at().has_value()) return std::string{"bytes unknown"};
 
             return std::to_string(*shown->at()) + "/" + std::to_string(*shown->whole());
         }
 
-        if (!shown->first().has_value()) return std::string{"pusto"};
+        if (!shown->first().has_value()) return std::string{"empty"};
 
-        std::string made = "wiersz " + std::to_string(*shown->first() + 1) + "/";
+        std::string made = "line " + std::to_string(*shown->first() + 1) + "/";
 
         made += shown->lines().has_value() ? std::to_string(*shown->lines()) : std::string{"?"};
 
@@ -225,40 +230,40 @@ int main(int argc, char** argv) {
 
     sheet.sized = naming;
 
-    // **Nasłuch wisi na kolumnie, nie na pasku.** Zdarzenie idzie bąbelkiem w górę od podglądu,
-    // a pasek jest jego rodzeństwem — na nim nie usłyszałby niczego. Obserwator oddaje fałsz, żeby
-    // nie zasłonić zdarzenia nikomu wyżej.
+    // The listener hangs on the column, not on the bar. The event bubbles up from the viewer, and
+    // the bar is its sibling, so on the bar it would hear nothing. The observer returns false so as
+    // not to hide the event from anyone above.
     (void)column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
         naming();
 
         return false;
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Zawijaj"), [shown, naming] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Dalej"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Next"),
                       [shown] { (void)shown->step(1); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Wstecz"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Prev"),
                       [shown] { (void)shown->step(-1); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Pozycja"), [counted, naming] {
+    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Pos"), [counted, naming] {
         *counted = !*counted;
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjście"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
-    // **Plik czytany strumieniowo i asynchronicznie.** `fs::open` i `File::read` idą przez pulę,
-    // a podgląd dostaje `Feed`, czyli źródło oddające obietnicę: żadne okno nie czeka na dysk na wątku
-    // głównym. Otwarcie też nie czeka — do jego przyjścia podgląd jest pusty. Uchwyt pliku żyje
-    // w domknięciu, więc nikt go nie zamknie wcześniej niż podgląd.
+    // The file is read as a stream and asynchronously. `fs::open` and `File::read` go through the
+    // pool, and the viewer gets a `Feed`, a source that returns a promise: no window waits for the
+    // disk on the main thread. Opening does not wait either; until it arrives the viewer is empty.
+    // The file handle lives in the closure, so nobody closes it before the viewer is done with it.
     std::optional<talcite::Promise<void>> opening;
 
     if (argc > 1) {
@@ -280,7 +285,7 @@ int main(int argc, char** argv) {
                         got.second);
                 })
                 .fail([shown, source, where](const std::exception&) {
-                    *source = "nie udało się otworzyć: " + talcite::fs::to_string(where);
+                    *source = "could not open: " + talcite::fs::to_string(where);
 
                     shown->hold(lump(sample));
                 }));
@@ -291,17 +296,17 @@ int main(int argc, char** argv) {
 
         shown->hold(lump(said));
 
-        // Zaznaczamy każde wystąpienie jednego słowa — po to, żeby było co malować i po czym
-        // skakać. Przy pliku z argumentu nie robimy tego: demo nie ma go w pamięci, a przechodzenie
-        // dwóch gigabajtów po to, żeby coś podświetlić, byłoby dokładnie tym szukaniem, którego
-        // jeszcze nie ma.
-        shown->marks().all(hunted(said, "wiersz"));
+        // We mark every occurrence of one word, so that there is something to paint and to jump
+        // between. We do not do it for a file from the argument: the demo does not hold it in
+        // memory, and walking two gigabytes to highlight something would be exactly the search that
+        // does not exist yet.
+        shown->marks().all(hunted(said, "line"));
     }
 
     term.show(sheet);
 
-    // Bez ogniska klawisze kończą wędrówkę na korzeniu i legenda nigdy ich nie zobaczy. Podgląd
-    // bierze je sam, więc `Pane` nie jest tu potrzebny.
+    // Without focus, keys end their journey at the root and the legend never sees them. The viewer
+    // takes them itself, so a `Pane` is not needed here.
     shown->focus();
 
     naming();

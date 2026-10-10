@@ -7,28 +7,31 @@
 
 #include "curving.hpp"
 
-// **X25519 z RFC 7748**, gdy system go nie daje (CNG ma krzywą 25519 dopiero od Windows 10): drabina
-// Montgomery'ego na samej współrzędnej u, w rzucie (X : Z), na ciele z `curving`.
+// X25519 from RFC 7748, for when the system does not provide it (CNG has curve 25519 only from
+// Windows 10 on): the Montgomery ladder on the u coordinate alone, in projective form (X : Z), over
+// the field from `curving`.
 //
-// Niezmiennik drabiny: R1 − R0 = P. Na każdym bicie skalara od najstarszego jedno z nich się podwaja,
-// a drugie staje się ich sumą — różnica zostaje P, więc wystarcza dodawanie różnicowe. Który punkt
-// się podwaja, zależy od bitu sekretu: zamiast gałęzi zamiana w czasie stałym, maską, i to tylko
-// wtedy, gdy bit różni się od poprzedniego. Na końcu u = X0 · Z0^(p − 2). Zamiany po pętli, jak
-// w RFC, nie ma: ostatni bit jest przycięty do zera, więc żadna zamiana nie zostaje w zawieszeniu.
+// The ladder invariant: R1 − R0 = P. On every bit of the scalar, from the most significant, one of
+// them doubles and the other becomes their sum; the difference stays P, so differential addition
+// is enough. Which point doubles depends on a secret bit: instead of a branch there is a
+// constant-time swap by mask, done only when the bit differs from the previous one. At the end
+// u = X0 · Z0^(p − 2). There is no swap after the loop as in the RFC: the last bit is clamped to
+// zero, so no swap is left pending.
 //
-// Skalar przycinamy jak RFC (bity 0–2 i 255 zero, bit 254 jeden) bez kopii — przycięte bity wynikają
-// z numeru, a ten jest jawny. Wynik zerowy (punkt małego rzędu, także zapisany niekanonicznie) to
-// odmowa, jak w libcrypto i w przejściówce CNG. Stan drabiny to pochodna sekretu — na końcu go
-// zerujemy.
+// The scalar is clamped as in the RFC (bits 0–2 and 255 zero, bit 254 one) without a copy: the
+// clamped bits follow from the bit index, which is public. A zero result (a point of small order,
+// also when written non-canonically) is a refusal, as in libcrypto and in the CNG adapter. The
+// ladder state is derived from the secret, so it is wiped at the end.
 namespace talcite {
 
 namespace {
 
 constexpr std::size_t wide = 32;
 
-// (A − 2) / 4 dla A = 486662.
+// (A − 2) / 4 for A = 486662.
 constexpr std::int64_t a24 = 121665;
 
+// Bit `at` of the clamped scalar (little-endian): bit 254 is always one, bits 0 to 2 always zero.
 std::int64_t bit(const Bytes& scalar, int at) {
     if (at == 254) return 1;
 
@@ -39,6 +42,8 @@ std::int64_t bit(const Bytes& scalar, int at) {
 
 }
 
+// The X25519 function: `scalar` times the point with coordinate `u`. Throws when the scalar is not
+// 32 bytes; returns nothing for a `u` of the wrong length or an all-zero result.
 std::optional<Bytes> x25519(const Bytes& scalar, const Bytes& u) {
     using namespace curving;
 

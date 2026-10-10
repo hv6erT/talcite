@@ -35,27 +35,29 @@
 
 namespace talcite {
 
-// Losowość bierzemy **wprost od systemu**, a nie przez `std::random_device`. Standard nie obiecuje,
-// że tamto urządzenie jest losowe — wolno mu być zwykłym generatorem deterministycznym, a MinGW
-// przez lata oddawał nim ten sam ciąg przy każdym uruchomieniu. Z wnętrza programu sprawdzić się
-// tego nie da: `entropy()` bywa zerowe także tam, gdzie źródło jest prawdziwe. Systemowe źródło
-// jest za to jedno na system i dobrze opisane:
+// Randomness is taken directly from the system, not through std::random_device. The standard does
+// not promise that that device is random: it may be an ordinary deterministic generator, and MinGW
+// for years returned the same sequence from it at every run. This cannot be checked from inside a
+// program: entropy() is sometimes zero even where the source is real. The system source, on the
+// other hand, is one per system and well documented:
 //
-// - Windows: `BCryptGenRandom` z generatorem wybranym przez system — ten sam CNG, który daje skróty,
-//   więc nic nowego się nie linkuje;
-// - Linux: getrandom, który czeka tylko raz, na zasilenie puli po starcie, a potem nie czeka nigdy;
-//   jądro starsze niż 3.17 go nie zna i wtedy czytamy /dev/urandom;
-// - macOS i BSD: arc4random_buf, który nie zawodzi;
-// - reszta POSIX-u: /dev/urandom.
+// - Windows: `BCryptGenRandom` with the generator chosen by the system, the same CNG that provides
+//   the hashes, so nothing new is linked;
+// - Linux: getrandom, which waits only once, for the pool to be seeded after boot, and then never
+//   waits; a kernel older than 3.17 does not know it, and then we read /dev/urandom;
+// - macOS and BSD: arc4random_buf, which does not fail;
+// - the rest of POSIX: /dev/urandom.
 //
-// **Generatora pseudolosowego tu nie ma i nie może być.** `mt19937` powstał do symulacji: jego stan
-// odtwarza się z trzystu dwunastu kolejnych wyników. Kto zobaczy tyle liczb, zna wszystkie następne
-// — a numer transakcji STUN jest **jedynym dowodem tożsamości odpowiedzi**.
+// There is no pseudorandom generator here and there must not be one. mt19937 was made for
+// simulations: its state can be reconstructed from 312 consecutive outputs. Whoever sees that many
+// numbers knows all the following ones, and the STUN transaction number is the only proof of an
+// answer's identity.
 
 namespace {
 
 #ifndef _WIN32
 
+// Fills `made` from /dev/urandom; throws `Trouble` when it cannot be opened or read.
 [[maybe_unused]] void urandom(Bytes& made) {
     int handle = -1;
 
@@ -90,13 +92,15 @@ namespace {
 
 }
 
+// `much` bytes from the system's cryptographic randomness; throws `Trouble` when the system gives
+// none.
 Bytes random(std::size_t much) {
     Bytes made(much);
 
     if (much == 0) return made;
 
 #ifdef _WIN32
-    // `ULONG` na długość — prośba ponad 4 GB idzie w kilku podejściach.
+    // The length is a ULONG, so a request above 4 GB goes in several rounds.
     for (std::size_t at = 0; at < made.size();) {
         const auto part = static_cast<ULONG>(std::min<std::size_t>(made.size() - at, 0x40000000u));
 
@@ -108,8 +112,8 @@ Bytes random(std::size_t much) {
         at += part;
     }
 #elif defined(TALCITE_RANDOM_GETRANDOM)
-    // getrandom bez flag oddaje najwyżej 32 MiB naraz i potrafi oddać mniej, niż poproszono — stąd
-    // pętla dobierająca resztę.
+    // getrandom without flags returns at most 32 MiB at a time and can return less than requested,
+    // hence the loop that fetches the rest.
     std::size_t at = 0;
 
     while (at < made.size()) {

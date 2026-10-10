@@ -7,31 +7,34 @@
 
 #include "fscore.hpp"
 
-// **Metadane osadzone w plikach — drzwi rdzenia.** Rozbiór formatów (ID3, komentarze Vorbis, atomy
-// MP4) mieszka za szwem, w talcite-adapters, tak jak dekodery obrazów: rdzeń daje typy, interfejs
-// dostawcy i ten plik, który otwiera plik, puszcza dostawcę w puli i zamienia jego zdanie odmowy
-// w `Refused`. Kontener rozpoznaje dostawca — wołający pyta „co ten plik mówi o sobie" i nie wie,
-// czy czyta FLAC, czy MP4.
+// Metadata embedded in files: the core's door. Parsing the formats (ID3, Vorbis comments, MP4
+// atoms) lives behind the seam, in talcite-adapters, like the image decoders: the core provides
+// the types, the provider interface and this file, which opens the file, runs the provider on the
+// pool and turns its refusal sentence into `Refused`. The provider recognizes the container; the
+// caller asks "what does this file say about itself" without knowing whether it reads FLAC or MP4.
 //
-// Dostawca dostaje `meta::Reader`, a nie bryłę bajtów: FLAC waży dziesiątki megabajtów, ID3v1 stoi
-// na samym końcu pliku, a atom `moov` w MP4 często też, więc rozbiór skacze po pliku zamiast go
-// wczytywać. Odczyt jest synchroniczny, bo cała praca biegnie już w puli, torem `io` — rozbiór
-// znaczników to garść porównań bajtów, a czeka się na dysk.
+// The provider gets a `meta::Reader`, not a lump of bytes: a FLAC file weighs tens of megabytes,
+// ID3v1 sits at the very end of the file, and the MP4 moov atom often does too, so parsing jumps
+// around the file instead of reading it whole. Reading is synchronous, because all the work
+// already runs on the pool, on the `io` lane: parsing tags is a handful of byte comparisons, and
+// the waiting is for the disk.
 namespace talcite {
 
 namespace {
 
-// Plik otwarty do odczytu, z rozmiarem zapamiętanym przy otwarciu. Odczyt poza końcem oddaje mniej
-// bajtów albo pustkę, nigdy błąd — o koniec pliku dostawca pyta przez `size()`, a krótszy odczyt
-// to dla niego znak pliku uciętego. Błąd systemu (udział, który zniknął) wychodzi jako `fs::Trouble`
-// i odrzuca obietnicę, jak w każdym odczycie `fs`.
+// A file opened for reading, with its size remembered at opening. A read past the end returns
+// fewer bytes or nothing, never an error: the provider asks about the end of the file through
+// `size()`, and a short read is its sign of a truncated file. A system error (a share that
+// vanished) comes out as `fs::Trouble` and rejects the promise, as in every `fs` read.
 class Opened final : public meta::Reader {
 public:
     explicit Opened(const fs::path& where)
         : held_(fs::core::open_at(where, fs::Mode::read)), size_(fs::core::sized(*held_)) {}
 
+    // The size of the file at the moment it was opened.
     [[nodiscard]] std::uintmax_t size() const override { return size_; }
 
+    // Up to `much` bytes from offset `at`, cut at the end of the file.
     [[nodiscard]] Bytes read(std::uintmax_t at, std::size_t much) override {
         if (at >= size_ || much == 0) return {};
 
@@ -47,14 +50,16 @@ private:
 
 }
 
+// The bound metadata provider; throws `Unbound` when none is bound.
 MetaProvider& Seam<MetaProvider>::provider() const {
     if (provider_ == nullptr) throw Unbound{MetaProvider::kind()};
 
     return *provider_;
 }
 
-// Szew bez dostawcy odrzuca obietnicę (`Unbound`), a nie rzuca od razu: wołający obietnicy ma
-// jedną drogę błędu, a nie dwie.
+// Promises the description of the file's embedded metadata. A seam without a provider rejects the
+// promise (`Unbound`) rather than throwing at once: the caller of a promise has one error path,
+// not two. A provider's refusal rejects it with `Refused`.
 Promise<meta::Description> Seam<MetaProvider>::described(fs::path where) const {
     return Promise<meta::Description>{[held = provider_, where = std::move(where)](auto resolve, auto) {
         if (held == nullptr) throw Unbound{MetaProvider::kind()};
@@ -69,6 +74,8 @@ Promise<meta::Description> Seam<MetaProvider>::described(fs::path where) const {
     }};
 }
 
+// Promises the bytes of the embedded picture with the given number, with the same errors as
+// `described`.
 Promise<Bytes> Seam<MetaProvider>::pictured(fs::path where, std::size_t which) const {
     return Promise<Bytes>{[held = provider_, where = std::move(where), which](auto resolve, auto) {
         if (held == nullptr) throw Unbound{MetaProvider::kind()};

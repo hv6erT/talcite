@@ -17,21 +17,25 @@
 namespace talcite::net {
 
 struct Listener::Held {
+    // The last handle to the gate is gone: close it if that has not happened yet, and only now
+    // hand the descriptor number to the exchange to be closed.
     ~Held() {
         close();
 
         retiring(numbered);
     }
 
-    // **Brama lokalna sprząta po sobie plik.** Zostawiony myli następne uruchomienie: wygląda jak
-    // żywe gniazdo, a nie jest — i choć `listening` umie go rozpoznać po odmowie połączenia,
-    // zostawianie śmieci w katalogu użytkownika nie jest naszą rolą. Kasujemy **przy zamknięciu**,
-    // a nie z ostatnim uchwytem: ten ginie dopiero, gdy wrócą anulowane przyjęcia, a do tego czasu
-    // pod tą ścieżką mogła już stanąć nowa brama — i straciłaby plik. Deskryptorowi kasowanie
-    // ścieżki nie szkodzi.
+    // Closes the gate: stops listening and cancels a pending accept.
     //
-    // Brama rury nie ma gniazda nasłuchującego ani pliku: zamyka się wolna instancja, a czekające
-    // przyjęcie dostaje anulowanie na swojej instancji.
+    // A local gate removes its file. A file left behind misleads the next run: it looks like a live
+    // socket but is not, and although `listening` can recognize it by the refused connection,
+    // leaving litter in the user's directory is not our business. The file is removed at close,
+    // not with the last handle: that one dies only when the cancelled accepts come back, and by
+    // then a new gate may already stand at that path and would lose its file. Removing the path
+    // does no harm to the descriptor.
+    //
+    // A pipe gate has no listening socket and no file: the spare instance is closed, and a pending
+    // accept gets cancelled on its own instance.
     void close() {
         if (const Handle one = which.exchange(nothing); one != nothing) {
             forget(one);
@@ -48,32 +52,33 @@ struct Listener::Held {
         if (waiting != nothing) forget(waiting);
     }
 
-    // **Numer przeżywa zamknięcie i ginie dopiero razem z uchwytem.** Zgłoszenia w locie trzymają
-    // uchwyt przez `kept`, więc deskryptor zamyka się dopiero wtedy, gdy nikt nie może już ani go
-    // zgłosić, ani na nim czytać. Zamykany wcześniej wracał jako numer świeżo otwartego gniazda —
-    // i wtedy ktoś czytał z cudzego połączenia.
+    // The number outlives the close and dies only with the handle. Requests in flight hold the
+    // handle through `kept`, so the descriptor is closed only when nobody can submit it or read
+    // from it any more. Closed earlier, the number could come back as a freshly opened socket, and
+    // someone would read from another connection.
     Handle numbered = nothing;
 
     std::atomic<Handle> which{nothing};
     Address mine;
 
-    // Centrala trzyma **jedno** zgłoszenie na gniazdo na kierunek, więc drugie przyjmowanie
-    // zaczęte w trakcie pierwszego nadpisywało je bez śladu: pierwsze nie dostawało ani
-    // zakończenia, ani terminu, znikało z mapy — a razem z nim znikała cierpliwość — i obietnica
-    // nie rozstrzygała się nigdy, trzymając przy tym bramę i jej deskryptor do końca programu.
+    // The exchange holds one request per socket per direction, so only one accept may run at a
+    // time. A second accept started during the first would overwrite it without a trace: the
+    // first would get neither a completion nor its deadline, it would vanish from the map, and its
+    // promise would never settle, keeping the gate and its descriptor until the end of the program.
     //
-    // Pamiętamy **kto** to miejsce trzyma, a nie „czy ktoś je trzyma". Bez tożsamości nie da się
-    // zwolnić go przy anulowaniu, a anulowanie jest jedyną chwilą, w której wołający się o tym
-    // dowiaduje: na IOCP anulowana operacja nie znika, tylko wraca portem jeszcze długo potem, więc
-    // gołą flagę wolno byłoby skasować dopiero wtedy — i skasowałoby się cudzą, gdyby w międzyczasie
-    // ktoś zdążył ruszyć.
+    // We remember who holds the place, not whether someone holds it. Without the identity the
+    // place could not be released at cancellation, and cancellation is the only moment the caller
+    // learns about it: on IOCP a cancelled operation does not disappear but comes back through the
+    // port much later, so a bare flag could be cleared only then, and it would clear someone
+    // else's if another accept had started in the meantime.
     //
-    // Goły wskaźnik, bo to jest wyłącznie znacznik tożsamości: nigdy nie sięgamy przez niego do
-    // obiektu. Zgłoszenie żyje własnym uchwytem w centrali i przez `kept`.
+    // A raw pointer, because it is only an identity tag: we never reach the object through it. The
+    // request lives by its own handle in the exchange and through `kept`.
     std::mutex guard;
     const void* meeting = nullptr;
 
-    // Rura (`piping.hpp`): brama i instancja, na której czeka przyjęcie — pod tym samym zamkiem.
+    // A pipe (`piping.hpp`): the gate and the instance on which an accept waits, under the same
+    // lock.
     std::shared_ptr<pipes::Gate> gate;
     Handle waiting = nothing;
 };
@@ -83,8 +88,9 @@ namespace {
 struct MeetPromise : Doing, detail::Result<Stream> {
     std::shared_ptr<Listener::Held> mine;
 
-    // Zwalnia miejsce **tylko wtedy, gdy wciąż jest moje**. Spóźnione zakończenie anulowanej
-    // operacji trafia tu, gdy miejsce należy już do następnej — i ma wtedy nie zrobić nic.
+    // Releases the accepting place, but only while it is still ours. A late completion of a
+    // cancelled operation arrives here when the place already belongs to the next one, and then
+    // it must do nothing.
     void yielded() {
         const std::lock_guard<std::mutex> kept{mine->guard};
 
@@ -94,39 +100,42 @@ struct MeetPromise : Doing, detail::Result<Stream> {
         mine->waiting = nothing;
     }
 
-    // Instancja rury, która nie została strumieniem, schodzi przez centralę — jest do niej przypięta.
+    // A pipe instance that did not become a stream is closed through the exchange, because it is
+    // bound to it.
     void unused() {
         if (instance) retiring(held);
     }
 
-    // Brama rury znowu ma wolną instancję — czymkolwiek skończyło się to przyjęcie.
+    // Gives the pipe gate a spare instance again, however this accept ended.
     void refilled() {
         if (instance) pipes::refill(*mine->gate, held);
     }
 
     bool instance = false;
 
-    // Anulowanie zwalnia miejsce **od razu**, bez oglądania się na to, co powiedziało `withdraw`.
-    // Na POSIX zgłoszenie właśnie wyszło z mapy i prawda tego dowodzi. Na Windowsie `withdraw` nie
-    // może powiedzieć prawdy nigdy — anulowana operacja wraca portem — ale tam centrala trzyma
-    // zgłoszenia po nakładce, a nie po gnieździe, i drugie `AcceptEx` na tym samym gnieździe
-    // nasłuchującym jest zwyczajną rzeczą. W obu razach miejsce jest wolne.
+    // Cancellation releases the place at once, regardless of what `withdraw` said. On POSIX the
+    // request has just left the map, and true proves it. On Windows `withdraw` can never say true,
+    // because the cancelled operation comes back through the port, but there the exchange keys
+    // requests by OVERLAPPED, not by socket, and a second AcceptEx on the same listening socket is
+    // an ordinary thing. Either way the place is free.
     //
-    // Zasłona `quitted` — opisana przy nawiązaniu w strumieniu.
+    // The `quitted` guard is described at the connect in the stream.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
         yielded();
     }
 
+    // The accept has completed: the pipe gate is refilled, the place released, and the promise
+    // settled with the new stream or with a `Trouble`. After a cancellation nothing is settled.
     void done(std::size_t, int code) override {
         refilled();
         yielded();
 
         if (quitted.load()) {
-            // **Przyjęte gniazdo nie ma komu trafić.** Anulowane przyjęcie potrafi mimo wszystko
-            // dojść do skutku — zostawał wtedy po nim otwarty deskryptor, którego nikt już nigdy
-            // nie zamknie. Droga błędu zamykała go od dawna, droga udana nie zamykała go wcale.
+            // The accepted socket has nobody to go to. A cancelled accept may still succeed, and
+            // it would then leave an open descriptor that nobody would ever close, so it is
+            // closed here.
             if (instance) {
                 unused();
             } else if (made != nothing) {
@@ -151,6 +160,8 @@ struct MeetPromise : Doing, detail::Result<Stream> {
         settled(*this, greeting(made, where));
     }
 
+    // The deadline passed: the place is released and the promise fails with `Overdue`, unless it
+    // was cancelled.
     void late() override {
         refilled();
         yielded();
@@ -164,8 +175,10 @@ struct MeetPromise : Doing, detail::Result<Stream> {
 
 }
 
-// Brama nie oddaje obietnicy, bo nie ma na co czekać: otwarcie gniazda, przypisanie portu i
-// nasłuchiwanie kończą się od razu. Obietnica, która nigdy nie czeka, jest kłamstwem o kształcie.
+// Opens a gate listening at the given address, with the given backlog; failures throw `Trouble`.
+// The constructor returns no promise because there is nothing to wait for: opening the socket,
+// binding the port and listening finish at once. A promise that never waits would be a lie about
+// the shape of the operation.
 Listener::Listener(Address where, int waiting) : held_(std::make_shared<Held>()) {
     if (!where.held()) throw Trouble{"An empty address is no place to listen."};
 
@@ -184,8 +197,8 @@ Listener::Listener(Address where, int waiting) : held_(std::make_shared<Held>())
     held_->which = one;
     held_->numbered = one;
 
-    // `SO_REUSEADDR` mówi o porcie w stanie TIME_WAIT, a gniazdo lokalne portu nie ma — więc dla
-    // niego to wywołanie nie znaczy nic i tylko odmówiłoby po cichu.
+    // SO_REUSEADDR is about a port in the TIME_WAIT state, and a local socket has no port, so for
+    // it the call means nothing and would only fail silently.
     if (where.family() != Family::local) sharing(one);
 
     if (!listening(one, where, waiting)) {
@@ -197,20 +210,20 @@ Listener::Listener(Address where, int waiting) : held_(std::make_shared<Held>())
         throw Trouble{"Cannot listen: " + spoken(why) + ".", why, where};
     }
 
-    // **Pytanie systemu ma prawo nic nie powiedzieć, a my i tak wiemy.** Przy porcie zero to
-    // system nadaje numer i bez `getsockname` nie znamy go wcale — ale przy gnieździe lokalnym
-    // adresem jest ścieżka, którą sami podaliśmy. Milczenie systemu nie ma prawa jej wymazać:
-    // niszczyciel kasuje po sobie plik właśnie po tej ścieżce.
+    // The system may answer nothing, and we know the address anyway. With port zero the system
+    // assigns the number, and without getsockname we would not know it at all, but for a local
+    // socket the address is the path we gave ourselves. The system's silence must not erase it:
+    // closing the gate removes the file by exactly this path.
     held_->mine = named(one, false);
 
     if (!held_->mine.held()) held_->mine = where;
 }
 
-// Pusty adres oddawany wtedy, gdy uchwytu już nie ma. Wszystkie pozostałe metody odpowiadają po
-// zamknięciu grzecznie, więc te też muszą — sięganie po nieistniejący uchwyt kończyło się
-// naruszeniem pamięci, a klasa wyraźnie zamierza być używalna po close().
 namespace {
 
+// The empty address returned once the handle is gone. All the other methods answer politely after
+// close(), so this one must too; reaching for a missing handle would be a memory violation, and
+// the class is meant to stay usable after close().
 const Address& nowhere() {
     static const Address one;
 
@@ -219,8 +232,11 @@ const Address& nowhere() {
 
 }
 
+// The address the gate listens at, or an empty address after close().
 const Address& Listener::mine() const { return held_ ? held_->mine : nowhere(); }
 
+// Waits for the next connection and promises the stream. A closed gate, or one already accepting,
+// gives a promise that has already failed with `Trouble`. A positive patience sets a deadline.
 Promise<Stream> Listener::accept(Patience patience) const {
     if (!held_) {
         auto made = std::make_shared<detail::Result<Stream>>();
@@ -232,9 +248,9 @@ Promise<Stream> Listener::accept(Patience patience) const {
 
     auto one = std::make_shared<MeetPromise>();
 
-    // Zajęcie miejsca i zapamiętanie, czyje ono jest, pod jednym zamkiem: inaczej dwa przyjmowania
-    // zaczęte naraz zapisałyby się jedno po drugim i drugie zostałoby z miejscem, którego pierwsze
-    // nie oddało.
+    // Taking the place and recording whose it is happen under one lock; otherwise two accepts
+    // started at once would register one after the other, and the second would be left with a
+    // place the first never released.
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
 
@@ -281,6 +297,7 @@ Promise<Stream> Listener::accept(Patience patience) const {
     return HandPromise<Stream>{one};
 }
 
+// Stops listening. Pending accepts are cancelled; the gate can still be asked questions afterward.
 void Listener::close() {
     if (!held_) return;
 

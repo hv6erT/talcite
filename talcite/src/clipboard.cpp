@@ -28,15 +28,15 @@ namespace talcite {
 
 namespace {
 
-// Ile bajtów treści wolno wysłać w OSC 52. Terminale ucinają długie ciągi **po cichu**, a próg
-// mają różny i żaden go nie ogłasza, więc powyżej naszego nie wysyłamy nic: lepiej „nie poszło"
-// niż ogryzek udający całość. W programie kopia zostaje pełna.
+// How many bytes of content may be sent in OSC 52. Terminals cut long strings silently, each at its
+// own threshold, and none announces it, so above ours we send nothing: "it did not work" is better
+// than a stub posing as the whole. Inside the program the copy stays complete.
 constexpr std::size_t brim = 64 * 1024;
 
 constexpr const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-// Base64 z dopełnieniem, bo takiego oczekują terminale. Dwadzieścia linijek zamiast zależności —
-// to nie jest kryptografia, tylko przepisanie trzech bajtów na cztery znaki.
+// Base64 with padding, because that is what terminals expect. Twenty lines instead of a dependency:
+// this is not cryptography, only rewriting three bytes as four characters.
 std::string sixed(std::string_view what) {
     std::string made;
 
@@ -77,12 +77,13 @@ std::string sixed(std::string_view what) {
     return made;
 }
 
-// Prośba do terminala, żeby wstawił to do schowka **swojej** maszyny. `c` to schowek systemowy;
-// wyboru pierwotnego (`p`, środkowy przycisk myszy) nie ruszamy — jeden schowek, jedna treść.
+// Asks the terminal to put the text into the clipboard of its own machine; false when the text is
+// above `brim`. `c` is the system clipboard; we leave the primary selection (`p`, the middle mouse
+// button) alone: one clipboard, one content.
 //
-// Wewnątrz tmuksa przechodzi to tylko przy `set-clipboard on`. Świadomie **nie opakowujemy** tego
-// w przekazanie tmuksowe: na nowych wersjach opakowanie psuje to, co bez niego działa, a wersji
-// tmuksa nie da się stąd poznać inaczej niż zgadywaniem.
+// Inside tmux this gets through only with set-clipboard on. We deliberately do not wrap it in tmux
+// passthrough: on newer versions the wrapping breaks what works without it, and the tmux version
+// cannot be learned from here other than by guessing.
 bool sent(Console& out, std::string_view what) {
     if (what.size() > brim) return false;
 
@@ -91,16 +92,17 @@ bool sent(Console& out, std::string_view what) {
     return true;
 }
 
-// Przez ssh schowek tego procesu jest schowkiem **nie tej maszyny**, przy której siedzi
-// użytkownik. Wtedy jedyną poprawną drogą jest poprosić terminal. Środowisko czytamy z konsoli,
-// bo to ona wie, gdzie siedzi użytkownik — i dzięki temu próba może udawać ssh na każdym systemie.
+// Over ssh the clipboard of this process is the clipboard of a machine other than the one the user
+// sits at. Then the only correct way is to ask the terminal. The environment is read from the
+// console, because the console knows where the user sits, and thanks to that a test can pretend to
+// be ssh on any system.
 bool remote(const Console& from) {
     return from.variable("SSH_CONNECTION").has_value() || from.variable("SSH_TTY").has_value();
 }
 
 #ifndef _WIN32
 
-// Czy program jest w PATH — tak samo, jak szuka go powłoka.
+// Whether the program is in PATH, searched the same way the shell does.
 bool present(const std::string& named) {
     const char* whole = std::getenv("PATH");
 
@@ -121,13 +123,13 @@ bool present(const std::string& named) {
     return false;
 }
 
-// **Schowek sesji graficznej przez jej własny program**: `wl-copy` pod Waylandem, `xclip` albo
-// `xsel` pod X, `pbcopy` na macOS. OSC 52 zostaje zapasem: GNOME Terminal i reszta rodziny VTE go
-// nie znają, więc kopia z twa nie docierała tam do schowka wcale. Przez ssh tej drogi nie ma —
-// program schowka tamtej maszyny to nie schowek użytkownika.
+// The graphical session's clipboard through its own program: `wl-copy` under Wayland, `xclip` or
+// `xsel` under X, `pbcopy` on macOS. OSC 52 stays as the fallback: GNOME Terminal and the rest of
+// the VTE family do not know it, so a copy would not reach the clipboard there at all. Over ssh
+// this way is closed: the clipboard program of that machine is not the user's clipboard.
 //
-// Każdy z nich zostawia po sobie proces pilnujący schowka; przez powłokę z wyjściem na /dev/null,
-// żeby ten proces nie trzymał naszych rur i nie wstrzymał końca.
+// Each of them leaves behind a process that guards the clipboard; it runs through the shell with
+// output to /dev/null, so that this process does not hold our pipes and does not delay the end.
 std::optional<Command> helped(const Console& from) {
     std::string line;
 
@@ -148,8 +150,9 @@ std::optional<Command> helped(const Console& from) {
     return made;
 }
 
-// Oddanie treści programowi schowka; prawda, gdy skończył bez błędu. Czekamy najwyżej półtorej
-// sekundy — program, który stanął, ustępuje miejsca OSC 52, zamiast zamrozić pętlę.
+// Hands the content to the clipboard program; true when it finished without an error. We wait at
+// most a second and a half: a program that got stuck gives way to OSC 52 instead of freezing the
+// loop.
 bool handed(const Command& what, std::string_view said) {
     try {
         const Child one = Child::start(what).await();
@@ -185,8 +188,8 @@ bool handed(const Command& what, std::string_view said) {
 
 #ifdef _WIN32
 
-// Schowek Windows trzyma wiersze rozdzielone parą, a dokument pojedynczym znakiem. Bez zamiany
-// trzy skopiowane wiersze byłyby w Notatniku jednym.
+// The Windows clipboard keeps lines separated by a pair (CR LF), and the document by a single
+// character. Without the conversion, three copied lines would be one in Notepad.
 std::wstring widened(std::string_view what) {
     std::string full;
 
@@ -201,6 +204,7 @@ std::wstring widened(std::string_view what) {
     return to_wstring(full);
 }
 
+// The clipboard's UTF-16 text as UTF-8, with CR LF pairs turned back into single line feeds.
 std::string narrowed(const wchar_t* what) {
     if (what == nullptr) return {};
 
@@ -219,8 +223,9 @@ std::string narrowed(const wchar_t* what) {
     return made;
 }
 
-// Otwarcie potrafi się nie udać, bo schowek trzyma w tej chwili inny proces. Kilka natychmiastowych
-// ponowień wystarcza; usypianie odpada, bo zamroziłoby pętlę zdarzeń.
+// Opens the clipboard. Opening can fail because another process holds the clipboard at the moment.
+// A few immediate retries are enough; sleeping is ruled out, because it would freeze the event
+// loop.
 bool opened() {
     for (int which = 0; which < 8; ++which)
         if (OpenClipboard(nullptr) != 0) return true;
@@ -232,14 +237,14 @@ bool opened() {
 
 #ifdef _WIN32
 
-// Oddanie tekstu schowkowi systemu Windows.
+// Hands the text to the Windows system clipboard; true when it took it.
 bool handed(std::string_view what) {
     const std::wstring wide = widened(what);
 
     if (!opened()) return false;
 
-    // Od tego miejsca **każda** droga wyjścia musi zamknąć schowek: zostawiony otwarty blokuje
-    // schowek całego pulpitu, nie tylko nasz.
+    // From here on every way out has to close the clipboard: left open, it blocks the clipboard of
+    // the whole desktop, not just ours.
     if (EmptyClipboard() == 0) {
         CloseClipboard();
 
@@ -271,8 +276,8 @@ bool handed(std::string_view what) {
 
     GlobalUnlock(room);
 
-    // **Po udanym oddaniu pamięć należy do systemu** i zwolnienie jej byłoby uszkodzeniem schowka.
-    // Po nieudanym należy dalej do nas i to my musimy ją zwolnić.
+    // After a successful hand-over the memory belongs to the system, and freeing it would damage
+    // the clipboard. After a failed one it is still ours, and we have to free it.
     const bool went = SetClipboardData(CF_UNICODETEXT, room) != nullptr;
 
     if (!went) GlobalFree(room);
@@ -282,7 +287,9 @@ bool handed(std::string_view what) {
     return went;
 }
 
-// Brak otwarcia to co innego niż pusty schowek: wtedy wołający sięga po własną kopię.
+// The text on the Windows clipboard; an empty inner value for an empty clipboard. Failing to open
+// is different from an empty clipboard: then the outer value is empty and the caller reaches for
+// its own copy.
 std::optional<std::optional<std::string>> taken() {
     if (!opened()) return std::nullopt;
 
@@ -309,14 +316,17 @@ std::optional<std::optional<std::string>> taken() {
 
 #endif
 
-// Schowek maszyny, przy której siedzi użytkownik. Na Windows na miejscu systemowy, a przez ssh
-// terminal; na POSIX-ie zawsze terminal.
+// The clipboard of the machine the user sits at. On Windows, locally, the system one, and over ssh
+// the terminal; on POSIX the graphical session's program, with the terminal as the fallback.
 class System final : public Clipboard {
 public:
     explicit System(Seam<Console> with) : console_(std::move(with)) {}
 
+    // The name of this clipboard in messages.
     [[nodiscard]] std::string_view name() const override { return "system clipboard"; }
 
+    // Copies the text: keeps it as our own copy, then hands it to the system clipboard or the
+    // clipboard program, or else asks the terminal. Returns whether it reached a clipboard.
     [[nodiscard]] bool copy(std::string_view what) override {
         mine_.assign(what);
 
@@ -336,6 +346,8 @@ public:
         return sent(out, what);
     }
 
+    // The text to paste: on Windows, locally, from the system clipboard; otherwise our own last
+    // copy, or nothing.
     [[nodiscard]] std::optional<std::string> paste() override {
 #ifdef _WIN32
 
@@ -353,26 +365,29 @@ public:
 private:
     Seam<Console> console_;
 
-    // Ostatnia własna kopia. Na POSIX-ie to jest **cała** odpowiedź `paste`, bo terminala o schowek
-    // nie pytamy — jego odpowiedź wsypałaby się do programu jako klawisze, dopóki dekoder nie zna
-    // OSC. Na Windows to zapas na wypadek, gdyby schowek systemu odmówił otwarcia.
+    // Our own last copy. On POSIX it is the whole answer of `paste`, because we do not ask the
+    // terminal for the clipboard: its answer would pour into the program as keys, as long as the
+    // decoder does not know OSC. On Windows it is a fallback in case the system clipboard refuses
+    // to open.
     //
-    // To nie jest własny schowek udający systemowy: to jedna zmienna po to, żeby wytnij i wklej
-    // **w tym samym programie** działało wszędzie. Wklejanie z zewnątrz robi użytkownik klawiszem
-    // terminala i przychodzi jako `PasteEvent`, więc tamtej drogi to nie dotyczy.
+    // This is not a private clipboard posing as the system one: it is one variable so that cut and
+    // paste within the same program works everywhere. Pasting from outside is done by the user with
+    // the terminal's key and arrives as a `PasteEvent`, so that path is not affected.
     std::string mine_;
 };
 
 }
 
-// **Jeden na proces**, bo własna kopia ma być wspólna: wycięte w jednym edytorze wkleja się
-// w drugim. Kto chce osobnego — próba, drugi terminal — bierze wersję z konsolą.
+// The clipboard of the user's machine. One per process, because our own copy has to be shared: what
+// is cut in one editor is pasted in another. Whoever wants a separate one (a test, a second
+// terminal) takes the version with a console.
 Seam<Clipboard> clipboard() {
     static const Seam<Clipboard> shared{std::make_shared<System>(console())};
 
     return shared;
 }
 
+// A separate clipboard that talks through the given console, with its own copy.
 Seam<Clipboard> clipboard(Seam<Console> with) {
     return Seam<Clipboard>{std::make_shared<System>(std::move(with))};
 }

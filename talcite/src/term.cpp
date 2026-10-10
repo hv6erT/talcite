@@ -20,36 +20,37 @@ namespace talcite {
 
 namespace {
 
-// Samotny Esc rozstrzyga się czasem, bo terminal nie mówi, czy coś jeszcze przyśle. Fork dawał
-// dwadzieścia milisekund i przez ssh strzałka rozpadała się na Esc i literę.
+// A lone Esc is settled by time, because the terminal does not say whether more is coming. Twenty
+// milliseconds is too short: over ssh an arrow key would fall apart into Esc and a letter.
 constexpr std::chrono::milliseconds hesitating{50};
 
-// Jak długo, oddawszy terminal, czekamy na dzwonek pętli w jednym obrocie.
+// How long one turn waits for the loop's bell while the terminal is handed over.
 constexpr std::chrono::milliseconds glancing{100};
 
 }
 
+// The terminal's state, behind a pointer so the public header stays free of it.
 struct Term::Held {
     std::unique_ptr<Loop> mine;
     Loop* loop = nullptr;
 
     explicit Held(Seam<Console> with) : console(with), compat(std::move(with)) {}
 
-    // **Wszystko, co sięga do terminala, idzie przez ten szew**: klatki, tytuł, mysz i ekran,
-    // a także wejście, tryb surowy, rozmiar i czas dwukliku. `Term` nie ma ani linijki kodu
-    // systemowego, więc próby z atrapą sprawdzają go całego.
+    // Everything that reaches the terminal goes through this seam: frames, the title, the mouse
+    // and the screen, and also input, raw mode, the size and the double-click time. `Term` has not
+    // a single line of system code, so tests with a fake console check all of it.
     Seam<Console> console;
 
-    // Stała, bo po usunięciu setterów nie ma w niej ani jednej metody niestałej: mierzy terminal
-    // i o niczym nie decyduje. Pyta przez tę samą konsolę, na którą rysujemy.
+    // Const, because it has no non-const method: it measures the terminal and decides nothing. It
+    // asks through the same console we draw on.
     const Capabilities compat;
     Decoder decoder;
 
-    // Życzenie aplikacji. W `Capabilities` nic się nie wpisuje — ona mierzy i tyle — więc
-    // wartość skuteczna powstaje przy każdym odczycie jako `życzenie.value_or(pomiar)`.
+    // The application's wish. Nothing is written into `Capabilities` (it only measures), so the
+    // effective value is formed at every read as wish.value_or(measurement).
     Setup wish;
 
-    // Świeża konfiguracja unieważnia obraz ekranu tak samo jak zmiana rozmiaru okna.
+    // A fresh configuration invalidates the screen image just as a change of the window size does.
     bool shifted = false;
 
     ui::Root* onto = nullptr;
@@ -63,8 +64,8 @@ struct Term::Held {
 
     View standing;
 
-    // Obrazy kitty (G2): co stoi na ekranie po ostatniej klatce i które obrazy terminal ma u siebie.
-    // Terminal trzyma obraz tak długo, jak ktoś po naszej stronie trzyma jego piksele.
+    // Kitty images: what stands on screen after the last frame, and which images the terminal holds.
+    // The terminal keeps an image as long as someone on our side holds its pixels.
     std::vector<Placement> placed;
     std::vector<std::pair<std::uint32_t, std::weak_ptr<const Pixels>>> sent;
 
@@ -75,20 +76,23 @@ struct Term::Held {
     int wide = 80;
     int high = 25;
 
-    // Ile razy zeszliśmy terminalowi z drogi. Licznik, a nie flaga, bo zagnieżdżone zejście jest
-    // dozwolone i ma znaczyć jedno: pierwszy wychodzi, ostatni wraca. Zdejmowanie stanu dwa razy
-    // wysłałoby drugi komplet sekwencji, a przy myszy zgubiłoby stan pośredni.
+    // How many times we have stepped out of the terminal's way. A counter, not a flag, because
+    // nested stepping aside is allowed and means one thing: the first one leaves, the last one
+    // returns. Undoing the state twice would send a second set of sequences and, for the mouse,
+    // lose the intermediate state.
     int away = 0;
 };
 
 namespace {
 
+// The squared distance between two channel values.
 int apart(int one, int two) { return (one - two) * (one - two); }
 
-// Najbliższy punkt palety 256: sześcian 6×6×6 albo szarości. Bierzemy bliższy z dwóch, bo
-// szarość z sześcianu bywa dalej niż osobna szara drabinka.
+// The nearest entry of the 256-color palette: the 6x6x6 cube or the grey ramp. The closer of the
+// two wins, because a grey from the cube may be farther than the separate grey ladder.
 int indexed(Color one) {
-    // Stopnie sześcianu z palety (`Color::indexed`): czerwony numerów 16, 52, 88, 124, 160, 196.
+    // The cube's steps from the palette (`Color::indexed`): the red of numbers 16, 52, 88, 124,
+    // 160, 196.
     static const std::array<int, 6> steps = [] {
         std::array<int, 6> made{};
 
@@ -127,8 +131,9 @@ int indexed(Color one) {
     return 16 + 36 * red + 6 * green + blue;
 }
 
-// Najbliższy z szesnastu podstawowych palety (`Color::indexed`). Wartości jak w xtermie — inne
-// terminale malują je nieco inaczej, ale wybór najbliższego i tak jest przybliżeniem.
+// The nearest of the palette's sixteen basic colors (`Color::indexed`). The values are xterm's;
+// other terminals paint them a little differently, but choosing the nearest is an approximation
+// anyway.
 int shortened(Color one) {
     int best = 0;
     int least = -1;
@@ -146,6 +151,8 @@ int shortened(Color one) {
     return best;
 }
 
+// Appends the SGR parameters for a foreground or background color at the terminal's color level:
+// 24-bit, 256-color, or the sixteen basic ones. Nothing for a transparent color or a mono terminal.
 void tinted(Color one, bool foreground, Colors how, std::string& into) {
     if (one.transparent || how == Colors::mono) return;
 
@@ -170,9 +177,9 @@ void tinted(Color one, bool foreground, Colors how, std::string& into) {
     else into += ";" + std::to_string((foreground ? 90 : 100) + which - 8);
 }
 
-// Styl wypisujemy zawsze od zera. Wyliczanie różnicy między dwoma stylami oszczędziłoby kilka
-// bajtów, a kosztowało pamiętanie, którym atrybutem się co gasi — i tak najdroższe są skoki
-// kursora, nie te kilka znaków.
+// Appends the SGR sequence for a style, always written from a reset. Computing the difference
+// between two styles would save a few bytes but cost remembering which attribute turns off what;
+// the cursor jumps are the expensive part anyway, not those few characters.
 void painted(const Style& what, Colors how, std::string& into) {
     into += "\x1b[0";
 
@@ -189,16 +196,18 @@ void painted(const Style& what, Colors how, std::string& into) {
     into += "m";
 }
 
+// Appends a cursor jump to `where` (zero-based).
 void placed(ui::Spot where, std::string& into) {
     into += "\x1b[" + std::to_string(where.y + 1) + ";" + std::to_string(where.x + 1) + "H";
 }
 
-// **Protokół graficzny kitty** (G2). Obraz idzie do terminala raz, pod numerem — numerem jest znak
-// obrazu z kratek — a potem tylko się go stawia i zdejmuje. Piksele surowe (`f=32`, RGBA), w base64,
-// porcjami po 4096 znaków; kolejne porcje niosą tylko `m` i `q`. `q=2` ucisza odpowiedzi, które
-// inaczej przyszłyby jako klawisze. Postawienie podaje kolumny i wiersze (`c`, `r`), więc terminal
-// wpasowuje obraz w prostokąt kratek, nawet gdy wymiar kratki znamy źle, a `C=1` zostawia kursor
-// w miejscu — dlatego przy kitty ostatni wiersz ekranu może mieć obraz.
+// The kitty graphics protocol: appends the transmission of one image. An image goes to the terminal
+// once, under a number (the image mark from the cells), and after that it is only placed and
+// removed. Raw pixels (f=32, RGBA) in base64, in pieces of 4096 characters; the following pieces
+// carry only m and q. q=2 silences the replies that would otherwise arrive as keys. A placement
+// gives columns and rows (c, r), so the terminal fits the image into the rectangle of cells even
+// when we know the cell size wrong, and C=1 leaves the cursor in place, which is why with kitty the
+// last screen row may hold an image.
 void kitty(const Picture& one, std::string& into) {
     const std::string coded = base64(one.pixels->stills()[one.still].bytes);
     const ui::Size size = one.pixels->size();
@@ -222,6 +231,7 @@ void kitty(const Picture& one, std::string& into) {
     }
 }
 
+// Appends the placement of an image already sent, at its cell rectangle.
 void stood(const Placement& one, std::string& into) {
     placed(one.at, into);
 
@@ -229,21 +239,23 @@ void stood(const Placement& one, std::string& into) {
             ",r=" + std::to_string(one.picture.size.high) + ",C=1,q=2\x1b\\";
 }
 
-// Zdjęcie z ekranu (`d=i`, dane zostają) i zwolnienie (`d=I`, terminal zapomina obraz).
+// Removing from the screen (d=i, the data stays) or releasing (d=I, the terminal forgets the
+// image).
 void unstood(std::uint32_t mark, bool forget, std::string& into) {
     into += "\x1b_Ga=d,d=";
     into += forget ? 'I' : 'i';
     into += ",i=" + std::to_string(mark) + ",q=2\x1b\\";
 }
 
+// Whether two placements are the same image at the same cell.
 bool same_place(const Placement& one, const Placement& two) {
     return one.picture.mark == two.picture.mark && one.at == two.at;
 }
 
-// Wszystko precz — przy wyjściu i przy oddaniu terminala, bo cudzy program dostaje ekran czysty,
-// a nasze numery mogłyby wejść w jego.
 using Sent = std::vector<std::pair<std::uint32_t, std::weak_ptr<const Pixels>>>;
 
+// Removes and forgets every kitty image, on exit and when handing the terminal over, because the
+// other program gets a clean screen and our numbers could collide with its own.
 void forgotten(Console& out, std::vector<Placement>& placed, Sent& sent) {
     if (placed.empty() && sent.empty()) return;
 
@@ -253,12 +265,14 @@ void forgotten(Console& out, std::vector<Placement>& placed, Sent& sent) {
     sent.clear();
 }
 
-// Skok kursora kosztuje kilka bajtów, znak jeden. Krótką przerwę między zmienionymi komórkami
-// taniej jest **przepisać** niż przeskoczyć — pod warunkiem, że przepisane komórki wyjdą
-// dokładnie takie, jakie już są: ten sam styl co obowiązujący, żaden znak podwójny i nic, co
-// jest tylko jego ciągiem dalszym.
+// The longest gap between changed cells that is rewritten rather than jumped over.
 constexpr int nearby = 4;
 
+// Rewrites the cells [from, upto) of row `y` instead of jumping over them, when that is possible;
+// returns whether it did. A cursor jump costs several bytes, a character one. A short gap between
+// changed cells is cheaper to rewrite than to jump over, provided the rewritten cells come out
+// exactly as they already are: the same style as the current one, no double-width character and
+// nothing that is only its continuation.
 bool bridged(const View& made, int y, int from, int upto, const Style& now, std::string& into) {
     if (upto - from > nearby) return false;
 
@@ -275,8 +289,9 @@ bool bridged(const View& made, int y, int from, int upto, const Style& now, std:
     return true;
 }
 
-// Trzy ustawienia, których terminal nie odgadnie z klatki: trzeba mu je **powiedzieć** sekwencją
-// i cofnąć drugą. Dla nich `Capabilities` nie ma settera, więc wartość skuteczna powstaje tutaj.
+// The settings the terminal cannot guess from a frame: it has to be told them with a sequence and
+// told to undo them with another. `Capabilities` has no setter for them, so the effective value is
+// formed here.
 struct Sending {
     Screen screen = Screen::none;
     Mouse mouse = Mouse::none;
@@ -284,10 +299,10 @@ struct Sending {
     bool bracketed_paste = false;
 };
 
-// Śledzenie ruchu **bez wciśniętego przycisku** nie ma czego mierzyć w terminalu: żadna odpowiedź
-// nie mówi, czy `?1003` jest rozumiane. Rozstrzyga więc samo życzenie, a domyślnie jest wyłączone —
-// bo włączone każe terminalowi zgłaszać każde drgnięcie kursora, także wtedy, gdy nikogo to nie
-// obchodzi, a przez ssh jest to prawdziwy ruch na łączu.
+// The effective screen, mouse, hover and bracketed-paste settings. Tracking motion without a pressed
+// button has nothing to measure in the terminal: no reply says whether ?1003 is understood. So the
+// wish alone decides, and the default is off, because when on, it makes the terminal report every
+// twitch of the pointer, even when nobody cares, and over ssh that is real traffic on the link.
 Sending sending(const Capabilities& compat, const Setup& wish) {
     Sending made;
 
@@ -299,9 +314,10 @@ Sending sending(const Capabilities& compat, const Setup& wish) {
     return made;
 }
 
-// Jedyne pole, w którym życzenie nie wygrywa bez zastrzeżeń: `Capabilities::blocks()` oddaje
-// sufit, czyli gęstość, której terminal jeszcze nie rozsypie. Glif szerszy niż kratka psuje `View`,
-// trafianie myszą i wypisywanie różnicy, więc bierzemy mniejszą z dwóch.
+// The effective block-glyph density. The only field where the wish does not win outright:
+// `Capabilities::blocks()` returns a ceiling, the density the terminal does not yet break up. A glyph
+// wider than a cell breaks `View`, mouse hits and writing the difference, so the smaller of the two
+// is taken.
 ui::Blocks blocked(const Capabilities& compat, const Setup& wish) {
     const ui::Blocks want = wish.blocks.value_or(ui::Blocks::basic);
     const ui::Blocks most = compat.blocks();
@@ -309,17 +325,20 @@ ui::Blocks blocked(const Capabilities& compat, const Setup& wish) {
     return want < most ? want : most;
 }
 
+// Whether frames are wrapped in synchronized output (mode 2026).
 bool synchronized(const Capabilities& compat, const Setup& wish) {
     return wish.synchronized.value_or(compat.synchronized());
 }
 
+// Whether the window title may be set.
 bool titles(const Capabilities& compat, const Setup& wish) {
     return wish.titles.value_or(compat.titles());
 }
 
-// `?1003` dokłada się do śledzenia, które już stoi, i **tylko wtedy, gdy ono stoi**: bez zgłaszania
-// myszy w ogóle nie miałby kto tego ruchu przysłać. Zdejmujemy je pierwsze, bo obejmuje sobą to,
-// co `?1002` — zdjęte na końcu zostawiłoby terminal na chwilę przy szerszym śledzeniu.
+// Turns mouse reporting on. ?1003 is added to tracking that is already on, and only when it is on:
+// without mouse reporting at all nobody would send that motion. It is turned off first (in
+// `unmoused`), because it covers what ?1002 does; turned off last, it would leave the terminal with
+// the wider tracking for a moment.
 void mousing(Console& out, Mouse given, bool hover) {
     if (given == Mouse::sgr) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
     else if (given == Mouse::basic) out.write("\x1b[?1000h");
@@ -327,6 +346,7 @@ void mousing(Console& out, Mouse given, bool hover) {
     if (given != Mouse::none && hover) out.write("\x1b[?1003h");
 }
 
+// Turns mouse reporting off, in the reverse order of `mousing`.
 void unmoused(Console& out, Mouse given, bool hover) {
     if (given != Mouse::none && hover) out.write("\x1b[?1003l");
 
@@ -334,19 +354,22 @@ void unmoused(Console& out, Mouse given, bool hover) {
     else if (given == Mouse::basic) out.write("\x1b[?1000l");
 }
 
+// Switches to the alternate screen (1049, or the older 47).
 void screened(Console& out, Screen given) {
     if (given == Screen::apart) out.write("\x1b[?1049h");
     else if (given == Screen::older) out.write("\x1b[?47h");
 }
 
+// Switches back from the alternate screen.
 void unscreened(Console& out, Screen given) {
     if (given == Screen::apart) out.write("\x1b[?1049l");
     else if (given == Screen::older) out.write("\x1b[?47l");
 }
 
-// Ubranie terminala i jego zdjęcie. Dwie połówki jednej rzeczy, więc stoją obok siebie i mają
-// **jedno** miejsce: robi to i konstruktor, i destruktor, i zejście z drogi na czas cudzego
-// programu. Rozpisane w trzech miejscach rozjechałyby się przy pierwszej zmianie.
+// Dressing the terminal: the screen, a hidden cursor, no autowrap, a cleared screen, the mouse and
+// bracketed paste. Dressing and undressing are two halves of one thing, so they stand side by side
+// and have one place: the constructor, the destructor and stepping aside for another program all
+// use them. Written out in three places, they would drift apart at the first change.
 void dressed(Console& out, const Sending& now) {
     screened(out, now.screen);
 
@@ -357,6 +380,7 @@ void dressed(Console& out, const Sending& now) {
     if (now.bracketed_paste) out.write("\x1b[?2004h");
 }
 
+// Undressing the terminal, in the reverse order of `dressed`.
 void undressed(Console& out, const Sending& now) {
     if (now.bracketed_paste) out.write("\x1b[?2004l");
 
@@ -367,8 +391,9 @@ void undressed(Console& out, const Sending& now) {
     unscreened(out, now.screen);
 }
 
-// Wysyłamy **samą różnicę**, nie całość: bezwarunkowe powtórzenie `\x1b[?1049h` na terminalu, który
-// już jest na ekranie zapasowym, kosztowałoby mrugnięcie, a przy myszy zgubiłoby stan pośredni.
+// Sends only the difference between two sets of settings, not the whole: repeating ?1049h
+// unconditionally on a terminal already on the alternate screen would cost a flicker, and for the
+// mouse it would lose the intermediate state.
 void shifting(Console& out, const Sending& was, const Sending& now) {
     if (was.bracketed_paste != now.bracketed_paste) out.write(now.bracketed_paste ? "\x1b[?2004h" : "\x1b[?2004l");
 
@@ -385,8 +410,8 @@ void shifting(Console& out, const Sending& was, const Sending& now) {
     }
 }
 
-// Rozmiar z konsoli, prawda, gdy się zmienił. Konsola, która rozmiaru nie zna — potok, próba —
-// zostawia poprzedni, a na starcie 80×25.
+// Reads the size from the console; true when it changed. A console that does not know its size (a
+// pipe, a test) keeps the previous one, 80x25 at the start.
 bool measured(const Console& from, int& wide, int& high) {
     const std::optional<ui::Size> now = from.size();
 
@@ -402,13 +427,15 @@ bool measured(const Console& from, int& wide, int& high) {
 
 }
 
+// Takes over the terminal: raw mode, the probe of its capabilities, then the dressing (alternate
+// screen, hidden cursor, mouse) according to the wish.
 Term::Term(Setup given, Seam<Console> with) : held_(std::make_unique<Held>(std::move(with))) {
     Held& held = *held_;
 
     held.wish = std::move(given);
 
-    // Pętla należy do wątku i może być tylko jedna. Jeśli już stoi — przyjmujemy ją; jeśli nie —
-    // zakładamy własną, bo bez niej Term nie ma na czym czekać.
+    // The loop belongs to the thread and there can be only one. If it exists, we adopt it; if not,
+    // we make our own, because without it `Term` has nothing to wait on.
     if (Loop* standing = Loop::current()) {
         held.loop = standing;
     } else {
@@ -422,8 +449,8 @@ Term::Term(Setup given, Seam<Console> with) : held_(std::make_unique<Held>(std::
 
     held.twice = console.double_click();
 
-    // Badanie musi się odbyć na przygotowanym terminalu, ale **przed** wejściem na ekran
-    // zapasowy — inaczej znaki próbne mrugnęłyby na czystym ekranie aplikacji.
+    // The probe has to happen on a prepared terminal, but before entering the alternate screen;
+    // otherwise the probe characters would flicker on the application's clean screen.
     (void)held.compat.colors();
 
     held.spare = held.compat.rest();
@@ -432,21 +459,22 @@ Term::Term(Setup given, Seam<Console> with) : held_(std::make_unique<Held>(std::
 
     held.entered = true;
 
-    // Rozmiar dopiero po wejściu na ekran zapasowy: na Windows to inny bufor, a mierzymy ten,
-    // na którym rysujemy.
+    // The size only after entering the alternate screen: on Windows it is a different buffer, and
+    // we measure the one we draw on.
     (void)measured(console, held.wide, held.high);
 }
 
-// Sprzątamy w odwrotnej kolejności i bez względu na to, jak wyszliśmy. Terminal zostawiony
-// w trybie surowym bez kursora jest nie do użycia, a użytkownik nie ma jak tego cofnąć.
+// Gives the terminal back. We clean up in reverse order, however we got here. A terminal left in
+// raw mode without a cursor is unusable, and the user has no way to undo it.
 Term::~Term() {
     Held& held = *held_;
 
-    // Cofamy stan **bieżący**, nie startowy: po `reconfigure` mysz albo ekran zapasowy mogą stać
-    // inaczej niż w konstruktorze, a wyłączyć trzeba to, co naprawdę jest włączone.
+    // The current state is undone, not the initial one: after `reconfigure` the mouse or the
+    // alternate screen may stand differently than in the constructor, and what has to be turned
+    // off is what is really on.
     //
-    // Gdy terminal jest właśnie oddany komuś innemu, zdejmować nie ma czego — `Pause` zdjął i ubranie,
-    // i tryb surowy już przy wejściu.
+    // When the terminal is handed to someone else right now, there is nothing to undo: `Pause`
+    // removed both the dressing and raw mode on entry.
     if (held.away > 0) return;
 
     forgotten(held.console.provider(), held.placed, held.sent);
@@ -456,15 +484,15 @@ Term::~Term() {
     held.console.provider().raw(false);
 }
 
-// **Zejście z drogi.** Cofamy dokładnie to, co założył konstruktor, i w odwrotnej kolejności:
-// najpierw sekwencje, potem tryb konsoli. Program, który teraz ruszy, zastaje terminal taki, jaki
-// zastaliśmy go my — z echem, z Enterem, z Ctrl-C, na tym buforze, na którym startowaliśmy.
+// Stepping out of the way. We undo exactly what the constructor set up, in reverse order: first the
+// sequences, then the console mode. The program that starts now finds the terminal as we found it:
+// with echo, with Enter, with Ctrl-C, on the buffer we started on.
 //
-// Klasa, a nie para metod publicznych, bo para metod jest umową, której kompilator nie pilnuje:
-// dałoby się wrócić bez wychodzenia albo wyjść i nie wrócić. Tu wyjście i powrót są jedną rzeczą,
-// więc powrót następuje także wtedy, gdy po drodze poleci wyjątek. Klasa zagnieżdżona sięga do
-// `Held` bez żadnego `friend`, a publiczna powierzchnia `Term` rośnie o jedno pojęcie, nie o dwa
-// czasowniki.
+// A class rather than a pair of public methods, because a pair of methods is a contract the
+// compiler does not enforce: one could return without leaving, or leave and never return. Here
+// leaving and returning are one thing, so the return happens even when an exception flies on the
+// way. The nested class reaches `Held` without any friend, and the public surface of `Term` grows by
+// one notion, not two verbs.
 Term::Pause::Pause(Term& given) : term_(given) {
     Held& held = *term_.held_;
 
@@ -477,6 +505,7 @@ Term::Pause::Pause(Term& given) : term_(given) {
     held.console.provider().raw(false);
 }
 
+// Takes the terminal back: raw mode and the dressing again, and a full repaint at the next frame.
 Term::Pause::~Pause() {
     Held& held = *term_.held_;
 
@@ -488,26 +517,28 @@ Term::Pause::~Pause() {
 
     if (held.entered) dressed(console, sending(held.compat, held.wish));
 
-    // Po cudzym programie na ekranie nie zostało nic z naszej klatki, a przy `Screen::plain`
-    // nawet ekran zapasowy jej nie schował. `shifted` znaczy dla `draw()` dokładnie to samo, co
-    // zmiana rozmiaru: porównaj z pustą kartką, czyli odmaluj wszystko.
+    // After the other program nothing of our frame is left on screen, and with `Screen::none` there
+    // is no alternate screen that could have kept it. To `draw()`, `shifted` means exactly what a size change
+    // means: compare with a blank sheet, that is, repaint everything.
     held.shifted = true;
     held.fresh = true;
 
-    // Rozmiar mógł się zmienić, gdy nas nie było — zmiany szły wtedy nie do nas.
+    // The size may have changed while we were away; the changes went to someone else then.
     (void)measured(console, held.wide, held.high);
 }
 
+// The event loop the terminal waits on.
 Loop& Term::loop() const { return *held_->loop; }
 
-// **Zmiana idzie przez pętlę, nie od razu.** Wywołanie może przyjść z dowolnego wątku — z okna
-// ustawień, z wczytanego pliku konfiguracji — a przestawienie terminala w połowie składania klatki
-// dałoby pół obrazu starą siatką i pół nową. Pętla wykonuje zaległości w `turn()`, tuż przed
-// rysowaniem, więc zmiana wchodzi zawsze na granicy klatki i zawsze na właściwym wątku.
+// Applies a new wish. The change goes through the loop, not at once. The call may come from any
+// thread (from a settings window, from a loaded configuration file), and switching the terminal in
+// the middle of composing a frame would give half a picture in the old grid and half in the new.
+// The loop runs pending work in `turn()`, right before drawing, so the change always comes in at a
+// frame boundary and always on the right thread.
 //
-// Zaległe wywołanie trzyma surowy wskaźnik na stan `Term`, więc zniszczenie go z jeszcze
-// niewykonanym `reconfigure` w kolejce jest błędem wołającego, tak samo jak przy każdym innym
-// `Loop::post` sięgającym do obiektu.
+// The pending call holds a raw pointer to the state of `Term`, so destroying it with a
+// `reconfigure` still queued is the caller's error, as with any other `Loop::post` that reaches an
+// object.
 void Term::reconfigure(Setup given) {
     held_->loop->post([held = held_.get(), given = std::move(given)]() mutable {
         const Sending was = sending(held->compat, held->wish);
@@ -528,30 +559,40 @@ void Term::reconfigure(Setup given) {
     });
 }
 
+// The effective color level: the wish, else the measurement.
 Colors Term::colors() const { return held_->wish.colors.value_or(held_->compat.colors()); }
 
+// The effective mouse protocol: the wish, else the measurement.
 Mouse Term::mouse() const { return held_->wish.mouse.value_or(held_->compat.mouse()); }
 
+// Whether the background is dark or light: the wish, else the measurement.
 Shade Term::shade() const { return held_->wish.shade.value_or(held_->compat.shade()); }
 
+// The effective graphics protocol: the wish, else the measurement.
 Graphics Term::graphics() const {
     return held_->wish.graphics.value_or(held_->compat.graphics());
 }
 
+// The effective block-glyph density, capped by what the terminal can show.
 ui::Blocks Term::blocks() const { return blocked(held_->compat, held_->wish); }
 
+// The cell size in pixels: the wish, else the measurement.
 ui::Size Term::cell() const { return held_->wish.cell.value_or(held_->compat.cell()); }
 
+// Whether Unicode is shown: the wish, else the measurement.
 bool Term::unicode() const { return held_->wish.unicode.value_or(held_->compat.unicode()); }
 
-// Fakty o kratce zostawiamy na korzeniu od razu, bo widżet obrazu czyta je stamtąd przy malowaniu,
-// a pierwsza klatka bywa rysowana zanim cokolwiek innego się wydarzy.
-// **Korzeń przestawiany w biegu** — tak przełącza się ekrany (panele, edytor, podgląd), a klawisz,
-// który przełącza, przychodzi w środku doręczania. Reszta odczytanego kawałka idzie już do nowego,
-// bo `fed` bierze bieżący korzeń przy każdym bajcie. Ognisko i czekanie na drugie kliknięcie każdy
-// korzeń trzyma swoje, więc klik na starym ekranie i klik na nowym nie składają się w dwuklik,
-// a powrót zastaje ognisko tam, gdzie zostało. Okno dwukliku korzeń dostaje stąd, z ustawienia
-// systemu, razem z resztą faktów o terminalu.
+// Shows `given` as the root. The facts about the cell are left on the root at once, because the
+// image widget reads them from there when painting, and the first frame may be drawn before
+// anything else happens.
+//
+// The root can be switched while running: this is how screens switch (panels, editor, viewer), and
+// the key that switches arrives in the middle of delivery. The rest of the chunk read goes to the
+// new root, because `fed` takes the current root for every byte. Each root keeps its own focus and
+// its own wait for a second click, so a click on the old screen and a click on the new one do not
+// add up to a double click, and returning finds the focus where it was left. The root gets the
+// double-click window from here, from the system setting, together with the other facts about the
+// terminal.
 void Term::show(ui::Root& given) {
     held_->onto = &given;
 
@@ -563,10 +604,13 @@ void Term::show(ui::Root& given) {
     given.graphics(graphics());
 }
 
+// The root being shown, or null before `show`.
 ui::Root* Term::shown() const { return held_->onto; }
 
+// The terminal's size in cells, as last measured.
 ui::Size Term::size() const { return {held_->wide, held_->high}; }
 
+// Sets the window title (OSC 0), when titles are enabled.
 void Term::title(std::string_view said) {
     if (!titles(held_->compat, held_->wish)) return;
 
@@ -577,31 +621,32 @@ void Term::title(std::string_view said) {
     held_->console.provider().write(made);
 }
 
-// Klatka powstaje w całości w pamięci, na terminal idzie sama różnica i to jednym zapisem:
-// widoczna połowa klatki jest gorsza niż klatka spóźniona o mikrosekundę.
+// Draws a frame. The frame is made whole in memory, and only the difference goes to the terminal,
+// in a single write: a visible half frame is worse than a frame late by a microsecond. Throws
+// std::logic_error when no root is shown.
 void Term::draw() {
     Held& held = *held_;
 
     if (held.onto == nullptr)
         throw std::logic_error("talcite::Term: no root set");
 
-    // Ekran należy teraz do cudzego programu. Rysowanie po nim byłoby pisaniem po czyimś obrazie,
-    // a nasza pamięć klatki i tak jest już nieaktualna.
+    // The screen now belongs to another program. Drawing on it would be writing over someone
+    // else's picture, and our memory of the frame is out of date anyway.
     if (held.away > 0) return;
 
     View made = held.onto->render({{0, 0}, {held.wide, held.high}});
 
     std::string into;
 
-    // Zmiana rozmiaru unieważnia poprzednią klatkę — po wyczyszczeniu ekranu porównujemy
-    // z pustą kartką, więc wszystko wyjdzie od nowa.
+    // A size change invalidates the previous frame: after clearing the screen we compare with a
+    // blank sheet, so everything comes out anew.
     //
-    // Świeża konfiguracja robi dokładnie to samo i **tym jest** wymuszenie renderowania wszystkiego
-    // od nowa. Drzewo i tak składa się w całości przy każdej klatce; jedyne, co pamiętało poprzedni
-    // obraz, to `standing`, i te cztery linijki mu tę pamięć odbierają.
+    // A fresh configuration does exactly the same, and that is what forcing a full repaint is. The
+    // tree is composed whole at every frame anyway; the only thing that remembered the previous
+    // picture is `standing`, and these four lines take that memory away.
     if (held.shifted || !(held.standing.size() == made.size())) {
-        // Obrazy kitty nie należą do tekstu, więc czyszczenie ekranu ich nie zdejmuje — robimy to sami.
-        // Dane zostają: odmalowanie postawi je bez ponownego wysyłania.
+        // Kitty images do not belong to the text, so clearing the screen does not remove them; we
+        // do it ourselves. The data stays: the repaint places them without sending them again.
         if (!held.placed.empty()) into += "\x1b_Ga=d,d=a,q=2\x1b\\";
 
         held.placed.clear();
@@ -615,12 +660,12 @@ void Term::draw() {
         held.shifted = false;
     }
 
-    // **Obrazy w pikselach** (G1, sixel). Klatka już wie, które obrazy widać w całości (`bared`):
-    // ich kratki są puste i niosą znak obrazu. Ostatni wiersz ekranu zostaje dla znaków, bo terminal
-    // po obrazie przesuwa kursor pod niego, a pod ostatnim wierszem jest już tylko przewinięcie.
-    // Obraz idzie na terminal, gdy którakolwiek jego kratka zmieniła się w tej klatce — nowy, przesunięty,
-    // inna klatka animacji, odsłonięty, ekran wyczyszczony. Kratki idą wcześniej: przepisanie ich
-    // zmazuje piksele pod spodem, a obraz kładzie się na czystym.
+    // Images in pixels (sixel). The frame already knows which images are visible whole (`bared`):
+    // their cells are empty and carry the image mark. The last screen row stays for characters,
+    // because after an image the terminal moves the cursor below it, and below the last row there
+    // is only scrolling. An image goes to the terminal when any of its cells changed in this frame:
+    // new, moved, another animation frame, uncovered, the screen cleared. The cells go first:
+    // rewriting them erases the pixels underneath, and the image is laid on a clean area.
     std::vector<Placement> pictured;
     std::vector<Placement> standing;
 
@@ -630,12 +675,12 @@ void Term::draw() {
     if (kind == Graphics::sixel && grid.wide > 0 && grid.high > 0)
         pictured = made.bared({{0, 0}, {made.size().wide, made.size().high - 1}});
 
-    // **Kitty** (G2) liczy się inaczej: tekst obrazu nie zmazuje, więc nie decyduje o nim zmiana
-    // kratek, tylko porównanie z tym, co stoi. Co znikło albo się przesunęło, zdejmujemy przed
-    // kratkami; obraz, którego pikseli nikt już nie trzyma, terminal zapomina. Nowe stawiamy po
-    // kratkach, wysyłając wcześniej te, których terminal jeszcze nie ma. Zapominanie idzie na końcu,
-    // gdy pamięć poprzedniej klatki (`standing`, `placed`) już nie trzyma pikseli — inaczej obraz
-    // zszedłby z terminala klatkę później.
+    // Kitty works differently: text does not erase an image, so what decides is not a change of
+    // cells but a comparison with what stands. Whatever vanished or moved is removed before the
+    // cells; an image whose pixels nobody holds any more is forgotten by the terminal. New ones are
+    // placed after the cells, first sending those the terminal does not have yet. Forgetting comes
+    // last, when the memory of the previous frame (`standing`, `placed`) no longer holds the
+    // pixels; otherwise the image would leave the terminal one frame later.
     if (kind == Graphics::kitty) {
         standing = made.bared({{0, 0}, made.size()});
 
@@ -662,7 +707,7 @@ void Term::draw() {
         for (int x = 0; x < made.size().wide; ++x) {
             const Cell one = made.at({x, y});
 
-            // Ciąg dalszy szerokiego znaku wyszedł razem z jego pierwszą połową.
+            // The continuation of a wide character went out together with its first half.
             if (one.letter == 0) continue;
 
             if (one == held.standing.at({x, y})) continue;
@@ -687,12 +732,13 @@ void Term::draw() {
 
             held.at.x += broad ? 2 : 1;
 
-            // Zawijanie mamy wyłączone, więc na ostatniej kolumnie kursor stoi w miejscu
-            // nieokreślonym — następny znak dostanie własny skok.
+            // Autowrap is off, so at the last column the cursor stands in an undefined place; the
+            // next character gets its own jump.
             if (held.at.x >= made.size().wide) held.at = ui::Spot{-1, -1};
         }
 
-    // Po obrazie kursor stoi tam, gdzie postawił go terminal — następny znak dostanie własny skok.
+    // After an image the cursor stands wherever the terminal put it; the next character gets its
+    // own jump.
     for (const Placement& one : pictured) {
         if (!one.picture.sixel) continue;
 
@@ -715,15 +761,16 @@ void Term::draw() {
 
         stood(one, into);
 
-        // `C=1` zostawia kursor w miejscu, ale terminal, który klucza nie zna, przesunąłby go —
-        // następny znak dostaje więc własny skok, jak po sixelu.
+        // C=1 leaves the cursor in place, but a terminal that does not know the key would move
+        // it, so the next character gets its own jump, as after a sixel.
         held.at = ui::Spot{-1, -1};
     }
 
     held.placed = std::move(standing);
 
-    // **Kursor bierzemy z korzenia, nie z kartki.** Klatka mówi, co narysować, a nie gdzie stoi
-    // daszek — ten należy do ogniska. Pytamy po złożeniu, bo dopiero wtedy prostokąty są świeże.
+    // The cursor comes from the root, not from the sheet. The frame says what to draw, not where
+    // the caret stands; that belongs to the focus. We ask after composing, because only then are
+    // the rectangles fresh.
     if (const std::optional<ui::Spot> spot = held.onto->caret(); spot.has_value()) {
         placed(*spot, into);
 
@@ -751,8 +798,8 @@ void Term::draw() {
     });
 
     if (!into.empty()) {
-        // Wstrzymanie rysowania na czas klatki, jeśli terminal to umie — wtedy nawet duża
-        // zmiana pojawia się w całości naraz.
+        // Drawing is held for the duration of the frame if the terminal can do that; then even a
+        // large change appears whole at once.
         Console& out = held.console.provider();
 
         if (synchronized(held.compat, held.wish)) out.write("\x1b[?2026h");
@@ -765,37 +812,42 @@ void Term::draw() {
 
 namespace {
 
-// Karmienie **po bajcie**, z bieżącym korzeniem przy każdym: klawisz w środku kawałka może
-// przestawić korzeń (`Term::show`), a klawisze wpisane z wyprzedzeniem mają pójść już do nowego.
-// Dekoder nie przywiązuje znaczenia do granic karmienia — próba „po bajcie to samo, co całością"
-// tego pilnuje — więc to jedyna różnica. Koszt: kawałek to najwyżej kilobajt.
+// Feeds the decoder byte by byte, with the current root for each: a key in the middle of a chunk
+// may switch the root (`Term::show`), and keys typed ahead must go to the new one. The decoder
+// attaches no meaning to feeding boundaries (a test checks that feeding byte by byte equals
+// feeding whole), so this is the only difference. The cost: a chunk is at most a kilobyte.
 void fed(Decoder& decoder, std::string_view given, ui::Root* const& onto) {
     for (std::size_t at = 0; at < given.size(); ++at) decoder.fed(given.substr(at, 1), *onto);
 }
 
 }
 
+// Asks `run` to end after the current turn, ringing the loop's bell to wake it.
 void Term::stop() {
     held_->running = false;
 
     held_->loop->bell().ring();
 }
 
+// Turns until `stop`.
 void Term::run() {
     while (turn()) {
     }
 }
 
+// One turn: waits for input, the loop's bell or a deadline, delivers what came, and draws when
+// something happened. Returns false once `stop` was called. Throws std::logic_error when no root is
+// shown.
 bool Term::turn() {
     Held& held = *held_;
 
     if (held.onto == nullptr)
         throw std::logic_error("talcite::Term: no root set");
 
-    // Terminal jest oddany: wejście należy do cudzego programu, ekran do tego, co on na nim
-    // napisze. Czytanie stdin ukradłoby mu klawisz, a rysowanie zamazało obraz — zostaje sama
-    // pętla, żeby zegar, sieć i czytanie plików mogły dokończyć swoje. Czekamy na dzwonku, a nie
-    // w pustym obrocie, bo `run()` kręciłby się wtedy na gorąco.
+    // The terminal is handed over: input belongs to the other program, the screen to whatever it
+    // writes there. Reading stdin would steal its key, and drawing would smear its picture; only
+    // the loop remains, so that timers, the network and file reads can finish their work. We wait
+    // on the bell, not in an empty turn, because `run()` would then spin hot.
     if (held.away > 0) {
         (void)held.loop->bell().wait(glancing);
         (void)held.loop->turn();
@@ -803,8 +855,8 @@ bool Term::turn() {
         return held.running;
     }
 
-    // Klawisze naciśnięte w trakcie badania czekają od uruchomienia. Idą pierwsze, przed
-    // czymkolwiek świeżym — inaczej przepadłyby mimo całej roboty, żeby ich nie zgubić.
+    // Keys pressed during the probe have waited since start-up. They go first, before anything
+    // fresh; otherwise they would be lost despite all the work done to keep them.
     bool doing = false;
 
     if (!held.spare.empty()) {
@@ -816,23 +868,23 @@ bool Term::turn() {
         doing = true;
     }
 
-    // Pierwszą klatkę rysujemy **przed** czekaniem, bo czekanie może nie mieć ogranicznika:
-    // inaczej program stałby pusty do pierwszego naciśnięcia.
+    // The first frame is drawn before waiting, because the wait may have no limit; otherwise the
+    // program would stand empty until the first key press.
     if (held.fresh) {
         held.fresh = false;
 
         draw();
     }
 
-    // Bez ogranicznika, dopóki nie ma czego rozstrzygać. Samotny Esc daje pięćdziesiąt
-    // milisekund. Kliknięcie czekające na swoje drugie nie budzi pętli: korzeń rozstrzyga je
-    // chwilą drugiego, gdy ono przyjdzie, a gdy nie przyjdzie — nie ma czego rozstrzygać.
+    // No limit while there is nothing to settle. A lone Esc gives fifty milliseconds. A click
+    // waiting for its second one does not wake the loop: the root settles it by the time of the
+    // second when that comes, and when it does not come, there is nothing to settle.
     std::optional<std::chrono::milliseconds> patience;
 
     if (held.decoder.pending()) patience = hesitating;
 
-    // **Drzewo też ma prawo poprosić o obrót.** Animowany obrazek liczy klatkę z zegara, więc mówi
-    // tylko, kiedy najpóźniej chce być obudzony; nikt tu nie wie, że chodzi o klatkę.
+    // The tree may ask for a turn too. An animated image computes its frame from the clock, so it
+    // says only when at the latest it wants to be woken; nobody here knows it is about a frame.
     const std::optional<std::chrono::milliseconds> wanted = held.onto->due();
 
     std::optional<std::chrono::steady_clock::time_point> awaited;
@@ -846,15 +898,16 @@ bool Term::turn() {
         if (!patience.has_value() || soon < *patience) patience = soon;
     }
 
-    // Czekamy na klawiaturę i na dzwonek pętli naraz. Konsola wraca pustką także po zmianie
-    // rozmiaru — jak się o niej dowiaduje, to już jej sprawa — więc w bezczynności nie ma ani
-    // jednego jałowego przebudzenia po tej stronie.
+    // We wait for the keyboard and the loop's bell at once. The console also returns empty after a
+    // size change (how it learns of that is its own business), so when idle there is not a single
+    // needless wake-up on this side.
     Console& console = held.console.provider();
 
     const std::string given = console.hear(patience, &held.loop->bell());
 
-    // Wznowiony po zatrzymaniu: terminal był w tym czasie powłoki, która zdjęła z niego nasze
-    // ubranie i pisała po ekranie. Ubieramy go na nowo i rysujemy wszystko, jak po cudzym programie.
+    // Resumed after a stop: meanwhile the terminal belonged to the shell, which removed our
+    // dressing and wrote on the screen. We dress it again and redraw everything, as after another
+    // program.
     if (console.resumed()) {
         if (held.entered) dressed(console, sending(held.compat, held.wish));
 
@@ -866,11 +919,11 @@ bool Term::turn() {
 
     if (spoken) fed(held.decoder, given, held.onto);
 
-    // Rozmiar sprawdzamy w każdym obrocie, nie tylko po pustce: obrót zdarza się też po klawiszu
-    // i po dzwonku pętli, a okno mogło zmienić się właśnie wtedy.
+    // The size is checked at every turn, not only after an empty read: a turn also happens after a
+    // key and after the loop's bell, and the window may have changed just then.
     const bool sized = measured(console, held.wide, held.high);
 
-    // Nic nie przyszło, a dekoder coś trzyma — to znaczy, że Esc był sam.
+    // Nothing came and the decoder holds something: the Esc was alone.
     if (!spoken && held.decoder.pending()) {
         held.decoder.flush(*held.onto);
 
@@ -887,20 +940,19 @@ bool Term::turn() {
         doing = true;
     }
 
-    // Czas, o który prosiło drzewo, upłynął — więc któryś węzeł maluje się teraz inaczej niż przed
-    // chwilą. Pytanie ponowne nic by tu nie dało: węzeł liczący klatkę z zegara zawsze oddaje resztę
-    // **bieżącej** klatki, czyli liczbę dodatnią, i po przekroczeniu granicy wygląda tak samo jak
-    // przed nią. Rozstrzyga więc chwila zapamiętana przed czekaniem, a nie ponowne pytanie.
+    // The time the tree asked for has passed, so some node now paints differently than a moment
+    // ago. Asking again would not help: a node that computes its frame from the clock always
+    // returns the rest of the current frame, a positive number, and past the boundary it looks the
+    // same as before it. So the moment recorded before waiting decides, not a second question.
     if (awaited.has_value() && std::chrono::steady_clock::now() >= *awaited) doing = true;
 
-    // **Praca z pętli też jest zdarzeniem.** Wywołanie zwrotne przeniesione przez `here()` albo
-    // `Loop::post` po to właśnie sięga do drzewa węzłów, więc bez tego zmiana byłaby widoczna
-    // dopiero po najbliższym klawiszu — a pasek postępu nie ruszyłby się wcale.
+    // Work from the loop is an event too. A callback moved over by `here()` or `Loop::post` reaches
+    // the node tree for exactly that purpose, so without this the change would show only after the
+    // next key, and a progress bar would not move at all.
     if (held.loop->turn() > 0) doing = true;
 
-    // Puste obroty — te, w których tylko upłynął ogranicznik — nie kosztują nic. Gdy coś się
-    // wydarzyło, składamy klatkę; jeśli mimo to nic się nie zmieniło, na terminal i tak nie
-    // pójdzie ani bajt.
+    // Empty turns, in which only the limit passed, cost nothing. When something happened we compose
+    // a frame; if nothing changed even so, not a byte goes to the terminal.
     if (doing) draw();
 
     return held.running;

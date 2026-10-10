@@ -9,6 +9,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <version>
 
 #include "talcite/fs.hpp"
 #include "talcite/time.hpp"
@@ -41,14 +42,45 @@ using namespace std::chrono_literals;
 
 namespace {
 
-// Rodzaj zmiany widzianej przez `Watch` — skrót, bo próby obserwowania pytają o niego co wiersz.
+// The kind of change seen by `Watch`: a short name, because the watching trials ask about it on
+// every line.
 using Changed = fs::Change::Kind;
 
 namespace stood = std::filesystem;
 
-// Katalog na czas jednego przypadku. Sprząta po sobie, także gdy przypadek padnie.
+// A file of the given length without writing content: `resize_file`. libc++ on Windows cuts the
+// length in it to 32 bits (its `off_t`), turning 5 GiB into 1 GiB, so there we do through the
+// system what MSVC's `resize_file` does.
+void stretched(const stood::path& where, std::uintmax_t size, std::error_code& why) {
+    why.clear();
+
+#if defined(_WIN32) && defined(_LIBCPP_VERSION)
+    const HANDLE file = CreateFileW(where.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    if (file == INVALID_HANDLE_VALUE) {
+        why.assign(static_cast<int>(GetLastError()), std::system_category());
+
+        return;
+    }
+
+    FILE_END_OF_FILE_INFO end{};
+
+    end.EndOfFile.QuadPart = static_cast<LONGLONG>(size);
+
+    if (SetFileInformationByHandle(file, FileEndOfFileInfo, &end, sizeof end) == 0)
+        why.assign(static_cast<int>(GetLastError()), std::system_category());
+
+    CloseHandle(file);
+#else
+    stood::resize_file(where, size, why);
+#endif
+}
+
+// A directory for the duration of one case. It cleans up after itself, also when the case fails.
 class Nook {
 public:
+    // Creates a fresh, empty directory with a name unique to this process and object.
     Nook() {
         static std::atomic<int> counted{0};
 
@@ -61,6 +93,7 @@ public:
         stood::create_directories(where_, ignored);
     }
 
+    // Removes the directory with everything in it, ignoring errors.
     ~Nook() {
         std::error_code ignored;
         stood::remove_all(where_, ignored);
@@ -71,8 +104,11 @@ public:
     Nook(Nook&&) = delete;
     Nook& operator=(Nook&&) = delete;
 
+    // The path of the directory.
     [[nodiscard]] const fs::path& where() const { return where_; }
 
+    // Creates a file of the given name in the directory with the given content, replacing an
+    // existing one, and returns its path.
     [[nodiscard]] fs::path made(const std::string& named, const std::string& held = {}) const {
         const fs::path one = where_ / named;
 
@@ -88,7 +124,7 @@ private:
 
 }
 
-TRIAL("fs: exists odpowiada, a nie rzuca") {
+TRIAL("fs: exists answers rather than throws") {
     const Nook nook;
 
     const fs::path one = nook.made("jest.txt", "cokolwiek");
@@ -97,7 +133,7 @@ TRIAL("fs: exists odpowiada, a nie rzuca") {
     ought(!fs::exists(nook.where() / "nie ma.txt").await());
 }
 
-TRIAL("fs: kind rozróżnia plik, katalog i pustkę") {
+TRIAL("fs: kind tells a file, a directory and nothing apart") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "x");
@@ -111,7 +147,7 @@ TRIAL("fs: kind rozróżnia plik, katalog i pustkę") {
          static_cast<int>(fs::Kind::none));
 }
 
-TRIAL("fs: size mierzy zawartość") {
+TRIAL("fs: size measures the content") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", std::string(1234, 'a'));
@@ -119,7 +155,7 @@ TRIAL("fs: size mierzy zawartość") {
     same(fs::size(one).await(), std::uintmax_t{1234});
 }
 
-TRIAL("fs: size na pustce odrzuca, a powód niesie ścieżkę") {
+TRIAL("fs: size on nothing rejects, and the reason carries the path") {
     const Nook nook;
 
     const fs::path missing = nook.where() / "nie ma.bin";
@@ -138,7 +174,7 @@ TRIAL("fs: size na pustce odrzuca, a powód niesie ścieżkę") {
     same(told, missing);
 }
 
-TRIAL("fs: written wskazuje chwilę bliską teraz") {
+TRIAL("fs: written points to a moment close to now") {
     const Nook nook;
 
     const fs::path one = nook.made("świeży.txt", "x");
@@ -153,7 +189,7 @@ TRIAL("fs: written wskazuje chwilę bliską teraz") {
     ought(apart < 600s);
 }
 
-TRIAL("fs: roomy podaje pojemność i wolne miejsce") {
+TRIAL("fs: roomy gives the capacity and the free space") {
     const Nook nook;
 
     const fs::Space told = fs::space(nook.where()).await();
@@ -163,7 +199,7 @@ TRIAL("fs: roomy podaje pojemność i wolne miejsce") {
     ought(told.free <= told.total);
 }
 
-TRIAL("fs: slice daje sensowną ratę") {
+TRIAL("fs: slice gives a sensible chunk") {
     const Nook nook;
 
     const std::size_t told = fs::chunk(nook.where()).await();
@@ -173,7 +209,7 @@ TRIAL("fs: slice daje sensowną ratę") {
     same(told & (told - 1), std::size_t{0});
 }
 
-TRIAL("fs: make tworzy całą drogę i nie przeszkadza mu, że już jest") {
+TRIAL("fs: make creates the whole path and does not mind that it exists") {
     const Nook nook;
 
     const fs::path deep = nook.where() / "jeden" / "dwa" / "trzy";
@@ -187,7 +223,7 @@ TRIAL("fs: make tworzy całą drogę i nie przeszkadza mu, że już jest") {
     ought(fs::exists(deep).await());
 }
 
-TRIAL("fs: rename przenosi") {
+TRIAL("fs: rename moves") {
     const Nook nook;
 
     const fs::path one = nook.made("stary.txt", std::string(5, 'x'));
@@ -200,13 +236,13 @@ TRIAL("fs: rename przenosi") {
     same(fs::size(two).await(), std::uintmax_t{5});
 }
 
-TRIAL("fs: rename na pustce odrzuca") {
+TRIAL("fs: rename on nothing rejects") {
     const Nook nook;
 
     threw(fs::rename(nook.where() / "nie ma", nook.where() / "gdziekolwiek").await());
 }
 
-TRIAL("fs: złota zasada — nic nie dzieje się bez pytania o wynik") {
+TRIAL("fs: the golden rule, nothing happens until the result is asked for") {
     const Nook nook;
 
     const fs::path deep = nook.where() / "leniwy";
@@ -222,7 +258,7 @@ TRIAL("fs: złota zasada — nic nie dzieje się bez pytania o wynik") {
     ought(fs::exists(deep).await());
 }
 
-TRIAL("fs: pytania składają się jak każde inne obietnice") {
+TRIAL("fs: queries compose like any other promises") {
     const Nook nook;
 
     const fs::path one = nook.made("a.txt", "aaa");
@@ -236,7 +272,7 @@ TRIAL("fs: pytania składają się jak każde inne obietnice") {
     same(first.await() + second.await(), std::uintmax_t{8});
 }
 
-TRIAL("fs: list podaje wpisy z opisem, nie same ścieżki") {
+TRIAL("fs: list gives entries with a description, not just paths") {
     const Nook nook;
 
     (void)nook.made("b.txt", std::string(11, 'x'));
@@ -262,7 +298,7 @@ TRIAL("fs: list podaje wpisy z opisem, nie same ścieżki") {
     ought(among[0].accessed.time_since_epoch().count() > 1700000000);
 }
 
-TRIAL("fs: list na pliku odrzuca") {
+TRIAL("fs: list on a file rejects") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "x");
@@ -270,13 +306,13 @@ TRIAL("fs: list na pliku odrzuca") {
     threw((void)fs::list(one).await());
 }
 
-TRIAL("fs: list pustego katalogu daje pustkę") {
+TRIAL("fs: list of an empty directory gives nothing") {
     const Nook nook;
 
     ought(fs::list(nook.where()).await().empty());
 }
 
-TRIAL("fs: walk schodzi w głąb") {
+TRIAL("fs: walk goes down into the depth") {
     const Nook nook;
 
     fs::make_folder(nook.where() / "jeden" / "dwa").await();
@@ -308,7 +344,7 @@ TRIAL("fs: walk schodzi w głąb") {
     same(folders, std::size_t{2});
 }
 
-TRIAL("fs: walk daje wynik uporządkowany") {
+TRIAL("fs: walk gives an ordered result") {
     const Nook nook;
 
     fs::make_folder(nook.where() / "z").await();
@@ -319,7 +355,7 @@ TRIAL("fs: walk daje wynik uporządkowany") {
     for (std::size_t at = 1; at < among.size(); ++at) ought(among[at - 1].where < among[at].where);
 }
 
-TRIAL("fs: jedno przejście zamiast tysiąca pytań") {
+TRIAL("fs: one pass instead of a thousand queries") {
     const Nook nook;
 
     for (int at = 0; at < 200; ++at)
@@ -336,11 +372,12 @@ TRIAL("fs: jedno przejście zamiast tysiąca pytań") {
 
     same(whole, std::uintmax_t{200 * 199 / 2});
 
-    // Dwieście rozmiarów przyszło razem z listą, więc nie ma tu dwustu przejść przez pulę.
+    // Two hundred sizes came together with the list, so there are no two hundred trips through the
+    // pool here.
     ought(held.spent() < 2000ms);
 }
 
-TRIAL("fs: anulowane przejście przerywa się w trakcie") {
+TRIAL("fs: a cancelled walk stops midway") {
     const Nook nook;
 
     for (int at = 0; at < 60; ++at) {
@@ -355,9 +392,9 @@ TRIAL("fs: anulowane przejście przerywa się w trakcie") {
 
     Promise<std::vector<fs::Entry>> going = fs::walk(nook.where());
 
-    // Bez odczekiwania: zadanie jest albo jeszcze w kolejce, albo dopiero co ruszyło. Pauza
-    // dawałaby przejściu szansę skończyć się przed anulowaniem, a wtedy przypadek mierzyłby
-    // wyścig zamiast mechanizmu.
+    // No waiting: the task is either still in the queue or has only just started. A pause would
+    // give the walk a chance to finish before the cancellation, and the case would then measure a
+    // race instead of the mechanism.
     going.start();
     going.cancel();
 
@@ -367,6 +404,7 @@ TRIAL("fs: anulowane przejście przerywa się w trakcie") {
 namespace {
 
 
+// The bytes as a string, one character per byte.
 std::string said_of(const fs::Bytes& given) {
     std::string made(given.size(), '\0');
 
@@ -378,7 +416,7 @@ std::string said_of(const fs::Bytes& given) {
 
 }
 
-TRIAL("File: otwiera do odczytu i czyta zakres") {
+TRIAL("File: opens for reading and reads a range") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -392,7 +430,7 @@ TRIAL("File: otwiera do odczytu i czyta zakres") {
     same(said_of(held.read(0, 10).await()), std::string{"0123456789"});
 }
 
-TRIAL("File: odczyt poza końcem oddaje tyle, ile jest") {
+TRIAL("File: a read past the end returns as much as there is") {
     const Nook nook;
 
     const fs::path one = nook.made("krótki.bin", "abc");
@@ -403,7 +441,7 @@ TRIAL("File: odczyt poza końcem oddaje tyle, ile jest") {
     ought(held.read(50, 10).await().empty());
 }
 
-TRIAL("File: zapisuje w podanym miejscu, nie od początku") {
+TRIAL("File: writes at the given place, not from the start") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "aaaaaaaaaa");
@@ -415,7 +453,7 @@ TRIAL("File: zapisuje w podanym miejscu, nie od początku") {
     same(said_of(held.read(0, 10).await()), std::string{"aaaaXYaaaa"});
 }
 
-TRIAL("File: write tworzy plik i zachowuje treść, fresh ją ucina") {
+TRIAL("File: write creates the file and keeps its content, fresh truncates it") {
     const Nook nook;
 
     const fs::path one = nook.where() / "nowy.bin";
@@ -442,16 +480,16 @@ TRIAL("File: write tworzy plik i zachowuje treść, fresh ją ucina") {
     same(fs::size(one).await(), std::uintmax_t{2});
 }
 
-TRIAL("File: otwarcie nieistniejącego do odczytu odrzuca") {
+TRIAL("File: opening a missing file for reading rejects") {
     const Nook nook;
 
     threw((void)fs::open(nook.where() / "nie ma.bin").await());
 }
 
-// Kopie dzielą jeden otwarty plik, więc **zamknięcie zamyka go wszystkim**: kopia zostaje w każdej
-// obietnicy, przez którą plik przeszedł, i dawne zamknięcie samej kopii zostawiało uchwyt otwarty
-// — na Windows tak długo, że zastąpienie pliku odmawiało. Bez zamknięcia kopie czytają to samo.
-TRIAL("File: kopie dzielą ten sam otwarty plik, a zamknięcie zamyka go wszystkim") {
+// Copies share one open file, so closing closes it for all of them: a copy stays in every promise
+// the file has passed through, and closing only one copy would leave the handle open, on Windows
+// long enough for replacing the file to be refused. Without closing, the copies read the same.
+TRIAL("File: copies share the same open file, and closing closes it for all") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "abcdef");
@@ -468,7 +506,7 @@ TRIAL("File: kopie dzielą ten sam otwarty plik, a zamknięcie zamyka go wszystk
 
     ought(!first.held());
 
-    // Odmowa mówi, co się stało, zamiast błędu odczytu z uchwytu, którego już nie ma.
+    // The refusal says what happened, instead of a read error from a handle that no longer exists.
     const auto refused = [](auto doing) {
         try {
             doing();
@@ -488,7 +526,8 @@ TRIAL("File: kopie dzielą ten sam otwarty plik, a zamknięcie zamyka go wszystk
     ought(refused([&] { (void)moving.read(3).await(); }));
 
 #ifndef _WIN32
-    // Deskryptor naprawdę wrócił do systemu: żaden otwarty w procesie nie wskazuje już tego pliku.
+    // The descriptor really went back to the system: no descriptor open in the process points to
+    // this file any more.
     std::error_code ignored;
 
     for (const stood::directory_entry& fd : stood::directory_iterator{"/proc/self/fd", ignored})
@@ -496,7 +535,7 @@ TRIAL("File: kopie dzielą ten sam otwarty plik, a zamknięcie zamyka go wszystk
 #endif
 }
 
-TRIAL("File: zamknięty odrzuca zamiast się wywracać") {
+TRIAL("File: a closed file rejects instead of crashing") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "abc");
@@ -508,7 +547,7 @@ TRIAL("File: zamknięty odrzuca zamiast się wywracać") {
     threw((void)held.size().await());
 }
 
-TRIAL("File: czytanie ratami składa cały plik") {
+TRIAL("File: reading in chunks assembles the whole file") {
     const Nook nook;
 
     std::string whole;
@@ -531,6 +570,7 @@ TRIAL("File: czytanie ratami składa cały plik") {
 
 namespace {
 
+// A string of the given length cycling through the letters a to z.
 std::string ladder(std::size_t much) {
     std::string made;
     made.reserve(much);
@@ -542,7 +582,7 @@ std::string ladder(std::size_t much) {
 
 }
 
-TRIAL("fs: read wciąga cały plik") {
+TRIAL("fs: read takes in the whole file") {
     const Nook nook;
 
     const std::string whole = ladder(70000);
@@ -551,7 +591,7 @@ TRIAL("fs: read wciąga cały plik") {
     same(said_of(fs::read(one).await()), whole);
 }
 
-TRIAL("fs: read pustego pliku daje pustkę") {
+TRIAL("fs: read of an empty file gives nothing") {
     const Nook nook;
 
     const fs::path one = nook.made("puste.bin", "");
@@ -559,13 +599,13 @@ TRIAL("fs: read pustego pliku daje pustkę") {
     ought(fs::read(one).await().empty());
 }
 
-TRIAL("fs: read nieistniejącego odrzuca") {
+TRIAL("fs: read of a missing file rejects") {
     const Nook nook;
 
     threw((void)fs::read(nook.where() / "nie ma.bin").await());
 }
 
-TRIAL("fs: write i read wracają tym samym") {
+TRIAL("fs: write and read round-trip") {
     const Nook nook;
 
     const std::string whole = ladder(70000);
@@ -577,7 +617,7 @@ TRIAL("fs: write i read wracają tym samym") {
     same(said_of(fs::read(one).await()), whole);
 }
 
-TRIAL("fs: write ścina to, co było wcześniej") {
+TRIAL("fs: write truncates what was there before") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", std::string(5000, 'x'));
@@ -587,7 +627,7 @@ TRIAL("fs: write ścina to, co było wcześniej") {
     same(said_of(fs::read(one).await()), std::string{"krótko"});
 }
 
-TRIAL("fs: postęp odczytu rośnie i kończy się na jedynce") {
+TRIAL("fs: read progress grows and ends at one") {
     const Nook nook;
 
     const fs::path one = nook.made("duży.bin", ladder(200000));
@@ -601,7 +641,7 @@ TRIAL("fs: postęp odczytu rośnie i kończy się na jedynce") {
     same(going.progress(), 1.0);
 }
 
-TRIAL("fs: copy odwzorowuje plik co do bajtu") {
+TRIAL("fs: copy reproduces a file to the byte") {
     const Nook nook;
 
     const std::string whole = ladder(70000);
@@ -615,7 +655,7 @@ TRIAL("fs: copy odwzorowuje plik co do bajtu") {
     ought(fs::exists(from).await());
 }
 
-TRIAL("fs: copy przenosi całe drzewo") {
+TRIAL("fs: copy carries the whole tree") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -646,10 +686,11 @@ TRIAL("fs: copy przenosi całe drzewo") {
     same(fs::walk(to).await().size(), fs::walk(from).await().size());
 }
 
-// Czekamy, aż kopia naprawdę ruszy — inaczej anulowanie trafiłoby zadanie jeszcze przed
-// pulą i przypadek przechodziłby, nic nie sprawdzając. Patrzymy na cel, a nie na postęp:
-// postęp rozstrzygniętej obietnicy wynosi jeden także po odrzuceniu, więc nie odróżnia
-// pracy trwającej od pracy, która nigdy nie ruszyła.
+// Waits until the copy has really started; otherwise the cancellation would hit the task before the
+// pool and the case would pass without checking anything. We look at the target, not at the
+// progress: the progress of a settled promise is one also after a rejection, so it does not tell
+// work in progress from work that never started. Returns whether the target grew past the given
+// size in time.
 bool grew(const fs::path& to, std::uintmax_t past) {
     for (int at = 0; at < 400; ++at) {
         std::error_code ignored;
@@ -662,9 +703,10 @@ bool grew(const fs::path& to, std::uintmax_t past) {
     return false;
 }
 
-// Anulowanie może trafić kopię przed pierwszą ratą albo już po ostatniej — nie da się tego
-// wymusić. Umowa brzmi inaczej i sprawdza się zawsze: cel jest albo pełny, albo go nie ma.
-TRIAL("fs: anulowana kopia zostawia cel pełny albo żaden") {
+// The cancellation may hit the copy before the first chunk or already after the last; that cannot
+// be forced. The contract is phrased differently and always holds: the target is either complete or
+// absent.
+TRIAL("fs: a cancelled copy leaves the target complete or absent") {
     const Nook nook;
 
     const fs::path from = nook.made("duży.bin", ladder(8000000));
@@ -683,7 +725,7 @@ TRIAL("fs: anulowana kopia zostawia cel pełny albo żaden") {
     if (fs::exists(to).await()) same(fs::size(to).await(), fs::size(from).await());
 }
 
-TRIAL("fs: kopia porzucona przed ruszeniem nie tworzy celu") {
+TRIAL("fs: a copy abandoned before starting creates no target") {
     const Nook nook;
 
     const fs::path from = nook.made("duży.bin", ladder(8000000));
@@ -699,9 +741,10 @@ TRIAL("fs: kopia porzucona przed ruszeniem nie tworzy celu") {
     if (fs::exists(to).await()) same(fs::size(to).await(), fs::size(from).await());
 }
 
-// Zastąpienie pisze obok (`.cel.bin.XXXXXX.part`) i dopiero całość przemianowuje na cel, więc
-// anulowanie w połowie zostawia cel **ze starą treścią**, a pliku obok nie zostawia wcale.
-TRIAL("fs: anulowana kopia nie rusza celu, który już był") {
+// Replacing writes alongside (`.cel.bin.XXXXXX.part`) and only renames the whole onto the target,
+// so a cancellation halfway leaves the target with its old content and leaves no file alongside at
+// all.
+TRIAL("fs: a cancelled copy leaves an existing target alone") {
     const Nook nook;
 
     const fs::path from = nook.made("duży.bin", ladder(8000000));
@@ -732,9 +775,9 @@ TRIAL("fs: anulowana kopia nie rusza celu, który już był") {
         ought(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
 }
 
-// Plik na katalog z zastąpieniem: zapis obok się udaje, ale przemianowanie na katalog — nie. Odmowa
-// i ani śladu pliku obok.
-TRIAL("fs: kopia pliku na katalog odmawia i nie zostawia pliku obok") {
+// A file onto a directory with replacing: writing alongside succeeds, but renaming onto the
+// directory does not. A refusal, and no trace of the file alongside.
+TRIAL("fs: copying a file onto a directory refuses and leaves no file alongside") {
     const Nook nook;
 
     const fs::path from = nook.made("film.mkv", "film");
@@ -750,9 +793,9 @@ TRIAL("fs: kopia pliku na katalog odmawia i nie zostawia pliku obok") {
         ought(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
 }
 
-// Drugie dowiązanie twarde do zastępowanego pliku zostaje przy starej treści: zastąpienie daje
-// celowi nowy plik, a nie przepisuje starego w miejscu.
-TRIAL("fs: zastąpienie nie przepisuje drugiego dowiązania") {
+// A second hard link to the replaced file keeps the old content: replacing gives the target a new
+// file rather than rewriting the old one in place.
+TRIAL("fs: replacing does not rewrite a second link") {
     const Nook nook;
 
     const fs::path from = nook.made("nowy.txt", "nowa treść");
@@ -771,10 +814,10 @@ TRIAL("fs: zastąpienie nie przepisuje drugiego dowiązania") {
     same(said_of(fs::read(twin).await()), std::string{"stara"});
 }
 
-// Katalog przenoszony do własnego wnętrza: dawniej system odmawiał zmiany nazwy, `move` brał to za
-// inny nośnik, kopiował drzewo do środka samego siebie i kasował źródło — znikało wszystko, a obietnica
-// mówiła „gotowe". Dziś odmowa i nic nie rusza się z miejsca.
-TRIAL("fs: move katalogu do własnego wnętrza odmawia i niczego nie rusza") {
+// A directory moved into its own interior: the system refuses the rename, and `move` must not take
+// that for a different volume, copy the tree into itself and delete the source, which would lose
+// everything while the promise said "done". It refuses, and nothing moves.
+TRIAL("fs: moving a directory into its own interior refuses and touches nothing") {
     const Nook nook;
 
     const fs::path from = nook.where() / "biblioteka";
@@ -799,9 +842,9 @@ TRIAL("fs: move katalogu do własnego wnętrza odmawia i niczego nie rusza") {
     ought(fs::exists(film).await());
 }
 
-// Katalog nadpisywany katalogiem łączy się z nim wpis po wpisie: pliki obu zostają, wspólna nazwa
-// dostaje treść przenoszonego, a źródło znika.
-TRIAL("fs: move katalogu na katalog z overwrite łączy oba") {
+// A directory overwritten with a directory merges with it entry by entry: the files of both stay, a
+// shared name gets the content of the moved one, and the source disappears.
+TRIAL("fs: moving a directory onto a directory with overwrite merges both") {
     const Nook nook;
 
     const fs::path from = nook.where() / "nowy";
@@ -822,8 +865,8 @@ TRIAL("fs: move katalogu na katalog z overwrite łączy oba") {
     same(said_of(fs::read(to / "tylko stary.txt").await()), std::string{"s"});
     same(said_of(fs::read(to / "w głąb" / "tylko nowy.txt").await()), std::string{"n"});
 
-    // Łączenie w obrębie nośnika to zmiany nazw — nie pyta o wolne miejsce, więc plik większy niż
-    // całe wolne miejsce (rzadki, na dysku prawie nic) przechodzi.
+    // Merging within a volume is renames: it does not ask about free space, so a file larger than
+    // all the free space (sparse, taking almost nothing on disk) passes.
     const fs::path big = nook.where() / "duży";
 
     fs::make_folder(big).await();
@@ -835,7 +878,7 @@ TRIAL("fs: move katalogu na katalog z overwrite łączy oba") {
 
     if (trouble) return;
 
-    stood::resize_file(nook.made("duży/film.mkv", ""), room.available + (std::uintmax_t{1} << 30), trouble);
+    stretched(nook.made("duży/film.mkv", ""), room.available + (std::uintmax_t{1} << 30), trouble);
 
     if (trouble) return;
 
@@ -845,8 +888,8 @@ TRIAL("fs: move katalogu na katalog z overwrite łączy oba") {
     ought(!fs::exists(big).await());
 }
 
-// Wyłączne utworzenie: drugi raz ten sam plik odmawia i mówi dlaczego, a pierwszy zostaje.
-TRIAL("fs: Mode::exclusive tworzy tylko nowy plik") {
+// Exclusive creation: the same file a second time refuses and says why, and the first one stays.
+TRIAL("fs: Mode::exclusive creates only a new file") {
     const Nook nook;
 
     const fs::path one = nook.where() / "numer.json";
@@ -871,10 +914,10 @@ TRIAL("fs: Mode::exclusive tworzy tylko nowy plik") {
     same(said_of(fs::read(one).await()), std::string{"pierwszy"});
 }
 
-// Nośnik mówi, jaki ma system plików — sprawdzian przed kopią pyta o granicę FAT32. Droga
-// przenośna nazwy systemu plików nie zna i mówi to pustym napisem.
+// A volume tells which file system it has: the check before a copy asks about the FAT32 limit. The
+// portable path does not know the file system's name and says so with an empty string.
 #if !defined(TALCITE_GENERIC_POSIX)
-TRIAL("fs: wykaz nośników zna system plików") {
+TRIAL("fs: the list of volumes knows the file system") {
     bool told = false;
 
     for (const fs::Volume& one : fs::volumes().await())
@@ -884,8 +927,9 @@ TRIAL("fs: wykaz nośników zna system plików") {
 }
 #endif
 
-// Wykaz nośników nigdy nie jest pusty — choćby sam korzeń, a na Windows litera dysku systemu.
-TRIAL("fs: wykaz nośników nie jest pusty") {
+// The list of volumes is never empty: at least the root, and on Windows the drive letter of the
+// system.
+TRIAL("fs: the list of volumes is not empty") {
     const std::vector<fs::Volume> found = fs::volumes().await();
 
     ought(!found.empty());
@@ -893,13 +937,13 @@ TRIAL("fs: wykaz nośników nie jest pusty") {
     for (const fs::Volume& one : found) ought(!one.where.empty());
 }
 
-TRIAL("fs: copy nieistniejącego odrzuca") {
+TRIAL("fs: copy of a missing file rejects") {
     const Nook nook;
 
     threw(fs::copy(nook.where() / "nie ma.bin", nook.where() / "cel.bin").await());
 }
 
-TRIAL("fs: move w obrębie nośnika zabiera źródło") {
+TRIAL("fs: move within a volume takes the source away") {
     const Nook nook;
 
     const std::string whole = ladder(3000);
@@ -912,7 +956,7 @@ TRIAL("fs: move w obrębie nośnika zabiera źródło") {
     same(said_of(fs::read(to).await()), whole);
 }
 
-TRIAL("fs: move przenosi też katalog") {
+TRIAL("fs: move carries a directory too") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -931,13 +975,13 @@ TRIAL("fs: move przenosi też katalog") {
     same(said_of(fs::read(to / "w głąb" / "plik.txt").await()), std::string{"treść"});
 }
 
-TRIAL("fs: move na nieistniejącym odrzuca") {
+TRIAL("fs: move of a missing file rejects") {
     const Nook nook;
 
     threw(fs::move(nook.where() / "nie ma.bin", nook.where() / "cel.bin").await());
 }
 
-TRIAL("fs: erase zdejmuje pojedynczy plik") {
+TRIAL("fs: erase removes a single file") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "cokolwiek");
@@ -947,7 +991,7 @@ TRIAL("fs: erase zdejmuje pojedynczy plik") {
     ought(!fs::exists(one).await());
 }
 
-TRIAL("fs: erase zdejmuje całe drzewo") {
+TRIAL("fs: erase removes a whole tree") {
     const Nook nook;
 
     const fs::path where = nook.where() / "drzewo";
@@ -963,13 +1007,13 @@ TRIAL("fs: erase zdejmuje całe drzewo") {
     ought(!fs::exists(where).await());
 }
 
-TRIAL("fs: erase pustki nie jest błędem") {
+TRIAL("fs: erasing nothing is not an error") {
     const Nook nook;
 
     fs::erase(nook.where() / "nie ma").await();
 }
 
-TRIAL("fs: postęp usuwania kończy się na jedynce") {
+TRIAL("fs: erase progress ends at one") {
     const Nook nook;
 
     const fs::path where = nook.where() / "drzewo";
@@ -992,23 +1036,26 @@ TRIAL("fs: postęp usuwania kończy się na jedynce") {
 
 namespace {
 
-// Dowiązania na Windows wymagają uprawnienia, którego bieg testów mieć nie musi. Gdy się
-// nie da, przypadek kończy się bez rozstrzygnięcia zamiast fałszywie oskarżać moduł.
+// Links on Windows need a privilege that the test run does not have to have. When creating one
+// fails, the case ends without a verdict instead of falsely accusing the module. Wine accepts a
+// link and creates nothing, hence the question whether it really stands. Returns whether the link
+// exists.
 bool linked(const fs::path& where, const fs::path& onto, bool folder = false) {
     std::error_code trouble;
 
     if (folder) stood::create_directory_symlink(onto, where, trouble);
     else stood::create_symlink(onto, where, trouble);
 
-    return !trouble;
+    return !trouble && stood::is_symlink(stood::symlink_status(where, trouble)) && !trouble;
 }
 
 }
 
-// **Dowiązanie do katalogu to katalog do wejścia**, jak w MC: `list` i `walk` idą za nim, gdy stoi
-// u samego korzenia. W głębi przejścia dowiązania zostają dowiązaniami — `walk` ich nie rozwija, bo
-// dowiązanie do przodka zamknęłoby koło. Dowiązanie do pliku i wiszące dalej odrzucają.
-TRIAL("fs: list i walk wchodzą przez dowiązanie do katalogu") {
+// A link to a directory is a directory to enter, as in MC: `list` and `walk` follow it when it
+// stands at the very root. Deeper in the walk, links stay links: `walk` does not expand them,
+// because a link to an ancestor would close a loop. A link to a file and a dangling one still
+// reject.
+TRIAL("fs: list and walk enter through a link to a directory") {
     const Nook nook;
 
     fs::make_folder(nook.where() / "katalog" / "głąb").await();
@@ -1025,7 +1072,8 @@ TRIAL("fs: list i walk wchodzą przez dowiązanie do katalogu") {
     same(listed.size(), std::size_t{2});
     same(listed[1].where, nook.where() / "skrót" / "plik.txt");
 
-    // `reach` mówi, dokąd wpis prowadzi: zwykły wpis — tam, gdzie stoi; dowiązanie — do celu.
+    // `reach` says where an entry leads: an ordinary entry to where it stands, a link to its
+    // target.
     const std::vector<fs::Entry> top = fs::list(nook.where()).await();
 
     same(top.size(), std::size_t{2});
@@ -1060,7 +1108,7 @@ TRIAL("fs: list i walk wchodzą przez dowiązanie do katalogu") {
     threw((void)fs::walk(nook.where() / "wiszące").await());
 }
 
-TRIAL("fs: copy odmawia, gdy cel istnieje") {
+TRIAL("fs: copy refuses when the target exists") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1071,7 +1119,7 @@ TRIAL("fs: copy odmawia, gdy cel istnieje") {
     same(said_of(fs::read(to).await()), std::string{"stare"});
 }
 
-TRIAL("fs: copy z overwrite nadpisuje") {
+TRIAL("fs: copy with overwrite overwrites") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1082,7 +1130,7 @@ TRIAL("fs: copy z overwrite nadpisuje") {
     same(said_of(fs::read(to).await()), std::string{"nowe"});
 }
 
-TRIAL("fs: copy ze skip zostawia cel w spokoju") {
+TRIAL("fs: copy with skip leaves the target alone") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1093,7 +1141,7 @@ TRIAL("fs: copy ze skip zostawia cel w spokoju") {
     same(said_of(fs::read(to).await()), std::string{"stare"});
 }
 
-TRIAL("fs: copy z beside zakłada nazwę obok") {
+TRIAL("fs: copy with beside creates a name alongside") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1109,7 +1157,7 @@ TRIAL("fs: copy z beside zakłada nazwę obok") {
     same(said_of(fs::read(nook.where() / "cel (3).bin").await()), std::string{"nowe"});
 }
 
-TRIAL("fs: polityka działa na każdym wpisie drzewa z osobna") {
+TRIAL("fs: the policy applies to every entry of the tree separately") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -1138,7 +1186,7 @@ TRIAL("fs: polityka działa na każdym wpisie drzewa z osobna") {
     same(said_of(fs::read(to / "dwa.txt").await()), std::string{"nowe"});
 }
 
-TRIAL("fs: move odmawia, gdy cel istnieje") {
+TRIAL("fs: move refuses when the target exists") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1150,7 +1198,7 @@ TRIAL("fs: move odmawia, gdy cel istnieje") {
     same(said_of(fs::read(to).await()), std::string{"stare"});
 }
 
-TRIAL("fs: rename odmawia, gdy cel istnieje") {
+TRIAL("fs: rename refuses when the target exists") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", "nowe");
@@ -1161,10 +1209,10 @@ TRIAL("fs: rename odmawia, gdy cel istnieje") {
     same(said_of(fs::read(to).await()), std::string{"stare"});
 }
 
-// Kolizja przy zmianie nazwy rozstrzyga się tak samo jak przy kopii: `skip` zostawia oba pliki,
-// `rename` kładzie obok — także przy polskich literach, bo nazwa obok składa się na postaci
-// rodzimej ścieżki — a `overwrite` zastępuje.
-TRIAL("fs: rename i move rozstrzygają kolizję według polityki") {
+// A collision on rename is settled the same way as on copy: `skip` leaves both files, `rename` puts
+// the file alongside (also with Polish letters, because the name alongside is composed in the
+// native form of the path), and `overwrite` replaces.
+TRIAL("fs: rename and move settle a collision by the policy") {
     const Nook nook;
 
     for (const bool moving : {false, true}) {
@@ -1204,9 +1252,9 @@ TRIAL("fs: rename i move rozstrzygają kolizję według polityki") {
     }
 }
 
-// Pusty katalog to też zajęty cel. `std::filesystem::rename` na POSIX-ie zastępuje go po cichu,
-// więc o zajęty cel pyta sam system, w tym samym wywołaniu co przeniesienie.
-TRIAL("fs: rename i move nie zastępują pustego katalogu") {
+// An empty directory is also an occupied target. `std::filesystem::rename` on POSIX replaces it
+// silently, so the system itself is asked about an occupied target, in the same call as the move.
+TRIAL("fs: rename and move do not replace an empty directory") {
     const Nook nook;
 
     const fs::path from = nook.where() / "źródło";
@@ -1223,13 +1271,15 @@ TRIAL("fs: rename i move nie zastępują pustego katalogu") {
     same(fs::list(to).await().size(), std::size_t{0});
 }
 
-// Nazwa obok, której system nie przyjmie (za długa), kończy szukanie od razu i mówi, co się stało —
-// dalsze numery byłyby tak samo za długie, a zdanie „nie ma wolnej nazwy" byłoby nieprawdą.
+// A name alongside that the system does not accept (too long) ends the search at once and says what
+// happened: further numbers would be just as long, and saying "there is no free name" would be
+// untrue.
 //
-// Cel pisze sama biblioteka: ścieżka z katalogiem tymczasowym Windows przekracza 260 znaków,
-// a `std::ofstream` pod MSVC bez długich ścieżek pliku nie zakłada — rename szedł wtedy na wolne
-// miejsce i się udawał. Na koniec cel wraca pod krótką nazwę, żeby sprzątanie katalogu go zdjęło.
-TRIAL("fs: rename z nazwą obok nie do przyjęcia mówi, że nie przeniósł") {
+// The library itself writes the target: the path in the Windows temporary directory exceeds 260
+// characters, and `std::ofstream` under MSVC without long paths does not create the file, so the
+// rename would find a free place and succeed. At the end the target goes back under a short name,
+// so that cleaning up the directory removes it.
+TRIAL("fs: rename with an unacceptable name alongside says it did not move") {
     const Nook nook;
 
     const std::string stem(250, 'a');
@@ -1256,9 +1306,10 @@ TRIAL("fs: rename z nazwą obok nie do przyjęcia mówi, że nie przeniósł") {
 
 #ifdef _WIN32
 
-// Plik za 260 znakami ścieżki: `std::filesystem` pod MSVC bez długich ścieżek mówi o nim „nie ma"
-// bez błędu. Biblioteka widzi go mimo to — istnieje, jest plikiem i zapis z `fail` go nie rusza.
-TRIAL("fs: na Windows plik za 260 znakami ścieżki stoi i nie jest wolnym miejscem") {
+// A file beyond 260 characters of path: `std::filesystem` under MSVC without long paths says it
+// "does not exist" without an error. The library sees it anyway: it exists, it is a file, and a
+// write with `fail` leaves it alone.
+TRIAL("fs: on Windows a file beyond 260 characters of path exists and is not a free place") {
     const Nook nook;
 
     const fs::path deep = nook.where() / (std::string(250, 'b') + ".bin");
@@ -1279,10 +1330,10 @@ TRIAL("fs: na Windows plik za 260 znakami ścieżki stoi i nie jest wolnym miejs
 
 #ifndef _WIN32
 
-// Między nośnikami system odmawia zmiany nazwy, zanim w ogóle spojrzy na cel — `move` rozstrzyga
-// więc kolizję jeszcze raz, zanim kopia cokolwiek nadpisze. Drugi nośnik to `/dev/shm`, gdy jest
-// i leży gdzie indziej niż katalog próby; inaczej nie ma czego sprawdzić.
-TRIAL("fs: move między nośnikami rozstrzyga kolizję przed kopią") {
+// Between volumes the system refuses a rename before it even looks at the target, so `move` settles
+// the collision once more before the copy overwrites anything. The second volume is `/dev/shm` when
+// it exists and lies elsewhere than the trial's directory; otherwise there is nothing to check.
+TRIAL("fs: move between volumes settles a collision before copying") {
     const Nook nook;
 
     const fs::path away = fs::path{"/dev/shm"} / ("talcite-nosnik-" + std::to_string(::getpid()));
@@ -1320,7 +1371,8 @@ TRIAL("fs: move między nośnikami rozstrzyga kolizję przed kopią") {
 
 namespace {
 
-// Drugi nośnik do prób: `/dev/shm`, gdy leży na innym urządzeniu niż katalog próby.
+// A second volume for the trials: a fresh directory on `/dev/shm`, when it lies on a different
+// device than the trial's directory; otherwise an empty path.
 fs::path elsewhere(const Nook& nook, const std::string& name) {
     struct stat here {};
     struct stat there {};
@@ -1340,9 +1392,9 @@ fs::path elsewhere(const Nook& nook, const std::string& name) {
 
 }
 
-// Między nośnikami katalog przenosi się wpis po wpisie: wszystko jest u celu z czasami zapisu,
-// a źródła nie ma.
-TRIAL("fs: move katalogu między nośnikami przenosi całość") {
+// Between volumes a directory moves entry by entry: everything is at the target with its
+// modification times, and the source is gone.
+TRIAL("fs: moving a directory between volumes carries the whole") {
     const Nook nook;
 
     const fs::path away = elsewhere(nook, "talcite-drzewo");
@@ -1373,7 +1425,8 @@ TRIAL("fs: move katalogu między nośnikami przenosi całość") {
     ought(fs::modified(away / "seriale" / "Sezon 01").await() == season);
     ought(fs::modified(away / "seriale").await() == show);
 
-    // Plik na plik z innego nośnika, z zastąpieniem: cel dostaje nową treść, źródła nie ma.
+    // A file onto a file from another volume, with replacing: the target gets the new content, the
+    // source is gone.
     const fs::path single = nook.made("nowy.nfo", "nowy");
 
     (void)fs::write(away / "stary.nfo", bytes("stary")).await();
@@ -1388,9 +1441,9 @@ TRIAL("fs: move katalogu między nośnikami przenosi całość") {
     stood::remove_all(away, trouble);
 }
 
-// Wpis, którego przenieść się nie da (potok), odmawia całości **przed pierwszym ruchem** — dawniej
-// kopia go pomijała, a `remove_all` kasował go razem ze źródłem.
-TRIAL("fs: move między nośnikami z wpisem nie do przeniesienia nie rusza niczego") {
+// An entry that cannot be moved (a pipe) refuses the whole before the first step; a copy that
+// skipped it would let `remove_all` delete it together with the source.
+TRIAL("fs: move between volumes with an entry that cannot be moved touches nothing") {
     const Nook nook;
 
     const fs::path away = elsewhere(nook, "talcite-potok");
@@ -1417,12 +1470,14 @@ TRIAL("fs: move między nośnikami z wpisem nie do przeniesienia nie rusza nicze
 
 namespace {
 
-// Granica rozmiaru pisanych plików (`RLIMIT_FSIZE`) na czas próby, z sygnałem `SIGXFSZ` zignorowanym
-// — zapis ponad nią odmawia wtedy błędem zamiast zabijać program. Próba wolnego miejsca pisze
-// na `/dev/shm`, który leży w pamięci: gdyby sprawdzian przed kopią zawiódł, kopia rzadkiego pliku
-// zapełniłaby całą pamięć maszyny. Tak właśnie skończył się jeden mutant, zanim stanęła ta granica.
+// A limit on the size of written files (`RLIMIT_FSIZE`) for the duration of a trial, with the
+// `SIGXFSZ` signal ignored, so that a write beyond it fails with an error instead of killing the
+// program. The free-space trial writes to `/dev/shm`, which lives in memory: if the check before a
+// copy failed, a copy of a sparse file would fill the machine's whole memory.
 class Capped {
 public:
+    // Lowers the soft limit to the given size and ignores `SIGXFSZ`; `held()` says whether it
+    // worked.
     explicit Capped(rlim_t most) {
         held_ = ::getrlimit(RLIMIT_FSIZE, &was_) == 0;
 
@@ -1436,6 +1491,7 @@ public:
         held_ = ::setrlimit(RLIMIT_FSIZE, &now) == 0;
     }
 
+    // Restores the previous limit and signal handler.
     ~Capped() {
         if (held_) ::setrlimit(RLIMIT_FSIZE, &was_);
 
@@ -1447,6 +1503,7 @@ public:
     Capped(Capped&&) = delete;
     Capped& operator=(Capped&&) = delete;
 
+    // Whether the limit is in place.
     [[nodiscard]] bool held() const { return held_; }
 
 private:
@@ -1457,9 +1514,10 @@ private:
 
 }
 
-// Kopia, która się nie zmieści, odmawia od razu i nie zostawia niczego. Plik jest rzadki — zajmuje
-// na dysku tyle co nic, a mówi o sobie, że jest większy niż całe wolne miejsce celu.
-TRIAL("fs: kopia większa niż wolne miejsce odmawia przed zapisem") {
+// A copy that will not fit refuses at once and leaves nothing behind. The file is sparse: it takes
+// almost nothing on disk but says of itself that it is larger than all the free space of the
+// target.
+TRIAL("fs: a copy larger than the free space refuses before writing") {
     const Nook nook;
 
     const fs::path away = elsewhere(nook, "talcite-miejsce");
@@ -1474,7 +1532,7 @@ TRIAL("fs: kopia większa niż wolne miejsce odmawia przed zapisem") {
 
     const fs::path from = nook.made("ogromny.bin", "");
 
-    stood::resize_file(from, room.available + (std::uintmax_t{1} << 30), trouble);
+    stretched(from, room.available + (std::uintmax_t{1} << 30), trouble);
 
     if (trouble) return;
 
@@ -1504,7 +1562,7 @@ TRIAL("fs: kopia większa niż wolne miejsce odmawia przed zapisem") {
     ought(said.find("free space") != std::string::npos);
     ought(fs::exists(from).await());
 
-    // Katalog liczy się sumą plików.
+    // A directory counts as the sum of its files.
     const fs::path folder = nook.where() / "katalog";
 
     fs::make_folder(folder).await();
@@ -1528,11 +1586,11 @@ TRIAL("fs: kopia większa niż wolne miejsce odmawia przed zapisem") {
 
 #if defined(__linux__)
 
-// Zmiana nazwy odmówiona **z innego powodu niż inny nośnik** to błąd, a nie zaproszenie do kopii.
-// Plik niezmienny (`FS_IMMUTABLE_FL`) odmawia przemianowania nawet administratorowi; dawniej `move`
-// kopiował go wtedy obok, kasowanie źródła po cichu się nie udawało i zostawały dwa egzemplarze
-// z odpowiedzią „gotowe".
-TRIAL("fs: move odmówiony przez system nie kopiuje") {
+// A rename refused for a reason other than a different volume is an error, not an invitation to
+// copy. An immutable file (`FS_IMMUTABLE_FL`) refuses renaming even to root; a `move` that then
+// copied it alongside would fail silently to delete the source and leave two copies with the answer
+// "done".
+TRIAL("fs: a move refused by the system does not copy") {
     const Nook nook;
 
     const fs::path from = nook.made("zablokowany.mkv", "film");
@@ -1564,7 +1622,7 @@ TRIAL("fs: move odmówiony przez system nie kopiuje") {
         said = why.what();
     }
 
-    // Z zastąpieniem tak samo: cel zostaje swój, źródło swoje.
+    // The same with replacing: the target keeps its own content, the source its own.
     const fs::path taken = nook.made("zajęty.mkv", "inny");
 
     std::string again;
@@ -1587,9 +1645,11 @@ TRIAL("fs: move odmówiony przez system nie kopiuje") {
 
 namespace {
 
-// Flaga `FS_IMMUTABLE_FL` na czas próby; zdejmuje ją sama, także gdy próba padnie.
+// The `FS_IMMUTABLE_FL` flag for the duration of a trial; it removes the flag itself, also when the
+// trial fails.
 class Immutable {
 public:
+    // Opens the file and sets the immutable flag on it; `set()` says whether that worked.
     explicit Immutable(const fs::path& where) : held_(::open(where.c_str(), O_RDONLY)) {
         if (held_ < 0 || ::ioctl(held_, FS_IOC_GETFLAGS, &was_) != 0) return;
 
@@ -1598,6 +1658,7 @@ public:
         set_ = ::ioctl(held_, FS_IOC_SETFLAGS, &locked) == 0;
     }
 
+    // Restores the previous flags and closes the file.
     ~Immutable() {
         if (set_) ::ioctl(held_, FS_IOC_SETFLAGS, &was_);
         if (held_ >= 0) ::close(held_);
@@ -1608,6 +1669,7 @@ public:
     Immutable(Immutable&&) = delete;
     Immutable& operator=(Immutable&&) = delete;
 
+    // Whether the flag was set.
     [[nodiscard]] bool set() const { return set_; }
 
 private:
@@ -1618,9 +1680,10 @@ private:
 
 }
 
-// Źródło, którego nie da się sprzątnąć po kopii między nośnikami: plik niezmienny zostaje i mówi
-// o tym wprost, a pusty katalog niezmienny zostawia źródło i zdanie, że coś zostało.
-TRIAL("fs: move między nośnikami mówi, co zostało w źródle") {
+// A source that cannot be cleaned up after a copy between volumes: an immutable file stays and says
+// so plainly, and an immutable empty directory leaves the source and a sentence that something
+// stayed behind.
+TRIAL("fs: move between volumes says what stayed in the source") {
     const Nook nook;
 
     const fs::path away = elsewhere(nook, "talcite-zostalo");
@@ -1682,10 +1745,10 @@ TRIAL("fs: move między nośnikami mówi, co zostało w źródle") {
 
 #endif
 
-// Zmiana nazwy na samą siebie niczego nie robi i się udaje. Na systemie bez wielkości liter tą
-// samą drogą idzie `heat` → `Heat`: cel „stoi", ale to ten sam wpis. Dowiązanie twarde to wpis
-// osobny, choć `equivalent` — tego nadpisać nie wolno.
-TRIAL("fs: rename na samego siebie się udaje, na dowiązanie twarde — odmawia") {
+// Renaming onto itself does nothing and succeeds. On a case-insensitive system `heat` → `Heat` goes
+// the same way: the target "exists", but it is the same entry. A hard link is a separate entry,
+// although `equivalent`, and it must not be overwritten.
+TRIAL("fs: rename onto itself succeeds, onto a hard link it refuses") {
     const Nook nook;
 
     const fs::path one = nook.made("jeden.txt", "treść");
@@ -1709,7 +1772,7 @@ TRIAL("fs: rename na samego siebie się udaje, na dowiązanie twarde — odmawia
     ought(fs::exists(one).await());
     ought(fs::exists(two).await());
 
-    // Ta sama nazwa w innym katalogu to też osobny wpis.
+    // The same name in another directory is also a separate entry.
     const fs::path other = nook.where() / "inny" / "jeden.txt";
 
     fs::make_folder(other.parent_path()).await();
@@ -1725,9 +1788,9 @@ TRIAL("fs: rename na samego siebie się udaje, na dowiązanie twarde — odmawia
 
 #ifdef _WIN32
 
-// Na Windows `heat` i `Heat` to jeden wpis, więc cel „stoi" — a zmiana samej wielkości liter jest
-// zwyczajną zmianą nazwy, dla pliku i dla katalogu, przy każdej polityce kolizji.
-TRIAL("fs: na Windows zmiana samej wielkości liter to zmiana nazwy") {
+// On Windows `heat` and `Heat` are one entry, so the target "exists", and a change of letter case
+// alone is an ordinary rename, for a file and for a directory, under every collision policy.
+TRIAL("fs: on Windows a change of letter case alone is a rename") {
     const Nook nook;
 
     const fs::path file = nook.made("heat.txt", "treść");
@@ -1749,7 +1812,7 @@ TRIAL("fs: na Windows zmiana samej wielkości liter to zmiana nazwy") {
 
 #endif
 
-TRIAL("fs: write z refuse nie rusza istniejącego") {
+TRIAL("fs: write with refuse leaves an existing file alone") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "stare");
@@ -1759,7 +1822,7 @@ TRIAL("fs: write z refuse nie rusza istniejącego") {
     same(said_of(fs::read(one).await()), std::string{"stare"});
 }
 
-TRIAL("fs: kopia zachowuje czas zapisu") {
+TRIAL("fs: a copy keeps the modification time") {
     const Nook nook;
 
     const fs::path from = nook.made("źródło.bin", ladder(5000));
@@ -1776,7 +1839,7 @@ TRIAL("fs: kopia zachowuje czas zapisu") {
     same(fs::modified(to).await(), dawno);
 }
 
-TRIAL("fs: kopia drzewa zachowuje czasy zapisu wpisów") {
+TRIAL("fs: a copy of a tree keeps the entries' modification times") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -1797,9 +1860,10 @@ TRIAL("fs: kopia drzewa zachowuje czasy zapisu wpisów") {
     same(fs::modified(to / "plik.txt").await(), dawno);
 }
 
-// Kopiowanie na samego siebie **kasowało plik**: cel otwierał się do zapisu i ucinał do zera,
-// a źródłem był ten sam plik. Teraz odmawia — a `beside` dalej wolno, bo tam cel jest inny.
-TRIAL("fs: copy pliku na samego siebie odmawia zamiast go kasować") {
+// Copying a file onto itself would delete it: the target would be opened for writing and truncated
+// to zero while it is also the source. So it refuses, while `beside` is still allowed, because
+// there the target is different.
+TRIAL("fs: copying a file onto itself refuses instead of deleting it") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -1808,23 +1872,25 @@ TRIAL("fs: copy pliku na samego siebie odmawia zamiast go kasować") {
 
     same(fs::read(one).await().size(), std::string{"treść"}.size());
 
-    // Ta sama ścieżka pisana inaczej to dalej ten sam plik.
+    // The same path written differently is still the same file.
     const fs::path around = nook.where() / "." / "plik.txt";
 
     threw(fs::copy(one, around, fs::Conflict::overwrite).await());
 
     same(fs::read(one).await().size(), std::string{"treść"}.size());
 
-    // `beside` robi kopię obok — i to jest jedyny sensowny sposób skopiowania pliku na siebie.
+    // `beside` makes a copy alongside, and that is the only sensible way to copy a file onto
+    // itself.
     fs::copy(one, one, fs::Conflict::rename).await();
 
     ought(stood::exists(nook.where() / "plik (2).txt"));
     same(fs::read(one).await().size(), std::string{"treść"}.size());
 }
 
-// Bez własnego strażnika katalog na samego siebie pada dopiero na pierwszym pliku w środku
-// i mówi o pliku — a pytano o katalog. Stąd osobne zdanie.
-TRIAL("fs: copy katalogu na samego siebie odmawia i mówi o katalogu") {
+// Without a guard of its own, a directory copied onto itself would fail only at the first file
+// inside and talk about that file, while the question was about the directory. Hence a separate
+// message.
+TRIAL("fs: copying a directory onto itself refuses and talks about the directory") {
     const Nook nook;
 
     const fs::path one = nook.where() / "katalog";
@@ -1844,7 +1910,7 @@ TRIAL("fs: copy katalogu na samego siebie odmawia i mówi o katalogu") {
     ought(stood::exists(one / "w środku.txt"));
 }
 
-TRIAL("fs: copy rozwija dowiązanie do pliku") {
+TRIAL("fs: copy follows a link to a file") {
     const Nook nook;
 
     const fs::path one = nook.made("prawdziwy.txt", "treść");
@@ -1862,7 +1928,7 @@ TRIAL("fs: copy rozwija dowiązanie do pliku") {
     same(said_of(fs::read(to).await()), std::string{"treść"});
 }
 
-TRIAL("fs: copy rozwija dowiązanie do katalogu w drzewie") {
+TRIAL("fs: copy follows a link to a directory in a tree") {
     const Nook nook;
 
     const fs::path osobno = nook.where() / "osobno";
@@ -1886,7 +1952,7 @@ TRIAL("fs: copy rozwija dowiązanie do katalogu w drzewie") {
     same(said_of(fs::read(to / "skrót" / "w środku.txt").await()), std::string{"treść"});
 }
 
-TRIAL("fs: dowiązanie na przodka nie zapętla kopiowania") {
+TRIAL("fs: a link to an ancestor does not make copying loop") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -1906,7 +1972,7 @@ TRIAL("fs: dowiązanie na przodka nie zapętla kopiowania") {
     same(said_of(fs::read(to / "plik.txt").await()), std::string{"treść"});
 }
 
-TRIAL("fs: zerwane dowiązanie w drzewie nie przewraca kopiowania") {
+TRIAL("fs: a broken link in a tree does not break copying") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -1927,7 +1993,7 @@ TRIAL("fs: zerwane dowiązanie w drzewie nie przewraca kopiowania") {
     ought(!fs::exists(to / "donikąd").await());
 }
 
-TRIAL("fs: kopia zerwanego dowiązania wprost odrzuca") {
+TRIAL("fs: copying a broken link directly rejects") {
     const Nook nook;
 
     const fs::path link = nook.where() / "donikąd";
@@ -1937,7 +2003,7 @@ TRIAL("fs: kopia zerwanego dowiązania wprost odrzuca") {
     threw(fs::copy(link, nook.where() / "cel").await());
 }
 
-TRIAL("fs: alike poznaje ten sam plik pod dwiema ścieżkami") {
+TRIAL("fs: alike recognizes the same file under two paths") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -1948,7 +2014,7 @@ TRIAL("fs: alike poznaje ten sam plik pod dwiema ścieżkami") {
     ought(!fs::equivalent(one, three).await());
 }
 
-TRIAL("fs: alike na nieistniejącym odrzuca") {
+TRIAL("fs: alike on a missing file rejects") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -1956,7 +2022,7 @@ TRIAL("fs: alike na nieistniejącym odrzuca") {
     threw((void)fs::equivalent(one, nook.where() / "nie ma").await());
 }
 
-TRIAL("fs: real prostuje ścieżkę") {
+TRIAL("fs: real straightens a path") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -1965,7 +2031,7 @@ TRIAL("fs: real prostuje ścieżkę") {
     same(fs::canonical(krzywa).await(), fs::canonical(one).await());
 }
 
-TRIAL("fs: target oddaje to, na co wskazuje dowiązanie") {
+TRIAL("fs: target returns what a link points to") {
     const Nook nook;
 
     const fs::path one = nook.made("prawdziwy.txt", "treść");
@@ -1977,7 +2043,7 @@ TRIAL("fs: target oddaje to, na co wskazuje dowiązanie") {
     ought(fs::equivalent(skrót, one).await());
 }
 
-TRIAL("fs: target na zwykłym pliku odrzuca") {
+TRIAL("fs: target on an ordinary file rejects") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -1985,15 +2051,13 @@ TRIAL("fs: target na zwykłym pliku odrzuca") {
     threw((void)fs::target(one).await());
 }
 
-TRIAL("fs: link zakłada dowiązanie miękkie") {
+TRIAL("fs: link creates a symbolic link") {
     const Nook nook;
 
     const fs::path one = nook.made("prawdziwy.txt", "treść");
     const fs::path skrót = nook.where() / "skrót.txt";
 
-    std::error_code próba;
-    stood::create_symlink(one, nook.where() / "próba", próba);
-    if (próba) return;
+    if (!linked(nook.where() / "próba", one)) return;
 
     fs::link(skrót, one).await();
 
@@ -2001,7 +2065,7 @@ TRIAL("fs: link zakłada dowiązanie miękkie") {
     same(said_of(fs::read(skrót).await()), std::string{"treść"});
 }
 
-TRIAL("fs: link zakłada dowiązanie twarde") {
+TRIAL("fs: link creates a hard link") {
     const Nook nook;
 
     const fs::path one = nook.made("prawdziwy.txt", "treść");
@@ -2013,7 +2077,7 @@ TRIAL("fs: link zakłada dowiązanie twarde") {
     ought(fs::equivalent(drugi, one).await());
 }
 
-TRIAL("fs: marks wracają tym, czym je ustawiono") {
+TRIAL("fs: marks come back as they were set") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -2033,7 +2097,7 @@ TRIAL("fs: marks wracają tym, czym je ustawiono") {
     ought(!fs::attributes(one).await().readonly);
 }
 
-TRIAL("fs: przejście przynosi atrybuty razem z wpisami") {
+TRIAL("fs: a listing brings the attributes together with the entries") {
     const Nook nook;
 
     const fs::path one = nook.made("zwykły.txt", "treść");
@@ -2062,7 +2126,7 @@ TRIAL("fs: przejście przynosi atrybuty razem z wpisami") {
     fs::attributes(one, what).await();
 }
 
-TRIAL("fs: temp i home wskazują istniejące katalogi") {
+TRIAL("fs: temp and home point to existing directories") {
     same(static_cast<int>(fs::kind(fs::temp()).await()), static_cast<int>(fs::Kind::folder));
 
     const fs::path dom = fs::home();
@@ -2071,7 +2135,7 @@ TRIAL("fs: temp i home wskazują istniejące katalogi") {
     same(static_cast<int>(fs::kind(dom).await()), static_cast<int>(fs::Kind::folder));
 }
 
-TRIAL("fs: here czyta i przestawia katalog bieżący") {
+TRIAL("fs: here reads and changes the current directory") {
     const Nook nook;
 
     const fs::path skąd = fs::current();
@@ -2085,13 +2149,13 @@ TRIAL("fs: here czyta i przestawia katalog bieżący") {
     same(fs::current(), skąd);
 }
 
-TRIAL("fs: here na nieistniejącym odrzuca") {
+TRIAL("fs: here on a missing directory rejects") {
     const Nook nook;
 
     threw(fs::current(nook.where() / "nie ma").await());
 }
 
-TRIAL("Flow: czyta po kolei bez prowadzenia rachunku") {
+TRIAL("Flow: reads in order without keeping count") {
     const Nook nook;
 
     const std::string whole = ladder(20000);
@@ -2112,7 +2176,7 @@ TRIAL("Flow: czyta po kolei bez prowadzenia rachunku") {
     same(flow.at(), static_cast<std::uintmax_t>(whole.size()));
 }
 
-TRIAL("Flow: krótki odczyt na końcu przesuwa tylko o tyle, ile przyszło") {
+TRIAL("Flow: a short read at the end moves only by as much as arrived") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "abcdefghij");
@@ -2129,7 +2193,7 @@ TRIAL("Flow: krótki odczyt na końcu przesuwa tylko o tyle, ile przyszło") {
     same(flow.at(), std::uintmax_t{10});
 }
 
-TRIAL("Flow: seek przestawia miejsce czytania") {
+TRIAL("Flow: seek moves the reading position") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2142,7 +2206,7 @@ TRIAL("Flow: seek przestawia miejsce czytania") {
     same(flow.at(), std::uintmax_t{7});
 }
 
-TRIAL("Flow: dwa strumienie z jednego pliku sobie nie przeszkadzają") {
+TRIAL("Flow: two streams from one file do not interfere") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2160,7 +2224,7 @@ TRIAL("Flow: dwa strumienie z jednego pliku sobie nie przeszkadzają") {
     same(second.at(), std::uintmax_t{3});
 }
 
-TRIAL("Flow: kopie dzielą pozycję") {
+TRIAL("Flow: copies share the position") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2174,7 +2238,7 @@ TRIAL("Flow: kopie dzielą pozycję") {
     same(first.at(), std::uintmax_t{6});
 }
 
-TRIAL("Flow: drugie żądanie przed pierwszym odrzuca") {
+TRIAL("Flow: a second request before the first one rejects") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", ladder(10000));
@@ -2189,7 +2253,7 @@ TRIAL("Flow: drugie żądanie przed pierwszym odrzuca") {
     same(said_of(first.await()).size(), std::size_t{1000});
 }
 
-TRIAL("Flow: porzucona obietnica zwalnia strumień") {
+TRIAL("Flow: an abandoned promise releases the stream") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2201,7 +2265,7 @@ TRIAL("Flow: porzucona obietnica zwalnia strumień") {
     same(said_of(flow.read(3).await()), std::string{"012"});
 }
 
-TRIAL("Flow: nieudana operacja też zwalnia strumień") {
+TRIAL("Flow: a failed operation also releases the stream") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2214,7 +2278,7 @@ TRIAL("Flow: nieudana operacja też zwalnia strumień") {
     same(said_of(flow.read(3).await()), std::string{"012"});
 }
 
-TRIAL("Flow: seek w trakcie odczytu odrzuca") {
+TRIAL("Flow: seek during a read rejects") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", ladder(10000));
@@ -2231,7 +2295,7 @@ TRIAL("Flow: seek w trakcie odczytu odrzuca") {
     same(flow.at(), std::uintmax_t{0});
 }
 
-TRIAL("Flow: zapis przesuwa się sam") {
+TRIAL("Flow: writing advances by itself") {
     const Nook nook;
 
     const fs::path one = nook.where() / "zapis.bin";
@@ -2245,7 +2309,7 @@ TRIAL("Flow: zapis przesuwa się sam") {
     same(said_of(fs::read(one).await()), std::string{"pierwsza druga"});
 }
 
-TRIAL("Flow: dopisanie na koniec po przestawieniu") {
+TRIAL("Flow: appending at the end after seeking") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.txt", "stare");
@@ -2259,7 +2323,7 @@ TRIAL("Flow: dopisanie na koniec po przestawieniu") {
     same(said_of(fs::read(one).await()), std::string{"stare i nowe"});
 }
 
-TRIAL("Flow: zamknięty odrzuca zamiast się wywracać") {
+TRIAL("Flow: a closed stream rejects instead of crashing") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2274,7 +2338,7 @@ TRIAL("Flow: zamknięty odrzuca zamiast się wywracać") {
     same(flow.at(), std::uintmax_t{0});
 }
 
-TRIAL("Flow: z zamkniętego pliku nie da się go wziąć") {
+TRIAL("Flow: a closed file gives no stream") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2285,7 +2349,7 @@ TRIAL("Flow: z zamkniętego pliku nie da się go wziąć") {
     threw((void)held.cursor());
 }
 
-TRIAL("Flow: strumień żyje dłużej niż uchwyt, z którego powstał") {
+TRIAL("Flow: a stream outlives the handle it came from") {
     const Nook nook;
 
     const fs::path one = nook.made("dane.bin", "0123456789");
@@ -2302,11 +2366,11 @@ TRIAL("Flow: strumień żyje dłużej niż uchwyt, z którego powstał") {
 
 namespace {
 
-// Zdarzenia z systemu plików przychodzą własnym tempem, więc czekamy na nie obietnicą
-// z ogranicznikiem, a nie uśpieniem. Zwraca pustkę, gdy nic nie przyszło na czas.
-// Cierpliwość jest hojna z powodu, który wynika wprost z reguły odpytywania: przerwa to
-// dziesięciokrotność samego zaglądania, więc na obciążonej maszynie potrafi urosnąć do
-// sekund. Przypadki, które oczekują ciszy, podają krótki czas jawnie.
+// Events from the file system arrive at their own pace, so we wait for them with a promise and a
+// limit, not with sleeping. Returns nothing when nothing arrived in time. The patience is generous
+// for a reason that follows directly from the polling rule: the pause is ten times the time a look
+// takes, so on a loaded machine it can grow to seconds. Cases that expect silence give a short time
+// explicitly.
 std::vector<fs::Change> awaited(fs::Watch& watch, std::chrono::milliseconds patience = 6000ms) {
     Promise<std::vector<fs::Change>> going = watch.next();
     Promise<void> limit = Time::limit(patience);
@@ -2319,8 +2383,8 @@ std::vector<fs::Change> awaited(fs::Watch& watch, std::chrono::milliseconds pati
         late = true;
     }
 
-    // Po upływie czasu zgłoszenie trzeba anulować, inaczej await() poniżej czekałby bez
-    // końca — obietnica dalej wisi w kolejce obserwacji.
+    // After the time is up the request has to be cancelled; otherwise await() below would wait
+    // forever, since the promise still hangs in the watch's queue.
     if (late) {
         going.cancel();
 
@@ -2339,6 +2403,7 @@ std::vector<fs::Change> awaited(fs::Watch& watch, std::chrono::milliseconds pati
     return made;
 }
 
+// Whether the batch has a change of the given kind at the given path.
 bool among(const std::vector<fs::Change>& given, const fs::path& where, fs::Change::Kind stir) {
     for (const fs::Change& one : given)
         if (one.where == where && one.kind == stir) return true;
@@ -2348,7 +2413,7 @@ bool among(const std::vector<fs::Change>& given, const fs::path& where, fs::Chan
 
 }
 
-TRIAL("Watch: nowy plik zgłasza się jako powstały") {
+TRIAL("Watch: a new file is reported as created") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where()).await();
@@ -2363,7 +2428,7 @@ TRIAL("Watch: nowy plik zgłasza się jako powstały") {
     ought(among(awaited(watch), one, Changed::created));
 }
 
-TRIAL("Watch: usunięty plik zgłasza się jako zniknięty") {
+TRIAL("Watch: a deleted file is reported as removed") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -2375,10 +2440,10 @@ TRIAL("Watch: usunięty plik zgłasza się jako zniknięty") {
     ought(among(awaited(watch), one, Changed::removed));
 }
 
-// Zapis istniejącego pliku idzie obok i przemianowaniem na cel, więc obserwator widzi przyjście
-// pliku pod tę nazwę — jako przemianowanie albo utworzenie, zależnie od tego, czy system łączy obie
-// połówki przemianowania. Plik pisany wprost zgłasza zmianę.
-TRIAL("Watch: zmiana treści zgłasza się jako zmiana") {
+// Writing an existing file goes alongside and is renamed onto the target, so the watch sees a file
+// arrive under that name: as a rename or a creation, depending on whether the system joins the two
+// halves of the rename. A file written directly reports a modification.
+TRIAL("Watch: a change of content is reported as a modification") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "stare");
@@ -2398,17 +2463,17 @@ TRIAL("Watch: zmiana treści zgłasza się jako zmiana") {
 
     (void)file.write(0, bytes("inne")).await();
 
-    // NTFS odkłada czas zapisu do zamknięcia uchwytu, więc zapis tej samej długości przez otwarty
-    // plik Windows zgłasza dopiero przy zamknięciu; inotify — od razu.
+    // NTFS defers the modification time until the handle is closed, so Windows reports a
+    // same-length write through an open file only at closing; inotify reports it at once.
     file.close();
 
     ought(among(awaited(again), one, Changed::modified));
 }
 
-// Dwa zapisy tej samej długości w jednej sekundzie, a między nimi spojrzenie obserwacji: przy
-// zaglądaniu sekunda i rozmiar się nie zmieniają, więc rozstrzyga czas dokładny. Próba czeka na
-// początek nowej sekundy, żeby oba zapisy i spojrzenie na pewno w niej padły.
-TRIAL("Watch: zapis tej samej długości w tej samej sekundzie zgłasza się") {
+// Two writes of the same length within one second, with a look of the watch between them: when
+// polling, the second and the size do not change, so the precise time decides. The trial waits for
+// the start of a new second, so that both writes and the look certainly fall within it.
+TRIAL("Watch: a write of the same length in the same second is reported") {
     const Nook nook;
 
     for (;;) {
@@ -2432,7 +2497,7 @@ TRIAL("Watch: zapis tej samej długości w tej samej sekundzie zgłasza się") {
     ought(among(awaited(watch), one, Changed::modified));
 }
 
-TRIAL("Watch: przemianowanie niesie poprzednią nazwę") {
+TRIAL("Watch: a rename carries the previous name") {
     const Nook nook;
 
     const fs::path from = nook.made("stary.txt", "treść");
@@ -2449,14 +2514,14 @@ TRIAL("Watch: przemianowanie niesie poprzednią nazwę") {
     for (const fs::Change& one : given)
         if (one.kind == Changed::renamed && one.where == to && one.was == from) jedno = true;
 
-    // Odpytywanie nie ma jak rozpoznać przemianowania — widzi tylko, że jednej nazwy nie ma,
-    // a druga się pojawiła. To jest uczciwa granica tej drogi i przypadek ją dopuszcza.
+    // Polling has no way to recognize a rename: it only sees that one name is gone and another has
+    // appeared. That is an honest limit of this path, and the case allows it.
     const bool parami = among(given, from, Changed::removed) && among(given, to, Changed::created);
 
     ought(jedno || parami);
 }
 
-TRIAL("Watch: zdarzenia sprzed zgłoszenia nie przepadają") {
+TRIAL("Watch: events from before the request are not lost") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where()).await();
@@ -2473,7 +2538,7 @@ TRIAL("Watch: zdarzenia sprzed zgłoszenia nie przepadają") {
     ought(among(awaited(watch), one, Changed::created));
 }
 
-TRIAL("Watch: płytka obserwacja nie widzi w głąb, głęboka widzi") {
+TRIAL("Watch: a shallow watch does not see into the depth, a deep one does") {
     const Nook nook;
 
     const fs::path głąb = nook.where() / "w głąb";
@@ -2493,7 +2558,7 @@ TRIAL("Watch: płytka obserwacja nie widzi w głąb, głęboka widzi") {
     ought(!among(awaited(płytka, 300ms), one, Changed::created));
 }
 
-TRIAL("Watch: głęboka obserwacja obejmuje katalogi powstałe później") {
+TRIAL("Watch: a deep watch covers directories created later") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where(), true).await();
@@ -2513,7 +2578,7 @@ TRIAL("Watch: głęboka obserwacja obejmuje katalogi powstałe później") {
     ought(among(awaited(watch), one, Changed::created));
 }
 
-TRIAL("Watch: dwie obserwacje tego samego katalogu dostają obie") {
+TRIAL("Watch: two watches of the same directory both receive") {
     const Nook nook;
 
     fs::Watch first = fs::watch(nook.where()).await();
@@ -2530,7 +2595,7 @@ TRIAL("Watch: dwie obserwacje tego samego katalogu dostają obie") {
     ought(among(awaited(second), one, Changed::created));
 }
 
-TRIAL("Watch: zamknięta obserwacja odrzuca") {
+TRIAL("Watch: a closed watch rejects") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where()).await();
@@ -2540,13 +2605,13 @@ TRIAL("Watch: zamknięta obserwacja odrzuca") {
     threw((void)watch.next().await());
 }
 
-TRIAL("Watch: obserwowanie pustki odrzuca") {
+TRIAL("Watch: watching nothing rejects") {
     const Nook nook;
 
     threw((void)fs::watch(nook.where() / "nie ma").await());
 }
 
-TRIAL("Watch: anulowane zgłoszenie nie zabiera paczki następnemu") {
+TRIAL("Watch: a cancelled request does not take the batch from the next one") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where()).await();
@@ -2567,7 +2632,7 @@ TRIAL("Watch: anulowane zgłoszenie nie zabiera paczki następnemu") {
     ought(among(awaited(watch), one, Changed::created));
 }
 
-TRIAL("Watch: sto obserwacji to dalej jeden wątek") {
+TRIAL("Watch: a hundred watches are still one thread") {
     const Nook nook;
 
     std::vector<fs::Watch> among;
@@ -2589,7 +2654,7 @@ TRIAL("Watch: sto obserwacji to dalej jeden wątek") {
     ought(::among(awaited(among[42]), one, Changed::created));
 }
 
-TRIAL("Flow: ciasna pętla odczytów nie słyszy zajętości") {
+TRIAL("Flow: a tight loop of reads never hears busy") {
     const Nook nook;
 
     const std::string whole = ladder(20000);
@@ -2610,7 +2675,7 @@ TRIAL("Flow: ciasna pętla odczytów nie słyszy zajętości") {
     same(made, whole);
 }
 
-TRIAL("Flow: ciasna pętla zapisów też nie") {
+TRIAL("Flow: a tight loop of writes neither") {
     const Nook nook;
 
     const fs::path one = nook.where() / "zapis.bin";
@@ -2623,7 +2688,7 @@ TRIAL("Flow: ciasna pętla zapisów też nie") {
     same(flow.at(), std::uintmax_t{2000});
 }
 
-TRIAL("Watch: obserwacja samego pliku, nie katalogu") {
+TRIAL("Watch: watching a single file, not a directory") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "stare");
@@ -2637,7 +2702,7 @@ TRIAL("Watch: obserwacja samego pliku, nie katalogu") {
     ought(among(given, one, Changed::modified) || among(given, one, Changed::created));
 }
 
-TRIAL("Watch: zniknięcie obserwowanego pliku zgłasza się") {
+TRIAL("Watch: the disappearance of a watched file is reported") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -2649,7 +2714,7 @@ TRIAL("Watch: zniknięcie obserwowanego pliku zgłasza się") {
     ought(among(awaited(watch), one, Changed::removed));
 }
 
-TRIAL("Watch: obserwacja przeżywa i przetrwa wiele paczek po kolei") {
+TRIAL("Watch: a watch survives many batches in a row") {
     const Nook nook;
 
     fs::Watch watch = fs::watch(nook.where()).await();
@@ -2671,9 +2736,9 @@ TRIAL("Watch: obserwacja przeżywa i przetrwa wiele paczek po kolei") {
     }
 }
 
-// Tak zapisuje większość edytorów: nowa treść obok, potem przemianowanie na miejsce starej.
-// Obserwacja przywiązana do i-węzła zostałaby przy usuniętej treści i zamilkła na zawsze.
-TRIAL("Watch: obserwacja pliku przeżywa zapis przez podmianę") {
+// This is how most editors save: the new content alongside, then a rename over the old one. A watch
+// tied to the inode would stay with the deleted content and fall silent forever.
+TRIAL("Watch: a file watch survives saving by replacement") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "stare");
@@ -2700,8 +2765,8 @@ TRIAL("Watch: obserwacja pliku przeżywa zapis przez podmianę") {
     ought(widziany);
     same(said_of(fs::read(one).await()), std::string{"zupełnie inna treść"});
 
-    // Właściwa próba jest tutaj: po podmianie obserwacja musi widzieć **następną** zmianę.
-    // Przywiązana do starego i-węzła zobaczyłaby tylko jego śmierć i zamilkła.
+    // The real trial is here: after the replacement the watch must see the next change. Tied to the
+    // old inode, it would see only its death and fall silent.
     fs::write(one, bytes("jeszcze inna"), fs::Conflict::overwrite).await();
 
     bool dalej = false;
@@ -2715,7 +2780,7 @@ TRIAL("Watch: obserwacja pliku przeżywa zapis przez podmianę") {
     ought(dalej);
 }
 
-TRIAL("Watch: obserwacja pliku milczy o sąsiadach") {
+TRIAL("Watch: a file watch is silent about its neighbors") {
     const Nook nook;
 
     const fs::path one = nook.made("mój.txt", "treść");
@@ -2744,8 +2809,8 @@ TRIAL("Watch: obserwacja pliku milczy o sąsiadach") {
 
 namespace {
 
-// Czas zapisu w nanosekundach od 1970 roku, prosto od systemu — próby ułamka sekundy nie mogą pytać
-// tej samej drogi, którą sprawdzają. Na Windows ziarno to sto nanosekund.
+// The modification time in nanoseconds since 1970, straight from the system: the fractional-second
+// trials must not ask the same path they check. On Windows the grain is a hundred nanoseconds.
 std::int64_t instant(const fs::path& where) {
 #ifdef _WIN32
     WIN32_FILE_ATTRIBUTE_DATA told{};
@@ -2765,8 +2830,9 @@ std::int64_t instant(const fs::path& where) {
 #endif
 }
 
-// Ustawia czas zapisu z ułamkiem: pełne sekundy plus 123 456 700 nanosekund (wielokrotność ziarna
-// Windows). Katalog też — przez uchwyt z `FILE_FLAG_BACKUP_SEMANTICS`.
+// Sets the modification time with a fraction: whole seconds plus 123 456 700 nanoseconds (a
+// multiple of the Windows grain). A directory too, through a handle with
+// FILE_FLAG_BACKUP_SEMANTICS.
 void aged(const fs::path& where, std::int64_t seconds) {
     const std::int64_t whole = seconds * 1000000000LL + 123456700LL;
 
@@ -2793,10 +2859,10 @@ void aged(const fs::path& where, std::int64_t seconds) {
 
 }
 
-// Kopia przenosi czas zapisu co do ułamka sekundy — plik, katalog i katalog w środku. Dawniej szło
-// to przez pełne sekundy, a serwer multimediów porównujący czasy z ułamkiem widział każdą kopię
-// jako zmieniony plik.
-TRIAL("fs: kopia przenosi czas zapisu z ułamkiem sekundy") {
+// A copy carries the modification time to a fraction of a second: a file, a directory and a
+// directory inside. A media server comparing times with fractions would otherwise see every copy as
+// a changed file.
+TRIAL("fs: a copy carries the modification time with a fraction of a second") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -2821,13 +2887,14 @@ TRIAL("fs: kopia przenosi czas zapisu z ułamkiem sekundy") {
 
     same(instant(two) % 1000000000LL, std::int64_t{123456700});
 
-    // Odczyt publiczny dalej oddaje pełne sekundy, ścięte w dół.
+    // The public reading still returns whole seconds, rounded down.
     same(fs::modified(two).await(), std::chrono::sys_seconds{std::chrono::seconds{1450000000}});
 }
 
-// Plik większy niż jeden kawałek kopii w jądrze (16 MiB) i z ogonem, który się w kawałek nie mieści:
-// kopia na tym samym nośniku i — gdzie się da — na innym, gdzie jądro odmawia i kopiujemy sami.
-TRIAL("fs: duży plik kopiuje się wiernie kawałkami") {
+// A file larger than one kernel copy chunk (16 MiB) and with a tail that does not fit in a chunk: a
+// copy on the same volume and, where possible, on another, where the kernel refuses and we copy
+// ourselves.
+TRIAL("fs: a large file is copied faithfully in chunks") {
     const Nook nook;
 
     const std::string whole = ladder(17 * 1024 * 1024 + 3);
@@ -2847,7 +2914,8 @@ TRIAL("fs: duży plik kopiuje się wiernie kawałkami") {
 
     same(said_of(fs::read(away / "daleko.mkv").await()) == whole, true);
 
-    // Przeniesienie między nośnikami idzie kopią — czas z ułamkiem jedzie razem z treścią.
+    // A move between volumes goes through a copy: the time with its fraction travels with the
+    // content.
     aged(from, 1200000000);
 
     const std::int64_t was = instant(from);
@@ -2864,7 +2932,7 @@ TRIAL("fs: duży plik kopiuje się wiernie kawałkami") {
 
 namespace {
 
-// Wszystkie paczki aż do ciszy: pierwsza z hojną cierpliwością, potem krótko.
+// All batches until silence: the first with generous patience, then briefly.
 std::vector<fs::Change> gathered(fs::Watch& watch) {
     std::vector<fs::Change> made = awaited(watch);
 
@@ -2874,6 +2942,7 @@ std::vector<fs::Change> gathered(fs::Watch& watch) {
     return made;
 }
 
+// Whether the path lies under the root (or is the root itself).
 bool under(const fs::path& where, const fs::path& root) {
     const auto [left, right] = std::mismatch(root.begin(), root.end(), where.begin(), where.end());
 
@@ -2882,10 +2951,10 @@ bool under(const fs::path& where, const fs::path& root) {
 
 }
 
-// Przemianowany podkatalog głębokiej obserwacji: plik w nim zgłasza się pod nową ścieżką i tylko
-// raz. Dawniej inotify dopisywał ten sam katalog drugi raz — każde zdarzenie przychodziło podwójnie,
-// raz pod nazwą, której już nie ma.
-TRIAL("Watch: przemianowany podkatalog słychać pod nową nazwą, raz") {
+// A renamed subdirectory of a deep watch: a file in it is reported under the new path, and only
+// once. inotify must not add the same directory a second time, or every event would arrive twice,
+// once under a name that no longer exists.
+TRIAL("Watch: a renamed subdirectory is heard under its new name, once") {
     const Nook nook;
 
     const fs::path stary = nook.where() / "stary";
@@ -2918,9 +2987,9 @@ TRIAL("Watch: przemianowany podkatalog słychać pod nową nazwą, raz") {
     same(seen, std::size_t{1});
 }
 
-// Usunięty podkatalog to jedno zniknięcie. Dawniej trzy wpisy: od rodzica, od samego katalogu
-// i „zmieniony" z pożegnania deskryptora.
-TRIAL("Watch: usunięty podkatalog zgłasza się raz") {
+// A deleted subdirectory is one removal, not three entries: from the parent, from the directory
+// itself and a "modified" from the descriptor's farewell.
+TRIAL("Watch: a deleted subdirectory is reported once") {
     const Nook nook;
 
     const fs::path głąb = nook.where() / "głąb";
@@ -2944,8 +3013,8 @@ TRIAL("Watch: usunięty podkatalog zgłasza się raz") {
     same(about, std::size_t{1});
 }
 
-// Katalog wyniesiony poza obserwowane drzewo nie zgłasza dalej swoich zmian pod starą ścieżką.
-TRIAL("Watch: podkatalog wyniesiony poza drzewo milknie") {
+// A directory moved out of the watched tree no longer reports its changes under the old path.
+TRIAL("Watch: a subdirectory moved out of the tree falls silent") {
     const Nook nook;
 
     fs::make_folder(nook.where() / "drzewo" / "gałąź").await();
@@ -2969,10 +3038,10 @@ TRIAL("Watch: podkatalog wyniesiony poza drzewo milknie") {
 
 #ifndef _WIN32
 
-// Zniknięcie samego korzenia jest zmianą bez względu na drogę: powiadomienia mówią o nim same,
-// a zaglądanie trzyma korzeń w spojrzeniu. Dawniej zaglądanie widziało tylko znikające dzieci,
-// a pusty katalog znikał bez słowa.
-TRIAL("Watch: usunięty pusty korzeń zgłasza się jako usunięty") {
+// The disappearance of the root itself is a change whatever the path: notifications report it
+// themselves, and polling keeps the root in its view, so an empty directory does not disappear
+// without a word.
+TRIAL("Watch: a deleted empty root is reported as removed") {
     const Nook nook;
 
     const fs::path root = nook.where() / "pusty";
@@ -2996,8 +3065,8 @@ TRIAL("Watch: usunięty pusty korzeń zgłasza się jako usunięty") {
 
 namespace {
 
-// Czy jakakolwiek instancja inotify tego procesu trzyma deskryptor na tym katalogu — `fdinfo`
-// wypisuje każdy jako „inotify wd:… ino:…" z numerem i-węzła szesnastkowo.
+// Whether any inotify instance of this process holds a descriptor on this directory: `fdinfo` lists
+// each one as "inotify wd:… ino:…" with the inode number in hexadecimal.
 bool inotified(const fs::path& where) {
     struct stat told {};
 
@@ -3023,8 +3092,9 @@ bool inotified(const fs::path& where) {
 
 namespace {
 
-// Jądro oddaje deskryptory zamkniętej instancji inotify z opóźnieniem. Czekamy, aż wrócą — inaczej
-// następny krok trafiłby na granicę wyczerpaną jeszcze przez poprzedni i poszedłby odpytywaniem.
+// The kernel returns the descriptors of a closed inotify instance with a delay. We wait until they
+// are back; otherwise the next step would hit a limit still exhausted by the previous one and would
+// go by polling.
 void recovered(const fs::path& where) {
     const int probe = inotify_init1(IN_CLOEXEC);
 
@@ -3041,11 +3111,12 @@ void recovered(const fs::path& where) {
 
 }
 
-// Granica `max_user_watches` wyczerpana: obserwacja nie odmawia ani nie głuchnie po cichu, tylko
-// odpytuje. Wyczerpujemy ją sami, deskryptorami na tylu plikach, ile system pozwoli; przy granicy
-// ponad 200 tysięcy próba byłaby za droga i się pomija. Trzy sytuacje: brak miejsca na korzeń,
-// miejsce na korzeń, a brak na podkatalog, i brak miejsca na podkatalog powstały później.
-TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
+// The max_user_watches limit exhausted: the watch neither refuses nor goes silently deaf, but
+// polls. We exhaust the limit ourselves, with descriptors on as many files as the system allows;
+// with a limit above 200 thousand the trial would be too expensive and is skipped. Three
+// situations: no room for the root; room for the root but none for a subdirectory; and no room for
+// a subdirectory created later.
+TRIAL("Watch: without inotify descriptors a watch polls") {
     std::ifstream reading{"/proc/sys/fs/inotify/max_user_watches"};
 
     long most = 0;
@@ -3054,8 +3125,8 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
 
     const Nook spent;
 
-    // Nowa instancja inotify, która zajmuje wszystko, co zostało — po deskryptorze na plik.
-    // `last` to ostatni wzięty, do oddania jednego miejsca.
+    // A new inotify instance that takes everything that is left, one descriptor per file. `last` is
+    // the last one taken, for giving back one place.
     int last = -1;
 
     const auto hogged = [&] {
@@ -3101,7 +3172,7 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
 
     ought(heard(none, first.where() / "świeży.txt"));
 
-    // Jedno miejsce wolne: korzeń się mieści, podkatalog już nie.
+    // One place free: the root fits, a subdirectory no longer does.
     inotify_rm_watch(hog, last);
 
     const Nook second;
@@ -3112,16 +3183,16 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
 
     ought(heard(half, second.where() / "głąb" / "świeży.txt"));
 
-    // Obserwacja nie jest dziurawa: albo całe drzewo stoi w inotify, albo nic z niego — korzeń, który
-    // się zmieścił, nie zostaje, gdy całość idzie odpytywaniem. Które z dwojga, zależy od tego, czy
-    // ktoś inny tego samego użytkownika nie zwolnił akurat deskryptora.
+    // The watch is not full of holes: either the whole tree stands in inotify or none of it, so a
+    // root that fitted does not stay when the whole goes by polling. Which of the two happens
+    // depends on whether someone else of the same user has just released a descriptor.
     ought(inotified(second.where() / "głąb") == inotified(second.where()));
 
     ::close(hog);
 
     recovered(second.where());
 
-    // Obserwacja stoi na zdarzeniach; podkatalog powstaje, gdy deskryptorów już nie ma.
+    // The watch stands on events; a subdirectory appears when there are no descriptors left.
     const Nook third;
 
     fs::Watch later = fs::watch(third.where(), true).await();
@@ -3130,8 +3201,9 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
 
     fs::make_folder(third.where() / "później").await();
 
-    // Przejście na odpytywanie zgłasza przepełnienie dopiero po pierwszym spojrzeniu; plik pisany
-    // wcześniej mógłby wejść już do niego i nie zgłosić się jako nowy — od tego jest przepełnienie.
+    // Switching to polling reports an overflow only after the first look; a file written earlier
+    // could already be part of that look and not be reported as new, which is what the overflow is
+    // for.
     bool switched = false;
 
     for (int again = 0; again < 4 && !switched; ++again)
@@ -3139,8 +3211,8 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
 
     ought(switched);
 
-    // Po przejściu inotify nie trzyma już niczego z tego drzewa — inaczej zmiana w korzeniu
-    // przychodziłaby dwa razy, raz od zdarzeń i raz od zaglądania.
+    // After switching, inotify holds nothing from this tree any more; otherwise a change in the
+    // root would arrive twice, once from events and once from polling.
     ought(!inotified(third.where()));
     ought(heard(later, third.where() / "później" / "świeży.txt"));
 
@@ -3149,9 +3221,9 @@ TRIAL("Watch: bez deskryptorów inotify obserwacja odpytuje") {
     recovered(third.where());
 }
 
-// Zamknięta obserwacja oddaje deskryptory inotify — także te z podkatalogów. Obserwacja mogła po
-// drodze przejść na zaglądanie, więc zdejmuje się z obu dróg naraz.
-TRIAL("Watch: zamknięta obserwacja oddaje deskryptory inotify") {
+// A closed watch gives back its inotify descriptors, also those of subdirectories. The watch may
+// have switched to polling along the way, so it is removed from both paths at once.
+TRIAL("Watch: a closed watch gives back its inotify descriptors") {
     const Nook nook;
 
     fs::make_folder(nook.where() / "głąb").await();
@@ -3163,9 +3235,10 @@ TRIAL("Watch: zamknięta obserwacja oddaje deskryptory inotify") {
 
     watch.close();
 
-    // Zamknięcie puszcza uchwyt, a deskryptory zdejmuje ten, kto puści obserwację ostatni — bywa nim
-    // praca z puli, która właśnie kończy przegląd. Pod obciążeniem to chwila po `close`, więc czekamy
-    // do skutku, najwyżej dwie sekundy: deskryptor, który naprawdę wycieka, zostaje na zawsze.
+    // Closing releases the handle, and the descriptors are removed by whoever releases the watch
+    // last, which may be a pool job just finishing a look. Under load that is a moment after
+    // `close`, so we wait until it happens, at most two seconds: a descriptor that really leaks
+    // stays forever.
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds{2};
 
     while ((inotified(nook.where()) || inotified(nook.where() / "głąb")) && std::chrono::steady_clock::now() < until)
@@ -3175,9 +3248,9 @@ TRIAL("Watch: zamknięta obserwacja oddaje deskryptory inotify") {
     ought(!inotified(nook.where() / "głąb"));
 }
 
-// Korzeń usunięty i postawiony na nowo: obserwacja nie głuchnie na zawsze, tylko przechodzi na
-// zaglądanie i widzi, co powstało w nowym.
-TRIAL("Watch: korzeń postawiony na nowo dalej słychać") {
+// A root deleted and created again: the watch does not go deaf forever, but switches to polling and
+// sees what was created in the new one.
+TRIAL("Watch: a root created again is still heard") {
     const Nook nook;
 
     const fs::path root = nook.where() / "korzeń";
@@ -3190,7 +3263,7 @@ TRIAL("Watch: korzeń postawiony na nowo dalej słychać") {
 
     const std::vector<fs::Change> given = gathered(watch);
 
-    // Zniknięcie korzenia i przyznanie, że od tej chwili obserwacja idzie inną drogą.
+    // The disappearance of the root, and the admission that from now on the watch goes another way.
     ought(among(given, root, Changed::removed));
     ought(among(given, root, Changed::overflow));
 
@@ -3212,7 +3285,7 @@ TRIAL("Watch: korzeń postawiony na nowo dalej słychać") {
 
 #endif
 
-TRIAL("fs: mount rozpoznaje nośnik") {
+TRIAL("fs: mount recognizes the volume") {
     const Nook nook;
 
     const int told = static_cast<int>(fs::mount(nook.where()).await());
@@ -3222,7 +3295,7 @@ TRIAL("fs: mount rozpoznaje nośnik") {
           told == static_cast<int>(fs::Mount::other));
 }
 
-TRIAL("fs: rata bierze się z rozpoznanego nośnika") {
+TRIAL("fs: the chunk comes from the recognized volume") {
     const Nook nook;
 
     const fs::Mount told = fs::mount(nook.where()).await();
@@ -3234,7 +3307,7 @@ TRIAL("fs: rata bierze się z rozpoznanego nośnika") {
     else same(rata, std::size_t{1024 * 1024});
 }
 
-TRIAL("fs: wykaz dysków nie jest pusty i niesie miejsce") {
+TRIAL("fs: the list of drives is not empty and carries the space") {
     const std::vector<fs::Volume> among = fs::volumes().await();
 
     ought(!among.empty());
@@ -3253,7 +3326,7 @@ TRIAL("fs: wykaz dysków nie jest pusty i niesie miejsce") {
     ought(któryś);
 }
 
-TRIAL("fs: każdy dysk z wykazu da się obejrzeć") {
+TRIAL("fs: every drive from the list can be looked at") {
     const std::vector<fs::Volume> among = fs::volumes().await();
 
     for (const fs::Volume& one : among) {
@@ -3263,8 +3336,9 @@ TRIAL("fs: każdy dysk z wykazu da się obejrzeć") {
     }
 }
 
-// Wykaz nośników to korzenie i nośnik każdego z nich: te same miejsca, w tej samej kolejności.
-TRIAL("fs: korzenie to miejsca z wykazu nośników") {
+// The list of volumes is the roots and the volume of each of them: the same places, in the same
+// order.
+TRIAL("fs: the roots are the places from the list of volumes") {
     const std::vector<fs::path> roots = fs::roots().await();
     const std::vector<fs::Volume> among = fs::volumes().await();
 
@@ -3274,8 +3348,9 @@ TRIAL("fs: korzenie to miejsca z wykazu nośników") {
     for (std::size_t at = 0; at < roots.size() && at < among.size(); ++at) same(roots[at], among[at].where);
 }
 
-// Nośnik pliku to jeden z korzeni, i to ten, pod którym plik leży — najgłębszy z pasujących.
-TRIAL("fs: mounted daje korzeń nośnika, na którym leży plik") {
+// A file's volume is one of the roots, and the one the file lies under: the deepest of those that
+// match.
+TRIAL("fs: mounted gives the root of the volume the file lies on") {
     const Nook nook;
 
     fs::write(nook.where() / "a.txt", bytes("abc")).await();
@@ -3287,7 +3362,8 @@ TRIAL("fs: mounted daje korzeń nośnika, na którym leży plik") {
 
     const fs::path whole = fs::canonical(nook.where() / "a.txt").await();
 
-    // Korzeń jest początkiem ścieżki — po kawałkach, bo zapis wielkości liter i ukośników bywa różny.
+    // The root is the beginning of the path, compared piece by piece, because letter case and
+    // slashes may be written differently.
     auto mine = whole.begin();
 
     for (const fs::path& piece : root) {
@@ -3302,7 +3378,7 @@ TRIAL("fs: mounted daje korzeń nośnika, na którym leży plik") {
         ++mine;
     }
 
-    // Żaden dłuższy korzeń nie jest początkiem ścieżki.
+    // No longer root is the beginning of the path.
     for (const fs::path& other : roots) {
         if (std::distance(other.begin(), other.end()) <= std::distance(root.begin(), root.end())) continue;
 
@@ -3317,8 +3393,8 @@ TRIAL("fs: mounted daje korzeń nośnika, na którym leży plik") {
 
 #if !defined(_WIN32)
 
-// Korzeń systemu plików zawsze jest w wykazie.
-TRIAL("fs: korzeń systemu plików jest wśród korzeni") {
+// The root of the file system is always in the list.
+TRIAL("fs: the root of the file system is among the roots") {
     const std::vector<fs::path> roots = fs::roots().await();
 
     ought(std::find(roots.begin(), roots.end(), fs::path{"/"}) != roots.end());
@@ -3328,9 +3404,9 @@ TRIAL("fs: korzeń systemu plików jest wśród korzeni") {
 
 #if defined(__linux__) && !defined(TALCITE_GENERIC_POSIX)
 
-// Punkt montowania mówi tym, co o nim wie tablica montowań: system plików i urządzenie albo
-// etykietę — nie samą ścieżką, jak katalog, który punktem montowania nie jest.
-TRIAL("fs: nośnik punktu montowania mówi z tablicy montowań") {
+// A mount point is described by what the mount table knows about it: the file system and the device
+// or label, not just its path, as for a directory that is not a mount point.
+TRIAL("fs: the volume of a mount point speaks from the mount table") {
     const fs::Volume root = fs::volume(fs::path{"/"}).await();
 
     ought(!root.format.empty());
@@ -3339,8 +3415,8 @@ TRIAL("fs: nośnik punktu montowania mówi z tablicy montowań") {
 
 #endif
 
-// Nośnik pod korzeniem mówi to samo, co jego wiersz w wykazie.
-TRIAL("fs: nośnik korzenia jak w wykazie") {
+// The volume under a root says the same as its row in the list.
+TRIAL("fs: the volume of a root is as in the list") {
     for (const fs::Volume& one : fs::volumes().await()) {
         const fs::Volume alone = fs::volume(one.where).await();
 
@@ -3352,8 +3428,8 @@ TRIAL("fs: nośnik korzenia jak w wykazie") {
     }
 }
 
-// Ścieżka, która nie jest korzeniem, dostaje rodzaj nośnika, na którym leży, i własną nazwę.
-TRIAL("fs: nośnik zwykłego katalogu") {
+// A path that is not a root gets the kind of the volume it lies on, and its own name.
+TRIAL("fs: the volume of an ordinary directory") {
     const Nook nook;
 
     const fs::Volume made = fs::volume(nook.where()).await();
@@ -3370,8 +3446,9 @@ TRIAL("fs: nośnik zwykłego katalogu") {
 
 #ifdef _WIN32
 
-// Litera bez ukośnika to na Windows „katalog bieżący na tym dysku" — nośnik dostaje korzeń.
-TRIAL("fs: nośnik litery bez ukośnika") {
+// A drive letter without a slash means "the current directory on that drive" on Windows, so the
+// volume gets the root.
+TRIAL("fs: the volume of a drive letter without a slash") {
     const fs::path system = fs::roots().await().front();
 
     const std::wstring letter = system.wstring().substr(0, 2);
@@ -3381,7 +3458,7 @@ TRIAL("fs: nośnik litery bez ukośnika") {
 
 #endif
 
-TRIAL("fs: udział sieciowy niesie to, co za nim stoi") {
+TRIAL("fs: a network share carries what stands behind it") {
     const std::vector<fs::Volume> among = fs::volumes().await();
 
     for (const fs::Volume& one : among)
@@ -3390,9 +3467,10 @@ TRIAL("fs: udział sieciowy niesie to, co za nim stoi") {
 
 #ifndef _WIN32
 
-// Prawa, liczba dowiązań, właściciel i grupa — cztery pola, na których stanie wykaz „długi"
-// z MC. Prawa są prawami **wpisu**, nie tego, na co wskazuje: dowiązanie ma swoje `lrwxrwxrwx`.
-TRIAL("fs: list niesie prawa, liczbę dowiązań, właściciela i grupę") {
+// Permissions, the number of links, the owner and the group: the four fields on which MC's "long"
+// listing will stand. The permissions are those of the entry, not of what it points to: a link has
+// its own lrwxrwxrwx.
+TRIAL("fs: list carries the permissions, the number of links, the owner and the group") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -3409,7 +3487,7 @@ TRIAL("fs: list niesie prawa, liczbę dowiązań, właściciela i grupę") {
 
     same(among.size(), std::size_t{2});
 
-    // Kolejność po ścieżce: `plik.txt`, `skrót`.
+    // Ordered by path: plik.txt, then the link.
     same(among[0].where.filename().string(), std::string{"plik.txt"});
     same(among[0].rights, stood::perms::owner_read | stood::perms::owner_write |
                               stood::perms::group_read);
@@ -3419,11 +3497,12 @@ TRIAL("fs: list niesie prawa, liczbę dowiązań, właściciela i grupę") {
     same(*among[0].owner, static_cast<std::uint32_t>(::getuid()));
     same(*among[0].group, static_cast<std::uint32_t>(::getgid()));
 
-    // Dowiązanie ma prawa swoje, a nie celu.
+    // A link has its own permissions, not those of its target.
     same(among[1].where.filename().string(), std::string{"skrót"});
     same(among[1].rights, stood::perms::all);
 
-    // Dowiązanie twarde widać po liczbie nazw — dopiero to pozwoli pokazać rolę `HARDLINK` z MC.
+    // A hard link shows in the number of names; only that makes it possible to show MC's HARDLINK
+    // role.
     fs::link(nook.where() / "druga nazwa", one, true).await();
 
     const std::vector<fs::Entry> potem = fs::list(nook.where()).await();
@@ -3433,9 +3512,10 @@ TRIAL("fs: list niesie prawa, liczbę dowiązań, właściciela i grupę") {
             same(each.links, std::uintmax_t{2});
 }
 
-// Jeden wpis bez czytania katalogu: to samo, co przynosi wykaz, łącznie z liczbą nazw. Na tym
-// stoi zapis „obok i przemianuj", który musi wiedzieć, czy nie zerwie twardego dowiązania.
-TRIAL("fs: entry oddaje jeden wpis z prawami, liczbą nazw i celem dowiązania") {
+// One entry without reading the directory: the same as the listing brings, including the number of
+// names. Writing "alongside and rename" stands on this, since it must know whether it would break a
+// hard link.
+TRIAL("fs: entry returns one entry with the permissions, the number of names and the link target") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -3465,11 +3545,11 @@ TRIAL("fs: entry oddaje jeden wpis z prawami, liczbą nazw i celem dowiązania")
     ought(got.target.has_value());
     same(*got.target, one);
 
-    // Brak wpisu to nie błąd, tylko `none`.
+    // A missing entry is not an error, just `none`.
     same(static_cast<int>(fs::entry(nook.where() / "nie ma").await().kind), static_cast<int>(fs::Kind::none));
 }
 
-TRIAL("fs: rights zmienia prawa i idzie za dowiązaniem") {
+TRIAL("fs: rights changes the permissions and follows a link") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -3489,10 +3569,10 @@ TRIAL("fs: rights zmienia prawa i idzie za dowiązaniem") {
     threw(fs::rights(nook.where() / "nie ma", stood::perms::owner_read).await());
 }
 
-// Znacznik mówi o tym, **na co wpis wskazuje**, a prawa o samym wpisie: dowiązanie do pliku tylko
-// do odczytu jest „tylko do odczytu", choć samo ma `lrwxrwxrwx`. To rozróżnienie kosztuje drugie
-// pytanie do systemu na dowiązanie i dlatego stoi tu wprost.
-TRIAL("fs: dowiązanie ma prawa swoje, a znaczniki celu") {
+// The attribute tells about what the entry points to, and the permissions about the entry itself: a
+// link to a read-only file is "read-only", although it has lrwxrwxrwx itself. This distinction
+// costs a second question to the system per link, and that is why it is stated here explicitly.
+TRIAL("fs: a link has its own permissions and its target's attributes") {
     const Nook nook;
 
     const fs::path one = nook.made("tylko-do-odczytu.txt", "treść");
@@ -3511,7 +3591,7 @@ TRIAL("fs: dowiązanie ma prawa swoje, a znaczniki celu") {
     ought(among[0].attributes.readonly);
     ought(!among[0].attributes.stale);
 
-    // Ten sam plik bez dowiązania: prawa i znacznik mówią to samo.
+    // The same file without a link: the permissions and the attribute say the same.
     ought(among[1].attributes.readonly);
     same(among[1].rights, stood::perms::owner_read);
 
@@ -3519,9 +3599,9 @@ TRIAL("fs: dowiązanie ma prawa swoje, a znaczniki celu") {
                        stood::perm_options::replace, ignored);
 }
 
-// Czas wpisu idzie teraz prosto z `lstat`, a nie przez zegar plikowy biblioteki standardowej —
-// więc to, co ustawiliśmy, ma wrócić co do sekundy.
-TRIAL("fs: list oddaje czas zapisu taki, jaki ustawiono") {
+// The entry's time comes straight from lstat, not through the standard library's file clock, so
+// what we set has to come back to the second.
+TRIAL("fs: list returns the modification time as it was set") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");
@@ -3536,22 +3616,23 @@ TRIAL("fs: list oddaje czas zapisu taki, jaki ustawiono") {
     same(among[0].modified, when);
 }
 
-TRIAL("fs: nazwa właściciela i grupy po numerze, nieznany numer bez nazwy") {
+TRIAL("fs: the owner and group name by number, an unknown number without a name") {
     const std::string mine = fs::owner(static_cast<std::uint32_t>(::getuid())).await();
 
     ought(!mine.empty());
 
-    // Drugie pytanie o ten sam numer idzie z pamięci — odpowiedź ta sama.
+    // A second question about the same number comes from memory, with the same answer.
     same(fs::owner(static_cast<std::uint32_t>(::getuid())).await(), mine);
 
     ought(!fs::group(static_cast<std::uint32_t>(::getgid())).await().empty());
 
-    // Numer, którego system nie zna, oddaje pustkę zamiast rzucać: pokazujący wypisze wtedy numer.
+    // A number the system does not know returns nothing instead of throwing: whoever shows it then
+    // prints the number.
     same(fs::owner(4294967294U).await(), std::string{});
     same(fs::group(4294967294U).await(), std::string{});
 }
 
-TRIAL("fs: list widzi bit wykonywania i dowiązanie bez celu") {
+TRIAL("fs: list sees the execute bit and a link without a target") {
     const Nook nook;
 
     const fs::path program = nook.made("uruchom.sh", "#!/bin/sh\n");
@@ -3567,7 +3648,7 @@ TRIAL("fs: list widzi bit wykonywania i dowiązanie bez celu") {
 
     same(among.size(), std::size_t{4});
 
-    // Kolejność po ścieżce: dane.txt, uruchom.sh, wiszace, zywe.
+    // Ordered by path: dane.txt, uruchom.sh, wiszace, zywe.
     ought(!among[0].attributes.executable);
     ought(among[1].attributes.executable);
     ought(!among[1].attributes.stale);
@@ -3578,7 +3659,8 @@ TRIAL("fs: list widzi bit wykonywania i dowiązanie bez celu") {
     same(static_cast<int>(among[3].kind), static_cast<int>(fs::Kind::link));
     ought(!among[3].attributes.stale);
 
-    // Cel niesie tylko dowiązanie — także wiszące, bo cel jest napisem w dowiązaniu, nie plikiem.
+    // Only a link carries a target, a dangling one too, because the target is a string in the link,
+    // not a file.
     ought(!among[0].target.has_value());
     ought(!among[1].target.has_value());
     ought(among[2].target.has_value());
@@ -3586,7 +3668,7 @@ TRIAL("fs: list widzi bit wykonywania i dowiązanie bez celu") {
     ought(among[3].target.has_value());
     same(*among[3].target, plain);
 
-    // Czas dowiązania jest czasem samego dowiązania — wiszące też go ma, a nie rok 1970.
+    // A link's time is the time of the link itself: a dangling one has it too, not the year 1970.
     const std::chrono::sys_seconds now =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
 
@@ -3595,7 +3677,7 @@ TRIAL("fs: list widzi bit wykonywania i dowiązanie bez celu") {
     ought(among[3].modified > now - std::chrono::hours{1});
 }
 
-TRIAL("fs: potok to wpis specjalny, nie plik") {
+TRIAL("fs: a pipe is a special entry, not a file") {
     const Nook nook;
 
     const fs::path pipe = nook.where() / "rura";
@@ -3611,23 +3693,23 @@ TRIAL("fs: potok to wpis specjalny, nie plik") {
 
 #endif
 
-// **Ścieżka jako tekst jest zawsze UTF-8**, na każdym systemie. `path::string()` pod MSVC oddaje
-// bieżącą stronę kodową ANSI — i to była przyczyna nazw plików rozsypujących się w panelach twa.
-// Ta próba przechodzi na POSIX-ie zawsze; na Windows dziś **padłaby** na `string()`, a przechodzi
-// na `to_string`, i to jest cała jej wartość: pilnuje różnicy, której jeden z dwóch systemów nie
-// widzi wcale.
-TRIAL("Pliki: ścieżka staje się tekstem w UTF-8 i wraca tą samą ścieżką") {
+// A path as text is always UTF-8, on every system. path::string() under MSVC returns the current
+// ANSI code page, which garbles file names with Polish letters. This trial always passes on POSIX;
+// on Windows it would fail with `string()` and passes with `to_string`, and that is its whole
+// value: it guards a difference that one of the two systems does not see at all.
+TRIAL("Files: a path becomes UTF-8 text and comes back as the same path") {
     const std::string said = "Zażółć gęślą jaźń.txt";
 
     const fs::path where = fs::from_string(said);
 
     same(fs::to_string(where), said);
 
-    // Bajt po bajcie, a nie „mniej więcej": tekst ma być tym samym UTF-8, który podaliśmy.
+    // Byte for byte, not "more or less": the text must be the same UTF-8 we gave.
     same(fs::to_string(where).size(), said.size());
 
-    // I w złożeniu, bo tak używa tego program: katalog plus nazwa wpisana przez człowieka.
-    const fs::path whole = fs::from_string("/dom/hubert") / fs::from_string(said);
+    // And in a composition, because that is how the program uses it: a directory plus a name typed
+    // by a person.
+    const fs::path whole = fs::from_string("/home/user") / fs::from_string(said);
 
     same(fs::to_string(whole.filename()), said);
 }
@@ -3636,14 +3718,16 @@ TRIAL("Pliki: ścieżka staje się tekstem w UTF-8 i wraca tą samą ścieżką"
 
 namespace {
 
-// Lista dostępu pliku, tak jak ją widzi Windows: czy chroniona przed dziedziczeniem, ile ma
-// wpisów i czy pierwszy należy do użytkownika, który uruchomił próbę.
+// A file's access list as Windows sees it: whether it is protected from inheritance, how many
+// entries it has, and whether the first belongs to the user who started the trial.
 struct Guard {
     bool shielded = false;
     DWORD entries = 0;
     bool mine = false;
 };
 
+// Reads the file's access list and compares its first entry with the user of the current process;
+// all false when it cannot be read.
 Guard guard(const fs::path& where) {
     PACL list = nullptr;
     PSECURITY_DESCRIPTOR held = nullptr;
@@ -3686,7 +3770,7 @@ Guard guard(const fs::path& where) {
 
 }
 
-TRIAL("fs: na Windows prawa tylko właściciela to chroniona lista z jednym wpisem") {
+TRIAL("fs: on Windows owner-only permissions are a protected list with one entry") {
     const Nook nook;
 
     const fs::path one = nook.made("klucze.json", "tajne");
@@ -3706,7 +3790,7 @@ TRIAL("fs: na Windows prawa tylko właściciela to chroniona lista z jednym wpis
     ought(!guard(one).shielded);
 }
 
-TRIAL("fs: na Windows samo prawo innych też zdejmuje ochronę") {
+TRIAL("fs: on Windows a permission for others alone also removes the protection") {
     const Nook nook;
 
     const fs::path one = nook.made("plik.txt", "treść");

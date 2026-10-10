@@ -31,18 +31,19 @@ namespace talcite::net {
 
 namespace {
 
-// Rura po drugiej stronie zamknięta — dla czytającego to koniec strumienia, nie awaria.
+// The pipe is closed on the other side. For the reader this is the end of the stream, not a
+// failure.
 bool ended_pipe(DWORD code) { return code == ERROR_BROKEN_PIPE || code == ERROR_PIPE_NOT_CONNECTED; }
 
-// Klucz zakończenia, które nie należy do żadnej operacji — mówi tylko „obudź się i policz
-// terminy". To zastępuje budzik z pary gniazd, który jest potrzebny przy WSAPoll.
+// A completion key that belongs to no operation; it only means "wake up and check the
+// deadlines". It replaces the socket-pair alarm that the WSAPoll backend needs.
 constexpr ULONG_PTR waking = 1;
 
 constexpr std::size_t roomy = sizeof(sockaddr_storage) + 16;
 
-// Operacja w locie. **OVERLAPPED musi przeżyć całe wywołanie systemowe**, a jądro pisze do
-// bufora długo po powrocie z funkcji — dlatego to wszystko należy do centrali, a nie do
-// domknięcia, które za chwilę zniknie.
+// An operation in flight. The OVERLAPPED must outlive the whole system call, and the kernel
+// writes to the buffer long after the function returns, so all of this is owned by the exchange
+// and not by a closure that is about to disappear.
 struct Flying {
     OVERLAPPED over{};
     std::shared_ptr<Doing> one;
@@ -51,10 +52,10 @@ struct Flying {
     int wide = static_cast<int>(sizeof(sockaddr_storage));
     char space[2 * roomy]{};
 
-    // **Licznik bajtów i znaczniki muszą przeżyć wywołanie.** Stały wcześniej na stosie funkcji
-    // rozpoczynającej operację, a ta wraca, gdy tylko jądro powie „w toku" — jądro miało więc
-    // adres z ramki, której już nie ma. MSDN mówi wprost: przy niezerowym lpOverlapped ten
-    // wskaźnik ma być pusty albo przeżyć operację.
+    // The byte counter and the flags must outlive the call too. The function that starts the
+    // operation returns as soon as the kernel says "pending", so they cannot live on its stack.
+    // MSDN says it plainly: with a non-null lpOverlapped this pointer must be null or outlive the
+    // operation.
     DWORD much = 0;
     DWORD marks = 0;
 
@@ -64,8 +65,8 @@ struct Flying {
 LPFN_ACCEPTEX accepting = nullptr;
 LPFN_CONNECTEX joining = nullptr;
 
-// AcceptEx i ConnectEx nie mają zwykłego wpisu w bibliotece — trzeba je wyprosić po numerze
-// z otwartego gniazda. Robimy to raz, na gnieździe zrobionym wyłącznie w tym celu.
+// AcceptEx and ConnectEx have no ordinary library entry point; they have to be requested by GUID
+// from an open socket. This is done once, on a socket created only for that purpose.
 void asking() {
     static std::once_flag once;
 
@@ -108,16 +109,16 @@ namespace {
 
 std::atomic<Exchange::Held*> standing{nullptr};
 
-// Gniazdo przypina się do portu raz i na zawsze — powtórzone przypięcie kończy się błędem, więc
-// pamiętamy, kogo już przypięliśmy.
+// Binds a handle to the completion port. A socket is bound once and for all, and binding it again
+// fails, so we remember which handles are already bound.
 //
-// **Zero znaczy „przypięte"**, cokolwiek innego to numer błędu. Porażka szła tu wcześniej po cichu:
-// funkcja nic nie oddawała, więc operacja startowała mimo wszystko — a jej zakończenie nie miało
-// **dokąd wrócić**, bo port o tym uchwycie nic nie wie. Skutek byłby dokładnie taki, jak przy
-// porzuconych zgłoszeniach z rozbiórki: `Ticket` zostaje świeży, wątek na `await` nie budzi się
-// nigdy i program nie kończy wyjścia.
+// Zero means "bound"; anything else is an error code. The caller must not start the operation on
+// failure: its completion would have nowhere to go, because the port knows nothing about this
+// handle. The `Ticket` would stay fresh, a thread in `await` would never wake up, and the program
+// would never finish exiting.
 //
-// Numer bierzemy z `GetLastError`, a nie z `amiss()`: to jest wywołanie Win32, nie Winsock.
+// The code comes from `GetLastError`, not from `amiss()`, because this is a Win32 call, not a
+// Winsock one.
 int tying(Exchange::Held& held, Handle one) {
     if (held.tied.count(one) != 0) return 0;
 
@@ -129,9 +130,10 @@ int tying(Exchange::Held& held, Handle one) {
     return 0;
 }
 
-// Zamknięcie odkładamy, dopóki choć jedno zakończenie jeszcze nie wróciło. CancelIoEx nie kończy
-// operacji od razu — jądro dopiero ją zamknie i dostarczy zakończenie z ERROR_OPERATION_ABORTED.
-// Uchwyt zamknięty wcześniej zostawiłby jądro piszące do zwolnionej pamięci.
+// Closes a handle that is waiting to be closed, but only once no completion for it is still
+// outstanding. CancelIoEx does not end an operation immediately; the kernel ends it later and
+// delivers a completion with ERROR_OPERATION_ABORTED. A handle closed earlier would leave the
+// kernel writing into freed memory.
 void sweeping(Exchange::Held& held, Handle one) {
     if (const auto found = held.counted.find(one); found != held.counted.end() && found->second > 0)
         return;
@@ -145,13 +147,12 @@ void sweeping(Exchange::Held& held, Handle one) {
     ending(one);
 }
 
-// Zakończenie idzie **na wątek z puli**, nie tutaj. Ciąg dalszy obietnicy to cudzy kod — gdyby
-// pobiegł na wątku centrali, jeden powolny then zatrzymałby całą sieć.
+// Delivers a completion to the operation on a pool thread, not here. The promise's continuation is
+// foreign code; if it ran on the exchange thread, one slow then would stall the whole network.
 void handed(std::shared_ptr<Doing> one, std::size_t much, int code, bool late) {
     pooling().post([one = std::move(one), much, code, late]() mutable {
-        // **Zapis przerwany terminem nie jest udany, choćby część bajtów zeszła.** Wcześniej
-        // gałąź terminu omijało się przy niezerowym liczniku, a kod błędu zerowało — więc
-        // przerwany zapis megabajta, z którego poszło 64 KiB, meldował się jako zapisany w całości.
+        // A write interrupted by its deadline is not a success, even if some bytes went out: an
+        // interrupted 1 MB write of which 64 KiB was sent must not report itself as complete.
         if (late && (much == 0 || one->kind == Kind::putting)) {
             one->late();
 
@@ -162,8 +163,9 @@ void handed(std::shared_ptr<Doing> one, std::size_t much, int code, bool late) {
     });
 }
 
-// Rozpoczęcie operacji. Na Windows **każda** zaczyna się tutaj: nie ma sygnału „można czytać",
-// jest tylko „przeczytano ci tyle". Prawda znaczy „poszło, czekaj na zakończenie".
+// Starts an operation. On Windows every operation starts here: there is no "ready to read"
+// signal, only "this much was read for you". True means "started, wait for the completion";
+// false means the request is already settled.
 bool began(const std::shared_ptr<Flying>& fly) {
     Doing& one = *fly->one;
 
@@ -177,17 +179,18 @@ bool began(const std::shared_ptr<Flying>& fly) {
                 return false;
             }
 
-            // **Gniazdo lokalne nie idzie przez ConnectEx** i nie jest to obejście, tylko
-            // właściwa droga. ConnectEx wymaga gniazda już przypisanego, a adres lokalny nie ma
-            // postaci „dowolnej", którą dałoby się przypisać — `Address::any` na nim odmawia,
-            // i słusznie, bo taki adres nie istnieje.
+            // A local socket does not go through ConnectEx, and this is the proper path, not a
+            // workaround. ConnectEx needs a socket that is already bound, and a local address has
+            // no "any" form that could be bound: `Address::any` refuses it, rightly, because such
+            // an address does not exist.
             //
-            // Ważniejsze jest jednak to, że **połączenie na własnej maszynie nie ma na co
-            // czekać**: nie ma uzgadniania, nie ma sieci, jest albo od razu, albo wcale. Nakładane
-            // wejście-wyjście nic tu nie wnosi, a wnosi zależność od tego, czy Winsock w ogóle
-            // wystawia ConnectEx dla AF_UNIX — czego dokumentacja nie mówi.
+            // More importantly, a connection on the same machine has nothing to wait for: there
+            // is no handshake and no network. Overlapped I/O adds nothing here except a dependence
+            // on whether Winsock exposes ConnectEx for AF_UNIX at all, which the documentation
+            // does not say.
             //
-            // Rozstrzygamy więc na miejscu i oddajemy fałsz, czyli „zgłoszenie już załatwione".
+            // So the connection is attempted on the spot and we return false, meaning "the request
+            // is already handled".
             if (one.where.family() == Family::local) {
                 sockaddr_storage told{};
 
@@ -202,27 +205,26 @@ bool began(const std::shared_ptr<Flying>& fly) {
 
                 const int why = ::WSAGetLastError();
 
-                // Wszystko poza „jeszcze nie teraz" jest odpowiedzią ostateczną: nie ma pliku, nikt
-                // nie słucha, brak praw.
+                // Anything other than "not yet" is a final answer: no such file, nobody
+                // listening, no permission.
                 if (why != WSAEWOULDBLOCK) {
                     handed(fly->one, 0, why, false);
 
                     return false;
                 }
 
-                // **Zmierzone na Windows: nawiązanie lokalne nie kończy się natychmiast.**
-                // Zakładałem, że skoro nie ma ani uzgadniania, ani sieci, `connect` zdąży w miejscu
-                // — i to było błędne. Gniazdo jest nieblokujące, więc odpowiada `WSAEWOULDBLOCK`
-                // i kończy się chwilę później.
+                // Measured on Windows: a local connection does not complete immediately. The
+                // socket is non-blocking, so `connect` answers `WSAEWOULDBLOCK` and completes a
+                // moment later.
                 //
-                // Portu do tego użyć nie możemy, bo bez `ConnectEx` nikt tam zakończenia nie
-                // złoży. Czekamy więc **na wątku z puli**, i to jest właściwe miejsce: pula na
-                // pracę zwykłą rośnie bez ograniczeń właśnie dlatego, że taka praca ma prawo
-                // poczekać. Czekaniem jest `select` na gotowość do pisania — ta sama rzecz, którą
-                // robi zaplecze przenośne, tylko jednym gniazdem zamiast wszystkimi.
+                // The port cannot be used for this, because without ConnectEx nobody posts a
+                // completion there. So we wait on a pool thread, which is the right place: the
+                // pool for ordinary work grows without limit precisely because such work is
+                // allowed to wait. The wait is a `select` for writability, the same thing the
+                // portable backend does, only for one socket instead of all of them.
                 //
-                // Zgłoszenia nie ma w mapie centrali (oddajemy fałsz), więc terminu nie pilnuje
-                // wątek centrali i musi go odmierzyć samo czekanie.
+                // The request is not in the exchange's map (we return false), so the exchange
+                // thread does not watch its deadline, and the wait itself has to measure it.
                 const Handle which = one.held;
                 const bool ever = one.ever;
                 const auto until = one.until;
@@ -248,8 +250,8 @@ bool began(const std::shared_ptr<Flying>& fly) {
                     FD_SET(static_cast<SOCKET>(which), &writing);
                     FD_SET(static_cast<SOCKET>(which), &failing);
 
-                    // Windows melduje nieudane nawiązanie w zbiorze wyjątkowym, a nie w zbiorze do
-                    // pisania — dlatego czekamy na oba naraz.
+                    // Windows reports a failed connection in the exception set, not in the write
+                    // set, so we wait on both at once.
                     const int ready = ::select(0, nullptr, &writing, &failing, ever ? &how : nullptr);
 
                     if (ready == 0) {
@@ -264,14 +266,15 @@ bool began(const std::shared_ptr<Flying>& fly) {
                         return;
                     }
 
-                    // Gotowość mówi tylko „już po" — **czy się udało**, mówi dopiero `SO_ERROR`.
+                    // Readiness only says "it is over"; whether it succeeded is told by
+                    // `SO_ERROR`.
                     handed(mine, 0, settling(which), false);
                 });
 
                 return false;
             }
 
-            // ConnectEx wymaga gniazda już przypisanego — inaczej odmawia.
+            // ConnectEx requires a socket that is already bound; otherwise it refuses.
             if (!bound(one.held, Address::any(one.where.family(), 0))) {
                 handed(fly->one, 0, amiss(), false);
 
@@ -294,10 +297,10 @@ bool began(const std::shared_ptr<Flying>& fly) {
         }
 
         case Kind::meeting: {
-            // **Rura czeka na klienta na swojej instancji** (`pipes::spare`); przyjęta instancja
-            // jest od razu strumieniem. Klient, który zdążył przed nami, nie daje zakończenia
-            // w porcie — rozstrzygamy na miejscu. Klient, który zdążył też odejść, to strumień,
-            // który od razu mówi „koniec".
+            // A pipe waits for a client on its own instance (`pipes::spare`); the accepted
+            // instance is the stream itself. A client that connected before us produces no
+            // completion on the port, so that case is settled on the spot. A client that has
+            // also already left is a stream that says "end" right away.
             if (pipes::piped(one.held)) {
                 if (::ConnectNamedPipe(reinterpret_cast<HANDLE>(one.held), &fly->over) != 0) return true;
 
@@ -386,8 +389,9 @@ bool began(const std::shared_ptr<Flying>& fly) {
             if (made != 0 && ::WSAGetLastError() != WSA_IO_PENDING) {
                 const int why = ::WSAGetLastError();
 
-                // Datagram większy niż bufor to nie awaria, tylko obcięcie — i tak samo jak na
-                // uniksach mówimy o tym wprost, zamiast oddać kawałek udający całość.
+                // A datagram larger than the buffer is not a failure but a truncation, and, as on
+                // Unix, we say so explicitly instead of handing back a piece that pretends to be
+                // the whole.
                 if (one.kind == Kind::fetching && why == WSAEMSGSIZE) {
                     one.where = facing(&fly->told);
                     one.cut = true;
@@ -408,8 +412,8 @@ bool began(const std::shared_ptr<Flying>& fly) {
         case Kind::putting:
         case Kind::sending: {
             if (pipes::piped(one.held)) {
-                // Zapis zera bajtów dochodzi do czytającego jako zero bajtów — czyli jako koniec.
-                // Gniazdo nie wysyła wtedy nic i rura też nie ma.
+                // A zero-byte write reaches the reader as zero bytes, that is, as the end of the
+                // stream. A socket sends nothing in that case, and neither does the pipe.
                 if (one.much >= one.buffer.size()) {
                     handed(fly->one, one.much, 0, false);
 
@@ -458,20 +462,21 @@ bool began(const std::shared_ptr<Flying>& fly) {
     return false;
 }
 
-// Zakończenie wróciło z jądra. Tu rozstrzyga się, czy operacja jest skończona, czy trzeba ją
-// puścić jeszcze raz — pisanie potrafi zejść po kawałku, a przyjęcie i nawiązanie wymagają
-// dopowiedzenia systemowi, czym właśnie się stały.
+// A completion came back from the kernel. This decides whether the operation is finished or has to
+// be issued again: a write may go out in pieces, and an accept or a connect needs the system told
+// what the socket has just become.
 void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
     Doing& one = *fly->one;
 
-    // Koniec rury przy czytaniu: tyle, ile przyszło, i bez błędu — dokładnie jak zamknięte gniazdo.
+    // The end of a pipe while reading: as many bytes as arrived, and no error, exactly like a
+    // closed socket.
     if (code != 0 && one.kind == Kind::getting && ended_pipe(static_cast<DWORD>(code)) && pipes::piped(one.held)) code = 0;
 
     if (code != 0) {
-        // Za duży datagram to **nie jest awaria odbioru**, tylko odpowiedź: tyle się zmieściło,
-        // reszta przepadła. Obsługa istniała wyłącznie na drodze natychmiastowej, więc zwykły
-        // przebieg — zgłoszenie odbioru, zanim cokolwiek przyszło — meldował gołym numerem błędu
-        // i gubił zarówno odebrane bajty, jak i adres nadawcy.
+        // A datagram that is too large is not a receive failure but an answer: this much fit,
+        // the rest is lost. It has to be handled here as well as on the immediate path, or a
+        // receive issued before anything arrived would report a bare error code and lose both the
+        // received bytes and the sender's address.
         if (one.kind == Kind::fetching && (code == WSAEMSGSIZE || code == ERROR_MORE_DATA)) {
             one.cut = true;
             one.where = facing(&fly->told);
@@ -494,7 +499,8 @@ void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
 
     switch (one.kind) {
         case Kind::joining: {
-            // Bez tego getpeername i getsockname na świeżo połączonym gnieździe nic nie wiedzą.
+            // Without this, getpeername and getsockname know nothing on a freshly connected
+            // socket.
             const SOCKET which = static_cast<SOCKET>(one.held);
 
             (void)::setsockopt(which, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, nullptr, 0);
@@ -532,8 +538,8 @@ void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
 
         case Kind::sending: handed(fly->one, much, 0, fly->late); return;
 
-        // Pisanie kończy się dopiero wtedy, gdy zeszło wszystko. Reszta idzie drugim
-        // zgłoszeniem, bo bufor i licznik są tam, gdzie były.
+        // A write is finished only when everything has gone out. The rest goes in a second
+        // request, because the buffer and the counter are still where they were.
         case Kind::putting: {
             one.much += much;
 
@@ -543,8 +549,8 @@ void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
                 return;
             }
 
-            // Przerwany zapis **nie jest** powodzeniem, choćby część zeszła: połowy paczki nie da
-            // się oddać wołającemu tak, jak oddaje się przeczytane bajty.
+            // An interrupted write is not a success, even if part of it went out: half a packet
+            // cannot be handed back to the caller the way read bytes are.
             if (fly->late) {
                 handed(fly->one, 0, 0, true);
 
@@ -560,10 +566,14 @@ void ended(const std::shared_ptr<Flying>& fly, DWORD much, int code) {
 
 }
 
+// Creates the completion port and starts the exchange thread. The thread waits on the port with a
+// timeout set by the nearest deadline, hands each completion to `ended`, and cancels operations
+// whose deadline has passed.
 Exchange::Exchange() : held_(std::make_unique<Held>()) {
-    // Pula **musi** powstać przed centralą, choć nic jej tu nie potrzebuje. Obiekty statyczne
-    // giną w kolejności odwrotnej do powstawania, a wątek centrali oddaje pracę do puli — więc
-    // gdyby pula powstała później, zginęłaby wcześniej i wątek sięgałby do zwolnionej pamięci.
+    // The pool must exist before the exchange, even though nothing here needs it yet. Static
+    // objects are destroyed in reverse order of construction, and the exchange thread hands work
+    // to the pool; a pool created later would be destroyed earlier, and the thread would reach
+    // into freed memory.
     (void)pooling();
 
     starting();
@@ -594,16 +604,15 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
             DWORD patience = INFINITE;
 
             if (timed) {
-                // **W górę, nie w dół** — ta sama poprawka i ten sam powód co przy zapleczu poll:
-                // ucięcie do zera przy terminie bliższym niż milisekunda sprawiało, że port wracał
-                // natychmiast, przegląd nie znajdował nic przeterminowanego i pętla kręciła się
-                // w kółko na pełnym rdzeniu.
+                // Round up, not down, for the same reason as in the poll backend: truncating to
+                // zero for a deadline less than a millisecond away makes the port return
+                // immediately, the sweep finds nothing overdue, and the loop spins on a full core.
                 const auto left = std::chrono::ceil<std::chrono::milliseconds>(
                     soonest - std::chrono::steady_clock::now());
 
-                // I **z ograniczeniem do zakresu**: `INFINITE` to `0xFFFFFFFF`, więc termin
-                // odleglejszy niż mniej więcej czterdzieści dziewięć dni po rzutowaniu znaczyłby
-                // „czekaj bez końca" — czyli nie zadziałałby nigdy.
+                // And clamp to the range: `INFINITE` is `0xFFFFFFFF`, so after the cast a deadline
+                // more than roughly forty-nine days away would mean "wait forever", that is, it
+                // would never fire.
                 const std::int64_t much =
                     std::min<std::int64_t>(std::max<std::int64_t>(left.count(), 0),
                                            static_cast<std::int64_t>(INFINITE) - 1);
@@ -619,8 +628,8 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
 
             const int why = made ? 0 : static_cast<int>(::GetLastError());
 
-            // Brak wskazania znaczy, że nic nie wróciło — minął czas albo port padł. Tak czy
-            // owak trzeba obejść terminy.
+            // No OVERLAPPED means nothing came back: the time ran out or the port failed. Either
+            // way the deadlines have to be checked.
             if (over != nullptr && key != waking) {
                 std::shared_ptr<Flying> fly;
 
@@ -645,9 +654,10 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
                 if (fly) ended(fly, much, why);
             }
 
-            // Przeterminowane przerywamy **po jednej operacji**, a nie po gnieździe: na jednym
-            // strumieniu może wisieć czytanie z terminem i pisanie bez. Zakończenie i tak wróci,
-            // z liczbą bajtów, które zdążyły przejść — i to jest ta liczba, która nie może zginąć.
+            // Overdue operations are cancelled one operation at a time, not per socket: one
+            // stream may carry a read with a deadline and a write without one. The completion
+            // comes back anyway, with the number of bytes that got through, and that number must
+            // not be lost.
             std::vector<std::pair<Handle, OVERLAPPED*>> cutting;
 
             {
@@ -671,7 +681,7 @@ Exchange::Exchange() : held_(std::make_unique<Held>()) {
     }};
 }
 
-// Rozbiórka ma kolejność i każdy jej krok ma powód.
+// Tears the exchange down. The steps come in a fixed order and each has a reason.
 Exchange::~Exchange() {
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
@@ -679,21 +689,23 @@ Exchange::~Exchange() {
         held_->closing = true;
     }
 
-    // 1. Wątek centrali staje — od tej chwili nikt już nie odda pracy do puli.
+    // 1. The exchange thread stops; from now on nobody hands work to the pool.
     if (held_->port != nullptr) ::PostQueuedCompletionStatus(held_->port, 0, waking, nullptr);
 
     if (held_->staff.joinable()) held_->staff.join();
 
-    // 2. Centrala przestaje istnieć dla świata — **przed** opróżnieniem puli, bo zadanie kończone
-    //    w puli potrafi zgłosić się z powrotem, a po zatrzymaniu wątku nie miałby go kto obsłużyć.
+    // 2. The exchange disappears for the rest of the world, before the pool is drained, because a
+    //    task finishing in the pool may submit itself again, and with the thread stopped nobody
+    //    would serve it.
     standing.store(nullptr);
 
-    // 3. Pula kończy to, co dostała.
+    // 3. The pool finishes what it was given.
     pooling().drain();
 
-    // 4. Operacje, które jeszcze wiszą. **Nie wolno ich po prostu zwolnić**: jądro trzyma
-    //    wskaźniki do ich OVERLAPPED, buforów i adresów, więc porzucone zostawiłyby je piszące do
-    //    zwolnionej pamięci. Najpierw więc zrywamy je i dobieramy zakończenia, które zaraz wrócą.
+    // 4. Operations still pending. They must not simply be freed: the kernel holds pointers to
+    //    their OVERLAPPED, buffers and addresses, and abandoned ones would leave it writing into
+    //    freed memory. So we cancel them first and collect the completions that are about to
+    //    come back.
     {
         std::vector<Handle> which;
 
@@ -702,20 +714,19 @@ Exchange::~Exchange() {
         for (const Handle one : which) (void)::CancelIoEx(reinterpret_cast<HANDLE>(one), nullptr);
     }
 
-    // **Zgłoszenie jest zarazem wynikiem obietnicy wołającego**, więc każde, które tu przechodzi,
-    //    musi zostać rozstrzygnięte — porzucone zostawia `Ticket` w stanie świeżym, a wątek
-    //    stojący na `await()` nie budzi się nigdy i program nie kończy wyjścia. Zaplecze POSIX robi
-    //    to samo w tym samym miejscu (`exchange.cpp`, `done(0, ECONNABORTED)`) i ma nad tym
-    //    komentarz mówiący, że był to prawdziwy błąd znaleziony pomiarem; tutaj tego brakowało.
+    // Each request is also the result of the caller's promise, so every one that passes through
+    //    here must be settled. An abandoned one leaves the `Ticket` fresh, a thread waiting in
+    //    `await()` never wakes up, and the program never finishes exiting. The POSIX backend does
+    //    the same at the same point (`exchange.cpp`, `done(0, ECONNABORTED)`).
     //
-    //    Wołamy `done()` **wprost, nie przez `ended()`**. Ta druga przechodzi przez `handed()`,
-    //    które wrzuca ciąg dalszy do puli — a pulę opróżniliśmy krok wcześniej i jesteśmy
-    //    w niszczeniu statyków. POSIX z tego samego powodu woła `done()` bezpośrednio.
+    //    We call `done()` directly, not through `ended()`. The latter goes through `handed()`,
+    //    which posts the continuation to the pool, and the pool was drained one step earlier and
+    //    we are in static destruction. POSIX calls `done()` directly for the same reason.
     const auto aborted = [](const std::shared_ptr<Flying>& fly) {
         Doing& one = *fly->one;
 
-        // Przyjęcie odrzucone zostawiłoby otwarte gniazdo, na którym miało stanąć — zwykła
-        // ścieżka zamyka je w tym samym miejscu.
+        // A rejected accept would leave open the socket it was supposed to become; the normal
+        // path closes it at the same point.
         if (one.kind == Kind::meeting && one.made != nothing) {
             ending(one.made);
 
@@ -745,17 +756,17 @@ Exchange::~Exchange() {
         }
     }
 
-    // Czego jądro nie oddało w tym czasie, tego i tak nie doczekamy — a wtedy **zostawiamy te
-    // operacje przy życiu**, zamiast zwalniać pamięć spod jądra. Wyciek na wyjściu z programu jest
-    // mniejszym złem niż zapis do zwolnionego bufora.
+    // Whatever the kernel did not return in that time will not come back anyway, and then we keep
+    // those operations alive instead of freeing memory out from under the kernel. A leak at
+    // program exit is a lesser evil than a write into a freed buffer.
     //
-    // Przeciek musi być **prawdziwy**, czyli nigdy niezwalniany. Statyk lokalny funkcji tego nie
-    // daje: powstaje w trakcie fazy niszczenia statyków, a więc zostanie zniszczony zaraz po
-    // powrocie stąd — sprowadzając dokładnie ten zapis do zwolnionej pamięci, przed którym miał
-    // bronić. Stąd wskazanie na stertę, którego nikt nie odbiera.
+    // The leak must be real, that is, never freed. A function-local static does not give that: it
+    // is created during static destruction, so it would be destroyed right after we return from
+    // here, bringing back exactly the write into freed memory it was meant to prevent. Hence a
+    // heap pointer that nobody ever reclaims.
     //
-    // Rozstrzygnięcie obietnicy niczego nie zwalnia, więc jedno z drugim się nie gryzie:
-    // wołający dostaje odpowiedź, a bufory zostają jądru.
+    // Settling the promise frees nothing, so the two do not conflict: the caller gets an answer
+    // and the buffers stay with the kernel.
     auto* stranded = new std::vector<std::shared_ptr<Flying>>;
 
     for (auto& [over, fly] : held_->flying) {
@@ -771,6 +782,7 @@ Exchange::~Exchange() {
     if (held_->port != nullptr) ::CloseHandle(held_->port);
 }
 
+// The number of handles that still have at least one operation in flight.
 std::size_t Exchange::waiting() const {
     const std::lock_guard<std::mutex> kept{held_->guard};
 
@@ -782,12 +794,16 @@ std::size_t Exchange::waiting() const {
     return much;
 }
 
+// The single exchange of the program, created on first use.
 Exchange& Exchange::running() {
     static Exchange one;
 
     return one;
 }
 
+// Registers an operation with the exchange and starts it. If the exchange is already gone, the
+// operation is aborted with WSAECONNABORTED; if the handle cannot be bound to the port, it is
+// settled with that error.
 void submit(std::shared_ptr<Doing> one) {
     (void)Exchange::running();
 
@@ -808,24 +824,24 @@ void submit(std::shared_ptr<Doing> one) {
 
     int why = 0;
 
-    // Wpisujemy **przed** rozpoczęciem, bo zakończenie potrafi wrócić, zanim wywołanie systemowe
-    // odda sterowanie — i wtedy szukalibyśmy operacji, której jeszcze nie ma w mapie.
+    // The entry goes in before the operation starts, because the completion can come back before
+    // the system call returns, and then we would be looking for an operation not yet in the map.
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
         held->flying.emplace(over, fly);
         ++held->counted[which];
 
-        // Przypięcie do portu dotyka mapy centrali, więc musi się zdarzyć tu, pod zamkiem —
-        // a nie w began, które biegnie już bez niego.
+        // Binding to the port touches the exchange's map, so it has to happen here, under the
+        // lock, and not in began, which runs without it.
         why = tying(*held, which);
     }
 
-    // **Nieprzypiętego uchwytu nie zaczynamy.** Zakończenie nie miałoby dokąd wrócić, więc operacja
-    // biegłaby w jądrze, a obietnica czekałaby na nie w nieskończoność.
+    // An unbound handle is not started. Its completion would have nowhere to go, so the operation
+    // would run in the kernel while the promise waited for it forever.
     if (why == 0 && began(fly)) {
-        // Bez tego centrala spałaby do poprzedniego terminu — a przy pustej centrali w
-        // nieskończoność, więc świeży termin nigdy by nie minął.
+        // Without this the exchange would sleep until the previous deadline, or forever when it
+        // was empty, so a fresh deadline would never pass.
         if (fly->one->ever)
             (void)::PostQueuedCompletionStatus(held->port, 0, waking, nullptr);
 
@@ -844,22 +860,23 @@ void submit(std::shared_ptr<Doing> one) {
         sweeping(*held, which);
     }
 
-    // Gdy `began` oddało fałsz, zgłoszenie jest już rozstrzygnięte — samo to zrobiło. Gdy poległo
-    // przypięcie, **nie zrobił tego nikt**, bo `began` nawet nie ruszyło; rozstrzygamy tutaj.
+    // When `began` returned false, the request is already settled; it did that itself. When the
+    // binding failed, nobody did, because `began` never ran, so it is settled here.
     if (why != 0) handed(fly->one, 0, why, false);
 }
 
-// Zdjęcie jednego zgłoszenia. Tu wygląda inaczej niż na uniksach i **inaczej się kończy**.
+// Withdraws one request. Here it looks different from Unix and ends differently.
 //
-// Tam zgłoszenie leży w mapie i wystarczy je stamtąd wyjąć: nikt go nigdy nie ruszy. Tu operacja
-// już biegnie w jądrze, a `CancelIoEx` tylko **prosi** o jej przerwanie — zakończenie i tak
-// przyjdzie do portu, z ERROR_OPERATION_ABORTED, i dopiero ono zdejmie znacznik kierunku.
-// Dlatego zawsze fałsz: my niczego nie zdjęliśmy i wołającemu nie wolno sprzątać po sobie samemu.
-// Od powiedzenia czekającemu właściwej rzeczy jest `Ticket::quitted`, a nie ta funkcja.
+// There the request sits in a map and taking it out is enough: nothing will ever touch it. Here
+// the operation is already running in the kernel, and `CancelIoEx` only asks for it to be
+// interrupted; the completion still arrives at the port, with ERROR_OPERATION_ABORTED, and only
+// that completion clears the direction flag. So the result is always false: we removed nothing,
+// and the caller must not clean up after itself. Telling the waiter the right thing is the job of
+// `Ticket::quitted`, not of this function.
 //
-// Przeglądamy `flying` po kolei świadomie. Wpisów jest tyle, ile operacji w locie, a anulowanie
-// nie jest ścieżką gorącą; osobna mapa kosztowałaby wpis przy **każdym** zgłoszeniu, żeby
-// przyspieszyć rzecz rzadką.
+// Scanning `flying` linearly is deliberate. There are as many entries as operations in flight, and
+// cancellation is not a hot path; a separate map would cost an entry on every submission to speed
+// up a rare event.
 bool withdraw(const std::shared_ptr<Doing>& one) {
     Exchange::Held* held = standing.load();
 
@@ -883,9 +900,9 @@ bool withdraw(const std::shared_ptr<Doing>& one) {
     return false;
 }
 
-// Zamknięcie deskryptora, oddane centrali. **Woła się je dopiero wtedy, gdy ginie ostatni uchwyt
-// do gniazda.** Zakończenia w locie trzymają uchwyt przez `kept`, więc dopóki którekolwiek żyje,
-// tu nie trafiamy — a numer zamkniętego gniazda system natychmiast oddaje następnemu.
+// Closes a descriptor through the exchange. It is called only when the last handle to the socket
+// dies. Completions in flight hold the handle through `kept`, so while any of them lives we do not
+// get here; the system hands the number of a closed socket to the next one immediately.
 void retiring(Handle one) {
     if (one == nothing) return;
 
@@ -906,8 +923,8 @@ void retiring(Handle one) {
     }
 }
 
-// Zapomnienie przerywa **wszystko**, co na gnieździe wisiało. Deskryptora nie zamyka — od tego
-// jest retiring.
+// Forgetting a socket cancels everything pending on it. It does not close the descriptor; that is
+// the job of retiring.
 void forget(Handle one) {
     Exchange::Held* held = standing.load();
 

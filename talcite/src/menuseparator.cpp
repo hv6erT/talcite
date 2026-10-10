@@ -10,24 +10,24 @@
 
 namespace talcite::ui {
 
-// **Kreska w menu to zwykły węzeł, a nie pozycja.** Dawniej była wyłączoną pozycją menu (MenuSeparator)
-// — z tekstem, podpowiedzią, klawiszami i `pick`, a `enabled(true)` robiło z niej pozycję do
-// wybrania. Menu i tak omija przy strzałkach wszystko, co nie jest dostępną pozycją (`item()`
-// oddaje dla kreski pustkę), więc nie trzeba było jej udawać. Rdzeń roli ma ten sam co pozycje,
-// żeby podmiana rdzenia menu obejmowała i kreskę.
+// A separator in a menu is a plain node, not an item: it has no text, hint, keys or `pick`. The
+// menu skips everything that is not an enabled item when moving with the arrows (`item()` gives
+// nothing for a separator), so the separator does not need to pretend to be one. Its role stem is
+// the same as the items', so that changing the menu's role stem covers the separator too.
 MenuSeparator::MenuSeparator() { role("talcite.menu"); }
 
-// Kreska nie ma czego trzymać w środku.
+// A separator has nothing to hold inside.
 int MenuSeparator::capacity() const { return 0; }
 
-// Kreska nie rozpycha menu — jej szerokość bierze się z pozostałych pozycji.
+// A separator does not push the menu wider; its width comes from the other items.
 Size MenuSeparator::wants(Size room) const { return {0, std::min(1, room.high)}; }
 
-// Znak bierzemy z menu, w którym leżymy, żeby kreska nie była cienka w grubej ramce.
+// Paints the line. The border kind comes from the menu we lie in, so the line is not thin in a
+// thick border.
 View MenuSeparator::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent where nothing is drawn, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 

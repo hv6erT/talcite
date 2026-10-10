@@ -404,7 +404,7 @@ struct Upward {
     std::function<void()> cancel;
 };
 
-void buried(Upward gone);
+void buried(Upward& gone);
 
 void climbed(const std::function<void()>& step);
 

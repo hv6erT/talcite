@@ -24,6 +24,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is reported as handled.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -34,28 +35,29 @@ private:
     talcite::Term& term_;
 };
 
+// A made-up file name for a row: every seventh is a directory, every fifth a name too long to fit.
 std::string named(int which) {
     const std::string number = std::to_string(which);
 
-    if (which % 7 == 0) return "katalog-" + number;
+    if (which % 7 == 0) return "directory-" + number;
 
-    if (which % 5 == 0) return "bardzo-dluga-nazwa-pliku-ktora-sie-nie-zmiesci-" + number + ".txt";
+    if (which % 5 == 0) return "a-very-long-file-name-that-will-not-fit-" + number + ".txt";
 
-    return "plik-" + number + ".txt";
+    return "file-" + number + ".txt";
 }
 
-// Okno z listą: wybór jednej pozycji. **Tab chodzi pole → lista → przyciski**, a strzałki w środku
-// listy Tabu nie zabierają — lista jest dla wędrówki jednym przystankiem, choć w środku ma sto
-// chętnych wierszy.
+// A window with a list: choosing one entry. Tab goes field, list, buttons, and the arrows inside
+// the list do not take Tab away: for the tour the list is one stop, even though it has a hundred
+// willing rows inside.
 std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::Span>& told) {
     const auto made = std::make_shared<talcite::ui::Dialog>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>(
-        "Wybór pliku", talcite::ui::FrameShape{talcite::ui::Border::twin});
+        "Choose a file", talcite::ui::FrameShape{talcite::ui::Border::twin});
 
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    column->children().add(std::make_shared<talcite::ui::Span>("Nazwa:"));
+    column->children().add(std::make_shared<talcite::ui::Span>("Name:"));
 
     const auto field = std::make_shared<talcite::ui::Field>(34);
 
@@ -67,9 +69,9 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
     for (int which = 0; which < 40; ++which)
         list->children().add(std::make_shared<talcite::ui::ListItem>(named(which)));
 
-    // Wybrany wiersz wpisuje się do pola. To jest **`ScrollEvent`, a nie `PickEvent`**: odzywa się
-    // przy każdej zmianie wiersza, a nie dopiero przy zatwierdzeniu. Wiersza zdarzenie nie niesie —
-    // słuchacz bierze go z `current()`, bo lista i tak go trzyma.
+    // The selected row is written into the field. This is a `ScrollEvent`, not a `PickEvent`: it
+    // speaks up on every change of row, not only on confirmation. The event does not carry the row;
+    // the listener takes it from `current()`, since the list holds it anyway.
     const std::weak_ptr<talcite::ui::List> weakly = list;
 
     (void)list->on<talcite::ui::ScrollEvent>([field, weakly](talcite::ui::ScrollEvent&) {
@@ -82,8 +84,8 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
     column->children().add(list);
     column->children().add(std::make_shared<talcite::ui::Span>(" "));
 
-    const auto yes = std::make_shared<talcite::ui::Button>("Otwórz");
-    const auto no = std::make_shared<talcite::ui::Button>("Przerwij");
+    const auto yes = std::make_shared<talcite::ui::Button>("Open");
+    const auto no = std::make_shared<talcite::ui::Button>("Stop");
 
     yes->keys().add(U'O');
     no->keys().add(U'P');
@@ -108,23 +110,23 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
         };
     };
 
-    (void)yes->on<talcite::ui::PickEvent>([what = shutting("otwarte: ")](talcite::ui::PickEvent&) {
+    (void)yes->on<talcite::ui::PickEvent>([what = shutting("opened: ")](talcite::ui::PickEvent&) {
         what();
 
         return true;
     });
     (void)no->on<talcite::ui::PickEvent>(
-        [what = shutting("przerwane, w polu zostało: ")](talcite::ui::PickEvent&) {
+        [what = shutting("canceled, the field holds: ")](talcite::ui::PickEvent&) {
             what();
 
             return true;
         });
 
-    // Enter i dwuklik na wierszu robią to samo co przycisk podstawowy.
+    // Enter and a double click on a row do the same as the primary button.
     for (const std::shared_ptr<talcite::ui::Node>& one : list->children())
         if (const auto item = std::dynamic_pointer_cast<talcite::ui::ListItem>(one))
             (void)item->on<talcite::ui::PickEvent>(
-                [what = shutting("otwarte: ")](talcite::ui::PickEvent&) {
+                [what = shutting("opened: ")](talcite::ui::PickEvent&) {
                     what();
 
                     return true;
@@ -135,8 +137,9 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
 
 }
 
-// Pełny ekran: lista wypełnia ramkę, pasek z prawej pokazuje, gdzie jesteśmy, a wiersz nad nią
-// mówi, co jest bieżące. F3 otwiera okno, w którym ta sama lista stoi obok pola i przycisków.
+// A full screen: the list fills the frame, the bar on the right shows where we are, and the line
+// above it says what is current. F3 opens a window in which the same kind of list stands next to a
+// field and buttons.
 int main() {
     talcite::Term term;
 
@@ -145,9 +148,9 @@ int main() {
     const auto dialogs = std::make_shared<talcite::ui::Modals>();
     const auto legend = std::make_shared<talcite::ui::Legend>();
 
-    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — lista");
+    const auto frame = std::make_shared<talcite::ui::Frame>("talcite — list");
     const auto column = std::make_shared<talcite::ui::Column>();
-    const auto told = std::make_shared<talcite::ui::Span>("strzałki, PgUp, PgDn, Home, End, kółko");
+    const auto told = std::make_shared<talcite::ui::Span>("arrows, PgUp, PgDn, Home, End, wheel");
 
     const auto list = std::make_shared<talcite::ui::List>(talcite::ui::plenty, talcite::ui::plenty,
                                                        talcite::ui::ScrollShape{true});
@@ -155,7 +158,7 @@ int main() {
     for (int which = 0; which < 200; ++which)
         list->children().add(std::make_shared<talcite::ui::ListItem>(named(which)));
 
-    // Co dziesiąta pozycja niedostępna — wędrówka ma je omijać, a nie zatrzymywać się na nich.
+    // Every tenth entry is disabled: moving through the list has to skip them, not stop on them.
     for (int which = 0; which < 200; which += 10)
         if (const auto one = std::dynamic_pointer_cast<talcite::ui::ListItem>(
                 list->children()[static_cast<std::size_t>(which)]))
@@ -166,7 +169,7 @@ int main() {
     (void)list->on<talcite::ui::ScrollEvent>([told, weakly](talcite::ui::ScrollEvent&) {
         if (const auto one = weakly.lock())
             if (const talcite::ui::ListItem* item = one->current())
-                told->text("wiersz " + std::to_string(one->which().value_or(0)) + ": " + item->text());
+                told->text("row " + std::to_string(one->which().value_or(0)) + ": " + item->text());
 
         return false;
     });
@@ -176,7 +179,7 @@ int main() {
             const std::weak_ptr<talcite::ui::ListItem> weak = item;
 
             (void)item->on<talcite::ui::PickEvent>([told, weak](talcite::ui::PickEvent&) {
-                if (const auto which = weak.lock()) told->text("otwarte: " + which->text());
+                if (const auto which = weak.lock()) told->text("opened: " + which->text());
 
                 return true;
             });
@@ -189,17 +192,17 @@ int main() {
     legend->content(frame);
     dialogs->content(legend);
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Wybór"),
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Choose"),
                       [dialogs, told] { dialogs->open(demo::closing(asking(told))); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(dialogs);
 
     list->focus();
 
     term.show(sheet);
-    term.title("talcite — lista");
+    term.title("talcite — list");
 
     term.run();
 

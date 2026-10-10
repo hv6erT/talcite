@@ -10,28 +10,32 @@
 
 namespace talcite {
 
-// **Sixel** (G1): obraz jako ciąg znaków, który terminal rysuje pikselami. Sześć wierszy pikseli to
-// jeden pas; w pasie każda barwa idzie osobnym przebiegiem, a znak `?`..`~` niesie sześć bitów —
-// które z sześciu pikseli kolumny mają tę barwę. Koder jest nasz, bez przejściówki: to sto
-// kilkadziesiąt wierszy i żadna biblioteka nie zrobi tego lepiej, a każda dołożyłaby szew.
+// Sixel: an image as a string of characters that the terminal draws as pixels. Six rows of pixels
+// make one band; within a band each color goes in a separate pass, and a character from ? to ~
+// carries six bits: which of the column's six pixels have that color. The encoder is our own,
+// without an adapter: it is under two hundred lines, no library would do it better, and each would
+// add a seam.
 //
-// Trzy decyzje, które warto znać:
+// Three choices worth knowing:
 //
-// - **Przezroczystość przez `P2 = 1`.** Piksel przezroczysty nie należy do żadnej barwy, a terminal
-//   zostawia pod nim to, co było — tło kratki, którą `Term` właśnie wymalował. Brzeg logo na tle okna
-//   wychodzi przez to taki, jak przy znakach: z tłem spodu.
-// - **Wysokość do pełnych pasów.** Terminal, który dostaje niepełny pas, rysuje go do sześciu wierszy
-//   i potrafi przewinąć ekran, gdy obraz stoi na dole. Obcinamy więc wysokość do wielokrotności
-//   sześciu (obraz niższy niż sześć zostaje, jak jest) i tracimy najwyżej pięć wierszy pikseli.
-// - **Paleta przez cięcie po medianie**, ważone liczbą pikseli, do `colors` barw. Obraz o mniejszej
-//   liczbie barw (logo, ikona) dostaje je dokładnie. Zdjęcie idzie przez kubełki 5×5×5 bitów: tnie
-//   się kubełki, nie barwy, a najbliższą barwę palety liczy się raz na kubełek. Plakat 800×1200
-//   koduje się tak w kilkadziesiąt milisekund zamiast prawie sekundy.
+// - Transparency through P2 = 1. A transparent pixel belongs to no color, and the terminal leaves
+//   what was under it: the background of the cell that `Term` has just painted. The edge of a logo
+//   on a window's background therefore comes out as it does with characters, with the background
+//   underneath.
+// - Height rounded down to full bands. A terminal that receives an incomplete band draws it as six
+//   rows and may scroll the screen when the image stands at the bottom. So the height is cut to a
+//   multiple of six (an image shorter than six stays as it is), losing at most five pixel rows.
+// - The palette comes from median cut, weighted by pixel count, down to `colors` colors. An image
+//   with fewer colors (a logo, an icon) gets them exactly. A photo goes through 5x5x5-bit buckets:
+//   the buckets are cut, not the colors, and the nearest palette color is computed once per
+//   bucket. An 800x1200 poster encodes this way in a few tens of milliseconds instead of almost a
+//   second.
 //
-// Nagłówek rastra `"1;1;szerokość;wysokość` mówi o kwadratowych pikselach i o rozmiarze obrazu —
-// terminal może od razu zarezerwować miejsce.
+// The raster header "1;1;width;height declares square pixels and the image size, so the terminal
+// can reserve the space at once.
 namespace {
 
+// The alpha from which a pixel counts as opaque.
 constexpr std::uint8_t solid = 128;
 
 struct Tone {
@@ -42,13 +46,15 @@ struct Tone {
     friend constexpr auto operator<=>(Tone, Tone) = default;
 };
 
+// A color and how many pixels have it.
 struct Counted {
     Tone tone;
     std::size_t many = 0;
 };
 
-// Cięcie po medianie: pudełko o największej rozpiętości na którymkolwiek kanale dzieli się na dwie
-// połowy po liczbie pikseli, aż pudełek jest tyle, ile barw wolno. Barwą pudełka jest średnia ważona.
+// Median cut: the box with the largest spread on any channel is split into two halves by pixel
+// count, until there are as many boxes as colors allowed (`most`). A box's color is its weighted
+// mean. With no more colors than allowed, they are returned as they are.
 std::vector<Tone> palette_of(std::vector<Counted> all, std::size_t most) {
     std::vector<Tone> made;
 
@@ -67,8 +73,8 @@ std::vector<Tone> palette_of(std::vector<Counted> all, std::size_t most) {
         int channel = 0;
     };
 
-    // Rozpiętość pudełka liczy się raz, gdy pudełko powstaje — przy stu tysiącach barw zdjęcia
-    // liczenie jej od nowa w każdym kroku byłoby kwadratowe.
+    // A box's spread is computed once, when the box is made; with a photo's hundred thousand
+    // colors, recomputing it at every step would be quadratic.
     const auto measured = [&all](std::size_t from, std::size_t upto) {
         Box made{from, upto, -1, 0};
 
@@ -159,6 +165,8 @@ std::vector<Tone> palette_of(std::vector<Counted> all, std::size_t most) {
     return made;
 }
 
+// The index of the palette color closest to `one`, by squared distance weighted 2:4:3 for red,
+// green and blue.
 std::size_t nearest(Tone one, const std::vector<Tone>& palette) {
     std::size_t made = 0;
     int least = std::numeric_limits<int>::max();
@@ -178,9 +186,11 @@ std::size_t nearest(Tone one, const std::vector<Tone>& palette) {
     return made;
 }
 
+// Appends the number in decimal.
 void number(std::size_t value, std::string& into) { into += std::to_string(value); }
 
-// Jeden przebieg barwy w pasie: znak powtórzony `run` razy — od czterech powtórzeń taniej przez `!`.
+// Writes one run within a color's pass: the character repeated `run` times; from four repetitions on
+// the repeat introducer ! is cheaper.
 void flushed(char sign, std::size_t run, std::string& into) {
     if (run == 0) return;
 
@@ -197,6 +207,9 @@ void flushed(char sign, std::size_t run, std::string& into) {
 
 }
 
+// Encodes frame `still` of the image as a complete sixel sequence (DCS to ST) with at most `colors`
+// colors (clamped to 1-256). Returns an empty string when there is no such frame, the image is empty
+// or its bytes are too few for its size.
 std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
     if (!one.held() || still >= one.stills().size()) return {};
 
@@ -224,14 +237,15 @@ std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
                static_cast<std::size_t>(tone.blue >> 3);
     };
 
-    // Indeks barwy dla każdego piksela; `none` to piksel przezroczysty.
+    // The color index of every pixel; `none` is a transparent pixel.
     constexpr std::uint16_t none = std::numeric_limits<std::uint16_t>::max();
 
     std::vector<std::uint16_t> picked(count, none);
     std::vector<Tone> palette;
 
-    // Najpierw próba dokładna: barwy liczone wprost, póki jest ich nie więcej niż wolno. Logo i ikona
-    // kończą tu, z paletą po kolei barw i indeksem przez wyszukiwanie binarne.
+    // First the exact attempt: colors are counted directly as long as there are no more than
+    // allowed. A logo or an icon ends here, with a palette in color order and the index found by
+    // binary search.
     std::unordered_map<std::uint32_t, std::size_t> exact;
     bool fits = true;
 
@@ -258,9 +272,9 @@ std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
                 picked[at] = static_cast<std::uint16_t>(std::lower_bound(palette.begin(), palette.end(), tone_at(at)) -
                                                         palette.begin());
     } else {
-        // Zdjęcie: barwy idą do kubełków 5×5×5 bitów z sumami kanałów, więc cięcie po medianie dzieli
-        // najwyżej 32768 kubełków, a nie setki tysięcy barw, a średnia pudełka i tak wychodzi dokładna.
-        // Kubełek dostaje najbliższą barwę palety raz — dla swojej średniej.
+        // A photo: colors go into 5x5x5-bit buckets with channel sums, so median cut splits at most
+        // 32768 buckets rather than hundreds of thousands of colors, and a box's mean still comes out
+        // exact. A bucket gets its nearest palette color once, for its own mean.
         struct Bin {
             std::size_t many = 0;
             std::uint64_t sums[3] = {};
@@ -332,9 +346,10 @@ std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
         number(percent(palette[at].blue), made);
     }
 
-    // Pas przechodzi się raz: każdy piksel dokłada swój bit do kolumny swojej barwy, a barwa pamięta
-    // pierwszą i ostatnią zajętą kolumnę. Przebieg barwy zaczyna się od pustych kolumn jednym `!`
-    // i kończy na ostatniej zajętej — puste kolumny na końcu nic nie rysują, więc ich nie piszemy.
+    // Each band is walked once: every pixel adds its bit to the column of its color, and each color
+    // remembers its first and last occupied column. A color's pass starts with the empty columns as
+    // one ! repeat and ends at the last occupied column; empty columns at the end draw nothing, so
+    // they are not written.
     std::vector<std::uint8_t> bits(palette.size() * wide);
     std::vector<std::size_t> first(palette.size(), wide);
     std::vector<std::size_t> last(palette.size(), 0);

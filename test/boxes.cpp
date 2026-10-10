@@ -15,13 +15,14 @@ using namespace talcite;
 
 namespace {
 
-// Dziecko o znanym życzeniu, mniejszym albo większym od pokoju — po to, żeby próba mogła pokazać,
-// że `Box` go **nie pyta**. Bez takiego dziecka „nie pyta" i „pyta, ale wychodzi to samo" byłyby
-// nierozróżnialne.
+// A child with a known wish, smaller or larger than the room, so that a trial can show that
+// `Box` does not ask it. Without such a child, "does not ask" and "asks, but the result is the
+// same" would be indistinguishable.
 class Wanting : public ui::Node {
 public:
     explicit Wanting(ui::Size given) : wants_(given) {}
 
+    // Always the size it was made with, whatever the room.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
 private:
@@ -30,58 +31,58 @@ private:
 
 }
 
-// --- Rozmiar ------------------------------------------------------------------------------------
+// --- Size ---------------------------------------------------------------------------------------
 
-// Nieustawiony rozmiar znaczy **maksimum dostępnego**, a nie zero i nie życzenie dziecka. `plenty`
-// to ta sama nieskończoność, której używa `List` — nie druga obok niej.
-TRIAL("Box: bez rozmiaru prosi o cały pokój") {
+// A size that is not set means the maximum available, not zero and not the child's wish.
+// `plenty` is the same infinity that `List` uses, not a second one beside it.
+TRIAL("Box: without a size it asks for the whole room") {
     const auto one = std::make_shared<ui::Box>();
 
     same(one->wants({20, 10}).wide, 20);
     same(one->wants({20, 10}).high, 10);
 }
 
-TRIAL("Box: zadany rozmiar jest tym, o co prosi") {
+TRIAL("Box: the given size is what it asks for") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, 4});
 
     same(one->wants({20, 10}).wide, 12);
     same(one->wants({20, 10}).high, 4);
 }
 
-// Przycięcie do pokoju, bo życzenie większe niż miejsce nie jest życzeniem, tylko kłamstwem wobec
-// rodzica, który je potem rozdziela.
-TRIAL("Box: rozmiar większy od pokoju schodzi do pokoju") {
+// Clamped to the room, because a wish larger than the space is not a wish but a lie to the parent,
+// which then divides the space.
+TRIAL("Box: a size larger than the room comes down to the room") {
     const auto one = std::make_shared<ui::Box>(ui::Size{200, 50});
 
     same(one->wants({20, 10}).wide, 20);
     same(one->wants({20, 10}).high, 10);
 }
 
-// Osie są niezależne: `plenty` w jednej znaczy „cały pokój w tej osi", a druga trzyma swoją
-// granicę. Tak wymierza się pasek, kolumna i każde okno wysokie na całą wysokość.
-TRIAL("Box: plenty w jednej osi nie rusza drugiej") {
+// The axes are independent: `plenty` on one means "the whole room on this axis", and the other
+// keeps its limit. This is how a bar, a column and every full-height window are sized.
+TRIAL("Box: plenty on one axis does not touch the other") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, ui::plenty});
 
     same(one->wants({20, 10}).wide, 12);
     same(one->wants({20, 10}).high, 10);
 }
 
-// Pokój bywa ujemny: rodzic odejmuje krawędzie i marginesy od tego, co ma, i przy ciasnym ekranie
-// wychodzi poniżej zera. Ujemne życzenie ma się zatrzymać tutaj, a nie wędrować w górę do rachunków
-// układu.
-TRIAL("Box: ujemny pokój oddaje zero, nie liczbę ujemną") {
+// A room can be negative: the parent subtracts edges and margins from what it has, and on a
+// cramped screen this goes below zero. A negative wish must stop here, not travel up into the
+// layout's arithmetic.
+TRIAL("Box: a negative room gives zero, not a negative number") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, 4});
 
     same(one->wants({-3, -1}).wide, 0);
     same(one->wants({-3, -1}).high, 0);
 }
 
-// --- Dziecko ------------------------------------------------------------------------------------
+// --- Child --------------------------------------------------------------------------------------
 
-// **`Box` dziecka nie pyta wcale** — i to jest jego sens, bo inaczej byłby `Frame` bez ramki,
-// a zadany rozmiar przestałby być zadany. Próba pokazuje to z obu stron: przy dziecku łakomszym
-// i przy dziecku skromniejszym od zadanej liczby.
-TRIAL("Box: życzenie dziecka niczego nie zmienia") {
+// `Box` does not ask its child at all, and that is its point, because otherwise it would be a
+// `Frame` without a frame, and a given size would stop being given. The trial shows this from both
+// sides: with a child greedier and with a child more modest than the given number.
+TRIAL("Box: the child's wish changes nothing") {
     const auto small = std::make_shared<ui::Box>(ui::Size{12, 4});
     const auto big = std::make_shared<ui::Box>(ui::Size{12, 4});
 
@@ -95,10 +96,10 @@ TRIAL("Box: życzenie dziecka niczego nie zmienia") {
     same(big->wants({20, 10}).high, 4);
 }
 
-// Drugiego trybu nie ma, bo robi go **brak** `Box`-a: zwykły `Node` schodzi do życzenia dziecka.
-// Próba stoi tu, a nie przy `Node`, bo to jest ta połowa rozstrzygnięcia, przez którą `Box` nie ma
-// wyliczenia trybów.
-TRIAL("Box: sam Node dalej schodzi do życzenia dziecka") {
+// There is no second mode, because the absence of a `Box` provides it: a plain `Node` follows the
+// child's wish. The trial stands here and not with `Node`, because this is the half of the
+// decision that spares `Box` an enumeration of modes.
+TRIAL("Box: a plain Node still follows the child's wish") {
     const auto one = std::make_shared<ui::Node>();
 
     one->children().add(std::make_shared<Wanting>(ui::Size{2, 1}));
@@ -107,27 +108,27 @@ TRIAL("Box: sam Node dalej schodzi do życzenia dziecka") {
     same(one->wants({20, 10}).high, 1);
 }
 
-// --- Życzenie jako funkcja -----------------------------------------------------------------------
+// --- Wish as a function -------------------------------------------------------------------------
 
-// **Po to życzeniem jest funkcja, a nie liczba.** „Najwyżej osiemdziesiąt kolumn, ale zostaw po
-// osiem z każdej strony" to zwyczajny sposób wymierzania okna — i liczbą się go nie zapisze, bo
-// druga połowa zależy od tego, ile miejsca w ogóle jest. Rachunek z `help.c` Midnight Commandera,
-// przeniesiony wprost.
-TRIAL("Box: życzenie liczone z pokoju") {
+// This is why a wish is a function and not a number. "At most eighty columns, but leave eight on
+// each side" is an ordinary way to size a window, and a number cannot express it, because the
+// second half depends on how much space there is at all. The computation from help.c of Midnight
+// Commander, carried over directly.
+TRIAL("Box: a wish computed from the room") {
     const auto one = std::make_shared<ui::Box>(
         ui::Box::Wish{[](ui::Size room) { return ui::Size{std::min(80, room.wide - 16), 20}; }});
 
-    // Szeroki pokój: górna granica trzyma.
+    // A wide room: the upper limit holds.
     same(one->wants({200, 40}).wide, 80);
 
-    // Ciasny: zostaje odstęp od krawędzi, którego stała liczba nie umiałaby zachować.
+    // A cramped one: the gap from the edge stays, which a constant number could not keep.
     same(one->wants({60, 40}).wide, 44);
     same(one->wants({30, 40}).wide, 14);
 }
 
-// Stała jest podprzypadkiem funkcji i dlatego oba konstruktory dają **jedno** pole — `wants` nie
-// ma czego rozgałęziać. Próba pilnuje, że zapisy są wymienne.
-TRIAL("Box: stała i funkcja oddająca tę samą stałą są nie do odróżnienia") {
+// A constant is a special case of a function, which is why both constructors fill one field and
+// `wants` has nothing to branch on. The trial guards that the two forms are interchangeable.
+TRIAL("Box: a constant and a function returning the same constant are indistinguishable") {
     const auto flat = std::make_shared<ui::Box>(ui::Size{12, 4});
     const auto deep = std::make_shared<ui::Box>(
         ui::Box::Wish{[](ui::Size) { return ui::Size{12, 4}; }});
@@ -138,9 +139,9 @@ TRIAL("Box: stała i funkcja oddająca tę samą stałą są nie do odróżnieni
     }
 }
 
-// Przycięcie zostaje w `Box`, nie w funkcji — bo inaczej każdy, kto ją pisze, musiałby o nim
-// pamiętać, a zapomnienie oddałoby rodzicowi życzenie większe niż miejsce.
-TRIAL("Box: funkcja łakoma i tak nie wyjdzie poza pokój") {
+// The clamping stays in `Box`, not in the function, because otherwise everyone who writes one
+// would have to remember it, and forgetting would hand the parent a wish larger than the space.
+TRIAL("Box: a greedy function still does not go beyond the room") {
     const auto one = std::make_shared<ui::Box>(
         ui::Box::Wish{[](ui::Size) { return ui::Size{1000, 1000}; }});
 
@@ -148,19 +149,19 @@ TRIAL("Box: funkcja łakoma i tak nie wyjdzie poza pokój") {
     same(one->wants({20, 10}).high, 10);
 }
 
-// Pusta funkcja rzuciłaby `bad_function_call` przy pierwszej klatce, z wnętrza układu i w miejscu,
-// które o niczym nie mówi. Odrzucamy ją tam, gdzie powstała.
-TRIAL("Box: pustego życzenia nie przyjmuje") {
+// An empty function would throw bad_function_call at the first frame, from inside the layout and
+// at a place that tells nothing. It is rejected where it is made.
+TRIAL("Box: an empty wish is not accepted") {
     threw((void)std::make_shared<ui::Box>(ui::Box::Wish{}));
 }
 
-// --- W drzewie ----------------------------------------------------------------------------------
+// --- In the tree --------------------------------------------------------------------------------
 
-// **Po to on jest.** Zasłona liczy pudełko z życzenia swojego jedynego dziecka i stawia je na
-// środku, więc treść łakoma — a taka jest każda strona, tabela i panel — rozdymała okno na cały
-// ekran. Próba pokazuje obie strony tego samego: **bez** `Box`-a okno zajmuje wszystko, **z** nim
-// stoi na zadanej liczbie i zasłona ma co wyśrodkować.
-TRIAL("Box: w zasłonie zatrzymuje łakomą treść na zadanym rozmiarze") {
+// This is what it is for. A modal computes its box from the wish of its only child and centers
+// it, so greedy content (and every page, table and panel is greedy) blows the window up to the
+// whole screen. The trials show both sides of the same thing: without a `Box` the window takes
+// everything, with one it stays at the given size and the modal has something to center.
+TRIAL("Box: in a modal it holds greedy content at the given size") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -175,12 +176,12 @@ TRIAL("Box: w zasłonie zatrzymuje łakomą treść na zadanym rozmiarze") {
 
     (void)top.render({{0, 0}, {30, 12}});
 
-    // Miejsce na cień — dwie kolumny i wiersz — odejmuje się przed środkowaniem, więc pudełko
-    // środkuje się w 28 na 11: (28−10)/2 = 9 i (11−4)/2 = 3.
+    // The room for the shadow (two columns and a row) is subtracted before centering, so the box
+    // is centered in 28 by 11: (28−10)/2 = 9 and (11−4)/2 = 3.
     same(one->children().front()->area(), (ui::Area{{9, 3}, {10, 4}}));
 }
 
-TRIAL("Box: bez niego ta sama treść rozdyma okno na cały ekran") {
+TRIAL("Box: without it the same content blows the window up to the whole screen") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();

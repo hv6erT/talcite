@@ -17,11 +17,14 @@ class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
+    // The size set in the constructor or by `wanting`, whatever room is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
+    // Changes the size the box asks for.
     void wanting(ui::Size given) { wants_ = given; }
 
 protected:
+    // Fills the whole given size with the box's letter, shifted by the visible part.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -37,6 +40,7 @@ private:
     char32_t what_ = U'?';
 };
 
+// The text of row `y` of the view, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -51,13 +55,14 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// A shared box that asks for `wants` and is filled with `what`.
 std::shared_ptr<Box> box(ui::Size wants, char32_t what) {
     return std::make_shared<Box>(wants, what);
 }
 
 }
 
-TRIAL("Dzieci: zwykły węzeł bierze jedno i przy drugim rzuca") {
+TRIAL("Children: a plain node takes one and throws on the second") {
     ui::Node one;
 
     same(one.capacity(), 1);
@@ -67,7 +72,7 @@ TRIAL("Dzieci: zwykły węzeł bierze jedno i przy drugim rzuca") {
     threw(one.children().add(box({2, 1}, U'b')));
 }
 
-TRIAL("Dzieci: napis nie bierze żadnego") {
+TRIAL("Children: a span takes none") {
     ui::Span one{"kot"};
 
     same(one.capacity(), 0);
@@ -75,7 +80,7 @@ TRIAL("Dzieci: napis nie bierze żadnego") {
     threw(one.children().add(box({2, 1}, U'a')));
 }
 
-TRIAL("Dzieci: korzeń jest opakowaniem, nie układem") {
+TRIAL("Children: the root is a wrapper, not a layout") {
     ui::Root top;
 
     same(top.capacity(), 1);
@@ -85,7 +90,7 @@ TRIAL("Dzieci: korzeń jest opakowaniem, nie układem") {
     threw(top.children().add(box({2, 1}, U'b')));
 }
 
-TRIAL("Dzieci: wiersz i kolumna biorą, ile trzeba") {
+TRIAL("Children: a row and a column take as many as needed") {
     ui::Row row;
     ui::Column column;
 
@@ -101,7 +106,7 @@ TRIAL("Dzieci: wiersz i kolumna biorą, ile trzeba") {
     same(column.children().many(), std::size_t{5});
 }
 
-TRIAL("Węzeł: jedyne dziecko dostaje cały prostokąt") {
+TRIAL("Node: the only child gets the whole rectangle") {
     ui::Node one;
 
     const auto inner = box({2, 1}, U'a');
@@ -114,7 +119,7 @@ TRIAL("Węzeł: jedyne dziecko dostaje cały prostokąt") {
     same(inner->area().size.high, 3);
 }
 
-TRIAL("Węzeł: chce tyle, co jego jedyne dziecko") {
+TRIAL("Node: wants as much as its only child") {
     ui::Node one;
 
     one.children().add(box({4, 2}, U'a'));
@@ -125,14 +130,14 @@ TRIAL("Węzeł: chce tyle, co jego jedyne dziecko") {
     same(wants.high, 2);
 }
 
-TRIAL("Węzeł bez dzieci nie chce nic") {
+TRIAL("Node without children wants nothing") {
     const ui::Node one;
 
     same(one.wants({80, 25}).wide, 0);
     same(one.wants({80, 25}).high, 0);
 }
 
-TRIAL("Kolumna: dzieci stoją jedno pod drugim") {
+TRIAL("Column: children stand one below the other") {
     ui::Column one;
 
     const auto first = box({6, 1}, U'a');
@@ -151,7 +156,7 @@ TRIAL("Kolumna: dzieci stoją jedno pod drugim") {
     same(read(made, 3), std::string{""});
 }
 
-TRIAL("Wiersz: dzieci stoją obok siebie") {
+TRIAL("Row: children stand side by side") {
     ui::Row one;
 
     const auto first = box({2, 1}, U'a');
@@ -167,10 +172,10 @@ TRIAL("Wiersz: dzieci stoją obok siebie") {
     same(read(made, 0), std::string{"aabbb"});
 }
 
-// Wiersz, który się łamie: dziecko, które nie mieści się w reszcie linii, zaczyna następną, a każda
-// linia stoi pośrodku. Dziecko o zerowej szerokości nie otwiera odstępu ani linii; szersze niż cały
-// wiersz stoi samo, przycięte.
-TRIAL("Wiersz: łamany przenosi to, co się nie mieści, i stawia linie pośrodku") {
+// A wrapping row: a child that does not fit in the rest of the line starts the next one, and each
+// line is centered. A child of zero width opens neither a gap nor a line; one wider than the whole
+// row stands alone, clipped.
+TRIAL("Row: wrapping carries over what does not fit and centers the lines") {
     ui::Row one{ui::RowShape{1, true}};
 
     const auto first = box({5, 1}, U'a');
@@ -198,10 +203,10 @@ TRIAL("Wiersz: łamany przenosi to, co się nie mieści, i stawia linie pośrodk
     same(empty->area().size.wide, 0);
     same(wide->area().size.wide, 12);
 
-    // Odstęp liczy się przy łamaniu: dwie piątki w dziesięciu kolumnach to dwie linie, nie jedna.
+    // The gap counts when wrapping: two fives in ten columns make two lines, not one.
     same(one.wants({10, 10}), (ui::Size{10, 4}));
 
-    // Dziecko, które przestało cokolwiek zajmować, dostaje prostokąt zerowy, a nie stary.
+    // A child that stopped taking any room gets a zero rectangle, not the old one.
     first->wanting({0, 1});
 
     (void)one.render({{0, 0}, {12, 3}});
@@ -210,7 +215,7 @@ TRIAL("Wiersz: łamany przenosi to, co się nie mieści, i stawia linie pośrodk
 
     first->wanting({5, 1});
 
-    // Dość miejsca: jedna linia, jak bez łamania.
+    // Enough room: one line, as without wrapping.
     same(one.wants({60, 10}), (ui::Size{38, 1}));
 
     one.wrapping(false);
@@ -218,7 +223,7 @@ TRIAL("Wiersz: łamany przenosi to, co się nie mieści, i stawia linie pośrodk
     same(one.wants({12, 10}).high, 1);
 }
 
-TRIAL("Wiersz: dziecko dostaje pełną wysokość") {
+TRIAL("Row: a child gets the full height") {
     ui::Row one;
 
     const auto first = box({2, 1}, U'a');
@@ -230,7 +235,7 @@ TRIAL("Wiersz: dziecko dostaje pełną wysokość") {
     same(first->area().size.high, 3);
 }
 
-TRIAL("Kolumna: dziecko dostaje pełną szerokość") {
+TRIAL("Column: a child gets the full width") {
     ui::Column one;
 
     const auto first = box({2, 1}, U'a');
@@ -242,7 +247,7 @@ TRIAL("Kolumna: dziecko dostaje pełną szerokość") {
     same(first->area().size.wide, 6);
 }
 
-TRIAL("Kolumna: chce sumy wysokości, ale nie więcej niż dostała") {
+TRIAL("Column: wants the sum of heights, but no more than it got") {
     ui::Column one;
 
     one.children().add(box({4, 3}, U'a'));
@@ -253,7 +258,7 @@ TRIAL("Kolumna: chce sumy wysokości, ale nie więcej niż dostała") {
     same(one.wants({2, 10}).wide, 2);
 }
 
-TRIAL("Wiersz: chce sumy szerokości, ale nie więcej niż dostał") {
+TRIAL("Row: wants the sum of widths, but no more than it got") {
     ui::Row one;
 
     one.children().add(box({4, 1}, U'a'));
@@ -264,7 +269,7 @@ TRIAL("Wiersz: chce sumy szerokości, ale nie więcej niż dostał") {
     same(one.wants({10, 1}).high, 1);
 }
 
-TRIAL("Wiersz: dziecko poza prawą krawędzią dostaje zerową szerokość") {
+TRIAL("Row: a child past the right edge gets zero width") {
     ui::Row one;
 
     const auto first = box({4, 1}, U'a');
@@ -280,7 +285,7 @@ TRIAL("Wiersz: dziecko poza prawą krawędzią dostaje zerową szerokość") {
     same(second->area().at.x, 4);
 }
 
-TRIAL("Wiersz w kolumnie układa się tak, jak się spodziewamy") {
+TRIAL("Row in a column is laid out as expected") {
     ui::Column outer;
 
     const auto row = std::make_shared<ui::Row>();

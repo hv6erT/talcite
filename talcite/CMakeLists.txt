@@ -5,15 +5,15 @@ add_library(talcite STATIC ${TALCITE_SOURCES} ${TALCITE_HEADERS})
 
 target_include_directories(talcite PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
-# Nadpisanie bez `override` (jak dawne Root::caret) widzi tylko -Wsuggest-override — budowanie
-# bez flag milczy, a Clang z -Wall mówił. Przesłonięcia wirtualnej funkcji nazwą o innym podpisie
-# (dawne Root::focus obok Node::focus) pilnuje -Woverloaded-virtual: na GCC poziom pierwszy, bo
-# poziom drugi krzyczy o każdą z kilkudziesięciu klas, która nadpisuje jedno `react(…)`
-# i przesłania z nazwy resztę przeciążeń `Handler` — a to jest kształt rozdania zdarzeń, nie błąd;
-# na Clangu jedyny poziom, ciszę dają `using …::react` w klasach po KeyedNode i w Editor.
-# PRIVATE — to reguła dla źródeł biblioteki, nie dla tych, którzy ją linkują. Poziom `=1` zna
-# dopiero GCC 13; starszy (Debian 12, Ubuntu 22.04, RHEL 9) odrzucał całą budowę nieznaną opcją,
-# więc tam ostrzeżenie dostaje sam `-Wsuggest-override`.
+# An override without the override keyword is caught only by -Wsuggest-override; a build without
+# flags stays silent. Hiding a virtual function behind a name with a different signature is caught
+# by -Woverloaded-virtual: level 1 on GCC, because level 2 complains about each of the dozens of
+# classes that override one react(...) and so hide the other Handler overloads by name, which is
+# how events are dispatched, not a mistake. Clang has a single level; the using ...::react
+# declarations in the classes derived from KeyedNode and in Editor keep it quiet.
+# PRIVATE: this is a rule for the library's sources, not for those who link it. Level =1 exists
+# only from GCC 13; older GCC (Debian 12, Ubuntu 22.04, RHEL 9) rejects the whole build over an
+# unknown option, so there the warning comes from -Wsuggest-override alone.
 target_compile_options(talcite PRIVATE
   $<$<CXX_COMPILER_ID:GNU>:-Wsuggest-override>
   $<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,13>>:-Woverloaded-virtual=1>
@@ -26,29 +26,29 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(talcite PUBLIC Threads::Threads)
 
-# WNetGetConnectionW — wykaz dysków musi umieć powiedzieć, jaki udział stoi za literą; z mpr także
-# WNetAddConnection2W, czyli logowanie do udziału bez litery (U4).
-# netapi32 — NetShareEnum, wykaz udziałów serwera (U4); CredWriteW z zapamiętaniem jest w advapi32.
-# ws2_32 — gniazda, getaddrinfo i inet_pton mieszkają na Windows w Winsocku.
-# iphlpapi — GetAdaptersAddresses, czyli wykaz własnych adresów dla local().
-# bcrypt — skróty i HMAC bierzemy **od systemu**, przez CNG. To import do bcrypt.dll, obecnego
-# w każdym Windowsie od Visty, tej samej klasy co ws2_32 i iphlpapi: nic się nie instaluje i nic
-# nie trzeba dostarczać z programem. Na Linuksie ta sama rzecz idzie przez gniazdo AF_ALG i nie
-# wymaga niczego dolinkowanego. Losowość nie potrzebuje żadnej z tych dróg — bierze ją
-# std::random_device.
+# mpr: WNetGetConnectionW, so that the list of drives can tell which share stands behind a letter,
+# and WNetAddConnection2W, which logs in to a share without a drive letter.
+# netapi32: NetShareEnum, the list of a server's shares. CredWriteW, which remembers a login, is in
+# advapi32.
+# ws2_32: on Windows, sockets, getaddrinfo and inet_pton live in Winsock.
+# iphlpapi: GetAdaptersAddresses, the list of the machine's own addresses for local().
+# bcrypt: digests, HMAC and random bytes come from the system, through CNG. bcrypt.dll is present
+# in every Windows since Vista, like ws2_32 and iphlpapi, so nothing is installed and nothing has
+# to ship with the program. On Linux digests go through an AF_ALG socket and need nothing linked.
 #
-# advapi32 — listy dostępu do plików (prawa „tylko właściciel" z `fs::rights`); też w każdym Windowsie.
-# crypt32 — sekret tylko dla tego użytkownika (`shielded`: CryptProtectData, DPAPI); w każdym Windowsie.
-# shell32 i ole32 — foldery znane (`fs::folder`: SHGetKnownFolderPath i CoTaskMemFree) oraz
-# argumenty programu w postaci szerokiej (`arguments`: CommandLineToArgvW).
+# advapi32: access lists of files (owner-only permissions from `fs::rights`); in every Windows.
+# crypt32: a secret readable only by this user (`shielded`: CryptProtectData, DPAPI); in every
+# Windows.
+# shell32 and ole32: known folders (`fs::folder`: SHGetKnownFolderPath and CoTaskMemFree) and the
+# program's arguments in wide form (`arguments`: CommandLineToArgvW).
 if(WIN32)
     target_link_libraries(talcite PUBLIC mpr netapi32 ws2_32 iphlpapi bcrypt advapi32 shell32 ole32 crypt32)
 endif()
 
-# MinGW: biblioteki uruchomieniowe GCC — libstdc++, libgcc i winpthread — wchodzą do pliku
-# wykonywalnego. Bez tego program zbudowany MinGW nie startuje na maszynie bez tych trzech DLL obok
-# („nie znaleziono libstdc++-6.dll"), a MSVC tego problemu nie ma, bo bierze środowisko systemu.
-# Flaga idzie do każdego programu, który linkuje talcite.
+# MinGW: the GCC runtime libraries (libstdc++, libgcc and winpthread) go into the executable.
+# Without this a program built with MinGW does not start on a machine that lacks those three DLLs
+# next to it ("libstdc++-6.dll was not found"); MSVC has no such problem, as it uses the system's
+# runtime. The flag reaches every program that links talcite.
 if(MINGW)
     target_link_libraries(talcite PUBLIC -static)
 endif()

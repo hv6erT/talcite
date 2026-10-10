@@ -5,9 +5,9 @@
 
 namespace talcite::ui {
 
-// Uchwyty leżą w mapie z typu zdarzenia na wektor par numer-funkcja. Funkcję trzymamy przez
-// wskaźnik do niczego, bo mapa nie może znać typów, których jeszcze nie ma; klucz mapy jest
-// jednak samym typem, więc odzyskanie po drugiej stronie nie jest zgadywaniem.
+// Handlers live in a map from the event type to a vector of number-function pairs. The function is
+// held through a pointer to void, because the map cannot know types that do not exist yet; the map
+// key is the type itself, though, so recovering it on the other side is not guesswork.
 struct Handler::Hands {
     std::unordered_map<std::type_index, std::vector<std::pair<std::uint64_t, std::shared_ptr<void>>>>
         held;
@@ -16,55 +16,71 @@ struct Handler::Hands {
 
 Handler::Handler() = default;
 
-// W ciele, nie przy deklaracji: Hands jest w nagłówku niepełne, a unique_ptr musi znać rozmiar
-// tego, co zwalnia.
+// Defined here, not at the declaration: Hands is incomplete in the header, and unique_ptr must know
+// the size of what it frees.
 Handler::~Handler() = default;
 
+// A bare handler has no parent, so events stop with it.
 Handler* Handler::parent() const { return nullptr; }
 
-// **Kanał widżetu zna tylko zdarzenia biblioteki**, po jednym `handle` na typ. Zdarzenie programu
-// (`QuitEvent` z twa) idzie wyłącznie kanałem wołających, przez `on<>` — `carried` sprawdza
-// w czasie kompilacji, czy jest dla niego `handle`, i gdy nie ma, kanału widżetu nie otwiera.
-// Dawniej łapało je ogólne `react(Event&)`, które zawsze oddawało fałsz i którego nikt nie
-// przesłaniał, a przy okazji po cichu połykało typ **wywiedziony** ze zdarzenia biblioteki bez
-// własnego przeciążenia. Teraz taki typ się nie kompiluje: `known` mówi, że przeciążenie pasuje,
-// `exact`, że nie dokładnie, i `static_assert` stawia sprawę jasno.
+// The widget channel knows only the library's events, with one `handle` per type. A program's own
+// event (QuitEvent in twa) travels only through the callers' channel, via `on<>`: `carried` checks
+// at compile time whether there is a `handle` for it and, when there is none, does not open the
+// widget channel. A type derived from a library event without its own overload does not compile:
+// `known` says an overload matches, `exact` says it is not an exact one, and the `static_assert`
+// makes it plain.
 //
-// Nazwa `handle`, a nie dawne `react`: klasa nazywa się `Handler`, więc „obsługuje”; wołający
-// mówi `on`, widżet `handle`. To ten sam rodowód, co `handleEvent` w Turbo Vision.
+// The name is `handle` because the class is called `Handler`; the caller says `on`, the widget says
+// `handle`. It comes from the same line as handleEvent in Turbo Vision.
+//
+// By default a widget does not take a key.
 bool Handler::handle(KeyEvent&) { return false; }
 
+// By default a widget does not take a mouse event.
 bool Handler::handle(MouseEvent&) { return false; }
 
+// By default a widget does not take a click.
 bool Handler::handle(ClickEvent&) { return false; }
 
+// By default a widget does not take a double click.
 bool Handler::handle(DoubleClickEvent&) { return false; }
 
+// By default a widget does not take a wheel turn.
 bool Handler::handle(WheelEvent&) { return false; }
 
+// By default a widget does not react to a size change.
 bool Handler::handle(SizeEvent&) { return false; }
 
+// By default a widget does not react to gaining focus.
 bool Handler::handle(FocusEvent&) { return false; }
 
+// By default a widget does not react to losing focus.
 bool Handler::handle(UnfocusEvent&) { return false; }
 
+// By default a widget does not react to being enabled.
 bool Handler::handle(EnableEvent&) { return false; }
 
+// By default a widget does not react to being disabled.
 bool Handler::handle(DisableEvent&) { return false; }
 
+// By default a widget does not take a scroll request.
 bool Handler::handle(ScrollEvent&) { return false; }
 
+// By default a widget does not take a pick.
 bool Handler::handle(PickEvent&) { return false; }
 
+// By default a widget does not take a close request.
 bool Handler::handle(CloseEvent&) { return false; }
 
+// By default a widget does not take a shortcut.
 bool Handler::handle(ShortcutEvent&) { return false; }
 
+// By default a widget does not take a paste.
 bool Handler::handle(PasteEvent&) { return false; }
 
-// Przydział dopiero przy pierwszym dopięciu. Węzeł, do którego nikt nic nie dopiął — a takich
-// jest większość — kosztuje jeden wskaźnik, a nie mapę. Numery idą od jedynki, więc zero może
-// znaczyć pusty uchwyt.
+// Registers a handler for the event type. The map is allocated only on the first registration: a
+// node nobody hooked anything to (most of them) costs one pointer, not a map. Numbers start at one,
+// so zero can mean an empty hook.
 Hook Handler::kept(std::type_index which, std::shared_ptr<void> what) {
     if (!hands_) hands_ = std::make_unique<Hands>();
 
@@ -75,11 +91,10 @@ Hook Handler::kept(std::type_index which, std::shared_ptr<void> what) {
     return Hook{which, one};
 }
 
-// **Uchwyt zna swój typ**, więc odpięcie go nie potrzebuje — dawniej trzeba było napisać
-// `off<KeyEvent>(numer)` i pomyłka w typie po cichu nie odpinała niczego. Po odpięciu uchwyt jest
-// pusty, więc `empty()` znaczy dokładnie „nic przez niego nie wisi”; odpięcie pustego nic nie
-// robi. Uchwyt nie odpina się sam przy zniszczeniu: większość wołających go odrzuca, bo uchwyt
-// ma żyć tyle, co węzeł.
+// The hook knows its type, so unhooking does not need it. After unhooking the hook is empty, so
+// `empty()` means exactly "nothing hangs through it"; unhooking an empty one does nothing. A hook
+// does not unhook itself when destroyed: most callers throw it away, because the handler is meant
+// to live as long as the node.
 void Handler::off(Hook& which) {
     const Hook gone = std::exchange(which, Hook{});
 
@@ -99,9 +114,9 @@ void Handler::off(Hook& which) {
     if (mine.empty()) hands_->held.erase(at);
 }
 
-// Oddajemy kopię, nie wgląd. Uchwyt ma prawo w trakcie własnego wywołania dopiąć albo odpiąć
-// inny — a to przestawiłoby wektor pod nogami pętli. Pusty wektor nic nie kosztuje, więc płaci
-// za to tylko ten węzeł, który uchwyty naprawdę ma.
+// The handlers of one event type, as a copy, not a view. A handler may hook or unhook another
+// during its own call, which would rearrange the vector under the loop's feet. An empty vector
+// costs nothing, so only a node that really has handlers pays for this.
 std::vector<std::shared_ptr<void>> Handler::among(std::type_index which) const {
     std::vector<std::shared_ptr<void>> made;
 

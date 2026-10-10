@@ -21,22 +21,26 @@ using namespace talcite;
 
 namespace {
 
-// Węzeł, który pokazuje na zewnątrz to, co widżet dostaje w `paint`.
+// A node that exposes what a widget receives in `paint`.
 class Peek : public ui::Node {
 public:
+    // The skin this node sees, as `paint` would get it.
     [[nodiscard]] const ui::Skin& seen() const { return skin(); }
 };
 
-// Pojemnik, który układa dzieci w wiersze — tyle, ile trzeba, żeby lista i chętny liść stały obok.
+// A container that lays its children out, just enough for a list and a focusable leaf to stand side
+// by side.
 class Hold : public ui::Node {
 public:
+    // Takes any number of children.
     [[nodiscard]] int capacity() const override { return ui::plenty; }
 
+    // Wants all the room it is given.
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
-    // Rysuje tylko pierwsze dziecko; reszta jest tu po to, żeby dało się jej oddać ognisko, i
-    // dostaje prostokąt o zerowym rozmiarze, żeby niczego nie zamalowała.
+    // Draws only the first child. The rest are here so that focus can be given to them, and they get
+    // a rectangle of zero size so that they paint over nothing.
     View paint(ui::Size given, ui::Area seen) override {
         View made{seen.size};
 
@@ -55,11 +59,15 @@ protected:
     }
 };
 
+// A leaf that accepts focus, used to take focus away from the widget under test.
 class Perch : public ui::Node {
 public:
+    // Always accepts focus.
     [[nodiscard]] bool focusable() const override { return true; }
 };
 
+// Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
+// dropping trailing spaces.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -74,6 +82,7 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// A style with only the foreground set to the given RGB color.
 Style tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Style made{};
 
@@ -84,7 +93,7 @@ Style tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 
 }
 
-TRIAL("Skin: wbudowana zna role i znaki") {
+TRIAL("Skin: the built-in one knows the roles and glyphs") {
     const ui::Skin one;
 
     ought(one.style("talcite.list.focus").reverse);
@@ -96,38 +105,38 @@ TRIAL("Skin: wbudowana zna role i znaki") {
     same(one.glyph("talcite.scroll.thumb"), U'█');
 }
 
-// **Odczyt nigdy nie rzuca**, bo woła się go z malowania. Nieznana rola daje barwy domyślne
-// terminala, a nieznany znak — pytajnik.
-TRIAL("Skin: nieznana rola daje pusty styl, nieznany znak pytajnik") {
+// Reading never throws, because it is called from painting. An unknown role gives the terminal's
+// default colors, and an unknown glyph gives a question mark.
+TRIAL("Skin: an unknown role gives an empty style, an unknown glyph a question mark") {
     const ui::Skin one;
 
     same(one.style("czego.tu.nie.ma"), Style{});
     same(one.glyph("czego.tu.nie.ma"), U'?');
 }
 
-// Zero jest zabronione: w `View` znaczy dalszy ciąg znaku dwukolumnowego i składanie klatki takie
-// kratki **pomija**, więc zero zrobiłoby dziurę w obrazie zamiast widocznego błędu.
-TRIAL("Skin: nieznany znak nigdy nie jest zerem") {
+// Zero is forbidden: in a `View` it marks the continuation of a two-column character, and composing
+// a frame skips such cells, so a zero would leave a hole in the picture instead of a visible error.
+TRIAL("Skin: an unknown glyph is never zero") {
     const ui::Skin one;
 
     ought(one.glyph("nie.ma.takiego") != 0);
     ought(ui::Skin::plain().glyph("nie.ma.takiego") != 0);
 }
 
-// To jest `Store(spare, held)`: wołający daje swoje, biblioteka dokłada resztę — tylko scalone raz,
-// przy budowaniu, a nie przy każdym odczycie.
-TRIAL("Skin: podane nadpisuje, reszta zostaje wbudowana") {
+// This is `Store(spare, held)`: the caller gives its own entries and the library adds the rest, only
+// merged once, at construction, not on every read.
+TRIAL("Skin: given entries override, the rest stays built in") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
     same(one.style("talcite.list.focus"), tinted(10, 20, 30));
 
-    // Nietknięte role dalej są takie, jak we wbudowanej.
+    // Untouched roles are still as in the built-in skin.
     ought(one.style("talcite.input").under);
     ought(one.style("talcite.shade").faint);
     same(one.glyph("talcite.line.thin.across"), U'─');
 }
 
-TRIAL("Skin: plain zawsze oddaje wbudowaną, także gdy nadpisano") {
+TRIAL("Skin: plain always gives the built-in skin, also when overridden") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
     same(one.style("talcite.list.focus"), tinted(10, 20, 30));
@@ -137,7 +146,7 @@ TRIAL("Skin: plain zawsze oddaje wbudowaną, także gdy nadpisano") {
     same(ui::Skin::plain().glyph("talcite.line.thin.across"), U'─');
 }
 
-TRIAL("Skin: komplet ramki składa się z pojedynczych znaków") {
+TRIAL("Skin: a border set is made of single glyphs") {
     const ui::Skin one;
 
     const ui::Lines thin = one.lines(ui::Border::thin);
@@ -152,40 +161,40 @@ TRIAL("Skin: komplet ramki składa się z pojedynczych znaków") {
     same(twin.across, U'═');
     same(twin.lower_right, U'╝');
 
-    // Bez obramowania oddaje cienki — ten sam wybór, który robi `drawn` dla `Border::none`.
+    // Without a border it gives the thin set, the same choice `drawn` makes for `Border::none`.
     same(one.lines(ui::Border::none).across, U'─');
     same(one.lines(ui::Border::none).upper_left, U'┌');
 
     same(one.lines(ui::Border::thick).across, U'━');
 }
 
-// Komplet jest **złożony**, a nie zapamiętany osobno: podmiana jednego znaku zmienia całą ósemkę.
-// Poprawne z definicji, bo skórki nie da się zmienić po zbudowaniu.
-TRIAL("Skin: podmiana znaku zmienia złożony komplet") {
+// The set is assembled, not stored separately: replacing one glyph changes the whole set of eight.
+// That is correct by definition, because a skin cannot change after it is built.
+TRIAL("Skin: replacing a glyph changes the assembled set") {
     const ui::Skin one{{}, {{"talcite.line.thin.across", U'='}}};
 
     same(one.glyph("talcite.line.thin.across"), U'=');
     same(one.lines(ui::Border::thin).across, U'=');
 
-    // Reszta kompletu bez zmian.
+    // The rest of the set is unchanged.
     same(one.lines(ui::Border::thin).upright, U'│');
 
-    // I nie tknęło to grubszych.
+    // And the heavier sets are not touched.
     same(one.lines(ui::Border::twin).across, U'═');
 }
 
-TRIAL("Skin: wbudowana to zawsze ten sam egzemplarz") {
+TRIAL("Skin: the built-in skin is always the same instance") {
     same(&ui::Skin::plain(), &ui::Skin::plain());
 }
 
-TRIAL("Skin: węzeł bez korzenia dostaje wbudowaną") {
+TRIAL("Skin: a node without a root gets the built-in skin") {
     const Peek one;
 
     same(&one.seen(), &ui::Skin::plain());
     ought(one.seen().style("talcite.list.focus").reverse);
 }
 
-TRIAL("Skin: węzeł w drzewie dostaje skórkę korzenia") {
+TRIAL("Skin: a node in a tree gets the root's skin") {
     ui::Root top;
 
     const auto one = std::make_shared<Peek>();
@@ -197,13 +206,13 @@ TRIAL("Skin: węzeł w drzewie dostaje skórkę korzenia") {
     same(&one->seen(), &top.skin());
     same(&deeper->seen(), &top.skin());
 
-    // Wbudowana to inny egzemplarz — korzeń ma własny.
+    // The built-in skin is a different instance; the root has its own.
     ought(&top.skin() != &ui::Skin::plain());
 }
 
-// **Podmiana całej palety jest całą zmianą wyglądu w locie**: nie ma powiadamiania ani obchodzenia
-// drzewa, bo węzeł czyta ją dopiero wtedy, gdy maluje.
-TRIAL("Skin: podmiana na korzeniu widoczna od razu w głębi") {
+// Replacing the whole palette is the entire change of look on the fly: there is no notification and
+// no walk over the tree, because a node reads the skin only when it paints.
+TRIAL("Skin: a replacement on the root is visible deep down at once") {
     ui::Root top;
 
     const auto one = std::make_shared<Peek>();
@@ -218,12 +227,12 @@ TRIAL("Skin: podmiana na korzeniu widoczna od razu w głębi") {
 
     same(deeper->seen().style("talcite.list.focus"), tinted(1, 2, 3));
 
-    // Reszta dalej z wbudowanej, bo nowa skórka też jest kompletna od urodzenia.
+    // The rest still comes from the built-in skin, because a new skin is also complete from birth.
     ought(deeper->seen().style("talcite.input").under);
 }
 
-// Węzeł zdjęty z drzewa przestaje widzieć skórkę korzenia — i **nie zostaje bez niczego**.
-TRIAL("Skin: zdjęty węzeł wraca do wbudowanej") {
+// A node removed from the tree stops seeing the root's skin, and is not left with nothing.
+TRIAL("Skin: a removed node goes back to the built-in skin") {
     ui::Root top;
 
     const auto one = std::make_shared<Peek>();
@@ -239,11 +248,11 @@ TRIAL("Skin: zdjęty węzeł wraca do wbudowanej") {
     ought(one->seen().style("talcite.input").under);
 }
 
-// **Skórka nie jest zamknięta.** Aplikacja wymyśla własne role obok tych, które zna biblioteka,
-// i czyta je tą samą drogą — bo klucz jest nazwą, a nie wyliczeniem, którego z zewnątrz nie da się
-// rozszerzyć. Panel plików w programie plikowym będzie tego potrzebował na katalogi, pliki
-// wykonywalne i zaznaczone.
-TRIAL("Skin: aplikacja dokłada własne role obok wbudowanych") {
+// The skin is not closed. An application invents its own roles beside the ones the library knows,
+// and reads them the same way, because the key is a name and not an enumeration that cannot be
+// extended from outside. The file panel of a file manager needs this for directories, executable
+// files and selected entries.
+TRIAL("Skin: an application adds its own roles beside the built-in ones") {
     ui::Root top;
 
     const auto one = std::make_shared<Peek>();
@@ -258,32 +267,32 @@ TRIAL("Skin: aplikacja dokłada własne role obok wbudowanych") {
     same(one->seen().style("fork.panel.directory"), tinted(1, 2, 3));
     same(one->seen().style("fork.panel.exec"), tinted(4, 5, 6));
 
-    // Role biblioteki stoją obok, nietknięte.
+    // The library's roles stand beside them, untouched.
     ought(one->seen().style("talcite.list.focus").reverse);
     ought(one->seen().style("talcite.input").under);
 }
 
-TRIAL("Skin: własne znaki dokłada się tak samo jak własne role") {
+TRIAL("Skin: custom glyphs are added the same way as custom roles") {
     const ui::Skin one{{}, {{"fork.panel.mark", U'*'}}};
 
     same(one.glyph("fork.panel.mark"), U'*');
     same(one.glyph("talcite.line.thin.across"), U'─');
 }
 
-// Rola, której nie ustawił nikt, daje barwy domyślne terminala — i **tego nie da się odróżnić** od
-// roli ustawionej celowo na domyślne. Widżet spoza biblioteki, który chce mieć własny wygląd
-// zapasowy, musi go dziś wsiać do skórki sam, przy jej budowaniu.
-TRIAL("Skin: cudza rola bez wpisu daje domyślne terminala") {
+// A role nobody set gives the terminal's default colors, and that cannot be told apart from a role
+// set to the defaults on purpose. A widget from outside the library that wants its own fallback look
+// has to seed it into the skin itself, when the skin is built.
+TRIAL("Skin: a foreign role without an entry gives the terminal defaults") {
     const ui::Skin one;
 
     same(one.style("fork.panel.directory"), Style{});
     same(ui::Skin::plain().style("fork.panel.directory"), Style{});
 }
 
-// **Wierzchni dokłada, ale nie odbiera.** Po to jest scalanie: widżet spoza biblioteki trzyma swój
-// wygląd zapasowy i nakłada na niego to, co powiedziała skórka — a gdy nie powiedziała nic, zostaje
-// jego własny.
-TRIAL("Style: scalanie dokłada kolor wierzchniego, a znaczniki sumuje") {
+// The upper style adds but does not take away. That is what merging is for: a widget from outside
+// the library keeps its own fallback look and lays over it what the skin said; when the skin said
+// nothing, its own look stays.
+TRIAL("Style: merging adds the upper color and combines the flags") {
     Style base{};
 
     base.foreground = Color{false, 1, 2, 3};
@@ -296,7 +305,8 @@ TRIAL("Style: scalanie dokłada kolor wierzchniego, a znaczniki sumuje") {
 
     const Style made = Style::merge(base, over);
 
-    // Kolor spodni został, bo wierzchni go nie podał; tło przyszło z wierzchniego.
+    // The lower foreground stayed, because the upper style did not give one; the background came
+    // from the upper style.
     same(made.foreground, (Color{false, 1, 2, 3}));
     same(made.background, (Color{false, 9, 9, 9}));
 
@@ -305,7 +315,7 @@ TRIAL("Style: scalanie dokłada kolor wierzchniego, a znaczniki sumuje") {
     ought(!made.bold);
 }
 
-TRIAL("Style: ustawiony kolor wierzchniego zasłania spodni") {
+TRIAL("Style: a color set in the upper style hides the lower one") {
     Style base{};
 
     base.foreground = Color{false, 1, 2, 3};
@@ -317,9 +327,9 @@ TRIAL("Style: ustawiony kolor wierzchniego zasłania spodni") {
     same(Style::merge(base, over).foreground, (Color{false, 7, 7, 7}));
 }
 
-// Pusty styl niczego nie zmienia — i to jest ten przypadek, dla którego scalanie powstało: rola,
-// o której skórka nie słyszała, oddaje właśnie pusty styl.
-TRIAL("Style: scalanie z pustym zostawia wygląd zapasowy") {
+// An empty style changes nothing, and this is the case merging exists for: a role the skin has not
+// heard of gives exactly an empty style.
+TRIAL("Style: merging with an empty style keeps the fallback look") {
     Style base{};
 
     base.foreground = Color{false, 1, 2, 3};
@@ -328,13 +338,13 @@ TRIAL("Style: scalanie z pustym zostawia wygląd zapasowy") {
 
     same(Style::merge(base, Style{}), base);
 
-    // W drugą stronę tak samo: pusty spodni oddaje wierzchni bez zmian.
+    // The same the other way round: an empty lower style gives the upper one unchanged.
     same(Style::merge(Style{}, base), base);
 }
 
-// Cena reguły, wypowiedziana wprost: wierzchni **nie zgasi** znacznika spodniego, bo `Style` nie ma
-// stanu „nie ustawiono" na znacznikach — ma go tylko kolor.
-TRIAL("Style: wierzchni nie gasi znacznika spodniego") {
+// The cost of the rule, stated plainly: the upper style cannot turn off a flag of the lower one,
+// because `Style` has no "not set" state for flags; only colors have it.
+TRIAL("Style: the upper style does not turn off a lower flag") {
     Style base{};
 
     base.under = true;
@@ -342,15 +352,15 @@ TRIAL("Style: wierzchni nie gasi znacznika spodniego") {
     ought(Style::merge(base, Style{}).under);
 }
 
-// Tak wygląda zastosowanie: widżet spoza biblioteki ze swoim wyglądem zapasowym.
-TRIAL("Skin: cudzy widżet nakłada skórkę na własny wygląd zapasowy") {
+// This is how it is used: a widget from outside the library with its own fallback look.
+TRIAL("Skin: a foreign widget lays the skin over its own fallback look") {
     Style mine{};
 
     mine.bold = true;
 
     const ui::Skin bare;
 
-    // Skórka nie zna tej roli — zostaje wygląd własny.
+    // The skin does not know this role, so the widget's own look stays.
     same(Style::merge(mine, bare.style("fork.panel.directory")), mine);
 
     const ui::Skin told{{{"fork.panel.directory", tinted(1, 2, 3)}}};
@@ -361,10 +371,10 @@ TRIAL("Skin: cudzy widżet nakłada skórkę na własny wygląd zapasowy") {
     ought(made.bold);
 }
 
-// **Drugi zastępnik przestał być zastępnikiem.** Bieżący wiersz bez ogniska ma własną rolę, którą
-// wbudowana skórka zostawia pustą — wygląda więc dokładnie jak dotąd, a pierwsza skórka z barwami
-// wypełni ją bez zmiany jednej linijki kodu.
-TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
+// The current row without focus has a role of its own, which the built-in skin leaves empty. It
+// therefore looks the same as a plain row marker, and a skin with colors can fill it in without
+// changing a line of code.
+TRIAL("Skin: the current row without focus takes the list.mark role") {
     ui::Root top;
 
     const auto list = std::make_shared<ui::List>(20, 3);
@@ -391,11 +401,11 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
 
     (void)top.render({{0, 0}, {20, 3}});
 
-    // Z ogniskiem bieżący wiersz jest w negatywie, a nie w roli „bez ogniska".
+    // With focus the current row is in reverse video, not in the "without focus" role.
     same(list->which(), std::optional<std::size_t>{0});
     ought(top.render({{0, 0}, {20, 3}}).at({0, 0}).style.reverse);
 
-    // Po wyjściu ogniska zostaje sam znacznik — i wchodzi rola.
+    // Once focus leaves, only the marker remains, and the role applies.
     perch->focus();
 
     const View made = top.render({{0, 0}, {20, 3}});
@@ -404,14 +414,14 @@ TRIAL("Skin: bieżący wiersz bez ogniska bierze rolę list.mark") {
     ought(!made.at({0, 0}).style.reverse);
     same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(5));
 
-    // Wiersz, który bieżący nie jest, roli nie dostaje.
+    // A row that is not current does not get the role.
     ought(list->which() != std::optional<std::size_t>{1});
     ought(made.at({0, 1}).style.foreground.transparent);
 }
 
-// **Znaki też przychodzą ze skórki.** Grubość dalej wybiera widżet — to jest wybór kształtu —
-// a skórka mówi, jakimi znakami ta grubość jest rysowana.
-TRIAL("Skin: znak ramki ze skórki idzie na ramkę") {
+// Glyphs come from the skin too. The widget still chooses the weight, since that is a choice of
+// shape, and the skin says which glyphs draw that weight.
+TRIAL("Skin: a frame glyph from the skin goes onto the frame") {
     ui::Root top;
 
     const auto frame = std::make_shared<ui::Frame>("kot", ui::FrameShape{ui::Border::twin});
@@ -425,9 +435,9 @@ TRIAL("Skin: znak ramki ze skórki idzie na ramkę") {
     same(read(top.render({{0, 0}, {11, 3}}), 0), std::string{"╔** kot **╗"});
 }
 
-// **To jest spłacony dług zastępników ASCII**: terminal bez znaków rysunkowych nie potrzebuje
-// osobnej gałęzi w kodzie, tylko drugiej skórki.
-TRIAL("Skin: skórka ASCII rysuje ramkę bez znaków rysunkowych") {
+// A terminal without box-drawing characters needs no separate branch in the code, only a second
+// skin.
+TRIAL("Skin: an ASCII skin draws a frame without box-drawing characters") {
     ui::Root top;
 
     const auto frame = std::make_shared<ui::Frame>("kot");
@@ -451,7 +461,7 @@ TRIAL("Skin: skórka ASCII rysuje ramkę bez znaków rysunkowych") {
     same(read(made, 2), std::string{"+---------+"});
 }
 
-TRIAL("Skin: wielokropek bierze się ze skórki") {
+TRIAL("Skin: the ellipsis comes from the skin") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Span>("dokumenty");
@@ -467,7 +477,7 @@ TRIAL("Skin: wielokropek bierze się ze skórki") {
     same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku~"});
 }
 
-TRIAL("Skin: strzałki i suwak przewijaka biorą znaki ze skórki") {
+TRIAL("Skin: the scroller's arrows and thumb take their glyphs from the skin") {
     ui::Root top;
 
     const auto list = std::make_shared<ui::List>(ui::plenty, ui::plenty, ui::ScrollShape{true});
@@ -498,14 +508,16 @@ TRIAL("Skin: strzałki i suwak przewijaka biorą znaki ze skórki") {
     same(made.at({7, 2}).letter, U'.');
 }
 
-// --- Rdzeń roli zadawany widżetowi -------------------------------------------------------------
+// --- The role stem given to a widget -----------------------------------------------------------
 //
-// Jedna rola dla wszystkich napisów w programie nie umie być naraz czerwona i granatowa, a napis
-// w pudełku błędu ma być czerwony. Kto buduje takie pudełko, ten wie, co w nim stoi — więc rdzeń
-// nazwy roli zadaje się widżetowi z zewnątrz, a końcówki na stan dokłada sam widżet.
+// A single role for all text in the program cannot be red and navy at once, and the text in an
+// error box has to be red. Whoever builds such a box knows what stands in it, so the stem of the
+// role name is given to the widget from outside, and the widget itself adds the suffixes for its
+// state.
 
 namespace {
 
+// A style with only the foreground set to the given RGB color.
 Style inked(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     Style made{};
 
@@ -516,7 +528,7 @@ Style inked(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 
 }
 
-TRIAL("Rola: napis pyta o rdzeń, który mu zadano") {
+TRIAL("Role: a span asks for the stem it was given") {
     ui::Root top;
 
     top.skin(ui::Skin{{{"talcite.normal", inked(1, 1, 1)}, {"moja.rola", inked(9, 9, 9)}}});
@@ -533,7 +545,7 @@ TRIAL("Rola: napis pyta o rdzeń, który mu zadano") {
     same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
-TRIAL("Rola: ramka pyta o rdzeń, który jej zadano") {
+TRIAL("Role: a frame asks for the stem it was given") {
     ui::Root top;
 
     Style mine{};
@@ -550,12 +562,12 @@ TRIAL("Rola: ramka pyta o rdzeń, który jej zadano") {
 
     const View made = top.render({{0, 0}, {6, 3}});
 
-    // Kreska i tło biorą się z tej samej roli.
+    // The line and the background come from the same role.
     same(made.at({0, 0}).style.background, (Color{false, 7, 7, 7}));
     same(made.at({2, 1}).style.background, (Color{false, 7, 7, 7}));
 }
 
-TRIAL("Rola: przycisk dokłada końcówkę na stan") {
+TRIAL("Role: a button adds a suffix for its state") {
     ui::Root top;
 
     ui::Styles these;
@@ -585,7 +597,7 @@ TRIAL("Rola: przycisk dokłada końcówkę na stan") {
     same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
-TRIAL("Rola: litera aktywna też idzie za rdzeniem") {
+TRIAL("Role: the hotkey letter also follows the stem") {
     ui::Root top;
 
     ui::Styles these;
@@ -608,17 +620,19 @@ TRIAL("Rola: litera aktywna też idzie za rdzeniem") {
 
     const View made = top.render({{0, 0}, {9, 1}});
 
-    // `[ Tak ]` — litera T stoi na trzeciej kratce.
+    // `[ Tak ]`: the letter T stands in the third cell.
     same(made.at({2, 0}).letter, U'T');
     ought(made.at({2, 0}).style.reverse);
     ought(!made.at({3, 0}).style.reverse);
 }
 
-// **Litera aktywna zmienia pismo i atrybuty, nigdy tła.** Skórki z Midnight Commandera dają `.key`
-// parę pismo–tło, a na literę w pozycji podświetlonej MC ma osobną rolę, której u nas nie ma —
-// więc tło z `.key` wchodziło w środek podświetlenia jako dziura: pomarańczowe `L` na tle paska,
-// `eft` na fioletowym. Próba stawia w `.key` tło inne niż tło ogniska i pyta o kratkę litery.
-TRIAL("Rola: litera aktywna bierze tło spod siebie, a pismo z .key") {
+// The hotkey letter changes the foreground and the attributes, never the background. Midnight
+// Commander skins give `.key` a foreground and background pair, and MC has a separate role for the
+// letter in a highlighted position, which we do not have. Taking the background from `.key` would
+// punch a hole into the highlight: an orange `L` on the bar's background and eft on purple. The
+// trial puts a background into `.key` that differs from the focus background and checks the letter's
+// cell.
+TRIAL("Role: the hotkey letter takes the background beneath it and the foreground from .key") {
     ui::Root top;
 
     ui::Styles these;
@@ -645,7 +659,8 @@ TRIAL("Rola: litera aktywna bierze tło spod siebie, a pismo z .key") {
 
     top.children().add(one);
 
-    // Bez ogniska: pismo z `.key`, tło przycisku — tu przypadkiem to samo, co w `.key`.
+    // Without focus: foreground from `.key`, the button's background, here by chance the same as in
+    // `.key`.
     View made = top.render({{0, 0}, {9, 1}});
 
     same(made.at({2, 0}).letter, U'T');
@@ -653,7 +668,7 @@ TRIAL("Rola: litera aktywna bierze tło spod siebie, a pismo z .key") {
     same(made.at({2, 0}).style.background, (Color{false, 10, 10, 10}));
     ought(made.at({2, 0}).style.bold);
 
-    // Z ogniskiem: pismo dalej z `.key`, ale tło **ogniska**, nie z `.key`.
+    // With focus: the foreground still from `.key`, but the background of focus, not from `.key`.
     one->focus();
 
     made = top.render({{0, 0}, {9, 1}});
@@ -664,9 +679,9 @@ TRIAL("Rola: litera aktywna bierze tło spod siebie, a pismo z .key") {
     ought(made.at({2, 0}).style.bold);
 }
 
-// Rodzina komunikatu i rodzina błędu muszą być w skórce wbudowanej, inaczej przycisk z ogniskiem
-// w komunikacie straciłby podświetlenie: pytałby o rolę, o której nikt nie słyszał.
-TRIAL("Skin: wbudowana zna rodzinę komunikatu i błędu") {
+// The message family and the error family have to be in the built-in skin, otherwise a focused
+// button in a message would lose its highlight: it would ask for a role nobody has heard of.
+TRIAL("Skin: the built-in skin knows the message and error families") {
     const ui::Skin one;
 
     for (const std::string& stem : {std::string{"talcite.message"}, std::string{"talcite.error"}}) {
@@ -674,8 +689,8 @@ TRIAL("Skin: wbudowana zna rodzinę komunikatu i błędu") {
         ought(one.style(stem + ".button.key").under);
         ought(one.style(stem + ".button.disabled").faint);
 
-        // Reszta rodziny jest pusta z rozmysłem: bez barw pudełko błędu niczym się nie różni od
-        // zwykłego okna, tak samo jak w mono-skórce Midnight Commandera.
+        // The rest of the family is empty on purpose: without colors an error box looks no different
+        // from a plain window, just as in Midnight Commander's mono skin.
         same(one.style(stem), Style{});
         same(one.style(stem + ".title"), Style{});
         same(one.style(stem + ".text"), Style{});
@@ -684,13 +699,15 @@ TRIAL("Skin: wbudowana zna rodzinę komunikatu i błędu") {
 }
 
 
-// --- Warianty na poziomy terminala ----------------------------------------------------------
+// --- Variants for terminal levels ----------------------------------------------------------
 //
-// Skórka niesie wartość roli na każdy poziom barwności i znaków; który obowiązuje, mówi jej korzeń
-// z faktów o terminalu. Wariantu brak — wbudowana, bez przybliżania.
+// A skin carries a role's value for each level of color and glyphs; which one applies is told by
+// its root from the facts about the terminal. With no variant, the built-in value applies, with no
+// approximation.
 
 namespace {
 
+// A role with an `ansi` variant and an `rgb` variant, and nothing for the other levels.
 ui::Shades shaded() {
     ui::Shades made;
 
@@ -702,7 +719,7 @@ ui::Shades shaded() {
 
 }
 
-TRIAL("Skin: jedna wartość obowiązuje na każdym poziomie") {
+TRIAL("Skin: a single value applies at every level") {
     ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
     for (const Colors level : {Colors::mono, Colors::ansi, Colors::palette, Colors::rgb}) {
@@ -712,13 +729,13 @@ TRIAL("Skin: jedna wartość obowiązuje na każdym poziomie") {
     }
 }
 
-TRIAL("Skin: wariant to najwyższy nieprzekraczający poziomu") {
+TRIAL("Skin: the variant is the highest one not above the level") {
     ui::Skin one{{{"talcite.list.focus", shaded()}}};
 
     one.colors(Colors::ansi);
     same(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
-    // Na `palette` nie ma własnego wariantu — obowiązuje `ansi`, nie `rgb`: wyżej się nie sięga.
+    // `palette` has no variant of its own, so `ansi` applies, not `rgb`: it never reaches higher.
     one.colors(Colors::palette);
     same(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
@@ -726,10 +743,11 @@ TRIAL("Skin: wariant to najwyższy nieprzekraczający poziomu") {
     same(one.style("talcite.list.focus"), tinted(3, 3, 3));
 }
 
-TRIAL("Skin: bez wariantu na poziom rola wraca do wbudowanej, nie do przybliżenia") {
+TRIAL("Skin: with no variant for the level, the role goes back to the built-in one, not an approximation") {
     ui::Skin one{{{"talcite.list.focus", shaded()}}};
 
-    // `mono` nie ma nic poniżej siebie, a skórka zaczyna od `ansi` — więc wbudowana: odwrócenie.
+    // `mono` has nothing below it, and the skin starts at `ansi`, so the built-in value applies:
+    // reverse video.
     one.colors(Colors::mono);
 
     same(one.style("talcite.list.focus"), ui::Skin::plain().style("talcite.list.focus"));
@@ -737,7 +755,7 @@ TRIAL("Skin: bez wariantu na poziom rola wraca do wbudowanej, nie do przybliżen
     ought(one.style("talcite.list.focus").foreground.transparent);
 }
 
-TRIAL("Skin: rola spoza wbudowanych bez wariantu daje pusty styl") {
+TRIAL("Skin: a role outside the built-in ones with no variant gives an empty style") {
     ui::Skin one{{{"app.thing", shaded()}}};
 
     one.colors(Colors::mono);
@@ -745,7 +763,7 @@ TRIAL("Skin: rola spoza wbudowanych bez wariantu daje pusty styl") {
     same(one.style("app.thing"), Style{});
 }
 
-TRIAL("Skin: znak ma wersję ASCII i unicode, terminal bez unicode bierze tylko ASCII") {
+TRIAL("Skin: a glyph has an ASCII and a Unicode version, a terminal without Unicode takes only ASCII") {
     ui::Signs sign;
 
     sign.ascii = U'-';
@@ -762,7 +780,7 @@ TRIAL("Skin: znak ma wersję ASCII i unicode, terminal bez unicode bierze tylko 
     same(one.lines(ui::Border::thin).across, U'─');
 }
 
-TRIAL("Skin: znak z samą wersją unicode na terminalu bez unicode wraca do wbudowanego") {
+TRIAL("Skin: a glyph with only a Unicode version falls back to the built-in one without Unicode") {
     ui::Signs sign;
 
     sign.unicode = U'=';
@@ -776,7 +794,7 @@ TRIAL("Skin: znak z samą wersją unicode na terminalu bez unicode wraca do wbud
     same(one.glyph("talcite.line.thin.across"), U'=');
 }
 
-TRIAL("Root: fakty o terminalu przechodzą na każdą kolejną skórkę") {
+TRIAL("Root: facts about the terminal carry over to every later skin") {
     ui::Root top;
 
     top.colors(Colors::rgb);
@@ -793,16 +811,17 @@ TRIAL("Root: fakty o terminalu przechodzą na każdą kolejną skórkę") {
     same(top.skin().style("talcite.list.focus"), tinted(1, 1, 1));
 }
 
-TRIAL("Root: bez faktów skórka stoi na mono i ASCII") {
+TRIAL("Root: without facts the skin stands on mono and ASCII") {
     ui::Root top;
 
     same(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::mono));
     ought(!top.skin().unicode());
 }
 
-// Paleta 256 barw: szesnaście podstawowych w wartościach xterma, sześcian 6×6×6 i rampa szarości.
-// Spoza palety — pustka. Z niej liczy terminal przy wypisywaniu i z niej czyta barwy aplikacja.
-TRIAL("Paleta: Color::indexed daje podstawowe, sześcian i szarości, a spoza palety nic") {
+// The 256-color palette: sixteen basic colors in xterm's values, the 6×6×6 cube and the gray ramp.
+// Outside the palette, nothing. The terminal computes from it when writing, and the application
+// reads colors from it.
+TRIAL("Palette: Color::indexed gives the basic colors, the cube and the grays, and nothing outside") {
     const auto rgb = [](int which) {
         const std::optional<Color> one = Color::indexed(which);
 

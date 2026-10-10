@@ -36,27 +36,31 @@
 
 namespace talcite::net {
 
-// **Port otwarty na routerze** (S1 w twa): udostępniający nasłuchuje, a do domowej sieci z zewnątrz
-// wpuszcza go dopiero router. Trzy drogi, po kolei:
+// A port opened on the router: the sharing side listens, and only the router lets it into the home
+// network from outside. Three ways, in order:
 //
-// - **PCP** (RFC 6887) — najnowsza, UDP na port 5351 routera; prośba MAP z losowym nonce, który
-//   potem odnawia i zamyka to samo mapowanie.
-// - **NAT-PMP** (RFC 6886) — poprzednik PCP, ten sam port. Router, który zna tylko NAT-PMP, na PCP
-//   odpowiada „nieznana wersja" w formacie NAT-PMP — dopiero wtedy idziemy tą drogą. Router
-//   milczący na PCP milczałby i tu, więc go nie męczymy.
-// - **UPnP IGD** — najpowszechniejsza w domowych routerach: SSDP (M-SEARCH na 239.255.255.250:1900
-//   i wprost do routera), opis urządzenia przez HTTP, potem SOAP do usługi WANIPConnection albo
-//   WANPPPConnection. Opis i odpowiedzi czyta szew XML — talcite parsera nie ma.
+// - PCP (RFC 6887): the newest, UDP to port 5351 of the router; a MAP request with a random nonce,
+//   which later renews and closes the same mapping.
+// - NAT-PMP (RFC 6886): the predecessor of PCP, on the same port. A router that knows only NAT-PMP
+//   answers PCP with "unsupported version" in the NAT-PMP format, and only then do we go this way.
+//   A router silent on PCP would be silent here too, so we do not bother it.
+// - UPnP IGD: the most common in home routers: SSDP (M-SEARCH to 239.255.255.250:1900 and directly
+//   to the router), the device description over HTTP, then SOAP to the WANIPConnection or
+//   WANPPPConnection service. The description and the answers are read by the XML seam; talcite
+//   has no parser of its own.
 //
-// Pytanie biegnie na wątku z puli i blokuje go, jak zwiad STUN: jest jedno, zadawane rzadko
-// (otwarcie, odnowienie, zamknięcie), a czekanie na router to zwykle milisekundy. Router pamięta,
-// która droga zadziałała, i przy odnowieniu zaczyna od niej; pamięta też nonce PCP i usługę UPnP,
-// bez których nie da się odnowić ani zamknąć.
+// The question runs on a pool thread and blocks it, like the STUN scout: there is one, asked
+// rarely (opening, renewal, closing), and waiting for a router usually takes milliseconds. The
+// router object remembers which way worked and starts from it at renewal; it also remembers the
+// PCP nonce and the UPnP service, without which a mapping can be neither renewed nor closed.
 //
-// Nic tu nie ustawia niczego na stałe bez wiedzy wołającego: mapowanie ma czas życia i wygasa samo,
-// chyba że router UPnP zna tylko mapowania trwałe — wtedy `lasting` wraca jako zero i zamknięcie
-// należy do wołającego.
+// Nothing here sets anything permanently without the caller knowing: a mapping has a lifetime and
+// expires by itself, unless a UPnP router knows only permanent mappings; then `lasting` comes back
+// as zero and closing is up to the caller.
 
+// The default router from the Linux routing table (the text of /proc/net/route): the gateway of
+// the default route with the lowest metric. It is separate so that a test can pass the table text
+// directly, without depending on the network of the machine it runs on.
 std::optional<Address> routed(std::string_view table) {
     std::optional<Address> best;
     unsigned long lowest = 0;
@@ -84,8 +88,9 @@ std::optional<Address> routed(std::string_view table) {
 
         if (!field.empty()) fields.push_back(std::move(field));
 
-        // Iface, Destination, Gateway, Flags, RefCnt, Use, Metric, Mask… Trasa domyślna to maska zero
-        // (cel przy niej też musi być zerem), a trasa przez router — brama różna od zera.
+        // Iface, Destination, Gateway, Flags, RefCnt, Use, Metric, Mask… A default route has a zero
+        // mask (its destination must then be zero too), and a route through a router has a nonzero
+        // gateway.
         if (fields.size() < 8 || fields[7] != "00000000") continue;
 
         const auto number = [](const std::string& hex) -> std::optional<unsigned long> {
@@ -110,8 +115,8 @@ std::optional<Address> routed(std::string_view table) {
 
         if (best && metric >= lowest) continue;
 
-        // Jądro wypisuje adres jako liczbę w porządku pamięci — kopia bajtów oddaje porządek sieci
-        // na każdej maszynie, a nie tylko na tej o najmłodszym bajcie z przodu.
+        // The kernel prints the address as a number in memory order, so copying the bytes gives
+        // network order on every machine, not only on a little-endian one.
         const auto value = static_cast<std::uint32_t>(*through);
 
         std::array<std::byte, 16> raw{};
@@ -125,12 +130,15 @@ std::optional<Address> routed(std::string_view table) {
     return best;
 }
 
+// The IPv4 address of this computer's default router; rejects with `Trouble` when there is none
+// or the system does not tell.
 Promise<Address> gateway() {
     return Promise<Address>{[](auto giving, auto amiss) {
         starting();
 
 #ifdef _WIN32
-        // Najlepsza trasa do adresu publicznego — nic nie wychodzi, system tylko odpowiada z tablicy.
+        // The best route to a public address: nothing is sent, the system only answers from its
+        // table.
         IN_ADDR toward{};
 
         ::inet_pton(AF_INET, "8.8.8.8", &toward);
@@ -169,8 +177,9 @@ Promise<Address> gateway() {
     }};
 }
 
-// Który nasz adres idzie w stronę podanego: połączone gniazdo UDP niczego nie wysyła, a system
-// wybiera mu adres źródłowy z tablicy tras — ten sam, którego użyje prawdziwa rozmowa.
+// Which of our addresses leads toward the given one: a connected UDP socket sends nothing, and the
+// system picks its source address from the routing table, the same one a real conversation would
+// use. The result has port zero.
 Promise<Address> leaving(Address toward) {
     return Promise<Address>{[toward](auto giving, auto amiss) mutable {
         if (toward.family() != Family::four && toward.family() != Family::six) {
@@ -211,32 +220,38 @@ using Clock = std::chrono::steady_clock;
 
 constexpr std::uint16_t pcp_port = 5351;
 
-// Najdłuższa dzierżawa UPnP — więcej IGD w wersji pierwszej nie przyjmuje.
+// The longest UPnP lease, in seconds; IGD version 1 does not accept more.
 constexpr std::uint32_t upnp_longest = 604800;
 
+// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
 Patience left(Clock::time_point until) {
     const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
 
     return rest.count() > 0 ? rest : Patience{1};
 }
 
+// Appends the low 16 bits of `value` in network byte order.
 void put16(Bytes& into, std::uint32_t value) {
     into.push_back(static_cast<std::byte>((value >> 8) & 0xff));
     into.push_back(static_cast<std::byte>(value & 0xff));
 }
 
+// Appends `value` as 32 bits in network byte order.
 void put32(Bytes& into, std::uint32_t value) {
     put16(into, value >> 16);
     put16(into, value & 0xffff);
 }
 
+// The byte at `at`.
 std::uint32_t got8(const Bytes& from, std::size_t at) { return std::to_integer<std::uint32_t>(from[at]); }
 
+// The big-endian 16-bit number at `at`.
 std::uint32_t got16(const Bytes& from, std::size_t at) { return (got8(from, at) << 8) | got8(from, at + 1); }
 
+// The big-endian 32-bit number at `at`.
 std::uint32_t got32(const Bytes& from, std::size_t at) { return (got16(from, at) << 16) | got16(from, at + 2); }
 
-// Adres w polu PCP: IPv6 wprost, IPv4 jako ::ffff:a.b.c.d.
+// Appends an address as a PCP field: IPv6 as is, IPv4 as ::ffff:a.b.c.d.
 void put_address(Bytes& into, const Address& one) {
     if (one.family() == Family::six) {
         into.insert(into.end(), one.bytes().begin(), one.bytes().end());
@@ -251,6 +266,7 @@ void put_address(Bytes& into, const Address& one) {
     into.insert(into.end(), one.bytes().begin(), one.bytes().begin() + 4);
 }
 
+// The 16-byte PCP address field at `at`, with `port`: an IPv4-mapped address becomes IPv4.
 Address taken_address(const Bytes& from, std::size_t at, std::uint16_t port) {
     std::array<std::byte, 16> raw{};
 
@@ -268,6 +284,7 @@ Address taken_address(const Bytes& from, std::size_t at, std::uint16_t port) {
     return Address{Family::four, short_one, port};
 }
 
+// The meaning of a PCP result code (RFC 6887, section 7.4), for error messages.
 std::string pcp_said(std::uint32_t code) {
     switch (code) {
         case 1: return "unsupported version";
@@ -287,6 +304,7 @@ std::string pcp_said(std::uint32_t code) {
     }
 }
 
+// The meaning of a NAT-PMP result code (RFC 6886, section 3.5), for error messages.
 std::string pmp_said(std::uint32_t code) {
     switch (code) {
         case 1: return "unsupported version";
@@ -298,8 +316,9 @@ std::string pmp_said(std::uint32_t code) {
     }
 }
 
-// Prośba z powtórkami: pół sekundy ćwierci, potem podwojenie, do terminu. `judged` dostaje każdy
-// datagram od routera i mówi, czy to koniec; obce źródła i za duże datagramy pomija się bez słowa.
+// A request with retries: a quarter of a second, then doubling, until the deadline. `judged` gets
+// every datagram from the router and says whether that is the end; foreign sources and oversized
+// datagrams are skipped silently. Returns whether `judged` accepted an answer.
 template <typename Judge>
 bool asked(const Udp& post, const Address& where, const Bytes& what, Clock::time_point until, Judge judged) {
     Patience wait{250};
@@ -351,10 +370,11 @@ namespace {
 
 using Kept = std::shared_ptr<Router::Held>;
 
-// Czas na jedną drogę UDP: 250 + 500 + 1000 ms. Router w domu odpowiada w milisekundach; kto milczy
-// prawie dwie sekundy, ten tej drogi nie zna.
+// The time for one UDP way: 250 + 500 + 1000 ms. A home router answers within milliseconds; one
+// that stays silent for almost two seconds does not know this way.
 constexpr Patience udp_turn{1750};
 
+// The router's address for PCP and NAT-PMP: the gateway, on port 5351 unless a port is given.
 Address aimed(const Routing& routing) {
     Address made = routing.gateway;
 
@@ -363,6 +383,7 @@ Address aimed(const Routing& routing) {
     return made;
 }
 
+// The earlier of two moments.
 Clock::time_point sooner(Clock::time_point one, Clock::time_point two) { return std::min(one, two); }
 
 // --- PCP ------------------------------------------------------------------------------------------
@@ -372,6 +393,8 @@ struct PcpOutcome {
     bool old = false;
 };
 
+// The PCP nonce of the mapping for this carrier and inside port, drawn at random the first time.
+// The same nonce renews and closes the mapping.
 Bytes nonce_for(const Kept& held, Carrier carrier, std::uint16_t inside) {
     const std::lock_guard<std::mutex> kept{held->guard};
 
@@ -382,6 +405,9 @@ Bytes nonce_for(const Kept& held, Carrier carrier, std::uint16_t inside) {
     return one;
 }
 
+// One PCP MAP request (RFC 6887, section 11); a lifetime of zero deletes the mapping. Returns the
+// opening, `old` when the router knows only NAT-PMP, or nothing when it does not answer; throws
+// `Trouble` when it refuses.
 PcpOutcome pcp(const Kept& held, const Address& mine, Carrier carrier, std::uint16_t inside, std::uint16_t outside,
                std::uint32_t lifetime, Clock::time_point until) {
     const Bytes nonce = nonce_for(held, carrier, inside);
@@ -409,7 +435,7 @@ PcpOutcome pcp(const Kept& held, const Address& mine, Carrier carrier, std::uint
     std::optional<Trouble> refused;
 
     const bool answered = asked(post, aimed(held->routing), what, until, [&](const Bytes& came) {
-        // Router tylko z NAT-PMP: „nieznana wersja" w jego formacie.
+        // A router with only NAT-PMP: "unsupported version" in its format.
         if (came.size() >= 4 && came[0] == std::byte{0}) {
             if (got16(came, 2) == 1) {
                 made.old = true;
@@ -447,6 +473,9 @@ PcpOutcome pcp(const Kept& held, const Address& mine, Carrier carrier, std::uint
 
 // --- NAT-PMP --------------------------------------------------------------------------------------
 
+// One NAT-PMP mapping request (RFC 6886, section 3.3), followed, when opening, by a question for
+// the external address; a lifetime of zero deletes the mapping. Returns nothing when the router
+// does not answer and throws `Trouble` when it refuses.
 std::optional<Opening> pmp(const Kept& held, Carrier carrier, std::uint16_t inside, std::uint16_t outside,
                            std::uint32_t lifetime, Clock::time_point until) {
     const std::uint32_t op = carrier == Carrier::udp ? 1 : 2;
@@ -486,7 +515,7 @@ std::optional<Opening> pmp(const Kept& held, Carrier carrier, std::uint16_t insi
 
     if (!answered || !made) return std::nullopt;
 
-    // Zamknięcie nie ma adresu zewnętrznego — pytamy tylko przy otwarciu.
+    // Closing has no external address, so we ask only when opening.
     if (lifetime == 0) return made;
 
     const std::uint16_t port = made->outside.port();
@@ -508,7 +537,7 @@ std::optional<Opening> pmp(const Kept& held, Carrier carrier, std::uint16_t insi
 
 // --- UPnP IGD -------------------------------------------------------------------------------------
 
-// Usługi, które otwierają porty, od najlepszej.
+// The services that open ports, best first.
 constexpr std::array<std::string_view, 3> services{"urn:schemas-upnp-org:service:WANIPConnection:2",
                                                    "urn:schemas-upnp-org:service:WANIPConnection:1",
                                                    "urn:schemas-upnp-org:service:WANPPPConnection:1"};
@@ -517,8 +546,10 @@ constexpr std::array<std::string_view, 3> searched{"urn:schemas-upnp-org:device:
                                                    "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
                                                    "urn:schemas-upnp-org:service:WANIPConnection:1"};
 
+// An ASCII letter in lower case; anything else unchanged.
 char lowered(char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; }
 
+// The text without leading and trailing spaces, tabs and line ends.
 std::string trimmed(std::string_view text) {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\r' || text.front() == '\n'))
         text.remove_prefix(1);
@@ -529,7 +560,7 @@ std::string trimmed(std::string_view text) {
     return std::string{text};
 }
 
-// Adres opisu z odpowiedzi SSDP — nagłówek LOCATION, wielkość liter dowolna.
+// The description address from an SSDP answer: the LOCATION header, in any letter case.
 std::optional<std::string> located(const Bytes& came) {
     const std::string text = talcite::text(came);
 
@@ -556,8 +587,9 @@ std::optional<std::string> located(const Bytes& came) {
     return std::nullopt;
 }
 
-// Opisy routerów: najpierw te, które leżą na samym routerze — w sieci bywają też wzmacniacze
-// i inne urządzenia, które udają bramę, a port otwiera tylko ta prawdziwa.
+// The router descriptions found by SSDP: first those that lie on the router itself, because a
+// network may also hold repeaters and other devices that pose as a gateway, and only the real one
+// opens the port.
 std::vector<Url> discovered(const Kept& held, Clock::time_point until) {
     const Routing& routing = held->routing;
     const Udp post{Address::any(Family::four, 0)};
@@ -578,7 +610,7 @@ std::vector<Url> discovered(const Kept& held, Clock::time_point until) {
             try {
                 post.send(to, bytes(message), left(until)).await();
             } catch (const Trouble&) {
-                // Sieć bez rozgłaszania grupowego — zostaje pytanie wprost.
+                // A network without multicast; the direct question remains.
             }
         }
     }
@@ -618,12 +650,14 @@ std::vector<Url> discovered(const Kept& held, Clock::time_point until) {
     return made;
 }
 
+// The local part of an XML name, without its namespace prefix.
 std::string_view local(std::string_view name) {
     const std::size_t at = name.rfind(':');
 
     return at == std::string_view::npos ? name : name.substr(at + 1);
 }
 
+// Collects every element named `name` (ignoring the prefix) in the subtree of `one`.
 void gathered(const xml::Node& one, std::string_view name, std::vector<const xml::Node*>& into) {
     if (one.kind != xml::Kind::element) return;
 
@@ -632,6 +666,7 @@ void gathered(const xml::Node& one, std::string_view name, std::vector<const xml
     for (const xml::Node& each : one.children) gathered(each, name, into);
 }
 
+// Every element named `name` in the document.
 std::vector<const xml::Node*> found(const xml::Document& document, std::string_view name) {
     std::vector<const xml::Node*> made;
 
@@ -640,6 +675,7 @@ std::vector<const xml::Node*> found(const xml::Document& document, std::string_v
     return made;
 }
 
+// The first child element of `one` named `name`, or null.
 const xml::Node* inner(const xml::Node& one, std::string_view name) {
     for (const xml::Node& each : one.children)
         if (each.kind == xml::Kind::element && local(each.name) == name) return &each;
@@ -647,14 +683,16 @@ const xml::Node* inner(const xml::Node& one, std::string_view name) {
     return nullptr;
 }
 
+// The trimmed text of the first element named `name`, or an empty string.
 std::string said_in(const xml::Document& document, std::string_view name) {
     const std::vector<const xml::Node*> all = found(document, name);
 
     return all.empty() ? std::string{} : trimmed(xml::text(*all.front()));
 }
 
-// Usługa z opisu urządzenia: najlepsza z obsługiwanych, a jej adres sterowania względem URLBase,
-// jeśli opis go ma, albo względem adresu samego opisu.
+// The service from a device description: the best of the supported ones, with its control address
+// resolved against URLBase, if the description has it, or against the address of the description
+// itself.
 std::optional<Control> controlled(const xml::Document& document, const Url& from) {
     Url base = from;
 
@@ -681,6 +719,7 @@ std::optional<Control> controlled(const xml::Document& document, const Url& from
     return std::nullopt;
 }
 
+// The text with the five XML special characters escaped.
 std::string escaped(std::string_view text) {
     std::string made;
 
@@ -698,8 +737,9 @@ std::string escaped(std::string_view text) {
     return made;
 }
 
-// Wywołanie SOAP. Odmowa usługi to HTTP 500 z UPnPError — jej numer idzie w kłopocie, bo 718
-// (port zajęty) i 725 (tylko trwałe) wołający rozstrzyga sam.
+// A SOAP call; returns the decoded answer. A refusal by the service is HTTP 500 with UPnPError; its
+// number goes into the `Trouble`, because the caller decides 718 (port taken) and 725 (only
+// permanent) by itself.
 xml::Document soap(const Kept& held, const Control& control, std::string_view action,
                    const std::vector<std::pair<std::string_view, std::string>>& arguments, Clock::time_point until) {
     std::string body = "<?xml version=\"1.0\"?>\r\n<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" "
@@ -745,12 +785,15 @@ xml::Document soap(const Kept& held, const Control& control, std::string_view ac
                   number};
 }
 
+// The UPnP service found earlier, if any.
 std::optional<Control> known_control(const Kept& held) {
     const std::lock_guard<std::mutex> kept{held->guard};
 
     return held->control;
 }
 
+// The UPnP service: the one found earlier, or the first that a description found by SSDP offers,
+// which is then remembered.
 std::optional<Control> found_control(const Kept& held, Clock::time_point until) {
     if (std::optional<Control> known = known_control(held)) return known;
 
@@ -776,13 +819,15 @@ std::optional<Control> found_control(const Kept& held, Clock::time_point until) 
                 return made;
             }
         } catch (const std::exception&) {
-            // Krzywy opis albo urządzenie, które nie odpowiada — próbujemy następnego.
+            // A malformed description or a device that does not answer; we try the next one.
         }
     }
 
     return std::nullopt;
 }
 
+// Opens the port through UPnP IGD with AddPortMapping, then asks for the external address. Returns
+// nothing without an XML seam or a service; throws `Trouble` when the router refuses.
 std::optional<Opening> upnp(const Kept& held, const Address& mine, Carrier carrier, std::uint16_t inside,
                             std::uint32_t lifetime, Clock::time_point until) {
     if (!held->routing.xml.bound()) return std::nullopt;
@@ -811,7 +856,8 @@ std::optional<Opening> upnp(const Kept& held, const Address& mine, Carrier carri
 
             break;
         } catch (const Trouble& why) {
-            // 725: router zna tylko mapowania trwałe. 718: port zewnętrzny zajęty — bierzemy inny.
+            // 725: the router knows only permanent mappings. 718: the external port is taken, so we
+            // take another one.
             if (why.code() == 725 && lease != 0 && turn < 6) {
                 lease = 0;
 
@@ -842,26 +888,31 @@ std::optional<Opening> upnp(const Kept& held, const Address& mine, Carrier carri
 
         if (!told.empty()) seen = Address{told, outside};
     } catch (const std::exception&) {
-        // Adres zewnętrzny to wiadomość dodatkowa — port i tak jest otwarty.
+        // The external address is extra information; the port is open anyway.
     }
 
     return Opening{Opener::upnp, carrier, inside, seen, std::chrono::seconds{lease}};
 }
 
-// --- Całość ---------------------------------------------------------------------------------------
+// --- The whole ------------------------------------------------------------------------------------
 
+// Our address in the home network: the one given in the settings, or the one leading to the
+// router.
 Address ours(const Kept& held) {
     if (held->routing.mine.held()) return held->routing.mine;
 
     return leaving(held->routing.gateway).await();
 }
 
+// Remembers which way worked, so that the next opening starts from it.
 void remembered(const Kept& held, Opener one) {
     const std::lock_guard<std::mutex> kept{held->guard};
 
     held->worked = one;
 }
 
+// Opens the port: first the way that worked last time, otherwise PCP, NAT-PMP when the router
+// knows only that, and UPnP. Throws the first refusal, or `Trouble` when no router answered.
 Opening opening(const Kept& held, Carrier carrier, std::uint16_t inside, std::chrono::seconds lasting) {
     const Clock::time_point until = Clock::now() + held->routing.patience;
     const Address mine = ours(held);
@@ -875,7 +926,7 @@ Opening opening(const Kept& held, Carrier carrier, std::uint16_t inside, std::ch
         worked = held->worked;
     }
 
-    // Pierwsza odmowa zostaje — „router odmówił" mówi więcej niż „nikt nie odpowiedział".
+    // The first refusal is kept: "the router refused" says more than "nobody answered".
     std::exception_ptr first;
 
     const auto tried = [&](auto&& doing) -> std::optional<Opening> {
@@ -926,6 +977,8 @@ Opening opening(const Kept& held, Carrier carrier, std::uint16_t inside, std::ch
     throw Trouble{"No router opened the port: none answered PCP, NAT-PMP or UPnP."};
 }
 
+// Closes a mapping the same way it was opened; throws `Trouble` when this router did not open it
+// or does not answer.
 void closing(const Kept& held, const Opening& one) {
     const Clock::time_point until = Clock::now() + held->routing.patience;
 
@@ -967,6 +1020,7 @@ void closing(const Kept& held, const Opening& one) {
     }
 }
 
+// A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> refused(const char* said) {
     return Promise<T>{[said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
@@ -974,8 +1028,11 @@ Promise<T> refused(const char* said) {
 
 }
 
+// A router described by `routing`: its address, discovery, our address, the label of mappings,
+// the patience and the XML seam.
 Router::Router(Routing routing) : held_(std::make_shared<Held>()) { held_->routing = std::move(routing); }
 
+// Opens `inside` on the router for `lasting`, in the background; resolves with the opening.
 Promise<Opening> Router::open(Carrier carrier, std::uint16_t inside, std::chrono::seconds lasting) const {
     if (!held_) return refused<Opening>("The router is empty.");
 
@@ -996,6 +1053,7 @@ Promise<Opening> Router::open(Carrier carrier, std::uint16_t inside, std::chrono
     return made;
 }
 
+// Closes an opening made by this router, in the background.
 Promise<void> Router::close(Opening one) const {
     if (!held_) return refused<void>("The router is empty.");
 

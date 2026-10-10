@@ -36,25 +36,25 @@ namespace talcite {
 
 namespace {
 
-// Najwięcej, ile oddaje jedno słuchanie. Odpowiedzi terminala mieszczą się w kilobajcie; więcej
-// to wklejka albo śmieci i nie ma powodu trzymać ich w całości.
+// The most that one listen returns. Terminal replies fit in a kilobyte; more is a paste or garbage,
+// and there is no reason to keep it whole.
 constexpr std::size_t brim = 64 * 1024;
 
-// Cisza, po której pierwsze kliknięcie przestaje czekać na drugie. Żadna specyfikacja
-// przeglądarkowa tego nie ustala — implementacje biorą wartość z systemu, a GTK ma domyślnie
-// tyle. Na Windows pytamy wprost o ustawienie użytkownika; pod POSIX nie ma o to kogo zapytać,
-// a przy pracy zdalnej ustawienie i tak leżałoby na niewłaściwej maszynie.
+// The silence after which a first click stops waiting for a second one. No browser specification
+// fixes it: implementations take the value from the system, and GTK has this much by default. On
+// Windows the user's setting is asked for directly; under POSIX there is no one to ask, and in
+// remote work the setting would sit on the wrong machine anyway.
 constexpr std::chrono::milliseconds deciding{400};
 
 #ifdef _WIN32
 
-// Windows wkłada zmianę rozmiaru do kolejki wejścia jako rekord, ale tylko wtedy, gdy zmienia się
-// bufor — w conhoście z przewijaniem okno rośnie, a bufor stoi. Dlatego słuchanie zagląda do
-// rozmiaru co tyle, niezależnie od rekordów.
+// Windows puts a size change into the input queue as a record, but only when the buffer changes:
+// in a conhost with scrollback the window grows while the buffer stays. So listening looks at the
+// size this often, regardless of records.
 constexpr std::chrono::milliseconds glancing{100};
 
-// Same modyfikatory i blokady nie zamieniają się na żaden bajt, więc czekanie na nie skończyłoby
-// się staniem w ReadFile do następnego prawdziwego klawisza.
+// Modifiers and locks alone turn into no byte, so waiting for them would end with standing in
+// ReadFile until the next real key.
 bool aside(const KEY_EVENT_RECORD& key) {
     switch (key.wVirtualKeyCode) {
         case VK_SHIFT:
@@ -75,14 +75,15 @@ bool aside(const KEY_EVENT_RECORD& key) {
     }
 }
 
-// Kolejka konsoli budzi czekanie także rekordami, których tryb wirtualny nie zamienia na bajty:
-// zmianą rozmiaru, ogniskiem, puszczeniem klawisza. ReadFile zjadłby je i **stanął** do
-// następnego klawisza. Więc najpierw zaglądamy: jeśli nie ma nic mówiącego, zdejmujemy ciszę sami.
+// The console queue also wakes the wait with records that virtual terminal mode does not turn into
+// bytes: a size change, focus, a key release. ReadFile would eat them and block until the next
+// key. So the queue is looked at first: if there is nothing that speaks, the silent records are
+// removed here.
 bool speaking(HANDLE input) {
     for (int again = 0; again < 16; ++again) {
         DWORD many = 0;
 
-        // Nie konsola — wejście przekierowane. Wtedy czytamy wprost.
+        // Not a console: the input is redirected. Then it is read directly.
         if (GetNumberOfConsoleInputEvents(input, &many) == 0) return true;
 
         if (many == 0) return false;
@@ -93,8 +94,8 @@ bool speaking(HANDLE input) {
 
         if (PeekConsoleInputW(input, seen, asked, &given) == 0 || given == 0) return true;
 
-        // Rekordy myszy zostawiamy czytaniu, nawet gdy same nie muszą nic dać: to ReadFile
-        // zamienia je na sekwencję, gdy śledzenie myszy jest włączone.
+        // Mouse records are left for reading, even when they need not produce anything: ReadFile
+        // turns them into a sequence when mouse tracking is on.
         for (DWORD at = 0; at < given; ++at)
             if (seen[at].EventType == MOUSE_EVENT ||
                 (seen[at].EventType == KEY_EVENT && seen[at].Event.KeyEvent.bKeyDown != 0 &&
@@ -109,11 +110,11 @@ bool speaking(HANDLE input) {
     return false;
 }
 
-// Rozmiar okna, nie bufora — bufor bywa wyższy o przewijanie. **Mierzymy bufor czynny w tej
-// chwili**: standardowe wyjście wskazuje ten, z którego wystartowaliśmy, a ekran zapasowy jest
-// innym buforem, i to po każdym `?1049h` nowym. Dlatego CONOUT$ otwieramy przy każdym pomiarze,
-// zamiast trzymać uchwyt z chwili startu, który po powrocie z cudzego programu wskazywałby bufor
-// już nieczynny.
+// The size of the window, not of the buffer; the buffer is often taller by the scrollback. The
+// buffer active right now is measured: standard output points to the one we started from, and the
+// alternate screen is another buffer, a new one after every `?1049h`. That is why CONOUT$ is
+// opened at every measurement instead of keeping a handle from the start, which after returning
+// from another program would point to a buffer no longer active.
 std::optional<ui::Size> measured() {
     const HANDLE probe = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE,
                                      FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0,
@@ -137,28 +138,30 @@ std::optional<ui::Size> measured() {
     return ui::Size{wide, high};
 }
 
-// **Konsola, która VT nie przyjmuje** — Windows 7 i 8.1, pierwsze wydania 10 i „starsza konsola"
-// z ustawień. Do tej pory dostawała te same sekwencje, co reszta, i wypisywała je jako tekst.
-// Kompilacja z TALCITE_LEGACY_CONSOLE wymusza tę drogę także na nowej konsoli — żeby dało się ją
-// sprawdzić bez starego systemu.
+// A console that does not accept VT: Windows 7 and 8.1, the first releases of 10 and the "legacy
+// console" from the settings. Building with TALCITE_LEGACY_CONSOLE forces this path on a new
+// console too, so that it can be checked without an old system.
 #ifdef TALCITE_LEGACY_CONSOLE
 constexpr bool forced = true;
 #else
 constexpr bool forced = false;
 #endif
 
-// Klej między `conhost::Screen` a buforem konsoli. Zapis karmi siatkę i przepisuje zmienione
-// wiersze przez WriteConsoleOutputW; ekran zapasowy to **osobny bufor**, wielkości okna — wyjście
-// z niego oddaje bufor główny taki, jaki był, razem z przewijaniem, bez przepisywania ani jednej
-// komórki. Wejście czytamy rekordami i zamieniamy na bajty, które dałaby konsola z VT.
+// The glue between `conhost::Screen` and the console buffer. Writing feeds the grid and copies the
+// changed rows through WriteConsoleOutputW; the alternate screen is a separate buffer of the
+// window's size, so leaving it gives back the main buffer as it was, scrollback included, without
+// rewriting a single cell. Input is read as records and turned into the bytes a console with VT
+// would give.
 class Legacy {
 public:
+    // Builds the grid from the console's buffer: its size, colors and palette, and the cursor
+    // where the shell left it.
     explicit Legacy(HANDLE output) : original_(output), screen_(opened(output)) {
         CONSOLE_SCREEN_BUFFER_INFO told{};
 
         if (GetConsoleScreenBufferInfo(output, &told) != 0) {
-            // Kursor stoi tam, gdzie zostawiła go powłoka — mówimy to siatce tak, jak powiedziałby
-            // to terminal: skokiem.
+            // The cursor stands where the shell left it; the grid is told so the way a terminal
+            // would be told: with a jump.
             const int x = told.dwCursorPosition.X - told.srWindow.Left;
             const int y = told.dwCursorPosition.Y - told.srWindow.Top;
 
@@ -168,6 +171,7 @@ public:
         (void)screen_.dirty();
     }
 
+    // Returns to the main buffer and gives back the original font.
     ~Legacy() {
         parted();
         unfonted();
@@ -178,16 +182,18 @@ public:
     Legacy(Legacy&&) = delete;
     Legacy& operator=(Legacy&&) = delete;
 
+    // Feeds what `Term` writes into the grid and copies the changes to the console.
     void written(std::string_view bytes) {
         screen_.fed(bytes);
 
         flushed();
     }
 
+    // The grid's replies to the probe's questions, waiting to be read as input.
     [[nodiscard]] std::string answered() { return screen_.answers(); }
 
-    // Rekordy, które czekają, na bajty. `stirred` mówi, że zmienił się bufor — wołający i tak
-    // zmierzy okno od nowa.
+    // The waiting records, as bytes. `stirred` says that the buffer changed; the caller measures
+    // the window anew anyway.
     [[nodiscard]] std::string heard(HANDLE input, bool& stirred) {
         std::string made;
 
@@ -206,7 +212,7 @@ public:
             if (one.EventType == KEY_EVENT) {
                 const KEY_EVENT_RECORD& key = one.Event.KeyEvent;
 
-                // Znak wpisany z Altem na klawiaturze numerycznej przychodzi z puszczeniem Alta.
+                // A character typed with Alt on the numeric keypad comes with the release of Alt.
                 if (key.bKeyDown != 0)
                     made += conhost::typed({key.wVirtualKeyCode, static_cast<char16_t>(key.uChar.UnicodeChar),
                                             key.dwControlKeyState, key.wRepeatCount},
@@ -230,7 +236,7 @@ public:
         return made;
     }
 
-    // Okno ma nowy rozmiar. Własny bufor idzie za nim, żeby nie wyrosły paski przewijania.
+    // The window has a new size. The own buffer follows it, so that no scroll bars appear.
     void resized(ui::Size size) {
         if (size == screen_.size()) return;
 
@@ -240,10 +246,11 @@ public:
         screen_.resize(size);
     }
 
-    // **Czcionka rastrowa** zna tylko stronę kodową OEM: ramki, strzałki i litery spoza niej konsola
-    // pokazałaby jako znaki zapytania. Na czas programu bierzemy TrueType tej samej wysokości —
-    // Consolas, a gdzie jej nie ma, Lucida Console — i przy wyjściu oddajemy dawną. Gdy żadna się nie
-    // przyjmie, zostaje rastrowa; co wtedy wybrać we właściwościach okna, mówi pomoc programu.
+    // A raster font knows only the OEM code page: the console would show frames, arrows and
+    // letters outside it as question marks. For the time of the program a TrueType font of the same
+    // height is taken (Consolas, or Lucida Console where it is missing), and the old one is given
+    // back at exit. When neither is accepted, the raster font stays; the program's help says what
+    // to choose in the window properties then.
     void fonted() {
         CONSOLE_FONT_INFOEX now{};
         now.cbSize = sizeof now;
@@ -265,7 +272,8 @@ public:
                 if (SetCurrentConsoleFontEx(original_, FALSE, &wanted) != 0 && truetyped(original_)) break;
             }
 
-            // Żadna nie weszła, a nieudana próba mogła zostawić inną rastrową — wraca ta sprzed nas.
+            // Neither one took, and a failed attempt may have left another raster font: the one
+            // from before comes back.
             if (!truetyped(original_)) unfonted();
         }
 
@@ -275,7 +283,8 @@ public:
             screen_.pixels({font.dwFontSize.X, font.dwFontSize.Y});
     }
 
-    // Dawna czcionka wraca — przy wyjściu z programu i przed oddaniem konsoli programowi potomnemu.
+    // The old font comes back, at program exit and before the console is handed to a child
+    // program.
     void unfonted() {
         if (!was_.has_value()) return;
 
@@ -284,7 +293,7 @@ public:
         was_.reset();
     }
 
-    // Powrót do bufora głównego, gdyby aplikacja nie wyszła z ekranu zapasowego sama.
+    // Back to the main buffer, in case the application did not leave the alternate screen itself.
     void parted() {
         if (own_ == nullptr) return;
 
@@ -295,6 +304,8 @@ public:
     }
 
 private:
+    // A grid in the console's colors and palette, of the window's size; when the console says
+    // nothing, 80 by 25 in light gray on black.
     static conhost::Screen opened(HANDLE output) {
         CONSOLE_SCREEN_BUFFER_INFOEX told{};
         told.cbSize = sizeof told;
@@ -319,8 +330,10 @@ private:
                                static_cast<std::uint8_t>((told.wAttributes >> 4) & 0x0F), palette};
     }
 
+    // The buffer being drawn on: our own alternate one, or the original.
     [[nodiscard]] HANDLE active() const { return own_ != nullptr ? own_ : original_; }
 
+    // Whether the buffer's current font is a TrueType one.
     [[nodiscard]] static bool truetyped(HANDLE buffer) {
         CONSOLE_FONT_INFOEX now{};
         now.cbSize = sizeof now;
@@ -328,7 +341,8 @@ private:
         return GetCurrentConsoleFontEx(buffer, FALSE, &now) != 0 && (now.FontFamily & TMPF_TRUETYPE) != 0;
     }
 
-    // Lewy górny róg okna w buforze. Własny bufor ma go w zerze; główny tam, dokąd go przewinięto.
+    // The top left corner of the window in the buffer. Our own buffer has it at zero; the main one
+    // wherever it was scrolled to.
     [[nodiscard]] ui::Spot corner() const {
         CONSOLE_SCREEN_BUFFER_INFO told{};
 
@@ -337,6 +351,8 @@ private:
         return {told.srWindow.Left, told.srWindow.Top};
     }
 
+    // Switches buffers when the grid entered or left the alternate screen, copies the changed rows,
+    // and carries over the cursor, its visibility and the window title.
     void flushed() {
         if (screen_.apart() && own_ == nullptr) {
             own_ = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -347,8 +363,9 @@ private:
             if (own_ != nullptr) {
                 const ui::Size size = screen_.size();
 
-                // Bufor zapasowy dostaje czcionkę, którą ustawiliśmy głównemu: SetCurrentConsoleFontEx
-                // bierze uchwyt bufora, nie okna, więc nie zakładamy, że nowy bufor ją odziedziczy.
+                // The alternate buffer gets the font set for the main one: SetCurrentConsoleFontEx
+                // takes a buffer handle, not a window, so the new buffer is not assumed to inherit
+                // it.
                 if (was_.has_value()) {
                     CONSOLE_FONT_INFOEX now{};
                     now.cbSize = sizeof now;
@@ -413,11 +430,13 @@ private:
 
 #else
 
-// Rurka sygnału zmiany rozmiaru. Obsługa sygnału wolno jej tylko pisać do deskryptora, a słuchanie
-// czeka na nią w tym samym poll(), co na klawiaturę — więc zmiana rozmiaru budzi czekanie
-// niezawodnie, także wtedy, gdy przyszła tuż przed nim.
+// The pipe for the size change signal. A signal handler may only write to a descriptor, and
+// listening waits for it in the same poll() as for the keyboard, so a size change wakes the wait
+// reliably, even when it came just before it.
 volatile std::sig_atomic_t stirred = -1;
 
+// The SIGWINCH handler: one byte into the pipe, with errno preserved. Also called directly to wake
+// listening after a resume.
 void widened(int) {
     if (stirred < 0) return;
 
@@ -428,15 +447,16 @@ void widened(int) {
     errno = saved;
 }
 
-// **Sygnały, po których terminal ma wrócić do człowieka.** Zabity przez SIGTERM albo SIGHUP
-// program zostawiał terminal w trybie surowym, na ekranie zapasowym, z myszą i bez kursora —
-// powłoka pod spodem była nie do użycia do `reset`. Zatrzymany z zewnątrz (SIGTSTP) zostawiał to
-// samo powłoce, a wznowiony (SIGCONT) rysował po tym, co narysowała ona.
+// Signals after which the terminal has to go back to the person. Without this, a program killed
+// by SIGTERM or SIGHUP would leave the terminal in raw mode, on the alternate screen, with the
+// mouse on and without a cursor, and the shell underneath would be unusable until reset. A program
+// stopped from outside (SIGTSTP) would leave the same to the shell, and once resumed (SIGCONT)
+// would draw over what the shell drew.
 //
-// Obsługa sygnału wolno jej tylko to, co bezpieczne w obsłudze sygnału: `tcsetattr`, `write`,
-// `sigaction`, `raise`. Stąd stan w zmiennych z góry — tryb sprzed i tryb surowy — oraz pożegnanie
-// stałym napisem, który zdejmuje wszystko, co `Term` umie włączyć; zdjęcie czegoś, czego nie
-// włączono, nic nie robi.
+// A signal handler may only do what is safe in a signal handler: `tcsetattr`, `write`,
+// `sigaction`, `raise`. Hence the state in variables prepared in advance (the mode from before and
+// the raw mode) and a farewell with a fixed string that turns off everything `Term` can turn on;
+// turning off something that was not turned on does nothing.
 termios cooked_kept{};
 termios raw_kept{};
 volatile std::sig_atomic_t rawly = 0;
@@ -444,6 +464,7 @@ volatile std::sig_atomic_t returned = 0;
 
 constexpr char farewell[] = "\x1b[?2004l\x1b[?1003l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l";
 
+// Gives the terminal back: the mode from before and the farewell string. Safe in a signal handler.
 void restored() {
     (void)::tcsetattr(STDIN_FILENO, TCSANOW, &cooked_kept);
 
@@ -451,6 +472,7 @@ void restored() {
     (void)wrote;
 }
 
+// Unblocks the signal in this thread, so that raising it from its own handler takes effect.
 void unblocked(int which) {
     sigset_t one;
 
@@ -460,6 +482,7 @@ void unblocked(int which) {
     (void)::pthread_sigmask(SIG_UNBLOCK, &one, nullptr);
 }
 
+// Installs `how` for the signal, with SA_RESTART; `was` receives the previous action if given.
 void handled(int which, void (*how)(int), struct sigaction* was) {
     struct sigaction made {};
 
@@ -470,8 +493,8 @@ void handled(int which, void (*how)(int), struct sigaction* was) {
     (void)::sigaction(which, &made, was);
 }
 
-// SIGTERM, SIGHUP, SIGQUIT: terminal wraca, a sygnał przychodzi jeszcze raz, już z domyślną
-// reakcją — kod wyjścia i powód końca są takie, jakich spodziewa się ten, kto go wysłał.
+// SIGTERM, SIGHUP, SIGQUIT: the terminal comes back, and the signal arrives once more, now with
+// the default action, so the exit code and the reason for the end are what the sender expects.
 void parted(int which) {
     restored();
 
@@ -481,9 +504,9 @@ void parted(int which) {
     (void)::raise(which);
 }
 
-// SIGTSTP: terminal wraca do powłoki, a my zatrzymujemy się naprawdę — domyślną reakcją, wywołaną
-// stąd. Wznowienie wraca w to samo miejsce: tryb surowy na nowo i znak dla słuchania, że trzeba
-// ubrać terminal i narysować wszystko jeszcze raz.
+// SIGTSTP: the terminal goes back to the shell, and the program really stops, through the default
+// action raised from here. Resuming returns to the same place: raw mode again and a sign for
+// listening that the terminal has to be set up and everything drawn once more.
 void paused(int which) {
     const int saved = errno;
 
@@ -504,8 +527,8 @@ void paused(int which) {
     errno = saved;
 }
 
-// SIGCONT po zatrzymaniu, którego nie dało się złapać (SIGSTOP): powłoka mogła przez ten czas
-// przestawić terminal i pisać po ekranie.
+// SIGCONT after a stop that could not be caught (SIGSTOP): in the meantime the shell may have
+// changed the terminal settings and written over the screen.
 void continued(int) {
     if (rawly == 0) return;
 
@@ -519,6 +542,7 @@ void continued(int) {
     errno = saved;
 }
 
+// Reads the pipe empty, so that the next poll() waits again.
 void drained(int from) {
     unsigned char room[64];
 
@@ -526,6 +550,7 @@ void drained(int from) {
     }
 }
 
+// The terminal size from TIOCGWINSZ, or nothing when the output is not a terminal.
 std::optional<ui::Size> measured() {
     winsize told{};
 
@@ -537,16 +562,18 @@ std::optional<ui::Size> measured() {
 
 #endif
 
-// **Prawdziwa konsola procesu — jedna.** Terminal jest jeden, więc i właściciel jego trybu jest
-// jeden: dwa obiekty liczyłyby włączenia trybu surowego osobno, każdy z własnym zapamiętanym
-// stanem, i drugi przywracałby to, co pierwszy dopiero założył. Wszystko, co biblioteka mówi
-// terminalowi i od niego słyszy, idzie tędy — dlatego próby podstawiają w tym miejscu atrapę
-// i sprawdzają rozmowę co do bajtu, bez terminala i bez przestawiania środowiska procesu.
+// The real console of the process; there is one. The terminal is one, so the owner of its mode is
+// one too: two objects would count raw mode activations separately, each with its own remembered
+// state, and the second would restore what the first had only just set. Everything the library
+// says to the terminal and hears from it goes through here, which is why trials substitute a fake
+// at this point and check the conversation byte by byte, without a terminal and without changing
+// the process environment.
 class Real final : public Console {
 public:
     Real() = default;
 
-    // Konsola porzucona w trybie surowym zostawiłaby terminal bez echa i bez Entera.
+    // A console abandoned in raw mode would leave the terminal without echo and without Enter, so
+    // the destructor leaves raw mode whatever the depth; it also closes the signal pipe.
     ~Real() override {
         if (depth_ > 0) {
             depth_ = 1;
@@ -569,10 +596,12 @@ public:
     Real(Real&&) = delete;
     Real& operator=(Real&&) = delete;
 
+    // The name of this console, for diagnostics.
     [[nodiscard]] std::string_view name() const override { return "console"; }
 
-    // Pusta wartość to co innego niż brak zmiennej, ale rozstrzyga o tym czytający: `NO_COLOR=`
-    // według swojej umowy nie gasi niczego, a `TERM=` znaczy tyle, co brak.
+    // An environment variable, or nothing when it is not set. An empty value is not the same as a
+    // missing variable, but the reader decides: `NO_COLOR=` by its own convention turns nothing
+    // off, and `TERM=` means as much as a missing one.
     [[nodiscard]] std::optional<std::string> variable(std::string_view name) const override {
         const std::string key{name};
 
@@ -583,6 +612,7 @@ public:
         return std::string{told};
     }
 
+    // Whether both input and output are a console or a terminal, not a file or a pipe.
     [[nodiscard]] bool lively() const override {
 #ifdef _WIN32
 
@@ -598,10 +628,11 @@ public:
 #endif
     }
 
-    // Na Windows nie ma czego zgadywać ze środowiska: albo konsola przyjmuje sekwencje ucieczki,
-    // albo nie. Ustawiamy bit, **odczytujemy z powrotem** — bo starsze conhosty potrafią przyjąć
-    // wywołanie i nic nie zrobić — i przywracamy stan. Konsola, która przyjęła VT, ma pełną paletę;
-    // ta, która nie przyjęła, ma szesnaście kolorów z czasów przed nią.
+    // On Windows there is nothing to guess from the environment: either the console accepts escape
+    // sequences or it does not. The bit is set, read back (because older conhosts can accept the
+    // call and do nothing), and the state is restored. A console that accepted VT has the full
+    // palette; one that did not has the sixteen colors from the time before it. Elsewhere this is
+    // always false, and the colors are judged from the environment.
     [[nodiscard]] bool vt() const override {
 #ifdef _WIN32
 
@@ -631,8 +662,8 @@ public:
 #endif
     }
 
-    // Zapamiętujemy, co oddaliśmy, bo słuchanie na Windows porównuje z tym bieżący pomiar
-    // i wraca, gdy się różni.
+    // The terminal size in cells. What was returned is remembered, because listening on Windows
+    // compares the current measurement with it and returns when they differ.
     [[nodiscard]] std::optional<ui::Size> size() const override {
         const std::optional<ui::Size> made = measured();
 
@@ -647,6 +678,7 @@ public:
         return made;
     }
 
+    // The double-click time: the user's setting on Windows, otherwise the GTK default.
     [[nodiscard]] std::chrono::milliseconds double_click() const override {
 #ifdef _WIN32
 
@@ -659,17 +691,17 @@ public:
         return deciding;
     }
 
-    // Tryb surowy — jeden, ten, w którym rysujemy. Bez echa i bez trybu wierszowego, bo inaczej
-    // klawisze i odpowiedzi terminala czekałyby na Enter; bez sygnałów i bez XON, bo Ctrl+C
-    // i Ctrl+S są dla programu zwykłymi klawiszami; bez zamiany CR na LF, bo Enter ma przyjść
-    // jako Enter. Na Windows dochodzi strona kodowa: konsola z ustawieniem innym niż UTF-8 liczy
-    // każdy bajt jako osobną kolumnę — znak chiński mierzy się wtedy na trzy — a pomiar musi się
-    // odbyć w tym samym kodowaniu, w którym potem rysujemy. Zawijanie gasimy, bo klatka stawia
-    // znak także w ostatniej kolumnie.
+    // Raw mode, the single one in which drawing happens. No echo and no line mode, because
+    // otherwise keys and terminal replies would wait for Enter; no signals and no XON, because
+    // Ctrl+C and Ctrl+S are ordinary keys for the program; no CR to LF translation, because Enter
+    // has to come as Enter. On Windows the code page joins in: a console set to anything other than
+    // UTF-8 counts every byte as a separate column (a Chinese character then measures three), and
+    // the measurement must happen in the same encoding that drawing uses later. Wrapping is turned
+    // off, because the frame puts a character in the last column too.
     //
-    // **Włączenia się zliczają**: przywraca dopiero wyłączenie ostatnie, więc badanie w środku
-    // `Term` nie zdejmuje trybu, który `Term` założył wcześniej. Razem z trybem zakładamy
-    // i zdejmujemy obsługę SIGWINCH — dopóki nie rysujemy, zmiana rozmiaru nas nie obchodzi.
+    // Activations are counted: only the last deactivation restores, so a probe inside `Term` does
+    // not remove the mode `Term` set earlier. The SIGWINCH handler is installed and removed
+    // together with the mode; while nothing is drawn, a size change does not matter.
     void raw(bool on) override {
         if (on) {
             if (depth_++ == 0) entered();
@@ -682,8 +714,8 @@ public:
         if (--depth_ == 0) left();
     }
 
-    // Czy od ostatniego pytania program był zatrzymany i wznowiony — wtedy terminal trzeba ubrać
-    // i narysować od nowa. Pytanie zdejmuje znak.
+    // Whether the program was stopped and resumed since the last question; then the terminal has
+    // to be set up and drawn anew. The question clears the sign.
     [[nodiscard]] bool resumed() override {
 #ifdef _WIN32
         return false;
@@ -696,9 +728,9 @@ public:
 #endif
     }
 
-    // Bajty prosto na wyjście. **Nie ma tu buforowania i nie ma obsługi błędu.** Krótki zapis
-    // dobieramy w pętli, a zapis, który się nie udał, milknie: nie ma komu tego zgłosić, bo na
-    // drugim końcu jest terminal, a nie plik.
+    // Bytes straight to the output. There is no buffering here and no error handling. A short
+    // write is completed in a loop, and a write that failed falls silent: there is no one to
+    // report it to, because a terminal is at the other end, not a file.
     void write(std::string_view bytes) override {
 #ifdef _WIN32
 
@@ -728,8 +760,8 @@ public:
 #endif
     }
 
-    // Pustka znaczy „nie ma czego czytać, rozejrzyj się": minął czas, zadzwonił dzwonek albo
-    // zmienił się rozmiar. Wołający i tak sprawdza wszystkie trzy, więc powodu nie oddajemy.
+    // Empty means "nothing to read, look around": the time passed, the bell rang or the size
+    // changed. The caller checks all three anyway, so the reason is not returned.
     [[nodiscard]] std::string hear(std::optional<std::chrono::milliseconds> patience,
                                    const Bell* also) override {
         std::string made;
@@ -738,7 +770,7 @@ public:
 
         const HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
 
-        // Odpowiedzi na sondę są już gotowe — przyszły z zapisu pytań.
+        // The replies to the probe are ready already; they came from writing the questions.
         if (legacy_ != nullptr) {
             made = legacy_->answered();
 
@@ -779,10 +811,10 @@ public:
             } else if (ready == WAIT_OBJECT_0 && speaking(input)) {
                 DWORD mode = 0;
 
-                // **Konsola czytana szeroko.** `ReadFile` przy stronie kodowej 65001 oddawał w części
-                // conhostów zero zamiast każdego znaku spoza ASCII — „ą" z klawiatury przychodziło
-                // jako pusty bajt. `ReadConsoleW` daje UTF-16, które przekładamy sami; połówkę pary
-                // zastępczej z końca odczytu trzymamy do następnego.
+                // A console read as wide text. In some conhosts `ReadFile` with code page 65001
+                // returns a zero in place of every non-ASCII character, so "ą" from the keyboard
+                // would arrive as an empty byte. `ReadConsoleW` gives UTF-16, which is converted
+                // here; the half of a surrogate pair at the end of a read is kept for the next one.
                 if (GetConsoleMode(input, &mode) != 0) {
                     wchar_t room[512];
                     DWORD given = 0;
@@ -809,8 +841,8 @@ public:
                 char room[1024];
                 DWORD given = 0;
 
-                // Wejście przekierowane i skończone budziłoby czekanie bez przerwy, więc pusty
-                // odczyt kończy słuchanie, a wołający się rozgląda.
+                // Redirected input that has ended would wake the wait without pause, so an empty
+                // read ends listening, and the caller looks around.
                 if (ReadFile(input, room, sizeof(room), &given, nullptr) == 0 || given == 0)
                     return made;
 
@@ -858,6 +890,8 @@ public:
     }
 
 private:
+    // Enters raw mode: on Windows the UTF-8 code pages and console modes, choosing VT or the
+    // translation; elsewhere termios, SIGWINCH and the signals that give the terminal back.
     void entered() {
 #ifdef _WIN32
 
@@ -873,10 +907,11 @@ private:
         SetConsoleCP(CP_UTF8);
         SetConsoleOutputCP(CP_UTF8);
 
-        // **Bez szybkiej edycji.** W konsoli Windows 10 (conhost) kliknięcie zaczyna wtedy zaznaczanie
-        // zamiast trafić do programu, a dopóki zaznaczenie trwa, każdy zapis do konsoli stoi — cały
-        // interfejs zamarza. Bitu szybkiej edycji nie da się ruszyć bez `ENABLE_EXTENDED_FLAGS`.
-        // Windows Terminal tego trybu nie ma, więc tam nic się nie zmienia.
+        // Without quick edit. In the Windows 10 console (conhost) a click would otherwise start a
+        // selection instead of reaching the program, and while the selection lasts every write to
+        // the console blocks, so the whole interface freezes. The quick edit bit cannot be changed
+        // without `ENABLE_EXTENDED_FLAGS`. Windows Terminal does not have this mode, so nothing
+        // changes there.
         DWORD raw = was_in_;
         raw &= ~static_cast<DWORD>(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT |
                                    ENABLE_MOUSE_INPUT | ENABLE_QUICK_EDIT_MODE);
@@ -885,9 +920,10 @@ private:
         DWORD vt = was_out_ | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
         vt &= ~static_cast<DWORD>(ENABLE_WRAP_AT_EOL_OUTPUT);
 
-        // **Tryb VT albo tłumaczenie — rozstrzyga pierwsze wejście i zostaje do końca.** Konsola,
-        // która bitu VT nie zna, odrzuca całe wywołanie z nim, także na wejściu — dlatego dla niej
-        // tryb wejścia idzie bez VT, za to z myszą: rekordy myszy zamieniamy sami.
+        // VT mode or the translation: the first entry decides, and it stays until the end. A
+        // console that does not know the VT bit rejects the whole call with it, on input too, so
+        // for such a console the input mode goes without VT but with the mouse: mouse records are
+        // translated here.
         if (legacy_ == nullptr && !modern_) {
             DWORD now = 0;
 
@@ -930,8 +966,8 @@ private:
 
         rawly = 1;
 
-        // Tylko tam, gdzie sygnał miał reakcję domyślną. Program, który ustawił własną obsługę albo
-        // sygnał zignorował, bierze odpowiedzialność na siebie — nie przykrywamy jej.
+        // Only where the signal had its default action. A program that installed its own handler or
+        // ignored the signal takes the responsibility itself, and that is not covered over.
         for (std::size_t at = 0; at < parting.size(); ++at) taken_[at] = defaulted(parting[at], before_[at]);
 
         held_ = true;
@@ -939,6 +975,8 @@ private:
 #endif
     }
 
+    // Leaves raw mode: restores SIGWINCH, the signal handlers, the console modes and code pages or
+    // the termios state from before.
     void left() {
 #ifndef _WIN32
 
@@ -981,8 +1019,8 @@ private:
 
 #ifndef _WIN32
 
-    // Rurka sygnału powstaje przy pierwszej potrzebie i żyje tyle, co konsola, czyli do końca
-    // procesu. Nie trafia do programów potomnych.
+    // The signal pipe is created at first need and lives as long as the console, that is, until
+    // the process ends. It does not leak into child programs.
     void prepared() {
         if (heard_ >= 0) return;
 
@@ -1016,8 +1054,9 @@ private:
 #else
     static constexpr std::array<int, 6> parting{SIGTERM, SIGHUP, SIGQUIT, SIGINT, SIGTSTP, SIGCONT};
 
-    // Obsługa pod sygnał z `parting`: kończące — `parted`, zatrzymanie — `paused`, wznowienie —
-    // `continued`.
+    // Installs the handler for a signal from `parting`, but only over the default action: ending
+    // signals get `parted`, the stop gets `paused`, the resume gets `continued`. False when the
+    // signal had a handler of its own; `was` keeps the previous action.
     static bool defaulted(int which, struct sigaction& was) {
         if (::sigaction(which, nullptr, &was) != 0 || was.sa_handler != SIG_DFL) return false;
 
@@ -1037,6 +1076,7 @@ private:
 
 }
 
+// The process console, shared by everyone who asks.
 Seam<Console> console() {
     static const Seam<Console> one{std::make_shared<Real>()};
 

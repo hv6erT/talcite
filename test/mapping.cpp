@@ -24,19 +24,21 @@
 
 using namespace talcite;
 
-// **Port otwierany na routerze** — PCP, NAT-PMP i UPnP IGD przeciw routerowi z próby: gniazdo UDP
-// na pętli zwrotnej udaje port 5351, drugie — SSDP, a brama TCP — serwer opisu i SOAP. Próba sama
-// czyta prośby bajt w bajt i pisze odpowiedzi, więc widać dokładnie, co idzie do routera.
+// Opening a port on the router: PCP, NAT-PMP and UPnP IGD against a router made by the trial. A UDP
+// socket on loopback plays port 5351, a second one plays SSDP, and a TCP listener plays the
+// description and SOAP server. The trial reads the requests byte for byte and writes the responses
+// itself, so it shows exactly what goes to the router.
 //
-// XML czyta atrapa, która **nie parsuje** i nie udaje, że to robi: zna kilka ustalonych treści
-// (`OPIS`, `DODANO`…) i oddaje za nie drzewa zbudowane tutaj. Prawdziwy XML z prawdziwego routera
-// przechodzi przez pugixml w próbie talcite-adapters.
+// XML is read by a fake that does not parse and does not pretend to: it knows a few fixed contents
+// (`OPIS`, `DODANO`…) and hands back trees built here for them. Real XML from a real router goes
+// through pugixml in a talcite-adapters trial.
 namespace {
 
 const net::Patience soon{6000};
 
 using Clock = std::chrono::steady_clock;
 
+// An element with the given name and, when `text` is not empty, a single text child.
 xml::Node element(std::string name, std::string text = {}) {
     xml::Node made;
 
@@ -47,12 +49,14 @@ xml::Node element(std::string name, std::string text = {}) {
     return made;
 }
 
+// The node with the given children appended.
 xml::Node with(xml::Node one, std::vector<xml::Node> children) {
     for (xml::Node& each : children) one.children.push_back(std::move(each));
 
     return one;
 }
 
+// A document whose only node is `top`.
 xml::Document document(xml::Node top) {
     xml::Document made;
 
@@ -61,12 +65,13 @@ xml::Document document(xml::Node top) {
     return made;
 }
 
+// A service entry of a device description with the given type and control address.
 xml::Node service(std::string type, std::string control) {
     return with(element("service"), {element("serviceType", std::move(type)), element("controlURL", std::move(control))});
 }
 
-// Opis jak u typowego routera: urządzenie bramy, w nim urządzenie WAN, w nim połączenie WAN —
-// a obok usługa, która portów nie otwiera.
+// A description as on a typical router: the gateway device, in it the WAN device, in it the WAN
+// connection, and next to it a service that does not open ports.
 xml::Document described(std::string control, std::string type = "urn:schemas-upnp-org:service:WANIPConnection:1") {
     xml::Node connection = with(element("device"), {with(element("serviceList"), {service(std::move(type), std::move(control))})});
     xml::Node wan =
@@ -78,6 +83,7 @@ xml::Document described(std::string control, std::string type = "urn:schemas-upn
                                                                     with(element("deviceList"), {std::move(wan)})})}));
 }
 
+// A SOAP fault with the given UPnP error code and description.
 xml::Document fault(std::string code, std::string description) {
     return document(with(element("s:Envelope"),
                          {with(element("s:Body"),
@@ -91,8 +97,10 @@ class Xml : public Codec<xml::Document> {
 public:
     std::map<std::string, xml::Document> known;
 
+    // The provider name that the seam reports.
     [[nodiscard]] std::string_view name() const override { return "fake xml"; }
 
+    // The tree registered in `known` for the given text, or a refusal for anything else.
     [[nodiscard]] std::string decode(const Bytes& given, xml::Document& into) override {
         const auto found = known.find(text(given));
 
@@ -103,9 +111,12 @@ public:
         return {};
     }
 
+    // Always refuses: the router code only reads XML.
     [[nodiscard]] std::string encode(const xml::Document&, Bytes&) override { return "the fake does not write"; }
 };
 
+// A fake XML codec that knows the description (with the given control address) and the router's
+// SOAP answers by their keys.
 std::shared_ptr<Xml> fake_xml(const std::string& control = "/ctl/IPConn") {
     auto made = std::make_shared<Xml>();
 
@@ -122,11 +133,12 @@ std::shared_ptr<Xml> fake_xml(const std::string& control = "/ctl/IPConn") {
     return made;
 }
 
-// Router z próby: port 5351 (PCP i NAT-PMP) i port SSDP — oba na pętli zwrotnej.
+// The trial's router: port 5351 (PCP and NAT-PMP) and the SSDP port, both on loopback.
 struct Fake {
     net::Udp pcp{net::Address::loopback(net::Family::four, 0)};
     net::Udp ssdp{net::Address::loopback(net::Family::four, 0)};
 
+    // Routing settings that point at the fake router, with the given XML seam.
     net::Routing routing(Seam<Codec<xml::Document>> xml = {}) const {
         net::Routing made;
 
@@ -140,27 +152,34 @@ struct Fake {
         return made;
     }
 
+    // The next datagram that reaches the fake port 5351.
     net::Datagram heard(net::Patience patience = soon) const { return pcp.receive(1500, patience).await(); }
 
+    // Sends the bytes from the fake port 5351 to `to`.
     void told(const net::Address& to, const Bytes& what) const { pcp.send(to, what, soon).await(); }
 };
 
+// The 16-bit big-endian value at `at`.
 std::uint32_t got16(const Bytes& from, std::size_t at) {
     return (std::to_integer<std::uint32_t>(from[at]) << 8) | std::to_integer<std::uint32_t>(from[at + 1]);
 }
 
+// The 32-bit big-endian value at `at`.
 std::uint32_t got32(const Bytes& from, std::size_t at) { return (got16(from, at) << 16) | got16(from, at + 2); }
 
+// Appends the low 16 bits of the value, big-endian.
 void put16(Bytes& into, std::uint32_t value) {
     into.push_back(static_cast<std::byte>((value >> 8) & 0xff));
     into.push_back(static_cast<std::byte>(value & 0xff));
 }
 
+// Appends the 32-bit value, big-endian.
 void put32(Bytes& into, std::uint32_t value) {
     put16(into, value >> 16);
     put16(into, value & 0xffff);
 }
 
+// The IPv4 address a.b.c.d mapped into IPv6 as ::ffff:a.b.c.d, 16 bytes.
 Bytes mapped_four(std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d) {
     Bytes made(10);
 
@@ -172,11 +191,13 @@ Bytes mapped_four(std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d
     return made;
 }
 
+// `much` bytes of `from` starting at `at`.
 Bytes slice(const Bytes& from, std::size_t at, std::size_t much) {
     return Bytes(from.begin() + static_cast<std::ptrdiff_t>(at), from.begin() + static_cast<std::ptrdiff_t>(at + much));
 }
 
-// Odpowiedź PCP na prośbę MAP: nagłówek odpowiedzi i to samo MAP z przydzielonym portem i adresem.
+// A PCP answer to a MAP request: the response header and the same MAP with the assigned port and
+// address.
 Bytes pcp_answer(const Bytes& asked, std::uint32_t result, std::uint32_t lifetime, std::uint32_t port, const Bytes& address) {
     Bytes made;
 
@@ -199,6 +220,7 @@ Bytes pcp_answer(const Bytes& asked, std::uint32_t result, std::uint32_t lifetim
     return made;
 }
 
+// A NAT-PMP answer to operation `op` with the given result code, ports and lifetime.
 Bytes pmp_answer(std::uint32_t op, std::uint32_t result, std::uint32_t inside, std::uint32_t outside, std::uint32_t lifetime) {
     Bytes made;
 
@@ -213,11 +235,13 @@ Bytes pmp_answer(std::uint32_t op, std::uint32_t result, std::uint32_t inside, s
     return made;
 }
 
-// Strona serwera HTTP z próby: jedno połączenie, głowa i treść żądania, odpowiedź.
+// The server side of the trial's HTTP: one connection, the head and body of a request, an answer.
 struct Desk {
     net::Stream plain;
     std::string kept;
 
+    // The next request, head and body, read up to its Content-Length; empty when the connection
+    // closed first.
     std::string asked() {
         std::string head;
 
@@ -256,6 +280,7 @@ struct Desk {
         return made;
     }
 
+    // Writes an HTTP answer with the given status and XML body, and closes the connection.
     void answered(int status, const std::string& body) {
         plain.write(bytes("HTTP/1.1 " + std::to_string(status) + " X\r\nContent-Type: text/xml\r\nContent-Length: " +
                           std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body),
@@ -265,13 +290,16 @@ struct Desk {
     }
 };
 
+// The next connection accepted on `gate`, as a desk.
 Desk accepted(const net::Listener& gate) { return Desk{gate.accept(soon).await(), {}}; }
 
+// Whether `what` occurs in `in`.
 bool has(const std::string& in, const std::string& what) { return in.find(what) != std::string::npos; }
 
+// The port of the listener, as text.
 std::string port_of(const net::Listener& gate) { return std::to_string(gate.mine().port()); }
 
-// Odpowiedź na pierwsze M-SEARCH: opis leży pod podanym adresem.
+// The answer to the first M-SEARCH: the description lies at the given address.
 std::string searched(const Fake& fake, const net::Listener& gate, const std::string& path = "/rootDesc.xml") {
     const net::Datagram came = fake.ssdp.receive(1500, soon).await();
     const std::string said = text(came.bytes);
@@ -289,7 +317,7 @@ std::string searched(const Fake& fake, const net::Listener& gate, const std::str
 
 }
 
-TRIAL("Router: trasa domyślna z tablicy Linuksa") {
+TRIAL("Router: the default route from the Linux table") {
     const std::string table =
         "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
         "eth0\t000200C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
@@ -309,29 +337,29 @@ TRIAL("Router: trasa domyślna z tablicy Linuksa") {
     ought(!net::routed("Iface\nwlan0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00FFFFFF\n").has_value());
 }
 
-// Brama tej maszyny zależy od sieci, na której próba biegnie — sprawdzamy tylko, że odpowiedź to
-// adres IPv4 albo czysta odmowa, i mówimy, co wyszło.
-TRIAL("Router: brama tego komputera — adres IPv4 albo odmowa") {
+// The gateway of this machine depends on the network the trial runs on, so we only check that the
+// answer is an IPv4 address or a clean refusal, and say what came out.
+TRIAL("Router: this computer's gateway, an IPv4 address or a refusal") {
     try {
         const net::Address one = net::gateway().await();
 
         ought(one.family() == net::Family::four);
         same(one.port(), static_cast<std::uint16_t>(0));
 
-        std::cout << "        brama: " << one.text() << "\n";
+        std::cout << "        gateway: " << one.text() << "\n";
     } catch (const Trouble& why) {
-        std::cout << "        bez bramy: " << why.what() << "\n";
+        std::cout << "        no gateway: " << why.what() << "\n";
     }
 }
 
-TRIAL("Router: adres, którym wychodzimy w stronę celu") {
+TRIAL("Router: the address we leave by toward the destination") {
     same(net::leaving(net::Address::loopback(net::Family::four, 0)).await().text(), std::string{"127.0.0.1"});
     same(net::leaving(net::Address::loopback(net::Family::four, 53)).await().port(), static_cast<std::uint16_t>(0));
 
     threw(net::leaving(net::Address{}).await());
 }
 
-TRIAL("Router: pusty, port zero i brak bramy to odmowa") {
+TRIAL("Router: empty, port zero and no gateway are refusals") {
     threw(net::Router{}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).await());
     threw(net::Router{}.close(net::Opening{}).await());
 
@@ -346,9 +374,9 @@ TRIAL("Router: pusty, port zero i brak bramy to odmowa") {
     threw(net::Router{none}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).await());
 }
 
-// RFC 6887: nagłówek (wersja 2, MAP, czas życia, nasz adres jako ::ffff:a.b.c.d) i MAP (nonce,
-// protokół, port wewnętrzny, proponowany port i adres zewnętrzny — „dowolny" to ::ffff:0.0.0.0).
-TRIAL("Router: PCP otwiera port — prośba MAP bajt w bajt, odpowiedź daje adres i czas") {
+// RFC 6887: the header (version 2, MAP, lifetime, our address as ::ffff:a.b.c.d) and MAP (nonce,
+// protocol, internal port, suggested port and external address; "any" is ::ffff:0.0.0.0).
+TRIAL("Router: PCP opens a port, the MAP request byte for byte, the answer gives address and time") {
     const Fake fake;
     const net::Router router{fake.routing()};
 
@@ -381,9 +409,9 @@ TRIAL("Router: PCP otwiera port — prośba MAP bajt w bajt, odpowiedź daje adr
     same(static_cast<long long>(one.lasting.count()), static_cast<long long>(1800));
 }
 
-// Odnowienie i zamknięcie niosą **ten sam nonce** — po nim router poznaje swoje mapowanie.
-// Zamknięcie to czas życia zero; po nim nonce znika, a drugie zamknięcie to odmowa.
-TRIAL("Router: PCP odnawia i zamyka tym samym nonce, UDP osobnym") {
+// Renewing and closing carry the same nonce; by it the router recognizes its mapping. Closing is a
+// lifetime of zero; after it the nonce is gone, and a second close is a refusal.
+TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
     const Fake fake;
     const net::Router router{fake.routing()};
 
@@ -420,7 +448,8 @@ TRIAL("Router: PCP odnawia i zamyka tym samym nonce, UDP osobnym") {
     fake.told(four.from, pcp_answer(four.bytes, 0, 0, 0, mapped_four(0, 0, 0, 0)));
     closing.await();
 
-    // Drugie zamknięcie odmawia od razu — router nie zna już tego mapowania, więc nie ma o co pytać.
+    // The second close refuses at once: the router no longer knows this mapping, so there is
+    // nothing to ask.
     const auto started = Clock::now();
 
     threw(router.close(opened).await());
@@ -428,7 +457,7 @@ TRIAL("Router: PCP odnawia i zamyka tym samym nonce, UDP osobnym") {
     ought(Clock::now() - started < std::chrono::seconds{2});
 }
 
-TRIAL("Router: PCP powtarza prośbę i pomija cudze odpowiedzi") {
+TRIAL("Router: PCP repeats the request and skips others' answers") {
     const Fake fake;
     const net::Udp stranger{net::Address::loopback(net::Family::four, 0)};
     const net::Router router{fake.routing()};
@@ -447,7 +476,8 @@ TRIAL("Router: PCP powtarza prośbę i pomija cudze odpowiedzi") {
     fake.told(again.from, wrong_nonce);
     stranger.send(again.from, pcp_answer(again.bytes, 0, 60, 2, mapped_four(2, 2, 2, 2)), soon).await();
     fake.told(again.from, Bytes{std::byte{2}, std::byte{0x81}});
-    // Własna prośba odbita z powrotem (bez bitu odpowiedzi) i odpowiedź o cudzy port — też nie.
+    // Our own request bounced back (without the response bit) and an answer about another port are
+    // skipped too.
     fake.told(again.from, again.bytes);
 
     Bytes other_port = pcp_answer(again.bytes, 0, 60, 3, mapped_four(3, 3, 3, 3));
@@ -469,7 +499,7 @@ TRIAL("Router: PCP powtarza prośbę i pomija cudze odpowiedzi") {
     same(one.outside.text(), std::string{"203.0.113.7"});
 }
 
-TRIAL("Router: odmowa PCP wraca z kodem, gdy innej drogi nie ma") {
+TRIAL("Router: a PCP refusal comes back with its code when there is no other way") {
     const Fake fake;
     const net::Router router{fake.routing()};
 
@@ -487,10 +517,10 @@ TRIAL("Router: odmowa PCP wraca z kodem, gdy innej drogi nie ma") {
     }
 }
 
-// RFC 6886: router tylko z NAT-PMP odpowiada na PCP „nieznaną wersją" w swoim formacie — wtedy
-// mapowanie (12 bajtów) i pytanie o adres zewnętrzny (2 bajty). Następne otwarcie idzie od razu
-// drogą, która zadziałała.
-TRIAL("Router: NAT-PMP, gdy router nie zna PCP, i potem już od razu") {
+// RFC 6886: a router with only NAT-PMP answers PCP with "unsupported version" in its own format;
+// then come the mapping (12 bytes) and the question about the external address (2 bytes). The next
+// opening goes straight the way that worked.
+TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away after that") {
     const Fake fake;
     const net::Router router{fake.routing()};
 
@@ -511,7 +541,7 @@ TRIAL("Router: NAT-PMP, gdy router nie zna PCP, i potem już od razu") {
     same(got16(map.bytes, 6), 4000u);
     same(got32(map.bytes, 8), 7200u);
 
-    // Odpowiedź na inną prośbę (UDP zamiast TCP) i o inny port wewnętrzny — pomijane.
+    // An answer to another request (UDP instead of TCP) and about another internal port, skipped.
     fake.told(map.from, pmp_answer(1, 0, 4000, 4009, 3600));
     fake.told(map.from, pmp_answer(2, 0, 4001, 4009, 3600));
     fake.told(map.from, pmp_answer(2, 0, 4000, 4002, 3600));
@@ -554,7 +584,7 @@ TRIAL("Router: NAT-PMP, gdy router nie zna PCP, i potem już od razu") {
 
     same(got16(end.bytes, 6), 0u);
     same(got32(end.bytes, 8), 0u);
-    // Zamknięcie nie pyta o adres zewnętrzny — kończy się zaraz po odpowiedzi.
+    // Closing does not ask for the external address; it ends right after the answer.
     const auto answered = Clock::now();
 
     fake.told(end.from, pmp_answer(2, 0, 4000, 0, 0));
@@ -563,7 +593,7 @@ TRIAL("Router: NAT-PMP, gdy router nie zna PCP, i potem już od razu") {
     ought(Clock::now() - answered < std::chrono::milliseconds{1000});
 }
 
-TRIAL("Router: odmowa NAT-PMP wraca z kodem") {
+TRIAL("Router: a NAT-PMP refusal comes back with its code") {
     const Fake fake;
     const net::Router router{fake.routing()};
 
@@ -585,9 +615,10 @@ TRIAL("Router: odmowa NAT-PMP wraca z kodem") {
     }
 }
 
-// Milczący router: PCP prawie dwie sekundy, NAT-PMP pominięty (kto milczy na PCP, milczy i tu),
-// UPnP bez szwu XML nie rusza — odmowa szybko, nie po upływie całej cierpliwości.
-TRIAL("Router: nikt nie odpowiada — odmowa po jednej turze") {
+// A silent router: PCP for almost two seconds, NAT-PMP skipped (whoever is silent on PCP is silent
+// here too), UPnP does not start without an XML seam; the refusal comes quickly, not after the
+// whole patience.
+TRIAL("Router: nobody answers, a refusal after one round") {
     const Fake fake;
     const net::Router router{fake.routing()};
     const auto started = Clock::now();
@@ -612,9 +643,10 @@ TRIAL("Router: nikt nie odpowiada — odmowa po jednej turze") {
     same(heard, 3);
 }
 
-// UPnP IGD: M-SEARCH, opis z usługą WANIPConnection głęboko w drzewie, AddPortMapping z naszym
-// adresem i etykietą (znaki XML ucieczką), adres zewnętrzny, a na koniec DeletePortMapping.
-TRIAL("Router: UPnP — wyszukanie, opis, dodanie, adres i usunięcie") {
+// UPnP IGD: M-SEARCH, a description with the WANIPConnection service deep in the tree,
+// AddPortMapping with our address and label (XML characters escaped), the external address, and
+// finally DeletePortMapping.
+TRIAL("Router: UPnP search, description, add, address and removal") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Router router{fake.routing(Seam<Codec<xml::Document>>{fake_xml()})};
@@ -656,7 +688,7 @@ TRIAL("Router: UPnP — wyszukanie, opis, dodanie, adres i usunięcie") {
     same(one.outside.port(), static_cast<std::uint16_t>(4000));
     same(static_cast<long long>(one.lasting.count()), static_cast<long long>(3600));
 
-    // Odnowienie: od razu UPnP, bez wyszukiwania — usługa jest zapamiętana.
+    // Renewal: straight to UPnP, without searching, since the service is remembered.
     auto renewal = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{3600});
 
     Desk again = accepted(gate);
@@ -683,9 +715,10 @@ TRIAL("Router: UPnP — wyszukanie, opis, dodanie, adres i usunięcie") {
     closing.await();
 }
 
-// 718 — port zewnętrzny zajęty: inny port. 725 — tylko trwałe: dzierżawa zero, czyli zamknięcie
-// należy do wołającego. Adres zewnętrzny, którego router nie poda, zostaje pusty, port — nie.
-TRIAL("Router: UPnP — zajęty port i tylko trwałe dzierżawy") {
+// 718: the external port is taken, so another port. 725: permanent leases only, so a lease of zero,
+// and closing is up to the caller. An external address the router does not give stays empty; the
+// port does not.
+TRIAL("Router: UPnP with a taken port and permanent leases only") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Router router{fake.routing(Seam<Codec<xml::Document>>{fake_xml()})};
@@ -710,7 +743,7 @@ TRIAL("Router: UPnP — zajęty port i tylko trwałe dzierżawy") {
     const std::string port = moved.substr(at, moved.find('<', at) - at);
 
     ought(port != "4000");
-    // Dłużej niż tydzień IGD w wersji pierwszej nie przyjmuje.
+    // IGD version 1 does not accept more than a week.
     ought(has(moved, "<NewLeaseDuration>604800</NewLeaseDuration>"));
     second.answered(500, "TRWALE");
 
@@ -733,7 +766,7 @@ TRIAL("Router: UPnP — zajęty port i tylko trwałe dzierżawy") {
     same(static_cast<long long>(one.lasting.count()), static_cast<long long>(0));
 }
 
-TRIAL("Router: odmowa UPnP wraca z kodem") {
+TRIAL("Router: a UPnP refusal comes back with its code") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Router router{fake.routing(Seam<Codec<xml::Document>>{fake_xml()})};
@@ -761,9 +794,9 @@ TRIAL("Router: odmowa UPnP wraca z kodem") {
     }
 }
 
-// Adres sterowania względem adresu opisu — od korzenia, względny i pełny; usługa PPP też otwiera
-// porty; opis bez usługi otwierającej porty to brak UPnP.
-TRIAL("Router: UPnP — adres sterowania względem opisu i usługa PPP") {
+// The control address relative to the description's address: from the root, relative and full; the
+// PPP service opens ports too; a description without a port-opening service means no UPnP.
+TRIAL("Router: UPnP control address relative to the description, and the PPP service") {
     for (const std::string control : {std::string{"ctl/PPP"}, std::string{"http://127.0.0.1:PORT/upnp/PPP"}}) {
         const Fake fake;
         const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
@@ -825,9 +858,9 @@ TRIAL("Router: UPnP — adres sterowania względem opisu i usługa PPP") {
     }
 }
 
-// W sieci bywa kilka urządzeń udających bramę (wzmacniacz, drugi router). Port otwiera tylko ten,
-// przez który wychodzimy — jego opis idzie pierwszy, nawet gdy odpowiedział później.
-TRIAL("Router: UPnP — opis z samej bramy przed cudzym") {
+// A network sometimes has several devices posing as a gateway (a repeater, a second router). Only
+// the one we leave through opens the port; its description goes first, even when it answered later.
+TRIAL("Router: UPnP takes the description from the gateway itself before another's") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Listener foreign{net::Address{"127.0.0.2", 0}};
@@ -864,9 +897,10 @@ TRIAL("Router: UPnP — opis z samej bramy przed cudzym") {
     ought(opening.await().by == net::Opener::upnp);
 }
 
-// Usługa lepsza wygrywa, choć w opisie stoi dalej; adres sterowania liczy się względem URLBase,
-// gdy opis go podaje, a nie względem adresu samego opisu.
-TRIAL("Router: UPnP — lepsza usługa i URLBase") {
+// The better service wins, even though it stands later in the description; the control address is
+// resolved against URLBase when the description gives one, not against the description's own
+// address.
+TRIAL("Router: UPnP, the better service and URLBase") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
@@ -905,8 +939,8 @@ TRIAL("Router: UPnP — lepsza usługa i URLBase") {
     ought(opening.await().by == net::Opener::upnp);
 }
 
-// Odpowiedź HTTP inna niż 200 i 500 to nie SOAP — kłopot mówi, co router odpowiedział.
-TRIAL("Router: UPnP — odpowiedź spoza SOAP to kłopot z jej statusem") {
+// An HTTP answer other than 200 and 500 is not SOAP; the trouble says what the router answered.
+TRIAL("Router: UPnP, an answer outside SOAP is trouble with its status") {
     const Fake fake;
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Router router{fake.routing(Seam<Codec<xml::Document>>{fake_xml()})};

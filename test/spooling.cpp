@@ -20,9 +20,9 @@ using namespace talcite;
 namespace {
 
 
-// Źródło asynchroniczne z pamięci: oddaje obietnicę, która spełnia się na puli — jak `File::read`
-// z talcite::fs, tylko bez dysku. `give` ogranicza jedną odpowiedź, bo źródło **ma prawo oddać
-// mniej, niż poproszono**.
+// An asynchronous source in memory: it returns a promise that is fulfilled on the pool, like
+// `File::read` from talcite::fs, only without a disk. `give` limits a single answer, because a
+// source is allowed to return less than was asked for.
 Feed fed(const Bytes& raw, std::size_t give = SIZE_MAX) {
     return [raw, give](std::size_t at, std::size_t most) {
         Bytes made;
@@ -35,17 +35,20 @@ Feed fed(const Bytes& raw, std::size_t give = SIZE_MAX) {
     };
 }
 
-// Źródło, które **liczy wołania**. Na nim widać, czy okno bajtów naprawdę oszczędza: przewijanie
-// po sąsiedztwie nie ma prawa schodzić do niego przy każdym wierszu. Liczy przy zamówieniu, na
-// wątku głównym — więc licznik można czytać bez zamka.
+// A source that counts its calls. It shows whether the byte window really saves work: scrolling
+// through the neighborhood must not go down to it on every row. It counts when the request is
+// made, on the main thread, so the counter can be read without a lock.
 class Taped {
 public:
     explicit Taped(std::string what) : raw_(bytes(what)) {}
 
+    // The size of the whole document in bytes.
     [[nodiscard]] std::size_t whole() const { return raw_.size(); }
 
+    // How many requests the spool has made so far.
     [[nodiscard]] int calls() const { return calls_; }
 
+    // A feed over the stored bytes that counts each request.
     [[nodiscard]] Feed feed() {
         return [this](std::size_t at, std::size_t most) {
             ++calls_;
@@ -59,10 +62,12 @@ private:
     int calls_ = 0;
 };
 
-// Szpula na źródle asynchronicznym musi żyć w `shared_ptr` — okno wraca do niej słabym uchwytem.
+// A spool on an asynchronous source has to live in a `shared_ptr`, because the window returns to it
+// through a weak handle.
 std::shared_ptr<Spool> spooled(const Feed& feed, std::size_t whole) { return std::make_shared<Spool>(feed, whole); }
 
-// Pyta, aż szpula przestanie czekać na okno; między pytaniami obraca pętlę, jak zrobiłby `Term`.
+// Asks until the spool stops waiting for a window; between the questions it turns the loop, as
+// `Term` would. Throws if the spool does not settle within 4000 turns.
 template <typename Fn>
 auto settled(Loop& loop, Spool& one, Fn fn) {
     for (int tries = 0; tries < 4000; ++tries) {
@@ -77,14 +82,17 @@ auto settled(Loop& loop, Spool& one, Fn fn) {
     throw std::runtime_error{"The spool never settled."};
 }
 
+// Rows from `which` on, at most `most` of them, once the spool has them; empty if it has none.
 std::vector<std::string> rolled(Loop& loop, Spool& one, std::size_t which, std::size_t most) {
     return settled(loop, one, [&] { return one.lines(which, most); }).value_or(std::vector<std::string>{});
 }
 
+// The starting byte of row `which`, once the spool knows it.
 std::optional<std::size_t> placed(Loop& loop, Spool& one, std::size_t which) {
     return settled(loop, one, [&] { return one.at(which); });
 }
 
+// A document of `much` numbered rows, each one `said` followed by its number and a line end.
 std::string many(int much, const char* said = "wiersz ") {
     std::string made;
 
@@ -95,9 +103,9 @@ std::string many(int much, const char* said = "wiersz ") {
 
 }
 
-// --- Dokument w pamięci --------------------------------------------------------------------------
+// --- A document in memory ------------------------------------------------------------------------
 
-TRIAL("Spool: liczy wiersze przy podaniu") {
+TRIAL("Spool: counts the rows when given") {
     Spool one{bytes("a\nbb\nccc")};
 
     ought(one.counted().has_value());
@@ -105,7 +113,7 @@ TRIAL("Spool: liczy wiersze przy podaniu") {
     same(one.whole(), std::size_t{8});
 }
 
-TRIAL("Spool: oddaje treść bez końca wiersza") {
+TRIAL("Spool: gives the content without the line end") {
     Spool one{bytes("a\nbb\nccc")};
 
     const std::vector<std::string> got = *one.lines(0, 10);
@@ -116,7 +124,7 @@ TRIAL("Spool: oddaje treść bez końca wiersza") {
     same(got[2], std::string{"ccc"});
 }
 
-TRIAL("Spool: zna bajt początku każdego wiersza") {
+TRIAL("Spool: knows the starting byte of every row") {
     Spool one{bytes("a\nbb\nccc")};
 
     same(*one.at(0), std::size_t{0});
@@ -125,15 +133,15 @@ TRIAL("Spool: zna bajt początku każdego wiersza") {
     ought(!one.at(3).has_value());
 }
 
-// Koniec wiersza na końcu pliku **nie robi** pustego wiersza po sobie. Inaczej każdy porządnie
-// zakończony plik miałby o jeden wiersz za dużo, a taki jest niemal każdy.
-TRIAL("Spool: enter na końcu nie dokłada pustego wiersza") {
+// A line end at the end of the file does not make an empty row after it. Otherwise every properly
+// terminated file, which is nearly every file, would have one row too many.
+TRIAL("Spool: a line end at the end adds no empty row") {
     Spool one{bytes("a\nb\n")};
 
     same(*one.counted(), std::size_t{2});
 }
 
-TRIAL("Spool: pusty dokument ma zero wierszy") {
+TRIAL("Spool: an empty document has zero rows") {
     Spool one{bytes("")};
 
     same(*one.counted(), std::size_t{0});
@@ -141,7 +149,7 @@ TRIAL("Spool: pusty dokument ma zero wierszy") {
     ought(!one.at(0).has_value());
 }
 
-TRIAL("Spool: powrót karetki znika z końca wiersza") {
+TRIAL("Spool: a carriage return disappears from the end of a row") {
     Spool one{bytes("x\r\ny\r\n")};
 
     const std::vector<std::string> got = *one.lines(0, 5);
@@ -151,9 +159,9 @@ TRIAL("Spool: powrót karetki znika z końca wiersza") {
     same(got[1], std::string{"y"});
 }
 
-// Plik binarny nie ma ani jednego `\n`. Bez granicy zassałby się w całości do jednego napisu,
-// więc rozpada się na równe kawałki po megabajcie.
-TRIAL("Spool: dokument bez końców wierszy rozpada się na kawałki") {
+// A binary file has not a single `\n`. Without a limit it would be sucked whole into one string, so
+// it falls apart into equal pieces of a megabyte.
+TRIAL("Spool: a document without line ends falls apart into pieces") {
     Spool one{bytes(std::string(3u * 1024 * 1024 + 7, 'z'))};
 
     same(*one.counted(), std::size_t{4});
@@ -164,9 +172,9 @@ TRIAL("Spool: dokument bez końców wierszy rozpada się na kawałki") {
     same(got[0].size(), std::size_t{7});
 }
 
-// --- Źródło strumieniowe -------------------------------------------------------------------------
+// --- A streaming source --------------------------------------------------------------------------
 
-TRIAL("Spool: strumień nie zna liczby wierszy przed dojściem do końca") {
+TRIAL("Spool: a stream does not know its row count before reaching the end") {
     Loop loop;
     Taped tape{many(2000)};
 
@@ -179,9 +187,10 @@ TRIAL("Spool: strumień nie zna liczby wierszy przed dojściem do końca") {
     ought(!one->counted().has_value());
 }
 
-// Pierwsze pytanie nie ma czym odpowiedzieć: okno jest dopiero zamówione. Odpowiedź to pustka
-// zamiast wektora i `stalled()`; po obrocie pętli okno jest i wiersze są. Nic tu nie czekało.
-TRIAL("Spool: na pierwsze pytanie odpowiada zamówieniem, a po obrocie pętli wierszami") {
+// The first question has nothing to answer with: the window has only just been requested. The
+// answer is an empty optional instead of a vector, and `stalled()`; after a turn of the loop the
+// window is there and so are the rows. Nothing here waited.
+TRIAL("Spool: the first question is answered with a request, and after a turn of the loop with rows") {
     Loop loop;
     Taped tape{many(50)};
 
@@ -198,7 +207,7 @@ TRIAL("Spool: na pierwsze pytanie odpowiada zamówieniem, a po obrocie pętli wi
     same(tape.calls(), 1);
     same(woken, 0);
 
-    // Drugie pytanie przed obrotem nie zamawia drugi raz — jedno okno w drodze naraz.
+    // A second question before the turn does not request again: one window in flight at a time.
     ought(!one->lines(0, 5).has_value());
     same(tape.calls(), 1);
 
@@ -210,8 +219,8 @@ TRIAL("Spool: na pierwsze pytanie odpowiada zamówieniem, a po obrocie pętli wi
     same(woken, 1);
 }
 
-// To jest ta chwila, w której w Midnight Commanderze znika `+`.
-TRIAL("Spool: liczba wierszy pojawia się po dojściu do końca") {
+// This is the moment when the `+` disappears in Midnight Commander.
+TRIAL("Spool: the row count appears after reaching the end") {
     Loop loop;
     Taped tape{many(2000)};
 
@@ -223,9 +232,9 @@ TRIAL("Spool: liczba wierszy pojawia się po dojściu do końca") {
     same(*one->counted(), std::size_t{2000});
 }
 
-// `counting()` idzie do końca samo, okno po oknie — nikt nie pyta w międzyczasie; a gdy skończy,
-// budzi uchwyt, żeby `End` mógł się dokończyć.
-TRIAL("Spool: counting dochodzi do końca okno po oknie i budzi uchwyt") {
+// `counting()` goes to the end by itself, window by window, with nobody asking in the meantime; when
+// it is done, it wakes the handle so that `End` can finish.
+TRIAL("Spool: counting reaches the end window by window and wakes the handle") {
     Loop loop;
     Taped tape{many(30000)};
 
@@ -247,7 +256,7 @@ TRIAL("Spool: counting dochodzi do końca okno po oknie i budzi uchwyt") {
     ought(woken > 1);
     ought(tape.calls() > 1);
 
-    // Po policzeniu koniec jest pod ręką: ostatni wiersz bez nowego zamówienia.
+    // Once counted, the end is at hand: the last row needs no new request.
     const int calls = tape.calls();
 
     const std::vector<std::string> got = rolled(loop, *one, 29999, 1);
@@ -257,7 +266,7 @@ TRIAL("Spool: counting dochodzi do końca okno po oknie i budzi uchwyt") {
     same(tape.calls(), calls);
 }
 
-TRIAL("Spool: skok w przód i powrót dają to samo, co dokument w pamięci") {
+TRIAL("Spool: a jump forward and back gives the same as a document in memory") {
     Loop loop;
 
     const std::string said = many(20000);
@@ -279,9 +288,9 @@ TRIAL("Spool: skok w przód i powrót dają to samo, co dokument w pamięci") {
     }
 }
 
-// Cofanie się jest jedyną trudną operacją, bo poprzedniego początku wiersza nie da się policzyć —
-// trzeba go znaleźć. Przechodzimy więc cały dokument **w tył**, wiersz po wierszu.
-TRIAL("Spool: krok w tył przez cały dokument nie gubi ani jednego wiersza") {
+// Stepping back is the only hard operation, because the previous row start cannot be computed; it
+// has to be found. So we walk the whole document backward, row by row.
+TRIAL("Spool: stepping back through the whole document does not lose a single row") {
     Loop loop;
     Taped tape{many(3000, "")};
 
@@ -297,9 +306,9 @@ TRIAL("Spool: krok w tył przez cały dokument nie gubi ani jednego wiersza") {
     }
 }
 
-// Okno bajtów ma sens tylko wtedy, gdy przewijanie po sąsiedztwie z niego korzysta. Sto wierszy
-// zwykłego tekstu mieści się w jednym oknie, więc zamówienie powinno być dokładnie jedno.
-TRIAL("Spool: przewijanie po sąsiedztwie nie schodzi do źródła przy każdym wierszu") {
+// The byte window makes sense only if scrolling through the neighborhood uses it. A hundred rows
+// of plain text fit in one window, so there should be exactly one request.
+TRIAL("Spool: scrolling through the neighborhood does not go to the source for every row") {
     Loop loop;
     Taped tape{many(100)};
 
@@ -310,10 +319,10 @@ TRIAL("Spool: przewijanie po sąsiedztwie nie schodzi do źródła przy każdym 
     same(tape.calls(), 1);
 }
 
-// Przy dokumencie dłuższym niż okno następne okno zamawia się **zanim** ktoś o nie zapyta: gdy
-// oddajemy wiersze z końca tego, co mamy, zamówienie już biegnie. Wiersz z drugiego okna wychodzi
-// wtedy bez pustej odpowiedzi — przewijanie w dół nie ma przystanków.
-TRIAL("Spool: okno w drodze, zanim przewijanie do niego dojdzie") {
+// With a document longer than the window, the next window is requested before anyone asks for it:
+// when we hand out rows from the end of what we have, the request is already running. A row from
+// the second window then comes out without an empty answer, so scrolling down has no stops.
+TRIAL("Spool: the window is on its way before scrolling reaches it") {
     Loop loop;
     Taped tape{many(20000)};
 
@@ -327,8 +336,8 @@ TRIAL("Spool: okno w drodze, zanim przewijanie do niego dojdzie") {
 
     same(tape.calls(), 1);
 
-    // Wiersz 3100 leży około 40 KB od początku: w pierwszym oknie, ale bliżej jego końca niż pół
-    // okna — to wystarczy, żeby drugie okno poszło w drogę bez pytania.
+    // Row 3100 lies about 40 KB from the start: in the first window, but closer to its end than half
+    // a window, which is enough for the second window to set off without being asked.
     (void)rolled(loop, *one, 3100, 40);
 
     same(tape.calls(), 2);
@@ -340,7 +349,7 @@ TRIAL("Spool: okno w drodze, zanim przewijanie do niego dojdzie") {
 
     same(woken, 2);
 
-    // Wiersz 5000 jest już w drugim oknie: odpowiedź od ręki, bez zamówienia.
+    // Row 5000 is already in the second window: answered at once, without a request.
     const std::optional<std::vector<std::string>> got = one->lines(5000, 40);
 
     ought(got.has_value());
@@ -350,10 +359,10 @@ TRIAL("Spool: okno w drodze, zanim przewijanie do niego dojdzie") {
     same(tape.calls(), 2);
 }
 
-// **Źródło ma prawo oddać mniej, niż poproszono** — plik czytany kawałkami, gniazdo, cokolwiek.
-// Cofanie się skanuje całe okno wstecz, więc jedna krótka odpowiedź wywracała je na sam początek
-// dokumentu: zamiast poprzedniego wiersza wychodził wiersz zerowy.
-TRIAL("Spool: źródło oddające po sto bajtów nie psuje cofania") {
+// A source is allowed to return less than was asked for: a file read in pieces, a socket, anything.
+// Stepping back scans a whole window backward, so a single short answer must not throw it back to
+// the very start of the document, which would yield row zero instead of the previous row.
+TRIAL("Spool: a source returning a hundred bytes at a time does not break stepping back") {
     Loop loop;
 
     const std::string said = many(4000);
@@ -372,9 +381,9 @@ TRIAL("Spool: źródło oddające po sto bajtów nie psuje cofania") {
     }
 }
 
-// Źródło, które odmawia, nie zamyka programu w pętli zamówień: dokument kończy się tam, dokąd
-// doszliśmy, i od tej chwili nikt już o nic nie pyta.
-TRIAL("Spool: odmowa źródła kończy dokument tam, dokąd doszedł") {
+// A source that refuses does not lock the program in a loop of requests: the document ends where
+// we got to, and from then on nobody asks for anything.
+TRIAL("Spool: a refusal by the source ends the document where it got to") {
     Loop loop;
 
     const Bytes raw = bytes(many(20000));
@@ -409,7 +418,7 @@ TRIAL("Spool: odmowa źródła kończy dokument tam, dokąd doszedł") {
     same(calls, was);
 }
 
-TRIAL("Spool: mówi, który wiersz zawiera dany bajt") {
+TRIAL("Spool: tells which row contains a given byte") {
     Spool one{bytes("a\nbb\nccc")};
 
     same(one.found(0), std::size_t{0});
@@ -421,7 +430,7 @@ TRIAL("Spool: mówi, który wiersz zawiera dany bajt") {
     same(one.found(1000), std::size_t{2});
 }
 
-TRIAL("Spool: bajt i wiersz zgadzają się w obie strony na całej długości") {
+TRIAL("Spool: byte and row agree both ways along the whole length") {
     const std::string said = many(5000);
 
     Spool one{bytes(said)};
@@ -430,11 +439,11 @@ TRIAL("Spool: bajt i wiersz zgadzają się w obie strony na całej długości") 
         same(one.found(*one.at(which)), which);
 }
 
-// **Po zmianie kotwice przesuwają się, a nie giną.** Szpula doszła raz do dalekiego wiersza i zna po
-// drodze kotwice. Zmiana na początku (wstawienie z nowymi wierszami, a potem skasowanie końca
-// wiersza) przesuwa je — skok z powrotem w to samo miejsce czyta okolicę kotwicy, a nie wszystko od
-// miejsca zmiany. Wynik zgadza się z liczeniem od zera.
-TRIAL("Spool: po zmianie kotwice przesuwają się, a skok daleko nie czyta od nowa") {
+// After a change the anchors move instead of vanishing. The spool once reached a far row and knows
+// the anchors along the way. A change at the start (an insertion with new rows, then deleting a line
+// end) moves them, so jumping back to the same place reads the neighborhood of an anchor, not
+// everything from the place of the change. The result agrees with counting from zero.
+TRIAL("Spool: after a change the anchors move, and a far jump does not read again") {
     std::string doc;
 
     for (int at = 0; at < 60000; ++at) doc += "wiersz " + std::to_string(at) + "\n";
@@ -462,8 +471,8 @@ TRIAL("Spool: po zmianie kotwice przesuwają się, a skok daleko nie czyta od no
         return at;
     };
 
-    // Koniec wiersza tuż przed kotwicą (co 64 wiersze): kotwica leży w skasowanym odcinku i ginie —
-    // jej wiersz zaczyna się teraz gdzie indziej.
+    // A line end right before an anchor (one every 64 rows): the anchor lies in the deleted stretch
+    // and vanishes, because its row now starts elsewhere.
     const std::size_t joined = started(192) - 1;
     doc.erase(joined, 1);
     quilt->erase(joined, 1);
@@ -478,7 +487,7 @@ TRIAL("Spool: po zmianie kotwice przesuwają się, a skok daleko nie czyta od no
     quilt->erase(gone, 1);
     spool->changed(gone, 1, 0, -1);
 
-    // Miejsce, w którym szpula stała, przesunęło się razem z kotwicami: pytanie o nie nie czyta nic.
+    // The place where the spool stood moved along with the anchors: asking for it reads nothing.
     *read = 0;
 
     same(spool->at(50000), std::optional<std::size_t>{started(50000)});
@@ -493,11 +502,11 @@ TRIAL("Spool: po zmianie kotwice przesuwają się, a skok daleko nie czyta od no
     same(spool->found(started(40000) + 3), std::size_t{40000});
 }
 
-// **Skok daleko od miejsca, w którym szpula stoi, zaczyna od najbliższej kotwicy** — w obie strony:
-// wiersz po numerze i wiersz po bajcie. Kotwic jest kilka tysięcy i szuka się ich połówkowo; gdyby
-// szukanie oddało kotwicę zerową, skok w środek przeczytałby dokument od początku albo cofał się
-// wiersz po wierszu od miejsca, w którym szpula stoi.
-TRIAL("Spool: skok daleko zaczyna od najbliższej kotwicy") {
+// A jump far from where the spool stands starts from the nearest anchor, both ways: a row by number
+// and a row by byte. There are several thousand anchors and they are found by bisection; if the
+// search returned anchor zero, a jump into the middle would read the document from the start or
+// step back row by row from where the spool stands.
+TRIAL("Spool: a far jump starts from the nearest anchor") {
     std::string doc;
 
     for (int at = 0; at < 60000; ++at) doc += "wiersz " + std::to_string(at) + "\n";
@@ -538,9 +547,9 @@ TRIAL("Spool: skok daleko zaczyna od najbliższej kotwicy") {
     ought(*read < 100000);
 }
 
-// Wiele zmian naraz (`rewritten`): wszystko za pierwszą zmianą idzie do kosza, także kotwica tuż za
-// nią — jej wiersz przy skasowanym końcu wiersza zaczyna się gdzie indziej.
-TRIAL("Spool: przepisanie od miejsca wyrzuca kotwice tuż za nim") {
+// Many changes at once (`rewritten`): everything after the first change is discarded, including
+// the anchor right after it, because with its line end deleted that row starts elsewhere.
+TRIAL("Spool: rewriting from a place throws away the anchors right after it") {
     std::string doc;
 
     for (int at = 0; at < 1000; ++at) doc += "w" + std::to_string(at) + "\n";

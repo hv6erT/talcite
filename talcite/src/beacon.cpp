@@ -12,20 +12,22 @@
 #include "talcite/random.hpp"
 #include "talcite/udp.hpp"
 
-// **Majak w sieci lokalnej** (S1). Udostępniający słucha na znanym porcie UDP i odpowiada na
-// pytanie o znacznik, który zna; pytający rozgłasza pytanie w swojej sieci i zbiera odpowiedzi.
-// Tak biorący znajduje zaproszenie bez adresu — wystarczy mu kod. Znacznik i treść odpowiedzi to
-// bajty wołającego: majak nie wie, co znaczą, i nie powinien wiedzieć (twa wkłada tu skrót
-// etykiety, a nie ją samą, i numer portu).
+// A beacon in the local network. The offering side listens on a well-known UDP port and answers
+// questions about a tag it knows; the asking side broadcasts the question in its network and
+// collects the answers. This is how a joining side finds an invitation without an address: the code
+// is enough. The tag and the answer's content are the caller's bytes: the beacon does not know what
+// they mean and should not (twa puts a hash of the label here, not the label itself, and a port
+// number).
 //
-// **Wiadomość**: `TLCB`, wersja, rodzaj (pytanie, odpowiedź), osiem bajtów losowych z pytania
-// (odpowiedź je powtarza — po nich pytający poznaje odpowiedzi na swoje pytanie, a nie cudze),
-// długość i znacznik, a w odpowiedzi jeszcze długość i treść. Wszystko, co do tego kształtu nie
-// pasuje — inna wersja, ucięte, za długie, nadmiarowe bajty — jest ignorowane bez słowa: port
-// stoi w sieci, a obcy datagram nie ma prawa niczego zmienić.
+// The message: `TLCB`, the version, the kind (question, answer), eight random bytes from the
+// question (the answer repeats them, so the asking side recognizes answers to its own question and
+// not to someone else's), the length and the tag, and in an answer also a length and the content.
+// Anything that does not fit this shape (another version, truncated, too long, extra bytes) is
+// ignored without a word: the port stands in the network, and a stranger's datagram may not change
+// anything.
 //
-// Rozgłaszamy tylko IPv4 (255.255.255.255): sieć domowa ma IPv4 zawsze, a IPv6 bez niego — rzadko.
-// Odpowiedź idzie wprost do pytającego, nie rozgłoszeniem.
+// We broadcast only over IPv4 (255.255.255.255): a home network always has IPv4, and IPv6 without
+// it is rare. The answer goes straight to the asking side, not by broadcast.
 namespace talcite::net {
 
 namespace {
@@ -37,7 +39,8 @@ constexpr std::byte answering{2};
 constexpr std::size_t nonce = 8;
 constexpr std::size_t widest_datagram = 4 + 2 + nonce + 1 + Beacon::widest_tag + 2 + Beacon::widest_payload;
 
-// Ile odpowiedzi na sekundę majak daje najwyżej — zapytany zalewem nie staje się wzmacniaczem.
+// The most answers per second the beacon gives, so that a flood of questions does not turn it into
+// an amplifier.
 constexpr int answers_per_second = 32;
 
 struct Read {
@@ -47,6 +50,7 @@ struct Read {
     Bytes payload;
 };
 
+// A beacon message of the given kind; `payload` is null for a question, which carries no content.
 Bytes written(std::byte kind, const Bytes& once, const Bytes& tag, const Bytes* payload) {
     Bytes made(magic, magic + 4);
 
@@ -65,14 +69,15 @@ Bytes written(std::byte kind, const Bytes& once, const Bytes& tag, const Bytes* 
     return made;
 }
 
+// A beacon message taken apart, or nothing when the bytes do not have exactly its shape.
 std::optional<Read> read(const Bytes& got) {
     if (got.size() < 4 + 2 + nonce + 1 || std::memcmp(got.data(), magic, 4) != 0 || got[4] != version) return std::nullopt;
 
     Read made;
 
-    // Rodzaj i długość znacznika sprawdza ten, kto czyta: majak odpowiada tylko na pytanie o swój
-    // znacznik, a pytający bierze tylko odpowiedź ze swoim — innego rodzaju ani dłuższego znacznika
-    // żaden z nich nie zna.
+    // The kind and the tag's length are checked by the reader: the beacon answers only questions
+    // about its own tag, and the asking side takes only answers with its own, so neither knows any
+    // other kind or a longer tag.
     made.kind = got[5];
 
     std::size_t at = 6;
@@ -107,10 +112,11 @@ std::optional<Read> read(const Bytes& got) {
 }
 
 struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
-    // Odbiór w centrali trzyma pocztę przy życiu, więc sama śmierć majaka by jej nie zamknęła —
-    // a odbiór bez terminu czekałby wtedy do końca programu. Zamykamy pocztę wprost: zamknięta
-    // odrzuca odbiór i wysyłkę, a łańcuch kończy się sam. Samo anulowanie łańcucha nie dosięgało
-    // wysyłki odpowiedzi, która akurat biegła w `all_settled`.
+    // Closes the socket on the way out. Receiving in the hub keeps the socket alive, so the
+    // beacon's death alone would not close it, and a receive without a deadline would then wait
+    // until the end of the program. We close the socket directly: once closed, it refuses receiving
+    // and sending, and the chain ends by itself. Canceling the chain alone would not reach an
+    // answer being sent in `all_settled` at that moment.
     ~Held() { post.close(); }
 
     Held() = default;
@@ -130,7 +136,8 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
     std::chrono::steady_clock::time_point second{};
     int answered = 0;
 
-    // Odpowiedź na pytanie, które pasuje do czegoś, co oferujemy — albo nic.
+    // The answer to a question that matches something we offer, or nothing. Answers beyond
+    // `answers_per_second` in one second are dropped.
     std::optional<Bytes> answer(const Bytes& got) {
         const std::optional<Read> asked = read(got);
 
@@ -154,8 +161,8 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
         return written(answering, asked->nonce, asked->tag, &found->second);
     }
 
-    // Jedna runda: datagram, odpowiedź, następna runda. Ciąg trzyma majak słabo — zamknięty
-    // majak kończy pętlę, bo zamknięta poczta odmawia odbioru.
+    // One round: a datagram, an answer, the next round. The chain holds the beacon weakly, so a
+    // closed beacon ends the loop, because a closed socket refuses to receive.
     static Promise<void> listened(const std::weak_ptr<Held>& weak) {
         const std::shared_ptr<Held> self = weak.lock();
 
@@ -178,6 +185,7 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
 
 namespace {
 
+// The empty address a closed beacon reports.
 const Address& nowhere() {
     static const Address one;
 
@@ -186,7 +194,8 @@ const Address& nowhere() {
 
 }
 
-// Majak słucha na wszystkich adresach IPv4 tego komputera.
+// The beacon listens on all IPv4 addresses of this computer, on the given port, and starts
+// answering at once.
 Beacon::Beacon(std::uint16_t port) : held_(std::make_shared<Held>()) {
     held_->post = Udp{Address::any(Family::four, port)};
     held_->mine = held_->post.mine();
@@ -194,8 +203,11 @@ Beacon::Beacon(std::uint16_t port) : held_(std::make_shared<Held>()) {
     held_->running->start();
 }
 
+// The address the beacon listens on, or an empty address once it is closed.
 const Address& Beacon::mine() const { return held_ ? held_->mine : nowhere(); }
 
+// Starts answering questions about `tag` with `payload`, replacing an earlier offer of the same
+// tag. Throws for a tag outside 1 to 64 bytes, a payload over 1024 bytes, or a closed beacon.
 void Beacon::offer(Bytes tag, Bytes payload) const {
     if (tag.empty() || tag.size() > widest_tag) throw Trouble{"A beacon tag takes 1 to 64 bytes."};
 
@@ -208,6 +220,7 @@ void Beacon::offer(Bytes tag, Bytes payload) const {
     held_->offers[std::move(tag)] = std::move(payload);
 }
 
+// Stops answering questions about `tag`. Does nothing on a closed beacon.
 void Beacon::withdraw(const Bytes& tag) const {
     if (!held_) return;
 
@@ -216,6 +229,7 @@ void Beacon::withdraw(const Bytes& tag) const {
     held_->offers.erase(tag);
 }
 
+// Closes the socket and drops every offer; the listening loop ends by itself.
 void Beacon::close() {
     if (!held_) return;
 
@@ -233,6 +247,7 @@ struct Seeking {
     std::vector<Sighting> found;
 };
 
+// Collects answers to our question until the patience runs out, each sender and content once.
 Promise<void> gathered(std::shared_ptr<Seeking> seeking) {
     const auto left = std::chrono::duration_cast<Patience>(seeking->until - std::chrono::steady_clock::now());
 
@@ -253,8 +268,8 @@ Promise<void> gathered(std::shared_ptr<Seeking> seeking) {
         });
 }
 
-// Pytanie wysłane na każdy adres po kolei. Adres, na który wysyłka odmówi (brak sieci, brak trasy
-// rozgłoszeniowej), nie przerywa pozostałych.
+// The question sent to each address in turn. An address that the send refuses (no network, no
+// broadcast route) does not stop the others.
 Promise<void> asked(std::shared_ptr<Seeking> seeking, std::shared_ptr<std::vector<Address>> to, std::size_t at,
                     std::shared_ptr<Bytes> question) {
     if (at >= to->size()) return Promise<void>{[](auto resolve, auto) { resolve(); }};
@@ -265,12 +280,13 @@ Promise<void> asked(std::shared_ptr<Seeking> seeking, std::shared_ptr<std::vecto
 
 }
 
-// **Szukanie**: pytanie na adres rozgłoszeniowy (albo na podane adresy — ten sam komputer, próby),
-// potem odpowiedzi zbierane do końca cierpliwości. Te same odpowiedzi od tego samego nadawcy liczą
-// się raz. Brak odpowiedzi to pusta lista, nie odmowa — „nikogo tu nie ma" jest wynikiem.
+// Seeking: a question to the broadcast address (or to the given addresses: the same computer,
+// tests), then answers collected until the patience runs out. The same answer from the same sender
+// counts once. No answer is an empty list, not a refusal: "nobody is here" is a result.
 Promise<std::vector<Sighting>> Beacon::sought(std::uint16_t port, Bytes tag, Patience patience,
                                              std::vector<Address> to) {
-    // Odmowa obietnicą, nie wyjątkiem z wołania — także wtedy, gdy nie dało się otworzyć gniazda.
+    // Refuse with a promise, not with an exception from the call, also when the socket cannot be
+    // opened.
     const auto refused = [](std::exception_ptr why) {
         return Promise<std::vector<Sighting>>{[why](auto, auto reject) { reject(why); }};
     };

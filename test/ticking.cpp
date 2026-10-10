@@ -14,6 +14,7 @@ using namespace talcite;
 
 namespace {
 
+// Reads row `y` of a drawn view as UTF-8 text, dropping trailing spaces.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -24,6 +25,7 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// Counts in `done` every `ui::PickEvent` that `one` sends; returns the count so far.
 int counted(const std::shared_ptr<ui::Tick>& one, int& done) {
     (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
@@ -36,9 +38,9 @@ int counted(const std::shared_ptr<ui::Tick>& one, int& done) {
 
 }
 
-// --- Co pole wie o sobie -------------------------------------------------------------------------
+// --- What a tick box knows about itself ----------------------------------------------------------
 
-TRIAL("Tick: świeże jest puste i chętne na ognisko") {
+TRIAL("Tick: a fresh one is empty and willing to take focus") {
     const ui::Tick one{"Zawijaj"};
 
     ought(!one.ticked());
@@ -48,23 +50,23 @@ TRIAL("Tick: świeże jest puste i chętne na ognisko") {
     same(one.text(), std::string{"Zawijaj"});
 }
 
-TRIAL("Tick: stan można podać przy tworzeniu") {
+TRIAL("Tick: the state can be given at construction") {
     const ui::Tick one{"Zawijaj", true};
 
     ought(one.ticked());
 }
 
-// Cztery kratki na klamrę i spację, reszta na napis — jeden wiersz, nie tyle, ile dano.
-TRIAL("Tick: chce klamry plus napisu i jednego wiersza") {
+// Four cells for the bracket and a space, the rest for the text: one row, not as many as given.
+TRIAL("Tick: wants the bracket plus the text and one row") {
     const ui::Tick one{"Zawijaj"};
 
     same(one.wants({40, 5}), (ui::Size{11, 1}));
     same(one.wants({6, 5}), (ui::Size{6, 1}));
 }
 
-// --- Rysowanie -----------------------------------------------------------------------------------
+// --- Drawing -------------------------------------------------------------------------------------
 
-TRIAL("Tick: rysuje klamrę ze stanem i napis") {
+TRIAL("Tick: draws the bracket with the state and the text") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -78,8 +80,8 @@ TRIAL("Tick: rysuje klamrę ze stanem i napis") {
     same(read(top.render({{0, 0}, {11, 1}}), 0), std::string{"[x] Zawijaj"});
 }
 
-// Za wąskie pole ucina **napis**, nie klamrę: klamra jest tym, co czyni z tego pole wyboru.
-TRIAL("Tick: za wąskie ucina napis, a nie klamrę") {
+// A box that is too narrow cuts the text, not the bracket: the bracket is what makes it a tick box.
+TRIAL("Tick: when too narrow it cuts the text, not the bracket") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -92,7 +94,7 @@ TRIAL("Tick: za wąskie ucina napis, a nie klamrę") {
     same(made.size(), std::size_t{4 + 3 + 2});
 }
 
-TRIAL("Tick: z ogniskiem ma własną rolę") {
+TRIAL("Tick: has its own role when focused") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -106,11 +108,11 @@ TRIAL("Tick: z ogniskiem ma własną rolę") {
     ought(top.render({{0, 0}, {11, 1}}).at({0, 0}).style.reverse);
 }
 
-// --- Odwracanie ----------------------------------------------------------------------------------
+// --- Toggling ------------------------------------------------------------------------------------
 
-// **Ustawienie z programu nie zawiadamia**, bo wypełnienie okna wartościami początkowymi nie jest
-// naciskaniem. Odwrócenie przez `pick` zawiadamia.
-TRIAL("Tick: podanie stanu milczy, odwrócenie zawiadamia") {
+// Setting it from the program does not notify, because filling a window with initial values is not
+// pressing. Toggling through `pick` notifies.
+TRIAL("Tick: setting the state is silent, toggling notifies") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -131,7 +133,7 @@ TRIAL("Tick: podanie stanu milczy, odwrócenie zawiadamia") {
     same(done, 1);
 }
 
-TRIAL("Tick: spacja odwraca, a enter idzie wyżej") {
+TRIAL("Tick: space toggles, and Enter goes up") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -157,7 +159,7 @@ TRIAL("Tick: spacja odwraca, a enter idzie wyżej") {
     same(done, 1);
 }
 
-TRIAL("Tick: kliknięcie bierze ognisko i odwraca") {
+TRIAL("Tick: a click takes focus and toggles") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -178,9 +180,9 @@ TRIAL("Tick: kliknięcie bierze ognisko i odwraca") {
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
-// --- Wyłączone -----------------------------------------------------------------------------------
+// --- Disabled ------------------------------------------------------------------------------------
 
-TRIAL("Tick: wyłączone nie odwraca się i nie bierze ogniska") {
+TRIAL("Tick: when disabled it does not toggle and does not take focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -201,9 +203,9 @@ TRIAL("Tick: wyłączone nie odwraca się i nie bierze ogniska") {
     same(done, 0);
 }
 
-// Wyłączone pole nie może zostać z ogniskiem — ognisko utknęłoby na czymś, z czego Tab już nie
-// wychodzi, bo wędrówka wyłączonych nie widzi.
-TRIAL("Tick: wyłączenie oddaje ognisko") {
+// A disabled box must not keep focus: focus would get stuck on something Tab no longer leaves,
+// because the walk does not see disabled widgets.
+TRIAL("Tick: disabling gives up focus") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Tick>("Zawijaj");
@@ -219,11 +221,11 @@ TRIAL("Tick: wyłączenie oddaje ognisko") {
     ought(top.focused_node() != static_cast<ui::Node*>(one.get()));
 }
 
-// --- Klawisz aktywny -----------------------------------------------------------------------------
+// --- Hotkey --------------------------------------------------------------------------------------
 
-// To jest ta rzecz, dla której cała przebudowa: pole wyboru odpowiada na swoją literę **z dowolnego
-// miejsca okna**, tą samą drogą co przycisk, bo okno rozdaje klawisz zdarzeniem, a nie pyta o typ.
-TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
+// A tick box answers its letter from anywhere in the window, the same way a button does, because
+// the window hands out the key through an event instead of asking about the type.
+TRIAL("Tick: the hotkey works from anywhere in the window") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -242,7 +244,7 @@ TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
     top.children().add(window);
     window->open(dialog);
 
-    // Ognisko stoi na pierwszym polu, a naciskamy literę drugiego.
+    // Focus stands on the first box, and we press the letter of the second.
     same(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     ui::KeyEvent what{U'w'};
@@ -253,7 +255,7 @@ TRIAL("Tick: klawisz aktywny działa z dowolnego miejsca okna") {
     ought(other->ticked());
 }
 
-TRIAL("Tick: wyłączone nie odpowiada na swój klawisz") {
+TRIAL("Tick: when disabled it does not answer its key") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();

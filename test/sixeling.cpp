@@ -17,6 +17,7 @@ using namespace talcite;
 
 namespace {
 
+// One RGBA pixel of a test image; opaque unless said otherwise.
 struct Rgba {
     std::uint8_t red = 0;
     std::uint8_t green = 0;
@@ -24,6 +25,7 @@ struct Rgba {
     std::uint8_t alpha = 255;
 };
 
+// A still image of the given size made from pixels listed row by row.
 Pixels held(ui::Size size, const std::vector<Rgba>& all) {
     Bytes made;
 
@@ -37,10 +39,11 @@ Pixels held(ui::Size size, const std::vector<Rgba>& all) {
     return Pixels{size, {Still{made, std::chrono::milliseconds{0}}}};
 }
 
+// One 0..255 channel value as a percentage, rounded to the nearest, as sixel colors are written.
 int percent(std::uint8_t value) { return (value * 100 + 127) / 255; }
 
-// Odczyt tego, co koder pisze — tyle sixela, ile potrzeba próbom: nagłówek, raster, barwy
-// w procentach RGB, przebiegi, `!`, `$` i `-`. Piksel bez barwy to -1.
+// A reader of what the encoder writes, covering as much sixel as the trials need: the header, the
+// raster, colors in RGB percent, runs, `!`, `$` and `-`. A pixel with no color is -1.
 struct Read {
     bool whole = false;
     int wide = 0;
@@ -48,9 +51,11 @@ struct Read {
     std::map<int, std::array<int, 3>> palette;
     std::vector<int> picked;
 
+    // The color register of pixel (x, y), or -1.
     [[nodiscard]] int at(int x, int y) const { return picked[static_cast<std::size_t>(y * wide + x)]; }
 };
 
+// Decodes `text` into a `Read`; `whole` is set only when the text ends with ST right after the data.
 Read decoded(const std::string& text) {
     Read made;
     std::size_t at = 0;
@@ -145,7 +150,7 @@ Read decoded(const std::string& text) {
     return made;
 }
 
-// Barwa piksela po odczycie, w procentach; -1 dla piksela pustego.
+// The color of a pixel after decoding, in percent; -1 for an empty pixel.
 std::array<int, 3> tone(const Read& read, int x, int y) {
     const int which = read.at(x, y);
 
@@ -154,16 +159,17 @@ std::array<int, 3> tone(const Read& read, int x, int y) {
     return read.palette.at(which);
 }
 
+// The color the encoder should give pixel `one`, in percent.
 std::array<int, 3> wanted(Rgba one) { return {percent(one.red), percent(one.green), percent(one.blue)}; }
 
 }
 
-TRIAL("sixel: obraz pusty i klatka spoza obrazu dają pusty ciąg") {
+TRIAL("sixel: an empty image and a frame outside the image give an empty string") {
     same(sixel(Pixels{}, 0), std::string{});
     same(sixel(held({1, 1}, {Rgba{1, 2, 3}}), 1), std::string{});
 }
 
-TRIAL("sixel: nagłówek z P2 = 1, raster o kwadratowych pikselach i domknięcie ST") {
+TRIAL("sixel: header with P2 = 1, a raster of square pixels and a closing ST") {
     const std::string made = sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{0, 0, 255}}), 0);
 
     ought(made.rfind("\x1bP0;1;0q\"1;1;2;1#", 0) == 0);
@@ -171,7 +177,7 @@ TRIAL("sixel: nagłówek z P2 = 1, raster o kwadratowych pikselach i domknięcie
     ought(decoded(made).whole);
 }
 
-TRIAL("sixel: obraz o niewielu barwach wraca dokładnie, piksel po pikselu") {
+TRIAL("sixel: an image with few colors comes back exactly, pixel by pixel") {
     const std::vector<Rgba> tones = {{255, 0, 0}, {0, 128, 0}, {10, 20, 250}, {255, 255, 255}, {0, 0, 0}};
     const ui::Size size{13, 13};
     std::vector<Rgba> all;
@@ -190,7 +196,7 @@ TRIAL("sixel: obraz o niewielu barwach wraca dokładnie, piksel po pikselu") {
         for (int x = 0; x < 13; ++x) ought(tone(read, x, y) == wanted(all[static_cast<std::size_t>(y * 13 + x)]));
 }
 
-TRIAL("sixel: piksel prawie przezroczysty nie jest rysowany, od połowy krycia już tak") {
+TRIAL("sixel: a nearly transparent pixel is not drawn, from half opacity it is") {
     const std::vector<Rgba> all = {{200, 0, 0, 0}, {200, 0, 0, 127}, {200, 0, 0, 128}, {200, 0, 0, 255}};
     const Read read = decoded(sixel(held({4, 1}, all), 0));
 
@@ -202,7 +208,7 @@ TRIAL("sixel: piksel prawie przezroczysty nie jest rysowany, od połowy krycia j
     same(read.palette.size(), std::size_t{1});
 }
 
-TRIAL("sixel: obraz całkiem przezroczysty to sam nagłówek bez barw") {
+TRIAL("sixel: a fully transparent image is just the header with no colors") {
     const std::string made = sixel(held({3, 2}, std::vector<Rgba>(6, Rgba{9, 9, 9, 0})), 0);
     const Read read = decoded(made);
 
@@ -211,14 +217,14 @@ TRIAL("sixel: obraz całkiem przezroczysty to sam nagłówek bez barw") {
     same(made, std::string{"\x1bP0;1;0q\"1;1;3;2\x1b\\"});
 }
 
-TRIAL("sixel: wysokość tnie się do pełnych pasów, obraz niższy niż pas zostaje") {
+TRIAL("sixel: the height is cut to full bands, an image lower than a band stays") {
     same(decoded(sixel(held({1, 7}, std::vector<Rgba>(7, Rgba{})), 0)).high, 6);
     same(decoded(sixel(held({1, 17}, std::vector<Rgba>(17, Rgba{})), 0)).high, 12);
     same(decoded(sixel(held({1, 5}, std::vector<Rgba>(5, Rgba{})), 0)).high, 5);
     same(decoded(sixel(held({1, 12}, std::vector<Rgba>(12, Rgba{})), 0)).high, 12);
 }
 
-TRIAL("sixel: pasy idą po kolei, kreska między nimi, a nie po ostatnim") {
+TRIAL("sixel: bands go in order with a dash between them, not after the last") {
     std::vector<Rgba> all(12, Rgba{255, 255, 255});
 
     for (std::size_t at = 6; at < 12; ++at) all[at] = Rgba{0, 0, 0};
@@ -233,11 +239,11 @@ TRIAL("sixel: pasy idą po kolei, kreska między nimi, a nie po ostatnim") {
     ought(made.find("-\x1b\\") == std::string::npos);
     same(std::count(made.begin(), made.end(), '-'), std::ptrdiff_t{1});
 
-    // Jedna barwa w pasie: żadnego powrotu karetki — pierwsza barwa pasa zaczyna od lewej i tak.
+    // One color per band: no carriage return, the first color of a band starts at the left anyway.
     same(std::count(made.begin(), made.end(), '$'), std::ptrdiff_t{0});
 }
 
-TRIAL("sixel: od czterech powtórzeń znak idzie przez wykrzyknik, krótsze wprost") {
+TRIAL("sixel: from four repeats a character goes through an exclamation mark, shorter ones directly") {
     const std::string ten = sixel(held({10, 1}, std::vector<Rgba>(10, Rgba{0, 0, 0})), 0);
     const std::string three = sixel(held({3, 1}, std::vector<Rgba>(3, Rgba{0, 0, 0})), 0);
     const std::string four = sixel(held({4, 1}, std::vector<Rgba>(4, Rgba{0, 0, 0})), 0);
@@ -247,7 +253,7 @@ TRIAL("sixel: od czterech powtórzeń znak idzie przez wykrzyknik, krótsze wpro
     ought(four.find("#0!4@\x1b") != std::string::npos);
 }
 
-TRIAL("sixel: dwie barwy w pasie dzieli powrót karetki, puste kolumny na końcu nie idą") {
+TRIAL("sixel: a carriage return separates two colors in a band, empty columns at the end are left out") {
     const std::vector<Rgba> all = {{255, 0, 0}, {0, 0, 255}, {0, 0, 0, 0}, {0, 0, 0, 0}};
     const std::string made = sixel(held({4, 1}, all), 0);
     const Read read = decoded(made);
@@ -258,18 +264,18 @@ TRIAL("sixel: dwie barwy w pasie dzieli powrót karetki, puste kolumny na końcu
     same(read.at(2, 0), -1);
     same(read.at(3, 0), -1);
 
-    // Paleta po kolei barw: (0,0,255) przed (255,0,0). Niebieska stoi w drugiej kolumnie,
-    // czerwona tylko w pierwszej — żaden przebieg nie dopisuje pustych kolumn za sobą.
+    // The palette is in color order: (0,0,255) before (255,0,0). Blue stands in the second column,
+    // red only in the first; no run adds empty columns after itself.
     ought(made.find("#0?@$#1@\x1b") != std::string::npos);
 }
 
-TRIAL("sixel: barwy w procentach, zaokrąglone do najbliższego") {
+TRIAL("sixel: colors in percent, rounded to the nearest") {
     const std::string made = sixel(held({1, 1}, {Rgba{255, 128, 1}}), 0);
 
     ought(made.find("#0;2;100;50;0") != std::string::npos);
 }
 
-TRIAL("sixel: więcej barw niż wolno — paleta się mieści, a piksele idą do bliskich") {
+TRIAL("sixel: more colors than allowed: the palette fits and pixels go to close colors") {
     const ui::Size size{40, 30};
     std::vector<Rgba> all;
 
@@ -299,7 +305,7 @@ TRIAL("sixel: więcej barw niż wolno — paleta się mieści, a piksele idą do
     ought(worst <= 12);
 }
 
-TRIAL("sixel: mała paleta — dokładnie tyle barw, ile wolno, i każda z nich w użyciu") {
+TRIAL("sixel: small palette: exactly as many colors as allowed, each of them in use") {
     const ui::Size size{8, 6};
     std::vector<Rgba> all;
 
@@ -327,9 +333,9 @@ TRIAL("sixel: mała paleta — dokładnie tyle barw, ile wolno, i każda z nich 
     same(seen.size(), std::size_t{2});
 }
 
-// Granica drogi dokładnej: barw dokładnie tyle, ile wolno. Te dwie leżą w jednym kubełku 5×5×5,
-// więc droga przez kubełki zlałaby je w jedną.
-TRIAL("sixel: barw tyle, ile wolno — wszystkie dokładnie") {
+// The limit of the exact path: exactly as many colors as allowed. These two fall into one 5×5×5
+// bucket, so the bucket path would merge them into one.
+TRIAL("sixel: as many colors as allowed, all exact") {
     const Read read = decoded(sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{249, 0, 0}}), 0, 2));
 
     ought(read.whole);
@@ -338,7 +344,7 @@ TRIAL("sixel: barw tyle, ile wolno — wszystkie dokładnie") {
     ought(tone(read, 1, 0) == wanted(Rgba{249, 0, 0}));
 }
 
-TRIAL("sixel: zero barw to jedna — koder nie pisze obrazu bez palety") {
+TRIAL("sixel: zero colors means one, the encoder does not write an image without a palette") {
     const Read read = decoded(sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{0, 0, 255}}), 0, 0));
 
     ought(read.whole);
@@ -346,7 +352,7 @@ TRIAL("sixel: zero barw to jedna — koder nie pisze obrazu bez palety") {
     ought(read.at(0, 0) == 0 && read.at(1, 0) == 0);
 }
 
-TRIAL("sixel: druga klatka obrazu ruchomego to jej własne piksele") {
+TRIAL("sixel: the second frame of a moving image is its own pixels") {
     Bytes first;
     Bytes second;
 

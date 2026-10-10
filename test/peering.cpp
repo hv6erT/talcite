@@ -14,21 +14,22 @@
 
 using namespace talcite;
 
-// Prawdziwego NAT-a w piaskownicy nie ma i nie da się go udać. Sprawdzamy więc **protokół**: czy
-// obie strony dobijające się naraz dochodzą do siebie, czy wybierają tę samą drogę, czy dane nie
-// mieszają się ze sprawdzaniem łączności i czy cisza kończy się terminem. Przejście przez dwa
-// prawdziwe NAT-y sprawdza się tylko w prawdziwej sieci.
+// There is no real NAT in the sandbox and it cannot be faked. So we check the protocol: whether
+// both sides knocking at once reach each other, whether they pick the same path, whether data does
+// not mix with the connectivity checks, and whether silence ends with the deadline. Getting through
+// two real NATs can only be checked on a real network.
 namespace {
 
 const net::Patience soon{6000};
 
+// A UDP socket on an IPv4 loopback address with a port chosen by the system.
 net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 
 
 }
 
-TRIAL("Rozmówca: dwie strony dobijające się naraz dochodzą do siebie") {
+TRIAL("Peer: two sides knocking at once reach each other") {
     net::Udp one = standing();
     net::Udp two = standing();
 
@@ -51,7 +52,7 @@ TRIAL("Rozmówca: dwie strony dobijające się naraz dochodzą do siebie") {
     same(right.met(), where);
 }
 
-TRIAL("Rozmówca: strona bierna odpowiada i sama dochodzi do rozmówcy") {
+TRIAL("Peer: the passive side answers and reaches its peer on its own") {
     net::Udp one = standing();
     net::Udp two = standing();
 
@@ -60,9 +61,9 @@ TRIAL("Rozmówca: strona bierna odpowiada i sama dochodzi do rozmówcy") {
 
     left.add(net::Candidate{two.mine(), net::Candidate::Sort::here});
 
-    // Prawa strona zna lewą z sygnalizacji, ale sama nie woła reach. Budzimy jej pętlę czekaniem
-    // na dane, których nikt nie przyśle — ma odpowiadać na cudze próby i dojść do rozmówcy sama.
-    // Tak właśnie wygląda strona, do której ktoś się dobija.
+    // The right side knows the left one from signaling, but does not call reach itself. Its loop is
+    // woken by waiting for data that nobody will send; it must answer the other side's checks and
+    // reach its peer on its own. That is exactly what the side being knocked on looks like.
     right.add(net::Candidate{one.mine(), net::Candidate::Sort::here});
 
     auto waiting = right.receive(1024, net::Patience{2000});
@@ -77,7 +78,7 @@ TRIAL("Rozmówca: strona bierna odpowiada i sama dochodzi do rozmówcy") {
     same(right.met(), one.mine());
 }
 
-// Zapytanie STUN złożone bajt po bajcie, żeby udawać obcego, który odzywa się nieproszony.
+// A STUN request put together byte by byte, to play a stranger who speaks up unasked.
 Bytes knocking() {
     Bytes made(20, std::byte{0});
 
@@ -92,17 +93,17 @@ Bytes knocking() {
     return made;
 }
 
-// NAT prawie zawsze nadaje drugiej stronie inny port niż ten, który zdążyła zgłosić. Drogę od tego
-// samego gospodarza wolno więc dopisać — bez tego przebijanie nie zadziałałoby prawie nigdy.
-TRIAL("Rozmówca: inny port znanego gospodarza dopisuje się sam") {
+// A NAT almost always gives the other side a different port from the one it managed to report. So
+// a path from the same host may be added; without that, hole punching would almost never work.
+TRIAL("Peer: another port of a known host is added by itself") {
     net::Udp one = standing();
     net::Udp two = standing();
     net::Udp three = standing();
 
     net::Peer left{one};
 
-    // Sygnalizacja podała port drugiego gniazda, a próba przyjdzie z trzeciego — ten sam adres,
-    // inny port, dokładnie jak zza NAT-u.
+    // Signaling gave the port of the second socket, and the check comes from the third: the same
+    // address, a different port, exactly as from behind a NAT.
     left.add(net::Candidate{two.mine(), net::Candidate::Sort::here});
 
     auto waking = left.receive(1024, net::Patience{1500});
@@ -126,16 +127,16 @@ TRIAL("Rozmówca: inny port znanego gospodarza dopisuje się sam") {
     }
 }
 
-// Bez tego wystarczyło jedno nieproszone zapytanie, żeby obcy trafił na listę dróg i dostał od nas
-// numer transakcji — a numer jest jedynym dowodem tożsamości odpowiedzi, więc odesłany wracał jako
-// wygrane przebijanie.
-TRIAL("Rozmówca: gospodarz, o którym nikt nie mówił, nie dopisuje się") {
+// Without this rule a single unsolicited request would be enough for a stranger to get onto the
+// list of paths and receive a transaction number from us; the number is the only proof of a
+// response's identity, so sending it back would count as a won hole punch.
+TRIAL("Peer: a host nobody mentioned is not added") {
     net::Udp one = standing();
     net::Udp evil = standing();
 
     net::Peer left{one};
 
-    // Jedyna znana droga prowadzi gdzie indziej i nigdy się nie odezwie.
+    // The only known path leads elsewhere and will never answer.
     left.add(net::Candidate{net::Address{"203.0.113.9", 5000}, net::Candidate::Sort::here});
 
     auto waking = left.receive(1024, net::Patience{900});
@@ -158,7 +159,7 @@ TRIAL("Rozmówca: gospodarz, o którym nikt nie mówił, nie dopisuje się") {
     }
 }
 
-TRIAL("Rozmówca: po przebiciu da się rozmawiać") {
+TRIAL("Peer: after punching through, the sides can talk") {
     net::Udp one = standing();
     net::Udp two = standing();
 
@@ -181,7 +182,7 @@ TRIAL("Rozmówca: po przebiciu da się rozmawiać") {
     same(text(waiting.await()), std::string{"witaj po drugiej stronie dziury"});
 }
 
-TRIAL("Rozmówca: sprawdzanie łączności nie miesza się z danymi") {
+TRIAL("Peer: connectivity checks do not mix with data") {
     net::Udp one = standing();
     net::Udp two = standing();
 
@@ -197,8 +198,8 @@ TRIAL("Rozmówca: sprawdzanie łączności nie miesza się z danymi") {
     (void)first.await();
     (void)second.await();
 
-    // Podtrzymania i odpowiedzi lecą tym samym gniazdem przez cały czas. Do danych nie ma prawa
-    // trafić ani jeden bajt STUN — inaczej wołający dostałby śmieć zamiast swojej wiadomości.
+    // Keepalives and responses travel over the same socket the whole time. Not a single STUN byte
+    // may reach the data, or the caller would get garbage instead of its message.
     for (int turn = 0; turn < 5; ++turn) {
         auto waiting = right.receive(1024, soon);
 
@@ -208,7 +209,7 @@ TRIAL("Rozmówca: sprawdzanie łączności nie miesza się z danymi") {
     }
 }
 
-TRIAL("Rozmówca: bez drogi nie ma się gdzie dobijać") {
+TRIAL("Peer: without a path there is nowhere to knock") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -224,13 +225,13 @@ TRIAL("Rozmówca: bez drogi nie ma się gdzie dobijać") {
     ought(amiss);
 }
 
-TRIAL("Rozmówca: droga donikąd kończy się terminem") {
+TRIAL("Peer: a path to nowhere ends with the deadline") {
     net::Udp one = standing();
     net::Udp two = standing();
 
     const net::Address nobody = two.mine();
 
-    // Zamykamy drugie gniazdo, więc adres jest poprawny, ale nikt za nim nie stoi.
+    // The second socket is closed, so the address is valid but nobody stands behind it.
     two.close();
 
     net::Peer left{one};
@@ -248,7 +249,7 @@ TRIAL("Rozmówca: droga donikąd kończy się terminem") {
     ought(late);
 }
 
-TRIAL("Rozmówca: własnego adresu nie przyjmujemy za cudzą drogę") {
+TRIAL("Peer: our own address is not taken as the other side's path") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -258,7 +259,7 @@ TRIAL("Rozmówca: własnego adresu nie przyjmujemy za cudzą drogę") {
     ought(left.theirs().empty());
 }
 
-TRIAL("Rozmówca: drogi ustawiają się wedle rodzaju") {
+TRIAL("Peer: paths are ordered by sort") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -275,7 +276,7 @@ TRIAL("Rozmówca: drogi ustawiają się wedle rodzaju") {
     same(made[2].sort, net::Candidate::Sort::lent);
 }
 
-TRIAL("Rozmówca: ta sama droga nie wchodzi dwa razy") {
+TRIAL("Peer: the same path does not go in twice") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -288,7 +289,7 @@ TRIAL("Rozmówca: ta sama droga nie wchodzi dwa razy") {
     same(static_cast<int>(left.theirs().size()), 1);
 }
 
-TRIAL("Rozmówca: zbieranie kandydatów bez zwiadowcy daje same karty") {
+TRIAL("Peer: gathering candidates without a scout gives only host candidates") {
     net::Udp one{net::Address::any(net::Family::four, 0)};
 
     net::Peer left{one};
@@ -298,18 +299,19 @@ TRIAL("Rozmówca: zbieranie kandydatów bez zwiadowcy daje same karty") {
     for (const net::Candidate& which : made) {
         same(which.sort, net::Candidate::Sort::here);
 
-        // Kandydat niesie port **naszego** gniazda, bo to jego szuka druga strona.
+        // The candidate carries the port of our socket, because that is what the other side looks
+        // for.
         same(which.where.port(), one.mine().port());
 
-        // Pętla zwrotna nie może wyjść na zewnątrz: kazałaby drugiej stronie dobijać się do samej
-        // siebie, a odpowiedź od własnego gniazda wyglądałaby jak udane przebicie.
+        // Loopback must not go out: it would make the other side knock on itself, and a response
+        // from its own socket would look like a successful punch.
         ought(!(which.where == net::Address::loopback(net::Family::four, which.where.port())));
     }
 
     same(left.candidates().size(), made.size());
 }
 
-TRIAL("Rozmówca: nie ma do kogo mówić przed przebiciem") {
+TRIAL("Peer: there is nobody to talk to before punching through") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -325,7 +327,7 @@ TRIAL("Rozmówca: nie ma do kogo mówić przed przebiciem") {
     ought(amiss);
 }
 
-TRIAL("Rozmówca: cisza na odbiorze kończy się terminem") {
+TRIAL("Peer: silence on receive ends with the deadline") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -341,7 +343,7 @@ TRIAL("Rozmówca: cisza na odbiorze kończy się terminem") {
     ought(late);
 }
 
-TRIAL("Rozmówca: zamknięty nie przyjmuje niczego") {
+TRIAL("Peer: a closed one accepts nothing") {
     net::Udp one = standing();
 
     net::Peer left{one};
@@ -359,7 +361,7 @@ TRIAL("Rozmówca: zamknięty nie przyjmuje niczego") {
     ought(amiss);
 }
 
-TRIAL("Rozmówca: dwa dobijania naraz dostają odmowę") {
+TRIAL("Peer: two knocks at once are refused") {
     net::Udp one = standing();
     net::Udp two = standing();
 
@@ -385,9 +387,9 @@ TRIAL("Rozmówca: dwa dobijania naraz dostają odmowę") {
     }
 }
 
-// Odmowa nie ma prawa zjeść przesyłki: sprawdzenie rozmiaru idzie przed zdjęciem jej z kolejki,
-// więc powtórzenie z większym miejscem jeszcze ją zastanie.
-TRIAL("Rozmówca: za duża przesyłka nie ginie przy odmowie") {
+// A refusal must not eat the message: the size check comes before taking it off the queue, so a
+// retry with more room still finds it.
+TRIAL("Peer: an oversized message is not lost on refusal") {
     net::Udp one = standing();
     net::Udp two = standing();
 

@@ -22,8 +22,8 @@ using namespace talcite;
 
 namespace {
 
-// Węzeł, który zapisuje, ile razy i z jaką widocznością go rysowano. Na nim widać, czy oszczędność
-// naprawdę działa: niewidoczne dziecko nie powinno w ogóle dostać paint.
+// A node that records how many times and with what visibility it was drawn. It shows whether the
+// saving really works: an invisible child should not get paint at all.
 class Sheet : public ui::Node {
 public:
     explicit Sheet(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
@@ -31,9 +31,12 @@ public:
     int drawn = 0;
     ui::Area last;
 
+    // The size given in the constructor, whatever room is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
 
 protected:
+    // Counts the call, remembers the visible part, and fills the size with letters that change by
+    // row, starting from the letter given in the constructor.
     View paint(ui::Size given, ui::Area seen) override {
         ++drawn;
         last = seen;
@@ -53,6 +56,7 @@ private:
     char32_t what_ = U'a';
 };
 
+// The text of row `y` of the view, with trailing spaces removed.
 std::string read(const View& one, int y) {
     std::string made;
 
@@ -67,6 +71,7 @@ std::string read(const View& one, int y) {
     return made;
 }
 
+// A column of `much` spans named "wiersz 0", "wiersz 1"….
 std::shared_ptr<ui::Column> rows(int much) {
     auto made = std::make_shared<ui::Column>();
 
@@ -78,7 +83,7 @@ std::shared_ptr<ui::Column> rows(int much) {
 
 }
 
-TRIAL("Widoczność: cały prostokąt, gdy nikt nie mówi inaczej") {
+TRIAL("Visibility: the whole rectangle when nobody says otherwise") {
     const auto one = std::make_shared<Sheet>(ui::Size{4, 4}, U'a');
 
     (void)one->render({{0, 0}, {4, 4}});
@@ -89,7 +94,7 @@ TRIAL("Widoczność: cały prostokąt, gdy nikt nie mówi inaczej") {
     same(one->last.size.high, 4);
 }
 
-TRIAL("Widoczność: czego nie widać, tego się nie rysuje") {
+TRIAL("Visibility: what cannot be seen is not drawn") {
     ui::Column top;
 
     const auto first = std::make_shared<Sheet>(ui::Size{4, 2}, U'a');
@@ -104,7 +109,7 @@ TRIAL("Widoczność: czego nie widać, tego się nie rysuje") {
     same(second->drawn, 0);
 }
 
-TRIAL("Widoczność: część wspólna liczy się w obu kierunkach") {
+TRIAL("Visibility: the intersection is computed in both directions") {
     const ui::Area one = ui::Area::crossed(ui::Area{{0, 0}, {10, 10}}, ui::Area{{5, 5}, {10, 10}});
 
     same(one.at.x, 5);
@@ -125,7 +130,7 @@ TRIAL("Widoczność: część wspólna liczy się w obu kierunkach") {
     same(over.size.high, 1);
 }
 
-TRIAL("Scroll w pionie: bez przewinięcia widać początek treści") {
+TRIAL("Vertical scroll: without scrolling the start of the content is visible") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.children().add(rows(10));
@@ -137,7 +142,7 @@ TRIAL("Scroll w pionie: bez przewinięcia widać początek treści") {
     same(one.shift().y, 0);
 }
 
-TRIAL("Scroll w pionie: przewinięcie przesuwa treść w górę") {
+TRIAL("Vertical scroll: scrolling moves the content up") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.children().add(rows(10));
@@ -150,7 +155,7 @@ TRIAL("Scroll w pionie: przewinięcie przesuwa treść w górę") {
     same(read(made, 1), std::string{"wiersz 5"});
 }
 
-TRIAL("Scroll w pionie: dalej niż koniec treści nie da się przewinąć") {
+TRIAL("Vertical scroll: cannot scroll past the end of the content") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.children().add(rows(5));
@@ -163,7 +168,7 @@ TRIAL("Scroll w pionie: dalej niż koniec treści nie da się przewinąć") {
     same(read(made, 0), std::string{"wiersz 2"});
 }
 
-TRIAL("Scroll w pionie: treść krótsza niż okno nie przewija się wcale") {
+TRIAL("Vertical scroll: content shorter than the window does not scroll at all") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.children().add(rows(2));
@@ -175,7 +180,7 @@ TRIAL("Scroll w pionie: treść krótsza niż okno nie przewija się wcale") {
     same(one.shift().y, 0);
 }
 
-TRIAL("Scroll w pionie: ujemne przewinięcie schodzi do zera") {
+TRIAL("Vertical scroll: a negative scroll goes down to zero") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.shift({0, -5});
@@ -183,7 +188,7 @@ TRIAL("Scroll w pionie: ujemne przewinięcie schodzi do zera") {
     same(one.shift().y, 0);
 }
 
-TRIAL("Scroll w pionie: rysuje tylko wiersze, które widać") {
+TRIAL("Vertical scroll: draws only the rows that are visible") {
     ui::Scroll one{ui::Axis::vertical};
 
     const auto column = std::make_shared<ui::Column>();
@@ -206,7 +211,7 @@ TRIAL("Scroll w pionie: rysuje tylko wiersze, które widać") {
     same(third->drawn, 0);
 }
 
-TRIAL("Scroll w pionie: dziecko dostaje widoczność we własnych współrzędnych") {
+TRIAL("Vertical scroll: the child gets its visibility in its own coordinates") {
     ui::Scroll one{ui::Axis::vertical};
 
     const auto inner = std::make_shared<Sheet>(ui::Size{6, 10}, U'a');
@@ -221,7 +226,7 @@ TRIAL("Scroll w pionie: dziecko dostaje widoczność we własnych współrzędny
     same(inner->last.size.high, 3);
 }
 
-TRIAL("Scroll w pionie: kółko przewija, a na końcu oddaje zdarzenie wyżej") {
+TRIAL("Vertical scroll: the wheel scrolls, and at the end passes the event up") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::vertical);
@@ -246,7 +251,7 @@ TRIAL("Scroll w pionie: kółko przewija, a na końcu oddaje zdarzenie wyżej") 
     same(scroll->shift().y, 7);
 }
 
-TRIAL("Scroll w pionie: kliknięcie trafia w to, co widać po przewinięciu") {
+TRIAL("Vertical scroll: a click hits what is visible after scrolling") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::vertical);
@@ -268,7 +273,7 @@ TRIAL("Scroll w pionie: kliknięcie trafia w to, co widać po przewinięciu") {
     same(scroll->children().front()->area().at.y, -2);
 }
 
-TRIAL("Scroll w poziomie: przewinięcie przesuwa treść w lewo") {
+TRIAL("Horizontal scroll: scrolling moves the content left") {
     ui::Scroll one{ui::Axis::horizontal};
 
     one.children().add(std::make_shared<ui::Span>("abcdefghij"));
@@ -280,7 +285,7 @@ TRIAL("Scroll w poziomie: przewinięcie przesuwa treść w lewo") {
     same(read(made, 0), std::string{"defg"});
 }
 
-TRIAL("Scroll w poziomie: dalej niż koniec treści nie da się przewinąć") {
+TRIAL("Horizontal scroll: cannot scroll past the end of the content") {
     ui::Scroll one{ui::Axis::horizontal};
 
     one.children().add(std::make_shared<ui::Span>("abcdefghij"));
@@ -292,7 +297,7 @@ TRIAL("Scroll w poziomie: dalej niż koniec treści nie da się przewinąć") {
     same(one.shift().x, 6);
 }
 
-TRIAL("Scroll w poziomie: chce co najwyżej tyle, ile dostał") {
+TRIAL("Horizontal scroll: wants at most as much as it got") {
     ui::Scroll one{ui::Axis::horizontal};
 
     one.children().add(std::make_shared<ui::Span>("abcdefghij"));
@@ -301,7 +306,7 @@ TRIAL("Scroll w poziomie: chce co najwyżej tyle, ile dostał") {
     same(one.wants({40, 1}).wide, 10);
 }
 
-TRIAL("Scroll: przewija w obu kierunkach naraz") {
+TRIAL("Scroll: scrolls in both directions at once") {
     ui::Scroll one{ui::Axis::both};
 
     const auto inner = std::make_shared<Sheet>(ui::Size{20, 20}, U'a');
@@ -320,7 +325,7 @@ TRIAL("Scroll: przewija w obu kierunkach naraz") {
     same(inner->last.size.high, 5);
 }
 
-TRIAL("Scroll: kółko przewija w pionie, a z Shiftem w poziomie") {
+TRIAL("Scroll: the wheel scrolls vertically, and with Shift horizontally") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::both);
@@ -348,7 +353,7 @@ TRIAL("Scroll: kółko przewija w pionie, a z Shiftem w poziomie") {
     same(scroll->shift().y, 3);
 }
 
-TRIAL("Scroll: przewinięcie nie wychodzi poza treść") {
+TRIAL("Scroll: scrolling does not go beyond the content") {
     ui::Scroll one{ui::Axis::both};
 
     one.children().add(std::make_shared<Sheet>(ui::Size{8, 8}, U'a'));
@@ -361,7 +366,7 @@ TRIAL("Scroll: przewinięcie nie wychodzi poza treść") {
     same(one.shift().y, 3);
 }
 
-TRIAL("Scroll: napis w przewijaku nie zawija się wcale") {
+TRIAL("Scroll: a span in a scroller does not wrap at all") {
     ui::Scroll one{ui::Axis::both};
 
     one.children().add(std::make_shared<ui::Span>("ala ma kota", ui::SpanShape{true}));
@@ -369,7 +374,7 @@ TRIAL("Scroll: napis w przewijaku nie zawija się wcale") {
     same(one.wants({4, 10}).high, 1);
 }
 
-TRIAL("Pasek: bez włączenia nie ma go wcale") {
+TRIAL("Scrollbar: without turning it on there is none") {
     ui::Scroll one{ui::Axis::vertical};
 
     one.children().add(rows(10));
@@ -380,7 +385,7 @@ TRIAL("Pasek: bez włączenia nie ma go wcale") {
     same(read(made, 0), std::string{"wiersz 0"});
 }
 
-TRIAL("Pasek: strzałki na końcach, suwak pomiędzy") {
+TRIAL("Scrollbar: arrows at the ends, the slider in between") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true}};
 
     one.children().add(rows(20));
@@ -394,7 +399,7 @@ TRIAL("Pasek: strzałki na końcach, suwak pomiędzy") {
     same(made.at({9, 3}).letter, U'░');
 }
 
-TRIAL("Pasek: suwak schodzi w dół razem z przewinięciem") {
+TRIAL("Scrollbar: the slider moves down together with scrolling") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true}};
 
     one.children().add(rows(20));
@@ -407,10 +412,10 @@ TRIAL("Pasek: suwak schodzi w dół razem z przewinięciem") {
     same(made.at({9, 1}).letter, U'░');
 }
 
-// Strona liczy pasek w bajtach, więc plik większy niż `int` to zwykły przypadek, nie ciekawostka.
-// Trzy miliardy bajtów, przewinięte do połowy: suwak ma stać w połowie toru — dziesięć kratek toru,
-// jedna na suwak, więc piąta od góry pod strzałką.
-TRIAL("Pasek: trzy miliardy w połowie dają suwak w połowie") {
+// The pager computes the bar in bytes, so a file larger than `int` is an ordinary case, not a
+// curiosity. Three billion bytes, scrolled to the middle: the slider must stand in the middle of
+// the track; ten cells of track, one for the slider, so the fifth from the top below the arrow.
+TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
     const ui::Skin how;
     const std::string role = "talcite.scroll";
 
@@ -432,9 +437,10 @@ TRIAL("Pasek: trzy miliardy w połowie dają suwak w połowie") {
     same(made.at({0, 7}).letter, U'░');
 }
 
-// Druga połowa tej samej pomyłki: długość suwaka to tor razy okno przez całość, a przy oknie rzędu
-// miliarda sam iloczyn nie mieści się w `int`. Okno na pół całości daje suwak na pół toru.
-TRIAL("Pasek: okno na pół z trzech miliardów daje suwak na pół toru") {
+// The other half of the same trap: the slider's length is the track times the window over the
+// whole, and with a window of the order of a billion the product alone does not fit in `int`. A
+// window of half the whole gives a slider of half the track.
+TRIAL("Scrollbar: a window of half of three billion gives a slider of half the track") {
     const ui::Skin how;
     const std::string role = "talcite.scroll";
 
@@ -453,7 +459,7 @@ TRIAL("Pasek: okno na pół z trzech miliardów daje suwak na pół toru") {
     for (int y = 6; y <= 10; ++y) same(made.at({0, y}).letter, U'░');
 }
 
-TRIAL("Pasek: treść mieszcząca się w oknie daje suwak na cały tor") {
+TRIAL("Scrollbar: content that fits in the window gives a slider over the whole track") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true}};
 
     one.children().add(rows(2));
@@ -465,9 +471,10 @@ TRIAL("Pasek: treść mieszcząca się w oknie daje suwak na cały tor") {
     same(made.at({9, 3}).letter, U'█');
 }
 
-// **Pasek „gdy trzeba"** (`needed`): treść, która mieści się w oknie, dostaje całą szerokość i nie ma
-// paska; dłuższa ma go jak zawsze. Przewijak chce wtedy tyle, ile treść, bez kolumny na pasek.
-TRIAL("Pasek gdy trzeba: treść mieszcząca się nie ma paska, dłuższa ma") {
+// The scrollbar "when needed" (`needed`): content that fits in the window gets the full width and
+// no bar; longer content has one as always. The scroller then wants as much as the content,
+// without a column for the bar.
+TRIAL("Scrollbar when needed: content that fits has no bar, longer content has one") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true, true}};
 
     const auto inner = std::make_shared<Sheet>(ui::Size{10, 4}, U'a');
@@ -487,15 +494,16 @@ TRIAL("Pasek gdy trzeba: treść mieszcząca się nie ma paska, dłuższa ma") {
     same(tight.at({9, 2}).letter, U'▼');
     same(one.wants({80, 3}).wide, 11);
 
-    // Treść równa oknu też się mieści — ostatnia kolumna należy do treści (wiersz 3 to „d").
+    // Content equal to the window fits too; the last column belongs to the content (row 3 is "d").
     const View exact = one.render({{0, 0}, {10, 4}});
 
     same(exact.at({9, 3}).letter, U'd');
 }
 
-// Oba paski „gdy trzeba": pionowy staje, bo treść jest za wysoka — i zabiera kolumnę, przez co treść
-// dokładnie tak szeroka jak okno przestaje się mieścić w poziomie. Drugie przejście to widzi.
-TRIAL("Pasek gdy trzeba: pionowy wywołuje poziomy, gdy zabrał kolumnę") {
+// Both bars "when needed": the vertical one appears because the content is too tall, and takes a
+// column, so content exactly as wide as the window stops fitting horizontally. The second pass
+// sees it.
+TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it took a column") {
     ui::Scroll one{ui::Axis::both, ui::ScrollShape{true, true}};
 
     one.children().add(std::make_shared<Sheet>(ui::Size{6, 20}, U'a'));
@@ -514,14 +522,15 @@ TRIAL("Pasek gdy trzeba: pionowy wywołuje poziomy, gdy zabrał kolumnę") {
     same(none.at({5, 0}).letter, U' ');
     same(none.at({0, 5}).letter, U' ');
 
-    // Treść dokładnie tak szeroka jak okno mieści się w poziomie.
+    // Content exactly as wide as the window fits horizontally.
     ui::Scroll exact{ui::Axis::both, ui::ScrollShape{true, true}};
 
     exact.children().add(std::make_shared<Sheet>(ui::Size{6, 5}, U'a'));
 
     same(exact.render({{0, 0}, {6, 6}}).at({0, 5}).letter, U' ');
 
-    // Przewijak tylko poziomy nie ma paska pionowego, choćby treść była wyższa od okna.
+    // A horizontal-only scroller has no vertical bar, even if the content is taller than the
+    // window.
     ui::Scroll across{ui::Axis::horizontal, ui::ScrollShape{true, true}};
 
     across.children().add(std::make_shared<Sheet>(ui::Size{20, 5}, U'a'));
@@ -532,7 +541,7 @@ TRIAL("Pasek gdy trzeba: pionowy wywołuje poziomy, gdy zabrał kolumnę") {
     same(flat.at({0, 2}).letter, U'◀');
 }
 
-TRIAL("Pasek: zabiera treści jedną kolumnę") {
+TRIAL("Scrollbar: takes one column from the content") {
     ui::Scroll one{ui::Axis::vertical};
 
     const auto inner = std::make_shared<Sheet>(ui::Size{20, 4}, U'a');
@@ -550,7 +559,7 @@ TRIAL("Pasek: zabiera treści jedną kolumnę") {
     same(inner->area().size.wide, 9);
 }
 
-TRIAL("Pasek: wchodzi też do tego, ile przewijak chce") {
+TRIAL("Scrollbar: also counts in what the scroller wants") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true}};
 
     one.children().add(std::make_shared<ui::Span>("kot"));
@@ -558,7 +567,7 @@ TRIAL("Pasek: wchodzi też do tego, ile przewijak chce") {
     same(one.wants({80, 5}).wide, 4);
 }
 
-TRIAL("Pasek poziomy: strzałki w bok i dolny wiersz") {
+TRIAL("Horizontal scrollbar: arrows to the sides and the bottom row") {
     ui::Scroll one{ui::Axis::horizontal, ui::ScrollShape{true}};
 
     one.children().add(std::make_shared<ui::Span>("abcdefghijklmnoprst"));
@@ -570,7 +579,7 @@ TRIAL("Pasek poziomy: strzałki w bok i dolny wiersz") {
     same(read(made, 0), std::string{"abcdef"});
 }
 
-TRIAL("Scroll: dwa paski i pusty narożnik") {
+TRIAL("Scroll: two bars and an empty corner") {
     ui::Scroll one{ui::Axis::both, ui::ScrollShape{true}};
 
     one.children().add(std::make_shared<Sheet>(ui::Size{20, 20}, U'a'));
@@ -584,7 +593,7 @@ TRIAL("Scroll: dwa paski i pusty narożnik") {
     same(made.at({5, 5}).letter, U' ');
 }
 
-TRIAL("Scroll: paski zabierają treści kolumnę i wiersz") {
+TRIAL("Scroll: the bars take a column and a row from the content") {
     ui::Scroll one{ui::Axis::both, ui::ScrollShape{true}};
 
     const auto inner = std::make_shared<Sheet>(ui::Size{20, 20}, U'a');
@@ -597,7 +606,7 @@ TRIAL("Scroll: paski zabierają treści kolumnę i wiersz") {
     same(inner->last.size.high, 5);
 }
 
-TRIAL("Przewijaki biorą jedno dziecko") {
+TRIAL("Scrollers take one child") {
     ui::Scroll first{ui::Axis::vertical};
     ui::Scroll second{ui::Axis::horizontal};
     ui::Scroll third{ui::Axis::both};
@@ -607,10 +616,10 @@ TRIAL("Przewijaki biorą jedno dziecko") {
     same(third.capacity(), 1);
 }
 
-// Suwak rysują wolne funkcje, które nie mają węzła, przez który dosięgłyby roli — więc rdzeń
-// dostają w argumencie. Dzięki temu przewijak, lista, tabela i strona mogą mieć suwak ubrany
-// osobno, zamiast jednego na całą bibliotekę.
-TRIAL("Scroll w pionie: rdzeń roli suwaka można podmienić") {
+// The slider is drawn by free functions that have no node through which to reach a role, so they
+// get the stem as an argument. Thanks to that the scroller, the list, the table and the pager can
+// have sliders dressed separately, instead of one for the whole library.
+TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
     ui::Root top;
 
     const auto one = std::make_shared<ui::Scroll>(ui::Axis::vertical, ui::ScrollShape{true});
@@ -637,10 +646,11 @@ TRIAL("Scroll w pionie: rdzeń roli suwaka można podmienić") {
     same(made.at({5, 0}).style.foreground, (Color{false, 6, 6, 6}));
 }
 
-// --- Za ogniskiem ---------------------------------------------------------------------------
+// --- Following the focus --------------------------------------------------------------------
 
 namespace {
 
+// A column of `much` fields of width `wide` holding their numbers.
 std::shared_ptr<ui::Column> fields(int much, int wide = 6) {
     auto made = std::make_shared<ui::Column>();
 
@@ -652,10 +662,10 @@ std::shared_ptr<ui::Column> fields(int much, int wide = 6) {
 
 }
 
-// Ognisko w polu poza oknem dosuwa przewinięcie w następnej klatce — w `paint`, jak w liście, bo
-// dopiero po rozstawieniu znany jest prostokąt pola. Do dołu, gdy pole jest niżej; do góry, gdy
-// wyżej; pole w oknie niczego nie rusza.
-TRIAL("Scroll w pionie: ognisko poza oknem dosuwa przewinięcie, w oknie nie rusza") {
+// Focus in a field outside the window adjusts the scrolling in the next frame, in `paint`, as in
+// the list, because only after layout is the field's rectangle known. Down when the field is
+// lower; up when it is higher; a field inside the window moves nothing.
+TRIAL("Vertical scroll: focus outside the window adjusts the scrolling, inside it moves nothing") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::vertical);
@@ -701,9 +711,9 @@ TRIAL("Scroll w pionie: ognisko poza oknem dosuwa przewinięcie, w oknie nie rus
     same(scroll->shift().y, 25);
 }
 
-// Kółko przesuwa widok, ognisko zostaje — i następna klatka nie cofa kółka: za ogniskiem idzie
-// się tylko w klatce po jego zmianie. Ognisko poza przewijakiem niczego nie rusza.
-TRIAL("Scroll w pionie: kółko nie kłóci się z ogniskiem, a ognisko obok przewijaka nic nie rusza") {
+// The wheel moves the view and the focus stays, and the next frame does not undo the wheel: the
+// focus is followed only in the frame after it changes. Focus outside the scroller moves nothing.
+TRIAL("Vertical scroll: the wheel does not fight the focus, and focus beside the scroller moves nothing") {
     ui::Root top;
 
     const auto whole = std::make_shared<ui::Column>();
@@ -742,8 +752,8 @@ TRIAL("Scroll w pionie: kółko nie kłóci się z ogniskiem, a ognisko obok prz
     same(scroll->shift().y, 3);
 }
 
-// Węzeł wyższy niż okno dosuwa się górą — początek jest ważniejszy niż koniec.
-TRIAL("Scroll w pionie: węzeł wyższy niż okno dosuwa się górą") {
+// A node taller than the window is brought in by its top; the start matters more than the end.
+TRIAL("Vertical scroll: a node taller than the window is brought in by its top") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::vertical);
@@ -770,7 +780,7 @@ TRIAL("Scroll w pionie: węzeł wyższy niż okno dosuwa się górą") {
     same(scroll->shift().y, 8);
 }
 
-TRIAL("Scroll w poziomie: ognisko poza oknem dosuwa przewinięcie w poziomie") {
+TRIAL("Horizontal scroll: focus outside the window adjusts the horizontal scrolling") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::horizontal);
@@ -797,7 +807,7 @@ TRIAL("Scroll w poziomie: ognisko poza oknem dosuwa przewinięcie w poziomie") {
     same(scroll->shift().x, 0);
 }
 
-TRIAL("Scroll: ognisko dosuwa przewinięcie w obu osiach naraz") {
+TRIAL("Scroll: the focus adjusts the scrolling on both axes at once") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::both);
@@ -834,15 +844,16 @@ TRIAL("Scroll: ognisko dosuwa przewinięcie w obu osiach naraz") {
     same(scroll->shift().y, 0);
 }
 
-// --- Oś przewijania ------------------------------------------------------------------------------
+// --- Scrolling axis ------------------------------------------------------------------------------
 
 namespace {
 
-// Węzeł, który zapamiętuje, o jaki pokój go pytano.
+// A node that remembers what room it was asked about.
 class Asked : public ui::Node {
 public:
     mutable ui::Size room;
 
+    // Remembers the room and asks for four by four.
     [[nodiscard]] ui::Size wants(ui::Size given) const override {
         room = given;
 
@@ -850,6 +861,7 @@ public:
     }
 };
 
+// The room that a scroller with a bar on the given axis offers its child when asked for 20 by 10.
 ui::Size asked(ui::Axis axis) {
     ui::Scroll one{axis, ui::ScrollShape{true}};
 
@@ -862,6 +874,8 @@ ui::Size asked(ui::Axis axis) {
     return probe->room;
 }
 
+// The visible size that a scroller with a bar on the given axis gives a large child in a window of
+// 10 by 5.
 ui::Size window(ui::Axis axis) {
     ui::Scroll one{axis, ui::ScrollShape{true}};
 
@@ -876,9 +890,10 @@ ui::Size window(ui::Axis axis) {
 
 }
 
-// Oś otwarta pyta o `plenty` (bez paska), zamknięta o pokój bez paska — dlatego napis w przewijaku
-// pionowym zawija się do szerokości okna, a w poziomym zostaje jednym długim wierszem.
-TRIAL("Scroll: oś otwarta pyta dziecko o plenty, zamknięta o pokój") {
+// An open axis asks for `plenty` (without the bar), a closed one for the room without the bar; that
+// is why a span in a vertical scroller wraps to the window's width, and in a horizontal one stays
+// one long line.
+TRIAL("Scroll: an open axis asks the child for plenty, a closed one for the room") {
     const ui::Size vertical = asked(ui::Axis::vertical);
     same(vertical.wide, 19);
     same(vertical.high, ui::plenty);
@@ -892,7 +907,7 @@ TRIAL("Scroll: oś otwarta pyta dziecko o plenty, zamknięta o pokój") {
     same(both.high, ui::plenty - 1);
 }
 
-TRIAL("Scroll: pasek stoi tylko przy osi otwartej") {
+TRIAL("Scroll: a bar stands only along an open axis") {
     same(window(ui::Axis::vertical).wide, 9);
     same(window(ui::Axis::vertical).high, 5);
 
@@ -903,7 +918,7 @@ TRIAL("Scroll: pasek stoi tylko przy osi otwartej") {
     same(window(ui::Axis::both).high, 4);
 }
 
-TRIAL("Scroll: składowa zamkniętej osi jest zawsze zerem") {
+TRIAL("Scroll: the component of a closed axis is always zero") {
     ui::Scroll vertical{ui::Axis::vertical};
     vertical.shift({5, 2});
     same(vertical.shift().x, 0);
@@ -922,7 +937,7 @@ TRIAL("Scroll: składowa zamkniętej osi jest zawsze zerem") {
     same(both.axis(), ui::Axis::both);
 }
 
-TRIAL("Scroll w poziomie: kółko przewija w poziomie, bez Shifta") {
+TRIAL("Horizontal scroll: the wheel scrolls horizontally, without Shift") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::horizontal);
@@ -939,7 +954,7 @@ TRIAL("Scroll w poziomie: kółko przewija w poziomie, bez Shifta") {
     same(scroll->shift().y, 0);
 }
 
-TRIAL("Scroll w pionie: kółko z Shiftem nie przewija w poziomie") {
+TRIAL("Vertical scroll: the wheel with Shift does not scroll horizontally") {
     ui::Root top;
 
     const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::vertical);

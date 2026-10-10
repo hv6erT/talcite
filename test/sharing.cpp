@@ -8,6 +8,7 @@
 #include <utility>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -22,9 +23,11 @@ namespace {
 
 namespace stood = std::filesystem;
 
-// Zmienna środowiska podstawiona na czas jednej próby i oddana po niej — pusta wartość to brak.
+// An environment variable replaced for the length of one trial and restored after it; an empty
+// value means the variable is absent.
 class Planted {
 public:
+    // Remembers the current value of `name`, then sets it to `value`.
     Planted(const char* name, const char* value) : name_(name) {
         if (const char* was = std::getenv(name)) was_ = was;
 
@@ -34,9 +37,11 @@ public:
     Planted(const Planted&) = delete;
     Planted& operator=(const Planted&) = delete;
 
+    // Restores the remembered value, or removes the variable if it had none.
     ~Planted() { put(was_ ? was_->c_str() : ""); }
 
 private:
+    // Sets the variable to `value`, or removes it when `value` is empty.
     void put(const char* value) const {
 #ifdef _WIN32
         (void)::_putenv_s(name_, value);
@@ -50,8 +55,10 @@ private:
     std::optional<std::string> was_;
 };
 
+// A fresh, empty temporary directory for one trial, removed with everything in it at the end.
 class Nook {
 public:
+    // Picks a name unique to this process and object and creates the directory empty.
     Nook() {
         static std::atomic<int> counted{0};
 
@@ -64,6 +71,7 @@ public:
         stood::create_directories(where_, ignored);
     }
 
+    // Removes the directory with its contents, ignoring errors.
     ~Nook() {
         std::error_code ignored;
         stood::remove_all(where_, ignored);
@@ -72,6 +80,7 @@ public:
     Nook(const Nook&) = delete;
     Nook& operator=(const Nook&) = delete;
 
+    // The directory's path.
     [[nodiscard]] const stood::path& where() const { return where_; }
 
 private:
@@ -80,9 +89,9 @@ private:
 
 }
 
-// --- Adres --------------------------------------------------------------------------------------
+// --- Address ------------------------------------------------------------------------------------
 
-TRIAL("Udział: cztery zapisy jednego miejsca dają to samo") {
+TRIAL("Share: four spellings of one place give the same thing") {
     for (const char* said : {"\\\\NAS\\filmy\\HD", "//NAS/filmy/HD", "smb://NAS/filmy/HD", "SMB://NAS/filmy/HD/",
                              "  \\\\NAS/filmy\\HD  "}) {
         const std::optional<fs::Share> one = fs::addressed(said);
@@ -98,7 +107,7 @@ TRIAL("Udział: cztery zapisy jednego miejsca dają to samo") {
     }
 }
 
-TRIAL("Udział: adres IP, głębsza reszta i kody procentowe") {
+TRIAL("Share: an IP address, a deeper rest and percent codes") {
     const std::optional<fs::Share> one = fs::addressed("smb://192.168.1.10/filmy/Filmy%20HD/2024");
 
     ought(one.has_value());
@@ -109,14 +118,14 @@ TRIAL("Udział: adres IP, głębsza reszta i kody procentowe") {
     same(one->name, std::string{"filmy"});
     same(one->rest, std::string{"Filmy HD/2024"});
 
-    // W UNC procent jest zwykłym znakiem nazwy.
+    // In UNC a percent sign is an ordinary character of the name.
     const std::optional<fs::Share> two = fs::addressed("\\\\nas\\100%20\\x");
 
     ought(two.has_value());
 
     if (two) same(two->name, std::string{"100%20"});
 
-    // Krzywy kod zostaje, jak stoi.
+    // A malformed code stays as it is.
     const std::optional<fs::Share> three = fs::addressed("smb://nas/a%2/b%zz");
 
     ought(three.has_value());
@@ -127,27 +136,27 @@ TRIAL("Udział: adres IP, głębsza reszta i kody procentowe") {
     }
 }
 
-TRIAL("Udział: użytkownik z URL-a, hasło z adresu odpada") {
-    const std::optional<fs::Share> one = fs::addressed("smb://hubert@nas/filmy");
+TRIAL("Share: the user comes from the URL, a password in the address is dropped") {
+    const std::optional<fs::Share> one = fs::addressed("smb://guest@nas/filmy");
 
     ought(one.has_value());
 
     if (one) {
-        same(one->user, std::string{"hubert"});
+        same(one->user, std::string{"guest"});
         same(one->server, std::string{"nas"});
         same(one->name, std::string{"filmy"});
     }
 
-    const std::optional<fs::Share> two = fs::addressed("smb://DOM%5Chubert:tajne@nas/filmy");
+    const std::optional<fs::Share> two = fs::addressed("smb://DOM%5Cguest:tajne@nas/filmy");
 
     ought(two.has_value());
 
     if (two) {
-        same(two->user, std::string{"DOM\\hubert"});
+        same(two->user, std::string{"DOM\\guest"});
         ought(fs::written(*two).find("tajne") == std::string::npos);
     }
 
-    // Małpa w ścieżce po serwerze to część nazwy, nie użytkownik.
+    // An at sign in the path after the server is part of a name, not a user.
     const std::optional<fs::Share> three = fs::addressed("smb://nas/filmy/@eaDir");
 
     ought(three.has_value());
@@ -158,7 +167,7 @@ TRIAL("Udział: użytkownik z URL-a, hasło z adresu odpada") {
     }
 }
 
-TRIAL("Udział: sam serwer i adresy, które udziałem nie są") {
+TRIAL("Share: a bare server, and addresses that are not shares") {
     for (const char* said : {"smb://nas", "smb://nas/", "\\\\nas", "\\\\nas\\", "//nas"}) {
         const std::optional<fs::Share> one = fs::addressed(said);
 
@@ -175,19 +184,19 @@ TRIAL("Udział: sam serwer i adresy, które udziałem nie są") {
         ought(!fs::addressed(said).has_value());
 }
 
-TRIAL("Udział: zapis do pokazania w zapisie systemu") {
-    fs::Share one{"NAS", "filmy", "Filmy HD/2024", "hubert"};
+TRIAL("Share: the spelling shown in the system's notation") {
+    fs::Share one{"NAS", "filmy", "Filmy HD/2024", "guest"};
 
 #ifdef _WIN32
     same(fs::written(one), std::string{"\\\\NAS\\filmy\\Filmy HD\\2024"});
     same(fs::written(fs::Share{"NAS", "", "", ""}), std::string{"\\\\NAS"});
 #else
-    same(fs::written(one), std::string{"smb://hubert@NAS/filmy/Filmy HD/2024"});
+    same(fs::written(one), std::string{"smb://guest@NAS/filmy/Filmy HD/2024"});
     same(fs::written(fs::Share{"NAS", "", "", ""}), std::string{"smb://NAS"});
     same(fs::written(fs::Share{"NAS", "filmy", "", ""}), std::string{"smb://NAS/filmy"});
 #endif
 
-    // Zapis wraca tym samym udziałem.
+    // The spelling parses back to the same share.
     const std::optional<fs::Share> back = fs::addressed(fs::written(one));
 
     ought(back.has_value());
@@ -199,9 +208,9 @@ TRIAL("Udział: zapis do pokazania w zapisie systemu") {
     }
 }
 
-// --- Odmowy -------------------------------------------------------------------------------------
+// --- Refusals -----------------------------------------------------------------------------------
 
-TRIAL("Udział: kody Windows po ludzku") {
+TRIAL("Share: Windows codes in plain terms") {
     same(fs::refused_by_windows(0), fs::Refused::none);
 
     for (const std::uint32_t code : {5U, 86U, 1244U, 1326U, 1327U, 1330U, 1331U, 1385U, 2202U})
@@ -219,13 +228,13 @@ TRIAL("Udział: kody Windows po ludzku") {
     same(fs::refused_by_windows(87), fs::Refused::other);
 }
 
-TRIAL("Udział: zdania gio po ludzku") {
+TRIAL("Share: gio messages in plain terms") {
     same(fs::refused_by_gio("gio: smb://nas/filmy/: Failed to mount Windows share: Permission denied"),
          fs::Refused::login);
-    same(fs::refused_by_gio("Password required for share filmy on nas\nUser [hubert]: Domain [WORKGROUP]: Password: \n"
+    same(fs::refused_by_gio("Password required for share filmy on nas\nUser [guest]: Domain [WORKGROUP]: Password: \n"
                             "gio: smb://nas/filmy/: Password dialog cancelled"),
          fs::Refused::login);
-    // Samo przerwanie pytania, bez słowa o haśle.
+    // A cancelled prompt alone, with no word about a password.
     same(fs::refused_by_gio("gio: smb://nas/filmy/: Operation was cancelled"), fs::Refused::login);
     same(fs::refused_by_gio("gio: smb://nas/kino/: Failed to mount Windows share: No such file or directory"),
          fs::Refused::missing);
@@ -235,7 +244,7 @@ TRIAL("Udział: zdania gio po ludzku") {
          fs::Refused::network);
     same(fs::refused_by_gio("gio: smb://nas/filmy/: The specified location is not supported"), fs::Refused::unsupported);
     same(fs::refused_by_gio("gio: smb://nas/: The specified location is not mounted"), fs::Refused::unsupported);
-    // Bez GVfs (sam `gio`, jak w kontenerze bez D-Bus).
+    // Without GVfs (bare `gio`, as in a container without D-Bus).
     same(fs::refused_by_gio("gio: smb://127.0.0.1/x: volume doesn?t implement mount"), fs::Refused::unsupported);
     same(fs::refused_by_gio("gio: smb://127.0.0.1/: Operation not supported"), fs::Refused::unsupported);
     same(fs::refused_by_gio("gio: coś zupełnie innego"), fs::Refused::other);
@@ -243,28 +252,28 @@ TRIAL("Udział: zdania gio po ludzku") {
 
 // --- GVfs ---------------------------------------------------------------------------------------
 
-TRIAL("Udział: montowanie GVfs po serwerze i udziale, bez wielkości liter") {
+TRIAL("Share: a GVfs mount is found by server and share, ignoring case") {
     const std::vector<std::string> names{"sftp:host=nas", "smb-share:server=nas,share=muzyka",
                                          "smb-share:domain=WORKGROUP,server=nas,share=filmy,user=ola",
-                                         "smb-share:server=nas,share=filmy,user=hubert"};
+                                         "smb-share:server=nas,share=filmy,user=guest"};
 
     same(fs::mounted_as(names, fs::Share{"NAS", "Filmy", "", ""}),
          std::optional<std::string>{"smb-share:domain=WORKGROUP,server=nas,share=filmy,user=ola"});
-    same(fs::mounted_as(names, fs::Share{"nas", "filmy", "", "hubert"}),
-         std::optional<std::string>{"smb-share:server=nas,share=filmy,user=hubert"});
+    same(fs::mounted_as(names, fs::Share{"nas", "filmy", "", "guest"}),
+         std::optional<std::string>{"smb-share:server=nas,share=filmy,user=guest"});
     same(fs::mounted_as(names, fs::Share{"nas", "muzyka", "", ""}),
          std::optional<std::string>{"smb-share:server=nas,share=muzyka"});
     ought(!fs::mounted_as(names, fs::Share{"nas", "kino", "", ""}).has_value());
     ought(!fs::mounted_as(names, fs::Share{"nas2", "filmy", "", ""}).has_value());
 
-    // Wartość z kodem procentowym, jak GVfs zapisuje spacje.
+    // A value with a percent code, as GVfs writes spaces.
     same(fs::mounted_as({"smb-share:server=nas,share=moje%20filmy"}, fs::Share{"nas", "Moje filmy", "", ""}),
          std::optional<std::string>{"smb-share:server=nas,share=moje%20filmy"});
 }
 
-// Nazwa katalogu GVfs w drugą stronę: serwer, udział i użytkownik, z kodami procentowymi. Inne
-// katalogi GVfs (sftp, sam serwer) udziałem nie są.
-TRIAL("Udział: katalog GVfs mówi, jaki to udział") {
+// A GVfs directory name the other way round: server, share and user, with percent codes. Other
+// GVfs directories (sftp, a bare server) are not shares.
+TRIAL("Share: a GVfs directory tells which share it is") {
     const std::optional<fs::Share> one = fs::gvfs_named("smb-share:domain=WORKGROUP,server=nas,share=moje%20filmy,user=ola");
 
     ought(one.has_value());
@@ -282,19 +291,19 @@ TRIAL("Udział: katalog GVfs mówi, jaki to udział") {
     ought(!fs::gvfs_named("smb-share:share=filmy").has_value());
 }
 
-TRIAL("Udział: wejście dla gio — użytkownik, domena, hasło") {
-    same(fs::answers("hubert", "tajne"), std::string{"hubert\n\ntajne\n"});
-    same(fs::answers("DOM\\hubert", "tajne"), std::string{"hubert\nDOM\ntajne\n"});
-    same(fs::answers("DOM;hubert", "x"), std::string{"hubert\nDOM\nx\n"});
+TRIAL("Share: input for gio is user, domain, password") {
+    same(fs::answers("guest", "tajne"), std::string{"guest\n\ntajne\n"});
+    same(fs::answers("DOM\\guest", "tajne"), std::string{"guest\nDOM\ntajne\n"});
+    same(fs::answers("DOM;guest", "x"), std::string{"guest\nDOM\nx\n"});
 }
 
-TRIAL("Udział: wykaz z gio list bez ukrytych") {
+TRIAL("Share: the gio list listing without hidden shares") {
     same(fs::listed("filmy\nmuzyka/\nIPC$\nprint$\n\n  Zdjęcia rodzinne  \n"),
          (std::vector<std::string>{"filmy", "muzyka", "Zdjęcia rodzinne"}));
     same(fs::listed(""), std::vector<std::string>{});
 }
 
-TRIAL("Udział: hasło zerowane w miejscu") {
+TRIAL("Share: the password is zeroed in place") {
     std::string secret = "tajne hasło";
 
     const char* at = secret.data();
@@ -308,7 +317,7 @@ TRIAL("Udział: hasło zerowane w miejscu") {
 
 #ifndef _WIN32
 
-TRIAL("Udział: zamontowany w GVfs wchodzi bez gio, z resztą ścieżki") {
+TRIAL("Share: one mounted in GVfs is entered without gio, with the rest of the path") {
     const Nook nook;
 
     std::error_code ignored;
@@ -323,14 +332,14 @@ TRIAL("Udział: zamontowany w GVfs wchodzi bez gio, z resztą ścieżki") {
     same(made.where, nook.where() / "gvfs" / "smb-share:server=nas,share=filmy" / "HD");
 }
 
-// Ścieżka w katalogu GVfs leży na udziale — z resztą pod nim; ścieżka obok GVfs, sam katalog GVfs
-// i katalog, który udziałem nie jest — nie.
-TRIAL("Udział: shared rozpoznaje ścieżkę w GVfs") {
+// A path inside a GVfs directory lies on a share, with the rest below it; a path beside GVfs, the
+// GVfs directory itself and a directory that is not a share do not.
+TRIAL("Share: shared recognizes a path in GVfs") {
     const Nook nook;
 
     const Planted runtime{"XDG_RUNTIME_DIR", nook.where().c_str()};
 
-    const stood::path mounted = nook.where() / "gvfs" / "smb-share:server=nas,share=filmy,user=hubert";
+    const stood::path mounted = nook.where() / "gvfs" / "smb-share:server=nas,share=filmy,user=guest";
 
     const std::optional<fs::Share> deep = fs::shared(mounted / "HD" / "film.mkv");
 
@@ -339,9 +348,9 @@ TRIAL("Udział: shared rozpoznaje ścieżkę w GVfs") {
     if (deep) {
         same(deep->server, std::string{"nas"});
         same(deep->name, std::string{"filmy"});
-        same(deep->user, std::string{"hubert"});
+        same(deep->user, std::string{"guest"});
         same(deep->rest, std::string{"HD/film.mkv"});
-        same(fs::written(*deep), std::string{"smb://hubert@nas/filmy/HD/film.mkv"});
+        same(fs::written(*deep), std::string{"smb://guest@nas/filmy/HD/film.mkv"});
     }
 
     const std::optional<fs::Share> top = fs::shared(mounted);
@@ -351,13 +360,13 @@ TRIAL("Udział: shared rozpoznaje ścieżkę w GVfs") {
     ought(!fs::shared(nook.where() / "gvfs").has_value());
     ought(!fs::shared(nook.where() / "gvfs" / "sftp:host=nas" / "x").has_value());
     ought(!fs::shared(nook.where() / "inny" / "smb-share:server=nas,share=filmy").has_value());
-    ought(!fs::shared("/home/hubert").has_value());
+    ought(!fs::shared("/home/guest").has_value());
 }
 
-TRIAL("Udział: bez XDG_RUNTIME_DIR nie ma GVfs i gio się nie woła") {
+TRIAL("Share: without XDG_RUNTIME_DIR there is no GVfs and gio is not called") {
     const Nook nook;
 
-    // Podróbka `gio` na PATH zostawia ślad — bez GVfs nie ma jej po co wołać.
+    // A fake `gio` on PATH leaves a trace; without GVfs there is no reason to call it.
     {
         std::ofstream script{nook.where() / "gio"};
 
@@ -372,12 +381,12 @@ TRIAL("Udział: bez XDG_RUNTIME_DIR nie ma GVfs i gio się nie woła") {
     for (const char* value : {"", "pusty"}) {
         const Planted runtime{"XDG_RUNTIME_DIR", "x"};
 
-        // Pusta wartość to też brak — `Planted` pustą zdejmuje, więc stawiamy ją wprost.
+        // An empty value also means absent. `Planted` removes an empty value, so we set it directly.
         if (*value == '\0') ::setenv("XDG_RUNTIME_DIR", "", 1);
         else ::unsetenv("XDG_RUNTIME_DIR");
 
         same(fs::reach(fs::Share{"nas", "filmy", "", ""}).await().refused, fs::Refused::unsupported);
-        same(fs::connect(fs::Share{"nas", "filmy", "", ""}, "hubert", "tajne", false).await().refused,
+        same(fs::connect(fs::Share{"nas", "filmy", "", ""}, "guest", "tajne", false).await().refused,
              fs::Refused::unsupported);
     }
 
@@ -387,10 +396,11 @@ TRIAL("Udział: bez XDG_RUNTIME_DIR nie ma GVfs i gio się nie woła") {
 
 #else
 
-TRIAL("Udział: Windows pamięta logowania") { ought(fs::keeps_logins()); }
+TRIAL("Share: Windows remembers logins") { ought(fs::keeps_logins()); }
 
-// Na Windows udział ma ścieżkę UNC: shared czyta ją jak adres, a ścieżka z literą dysku udziałem nie jest.
-TRIAL("Udział: shared rozpoznaje ścieżkę UNC") {
+// On Windows a share has a UNC path: shared reads it like an address, and a path with a drive
+// letter is not a share.
+TRIAL("Share: shared recognizes a UNC path") {
     const std::optional<fs::Share> one = fs::shared(fs::path{L"\\\\nas\\filmy\\HD"});
 
     ought(one.has_value());
@@ -406,22 +416,28 @@ TRIAL("Udział: shared rozpoznaje ścieżkę UNC") {
 
 #endif
 
-// --- Zmiana samej wielkości liter ----------------------------------------------------------------
+// --- Changing only the case of letters -----------------------------------------------------------
 
-TRIAL("Udział: zmiana samej wielkości liter to ta sama nazwa w tym samym katalogu") {
-    ought(fs::core::recased("kat/heat.mkv", "kat/Heat.mkv"));
-    ought(fs::core::recased("kat/żółw", "kat/ŻÓŁW"));
-    ought(fs::core::recased("kat/Ёлка", "kat/ёЛКА"));
-    ought(!fs::core::recased("kat/heat.mkv", "kat/heat.mkv"));
-    ought(!fs::core::recased("kat/heat.mkv", "kat/Heat.avi"));
-    ought(!fs::core::recased("kat/heat.mkv", "kat/Heat.mkv2"));
-    ought(!fs::core::recased("kat/heat.mkv2", "kat/Heat.mkv"));
-    ought(!fs::core::recased("kat/heat.mkv", "inny/Heat.mkv"));
+// Paths are made from text through `from_string`: a `path` built from `const char*` reads the bytes
+// in the ANSI code page (MSVC, libc++ under MinGW), so "żółw" in UTF-8 would be something else.
+TRIAL("Share: changing only the case is the same name in the same directory") {
+    const auto recased = [](std::string_view from, std::string_view to) {
+        return fs::core::recased(fs::from_string(from), fs::from_string(to));
+    };
+
+    ought(recased("kat/heat.mkv", "kat/Heat.mkv"));
+    ought(recased("kat/żółw", "kat/ŻÓŁW"));
+    ought(recased("kat/Ёлка", "kat/ёЛКА"));
+    ought(!recased("kat/heat.mkv", "kat/heat.mkv"));
+    ought(!recased("kat/heat.mkv", "kat/Heat.avi"));
+    ought(!recased("kat/heat.mkv", "kat/Heat.mkv2"));
+    ought(!recased("kat/heat.mkv2", "kat/Heat.mkv"));
+    ought(!recased("kat/heat.mkv", "inny/Heat.mkv"));
 }
 
-// Serwer, który zmianę wielkości przyjmuje bez słowa i nic nie robi: pierwsze sprawdzenie spisu
-// mówi „nie ma", więc idą dwa kroki przez nazwę obok.
-TRIAL("Udział: zignorowana zmiana wielkości idzie dwoma krokami") {
+// A server that accepts a case change without complaint and does nothing: the first look at the
+// listing says the new name is not there, so two steps go through a name beside it.
+TRIAL("Share: an ignored case change takes two steps") {
     std::vector<std::pair<std::string, std::string>> moves;
 
     const auto move = [&moves](const fs::path& one, const fs::path& two) {
@@ -435,14 +451,14 @@ TRIAL("Udział: zignorowana zmiana wielkości idzie dwoma krokami") {
     same(moves, (std::vector<std::pair<std::string, std::string>>{{"heat.mkv", "Heat.mkv.~case"},
                                                                     {"Heat.mkv.~case", "Heat.mkv"}}));
 
-    // Serwer, który zrobił, co trzeba — bez kroków.
+    // A server that did what it should: no steps.
     moves.clear();
 
     ought(fs::core::respelled_twice("kat/heat.mkv", "kat/Heat.mkv", move, [](const fs::path&) { return true; }));
     ought(moves.empty());
 }
 
-TRIAL("Udział: drugi krok nieudany cofa pierwszy") {
+TRIAL("Share: a failed second step undoes the first") {
     std::vector<std::pair<std::string, std::string>> moves;
 
     const auto move = [&moves](const fs::path& one, const fs::path& two) {
@@ -457,7 +473,7 @@ TRIAL("Udział: drugi krok nieudany cofa pierwszy") {
                                                                     {"Heat.mkv.~case", "Heat.mkv"},
                                                                     {"Heat.mkv.~case", "heat.mkv"}}));
 
-    // Pierwszy nieudany — nic więcej.
+    // A failed first step: nothing more.
     moves.clear();
 
     ought(!fs::core::respelled_twice("kat/heat.mkv", "kat/Heat.mkv",
@@ -469,7 +485,7 @@ TRIAL("Udział: drugi krok nieudany cofa pierwszy") {
     same(moves.size(), std::size_t{1});
 }
 
-TRIAL("Udział: zmiana wielkości na dysku daje nazwę w spisie") {
+TRIAL("Share: a case change on disk gives the name in the listing") {
     const Nook nook;
 
     {

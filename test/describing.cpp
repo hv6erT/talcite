@@ -12,10 +12,11 @@
 
 #include "talcite/meta.hpp"
 
-// **Drzwi metadanych w rdzeniu.** Rozbioru formatów tu nie ma — mieszka za szwem, w talcite-adapters,
-// i tam ma swoje próby. Tu pilnujemy samego szwu: że plik otwiera się w puli i to leniwie, że dostawca
-// widzi prawdziwy rozmiar i prawdziwe bajty, że odczyt poza końcem jest krótszy, a nie błędny, i że
-// pusty szew, odmowa dostawcy i brak pliku wychodzą trzema różnymi drogami.
+// The metadata door in the core. There is no format parsing here; it lives behind the seam, in
+// talcite-adapters, and has its trials there. Here we guard the seam itself: that the file is
+// opened in the pool and lazily, that the provider sees the real size and the real bytes, that a
+// read past the end is shorter rather than an error, and that an empty seam, a provider's refusal
+// and a missing file come out three different ways.
 
 using namespace talcite;
 
@@ -23,6 +24,7 @@ namespace {
 
 namespace stdfs = std::filesystem;
 
+// Writes `body` to the file `name` in a directory of the trials and returns its path.
 [[nodiscard]] stdfs::path written(std::string_view name, std::string_view body) {
     const stdfs::path made = stdfs::temp_directory_path() / "talcite-describing";
 
@@ -37,15 +39,18 @@ namespace stdfs = std::filesystem;
     return file;
 }
 
-// Udawany dostawca: typ to pierwsze cztery bajty, pole mówi rozmiar, drugie — dwa ostatnie bajty,
-// trzecie — ile oddał odczyt zachodzący za koniec, czwarte — ile oddał odczyt w całości za końcem.
-// Plik zaczynający się od „NOPE" odmawia. Obrazem jest bajt `which` powtórzony trzy razy.
+// A fake provider: the type is the first four bytes, the first field tells the size, the second
+// the last two bytes, the third how much a read reaching past the end returned, the fourth how
+// much a read entirely past the end returned. A file starting with "NOPE" is refused. A picture
+// is the byte `which` repeated three times, followed by the file's first byte.
 class Faked final : public MetaProvider {
 public:
     std::atomic<int> asked{0};
 
+    // The name of the fake provider.
     [[nodiscard]] std::string_view name() const override { return "fake meta"; }
 
+    // Fills in the description as above and counts the call in `asked`.
     [[nodiscard]] std::string describe(meta::Reader& from, meta::Description& into) override {
         ++asked;
 
@@ -64,6 +69,7 @@ public:
         return {};
     }
 
+    // Gives picture `which`, or refuses for a number above nine.
     [[nodiscard]] std::string picture(meta::Reader& from, std::size_t which, Bytes& into) override {
         if (which > 9) return "no such picture";
 
@@ -76,7 +82,7 @@ public:
 
 }
 
-TRIAL("Metadane: pusty szew odrzuca obietnicę Unbound z nazwą rodzaju") {
+TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
     const Seam<MetaProvider> none;
 
     ought(!none.bound());
@@ -104,7 +110,7 @@ TRIAL("Metadane: pusty szew odrzuca obietnicę Unbound z nazwą rodzaju") {
     ought(amiss);
 }
 
-TRIAL("Metadane: dostawca widzi rozmiar i bajty pliku, a odczyt za końcem jest krótszy") {
+TRIAL("Meta: the provider sees the file's size and bytes, and a read past the end is shorter") {
     auto faked = std::make_shared<Faked>();
     const Seam<MetaProvider> meta{faked};
 
@@ -126,7 +132,7 @@ TRIAL("Metadane: dostawca widzi rozmiar i bajty pliku, a odczyt za końcem jest 
     ought(!got.damaged);
 }
 
-TRIAL("Metadane: odmowa dostawcy wychodzi jako Refused z nazwą rodzaju") {
+TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
     const Seam<MetaProvider> meta{std::make_shared<Faked>()};
 
     same(std::string{meta.provider().name()}, std::string{"fake meta"});
@@ -152,7 +158,7 @@ TRIAL("Metadane: odmowa dostawcy wychodzi jako Refused z nazwą rodzaju") {
     ought(amiss);
 }
 
-TRIAL("Metadane: brak pliku odrzuca błędem systemu plików, a dostawca nie jest pytany") {
+TRIAL("Meta: a missing file rejects with a file system error, and the provider is not asked") {
     auto faked = std::make_shared<Faked>();
     const Seam<MetaProvider> meta{faked};
 
@@ -168,7 +174,7 @@ TRIAL("Metadane: brak pliku odrzuca błędem systemu plików, a dostawca nie jes
     same(faked->asked.load(), 0);
 }
 
-TRIAL("Metadane: obraz idzie od dostawcy z numerem, o który pytano") {
+TRIAL("Meta: the picture comes from the provider with the number asked for") {
     const Seam<MetaProvider> meta{std::make_shared<Faked>()};
 
     const Bytes got = meta.pictured(written("picture.bin", "Zebra"), 7).await();

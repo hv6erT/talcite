@@ -14,8 +14,9 @@ using namespace talcite;
 
 namespace {
 
-// Rozwinięta lista, jeśli wisi: zasłona → ramka → lista. Próby pytają ją wprost o wiersze, suwak
-// i bieżącą pozycję, bo to są rzeczy, których z ekranu nie da się odczytać bez liczenia kratek.
+// The unrolled list, if one is up: veil → frame → list. The trials ask it directly for its rows,
+// scrollbar and current position, because those cannot be read off the screen without counting
+// cells.
 ui::List* rolled(const ui::Modals& window) {
     const ui::Modal* veil = window.current();
 
@@ -24,6 +25,7 @@ ui::List* rolled(const ui::Modals& window) {
     return dynamic_cast<ui::List*>(veil->children().front()->children().front().get());
 }
 
+// Counts in `done` every pick that the history field announces.
 void counted(const std::shared_ptr<ui::HistoryField>& one, int& done) {
     (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
@@ -32,13 +34,14 @@ void counted(const std::shared_ptr<ui::HistoryField>& one, int& done) {
     });
 }
 
-// Historia **w oknie**, bo bez okna zasłon nie ma jej gdzie rozwinąć.
+// The history inside a window, because without a window there is nowhere to unroll its veils.
 struct Stage {
     ui::Root top;
     std::shared_ptr<ui::Modals> window = std::make_shared<ui::Modals>();
     std::shared_ptr<ui::Column> column = std::make_shared<ui::Column>();
     std::shared_ptr<ui::HistoryField> one = std::make_shared<ui::HistoryField>(ui::plenty);
 
+    // Puts the field in a column inside the window and gives it the focus.
     Stage() {
         column->children().add(one);
         window->content(column);
@@ -46,22 +49,23 @@ struct Stage {
         one->focus();
     }
 
-    // Trzy polecenia, najświeższe pierwsze — czyli „git status" jest tym, do którego wraca się
-    // pierwszą strzałką w górę.
+    // Three commands, the most recent first, so "git status" is the one the first up arrow
+    // returns to.
     void filled() {
         one->options().insert(0, "make -j8");
         one->options().insert(0, "ls -la /etc");
         one->options().insert(0, "git status");
     }
 
+    // Renders the whole stage at the given size.
     View drawn(ui::Size size = {40, 12}) { return top.render({{0, 0}, size}); }
 };
 
 }
 
-// --- Co historia wie o sobie ---------------------------------------------------------------------
+// --- What the history knows about itself ---------------------------------------------------------
 
-TRIAL("HistoryField: świeża nic nie pamięta i jest zwykłym polem") {
+TRIAL("HistoryField: a fresh one remembers nothing and is an ordinary field") {
     const ui::HistoryField one{20};
 
     ought(one.options().empty());
@@ -71,7 +75,7 @@ TRIAL("HistoryField: świeża nic nie pamięta i jest zwykłym polem") {
     same(one.keeps(), 60);
 }
 
-TRIAL("HistoryField: dokładanie stawia najświeższy wpis na czele") {
+TRIAL("HistoryField: adding puts the most recent entry at the head") {
     Stage stage;
 
     stage.filled();
@@ -81,9 +85,9 @@ TRIAL("HistoryField: dokładanie stawia najświeższy wpis na czele") {
     same(stage.one->options().back(), std::string{"make -j8"});
 }
 
-// Powtórzony wpis **wraca na czoło** zamiast leżeć dwa razy — inaczej historia człowieka, który
-// dziesięć razy wpisał to samo, składałaby się z niego jednego.
-TRIAL("HistoryField: powtórzony wpis wraca na czoło, a nie dopisuje się drugi raz") {
+// A repeated entry goes back to the head instead of lying there twice; otherwise the history of
+// someone who typed the same thing ten times would consist of it alone.
+TRIAL("HistoryField: a repeated entry goes back to the head instead of being added a second time") {
     Stage stage;
 
     stage.filled();
@@ -93,8 +97,9 @@ TRIAL("HistoryField: powtórzony wpis wraca na czoło, a nie dopisuje się drugi
     same(stage.one->options().front(), std::string{"make -j8"});
 }
 
-// Reguła należy dziś do zbioru, nie do historii — i obowiązuje tak samo w wyborze i w grupie opcji.
-TRIAL("HistoryField: pusty wpis nie wchodzi") {
+// The rule belongs to the option set, not to the history, and holds the same in a select and in an
+// option group.
+TRIAL("HistoryField: an empty entry does not go in") {
     Stage stage;
 
     stage.one->options().insert(0, "");
@@ -102,11 +107,11 @@ TRIAL("HistoryField: pusty wpis nie wchodzi") {
     ought(stage.one->options().empty());
 }
 
-// **Sufit obowiązuje od najbliższej klatki.** Historia sprząta po sobie sama — przy malowaniu
-// i przy klawiszu — a nie każe się zawiadamiać o każdej zmianie zbioru. Między dopisaniem wpisu
-// a pierwszym użyciem pola lista bywa więc o wpis za długa i to jest cena tego, że `Options`
-// nie zna swojego właściciela.
-TRIAL("HistoryField: sufit ucina najstarsze") {
+// The ceiling applies from the next frame. The history tidies up after itself, when painting and on
+// a key, instead of demanding to be told about every change of the set. So between adding an entry
+// and the first use of the field the list may be one entry too long, and that is the price of
+// `Options` not knowing its owner.
+TRIAL("HistoryField: the ceiling cuts the oldest") {
     Stage stage;
 
     stage.one->keeps(2);
@@ -119,7 +124,7 @@ TRIAL("HistoryField: sufit ucina najstarsze") {
     same(stage.one->options().back(), std::string{"ls -la /etc"});
 }
 
-TRIAL("HistoryField: obniżenie sufitu ucina to, co już jest") {
+TRIAL("HistoryField: lowering the ceiling cuts what is already there") {
     Stage stage;
 
     stage.filled();
@@ -129,7 +134,7 @@ TRIAL("HistoryField: obniżenie sufitu ucina to, co już jest") {
     same(stage.one->options().front(), std::string{"git status"});
 }
 
-TRIAL("HistoryField: clear czyści wszystko") {
+TRIAL("HistoryField: clear clears everything") {
     Stage stage;
 
     stage.filled();
@@ -138,9 +143,9 @@ TRIAL("HistoryField: clear czyści wszystko") {
     ought(stage.one->options().empty());
 }
 
-// --- Wędrówka strzałkami -------------------------------------------------------------------------
+// --- Walking with the arrows ---------------------------------------------------------------------
 
-TRIAL("HistoryField: góra wchodzi w przeszłość, dół z niej wraca") {
+TRIAL("HistoryField: up goes into the past, down comes back from it") {
     Stage stage;
 
     stage.filled();
@@ -159,9 +164,9 @@ TRIAL("HistoryField: góra wchodzi w przeszłość, dół z niej wraca") {
     same(stage.one->text(), std::string{"git status"});
 }
 
-// **To jest ta rzecz, bez której historia jest pułapką**: raz wszedłeś i nie ma jak wrócić do
-// swojego wiersza. Dół z najświeższego wpisu przywraca to, co użytkownik pisał.
-TRIAL("HistoryField: dół z najświeższego wraca do tego, co pisał użytkownik") {
+// This is the thing without which the history is a trap: once in, there is no way back to your own
+// line. Down from the most recent entry restores what the user was typing.
+TRIAL("HistoryField: down from the most recent returns to what the user was typing") {
     Stage stage;
 
     stage.filled();
@@ -178,8 +183,8 @@ TRIAL("HistoryField: dół z najświeższego wraca do tego, co pisał użytkowni
     same(stage.one->text(), std::string{"cos wlasnego"});
 }
 
-// Kolejne kroki w górę mają wracać **do tego samego** własnego wiersza, a nie do poprzedniego wpisu.
-TRIAL("HistoryField: własny wiersz zapamiętuje się raz, przy wejściu w przeszłość") {
+// Further steps up must come back to the same own line, not to the previous entry.
+TRIAL("HistoryField: the own line is remembered once, on entering the past") {
     Stage stage;
 
     stage.filled();
@@ -201,15 +206,16 @@ TRIAL("HistoryField: własny wiersz zapamiętuje się raz, przy wejściu w przes
     same(stage.one->text(), std::string{"moje"});
 }
 
-// Na krańcu strzałka **idzie wyżej**, żeby w oknie przeszła dalej zamiast utknąć.
-TRIAL("HistoryField: na krańcach oddaje strzałkę wyżej") {
+// At either end the arrow goes up the tree, so that in a window it passes on instead of getting
+// stuck.
+TRIAL("HistoryField: at the ends it passes the arrow up") {
     Stage stage;
 
     stage.filled();
 
     ui::KeyEvent down{ui::Code::down};
 
-    // Przy własnym wierszu nie ma dokąd iść w przód.
+    // At the own line there is nowhere to go forward.
     ought(!stage.top.dispatch(down));
 
     ui::KeyEvent up{ui::Code::up};
@@ -218,12 +224,12 @@ TRIAL("HistoryField: na krańcach oddaje strzałkę wyżej") {
     ought(stage.top.dispatch(up));
     ought(stage.top.dispatch(up));
 
-    // Najstarszy wpis to koniec przeszłości.
+    // The oldest entry is the end of the past.
     ought(!stage.top.dispatch(up));
     same(stage.one->text(), std::string{"make -j8"});
 }
 
-TRIAL("HistoryField: pusta nie bierze strzałek") {
+TRIAL("HistoryField: an empty one does not take the arrows") {
     Stage stage;
 
     ui::KeyEvent up{ui::Code::up};
@@ -235,11 +241,11 @@ TRIAL("HistoryField: pusta nie bierze strzałek") {
     ought(!stage.top.dispatch(down));
 }
 
-// --- Zawiadamianie -------------------------------------------------------------------------------
+// --- Notification --------------------------------------------------------------------------------
 
-// Zawiadamiamy, **ilekroć wpis z przeszłości trafia do pola**. Pisania nikt nie ogłasza i ogłaszać
-// nie będzie; powrót do własnego wiersza też nie jest wzięciem niczego z przeszłości.
-TRIAL("HistoryField: wzięcie wpisu zawiadamia, powrót do swojego już nie") {
+// We notify whenever an entry from the past lands in the field. Typing is not announced and will
+// not be; returning to the own line is not taking anything from the past either.
+TRIAL("HistoryField: taking an entry notifies, returning to your own does not") {
     Stage stage;
 
     stage.filled();
@@ -265,7 +271,7 @@ TRIAL("HistoryField: wzięcie wpisu zawiadamia, powrót do swojego już nie") {
     same(done, 3);
 }
 
-TRIAL("HistoryField: pisanie nie zawiadamia") {
+TRIAL("HistoryField: typing does not notify") {
     Stage stage;
 
     stage.filled();
@@ -282,10 +288,11 @@ TRIAL("HistoryField: pisanie nie zawiadamia") {
     same(done, 0);
 }
 
-// --- Pole tekstowe pod spodem --------------------------------------------------------------------
+// --- The text field underneath -------------------------------------------------------------------
 
-// Historia **jest polem** i niczego mu nie odbiera: litery, kasowanie i kursor mają działać dalej.
-TRIAL("HistoryField: dalej jest zwykłym polem tekstowym") {
+// The history is a field and takes nothing away from it: letters, erasing and the cursor must keep
+// working.
+TRIAL("HistoryField: it is still an ordinary text field") {
     Stage stage;
 
     stage.filled();
@@ -309,8 +316,8 @@ TRIAL("HistoryField: dalej jest zwykłym polem tekstowym") {
     same(stage.one->text(), std::string{"ac"});
 }
 
-// Wpis wzięty z przeszłości ma kursor **na końcu**, żeby dało się od razu dopisywać.
-TRIAL("HistoryField: wzięty wpis ma kursor na końcu") {
+// An entry taken from the past has the cursor at the end, so that typing can go on at once.
+TRIAL("HistoryField: a taken entry has the cursor at the end") {
     Stage stage;
 
     stage.filled();
@@ -322,11 +329,11 @@ TRIAL("HistoryField: wzięty wpis ma kursor na końcu") {
     same(stage.one->cursor(), std::string{"git status"}.size());
 }
 
-// --- Rozwijanie ----------------------------------------------------------------------------------
+// --- Unrolling -----------------------------------------------------------------------------------
 
-// **Domyślnego skrótu nie ma.** Pole stało kiedyś na Alt+H przypisanym w konstruktorze, zanim
-// wołający cokolwiek powiedział. Kto chce rozwijanie z klawiatury, podaje klawisz sam.
-TRIAL("HistoryField: bez podanego klawisza nic nie rozwija") {
+// There is no default shortcut: nothing is bound before the caller says anything. Whoever wants
+// unrolling from the keyboard gives the key.
+TRIAL("HistoryField: without a given key nothing unrolls") {
     Stage stage;
 
     stage.filled();
@@ -340,7 +347,7 @@ TRIAL("HistoryField: bez podanego klawisza nic nie rozwija") {
     ought(!stage.one->opened());
 }
 
-TRIAL("HistoryField: podany klawisz rozwijający otwiera listę, Esc ją zamyka") {
+TRIAL("HistoryField: the given unroll key opens the list, Esc closes it") {
     Stage stage;
 
     stage.filled();
@@ -364,7 +371,7 @@ TRIAL("HistoryField: podany klawisz rozwijający otwiera listę, Esc ją zamyka"
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
-TRIAL("HistoryField: klawisz rozwijający da się przestawić") {
+TRIAL("HistoryField: the unroll key can be changed") {
     Stage stage;
 
     stage.filled();
@@ -376,8 +383,8 @@ TRIAL("HistoryField: klawisz rozwijający da się przestawić") {
     ought(stage.one->opened());
 }
 
-// Sam klawisz bez modyfikatora ma **pisać**, a nie rozwijać.
-TRIAL("HistoryField: sama litera bez modyfikatora nie rozwija") {
+// A plain key without a modifier must type, not unroll.
+TRIAL("HistoryField: a plain letter without a modifier does not unroll") {
     Stage stage;
 
     stage.filled();
@@ -390,7 +397,7 @@ TRIAL("HistoryField: sama litera bez modyfikatora nie rozwija") {
     same(stage.one->text(), std::string{"h"});
 }
 
-TRIAL("HistoryField: pusta nie ma czego rozwijać") {
+TRIAL("HistoryField: an empty one has nothing to unroll") {
     Stage stage;
 
     ui::Mods alt;
@@ -404,8 +411,8 @@ TRIAL("HistoryField: pusta nie ma czego rozwijać") {
     ought(stage.window->empty());
 }
 
-// Rozwinięta lista staje **pod polem**, tak samo jak przy wyborze — bo to ta sama zasłona.
-TRIAL("HistoryField: rozwinięta lista staje pod polem") {
+// The unrolled list stands below the field, as with a select, because it is the same veil.
+TRIAL("HistoryField: the unrolled list stands below the field") {
     Stage stage;
 
     stage.filled();
@@ -420,7 +427,7 @@ TRIAL("HistoryField: rozwinięta lista staje pod polem") {
     same(made.at({1, 2}).letter, U'g');
 }
 
-TRIAL("HistoryField: liczba wierszy listy ma dolną granicę") {
+TRIAL("HistoryField: the number of list rows has a lower bound") {
     ui::HistoryField one{20};
 
     same(one.rows(), 8);
@@ -446,8 +453,8 @@ TRIAL("HistoryField: liczba wierszy listy ma dolną granicę") {
     ought(list->scrollbar());
 }
 
-// Lista stoi tam, gdzie stoi wędrówka — dwa razy w górę i rozwinięcie pokazuje drugi wpis.
-TRIAL("HistoryField: rozwinięta lista stoi na wpisie wędrówki") {
+// The list stands where the walk stands: two steps up and unrolling shows the second entry.
+TRIAL("HistoryField: the unrolled list stands on the walk's entry") {
     Stage stage;
 
     stage.filled();
@@ -465,9 +472,9 @@ TRIAL("HistoryField: rozwinięta lista stoi na wpisie wędrówki") {
     same(list->which(), std::optional<std::size_t>{1});
 }
 
-// Rozwinięcie sprząta najpierw po wołającym, tak jak malowanie i klawisz: wpisy ponad sufit nie
-// trafiają na listę, nawet gdy nic jeszcze nie zdążyło się narysować.
-TRIAL("HistoryField: rozwinięcie przycina do sufitu") {
+// Unrolling first tidies up after the caller, as painting and keys do: entries above the ceiling do
+// not reach the list, even when nothing has been drawn yet.
+TRIAL("HistoryField: unrolling trims to the ceiling") {
     Stage stage;
 
     stage.one->keeps(2);
@@ -480,7 +487,7 @@ TRIAL("HistoryField: rozwinięcie przycina do sufitu") {
     same(list->children().many(), std::size_t{2});
 }
 
-TRIAL("HistoryField: wybór z listy trafia do pola i zawiadamia") {
+TRIAL("HistoryField: a pick from the list goes into the field and notifies") {
     Stage stage;
 
     stage.filled();
@@ -506,8 +513,8 @@ TRIAL("HistoryField: wybór z listy trafia do pola i zawiadamia") {
     ought(!stage.one->opened());
 }
 
-// Dołożenie świeżego wpisu kończy wędrówkę: stoimy znowu przy tym, co w polu.
-TRIAL("HistoryField: dołożenie wpisu kończy wędrówkę") {
+// Adding a fresh entry ends the walk: we are back at what is in the field.
+TRIAL("HistoryField: adding an entry ends the walk") {
     Stage stage;
 
     stage.filled();
@@ -521,13 +528,13 @@ TRIAL("HistoryField: dołożenie wpisu kończy wędrówkę") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    // Skoro wędrówka się skończyła, dół nie ma dokąd iść i idzie wyżej.
+    // Since the walk has ended, down has nowhere to go and goes up the tree.
     ought(!stage.top.dispatch(down));
 }
 
-// --- Wyłączona -----------------------------------------------------------------------------------
+// --- Disabled ------------------------------------------------------------------------------------
 
-TRIAL("HistoryField: wyłączona nie rozwija i nie wędruje") {
+TRIAL("HistoryField: a disabled one neither unrolls nor walks") {
     Stage stage;
 
     stage.filled();
@@ -544,7 +551,7 @@ TRIAL("HistoryField: wyłączona nie rozwija i nie wędruje") {
     ought(stage.one->text().empty());
 }
 
-TRIAL("HistoryField: wyłączenie w trakcie zamyka rozwiniętą listę i oddaje ognisko") {
+TRIAL("HistoryField: disabling midway closes the unrolled list and gives up the focus") {
     Stage stage;
 
     stage.filled();
@@ -562,12 +569,13 @@ TRIAL("HistoryField: wyłączenie w trakcie zamyka rozwiniętą listę i oddaje 
 
 namespace {
 
-// Pojemnik, który jako widżet słucha wyłączeń w swoim poddrzewie.
+// A container that, as a widget, listens for disabling in its subtree.
 class Watcher : public ui::Column {
 public:
     const ui::Handler* seen = nullptr;
 
 protected:
+    // Records which node was disabled and takes the event.
     bool handle(ui::DisableEvent& what) override {
         seen = what.target();
 
@@ -577,7 +585,7 @@ protected:
 
 }
 
-TRIAL("HistoryField: zwinięcie listy nie zasłania wyłączenia przodkom") {
+TRIAL("HistoryField: rolling up the list does not hide the disabling from ancestors") {
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -596,9 +604,9 @@ TRIAL("HistoryField: zwinięcie listy nie zasłania wyłączenia przodkom") {
     same(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
 }
 
-// Klawisz aktywny sprawdza dostępność w `KeyedNode`, a historia ma ją po polu tekstowym. Wyłączona
-// nie może go połknąć — inaczej ten sam skrót nie doszedłby do nikogo innego.
-TRIAL("HistoryField: wyłączona nie bierze swojego klawisza") {
+// A hotkey checks availability in `KeyedNode`, and the history gets it from the text field. A
+// disabled one must not swallow its key, or the same shortcut would reach nobody else.
+TRIAL("HistoryField: a disabled one does not take its key") {
     Stage stage;
 
     stage.filled();
@@ -615,9 +623,9 @@ TRIAL("HistoryField: wyłączona nie bierze swojego klawisza") {
     ought(!stage.one->opened());
 }
 
-// Historia jest dziś węzłem z klawiszami, więc jej klawisz rozwijający leży w `keys()` — razem
-// z modyfikatorami, co jest całym powodem, dla którego `Key` się ich nauczył.
-TRIAL("HistoryField: klawisz z Altem odpowiada tylko z Altem") {
+// The history is a node with keys, so its unroll key lies in `keys()`, together with its
+// modifiers.
+TRIAL("HistoryField: a key with Alt answers only with Alt") {
     Stage stage;
 
     stage.filled();

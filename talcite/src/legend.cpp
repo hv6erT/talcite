@@ -11,31 +11,35 @@
 
 namespace talcite::ui {
 
-// Legenda zabiera cały ekran i sama stawia nad sobą wiersz treści — tak samo jak pasek menu i z tej
-// samej przyczyny: dziecko może wejść na rodzeństwo, ale nie może wyjść poza rodzica.
+// The legend takes the whole screen and places the content row above itself, just like the menu
+// bar and for the same reason: a child may overlap its siblings but cannot reach outside its
+// parent.
 //
-// **Legenda jest oknem zewnętrznym, a pasek menu siedzi w niej**, nie odwrotnie. Wtedy menu dostaje
-// wiersze od zera do przedostatniego i rozwinięta lista **nie ma jak zamalować paska klawiszy** —
-// dokładnie jak w Midnight Commanderze. Przy odwrotnym zagnieżdżeniu wysokie menu wjechałoby na
-// legendę.
+// The legend is the outer window and the menu bar sits inside it, not the other way round. The
+// menu then gets the rows from zero to the next-to-last, and an open list cannot paint over the
+// key bar, exactly as in Midnight Commander. With the opposite nesting a tall menu would run over
+// the legend.
 Legend::Legend() : body_(std::make_shared<Row>()) {
     children().add(body_);
 }
 
-// Treść pod spodem. Gniazdo opisuje `slot.hpp`.
+// The content underneath, or `nullptr` when there is none. The slot is described in `slot.hpp`.
 Node* Legend::content() const { return held(*body_); }
 
+// Puts the given node in the content slot, replacing what was there.
 void Legend::content(std::shared_ptr<Node> given) { hold(*body_, std::move(given)); }
 
+// The legend wants all the room it is offered.
 Size Legend::wants(Size room) const { return room; }
 
-// Z zewnątrz przyjmuje dokładnie jedno dziecko — treść — a każde zgłoszone pole otwiera dokładnie
-// jedno miejsce, które zaraz samo zajmuje.
+// From outside it accepts exactly one child, the content, and every registered field opens
+// exactly one more place, which the field itself takes right away.
 int Legend::capacity() const { return 1 + static_cast<int>(items_.size()); }
 
-// **Pole robi pasek, a nie wołający.** Wchodzi **wprost pod pasek**, a nie do wiersza treści:
-// legenda maluje je sama, w ostatnim wierszu, na szerokościach, które sama dzieli. Do wektora
-// wpisujemy przed dopięciem, bo to on otwiera miejsce w `capacity()`.
+// Creates a field for the given key and label and returns it. The bar makes the field, not the
+// caller. It goes directly under the bar, not into the content row: the legend paints it itself,
+// in the last row, at widths it divides itself. It goes into the vector before being attached,
+// because the vector is what opens a place in `capacity()`.
 std::shared_ptr<LegendItem> Legend::add(Key key, std::string text) {
     auto one = std::make_shared<LegendItem>(key, std::move(text));
 
@@ -52,8 +56,9 @@ std::shared_ptr<LegendItem> Legend::add(Key key, std::string text) {
     return one;
 }
 
-// Przełączenie kontekstu — panel, podgląd, edytor — to opróżnienie paska i nowe pola. Zdejmujemy
-// i z wektora, i z drzewa, bo inaczej capacity() liczyłby miejsca po polach, których już nie ma.
+// Removes all fields. Switching context (panel, viewer, editor) means emptying the bar and adding
+// new fields. They are removed both from the vector and from the tree, or `capacity()` would
+// count places for fields that no longer exist.
 void Legend::clear() {
     const std::vector<std::shared_ptr<LegendItem>> these = items_;
 
@@ -62,8 +67,9 @@ void Legend::clear() {
     for (const std::shared_ptr<LegendItem>& one : these) (void)children().remove(one.get());
 }
 
-// Podział wiersza. Reszta z dzielenia idzie do pól od lewej, więc pasek **dokładnie** wypełnia
-// wiersz i nie zostaje ogryzek przy prawej krawędzi.
+// The width of the given field in a row of the given width. The remainder of the division goes to
+// the fields from the left, so the bar fills the row exactly and no stub is left at the right
+// edge.
 int Legend::width(int which, int wide) const {
     const int count = static_cast<int>(items_.size());
 
@@ -72,8 +78,8 @@ int Legend::width(int which, int wide) const {
     return wide / count + (which < wide % count ? 1 : 0);
 }
 
-// Liczone z tych samych szerokości, którymi maluje paint — inaczej trafianie myszą rozjechałoby
-// się z obrazem o resztę z dzielenia.
+// The column where the given field starts. It is computed from the same widths that paint uses;
+// otherwise mouse hits would drift from the picture by the remainder of the division.
 int Legend::along(int which, int wide) const {
     int made = 0;
 
@@ -82,15 +88,16 @@ int Legend::along(int which, int wide) const {
     return made;
 }
 
+// Paints the content above and the fields in the last row.
 View Legend::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — reguła opisana przy `Node::paint`.
+    // Transparent where nothing is drawn, the rule described at `Node::paint`.
 
     made.clear({{0, 0}, seen.size});
 
-    // Pusty pasek nie zabiera wiersza. Legenda bez pól to legenda, której nie ma, a nie pusta
-    // krecha na dole ekranu.
+    // An empty bar does not take a row. A legend without fields is a legend that is not there,
+    // not an empty strip at the bottom of the screen.
     const int high = items_.empty() ? given.high : std::max(given.high - 1, 0);
 
     const Area above{{0, 0}, {given.wide, high}};
@@ -113,26 +120,25 @@ View Legend::paint(Size given, Area seen) {
     return made;
 }
 
-// Klawisz dochodzi tu **bąbelkiem od ogniska**, bo legenda jest przodkiem całej treści. To jest ten
-// sam chwyt, którym pasek menu dostaje F9, i dlatego nie potrzeba do tego niczego w rdzeniu.
+// Offers a key to the fields. The key arrives here by bubbling up from the focus, because the
+// legend is an ancestor of all the content. This is the same trick by which the menu bar gets F9,
+// so nothing in the core is needed for it.
 //
-// **Niczego nie odsiewamy.** Stał tu ręczny odsiew Ctrl i Alt, bo zbiór klawiszy pola nie umiał
-// ich wyrazić i wpadłyby jako zwykłe naciśnięcie. Odkąd modyfikatory są częścią klawisza, robi to
-// `Keys::contains`: pole zgłoszone na `F5` nie odpowie na Ctrl+F5, a pole zgłoszone na `Ctrl+F5`
-// odpowie wyłącznie na nie. Shift przymyka ta sama reguła i z tego samego powodu, co dotąd tutaj —
-// terminale meldują go przy klawiszach funkcyjnych niezgodnie.
+// Nothing is filtered here. Modifiers are part of the key, so `Keys::contains` does it: a field
+// registered for F5 does not answer to Ctrl+F5, and a field registered for Ctrl+F5 answers only to
+// that. Shift is handled by the same rule, because terminals report it inconsistently with
+// function keys.
 //
-// **Pasek rozdaje klawisz aktywny, a nie rozstrzyga za pola.** Stała tu pętla z własnym składaniem
-// wielkości liter i własnym pytaniem o dostępność — czyli druga kopia tego, co robi już węzeł
-// z klawiszami. Dziś pasek tylko podaje zdarzenie po kolei swoim polom, a dopasowanie, odsianie
-// wyłączonych i sama czynność należą do `KeyedNode` i do `LegendItem::activate()`.
+// The bar hands out the hotkey; it does not decide for the fields. It only passes the event to its
+// fields in turn, and the matching, the skipping of disabled fields and the action itself belong
+// to `KeyedNode` and to `LegendItem::activate()`.
 //
-// Rozdajemy **wyłącznie po `items_`**, a nie przez `broadcast(what)`, bo tamto weszłoby najpierw
-// w wiersz treści. Pasek klawiszy jest z boku układu i ma dostać klawisz **zamiast** treści,
-// a nie przed nią.
+// The key is offered only to `items_`, not through `broadcast(what)`, because that would go into
+// the content row first. The key bar stands beside the layout and has to get the key instead of
+// the content, not before it.
 //
-// Po **migawce**, nie po żywym wykazie: uchwyt pola ma prawo przebudować pasek w reakcji, a wtedy
-// wektor się przenosi pod nogami pętli.
+// The loop runs over a snapshot, not over the live list: a field's handler may rebuild the bar in
+// response, and then the vector moves under the loop's feet.
 bool Legend::handle(KeyEvent& what) {
     if (what.key().empty()) return false;
 

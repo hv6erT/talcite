@@ -1,50 +1,51 @@
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "proving.hpp"
 
-// Spójność CLAUDE.md z kodem: każda nazwa ujęta w opisie w odwrotne apostrofy ma naprawdę
-// istnieć. Opis mówiący o rzeczach nieistniejących wygląda na prawdę i dlatego jest gorszy niż
-// brak opisu.
+// Comments are the documentation of this code, so a name quoted in one with backticks has to
+// exist. A comment that speaks of things that are gone looks true and is therefore worse than
+// no comment at all.
 //
-// **Nazwa jest sprawdzana wobec dokumentu, który ją definiuje**, a nie wobec sklejki całego
-// tekstu projektu. Rodziny i ich źródła prawdy:
+// A name is checked against the document that defines it:
 //
-//   nazwa C++     — źródła biblioteki, prób i pokazów
-//   rola skórki   — napis w źródłach, bo rola nazywa się tam, gdzie się ją nadaje
-//   nazwa pliku   — wykaz plików projektu
+//   C++ name   - the code of the library, the tests and the demos, with comments left out
+//   skin role  - a string in the code, since a role is named where it is given
+//   file name  - the files of the project
 //
-// Zapisy z kropkami, które nie są ani rolą, ani plikiem, to wyrażenia (`kept_.clear`, `seen.size`),
-// a nie nazwy — biblioteka nie ma dokumentów kluczowanych, więc nie ma czego z nimi zestawiać.
+// Dotted forms that are neither a role nor a file are expressions (`kept_.clear`, `seen.size`),
+// not names: the library has no keyed documents to check them against.
 //
-// **Nazwy cudzej i odrzuconej nie ubieramy w odwrotne apostrofy.** Powód, dla którego czegoś
-// u nas nie ma, należy do zdania, które o tym mówi, a nie do listy wyjątków w próbie — lista
-// wyjątków jest kryjówką. Przedtem stała tu taka lista na pięćdziesiąt wpisów i to w niej
-// przeżyły nazwy dawno zniknięte z API. Dlatego listy nie ma wcale: OpenSSL, Win32, POSIX, klucze
-// skórek Midnight Commandera, pomysły odrzucone i rzeczy jeszcze nienapisane idą gołe.
+// Comments are left out of the code that names are looked up in; otherwise every quoted name
+// would prove itself. For the same reason this file's own code is left out too. A name from
+// elsewhere (OpenSSL, Win32, POSIX, skin keys of Midnight Commander) or an idea not taken is
+// written without backticks: why something is not here belongs to the sentence that says so, not
+// to a list of exceptions in the test.
 //
-// Próba **nie sprawdza samej siebie**: własnego pliku nie wciąga do stogu. Inaczej każda nazwa
-// w niej wypisana dowodziłaby swojego istnienia.
+// A qualified name (`Page::hold`) is checked harder: it has to appear in the code as written, or
+// its member has to appear in the body of the class, its own or inherited.
 //
-// Jedno miejsce zostaje słabsze świadomie: **nazwa C++ bez kwalifikatora** szukana jest w tekście
-// źródeł razem z komentarzami, bo komentarze są jedynym zaczepieniem cudzego słownictwa, które
-// opis wymienia z sensem. Nazwa z kwalifikatorem (`Page::hold`) sprawdzana jest mocniej: musi stać
-// w źródłach dosłownie albo w ciele swojej klasy — także odziedziczonym.
+// Headers carry no comments at all, public or internal: what a name in a header does not say for
+// itself is said next to its definition, in the `.cpp` file.
 
 namespace {
 
 namespace stood = std::filesystem;
 
-// Korzeń projektu liczony od tego pliku: `test/naming.cpp` leży o jeden katalog niżej.
+// The project root, counted from this file: `naming.cpp` lies one directory below it.
 stood::path root() { return stood::path{__FILE__}.parent_path().parent_path(); }
 
+// The whole content of a file, or nothing when it cannot be read.
 std::string slurped(const stood::path& where) {
     std::ifstream input{where, std::ios::binary};
 
@@ -55,18 +56,439 @@ std::string slurped(const stood::path& where) {
     return held.str();
 }
 
+// Whether the text ends with the given tail.
 bool ends(std::string_view whole, std::string_view tail) {
     return whole.size() >= tail.size() &&
            whole.compare(whole.size() - tail.size(), tail.size(), tail) == 0;
 }
 
+// Whether the file is C++ code: a `.cpp` or `.hpp` file.
 bool coded(const stood::path& one) {
     const std::string ending = one.extension().string();
 
     return ending == ".hpp" || ending == ".cpp";
 }
 
-// Tekst źródeł. Własny plik zostaje poza stogiem — patrz uwaga na górze.
+// Whether the character can be part of an identifier.
+bool wordy(char one) { return std::isalnum(static_cast<unsigned char>(one)) != 0 || one == '_'; }
+
+struct Comment {
+    std::size_t line = 0;
+    std::string text;
+};
+
+struct Split {
+    std::string code;
+    std::vector<Comment> comments;
+};
+
+// A source file taken apart into code and comments. Comments become spaces in the code, so that
+// line numbers stay; string and character literals, raw strings included, stay code, so that
+// `https://` in a string is not a comment. An apostrophe right after a letter or digit is a digit
+// separator (`1'000`), not the start of a character literal.
+Split split(std::string_view source) {
+    Split made;
+
+    made.code.reserve(source.size());
+
+    std::size_t line = 1;
+    std::size_t at = 0;
+
+    const auto keep = [&](char one) {
+        if (one == '\n') ++line;
+
+        made.code += one;
+    };
+
+    while (at < source.size()) {
+        const char one = source[at];
+
+        if (source.compare(at, 2, "//") == 0) {
+            const std::size_t end = std::min(source.find('\n', at), source.size());
+
+            made.comments.push_back({line, std::string{source.substr(at + 2, end - at - 2)}});
+            made.code.append(end - at, ' ');
+            at = end;
+
+            continue;
+        }
+
+        if (source.compare(at, 2, "/*") == 0) {
+            const std::size_t end = std::min(source.find("*/", at + 2), source.size());
+            const std::size_t stop = std::min(end + 2, source.size());
+
+            std::size_t from = at + 2;
+
+            for (std::size_t here = from; here <= end && here < source.size(); ++here) {
+                if (here == end || source[here] == '\n') {
+                    made.comments.push_back({line, std::string{source.substr(from, here - from)}});
+
+                    if (here < end) {
+                        ++line;
+                        from = here + 1;
+                    }
+                }
+            }
+
+            for (std::size_t here = at; here < stop; ++here) made.code += source[here] == '\n' ? '\n' : ' ';
+
+            at = stop;
+
+            continue;
+        }
+
+        const bool after_word = at > 0 && wordy(source[at - 1]);
+
+        if (one == '"' && at > 0 && source[at - 1] == 'R' &&
+            (at < 2 || !wordy(source[at - 2]) || std::string_view{"8LuU"}.find(source[at - 2]) != std::string_view::npos)) {
+            const std::size_t open = source.find('(', at);
+
+            if (open != std::string_view::npos) {
+                const std::string closer = ")" + std::string{source.substr(at + 1, open - at - 1)} + "\"";
+                const std::size_t end = std::min(source.find(closer, open), source.size());
+                const std::size_t stop = std::min(end + closer.size(), source.size());
+
+                for (std::size_t here = at; here < stop; ++here) keep(source[here]);
+
+                at = stop;
+
+                continue;
+            }
+        }
+
+        if (one == '"' || (one == '\'' && !after_word)) {
+            keep(one);
+            ++at;
+
+            while (at < source.size() && source[at] != one && source[at] != '\n') {
+                if (source[at] == '\\' && at + 1 < source.size()) keep(source[at++]);
+
+                keep(source[at++]);
+            }
+
+            if (at < source.size()) keep(source[at++]);
+
+            continue;
+        }
+
+        keep(one);
+        ++at;
+    }
+
+    return made;
+}
+
+// The code with the contents of string and character literals turned into spaces, so that a brace
+// inside a literal does not count as a brace.
+std::string blanked(std::string_view code) {
+    std::string made{code};
+
+    std::size_t at = 0;
+
+    while (at < code.size()) {
+        const char one = code[at];
+
+        if (one == '"' && at > 0 && code[at - 1] == 'R' &&
+            (at < 2 || !wordy(code[at - 2]) || std::string_view{"8LuU"}.find(code[at - 2]) != std::string_view::npos)) {
+            const std::size_t open = code.find('(', at);
+
+            if (open != std::string_view::npos) {
+                const std::string closer = ")" + std::string{code.substr(at + 1, open - at - 1)} + "\"";
+                const std::size_t end = std::min(code.find(closer, open), code.size());
+                const std::size_t stop = std::min(end + closer.size(), code.size());
+
+                for (std::size_t here = at + 1; here + 1 < stop; ++here)
+                    if (made[here] != '\n') made[here] = ' ';
+
+                at = stop;
+
+                continue;
+            }
+        }
+
+        if (one == '"' || (one == '\'' && !(at > 0 && wordy(code[at - 1])))) {
+            std::size_t here = at + 1;
+
+            while (here < code.size() && code[here] != one && code[here] != '\n') {
+                if (code[here] == '\\' && here + 1 < code.size()) made[here++] = ' ';
+
+                made[here++] = ' ';
+            }
+
+            at = here + 1;
+
+            continue;
+        }
+
+        ++at;
+    }
+
+    return made;
+}
+
+// The text without spaces, tabs and line ends on either side.
+std::string trimmed(std::string_view text) {
+    const std::size_t from = text.find_first_not_of(" \t\r\n");
+
+    if (from == std::string_view::npos) return {};
+
+    return std::string{text.substr(from, text.find_last_not_of(" \t\r\n") - from + 1)};
+}
+
+// Leading access labels (`public:`) in front of a declaration, or nothing.
+std::size_t labelled(std::string_view text) {
+    for (const std::string_view label : {std::string_view{"public"}, std::string_view{"private"}, std::string_view{"protected"}}) {
+        if (text.substr(0, label.size()) != label) continue;
+
+        std::size_t at = label.size();
+
+        while (at < text.size() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n')) ++at;
+
+        if (at < text.size() && text[at] == ':' && (at + 1 == text.size() || text[at + 1] != ':')) return at + 1;
+    }
+
+    return 0;
+}
+
+enum class Head : std::uint8_t { none, function, initializing };
+
+// What the text in front of an opening brace is. A function definition is a name with a parameter
+// list, then only qualifiers (`const`, `noexcept`, `override`, a trailing return type) or a
+// constructor's initializer list. A brace inside an initializer list that is not finished yet
+// (`: size_{…}`, `: Dialog(Shape{…})`) is brace initialization of a member or a base. Control
+// statements, lambdas, classes, namespaces and other brace initialization are none of these.
+Head signature(std::string_view given) {
+    std::string text;
+
+    for (std::size_t at = 0; at < given.size();) {
+        const std::size_t end = std::min(given.find('\n', at), given.size());
+        const std::string line = trimmed(given.substr(at, end - at));
+
+        if (!line.empty() && line.front() != '#') text += line + ' ';
+
+        at = end + 1;
+    }
+
+    for (std::size_t at = text.find("[["); at != std::string::npos; at = text.find("[[")) {
+        const std::size_t end = text.find("]]", at);
+
+        if (end == std::string::npos) break;
+
+        text.erase(at, end + 2 - at);
+    }
+
+    text = trimmed(text);
+
+    while (const std::size_t skip = labelled(text)) text = trimmed(std::string_view{text}.substr(skip));
+
+    std::size_t open = text.find('(');
+
+    if (open == std::string::npos || open == 0) return Head::none;
+
+    const std::string head = trimmed(std::string_view{text}.substr(0, open));
+
+    // `operator()` has its parameter list after its own pair of parentheses.
+    if (head.ends_with("operator") && text.compare(open, 2, "()") == 0) open = text.find('(', open + 2);
+
+    if (open == std::string::npos) return Head::none;
+
+    std::vector<std::string> words;
+    std::string word;
+
+    for (const char one : head + ' ') {
+        if (wordy(one) && !(word.empty() && std::isdigit(static_cast<unsigned char>(one)) != 0)) {
+            word += one;
+        } else if (!word.empty()) {
+            words.push_back(word);
+            word.clear();
+        }
+    }
+
+    constexpr std::string_view keys[] = {"if", "for", "while", "switch", "catch", "return", "else", "do", "sizeof",
+                                         "alignof", "new", "delete", "throw", "case", "co_return", "static_assert",
+                                         "typedef", "using", "class", "struct", "enum", "union", "namespace", "TRIAL",
+                                         "extern"};
+
+    const auto key = [&keys](const std::string& one) { return std::find(std::begin(keys), std::end(keys), one) != std::end(keys); };
+
+    if (words.empty() || key(words.front()) || key(words.back())) return Head::none;
+    if (words.front() == "template" && words.size() > 1 && key(words[1])) return Head::none;
+
+    const bool operating = head.find("operator") != std::string::npos;
+
+    if (!operating && head.find_first_of("=[]{}") != std::string::npos) return Head::none;
+    if (!operating && !wordy(head.back())) return Head::none;
+
+    std::size_t close = std::string::npos;
+    std::size_t deep = 0;
+
+    for (std::size_t at = open; at < text.size(); ++at) {
+        if (text[at] == '(') ++deep;
+        else if (text[at] == ')' && --deep == 0) {
+            close = at;
+            break;
+        }
+    }
+
+    if (close == std::string::npos) return Head::none;
+
+    std::string rest = trimmed(std::string_view{text}.substr(close + 1));
+
+    while (!rest.empty()) {
+        if (rest.starts_with("->") || rest.starts_with("requires")) return Head::function;
+
+        if (rest.front() == ':' && !rest.starts_with("::")) {
+            const std::string init = trimmed(std::string_view{rest}.substr(1));
+
+            int level = 0;
+
+            for (const char one : init) level += one == '(' ? 1 : one == ')' ? -1 : 0;
+
+            const bool finished = level == 0 && !init.empty() && (init.back() == ')' || init.back() == '}');
+
+            return finished ? Head::function : Head::initializing;
+        }
+
+        if (rest.starts_with("noexcept(")) {
+            std::size_t level = 0;
+            std::size_t at = 8;
+
+            for (; at < rest.size(); ++at) {
+                if (rest[at] == '(') ++level;
+                else if (rest[at] == ')' && --level == 0) break;
+            }
+
+            rest = trimmed(std::string_view{rest}.substr(std::min(at + 1, rest.size())));
+
+            continue;
+        }
+
+        bool taken = false;
+
+        for (const std::string_view qualifier : {std::string_view{"const"}, std::string_view{"noexcept"}, std::string_view{"override"},
+                                                 std::string_view{"final"}, std::string_view{"mutable"}}) {
+            if (rest.starts_with(qualifier) && (rest.size() == qualifier.size() || !wordy(rest[qualifier.size()]))) {
+                rest = trimmed(std::string_view{rest}.substr(qualifier.size()));
+                taken = true;
+                break;
+            }
+        }
+
+        if (taken) continue;
+
+        if (rest.front() == '&') {
+            rest = trimmed(std::string_view{rest}.substr(rest.starts_with("&&") ? 2 : 1));
+            continue;
+        }
+
+        return Head::none;
+    }
+
+    return Head::function;
+}
+
+struct Definition {
+    std::size_t line = 0;
+    bool empty = false;
+};
+
+// The function definitions of a source file: the line where each one starts (its `template` or
+// attribute line, if any) and whether its body is empty.
+std::vector<Definition> definitions(std::string_view source) {
+    const std::string code = blanked(split(source).code);
+
+    std::vector<std::size_t> lines(code.size() + 1, 1);
+
+    for (std::size_t at = 0; at < code.size(); ++at) lines[at + 1] = lines[at] + (code[at] == '\n' ? 1 : 0);
+
+    std::vector<Definition> made;
+    std::size_t last = 0;
+
+    for (std::size_t at = 0; at < code.size(); ++at) {
+        const char one = code[at];
+
+        if (one == ';' || one == '}') {
+            last = at + 1;
+            continue;
+        }
+
+        if (one != '{') continue;
+
+        const std::string_view before = std::string_view{code}.substr(last, at - last);
+        const bool parenthesized = std::count(before.begin(), before.end(), '(') > std::count(before.begin(), before.end(), ')');
+        const Head head = parenthesized ? Head::initializing : signature(before);
+
+        // Braces inside an initializer list or inside parentheses (a default argument `= {}`, a
+        // lambda passed as an argument) are skipped, and the text before them goes on.
+        if (head == Head::initializing) {
+            std::size_t deep = 0;
+
+            for (; at < code.size(); ++at) {
+                if (code[at] == '{') ++deep;
+                else if (code[at] == '}' && --deep == 0) break;
+            }
+
+            continue;
+        }
+
+        if (head == Head::function) {
+            std::size_t from = last;
+
+            for (;;) {
+                while (from < at && std::isspace(static_cast<unsigned char>(code[from])) != 0) ++from;
+
+                if (const std::size_t skip = labelled(std::string_view{code}.substr(from, at - from))) {
+                    from += skip;
+                    continue;
+                }
+
+                if (from < at && code[from] == '#') {
+                    from = std::min(code.find('\n', from), at);
+                    continue;
+                }
+
+                break;
+            }
+
+            std::size_t next = at + 1;
+
+            while (next < code.size() && std::isspace(static_cast<unsigned char>(code[next])) != 0) ++next;
+
+            made.push_back({lines[from], next < code.size() && code[next] == '}'});
+        }
+
+        last = at + 1;
+    }
+
+    return made;
+}
+
+// The lines that hold nothing but a comment.
+std::set<std::size_t> commented(std::string_view source) {
+    std::set<std::size_t> made;
+
+    std::vector<std::string_view> rows;
+
+    for (std::size_t at = 0; at <= source.size();) {
+        const std::size_t end = std::min(source.find('\n', at), source.size());
+
+        rows.push_back(source.substr(at, end - at));
+        at = end + 1;
+    }
+
+    for (const Comment& one : split(source).comments) {
+        if (one.line == 0 || one.line > rows.size()) continue;
+
+        const std::string row = trimmed(rows[one.line - 1]);
+
+        if (row.starts_with("//") || row.starts_with("/*") || row.starts_with("*")) made.insert(one.line);
+    }
+
+    return made;
+}
+
+// The code of the sources, without comments. This file's own code stays out (see the note at
+// the top).
 std::string gathered(const stood::path& from) {
     std::string whole;
 
@@ -74,14 +496,12 @@ std::string gathered(const stood::path& from) {
 
     for (const auto& one : stood::recursive_directory_iterator{from})
         if (one.is_regular_file() && coded(one.path()) && one.path().filename() != "naming.cpp")
-            whole += slurped(one.path()) + '\n';
+            whole += split(slurped(one.path())).code + '\n';
 
     return whole;
 }
 
-bool wordy(char one) { return std::isalnum(static_cast<unsigned char>(one)) != 0 || one == '_'; }
-
-// Wystąpienie całym słowem, a nie kawałkiem innego: `put` nie może zaliczyć się przez `output`.
+// A whole word, not a piece of another: `put` must not count because of `output`.
 bool present(std::string_view whole, std::string_view stem) {
     if (stem.empty()) return false;
 
@@ -96,14 +516,15 @@ bool present(std::string_view whole, std::string_view stem) {
     return false;
 }
 
-// Ciało klasy albo struktury o podanej nazwie i wykaz jej podstaw. Szukamy słowa `class` albo
-// `struct` **przed** nazwą, żeby nie wziąć użycia za deklarację, i przeskakujemy zapowiedzi
-// (`class Node;`), bo one ciała nie mają.
+// The body of a class or struct of the given name and the list of its bases. The word `class` or
+// `struct` is looked for before the name, so that a use is not taken for a declaration, and
+// forward declarations (`class Node;`) are skipped, as they have no body.
 struct Told {
     std::string body;
     std::vector<std::string> above;
 };
 
+// Every class or struct of the given name found in the code, with its body and bases.
 std::vector<Told> told(std::string_view whole, std::string_view name) {
     std::vector<Told> every;
 
@@ -171,12 +592,15 @@ struct Named {
     std::string build;
 };
 
+constexpr const char* bases[] = {"talcite", "test", "demo"};
+
+// Everything names are checked against, gathered once per test.
 Named taken() {
     Named made;
 
     const stood::path here = root();
 
-    for (const char* base : {"talcite", "test", "demo"}) made.code += gathered(here / base);
+    for (const char* base : bases) made.code += gathered(here / base);
 
     for (const char* one : {"CMakeLists.txt", "CMakePresets.json", "talcite/CMakeLists.txt",
                             "test/CMakeLists.txt", "demo/CMakeLists.txt"})
@@ -185,15 +609,15 @@ Named taken() {
     for (const auto& one : stood::directory_iterator{here})
         if (one.is_regular_file()) made.files.insert(one.path().filename().string());
 
-    for (const char* base : {"talcite", "test", "demo"})
+    for (const char* base : bases)
         for (const auto& one : stood::recursive_directory_iterator{here / base})
             if (one.is_regular_file()) made.files.insert(one.path().filename().string());
 
     return made;
 }
 
-// Nazwa z kwalifikatorem: albo stoi w źródłach dosłownie (`void Page::hold(...)`), albo jej człon
-// leży w ciele klasy — własnym lub odziedziczonym, bo `Select::options` przychodzi z `OptionsNode`.
+// A qualified name either appears in the code as written, or its member lies in the body of the
+// class, its own or inherited: `Select::options` comes from `OptionsNode`.
 bool inherited(const Named& all, const std::string& owner, const std::string& stem, int deep) {
     if (deep > 4) return false;
 
@@ -207,6 +631,7 @@ bool inherited(const Named& all, const std::string& owner, const std::string& st
     return false;
 }
 
+// Whether the text is a single C++ identifier.
 bool identifier(std::string_view one) {
     if (one.empty() || (!std::isalpha(static_cast<unsigned char>(one[0])) && one[0] != '_'))
         return false;
@@ -214,7 +639,7 @@ bool identifier(std::string_view one) {
     return std::all_of(one.begin(), one.end(), wordy);
 }
 
-// `Node` albo `Page::hold`; `nazwa()` liczy się tak samo, jak `nazwa`.
+// `Node` or `Page::hold`; `name()` counts the same as `name`.
 bool cplusplus(std::string_view one, std::string& owner, std::string& stem) {
     const std::size_t colon = one.find("::");
 
@@ -237,8 +662,8 @@ bool cplusplus(std::string_view one, std::string& owner, std::string& stem) {
     return true;
 }
 
-// `talcite.frame`, `node.cpp` — człony rozdzielone kropkami, bez znaków, które robią z zapisu
-// wzorzec (`talcite.panel.name.*`) albo kawałek kodu.
+// `talcite.frame`, `node.cpp`: parts separated by dots, without the characters that would make a
+// pattern (`talcite.panel.name.*`) or a piece of code out of it.
 bool dotted(std::string_view one) {
     if (one.empty() || one.find('.') == std::string_view::npos) return false;
 
@@ -261,6 +686,7 @@ bool dotted(std::string_view one) {
     return !fresh;
 }
 
+// Whether the dotted text names a file, judged by its extension.
 bool filed(std::string_view one) {
     for (const char* tail : {".cpp", ".hpp", ".json", ".md", ".txt", ".ini", ".c", ".h"})
         if (ends(one, tail)) return true;
@@ -268,113 +694,224 @@ bool filed(std::string_view one) {
     return false;
 }
 
+// While the comments are rewritten in English, the files not rewritten yet are listed, one
+// path per line, in `pending-comments.txt` and skipped by the two tests below. The list only
+// shrinks; when it is empty, it goes, together with this function.
+std::set<std::string> pending() {
+    std::set<std::string> made;
+
+    std::istringstream lines{slurped(root() / "test" / "pending-comments.txt")};
+    std::string line;
+
+    while (std::getline(lines, line))
+        if (!line.empty()) made.insert(line);
+
+    return made;
 }
 
-TRIAL("Nazwy: każda nazwa z CLAUDE.md istnieje naprawdę") {
-    const std::string doc = slurped(root() / "CLAUDE.md");
+// Every code file of the project, by its path relative to the root, with `/` as the separator.
+std::vector<std::pair<std::string, stood::path>> sources() {
+    std::vector<std::pair<std::string, stood::path>> made;
 
-    ought(!doc.empty());
+    for (const char* base : bases)
+        for (const auto& one : stood::recursive_directory_iterator{root() / base})
+            if (one.is_regular_file() && coded(one.path()))
+                made.emplace_back(one.path().lexically_relative(root()).generic_string(), one.path());
 
+    std::sort(made.begin(), made.end());
+
+    return made;
+}
+
+// What is wrong with one name quoted in a comment, or nothing.
+std::string checked(const Named& all, std::string one) {
+    if (one.size() > 2 && one.compare(one.size() - 2, 2, "()") == 0) one.resize(one.size() - 2);
+
+    std::string owner;
+    std::string stem;
+
+    if (dotted(one)) {
+        if (filed(one)) return all.files.contains(one) ? "" : "no such file";
+
+        if (one.rfind("talcite.", 0) == 0)
+            return present(all.code, '"' + one + '"') ? "" : "no such role in the code";
+
+        return "";
+    }
+
+    if (!cplusplus(one, owner, stem)) return "";
+
+    if (!owner.empty()) {
+        if (present(all.code, one) || inherited(all, owner, stem, 0)) return "";
+
+        return "not in the code, nor in the body of " + owner;
+    }
+
+    if (stem.size() < 3) return "";
+
+    if (present(all.code, stem) || present(all.build, stem)) return "";
+
+    return "not in the code of the library";
+}
+
+}
+
+TRIAL("Names: every name quoted in a comment exists") {
     const Named all = taken();
+    const std::set<std::string> skipped = pending();
 
     std::vector<std::string> bad;
 
-    std::size_t line = 1;
+    for (const auto& [name, where] : sources()) {
+        if (where.extension() != ".cpp" || skipped.contains(name)) continue;
 
-    for (std::size_t at = 0; at < doc.size(); ++at) {
-        if (doc[at] == '\n') {
-            ++line;
+        for (const Comment& comment : split(slurped(where)).comments) {
+            const std::string& text = comment.text;
 
-            continue;
-        }
+            for (std::size_t at = text.find('`'); at != std::string::npos; at = text.find('`', at + 1)) {
+                const std::size_t upto = text.find('`', at + 1);
 
-        if (doc[at] != '`') continue;
+                if (upto == std::string::npos) break;
 
-        const std::size_t upto = doc.find_first_of("`\n", at + 1);
+                const std::string one = text.substr(at + 1, upto - at - 1);
+                const std::string wrong = checked(all, one);
 
-        if (upto == std::string::npos || doc[upto] == '\n') continue;
+                if (!wrong.empty())
+                    bad.push_back("  " + name + ":" + std::to_string(comment.line) + ": " + one + " - " + wrong);
 
-        std::string one = doc.substr(at + 1, upto - at - 1);
-
-        at = upto;
-
-        if (one.size() > 2 && one.compare(one.size() - 2, 2, "()") == 0) one.resize(one.size() - 2);
-
-        const std::string where = "  wiersz " + std::to_string(line) + ": " + one + " — ";
-
-        std::string owner;
-        std::string stem;
-
-        if (dotted(one)) {
-            if (filed(one)) {
-                if (!all.files.contains(one)) bad.push_back(where + "nie ma takiego pliku");
-            } else if (one.rfind("talcite.", 0) == 0) {
-                if (!present(all.code, '"' + one + '"'))
-                    bad.push_back(where + "nie ma takiej roli w źródłach");
-            }
-        } else if (cplusplus(one, owner, stem)) {
-            if (!owner.empty()) {
-                if (present(all.code, one)) continue;
-
-                if (inherited(all, owner, stem, 0)) continue;
-
-                bad.push_back(where + "nie ma jej w źródłach ani w ciele " + owner);
-            } else {
-                if (stem.size() < 3) continue;
-
-                if (present(all.code, stem) || present(all.build, stem)) continue;
-
-                bad.push_back(where + "nie ma jej w źródłach biblioteki");
+                at = upto;
             }
         }
     }
 
     if (!bad.empty()) {
-        std::string said = "nazwy z CLAUDE.md, których nie ma:";
+        std::string said = "names quoted in comments that do not exist:";
 
         for (const std::string& one : bad) said += '\n' + one;
 
-        said += "\n\n  Nazwa cudza albo odrzucona nie idzie w odwrotnych apostrofach.";
+        said += "\n\n  A name from elsewhere, or one that is gone, is written without backticks.";
 
         ::proving::fell(__FILE__, __LINE__, said);
     }
 }
 
-// **Nagłówek publiczny jest goły** — to reguła projektu: omówienie żyje w `.cpp` i w CLAUDE.md,
-// a nazwa w nagłówku ma mówić sama za siebie. Reguła stała na papierze i trzy nagłówki ją łamały,
-// zanim ktoś to zauważył; ta próba pilnuje jej tak samo jak nazw — pokazuje plik i wiersz.
-// Schodzi też do `detail/`: wnętrzności obietnicy są widoczne dla każdego, kto dołącza
-// `promise.hpp`, więc reguła obowiązuje je tak samo.
-TRIAL("Nazwy: nagłówki publiczne nie mają komentarzy") {
+TRIAL("Names: headers carry no comments") {
+    const std::set<std::string> skipped = pending();
+
     std::vector<std::string> bad;
 
-    for (const stood::directory_entry& one :
-         stood::recursive_directory_iterator{root() / "talcite" / "include" / "talcite"}) {
-        if (one.path().extension() != ".hpp") continue;
+    for (const auto& [name, where] : sources()) {
+        if (where.extension() != ".hpp" || skipped.contains(name)) continue;
 
-        std::istringstream lines{slurped(one.path())};
-        std::string line;
-        std::size_t number = 0;
-
-        while (std::getline(lines, line)) {
-            ++number;
-
-            const std::size_t first = line.find_first_not_of(" \t");
-
-            if (first == std::string::npos) continue;
-
-            const std::string_view rest = std::string_view{line}.substr(first);
-
-            if (rest.starts_with("//") || rest.starts_with("/*"))
-                bad.push_back("  " + one.path().filename().string() + ":" + std::to_string(number));
-        }
+        for (const Comment& comment : split(slurped(where)).comments)
+            bad.push_back("  " + name + ":" + std::to_string(comment.line));
     }
 
     if (!bad.empty()) {
-        std::string said = "komentarze w nagłówkach publicznych:";
+        std::string said = "comments in headers - they belong next to the definition, in the .cpp file:";
 
         for (const std::string& one : bad) said += '\n' + one;
 
         ::proving::fell(__FILE__, __LINE__, said);
     }
+}
+
+// Every function that does something says so in a comment right above it. A defaulted or empty
+// function (`= default`, `{}`) needs none, and neither do lambdas, which the comment of their
+// enclosing function covers, nor trials, whose name is their description.
+TRIAL("Names: every function that does something has a comment above it") {
+    const std::set<std::string> skipped = pending();
+
+    std::vector<std::string> bad;
+
+    for (const auto& [name, where] : sources()) {
+        if (where.extension() != ".cpp" || skipped.contains(name)) continue;
+
+        const std::string source = slurped(where);
+        const std::set<std::size_t> above = commented(source);
+
+        for (const Definition& one : definitions(source))
+            if (!one.empty && !above.contains(one.line - 1)) bad.push_back("  " + name + ":" + std::to_string(one.line));
+    }
+
+    if (!bad.empty()) {
+        std::string said = "functions without a comment right above them:";
+
+        for (const std::string& one : bad) said += '\n' + one;
+
+        ::proving::fell(__FILE__, __LINE__, said);
+    }
+}
+
+TRIAL("Names: function definitions are told apart from statements, lambdas and classes") {
+    const std::vector<Definition> found = definitions(
+        "namespace x {\n"                                        // 1
+        "struct Held : Base {\n"                                 // 2
+        "public:\n"                                              // 3
+        "    explicit Held(int one) : one_(one) {}\n"            // 4
+        "    int one() const noexcept { return one_; }\n"        // 5
+        "};\n"                                                   // 6
+        "template <typename T>\n"                                // 7
+        "[[nodiscard]] auto twice(T one) -> T {\n"               // 8
+        "    if (one > 0) { return one; }\n"                     // 9
+        "    const auto f = [&](int a) { return a; };\n"         // 10
+        "    std::for_each(a, b, [](int c) { (void)c; });\n"     // 11
+        "    for (int i = 0; i < 3; ++i) {\n"                    // 12
+        "    }\n"                                                // 13
+        "    return \"{\" + one;\n"                             // 14
+        "}\n"                                                    // 15
+        "bool operator==(const Held& a, const Held& b) {\n"      // 16
+        "    return a.one() == b.one();\n"                       // 17
+        "}\n"                                                    // 18
+        "TRIAL(\"name\") {\n"                                   // 19
+        "}\n"                                                    // 20
+        "}\n");
+
+    same(found.size(), std::size_t{4});
+
+    if (found.size() == 4) {
+        same(found[0].line, std::size_t{4});
+        ought(found[0].empty);
+        same(found[1].line, std::size_t{5});
+        same(found[2].line, std::size_t{7});
+        same(found[3].line, std::size_t{16});
+        ought(!found[3].empty);
+    }
+
+    // Brace initialization in a constructor's initializer list is not a body.
+    const std::vector<Definition> built = definitions("A::A(int x)\n    : b_{x}, c_(Shape{x}) {\n    go();\n}\n");
+
+    same(built.size(), std::size_t{1});
+
+    if (built.size() == 1) {
+        same(built[0].line, std::size_t{1});
+        ought(!built[0].empty);
+    }
+
+    // Neither are braces in a default argument.
+    const std::vector<Definition> defaulted = definitions("void f(int a, Mods b = {}) {\n    go();\n}\n");
+
+    same(defaulted.size(), std::size_t{1});
+}
+
+TRIAL("Names: the split keeps strings and raw strings as code") {
+    const Split made = split("int a = 1'000; // one\n"
+                             "const char* b = \"https://x\"; /* two\nthree */ char c = '/';\n"
+                             "const char* d = R\"j(// not a comment)j\";\n");
+
+    same(made.comments.size(), std::size_t{3});
+
+    if (made.comments.size() == 3) {
+        same(made.comments[0].line, std::size_t{1});
+        same(made.comments[0].text, std::string{" one"});
+        same(made.comments[1].line, std::size_t{2});
+        same(made.comments[1].text, std::string{" two"});
+        same(made.comments[2].line, std::size_t{3});
+        same(made.comments[2].text, std::string{"three "});
+    }
+
+    ought(made.code.find("https://x") != std::string::npos);
+    ought(made.code.find("// not a comment") != std::string::npos);
+    ought(made.code.find("one") == std::string::npos);
+    same(std::count(made.code.begin(), made.code.end(), '\n'), std::ptrdiff_t{4});
 }

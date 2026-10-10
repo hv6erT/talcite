@@ -25,6 +25,7 @@ public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; every other key is taken, so nothing leaks past the root.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) term_.stop();
 
@@ -35,10 +36,12 @@ private:
     talcite::Term& term_;
 };
 
+// A true-color value from its three components.
 talcite::Color tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return talcite::Color{false, red, green, blue};
 }
 
+// A style with the given foreground and background and nothing else set.
 talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     talcite::Style made{};
 
@@ -48,6 +51,7 @@ talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     return made;
 }
 
+// The demo's skin: light text on blue, with cyan input fields and a black-and-cyan legend.
 talcite::ui::Skin coloured() {
     const talcite::Color blue = tinted(0, 0, 160);
     const talcite::Color light = tinted(200, 200, 200);
@@ -67,9 +71,9 @@ talcite::ui::Skin coloured() {
     }};
 }
 
-// Powłoka jest **tym, co uruchamiamy**, a nie tym, co talcite o czymkolwiek zakłada: to demonstracja
-// wpisuje `sh -c`, bo chce podać całe zdanie, i to ona wie, jak się ta powłoka nazywa na jej
-// systemie. Biblioteka dostaje zwykły przepis z programem i argumentami.
+// The shell is what we run, not something talcite assumes: the demo writes `sh -c` because it wants
+// to pass a whole sentence, and only the demo knows what the shell is called on its system. The
+// library gets a plain recipe with a program and its arguments.
 talcite::Command spoken(const std::string& said) {
     talcite::Command made;
 
@@ -90,6 +94,7 @@ talcite::Command spoken(const std::string& said) {
     return made;
 }
 
+// The standard output with the standard error appended to it, for showing both in one viewer.
 talcite::Bytes joined(talcite::Bytes read, const talcite::Bytes& errors) {
     read.insert(read.end(), errors.begin(), errors.end());
 
@@ -98,22 +103,22 @@ talcite::Bytes joined(talcite::Bytes read, const talcite::Bytes& errors) {
 
 }
 
-// **Uruchamianie cudzych programów, dwiema drogami.** Enter zbiera wyjście do podglądu — polecenie
-// biegnie obok, a okno przez ten czas żyje normalnie. F4 oddaje programowi cały terminal i czeka:
-// tak w Midnight Commanderze otwiera się edytor albo `less`, i tak jedynie mogą działać programy,
-// które same rysują po ekranie.
+// Running other programs, in two ways. Enter collects the output for the viewer: the command runs
+// alongside, and the window keeps working normally in the meantime. F4 hands the whole terminal to
+// the program and waits: this is how Midnight Commander opens an editor or less, and it is the only
+// way programs that draw on the screen themselves can work.
 int main() {
     talcite::Term term;
 
     Sheet sheet{term};
 
     const auto legend = std::make_shared<talcite::ui::Legend>();
-    const auto frame = std::make_shared<talcite::ui::Frame>("wyjście");
+    const auto frame = std::make_shared<talcite::ui::Frame>("output");
     const auto column = std::make_shared<talcite::ui::Column>();
 
-    const auto told = std::make_shared<talcite::ui::Span>("Enter — zbierz wyjście   F4 — oddaj ekran");
+    const auto told = std::make_shared<talcite::ui::Span>("Enter — collect output   F4 — hand over the screen");
     const auto viewer = std::make_shared<talcite::ui::Viewer>();
-    const auto field = std::make_shared<talcite::ui::Field>(talcite::ui::plenty, "talcite --wersja");
+    const auto field = std::make_shared<talcite::ui::Field>(talcite::ui::plenty, "talcite --version");
 
     frame->children().add(viewer);
 
@@ -126,24 +131,24 @@ int main() {
     const auto showing = [told, viewer](const talcite::Output& made) {
         viewer->hold(joined(made.out, made.err));
 
-        told->text("kod wyjścia: " + std::to_string(made.exit.code));
+        told->text("exit code: " + std::to_string(made.exit.code));
     };
 
-    // **Zbieranie biegnie obok.** `here()` przenosi ciąg dalszy na pętlę rysującą, więc dotykanie
-    // drzewa węzłów odbywa się na tym samym wątku, co rysowanie — a przez ten czas okno reaguje.
+    // Collecting runs alongside. `here()` moves the continuation onto the drawing loop, so the node
+    // tree is touched on the same thread that draws it, and the window responds in the meantime.
     //
-    // Obietnicę trzymamy, bo ogniwo wisi na niej słabym wskazaniem: porzucona nigdy by nie
-    // zadziałała. I trzeba ją ruszyć — same `then` niczego nie uruchamia.
+    // We keep the promise because the chain hangs on it through a weak pointer: an abandoned
+    // promise would never fire. It also has to be started, since `then` alone runs nothing.
     const auto kept = std::make_shared<std::optional<talcite::Promise<void>>>();
 
     const auto gathering = [field, told, showing, kept] {
-        told->text("biegnie…");
+        told->text("running…");
 
         kept->emplace(talcite::Child::run(spoken(field->text()))
                           .here()
                           .then([showing](const talcite::Output& made) { showing(made); })
                           .fail([told](const std::exception& why) {
-                              told->text(std::string{"nie poszło: "} + why.what());
+                              told->text(std::string{"failed: "} + why.what());
                           }));
 
         (*kept)->start();
@@ -157,17 +162,18 @@ int main() {
         return true;
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Zbierz"), gathering);
+    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Collect"), gathering);
 
-    // Oddanie ekranu jest **zwykłym wywołaniem, które trwa**: pętla rysująca stoi, bo terminal
-    // należy teraz do kogoś innego. Wątki puli — zegar, sieć, czytanie plików — biegną dalej.
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Oddaj"), [&term, field, told] {
+    // Handing over the screen is an ordinary call that takes time: the drawing loop stands still,
+    // because the terminal now belongs to someone else. The pool threads (the clock, the network,
+    // file reading) keep running.
+    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Hand over"), [&term, field, told] {
         const talcite::Exit made = term.execute(spoken(field->text()));
 
-        told->text("wrócił z kodem " + std::to_string(made.code));
+        told->text("returned with code " + std::to_string(made.code));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Wyjdź"), [&term] { term.stop(); });
+    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());
@@ -175,7 +181,7 @@ int main() {
     field->focus();
 
     term.show(sheet);
-    term.title("talcite — cudze programy");
+    term.title("talcite — other programs");
 
     term.run();
 

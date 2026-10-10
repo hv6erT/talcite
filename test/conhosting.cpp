@@ -12,18 +12,19 @@
 #include "talcite/console.hpp"
 #include "talcite/term.hpp"
 
-// **Tłumaczenie dla konsoli bez VT.** Część przenośna sprawdza się tu, na każdym systemie: mały
-// terminal czyta to, co pisze `Term`, i odpowiada sondzie, a rekordy klawiatury i myszy wychodzą
-// tymi samymi bajtami, które conhost z trybem VT dałby dekoderowi. Klej Win32 sprawdza się już
-// tylko na prawdziwej konsoli.
+// The translation for a console without VT. The portable part is checked here, on every system:
+// a small terminal reads what `Term` writes and answers the probe, and keyboard and mouse records
+// come out as the same bytes that conhost in VT mode would give the decoder. The Win32 glue is
+// checked only on a real console.
 
 using namespace talcite;
 
 namespace {
 
-// Kolory konsoli: biały na czarnym, jak w domyślnym cmd.exe.
+// A screen of the given size in the console colors white on black, as in the default cmd.exe.
 conhost::Screen screen(int wide = 20, int high = 5) { return conhost::Screen{{wide, high}, 7, 0}; }
 
+// The characters of row `y` of the screen, without trailing spaces.
 std::u32string row(const conhost::Screen& from, int y) {
     std::u32string made;
 
@@ -34,42 +35,54 @@ std::u32string row(const conhost::Screen& from, int y) {
     return made;
 }
 
-// Konsola, za którą stoi tłumaczenie — tak jak stanie w `console.cpp`, tylko bez Win32. Na Windows
-// pusty TERM wystarcza za „to jest konsola"; tu, pod POSIX, podłoga potrzebuje jakiegoś, więc
-// dajemy najskromniejszy — bez 256 i bez COLORTERM, żeby barwy szły z `vt()`.
+// A console with the translation behind it, as it will stand in `console.cpp`, only without Win32.
+// On Windows an empty TERM is enough for "this is a console"; here, under POSIX, the floor needs
+// one, so we give the most modest one, without 256 and without COLORTERM, so that the colors
+// follow from `vt()`.
 class Translated final : public Console {
 public:
     conhost::Screen shown{{40, 6}, 7, 0};
 
+    // The name of this fake console.
     [[nodiscard]] std::string_view name() const override { return "translated console"; }
 
+    // Only TERM is set, to xterm.
     [[nodiscard]] std::optional<std::string> variable(std::string_view name) const override {
         if (name == "TERM") return std::string{"xterm"};
 
         return std::nullopt;
     }
 
+    // There is a terminal to talk to.
     [[nodiscard]] bool lively() const override { return true; }
 
+    // The console does not understand VT sequences itself.
     [[nodiscard]] bool vt() const override { return false; }
 
+    // The size of the translated screen.
     [[nodiscard]] std::optional<ui::Size> size() const override { return shown.size(); }
 
+    // The double-click time of the console.
     [[nodiscard]] std::chrono::milliseconds double_click() const override { return std::chrono::milliseconds{500}; }
 
     void raw(bool) override {}
 
+    // The program was never suspended.
     [[nodiscard]] bool resumed() override { return false; }
 
+    // Feeds the written bytes to the translated screen.
     void write(std::string_view bytes) override { shown.fed(bytes); }
 
+    // The screen's answers to the queries written so far.
     [[nodiscard]] std::string hear(std::optional<std::chrono::milliseconds>, const Bell*) override {
         return shown.answers();
     }
 };
 
+// A root that draws a red x, a wide character and "ok" in reverse video.
 class Painted : public ui::Root {
 protected:
+    // Draws the three samples in the top left corner.
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
 
@@ -91,9 +104,9 @@ protected:
 
 }
 
-// --- Siatka --------------------------------------------------------------------------------------
+// --- Grid ----------------------------------------------------------------------------------------
 
-TRIAL("Konsola bez VT: tekst staje od kursora, a CUP liczy od jedynki") {
+TRIAL("Console without VT: text lands at the cursor, and CUP counts from one") {
     conhost::Screen one = screen();
 
     one.fed("ab\x1b[3;5Hcd");
@@ -103,7 +116,7 @@ TRIAL("Konsola bez VT: tekst staje od kursora, a CUP liczy od jedynki") {
     ought(one.cursor() == ui::Spot{6, 2});
 }
 
-TRIAL("Konsola bez VT: UTF-8 urwany w połowie wychodzi jako znak zapytania") {
+TRIAL("Console without VT: UTF-8 cut off halfway comes out as a question mark") {
     conhost::Screen one = screen();
 
     one.fed("\xc4");
@@ -112,7 +125,7 @@ TRIAL("Konsola bez VT: UTF-8 urwany w połowie wychodzi jako znak zapytania") {
     same(row(one, 0), std::u32string{U"ą!?x"});
 }
 
-TRIAL("Konsola bez VT: znak chiński zajmuje dwie kratki, druga pusta i oznaczona") {
+TRIAL("Console without VT: a Chinese character takes two cells, the second empty and marked") {
     conhost::Screen one = screen();
 
     one.fed("a你b");
@@ -124,7 +137,7 @@ TRIAL("Konsola bez VT: znak chiński zajmuje dwie kratki, druga pusta i oznaczon
     ought(one.cursor() == ui::Spot{4, 0});
 }
 
-TRIAL("Konsola bez VT: przykrycie połowy znaku szerokiego czyści drugą połowę") {
+TRIAL("Console without VT: covering half of a wide character clears the other half") {
     conhost::Screen one = screen();
 
     one.fed("你好\x1b[1;2Hx\x1b[1;3Hy");
@@ -134,7 +147,7 @@ TRIAL("Konsola bez VT: przykrycie połowy znaku szerokiego czyści drugą połow
     ought(!one.at(3, 0).trailing);
 }
 
-TRIAL("Konsola bez VT: znak spoza BMP staje jako znak zapytania na dwóch kratkach") {
+TRIAL("Console without VT: a character outside the BMP lands as a question mark on two cells") {
     conhost::Screen one = screen();
 
     one.fed("\xf0\x9f\xac\x80|");
@@ -143,7 +156,7 @@ TRIAL("Konsola bez VT: znak spoza BMP staje jako znak zapytania na dwóch kratka
     ought(one.at(1, 0).trailing);
 }
 
-TRIAL("Konsola bez VT: bez zawijania ostatnia kolumna przyjmuje kolejne znaki") {
+TRIAL("Console without VT: without wrapping the last column takes the following characters") {
     conhost::Screen one = screen(4, 2);
 
     one.fed("\x1b[?7labcdef");
@@ -152,7 +165,7 @@ TRIAL("Konsola bez VT: bez zawijania ostatnia kolumna przyjmuje kolejne znaki") 
     same(row(one, 1), std::u32string{});
 }
 
-TRIAL("Konsola bez VT: z zawijaniem tekst schodzi wiersz niżej, a na dole siatka jedzie w górę") {
+TRIAL("Console without VT: with wrapping text moves a row down, and at the bottom the grid scrolls up") {
     conhost::Screen one = screen(3, 2);
 
     one.fed("abcdefg");
@@ -161,7 +174,7 @@ TRIAL("Konsola bez VT: z zawijaniem tekst schodzi wiersz niżej, a na dole siatk
     same(row(one, 1), std::u32string{U"g"});
 }
 
-TRIAL("Konsola bez VT: EL i ED czyszczą od kursora, do kursora i całość") {
+TRIAL("Console without VT: EL and ED clear from the cursor, up to the cursor and everything") {
     conhost::Screen one = screen(6, 3);
 
     one.fed("abcdef\r\nghijkl\r\nmnopqr");
@@ -182,7 +195,7 @@ TRIAL("Konsola bez VT: EL i ED czyszczą od kursora, do kursora i całość") {
     for (int y = 0; y < 3; ++y) same(row(one, y), std::u32string{});
 }
 
-TRIAL("Konsola bez VT: zmienione wiersze wychodzą raz, rosnąco") {
+TRIAL("Console without VT: changed rows come out once, in ascending order") {
     conhost::Screen one = screen(6, 4);
 
     (void)one.dirty();
@@ -193,9 +206,9 @@ TRIAL("Konsola bez VT: zmienione wiersze wychodzą raz, rosnąco") {
     ought(one.dirty().empty());
 }
 
-// --- Kolory --------------------------------------------------------------------------------------
+// --- Colors --------------------------------------------------------------------------------------
 
-TRIAL("Konsola bez VT: SGR ANSI przechodzi na bity konsoli, a wytłuszczenie rozjaśnia") {
+TRIAL("Console without VT: ANSI SGR maps to console bits, and bold brightens") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[0;31;44ma\x1b[0;1;32mb\x1b[0;93;100mc\x1b[0md");
@@ -209,7 +222,7 @@ TRIAL("Konsola bez VT: SGR ANSI przechodzi na bity konsoli, a wytłuszczenie roz
     same(int{one.at(3, 0).paper}, 0);
 }
 
-TRIAL("Konsola bez VT: odwrócenie zamienia barwę z tłem, a podkreślenie zostaje na komórce") {
+TRIAL("Console without VT: reverse swaps ink and paper, and the underline stays on the cell") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[0;4;7;31ma");
@@ -219,7 +232,7 @@ TRIAL("Konsola bez VT: odwrócenie zamienia barwę z tłem, a podkreślenie zost
     ought(one.at(0, 0).under);
 }
 
-TRIAL("Konsola bez VT: 256 kolorów i RGB idą do najbliższego koloru konsoli") {
+TRIAL("Console without VT: 256 colors and RGB go to the nearest console color") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[0;38;5;196ma\x1b[0;38;2;0;0;140mb\x1b[0;48;5;9mc\x1b[0;38;5;244md");
@@ -230,7 +243,7 @@ TRIAL("Konsola bez VT: 256 kolorów i RGB idą do najbliższego koloru konsoli")
     same(int{one.at(3, 0).ink}, 8);
 }
 
-TRIAL("Konsola bez VT: najbliższy kolor bierze pierwszy z równie bliskich") {
+TRIAL("Console without VT: the nearest color takes the first of equally near ones") {
     const conhost::Palette among = conhost::classic();
 
     same(int{conhost::nearest(among, 0, 0, 0)}, 0);
@@ -239,9 +252,9 @@ TRIAL("Konsola bez VT: najbliższy kolor bierze pierwszy z równie bliskich") {
     same(int{conhost::nearest(among, 64, 0, 0)}, 0);
 }
 
-// --- Tryby i ekran zapasowy ----------------------------------------------------------------------
+// --- Modes and the alternate screen --------------------------------------------------------------
 
-TRIAL("Konsola bez VT: tryby kursora i myszy idą za DECSET i DECRST") {
+TRIAL("Console without VT: cursor and mouse modes follow DECSET and DECRST") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[?25l\x1b[?1000h\x1b[?1002h\x1b[?1006h");
@@ -255,7 +268,7 @@ TRIAL("Konsola bez VT: tryby kursora i myszy idą za DECSET i DECRST") {
     ought(one.tracking() == conhost::Tracking{false, false, true, false});
 }
 
-TRIAL("Konsola bez VT: ekran zapasowy czyści i każe przepisać wszystko, powrót oddaje stary bez przepisywania") {
+TRIAL("Console without VT: the alternate screen clears and asks for a full rewrite, returning gives back the old one without rewriting") {
     conhost::Screen one = screen(6, 3);
 
     one.fed("main\r\n\x1b[2;3H");
@@ -276,7 +289,7 @@ TRIAL("Konsola bez VT: ekran zapasowy czyści i każe przepisać wszystko, powr�
     ought(one.dirty().empty());
 }
 
-TRIAL("Konsola bez VT: zmiana rozmiaru na ekranie zapasowym przycina też główny") {
+TRIAL("Console without VT: resizing on the alternate screen also clips the main one") {
     conhost::Screen one = screen(6, 3);
 
     one.fed("abcdef\x1b[?1049h");
@@ -288,7 +301,7 @@ TRIAL("Konsola bez VT: zmiana rozmiaru na ekranie zapasowym przycina też głów
     same(row(one, 1), std::u32string{});
 }
 
-TRIAL("Konsola bez VT: za długa sekwencja CSI znika w całości, nie wychodzi w tekst") {
+TRIAL("Console without VT: a too long CSI sequence vanishes entirely and does not leak into the text") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[" + std::string(100, '1') + "mx");
@@ -296,7 +309,7 @@ TRIAL("Konsola bez VT: za długa sekwencja CSI znika w całości, nie wychodzi w
     same(row(one, 0), std::u32string{U"x"});
 }
 
-TRIAL("Konsola bez VT: zmiana rozmiaru zostawia, co się mieści, i każe przepisać wszystko") {
+TRIAL("Console without VT: resizing keeps what fits and asks for a full rewrite") {
     conhost::Screen one = screen(6, 3);
 
     one.fed("abcdef\x1b[3;6H");
@@ -309,9 +322,9 @@ TRIAL("Konsola bez VT: zmiana rozmiaru zostawia, co się mieści, i każe przepi
     ought(one.dirty() == std::vector<int>{0, 1});
 }
 
-// --- Odpowiedzi ----------------------------------------------------------------------------------
+// --- Answers -------------------------------------------------------------------------------------
 
-TRIAL("Konsola bez VT: DECRQM zna tylko to, co tłumaczenie umie") {
+TRIAL("Console without VT: DECRQM knows only what the translation can do") {
     conhost::Screen one = screen();
 
     one.fed("\x1b[?1006$p\x1b[?1049$p\x1b[?2004$p\x1b[?2026$p\x1b[?1004$p\x1b[?25$p");
@@ -320,7 +333,7 @@ TRIAL("Konsola bez VT: DECRQM zna tylko to, co tłumaczenie umie") {
     same(one.answers(), std::string{});
 }
 
-TRIAL("Konsola bez VT: CPR, DA1, 16t i OSC 11 odpowiadają, DA2, APC i DCS milkną") {
+TRIAL("Console without VT: CPR, DA1, 16t and OSC 11 answer, DA2, APC and DCS stay silent") {
     conhost::Screen one{{20, 5}, 7, 1};
 
     one.fed("\x1b[>c\x1b_Gi=31,a=q;AAAA\x1b\\\x1bP+q5463\x1b\\\x1b[16t\x1b]11;?\x1b\\\x1b[2;4H\x1b[6n\x1b[c");
@@ -334,7 +347,7 @@ TRIAL("Konsola bez VT: CPR, DA1, 16t i OSC 11 odpowiadają, DA2, APC i DCS milkn
     same(one.answers(), std::string{"\x1b[6;16;8t"});
 }
 
-TRIAL("Konsola bez VT: tytuł przychodzi z OSC 0 i OSC 2, zakończony ST albo BEL") {
+TRIAL("Console without VT: the title comes from OSC 0 and OSC 2, ended by ST or BEL") {
     conhost::Screen one = screen();
 
     one.fed("\x1b]0;twa \xe2\x80\x94 filmy\x1b\\");
@@ -348,7 +361,7 @@ TRIAL("Konsola bez VT: tytuł przychodzi z OSC 0 i OSC 2, zakończony ST albo BE
     same(row(one, 0), std::u32string{U"x"});
 }
 
-TRIAL("Konsola bez VT: sonda możliwości widzi szesnaście kolorów, mysz SGR, ekran zapasowy i bloki zwykłe") {
+TRIAL("Console without VT: the capability probe sees sixteen colors, SGR mouse, the alternate screen and basic blocks") {
     auto line = std::make_shared<Translated>();
 
     const Capabilities seen{Seam<Console>{line}};
@@ -364,7 +377,7 @@ TRIAL("Konsola bez VT: sonda możliwości widzi szesnaście kolorów, mysz SGR, 
     same(seen.rest(), std::string{});
 }
 
-TRIAL("Konsola bez VT: klatka Term staje w siatce w kolorach konsoli") {
+TRIAL("Console without VT: a Term frame lands in the grid in console colors") {
     auto line = std::make_shared<Translated>();
 
     Painted root;
@@ -392,10 +405,12 @@ TRIAL("Konsola bez VT: klatka Term staje w siatce w kolorach konsoli") {
     ought(line->shown.tracking() == conhost::Tracking{});
 }
 
-// --- Klawiatura ----------------------------------------------------------------------------------
+// --- Keyboard ------------------------------------------------------------------------------------
 
 namespace {
 
+// The bytes one keyboard record with the virtual key `code`, the UTF-16 `unit`, the control key
+// `state` and the `repeat` count turns into.
 std::string key(std::uint16_t code, char16_t unit = 0, std::uint32_t state = 0, int repeat = 1) {
     char16_t pending = 0;
 
@@ -404,7 +419,7 @@ std::string key(std::uint16_t code, char16_t unit = 0, std::uint32_t state = 0, 
 
 }
 
-TRIAL("Konsola bez VT: klawisze nazwane idą jak w conhoście z VT") {
+TRIAL("Console without VT: named keys go as in conhost with VT") {
     same(key(0x26), std::string{"\x1b[A"});
     same(key(0x25, 0, 0x10), std::string{"\x1b[1;2D"});
     same(key(0x24, 0, 0x08), std::string{"\x1b[1;5H"});
@@ -423,7 +438,7 @@ TRIAL("Konsola bez VT: klawisze nazwane idą jak w conhoście z VT") {
     same(key(0x1B, 0x1B), std::string{"\x1b"});
 }
 
-TRIAL("Konsola bez VT: znak z Altem dostaje Esc, z AltGr zostaje literą układu") {
+TRIAL("Console without VT: a character with Alt gets Esc, with AltGr it stays the layout's letter") {
     same(key('A', u'a', 0x02), std::string{"\x1b" "a"});
     same(key('A', u'ą', 0x01 | 0x08), std::string{"ą"});
     same(key('A', u'ą', 0x02 | 0x08), std::string{"ą"});
@@ -433,7 +448,7 @@ TRIAL("Konsola bez VT: znak z Altem dostaje Esc, z AltGr zostaje literą układu
     same(key(0x10), std::string{});
 }
 
-TRIAL("Konsola bez VT: para zastępcza składa się z dwóch rekordów, a powtórzenie mnoży znak") {
+TRIAL("Console without VT: a surrogate pair is put together from two records, and the repeat count multiplies the character") {
     char16_t pending = 0;
 
     same(conhost::typed({0, 0xD83D, 0, 1}, pending), std::string{});
@@ -443,9 +458,9 @@ TRIAL("Konsola bez VT: para zastępcza składa się z dwóch rekordów, a powtó
     same(key('X', u'x', 0, 3), std::string{"xxx"});
 }
 
-// --- Mysz ----------------------------------------------------------------------------------------
+// --- Mouse ---------------------------------------------------------------------------------------
 
-TRIAL("Konsola bez VT: wciśnięcie i puszczenie wychodzą z pamięci przycisków") {
+TRIAL("Console without VT: press and release come from the memory of buttons") {
     conhost::Pointing one;
     const conhost::Tracking wanted{true, true, false, true};
 
@@ -456,10 +471,10 @@ TRIAL("Konsola bez VT: wciśnięcie i puszczenie wychodzą z pamięci przyciskó
     same(one.pointed({{6, 2}, 0x0, 0x01, 0}, wanted), std::string{});
 }
 
-TRIAL("Konsola bez VT: kółko, ruch bez przycisku i przycisk wciśnięty przed śledzeniem") {
+TRIAL("Console without VT: the wheel, motion without a button and a button pressed before tracking") {
     conhost::Pointing one;
 
-    // Bez 1006 nic: dekoder starego zapisu X10 nie zna.
+    // Without 1006 nothing: the decoder does not know the old X10 encoding.
     same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, false}), std::string{});
 
     same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, true}), std::string{"\x1b[<64;1;1M"});

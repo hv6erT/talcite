@@ -7,6 +7,7 @@
 
 namespace {
 
+// The printed name of a key that is not a letter; "?" for a code without a name.
 std::string named(talcite::ui::Code code) {
     switch (code) {
         case talcite::ui::Code::escape: return "Esc";
@@ -15,10 +16,10 @@ std::string named(talcite::ui::Code code) {
         case talcite::ui::Code::backspace: return "Backspace";
         case talcite::ui::Code::insert: return "Insert";
         case talcite::ui::Code::remove: return "Delete";
-        case talcite::ui::Code::up: return "W górę";
-        case talcite::ui::Code::down: return "W dół";
-        case talcite::ui::Code::left: return "W lewo";
-        case talcite::ui::Code::right: return "W prawo";
+        case talcite::ui::Code::up: return "Up";
+        case talcite::ui::Code::down: return "Down";
+        case talcite::ui::Code::left: return "Left";
+        case talcite::ui::Code::right: return "Right";
         case talcite::ui::Code::home: return "Home";
         case talcite::ui::Code::end: return "End";
         case talcite::ui::Code::pageup: return "PgUp";
@@ -41,6 +42,7 @@ std::string named(talcite::ui::Code code) {
     return "?";
 }
 
+// The modifiers held with a key, as a prefix such as "Ctrl+Alt+"; empty when none is held.
 std::string marked(talcite::ui::Mods mods) {
     std::string made;
 
@@ -51,13 +53,16 @@ std::string marked(talcite::ui::Mods mods) {
     return made;
 }
 
-// Cała aplikacja to jeden korzeń: reakcje dopisują wiersz do listy, a paint rysuje listę.
-// Nikt tu nie pisze na terminal wprost — Term składa klatkę i wysyła samą różnicę.
+// The whole application is one root: the reactions append a line to the list, and `paint` draws the
+// list. Nothing here writes to the terminal directly; `Term` composes the frame and sends only the
+// difference.
 class Sheet : public talcite::ui::Root {
 public:
     explicit Sheet(talcite::Term& term) : term_(term) {}
 
 protected:
+    // F10 stops the terminal; any other key is logged with its modifiers, as a quoted letter or by
+    // its name.
     bool handle(talcite::ui::KeyEvent& what) override {
         if (what.key() == talcite::ui::Code::f10) {
             term_.stop();
@@ -70,62 +75,69 @@ protected:
         if (what.key().letter() != 0) said += "'" + talcite::utf8::encode(what.key().letter()) + "'";
         else said += named(what.key().code());
 
-        shown("klawisz", said);
+        shown("key", said);
 
         return true;
     }
 
+    // Logs a mouse press, release or move, with the cell where it happened.
     bool handle(talcite::ui::MouseEvent& what) override {
         const std::string where =
             std::to_string(what.where().x) + ", " + std::to_string(what.where().y);
 
-        const std::string doing = what.press() == talcite::ui::Press::down   ? "wciśnięcie"
-                                  : what.press() == talcite::ui::Press::up   ? "puszczenie"
-                                                                          : "ruch";
+        const std::string doing = what.press() == talcite::ui::Press::down   ? "press"
+                                  : what.press() == talcite::ui::Press::up   ? "release"
+                                                                          : "move";
 
-        shown("mysz", doing + " w " + where);
+        shown("mouse", doing + " at " + where);
 
         return true;
     }
 
+    // Logs a click with its cell.
     bool handle(talcite::ui::ClickEvent& what) override {
-        shown("kliknięcie", std::to_string(what.where().x) + ", " + std::to_string(what.where().y));
+        shown("click", std::to_string(what.where().x) + ", " + std::to_string(what.where().y));
 
         return true;
     }
 
+    // Logs a double click with its cell.
     bool handle(talcite::ui::DoubleClickEvent& what) override {
-        shown("podwójne kliknięcie",
+        shown("double click",
               std::to_string(what.where().x) + ", " + std::to_string(what.where().y));
 
         return true;
     }
 
+    // Logs which way the wheel turned.
     bool handle(talcite::ui::WheelEvent& what) override {
-        shown("kółko", what.steps() > 0 ? "w górę" : "w dół");
+        shown("wheel", what.steps() > 0 ? "up" : "down");
 
         return true;
     }
 
+    // Logs a paste with the size of the pasted text in bytes.
     bool handle(talcite::ui::PasteEvent& what) override {
-        shown("wklejenie", std::to_string(what.text().size()) + " bajtów");
+        shown("paste", std::to_string(what.text().size()) + " bytes");
 
         return true;
     }
 
+    // Logs the new size of the terminal.
     bool handle(talcite::ui::SizeEvent& what) override {
-        shown("rozmiar", std::to_string(what.wide()) + " na " + std::to_string(what.high()));
+        shown("size", std::to_string(what.wide()) + " by " + std::to_string(what.high()));
 
         return true;
     }
 
+    // A bold heading, then the logged lines below it, as many as fit.
     talcite::View paint(talcite::ui::Size given, talcite::ui::Area seen) override {
         talcite::View made{seen.size};
 
         talcite::Style head;
         head.bold = true;
 
-        made.put({2 - seen.at.x, 0 - seen.at.y}, "Naciskaj klawisze. F10 kończy.", head);
+        made.put({2 - seen.at.x, 0 - seen.at.y}, "Press keys. F10 quits.", head);
 
         int y = 2;
 
@@ -141,6 +153,7 @@ protected:
     }
 
 private:
+    // Appends one line to the log and drops the oldest lines that no longer fit on the screen.
     void shown(const std::string& what, const std::string& said) {
         said_.push_back(what + ": " + said);
 
@@ -156,13 +169,14 @@ private:
 
 }
 
+// Shows every key, mouse, paste and size event the terminal delivers, one per line.
 int main() {
     talcite::Term term;
 
     Sheet sheet{term};
 
     term.show(sheet);
-    term.title("talcite — klawisze");
+    term.title("talcite — keys");
 
     term.run();
 

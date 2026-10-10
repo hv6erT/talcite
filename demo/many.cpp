@@ -12,15 +12,15 @@
 
 using namespace talcite;
 
-// Prawdziwy kształt serwera: na **każdym** połączeniu wisi czytanie, ale odzywa się garstka.
-// To jest przypadek, w którym epoll bije poll — i jedyny, w którym w ogóle widać różnicę.
+// The real shape of a server: a read waits on every connection, but only a handful speak up. This
+// is the case in which epoll beats poll, and the only one in which the difference shows at all.
 //
-//     talcite-many [połączeń] [czynnych] [rund]
+//     talcite-many [connections] [active] [rounds]
 //
-// Ten program znalazł dwa błędy, których nie złapało pięćset testów: kolejność niszczenia
-// obiektów statycznych i sięganie do centrali już rozebranej. Warto go uruchamiać.
+// The program exercises what the unit tests do not reach: the order in which static objects are
+// destroyed, and calls into a hub that has already been torn down. It is worth running.
 int main(int count, char** args) {
-    // Konsola Windows domyślnie nie jest w UTF-8, a my piszemy w UTF-8.
+    // The Windows console is not in UTF-8 by default, and we write UTF-8.
     const showing::Speaking speaking;
 
     const int many = count > 1 ? std::atoi(args[1]) : 1000;
@@ -43,7 +43,7 @@ int main(int count, char** args) {
             clients.push_back(joining.await());
         }
 
-        std::cout << many << " połączeń stoi\n";
+        std::cout << many << " connections up\n";
 
         std::vector<Promise<Bytes>> reading;
 
@@ -81,10 +81,10 @@ int main(int count, char** args) {
 
         const long long whole = static_cast<long long>(busy) * rounds;
 
-        std::cout << busy << " czynnych, " << whole << " wymian w " << spent.count() << " ms — "
-                  << (spent.count() > 0 ? whole * 1000 / spent.count() : 0) << " na sekundę\n";
+        std::cout << busy << " active, " << whole << " exchanges in " << spent.count() << " ms — "
+                  << (spent.count() > 0 ? whole * 1000 / spent.count() : 0) << " per second\n";
     } catch (const std::exception& why) {
-        std::cout << "kłopot: " << why.what() << "\n";
+        std::cout << "trouble: " << why.what() << "\n";
 
         return 1;
     }

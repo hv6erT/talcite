@@ -18,9 +18,10 @@ std::once_flag once;
 
 }
 
-// Winsock trzeba obudzić przed pierwszym wywołaniem czegokolwiek, łącznie z getaddrinfo. Robimy
-// to raz i **nie wołamy WSACleanup** — biblioteka nie wie, kto jeszcze z gniazd korzysta, a
-// zamknięcie w złej chwili wywraca cudzy kod. Winsock i tak sprząta po sobie przy końcu procesu.
+// Winsock has to be started before the first call of anything, getaddrinfo included. We do it once
+// and never call WSACleanup: the library does not know who else uses sockets, and shutting down at
+// the wrong moment breaks someone else's code. Winsock cleans up after itself when the process
+// ends anyway.
 void starting() {
     std::call_once(once, [] {
         WSADATA data{};
@@ -29,12 +30,14 @@ void starting() {
     });
 }
 
+// The error code of the last failed socket call on this thread.
 int amiss() { return WSAGetLastError(); }
 
 #else
 
 void starting() {}
 
+// The error code of the last failed socket call (`errno` outside Windows).
 int amiss() { return errno; }
 
 #endif

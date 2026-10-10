@@ -12,8 +12,9 @@ using namespace talcite;
 
 namespace {
 
-// Próby piszą piksele zwykłymi liczbami, bo tak się je czyta; zamiana na `Bytes` siedzi w jednym
-// miejscu, żeby nie rozłazić `std::byte{}` po stu wierszach oczekiwań.
+// The trials write pixels as plain numbers, because that is how they read; the conversion to
+// `Bytes` lives in one place, so that `std::byte{}` does not spread over a hundred lines of
+// expectations.
 Bytes lump(const std::vector<std::uint8_t>& bytes) {
     Bytes made;
 
@@ -24,12 +25,13 @@ Bytes lump(const std::vector<std::uint8_t>& bytes) {
     return made;
 }
 
-// Obrazek z podanych pikseli, po cztery bajty na każdy.
+// An image made of the given pixels, four bytes for each.
 Pixels made(ui::Size size, const std::vector<std::uint8_t>& bytes,
             std::chrono::milliseconds after = std::chrono::milliseconds{0}) {
     return Pixels{size, {Still{lump(bytes), after}}};
 }
 
+// Channel `which` (0 red, 1 green, 2 blue, 3 alpha) of the pixel at (`x`, `y`) in frame `still`.
 std::uint8_t band(const Pixels& one, int x, int y, std::size_t which, std::size_t still = 0) {
     const std::size_t at = (static_cast<std::size_t>(y) *
                                 static_cast<std::size_t>(one.size().wide) +
@@ -41,9 +43,9 @@ std::uint8_t band(const Pixels& one, int x, int y, std::size_t which, std::size_
 
 }
 
-// --- Budowa -------------------------------------------------------------------------------------
+// --- Construction -------------------------------------------------------------------------------
 
-TRIAL("Pixels: pusty nic nie niesie") {
+TRIAL("Pixels: an empty one carries nothing") {
     const Pixels one;
 
     ought(!one.held());
@@ -51,7 +53,7 @@ TRIAL("Pixels: pusty nic nie niesie") {
     ought(one.stills().empty());
 }
 
-TRIAL("Pixels: klatka nie zgadzająca się z wymiarami jest błędem") {
+TRIAL("Pixels: a frame that does not match the size is an error") {
     bool threw = false;
 
     try {
@@ -63,7 +65,7 @@ TRIAL("Pixels: klatka nie zgadzająca się z wymiarami jest błędem") {
     ought(threw);
 }
 
-TRIAL("Pixels: klatki bez wymiarów są błędem") {
+TRIAL("Pixels: frames without a size are an error") {
     bool threw = false;
 
     try {
@@ -75,7 +77,7 @@ TRIAL("Pixels: klatki bez wymiarów są błędem") {
     ought(threw);
 }
 
-TRIAL("Pixels: kilka klatek trzyma swoje opóźnienia") {
+TRIAL("Pixels: several frames keep their delays") {
     const Pixels one{{1, 1},
                      {Still{lump({1, 2, 3, 255}), std::chrono::milliseconds{40}},
                       Still{lump({4, 5, 6, 255}), std::chrono::milliseconds{80}}}};
@@ -85,14 +87,13 @@ TRIAL("Pixels: kilka klatek trzyma swoje opóźnienia") {
     same(one.stills()[1].after.count(), static_cast<long long>(80));
 }
 
-// --- Światło liniowe ----------------------------------------------------------------------------
+// --- Linear light -------------------------------------------------------------------------------
 //
-// **To jest ta poprawka, dla której cały ten etap istnieje.** Bajt w pliku nie jest jasnością —
-// niesie wartość po krzywej gamma. Średnia jasność czerni i bieli to 0,5, a bajtem 0,5 jest 188,
-// nie 127. Uśrednianie surowych bajtów przyciemnia każdą krawędź; tak robi większość programów
-// i tak robi fork.
+// A byte in the file is not brightness; it carries a value along the gamma curve. The average
+// brightness of black and white is 0.5, and the byte for 0.5 is 188, not 127. Averaging the raw
+// bytes darkens every edge, which is what most programs do.
 
-TRIAL("Pixels: czerń i biel dają w połowie 188, a nie 127") {
+TRIAL("Pixels: black and white give 188 at half, not 127") {
     const Pixels one = made({2, 1}, {0, 0, 0, 255, 255, 255, 255, 255});
 
     const Pixels half = one.scaled({1, 1});
@@ -101,7 +102,7 @@ TRIAL("Pixels: czerń i biel dają w połowie 188, a nie 127") {
     same(static_cast<int>(band(half, 0, 0, 3)), 255);
 }
 
-TRIAL("Pixels: jednolita barwa przetrwa zmniejszenie bez zmiany") {
+TRIAL("Pixels: a uniform color survives downscaling unchanged") {
     const Pixels red = made({4, 4}, [] {
         std::vector<std::uint8_t> these(64, 0);
 
@@ -120,26 +121,26 @@ TRIAL("Pixels: jednolita barwa przetrwa zmniejszenie bez zmiany") {
     same(static_cast<int>(band(small, 1, 1, 1)), 0);
 }
 
-// --- Alfa ---------------------------------------------------------------------------------------
+// --- Alpha --------------------------------------------------------------------------------------
 //
-// Piksel przezroczysty niesie w pliku jakąś barwę, zwykle czarną. Wliczony na równi z widocznymi
-// robi **ciemną obwódkę wokół każdego wyciętego kształtu** — błąd, który popełnia większość szybkich
-// skalowań i którego potem nikt nie umie nazwać. Barwę ważymy więc alfą i przez nią dzielimy.
+// A transparent pixel carries some color in the file, usually black. Counted on a par with the
+// visible ones it makes a dark outline around every cut-out shape, a bug that most fast scalers
+// have and that nobody can name afterwards. So the color is weighted by alpha and divided by it.
 
-TRIAL("Pixels: przezroczysty sąsiad nie przyciemnia barwy") {
+TRIAL("Pixels: a transparent neighbor does not darken the color") {
     const Pixels one = made({2, 1}, {255, 0, 0, 255, 0, 0, 0, 0});
 
     const Pixels half = one.scaled({1, 1});
 
-    // Czerwień zostaje pełna — naiwne uśrednienie dałoby tu 128.
+    // Red stays full; naive averaging would give 128 here.
     same(static_cast<int>(band(half, 0, 0, 0)), 255);
     same(static_cast<int>(band(half, 0, 0, 1)), 0);
 
-    // Przezroczystość uśrednia się normalnie: połowa z widocznego i niewidocznego.
+    // Transparency averages normally: half from the visible pixel and half from the invisible one.
     same(static_cast<int>(band(half, 0, 0, 3)), 128);
 }
 
-TRIAL("Pixels: sama przezroczystość zostaje przezroczystością") {
+TRIAL("Pixels: pure transparency stays transparent") {
     const Pixels one = made({2, 1}, {255, 0, 0, 0, 0, 255, 0, 0});
 
     const Pixels half = one.scaled({1, 1});
@@ -148,11 +149,11 @@ TRIAL("Pixels: sama przezroczystość zostaje przezroczystością") {
     same(static_cast<int>(band(half, 0, 0, 0)), 0);
 }
 
-// --- Skalowanie ---------------------------------------------------------------------------------
+// --- Scaling ------------------------------------------------------------------------------------
 
-// Filtr pudełkowy bierze **wszystkie** piksele źródła, więc cienka jasna kreska nie znika przez to,
-// że akurat nie trafiła w próbkę. Najbliższy sąsiad zgubiłby ją w trzech przypadkach na cztery.
-TRIAL("Pixels: cienka kreska nie ginie przy zmniejszaniu") {
+// The box filter takes all the source pixels, so a thin bright line does not vanish just because
+// it missed the sample. Nearest neighbor would lose it in three cases out of four.
+TRIAL("Pixels: a thin line does not vanish when downscaling") {
     const Pixels one =
         made({4, 1}, {0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 255, 0, 0, 0, 255});
 
@@ -161,7 +162,7 @@ TRIAL("Pixels: cienka kreska nie ginie przy zmniejszaniu") {
     ought(band(small, 0, 0, 0) > 0);
 }
 
-TRIAL("Pixels: zmniejszenie łączy kwadraty po równo") {
+TRIAL("Pixels: downscaling merges squares evenly") {
     const Pixels one = made({2, 2}, {255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0,
                                      255});
 
@@ -172,9 +173,9 @@ TRIAL("Pixels: zmniejszenie łączy kwadraty po równo") {
     same(static_cast<int>(band(small, 0, 0, 0)), 255);
 }
 
-// Powiększenie daje najbliższego sąsiada, czyli ostre kwadraty — i to jest **właściwa** odpowiedź
-// dla ikony i pikselowej grafiki, a nie zaniedbanie. Rozmyty piksel-art wygląda gorzej.
-TRIAL("Pixels: powiększenie mnoży piksele, a nie rozmywa") {
+// Upscaling uses nearest neighbor, that is sharp squares, and that is the right answer for an icon
+// and for pixel art, not an oversight. Blurred pixel art looks worse.
+TRIAL("Pixels: upscaling multiplies pixels instead of blurring") {
     const Pixels one = made({2, 1}, {10, 0, 0, 255, 200, 0, 0, 255});
 
     const Pixels big = one.scaled({4, 1});
@@ -186,7 +187,7 @@ TRIAL("Pixels: powiększenie mnoży piksele, a nie rozmywa") {
     same(static_cast<int>(band(big, 3, 0, 0)), 200);
 }
 
-TRIAL("Pixels: ten sam rozmiar oddaje to samo") {
+TRIAL("Pixels: the same size gives back the same image") {
     const Pixels one = made({2, 1}, {1, 2, 3, 255, 4, 5, 6, 255});
 
     const Pixels same_size = one.scaled({2, 1});
@@ -195,7 +196,7 @@ TRIAL("Pixels: ten sam rozmiar oddaje to samo") {
     same(same_size.size().wide, 2);
 }
 
-TRIAL("Pixels: zerowy cel nie niesie nic") {
+TRIAL("Pixels: a zero target carries nothing") {
     const Pixels one = made({2, 1}, {1, 2, 3, 255, 4, 5, 6, 255});
 
     ought(!one.scaled({0, 4}).held());
@@ -203,7 +204,7 @@ TRIAL("Pixels: zerowy cel nie niesie nic") {
     ought(!Pixels{}.scaled({4, 4}).held());
 }
 
-TRIAL("Pixels: opóźnienia przeżywają skalowanie") {
+TRIAL("Pixels: delays survive scaling") {
     const Pixels one{{2, 1},
                      {Still{lump({0, 0, 0, 255, 255, 255, 255, 255}), std::chrono::milliseconds{40}},
                       Still{lump({255, 255, 255, 255, 0, 0, 0, 255}), std::chrono::milliseconds{90}}}};
@@ -216,51 +217,51 @@ TRIAL("Pixels: opóźnienia przeżywają skalowanie") {
     same(static_cast<int>(band(half, 0, 0, 0, 1)), 188);
 }
 
-// --- Dopasowanie ---------------------------------------------------------------------------------
+// --- Fitting -------------------------------------------------------------------------------------
 //
-// **Kratka nie jest kwadratem.** U jednych jest 10 na 20 pikseli, u innych 9 na 21 — bez jej wymiaru
-// koło wychodzi jajkiem. Zero znaczy „terminal nie powiedział" i wtedy przyjmujemy 1:2.
+// A cell is not a square. Some terminals have 10 by 20 pixels, others 9 by 21; without its size a
+// circle comes out as an egg. Zero means "the terminal did not say", and then 1:2 is assumed.
 
-TRIAL("fitting: kwadrat w kratce 1:2 zajmuje dwa razy mniej wierszy") {
+TRIAL("fitting: a square in a 1:2 cell takes half as many rows") {
     const ui::Size made_size = fitting({100, 100}, {40, 40}, {10, 20});
 
     same(made_size.wide, 40);
     same(made_size.high, 20);
 }
 
-TRIAL("fitting: nieznana kratka znaczy 1:2") {
+TRIAL("fitting: an unknown cell means 1:2") {
     same(fitting({100, 100}, {40, 40}, {0, 0}).high, 20);
     same(fitting({100, 100}, {40, 40}, {0, 0}).wide, 40);
 }
 
-TRIAL("fitting: kwadratowa kratka nie ściska wysokości") {
+TRIAL("fitting: a square cell does not squeeze the height") {
     const ui::Size one = fitting({100, 100}, {40, 40}, {10, 10});
 
     same(one.wide, 40);
     same(one.high, 40);
 }
 
-TRIAL("fitting: obrazek szeroki bierze całą szerokość") {
+TRIAL("fitting: a wide image takes the full width") {
     const ui::Size one = fitting({100, 50}, {40, 20}, {10, 20});
 
     same(one.wide, 40);
     same(one.high, 10);
 }
 
-TRIAL("fitting: obrazek wysoki ogranicza się wysokością miejsca") {
+TRIAL("fitting: a tall image is limited by the height of the space") {
     const ui::Size one = fitting({50, 100}, {40, 20}, {10, 20});
 
     same(one.wide, 20);
     same(one.high, 20);
 }
 
-// Obrazek zajmujący zero kratek to obrazek, którego nie widać — a wołający prosił o podgląd.
-TRIAL("fitting: zawsze co najmniej jedna kratka") {
+// An image taking zero cells is an image nobody sees, and the caller asked for a preview.
+TRIAL("fitting: always at least one cell") {
     same(fitting({1000, 1}, {40, 20}, {10, 20}).high, 1);
     same(fitting({1, 1000}, {40, 20}, {10, 20}).wide, 1);
 }
 
-TRIAL("fitting: cokolwiek zerowego daje nic") {
+TRIAL("fitting: anything zero gives nothing") {
     same(fitting({0, 10}, {40, 20}, {10, 20}).wide, 0);
     same(fitting({10, 0}, {40, 20}, {10, 20}).wide, 0);
     same(fitting({10, 10}, {0, 20}, {10, 20}).wide, 0);

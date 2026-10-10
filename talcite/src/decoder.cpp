@@ -14,18 +14,19 @@ namespace {
 
 constexpr char esc = '\x1b';
 
-// Bajty ponad ten zapas przy niedomkniętej sekwencji znaczą, że to nie jest sekwencja, tylko
-// śmieci. Bez tego zepsute wejście rosłoby w buforze bez końca.
+// More bytes than this allowance in an unclosed sequence mean that it is not a sequence but
+// garbage. Without this limit broken input would grow in the buffer without end.
 constexpr std::size_t most = 64;
 
-// Napisy sterujące — OSC (`Esc ]`), DCS (`Esc P`), APC (`Esc _`), PM (`Esc ^`) i SOS (`Esc X`) —
-// to odpowiedzi terminala, nie klawisze: kolor tła, XTGETTCAP, odpowiedź protokołu obrazów kitty.
-// Kończy je ST (`Esc \`), a OSC także dzwonek. Bywają długie, więc mają własny zapas.
+// Control strings (OSC `Esc ]`, DCS `Esc P`, APC `Esc _`, PM `Esc ^` and SOS `Esc X`) are terminal
+// replies, not keys: the background color, XTGETTCAP, the reply of the kitty image protocol. They
+// end with ST (`Esc \`), and OSC also with BEL. They can be long, so they have their own allowance.
 constexpr std::size_t stretched = 4096;
 
+// Whether the byte after Esc opens a control string.
 bool stringed(char lead) { return lead == ']' || lead == 'P' || lead == '_' || lead == '^' || lead == 'X'; }
 
-// Koniec napisu sterującego od `from`; `npos`, gdy jeszcze nie przyszedł.
+// The end of a control string that starts at `from`; `npos` when it has not arrived yet.
 std::size_t ended(const std::string& rest, std::size_t from, char lead) {
     for (std::size_t at = from; at < rest.size(); ++at) {
         if (lead == ']' && rest[at] == '\x07') return at + 1;
@@ -36,6 +37,7 @@ std::size_t ended(const std::string& rest, std::size_t from, char lead) {
     return std::string::npos;
 }
 
+// The numeric parameters of a sequence, split at semicolons; an empty parameter counts as zero.
 std::vector<int> numbers(std::string_view body) {
     std::vector<int> made;
 
@@ -63,8 +65,8 @@ std::vector<int> numbers(std::string_view body) {
     return made;
 }
 
-// Maska modyfikatorów z sekwencji jest pomniejszona o jeden: 1 to sam shift, 4 to sam ctrl,
-// 5 to shift z ctrl. Zero i jeden znaczą brak.
+// The modifier value in a sequence is the mask plus one: after subtracting one, 1 is shift alone,
+// 4 is ctrl alone and 5 is shift with ctrl. Zero and one mean no modifiers.
 ui::Mods marked(int given) {
     ui::Mods made;
 
@@ -79,8 +81,8 @@ ui::Mods marked(int given) {
     return made;
 }
 
-// Znak sterujący to w istocie litera z ctrl — 0x01 jest Ctrl+A. Tab, Enter i Backspace mają
-// własne kody, więc trzeba je wyjąć, zanim wpadną w tę regułę.
+// A control character is really a letter with ctrl: 0x01 is Ctrl+A. Tab, Enter and Backspace
+// have their own codes, so they are taken out before they fall under that rule.
 ui::Key steering(unsigned char byte, ui::Mods& mods) {
     switch (byte) {
         case 0x09: return ui::Key{ui::Code::tab};
@@ -99,6 +101,7 @@ ui::Key steering(unsigned char byte, ui::Mods& mods) {
     return ui::Key{static_cast<char32_t>(byte + 0x40)};
 }
 
+// The key of a `Esc [ n ~` sequence, by its number; an empty key for a number that means nothing.
 ui::Key tilde(int given) {
     switch (given) {
         case 1:
@@ -125,6 +128,7 @@ ui::Key tilde(int given) {
     }
 }
 
+// The key of a sequence ending in a letter (arrows, Home, End, F1–F4); an empty key otherwise.
 ui::Key lettered(char last) {
     switch (last) {
         case 'A': return ui::Key{ui::Code::up};
@@ -153,15 +157,17 @@ Decoder::Decoder() : held_(std::make_unique<Held>()) {}
 
 Decoder::~Decoder() = default;
 
+// True when the buffer holds an Esc that may still be a key on its own or the start of a sequence;
+// the caller waits a moment and then calls `flush`.
 bool Decoder::pending() const {
     return !held_->rest.empty() && held_->rest.front() == esc;
 }
 
-// Wiszący Esc rozstrzyga ten, kto ma zegar — dekoder tylko mówi, że coś trzyma. Po upływie
-// czasu zamieniamy go w klawisz i puszczamy w obieg to, co za nim zostało.
+// A pending Esc is settled by whoever has the clock; the decoder only says that it holds
+// something. When the time is up, the Esc becomes a key and what was left behind it is fed again.
 //
-// Esc z początkiem napisu sterującego, po którym nic nie domknęło napisu, to jednak Alt z literą —
-// Alt+P, Alt+] — i taki klawisz wychodzi, a reszta idzie jako zwykłe znaki.
+// An Esc with the start of a control string that nothing closed is Alt with a letter after all
+// (Alt+P, Alt+]): that key goes out, and the rest goes as ordinary characters.
 void Decoder::flush(ui::Root& onto) {
     if (!pending()) return;
 
@@ -195,6 +201,9 @@ void Decoder::flush(ui::Root& onto) {
     fed(spare, onto);
 }
 
+// Turns the bytes from the terminal into events dispatched to `onto`: keys, mouse and wheel
+// events, and pastes. An incomplete sequence or character stays in the buffer for the next call;
+// terminal replies are swallowed.
 void Decoder::fed(std::string_view bytes, ui::Root& onto) {
     Held& held = *held_;
 
@@ -203,14 +212,14 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
     std::size_t at = 0;
 
     while (at < held.rest.size()) {
-        // Wklejanie w nawiasach: wszystko do znacznika końca jest treścią, a nie klawiszami.
+        // Bracketed paste: everything up to the end marker is content, not keys.
         if (held.pasting) {
             const std::size_t end = held.rest.find("\x1b[201~", at);
 
             if (end == std::string::npos) {
-                // Ogon, który może być początkiem znacznika końca, musi zostać w buforze.
-                // Inaczej pocięte „\e[20" trafiłoby do treści i wklejenie nigdy by się nie
-                // zamknęło.
+                // A tail that may be the start of the end marker has to stay in the buffer.
+                // Otherwise a "\e[20" cut off by the read would go into the content and the paste
+                // would never close.
                 const std::string_view rest{held.rest};
                 const std::string_view mark{"\x1b[201~"};
 
@@ -251,8 +260,8 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
             const char lead = held.rest[at + 1];
 
-            // Esc po Escu to dwa naciśnięcia, a nie jedno z modyfikatorem. Drugi zostaje
-            // w buforze i rozstrzygnie się sam.
+            // Esc after Esc is two presses, not one with a modifier. The second one stays in the
+            // buffer and settles itself.
             if (lead == esc) {
                 ui::KeyEvent what{ui::Key{ui::Code::escape}};
 
@@ -263,9 +272,10 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
                 continue;
             }
 
-            // **Spóźnione odpowiedzi terminala nie są klawiszami.** Sonda możliwości czeka na nie
-            // chwilę; przez SSH albo na wolnym terminalu odpowiedź przychodziła po czasie i szła
-            // tutaj — kolor tła z OSC 11 stawał się Alt+] i ciągiem liter wpisanych w pole.
+            // Late terminal replies are not keys. The capability probe waits for them only a
+            // moment; over SSH or on a slow terminal the reply comes later and arrives here, and
+            // without this the background color from OSC 11 would become Alt+] and a string of
+            // letters typed into a field.
             if (stringed(lead)) {
                 const std::size_t end = ended(held.rest, at + 2, lead);
 
@@ -300,7 +310,8 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
 
                 at = end + 1;
 
-                // Mysz w zapisie SGR. Maska niesie przycisk, ruch, kółko i modyfikatory naraz.
+                // Mouse in the SGR encoding. The mask carries the button, motion, the wheel and the
+                // modifiers at once.
                 if (!body.empty() && body.front() == '<') {
                     const std::vector<int> among = numbers(body.substr(1));
 
@@ -338,15 +349,15 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
                     continue;
                 }
 
-                // Odpowiedzi ze znacznikiem prywatnym — Primary i Secondary DA, DECRPM, raport
-                // położenia kursora DECXCPR, flagi klawiatury kitty — klawiszami nie są nigdy.
+                // Replies with a private marker (Primary and Secondary DA, DECRPM, the DECXCPR cursor
+                // position report, kitty keyboard flags) are never keys.
                 if (!body.empty() && (body.front() == '?' || body.front() == '>' || body.front() == '='))
                     continue;
 
                 const std::vector<int> among = numbers(body);
 
-                // Raport położenia kursora (CPR): `Esc [ wiersz ; kolumna R`. F3 z modyfikatorem
-                // ma ten sam kształt, ale zawsze z jedynką na przedzie.
+                // The cursor position report (CPR) is `Esc [ row ; column R`. F3 with a modifier has
+                // the same shape, but always with a one in front.
                 if (last == 'R' && among.size() >= 2 && among[0] != 1) continue;
 
                 if (last == '~') {
@@ -380,7 +391,7 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
                 continue;
             }
 
-            // Esc jako przedrostek Alt. Znak za nim rozbieramy tak jak każdy inny.
+            // Esc as the Alt prefix. The character after it is taken apart like any other.
             const auto next = static_cast<unsigned char>(lead);
 
             ui::Mods mods;
@@ -457,8 +468,8 @@ void Decoder::fed(std::string_view bytes, ui::Root& onto) {
             continue;
         }
 
-        // Odczyt potrafi się skończyć w połowie znaku. Ogon zostaje w buforze do następnego
-        // karmienia — to jest cały powód, dla którego dekoder jest maszyną stanową.
+        // A read can end in the middle of a character. The tail stays in the buffer until the next
+        // feed; that is the whole reason the decoder is a state machine.
         if (at + 1 + more > held.rest.size()) break;
 
         char32_t code = byte & (0x3F >> more);

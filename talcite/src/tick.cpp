@@ -15,18 +15,19 @@ namespace talcite::ui {
 
 namespace {
 
-// Klamra ze znakiem i spacja za nią: `[x] `. Cztery kratki, zawsze.
+// The bracket with the mark and the space after it: `[x] `. Always four cells.
 constexpr int around = 4;
 
 }
 
+// A check box with the given label and initial state, styled under the role `talcite.tick`.
 Tick::Tick(std::string text, bool on) : text_(std::move(text)), on_(on) { role("talcite.tick"); }
 
-// **Ustawienie z programu nie zawiadamia.** Wypełnienie okna wartościami początkowymi uruchamiałoby
-// inaczej wszystko, co do tych wartości podpięto — a to jest wypełnianie, nie naciskanie.
+// Setting the state from the program does not notify. Otherwise filling a window with its initial
+// values would fire everything connected to those values, and that is filling in, not pressing.
 void Tick::ticked(bool given) { on_ = given; }
 
-// Odwrócenie stanu **razem z zawiadomieniem**. Tędy idzie spacja, kliknięcie i klawisz aktywny.
+// Flips the state and notifies. Space, a click and the shortcut key all go through here.
 void Tick::pick() {
     if (!enabled()) return;
 
@@ -35,32 +36,36 @@ void Tick::pick() {
     (void)trigger(PickEvent{});
 }
 
+// A check box holds no children.
 int Tick::capacity() const { return 0; }
 
-// Jeden wiersz, nie tyle, ile dano — tak samo jak przycisk. Wiersz układu daje dzieciom swoją
-// wysokość, a bez tego negatyw ogniska rozlałby się na całą jego wysokość.
+// One row, not as many as offered, just like a button. A layout row gives its children its own
+// height, and without this the focus highlight would spread over all of it.
 Size Tick::wants(Size room) const {
     return {std::min(measured(text_).wide + around, room.wide), std::min(1, room.high)};
 }
 
+// Draws the bracket with the mark, then the label elided to the room left, with the shortcut
+// letter underlined.
 View Tick::paint(Size given, Area seen) {
     View made{seen.size};
 
-    // Przezroczysty tam, gdzie nic nie rysuje — ta sama reguła i ten sam powód co w przycisku.
+    // Transparent wherever nothing is drawn: the same rule and the same reason as in the button.
     made.clear({{0, 0}, seen.size});
 
     const Skin& how = skin();
 
-    // Rola na stan, złożona z rdzenia i końcówki — ta sama umowa co w przycisku, żeby autor skórki
-    // opisywał rodzinę `<rdzeń>`, `<rdzeń>.focus`, `<rdzeń>.off` i niczego nie zgadywał.
+    // The role for the state is built from a stem and a suffix, the same contract as in the
+    // button, so that a skin author describes the family `<stem>`, `<stem>.focus`, `<stem>.off`
+    // and has nothing to guess.
     const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
 
     const std::string first = on_ ? "[x] " : "[ ] ";
 
-    // Za wąskie pole ucina **napis**, a nie klamrę. Klamra jest tym, co czyni z tego pole wyboru;
-    // urwana zostawiałaby po sobie coś, co wygląda jak zwykły tekst.
+    // A field that is too narrow cuts the label, not the bracket. The bracket is what makes this a
+    // check box; cut off, it would leave behind something that looks like plain text.
     const int room = std::max(given.wide - around, 0);
 
     made.put({-seen.at.x, -seen.at.y}, first, look);
@@ -72,17 +77,17 @@ View Tick::paint(Size given, Area seen) {
 
     made.put({around - seen.at.x, -seen.at.y}, shown, look);
 
-    // Znakowanie liczymy po **przyciętym** napisie: litera, której po przycięciu nie widać, nie ma
-    // czego podkreślać. Klawisz aktywny bez podkreślenia byłby zresztą klawiszem, o którym nikt się
-    // nie dowie — a w Midnight Commanderze pole wyboru swoją literę pokazuje.
+    // The marking is computed on the elided label: a letter that is cut off has nothing to
+    // underline. A shortcut key without an underline would be a key nobody learns about, and in
+    // Midnight Commander a check box does show its letter.
     talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
                       look, how.style(role() + ".key"));
 
     return made;
 }
 
-// **Spacja odwraca, Enter idzie wyżej.** W oknie dialogowym Enter należy do przycisku podstawowego,
-// więc pole wyboru, które by go połknęło, psułoby zatwierdzanie okna.
+// Space flips the box, Enter goes up. In a dialog Enter belongs to the default button, so a check
+// box that swallowed it would break confirming the dialog.
 bool Tick::handle(KeyEvent& what) {
     if (!enabled()) return false;
 
@@ -95,6 +100,8 @@ bool Tick::handle(KeyEvent& what) {
     return true;
 }
 
+// A click takes the focus (when the box is in a tree) and flips the box. A disabled box still
+// consumes the click, so it does not fall through to what lies below.
 bool Tick::handle(ClickEvent&) {
     if (!enabled()) return true;
 
@@ -105,8 +112,8 @@ bool Tick::handle(ClickEvent&) {
     return true;
 }
 
-// Klawisz aktywny przychodzi z bazy — ona sprawdziła, że jest nasz. Ptaszek robi to samo, co przy
-// spacji i przy kliknięciu: odwraca się i zawiadamia.
+// The shortcut key comes from the base class, which has checked that it is ours. The box does the
+// same as for space and a click: it flips and notifies.
 void Tick::activate() { pick(); }
 
 }

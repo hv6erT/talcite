@@ -27,11 +27,13 @@ using namespace talcite;
 
 namespace {
 
+// A promise that resolves with the given value.
 template <typename T>
 Promise<T> gave(T given) {
     return Promise<T>{[given](auto resolve, auto) { resolve(given); }};
 }
 
+// A promise that sleeps `wait` milliseconds and then resolves with `given`.
 Promise<int> slowly(int given, int wait) {
     return Promise<int>{[given, wait](auto resolve, auto) {
         std::this_thread::sleep_for(std::chrono::milliseconds{wait});
@@ -41,7 +43,7 @@ Promise<int> slowly(int given, int wait) {
 
 }
 
-TRIAL("Promise: nie rusza, dopóki nikt nie każe") {
+TRIAL("Promise: does not start until someone says so") {
     std::atomic<bool> ran{false};
 
     Promise<int> one{[&ran](auto resolve, auto) {
@@ -57,13 +59,13 @@ TRIAL("Promise: nie rusza, dopóki nikt nie każe") {
     ought(ran.load());
 }
 
-TRIAL("Promise: await oddaje wynik") {
+TRIAL("Promise: await gives the result") {
     Promise<std::string> one = gave<std::string>("gotowe");
 
     same(one.await(), std::string{"gotowe"});
 }
 
-TRIAL("Promise: wynik zostaje, praca dzieje się raz") {
+TRIAL("Promise: the result stays, the work happens once") {
     std::atomic<int> counted{0};
 
     Promise<int> one{[&counted](auto resolve, auto) {
@@ -75,7 +77,7 @@ TRIAL("Promise: wynik zostaje, praca dzieje się raz") {
     same(counted.load(), 1);
 }
 
-TRIAL("Promise: odrzucenie wraca z await jako wyjątek") {
+TRIAL("Promise: a rejection comes back from await as an exception") {
     Promise<int> one{[](auto, auto reject) { reject("No such file."); }};
 
     bool caught = false;
@@ -89,26 +91,26 @@ TRIAL("Promise: odrzucenie wraca z await jako wyjątek") {
     ought(caught);
 }
 
-TRIAL("Promise: rzucony wyjątek w ciele staje się odrzuceniem") {
-    Promise<int> one{[](auto, auto) -> void { throw std::runtime_error{"padło"}; }};
+TRIAL("Promise: an exception thrown in the body becomes a rejection") {
+    Promise<int> one{[](auto, auto) -> void { throw std::runtime_error{"fell over"}; }};
 
     threw((void)one.await());
 }
 
-TRIAL("Promise: then podaje wynik dalej") {
+TRIAL("Promise: then passes the result on") {
     Promise<int> chain = gave(20).then([](const int& given) { return given + 2; });
 
     same(chain.await(), 22);
 }
 
-TRIAL("Promise: then zmienia typ") {
+TRIAL("Promise: then changes the type") {
     Promise<std::string> chain =
         gave(7).then([](const int& given) { return std::to_string(given * 6); });
 
     same(chain.await(), std::string{"42"});
 }
 
-TRIAL("Promise: cały łańcuch rusza z ostatniego ogniwa") {
+TRIAL("Promise: the whole chain starts from the last link") {
     std::atomic<bool> ran{false};
 
     Promise<int> root{[&ran](auto resolve, auto) {
@@ -124,7 +126,7 @@ TRIAL("Promise: cały łańcuch rusza z ostatniego ogniwa") {
     same(chain.await(), 3);
 }
 
-TRIAL("Promise: odrzucenie przeskakuje then i trafia do fail") {
+TRIAL("Promise: a rejection skips then and reaches fail") {
     std::atomic<int> ran{0};
     std::string said;
 
@@ -141,16 +143,17 @@ TRIAL("Promise: odrzucenie przeskakuje then i trafia do fail") {
     same(said, std::string{"zepsute"});
 }
 
-// Dawniej łańcuch obietnicy nie rozwijał i oddawał Promise<Promise<int>>. Zmienione świadomie:
-// bez spłaszczania łańcuch kroków asynchronicznych nie składa się wcale — każdy krok dokłada
-// warstwę opakowania, a wołający musi ją zdejmować, czyli czekać, czyli blokować wątek.
-TRIAL("Promise: obietnica oddana z then rozwija się w łańcuchu") {
+// A promise returned from `then` is unwrapped in the chain instead of giving
+// Promise<Promise<int>>. Without flattening a chain of asynchronous steps does not compose at all:
+// every step adds a layer of wrapping, and the caller has to take it off, that is wait, that is
+// block a thread.
+TRIAL("Promise: a promise returned from then unwraps in the chain") {
     Promise<int> chain = gave(5).then([](const int& given) { return slowly(given * 2, 20); });
 
     same(chain.await(), 10);
 }
 
-TRIAL("Promise: rozwijanie działa też dla pustej obietnicy") {
+TRIAL("Promise: unwrapping works for a void promise too") {
     std::atomic<int> ran{0};
 
     Promise<void> chain = gave(1).then([&ran](const int&) {
@@ -165,7 +168,7 @@ TRIAL("Promise: rozwijanie działa też dla pustej obietnicy") {
     same(ran.load(), 1);
 }
 
-TRIAL("Promise: odrzucenie w środku łańcucha wychodzi na wierzch") {
+TRIAL("Promise: a rejection in the middle of the chain comes to the surface") {
     std::string said;
 
     Promise<int> chain =
@@ -180,7 +183,7 @@ TRIAL("Promise: odrzucenie w środku łańcucha wychodzi na wierzch") {
     same(said, std::string{"zepsute w środku"});
 }
 
-TRIAL("Promise: dwa kroki asynchroniczne pod rząd") {
+TRIAL("Promise: two asynchronous steps in a row") {
     Promise<int> chain = gave(3)
                              .then([](const int& given) { return slowly(given + 1, 10); })
                              .then([](const int& given) { return slowly(given * 10, 10); });
@@ -188,7 +191,7 @@ TRIAL("Promise: dwa kroki asynchroniczne pod rząd") {
     same(chain.await(), 40);
 }
 
-TRIAL("Promise: obietnica wewnętrzna rusza sama, bez await") {
+TRIAL("Promise: an inner promise starts by itself, without await") {
     std::atomic<int> ran{0};
 
     Promise<int> chain = gave(1).then([&ran](const int&) {
@@ -202,7 +205,7 @@ TRIAL("Promise: obietnica wewnętrzna rusza sama, bez await") {
     same(ran.load(), 1);
 }
 
-TRIAL("Promise: void rozstrzyga się bez ładunku") {
+TRIAL("Promise: void settles without a payload") {
     std::atomic<bool> ran{false};
 
     Promise<void> one{[&ran](auto resolve, auto) {
@@ -215,13 +218,13 @@ TRIAL("Promise: void rozstrzyga się bez ładunku") {
     ought(ran.load());
 }
 
-TRIAL("Promise: then po void woła bez parametru") {
+TRIAL("Promise: then after void calls without a parameter") {
     Promise<int> chain = Promise<void>{[](auto resolve, auto) { resolve(); }}.then([] { return 9; });
 
     same(chain.await(), 9);
 }
 
-TRIAL("Promise: rejestracja na rozstrzygniętej nie przepada") {
+TRIAL("Promise: registering on a settled one is not lost") {
     Promise<int> one = gave(3);
 
     same(one.await(), 3);
@@ -231,7 +234,7 @@ TRIAL("Promise: rejestracja na rozstrzygniętej nie przepada") {
     same(late.await(), 9);
 }
 
-TRIAL("Promise: kopia uchwytu dzieli wynik") {
+TRIAL("Promise: a copy of the handle shares the result") {
     Promise<int> one = slowly(4, 20);
     Promise<int> two = one;
 
@@ -239,7 +242,7 @@ TRIAL("Promise: kopia uchwytu dzieli wynik") {
     same(two.await(), 4);
 }
 
-TRIAL("Promise: martwa gałąź milczy") {
+TRIAL("Promise: a dead branch stays silent") {
     std::atomic<int> ran{0};
 
     Promise<int> root = slowly(1, 60);
@@ -262,7 +265,7 @@ TRIAL("Promise: martwa gałąź milczy") {
     same(ran.load(), 0);
 }
 
-TRIAL("Pool: własna pula bierze pracę i daje się opróżnić") {
+TRIAL("Pool: an own pool takes work and can be drained") {
     Pool mine;
 
     std::atomic<int> counted{0};
@@ -275,7 +278,7 @@ TRIAL("Pool: własna pula bierze pracę i daje się opróżnić") {
     ought(mine.staff() >= 1);
 }
 
-TRIAL("Pool: robotnicy wracają, a nie mnożą się bez końca") {
+TRIAL("Pool: workers come back instead of multiplying without end") {
     Pool mine;
 
     for (int at = 0; at < 50; ++at) {
@@ -286,7 +289,7 @@ TRIAL("Pool: robotnicy wracają, a nie mnożą się bez końca") {
     ought(mine.staff() <= 2);
 }
 
-TRIAL("Promise: cancel przed startem nie uruchamia pracy") {
+TRIAL("Promise: cancel before the start does not run the work") {
     std::atomic<bool> ran{false};
 
     Promise<int> one{[&ran](auto resolve, auto) {
@@ -312,7 +315,7 @@ TRIAL("Promise: cancel przed startem nie uruchamia pracy") {
     ought(!ran.load());
 }
 
-TRIAL("Promise: cancel w trakcie — spóźniony wynik jest pomijany") {
+TRIAL("Promise: cancel midway, the late result is ignored") {
     Promise<int> one = slowly(5, 80);
 
     one.start();
@@ -335,7 +338,7 @@ TRIAL("Promise: cancel w trakcie — spóźniony wynik jest pomijany") {
     ought(caught);
 }
 
-TRIAL("Promise: cancel przeskakuje then i trafia do fail") {
+TRIAL("Promise: cancel skips then and reaches fail") {
     std::atomic<int> ran{0};
     std::atomic<bool> knew{false};
 
@@ -357,15 +360,15 @@ TRIAL("Promise: cancel przeskakuje then i trafia do fail") {
     ought(knew.load());
 }
 
-// Rzucone coś, co nie jest `std::exception`, też trafia do `fail` — jako stałe `Rejected`
-// z angielskim zdaniem, bo `fail` przyjmuje `const std::exception&` i nie ma czego innego podać.
-TRIAL("Promise: fail dostaje także odrzucenie nie-wyjątkiem") {
+// Something thrown that is not a `std::exception` reaches `fail` too, as a fixed `Rejected` with an
+// English sentence, because `fail` takes `const std::exception&` and has nothing else to give.
+TRIAL("Promise: fail also gets a rejection that is not an exception") {
     std::string said;
 
     Promise<int> chain = Promise<int>{[](auto, auto) { throw 7; }}.fail(
         [&said](const std::exception& why) { said = why.what(); });
 
-    // Sam powód idzie dalej nietknięty — ogon rzuca tym, czym rzuciło ciało.
+    // The reason itself goes on untouched: the tail throws whatever the body threw.
     bool rethrown = false;
 
     try {
@@ -378,7 +381,7 @@ TRIAL("Promise: fail dostaje także odrzucenie nie-wyjątkiem") {
     same(said, std::string{"Unknown reason for rejection."});
 }
 
-TRIAL("Promise: finally biegnie po powodzeniu i nie rusza wyniku") {
+TRIAL("Promise: finally runs after success and does not touch the result") {
     std::atomic<int> ran{0};
 
     Promise<int> chain = gave(11).finally([&ran] { ++ran; });
@@ -387,7 +390,7 @@ TRIAL("Promise: finally biegnie po powodzeniu i nie rusza wyniku") {
     same(ran.load(), 1);
 }
 
-TRIAL("Promise: finally biegnie po odrzuceniu, a powód idzie dalej") {
+TRIAL("Promise: finally runs after a rejection, and the reason goes on") {
     std::atomic<int> ran{0};
     std::string said;
 
@@ -401,7 +404,7 @@ TRIAL("Promise: finally biegnie po odrzuceniu, a powód idzie dalej") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("Promise: finally biegnie także po anulowaniu") {
+TRIAL("Promise: finally runs after cancelling too") {
     std::atomic<int> ran{0};
 
     Promise<int> root = slowly(2, 60);
@@ -414,12 +417,12 @@ TRIAL("Promise: finally biegnie także po anulowaniu") {
     same(ran.load(), 1);
 }
 
-// --- Anulowanie idzie do źródła --------------------------------------------------------------
+// --- Cancelling goes to the source -----------------------------------------------------------
 
-// **Anuluje się pracę, a nie widok na nią** (przegląd, krok 6c). Wołający trzyma zwykle ogon —
-// ostatnie ogniwo z `then`, `fail` i `on` — i to jego chce przerwać. Dawniej anulowanie ogona
-// odrzucało sam ogon, a odczyt pod spodem biegł do końca; twa trzymało więc głowę i ogon osobno.
-TRIAL("cancel: ogon anuluje źródło, zanim ono ruszy") {
+// Cancelling stops the work, not a view of it. The caller usually holds the tail (the last link
+// from `then`, `fail` and `on`), and that is what it wants to stop, so cancelling the tail reaches
+// the source; the caller does not need to hold the head and the tail separately.
+TRIAL("cancel: the tail cancels the source before it starts") {
     std::atomic<bool> ran{false};
 
     Promise<int> root{[&ran](auto resolve, auto) {
@@ -441,7 +444,7 @@ TRIAL("cancel: ogon anuluje źródło, zanim ono ruszy") {
     ought(!ran.load());
 }
 
-TRIAL("cancel: ogon przerywa źródło, które już biegnie") {
+TRIAL("cancel: the tail stops a source that is already running") {
     Promise<int> root = slowly(1, 80);
     Promise<int> tail = root.then([](const int& given) { return given; });
 
@@ -461,9 +464,9 @@ TRIAL("cancel: ogon przerywa źródło, które już biegnie") {
     ought(caught);
 }
 
-// Obietnica oddana z `then` jest pracą tak samo jak źródło — często jedyną, która jeszcze trwa,
-// bo źródło dawno się rozstrzygnęło. Anulowanie ogona musi dojść i do niej.
-TRIAL("cancel: dochodzi do obietnicy oddanej z then") {
+// A promise returned from `then` is work just like the source, often the only one still running,
+// because the source settled long ago. Cancelling the tail must reach it too.
+TRIAL("cancel: reaches a promise returned from then") {
     Promise<int> inner = slowly(2, 80);
 
     Promise<int> tail = gave(1).then([inner](const int&) { return inner; });
@@ -484,9 +487,10 @@ TRIAL("cancel: dochodzi do obietnicy oddanej z then") {
     ought(caught);
 }
 
-// Ogon anulowany, zanim `then` zdążył oddać swoją obietnicę: oddana już nie rusza. Bez tego
-// anulowanie trafiałoby w szczelinę między końcem ciała `then` a startem tego, co oddało.
-TRIAL("cancel: obietnica oddana z then po anulowaniu już nie rusza") {
+// The tail is cancelled before `then` has returned its promise: the returned one no longer starts.
+// Without that, cancelling would fall into the gap between the end of the `then` body and the start
+// of what it returned.
+TRIAL("cancel: a promise returned from then after cancelling no longer starts") {
     std::atomic<bool> release{false};
     std::atomic<bool> ran{false};
 
@@ -513,7 +517,7 @@ TRIAL("cancel: obietnica oddana z then po anulowaniu już nie rusza") {
     ought(!ran.load());
 }
 
-TRIAL("cancel: złączenie anuluje wszystkich członków") {
+TRIAL("cancel: a join cancels all its members") {
     Promise<int> one = slowly(1, 80);
     Promise<int> two = slowly(2, 80);
 
@@ -538,9 +542,9 @@ TRIAL("cancel: złączenie anuluje wszystkich członków") {
     threw((void)many[1].await());
 }
 
-// Rozstrzygniętego nie ma czego przerywać: wynik zostaje, a źródło nie dostaje anulowania,
-// choć ogon wciąż na nie wskazuje.
-TRIAL("cancel: na rozstrzygniętym ogonie nic nie zmienia") {
+// A settled promise has nothing to stop: the result stays, and the source gets no cancel, even
+// though the tail still points to it.
+TRIAL("cancel: on a settled tail it changes nothing") {
     Promise<int> root = gave(5);
     Promise<int> tail = root.then([](const int& given) { return given * 2; });
 
@@ -551,8 +555,8 @@ TRIAL("cancel: na rozstrzygniętym ogonie nic nie zmienia") {
     same(tail.await(), 10);
     same(root.await(), 5);
 
-    // Także złączenie: wyścig rozstrzygnięty pierwszym członkiem nie przerywa drugiego, gdy się
-    // go potem anuluje — rozstrzygnięte już nie mówi niczego w dół ani w górę.
+    // A join too: a race settled by its first member does not stop the second when it is cancelled
+    // later; what is settled no longer says anything down or up.
     Promise<int> fast = gave(1);
     Promise<int> slow = slowly(2, 60);
     Promise<void> first = Promise<int>::race(fast, slow);
@@ -563,10 +567,10 @@ TRIAL("cancel: na rozstrzygniętym ogonie nic nie zmienia") {
     same(slow.await(), 2);
 }
 
-// **Wspólne źródło dzieli los.** Dwie gałęzie z jednej obietnicy wskazują na tę samą pracę, więc
-// anulowanie jednej przerywa ją i dla drugiej. Tak jest świadomie: liczenie zainteresowanych
-// gałęzi wymagałoby stanu i zamków w każdym ogniwie dla przypadku, którego nikt dziś nie ma.
-TRIAL("cancel: gałęzie ze wspólnego źródła dzielą anulowanie") {
+// A shared source shares its fate. Two branches from one promise point to the same work, so
+// cancelling one stops it for the other as well. That is deliberate: counting interested branches
+// would need state and locks in every link for a case nobody has.
+TRIAL("cancel: branches from a shared source share the cancel") {
     Promise<int> root = slowly(1, 80);
     Promise<int> left = root.then([](const int& given) { return given; });
     Promise<int> right = root.then([](const int& given) { return given; });
@@ -577,7 +581,7 @@ TRIAL("cancel: gałęzie ze wspólnego źródła dzielą anulowanie") {
     threw((void)right.await());
 }
 
-TRIAL("all: czeka na wszystkie, a wyniki zostają w obietnicach") {
+TRIAL("all: waits for all, and the results stay in the promises") {
     Promise<int> one = slowly(1, 60);
     Promise<int> two = slowly(2, 10);
     Promise<int> three = slowly(3, 30);
@@ -589,7 +593,7 @@ TRIAL("all: czeka na wszystkie, a wyniki zostają w obietnicach") {
     same(three.await(), 3);
 }
 
-TRIAL("all: then po nim dostaje pustkę") {
+TRIAL("all: then after it gets nothing") {
     std::atomic<bool> ran{false};
 
     Promise<int> one = gave(1);
@@ -602,7 +606,7 @@ TRIAL("all: then po nim dostaje pustkę") {
     ought(ran.load());
 }
 
-TRIAL("all: nic nie rusza, dopóki nikt nie każe") {
+TRIAL("all: nothing starts until someone says so") {
     std::atomic<int> ran{0};
 
     std::vector<Promise<int>> among;
@@ -623,7 +627,7 @@ TRIAL("all: nic nie rusza, dopóki nikt nie każe") {
     same(ran.load(), 3);
 }
 
-TRIAL("all: biegną obok siebie, nie po kolei") {
+TRIAL("all: they run side by side, not one after another") {
     const auto began = std::chrono::steady_clock::now();
 
     std::vector<Promise<int>> among;
@@ -638,12 +642,12 @@ TRIAL("all: biegną obok siebie, nie po kolei") {
     ought(spent < 240);
 }
 
-TRIAL("all: pusty zbiór rozstrzyga się od razu") {
+TRIAL("all: an empty set settles at once") {
     Promise<int>::all(std::vector<Promise<int>>{}).await();
     Promise<int>::all().await();
 }
 
-TRIAL("all: jedno odrzucenie przewraca całość") {
+TRIAL("all: one rejection brings the whole down") {
     std::vector<Promise<int>> among;
     among.push_back(gave(1));
     among.push_back(Promise<int>{[](auto, auto reject) { reject("zepsute"); }});
@@ -659,7 +663,7 @@ TRIAL("all: jedno odrzucenie przewraca całość") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("all: łączy też obietnice bez ładunku") {
+TRIAL("all: joins void promises too") {
     std::atomic<int> ran{0};
 
     std::vector<Promise<void>> among;
@@ -676,10 +680,12 @@ TRIAL("all: łączy też obietnice bez ładunku") {
 
 namespace {
 
+// The highest number of jobs running at the same time.
 struct Highest {
     std::atomic<int> now{0};
     std::atomic<int> most{0};
 
+    // Counts a job in and raises the highest number seen when needed.
     void entered() {
         const int here = ++now;
 
@@ -688,12 +694,13 @@ struct Highest {
         }
     }
 
+    // Counts a job out.
     void left() { --now; }
 };
 
 }
 
-TRIAL("Pool: praca licząca nie przekracza sufitu") {
+TRIAL("Pool: computing work does not exceed the ceiling") {
     Pool mine{3};
 
     Highest counted;
@@ -711,7 +718,7 @@ TRIAL("Pool: praca licząca nie przekracza sufitu") {
     ought(counted.most.load() >= 2);
 }
 
-TRIAL("Pool: zwykła praca sufitu nie zna") {
+TRIAL("Pool: ordinary work knows no ceiling") {
     Pool mine{2};
 
     Highest counted;
@@ -728,7 +735,7 @@ TRIAL("Pool: zwykła praca sufitu nie zna") {
     ought(counted.most.load() > 2);
 }
 
-TRIAL("Pool: pracy liczącej nie głodzi zajęty zespół") {
+TRIAL("Pool: computing work is not starved by a busy team") {
     Pool mine{2};
 
     std::atomic<bool> done{false};
@@ -743,12 +750,11 @@ TRIAL("Pool: pracy liczącej nie głodzi zajęty zespół") {
     ought(done.load());
 }
 
-// --- Tory ------------------------------------------------------------------------------------
+// --- Lanes -----------------------------------------------------------------------------------
 
-// **Tor mówi, gdzie biegnie ciało źródła** (przegląd, krok 6d). Dawniej była to klasa pochodna
-// EasyPromise, której nikt w bibliotece nie używał, a flagę dało się postawić także na ogniwie —
-// gdzie nie robiła nic. Teraz tor podaje się w konstruktorze i dotyczy dokładnie ciała.
-TRIAL("Lane: ciało z torem cpu nie przekracza sufitu, także w złączeniu") {
+// The lane says where the source's body runs. It is given in the constructor and applies exactly
+// to the body.
+TRIAL("Lane: a body on the cpu lane does not exceed the ceiling, in a join too") {
     Highest counted;
 
     std::vector<Promise<int>> among;
@@ -767,7 +773,7 @@ TRIAL("Lane: ciało z torem cpu nie przekracza sufitu, także w złączeniu") {
     ought(counted.most.load() <= static_cast<int>(pooling().most()));
 }
 
-TRIAL("Lane: tor nie przyspiesza startu — obietnica dalej jest leniwa") {
+TRIAL("Lane: the lane does not hasten the start, the promise is still lazy") {
     std::atomic<bool> ran{false};
 
     Promise<int> one{[&ran](auto resolve, auto) {
@@ -784,10 +790,10 @@ TRIAL("Lane: tor nie przyspiesza startu — obietnica dalej jest leniwa") {
     ought(ran.load());
 }
 
-// **Ciąg dalszy biegnie na wątku tego, kto rozstrzygnął** — więc liczenie w `then` po odczycie
-// szło torem bez sufitu. `on(Lane::cpu)` przesiada resztę łańcucha na tor liczący, tak jak
-// `on(pętla)` przesiada ją na pętlę.
-TRIAL("Lane: on(cpu) przesiada liczenie po zwykłym źródle pod sufit") {
+// A continuation runs on the thread of whoever settled the promise, so computing in `then` after a
+// read would run on the lane without a ceiling. `on(Lane::cpu)` moves the rest of the chain to the
+// computing lane, just as `on(loop)` moves it to a loop.
+TRIAL("Lane: on(cpu) moves computing after an ordinary source under the ceiling") {
     Highest counted;
 
     const int many = static_cast<int>(pooling().most()) * 4;
@@ -808,9 +814,10 @@ TRIAL("Lane: on(cpu) przesiada liczenie po zwykłym źródle pod sufit") {
     ought(counted.most.load() <= static_cast<int>(pooling().most()));
 }
 
-// Odwrotnie: czekanie po źródle liczącym zajmowało miejsce pod sufitem, czyli rdzeń, który miał
-// liczyć. `on(Lane::io)` zwalnia je — czekający biegną obok siebie, ilu ich jest.
-TRIAL("Lane: on(io) wyprowadza czekanie spod sufitu") {
+// The other way round: waiting after a computing source would take a place under the ceiling, that
+// is a core that should be computing. `on(Lane::io)` frees it; the waiters run side by side, however
+// many there are.
+TRIAL("Lane: on(io) takes waiting out from under the ceiling") {
     Highest counted;
 
     const int many = static_cast<int>(pooling().most()) * 4;
@@ -831,7 +838,7 @@ TRIAL("Lane: on(io) wyprowadza czekanie spod sufitu") {
     ought(counted.most.load() > static_cast<int>(pooling().most()));
 }
 
-TRIAL("all_settled: czeka na wszystkie i nie przewraca się na odrzuceniu") {
+TRIAL("all_settled: waits for all and does not fall over on a rejection") {
     Promise<int> good = slowly(7, 20);
     Promise<int> bad{[](auto, auto reject) { reject("zepsute"); }};
     Promise<int> other = slowly(9, 40);
@@ -843,7 +850,7 @@ TRIAL("all_settled: czeka na wszystkie i nie przewraca się na odrzuceniu") {
     threw((void)bad.await());
 }
 
-TRIAL("all_settled: powody zostają w obietnicach, a nie w łączeniu") {
+TRIAL("all_settled: the reasons stay in the promises, not in the join") {
     std::atomic<bool> ran{false};
 
     Promise<int> bad{[](auto, auto reject) { reject("padło"); }};
@@ -865,7 +872,7 @@ TRIAL("all_settled: powody zostają w obietnicach, a nie w łączeniu") {
     same(said, std::string{"padło"});
 }
 
-TRIAL("all: wyliczenie zamiast wektora") {
+TRIAL("all: a list of arguments instead of a vector") {
     Promise<int> one = slowly(1, 30);
     Promise<int> two = slowly(2, 10);
 
@@ -875,7 +882,7 @@ TRIAL("all: wyliczenie zamiast wektora") {
     same(two.await(), 2);
 }
 
-TRIAL("all: wyliczenie łączy obietnice różnych typów") {
+TRIAL("all: a list of arguments joins promises of different types") {
     Promise<int> counted = slowly(5, 20);
     Promise<std::string> said{[](auto resolve, auto) { resolve(std::string{"gotowe"}); }};
     Promise<void> done{[](auto resolve, auto) { resolve(); }};
@@ -886,7 +893,7 @@ TRIAL("all: wyliczenie łączy obietnice różnych typów") {
     same(said.await(), std::string{"gotowe"});
 }
 
-TRIAL("all: wyliczenie przewraca się na odrzuceniu") {
+TRIAL("all: a list of arguments falls over on a rejection") {
     Promise<int> good = gave(1);
     Promise<std::string> bad{[](auto, auto reject) { reject("zepsute"); }};
 
@@ -900,7 +907,7 @@ TRIAL("all: wyliczenie przewraca się na odrzuceniu") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("all_settled: wyliczenie różnych typów nie przewraca się") {
+TRIAL("all_settled: a list of different types does not fall over") {
     Promise<int> good = slowly(3, 20);
     Promise<std::string> bad{[](auto, auto reject) { reject("padło"); }};
 
@@ -910,12 +917,12 @@ TRIAL("all_settled: wyliczenie różnych typów nie przewraca się") {
     threw((void)bad.await());
 }
 
-// **Upuszczone łączenie nie trzyma swoich wejść.** Łączenie pilnowało ogniw, które na nie czekają,
-// a ogniwa trzymały łączenie — koło, które rozrywało dopiero rozstrzygnięcie ostatniego wejścia.
-// Wejście, które nie rozstrzygnie się nigdy (w twa: ciąg dalszy na pętli, która zginęła wcześniej),
-// zostawiało w pamięci całość razem z wynikami wejść już rozstrzygniętych. Wyszło na sanitizerze
-// w próbach twa. Sprawdzamy bez zegara: wynik rozstrzygniętego wejścia ma zniknąć razem z łączeniem.
-TRIAL("all i all_settled: upuszczone łączenie nie trzyma wejść, które nie przyjdą nigdy") {
+// A dropped join does not hold its inputs. The join keeps the links that wait on it, and those
+// links hold the join, a cycle that only the settling of the last input would break. An input that
+// never settles (in twa: a continuation on a loop that died earlier) would keep the whole in memory
+// together with the results of the inputs that did settle. Checked without a clock: the result of a
+// settled input must disappear together with the join.
+TRIAL("all and all_settled: a dropped join does not hold inputs that will never come") {
     const auto dropped = [](auto joining) {
         std::weak_ptr<int> seen;
 
@@ -952,7 +959,7 @@ TRIAL("all i all_settled: upuszczone łączenie nie trzyma wejść, które nie p
     });
 }
 
-TRIAL("race: rozstrzyga się z pierwszą, nie czeka na resztę") {
+TRIAL("race: settles with the first, does not wait for the rest") {
     const auto began = std::chrono::steady_clock::now();
 
     Promise<int> quick = slowly(1, 20);
@@ -969,7 +976,7 @@ TRIAL("race: rozstrzyga się z pierwszą, nie czeka na resztę") {
     same(quick.await(), 1);
 }
 
-TRIAL("race: pierwsze odrzucenie też rozstrzyga") {
+TRIAL("race: the first rejection settles it too") {
     Promise<int> slow = slowly(1, 400);
     Promise<std::string> bad{[](auto, auto reject) {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
@@ -986,7 +993,7 @@ TRIAL("race: pierwsze odrzucenie też rozstrzyga") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("race: obietnica już rozstrzygnięta wygrywa od razu") {
+TRIAL("race: an already settled promise wins at once") {
     Promise<int> done = gave(5);
     (void)done.await();
 
@@ -1003,7 +1010,7 @@ TRIAL("race: obietnica już rozstrzygnięta wygrywa od razu") {
     ought(spent < 200);
 }
 
-TRIAL("race: bierze też zbiór policzony w czasie działania") {
+TRIAL("race: also takes a set computed at run time") {
     std::vector<Promise<int>> among;
     among.push_back(slowly(1, 300));
     among.push_back(slowly(2, 20));
@@ -1021,7 +1028,7 @@ TRIAL("race: bierze też zbiór policzony w czasie działania") {
     same(among[1].await(), 2);
 }
 
-TRIAL("all: bierze każdy zakres, nie tylko wektor") {
+TRIAL("all: takes any range, not only a vector") {
     std::deque<Promise<int>> among;
     among.push_back(gave(1));
     among.push_back(gave(2));
@@ -1032,7 +1039,7 @@ TRIAL("all: bierze każdy zakres, nie tylko wektor") {
     same(among[1].await(), 2);
 }
 
-TRIAL("all: przewraca się od razu, nie czeka na wcześniejsze") {
+TRIAL("all: falls over at once, does not wait for the earlier ones") {
     const auto began = std::chrono::steady_clock::now();
 
     Promise<int> slow = slowly(1, 400);
@@ -1056,13 +1063,13 @@ TRIAL("all: przewraca się od razu, nie czeka na wcześniejsze") {
     same(said, std::string{"zepsute"});
 }
 
-TRIAL("all: nie zajmuje wątku puli na czas czekania") {
+TRIAL("all: does not occupy a pool thread while waiting") {
     Pool mine{2};
 
     std::atomic<int> ran{0};
 
-    // Cztery długie zadania w puli, która i tak rośnie — chodzi o to, żeby samo czekanie
-    // na all nie było jednym z nich.
+    // Four long jobs in a pool that grows anyway; the point is that the waiting for all itself is
+    // not one of them.
     std::vector<Promise<int>> among;
     for (int at = 0; at < 4; ++at) among.push_back(slowly(at, 60));
 
@@ -1078,7 +1085,7 @@ TRIAL("all: nie zajmuje wątku puli na czas czekania") {
     (void)mine.staff();
 }
 
-TRIAL("any: wygrywa pierwsza udana, choćby inna padła wcześniej") {
+TRIAL("any: the first success wins, even if another failed earlier") {
     Promise<int> bad{[](auto, auto reject) {
         std::this_thread::sleep_for(std::chrono::milliseconds{10});
         reject("zepsute");
@@ -1090,7 +1097,7 @@ TRIAL("any: wygrywa pierwsza udana, choćby inna padła wcześniej") {
     same(good.await(), 8);
 }
 
-TRIAL("any: przewraca się dopiero, gdy padną wszystkie") {
+TRIAL("any: falls over only when all have failed") {
     Promise<int> one{[](auto, auto reject) { reject("pierwsze"); }};
     Promise<int> two{[](auto, auto reject) {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
@@ -1107,7 +1114,7 @@ TRIAL("any: przewraca się dopiero, gdy padną wszystkie") {
     ought(!said.empty());
 }
 
-TRIAL("any: bierze też zakres") {
+TRIAL("any: takes a range too") {
     std::vector<Promise<int>> among;
     among.push_back(Promise<int>{[](auto, auto reject) { reject("zepsute"); }});
     among.push_back(slowly(4, 30));
@@ -1117,7 +1124,7 @@ TRIAL("any: bierze też zakres") {
     same(among[1].await(), 4);
 }
 
-TRIAL("then: wywołanie nigdy nie biegnie na wątku rejestrującym") {
+TRIAL("then: the call never runs on the registering thread") {
     Promise<int> one = gave(3);
 
     same(one.await(), 3);
@@ -1135,13 +1142,13 @@ TRIAL("then: wywołanie nigdy nie biegnie na wątku rejestrującym") {
     ought(aside.load());
 }
 
-TRIAL("Pool: drop zdejmuje zadanie z kolejki, zanim ruszy") {
+TRIAL("Pool: drop takes a job off the queue before it starts") {
     Pool mine{1};
 
     std::atomic<int> ran{0};
     std::atomic<bool> late{false};
 
-    // Sufit jeden, więc drugie i trzecie stoją w kolejce i czekają na swoją kolej.
+    // The ceiling is one, so the second and the third stand in the queue waiting for their turn.
     for (int at = 0; at < 2; ++at)
         mine.post([&ran] {
             ++ran;
@@ -1157,7 +1164,7 @@ TRIAL("Pool: drop zdejmuje zadanie z kolejki, zanim ruszy") {
     ought(!late.load());
 }
 
-TRIAL("Pool: drop na biegnącym budzi je dzwonkiem") {
+TRIAL("Pool: drop on a running one wakes it with the bell") {
     Pool mine;
 
     std::atomic<bool> woke{false};
@@ -1183,7 +1190,7 @@ TRIAL("Pool: drop na biegnącym budzi je dzwonkiem") {
     ought(woke.load());
 }
 
-TRIAL("Pool: dzwonek nie przechodzi na następne zadanie") {
+TRIAL("Pool: the bell does not carry over to the next job") {
     Pool mine{1};
 
     std::atomic<bool> woke{true};
@@ -1202,7 +1209,7 @@ TRIAL("Pool: dzwonek nie przechodzi na następne zadanie") {
     ought(!woke.load());
 }
 
-TRIAL("Promise: cancel nie uruchamia zadania stojącego w kolejce") {
+TRIAL("Promise: cancel does not run a job standing in the queue") {
     std::atomic<int> ran{0};
 
     std::vector<Promise<int>> among;
@@ -1226,11 +1233,13 @@ TRIAL("Promise: cancel nie uruchamia zadania stojącego w kolejce") {
 
 namespace {
 
-// Przykład tego, o co chodzi w wirtualnym progress: bilet, który wie, ile rat z ilu zeszło.
+// An example of what the virtual progress is about: a ticket that knows how many installments out
+// of how many are done.
 struct Counted : detail::Result<int> {
     std::atomic<int> done{0};
     std::atomic<int> whole{0};
 
+    // The share of installments done, from 0 to 1; zero while the total is unknown.
     [[nodiscard]] double progress() const override {
         const int all = whole.load();
         if (all == 0) return 0.0;
@@ -1239,6 +1248,7 @@ struct Counted : detail::Result<int> {
     }
 };
 
+// A promise that sleeps through `steps` installments and counts them in its ticket.
 class Stepping : public Promise<int> {
 public:
     explicit Stepping(int steps) : Stepping(steps, std::make_shared<Counted>()) {}
@@ -1261,7 +1271,7 @@ private:
 
 }
 
-TRIAL("progress: zwykła obietnica zna tylko zero i jeden") {
+TRIAL("progress: an ordinary promise knows only zero and one") {
     Promise<int> one = slowly(1, 60);
 
     same(one.progress(), 0.0);
@@ -1270,7 +1280,7 @@ TRIAL("progress: zwykła obietnica zna tylko zero i jeden") {
     same(one.progress(), 1.0);
 }
 
-TRIAL("progress: odrzucona też jest skończona") {
+TRIAL("progress: a rejected one is finished too") {
     Promise<int> one{[](auto, auto reject) { reject("zepsute"); }};
 
     threw((void)one.await());
@@ -1278,7 +1288,7 @@ TRIAL("progress: odrzucona też jest skończona") {
     same(one.progress(), 1.0);
 }
 
-TRIAL("progress: pochodny bilet liczy po swojemu") {
+TRIAL("progress: a derived ticket counts its own way") {
     Stepping one{5};
 
     same(one.progress(), 0.0);
@@ -1302,7 +1312,7 @@ TRIAL("progress: pochodny bilet liczy po swojemu") {
     same(one.progress(), 1.0);
 }
 
-TRIAL("progress: przycięcie do Promise nie gubi sposobu liczenia") {
+TRIAL("progress: cutting down to Promise does not lose the way of counting") {
     Stepping made{4};
     Promise<int> one = made;
 
@@ -1324,11 +1334,12 @@ TRIAL("progress: przycięcie do Promise nie gubi sposobu liczenia") {
 
 namespace {
 
-// Obietnica, która nigdy nie rusza — służy wyłącznie do ustawiania postępu z ręki.
+// A promise that never starts; it serves only to set the progress by hand.
 class Sitting : public Promise<int> {
 public:
     Sitting() : Sitting(std::make_shared<Counted>()) {}
 
+    // Sets the progress to `done` out of `whole`.
     void set(int done, int whole) const {
         held_->whole.store(whole);
         held_->done.store(done);
@@ -1343,7 +1354,7 @@ private:
 
 }
 
-TRIAL("progress: all uśrednia składowe") {
+TRIAL("progress: all averages its parts") {
     const Sitting one;
     const Sitting two;
     const Sitting three;
@@ -1357,7 +1368,7 @@ TRIAL("progress: all uśrednia składowe") {
     ought(std::abs(joined.progress() - 0.5) < 0.001);
 }
 
-TRIAL("progress: race i any biorą największą") {
+TRIAL("progress: race and any take the largest") {
     const Sitting one;
     const Sitting two;
 
@@ -1368,7 +1379,7 @@ TRIAL("progress: race i any biorą największą") {
     ought(std::abs(Promise<int>::any(one, two).progress() - 0.7) < 0.001);
 }
 
-TRIAL("progress: all_settled też uśrednia") {
+TRIAL("progress: all_settled averages too") {
     const Sitting one;
     const Sitting two;
 
@@ -1378,7 +1389,7 @@ TRIAL("progress: all_settled też uśrednia") {
     ought(std::abs(Promise<int>::all_settled(one, two).progress() - 0.5) < 0.001);
 }
 
-TRIAL("progress: rozstrzygnięte łączenie mówi jeden") {
+TRIAL("progress: a settled join says one") {
     Promise<int> one = gave(1);
     Promise<int> two = gave(2);
 
@@ -1391,7 +1402,7 @@ TRIAL("progress: rozstrzygnięte łączenie mówi jeden") {
     same(joined.progress(), 1.0);
 }
 
-TRIAL("progress: zakresowa postać też liczy") {
+TRIAL("progress: the range form counts too") {
     std::vector<Sitting> among(4);
 
     among[0].set(4, 4);
@@ -1404,20 +1415,20 @@ TRIAL("progress: zakresowa postać też liczy") {
     ought(std::abs(Promise<int>::all(plain).progress() - 0.5) < 0.001);
 }
 
-// **Zadanie żyje krócej niż ogłoszenie o jego końcu.**
+// A job lives shorter than the announcement of its end.
 //
-// Domknięcie zadania trzyma to, co złapał wołający — obietnicę, jej wynik, cudze uchwyty. Pętla
-// robotnika kasowała je dopiero na końcu obrotu, czyli **po** tym, jak pod zamkiem zmniejszyła
-// `busy_` i obudziła `drain()`. Ten, kto czekał, ruszał więc dalej, podczas gdy cudzy wątek wciąż
-// uruchamiał destruktory tego, co sam mu podał — i to jest ten wyścig, który zgłaszał TSan
-// przy zwalnianiu wyniku obietnicy.
+// A job's closure holds what the caller captured: a promise, its result, other handles. The worker
+// loop destroys it before it lowers `busy_` under the lock and wakes `drain()`. Otherwise the waiter
+// would move on while another thread still runs the destructors of what the waiter handed it, the
+// race that TSan reports when a promise's result is freed.
 //
-// Sprawdzamy to bez zegara i bez losowości: destruktor domknięcia śpi, więc gdyby `drain()` wracał
-// przed nim, chorągiewka byłaby jeszcze opuszczona.
-TRIAL("Pula: po opróżnieniu nikt już nie trzyma domknięcia zadania") {
+// Checked without a clock and without randomness: the closure's destructor sleeps, so if `drain()`
+// returned before it, the flag would still be down.
+TRIAL("Pool: after draining nobody holds the job's closure anymore") {
     struct Watch {
         std::shared_ptr<std::atomic<bool>> gone;
 
+        // A watch that raises `gone` when the closure holding it is destroyed.
         Watch(std::shared_ptr<std::atomic<bool>> given) : gone(std::move(given)) {}
 
         Watch(Watch&&) noexcept = default;
@@ -1425,6 +1436,7 @@ TRIAL("Pula: po opróżnieniu nikt już nie trzyma domknięcia zadania") {
         Watch& operator=(Watch&&) noexcept = default;
         Watch& operator=(const Watch&) = default;
 
+        // Sleeps a while and then raises the flag, unless the watch was moved from.
         ~Watch() {
             if (!gone) return;
 
@@ -1447,14 +1459,13 @@ TRIAL("Pula: po opróżnieniu nikt już nie trzyma domknięcia zadania") {
     ought(gone->load());
 }
 
-// **Anulowanie z drugiego wątku, równolegle z `start()`.** Numer zadania wpisuje pula pod swoim
-// zamkiem, zanim zadanie stanie się widoczne dla robotników — bez tego był tam wyścig, w którym
-// `cancel()` widział zero, nie dzwonił dzwonkiem, a praca przechodziła całą robotę do końca.
-// Zmierzone przed poprawką: na 1523 uruchomione ciała 467 nie usłyszało dzwonka.
+// Cancelling from another thread, in parallel with `start()`. The pool writes the job number under
+// its lock before the job becomes visible to the workers; otherwise `cancel()` could see zero, not
+// ring the bell, and the work would run all the way to the end.
 //
-// Sprawdzenie jest jednostronne, więc próba nie może być kapryśna: **żadne** ciało nie ma prawa
-// dojść do końca po anulowaniu. Ile ich w ogóle ruszy, zależy od przeplotu i nie jest badane.
-TRIAL("Promise: anulowanie równoległe ze start() zawsze dochodzi do ciała") {
+// The check is one-sided, so the trial cannot be flaky: no body may reach the end after
+// cancelling. How many of them start at all depends on the interleaving and is not examined.
+TRIAL("Promise: cancelling in parallel with start() always reaches the body") {
     std::atomic<int> ran{0};
     std::atomic<int> heard{0};
     std::atomic<int> whole{0};
@@ -1463,11 +1474,11 @@ TRIAL("Promise: anulowanie równoległe ze start() zawsze dochodzi do ciała") {
         Promise<int> one{[&ran, &heard, &whole](auto resolve, auto) {
             ran.fetch_add(1);
 
-            // Praca ratami, tak jak robi to chodzenie po drzewie i kopiowanie: między ratami
-            // pytamy dzwonek, czy jesteśmy jeszcze potrzebni. **Raty trwają razem do dwóch
-            // sekund**, a nie dwóch milisekund: anulowanie biegnie w osobnym wątku, a na
-            // obciążonej maszynie ten wątek potrafi stać dłużej, niż trwała cała praca. Wtedy
-            // praca kończyła się uczciwie przed anulowaniem i próba pękała, choć kod był dobry.
+            // Work in installments, as walking a tree and copying do: between installments we ask
+            // the bell whether we are still needed. The installments last up to two seconds in
+            // total, not two milliseconds: cancelling runs in a separate thread, and on a loaded
+            // machine that thread can stall for longer than the whole work takes. The work would
+            // then honestly finish before the cancel and the trial would fail with good code.
             Bell* bell = ringing();
 
             for (int step = 0; step < 400; ++step) {
@@ -1495,19 +1506,20 @@ TRIAL("Promise: anulowanie równoległe ze start() zawsze dochodzi do ciała") {
         }
     }
 
-    // **Czekamy, aż pula się uspokoi**, i dopiero wtedy liczymy. `await()` wraca, gdy tylko
-    // obietnica jest odrzucona — a ciało robotnika może wtedy jeszcze biec i dopiero za chwilę
-    // usłyszeć dzwonek. Bez tego próba pękałaby raz na kilka przebiegów, i to nie z winy kodu.
+    // We wait until the pool calms down, and only then count. `await()` returns as soon as the
+    // promise is rejected, and the worker's body may still be running and hear the bell only a
+    // moment later. Without this the trial would fail once in a few runs, through no fault of the
+    // code.
     pooling().drain();
 
     same(whole.load(), 0);
     same(heard.load(), ran.load());
 }
 
-// **Długi łańcuch kosztuje tyle, ile ma ogniw.** Ogniwo trzymało dwie kopie rodzica, a każda kopia —
-// swoje dwie, więc budowa kosztowała 2^n: przy dwudziestu dwóch ogniwach sześć sekund, a przy
-// dwóch tysiącach nigdy by się nie skończyła. Dziś ogniwa dzielą rodzica.
-TRIAL("Promise: dwa tysiące ogniw budują się i rozstrzygają od razu") {
+// A long chain costs as much as it has links. Links share their parent; if each link held two
+// copies of its parent, and each copy its own two, building would cost 2^n: six seconds at
+// twenty-two links, and two thousand would never finish.
+TRIAL("Promise: two thousand links build and settle at once") {
     Promise<int> chain = gave(0);
 
     for (int at = 0; at < 2000; ++at) chain = chain.then([](int one) { return one + 1; });
@@ -1515,9 +1527,9 @@ TRIAL("Promise: dwa tysiące ogniw budują się i rozstrzygają od razu") {
     same(chain.await(), 2000);
 }
 
-// Trampolina budzenia nie zmienia porządku: potomek ciągu dalszego biegnie przed jego rodzeństwem,
-// tak jak wtedy, gdy budzenie szło w głąb stosu.
-TRIAL("Promise: ciągi dalsze budzą się w głąb — potomek przed rodzeństwem") {
+// The waking trampoline does not change the order: a continuation's descendant runs before its
+// siblings, just as when waking goes depth-first down the stack.
+TRIAL("Promise: continuations wake depth-first, the descendant before its siblings") {
     std::mutex guard;
     std::vector<std::string> order;
 
@@ -1538,11 +1550,29 @@ TRIAL("Promise: ciągi dalsze budzą się w głąb — potomek przed rodzeństwe
     same(order, (std::vector<std::string>{"b", "d", "c"}));
 }
 
-// **Rozstrzygnięcie i rozbiórka nie schodzą w głąb stosu.** Ciąg dalszy budził następnych na tym
-// samym stosie, a zwolnienie ogona zwalniało rodzica z wnętrza destruktora — piętro na ogniwo. Przy
-// stosie 8 MB rozstrzygnięcie padało przy stu tysiącach ogniw, przy 1 MB (Windows) — przy kilku
-// tysiącach. Dwieście tysięcy przechodzi tu na każdym stosie.
-TRIAL("Promise: dwieście tysięcy ogniw rozstrzyga się i zwalnia bez głębokiego stosu") {
+// Teardown leaves the link empty, on every library. A moved-from `std::function` need not be empty
+// (libc++ copies a small object), so `buried` takes the contents out by swapping: after it the link
+// holds nothing, and the last reference is released in the trampoline, not in a member's
+// destructor, which would bring teardown back down the stack.
+TRIAL("Promise: teardown leaves the link empty, whatever the library") {
+    const auto held = std::make_shared<int>(7);
+
+    detail::Upward one{[held] {}, [held] {}};
+
+    same(held.use_count(), 3L);
+
+    detail::buried(one);
+
+    ought(!one.start);
+    ought(!one.cancel);
+    same(held.use_count(), 1L);
+}
+
+// Settling and teardown do not descend the stack. Waking the next continuations on the same stack,
+// and freeing the parent from inside the tail's destructor, would cost a stack frame per link: with
+// an 8 MB stack settling would fail at a hundred thousand links, with 1 MB (Windows) at a few
+// thousand. Two hundred thousand pass here on any stack.
+TRIAL("Promise: two hundred thousand links settle and are freed without a deep stack") {
     std::atomic<int> passed{0};
 
     {
@@ -1561,9 +1591,9 @@ TRIAL("Promise: dwieście tysięcy ogniw rozstrzyga się i zwalnia bez głęboki
 
 #ifndef _WIN32
 
-// Rozbiórka i anulowanie na wątku z małym stosem — 256 KB, czwarta część windowsowego. Dawniej
-// padały już przy kilku tysiącach ogniw; tu jest ich pięćdziesiąt tysięcy.
-TRIAL("Promise: rozbiórka i anulowanie długiego łańcucha mieszczą się w małym stosie") {
+// Teardown and cancelling on a thread with a small stack, 256 KB, a quarter of the Windows one;
+// here with fifty thousand links.
+TRIAL("Promise: teardown and cancelling of a long chain fit in a small stack") {
     struct Job {
         int built = 0;
     };

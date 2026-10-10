@@ -32,21 +32,23 @@ using namespace talcite;
 
 namespace {
 
+// The patience every operation gets unless a trial needs a different one, in milliseconds.
 const net::Patience soon{4000};
 
 
 
-// Brama na pętli zwrotnej z portem od systemu — dwa testy naraz nigdy się wtedy nie pobiją
-// o ten sam numer.
+// A gate on the loopback with a port from the system, so that two tests running at once never
+// fight over the same number.
 net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
-// Obie strony ruszają od razu, bo obietnica sieciowa zaczyna się w konstruktorze. Dopiero
-// potem czekamy — inaczej czekanie na przyjęcie zatrzymałoby nawiązanie, które ma je wywołać.
+// Both sides start at once, because a network promise begins in its constructor. Only then do we
+// wait; otherwise waiting for the accept would hold up the connect that is supposed to trigger it.
 struct Pair {
     net::Stream server;
     net::Stream client;
 };
 
+// Connects a client to `gate` and returns both ends of the connection.
 Pair joined(const net::Listener& gate) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
@@ -59,7 +61,7 @@ Pair joined(const net::Listener& gate) {
 
 }
 
-TRIAL("Brama: dostaje port od systemu") {
+TRIAL("Gate: gets a port from the system") {
     const net::Listener gate = standing();
 
     ought(gate.held());
@@ -67,7 +69,7 @@ TRIAL("Brama: dostaje port od systemu") {
     same(gate.mine().text(), std::string{"127.0.0.1"});
 }
 
-TRIAL("Brama: pusty adres odrzuca") {
+TRIAL("Gate: rejects an empty address") {
     bool threw = false;
 
     try {
@@ -81,7 +83,7 @@ TRIAL("Brama: pusty adres odrzuca") {
     ought(threw);
 }
 
-TRIAL("Strumień: nawiązanie i przyjęcie spotykają się") {
+TRIAL("Stream: connect and accept meet") {
     const net::Listener gate = standing();
 
     const Pair both = joined(gate);
@@ -94,7 +96,7 @@ TRIAL("Strumień: nawiązanie i przyjęcie spotykają się") {
     same(both.server.peer().port(), both.client.mine().port());
 }
 
-TRIAL("Strumień: bajty przechodzą w obie strony") {
+TRIAL("Stream: bytes pass both ways") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -108,7 +110,7 @@ TRIAL("Strumień: bajty przechodzą w obie strony") {
     same(text(both.client.read(64, soon).await()), std::string{"i wzajemnie"});
 }
 
-TRIAL("Strumień: większa paczka schodzi w całości") {
+TRIAL("Stream: a larger batch arrives whole") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -133,7 +135,7 @@ TRIAL("Strumień: większa paczka schodzi w całości") {
     ought(made == much);
 }
 
-TRIAL("Strumień: zamknięcie drugiej strony daje pustkę") {
+TRIAL("Stream: the other side closing gives emptiness") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -143,7 +145,7 @@ TRIAL("Strumień: zamknięcie drugiej strony daje pustkę") {
     same(static_cast<int>(both.server.read(64, soon).await().size()), 0);
 }
 
-TRIAL("Strumień: cisza kończy się terminem, a nie pustką") {
+TRIAL("Stream: silence ends with the deadline, not with emptiness") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -159,7 +161,7 @@ TRIAL("Strumień: cisza kończy się terminem, a nie pustką") {
     ought(late);
 }
 
-TRIAL("Strumień: drugie czytanie naraz dostaje odmowę") {
+TRIAL("Stream: a second read at the same time is refused") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -182,7 +184,7 @@ TRIAL("Strumień: drugie czytanie naraz dostaje odmowę") {
     }
 }
 
-TRIAL("Strumień: po czytaniu można czytać znowu") {
+TRIAL("Stream: after a read one can read again") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -196,7 +198,7 @@ TRIAL("Strumień: po czytaniu można czytać znowu") {
     same(text(both.server.read(64, soon).await()), std::string{"dwa"});
 }
 
-TRIAL("Strumień: zamknięcie przerywa czekające czytanie") {
+TRIAL("Stream: closing interrupts a waiting read") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -218,7 +220,7 @@ TRIAL("Strumień: zamknięcie przerywa czekające czytanie") {
     ought(amiss);
 }
 
-TRIAL("Strumień: nawiązanie do zamkniętego portu odrzuca") {
+TRIAL("Stream: connecting to a closed port is rejected") {
     net::Address where;
 
     {
@@ -240,7 +242,7 @@ TRIAL("Strumień: nawiązanie do zamkniętego portu odrzuca") {
     ought(amiss);
 }
 
-TRIAL("Strumień: pusty adres nie jest celem") {
+TRIAL("Stream: an empty address is not a target") {
     bool amiss = false;
 
     try {
@@ -252,7 +254,7 @@ TRIAL("Strumień: pusty adres nie jest celem") {
     ought(amiss);
 }
 
-TRIAL("Strumień: zamknięty nie przyjmuje zgłoszeń") {
+TRIAL("Stream: a closed one accepts no requests") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -270,7 +272,7 @@ TRIAL("Strumień: zamknięty nie przyjmuje zgłoszeń") {
     ought(amiss);
 }
 
-TRIAL("Brama: przyjmuje kilka połączeń po kolei") {
+TRIAL("Gate: accepts several connections in turn") {
     const net::Listener gate = standing();
 
     for (int which = 0; which < 3; ++which) {
@@ -282,7 +284,7 @@ TRIAL("Brama: przyjmuje kilka połączeń po kolei") {
     }
 }
 
-TRIAL("Centrala: po wszystkim nikt nie czeka") {
+TRIAL("Exchange: when all is done nobody waits") {
     const net::Listener gate = standing();
 
     {
@@ -299,10 +301,10 @@ TRIAL("Centrala: po wszystkim nikt nie czeka") {
     ought(net::Exchange::running().waiting() <= 1);
 }
 
-// Centrala trzyma jedno zgłoszenie na gniazdo na kierunek, więc drugie przyjmowanie nadpisywało
-// pierwsze: obietnica nie rozstrzygała się nigdy, termin przestawał istnieć, a brama i jej
-// deskryptor zostawały do końca programu.
-TRIAL("Brama: drugie przyjmowanie dostaje odmowę, a pierwsze żyje") {
+// The exchange holds one request per socket per direction, so a second accept must be refused
+// rather than overwrite the first: otherwise the first promise would never settle, its deadline
+// would cease to exist, and the gate and its descriptor would stay until the end of the program.
+TRIAL("Gate: a second accept is refused and the first lives on") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
     auto first = gate.accept(net::Patience{3000});
@@ -324,9 +326,9 @@ TRIAL("Brama: drugie przyjmowanie dostaje odmowę, a pierwsze żyje") {
     same(server.peer(), client.mine());
 }
 
-// Rozmiar podaje wołający, więc przydział bufora potrafi rzucić. Wyjątek rzucony po zajęciu
-// znacznika zostawiał go ustawionym na zawsze i gniazdo już nigdy nie czytało.
-TRIAL("Strumień: wyjątek z przydziału nie blokuje czytania na zawsze") {
+// The caller gives the size, so allocating the buffer can throw. An exception thrown after the
+// busy flag is taken must not leave the flag set, or the socket would never read again.
+TRIAL("Stream: an exception from allocation does not block reading forever") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
     auto waiting = gate.accept(net::Patience{3000});
@@ -349,9 +351,9 @@ TRIAL("Strumień: wyjątek z przydziału nie blokuje czytania na zawsze") {
     same(text(server.read(64, net::Patience{3000}).await()), std::string{"po wyjątku"});
 }
 
-// Zerowe czytanie wyglądało jak koniec strumienia: recv z zerową długością oddaje zero także na
-// zdrowym gnieździe, a zero bez błędu znaczy u nas „druga strona zamknęła".
-TRIAL("Strumień: zerowe czytanie nie udaje końca strumienia") {
+// A zero-length read must be refused: recv with zero length returns zero even on a healthy socket,
+// and zero without an error means "the other side closed" here.
+TRIAL("Stream: a zero-length read does not pretend to be the end of the stream") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
     auto waiting = gate.accept(soon);
@@ -374,8 +376,8 @@ TRIAL("Strumień: zerowe czytanie nie udaje końca strumienia") {
     same(text(server.read(64, soon).await()), std::string{"osiem!!!"});
 }
 
-// Po zamknięciu wszystkie metody odpowiadają grzecznie — te też muszą, zamiast naruszać pamięć.
-TRIAL("Strumień: adresy po zamknięciu są puste, a nie wybuchają") {
+// After closing, every method answers politely; these have to as well, instead of violating memory.
+TRIAL("Stream: addresses after closing are empty and do not blow up") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
 
     auto waiting = gate.accept(soon);
@@ -396,17 +398,18 @@ TRIAL("Strumień: adresy po zamknięciu są puste, a nie wybuchają") {
     ought(!other.mine().held());
 }
 
-// --- Anulowanie -------------------------------------------------------------------------------
+// --- Cancelling -------------------------------------------------------------------------------
 //
-// Zgłoszenie sieciowe jest jednocześnie biletem obietnicy, więc `cancel()` musiał je zdjąć
-// z centrali, a nie tylko odrzucić. Zanim to zrobił, przerwane czytanie zostawiało kierunek
-// gniazda zajęty **na zawsze**: wołający przestawał czekać, a strumień do końca programu
-// odpowiadał „zajęty" i przez `kept` trzymał otwarty deskryptor.
+// A network request is also the promise's ticket, so `cancel()` has to remove it from the exchange,
+// not just reject it. Otherwise an interrupted read would leave the socket's direction busy
+// forever: the caller would stop waiting, while the stream answered "busy" until the end of the
+// program and kept the descriptor open through `kept`.
 
 namespace {
 
-// Na uniksach kierunek zwalnia się w samym `cancel()`. Na Windows dopiero wtedy, gdy przerwane
-// zgłoszenie wróci z portu zakończeń — dlatego próbujemy chwilę, zamiast zakładać jedno z dwojga.
+// On Unix systems the direction is freed within `cancel()` itself. On Windows only once the
+// interrupted request comes back from the completion port, so we keep trying for a while instead of
+// assuming either one. Returns empty bytes if no read succeeds within 200 tries.
 Bytes patiently(const net::Stream& one, std::size_t most) {
     for (int tried = 0; tried < 200; ++tried) {
         auto next = one.read(most, soon);
@@ -421,6 +424,7 @@ Bytes patiently(const net::Stream& one, std::size_t most) {
     return Bytes{};
 }
 
+// Waits, for up to about a second, until the exchange has at most `below` requests waiting.
 void settling(std::size_t below) {
     for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > below; ++tried)
         Time::later(std::chrono::milliseconds{5}).await();
@@ -428,7 +432,7 @@ void settling(std::size_t below) {
 
 }
 
-TRIAL("Strumień: anulowane czytanie zwalnia kierunek") {
+TRIAL("Stream: a cancelled read frees the direction") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -452,7 +456,7 @@ TRIAL("Strumień: anulowane czytanie zwalnia kierunek") {
     same(text(patiently(both.server, 8)), std::string{"hej"});
 }
 
-TRIAL("Centrala: anulowanie zdejmuje zgłoszenie") {
+TRIAL("Exchange: cancelling removes the request") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -478,9 +482,9 @@ TRIAL("Centrala: anulowanie zdejmuje zgłoszenie") {
     same(net::Exchange::running().waiting(), before);
 }
 
-// Brama ma jedno zgłoszenie na siebie, więc porzucone przyjmowanie zamykało ją na głucho:
-// każde następne słyszało „zajęta", a połączenia stały w kolejce systemu.
-TRIAL("Brama: anulowane przyjmowanie nie zamyka bramy") {
+// A gate has one request for itself, so an abandoned accept must not shut it for good: every later
+// accept would hear "busy", and connections would stand in the system's queue.
+TRIAL("Gate: a cancelled accept does not shut the gate") {
     const net::Listener gate = standing();
 
     const std::size_t before = net::Exchange::running().waiting();
@@ -508,17 +512,16 @@ TRIAL("Brama: anulowane przyjmowanie nie zamyka bramy") {
     same(text(both.server.read(8, soon).await()), std::string{"znowu"});
 }
 
-// --- Anulowanie zwalnia miejsce od razu ----------------------------------------------------------
+// --- Cancelling frees the place at once ----------------------------------------------------------
 
-// **Anulowanie jest jedyną chwilą, w której wołający się o tym dowiaduje**, więc zaraz po nim ma
-// prawo poprosić o następną operację i ma ją dostać. Celowo bez żadnego odczekiwania pośrodku: to
-// właśnie odczekanie maskowało usterkę, bo znacznik zdejmowało dopiero spóźnione zakończenie na
-// wątku puli.
+// Cancelling is the only moment the caller learns about it, so right after it the caller may ask
+// for the next operation and must get it. There is deliberately no waiting in between: waiting
+// would hide a flag that is cleared only by a late completion on a pool thread.
 //
-// Na uniksach `withdraw` wyjmuje zgłoszenie z centrali i oddaje prawdę, więc te próby przechodziły
-// tu zawsze. Na Windows `CancelIoEx` tylko prosi i prawdy nie ma nigdy — i tam dopiero widać, czy
-// miejsce naprawdę zwolniono.
-TRIAL("Brama: po anulowaniu można od razu przyjmować znowu") {
+// On Unix systems `withdraw` takes the request out of the exchange and reports success, so there
+// these trials always pass. On Windows CancelIoEx only asks and never reports success, and only
+// there does it show whether the place was really freed.
+TRIAL("Gate: after cancelling one can accept again at once") {
     const net::Listener gate = standing();
 
     auto first = gate.accept(net::Patience{0});
@@ -537,10 +540,10 @@ TRIAL("Brama: po anulowaniu można od razu przyjmować znowu") {
     same(text(both.server.read(8, soon).await()), std::string{"znowu"});
 }
 
-// Czytanie, a **nie** pisanie: krótki zapis na pętli zwrotnej kończy się, zanim zdąży się go
-// anulować, więc niczego by tu nie sprawdzał. Czytanie stoi, dopóki coś nie przyjdzie — i dlatego
-// anulowanie trafia w operację naprawdę będącą w locie.
-TRIAL("Strumień: sto anulowanych czytań nie zajmuje kierunku na stałe") {
+// Reading, not writing: a short write on the loopback finishes before it can be cancelled, so it
+// would check nothing here. A read stands until something arrives, and that is why the
+// cancellation hits an operation that is really in flight.
+TRIAL("Stream: a hundred cancelled reads do not occupy the direction for good") {
     const net::Listener gate = standing();
 
     Pair both = joined(gate);
@@ -561,10 +564,10 @@ TRIAL("Strumień: sto anulowanych czytań nie zajmuje kierunku na stałe") {
     same(text(patiently(both.server, 6)), std::string{"po stu"});
 }
 
-// Sto obrotów, bo chodzi o wąskie okno. Gdyby którekolwiek anulowanie zostawiało miejsce zajęte,
-// następne przyjmowanie usłyszałoby „Brama już przyjmuje." — i to jest jedyna rzecz, której ta
-// próba pilnuje.
-TRIAL("Brama: sto anulowań pod rząd nie zajmuje jej na stałe") {
+// A hundred turns, because the window is narrow. If any cancellation left the place occupied, the
+// next accept would hear "The gate is already accepting.", and that is the only thing this trial
+// watches for.
+TRIAL("Gate: a hundred cancellations in a row do not occupy it for good") {
     const net::Listener gate = standing();
 
     for (int again = 0; again < 100; ++again) {
@@ -585,14 +588,13 @@ TRIAL("Brama: sto anulowań pod rząd nie zajmuje jej na stałe") {
     same(text(both.server.read(8, soon).await()), std::string{"po stu"});
 }
 
-// **Zapis po rozłączeniu nie ma prawa zabić procesu.** Domyślną reakcją na SIGPIPE jest śmierć,
-// a biblioteka sieciowa, która ubija program wołającego dlatego, że rozmówca się rozłączył, jest
-// nie do użycia. Zmierzone przed poprawką: program ginął z kodem 141, nie zdążywszy zgłosić ani
-// jednego zapisu.
+// A write after disconnection must not kill the process. The default reaction to SIGPIPE is death,
+// and a network library that kills the caller's program because the peer hung up is unusable;
+// unprotected, the program dies with exit code 141 before it can report a single write.
 //
-// Próba jest zarazem sprawdzeniem, że **proces przeżył** — gdyby sygnał wrócił, cała binarka
-// próbna umarłaby tutaj i nie doszłaby do końca.
-TRIAL("Strumień: zapis po rozłączeniu odmawia, zamiast zabijać proces") {
+// The trial is also the check that the process survived: if the signal came back, the whole test
+// binary would die here and never reach the end.
+TRIAL("Stream: a write after disconnection is refused instead of killing the process") {
     const net::Listener gate = standing();
 
     auto meeting = gate.accept(soon);
@@ -603,8 +605,8 @@ TRIAL("Strumień: zapis po rozłączeniu odmawia, zamiast zabijać proces") {
 
     one.close();
 
-    // Więcej, niż zmieści bufor gniazda — inaczej pierwszy zapis zszedłby do bufora i nigdy nie
-    // dotknąłby zerwanego połączenia.
+    // More than the socket buffer holds; otherwise the first write would go into the buffer and
+    // never touch the broken connection.
     const Bytes much(4 * 1024 * 1024, std::byte{0x41});
 
     bool told = false;
@@ -620,12 +622,12 @@ TRIAL("Strumień: zapis po rozłączeniu odmawia, zamiast zabijać proces") {
     ought(told);
 }
 
-// --- gniazdo lokalne ---------------------------------------------------------------------------
+// --- Local socket ------------------------------------------------------------------------------
 
 namespace {
 
-// Ścieżka w katalogu tymczasowym, niepowtarzalna w obrębie biegu. Nie w bieżącym katalogu, bo
-// zestaw prób ma prawo biec z miejsca tylko do odczytu.
+// A path in the temporary directory, unique within the run. Not in the current directory, because
+// the trial set may run from a read-only place.
 std::string nearby(const std::string& what) {
     static std::atomic<unsigned> counted{0};
 
@@ -638,7 +640,7 @@ std::string nearby(const std::string& what) {
 
 }
 
-TRIAL("Gniazdo lokalne: rozmowa idzie ścieżką, nie portem") {
+TRIAL("Local socket: the conversation goes by path, not by port") {
     const std::string said = nearby("rozmowa");
 
     const net::Listener gate{net::Address::local(said)};
@@ -656,16 +658,16 @@ TRIAL("Gniazdo lokalne: rozmowa idzie ścieżką, nie portem") {
 
     same(text(server.read(64, soon).await()), std::string{"dzień dobry"});
 
-    // Rozmówca po tej stronie zna ścieżkę bramy; nasz własny koniec nazwy nie ma i to jest
-    // prawda, a nie brak.
+    // The peer on this side knows the gate's path; our own end has no name, and that is the truth,
+    // not something missing.
     same(client.peer().path(), said);
 }
 
-// Po drugiej stronie gniazda lokalnego jest ten sam użytkownik — system to mówi, a demon
-// udostępniania pyta o to, zanim cokolwiek odpowie. Połączenie sieciowe nie ma tu nic do
-// powiedzenia: pustka. Windows mówi przez numer procesu rozmówcy; system, który go nie da
-// (stary, Wine), też daje pustkę, a nie fałsz.
-TRIAL("Gniazdo lokalne: rozmówca to ten sam użytkownik, a w sieci — pustka") {
+// On the other side of a local socket is the same user: the system says so, and the sharing daemon
+// asks about it before it answers anything. A network connection has nothing to say here: empty.
+// Windows tells through the peer's process number; a system that does not give it (old ones, Wine)
+// also gives empty, not false.
+TRIAL("Local socket: the peer is the same user, and on the network it is empty") {
     const std::string said = nearby("swoj");
 
     const net::Listener gate{net::Address::local(said)};
@@ -679,7 +681,7 @@ TRIAL("Gniazdo lokalne: rozmówca to ten sam użytkownik, a w sieci — pustka")
 #ifdef _WIN32
     ought(!server.kindred().has_value() || *server.kindred());
 
-    // Rura mówi o rozmówcy po obu stronach.
+    // A pipe tells about the peer on both sides.
     if (net::pipes::chosen()) {
         ought(server.kindred() == std::optional<bool>{true});
         ought(client.kindred() == std::optional<bool>{true});
@@ -699,11 +701,11 @@ TRIAL("Gniazdo lokalne: rozmówca to ten sam użytkownik, a w sieci — pustka")
 
 #ifndef _WIN32
 
-// Rozmówca innego użytkownika — dziecko, które przed połączeniem zostaje kimś innym. Zmienić
-// użytkownika umie tylko administrator, więc bez tych praw próba się pomija.
-TRIAL("Gniazdo lokalne: rozmówca innego użytkownika to nie my") {
+// A peer of another user: a child that becomes someone else before connecting. Only an
+// administrator can change the user, so without those rights the trial skips itself.
+TRIAL("Local socket: a peer of another user is not us") {
     if (::geteuid() != 0) {
-        std::cout << "        bez praw administratora nie da się być kimś innym — próba pominięta\n";
+        std::cout << "        without administrator rights one cannot become another user, trial skipped\n";
 
         return;
     }
@@ -753,8 +755,8 @@ TRIAL("Gniazdo lokalne: rozmówca innego użytkownika to nie my") {
 
 #endif
 
-// Rura nazwana pliku nie zakłada wcale — wtedy nie ma czego sprzątać.
-TRIAL("Gniazdo lokalne: brama sprząta po sobie plik") {
+// A named pipe creates no file at all, and then there is nothing to clean up.
+TRIAL("Local socket: the gate cleans up its file") {
     const std::string said = nearby("sprzatanie");
 
     {
@@ -767,9 +769,10 @@ TRIAL("Gniazdo lokalne: brama sprząta po sobie plik") {
     ought(!fs::exists(said).await());
 }
 
-// Kilku klientów łączy się, zanim brama zacznie przyjmować, i wszyscy dochodzą. Przy rurze klient,
-// dla którego nie ma wolnej instancji, czeka na nią — a nie dostaje odmowy, bo nazwa nie znika.
-TRIAL("Gniazdo lokalne: kilku rozmówców naraz, także przed przyjęciem") {
+// Several clients connect before the gate starts accepting, and all of them get through. With a
+// pipe, a client for which there is no free instance waits for one instead of being refused,
+// because the name does not disappear.
+TRIAL("Local socket: several peers at once, also before accepting") {
     const std::string said = nearby("kilku");
 
     const net::Listener gate{net::Address::local(said)};
@@ -794,7 +797,8 @@ TRIAL("Gniazdo lokalne: kilku rozmówców naraz, także przed przyjęciem") {
 
     same(heard, (std::vector<std::string>{"0", "1", "2"}));
 
-    // Odpowiedź i koniec: zamknięta strona serwera to dla klienta pustka po przeczytaniu reszty.
+    // An answer and the end: for the client a closed server side is emptiness after reading the
+    // rest.
     servers.front().write(bytes("pa"), soon).await();
     servers.front().close();
     servers.erase(servers.begin());
@@ -819,9 +823,9 @@ TRIAL("Gniazdo lokalne: kilku rozmówców naraz, także przed przyjęciem") {
     ought(answered);
 }
 
-// Zamknięcie jednej kopii strumienia kończy rozmowę także wtedy, gdy druga kopia jeszcze żyje — tak
-// jak `shutdown` gniazda. Pusty zapis po drodze nie udaje końca.
-TRIAL("Gniazdo lokalne: zamknięcie kopii kończy rozmowę, a pusty zapis jej nie kończy") {
+// Closing one copy of a stream ends the conversation even while the other copy still lives, like
+// `shutdown` on a socket. An empty write along the way does not pretend to be the end.
+TRIAL("Local socket: closing a copy ends the conversation, and an empty write does not") {
     const std::string said = nearby("koniec");
 
     const net::Listener gate{net::Address::local(said)};
@@ -839,7 +843,7 @@ TRIAL("Gniazdo lokalne: zamknięcie kopii kończy rozmowę, a pusty zapis jej ni
 
     const net::Stream twin = client;
 
-    // Czytanie czeka, zanim druga strona się zamknie — koniec przychodzi do czekającego.
+    // The read waits before the other side closes; the end arrives to the one waiting.
     auto waiting = server.read(16, soon);
 
     client.close();
@@ -848,11 +852,12 @@ TRIAL("Gniazdo lokalne: zamknięcie kopii kończy rozmowę, a pusty zapis jej ni
     ought(twin.held());
 }
 
-// Przyjmowanie anulowane, potem nowe: klient trafia do nowego, a nie do instancji obok, na którą nikt
-// nie czeka. Kilka razy, bo przy rurze to kwestia tego, w którą instancję trafi klient. Chwila po
-// anulowaniu jest dla rury: anulowana instancja słucha, dopóki system jej nie odda, a klient, który
-// trafi w nią w tej chwili, dostaje zerwaną rurę i łączy się od nowa.
-TRIAL("Gniazdo lokalne: po anulowanym przyjmowaniu klient trafia do następnego") {
+// An accept cancelled, then a new one: the client reaches the new one, not an instance beside it
+// that nobody waits on. Several times, because with a pipe it is a matter of which instance the
+// client hits. The pause after cancelling is for the pipe: a cancelled instance keeps listening
+// until the system gives it back, and a client that hits it at that moment gets a broken pipe and
+// connects again.
+TRIAL("Local socket: after a cancelled accept the client reaches the next one") {
     const std::string said = nearby("anulowane");
 
     const net::Listener gate{net::Address::local(said)};
@@ -876,9 +881,10 @@ TRIAL("Gniazdo lokalne: po anulowanym przyjmowaniu klient trafia do następnego"
     }
 }
 
-// Zamknięta brama oddaje ścieżkę od razu — także z przyjmowaniem w toku — a połączona przed chwilą
-// rozmowa po zamknięciu nie zostawia bramy bez wolnego miejsca: następny klient czeka na przyjęcie.
-TRIAL("Gniazdo lokalne: zamknięta brama oddaje ścieżkę, a między przyjęciami jest miejsce dla klienta") {
+// A closed gate gives up its path at once, also with an accept in progress, and a conversation
+// connected a moment ago does not, once closed, leave the gate without a free place: the next
+// client waits to be accepted.
+TRIAL("Local socket: a closed gate gives up its path, and between accepts there is room for a client") {
     const std::string said = nearby("oddana");
 
     {
@@ -897,7 +903,7 @@ TRIAL("Gniazdo lokalne: zamknięta brama oddaje ścieżkę, a między przyjęcia
             told = true;
         }
 
-        // Od razu, nie po terminie: zamknięcie przerywa czekające przyjmowanie.
+        // At once, not after the deadline: closing interrupts the waiting accept.
         ought(told);
         ought(std::chrono::steady_clock::now() - closed < std::chrono::seconds{2});
     }
@@ -915,7 +921,8 @@ TRIAL("Gniazdo lokalne: zamknięta brama oddaje ścieżkę, a między przyjęcia
         client.close();
     }
 
-    // Między przyjęciami, po zamknięciu jedynej rozmowy: klient łączy się, zanim brama zacznie przyjmować.
+    // Between accepts, after closing the only conversation: the client connects before the gate
+    // starts accepting.
     auto joining = net::Stream::connect(net::Address::local(said), soon);
 
     std::this_thread::sleep_for(std::chrono::milliseconds{300});
@@ -932,8 +939,8 @@ TRIAL("Gniazdo lokalne: zamknięta brama oddaje ścieżkę, a między przyjęcia
 
 #ifdef _WIN32
 
-// Ścieżki Windows nie rozróżniają wielkości liter — rura z tej samej ścieżki inaczej zapisanej też.
-TRIAL("Gniazdo lokalne: na Windows ścieżka bez względu na wielkość liter") {
+// Windows paths ignore case, and so does a pipe for the same path spelled differently.
+TRIAL("Local socket: on Windows the path ignores case") {
     const std::string said = nearby("Wielkie");
 
     std::string lowered = said;
@@ -952,10 +959,10 @@ TRIAL("Gniazdo lokalne: na Windows ścieżka bez względu na wielkość liter") 
 
 #endif
 
-TRIAL("Gniazdo lokalne: martwy plik nie blokuje nasłuchiwania") {
+TRIAL("Local socket: a dead file does not block listening") {
     const std::string said = nearby("martwy");
 
-    // Plik, pod którym nikt nie słucha — dokładnie to, co zostaje po programie, który padł.
+    // A file nobody listens under, exactly what a program that crashed leaves behind.
     fs::write(said, Bytes{}).await();
 
     ought(fs::exists(said).await());
@@ -973,7 +980,7 @@ TRIAL("Gniazdo lokalne: martwy plik nie blokuje nasłuchiwania") {
     same(text(server.read(16, soon).await()), std::string{"stoję"});
 }
 
-TRIAL("Gniazdo lokalne: żywej bramy druga nie przykrywa") {
+TRIAL("Local socket: a second gate does not cover a live one") {
     const std::string said = nearby("zajete");
 
     const net::Listener first{net::Address::local(said)};
@@ -988,7 +995,7 @@ TRIAL("Gniazdo lokalne: żywej bramy druga nie przykrywa") {
 
     ought(told);
 
-    // Pierwsza brama ma dalej działać — odmowa drugiej nie może jej sprzątnąć pliku.
+    // The first gate has to keep working; refusing the second must not clean up its file.
     auto meeting = first.accept(soon);
     auto joining = net::Stream::connect(net::Address::local(said), soon);
 

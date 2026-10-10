@@ -11,20 +11,51 @@
 
 namespace talcite::ui {
 
-// Pasek jest jedną kratką szeroki: strzałka na początku, strzałka na końcu, a między nimi tor
-// z suwakiem. Suwak mówi dwie rzeczy naraz — gdzie jesteśmy **i** jaka część całości mieści się
-// w oknie — bo jego długość jest ułamkiem toru w tej samej proporcji.
+// A scrollbar is one cell wide: an arrow at the start, an arrow at the end, and between them a
+// track with a thumb. The thumb says two things at once, where we are and how much of the whole
+// fits in the window, because its length is the same fraction of the track.
+//
+// This is an internal header: the library's API does not draw bars, the widgets do. The name of the
+// bar's role stays public in the widgets (`scrollbar_role`), because that is what reaches the skin.
+//
+// `Scrollbar` is one bar as a single object. The caller fills the fields by name and calls `draw`:
+//
+//     Scrollbar{.at = Scrollbar::edge(given, seen, true), .much = given.high, .shift = shift_,
+//               .whole = rows, .window = given.high, .skin = skin(), .role = role}.draw(made);
+//
+// `at` is the bar's first cell in the coordinates of the view being painted (the top one for a
+// vertical bar, the left one for a horizontal bar); `much` is the bar's length in cells, arrows
+// included; `shift`, `whole` and `window` are the scroll offset, the length of the whole and the
+// length of the window, in any units as long as they are the same: rows, columns or bytes. Both
+// references (`skin`, `role`) live shorter than the expression that creates the bar: the object is
+// not for keeping, only for one drawing. `Scrollbar::track` (inline in the header) copies the
+// position and numbers into a `Track`.
+//
+// `Track` holds the position and numbers of one bar, all that is needed to draw it and to hit it
+// with the mouse. It has no skin and no role, so it can be kept until the next frame.
+//
+// `Part` is the part of the bar under a cell: the arrows (one row), the track before and after the
+// thumb (one page), the thumb (dragging). `Asked` says what to do after a mouse event on the bar:
+// the part the press hit and, while the thumb is dragged, the new offset in the bar's units.
+//
+// `Grip` is the mouse handling on a bar, shared by every scrolling widget: the table, the page, the
+// list and the scroller each draw the bar their own way, but hitting, grabbing and dragging work
+// the same everywhere, so they are computed once, here. After each paint the widget says where the
+// bar ended up (in its own coordinates) and asks on each event what to do; it does the scrolling
+// itself, in its own units. `Grip::over` (inline) tells whether a cell lies on the bar, and
+// `Grip::held` whether the thumb is being dragged.
 namespace {
 
-// **Pasek liczy proporcję, nie sztuki.** Wolno mu więc podzielić wszystkie trzy liczby wspólnym
-// dzielnikiem, byle całość zmieściła się w `int` — a to jest jedyny sposób, żeby dokument
-// o dwóch miliardach wierszy albo bajtów w ogóle dał się narysować.
+// The bar computes a proportion, not counts. So it may divide all three numbers by a common
+// divisor, as long as the whole fits in `int`; that is the only way a document of two billion
+// rows or bytes can be drawn at all.
 struct Scaled {
     int shift = 0;
     int whole = 0;
     int window = 0;
 };
 
+// The three numbers divided by the smallest power of two that brings `whole` within `int`.
 Scaled scaled(std::size_t shift, std::size_t whole, std::size_t window) {
     constexpr auto brim = static_cast<std::size_t>(std::numeric_limits<int>::max());
 
@@ -36,7 +67,8 @@ Scaled scaled(std::size_t shift, std::size_t whole, std::size_t window) {
             static_cast<int>(window / by)};
 }
 
-// Dzielnik, którym `scaled` zmieściło liczby w `int` — potrzebny w drugą stronę, przy ciągnięciu.
+// The divisor `scaled` used to fit the numbers in `int`, needed in the other direction, when the
+// thumb is dragged.
 std::size_t divisor(std::size_t whole) {
     constexpr auto brim = static_cast<std::size_t>(std::numeric_limits<int>::max());
 
@@ -47,8 +79,8 @@ std::size_t divisor(std::size_t whole) {
     return by;
 }
 
-// **Rozkład paska liczony w jednym miejscu** — rysowanie i mysz muszą widzieć suwak w tych samych
-// kratkach, inaczej klik w narysowany suwak trafiałby w tor obok.
+// The bar's layout, computed in one place: drawing and the mouse must see the thumb in the same
+// cells, otherwise a click on the drawn thumb would hit the track next to it.
 struct Laid {
     int track = 0;
     int thumb = 0;
@@ -56,6 +88,8 @@ struct Laid {
     int most = 0;
 };
 
+// The track length (the bar without its two arrows), the thumb length, the thumb's first cell on
+// the track and the largest scaled offset.
 Laid laid_out(const Track& one) {
     Laid made;
 
@@ -67,12 +101,12 @@ Laid laid_out(const Track& one) {
 
     made.most = std::max(small.whole - small.window, 0);
 
-    // Gdy treść mieści się w oknie, suwak zajmuje cały tor. Inaczej trzeba by rysować pasek,
-    // który niczego nie pokazuje, a mimo to zajmuje miejsce.
+    // When the content fits in the window, the thumb fills the whole track. Otherwise we would
+    // have to draw a bar that shows nothing and still takes space.
     //
-    // **Iloczyny liczymy w 64 bitach.** Skalowanie mieści w `int` każdą z liczb z osobna, ale nie
-    // ich iloczyn z długością toru: plik trzech miliardów bajtów przewinięty do połowy dawał
-    // `room * shift` rzędu miliardów razy kilka i suwak lądował byle gdzie.
+    // Products are computed in 64 bits. Scaling fits each number in `int` on its own, but not its
+    // product with the track length: for a three-billion-byte file scrolled halfway, `room * shift`
+    // is several billion, and in `int` the thumb would land anywhere.
     const auto widened = [](int value) { return static_cast<std::int64_t>(value); };
 
     made.thumb = made.most == 0 ? made.track
@@ -88,16 +122,22 @@ Laid laid_out(const Track& one) {
 
 }
 
+// The bar's first cell at the edge, in the coordinates of the visible area `seen` of a widget of
+// size `given`: on the right for a vertical bar, at the bottom for a horizontal one. Every scroller
+// needs this, and it is exactly the kind of arithmetic that comes out one cell off in each copy.
 Spot Scrollbar::edge(Size given, Area seen, bool upright) {
     return upright ? Spot{given.wide - 1 - seen.at.x, -seen.at.y}
                    : Spot{-seen.at.x, given.high - 1 - seen.at.y};
 }
 
+// Draws the arrows, the track and the thumb into `into`, with the glyphs and styles of `role` and
+// its .up/.down/.left/.right, .track and .thumb variants from the skin.
 void Scrollbar::draw(View& into) const {
     if (much <= 0) return;
 
-    // Pasek pyta skórkę sam, bo nie jest węzłem i nie ma przodka, przez którego mógłby do niej
-    // dojść. Wołający podaje ją z `Node::skin()` — jedno wskazanie zamiast dwóch stylów w polach.
+    // The bar asks the skin itself, because it is not a node and has no ancestor through which
+    // to reach it. The caller passes it from `Node::skin()`: one reference instead of two styles in
+    // the fields.
     const Style look = skin.style(role);
     const Style full = skin.style(role + ".thumb");
 
@@ -123,10 +163,13 @@ void Scrollbar::draw(View& into) const {
     }
 }
 
-// Pasek z ostatniej klatki — albo jego brak, gdy treść mieści się bez niego. Chwytu brak paska
-// nie puszcza: ruch bez paska i tak nic nie ciągnie, a puszczenie przycisku chwyt zdejmuje.
+// Records the bar from the last frame, or its absence when the content fits without it. A missing
+// bar does not release the grip: motion without a bar drags nothing anyway, and releasing the
+// button removes the grip.
 void Grip::laid(std::optional<Track> given) { track_ = given; }
 
+// The part of the bar under the cell `here` (in the widget's coordinates); `Part::none` off the bar
+// or when there is no bar.
 Part Grip::part(Spot here) const {
     if (!track_.has_value() || track_->much <= 0) return Part::none;
 
@@ -152,11 +195,12 @@ Part Grip::part(Spot here) const {
     return Part::thumb;
 }
 
-// Wciśnięcie lewym na pasku mówi, w co trafiło; na suwaku zapamiętuje, w której jego kratce go
-// chwycono, i prosi korzeń o przytrzymanie — ruch ma dochodzić, choćby kursor zjechał z paska, jak
-// przy ciągnięciu okna. Ruch przy chwycie daje przewinięcie, przy którym suwak stoi pod kursorem
-// tą samą kratką; tor liczy się w tych samych proporcjach co przy rysowaniu, a wynik wraca do
-// jednostek paska (wiersze, bajty) przez dzielnik skalowania. Puszczenie kończy chwyt.
+// A left press on the bar says what it hit; on the thumb it remembers which of the thumb's cells
+// was grabbed and asks the root to capture the mouse, so that motion keeps arriving even when the
+// pointer leaves the bar, as when dragging a window. Motion while grabbed yields the offset at
+// which the same cell of the thumb stays under the pointer; the track is computed in the same
+// proportions as for drawing, and the result returns to the bar's units (rows, bytes) through the
+// scaling divisor. Releasing the button ends the grip.
 Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
     if (what.press() == Press::up) {
         const bool was = grip_.has_value();
@@ -181,8 +225,8 @@ Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
         const auto scaled_to = static_cast<std::size_t>(
             (static_cast<std::int64_t>(cell) * laid.most + room / 2) / room);
 
-        // Kratka nie wychodzi poza tor, więc wynik nie wychodzi poza ostatnie przewinięcie — także
-        // po pomnożeniu przez dzielnik skalowania, którym je wcześniej podzielono.
+        // The cell does not leave the track, so the result does not go past the last offset, also
+        // after multiplying by the scaling divisor it was divided by before.
         return Asked{Part::thumb, scaled_to * divisor(one.whole)};
     }
 

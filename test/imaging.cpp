@@ -25,6 +25,7 @@ using namespace talcite;
 
 namespace {
 
+// Turns a lowercase hexadecimal string into bytes, two digits per byte.
 [[nodiscard]] Bytes lump(std::string_view hex) {
     Bytes made;
 
@@ -43,11 +44,12 @@ namespace {
     return made;
 }
 
-// **Gęstość siatki, wymiar kratki, barwność i znaki leżą na korzeniu**, bo są faktem o powierzchni,
-// nie o widżecie. Próba jest tu w tej samej roli co `Term`: to ona je stawia — domyślnie jak terminal,
-// który umie wszystko.
+// The grid density, the cell size, the color depth and the character set live on the root, because
+// they are facts about the surface, not about a widget. Here the trial plays the role of `Term`: it
+// sets them, by default like a terminal that can do everything.
 class Sheet : public ui::Root {
 public:
+    // Sets the cell size and the block kind, full colors and Unicode.
     explicit Sheet(ui::Size given = {10, 20}, ui::Blocks kind = ui::Blocks::sextants) {
         cell(given);
         blocks(kind);
@@ -56,14 +58,16 @@ public:
     }
 };
 
-// Węzeł proszący o obudzenie o stałej porze — po to, żeby sprawdzić samo zbieranie w korzeniu,
-// bez obrazka i bez zegara.
+// A node asking to be woken up after a fixed time, to check the gathering in the root by itself,
+// without a picture and without a clock.
 class Ticking : public ui::Node {
 public:
     explicit Ticking(int after) : after_(after) {}
 
+    // Room for a few children, so the node can stand above others.
     [[nodiscard]] int capacity() const override { return 4; }
 
+    // Always asks to be woken up after the fixed time.
     [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override {
         return std::chrono::milliseconds{after_};
     }
@@ -72,7 +76,7 @@ private:
     int after_ = 0;
 };
 
-// GIF 16x12, cztery klatki po 40, 100, 100 i 120 ms.
+// A 16x12 GIF, four frames of 40, 100, 100 and 120 ms.
 constexpr std::string_view leaping =
     "47494638396110000c00810000000000ff000000000000000021ff0b4e45545343415045322e300301000000"
     "21f90404040000002c0000000010000c000008220003080c00a0a0c18305071244c85021c386031f4a9c48b1"
@@ -82,17 +86,17 @@ constexpr std::string_view leaping =
     "0002002c060004000700060081000000ff000000000000000008190001080420a0e0408206050658186020c3"
     "0005053c8cf83020003b";
 
-// GIF 4x3, dwie klatki: pierwsza dwadzieścia milisekund, druga trzy sekundy. Krótka na początku
-// i długa po niej znaczy, że **po stu milisekundach jesteśmy w drugiej na pewno** — z prawie
-// trzysekundowym zapasem, więc próba nie zależy od obciążenia maszyny.
+// A 4x3 GIF with two frames: the first twenty milliseconds, the second three seconds. Short at the
+// start and long after it means that after a hundred milliseconds we are certainly in the second,
+// with almost three seconds to spare, so the trial does not depend on the machine's load.
 constexpr std::string_view quick =
     "47494638396104000300810000ff000000000000000000000021ff0b4e45545343415045322e300301000000"
     "21f90400020000002c00000000040003000008080001081c485060400021f904012c0101002c000000000400"
     "03008100ff0000000000000000000008080001081c48506040003b";
 
-// Widżet na atrapie: próby sprawdzają widżet — proporcję, zegar, przewijanie — a nie dekoder,
-// który mieszka w talcite-adapters razem ze swoimi próbami. Szew i bajty idą w domknięciu
-// `figured`; widżet dostaje źródło.
+// The widget on a fake: the trials check the widget (aspect ratio, clock, scrolling), not the
+// decoder, which lives in talcite-adapters together with its own trials. The seam and the bytes go
+// into the closure of `figured`; the widget gets the source.
 [[nodiscard]] std::shared_ptr<ui::Image> shown(std::string_view hex) {
     const auto one = std::make_shared<ui::Image>();
 
@@ -101,8 +105,9 @@ constexpr std::string_view quick =
     return one;
 }
 
-// Plik dekoduje się na puli po pierwszym malowaniu i wraca przez pętlę: obracamy i malujemy, aż
-// zamówienie wróci — jak przy szpuli.
+// The file is decoded on the pool after the first paint and comes back through the loop: we turn
+// the loop and paint until the request comes back, as with the spool. Returns false if it does not
+// settle in time.
 [[nodiscard]] bool settled(Loop& loop, ui::Root& top, const ui::Image& one, ui::Size room) {
     for (int tries = 0; tries < 500; ++tries) {
         (void)top.render({{0, 0}, room});
@@ -118,16 +123,16 @@ constexpr std::string_view quick =
 
 }
 
-// --- Co widżet wie przed układem ---------------------------------------------------------------
+// --- What the widget knows before layout ---------------------------------------------------------
 
-// **Dekodowanie liczy, więc idzie torem `cpu`.** Próba zajmuje cały sufit toru liczącego
-// czekającymi zadaniami: źródło obrazu ma wtedy stać w kolejce, a ruszyć dopiero po zwolnieniu
-// miejsca. Na torze zwykłym ruszyłoby od razu, obok zajętych.
+// Decoding computes, so it runs on the `cpu` lane. The trial fills the whole limit of the computing
+// lane with waiting tasks: the picture's source must then wait in the queue and start only after
+// room is freed. On the ordinary lane it would start at once, next to the busy ones.
 //
-// Stan zajmujących zadań leży we wspólnym wskaźniku, nie na stosie próby: zadanie, które śpi
-// w chwili zwolnienia, budzi się już po jej końcu, a odczyt z martwej ramki potrafił zwrócić
-// „jeszcze nie" i zawiesić robotnika na zawsze.
-TRIAL("figured: dekodowanie biegnie torem cpu") {
+// The state of the occupying tasks lives behind a shared pointer, not on the trial's stack: a task
+// that sleeps at the moment of release wakes up after the trial has ended, and reading a dead stack
+// frame could return "not yet" and hang the worker forever.
+TRIAL("figured: decoding runs on the cpu lane") {
     struct Hold {
         std::atomic<bool> release{false};
         std::atomic<int> held{0};
@@ -171,7 +176,7 @@ TRIAL("figured: dekodowanie biegnie torem cpu") {
     same(hold->left.load(), most);
 }
 
-TRIAL("Image: pusty nic nie niesie i o nic nie prosi") {
+TRIAL("Image: an empty one holds nothing and asks for nothing") {
     const ui::Image one;
 
     ought(!one.held());
@@ -179,11 +184,11 @@ TRIAL("Image: pusty nic nie niesie i o nic nie prosi") {
     ought(!one.due().has_value());
 }
 
-// Rozmiar musi być znany **przed** malowaniem, bo pyta o niego układ — więc `hold` czyta go
-// z nagłówka (`shaped`), bez dekodera i od ręki. Liczba klatek znana jest dopiero, gdy wróci
-// zamówienie po pierwszym układzie, bo GIF nie mówi jej w nagłówku i policzyć ją znaczy przejść
-// cały plik.
-TRIAL("Image: po wczytaniu zna format i rozmiar, klatki dopiero po zamówieniu") {
+// The size must be known before painting, because the layout asks for it, so `hold` reads it from
+// the header (`shaped`), without a decoder and at once. The number of frames is known only when the
+// request after the first layout comes back, because GIF does not state it in the header and
+// counting it means going through the whole file.
+TRIAL("Image: after loading it knows the format and size, the frames only after the request") {
     Loop loop;
     Sheet sheet;
 
@@ -207,10 +212,11 @@ TRIAL("Image: po wczytaniu zna format i rozmiar, klatki dopiero po zamówieniu")
     same(one->frames(), std::size_t{4});
 }
 
-// Odmowa dostawcy i brak dostawcy kończą się tak samo: widżet pusty, format z nagłówka. To jedyne
-// miejsce, gdzie wyjątek szwu nie idzie wyżej — widżet ma pokazać, co może, a legenda po
-// `kind()` powie „JPEG, bez dostawcy".
-TRIAL("Image: odmowa dostawcy nie niesie nic, format zostaje z nagłówka") {
+// A refusal by the provider and no provider at all end the same way: an empty widget, with the
+// format from the header. This is the only place where the seam's exception does not go further up:
+// the widget is to show what it can, and the legend, through `kind()`, will say "JPEG, no
+// provider".
+TRIAL("Image: a provider's refusal holds nothing, the format stays from the header") {
     Loop loop;
     Sheet sheet;
 
@@ -221,8 +227,9 @@ TRIAL("Image: odmowa dostawcy nie niesie nic, format zostaje z nagłówka") {
     same(static_cast<int>(one->format()), static_cast<int>(Format::jpeg));
     ought(!one->held());
 
-    // Nagłówek z wymiarami, ale dostawca odmawia: rozmiar jest do pierwszego zamówienia, potem
-    // widżet pusty — pokazuje, co może, a legenda po `kind()` powie, czego nie.
+    // A header with dimensions, but the provider refuses: the size is there until the first
+    // request, then the widget is empty. It shows what it can, and the legend, through `kind()`,
+    // will say what it cannot.
     const auto other = std::make_shared<ui::Image>();
 
     other->hold(figured(lump("ffd8ffe100104578696600000000000000000000ffc0001108001000200301220002110103110100"),
@@ -237,7 +244,7 @@ TRIAL("Image: odmowa dostawcy nie niesie nic, format zostaje z nagłówka") {
     same(static_cast<int>(other->format()), static_cast<int>(Format::jpeg));
 }
 
-TRIAL("Image: bez dostawcy plik zostaje pusty, a obrazek z kodu działa") {
+TRIAL("Image: without a provider a file stays empty, while a picture made in code works") {
     const auto one = std::make_shared<ui::Image>();
 
     one->hold(figured(lump(leaping), {}));
@@ -256,11 +263,12 @@ TRIAL("Image: bez dostawcy plik zostaje pusty, a obrazek z kodu działa") {
     same(static_cast<int>(one->format()), static_cast<int>(Format::none));
 }
 
-// **Widżet zna tylko źródło.** Bajty, szew, dekoder — nic z tego nie jest mu potrzebne: `Figure`
-// zrobiony ręcznie, z funkcją oddającą piksele w żądanym rozmiarze, wystarcza. Rozmiar, o który
-// prosi, jest rozmiarem kratek pomnożonym przez ziarno siatki — przy znakach blokowych 1×2 na
-// kratkę — a po zmianie miejsca zamawia od nowa, z nowym rozmiarem; do tego czasu maluje stare.
-TRIAL("Image: źródło woła się z rozmiarem z układu, a po zmianie miejsca od nowa") {
+// The widget knows only the source. Bytes, the seam, the decoder: it needs none of them; a
+// hand-made `Figure` with a function that returns pixels in the requested size is enough. The size
+// it asks for is the size in cells multiplied by the grid's grain (1×2 per cell with block
+// characters), and after a change of place it requests again, with the new size; until then it
+// paints the old one.
+TRIAL("Image: the source is called with the size from the layout, and again after a change of place") {
     Loop loop;
     Sheet sheet;
 
@@ -296,18 +304,18 @@ TRIAL("Image: źródło woła się z rozmiarem z układu, a po zmianie miejsca o
     ought(asked->front().wide > 0);
     ought(asked->front().high > 0);
 
-    // To samo miejsce — nic nowego nie zamawia.
+    // The same place: nothing new is requested.
     (void)sheet.render({{0, 0}, {40, 20}});
     (void)loop.turn();
 
     same(asked->size(), std::size_t{1});
 
-    // Mniejsze miejsce — zamawia od nowa, z mniejszym rozmiarem.
+    // A smaller place: it requests again, with a smaller size.
     ought(settled(loop, sheet, *one, {20, 10}));
     same(asked->size(), std::size_t{2});
     ought(asked->back().wide < asked->front().wide);
 
-    // Bez Unicode ziarno jest inne, więc zamawia od nowa — raz, a nie przy każdej klatce.
+    // Without Unicode the grain is different, so it requests again: once, not on every frame.
     sheet.unicode(false);
 
     ought(settled(loop, sheet, *one, {20, 10}));
@@ -320,9 +328,9 @@ TRIAL("Image: źródło woła się z rozmiarem z układu, a po zmianie miejsca o
     same(asked->size(), std::size_t{3});
 }
 
-// Odmowa źródła — odrzucona obietnica, nie pusty wynik — opróżnia widżet tak samo: rodzaj zostaje,
-// kształt znika, żeby układ przestał prosić o miejsce.
-TRIAL("Image: odrzucona obietnica źródła opróżnia widżet, rodzaj zostaje") {
+// A refusal by the source (a rejected promise, not an empty result) empties the widget the same
+// way: the kind stays, the shape goes, so that the layout stops asking for room.
+TRIAL("Image: a rejected promise from the source empties the widget, the kind stays") {
     Loop loop;
     Sheet sheet;
 
@@ -347,11 +355,11 @@ TRIAL("Image: odrzucona obietnica źródła opróżnia widżet, rodzaj zostaje")
     same(static_cast<int>(one->format()), static_cast<int>(Format::bmp));
 }
 
-// --- Proporcja ---------------------------------------------------------------------------------
+// --- Aspect ratio --------------------------------------------------------------------------------
 
-// **Kratka nie jest kwadratem.** Obrazek 16 na 12 przy kratce 10 na 20 zajmuje czterdzieści kratek
-// wszerz i piętnaście wzdłuż, bo wysokość liczy się z prawdziwej proporcji kratki.
-TRIAL("Image: proporcja liczy się z wymiaru kratki") {
+// A cell is not a square. A 16 by 12 picture with a 10 by 20 cell takes forty cells across and
+// fifteen down, because the height is computed from the cell's true proportions.
+TRIAL("Image: the aspect ratio is computed from the cell size") {
     Sheet sheet;
 
     const auto one = shown(leaping);
@@ -362,20 +370,20 @@ TRIAL("Image: proporcja liczy się z wymiaru kratki") {
     same(one->wants({40, 20}).high, 15);
 }
 
-// Poza drzewem nie ma kogo zapytać o kratkę, więc widżet przyjmuje jeden do dwóch — tak samo, jak
-// gdy terminal nie odpowie na `16t`.
-TRIAL("Image: bez wymiaru kratki przyjmujemy jeden do dwóch") {
+// Outside a tree there is nobody to ask about the cell, so the widget assumes one to two, the same
+// as when the terminal does not answer `16t`.
+TRIAL("Image: without a cell size we assume one to two") {
     const auto one = shown(leaping);
 
     same(one->wants({40, 20}).wide, 40);
     same(one->wants({40, 20}).high, 15);
 }
 
-// --- Ustawienie w polu -------------------------------------------------------------------------
+// --- Placement in the area -----------------------------------------------------------------------
 
-// Podgląd staje **na środku**, jak w Midnight Commanderze, a reszta pola zostaje nierysowana —
-// czyli widać przez nią tło rodzica.
-TRIAL("Image: obrazek staje na środku pola") {
+// The preview stands in the middle, as in Midnight Commander, and the rest of the area is left
+// unpainted, so the parent's background shows through it.
+TRIAL("Image: the picture stands in the middle of the area") {
     Loop loop;
     Sheet sheet;
 
@@ -387,7 +395,7 @@ TRIAL("Image: obrazek staje na środku pola") {
 
     const View made = sheet.render({{0, 0}, {40, 20}});
 
-    // Piętnaście wierszy w polu dwudziestu: dwa puste u góry, trzy u dołu.
+    // Fifteen rows in an area of twenty: two empty at the top, three at the bottom.
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::none));
     same(static_cast<int>(made.at({0, 1}).shown), static_cast<int>(Shown::none));
     ought(made.at({0, 2}).shown != Shown::none);
@@ -396,10 +404,11 @@ TRIAL("Image: obrazek staje na środku pola") {
     same(static_cast<int>(made.at({0, 19}).shown), static_cast<int>(Shown::none));
 }
 
-// **Brzeg obrazu w oknie ma tło okna.** Kratka pokryta częściowo nie ma papieru z roli obrazu, więc idzie
-// tuszem i bierze tło ramki, w której stoi. Dawniej zostawała przezroczysta aż do terminala, a ten
-// malował tam swoje tło — czarne kratki wokół logo w granatowym oknie twa.
-TRIAL("Image: brzeg obrazu bierze tło okna, w którym stoi") {
+// The edge of a picture in a window has the window's background. A partly covered cell has no paper
+// from the picture's role, so it goes as ink and takes the background of the frame it stands in.
+// Left transparent all the way to the terminal, it would show the terminal's own background
+// instead.
+TRIAL("Image: the picture's edge takes the background of the window it stands in") {
     Sheet sheet;
 
     Style frame{};
@@ -408,7 +417,8 @@ TRIAL("Image: brzeg obrazu bierze tło okna, w którym stoi") {
 
     sheet.skin(ui::Skin{{{"talcite.frame", frame}}});
 
-    // Obrazek 4x6: lewa kolumna czerwona, reszta przezroczysta — w sekstantach dwie kratki z sylwetką.
+    // A 4x6 picture: the left column red, the rest transparent; in sextants, two cells with a
+    // silhouette.
     Bytes bytes(4 * 6 * 4, std::byte{0});
 
     for (int y = 0; y < 6; ++y) {
@@ -445,15 +455,15 @@ TRIAL("Image: brzeg obrazu bierze tło okna, w którym stoi") {
     ought(seen > 0);
 }
 
-// --- Zegar -------------------------------------------------------------------------------------
+// --- Clock ---------------------------------------------------------------------------------------
 
-TRIAL("Image: przed układem nie ma o co prosić") {
+TRIAL("Image: before layout there is nothing to ask for") {
     const auto one = shown(leaping);
 
     ought(!one->due().has_value());
 }
 
-TRIAL("Image: rozwinięta animacja prosi o obudzenie") {
+TRIAL("Image: a decoded animation asks to be woken up") {
     Loop loop;
     Sheet sheet;
 
@@ -467,10 +477,10 @@ TRIAL("Image: rozwinięta animacja prosi o obudzenie") {
     ought(*one->due() <= std::chrono::milliseconds{40});
 }
 
-// **Ustawienie klatki jest przewinięciem**: przesuwa początek odliczania tak, jakby animacja
-// właśnie do niej dobiegła. Dzięki temu rachunek czasu sprawdza się bez czekania — po przewinięciu
-// zostaje dokładnie tyle, ile trwa ta klatka.
-TRIAL("Image: przewinięcie ustawia klatkę razem z czasem") {
+// Setting the frame is seeking: it moves the start of the countdown as if the animation had just
+// reached that frame. Thanks to that, the timing is checked without waiting: after seeking, exactly
+// as much time is left as the frame lasts.
+TRIAL("Image: seeking sets the frame together with the time") {
     Loop loop;
     Sheet sheet;
 
@@ -496,7 +506,7 @@ TRIAL("Image: przewinięcie ustawia klatkę razem z czasem") {
     ought(held);
 }
 
-TRIAL("Image: przewinięcie poza koniec zatrzymuje się na ostatniej klatce") {
+TRIAL("Image: seeking past the end stops at the last frame") {
     Loop loop;
     Sheet sheet;
 
@@ -510,9 +520,9 @@ TRIAL("Image: przewinięcie poza koniec zatrzymuje się na ostatniej klatce") {
     same(one->still(), std::size_t{3});
 }
 
-// Zatrzymanie zamraża **tę klatkę, którą widać**, a nie zerową — inaczej pauza przeskakiwałaby
-// obraz.
-TRIAL("Image: zatrzymanie zamraża widoczną klatkę") {
+// Pausing freezes the frame that is visible, not frame zero; otherwise a pause would make the
+// picture jump.
+TRIAL("Image: pausing freezes the visible frame") {
     Loop loop;
     Sheet sheet;
 
@@ -529,10 +539,11 @@ TRIAL("Image: zatrzymanie zamraża widoczną klatkę") {
     ought(!one->due().has_value());
 }
 
-// Wznowienie rusza **od zamrożonej klatki**, a nie od tej, na którą wskazywałby zegar puszczony
-// przy `hold`. Dawniej po pauzie obraz przeskakiwał o tyle klatek, ile minęło czasu. Klatka pierwsza
-// trwa sto milisekund — tyle zapasu ma sprawdzenie zaraz po wznowieniu.
-TRIAL("Image: wznowienie rusza od zamrożonej klatki") {
+// Resuming starts from the frozen frame, not from the one the clock started at `hold` would point
+// to; otherwise the picture would jump ahead after a pause by as many frames as time had passed.
+// The first frame lasts a hundred milliseconds, which is the margin the check right after resuming
+// has.
+TRIAL("Image: resuming starts from the frozen frame") {
     Loop loop;
     Sheet sheet;
 
@@ -553,9 +564,9 @@ TRIAL("Image: wznowienie rusza od zamrożonej klatki") {
     ought(one->due().has_value());
 }
 
-// Jedyna próba, która naprawdę czeka. Pierwsza klatka trwa dwadzieścia milisekund, druga trzy
-// sekundy — po stu milisekundach jesteśmy w drugiej z prawie trzysekundowym zapasem.
-TRIAL("Image: zegar przesuwa klatkę sam") {
+// The only trial that really waits. The first frame lasts twenty milliseconds, the second three
+// seconds: after a hundred milliseconds we are in the second with almost three seconds to spare.
+TRIAL("Image: the clock advances the frame by itself") {
     Loop loop;
     Sheet sheet;
 
@@ -572,15 +583,15 @@ TRIAL("Image: zegar przesuwa klatkę sam") {
 
     same(one->still(), std::size_t{1});
 
-    // Zatrzymanie zamraża klatkę, do której doszedł zegar — a nie tę, którą ostatnio ustawiono.
+    // Pausing freezes the frame the clock has reached, not the one set last.
     one->play(false);
 
     same(one->still(), std::size_t{1});
 }
 
-// Klatki bez opóźnienia to nie animacja, tylko obrazek. Dekoder GIF-a takich nie wypuszcza, ale
-// obrazek zrobiony w kodzie owszem — i wtedy „która klatka teraz" nie ma odpowiedzi.
-TRIAL("Image: klatki bez opóźnień nie są animacją") {
+// Frames without a delay are not an animation, just a picture. The GIF decoder never produces such
+// frames, but a picture made in code can, and then "which frame now" has no answer.
+TRIAL("Image: frames without delays are not an animation") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Image>();
@@ -599,9 +610,10 @@ TRIAL("Image: klatki bez opóźnień nie są animacją") {
     ought(!one->due().has_value());
 }
 
-// --- Barwność i znaki z korzenia ---------------------------------------------------------------
+// --- Color depth and characters from the root ----------------------------------------------------
 
-// Obrazek w kodzie: czerwony u góry, przezroczysty u dołu, 8×8 — tyle, ile ma jedna kratka klocków.
+// A picture made in code: red at the top, transparent at the bottom, 8×8, as much as one cell of
+// blocks holds.
 Pixels halved() {
     Bytes made(8 * 8 * 4, std::byte{0});
 
@@ -613,10 +625,11 @@ Pixels halved() {
     return Pixels{{8, 8}, {Still{std::move(made), std::chrono::milliseconds{0}}}};
 }
 
-// Znaki bierze widżet z korzenia i przelicza obraz, gdy korzeń je zmieni: bez Unicode kratka ma
-// siatkę 2×4 i znak z drabiny ASCII, z Unicode — klocki. Barwność też idzie z korzenia: w pełnych
-// kolorach połówka ma barwę obrazu.
-TRIAL("Image: znaki i barwność idą z korzenia, zmiana znaków przelicza obraz") {
+// The widget takes the character set from the root and recomputes the picture when the root changes
+// it: without Unicode a cell has a 2×4 grid and a character from the ASCII ladder, with Unicode
+// blocks. The color depth comes from the root too: in full colors the half block has the picture's
+// color.
+TRIAL("Image: characters and color depth come from the root, a change of characters recomputes the picture") {
     Sheet sheet{{0, 0}, ui::Blocks::basic};
 
     const auto one = std::make_shared<ui::Image>();
@@ -641,8 +654,8 @@ TRIAL("Image: znaki i barwność idą z korzenia, zmiana znaków przelicza obraz
 
     same(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 
-    // Barwność z korzenia: dwie barwy w pełnych kolorach to połówka, a w czarno-białym obraz
-    // z przezroczystością (jeden piksel) to sama sylwetka — pełny klocek.
+    // Color depth from the root: two colors in full color give a half block, while in black and
+    // white a picture with transparency (one pixel) is a silhouette only: a full block.
     Bytes two(8 * 8 * 4, std::byte{0});
 
     for (std::size_t at = 0; at < two.size(); at += 4) {
@@ -662,7 +675,7 @@ TRIAL("Image: znaki i barwność idą z korzenia, zmiana znaków przelicza obraz
 
     one->hold(halved());
 
-    // Poza drzewem: pełne kolory i Unicode — dwie barwy to połówka, nie sylwetka.
+    // Outside a tree: full colors and Unicode, so two colors give a half block, not a silhouette.
     const auto alone = std::make_shared<ui::Image>();
 
     alone->hold(halved());
@@ -683,19 +696,19 @@ TRIAL("Image: znaki i barwność idą z korzenia, zmiana znaków przelicza obraz
     same(alone->render({{0, 0}, {1, 1}}, {{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 }
 
-// --- Zbieranie w korzeniu ----------------------------------------------------------------------
+// --- Gathering in the root -----------------------------------------------------------------------
 
-// Korzeń **nie ma własnej prośby** — zbiera cudze i oddaje najbliższą. Dzięki temu `Term` pyta
-// jedno miejsce i nie musi wiedzieć, że w środku siedzi obrazek.
-TRIAL("Root: bierze najbliższą prośbę z poddrzewa") {
+// The root has no request of its own: it gathers the others' and returns the nearest. Thanks to
+// that, `Term` asks one place and does not have to know that there is a picture inside.
+TRIAL("Root: takes the nearest request from the subtree") {
     Sheet sheet;
 
     const auto outer = std::make_shared<Ticking>(500);
     const auto inner = std::make_shared<Ticking>(70);
     const auto quiet = std::make_shared<ui::Node>();
 
-    // Korzeń przyjmuje jedno dziecko, więc prośby leżą **głębiej niż jeden poziom** — i o to
-    // w tej próbie chodzi: zbieranie ma zejść całą drogą w dół.
+    // The root takes one child, so the requests lie deeper than one level, and that is the point of
+    // this trial: the gathering has to go all the way down.
     outer->children().add(quiet);
     outer->children().add(inner);
     sheet.children().add(outer);
@@ -704,7 +717,7 @@ TRIAL("Root: bierze najbliższą prośbę z poddrzewa") {
     same(sheet.due()->count(), 70LL);
 }
 
-TRIAL("Root: drzewo bez animacji o nic nie prosi") {
+TRIAL("Root: a tree without animation asks for nothing") {
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Node>();

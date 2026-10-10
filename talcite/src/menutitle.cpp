@@ -11,36 +11,45 @@ namespace talcite::ui {
 
 namespace {
 
-// Podświetlony tytuł to tytuł z ogniskiem — pasek czynny, zwinięty — albo tytuł menu rozwiniętego.
+// Whether the title is highlighted: it has the focus (the bar is active but folded), or its menu
+// is open.
 bool lit(const MenuTitle& one) { return one.focused() || one.menu().opened(); }
 
 }
 
+// The title in the bar is a node separate from the list it opens. The title stands in the row of
+// titles, and the list is a child of the bar's stack: two rectangles in two places of the tree,
+// each knowing where it is.
+//
+// The title has no keys of its own: it asks the menu's `keys()`, so a hotkey letter added to the
+// menu works without changes on the caller's side. The focus on the title means the bar is active
+// but folded.
 MenuTitle::MenuTitle(Menu& menu) : menu_(menu) {}
 
-// Napis z kratką odstępu po obu stronach — tyle, ile zajmował w pasku, gdy pasek liczył to sam.
+// The menu's title with one cell of space on each side, in a single row.
 Size MenuTitle::wants(Size room) const {
     return {std::min(2 + measured(menu_.title()).wide, room.wide), std::min(1, room.high)};
 }
 
-// Tytuł bierze ognisko, bo pasek czynny musi mieć je gdzieś postawić, a zwinięte menu jest poza
-// drzewem i wziąć go nie może.
+// The title takes the focus, because an active bar has to put it somewhere, and a folded menu is
+// outside the tree and cannot take it.
 bool MenuTitle::focusable() const { return true; }
 
+// Paints the title, highlighted when lit, with its hotkey letter marked.
 View MenuTitle::paint(Size given, Area seen) {
     View made{seen.size};
 
     const Skin& how = skin();
 
-    // Role bierzemy z menu, nie własne: dla skórki tytuł i lista to jedno menu, a `talcite.menubar`
-    // było rolą tytułu od zawsze.
+    // The roles come from the menu, not from the title itself: for the skin the title and the list
+    // are one menu, and `talcite.menubar` is the title's role.
     const Style look = how.style(lit(*this) ? menu_.role() + ".focus" : menu_.role());
 
     made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
     made.put({1 - seen.at.x, -seen.at.y}, menu_.title(), look);
 
-    // Litera aktywna — ta sama maszyneria, co w pozycji menu i w przycisku. Tytuł stoi o jedną
-    // kratkę od lewej krawędzi swojego pasa, więc i litera jest o tę kratkę przesunięta.
+    // The hotkey letter uses the same machinery as a menu item and a button. The title stands one
+    // cell from the left edge of its strip, so the letter is shifted by that cell too.
     talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, menu_.title(),
                          talcite::ui::shortcut_column(menu_.keys(), menu_.title()),
                          look, how.style(menu_.role() + ".key"));
@@ -48,9 +57,9 @@ View MenuTitle::paint(Size given, Area seen) {
     return made;
 }
 
-// **Zwinięte z ogniskiem rozwija się w dół i Enterem**, jak w Midnight Commanderze; reszta idzie
-// w górę do paska — strzałki w bok, Esc i litery tytułów. Tytuł bez pozycji pod spodem: Enter woła
-// czynność tytułu, bo nie ma czego rozwijać.
+// A folded title with the focus opens with the down arrow and Enter, as in Midnight Commander; the
+// rest goes up to the bar: the side arrows, Esc and title letters. For a title with no items below
+// it, Enter performs the title's action, because there is nothing to open.
 bool MenuTitle::handle(KeyEvent& what) {
     if (!focused()) return false;
 
@@ -76,8 +85,9 @@ bool MenuTitle::handle(KeyEvent& what) {
     return false;
 }
 
-// **Czynność tytułu to rozwinięcie menu.** Litera robi dokładnie to, co kliknięcie w tytuł —
-// i nic ponadto. Klawisze są w menu, nie tu, żeby `menu->keys().add(...)` działało jak dotąd.
+// The action of a title is opening its menu. The letter does exactly what a click on the title
+// does and nothing more. The keys live in the menu, not here, so that adding keys to the menu is
+// all a caller has to do.
 bool MenuTitle::handle(ShortcutEvent& what) {
     if (!menu_.keys().contains(what.key())) return false;
 
@@ -86,9 +96,9 @@ bool MenuTitle::handle(ShortcutEvent& what) {
     return true;
 }
 
-// Klik w tytuł przełącza, jak w Midnight Commanderze. Klik **rozwija**, a nie tylko uaktywnia:
-// myszą człowiek celuje w konkretne menu i chce jego zawartości. Klawiaturą jest inaczej — F9
-// bierze pasek, a rozwinięcie wybiera się osobno.
+// A click on the title toggles, as in Midnight Commander. A click opens the menu, not only
+// activates the bar: with the mouse a person aims at a particular menu and wants its contents.
+// With the keyboard it is different: F9 takes the bar, and opening is chosen separately.
 bool MenuTitle::handle(ClickEvent&) {
     if (menu_.children().empty()) {
         menu_.pick();

@@ -17,9 +17,9 @@ struct Named {
     std::string_view name;
 };
 
-// **Jedna pisownia na klawisz.** Zapis czyta się bez względu na wielkość liter, ale synonimów nie
-// ma: `Ins`, a nie także `Insert`. Dwie pisownie tego samego klawisza w plikach języków to dwa
-// miejsca, w których próba zderzeń musiałaby wiedzieć, że chodzi o jedno.
+// One spelling per key. The written form is read regardless of case, but there are no synonyms:
+// Ins, and not also Insert. Two spellings of the same key in the language files would be two
+// places where the collision test would have to know that they mean one key.
 constexpr std::array<Named, 26> names{{
     {Code::escape, "Esc"},     {Code::enter, "Enter"},   {Code::tab, "Tab"},
     {Code::backspace, "Backspace"}, {Code::insert, "Ins"}, {Code::remove, "Del"},
@@ -32,6 +32,7 @@ constexpr std::array<Named, 26> names{{
     {Code::f11, "F11"},        {Code::f12, "F12"},
 }};
 
+// Whether two ASCII spellings are equal ignoring case.
 bool same(std::string_view one, std::string_view two) {
     if (one.size() != two.size()) return false;
 
@@ -42,8 +43,9 @@ bool same(std::string_view one, std::string_view two) {
     return true;
 }
 
-// Przedrostek modyfikatora zdejmuje się z początku i od razu mówi, który to był. Kolejność
-// w zapisie jest dowolna, ale każdy modyfikator wolno podać raz.
+// Strips a modifier prefix from the front of the text and records which modifier it was. The
+// order in the written form is free, but each modifier may be given only once: a repeated one
+// returns false and is left in place, so the whole key fails to read.
 bool stripped(std::string_view& rest, std::string_view prefix, bool& into) {
     if (!same(rest.substr(0, prefix.size()), prefix)) return false;
 
@@ -57,11 +59,11 @@ bool stripped(std::string_view& rest, std::string_view prefix, bool& into) {
 
 }
 
-// **Zapis klawisza, jaki widzi człowiek**: modyfikatory `Ctrl+`, `Alt+`, `Shift+` i klawisz —
-// nazwa z tabeli, `Space` albo jeden znak. Litera wychodzi złożona (`folded`, więc mała także
-// w cyrylicy: „Alt+Л" to `л`), bo `Alt+K` i `Alt+k` to ten sam klawisz (`alike` nie patrzy na
-// wielkość), a Shift przy literze nic nie znaczy.
-// Wszystko, czego nie da się przeczytać w całości, daje pustkę: pół skrótu byłoby innym skrótem.
+// Reads a key as a person writes it: the modifiers Ctrl+, Alt+, Shift+ and the key, which is a
+// name from the table, Space or a single character. A letter comes out case-folded (`folded`, so
+// lowercase in Cyrillic too: "Alt+Л" gives л), because Alt+K and Alt+k are the same key (`alike`
+// ignores case), and Shift means nothing next to a letter. Anything that cannot be read in full
+// gives nothing: half a shortcut would be a different shortcut.
 std::optional<Key> Key::from_string(std::string_view written) {
     Mods with;
 
@@ -87,10 +89,10 @@ std::optional<Key> Key::from_string(std::string_view written) {
     return Key{folded(letter), Mods{with.ctrl, with.alt, false}};
 }
 
-// Odwrotność `from_string` dla każdego klawisza, który ona oddaje: litera łacińska wielka, jak na
-// klawiszu, a Shift przy literze pominięty. Poza łaciną podstawową litera zostaje, jaka przyszła —
-// odwrotność składania nie jest jednoznaczna („σ" ma dwie wielkie drogi: „Σ" i „ς"), a zapis
-// i tak wraca do tego samego klawisza.
+// The inverse of `from_string` for every key it returns: a basic Latin letter is written in
+// uppercase, as on the keycap, and Shift next to a letter is left out. Outside basic Latin the
+// letter stays as it came, because the inverse of case folding is not unique ("σ" has two ways
+// back, "Σ" and "ς"), and the written form reads back to the same key anyway.
 std::string to_string(Key one) {
     if (one.empty()) return {};
 
@@ -115,19 +117,18 @@ std::string to_string(Key one) {
     return made;
 }
 
-// **Cała reguła dopasowania skrótu stoi tutaj** — dla `Keys` i dla każdego programu, który porównuje
-// skróty sam. Trzy części, każda z osobnym powodem.
+// Whether two keys count as the same shortcut. The whole matching rule lives here, for `Keys` and
+// for every program that compares shortcuts itself. It has three parts, each with its own reason.
 //
-// **Wielkość liter składamy.** `Key::operator==` zostaje dokładne, bo pole tekstowe stoi na różnicy
-// między „T" a „t" — ale skrót zgłoszony jako `U'T'` ma odpowiadać na jedno i drugie.
+// Letter case is folded. The equality operator of `Key` stays exact, because a text field depends
+// on the difference between "T" and "t", but a shortcut registered as U'T' has to answer to both.
 //
-// **Ctrl i Alt porównujemy dokładnie**: zbiór trzymający zwykłe `F5` sam z siebie nie odpowie na
-// Ctrl+F5, a trzymający `Alt+H` — wyłącznie na `Alt+H`.
+// Ctrl and Alt are compared exactly: a set holding plain F5 does not answer to Ctrl+F5 by itself,
+// and one holding Alt+H answers only to Alt+H.
 //
-// **Shift przy literze przymykamy**, bo jest już zakodowany w samej literze; **przy klawiszu
-// kodowanym porównujemy** — Shift+F7 i F7 to w Midnight Commanderze dwa różne klawisze (powtórz
-// szukanie i szukaj), a pole paska z `Key{f7}` brało oba i okno otwierało się obok powtórzonego
-// szukania.
+// Shift is ignored next to a letter, because it is already encoded in the letter itself, but it
+// is compared for a coded key: Shift+F7 and F7 are two different keys in Midnight Commander
+// (repeat search and search), and a bar field registered for F7 must not also open on Shift+F7.
 bool alike(Key one, Key two) {
     const Mods here = one.mods();
     const Mods there = two.mods();
