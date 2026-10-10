@@ -218,6 +218,38 @@ TRIAL("Modal: Tab moves the focus over the willing nodes and wraps around") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
+// The down and up arrows move the focus like Tab and Shift+Tab when nothing lower down took them,
+// as in the dialogs of Midnight Commander; with a modifier they are swallowed as before.
+TRIAL("Modal: the down and up arrows move the focus like Tab") {
+    Stage stage;
+
+    const auto one = std::make_shared<ui::Modal>();
+    const auto column = std::make_shared<ui::Column>();
+    const auto first = std::make_shared<Box>(ui::Size{6, 1}, U'a');
+    const auto second = std::make_shared<Box>(ui::Size{6, 1}, U'b');
+
+    column->children().add(first);
+    column->children().add(second);
+    one->children().add(column);
+
+    stage.window->open(one);
+
+    ui::KeyEvent down{ui::Code::down};
+
+    ought(stage.top.dispatch(down));
+    same(stage.top.focused_node(), static_cast<ui::Node*>(second.get()));
+
+    ui::KeyEvent up{ui::Code::up};
+
+    ought(stage.top.dispatch(up));
+    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+
+    ui::KeyEvent shifted{ui::Key{ui::Code::down, ui::Mods{.shift = true}}};
+
+    ought(stage.top.dispatch(shifted));
+    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+}
+
 // --- Division of roles ---------------------------------------------------------------------------
 
 // This is the trial the whole division of roles exists for. Enter pressing the primary button is a

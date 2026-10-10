@@ -7,6 +7,8 @@
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
+#include "eliding.hpp"
+
 
 namespace talcite::ui {
 
@@ -257,6 +259,15 @@ View Field::paint(Size given, Area seen) {
         for (int which = 0; which < wide; ++which) dots += dot;
 
         made.put({-seen.at.x, -seen.at.y}, dots, look);
+    } else if (!focused() && (from_ > 0 || upto < text_.size())) {
+        // A field at rest that cannot hold its whole text shows the beginning and ends with the
+        // ellipsis, so a list cut in mid-word does not look like a typing error. Only the drawing
+        // changes: the scroll offset stays for when the focus comes back.
+        const std::string shown = elided(text_, room, Elide::right, how.glyph("talcite.elide"));
+
+        made.put({-seen.at.x, -seen.at.y}, shown, look);
+
+        wide = measured(shown).wide;
     } else {
         made.put({-seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
     }

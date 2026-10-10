@@ -150,12 +150,21 @@ void Modal::step(int by) {
 // themselves.
 //
 // The rest is swallowed, because swallowing does nothing: it is the curtain's whole job and the
-// only way modality can be expressed at all. Tab and Shift+Tab move between the stops.
+// only way modality can be expressed at all. Tab and Shift+Tab move between the stops, and so do
+// the down and up arrows, as in the dialogs of Midnight Commander: a widget that uses them (a list,
+// a group of options, a history) takes them first and lets them through only at its ends, so an
+// arrow reaches the curtain exactly when nothing lower down wants it.
 bool Modal::handle(KeyEvent& what) {
     const Code code = what.key().code();
 
     if (code == Code::tab) {
         step(what.mods().shift ? -1 : 1);
+
+        return true;
+    }
+
+    if ((code == Code::down || code == Code::up) && !what.mods().shift && !what.mods().ctrl && !what.mods().alt) {
+        step(code == Code::down ? 1 : -1);
 
         return true;
     }

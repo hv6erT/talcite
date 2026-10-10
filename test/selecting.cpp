@@ -158,7 +158,9 @@ TRIAL("Select: has its own role when focused") {
 // --- Keys while closed ---------------------------------------------------------------------------
 
 // Moving is choosing: an arrow changes the value at once, just as in a radio group.
-TRIAL("Select: arrows change the value and notify") {
+// The side arrows change the value and notify; the up and down arrows leave it alone and go up the
+// tree, where a window moves the focus with them.
+TRIAL("Select: the side arrows change the value and notify, up and down pass") {
     Stage stage;
 
     stage.one->focus();
@@ -167,36 +169,44 @@ TRIAL("Select: arrows change the value and notify") {
 
     counted(stage.one, done);
 
-    ui::KeyEvent down{ui::Code::down};
+    ui::KeyEvent right{ui::Code::right};
 
-    ought(stage.top.dispatch(down));
+    ought(stage.top.dispatch(right));
     same(*stage.one->value(), std::string{"ISO-8859-2"});
     same(done, 1);
 
+    ui::KeyEvent left{ui::Code::left};
+
+    ought(stage.top.dispatch(left));
+    same(*stage.one->value(), std::string{"UTF-8"});
+    same(done, 2);
+
+    ui::KeyEvent down{ui::Code::down};
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
+    ought(!stage.top.dispatch(down));
+    ought(!stage.top.dispatch(up));
     same(*stage.one->value(), std::string{"UTF-8"});
     same(done, 2);
 
     ought(!stage.one->opened());
 }
 
-// At either end the key goes up the tree: in a window the arrow then has to move to the next widget.
-TRIAL("Select: at either end it passes the arrow up") {
+// At either end a side arrow goes up the tree too.
+TRIAL("Select: at either end it passes the side arrow up") {
     Stage stage;
 
     stage.one->focus();
 
-    ui::KeyEvent up{ui::Code::up};
+    ui::KeyEvent left{ui::Code::left};
 
-    ought(!stage.top.dispatch(up));
+    ought(!stage.top.dispatch(left));
 
     stage.one->value("CP1250");
 
-    ui::KeyEvent down{ui::Code::down};
+    ui::KeyEvent right{ui::Code::right};
 
-    ought(!stage.top.dispatch(down));
+    ought(!stage.top.dispatch(right));
     same(*stage.one->value(), std::string{"CP1250"});
 }
 

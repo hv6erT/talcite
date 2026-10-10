@@ -14,6 +14,7 @@
 #include "talcite/bytes.hpp"
 #include "talcite/editor.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/event.hpp"
 #include "talcite/feed.hpp"
 #include "talcite/loop.hpp"
 #include "talcite/promise.hpp"
@@ -293,6 +294,27 @@ TRIAL("Viewer: a step down and up returns to the same place") {
     same(*one->first(), std::size_t{5});
 
     one->slide(-5);
+    same(*one->first(), std::size_t{0});
+}
+
+// The wheel under the mouse moves the view three rows a notch, down and back, as in the list and
+// the scroller; the wheel goes through the root to the node under the mouse, as from the terminal.
+TRIAL("Viewer: the wheel moves the view three rows a notch") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, many(100));
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    ui::WheelEvent down{{1, 1}, -1};
+
+    ought(sheet.dispatch(down));
+    same(*one->first(), std::size_t{3});
+    same(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"wiersz 3"});
+
+    ui::WheelEvent up{{1, 1}, 1};
+
+    ought(sheet.dispatch(up));
     same(*one->first(), std::size_t{0});
 }
 

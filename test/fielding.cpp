@@ -184,6 +184,37 @@ TRIAL("Field: scrolls so that the cursor is visible") {
     same(*top.caret(), (ui::Spot{0, 0}));
 }
 
+// At rest the field is not being typed in, so the ellipsis tells no lie there: a field without the
+// focus that cannot hold its text shows the beginning and ends with the ellipsis. With the focus
+// back, it scrolls to the cursor again.
+TRIAL("Field: without the focus a text that does not fit ends with the ellipsis") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(5, "abcdefgh");
+    const auto other = std::make_shared<ui::Field>(5, "ab");
+    const auto both = std::make_shared<ui::Column>();
+
+    both->children().add(one);
+    both->children().add(other);
+    top.children().add(both);
+
+    one->focus();
+
+    same(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
+
+    other->focus();
+
+    const View rest = top.render({{0, 0}, {5, 2}});
+
+    same(read(rest, 0), std::string{"abcd…"});
+    same(read(rest, 1), std::string{"ab"});
+    same(one->text(), std::string{"abcdefgh"});
+
+    one->focus();
+
+    same(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
+}
+
 TRIAL("Field: a double-width character takes two cells") {
     ui::Root top;
 

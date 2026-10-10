@@ -21,8 +21,11 @@ bool Dialog::handle(KeyEvent& what) {
     // mechanism.
     //
     // This happens before the key is handed to the modal, because the modal swallows everything it
-    // did not recognize. Escape and Tab are not broadcast: the modal settles those two earlier.
-    if (code != Code::escape && code != Code::tab) {
+    // did not recognize. Escape and Tab are not broadcast: the modal settles those two earlier, and
+    // so it does the up and down arrows, which move the focus like Tab; no hotkey is an arrow.
+    const bool walking = code == Code::up || code == Code::down;
+
+    if (code != Code::escape && code != Code::tab && !walking) {
         (void)broadcast(what);
 
         return true;

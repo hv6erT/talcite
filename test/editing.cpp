@@ -13,6 +13,7 @@
 #include "talcite/bytes.hpp"
 #include "talcite/editor.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/event.hpp"
 #include "talcite/feed.hpp"
 #include "talcite/loop.hpp"
 #include "talcite/promise.hpp"
@@ -94,6 +95,28 @@ TRIAL("Editor: once given text, it knows the lines and stands at the start") {
 }
 
 // --- Changes -------------------------------------------------------------------------------------
+
+// The wheel under the mouse moves the view of the editor three rows a notch, as in the viewer, and
+// leaves the cursor where it stood.
+TRIAL("Editor: the wheel moves the view and not the cursor") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, many(100));
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    ui::WheelEvent down{{1, 1}, -2};
+
+    ought(sheet.dispatch(down));
+    same(*one->first(), std::size_t{6});
+    same(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"l6"});
+    same(one->cursor(), std::size_t{0});
+
+    ui::WheelEvent up{{1, 1}, 1};
+
+    ought(sheet.dispatch(up));
+    same(*one->first(), std::size_t{3});
+}
 
 TRIAL("Editor: typing a character moves the cursor and makes the document dirty") {
     Sheet sheet;

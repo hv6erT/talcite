@@ -86,9 +86,12 @@ View Button::paint(Size given, Area seen) {
     // The marking is computed on the clipped label: a letter that is not visible after clipping has
     // nothing to underline, and computed on the whole label it would land on the ellipsis or the
     // bracket. The hot letter has its own role, laid over the button's look, so a skin can give it
-    // a color, while the built-in skin stays with an underline, which shows on every terminal.
-    talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
-                      look, how.style(role() + ".key"));
+    // a color, while the built-in skin stays with an underline, which shows on every terminal. A
+    // disabled button marks no letter: the key does nothing, and a lit letter would make the dimmed
+    // button look half alive.
+    if (enabled())
+        talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+                          look, how.style(role() + ".key"));
 
     return made;
 }

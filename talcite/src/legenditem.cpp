@@ -120,9 +120,11 @@ View LegendItem::paint(Size given, Area seen) {
     made.put({aside - seen.at.x, -seen.at.y}, shown, label);
 
     // The column is computed on this text, not on the earlier one: with the tag the name is
-    // narrower, so a letter visible in the wider one may already be inside the ellipsis here.
-    talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
-                      label, how.style(role() + ".key"));
+    // narrower, so a letter visible in the wider one may already be inside the ellipsis here. A
+    // disabled field marks no letter, since its key does nothing.
+    if (enabled())
+        talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+                          label, how.style(role() + ".key"));
 
     return made;
 }

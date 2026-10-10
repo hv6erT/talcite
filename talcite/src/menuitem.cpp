@@ -64,9 +64,11 @@ View MenuItem::paint(Size given, Area seen) {
     }
 
     // The hotkey letter has its own role, laid over the item's look, as in a button and a check
-    // box. The text stands one cell from the left, so the letter is shifted by that cell too.
-    talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, shortcut_column(text_),
-                      look, how.style(role() + ".key"));
+    // box. The text stands one cell from the left, so the letter is shifted by that cell too. A
+    // disabled item marks no letter, since its key does nothing.
+    if (enabled())
+        talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, shortcut_column(text_),
+                          look, how.style(role() + ".key"));
 
     return made;
 }

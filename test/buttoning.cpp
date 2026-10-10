@@ -622,6 +622,27 @@ TRIAL("Dialog: Shift+Tab walks backwards") {
     same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
+// The down and up arrows walk like Tab and Shift+Tab: a dialog does not send them out as
+// shortcuts, and the modal moves the focus with them.
+TRIAL("Dialog: the down and up arrows walk like Tab") {
+    ui::Root top;
+
+    int done = 0;
+
+    const Both both = asking(top, &done);
+
+    ui::KeyEvent down{ui::Code::down};
+
+    ought(top.dispatch(down));
+    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
+
+    ui::KeyEvent up{ui::Code::up};
+
+    ought(top.dispatch(up));
+    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
+    same(done, 0);
+}
+
 TRIAL("Dialog: Tab does not leave the dialog") {
     ui::Root top;
 

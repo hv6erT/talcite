@@ -111,12 +111,14 @@ View Select::paint(Size given, Area seen) {
     return made;
 }
 
-// Enter opens the list. The arrows (and Home, End) change the value without opening and notify, the
-// same as in an option group.
+// Enter opens the list. The side arrows (and Home, End) change the value without opening and
+// notify. The up and down arrows are not the selection's: in a window they move between the
+// widgets, as in Midnight Commander, and a selection that took them would change its value under
+// someone who only wanted to go past it to the next row.
 //
-// At either end an arrow goes up the tree, so that in a window it moves to the next widget instead
-// of getting stuck. Letters, Tab and function keys are always passed on: if the selection swallowed
-// them, a "Cancel" button would stop answering to its letter whenever the focus is here.
+// At either end a side arrow goes up the tree too. Letters, Tab and function keys are always passed
+// on: if the selection swallowed them, a "Cancel" button would stop answering to its letter whenever
+// the focus is here.
 bool Select::handle(KeyEvent& what) {
     if (!enabled() || options().empty()) return false;
 
@@ -135,14 +137,14 @@ bool Select::handle(KeyEvent& what) {
     const std::size_t at = *which();
 
     switch (code) {
-        case Code::up:
+        case Code::left:
             if (at == 0) return false;
 
             chose(options()[at - 1]);
 
             return true;
 
-        case Code::down:
+        case Code::right:
             if (at == last) return false;
 
             chose(options()[at + 1]);

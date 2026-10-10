@@ -79,9 +79,11 @@ View Tick::paint(Size given, Area seen) {
 
     // The marking is computed on the elided label: a letter that is cut off has nothing to
     // underline. A shortcut key without an underline would be a key nobody learns about, and in
-    // Midnight Commander a check box does show its letter.
-    talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
-                      look, how.style(role() + ".key"));
+    // Midnight Commander a check box does show its letter. A disabled box marks none, since its
+    // key does nothing.
+    if (enabled())
+        talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+                          look, how.style(role() + ".key"));
 
     return made;
 }
