@@ -170,13 +170,17 @@ void Table::which(std::size_t given) {
     kept.which = want;
 
     const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
+    const std::size_t was = kept.top;
 
     if (want < kept.top)
         kept.top = want;
     else if (want >= kept.top + static_cast<std::size_t>(high))
         kept.top = want - static_cast<std::size_t>(high) + 1;
 
-    kept.fresh = true;
+    // The rows are fetched again only when the view moved: a cursor that walks inside the visible
+    // rows changes only which row is painted as current, and fetching every row at each arrow press
+    // costs the source a row's worth of work per row.
+    if (kept.top != was) kept.fresh = true;
 
     (void)trigger(ScrollEvent{});
 }
