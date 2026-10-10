@@ -641,6 +641,54 @@ TRIAL("fs: read progress grows and ends at one") {
     same(going.progress(), 1.0);
 }
 
+// The bar of a folder copy and of a move counts bytes and entries in one measure: what it shows
+// while the pool works never goes back and never passes one, and the end is one. A folder with one
+// large file and a few small ones would otherwise jump, once per entry.
+TRIAL("fs: folder copy and move progress never goes back and ends at one") {
+    const Nook nook;
+
+    std::error_code ignored;
+
+    stood::create_directories(nook.where() / "src" / "inner", ignored);
+
+    (void)nook.made("src/large.bin", ladder(6000000));
+    (void)nook.made("src/a.txt", "a");
+    (void)nook.made("src/inner/b.txt", "bb");
+
+    const auto watched = [](Promise<void> going) {
+        going.start();
+
+        double last = 0.0;
+        bool steady = true;
+
+        for (int tries = 0; tries < 100000; ++tries) {
+            const double now = going.progress();
+
+            if (now < last || now > 1.0) steady = false;
+
+            last = now;
+
+            if (now >= 1.0) break;
+
+            std::this_thread::yield();
+        }
+
+        going.await();
+
+        ought(steady);
+        same(going.progress(), 1.0);
+    };
+
+    watched(fs::copy(nook.where() / "src", nook.where() / "copy"));
+
+    same(stood::file_size(nook.where() / "copy" / "large.bin"), std::uintmax_t{6000000});
+
+    watched(fs::move(nook.where() / "copy", nook.where() / "moved"));
+
+    ought(!stood::exists(nook.where() / "copy"));
+    same(stood::file_size(nook.where() / "moved" / "inner" / "b.txt"), std::uintmax_t{2});
+}
+
 TRIAL("fs: copy reproduces a file to the byte") {
     const Nook nook;
 
