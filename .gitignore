@@ -1,8 +1,8 @@
-# Wyniki budowania — CMakePresets kieruje je do out/, ręczne konfiguracje zwykle do build/.
+# Build output: CMakePresets sends it to out/, manual configurations usually to build/.
 out/
 build/
 
-# Stan edytorów i narzędzi. CMakeUserPresets.json jest z założenia osobisty.
+# Editor and tool state. CMakeUserPresets.json is personal by design.
 .vs/
 .vscode/
 .idea/
@@ -11,6 +11,10 @@ CMakeUserPresets.json
 *.user
 *.suo
 
-# Pliki odłożone do ręcznego usunięcia.
+# Files set aside for manual deletion.
 _to_delete/
+
+# Claude files stay out of the repository.
 CLAUDE.md
+CLAUDE.local.md
+.claude/
