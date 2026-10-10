@@ -524,6 +524,43 @@ TRIAL("Select: a click takes focus and rolls out") {
     same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
+// A click beside the rolled-out list rolls it up and gives the focus back, choosing nothing; a
+// click on one of its rows chooses it, as before.
+TRIAL("Select: a click beside the rolled-out list closes it, a click on a row chooses") {
+    Stage stage;
+
+    int done = 0;
+
+    counted(stage.one, done);
+
+    (void)stage.drawn();
+
+    stage.one->focus();
+    stage.one->open();
+
+    (void)stage.drawn();
+
+    ui::ClickEvent beside{{25, 10}, ui::Mouse::left};
+
+    ought(stage.top.dispatch(beside));
+    ought(!stage.one->opened());
+    ought(stage.window->empty());
+    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
+    same(done, 0);
+
+    stage.one->open();
+
+    (void)stage.drawn();
+
+    // Rows: the select in row zero, the frame from row one, the options in rows two to four.
+    ui::ClickEvent third{{2, 4}, ui::Mouse::left};
+
+    ought(stage.top.dispatch(third));
+    ought(!stage.one->opened());
+    same(done, 1);
+    same(*stage.one->value(), std::string{"CP1250"});
+}
+
 // --- Disabled ------------------------------------------------------------------------------------
 
 TRIAL("Select: when disabled it does not roll out, does not choose and gives up focus") {

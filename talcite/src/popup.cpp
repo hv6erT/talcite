@@ -168,6 +168,19 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
         return true;
     });
 
+    // A single click on a row chooses it, as in every drop-down list: the list was rolled out to be
+    // chosen from, and the double click a plain list asks for would leave the first click doing
+    // nothing visible. The row takes the click and the focus first; then it is picked like Enter.
+    (void)list->on<ClickEvent>([](ClickEvent& what) {
+        auto* row = dynamic_cast<ListItem*>(what.target());
+
+        if (row == nullptr || !row->enabled()) return false;
+
+        row->pick();
+
+        return true;
+    });
+
     const auto frame = std::make_shared<Frame>();
 
     frame->children().add(list);
@@ -175,6 +188,24 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
     const auto veil = std::make_shared<Rolled>(under_->weak_from_this());
 
     veil->children().add(frame);
+
+    // A click beside the rolled-out list rolls it up, as a click beside an open menu does: the list
+    // is a part of the widget below, not a window waiting for an answer, so the click is not an
+    // answer either and goes no further. A click on the list hits its rows or its frame, and only
+    // one beside it lands on the veil itself. While the widget lives, this object lives too; a
+    // widget gone meanwhile leaves only the veil to close.
+    const std::weak_ptr<Modal> drawn = veil;
+
+    (void)veil->on<ClickEvent>([this, mine, drawn](ClickEvent& what) {
+        const std::shared_ptr<Modal> one = drawn.lock();
+
+        if (!one || what.target() != one.get()) return false;
+
+        if (mine.lock()) close();
+        else one->close();
+
+        return true;
+    });
 
     window->open(veil);
 
