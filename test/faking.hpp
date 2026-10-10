@@ -260,7 +260,7 @@ public:
     // Pierwsze pytanie o szyfrogram **napędza** uścisk dłoni — bez tego nikt by go nie zaczął.
     [[nodiscard]] talcite::Bytes pull() override {
         if (refused_.has_value()) {
-            amiss_ = "Uścisk odrzucony.";
+            amiss_ = "Handshake rejected.";
 
             return {};
         }

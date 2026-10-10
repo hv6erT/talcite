@@ -247,7 +247,7 @@ TRIAL("Seam: a handshake refusal carries the reason, the server name and the add
             same(why.why(), one);
             same(why.host(), std::string{"talcite.test"});
             ought(why.where() == gate.mine());
-            same(std::string{why.what()}, std::string{"Uścisk odrzucony."});
+            same(std::string{why.what()}, std::string{"Handshake rejected."});
         }
 
         ought(refused);
