@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -15,6 +16,7 @@
 
 #include "faking.hpp"
 #include "talcite/clipboard.hpp"
+#include "talcite/fs.hpp"
 
 using namespace talcite;
 
@@ -139,6 +141,90 @@ TRIAL("Clipboard: content equal to the threshold still goes out") {
 
     ought(one.kept.provider().copy(std::string(64 * 1024, 'x')));
     ought(!one.line->written.empty());
+}
+
+// --- Files --------------------------------------------------------------------------------------
+
+namespace {
+
+// An absolute path under the temporary directory, absolute on every system, which a list of files
+// on the clipboard requires.
+std::filesystem::path rooted(const std::string& name) { return std::filesystem::temp_directory_path() / name; }
+
+// Two files, cut or copied.
+Files two(Handing how) {
+    Files made;
+
+    made.paths = {rooted("a.mkv"), rooted("b")};
+    made.how = how;
+
+    return made;
+}
+
+}
+
+TRIAL("Clipboard: a clipboard that knows only text takes no files") {
+    faking::Clipboard one;
+
+    ought(!one.give(two(Handing::copy)));
+    ought(!one.taken().has_value());
+}
+
+// Over ssh the system clipboard is not the user's, so files stay in our own copy: `give` says they
+// did not reach the system, yet a paste in the same program gets them back, cut included, and a text
+// paste gets their paths.
+TRIAL("Clipboard: over ssh files stay in our own copy, with their paths as text") {
+    Wired one;
+
+    ought(!one.kept.provider().give(two(Handing::cut)));
+
+    const std::optional<Files> got = one.kept.provider().taken();
+
+    ought(got.has_value());
+    ought(got.has_value() && got->paths == two(Handing::cut).paths);
+    ought(got.has_value() && got->how == Handing::cut);
+
+    same(one.kept.provider().paste().value_or(""),
+         fs::to_string(rooted("a.mkv")) + "\n" + fs::to_string(rooted("b")));
+    same(one.line->written, std::string{});
+}
+
+// One clipboard, one content: copied text replaces the files, and an empty list takes files away
+// together with their text, but leaves text that came after them.
+TRIAL("Clipboard: copied text replaces the files, and an empty list takes only files away") {
+    Wired one;
+
+    ought(!one.kept.provider().give(two(Handing::copy)));
+    ought(one.kept.provider().copy("abc"));
+    ought(!one.kept.provider().taken().has_value());
+
+    (void)one.kept.provider().give({});
+
+    same(one.kept.provider().paste().value_or(""), std::string{"abc"});
+
+    (void)one.kept.provider().give(two(Handing::copy));
+    (void)one.kept.provider().give({});
+
+    ought(!one.kept.provider().taken().has_value());
+    ought(!one.kept.provider().paste().has_value());
+}
+
+// Another process does not share our working directory, so a relative path would point it
+// elsewhere: the whole list is refused and what was there stays.
+TRIAL("Clipboard: a relative path refuses the whole list and changes nothing") {
+    Wired one;
+
+    (void)one.kept.provider().give(two(Handing::cut));
+
+    Files wrong;
+
+    wrong.paths = {rooted("c"), std::filesystem::path{"relative.txt"}};
+
+    ought(!one.kept.provider().give(wrong));
+
+    const std::optional<Files> got = one.kept.provider().taken();
+
+    ought(got.has_value() && got->paths == two(Handing::cut).paths);
 }
 
 #ifndef _WIN32
@@ -279,6 +365,207 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         same(helper.got(), std::string{});
         same(one.line->written, std::string{"\x1b]52;c;YWJj\x07"});
+    }
+}
+
+namespace {
+
+// A pretend Wayland session: wl-copy and wl-paste at the front of PATH. wl-copy saves its
+// arguments and its input; wl-paste prints the offer of the asked type, a file named after the type,
+// and fails like the real one when there is none. PATH and the directory go back as they were.
+class Session {
+public:
+    // Writes both scripts; with `stuck`, wl-paste sleeps five seconds first.
+    explicit Session(bool stuck = false) {
+        where_ = std::filesystem::temp_directory_path() / ("talcite-session-" + std::to_string(::getpid()));
+
+        std::error_code ignored;
+
+        std::filesystem::remove_all(where_, ignored);
+        std::filesystem::create_directories(where_, ignored);
+
+        const std::string at = where_.string();
+
+        scripted("wl-copy", "printf '%s' \"$*\" > \"" + at + "/args\"\ncat > \"" + at + "/given\"\n");
+        scripted("wl-paste", std::string{stuck ? "sleep 5\n" : ""} + "offer=\"" + at + "/offer-$(printf '%s' \"$3\" | tr / _)\"\n" +
+                                 "[ -f \"$offer\" ] || exit 1\ncat \"$offer\"\n");
+
+        const char* was = std::getenv("PATH");
+
+        was_ = was == nullptr ? std::string{} : std::string{was};
+
+        ::setenv("PATH", (at + ":" + was_).c_str(), 1);
+
+        line = faking::terminal();
+        line->environment["WAYLAND_DISPLAY"] = "wayland-0";
+
+        kept = clipboard(Seam<Console>{line});
+    }
+
+    // Restores PATH and removes the directory.
+    ~Session() {
+        ::setenv("PATH", was_.c_str(), 1);
+
+        std::error_code ignored;
+
+        std::filesystem::remove_all(where_, ignored);
+    }
+
+    Session(const Session&) = delete;
+    Session& operator=(const Session&) = delete;
+
+    // Makes the clipboard offer the content under the type, as another program would.
+    void offer(const std::string& type, const std::string& content) const {
+        std::string named = type;
+
+        for (char& one : named)
+            if (one == '/') one = '_';
+
+        std::ofstream making{where_ / ("offer-" + named), std::ios::binary};
+
+        making << content;
+    }
+
+    // What the last wl-copy got as arguments, or an empty string.
+    [[nodiscard]] std::string args() const { return read("args"); }
+
+    // What the last wl-copy got as input, or an empty string.
+    [[nodiscard]] std::string given() const { return read("given"); }
+
+    std::shared_ptr<faking::Terminal> line;
+    Seam<Clipboard> kept;
+
+private:
+    // Writes an executable script under the name.
+    void scripted(const std::string& named, const std::string& body) const {
+        {
+            std::ofstream making{where_ / named, std::ios::binary};
+
+            making << "#!/bin/sh\n" << body;
+        }
+
+        std::error_code ignored;
+
+        std::filesystem::permissions(where_ / named, std::filesystem::perms::owner_all, ignored);
+    }
+
+    // The content of a file in the directory, or an empty string.
+    [[nodiscard]] std::string read(const std::string& named) const {
+        std::ifstream reading{where_ / named, std::ios::binary};
+
+        return std::string{std::istreambuf_iterator<char>{reading}, std::istreambuf_iterator<char>{}};
+    }
+
+    std::filesystem::path where_;
+    std::string was_;
+};
+
+}
+
+// Files go to the session's clipboard as text/uri-list, the type file managers read: file URIs with
+// every byte outside the unreserved characters escaped, multibyte letters too, lines ended by CR LF.
+TRIAL("Clipboard: files go to the session's clipboard program as a uri-list") {
+    const Session one;
+
+    Files what;
+
+    what.paths = {"/tmp/a b/za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87.mkv", "/srv/100%"};
+
+    ought(one.kept.provider().give(what));
+
+    same(one.args(), std::string{"--type text/uri-list"});
+    same(one.given(), std::string{"file:///tmp/a%20b/za%C5%BC%C3%B3%C5%82%C4%87.mkv\r\nfile:///srv/100%25\r\n"});
+    same(one.line->written, std::string{});
+
+    (void)one.kept.provider().give({});
+
+    same(one.args(), std::string{"--clear"});
+}
+
+// A uri-list from another program: comments and lines naming no local file are skipped, the host
+// may be empty or localhost, the line ends may be CR LF or LF, and the escapes come back as bytes.
+// Such a list is a copy.
+TRIAL("Clipboard: a uri-list from another program is read as copied files") {
+    const Session one;
+
+    one.offer("text/uri-list", "# from a file manager\r\nfile:///tmp/a%20b\r\nfile://localhost/srv/z%C5%BC\n"
+                               "file://elsewhere/x\r\nhttps://example.com/y\r\nfile:///bad%2\r\nfile:///nul%00\r\n");
+
+    const std::optional<Files> got = one.kept.provider().taken();
+
+    ought(got.has_value());
+
+    if (!got.has_value()) return;
+
+    same(got->paths.size(), std::size_t{2});
+    ought(got->paths.size() == 2 && got->paths[0] == std::filesystem::path{"/tmp/a b"} &&
+          got->paths[1] == std::filesystem::path{"/srv/z\xc5\xbc"});
+    ought(got->how == Handing::copy);
+}
+
+// GNOME's file managers mark a cut in their own type, "cut" or "copy" above the URIs.
+TRIAL("Clipboard: a cut from a GNOME file manager is read as cut") {
+    const Session one;
+
+    one.offer("x-special/gnome-copied-files", "cut\nfile:///tmp/a\nfile:///tmp/b");
+    one.offer("text/uri-list", "file:///tmp/a\r\nfile:///tmp/b\r\n");
+
+    std::optional<Files> got = one.kept.provider().taken();
+
+    ought(got.has_value() && got->how == Handing::cut && got->paths.size() == 2);
+
+    one.offer("x-special/gnome-copied-files", "copy\nfile:///tmp/a\nfile:///tmp/b");
+
+    got = one.kept.provider().taken();
+
+    ought(got.has_value() && got->how == Handing::copy && got->paths.size() == 2);
+}
+
+// The uri-list cannot say "cut", so our own cut is recognized by its list: the same paths as we cut
+// paste as cut, any other list as a copy.
+TRIAL("Clipboard: our own cut comes back as cut, another list as a copy") {
+    const Session one;
+
+    Files what;
+
+    what.paths = {"/tmp/a", "/tmp/b"};
+    what.how = Handing::cut;
+
+    ought(one.kept.provider().give(what));
+
+    one.offer("text/uri-list", one.given());
+
+    std::optional<Files> got = one.kept.provider().taken();
+
+    ought(got.has_value() && got->how == Handing::cut && got->paths == what.paths);
+
+    one.offer("text/uri-list", "file:///tmp/a\r\n");
+
+    got = one.kept.provider().taken();
+
+    ought(got.has_value() && got->how == Handing::copy && got->paths.size() == 1);
+}
+
+// The session's clipboard answers, not our older copy: when it holds something else, there is
+// nothing to paste, and a clipboard program that hangs is killed within the limit: each of the two
+// readings waits a second and a half, while the program would sleep five seconds through each.
+TRIAL("Clipboard: a session clipboard without files gives none, even after our own") {
+    {
+        const Session one;
+
+        ought(one.kept.provider().give(two(Handing::copy)));
+        ought(!one.kept.provider().taken().has_value());
+    }
+
+    {
+        const Session one{true};
+
+        one.offer("text/uri-list", "file:///tmp/a\r\n");
+
+        const auto began = std::chrono::steady_clock::now();
+
+        ought(!one.kept.provider().taken().has_value());
+        ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{8});
     }
 }
 

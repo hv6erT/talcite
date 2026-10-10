@@ -1046,7 +1046,10 @@ private:
 
         termios raw = was_;
 
-        raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO | ISIG);
+        // IEXTEN goes too, as in cfmakeraw: on the BSDs and macOS it keeps Ctrl+V (literal next)
+        // and Ctrl+O (discard) for the terminal driver even without ICANON, so the program would
+        // never see them.
+        raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO | ISIG | IEXTEN);
         raw.c_iflag &= ~static_cast<tcflag_t>(IXON | ICRNL);
         raw.c_cc[VMIN] = 0;
         raw.c_cc[VTIME] = 0;
