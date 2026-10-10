@@ -235,6 +235,8 @@ Glyphs glyphing() {
         {"talcite.select.mark", U'▼'},
 
         {"talcite.elide", U'…'},
+
+        {"talcite.diff.closed", U'▸'}, {"talcite.diff.open", U'▾'},
     };
 
     ruled(made, "talcite.line.thin", Border::thin);

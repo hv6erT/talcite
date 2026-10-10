@@ -35,6 +35,18 @@ std::string said(const View& one, int y) {
     return made;
 }
 
+// A row of the view without the open fold sign at its end, for rows of an unfolded hunk whose text
+// is the point of the trial.
+std::string bare(const View& one, int y) {
+    std::string made = said(one, y);
+
+    if (const std::string sign = "▾"; made.ends_with(sign)) made.erase(made.size() - sign.size());
+
+    while (!made.empty() && made.back() == ' ') made.pop_back();
+
+    return made;
+}
+
 // The text of a side outside its marks.
 std::string kept(const ui::DiffSide& one) {
     std::string made;
@@ -339,7 +351,8 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 }
 
 // A header with the sides' titles, a section title in its own row, check boxes at the hunks that
-// have them, and "+N" at a folded hunk with several rows. The cursor stands on the first hunk with
+// have them, and "+N" with the closed fold sign at a folded hunk with several rows; unfolded, the
+// hunk carries the open sign instead, and a hunk of one row carries none. The cursor stands on the first hunk with
 // rows, not on a section heading.
 TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
     Sheet sheet;
@@ -356,9 +369,10 @@ TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
     ought(said(made, 0).find("Będzie") != std::string::npos);
     ought(said(made, 1).find("Pewne (2)") != std::string::npos);
     ought(said(made, 2).rfind("[ ] a.mkv", 0) == 0);
-    ought(said(made, 2).find("+1") != std::string::npos);
+    ought(said(made, 2).find("+1 ▸") != std::string::npos);
     ought(said(made, 2).find("A (2000)/A (2000).mkv") != std::string::npos);
     ought(said(made, 3).rfind("[ ] b.mkv", 0) == 0);
+    ought(said(made, 3).find("▸") == std::string::npos && said(made, 3).find("▾") == std::string::npos);
     ought(said(made, 4).find("Kolizje (1)") != std::string::npos);
     ought(said(made, 5).rfind("    c.mkv", 0) == 0);
     same(said(made, 6), std::string{});
@@ -368,6 +382,7 @@ TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
     const View open = sheet.render({{0, 0}, {70, 8}});
 
     ought(said(open, 2).find("+1") == std::string::npos);
+    ought(said(open, 2).find("▾") != std::string::npos);
     ought(said(open, 3).find("a.srt") != std::string::npos);
     ought(said(open, 3).find("A (2000).srt") != std::string::npos);
     ought(one->opened(1));
@@ -385,7 +400,7 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     const View narrow = sheet.render({{0, 0}, {40, 5}});
 
-    same(said(narrow, 0), std::string{"- a.mkv"});
+    same(bare(narrow, 0), std::string{"- a.mkv"});
     same(said(narrow, 1), std::string{"+ A/a.mkv"});
     same(said(narrow, 2), std::string{"  same.txt"});
 
@@ -402,7 +417,7 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     const View wide = sheet.render({{0, 0}, {120, 5}});
 
-    same(said(wide, 0), std::string{"- a.mkv"});
+    same(bare(wide, 0), std::string{"- a.mkv"});
 
     one->unified(std::nullopt);
 
@@ -603,7 +618,7 @@ TRIAL("DiffViewer: line numbers and empty sides") {
 
     const View flat = sheet.render({{0, 0}, {60, 4}});
 
-    same(said(flat, 0), std::string{" 9  9   dziewięć"});
+    same(bare(flat, 0), std::string{" 9  9   dziewięć"});
     same(said(flat, 1), std::string{"10    - dziesięć"});
     same(said(flat, 2), std::string{"   11 + nowy"});
 }
@@ -762,7 +777,7 @@ TRIAL("DiffViewer: a title above rows, an empty hunk, a tab and a mark in the mi
     const View made = sheet.render({{0, 0}, {40, 8}});
 
     same(said(made, 0), std::string{"@@ -1,2 +1,2 @@"});
-    same(said(made, 1), std::string{"- x a"});
+    same(bare(made, 1), std::string{"- x a"});
     same(said(made, 2), std::string{"+ x b a"});
     same(said(made, 3), std::string{"  t       u"});
     same(said(made, 4), std::string{});

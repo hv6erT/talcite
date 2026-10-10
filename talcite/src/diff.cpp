@@ -868,13 +868,17 @@ View DiffViewer::paint(Size given, Area seen) {
         const Style came_mark = Style::merge(came, how.style(base + ".came.mark"));
         const Style faint = Style::merge(look, how.style(base + ".number"));
 
-        // "+N" at the first row of a folded hunk: how many rows wait behind unfolding.
+        // The fold sign at the first row of a hunk with more rows: closed with "+N", how many rows
+        // wait behind unfolding, and open once unfolded, the way a tree shows its branches, so a
+        // hunk tells that it unfolds before anyone tries.
         std::string folded;
 
-        if (one.line.row == 0 && !kept.opened(one.hunk) && one.data.rows.size() > 1)
-            folded = " +" + std::to_string(one.data.rows.size() - 1);
+        if (one.line.row == 0 && one.data.rows.size() > 1)
+            folded = kept.opened(one.hunk)
+                         ? " " + utf8::encode(how.glyph("talcite.diff.open"))
+                         : " +" + std::to_string(one.data.rows.size() - 1) + " " + utf8::encode(how.glyph("talcite.diff.closed"));
 
-        const int tag = static_cast<int>(folded.size());
+        const int tag = measured(folded).wide;
 
         if (unify) {
             const int text_at = x + ticks + 2 * gutter;
