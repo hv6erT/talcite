@@ -245,46 +245,23 @@ Promise<std::string> until(const Wire& wire, std::string_view mark, std::size_t 
     });
 }
 
-// Where the body of a download goes (`HttpClient::save`): the file, and the counters of the
-// promise's progress, the bytes written and the whole from Content-Length (zero when unknown).
-struct Spilling {
-    fs::File file;
-    std::atomic<std::uint64_t>* done = nullptr;
-    std::atomic<std::uint64_t>* whole = nullptr;
-};
-
-using Spill = std::shared_ptr<Spilling>;
-
-// Where a body goes: into memory, up to `most` bytes, or into the file of a download, without a
-// limit, at the next offset (`written`).
+// Where a body goes: into memory, up to `most` bytes. The body of a download does not come this way
+// (`poured`).
 struct Sink {
     Bytes memory;
     std::size_t most = 0;
-    Spill spill;
-    std::uint64_t written = 0;
 };
 
 using Sunk = std::shared_ptr<Sink>;
 
-// Takes a piece of the body: appends it in memory within the limit, or writes it to the file and
-// counts it for the progress.
+// Takes a piece of the body into memory, within the limit.
 Promise<void> took(const Sunk& sink, Bytes part) {
-    if (part.empty()) return ready();
+    if (part.size() > sink->most || sink->memory.size() > sink->most - part.size())
+        throw oversized("The response body is too large.");
 
-    if (!sink->spill) {
-        if (part.size() > sink->most || sink->memory.size() > sink->most - part.size())
-            throw oversized("The response body is too large.");
+    sink->memory.insert(sink->memory.end(), part.begin(), part.end());
 
-        sink->memory.insert(sink->memory.end(), part.begin(), part.end());
-
-        return ready();
-    }
-
-    const std::uint64_t at = sink->written;
-
-    sink->written += part.size();
-
-    return sink->spill->file.write(at, std::move(part)).then([sink](std::size_t) { sink->spill->done->store(sink->written); });
+    return ready();
 }
 
 // The bytes the buffer holds, at most `much` of them, taken out of it.
@@ -340,25 +317,31 @@ std::optional<std::uint64_t> hexed(std::string_view text) {
     return made;
 }
 
+// The size from a chunk header line: hexadecimal digits, with extensions after a semicolon skipped;
+// anything else is a malformed response.
+std::uint64_t chunk_size(const std::string& line) {
+    const std::optional<std::uint64_t> much = hexed(trimmed(std::string_view{line}.substr(0, line.find(';'))));
+
+    if (!much) throw malformed("A chunk size is not a number.");
+
+    return *much;
+}
+
 Promise<void> trailed(const Wire& wire, Patience patience);
 
 // A chunked body: a line with the size in hexadecimal (extensions after a semicolon are skipped),
 // the chunk, CRLF; a zero chunk ends it, followed by a trailer up to an empty line, which is read
 // and discarded. The sink keeps the limit of a body in memory.
 Promise<void> chunked(const Wire& wire, const Sunk& sink, Patience patience) {
-    return until(wire, "\r\n", line_most, patience, false).then([wire, sink, patience](std::string line) -> Promise<void> {
-        const std::string_view size = trimmed(std::string_view{line}.substr(0, line.find(';')));
-        const std::optional<std::uint64_t> much = hexed(size);
+    return until(wire, "\r\n", line_most, patience, false).then([wire, sink, patience](const std::string& line) -> Promise<void> {
+        const std::uint64_t much = chunk_size(line);
 
-        if (!much) throw malformed("A chunk size is not a number.");
+        if (much == 0) return trailed(wire, patience);
 
-        if (*much == 0) return trailed(wire, patience);
-
-        if (!sink->spill && (*much > sink->most || sink->memory.size() > sink->most - *much))
-            throw oversized("The response body is too large.");
+        if (much > sink->most || sink->memory.size() > sink->most - much) throw oversized("The response body is too large.");
 
         // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
-        return exact(wire, *much, sink, patience)
+        return exact(wire, much, sink, patience)
             .then([wire, patience] { return until(wire, "\r\n", 0, patience, false); })
             .then([wire, sink, patience](const std::string&) { return chunked(wire, sink, patience); });
     });
@@ -496,6 +479,21 @@ bool reusable(const Head& head, Framing how, const Wire& wire) {
 
     return std::find(words.begin(), words.end(), "close") == words.end();
 }
+
+// Where the body of a download goes (`HttpClient::save`): the file and the counters of the
+// promise's progress (the bytes written, and the whole from Content-Length, zero when unknown). Once
+// the head of a 2xx answer has come, the connection with the body still on it waits here, with the
+// head and the framing, for the download's pool task to read the body (`poured`).
+struct Spilling {
+    fs::File file;
+    std::atomic<std::uint64_t>* done = nullptr;
+    std::atomic<std::uint64_t>* whole = nullptr;
+    Wire wire{};
+    Head head{};
+    Frame frame{};
+};
+
+using Spill = std::shared_ptr<Spilling>;
 
 // The proxy credential: Basic with the "user:password" pair in base64 (RFC 7617).
 std::string based(std::string_view text) {
@@ -992,8 +990,9 @@ Promise<Wire> dialed(const Kept& held, const Url& url) {
 
 // One exchange on the given connection: the request, the head (skipping 1xx responses), the body.
 // At the end the connection goes back to the pool if it can be used again, otherwise it is closed.
-// With a spill (a download), the body of a 2xx answer goes into its file without the body limit;
-// any other answer (a redirect, an error page) stays in memory as usual.
+// With a spill (a download), the exchange ends at the head of a 2xx answer and leaves its body on the
+// connection for the download (`poured`); any other answer (a redirect, an error page) is read into
+// memory as usual.
 Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill spill) {
     const Patience patience = held->limits.patience;
     const Place where = place_of(request.url);
@@ -1016,14 +1015,18 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
             const bool spilling = spill != nullptr && head.status >= 200 && head.status < 300;
             const Frame frame = framed(head, spilling ? std::numeric_limits<std::uint64_t>::max() : held->limits.body);
 
+            if (spilling) {
+                spill->wire = wire;
+                spill->head = head;
+                spill->frame = frame;
+                spill->whole->store(frame.how == Framing::sized ? frame.size : 0);
+
+                return given(Response{head.status, head.headers, {}, url});
+            }
+
             const auto sink = std::make_shared<Sink>();
 
             sink->most = held->limits.body;
-
-            if (spilling) {
-                sink->spill = spill;
-                spill->whole->store(frame.how == Framing::sized ? frame.size : 0);
-            }
 
             Promise<void> read = frame.how == Framing::sized   ? exact(wire, frame.size, sink, patience)
                                  : frame.how == Framing::pieces ? chunked(wire, sink, patience)
@@ -1176,8 +1179,88 @@ public:
         : Promise<Response>(std::move(given), std::move(made)) {}
 };
 
-// The work of a download on the pool: the file opened anew, the exchange awaited (which hears a
-// cancellation), and the file removed again unless a whole 2xx body is in it.
+// Writes a piece of the body at the end of the download's file and counts it for the progress.
+void spilled(Spilling& spill, Bytes part, std::uint64_t& written) {
+    if (part.empty()) return;
+
+    const std::uint64_t at = written;
+
+    written += part.size();
+
+    (void)spill.file.write(at, std::move(part)).await();
+
+    spill.done->store(written);
+}
+
+// Reads the body of a download from its connection into the file, in the download's own pool task:
+// one read and one write at a time, each awaited and gone before the next, so a body of gigabytes
+// costs one piece of memory, and every wait hears a cancellation. A chain of promises, as for a body
+// in memory, would grow with every piece until the last one came. At the end the connection goes
+// back to the pool if it can be used again, otherwise it is closed.
+void poured(const Kept& held, Spilling& spill, const Url& url) {
+    const Patience patience = held->limits.patience;
+    const Wire wire = spill.wire;
+
+    std::uint64_t written = 0;
+
+    // Moves at most `much` bytes from the buffer into the file and says how many.
+    const auto drawn = [&](std::uint64_t much) {
+        Bytes part = taken_out(wire, much);
+        const std::uint64_t moved = part.size();
+
+        spilled(spill, std::move(part), written);
+
+        return moved;
+    };
+
+    // Exactly `much` bytes of the body, the buffer refilled from the connection as it empties.
+    const auto exactly = [&](std::uint64_t much) {
+        while (much > 0) {
+            if (wire->kept.empty() && !more(wire, patience).await()) throw malformed("The connection closed in the middle of the body.");
+
+            much -= drawn(much);
+        }
+    };
+
+    switch (spill.frame.how) {
+        case Framing::sized:
+            exactly(spill.frame.size);
+            break;
+
+        case Framing::pieces:
+            // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
+            for (std::uint64_t much = chunk_size(until(wire, "\r\n", line_most, patience, false).await()); much != 0;
+                 much = chunk_size(until(wire, "\r\n", line_most, patience, false).await())) {
+                exactly(much);
+
+                (void)until(wire, "\r\n", 0, patience, false).await();
+            }
+
+            trailed(wire, patience).await();
+            break;
+
+        case Framing::closing:
+            do {
+                (void)drawn(wire->kept.size());
+            } while (more(wire, patience).await());
+            break;
+
+        case Framing::none:
+            break;
+    }
+
+    if (reusable(spill.head, spill.frame.how, wire)) {
+        wire->heard = false;
+
+        held->returned(place_of(url), wire);
+    } else {
+        wire->close();
+    }
+}
+
+// The work of a download on the pool: the file opened anew, the exchange awaited up to the head, the
+// body poured into the file (both waits hear a cancellation), and the file removed again unless a
+// whole 2xx body is in it.
 Response downloaded(const Kept& held, const Request& request, const std::filesystem::path& into, Saved& counted) {
     if (!held) throw Trouble{"The HTTP client is empty."};
 
@@ -1192,7 +1275,11 @@ Response downloaded(const Kept& held, const Request& request, const std::filesys
 
     try {
         got = fetched(held, request, 0, spill).await();
+
+        if (spill->wire) poured(held, *spill, got.url);
     } catch (...) {
+        if (spill->wire) spill->wire->close();
+
         spill->file.close();
         std::filesystem::remove(into, ignored);
 
