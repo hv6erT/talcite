@@ -127,13 +127,20 @@ public:
         if (Bell* const bell = ringing(); bell == nullptr) {
             result_->stirred.wait(held, settled);
         } else {
-            while (!result_->stirred.wait_for(held, detail::glance, settled)) {
-                if (!bell->wait(std::chrono::milliseconds{0})) continue;
+            held.unlock();
 
-                held.unlock();
-                cancel();
-                held.lock();
-            }
+            const Bell::Ear was = bell->heed(Bell::Ear{&result_->guard, &result_->stirred});
+
+            held.lock();
+            result_->stirred.wait(held, [&] { return settled() || bell->rang(); });
+            held.unlock();
+
+            (void)bell->heed(was);
+
+            if (!detail::over(*result_)) cancel();
+
+            held.lock();
+            result_->stirred.wait(held, settled);
         }
 
         if (result_->state.load() == detail::State::rejected) std::rethrow_exception(result_->why);

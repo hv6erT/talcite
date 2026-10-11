@@ -17,10 +17,11 @@ namespace talcite::detail {
 // `Promise::await` waiting inside a pool task hears that task's cancellation. A long task that waits
 // for other work (a plan reading a file through a seam, a scan asking for the tags of a track) would
 // otherwise wait to the end after its own promise was cancelled, and the cancelled task would hold a
-// worker and the disk all that time. So on a pool thread the wait looks at the task's bell every
-// `glance`; when it rings, the awaited promise is cancelled too, since nobody wants its result any
-// more, and `await` throws `Cancelled` as that promise now does. Outside the pool there is no bell
-// and the wait is a plain one. The callers stay as they are: only the waiting changes.
+// worker and the disk all that time. So on a pool thread the wait lends the task's bell an ear
+// (`Bell::heed`): the ring wakes the waiting thread at once, with nothing woken up in between to
+// look. Then the awaited promise is cancelled too, since nobody wants its result any more, and
+// `await` throws `Cancelled` as that promise now does. Outside the pool there is no bell and the
+// wait is a plain one. The callers stay as they are: only the waiting changes.
 //
 // A rejection with something that is not a `std::exception` reaches `fail` as this one constant
 // `Rejected`. It stands here, not in the header, because the links in `detail` are defined before

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <deque>
 #include <chrono>
+#include <condition_variable>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -467,6 +468,50 @@ TRIAL("cancel: the tail stops a source that is already running") {
 // A pool task that waits for other work hears its own cancellation in the wait: `await` stops,
 // throws `Cancelled`, and cancels the work it waited for, which nobody wants any more. Without that
 // the cancelled task would wait to the end and hold its worker.
+// A bell with an ear lent to it wakes that condition variable when it rings, from another thread,
+// and says it rang until cleared; `heed` gives back the ear heard before, and without an ear a ring
+// touches no condition variable.
+TRIAL("Bell: an ear lent to it wakes a condition variable, and rang lasts until clear") {
+    Bell bell;
+
+    std::mutex guard;
+    std::condition_variable stirred;
+
+    ought(!bell.rang());
+
+    const Bell::Ear before = bell.heed(Bell::Ear{&guard, &stirred});
+
+    ought(before.guard == nullptr && before.stirred == nullptr);
+
+    std::thread ringer{[&bell] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{20});
+        bell.ring();
+    }};
+
+    {
+        std::unique_lock<std::mutex> held{guard};
+
+        ought(stirred.wait_for(held, std::chrono::seconds{10}, [&bell] { return bell.rang(); }));
+    }
+
+    ringer.join();
+
+    const Bell::Ear lent = bell.heed(Bell::Ear{});
+
+    ought(lent.guard == &guard && lent.stirred == &stirred);
+    ought(bell.rang());
+    ought(bell.wait(std::chrono::milliseconds{0}));
+
+    bell.clear();
+
+    ought(!bell.rang());
+    ought(!bell.wait(std::chrono::milliseconds{0}));
+
+    bell.ring();
+
+    ought(bell.rang());
+}
+
 TRIAL("await: a cancelled pool task stops waiting and cancels what it waited for") {
     const auto began = std::make_shared<std::atomic<bool>>(false);
     const auto heard = std::make_shared<std::atomic<bool>>(false);
