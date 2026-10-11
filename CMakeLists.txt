@@ -29,9 +29,15 @@ if(WIN32)
   add_compile_definitions(NOMINMAX)
 endif()
 
+# A COFF object file holds at most 65,279 sections, and a large translation unit full of templates
+# (a test file with many trials, the matching code) goes past that in a Debug build: MSVC stops with
+# C1128, MinGW's assembler with "too many sections". /bigobj and -mbig-obj lift the limit; the
+# object files only grow a little.
 if(MSVC)
-  add_compile_options(/utf-8)
+  add_compile_options(/utf-8 /bigobj)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+elseif(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options(-Wa,-mbig-obj)
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
