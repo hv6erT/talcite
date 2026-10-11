@@ -4,9 +4,13 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -397,6 +401,139 @@ TRIAL("HTTP: a chunked body is joined into a whole") {
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
     same(body(again.await()), std::string{"ok"});
+}
+
+// A file of the trials for downloads, in a directory of its own, removed first so each trial
+// starts without it.
+std::filesystem::path saved_as(const std::string& name) {
+    const std::filesystem::path folder = std::filesystem::temp_directory_path() / "talcite-fetching";
+
+    std::error_code why;
+
+    std::filesystem::create_directories(folder, why);
+    std::filesystem::remove(folder / name, why);
+
+    return folder / name;
+}
+
+// The contents of a file, empty when there is none.
+std::string inside(const std::filesystem::path& where) {
+    std::ifstream file{where, std::ios::binary};
+
+    return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
+// A download takes the body of a 2xx answer into the file, beyond the body limit, whether it comes
+// by length or in chunks, and through a redirect; the answer comes back with an empty body and the
+// progress reaches the end. The connection goes back to the pool afterwards.
+TRIAL("HTTP: a download takes the body into a file, beyond the body limit, by length, in chunks and through a redirect") {
+    const net::Listener gate = standing();
+
+    net::HttpClient client{nothing, net::Limits{4096, 10, 5, soon}};
+
+    const std::string whole(300'000, 'z');
+    const std::filesystem::path first = saved_as("dlugi.bin");
+
+    auto got = client.save(asked(at(gate, "/plik")), first);
+
+    Desk desk = accepted(gate);
+
+    same(desk.heard().substr(0, 14), std::string{"GET /plik HTTP"});
+    desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(whole.size()) + "\r\n\r\n" + whole);
+
+    const net::Response one = got.await();
+
+    same(one.status, 200);
+    ought(one.body.empty());
+    same(inside(first), whole);
+    ought(got.progress() == 1.0);
+
+    // The next request on the same connection: in chunks, through a redirect to another target.
+    const std::filesystem::path second = saved_as("kawalki.bin");
+
+    auto again = client.save(asked(at(gate, "/stary")), second);
+
+    same(desk.heard().substr(0, 15), std::string{"GET /stary HTTP"});
+    desk.wrote("HTTP/1.1 302 Found\r\nLocation: /nowy\r\nContent-Length: 4\r\n\r\ntu: ");
+    same(desk.heard().substr(0, 14), std::string{"GET /nowy HTTP"});
+    desk.wrote("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
+               "5\r\nAla m\r\nD\r\na kota i psa.\r\n0\r\n\r\n");
+
+    same(again.await().status, 200);
+    same(inside(second), std::string{"Ala ma kota i psa."});
+}
+
+// An answer other than 2xx comes back as usual, with its body in memory and within the limit, and
+// leaves no file; a connection cut in the middle of the body is refused and leaves no file either,
+// so a file at the place is always a whole body.
+TRIAL("HTTP: a download that is not 2xx or is cut off leaves no file") {
+    const net::Listener gate = standing();
+
+    net::HttpClient client{nothing};
+
+    const std::filesystem::path missing = saved_as("brak.bin");
+
+    auto got = client.save(asked(at(gate, "/brak")), missing);
+
+    Desk desk = accepted(gate);
+
+    (void)desk.heard();
+    desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 5\r\n\r\nbrak!");
+
+    const net::Response one = got.await();
+
+    same(one.status, 404);
+    same(body(one), std::string{"brak!"});
+    ought(!std::filesystem::exists(missing));
+
+    const std::filesystem::path cut = saved_as("urwany.bin");
+
+    auto broken = client.save(asked(at(gate, "/urwany")), cut);
+
+    same(desk.heard().substr(0, 16), std::string{"GET /urwany HTTP"});
+    desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npoczatek");
+    desk.close();
+
+    same(why(broken), std::optional{net::HttpTrouble::Why::malformed});
+    ought(!std::filesystem::exists(cut));
+}
+
+// A download cancelled while the body comes stops at once, from the pool, and leaves no file.
+TRIAL("HTTP: a cancelled download stops and leaves no file") {
+    const net::Listener gate = standing();
+
+    net::HttpClient client{nothing};
+
+    const std::filesystem::path place = saved_as("przerwany.bin");
+
+    auto got = client.save(asked(at(gate, "/wolny")), place);
+
+    Desk desk = accepted(gate);
+
+    (void)desk.heard();
+    desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + std::string(1000, 'a'));
+
+    for (int tries = 0; tries < 2000 && got.progress() == 0.0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+    ought(got.progress() > 0.0 && got.progress() < 1.0);
+
+    got.cancel();
+
+    bool cancelled = false;
+
+    try {
+        (void)got.await();
+    } catch (const Cancelled&) {
+        cancelled = true;
+    }
+
+    ought(cancelled);
+
+    for (int tries = 0; tries < 2000 && std::filesystem::exists(place); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+    ought(!std::filesystem::exists(place));
+
+    desk.close();
 }
 
 // A response without a length and without chunks lasts until the connection closes, and that

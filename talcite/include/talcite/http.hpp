@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -106,6 +107,8 @@ public:
     [[nodiscard]] Promise<Response> get(Request request) const;
 
     [[nodiscard]] Promise<Response> post(Request request, Bytes body) const;
+
+    [[nodiscard]] Promise<Response> save(Request request, std::filesystem::path into) const;
 
 private:
     std::shared_ptr<Held> held_;

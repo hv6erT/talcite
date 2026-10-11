@@ -1,15 +1,19 @@
 #include "talcite/http.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <span>
+#include <system_error>
 #include <tuple>
 #include <utility>
 
+#include "talcite/fs.hpp"
 #include "talcite/stream.hpp"
 
 #include "raced.hpp"
@@ -28,6 +32,10 @@
 // A response status is not an error: 404 and 429 come back as a `Response`, because the caller
 // knows what to do with them. `HttpTrouble` means only a protocol violation or a limit from
 // `Limits` being exceeded.
+//
+// A download (`save`) takes the body of a 2xx answer straight into a file, piece by piece as it
+// arrives, without the body limit and without holding it in memory, so a file of gigabytes costs
+// one piece of memory; the promise's progress follows the bytes written against Content-Length.
 namespace talcite::net {
 
 namespace {
@@ -237,39 +245,93 @@ Promise<std::string> until(const Wire& wire, std::string_view mark, std::size_t 
     });
 }
 
-// Exactly `much` bytes of the body, appended to `into`.
-Promise<void> exact(const Wire& wire, std::size_t much, std::shared_ptr<Bytes> into, Patience patience) {
-    if (wire->kept.size() >= much) {
-        into->insert(into->end(), wire->kept.begin(), wire->kept.begin() + static_cast<std::ptrdiff_t>(much));
-        wire->kept.erase(wire->kept.begin(), wire->kept.begin() + static_cast<std::ptrdiff_t>(much));
+// Where the body of a download goes (`HttpClient::save`): the file, and the counters of the
+// promise's progress, the bytes written and the whole from Content-Length (zero when unknown).
+struct Spilling {
+    fs::File file;
+    std::atomic<std::uint64_t>* done = nullptr;
+    std::atomic<std::uint64_t>* whole = nullptr;
+};
+
+using Spill = std::shared_ptr<Spilling>;
+
+// Where a body goes: into memory, up to `most` bytes, or into the file of a download, without a
+// limit, at the next offset (`written`).
+struct Sink {
+    Bytes memory;
+    std::size_t most = 0;
+    Spill spill;
+    std::uint64_t written = 0;
+};
+
+using Sunk = std::shared_ptr<Sink>;
+
+// Takes a piece of the body: appends it in memory within the limit, or writes it to the file and
+// counts it for the progress.
+Promise<void> took(const Sunk& sink, Bytes part) {
+    if (part.empty()) return ready();
+
+    if (!sink->spill) {
+        if (part.size() > sink->most || sink->memory.size() > sink->most - part.size())
+            throw oversized("The response body is too large.");
+
+        sink->memory.insert(sink->memory.end(), part.begin(), part.end());
 
         return ready();
     }
 
-    return more(wire, patience).then([wire, much, into, patience](bool got) -> Promise<void> {
+    const std::uint64_t at = sink->written;
+
+    sink->written += part.size();
+
+    return sink->spill->file.write(at, std::move(part)).then([sink](std::size_t) { sink->spill->done->store(sink->written); });
+}
+
+// The bytes the buffer holds, at most `much` of them, taken out of it.
+Bytes taken_out(const Wire& wire, std::uint64_t much) {
+    const auto now = static_cast<std::ptrdiff_t>(std::min<std::uint64_t>(much, wire->kept.size()));
+
+    Bytes made(wire->kept.begin(), wire->kept.begin() + now);
+
+    wire->kept.erase(wire->kept.begin(), wire->kept.begin() + now);
+
+    return made;
+}
+
+// Exactly `much` bytes of the body, into the sink as they come.
+Promise<void> exact(const Wire& wire, std::uint64_t much, const Sunk& sink, Patience patience) {
+    if (much == 0) return ready();
+
+    if (!wire->kept.empty()) {
+        Bytes part = taken_out(wire, much);
+        const std::uint64_t left = much - part.size();
+
+        return took(sink, std::move(part)).then([wire, left, sink, patience] { return exact(wire, left, sink, patience); });
+    }
+
+    return more(wire, patience).then([wire, much, sink, patience](bool got) -> Promise<void> {
         if (!got) throw malformed("The connection closed in the middle of the body.");
 
-        return exact(wire, much, into, patience);
+        return exact(wire, much, sink, patience);
     });
 }
 
 // The body until the connection closes: a response without a length and without chunks.
-Promise<void> drained(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t most, Patience patience) {
-    into->insert(into->end(), wire->kept.begin(), wire->kept.end());
-    wire->kept.clear();
+Promise<void> drained(const Wire& wire, const Sunk& sink, Patience patience) {
+    Bytes part = taken_out(wire, wire->kept.size());
 
-    if (into->size() > most) throw oversized("The response body is too large.");
+    return took(sink, std::move(part)).then([wire, sink, patience] {
+        return more(wire, patience).then([wire, sink, patience](bool got) -> Promise<void> {
+            if (!got) return ready();
 
-    return more(wire, patience).then([wire, into, most, patience](bool got) -> Promise<void> {
-        if (!got) return ready();
-
-        return drained(wire, into, most, patience);
+            return drained(wire, sink, patience);
+        });
     });
 }
 
 // A chunk size from hexadecimal digits; nothing when the text is not entirely such a number.
-std::optional<std::size_t> hexed(std::string_view text) {
-    std::size_t made = 0;
+std::optional<std::uint64_t> hexed(std::string_view text) {
+    std::uint64_t made = 0;
 
     const auto [end, why] = std::from_chars(text.data(), text.data() + text.size(), made, 16);
 
@@ -282,24 +344,24 @@ Promise<void> trailed(const Wire& wire, Patience patience);
 
 // A chunked body: a line with the size in hexadecimal (extensions after a semicolon are skipped),
 // the chunk, CRLF; a zero chunk ends it, followed by a trailer up to an empty line, which is read
-// and discarded.
-Promise<void> chunked(const Wire& wire, std::shared_ptr<Bytes> into, std::size_t most, Patience patience) {
-    return until(wire, "\r\n", line_most, patience, false)
-        .then([wire, into, most, patience](std::string line) -> Promise<void> {
-            const std::string_view size = trimmed(std::string_view{line}.substr(0, line.find(';')));
-            const std::optional<std::size_t> much = hexed(size);
+// and discarded. The sink keeps the limit of a body in memory.
+Promise<void> chunked(const Wire& wire, const Sunk& sink, Patience patience) {
+    return until(wire, "\r\n", line_most, patience, false).then([wire, sink, patience](std::string line) -> Promise<void> {
+        const std::string_view size = trimmed(std::string_view{line}.substr(0, line.find(';')));
+        const std::optional<std::uint64_t> much = hexed(size);
 
-            if (!much) throw malformed("A chunk size is not a number.");
+        if (!much) throw malformed("A chunk size is not a number.");
 
-            if (*much == 0) return trailed(wire, patience);
+        if (*much == 0) return trailed(wire, patience);
 
-            if (*much > most || into->size() > most - *much) throw oversized("The response body is too large.");
+        if (!sink->spill && (*much > sink->most || sink->memory.size() > sink->most - *much))
+            throw oversized("The response body is too large.");
 
-            // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
-            return exact(wire, *much, into, patience)
-                .then([wire, patience] { return until(wire, "\r\n", 0, patience, false); })
-                .then([wire, into, most, patience](const std::string&) { return chunked(wire, into, most, patience); });
-        });
+        // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
+        return exact(wire, *much, sink, patience)
+            .then([wire, patience] { return until(wire, "\r\n", 0, patience, false); })
+            .then([wire, sink, patience](const std::string&) { return chunked(wire, sink, patience); });
+    });
 }
 
 // Reads and discards the trailer lines up to the empty line that ends the response.
@@ -388,13 +450,13 @@ enum class Framing : std::uint8_t { none, sized, pieces, closing };
 
 struct Frame {
     Framing how = Framing::closing;
-    std::size_t size = 0;
+    std::uint64_t size = 0;
 };
 
 // Decides how the body is framed: none for 204 and 304, chunked when Transfer-Encoding says so (any
 // other coding is refused), otherwise Content-Length, which must be one number within `most`, and
 // until close without it.
-Frame framed(const Head& head, std::size_t most) {
+Frame framed(const Head& head, std::uint64_t most) {
     if (head.status == 204 || head.status == 304) return {Framing::none, 0};
 
     if (const std::vector<std::string> codings = worded(head.headers, "transfer-encoding"); !codings.empty()) {
@@ -403,12 +465,12 @@ Frame framed(const Head& head, std::size_t most) {
         return {Framing::pieces, 0};
     }
 
-    std::optional<std::size_t> size;
+    std::optional<std::uint64_t> size;
 
     for (const Header& one : head.headers) {
         if (!alike(one.name, "content-length")) continue;
 
-        std::size_t made = 0;
+        std::uint64_t made = 0;
 
         const auto [end, why] = std::from_chars(one.value.data(), one.value.data() + one.value.size(), made);
 
@@ -930,7 +992,9 @@ Promise<Wire> dialed(const Kept& held, const Url& url) {
 
 // One exchange on the given connection: the request, the head (skipping 1xx responses), the body.
 // At the end the connection goes back to the pool if it can be used again, otherwise it is closed.
-Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
+// With a spill (a download), the body of a 2xx answer goes into its file without the body limit;
+// any other answer (a redirect, an error page) stays in memory as usual.
+Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill spill) {
     const Patience patience = held->limits.patience;
     const Place where = place_of(request.url);
 
@@ -944,20 +1008,29 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
 
             return given(std::move(head));
         })
-        .then([held, wire, patience, where, url = request.url](const std::string& text) -> Promise<Response> {
+        .then([held, wire, patience, where, url = request.url, spill](const std::string& text) -> Promise<Response> {
             const Head head = parsed(text);
 
             if (head.status >= 100 && head.status < 200) throw malformed("Too many interim responses.");
 
-            const Frame frame = framed(head, held->limits.body);
-            const auto body = std::make_shared<Bytes>();
+            const bool spilling = spill != nullptr && head.status >= 200 && head.status < 300;
+            const Frame frame = framed(head, spilling ? std::numeric_limits<std::uint64_t>::max() : held->limits.body);
 
-            Promise<void> read = frame.how == Framing::sized   ? exact(wire, frame.size, body, patience)
-                                 : frame.how == Framing::pieces ? chunked(wire, body, held->limits.body, patience)
-                                 : frame.how == Framing::closing ? drained(wire, body, held->limits.body, patience)
+            const auto sink = std::make_shared<Sink>();
+
+            sink->most = held->limits.body;
+
+            if (spilling) {
+                sink->spill = spill;
+                spill->whole->store(frame.how == Framing::sized ? frame.size : 0);
+            }
+
+            Promise<void> read = frame.how == Framing::sized   ? exact(wire, frame.size, sink, patience)
+                                 : frame.how == Framing::pieces ? chunked(wire, sink, patience)
+                                 : frame.how == Framing::closing ? drained(wire, sink, patience)
                                                                  : ready();
 
-            return read.then([held, wire, where, url, head, frame, body] {
+            return read.then([held, wire, where, url, head, frame, sink] {
                 if (reusable(head, frame.how, wire)) {
                     wire->heard = false;
 
@@ -966,7 +1039,7 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
                     wire->close();
                 }
 
-                return Response{head.status, head.headers, std::move(*body), url};
+                return Response{head.status, head.headers, std::move(sink->memory), url};
             });
         });
 }
@@ -974,20 +1047,21 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire) {
 // An exchange on a pooled connection or a new one. A pooled connection that failed before the first
 // byte of the response was closed by the server while idle, and the request is then sent again on a
 // new one.
-Promise<Response> attempted(const Kept& held, const Request& request) {
+Promise<Response> attempted(const Kept& held, const Request& request, const Spill& spill) {
     if (Wire idle = request.method == "GET" ? held->taken(place_of(request.url)) : Wire{}) {
-        return caught(exchanged(held, request, idle)).then([held, request, idle](Outcome<Response> got) -> Promise<Response> {
-            if (got.value) return given(std::move(*got.value));
+        return caught(exchanged(held, request, idle, spill))
+            .then([held, request, idle, spill](Outcome<Response> got) -> Promise<Response> {
+                if (got.value) return given(std::move(*got.value));
 
-            idle->close();
+                idle->close();
 
-            if (idle->heard) return refused<Response>(got.why);
+                if (idle->heard) return refused<Response>(got.why);
 
-            return dialed(held, request.url).then([held, request](Wire wire) { return exchanged(held, request, wire); });
-        });
+                return dialed(held, request.url).then([held, request, spill](Wire wire) { return exchanged(held, request, wire, spill); });
+            });
     }
 
-    return dialed(held, request.url).then([held, request](Wire wire) { return exchanged(held, request, wire); });
+    return dialed(held, request.url).then([held, request, spill](Wire wire) { return exchanged(held, request, wire, spill); });
 }
 
 // Whether the status is a redirect that is followed: 301, 302, 303, 307 or 308.
@@ -996,13 +1070,14 @@ bool redirecting(int status) {
 }
 
 // Sends the request and follows redirects up to the limit, refusing a downgrade from HTTPS to HTTP.
-Promise<Response> fetched(const Kept& held, Request request, int hops) {
+// A download keeps its spill through the redirects, so the body of the last answer lands in the file.
+Promise<Response> fetched(const Kept& held, Request request, int hops, Spill spill = nullptr) {
     checked(request);
 
     if (request.url.secure && !held->tls.bound())
         throw HttpTrouble{HttpTrouble::Why::insecure, "HTTPS needs a TLS provider."};
 
-    return attempted(held, request).then([held, request, hops](Response got) -> Promise<Response> {
+    return attempted(held, request, spill).then([held, request, hops, spill](Response got) -> Promise<Response> {
         const std::string* location = got.header("location");
 
         if (!redirecting(got.status) || location == nullptr) return given(std::move(got));
@@ -1029,7 +1104,7 @@ Promise<Response> fetched(const Kept& held, Request request, int hops) {
             if (next->host == request.url.host || (!alike(one.name, "authorization") && !alike(one.name, "cookie")))
                 again.headers.push_back(one);
 
-        return fetched(held, std::move(again), hops + 1);
+        return fetched(held, std::move(again), hops + 1, spill);
     });
 }
 
@@ -1071,6 +1146,87 @@ Promise<Response> HttpClient::post(Request request, Bytes body) const {
     request.body = std::move(body);
 
     return sent(held_, std::move(request));
+}
+
+namespace {
+
+// The ticket of a download: the bytes written and the whole, for the progress bar.
+struct Saved : detail::Result<Response> {
+    std::atomic<std::uint64_t> done{0};
+    std::atomic<std::uint64_t> whole{0};
+
+    // The finished share between 0 and 1; a settled download counts as complete, one of unknown
+    // length as not begun.
+    [[nodiscard]] double progress() const override {
+        if (detail::over(*this)) return 1.0;
+
+        const std::uint64_t all = whole.load();
+
+        if (all == 0) return 0.0;
+
+        return std::min(1.0, static_cast<double>(done.load()) / static_cast<double>(all));
+    }
+};
+
+// A promise whose ticket counts the bytes of a download.
+class SavePromise : public Promise<Response> {
+public:
+    // Builds the promise around its callback and the counting ticket.
+    SavePromise(Promise<Response>::Callback given, std::shared_ptr<Saved> made)
+        : Promise<Response>(std::move(given), std::move(made)) {}
+};
+
+// The work of a download on the pool: the file opened anew, the exchange awaited (which hears a
+// cancellation), and the file removed again unless a whole 2xx body is in it.
+Response downloaded(const Kept& held, const Request& request, const std::filesystem::path& into, Saved& counted) {
+    if (!held) throw Trouble{"The HTTP client is empty."};
+
+    const auto spill = std::make_shared<Spilling>();
+
+    spill->file = fs::open(into, fs::Mode::truncate).await();
+    spill->done = &counted.done;
+    spill->whole = &counted.whole;
+
+    Response got;
+    std::error_code ignored;
+
+    try {
+        got = fetched(held, request, 0, spill).await();
+    } catch (...) {
+        spill->file.close();
+        std::filesystem::remove(into, ignored);
+
+        throw;
+    }
+
+    spill->file.close();
+
+    if (got.status < 200 || got.status > 299) std::filesystem::remove(into, ignored);
+
+    return got;
+}
+
+}
+
+// Downloads with a GET into the file at `into`, created anew: the body of a 2xx answer goes to the
+// file piece by piece, and the answer comes back with an empty body. Any other answer comes back as
+// usual, with its body in memory, and leaves no file; neither does a failed or cancelled download,
+// so a file at `into` is always a whole body. Like every network promise, it starts at once.
+Promise<Response> HttpClient::save(Request request, std::filesystem::path into) const {
+    request.method = "GET";
+    request.body.clear();
+
+    auto counted = std::make_shared<Saved>();
+
+    const auto work = [held = held_, request = std::move(request), into = std::move(into), counted](auto resolve, auto) {
+        resolve(downloaded(held, request, into, *counted));
+    };
+
+    Promise<Response> made = SavePromise{work, counted};
+
+    made.start();
+
+    return made;
 }
 
 }
