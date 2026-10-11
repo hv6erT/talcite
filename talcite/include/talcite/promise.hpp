@@ -121,7 +121,20 @@ public:
         start();
 
         std::unique_lock<std::mutex> held{result_->guard};
-        result_->stirred.wait(held, [this] { return detail::over(*result_); });
+
+        const auto settled = [this] { return detail::over(*result_); };
+
+        if (Bell* const bell = ringing(); bell == nullptr) {
+            result_->stirred.wait(held, settled);
+        } else {
+            while (!result_->stirred.wait_for(held, detail::glance, settled)) {
+                if (!bell->wait(std::chrono::milliseconds{0})) continue;
+
+                held.unlock();
+                cancel();
+                held.lock();
+            }
+        }
 
         if (result_->state.load() == detail::State::rejected) std::rethrow_exception(result_->why);
 

@@ -464,6 +464,45 @@ TRIAL("cancel: the tail stops a source that is already running") {
     ought(caught);
 }
 
+// A pool task that waits for other work hears its own cancellation in the wait: `await` stops,
+// throws `Cancelled`, and cancels the work it waited for, which nobody wants any more. Without that
+// the cancelled task would wait to the end and hold its worker.
+TRIAL("await: a cancelled pool task stops waiting and cancels what it waited for") {
+    const auto began = std::make_shared<std::atomic<bool>>(false);
+    const auto heard = std::make_shared<std::atomic<bool>>(false);
+    const auto dropped = std::make_shared<std::atomic<bool>>(false);
+
+    Promise<void> never{[](auto, auto) {}};
+    Promise<void> watched = never.fail([dropped](const std::exception& why) {
+        dropped->store(dynamic_cast<const Cancelled*>(&why) != nullptr);
+    });
+
+    Promise<void> task{[never, began, heard](auto resolve, auto) mutable {
+        began->store(true);
+
+        try {
+            never.await();
+        } catch (const Cancelled&) {
+            heard->store(true);
+        }
+
+        resolve();
+    }};
+
+    task.start();
+
+    for (int tries = 0; tries < 2000 && !began->load(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+    ought(began->load());
+
+    task.cancel();
+
+    for (int tries = 0; tries < 2000 && !heard->load(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+    ought(heard->load());
+    ought(dropped->load());
+}
+
 // A promise returned from `then` is work just like the source, often the only one still running,
 // because the source settled long ago. Cancelling the tail must reach it too.
 TRIAL("cancel: reaches a promise returned from then") {

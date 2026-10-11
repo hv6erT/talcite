@@ -27,6 +27,8 @@ class Promise;
 
 namespace talcite::detail {
 
+inline constexpr std::chrono::milliseconds glance{10};
+
 [[nodiscard]] const std::exception& unknown();
 
 [[nodiscard]] Promise<void> deadline(std::chrono::milliseconds patience);
