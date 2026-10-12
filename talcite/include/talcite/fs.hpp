@@ -149,6 +149,8 @@ private:
 
 [[nodiscard]] Promise<void> make_folder(const path& where);
 
+[[nodiscard]] Promise<void> unmade(const path& where);
+
 [[nodiscard]] Promise<void> rename(const path& from, const path& to,
                                    Conflict how = Conflict::fail);
 

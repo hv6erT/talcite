@@ -1100,6 +1100,70 @@ bool linked(const fs::path& where, const fs::path& onto, bool folder = false) {
 
 }
 
+TRIAL("fs: unmade removes an empty folder, and a missing one counts as removed") {
+    const Nook nook;
+
+    const fs::path where = nook.where() / "pusty";
+    fs::make_folder(where).get();
+
+    fs::unmade(where).get();
+
+    ought(!stood::exists(where));
+
+    fs::unmade(where).get();
+    fs::unmade(nook.where() / "nie ma" / "wcale").get();
+}
+
+// A folder with anything inside is refused, and what is inside stays: unlike `erase`, `unmade`
+// never descends. An empty subfolder is enough to refuse.
+TRIAL("fs: unmade refuses a folder with anything inside and leaves it whole") {
+    const Nook nook;
+
+    const fs::path where = nook.where() / "pełny";
+    fs::make_folder(where / "w środku").get();
+
+    std::string said;
+
+    try {
+        fs::unmade(where).get();
+    } catch (const fs::Trouble& why) {
+        said = why.what();
+    }
+
+    ought(said.find("not empty") != std::string::npos);
+    ought(stood::is_directory(where / "w środku"));
+
+    const fs::path file = nook.made("pełny/w środku/plik.txt", "treść");
+
+    threw(fs::unmade(where / "w środku").get());
+    same(said_of(fs::read(file).get()), std::string{"treść"});
+}
+
+// A file is not a folder, and neither is a link, even one to a folder: removing the link would
+// look like success while the folder it points to stays.
+TRIAL("fs: unmade refuses a file and a link, also a link to a folder") {
+    const Nook nook;
+
+    const fs::path file = nook.made("plik.txt", "x");
+
+    threw(fs::unmade(file).get());
+    ought(stood::exists(file));
+
+    const fs::path folder = nook.where() / "cel";
+    fs::make_folder(folder).get();
+
+    const fs::path link = nook.where() / "skrót";
+
+    if (!linked(link, folder, true)) return;
+
+    threw(fs::unmade(link).get());
+
+    std::error_code ignored;
+
+    ought(stood::is_symlink(stood::symlink_status(link, ignored)));
+    ought(stood::is_directory(folder));
+}
+
 // A link to a directory is a directory to enter, as in MC: `list` and `walk` follow it when it
 // stands at the very root. Deeper in the walk, links stay links: `walk` does not expand them,
 // because a link to an ancestor would close a loop. A link to a file and a dangling one still

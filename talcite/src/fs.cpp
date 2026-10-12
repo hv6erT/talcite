@@ -968,6 +968,42 @@ void make_folder_at(const path& where) {
     if (trouble) amiss("Cannot create the directory.", where);
 }
 
+// Removes an empty folder and nothing else: a missing entry counts as removed, a file, a link (also
+// one to a folder) and a folder with anything inside are refused, and nothing inside is touched.
+// The emptiness is decided by the system in the removal itself, not by an earlier look, so an entry
+// that appears in between stays and the removal is refused.
+void unmade_at(const path& where) {
+    const Kind what = kind_at(where);
+
+    if (what == Kind::none) return;
+
+    if (what != Kind::folder) amiss("Not a folder.", where);
+
+#ifdef _WIN32
+    if (RemoveDirectoryW(longly(where).c_str()) != 0) return;
+
+    const DWORD why = GetLastError();
+
+    if (why == ERROR_FILE_NOT_FOUND || why == ERROR_PATH_NOT_FOUND) return;
+
+    if (why == ERROR_DIR_NOT_EMPTY) amiss("The folder is not empty.", where);
+
+    amiss("Cannot remove the folder.", where);
+#else
+    if (::rmdir(where.c_str()) == 0) return;
+
+    const int why = errno;
+
+    if (why == ENOENT) return;
+
+    if (why == ENOTEMPTY || why == EEXIST) amiss("The folder is not empty.", where);
+
+    if (why == ENOTDIR) amiss("Not a folder.", where);
+
+    amiss("Cannot remove the folder.", where);
+#endif
+}
+
 // The name beside: target.bin → target (2).bin. Built on the native form of the path, not through
 // `string()`, which under MSVC returns the ANSI code page and breaks or rejects Polish letters.
 path beside(const path& to, int at) {
@@ -2437,6 +2473,13 @@ Promise<std::optional<path>> folder(Known which) {
 Promise<void> make_folder(const path& where) {
     return run(io(), [where]() {
         make_folder_at(where);
+    });
+}
+
+// Removes an empty folder on the pool (`unmade_at`).
+Promise<void> unmade(const path& where) {
+    return run(io(), [where]() {
+        unmade_at(where);
     });
 }
 

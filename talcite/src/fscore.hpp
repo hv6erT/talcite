@@ -61,6 +61,8 @@ inline constexpr std::size_t astray = 256 * 1024;
 
 void make_folder_at(const path& where);
 
+void unmade_at(const path& where);
+
 [[nodiscard]] std::chrono::sys_seconds modified_at(const path& where);
 
 // Modification time at the system's full precision: nanoseconds on POSIX, hundreds of
