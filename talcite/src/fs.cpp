@@ -18,9 +18,8 @@
 #include <utility>
 #include <vector>
 
-#include "talcite/bell.hpp"
 #include "talcite/encoding.hpp"
-#include "talcite/pool.hpp"
+#include "talcite/promise.hpp"
 
 #include "folding.hpp"
 #include "fscore.hpp"
@@ -576,13 +575,13 @@ std::size_t chunk_at(const path& where) {
     }
 }
 
-// The only place where work asks whether it is still needed. The worker's bell is rung by drop() on
-// the pool, that is by cancel() on the promise, and walking a tree is an operation that takes long
-// enough for this to matter.
+// The only place where work asks whether it is still needed: whether the promise of the work
+// running on this thread has been given up. Walking a tree is an operation that takes long enough
+// for this to matter.
 bool stopped() {
-    Bell* bell = ringing();
+    const Stop* stop = Stop::current();
 
-    return bell != nullptr && bell->wait(std::chrono::milliseconds{0});
+    return stop != nullptr && stop->stopped();
 }
 
 #ifndef _WIN32
@@ -1967,66 +1966,64 @@ Trouble::Trouble(const std::string& said, path where)
 
 // Whether anything exists at the path, checked on the pool.
 Promise<bool> exists(const path& where) {
-    return Promise<bool>{[where](auto resolve, auto) { resolve(exists_at(where)); }};
+    return run(io(), [where]() -> bool { return exists_at(where); });
 }
 
 // The kind of the entry at the path, without following a symlink.
 Promise<Kind> kind(const path& where) {
-    return Promise<Kind>{[where](auto resolve, auto) { resolve(kind_at(where)); }};
+    return run(io(), [where]() -> Kind { return kind_at(where); });
 }
 
 // The size of the file in bytes.
 Promise<std::uintmax_t> size(const path& where) {
-    return Promise<std::uintmax_t>{[where](auto resolve, auto) { resolve(size_at(where)); }};
+    return run(io(), [where]() -> std::uintmax_t { return size_at(where); });
 }
 
 // The write time of the entry, in whole seconds.
 Promise<std::chrono::sys_seconds> modified(const path& where) {
-    return Promise<std::chrono::sys_seconds>{
-        [where](auto resolve, auto) { resolve(modified_at(where)); }};
+    return run(io(), [where]() -> std::chrono::sys_seconds { return modified_at(where); });
 }
 
 // Sets the write time of a file or a directory.
 Promise<void> modified(const path& where, std::chrono::sys_seconds when) {
-    return Promise<void>{[where, when](auto resolve, auto) {
+    return run(io(), [where, when]() {
         stamp_at(where, Instant{when});
-        resolve();
-    }};
+    });
 }
 
 // The total and available space of the volume under the path.
 Promise<Space> space(const path& where) {
-    return Promise<Space>{[where](auto resolve, auto) { resolve(space_at(where)); }};
+    return run(io(), [where]() -> Space { return space_at(where); });
 }
 
 // The kind of medium the path lies on.
 Promise<Mount> mount(const path& where) {
-    return Promise<Mount>{[where](auto resolve, auto) { resolve(mount_at(where)); }};
+    return run(io(), [where]() -> Mount { return mount_at(where); });
 }
 
 // The list of volumes with their details.
 Promise<std::vector<Volume>> volumes() {
-    return Promise<std::vector<Volume>>{[](auto resolve, auto) { resolve(volumes_at()); }};
+    return run(io(), []() -> std::vector<Volume> { return volumes_at(); });
 }
 
 // The roots of the volumes only, without asking the media, so the list is fast.
 Promise<std::vector<path>> roots() {
-    return Promise<std::vector<path>>{[](auto resolve, auto) { resolve(roots_at()); }};
+    return run(io(), []() -> std::vector<path> { return roots_at(); });
 }
 
 // The root of the volume the path lies on.
 Promise<path> mounted(const path& where) {
-    return Promise<path>{[where](auto resolve, auto) { resolve(mounting_at(where)); }};
+    return run(io(), [where]() -> path { return mounting_at(where); });
 }
 
 // The details of the volume at the given root.
 Promise<Volume> volume(const path& where) {
-    return Promise<Volume>{[where](auto resolve, auto) { resolve(volume_at(where)); }};
+    return run(io(), [where]() -> Volume { return volume_at(where); });
 }
 
 // The read chunk suited to the medium under the path.
 Promise<std::size_t> chunk(const path& where) {
-    return Promise<std::size_t>{[where](auto resolve, auto) { resolve(chunk_at(where)); }};
+    return run(io(), [where]() -> std::size_t { return chunk_at(where); });
 }
 
 namespace {
@@ -2102,40 +2099,39 @@ std::string group_at(std::uint32_t which) {
 // listing asks once per listing, not once per row. A number the system does not know gives an empty
 // text, and the caller then shows the number itself, as ls does.
 Promise<std::string> owner(std::uint32_t which) {
-    return Promise<std::string>{[which](auto resolve, auto) {
+    return run(io(), [which]() -> std::string {
         static std::map<std::uint32_t, std::string> among;
         static std::mutex guard;
 
-        resolve(cached(among, guard, which, owner_at));
-    }};
+        return cached(among, guard, which, owner_at);
+    });
 }
 
 // The group's name by number, cached and empty for an unknown number, like `owner`.
 Promise<std::string> group(std::uint32_t which) {
-    return Promise<std::string>{[which](auto resolve, auto) {
+    return run(io(), [which]() -> std::string {
         static std::map<std::uint32_t, std::string> among;
         static std::mutex guard;
 
-        resolve(cached(among, guard, which, group_at));
-    }};
+        return cached(among, guard, which, group_at);
+    });
 }
 
 // The hidden, read-only and system attributes of the entry.
 Promise<Attributes> attributes(const path& where) {
-    return Promise<Attributes>{[where](auto resolve, auto) { resolve(attributes_at(where)); }};
+    return run(io(), [where]() -> Attributes { return attributes_at(where); });
 }
 
 // Sets the attributes of the entry (see `attributed_at` for what POSIX can set).
 Promise<void> attributes(const path& where, Attributes what) {
-    return Promise<void>{[where, what](auto resolve, auto) {
+    return run(io(), [where, what]() {
         attributed_at(where, what);
-        resolve();
-    }};
+    });
 }
 
 // One entry described as in a listing; `Kind::none` when it does not exist.
 Promise<Entry> entry(const path& where) {
-    return Promise<Entry>{[where](auto resolve, auto) { resolve(entry_at(where)); }};
+    return run(io(), [where]() -> Entry { return entry_at(where); });
 }
 
 #ifdef _WIN32
@@ -2226,7 +2222,7 @@ void guarded(const path& where, stood::perms what) {
 // Rights follow a symlink, like chmod: a symlink has no rights of its own. On Windows the bits map
 // onto the read-only attribute and onto the access list (`guarded`).
 Promise<void> rights(const path& where, std::filesystem::perms what) {
-    return Promise<void>{[where, what](auto resolve, auto) {
+    return run(io(), [where, what]() {
         std::error_code why;
 
         stood::permissions(where, what, stood::perm_options::replace, why);
@@ -2236,32 +2232,29 @@ Promise<void> rights(const path& where, std::filesystem::perms what) {
 #ifdef _WIN32
         guarded(where, what);
 #endif
-
-        resolve();
-    }};
+    });
 }
 
 // Whether both paths lead to the same file.
 Promise<bool> equivalent(const path& one, const path& two) {
-    return Promise<bool>{[one, two](auto resolve, auto) { resolve(equivalent_at(one, two)); }};
+    return run(io(), [one, two]() -> bool { return equivalent_at(one, two); });
 }
 
 // Where a symlink points.
 Promise<path> target(const path& where) {
-    return Promise<path>{[where](auto resolve, auto) { resolve(target_at(where)); }};
+    return run(io(), [where]() -> path { return target_at(where); });
 }
 
 // The path with symlinks resolved as far as it exists.
 Promise<path> canonical(const path& where) {
-    return Promise<path>{[where](auto resolve, auto) { resolve(canonical_at(where)); }};
+    return run(io(), [where]() -> path { return canonical_at(where); });
 }
 
 // Creates a hard link or a symlink at `where` pointing to `onto`.
 Promise<void> link(const path& where, const path& onto, bool hard) {
-    return Promise<void>{[where, onto, hard](auto resolve, auto) {
+    return run(io(), [where, onto, hard]() {
         linking_at(where, onto, hard);
-        resolve();
-    }};
+    });
 }
 
 // The current directory, read directly: reading is only a look.
@@ -2274,14 +2267,12 @@ path current() {
 // Changes the current directory. It is shared by the whole process, so changing it also affects the
 // pool's threads; hence a promise of its own: a change is an event.
 Promise<void> current(const path& where) {
-    return Promise<void>{[where](auto resolve, auto) {
+    return run(io(), [where]() {
         std::error_code trouble;
 
         stood::current_path(where, trouble);
         if (trouble) amiss("Cannot enter the directory.", where);
-
-        resolve();
-    }};
+    });
 }
 
 // The home directory from USERPROFILE on Windows and HOME elsewhere; empty when it is not set.
@@ -2431,48 +2422,43 @@ std::optional<path> asked_folder(Known which) {
 // A known folder only when it really is on disk: an entry in the system settings whose directory
 // nobody created is not a place one can enter.
 Promise<std::optional<path>> folder(Known which) {
-    return Promise<std::optional<path>>{[which](auto resolve, auto) {
+    return run(io(), [which]() -> std::optional<path> {
         std::optional<path> made = asked_folder(which);
 
         std::error_code ignored;
 
         if (made && !stood::is_directory(*made, ignored)) made.reset();
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // Creates the directory together with any missing parents.
 Promise<void> make_folder(const path& where) {
-    return Promise<void>{[where](auto resolve, auto) {
+    return run(io(), [where]() {
         make_folder_at(where);
-        resolve();
-    }};
+    });
 }
 
 // Renames within one medium, with the collision policy; moving to another medium is an error here,
 // because that needs a copy.
 Promise<void> rename(const path& from, const path& to, Conflict how) {
-    return Promise<void>{[from, to, how](auto resolve, auto) {
+    return run(io(), [from, to, how]() {
         const Shift made = shifted(from, to, how);
 
         if (!made.where.empty() && !made.done) amiss("Cannot rename.", from);
-
-        resolve();
-    }};
+    });
 }
 
 // The entries of the directory, sorted by path.
 Promise<std::vector<Entry>> list(const path& where) {
-    return Promise<std::vector<Entry>>{
-        [where](auto resolve, auto) { resolve(list_at(where)); }};
+    return run(io(), [where]() -> std::vector<Entry> { return list_at(where); });
 }
 
 // Every entry under the directory, recursively, sorted by path; inaccessible subdirectories are
 // skipped.
 Promise<std::vector<Entry>> walk(const path& where) {
-    return Promise<std::vector<Entry>>{
-        [where](auto resolve, auto) { resolve(walk_at(where)); }};
+    return run(io(), [where]() -> std::vector<Entry> { return walk_at(where); });
 }
 
 }

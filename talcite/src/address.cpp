@@ -301,7 +301,7 @@ Address Address::unmapped() const {
 // and without duplicates. Fails with `Trouble` when the name is unknown or has no address of the
 // asked family.
 Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Family family) {
-    return Promise<std::vector<Address>>{[host, port, family](auto giving, auto amiss) {
+    return run(io(), [host, port, family]() -> std::vector<Address> {
         starting();
 
         addrinfo wanted{};
@@ -316,10 +316,7 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
         const int code = ::getaddrinfo(host.c_str(), nullptr, &wanted, &found);
 
         if (code != 0) {
-            amiss(std::make_exception_ptr(
-                Trouble{"Unknown name " + host + ": " + amiss_named(code) + ".", code}));
-
-            return;
+            throw Trouble{"Unknown name " + host + ": " + amiss_named(code) + ".", code};
         }
 
         // A guard frees the system's list, not a line at the end: collecting can throw when memory
@@ -343,13 +340,11 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
         }
 
         if (made.empty()) {
-            amiss(std::make_exception_ptr(Trouble{"The name has no addresses: " + host + "."}));
-
-            return;
+            throw Trouble{"The name has no addresses: " + host + "."};
         }
 
-        giving(std::move(made));
-    }};
+        return made;
+    });
 }
 
 
@@ -362,7 +357,7 @@ Promise<std::vector<Address>> resolve(std::string host, std::uint16_t port, Fami
 // belongs to the caller, because every use filters differently. Candidate gathering drops the
 // loopback, so that the other side does not try to reach itself.
 Promise<std::vector<Address>> mine(Family family) {
-    return Promise<std::vector<Address>>{[family](auto giving, auto amiss) {
+    return run(io(), [family]() -> std::vector<Address> {
         starting();
 
         std::vector<Address> made;
@@ -392,11 +387,8 @@ Promise<std::vector<Address>> mine(Family family) {
         // ERROR_NO_DATA means "no addresses of this family", not a failure: POSIX returns an empty
         // list then, and Windows has to do the same.
         if (code != NO_ERROR && code != ERROR_NO_DATA) {
-            amiss(std::make_exception_ptr(
-                Trouble{"Cannot list own addresses: " + spoken(static_cast<int>(code)) + ".",
-                        static_cast<int>(code)}));
-
-            return;
+            throw Trouble{"Cannot list own addresses: " + spoken(static_cast<int>(code)) + ".",
+                        static_cast<int>(code)};
         }
 
         for (const IP_ADAPTER_ADDRESSES* card = first; card != nullptr; card = card->Next) {
@@ -417,10 +409,7 @@ Promise<std::vector<Address>> mine(Family family) {
         ifaddrs* first = nullptr;
 
         if (::getifaddrs(&first) != 0) {
-            amiss(std::make_exception_ptr(
-                Trouble{"Cannot list own addresses: " + spoken(errno) + ".", errno}));
-
-            return;
+            throw Trouble{"Cannot list own addresses: " + spoken(errno) + ".", errno};
         }
 
         struct Freeing {
@@ -453,8 +442,8 @@ Promise<std::vector<Address>> mine(Family family) {
 
 #endif
 
-        giving(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // `Trouble` does not translate the number by itself. The numbers come from three different worlds

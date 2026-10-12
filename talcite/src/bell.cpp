@@ -34,8 +34,8 @@ Bell::~Bell() {
 
 // Rings the bell: the event stays signaled until `clear`.
 void Bell::ring() {
+    rang_.store(true);
     SetEvent(event_);
-    spread();
 }
 
 // Silences the bell.
@@ -77,16 +77,16 @@ Bell::~Bell() {
 // Rings the bell by writing one byte into the pipe. A full pipe already rings, so a failed write is
 // ignored.
 void Bell::ring() {
+    rang_.store(true);
+
     const unsigned char one = 1;
     const ssize_t wrote = ::write(rung_, &one, 1);
     (void)wrote;
-
-    spread();
 }
 
 // Silences the bell by draining the pipe. A read interrupted by a signal is retried: leaving the
-// loop with a byte still in the pipe would make the next task in the pool see the bell and consider
-// itself canceled, and then its promise would never settle and `await` would wait forever.
+// loop with a byte still in the pipe would wake the next task's waits on the bell at once, as though
+// its work had been stopped.
 void Bell::clear() {
     rang_.store(false);
 
@@ -119,37 +119,5 @@ bool Bell::wait(std::chrono::milliseconds patience) {
 
 // Whether the bell has rung since the last `clear`, without waiting and without silencing it.
 bool Bell::rang() const { return rang_.load(); }
-
-// Lends the bell an ear: from now on a ring also wakes the condition variable `ear.stirred`, under
-// its mutex `ear.guard`, besides the descriptor. That is how a thread blocked on a condition
-// variable (`Promise::await` in a pool task) hears its task's cancellation at once, without waking
-// up to look. The mutex is taken before the notification, so a waiter that checked `rang` under it
-// and is just going to sleep does not miss the ring. An empty ear stops it; the ear heard before is
-// returned, to be given back. Whoever lends an ear must not hold its mutex while lending it, since
-// a ring holds the ear while it takes that mutex.
-Bell::Ear Bell::heed(Ear ear) {
-    const std::lock_guard<std::mutex> held{ear_guard_};
-
-    const Ear was = ear_;
-
-    ear_ = ear;
-
-    return was;
-}
-
-// Marks the bell as rung and wakes the ear lent to it, if any (`heed`).
-void Bell::spread() {
-    rang_.store(true);
-
-    const std::lock_guard<std::mutex> held{ear_guard_};
-
-    if (ear_.stirred == nullptr) return;
-
-    {
-        const std::lock_guard<std::mutex> listening{*ear_.guard};
-    }
-
-    ear_.stirred->notify_all();
-}
 
 }

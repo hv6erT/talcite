@@ -258,7 +258,7 @@ TRIAL("Image: figured gives kind and shape at once, and pixels at the requested 
     same(one.size.high, 12);
     ought(static_cast<bool>(one.fetch));
 
-    const Pixels made = one.fetch({8, 6}).await();
+    const Pixels made = one.fetch({8, 6}).get();
 
     ought(made.held());
     same(made.size().wide, 8);
@@ -278,7 +278,7 @@ TRIAL("Image: figured rejects the promise when the provider refuses") {
     bool amiss = false;
 
     try {
-        (void)one.fetch({8, 6}).await();
+        (void)one.fetch({8, 6}).get();
     } catch (const Refused& why) {
         amiss = std::string{why.what()} == "Image provider refused: not a GIF the fake would read";
     }
@@ -298,7 +298,7 @@ TRIAL("Image: figured without a provider has no shape and rejects with Unbound")
     bool amiss = false;
 
     try {
-        (void)one.fetch({8, 6}).await();
+        (void)one.fetch({8, 6}).get();
     } catch (const Unbound&) {
         amiss = true;
     }

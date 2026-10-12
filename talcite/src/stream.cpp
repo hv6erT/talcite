@@ -72,21 +72,13 @@ std::chrono::steady_clock::time_point until(Patience patience) {
 // data.
 template <typename T>
 Promise<T> busy() {
-    auto made = std::make_shared<detail::Result<T>>();
-
-    detail::spoiled(*made, std::make_exception_ptr(Trouble{"The stream is already busy in that direction."}));
-
-    return HandPromise<T>{made};
+    return refused<T>("The stream is already busy in that direction.");
 }
 
 // A promise already rejected with `Trouble` carrying the message, code and address.
 template <typename T>
 Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) {
-    auto made = std::make_shared<detail::Result<T>>();
-
-    detail::spoiled(*made, std::make_exception_ptr(Trouble{said, code, std::move(where)}));
-
-    return HandPromise<T>{made};
+    return refused<T>(said, code, std::move(where));
 }
 
 // A network request is at the same time the promise's ticket, so cancelling has to withdraw it
@@ -106,10 +98,9 @@ Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) 
 // completion of a cancelled operation then finds another identity and touches nothing; otherwise
 // it would clear the marker that already belongs to the next operation.
 //
-// The completion may also arrive before our rejection and settle the ticket first; the caller would
-// then get a `Trouble` with the abort error number instead of `Cancelled`. That is what `quitted`
-// is for: set before withdrawing, it tells the late completion to clean up and stay silent.
-struct JoinPromise : Doing, detail::Result<Stream> {
+// A late completion of a cancelled request finds its promise already ended, and settling it then
+// changes nothing: the caller keeps `Cancelled`, not a `Trouble` with the abort error number.
+struct JoinPromise : Handing<Stream> {
     std::shared_ptr<Stream::Held> mine;
 
     // Withdraws an abandoned connect from the hub. Connecting has no direction marker, yet it must
@@ -119,12 +110,8 @@ struct JoinPromise : Doing, detail::Result<Stream> {
 
     // The connect finished: the stream with both addresses, or `Trouble` with the error.
     void done(std::size_t, int code) override {
-        if (quitted.load()) return;
-
         if (code != 0) {
-            spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Cannot connect: " + spoken(code) + ".", code,
-                                       mine->peer}));
+            (void)settle->fail(std::make_exception_ptr(Trouble{"Cannot connect: " + spoken(code) + ".", code, mine->peer}));
 
             return;
         }
@@ -136,19 +123,15 @@ struct JoinPromise : Doing, detail::Result<Stream> {
 
         mine->mine = named(held, false);
 
-        settled(*this, Stream{mine});
+        (void)settle->value(Stream{mine});
     }
 
     // The deadline passed before the connection was made: rejects with `Overdue`.
-    void late() override {
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
-    }
+    void late() override { (void)settle->fail(std::make_exception_ptr(Overdue{})); }
 };
 
 // One read in flight.
-struct ReadPromise : Doing, detail::Result<Bytes> {
+struct ReadPromise : Handing<Bytes> {
     std::shared_ptr<Stream::Held> mine;
 
     // Releases the read direction, but only if this read still holds it.
@@ -174,20 +157,16 @@ struct ReadPromise : Doing, detail::Result<Bytes> {
     void done(std::size_t much, int code) override {
         yielded();
 
-        if (quitted.load()) return;
-
         if (much > 0) {
             buffer.resize(much);
 
-            settled(*this, std::move(buffer));
+            (void)settle->value(std::move(buffer));
 
             return;
         }
 
         if (code != 0) {
-            spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Cannot read: " + spoken(code) + ".", code,
-                                       mine->peer}));
+            (void)settle->fail(std::make_exception_ptr(Trouble{"Cannot read: " + spoken(code) + ".", code, mine->peer}));
 
             return;
         }
@@ -195,7 +174,7 @@ struct ReadPromise : Doing, detail::Result<Bytes> {
         // Zero bytes without an error means exactly one thing: the other side has closed.
         buffer.clear();
 
-        settled(*this, std::move(buffer));
+        (void)settle->value(std::move(buffer));
     }
 
     // A deadline with empty hands rejects with `Overdue`. If it resolved with nothing, silence could
@@ -203,14 +182,12 @@ struct ReadPromise : Doing, detail::Result<Bytes> {
     void late() override {
         yielded();
 
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
+        (void)settle->fail(std::make_exception_ptr(Overdue{}));
     }
 };
 
 // One write in flight.
-struct WritePromise : Doing, detail::Result<void> {
+struct WritePromise : Handing<void> {
     std::shared_ptr<Stream::Held> mine;
 
     // Releases the write direction, but only if this write still holds it.
@@ -231,31 +208,25 @@ struct WritePromise : Doing, detail::Result<void> {
     void done(std::size_t much, int code) override {
         yielded();
 
-        if (quitted.load()) return;
-
         if (code != 0) {
             // How many bytes got out before the break is said explicitly. The buffer was moved and
             // is gone, so without this number the caller does not know whether to resume from zero
             // or not at all, and resending everything means doubled content for the other side.
-            spoiled(*this, std::make_exception_ptr(
-                               Trouble{"Cannot write: " + spoken(code) + ". Took " +
-                                           std::to_string(much) + " of " +
-                                           std::to_string(buffer.size()) + " bytes.",
-                                       code, mine->peer}));
+            (void)settle->fail(std::make_exception_ptr(Trouble{"Cannot write: " + spoken(code) + ". Took " + std::to_string(much) +
+                                                                   " of " + std::to_string(buffer.size()) + " bytes.",
+                                                               code, mine->peer}));
 
             return;
         }
 
-        settled(*this);
+        (void)settle->value();
     }
 
     // The deadline passed before the write finished: rejects with `Overdue`.
     void late() override {
         yielded();
 
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
+        (void)settle->fail(std::make_exception_ptr(Overdue{}));
     }
 };
 
@@ -276,8 +247,7 @@ Promise<Stream> Stream::connect(Address where, Patience patience) {
     mine->which = opened(where.family(), true);
     mine->numbered = mine->which.load();
 
-    if (mine->which.load() == nothing)
-        return amiss_now<Stream>("Cannot open a socket: " + spoken(net::amiss()) + ".",
+    if (mine->which.load() == nothing) return amiss_now<Stream>("Cannot open a socket: " + spoken(net::amiss()) + ".",
                                  net::amiss(), where);
 
     mine->peer = where;
@@ -292,9 +262,11 @@ Promise<Stream> Stream::connect(Address where, Patience patience) {
     one->ever = patience.count() > 0;
     one->until = until(patience);
 
+    Promise<Stream> made = handed<Stream>(one);
+
     submit(one);
 
-    return HandPromise<Stream>{one};
+    return made;
 }
 
 namespace {
@@ -363,9 +335,11 @@ Promise<Bytes> Stream::read(std::size_t most, Patience patience) const {
     one->ever = patience.count() > 0;
     one->until = until(patience);
 
+    Promise<Bytes> made = handed<Bytes>(one);
+
     submit(one);
 
-    return HandPromise<Bytes>{one};
+    return made;
 }
 
 // Writes all the bytes within `patience`.
@@ -390,9 +364,11 @@ Promise<void> Stream::write(Bytes what, Patience patience) const {
     one->ever = patience.count() > 0;
     one->until = until(patience);
 
+    Promise<void> made = handed<void>(one);
+
     submit(one);
 
-    return HandPromise<void>{one};
+    return made;
 }
 
 // Turns Nagle's algorithm on or off. It is a property of TCP, and a local socket has nothing to do

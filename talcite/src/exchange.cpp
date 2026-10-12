@@ -522,7 +522,7 @@ Exchange::~Exchange() {
     //    in the middle of its own destruction.
     //
     //    They are refused, not silently abandoned. A request is also the result of the caller's
-    //    promise: an abandoned one would stay fresh, a thread standing on `await` would never wake
+    //    promise: an abandoned one would stay fresh, a thread standing on `get` would never wake
     //    up, and the program would never end.
     for (auto& [which, pair] : held_->watching)
         for (const std::shared_ptr<Doing>& one : {pair.reading, pair.writing})

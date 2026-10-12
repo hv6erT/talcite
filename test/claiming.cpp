@@ -80,7 +80,7 @@ private:
 }
 
 TRIAL("Runtime directory: exists and is ours alone") {
-    const fs::path made = fs::runtime().await();
+    const fs::path made = fs::runtime().get();
 
     ought(!made.empty());
     ought(stood::is_directory(made));
@@ -108,7 +108,7 @@ TRIAL("Runtime directory: a foreign or open XDG_RUNTIME_DIR is not taken") {
 
     if (stood::is_directory(own, why)) ::chmod(own.c_str(), 0755);
 
-    const fs::path made = fs::runtime().await();
+    const fs::path made = fs::runtime().get();
 
     same(made, own);
     ought(private_folder(made));
@@ -116,7 +116,7 @@ TRIAL("Runtime directory: a foreign or open XDG_RUNTIME_DIR is not taken") {
     // A private XDG_RUNTIME_DIR wins.
     ::chmod(open.c_str(), 0700);
 
-    same(fs::runtime().await(), open);
+    same(fs::runtime().get(), open);
 }
 
 // Someone else's directory (in XDG_RUNTIME_DIR, or created before us in the temporary directory
@@ -142,7 +142,7 @@ TRIAL("Runtime directory: someone else's directory is not ours") {
 
     const stood::path own = room / ("talcite-" + std::to_string(::geteuid()));
 
-    same(fs::runtime().await(), own);
+    same(fs::runtime().get(), own);
 
     stood::remove_all(own, why);
     stood::create_directories(own, why);
@@ -150,7 +150,7 @@ TRIAL("Runtime directory: someone else's directory is not ours") {
 
     ought(::chown(own.c_str(), 65534, 65534) == 0);
 
-    threw(fs::runtime().await());
+    threw(fs::runtime().get());
 
     stood::remove_all(room, why);
 }
@@ -163,12 +163,12 @@ TRIAL("Runtime directory: someone else's directory is not ours") {
 TRIAL("Lock: one instance, nothing for the second, and after release the next one") {
     const stood::path where = spot("jedna");
 
-    std::optional<Claim> first = Claim::taken(where).await();
+    std::optional<Claim> first = Claim::taken(where).get();
 
     ought(first.has_value() && first->held());
     ought(first.has_value() && first->where() == where);
 
-    const std::optional<Claim> second = Claim::taken(where).await();
+    const std::optional<Claim> second = Claim::taken(where).get();
 
     ought(!second.has_value());
 
@@ -176,7 +176,7 @@ TRIAL("Lock: one instance, nothing for the second, and after release the next on
 
     ought(first.has_value() && !first->held());
 
-    const std::optional<Claim> third = Claim::taken(where).await();
+    const std::optional<Claim> third = Claim::taken(where).get();
 
     ought(third.has_value() && third->held());
 }
@@ -186,7 +186,7 @@ TRIAL("Lock: one instance, nothing for the second, and after release the next on
 TRIAL("Lock: the last copy of the handle holds it") {
     const stood::path where = spot("kopie");
 
-    std::optional<Claim> one = Claim::taken(where).await();
+    std::optional<Claim> one = Claim::taken(where).get();
 
     ought(one.has_value());
 
@@ -197,15 +197,15 @@ TRIAL("Lock: the last copy of the handle holds it") {
 
         one.reset();
 
-        ought(!Claim::taken(where).await().has_value());
+        ought(!Claim::taken(where).get().has_value());
     }
 
-    ought(Claim::taken(where).await().has_value());
+    ought(Claim::taken(where).get().has_value());
 }
 
 // A place where the file cannot be created is a refusal, not nothing, because nobody runs there.
 TRIAL("Lock: a missing directory is a refusal, not already running") {
-    threw(Claim::taken(fs::temp() / "talcite-nie-ma-takiego-katalogu" / "blokada").await());
+    threw(Claim::taken(fs::temp() / "talcite-nie-ma-takiego-katalogu" / "blokada").get());
 }
 
 #ifndef _WIN32
@@ -220,7 +220,7 @@ TRIAL("Lock: does not follow a symlink") {
 
     stood::create_symlink(aim, where, why);
 
-    threw(Claim::taken(where).await());
+    threw(Claim::taken(where).get());
     ought(!stood::exists(aim, why));
 }
 
@@ -258,18 +258,18 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 #ifdef _WIN32
     const std::string name = "talcite-proba";
 
-    login::withdraw(name).await();
+    login::withdraw(name).get();
 
-    ought(!login::enrolled(name).await());
+    ought(!login::enrolled(name).get());
 
     Command what;
 
     what.program = L"C:\\windows\\notepad.exe";
     what.arguments = {"a b", "c"};
 
-    login::enrol(name, what).await();
+    login::enrol(name, what).get();
 
-    ought(login::enrolled(name).await());
+    ought(login::enrolled(name).get());
 
     std::wstring told(512, L'\0');
     DWORD much = static_cast<DWORD>(told.size() * sizeof(wchar_t));
@@ -288,12 +288,12 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     elsewhere.where = L"C:\\windows";
 
-    threw(login::enrol(name, elsewhere).await());
+    threw(login::enrol(name, elsewhere).get());
 
-    login::withdraw(name).await();
-    login::withdraw(name).await();
+    login::withdraw(name).get();
+    login::withdraw(name).get();
 
-    ought(!login::enrolled(name).await());
+    ought(!login::enrolled(name).get());
 #else
     const stood::path root = fs::temp() / "talcite-logowanie";
 
@@ -305,9 +305,9 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     const std::string name = "talcite-proba";
 
-    ought(!login::enrolled(name).await());
+    ought(!login::enrolled(name).get());
 
-    login::withdraw(name).await();
+    login::withdraw(name).get();
 
     Command what;
 
@@ -316,9 +316,9 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
     what.where = "/tmp/w";
     what.environment = {Variable{"A", "b"}};
 
-    login::enrol(name, what).await();
+    login::enrol(name, what).get();
 
-    ought(login::enrolled(name).await());
+    ought(login::enrolled(name).get());
 
     const stood::path file = root / "autostart" / "talcite-proba.desktop";
 
@@ -338,7 +338,7 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     plain.program = "/usr/bin/twad";
 
-    login::enrol(name, plain).await();
+    login::enrol(name, plain).get();
 
     same(inside(), std::string{"[Desktop Entry]\nType=Application\nName=talcite-proba\nExec=/usr/bin/twad\n"
                                "Terminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"});
@@ -349,37 +349,37 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     broken.arguments = {"a\nb"};
 
-    threw(login::enrol(name, broken).await());
-    ought(login::enrolled(name).await());
+    threw(login::enrol(name, broken).get());
+    ought(login::enrolled(name).get());
 
-    login::withdraw(name).await();
-    login::withdraw(name).await();
+    login::withdraw(name).get();
+    login::withdraw(name).get();
 
-    ought(!login::enrolled(name).await());
+    ought(!login::enrolled(name).get());
     ought(!stood::exists(file));
 
     // Without XDG_CONFIG_HOME (or with a relative path): ~/.config.
     const Varied home{"HOME", root.c_str()};
     const Varied relative{"XDG_CONFIG_HOME", "wzgledna"};
 
-    login::enrol(name, plain).await();
+    login::enrol(name, plain).get();
 
     ought(stood::exists(root / ".config" / "autostart" / "talcite-proba.desktop"));
 
-    login::withdraw(name).await();
+    login::withdraw(name).get();
 #endif
 
     for (const char* bad : {"", ".ukryta", "z/ukosnikiem", "spacja w nazwie", "ąę"}) {
-        threw(login::enrolled(bad).await());
-        threw(login::withdraw(bad).await());
+        threw(login::enrolled(bad).get());
+        threw(login::withdraw(bad).get());
     }
 
     Command some;
 
     some.program = fs::temp() / "talcite-program";
 
-    threw(login::enrol(std::string(65, 'a'), some).await());
-    threw(login::enrol(name, Command{}).await());
+    threw(login::enrol(std::string(65, 'a'), some).get());
+    threw(login::enrol(name, Command{}).get());
 
-    ought(!login::enrolled(name).await());
+    ought(!login::enrolled(name).get());
 }

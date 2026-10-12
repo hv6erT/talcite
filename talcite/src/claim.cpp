@@ -104,7 +104,7 @@ path runtime_at() {
 
 // The private runtime folder, found on the pool; the promise fails when there is none.
 Promise<path> runtime() {
-    return Promise<path>{[](auto resolve, auto) { resolve(runtime_at()); }};
+    return run(io(), []() -> path { return runtime_at(); });
 }
 
 }
@@ -156,7 +156,7 @@ const fs::path& nowhere() {
 // refusal is only what could not be checked (no folder, no permissions). On POSIX we do not follow
 // links: someone else's link in our place must not point at a file we would lock.
 Promise<std::optional<Claim>> Claim::taken(fs::path where) {
-    return Promise<std::optional<Claim>>{[where = std::move(where)](auto resolve, auto) {
+    return run(io(), [where = std::move(where)]() -> std::optional<Claim> {
         auto held = std::make_shared<Held>();
 
         held->where = where;
@@ -170,9 +170,7 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
             const DWORD why = GetLastError();
 
             if (why == ERROR_SHARING_VIOLATION || why == ERROR_LOCK_VIOLATION) {
-                resolve(std::optional<Claim>{});
-
-                return;
+                return std::optional<Claim>{};
             }
 
             fs::core::amiss("Cannot open the claim file.", where);
@@ -186,9 +184,7 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
 
         if (::flock(held->descriptor, LOCK_EX | LOCK_NB) != 0) {
             if (errno == EWOULDBLOCK) {
-                resolve(std::optional<Claim>{});
-
-                return;
+                return std::optional<Claim>{};
             }
 
             fs::core::amiss("Cannot lock the claim file.", where);
@@ -196,8 +192,8 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
 
 #endif
 
-        resolve(std::optional<Claim>{Claim{std::move(held)}});
-    }};
+        return std::optional<Claim>{Claim{std::move(held)}};
+    });
 }
 
 // The path of the lock file, or an empty path once released.

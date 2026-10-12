@@ -74,7 +74,7 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
     std::ofstream{root / "groźny.exe", std::ios::binary} << "ZARAZA";
 
 #ifdef _WIN32
-    const scan::Scanned one = scan::scanned(root / "film.mkv").await();
+    const scan::Scanned one = scan::scanned(root / "film.mkv").get();
 
     ought(one.verdict != scan::Verdict::infected);
 #else
@@ -89,8 +89,8 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
     {
         const Varied path{"PATH", fs::to_string(bin) + ":/usr/bin:/bin"};
 
-        const scan::Scanned clean = scan::scanned(root / "film.mkv").await();
-        const scan::Scanned bad = scan::scanned(root / "groźny.exe").await();
+        const scan::Scanned clean = scan::scanned(root / "film.mkv").get();
+        const scan::Scanned bad = scan::scanned(root / "groźny.exe").get();
 
         ought(clean.verdict == scan::Verdict::clean);
         same(clean.by, std::string{"clamscan"});
@@ -102,24 +102,24 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
         program(bin / "clamdscan", "if grep -q ZARAZA \"$3\"; then exit 1; fi\nexit 0\n");
         program(bin / "clamscan", "exit 2\n");
 
-        same(scan::scanned(root / "groźny.exe").await().by, std::string{"clamdscan"});
-        ought(scan::scanned(root / "film.mkv").await().verdict == scan::Verdict::clean);
+        same(scan::scanned(root / "groźny.exe").get().by, std::string{"clamdscan"});
+        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::clean);
 
         // A scanner without a database (exit code 2): the result is unknown, not "clean".
         program(bin / "clamdscan", "exit 2\n");
 
-        ought(scan::scanned(root / "film.mkv").await().verdict == scan::Verdict::unknown);
+        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
 
         // A scanner killed by a signal said nothing, even if the signal number looks like a threat code.
         program(bin / "clamscan", "kill -HUP $$\n");
 
-        ought(scan::scanned(root / "film.mkv").await().verdict == scan::Verdict::unknown);
+        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
     }
 
     {
         const Varied path{"PATH", fs::to_string(root / "nic")};
 
-        const scan::Scanned none = scan::scanned(root / "film.mkv").await();
+        const scan::Scanned none = scan::scanned(root / "film.mkv").get();
 
         ought(none.verdict == scan::Verdict::unknown);
         ought(none.by.empty());

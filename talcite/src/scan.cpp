@@ -47,13 +47,8 @@ std::string text_of(const Bytes& got) {
     return made;
 }
 
-// A promise that resolves at once with a result already known.
-Promise<Scanned> ready(Scanned one) {
-    return Promise<Scanned>{[one = std::move(one)](auto resolve, auto) mutable { resolve(std::move(one)); }};
-}
-
 // Runs a command-line scanner whose exit code gives the verdict (`clean` and `infected` are the
-// codes for the two definite answers). A program that does not exist yields `std::nullopt`.
+// codes for the two definite answers). A program that cannot be started yields `std::nullopt`.
 Promise<std::optional<Scanned>> asked(fs::path program, std::vector<std::string> arguments, int clean, int infected, std::string by) {
     Command what;
 
@@ -61,24 +56,12 @@ Promise<std::optional<Scanned>> asked(fs::path program, std::vector<std::string>
     what.arguments = std::move(arguments);
     what.merge = true;
 
-    Promise<Output> running = Child::run(std::move(what));
+    return Child::run(std::move(what)).outcome().then([clean, infected, by](Outcome<Output> ran) -> std::optional<Scanned> {
+        if (!ran.ok()) return std::nullopt;
 
-    return Promise<void>::all_settled(running).then([running, clean, infected, by]() mutable -> std::optional<Scanned> {
-        Output got;
-
-        try {
-            got = running.await();
-        } catch (const std::exception&) {
-            return std::nullopt;
-        }
+        const Output got = std::move(ran).value();
 
         if (got.exit.ended != Ended::normal) return Scanned{Verdict::unknown, by, text_of(got.out)};
-
-#ifndef _WIN32
-        // When the program cannot be started (it does not exist), the child exits with code 127, as
-        // in a shell.
-        if (got.exit.code == 127) return std::nullopt;
-#endif
 
         if (got.exit.code == clean) return Scanned{Verdict::clean, by, text_of(got.out)};
 
@@ -152,7 +135,7 @@ Promise<std::optional<Scanned>> defended(const fs::path& where) {
     const DWORD much = GetEnvironmentVariableW(L"ProgramFiles", folder.data(), static_cast<DWORD>(folder.size()));
 
     if (much == 0 || much >= folder.size())
-        return Promise<std::optional<Scanned>>{[](auto resolve, auto) { resolve(std::optional<Scanned>{}); }};
+        return run(io(), []() -> std::optional<Scanned> { return std::optional<Scanned>{}; });
 
     const fs::path program = fs::path{std::wstring{folder.data(), much}} / L"Windows Defender" / L"MpCmdRun.exe";
 
@@ -169,7 +152,7 @@ Promise<Scanned> scanned(fs::path where, std::string source) {
 #ifdef _WIN32
     // The attachment service is called directly, on a pool thread; if it fails, Defender's command
     // line is tried.
-    return Promise<std::optional<Scanned>>{[where, source = std::move(source)](auto resolve, auto) { resolve(attached(where, source)); }}
+    return run(io(), [where, source = std::move(source)]() -> std::optional<Scanned> { return attached(where, source); })
         .then([where](std::optional<Scanned> one) -> Promise<Scanned> {
             if (one) return ready(std::move(*one));
 

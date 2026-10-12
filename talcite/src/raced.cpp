@@ -6,8 +6,7 @@
 #include <mutex>
 #include <optional>
 #include <utility>
-
-#include "talcite/time.hpp"
+#include <vector>
 
 // The address race (RFC 8305, "Happy Eyeballs"): connecting to the first address that answers.
 // A name usually gives IPv6 and IPv4, and a network in which IPv6 is announced but does not get
@@ -43,47 +42,51 @@ std::vector<Address> interleaved(std::vector<Address> found) {
 
 namespace {
 
-// The state of one race. The body of the promise returned from `raced` holds it; the links of the
-// attempts and the clocks reach for it weakly, so nothing holds itself in a cycle. The state holds
-// the attempts' tails (`tails`) strongly, because a parent holds its links weakly, and a tail
-// without an owner would die before the attempt ends.
+// The state of one race. The callbacks of the attempts hold it, so it lives while an attempt is
+// running; the race holds the tails of the attempts and the clocks, so that dropping them cancels
+// them. The cycle this makes ends with the race: `ended` takes both lists out. The clocks and the
+// stop listener reach for the race weakly, because they alone must not keep it alive.
 struct Race {
     std::vector<Address> order;
     Patience patience{};
     std::chrono::milliseconds gap{};
 
-    Promise<Stream>::Resolve resolve;
-    std::optional<Reject> reject;
+    std::optional<Settle<Stream>> settle;
 
     std::mutex guard;
     std::size_t next = 0;
     std::size_t lost = 0;
     bool over = false;
     std::exception_ptr last;
-    std::vector<Promise<Stream>> tries;
-    std::vector<Promise<void>> clocks;
     std::vector<Promise<void>> tails;
+    std::vector<Promise<void>> clocks;
 };
 
 using Held = std::shared_ptr<Race>;
 
 void launched(const Held& race);
 
-// Ends the race: attempts still running and the clocks are cancelled outside the lock, because
-// cancelling rejects, and the rejection comes back to `failed`, which takes the same lock.
-void ended(const Held& race, std::unique_lock<std::mutex>& kept) {
+// Ends the race and gives back its settle. The attempts still running and the clocks are dropped,
+// and so cancelled, outside the lock: dropping the last owner of a promise releases what it
+// waited for, and nothing of that should run under our lock.
+std::optional<Settle<Stream>> ended(const Held& race, std::unique_lock<std::mutex>& kept) {
     race->over = true;
 
-    std::vector<Promise<Stream>> tries = std::move(race->tries);
+    std::optional<Settle<Stream>> settle = std::move(race->settle);
+    std::vector<Promise<void>> tails = std::move(race->tails);
     std::vector<Promise<void>> clocks = std::move(race->clocks);
+
+    race->settle.reset();
 
     kept.unlock();
 
-    for (Promise<Stream>& one : tries) one.cancel();
-    for (Promise<void>& one : clocks) one.cancel();
+    tails.clear();
+    clocks.clear();
+
+    return settle;
 }
 
-// An attempt connected: the first one resolves the race, and a stream that comes too late is
+// An attempt connected: the first one settles the race, and a stream that comes too late is
 // closed.
 void won(const Held& race, Stream stream) {
     std::unique_lock<std::mutex> kept{race->guard};
@@ -96,30 +99,27 @@ void won(const Held& race, Stream stream) {
         return;
     }
 
-    const Promise<Stream>::Resolve resolve = race->resolve;
+    std::optional<Settle<Stream>> settle = ended(race, kept);
 
-    ended(race, kept);
-
-    resolve(std::move(stream));
+    if (settle) (void)settle->value(std::move(stream));
 }
 
-// An attempt failed with `why`. When it was the last address, the race is rejected with that
-// error; otherwise the next attempt may start early.
-void failed(const Held& race, std::exception_ptr why) {
+// An attempt failed with `why`. When it was the last address, the race fails with that error;
+// otherwise the next attempt may start early.
+void missed(const Held& race, std::exception_ptr why) {
     std::unique_lock<std::mutex> kept{race->guard};
 
     if (race->over) return;
 
-    race->last = why;
+    race->last = std::move(why);
     ++race->lost;
 
     if (race->lost == race->order.size()) {
-        const Reject reject = *race->reject;
         const std::exception_ptr last = race->last;
 
-        ended(race, kept);
+        std::optional<Settle<Stream>> settle = ended(race, kept);
 
-        reject(last);
+        if (settle) (void)settle->fail(last);
 
         return;
     }
@@ -134,9 +134,8 @@ void failed(const Held& race, std::exception_ptr why) {
 }
 
 // Starts the attempt on the next address and, when more addresses remain, the clock for the one
-// after it. The links of the attempt and the clock are built outside the lock: an immediate
-// refusal (the socket cannot be opened) settles the attempt before `fail` returns, and its body
-// takes the same lock.
+// after it. The promises are built outside the lock, because an attempt may end on another thread
+// at any moment, and its callback takes the same lock.
 void launched(const Held& race) {
     std::size_t at = 0;
     Address where;
@@ -152,24 +151,21 @@ void launched(const Held& race) {
         more = race->next < race->order.size();
     }
 
-    Promise<Stream> attempt = Stream::connect(where, race->patience);
+    Promise<void> tail = Stream::connect(where, race->patience).outcome().then([race](Outcome<Stream> got) {
+        if (got.ok()) {
+            won(race, std::move(got).value());
+        } else if (!got.cancelled()) {
+            missed(race, got.error());
+        }
+    });
 
-    Promise<void> tail = attempt
-                             .fail([weak = std::weak_ptr<Race>{race}](const std::exception&) {
-                                 if (const Held alive = weak.lock()) failed(alive, std::current_exception());
-                             })
-                             .then([weak = std::weak_ptr<Race>{race}](Stream stream) {
-                                 if (const Held alive = weak.lock()) won(alive, std::move(stream));
-                                 else stream.close();
-                             });
-
-    std::optional<Promise<void>> clock;
+    Promise<void> clock;
 
     if (more) {
         // The clock for the next attempt. When another one has started in the meantime (a refusal
         // sped up the queue), the clock does nothing: `next` is then further than it was for
         // whoever set the clock.
-        clock = Time::later(race->gap).then([weak = std::weak_ptr<Race>{race}, after = at + 1] {
+        clock = later(race->gap).then([weak = std::weak_ptr<Race>{race}, after = at + 1] {
             const Held alive = weak.lock();
 
             if (!alive) return;
@@ -184,42 +180,25 @@ void launched(const Held& race) {
         });
     }
 
-    bool late = false;
+    // When the race was decided before this attempt was recorded, the promises stay here and are
+    // dropped on return, which cancels them: there is nothing left to run them for.
+    const std::lock_guard<std::mutex> kept{race->guard};
 
-    {
-        const std::lock_guard<std::mutex> kept{race->guard};
+    if (race->over) return;
 
-        late = race->over;
+    race->tails.push_back(std::move(tail));
 
-        if (!late) {
-            race->tries.push_back(attempt);
-            race->tails.push_back(tail);
-
-            if (clock) race->clocks.push_back(*clock);
-        }
-    }
-
-    // The race was decided before this attempt was recorded in the state, so there is nothing left
-    // to run it for.
-    if (late) {
-        attempt.cancel();
-
-        return;
-    }
-
-    tail.start();
-
-    if (clock) clock->start();
+    if (clock) race->clocks.push_back(std::move(clock));
 }
 
 }
 
 // Connects to the first of `found` that answers, starting the next attempt after `gap` of silence
 // (`stagger`, 250 ms, by default). This is private to the library: the HTTP client uses it, and the
-// tests pass a gap shorter than the default.
+// tests pass a gap shorter than the default. Giving up the promise ends the race and cancels the
+// attempts.
 Promise<Stream> raced(std::vector<Address> found, Patience patience, std::chrono::milliseconds gap) {
-    if (found.empty())
-        return Promise<Stream>{[](auto, auto reject) { reject(std::make_exception_ptr(Trouble{"There is no address."})); }};
+    if (found.empty()) return failed<Stream>(std::make_exception_ptr(Trouble{"There is no address."}));
 
     auto race = std::make_shared<Race>();
 
@@ -227,21 +206,23 @@ Promise<Stream> raced(std::vector<Address> found, Patience patience, std::chrono
     race->patience = patience;
     race->gap = gap;
 
-    // Like every network promise, it starts at once, not at the first wait.
-    Promise<Stream> made{[race](auto resolve, auto reject) {
-        {
-            const std::lock_guard<std::mutex> kept{race->guard};
+    auto [made, settle] = promised<Stream>();
 
-            race->resolve = std::move(resolve);
-            race->reject.emplace(std::move(reject));
-        }
+    race->settle.emplace(std::move(settle));
 
-        launched(race);
-    }};
+    (void)detail::stopping(race->settle->stop(), [weak = std::weak_ptr<Race>{race}] {
+        const Held alive = weak.lock();
 
-    made.start();
+        if (!alive) return;
 
-    return made;
+        std::unique_lock<std::mutex> kept{alive->guard};
+
+        if (!alive->over) (void)ended(alive, kept);
+    });
+
+    launched(race);
+
+    return std::move(made);
 }
 
 }

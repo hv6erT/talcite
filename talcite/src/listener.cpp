@@ -85,7 +85,7 @@ struct Listener::Held {
 
 namespace {
 
-struct MeetPromise : Doing, detail::Result<Stream> {
+struct MeetPromise : Handing<Stream> {
     std::shared_ptr<Listener::Held> mine;
 
     // Releases the accepting place, but only while it is still ours. A late completion of a
@@ -118,8 +118,6 @@ struct MeetPromise : Doing, detail::Result<Stream> {
     // because the cancelled operation comes back through the port, but there the exchange keys
     // requests by OVERLAPPED, not by socket, and a second AcceptEx on the same listening socket is
     // an ordinary thing. Either way the place is free.
-    //
-    // The `quitted` guard is described at the connect in the stream.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
@@ -132,10 +130,11 @@ struct MeetPromise : Doing, detail::Result<Stream> {
         refilled();
         yielded();
 
-        if (quitted.load()) {
+        if (settle->stop().stopped()) {
             // The accepted socket has nobody to go to. A cancelled accept may still succeed, and
             // it would then leave an open descriptor that nobody would ever close, so it is
-            // closed here.
+            // closed here. One cancelled a moment later is closed with the stream that its
+            // promise refuses.
             if (instance) {
                 unused();
             } else if (made != nothing) {
@@ -150,14 +149,14 @@ struct MeetPromise : Doing, detail::Result<Stream> {
         if (code != 0) {
             unused();
 
-            spoiled(*this, std::make_exception_ptr(
+            (void)settle->fail(std::make_exception_ptr(
                                Trouble{"Cannot accept a connection: " + spoken(code) + ".", code,
                                        mine->mine}));
 
             return;
         }
 
-        settled(*this, greeting(made, where));
+        (void)settle->value(greeting(made, where));
     }
 
     // The deadline passed: the place is released and the promise fails with `Overdue`, unless it
@@ -167,9 +166,7 @@ struct MeetPromise : Doing, detail::Result<Stream> {
         yielded();
         unused();
 
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
+        (void)settle->fail(std::make_exception_ptr(Overdue{}));
     }
 };
 
@@ -238,13 +235,7 @@ const Address& Listener::mine() const { return held_ ? held_->mine : nowhere(); 
 // Waits for the next connection and promises the stream. A closed gate, or one already accepting,
 // gives a promise that has already failed with `Trouble`. A positive patience sets a deadline.
 Promise<Stream> Listener::accept(Patience patience) const {
-    if (!held_) {
-        auto made = std::make_shared<detail::Result<Stream>>();
-
-        detail::spoiled(*made, std::make_exception_ptr(Trouble{"The gate is closed."}));
-
-        return HandPromise<Stream>{made};
-    }
+    if (!held_) return refused<Stream>("The gate is closed.");
 
     auto one = std::make_shared<MeetPromise>();
 
@@ -254,14 +245,7 @@ Promise<Stream> Listener::accept(Patience patience) const {
     {
         const std::lock_guard<std::mutex> kept{held_->guard};
 
-        if (held_->meeting != nullptr) {
-            auto made = std::make_shared<detail::Result<Stream>>();
-
-            detail::spoiled(*made,
-                    std::make_exception_ptr(Trouble{"The gate is already accepting.", 0, held_->mine}));
-
-            return HandPromise<Stream>{made};
-        }
+        if (held_->meeting != nullptr) return refused<Stream>("The gate is already accepting.", 0, held_->mine);
 
         held_->meeting = one.get();
 
@@ -271,11 +255,7 @@ Promise<Stream> Listener::accept(Patience patience) const {
             if (held_->waiting == nothing) {
                 held_->meeting = nullptr;
 
-                auto made = std::make_shared<detail::Result<Stream>>();
-
-                detail::spoiled(*made, std::make_exception_ptr(Trouble{"The gate is closed.", 0, held_->mine}));
-
-                return HandPromise<Stream>{made};
+                return refused<Stream>("The gate is closed.", 0, held_->mine);
             }
 
             one->instance = true;
@@ -292,9 +272,11 @@ Promise<Stream> Listener::accept(Patience patience) const {
     one->ever = patience.count() > 0;
     one->until = std::chrono::steady_clock::now() + patience;
 
+    Promise<Stream> made = handed<Stream>(one);
+
     submit(one);
 
-    return HandPromise<Stream>{one};
+    return made;
 }
 
 // Stops listening. Pending accepts are cancelled; the gate can still be asked questions afterward.

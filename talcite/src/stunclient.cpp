@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "talcite/address.hpp"
-#include "talcite/time.hpp"
+#include "talcite/place.hpp"
 
 #include "stunning.hpp"
 
@@ -56,6 +56,12 @@ Patience left(Clock::time_point until) {
     return rest.count() > 0 ? rest : Patience{1};
 }
 
+// A promise rejected with `Trouble` and the given text.
+template <typename T>
+Promise<T> refused(const char* said) {
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
+}
+
 // One question to one server, retransmissions included; the reflexive address, or an empty one when
 // the deadline passes, and `Trouble` when the server refuses. It runs on a pool thread and blocks it,
 // on purpose. For TLS that choice would be bad, because there the waiting is per connection and
@@ -71,7 +77,7 @@ Address trying(StunClient::Held& held, const Address& where, Clock::time_point u
     Patience wait{500};
 
     while (Clock::now() < until) {
-        held.post.send(where, what, left(until)).await();
+        held.post.send(where, what, left(until)).get();
 
         const Clock::time_point edge = std::min(Clock::now() + wait, until);
 
@@ -79,7 +85,7 @@ Address trying(StunClient::Held& held, const Address& where, Clock::time_point u
             Datagram came;
 
             try {
-                came = held.post.receive(1500, left(edge)).await();
+                came = held.post.receive(1500, left(edge)).get();
             } catch (const Overdue&) {
                 break;
             } catch (const Trouble&) {
@@ -197,40 +203,25 @@ StunClient::Mapping StunClient::known() const {
 // receives one at a time, so a second question started during the first would eat the other's
 // answer. We refuse instead of corrupting.
 Promise<Address> StunClient::seen() const {
-    if (!held_)
-        return Promise<Address>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The scout is empty."}));
-        }};
+    if (!held_) return refused<Address>("The scout is empty.");
 
     bool was = false;
 
-    if (!held_->asking.compare_exchange_strong(was, true))
-        return Promise<Address>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The scout is already asking."}));
-        }};
+    if (!held_->asking.compare_exchange_strong(was, true)) return refused<Address>("The scout is already asking.");
 
     auto held = held_;
 
-    Promise<Address> made{[held, kept = std::make_shared<Asking>(held)](auto resolve,
-                                                                                 auto reject) {
-        try {
-            const Address one = hunting(*held);
+    return run(io(), [held, kept = std::make_shared<Asking>(held)]() -> Address {
+        const Address one = hunting(*held);
 
-            {
-                const std::lock_guard<std::mutex> also{held->guard};
+        {
+            const std::lock_guard<std::mutex> also{held->guard};
 
-                held->last = one;
-            }
-
-            resolve(one);
-        } catch (...) {
-            reject(std::current_exception());
+            held->last = one;
         }
-    }};
 
-    made.start();
-
-    return made;
+        return one;
+    });
 }
 
 // Two questions to two different servers, from the same socket. The same address and port in both
@@ -238,88 +229,73 @@ Promise<Address> StunClient::seen() const {
 // makes sense. Different ones mean a symmetric NAT: the address learned from a server is useless
 // to the other side, and hole punching will never work, however long one tries.
 Promise<StunClient::Mapping> StunClient::mapping() const {
-    if (!held_)
-        return Promise<Mapping>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The scout is empty."}));
-        }};
+    if (!held_) return refused<Mapping>("The scout is empty.");
 
     bool was = false;
 
-    if (!held_->asking.compare_exchange_strong(was, true))
-        return Promise<Mapping>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The scout is already asking."}));
-        }};
+    if (!held_->asking.compare_exchange_strong(was, true)) return refused<Mapping>("The scout is already asking.");
 
     auto held = held_;
 
-    Promise<Mapping> made{[held, kept = std::make_shared<Asking>(held)](auto resolve,
-                                                                                auto reject) {
-        try {
-            Mapping what = Mapping::unknown;
+    return run(io(), [held, kept = std::make_shared<Asking>(held)]() -> Mapping {
+        Mapping what = Mapping::unknown;
 
-            std::vector<Address> servers;
+        std::vector<Address> servers;
 
-            {
-                const std::lock_guard<std::mutex> also{held->guard};
+        {
+            const std::lock_guard<std::mutex> also{held->guard};
 
-                servers = held->servers;
-            }
-
-            // The verdict needs two different servers. The same address twice would give two
-            // identical answers and from them the verdict "alike", a lie in the dangerous
-            // direction: that hole punching will work, although the NAT may be symmetric.
-            Address first;
-            Address other;
-
-            for (const Address& one : servers) {
-                if (!first.held()) {
-                    first = one;
-
-                    continue;
-                }
-
-                if (!(one == first)) {
-                    other = one;
-
-                    break;
-                }
-            }
-
-            // With a single server, "unknown" is a true answer, not a failure.
-            if (first.held() && other.held()) {
-                // Each question gets its own half of the patience. With a shared deadline a silent
-                // first server would eat all of it, the second would not get a single packet, and
-                // the mapping would end in a successful "unknown".
-                const Patience half{held->patience.count() / 2 + 1};
-
-                const Address one = trying(*held, first, Clock::now() + half);
-                const Address two = trying(*held, other, Clock::now() + half);
-
-                if (one.held() && two.held())
-                    what = one == two ? Mapping::alike : Mapping::symmetric;
-
-                if (one.held()) {
-                    const std::lock_guard<std::mutex> also{held->guard};
-
-                    held->last = one;
-                }
-            }
-
-            {
-                const std::lock_guard<std::mutex> also{held->guard};
-
-                held->known = what;
-            }
-
-            resolve(what);
-        } catch (...) {
-            reject(std::current_exception());
+            servers = held->servers;
         }
-    }};
 
-    made.start();
+        // The verdict needs two different servers. The same address twice would give two
+        // identical answers and from them the verdict "alike", a lie in the dangerous
+        // direction: that hole punching will work, although the NAT may be symmetric.
+        Address first;
+        Address other;
 
-    return made;
+        for (const Address& one : servers) {
+            if (!first.held()) {
+                first = one;
+
+                continue;
+            }
+
+            if (!(one == first)) {
+                other = one;
+
+                break;
+            }
+        }
+
+        // With a single server, "unknown" is a true answer, not a failure.
+        if (first.held() && other.held()) {
+            // Each question gets its own half of the patience. With a shared deadline a silent
+            // first server would eat all of it, the second would not get a single packet, and
+            // the mapping would end in a successful "unknown".
+            const Patience half{held->patience.count() / 2 + 1};
+
+            const Address one = trying(*held, first, Clock::now() + half);
+            const Address two = trying(*held, other, Clock::now() + half);
+
+            if (one.held() && two.held())
+                what = one == two ? Mapping::alike : Mapping::symmetric;
+
+            if (one.held()) {
+                const std::lock_guard<std::mutex> also{held->guard};
+
+                held->last = one;
+            }
+        }
+
+        {
+            const std::lock_guard<std::mutex> also{held->guard};
+
+            held->known = what;
+        }
+
+        return what;
+    });
 }
 
 }

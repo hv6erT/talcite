@@ -520,7 +520,8 @@ bool present(std::string_view whole, std::string_view stem) {
 
 // The body of a class or struct of the given name and the list of its bases. The word `class` or
 // `struct` is looked for before the name, so that a use is not taken for a declaration, and
-// forward declarations (`class Node;`) are skipped, as they have no body.
+// forward declarations (`class Node;`) are skipped, as they have no body. An attribute between
+// the word and the name (`class [[nodiscard]] Promise`) is stepped over.
 struct Told {
     std::string body;
     std::vector<std::string> above;
@@ -537,6 +538,16 @@ std::vector<Told> told(std::string_view whole, std::string_view name) {
         std::size_t back = at;
 
         while (back > 0 && (whole[back - 1] == ' ' || whole[back - 1] == '\t')) --back;
+
+        if (back >= 2 && whole.substr(back - 2, 2) == "]]") {
+            const std::size_t open = whole.rfind("[[", back - 2);
+
+            if (open != std::string_view::npos) {
+                back = open;
+
+                while (back > 0 && (whole[back - 1] == ' ' || whole[back - 1] == '\t')) --back;
+            }
+        }
 
         const bool klass = back >= 5 && whole.substr(back - 5, 5) == "class";
         const bool structure = back >= 6 && whole.substr(back - 6, 6) == "struct";

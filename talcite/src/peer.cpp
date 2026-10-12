@@ -10,8 +10,9 @@
 #include <utility>
 
 #include "talcite/address.hpp"
-#include "talcite/time.hpp"
+#include "talcite/place.hpp"
 
+#include "hearing.hpp"
 #include "stunning.hpp"
 
 namespace talcite::net {
@@ -129,7 +130,7 @@ void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what,
         if (held->shutting.load()) return;
 
         if (through) {
-            held->relay.send(to, std::move(what), patience).await();
+            held->relay.send(to, std::move(what), patience).get();
 
             return;
         }
@@ -138,7 +139,7 @@ void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what,
 
         if (held->shutting.load()) return;
 
-        held->post.send(to, std::move(what), patience).await();
+        held->post.send(to, std::move(what), patience).get();
     } catch (const std::exception&) {
     }
 }
@@ -264,7 +265,7 @@ bool turning(const std::shared_ptr<Living>& held, Clock::time_point& beat) {
     try {
         if (held->shutting.load()) return false;
 
-        came = held->post.receive(roomy, listening).await();
+        came = held->post.receive(roomy, listening).get();
     } catch (const Overdue&) {
         Address met;
 
@@ -313,7 +314,7 @@ bool drawing(const std::shared_ptr<Living>& held) {
     try {
         if (held->shutting.load()) return false;
 
-        came = held->relay.receive(roomy, listening).await();
+        came = held->relay.receive(roomy, listening).get();
     } catch (const Overdue&) {
         return true;
     } catch (const std::exception&) {
@@ -374,13 +375,9 @@ void waking(const std::shared_ptr<Living>& held) {
     bool was = false;
 
     if (held->living.compare_exchange_strong(was, true)) {
-        Promise<void> made{[weak = std::weak_ptr<Living>{held}](auto resolve, auto) {
+        run(io(), [weak = std::weak_ptr<Living>{held}]() {
             minding(weak);
-
-            resolve();
-        }};
-
-        made.start();
+        }).detach();
     }
 
     if (!held->relay.held()) return;
@@ -388,13 +385,9 @@ void waking(const std::shared_ptr<Living>& held) {
     was = false;
 
     if (held->fetching.compare_exchange_strong(was, true)) {
-        Promise<void> made{[weak = std::weak_ptr<Living>{held}](auto resolve, auto) {
+        run(io(), [weak = std::weak_ptr<Living>{held}]() {
             watching(weak);
-
-            resolve();
-        }};
-
-        made.start();
+        }).detach();
     }
 }
 
@@ -437,7 +430,7 @@ void letting(const std::shared_ptr<Living>& held) {
         if (held->shutting.load()) return;
 
         try {
-            held->relay.allow(one, granting).await();
+            held->relay.allow(one, granting).get();
         } catch (const std::exception&) {
         }
 
@@ -452,8 +445,7 @@ void letting(const std::shared_ptr<Living>& held) {
 // A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said) {
-    return Promise<T>{
-        [said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 }
@@ -548,71 +540,64 @@ Promise<std::vector<Candidate>> Peer::gather(StunClient scout, Patience patience
 
     auto held = held_->alive;
 
-    Promise<std::vector<Candidate>> made{[held, scout, patience](auto resolve, auto reject) {
-        try {
-            const Clock::time_point until = Clock::now() + patience;
+    return run(io(), [held, scout, patience]() -> std::vector<Candidate> {
+        const Clock::time_point until = Clock::now() + patience;
 
-            const std::uint16_t port = held->post.mine().port();
+        const std::uint16_t port = held->post.mine().port();
 
-            std::vector<Candidate> found;
+        std::vector<Candidate> found;
 
-            for (Address one : mine(held->post.mine().family()).await()) {
-                if (one == Address::loopback(one.family(), 0)) continue;
+        for (Address one : mine(held->post.mine().family()).get()) {
+            if (one == Address::loopback(one.family(), 0)) continue;
 
-                one.port(port);
+            one.port(port);
 
-                found.push_back(Candidate{one, Candidate::Sort::here});
-            }
-
-            // The reflection from the server may be missing: no scout, no answer or past the
-            // deadline. That is no reason to fail the gathering, since within one local network
-            // the cards alone are enough. The deadline is ours, not the scout's: the scout has its
-            // own patience from its constructor, usually an order of magnitude longer, and without
-            // this check it would use all of it.
-            if (scout.held() && Clock::now() < until) {
-                try {
-                    if (const Address seen = scout.seen().timeout(left(until)).await(); seen.held())
-                        found.push_back(Candidate{seen, Candidate::Sort::seen});
-                } catch (const std::exception&) {
-                }
-            }
-
-            // The relay is the last resort, so it is asked last, and its address goes to the list
-            // as a `lent` path, that is, after all the others. It is opened only when it is not
-            // open yet: the caller has the right to do that itself and hand it over ready. A failed
-            // relay does not fail the gathering, just like a failed scout.
-            if (held->relay.held() && Clock::now() < until) {
-                try {
-                    Address lent = held->relay.lent();
-
-                    if (!lent.held()) lent = held->relay.open(left(until)).await();
-
-                    if (lent.held()) found.push_back(Candidate{lent, Candidate::Sort::lent});
-                } catch (const std::exception&) {
-                }
-            }
-
-            {
-                const std::lock_guard<std::mutex> kept{held->guard};
-
-                held->mine = found;
-            }
-
-            resolve(found);
-        } catch (...) {
-            reject(std::current_exception());
+            found.push_back(Candidate{one, Candidate::Sort::here});
         }
-    }};
 
-    made.start();
+        // The reflection from the server may be missing: no scout, no answer or past the
+        // deadline. That is no reason to fail the gathering, since within one local network
+        // the cards alone are enough. The deadline is ours, not the scout's: the scout has its
+        // own patience from its constructor, usually an order of magnitude longer, and without
+        // this check it would use all of it.
+        if (scout.held() && Clock::now() < until) {
+            try {
+                if (const Address seen = scout.seen().timeout(left(until)).get(); seen.held())
+                    found.push_back(Candidate{seen, Candidate::Sort::seen});
+            } catch (const std::exception&) {
+            }
+        }
 
-    return made;
+        // The relay is the last resort, so it is asked last, and its address goes to the list
+        // as a `lent` path, that is, after all the others. It is opened only when it is not
+        // open yet: the caller has the right to do that itself and hand it over ready. A failed
+        // relay does not fail the gathering, just like a failed scout.
+        if (held->relay.held() && Clock::now() < until) {
+            try {
+                Address lent = held->relay.lent();
+
+                if (!lent.held()) lent = held->relay.open(left(until)).get();
+
+                if (lent.held()) found.push_back(Candidate{lent, Candidate::Sort::lent});
+            } catch (const std::exception&) {
+            }
+        }
+
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
+
+            held->mine = found;
+        }
+
+        return found;
+    });
 }
 
 // Punches through to the other side; resolves with the address on the winning path, or rejects
 // with `Overdue` when the patience runs out. Both sides do the same thing and must do it at the
 // same time: my datagram dies on the other NAT but opens a hole in mine, and theirs dies on mine,
-// opening a hole in theirs. Only the second datagram of each side meets an open passage.
+// opening a hole in theirs. Only the second datagram of each side meets an open passage. Cancelling
+// the promise ends the punching within one round.
 Promise<Address> Peer::reach(Patience patience) {
     if (!held_) return amiss_now<Address>("The peer is empty.");
 
@@ -623,8 +608,10 @@ Promise<Address> Peer::reach(Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<Address> made{[held, patience](auto resolve, auto reject) {
+    return run(io(), [held, patience]() -> Address {
         try {
+            const Hearing heard{held};
+
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
@@ -636,7 +623,7 @@ Promise<Address> Peer::reach(Patience patience) {
 
             const Clock::time_point until = Clock::now() + patience;
 
-            while (Clock::now() < until && !held->shutting.load()) {
+            while (Clock::now() < until && !held->shutting.load() && !heard.rang()) {
                 // Permissions are granted in every round, because paths may arrive from signaling
                 // while the punching is already under way. An address already handled costs
                 // nothing here.
@@ -654,7 +641,7 @@ Promise<Address> Peer::reach(Patience patience) {
                 }
 
                 for (const Candidate& one : ways) {
-                    if (held->shutting.load()) break;
+                    if (held->shutting.load() || heard.rang()) break;
 
                     // The deadline is checked at every path, not once per round. With a dozen or
                     // so paths one round takes a dozen quarter-seconds, so reach would otherwise
@@ -666,31 +653,27 @@ Promise<Address> Peer::reach(Patience patience) {
 
                 std::unique_lock<std::mutex> kept{held->guard};
 
-                if (held->stirring.wait_for(kept, pausing,
-                                            [&held] { return held->met.held(); })) {
+                if (held->stirring.wait_for(kept, pausing, [&held, &heard] { return held->met.held() || heard.rang(); }) &&
+                    held->met.held()) {
                     const Address won = held->met;
 
                     kept.unlock();
 
                     held->reaching.store(false);
 
-                    resolve(won);
-
-                    return;
+                    return won;
                 }
             }
+
+            if (heard.rang()) throw Cancelled{};
 
             throw Overdue{};
         } catch (...) {
             held->reaching.store(false);
 
-            reject(std::current_exception());
+            throw;
         }
-    }};
-
-    made.start();
-
-    return made;
+    });
 }
 
 // Sends one parcel to the other side on the winning path; rejects when no path has won yet or the
@@ -713,88 +696,71 @@ Promise<void> Peer::send(Bytes what, Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<void> made{[held, met, through, what = std::move(what), patience](auto resolve,
-                                                                             auto reject) mutable {
-        try {
-            if (held->shutting.load()) throw Trouble{"The peer is closed."};
+    return run(io(), [held, met, through, what = std::move(what), patience]() mutable {
+        if (held->shutting.load()) throw Trouble{"The peer is closed."};
 
-            // We speak through the channel we punched through. Sending directly to an address that
-            // spoke up through the relay would hit the other side's NAT and be lost.
-            if (through) {
-                held->relay.send(met, std::move(what), patience).await();
+        // We speak through the channel we punched through. Sending directly to an address that
+        // spoke up through the relay would hit the other side's NAT and be lost.
+        if (through) {
+            held->relay.send(met, std::move(what), patience).get();
 
-                resolve();
-
-                return;
-            }
-
-            const std::lock_guard<std::mutex> kept{held->speaking};
-
-            if (held->shutting.load()) throw Trouble{"The peer is closed."};
-
-            held->post.send(met, std::move(what), patience).await();
-
-            resolve();
-        } catch (...) {
-            reject(std::current_exception());
+            return;
         }
-    }};
 
-    made.start();
+        const std::lock_guard<std::mutex> kept{held->speaking};
 
-    return made;
+        if (held->shutting.load()) throw Trouble{"The peer is closed."};
+
+        held->post.send(met, std::move(what), patience).get();
+    });
 }
 
 // Receives the next parcel from the other side, at most `most` bytes; rejects with `Overdue` when
 // nothing arrives within the patience, and with `Trouble` when the peer is closed or the parcel
-// does not fit.
+// does not fit. Cancelling the promise ends the wait at once.
 Promise<Bytes> Peer::receive(std::size_t most, Patience patience) {
     if (!held_) return amiss_now<Bytes>("The peer is empty.");
 
     auto held = held_->alive;
 
-    Promise<Bytes> made{[held, most, patience](auto resolve, auto reject) {
-        try {
-            waking(held);
+    return run(io(), [held, most, patience]() -> Bytes {
+        waking(held);
 
-            std::unique_lock<std::mutex> kept{held->guard};
+        const Hearing heard{held};
 
-            // The death of the loops wakes the waiter too. Without this condition a notification
-            // about a closed socket could never become true, so the caller would sleep through its
-            // whole patience and get a timeout instead of the real reason, holding a pool thread
-            // all the while. It takes the death of both loops, and with a relay there are two: as
-            // long as one of them lives, silence is only silence and the caller has to keep
-            // waiting.
-            if (!held->stirring.wait_for(kept, patience, [&held] {
-                    return !held->spare.empty() || held->shutting.load() ||
-                           (!held->living.load() && !held->fetching.load());
-                }))
-                throw Overdue{};
+        std::unique_lock<std::mutex> kept{held->guard};
 
-            if (held->spare.empty()) throw Trouble{"The peer is closed."};
+        // The death of the loops wakes the waiter too. Without this condition a notification
+        // about a closed socket could never become true, so the caller would sleep through its
+        // whole patience and get a timeout instead of the real reason, holding a pool thread
+        // all the while. It takes the death of both loops, and with a relay there are two: as
+        // long as one of them lives, silence is only silence and the caller has to keep
+        // waiting.
+        if (!held->stirring.wait_for(kept, patience, [&held, &heard] {
+                return !held->spare.empty() || held->shutting.load() ||
+                       (!held->living.load() && !held->fetching.load()) || heard.rang();
+            }))
+            throw Overdue{};
 
-            // A datagram is a whole. Handing over a piece pretending to be the whole would be worse
-            // than refusing, and `Udp` decides it the same way. But the refusal must not eat the
-            // datagram: the size is checked before it is taken off the queue, so a retry with more
-            // room still finds it.
-            if (held->spare.front().size() > most)
-                throw Trouble{"The parcel does not fit in the given space."};
+        if (heard.rang()) throw Cancelled{};
 
-            Bytes one = std::move(held->spare.front());
+        if (held->spare.empty()) throw Trouble{"The peer is closed."};
 
-            held->spare.pop_front();
+        // A datagram is a whole. Handing over a piece pretending to be the whole would be worse
+        // than refusing, and `Udp` decides it the same way. But the refusal must not eat the
+        // datagram: the size is checked before it is taken off the queue, so a retry with more
+        // room still finds it.
+        if (held->spare.front().size() > most)
+            throw Trouble{"The parcel does not fit in the given space."};
 
-            kept.unlock();
+        Bytes one = std::move(held->spare.front());
 
-            resolve(std::move(one));
-        } catch (...) {
-            reject(std::current_exception());
-        }
-    }};
+        held->spare.pop_front();
 
-    made.start();
+        kept.unlock();
 
-    return made;
+        return one;
+    });
 }
 
 // Closes the peer. Closing explicitly does exactly what letting go of the last peer does: the

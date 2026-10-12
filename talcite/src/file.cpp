@@ -380,7 +380,7 @@ const path& File::where() const {
 Promise<Bytes> File::read(std::uintmax_t at, std::size_t much) const {
     auto held = held_;
 
-    return Promise<Bytes>{[held, at, much](auto resolve, auto) {
+    return run(io(), [held, at, much]() -> Bytes {
         if (!held) amiss("The file is not open.", path{});
 
         Bytes made;
@@ -391,15 +391,15 @@ Promise<Bytes> File::read(std::uintmax_t at, std::size_t much) const {
             made = read_at(*held, at, much);
         }
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // Writes all of `what` at offset `at` on the pool and resolves with the byte count.
 Promise<std::size_t> File::write(std::uintmax_t at, Bytes what) const {
     auto held = held_;
 
-    return Promise<std::size_t>{[held, at, what = std::move(what)](auto resolve, auto) {
+    return run(io(), [held, at, what = std::move(what)]() -> std::size_t {
         if (!held) amiss("The file is not open.", path{});
 
         std::size_t made = 0;
@@ -410,8 +410,8 @@ Promise<std::size_t> File::write(std::uintmax_t at, Bytes what) const {
             made = write_at(*held, at, what);
         }
 
-        resolve(made);
-    }};
+        return made;
+    });
 }
 
 struct Cursor::Held {
@@ -422,15 +422,16 @@ struct Cursor::Held {
 
 namespace {
 
-// The busy flag is taken when the promise is created, not when it runs. Promises are lazy, so two
-// reads created before either of them starts would begin at the same position, and which of them
-// fails would depend on the order in the pool. The guard releases the stream when the operation
-// ends (also with an exception) and when the promise dies untouched.
+// The busy flag is taken when the promise is created, not when the body runs. The body runs later,
+// on the pool, so two reads created before either of them starts would begin at the same position,
+// and which of them fails would depend on the order in the pool. The guard releases the stream when
+// the operation ends (also with an exception), and when a promise let go of before its body began
+// takes the body with it.
 class Claim {
 public:
     explicit Claim(std::shared_ptr<Cursor::Held> held) : held_(std::move(held)) {}
 
-    // A promise that dies without running still releases the stream.
+    // A body that never ran still releases the stream.
     ~Claim() { free(); }
 
     Claim(const Claim&) = delete;
@@ -521,23 +522,21 @@ void Cursor::seek(std::uintmax_t at) {
 }
 
 // Reads up to `much` bytes from the current position and advances it by what was read. One
-// operation at a time: a second one rejects with "The stream is busy.".
+// operation at a time: a second one rejects with "The stream is busy.". A read let go of before it
+// began reads nothing; one already reading finishes, so the position moves, and then frees the
+// stream.
 Promise<Bytes> Cursor::read(std::size_t much) {
     auto held = held_;
     Claiming got = claimed(held);
 
-    if (!got.claim)
-        return Promise<Bytes>{
-            [said = std::move(got.said), where = std::move(got.where)](auto, auto) {
-                amiss(said, where);
-            }};
+    if (!got.claim) return failed<Bytes>(std::make_exception_ptr(Trouble{got.said, got.where}));
 
-    return Promise<Bytes>{[held, claim = std::move(got.claim), much](auto resolve, auto) {
+    return run(io(), [held, claim = std::move(got.claim), much]() -> Bytes {
         Bytes made;
 
-        // The release must happen before resolving, not after it: resolve wakes the thread waiting
-        // in await, and that thread immediately goes for the next read. Releasing after resolve
-        // would leave a gap in which the next read of a loop is told "busy".
+        // The release must happen before the value is given, not after it: the value wakes the
+        // thread waiting for it, and that thread immediately goes for the next read. Releasing
+        // after it would leave a gap in which the next read of a loop is told "busy".
         {
             const Freeing freeing{claim};
 
@@ -550,8 +549,8 @@ Promise<Bytes> Cursor::read(std::size_t much) {
             held->at.store(at + made.size());
         }
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // Writes all of `what` at the current position and advances it. One operation at a time, as in
@@ -560,14 +559,9 @@ Promise<std::size_t> Cursor::write(Bytes what) {
     auto held = held_;
     Claiming got = claimed(held);
 
-    if (!got.claim)
-        return Promise<std::size_t>{
-            [said = std::move(got.said), where = std::move(got.where)](auto, auto) {
-                amiss(said, where);
-            }};
+    if (!got.claim) return failed<std::size_t>(std::make_exception_ptr(Trouble{got.said, got.where}));
 
-    return Promise<std::size_t>{
-        [held, claim = std::move(got.claim), what = std::move(what)](auto resolve, auto) {
+    return run(io(), [held, claim = std::move(got.claim), what = std::move(what)]() -> std::size_t {
             std::size_t much = 0;
 
             {
@@ -582,15 +576,15 @@ Promise<std::size_t> Cursor::write(Bytes what) {
                 held->at.store(at + much);
             }
 
-            resolve(much);
-        }};
+            return much;
+        });
 }
 
 // Waits on the pool until the written data is on the medium (see `sync_at`).
 Promise<void> File::sync() const {
     auto held = held_;
 
-    return Promise<void>{[held](auto resolve, auto) {
+    return run(io(), [held]() {
         if (!held) amiss("The file is not open.", path{});
 
         {
@@ -598,16 +592,14 @@ Promise<void> File::sync() const {
 
             sync_at(*held);
         }
-
-        resolve();
-    }};
+    });
 }
 
 // The current size of the file, read on the pool.
 Promise<std::uintmax_t> File::size() const {
     auto held = held_;
 
-    return Promise<std::uintmax_t>{[held](auto resolve, auto) {
+    return run(io(), [held]() -> std::uintmax_t {
         if (!held) amiss("The file is not open.", path{});
 
         std::uintmax_t made = 0;
@@ -618,14 +610,13 @@ Promise<std::uintmax_t> File::size() const {
             made = sized(*held);
         }
 
-        resolve(made);
-    }};
+        return made;
+    });
 }
 
 // Opens the file on the pool in the given mode.
 Promise<File> open(const path& where, Mode how) {
-    return Promise<File>{
-        [where, how](auto resolve, auto) { resolve(File{open_at(where, how)}); }};
+    return run(io(), [where, how]() -> File { return File{open_at(where, how)}; });
 }
 
 }

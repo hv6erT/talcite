@@ -26,7 +26,6 @@ const net::Patience soon{6000};
 net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
 
-
 }
 
 TRIAL("Peer: two sides knocking at once reach each other") {
@@ -45,8 +44,8 @@ TRIAL("Peer: two sides knocking at once reach each other") {
     auto first = left.reach(soon);
     auto second = right.reach(soon);
 
-    same(first.await(), there);
-    same(second.await(), where);
+    same(std::move(first).get(), there);
+    same(std::move(second).get(), where);
 
     same(left.met(), there);
     same(right.met(), where);
@@ -68,10 +67,10 @@ TRIAL("Peer: the passive side answers and reaches its peer on its own") {
 
     auto waiting = right.receive(1024, net::Patience{2000});
 
-    same(left.reach(soon).await(), two.mine());
+    same(left.reach(soon).get(), two.mine());
 
     try {
-        (void)waiting.await();
+        (void)std::move(waiting).get();
     } catch (const std::exception&) {
     }
 
@@ -111,9 +110,9 @@ TRIAL("Peer: another port of a known host is added by itself") {
     bool knows = false;
 
     for (int turn = 0; turn < 30 && !knows; ++turn) {
-        three.send(one.mine(), knocking(), soon).await();
+        three.send(one.mine(), knocking(), soon).get();
 
-        Time::later(std::chrono::milliseconds{50}).await();
+        later(std::chrono::milliseconds{50}).get();
 
         for (const net::Candidate& which : left.theirs())
             if (which.where == three.mine()) knows = true;
@@ -122,7 +121,7 @@ TRIAL("Peer: another port of a known host is added by itself") {
     ought(knows);
 
     try {
-        (void)waking.await();
+        (void)std::move(waking).get();
     } catch (const std::exception&) {
     }
 }
@@ -142,9 +141,9 @@ TRIAL("Peer: a host nobody mentioned is not added") {
     auto waking = left.receive(1024, net::Patience{900});
 
     for (int turn = 0; turn < 6; ++turn) {
-        evil.send(one.mine(), knocking(), soon).await();
+        evil.send(one.mine(), knocking(), soon).get();
 
-        Time::later(std::chrono::milliseconds{60}).await();
+        later(std::chrono::milliseconds{60}).get();
     }
 
     ought(!left.met().held());
@@ -154,7 +153,7 @@ TRIAL("Peer: a host nobody mentioned is not added") {
     for (const net::Candidate& which : left.theirs()) ought(!(which.where == evil.mine()));
 
     try {
-        (void)waking.await();
+        (void)std::move(waking).get();
     } catch (const std::exception&) {
     }
 }
@@ -172,14 +171,14 @@ TRIAL("Peer: after punching through, the sides can talk") {
     auto first = left.reach(soon);
     auto second = right.reach(soon);
 
-    (void)first.await();
-    (void)second.await();
+    (void)std::move(first).get();
+    (void)std::move(second).get();
 
     auto waiting = right.receive(1024, soon);
 
-    left.send(bytes("witaj po drugiej stronie dziury"), soon).await();
+    left.send(bytes("witaj po drugiej stronie dziury"), soon).get();
 
-    same(text(waiting.await()), std::string{"witaj po drugiej stronie dziury"});
+    same(text(std::move(waiting).get()), std::string{"witaj po drugiej stronie dziury"});
 }
 
 TRIAL("Peer: connectivity checks do not mix with data") {
@@ -195,17 +194,17 @@ TRIAL("Peer: connectivity checks do not mix with data") {
     auto first = left.reach(soon);
     auto second = right.reach(soon);
 
-    (void)first.await();
-    (void)second.await();
+    (void)std::move(first).get();
+    (void)std::move(second).get();
 
     // Keepalives and responses travel over the same socket the whole time. Not a single STUN byte
     // may reach the data, or the caller would get garbage instead of its message.
     for (int turn = 0; turn < 5; ++turn) {
         auto waiting = right.receive(1024, soon);
 
-        left.send(bytes("rata " + std::to_string(turn)), soon).await();
+        left.send(bytes("rata " + std::to_string(turn)), soon).get();
 
-        same(text(waiting.await()), "rata " + std::to_string(turn));
+        same(text(std::move(waiting).get()), "rata " + std::to_string(turn));
     }
 }
 
@@ -217,7 +216,7 @@ TRIAL("Peer: without a path there is nowhere to knock") {
     bool amiss = false;
 
     try {
-        (void)left.reach(soon).await();
+        (void)left.reach(soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -241,7 +240,7 @@ TRIAL("Peer: a path to nowhere ends with the deadline") {
     bool late = false;
 
     try {
-        (void)left.reach(net::Patience{700}).await();
+        (void)left.reach(net::Patience{700}).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -294,7 +293,7 @@ TRIAL("Peer: gathering candidates without a scout gives only host candidates") {
 
     net::Peer left{one};
 
-    const std::vector<net::Candidate> made = left.gather(net::StunClient{}, soon).await();
+    const std::vector<net::Candidate> made = left.gather(net::StunClient{}, soon).get();
 
     for (const net::Candidate& which : made) {
         same(which.sort, net::Candidate::Sort::here);
@@ -319,7 +318,7 @@ TRIAL("Peer: there is nobody to talk to before punching through") {
     bool amiss = false;
 
     try {
-        left.send(bytes("za wcześnie"), soon).await();
+        left.send(bytes("za wcześnie"), soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -335,7 +334,7 @@ TRIAL("Peer: silence on receive ends with the deadline") {
     bool late = false;
 
     try {
-        (void)left.receive(1024, net::Patience{300}).await();
+        (void)left.receive(1024, net::Patience{300}).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -353,7 +352,7 @@ TRIAL("Peer: a closed one accepts nothing") {
     bool amiss = false;
 
     try {
-        (void)left.reach(soon).await();
+        (void)left.reach(soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -374,7 +373,7 @@ TRIAL("Peer: two knocks at once are refused") {
     bool busy = false;
 
     try {
-        (void)left.reach(soon).await();
+        (void)left.reach(soon).get();
     } catch (const net::Trouble&) {
         busy = true;
     }
@@ -382,7 +381,7 @@ TRIAL("Peer: two knocks at once are refused") {
     ought(busy);
 
     try {
-        (void)first.await();
+        (void)std::move(first).get();
     } catch (const std::exception&) {
     }
 }
@@ -402,16 +401,16 @@ TRIAL("Peer: an oversized message is not lost on refusal") {
     auto first = left.reach(soon);
     auto second = right.reach(soon);
 
-    (void)first.await();
-    (void)second.await();
+    (void)std::move(first).get();
+    (void)std::move(second).get();
 
-    left.send(bytes("sto bajtów by tu nie weszło"), soon).await();
+    left.send(bytes("sto bajtów by tu nie weszło"), soon).get();
 
     bool amiss = false;
 
     for (int turn = 0; turn < 40 && !amiss; ++turn) {
         try {
-            (void)right.receive(4, net::Patience{100}).await();
+            (void)right.receive(4, net::Patience{100}).get();
         } catch (const Overdue&) {
             continue;
         } catch (const net::Trouble&) {
@@ -421,5 +420,5 @@ TRIAL("Peer: an oversized message is not lost on refusal") {
 
     ought(amiss);
 
-    same(text(right.receive(1024, soon).await()), std::string{"sto bajtów by tu nie weszło"});
+    same(text(right.receive(1024, soon).get()), std::string{"sto bajtów by tu nie weszło"});
 }

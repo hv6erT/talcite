@@ -128,7 +128,7 @@ TRIAL("Address: can be built from raw bytes") {
 }
 
 TRIAL("Names: loopback has an address") {
-    const std::vector<net::Address> made = net::resolve("localhost", 80).await();
+    const std::vector<net::Address> made = net::resolve("localhost", 80).get();
 
     ought(!made.empty());
 
@@ -139,7 +139,7 @@ TRIAL("Names: loopback has an address") {
 }
 
 TRIAL("Names: an address written directly passes too") {
-    const std::vector<net::Address> made = net::resolve("127.0.0.1", 443).await();
+    const std::vector<net::Address> made = net::resolve("127.0.0.1", 443).get();
 
     same(static_cast<int>(made.size()), 1);
     same(made.front().text(), std::string{"127.0.0.1"});
@@ -148,7 +148,7 @@ TRIAL("Names: an address written directly passes too") {
 
 TRIAL("Names: one family can be requested") {
     const std::vector<net::Address> made =
-        net::resolve("localhost", 80, net::Family::four).await();
+        net::resolve("localhost", 80, net::Family::four).get();
 
     for (const net::Address& one : made) same(one.family(), net::Family::four);
 }
@@ -157,7 +157,7 @@ TRIAL("Names: an unknown name rejects the promise") {
     bool threw = false;
 
     try {
-        (void)net::resolve("nie.ma.takiej.nazwy.talcite.test", 80).await();
+        (void)net::resolve("nie.ma.takiej.nazwy.talcite.test", 80).get();
     } catch (const net::Trouble& why) {
         threw = true;
 
@@ -168,7 +168,7 @@ TRIAL("Names: an unknown name rejects the promise") {
 }
 
 TRIAL("Own: the list is not empty and has loopback") {
-    const std::vector<net::Address> made = net::mine().await();
+    const std::vector<net::Address> made = net::mine().get();
 
     ought(!made.empty());
 
@@ -184,12 +184,12 @@ TRIAL("Own: the list is not empty and has loopback") {
 }
 
 TRIAL("Own: the list has no ports") {
-    for (const net::Address& one : net::mine().await())
+    for (const net::Address& one : net::mine().get())
         same(one.port(), static_cast<std::uint16_t>(0));
 }
 
 TRIAL("Own: one family can be requested") {
-    const std::vector<net::Address> made = net::mine(net::Family::four).await();
+    const std::vector<net::Address> made = net::mine(net::Family::four).get();
 
     ought(!made.empty());
 
@@ -197,7 +197,7 @@ TRIAL("Own: one family can be requested") {
 }
 
 TRIAL("Own: the same address does not appear twice") {
-    const std::vector<net::Address> made = net::mine().await();
+    const std::vector<net::Address> made = net::mine().get();
 
     for (std::size_t at = 0; at < made.size(); ++at)
         for (std::size_t which = at + 1; which < made.size(); ++which)
@@ -205,7 +205,7 @@ TRIAL("Own: the same address does not appear twice") {
 }
 
 TRIAL("Own: every address can be written and read back") {
-    for (const net::Address& one : net::mine().await()) {
+    for (const net::Address& one : net::mine().get()) {
         // A link-local address carries the scope id after the percent sign, and it comes back only
         // on systems that name it, so only the address itself is compared, without the id.
         const net::Address again{one.text(), one.port()};
@@ -265,7 +265,7 @@ TRIAL("Address: an unknown interface name is a trouble, not zero") {
 // loopback into ::1%1, which no longer equals ::1 and would come out as a candidate for hole
 // punching.
 TRIAL("Own: a scope id only on link-local addresses") {
-    for (const net::Address& one : net::mine().await()) {
+    for (const net::Address& one : net::mine().get()) {
         if (one.family() != net::Family::six) continue;
 
         if (one.scope() == 0) continue;

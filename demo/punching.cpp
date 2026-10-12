@@ -92,7 +92,7 @@ int main(int count, char** given) {
         for (const showing::Server& one : showing::known()) {
             try {
                 const std::vector<net::Address> found =
-                    net::resolve(one.first, one.second, net::Family::four).await();
+                    net::resolve(one.first, one.second, net::Family::four).get();
 
                 if (!found.empty()) scout.add(found.front());
             } catch (const std::exception&) {
@@ -106,11 +106,11 @@ int main(int count, char** given) {
             return 1;
         }
 
-        std::cout << "mapping: " << named(scout.mapping().await()) << "\n";
+        std::cout << "mapping: " << named(scout.mapping().get()) << "\n";
 
         net::Peer peer{mine};
 
-        const std::vector<net::Candidate> ways = peer.gather(scout, net::Patience{12000}).await();
+        const std::vector<net::Candidate> ways = peer.gather(scout, net::Patience{12000}).get();
 
         std::cout << "\nmy ways — copy them to the other side:\n";
 
@@ -153,7 +153,7 @@ int main(int count, char** given) {
             std::cout << "\nknocking at " << where.spelled() << "\n";
         }
 
-        const net::Address met = peer.reach(net::Patience{45000}).await();
+        const net::Address met = peer.reach(net::Patience{45000}).get();
 
         std::cout << "punched through — talking to " << met.spelled() << "\n\n";
 
@@ -171,9 +171,9 @@ int main(int count, char** given) {
             while (std::chrono::steady_clock::now() - began < much) {
                 peer.send(spelt(std::string{what} + " " + std::to_string(turn++) + " from " + me),
                           soon)
-                    .await();
+                    .get();
 
-                Time::later(std::chrono::milliseconds{1000}).await();
+                later(std::chrono::milliseconds{1000}).get();
 
                 for (int at = 0; at < 8; ++at) {
                     Bytes came;
@@ -181,7 +181,7 @@ int main(int count, char** given) {
                     // Receive first and print afterwards, so that a line is never left half-printed
                     // when the queue turns out to be empty.
                     try {
-                        came = peer.receive(4096, net::Patience{1}).await();
+                        came = peer.receive(4096, net::Patience{1}).get();
                     } catch (const std::exception&) {
                         break;
                     }
@@ -197,7 +197,7 @@ int main(int count, char** given) {
 
         std::cout << "\nforty-five seconds of silence — only the keepalive talks:\n";
 
-        Time::later(std::chrono::milliseconds{45000}).await();
+        later(std::chrono::milliseconds{45000}).get();
 
         std::cout << "\ntalking again — if it gets through, the hole survived the silence:\n";
 

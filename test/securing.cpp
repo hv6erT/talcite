@@ -20,7 +20,6 @@ namespace {
 const net::Patience soon{15000};
 
 
-
 using faking::Watching;
 
 // A listener on an IPv4 loopback address with a port chosen by the system.
@@ -37,14 +36,14 @@ Pair guarded(const net::Listener& gate, const talcite::Seam<net::TlsProvider>& g
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
 
-    net::Stream one = meeting.await();
-    net::Stream two = joining.await();
+    net::Stream one = std::move(meeting).get();
+    net::Stream two = std::move(joining).get();
 
     auto there = net::TlsStream::server(std::move(one), guard, soon);
     auto here = net::TlsStream::client(std::move(two), guard, "gdziekolwiek", soon);
 
-    net::TlsStream server = there.await();
-    net::TlsStream client = here.await();
+    net::TlsStream server = std::move(there).get();
+    net::TlsStream client = std::move(here).get();
 
     return Pair{std::move(server), std::move(client)};
 }
@@ -71,13 +70,13 @@ TRIAL("Seam: content passes both ways") {
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(bytes("tajna wiadomość"), soon).await();
+    both.client.write(bytes("tajna wiadomość"), soon).get();
 
-    same(text(both.server.read(1024, soon).await()), std::string{"tajna wiadomość"});
+    same(text(both.server.read(1024, soon).get()), std::string{"tajna wiadomość"});
 
-    both.server.write(bytes("i odpowiedź"), soon).await();
+    both.server.write(bytes("i odpowiedź"), soon).get();
 
-    same(text(both.client.read(1024, soon).await()), std::string{"i odpowiedź"});
+    same(text(both.client.read(1024, soon).get()), std::string{"i odpowiedź"});
 }
 
 TRIAL("Seam: a hundred thousand bytes pass in pieces") {
@@ -94,14 +93,14 @@ TRIAL("Seam: a hundred thousand bytes pass in pieces") {
     std::string made;
 
     while (made.size() < much.size()) {
-        const Bytes one = both.server.read(65536, soon).await();
+        const Bytes one = both.server.read(65536, soon).get();
 
         if (one.empty()) break;
 
         made += text(one);
     }
 
-    writing.await();
+    std::move(writing).get();
 
     same(made.size(), much.size());
     ought(made == much);
@@ -114,11 +113,11 @@ TRIAL("Seam: reading less than a record leaves the rest for later") {
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(bytes("abcdefghij"), soon).await();
+    both.client.write(bytes("abcdefghij"), soon).get();
 
-    same(text(both.server.read(4, soon).await()), std::string{"abcd"});
-    same(text(both.server.read(4, soon).await()), std::string{"efgh"});
-    same(text(both.server.read(4, soon).await()), std::string{"ij"});
+    same(text(both.server.read(4, soon).get()), std::string{"abcd"});
+    same(text(both.server.read(4, soon).get()), std::string{"efgh"});
+    same(text(both.server.read(4, soon).get()), std::string{"ij"});
 }
 
 TRIAL("Seam: the other side closing gives emptiness") {
@@ -130,7 +129,7 @@ TRIAL("Seam: the other side closing gives emptiness") {
 
     both.client.close();
 
-    same(static_cast<int>(both.server.read(64, soon).await().size()), 0);
+    same(static_cast<int>(both.server.read(64, soon).get().size()), 0);
 }
 
 TRIAL("Seam: silence ends with the deadline") {
@@ -143,7 +142,7 @@ TRIAL("Seam: silence ends with the deadline") {
     bool late = false;
 
     try {
-        (void)both.server.read(64, net::Patience{200}).await();
+        (void)both.server.read(64, net::Patience{200}).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -163,7 +162,7 @@ TRIAL("Seam: a second read at the same time is refused") {
     bool busy = false;
 
     try {
-        (void)both.server.read(64, net::Patience{300}).await();
+        (void)both.server.read(64, net::Patience{300}).get();
     } catch (const std::exception&) {
         busy = true;
     }
@@ -171,7 +170,7 @@ TRIAL("Seam: a second read at the same time is refused") {
     ought(busy);
 
     try {
-        (void)first.await();
+        (void)std::move(first).get();
     } catch (const std::exception&) {
     }
 }
@@ -183,12 +182,12 @@ TRIAL("Seam: trouble reported by the protection comes to the surface") {
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(bytes("cokolwiek"), soon).await();
+    both.client.write(bytes("cokolwiek"), soon).get();
 
     bool amiss = false;
 
     try {
-        (void)both.server.read(64, soon).await();
+        (void)both.server.read(64, soon).get();
     } catch (const net::Trouble& why) {
         amiss = true;
 
@@ -207,12 +206,12 @@ TRIAL("Seam: trouble without a recognized reason is TlsTrouble with reason other
 
     Pair both = guarded(gate, guard);
 
-    both.client.write(bytes("cokolwiek"), soon).await();
+    both.client.write(bytes("cokolwiek"), soon).get();
 
     bool amiss = false;
 
     try {
-        (void)both.server.read(64, soon).await();
+        (void)both.server.read(64, soon).get();
     } catch (const net::TlsTrouble& why) {
         amiss = true;
 
@@ -234,13 +233,13 @@ TRIAL("Seam: a handshake refusal carries the reason, the server name and the add
         const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>(false, one)};
 
         auto meeting = gate.accept(soon);
-        net::Stream two = net::Stream::connect(gate.mine(), soon).await();
-        const net::Stream there = meeting.await();
+        net::Stream two = net::Stream::connect(gate.mine(), soon).get();
+        const net::Stream there = std::move(meeting).get();
 
         bool refused = false;
 
         try {
-            (void)net::TlsStream::client(std::move(two), guard, "talcite.test", soon).await();
+            (void)net::TlsStream::client(std::move(two), guard, "talcite.test", soon).get();
         } catch (const net::TlsTrouble& why) {
             refused = true;
 
@@ -262,8 +261,8 @@ TRIAL("Seam: a handshake cut off halfway rejects the promise") {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
 
-    net::Stream one = meeting.await();
-    net::Stream two = joining.await();
+    net::Stream one = std::move(meeting).get();
+    net::Stream two = std::move(joining).get();
 
     auto here = net::TlsStream::client(std::move(two), guard, "gdziekolwiek", soon);
 
@@ -273,7 +272,7 @@ TRIAL("Seam: a handshake cut off halfway rejects the promise") {
     bool amiss = false;
 
     try {
-        (void)here.await();
+        (void)std::move(here).get();
     } catch (const std::exception&) {
         amiss = true;
     }
@@ -290,11 +289,11 @@ TRIAL("Seam: writing and reading at once do not mix on the socket") {
 
     auto reading = both.client.read(1024, soon);
 
-    both.server.write(bytes("od serwera"), soon).await();
-    both.client.write(bytes("od klienta"), soon).await();
+    both.server.write(bytes("od serwera"), soon).get();
+    both.client.write(bytes("od klienta"), soon).get();
 
-    same(text(reading.await()), std::string{"od serwera"});
-    same(text(both.server.read(1024, soon).await()), std::string{"od klienta"});
+    same(text(std::move(reading).get()), std::string{"od serwera"});
+    same(text(both.server.read(1024, soon).get()), std::string{"od klienta"});
 }
 
 // The guard is a value, so it may be absent. An empty one must say so plainly instead of reaching
@@ -319,7 +318,7 @@ TRIAL("Seam: an empty seam refuses with Unbound, and provider() on it throws the
 
     auto joining = net::Stream::connect(gate.mine(), soon);
 
-    net::Stream two = joining.await();
+    net::Stream two = std::move(joining).get();
 
     const talcite::Seam<net::TlsProvider> none;
 
@@ -338,7 +337,7 @@ TRIAL("Seam: an empty seam refuses with Unbound, and provider() on it throws the
     amiss = false;
 
     try {
-        (void)net::TlsStream::client(std::move(two), none, "gdziekolwiek", soon).await();
+        (void)net::TlsStream::client(std::move(two), none, "gdziekolwiek", soon).get();
     } catch (const talcite::Unbound&) {
         amiss = true;
     }
@@ -358,7 +357,7 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
 
     auto joining = net::Stream::connect(gate.mine(), soon);
 
-    net::Stream two = joining.await();
+    net::Stream two = std::move(joining).get();
 
     const talcite::Seam<net::TlsProvider> guard{std::make_shared<Nothing>()};
 
@@ -368,7 +367,7 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
     bool amiss = false;
 
     try {
-        (void)net::TlsStream::server(std::move(two), guard, soon).await();
+        (void)net::TlsStream::server(std::move(two), guard, soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -376,7 +375,7 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
     ought(amiss);
 }
 
-// Rejections from `TlsStream` come out as trouble, not as a bare string: `reject` would wrap a
+// Rejections from `TlsStream` come out as trouble, not as a bare string: `Settle::fail` would wrap a
 // string in `Rejected`, which `catch (const Trouble&)` does not catch. The rest of the library
 // rejects with trouble, and these four places must do the same.
 TRIAL("Seam: rejections come out as trouble, not as a bare string") {
@@ -391,7 +390,7 @@ TRIAL("Seam: rejections come out as trouble, not as a bare string") {
     bool amiss = false;
 
     try {
-        (void)both.client.read(1024, soon).await();
+        (void)both.client.read(1024, soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -401,7 +400,7 @@ TRIAL("Seam: rejections come out as trouble, not as a bare string") {
     amiss = false;
 
     try {
-        both.client.write(bytes("do zamkniętego"), soon).await();
+        both.client.write(bytes("do zamkniętego"), soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -426,7 +425,7 @@ TRIAL("Seam: a second read at the same time refuses with trouble") {
     bool busy = false;
 
     try {
-        (void)both.server.read(1024, net::Patience{300}).await();
+        (void)both.server.read(1024, net::Patience{300}).get();
     } catch (const net::Trouble&) {
         busy = true;
     }
@@ -434,7 +433,7 @@ TRIAL("Seam: a second read at the same time refuses with trouble") {
     ought(busy);
 
     try {
-        (void)reading.await();
+        (void)std::move(reading).get();
     } catch (const std::exception&) {
     }
 }
@@ -463,12 +462,10 @@ TRIAL("Seam: closing during a write crashes nobody") {
 
         Promise<void> wrote = both.client.write(std::move(much), soon);
 
-        wrote.start();
-
         std::thread other{[&both] { both.client.close(); }};
 
         try {
-            wrote.await();
+            std::move(wrote).get();
         } catch (...) {
         }
 

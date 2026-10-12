@@ -177,7 +177,7 @@ TRIAL("Gauge: an indeterminate gauge without a loop starts no timer and does not
     same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
-// The gauge spins by itself. `Time::later` measures the time, `here()` moves the continuation to
+// The gauge spins by itself. `later` measures the time, `here()` moves the continuation to
 // the loop's thread, and `Loop::turn()` runs it: here in the trial by hand, in a program `Term`
 // does it.
 TRIAL("Gauge: an indeterminate gauge spins by itself on the library's timer") {

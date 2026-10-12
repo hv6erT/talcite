@@ -258,9 +258,7 @@ Figure figured(Bytes raw, Seam<ImageProvider> images) {
     // of cores. On the ordinary lane ten images scrolled at once would be ten computing threads on
     // a few cores, and each would finish later than if they waited in a queue.
     made.fetch = [raw = std::move(raw), images = std::move(images)](ui::Size want) {
-        return Promise<Pixels>{
-            [raw, images, want](auto resolve, auto) { resolve(shrunk(images, raw, want)); },
-            Lane::cpu};
+        return run(cpu(), [raw, images, want]() -> Pixels { return shrunk(images, raw, want); });
     };
 
     return made;

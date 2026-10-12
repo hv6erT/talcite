@@ -137,8 +137,8 @@ int main() {
     // Collecting runs alongside. `here()` moves the continuation onto the drawing loop, so the node
     // tree is touched on the same thread that draws it, and the window responds in the meantime.
     //
-    // We keep the promise because the chain hangs on it through a weak pointer: an abandoned
-    // promise would never fire. It also has to be started, since `then` alone runs nothing.
+    // We keep the promise: work goes on only while someone wants it, so a dropped promise would stop
+    // the program and its callbacks would never run.
     const auto kept = std::make_shared<std::optional<talcite::Promise<void>>>();
 
     const auto gathering = [field, told, showing, kept] {
@@ -147,11 +147,9 @@ int main() {
         kept->emplace(talcite::Child::run(spoken(field->text()))
                           .here()
                           .then([showing](const talcite::Output& made) { showing(made); })
-                          .fail([told](const std::exception& why) {
+                          .recover([told](const std::exception& why) {
                               told->text(std::string{"failed: "} + why.what());
                           }));
-
-        (*kept)->start();
     };
 
     (void)field->on<talcite::ui::KeyEvent>([gathering](talcite::ui::KeyEvent& what) {

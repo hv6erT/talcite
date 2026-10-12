@@ -116,7 +116,7 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
     // beacon's death alone would not close it, and a receive without a deadline would then wait
     // until the end of the program. We close the socket directly: once closed, it refuses receiving
     // and sending, and the chain ends by itself. Canceling the chain alone would not reach an
-    // answer being sent in `all_settled` at that moment.
+    // answer being sent in `settled` at that moment.
     ~Held() { post.close(); }
 
     Held() = default;
@@ -161,25 +161,50 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
         return written(answering, asked->nonce, asked->tag, &found->second);
     }
 
-    // One round: a datagram, an answer, the next round. The chain holds the beacon weakly, so a
-    // closed beacon ends the loop, because a closed socket refuses to receive.
-    static Promise<void> listened(const std::weak_ptr<Held>& weak) {
-        const std::shared_ptr<Held> self = weak.lock();
+    // The listening loop: a datagram, an answer, the next datagram. The loop holds the beacon
+    // weakly and only for the moment of each step, so a beacon that is gone or closed ends it: a
+    // closed socket refuses to receive. A send that fails loses one answer, not the loop.
+    static Promise<void> listened(std::weak_ptr<Held> weak) {
+        for (;;) {
+            Promise<Datagram> coming;
 
-        if (!self || !self->post.held()) return Promise<void>{[](auto resolve, auto) { resolve(); }};
+            {
+                const std::shared_ptr<Held> self = weak.lock();
 
-        return self->post.receive(widest_datagram + 1, Patience{0}).then([weak](Datagram got) {
-            const std::shared_ptr<Held> self = weak.lock();
+                if (!self || !self->post.held()) co_return;
 
-            if (!self) return Promise<void>{[](auto resolve, auto) { resolve(); }};
+                coming = self->post.receive(widest_datagram + 1, Patience{0});
+            }
 
-            std::optional<Bytes> said = self->answer(got.bytes);
+            Datagram got;
 
-            Promise<void> sent = said ? Promise<void>::all_settled(self->post.send(got.from, std::move(*said), Patience{1000}))
-                                      : Promise<void>{[](auto resolve, auto) { resolve(); }};
+            try {
+                got = co_await std::move(coming);
+            } catch (...) {
+                co_return;
+            }
 
-            return sent.then([weak] { return listened(weak); });
-        });
+            Promise<void> sent;
+
+            {
+                const std::shared_ptr<Held> self = weak.lock();
+
+                if (!self) co_return;
+
+                std::optional<Bytes> said = self->answer(got.bytes);
+
+                if (!said) continue;
+
+                sent = self->post.send(got.from, std::move(*said), Patience{1000});
+            }
+
+            try {
+                co_await std::move(sent);
+            } catch (const Cancelled&) {
+                throw;
+            } catch (...) {
+            }
+        }
     }
 };
 
@@ -200,7 +225,6 @@ Beacon::Beacon(std::uint16_t port) : held_(std::make_shared<Held>()) {
     held_->post = Udp{Address::any(Family::four, port)};
     held_->mine = held_->post.mine();
     held_->running.emplace(Held::listened(held_));
-    held_->running->start();
 }
 
 // The address the beacon listens on, or an empty address once it is closed.
@@ -247,35 +271,38 @@ struct Seeking {
     std::vector<Sighting> found;
 };
 
-// Collects answers to our question until the patience runs out, each sender and content once.
+// Collects answers to our question until the patience runs out, each sender and content once; ends
+// with the error of the receive that waited past the deadline.
 Promise<void> gathered(std::shared_ptr<Seeking> seeking) {
-    const auto left = std::chrono::duration_cast<Patience>(seeking->until - std::chrono::steady_clock::now());
+    for (;;) {
+        const auto left = std::chrono::duration_cast<Patience>(seeking->until - std::chrono::steady_clock::now());
 
-    if (left <= Patience{0}) return Promise<void>{[](auto resolve, auto) { resolve(); }};
+        if (left <= Patience{0}) co_return;
 
-    return seeking->post.receive(widest_datagram + 1, left)
-        .then([seeking](Datagram got) {
-            const std::optional<Read> told = read(got.bytes);
+        const Datagram got = co_await seeking->post.receive(widest_datagram + 1, left);
 
-            if (told && told->kind == answering && told->nonce == seeking->once && told->tag == seeking->tag) {
-                Sighting one{got.from, told->payload};
+        const std::optional<Read> told = read(got.bytes);
 
-                if (std::find(seeking->found.begin(), seeking->found.end(), one) == seeking->found.end())
-                    seeking->found.push_back(std::move(one));
-            }
+        if (told && told->kind == answering && told->nonce == seeking->once && told->tag == seeking->tag) {
+            Sighting one{got.from, told->payload};
 
-            return gathered(seeking);
-        });
+            if (std::find(seeking->found.begin(), seeking->found.end(), one) == seeking->found.end())
+                seeking->found.push_back(std::move(one));
+        }
+    }
 }
 
 // The question sent to each address in turn. An address that the send refuses (no network, no
 // broadcast route) does not stop the others.
-Promise<void> asked(std::shared_ptr<Seeking> seeking, std::shared_ptr<std::vector<Address>> to, std::size_t at,
-                    std::shared_ptr<Bytes> question) {
-    if (at >= to->size()) return Promise<void>{[](auto resolve, auto) { resolve(); }};
-
-    return Promise<void>::all_settled(seeking->post.send((*to)[at], *question, Patience{1000}))
-        .then([seeking, to, at, question] { return asked(seeking, to, at + 1, question); });
+Promise<void> asked(std::shared_ptr<Seeking> seeking, std::vector<Address> to, Bytes question) {
+    for (const Address& one : to) {
+        try {
+            co_await seeking->post.send(one, question, Patience{1000});
+        } catch (const Cancelled&) {
+            throw;
+        } catch (...) {
+        }
+    }
 }
 
 }
@@ -287,9 +314,7 @@ Promise<std::vector<Sighting>> Beacon::sought(std::uint16_t port, Bytes tag, Pat
                                              std::vector<Address> to) {
     // Refuse with a promise, not with an exception from the call, also when the socket cannot be
     // opened.
-    const auto refused = [](std::exception_ptr why) {
-        return Promise<std::vector<Sighting>>{[why](auto, auto reject) { reject(why); }};
-    };
+    const auto refused = [](std::exception_ptr why) { return failed<std::vector<Sighting>>(std::move(why)); };
 
     if (tag.empty() || tag.size() > widest_tag)
         return refused(std::make_exception_ptr(Trouble{"A beacon tag takes 1 to 64 bytes."}));
@@ -309,14 +334,11 @@ Promise<std::vector<Sighting>> Beacon::sought(std::uint16_t port, Bytes tag, Pat
 
     if (to.empty()) to.push_back(Address{"255.255.255.255", port});
 
-    const auto question = std::make_shared<Bytes>(written(asking, seeking->once, seeking->tag, nullptr));
-    const auto targets = std::make_shared<std::vector<Address>>(std::move(to));
+    Bytes question = written(asking, seeking->once, seeking->tag, nullptr);
 
-    return asked(seeking, targets, 0, question)
-        .then([seeking] {
-            return Promise<void>::all_settled(gathered(seeking));
-        })
-        .then([seeking] {
+    return asked(seeking, std::move(to), std::move(question))
+        .then([seeking] { return gathered(seeking).outcome(); })
+        .then([seeking](const Outcome<void>&) {
             seeking->post.close();
 
             return std::move(seeking->found);

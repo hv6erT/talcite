@@ -2300,7 +2300,7 @@ Drain into(std::string& what, int& much, int* ended = nullptr) {
 
         if (!got.empty()) ++much;
 
-        return Promise<void>{[](auto resolve, auto) { resolve(); }};
+        return ready();
     };
 }
 
@@ -2311,10 +2311,10 @@ Drain into(std::string& what, int& much, int* ended = nullptr) {
 bool saved(Loop& loop, Promise<void> made) {
     std::optional<bool> went;
 
-    Promise<void> watched =
-        made.on(loop).then([&went] { went = true; }).fail([&went](const std::exception&) { went = false; });
-
-    watched.start();
+    Promise<void> watched = std::move(made)
+                                .on(loop)
+                                .then([&went] { went = true; })
+                                .recover([&went](const std::exception&) { went = false; });
 
     for (int tries = 0; tries < 4000 && !went.has_value(); ++tries) {
         (void)loop.bell().wait(std::chrono::milliseconds{5});
@@ -2390,11 +2390,11 @@ TRIAL("Editor: a refusal at the end leaves the document dirty") {
 
     ought(!saved(loop, one->save([&got](Bytes given) {
         if (given.empty())
-            return Promise<void>{[](auto, auto reject) { reject(std::make_exception_ptr(std::runtime_error{"rename failed"})); }};
+            return failed<void>(std::make_exception_ptr(std::runtime_error{"rename failed"}));
 
         for (const std::byte one : given) got.push_back(static_cast<char>(one));
 
-        return Promise<void>{[](auto resolve, auto) { resolve(); }};
+        return ready();
     })));
 
     same(got, std::string{"Xabcdef"});
@@ -2415,7 +2415,7 @@ TRIAL("Editor: a drain that refuses interrupts the save") {
     one->insert("X");
 
     ought(!saved(loop, one->save([](Bytes) {
-        return Promise<void>{[](auto, auto reject) { reject(std::make_exception_ptr(std::runtime_error{"disk full"})); }};
+        return failed<void>(std::make_exception_ptr(std::runtime_error{"disk full"}));
     })));
     ought(one->dirty());
     ought(!one->busy());

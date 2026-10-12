@@ -539,7 +539,7 @@ Said told(std::vector<std::string> arguments, std::string input = {}) {
     Said made;
 
     try {
-        const Output out = Child::run(std::move(what), std::move(given)).await();
+        const Output out = Child::run(std::move(what), std::move(given)).get();
 
         made.started = true;
         made.code = out.exit.ended == Ended::normal ? out.exit.code : -1;
@@ -715,25 +715,25 @@ bool keeps_logins() {
 
 // Reaches the share in the background with whatever credentials the system already has.
 Promise<Reached> reach(Share one) {
-    return Promise<Reached>{[one = std::move(one)](auto resolve, auto) { resolve(reached_at(one)); }};
+    return run(io(), [one = std::move(one)]() -> Reached { return reached_at(one); });
 }
 
 // Connects to the share in the background with the given login, optionally remembering it; the
 // password is wiped when done.
 Promise<Reached> connect(Share one, std::string user, std::string password, bool remember) {
-    return Promise<Reached>{[one = std::move(one), user = std::move(user), password = std::move(password),
-                             remember](auto resolve, auto) mutable {
+    return run(io(), [one = std::move(one), user = std::move(user), password = std::move(password),
+                             remember]() mutable -> Reached {
         Reached made = connected_at(one, user, password, remember);
 
         wiped(password);
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // Lists the shares of a server in the background.
 Promise<Offered> shares(Share server) {
-    return Promise<Offered>{[server = std::move(server)](auto resolve, auto) { resolve(offered_at(server)); }};
+    return run(io(), [server = std::move(server)]() -> Offered { return offered_at(server); });
 }
 
 }

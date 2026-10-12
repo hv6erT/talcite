@@ -763,7 +763,7 @@ TRIAL("Image: an image from a file with sixel also orders the field's pixels") {
     figure.fetch = [&asked](ui::Size want) {
         asked.push_back(want);
 
-        return Promise<Pixels>{[want](auto resolve, auto) { resolve(square(want, 200)); }};
+        return ready(square(want, 200));
     };
 
     top.image->hold(std::move(figure));

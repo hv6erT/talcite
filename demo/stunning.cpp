@@ -104,7 +104,7 @@ int main(int count, char** given) {
             std::vector<net::Address> found;
 
             try {
-                found = net::resolve(one.first, one.second, net::Family::four).await();
+                found = net::resolve(one.first, one.second, net::Family::four).get();
             } catch (const net::Trouble& why) {
                 std::cout << "could not resolve " << one.first << ": " << why.what() << "\n";
 
@@ -128,12 +128,12 @@ int main(int count, char** given) {
             return 1;
         }
 
-        const net::Address seen = scout.seen().await();
+        const net::Address seen = scout.seen().get();
 
         std::cout << "they see me as " << seen.spelled() << "\n";
 
         if (scout.servers().size() >= 2)
-            std::cout << "mapping: " << named(scout.mapping().await()) << "\n";
+            std::cout << "mapping: " << named(scout.mapping().get()) << "\n";
         else
             std::cout << "nothing to say about the mapping — it takes two servers.\n";
     } catch (const Overdue&) {

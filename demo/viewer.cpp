@@ -284,13 +284,11 @@ int main(int argc, char** argv) {
                         [file = got.first](std::size_t at, std::size_t most) { return file.read(at, most); },
                         got.second);
                 })
-                .fail([shown, source, where](const std::exception&) {
+                .recover([shown, source, where](const std::exception&) {
                     *source = "could not open: " + talcite::fs::to_string(where);
 
                     shown->hold(lump(sample));
                 }));
-
-        opening->start();
     } else {
         const std::string said = sample;
 

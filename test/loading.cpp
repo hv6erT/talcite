@@ -22,7 +22,6 @@ namespace {
 const net::Patience soon{15000};
 
 
-
 // A listener on an IPv4 loopback address with a port chosen by the system.
 net::Listener standing() { return net::Listener{net::Address::loopback(net::Family::four, 0)}; }
 
@@ -36,8 +35,8 @@ Pair joined(const net::Listener& gate) {
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(gate.mine(), soon);
 
-    net::Stream server = meeting.await();
-    net::Stream client = joining.await();
+    net::Stream server = std::move(meeting).get();
+    net::Stream client = std::move(joining).get();
 
     return Pair{std::move(server), std::move(client)};
 }
@@ -50,9 +49,9 @@ TRIAL("Load: fifty connections one after another") {
     for (int which = 0; which < 50; ++which) {
         Pair both = joined(gate);
 
-        both.client.write(bytes(std::to_string(which)), soon).await();
+        both.client.write(bytes(std::to_string(which)), soon).get();
 
-        same(text(both.server.read(16, soon).await()), std::to_string(which));
+        same(text(both.server.read(16, soon).get()), std::to_string(which));
     }
 }
 
@@ -66,8 +65,8 @@ TRIAL("Load: fifty connections at once") {
         auto meeting = gate.accept(soon);
         auto joining = net::Stream::connect(gate.mine(), soon);
 
-        servers.push_back(meeting.await());
-        clients.push_back(joining.await());
+        servers.push_back(std::move(meeting).get());
+        clients.push_back(std::move(joining).get());
     }
 
     std::vector<Promise<Bytes>> reading;
@@ -75,10 +74,10 @@ TRIAL("Load: fifty connections at once") {
     for (net::Stream& one : servers) reading.push_back(one.read(16, soon));
 
     for (int which = 0; which < 50; ++which)
-        clients[static_cast<std::size_t>(which)].write(bytes(std::to_string(which)), soon).await();
+        clients[static_cast<std::size_t>(which)].write(bytes(std::to_string(which)), soon).get();
 
     for (int which = 0; which < 50; ++which)
-        same(text(reading[static_cast<std::size_t>(which)].await()), std::to_string(which));
+        same(text(std::move(reading[static_cast<std::size_t>(which)]).get()), std::to_string(which));
 }
 
 TRIAL("Load: reading and writing at once on one stream") {
@@ -88,11 +87,11 @@ TRIAL("Load: reading and writing at once on one stream") {
 
     auto reading = both.client.read(64, soon);
 
-    both.server.write(bytes("z drugiej strony"), soon).await();
-    both.client.write(bytes("i z tej"), soon).await();
+    both.server.write(bytes("z drugiej strony"), soon).get();
+    both.client.write(bytes("i z tej"), soon).get();
 
-    same(text(reading.await()), std::string{"z drugiej strony"});
-    same(text(both.server.read(64, soon).await()), std::string{"i z tej"});
+    same(text(std::move(reading).get()), std::string{"z drugiej strony"});
+    same(text(both.server.read(64, soon).get()), std::string{"i z tej"});
 }
 
 // The most important case for IOCP: cancelling one operation, not the whole socket. One stream has
@@ -111,7 +110,7 @@ TRIAL("Load: a deadline cancels one operation, not the socket") {
     bool late = false;
 
     try {
-        (void)reading.await();
+        (void)std::move(reading).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -121,21 +120,21 @@ TRIAL("Load: a deadline cancels one operation, not the socket") {
     std::string made;
 
     while (made.size() < much.size()) {
-        const Bytes one = both.server.read(65536, soon).await();
+        const Bytes one = both.server.read(65536, soon).get();
 
         if (one.empty()) break;
 
         made += text(one);
     }
 
-    writing.await();
+    std::move(writing).get();
 
     same(made.size(), much.size());
 
     // The stream lives on: the cancelled read did not take the connection with it.
-    both.server.write(bytes("dalej stoję"), soon).await();
+    both.server.write(bytes("dalej stoję"), soon).get();
 
-    same(text(both.client.read(64, soon).await()), std::string{"dalej stoję"});
+    same(text(both.client.read(64, soon).get()), std::string{"dalej stoję"});
 }
 
 TRIAL("Load: an empty write breaks nothing") {
@@ -143,10 +142,10 @@ TRIAL("Load: an empty write breaks nothing") {
 
     Pair both = joined(gate);
 
-    both.client.write(Bytes{}, soon).await();
-    both.client.write(bytes("po pustym"), soon).await();
+    both.client.write(Bytes{}, soon).get();
+    both.client.write(bytes("po pustym"), soon).get();
 
-    same(text(both.server.read(64, soon).await()), std::string{"po pustym"});
+    same(text(both.server.read(64, soon).get()), std::string{"po pustym"});
 }
 
 TRIAL("Load: reading less than what arrived") {
@@ -154,11 +153,11 @@ TRIAL("Load: reading less than what arrived") {
 
     Pair both = joined(gate);
 
-    both.client.write(bytes("abcdefgh"), soon).await();
+    both.client.write(bytes("abcdefgh"), soon).get();
 
-    same(text(both.server.read(3, soon).await()), std::string{"abc"});
-    same(text(both.server.read(3, soon).await()), std::string{"def"});
-    same(text(both.server.read(3, soon).await()), std::string{"gh"});
+    same(text(both.server.read(3, soon).get()), std::string{"abc"});
+    same(text(both.server.read(3, soon).get()), std::string{"def"});
+    same(text(both.server.read(3, soon).get()), std::string{"gh"});
 }
 
 TRIAL("Load: closing cancels both directions at once") {
@@ -176,13 +175,13 @@ TRIAL("Load: closing cancels both directions at once") {
     int amiss = 0;
 
     try {
-        (void)reading.await();
+        (void)std::move(reading).get();
     } catch (const std::exception&) {
         ++amiss;
     }
 
     try {
-        writing.await();
+        std::move(writing).get();
     } catch (const std::exception&) {
         ++amiss;
     }
@@ -202,7 +201,7 @@ TRIAL("Load: listener closed while waiting for a connection") {
     bool amiss = false;
 
     try {
-        (void)meeting.await();
+        (void)std::move(meeting).get();
     } catch (const std::exception&) {
         amiss = true;
     }
@@ -222,7 +221,7 @@ TRIAL("Load: connecting to a dead port fails instead of hanging") {
     bool amiss = false;
 
     try {
-        (void)net::Stream::connect(where, net::Patience{3000}).await();
+        (void)net::Stream::connect(where, net::Patience{3000}).get();
     } catch (const std::exception&) {
         amiss = true;
     }
@@ -237,9 +236,9 @@ TRIAL("Load: twenty datagrams in a row") {
     for (int which = 0; which < 20; ++which) {
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), bytes(std::to_string(which)), soon).await();
+        there.send(here.mine(), bytes(std::to_string(which)), soon).get();
 
-        same(text(waiting.await().bytes), std::to_string(which));
+        same(text(std::move(waiting).get().bytes), std::to_string(which));
     }
 }
 
@@ -250,14 +249,14 @@ TRIAL("Load: afterwards the exchange holds no sockets") {
         for (int which = 0; which < 5; ++which) {
             Pair both = joined(gate);
 
-            both.client.write(bytes("raz"), soon).await();
+            both.client.write(bytes("raz"), soon).get();
 
-            (void)both.server.read(16, soon).await();
+            (void)both.server.read(16, soon).get();
         }
     }
 
     for (int tried = 0; tried < 400 && net::Exchange::running().waiting() > 0; ++tried)
-        Time::later(std::chrono::milliseconds{5}).await();
+        later(std::chrono::milliseconds{5}).get();
 
     same(static_cast<int>(net::Exchange::running().waiting()), 0);
 }

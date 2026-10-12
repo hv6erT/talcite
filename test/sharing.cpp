@@ -326,7 +326,7 @@ TRIAL("Share: one mounted in GVfs is entered without gio, with the rest of the p
 
     const Planted runtime{"XDG_RUNTIME_DIR", nook.where().c_str()};
 
-    const fs::Reached made = fs::reach(fs::Share{"NAS", "filmy", "HD", ""}).await();
+    const fs::Reached made = fs::reach(fs::Share{"NAS", "filmy", "HD", ""}).get();
 
     same(made.refused, fs::Refused::none);
     same(made.where, nook.where() / "gvfs" / "smb-share:server=nas,share=filmy" / "HD");
@@ -385,8 +385,8 @@ TRIAL("Share: without XDG_RUNTIME_DIR there is no GVfs and gio is not called") {
         if (*value == '\0') ::setenv("XDG_RUNTIME_DIR", "", 1);
         else ::unsetenv("XDG_RUNTIME_DIR");
 
-        same(fs::reach(fs::Share{"nas", "filmy", "", ""}).await().refused, fs::Refused::unsupported);
-        same(fs::connect(fs::Share{"nas", "filmy", "", ""}, "guest", "tajne", false).await().refused,
+        same(fs::reach(fs::Share{"nas", "filmy", "", ""}).get().refused, fs::Refused::unsupported);
+        same(fs::connect(fs::Share{"nas", "filmy", "", ""}, "guest", "tajne", false).get().refused,
              fs::Refused::unsupported);
     }
 
@@ -492,7 +492,7 @@ TRIAL("Share: a case change on disk gives the name in the listing") {
         std::ofstream{nook.where() / "heat.txt"} << "x";
     }
 
-    fs::rename(nook.where() / "heat.txt", nook.where() / "Heat.txt").await();
+    fs::rename(nook.where() / "heat.txt", nook.where() / "Heat.txt").get();
 
     std::vector<std::string> named;
     std::error_code ignored;

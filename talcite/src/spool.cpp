@@ -178,13 +178,11 @@ void Spool::ask(std::size_t at, std::size_t upto) {
                        .then([weak, from](Bytes got) {
                            if (const std::shared_ptr<Spool> mine = weak.lock()) mine->arrived(from, std::move(got));
                        })
-                       .fail([weak, from](const std::exception&) {
+                       .recover([weak, from](const std::exception&) {
                            // The source refused: the document ends where we got to. Otherwise
                            // every paint would order the same window again, forever.
                            if (const std::shared_ptr<Spool> mine = weak.lock()) mine->arrived(from, {});
                        }));
-
-    ordered_->start();
 }
 
 // A window has arrived. It is appended to what we have when adjacent, otherwise it starts a new

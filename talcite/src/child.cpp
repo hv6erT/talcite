@@ -151,7 +151,7 @@ struct Child::Held {
 
     bool merge = false;
 
-    std::optional<Promise<Exit>> waiting;
+    SharedPromise<Exit> waiting;
 
     fs::path program;
 
@@ -235,7 +235,7 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
     // It is closed on every way out, including an exception from `amiss`.
     const std::shared_ptr<void> closing{ready, [](void* which) { CloseHandle(which); }};
 
-    Bell* bell = ringing();
+    const Stop* stop = Stop::current();
 
     const DWORD asked = most < static_cast<std::size_t>(MAXDWORD) ? static_cast<DWORD>(most) : MAXDWORD;
 
@@ -264,8 +264,8 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
             if (why != ERROR_IO_PENDING) amiss("Cannot read from the program.", held.program);
 
-            const HANDLE these[2] = {ready, bell != nullptr ? static_cast<HANDLE>(bell->waited()) : nullptr};
-            const DWORD many = bell != nullptr ? 2 : 1;
+            const HANDLE these[2] = {ready, stop != nullptr ? static_cast<HANDLE>(stop->heard()) : nullptr};
+            const DWORD many = stop != nullptr ? 2 : 1;
 
             const DWORD which = WaitForMultipleObjects(many, these, FALSE, INFINITE);
 
@@ -311,7 +311,7 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
     if (one < 0) return made;
 
-    Bell* bell = ringing();
+    const Stop* stop = Stop::current();
 
     for (;;) {
         pollfd watched[2];
@@ -319,8 +319,8 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
         watched[0] = pollfd{one, POLLIN, 0};
 
-        if (bell != nullptr) {
-            watched[1] = pollfd{bell->waited(), POLLIN, 0};
+        if (stop != nullptr) {
+            watched[1] = pollfd{stop->heard(), POLLIN, 0};
             many = 2;
         }
 
@@ -459,7 +459,7 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
     const Writing counted{held};
 
-    Bell* bell = ringing();
+    const Stop* stop = Stop::current();
 
     // The event for the completion of a write. Our own, not shared: each chunk waits for its own.
     const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -506,9 +506,9 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
                 these[many++] = wake;
             }
 
-            if (bell != nullptr) {
+            if (stop != nullptr) {
                 rung = many;
-                these[many++] = static_cast<HANDLE>(bell->waited());
+                these[many++] = static_cast<HANDLE>(stop->heard());
             }
 
             const DWORD which = WaitForMultipleObjects(many, these, FALSE, INFINITE);
@@ -559,7 +559,7 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
     const Muffled quiet;
 
-    Bell* bell = ringing();
+    const Stop* stop = Stop::current();
 
     std::size_t done = 0;
 
@@ -573,8 +573,8 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
         watched[0] = pollfd{one, POLLOUT, 0};
 
-        if (bell != nullptr) {
-            watched[many] = pollfd{bell->waited(), POLLIN, 0};
+        if (stop != nullptr) {
+            watched[many] = pollfd{stop->heard(), POLLIN, 0};
             ++many;
         }
 
@@ -593,7 +593,7 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
             amiss("Cannot write to the program.", held.program);
         }
 
-        if (bell != nullptr && (watched[1].revents & POLLIN) != 0) throw Cancelled{};
+        if (stop != nullptr && (watched[1].revents & POLLIN) != 0) throw Cancelled{};
 
         // The wake-up pipe is level-triggered and never drained: the byte dropped by
         // `close_input()` stays in it forever, so it wakes every writer, not just the first.
@@ -1457,19 +1457,21 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     const std::shared_ptr<Grave> grave = held->grave;
     const fs::path program_named = what.program;
 
-    held->waiting = Promise<Exit>{[grave, program_named](auto resolve, Reject reject) {
-        try {
-            resolve(buried(grave, program_named));
-        } catch (...) {
-            reject(std::current_exception());
-        }
-    }};
+    // The burial runs on its own, let go (`detach`), and only reports to the shared promise that the
+    // callers of `wait` look at. A child whose end nobody ever asks about is still buried and leaves
+    // no zombie in the process table, and the right to let go of the handle without asking anything
+    // is exactly what `close()` promises.
+    auto [ending, settle] = promised<Exit>();
 
-    // We start right away, not on the first question about the end. Promises in talcite are lazy,
-    // so a child whose end nobody ever asks about would not be buried and would leave a zombie in
-    // the process table. And the right to let go of the handle without asking anything is exactly
-    // what `close()` promises.
-    held->waiting->start();
+    run(io(), [grave, program_named, settle = std::move(settle)]() mutable {
+        try {
+            (void)settle.value(buried(grave, program_named));
+        } catch (...) {
+            (void)settle.fail(std::current_exception());
+        }
+    }).detach();
+
+    held->waiting = std::move(ending).share();
 
     return held;
 }
@@ -1687,45 +1689,31 @@ private:
 // read at once: a program that fills the one we are not looking at will stop and never end.
 [[nodiscard]] Promise<void> sipping(std::shared_ptr<Child::Held> held, bool errors,
                                     std::shared_ptr<Bytes> into) {
-    return Promise<void>{[held, errors, into](auto resolve, Reject reject) {
-        try {
-            for (;;) {
-                Bytes got = sipped(*held, errors, brim);
+    return talcite::run(io(), [held, errors, into]() {
+        for (;;) {
+            Bytes got = sipped(*held, errors, brim);
 
-                if (got.empty()) break;
+            if (got.empty()) break;
 
-                into->insert(into->end(), got.begin(), got.end());
-            }
-
-            resolve();
-        } catch (...) {
-            reject(std::current_exception());
+            into->insert(into->end(), got.begin(), got.end());
         }
-    }};
+    });
 }
 
 }
 
 // Starts a program let loose and resolves to its process number; see `loosed`.
 Promise<std::int64_t> Child::detached(Command what) {
-    return Promise<std::int64_t>{[what = std::move(what)](auto resolve, Reject reject) {
-        try {
-            resolve(loosed(what));
-        } catch (...) {
-            reject(std::current_exception());
-        }
-    }};
+    return talcite::run(io(), [what = std::move(what)]() -> std::int64_t {
+        return loosed(what);
+    });
 }
 
 // Starts a child program on pipes.
 Promise<Child> Child::start(Command what) {
-    return Promise<Child>{[what = std::move(what)](auto resolve, Reject reject) {
-        try {
-            resolve(Rearing::made(reared(what, false)));
-        } catch (...) {
-            reject(std::current_exception());
-        }
-    }};
+    return talcite::run(io(), [what = std::move(what)]() -> Child {
+        return Rearing::made(reared(what, false));
+    });
 }
 
 // The child's process number, or -1 for an empty handle.
@@ -1736,20 +1724,13 @@ std::int64_t Child::pid() const { return held_ == nullptr ? -1 : held_->grave->w
 Promise<std::size_t> Child::write(Bytes what) const {
     std::shared_ptr<Held> held = held_;
 
-    return Promise<std::size_t>{
-        [held, what = std::move(what)](auto resolve, Reject reject) mutable {
-            try {
-                if (held == nullptr) {
-                    resolve(0);
-
-                    return;
-                }
-
-                resolve(poured(*held, what));
-            } catch (...) {
-                reject(std::current_exception());
+    return talcite::run(io(), [held, what = std::move(what)]() mutable -> std::size_t {
+            if (held == nullptr) {
+                return 0;
             }
-        }};
+
+            return poured(*held, what);
+        });
 }
 
 // Closes the child's input. The last writer to leave closes it, not whoever asked. As long as any
@@ -1798,19 +1779,13 @@ void Child::close_input() const {
 Promise<Bytes> Child::read(std::size_t most) const {
     std::shared_ptr<Held> held = held_;
 
-    return Promise<Bytes>{[held, most](auto resolve, Reject reject) {
-        try {
-            if (held == nullptr) {
-                resolve(Bytes{});
-
-                return;
-            }
-
-            resolve(sipped(*held, false, most));
-        } catch (...) {
-            reject(std::current_exception());
+    return talcite::run(io(), [held, most]() -> Bytes {
+        if (held == nullptr) {
+            return Bytes{};
         }
-    }};
+
+        return sipped(*held, false, most);
+    });
 }
 
 // Reads at most `most` bytes of the child's error output on the pool; empty at the end of it or for
@@ -1818,31 +1793,24 @@ Promise<Bytes> Child::read(std::size_t most) const {
 Promise<Bytes> Child::read_errors(std::size_t most) const {
     std::shared_ptr<Held> held = held_;
 
-    return Promise<Bytes>{[held, most](auto resolve, Reject reject) {
-        try {
-            if (held == nullptr) {
-                resolve(Bytes{});
-
-                return;
-            }
-
-            resolve(sipped(*held, true, most));
-        } catch (...) {
-            reject(std::current_exception());
+    return talcite::run(io(), [held, most]() -> Bytes {
+        if (held == nullptr) {
+            return Bytes{};
         }
-    }};
+
+        return sipped(*held, true, most);
+    });
 }
 
-// The child's exit. Every caller gets its own view of the one shared wait, shielded from it: a
-// caller who gives up (a timeout, a cancelled chain) cancels only that view. Handing out the shared
+// The child's exit. Every caller gets its own view of the one shared wait: a caller who gives up (a
+// timeout, a cancelled chain) gives up only that view. Handing out the shared
 // promise itself would let the first impatient caller cancel the burial for everyone; later callers
 // would then get `Cancelled` instead of the exit code, and the dead child would stay unburied. An
 // empty handle resolves to `Ended::lost` at once.
 Promise<Exit> Child::wait() const {
-    if (held_ == nullptr || !held_->waiting.has_value())
-        return Promise<Exit>{[](auto resolve, Reject) { resolve(Exit{Ended::lost, 0, 0}); }};
+    if (held_ == nullptr || !held_->waiting) return ready(Exit{Ended::lost, 0, 0});
 
-    return held_->waiting->shielded();
+    return held_->waiting.view();
 }
 
 // Asks the program to end: SIGTERM to its whole group on POSIX, Ctrl-Break on Windows. Does nothing
@@ -1910,55 +1878,46 @@ void Child::close() { held_.reset(); }
 // The program is started on this worker, not through `start`, so that no moment exists in which it
 // runs and no handle to kill it is held.
 Promise<Output> Child::run(Command what, Bytes input) {
-    return Promise<Output>{[what = std::move(what), input = std::move(input)](auto resolve,
-                                                                       Reject reject) mutable {
-        try {
-            const Child one = Rearing::made(reared(what, false));
+    return talcite::run(io(), [what = std::move(what), input = std::move(input)]() mutable -> Output {
+        const Child one = Rearing::made(reared(what, false));
 
-            Killing guarded{one};
+        Killing guarded{one};
 
-            const std::shared_ptr<Child::Held>& held = Rearing::inside(one);
+        const std::shared_ptr<Child::Held>& held = Rearing::inside(one);
 
-            auto read = std::make_shared<Bytes>();
-            auto errors = std::make_shared<Bytes>();
+        auto read = std::make_shared<Bytes>();
+        auto errors = std::make_shared<Bytes>();
 
-            // Reading starts before writing. The other order deadlocks on input larger than the
-            // pipe: we wait for the child to take it, and the child waits for us to take what it
-            // has managed to print.
-            Promise<void> reading = sipping(held, false, read);
-            Promise<void> moaning =
-                what.merge ? Promise<void>{[](auto done, Reject) { done(); }}
-                           : sipping(held, true, errors);
+        // Reading starts before writing. The other order deadlocks on input larger than the
+        // pipe: we wait for the child to take it, and the child waits for us to take what it
+        // has managed to print.
+        Promise<void> reading = sipping(held, false, read);
+        Promise<void> moaning = what.merge ? ready() : sipping(held, true, errors);
 
-            Promise<void> both = Promise<void>::all(reading, moaning);
+        Promise<void> both = all(std::move(reading), std::move(moaning)).then([](auto) {});
 
-            both.start();
-
-            if (!input.empty()) {
-                try {
-                    (void)one.write(std::move(input)).await();
-                } catch (const fs::Trouble&) {
-                    // The program stopped reading; its input ends here.
-                }
+        if (!input.empty()) {
+            try {
+                (void)one.write(std::move(input)).get();
+            } catch (const fs::Trouble&) {
+                // The program stopped reading; its input ends here.
             }
-
-            one.close_input();
-
-            both.await();
-
-            Output made;
-
-            made.exit = one.wait().await();
-            made.out = std::move(*read);
-            made.err = std::move(*errors);
-
-            guarded.spare();
-
-            resolve(std::move(made));
-        } catch (...) {
-            reject(std::current_exception());
         }
-    }};
+
+        one.close_input();
+
+        std::move(both).get();
+
+        Output made;
+
+        made.exit = one.wait().get();
+        made.out = std::move(*read);
+        made.err = std::move(*errors);
+
+        guarded.spare();
+
+        return made;
+    });
 }
 
 #ifdef _WIN32
@@ -1997,7 +1956,7 @@ Exit Term::execute(Command what) {
 
     const Child one = Rearing::made(reared(what, true));
 
-    const Exit made = one.wait().await();
+    const Exit made = one.wait().get();
 
 #ifndef _WIN32
 

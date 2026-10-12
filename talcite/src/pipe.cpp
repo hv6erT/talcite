@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "talcite/pool.hpp"
+#include "talcite/promise.hpp"
 #include "talcite/trouble.hpp"
 
 #include "handing.hpp"
@@ -381,46 +381,31 @@ void shut(Gate& gate) {
     gate.free = nothing;
 }
 
-namespace {
-
-struct DialPromise : detail::Result<Stream> {};
-
-}
-
 // Connects to the pipe of `where` in the pool. When all instances are busy, we wait for a free one
 // in slices, so that cancellation and the deadline do not wait for the system; a missing pipe is a
 // refused connection, as with a socket without a listener. A stream nobody wants any more
 // (cancelled at the last moment) goes away together with its handle.
 Promise<Stream> dialed(Address where, Patience patience) {
-    auto one = std::make_shared<DialPromise>();
     const bool ever = patience.count() > 0;
     const auto until = std::chrono::steady_clock::now() + patience;
 
-    pooling().post([one, where, ever, until] {
+    return run(io(), [where, ever, until](Work& work) -> Stream {
         const std::wstring name = pipe_name(where.path());
 
         for (;;) {
-            if (one->quitted.load()) return;
+            if (work.stop().stopped()) throw Cancelled{};
 
             const HANDLE made = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                                             FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
 
-            if (made != INVALID_HANDLE_VALUE) {
-                settled(*one, greeting(enrolled(made, where.path(), false), where));
-
-                return;
-            }
+            if (made != INVALID_HANDLE_VALUE) return greeting(enrolled(made, where.path(), false), where);
 
             const DWORD why = GetLastError();
 
             if (why == ERROR_PIPE_BUSY) {
                 const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(until - std::chrono::steady_clock::now()).count();
 
-                if (ever && left <= 0) {
-                    spoiled(*one, std::make_exception_ptr(Overdue{}));
-
-                    return;
-                }
+                if (ever && left <= 0) throw Overdue{};
 
                 (void)WaitNamedPipeW(name.c_str(), static_cast<DWORD>(ever ? std::min<long long>(left, 250) : 250));
 
@@ -429,13 +414,9 @@ Promise<Stream> dialed(Address where, Patience patience) {
 
             const int code = why == ERROR_FILE_NOT_FOUND ? WSAECONNREFUSED : static_cast<int>(why);
 
-            spoiled(*one, std::make_exception_ptr(Trouble{"Cannot connect: " + spoken(code) + ".", code, where}));
-
-            return;
+            throw Trouble{"Cannot connect: " + spoken(code) + ".", code, where};
         }
     });
-
-    return HandPromise<Stream>{one};
 }
 
 #else
@@ -471,11 +452,7 @@ void shut(Gate&) {}
 
 // A promise rejected with `Trouble`: named pipes exist only on Windows.
 Promise<Stream> dialed(Address where, Patience) {
-    auto made = std::make_shared<detail::Result<Stream>>();
-
-    detail::spoiled(*made, std::make_exception_ptr(Trouble{"Named pipes are a Windows thing.", 0, std::move(where)}));
-
-    return HandPromise<Stream>{made};
+    return failed<Stream>(std::make_exception_ptr(Trouble{"Named pipes are a Windows thing.", 0, std::move(where)}));
 }
 
 #endif

@@ -177,13 +177,13 @@ TRIAL("Scout: the reflected address from the XOR-ed attribute") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     server.send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true),
                 soon)
-        .await();
+        .get();
 
-    const net::Address made = asking.await();
+    const net::Address made = std::move(asking).get();
 
     same(made.text(), std::string{"203.0.113.7"});
     same(made.port(), static_cast<std::uint16_t>(40404));
@@ -200,13 +200,13 @@ TRIAL("Scout: the old attribute without XOR is understood too") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     server.send(came.from, addressed(0x0001, "198.51.100.9", 1234, numbered(came.bytes), false),
                 soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"198.51.100.9"});
+    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 TRIAL("Scout: an address of the IPv6 family") {
@@ -219,11 +219,11 @@ TRIAL("Scout: an address of the IPv6 family") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
-    server.send(came.from, sixed(numbered(came.bytes), 9999), soon).await();
+    server.send(came.from, sixed(numbered(came.bytes), 9999), soon).get();
 
-    const net::Address made = asking.await();
+    const net::Address made = std::move(asking).get();
 
     same(made.family(), net::Family::six);
     same(made.text(), std::string{"2001:db8::1"});
@@ -240,19 +240,19 @@ TRIAL("Scout: someone else's response is not accepted") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes other = numbered(came.bytes);
 
     other[0] = ~other[0];
 
     // First a response with another transaction number, then the right one.
-    server.send(came.from, addressed(0x0020, "1.2.3.4", 1, other, true), soon).await();
+    server.send(came.from, addressed(0x0020, "1.2.3.4", 1, other, true), soon).get();
     server
         .send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true), soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"203.0.113.7"});
+    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: garbage on the socket does not get in the way") {
@@ -265,16 +265,16 @@ TRIAL("Scout: garbage on the socket does not get in the way") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes trash(40, std::byte{0xFF});
 
-    server.send(came.from, trash, soon).await();
+    server.send(came.from, trash, soon).get();
     server
         .send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true), soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"203.0.113.7"});
+    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: the server's refusal comes out as trouble") {
@@ -287,14 +287,14 @@ TRIAL("Scout: the server's refusal comes out as trouble") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
-    server.send(came.from, refused(numbered(came.bytes)), soon).await();
+    server.send(came.from, refused(numbered(came.bytes)), soon).get();
 
     bool amiss = false;
 
     try {
-        (void)asking.await();
+        (void)std::move(asking).get();
     } catch (const net::Trouble& why) {
         amiss = true;
 
@@ -315,15 +315,15 @@ TRIAL("Scout: a retry after a lost request") {
     auto asking = scout.seen();
 
     // The first request is lost; we answer only the second.
-    (void)server.receive(1024, soon).await();
+    (void)server.receive(1024, soon).get();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     server.send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true),
                 soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"203.0.113.7"});
+    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: silence ends with the deadline") {
@@ -337,7 +337,7 @@ TRIAL("Scout: silence ends with the deadline") {
     bool late = false;
 
     try {
-        (void)scout.seen().await();
+        (void)scout.seen().get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -353,7 +353,7 @@ TRIAL("Scout: without servers there is nothing to ask") {
     bool amiss = false;
 
     try {
-        (void)scout.seen().await();
+        (void)scout.seen().get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -374,7 +374,7 @@ TRIAL("Scout: two questions at once are refused") {
     bool busy = false;
 
     try {
-        (void)scout.seen().await();
+        (void)scout.seen().get();
     } catch (const net::Trouble&) {
         busy = true;
     }
@@ -382,7 +382,7 @@ TRIAL("Scout: two questions at once are refused") {
     ought(busy);
 
     try {
-        (void)first.await();
+        (void)std::move(first).get();
     } catch (const std::exception&) {
     }
 }
@@ -399,19 +399,19 @@ TRIAL("Scout: matching reflections mean hole punching makes sense") {
 
     auto asking = scout.mapping();
 
-    const net::Datagram first = one.receive(1024, soon).await();
+    const net::Datagram first = one.receive(1024, soon).get();
 
     one.send(first.from, addressed(0x0020, "203.0.113.7", 40404, numbered(first.bytes), true),
              soon)
-        .await();
+        .get();
 
-    const net::Datagram second = two.receive(1024, soon).await();
+    const net::Datagram second = two.receive(1024, soon).get();
 
     two.send(second.from, addressed(0x0020, "203.0.113.7", 40404, numbered(second.bytes), true),
              soon)
-        .await();
+        .get();
 
-    same(asking.await(), net::StunClient::Mapping::alike);
+    same(std::move(asking).get(), net::StunClient::Mapping::alike);
     same(scout.known(), net::StunClient::Mapping::alike);
 }
 
@@ -427,19 +427,19 @@ TRIAL("Scout: differing reflections mean a symmetric NAT") {
 
     auto asking = scout.mapping();
 
-    const net::Datagram first = one.receive(1024, soon).await();
+    const net::Datagram first = one.receive(1024, soon).get();
 
     one.send(first.from, addressed(0x0020, "203.0.113.7", 40404, numbered(first.bytes), true),
              soon)
-        .await();
+        .get();
 
-    const net::Datagram second = two.receive(1024, soon).await();
+    const net::Datagram second = two.receive(1024, soon).get();
 
     two.send(second.from, addressed(0x0020, "203.0.113.7", 51515, numbered(second.bytes), true),
              soon)
-        .await();
+        .get();
 
-    same(asking.await(), net::StunClient::Mapping::symmetric);
+    same(std::move(asking).get(), net::StunClient::Mapping::symmetric);
 }
 
 TRIAL("Scout: with one server there is no verdict") {
@@ -450,7 +450,7 @@ TRIAL("Scout: with one server there is no verdict") {
 
     scout.add(server.mine());
 
-    same(scout.mapping().await(), net::StunClient::Mapping::unknown);
+    same(scout.mapping().get(), net::StunClient::Mapping::unknown);
 }
 
 // The only trial in the whole suite that goes out to the internet. No network is not a failure
@@ -468,7 +468,7 @@ TRIAL("Scout: real servers on the internet") {
     for (const Server& one : known()) {
         try {
             const std::vector<net::Address> found =
-                net::resolve(one.first, one.second, net::Family::four).await();
+                net::resolve(one.first, one.second, net::Family::four).get();
 
             if (!found.empty()) scout.add(found.front());
         } catch (const std::exception&) {
@@ -484,7 +484,7 @@ TRIAL("Scout: real servers on the internet") {
     net::Address seen;
 
     try {
-        seen = scout.seen().await();
+        seen = scout.seen().get();
     } catch (const std::exception& why) {
         std::cout << "        no answer from the network (" << why.what() << "), trial skipped\n";
 
@@ -496,7 +496,7 @@ TRIAL("Scout: real servers on the internet") {
     ought(seen.held());
     ought(seen.port() != 0);
 
-    const net::StunClient::Mapping what = scout.mapping().await();
+    const net::StunClient::Mapping what = scout.mapping().get();
 
     std::cout << "        mapping: "
               << (what == net::StunClient::Mapping::alike
@@ -526,22 +526,17 @@ TRIAL("Scout: a cancelled question does not freeze the scout for good") {
         auto first = scout.seen();
 
         first.cancel();
-
-        try {
-            (void)first.await();
-        } catch (const std::exception&) {
-        }
     }
 
     bool again = false;
 
     for (int turn = 0; turn < 40 && !again; ++turn) {
         try {
-            (void)scout.seen().await();
+            (void)scout.seen().get();
         } catch (const Overdue&) {
             again = true;
         } catch (const net::Trouble&) {
-            Time::later(std::chrono::milliseconds{100}).await();
+            later(std::chrono::milliseconds{100}).get();
         }
     }
 
@@ -560,15 +555,15 @@ TRIAL("Scout: an oversized datagram does not break the question") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
-    server.send(came.from, Bytes(4000, std::byte{0x41}), soon).await();
+    server.send(came.from, Bytes(4000, std::byte{0x41}), soon).get();
 
     server.send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true),
                 soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"203.0.113.7"});
+    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 // One misconfigured server at the head of the list must not rule out all the ones after it.
@@ -584,17 +579,17 @@ TRIAL("Scout: one server's refusal does not end the round") {
 
     auto asking = scout.seen();
 
-    const net::Datagram first = bad.receive(1024, soon).await();
+    const net::Datagram first = bad.receive(1024, soon).get();
 
-    bad.send(first.from, refused(numbered(first.bytes)), soon).await();
+    bad.send(first.from, refused(numbered(first.bytes)), soon).get();
 
-    const net::Datagram second = good.receive(1024, soon).await();
+    const net::Datagram second = good.receive(1024, soon).get();
 
     good.send(second.from, addressed(0x0020, "198.51.100.9", 1234, numbered(second.bytes), true),
               soon)
-        .await();
+        .get();
 
-    same(asking.await().text(), std::string{"198.51.100.9"});
+    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 // The same address added twice must not give two identical answers and from them the verdict
@@ -608,7 +603,7 @@ TRIAL("Scout: the same server twice gives no verdict") {
     scout.add(server.mine());
     scout.add(server.mine());
 
-    same(scout.mapping().await(), net::StunClient::Mapping::unknown);
+    same(scout.mapping().get(), net::StunClient::Mapping::unknown);
 }
 
 // A broken XOR-ed attribute must not erase a correctly read old one.
@@ -622,7 +617,7 @@ TRIAL("Scout: a bad attribute does not erase a good one") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes made = addressed(0x0001, "198.51.100.9", 1234, numbered(came.bytes), false);
 
@@ -645,9 +640,9 @@ TRIAL("Scout: a bad attribute does not erase a good one") {
     made[2] = static_cast<std::byte>(much >> 8);
     made[3] = static_cast<std::byte>(much & 0xFF);
 
-    server.send(came.from, made, soon).await();
+    server.send(came.from, made, soon).get();
 
-    same(asking.await().text(), std::string{"198.51.100.9"});
+    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 // The reason for a refusal is written by a stranger, and the text goes to the terminal.
@@ -661,7 +656,7 @@ TRIAL("Scout: the refusal reason carries no control characters") {
 
     auto asking = scout.seen();
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes value;
 
@@ -688,12 +683,12 @@ TRIAL("Scout: the refusal reason carries no control characters") {
 
     for (const std::byte one : value) made.push_back(one);
 
-    server.send(came.from, made, soon).await();
+    server.send(came.from, made, soon).get();
 
     bool amiss = false;
 
     try {
-        (void)asking.await();
+        (void)std::move(asking).get();
     } catch (const net::Trouble& why) {
         amiss = true;
 

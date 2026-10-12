@@ -51,25 +51,25 @@ int main() {
         auto meeting = gate.accept(soon);
         auto joining = net::Stream::connect(gate.mine(), soon);
 
-        net::Stream server = meeting.await();
-        net::Stream client = joining.await();
+        net::Stream server = std::move(meeting).get();
+        net::Stream client = std::move(joining).get();
 
         std::cout << "client " << client.mine().spelled() << " talks to "
                   << client.peer().spelled() << "\n";
 
-        client.write(spelt("hello, world"), soon).await();
+        client.write(spelt("hello, world"), soon).get();
 
-        const std::string heard = read(server.read(1024, soon).await());
+        const std::string heard = read(server.read(1024, soon).get());
 
         std::cout << "server heard: " << heard << "\n";
 
-        server.write(spelt(heard + " — and to you too"), soon).await();
+        server.write(spelt(heard + " — and to you too"), soon).get();
 
-        std::cout << "client heard: " << read(client.read(1024, soon).await()) << "\n";
+        std::cout << "client heard: " << read(client.read(1024, soon).get()) << "\n";
 
         client.close();
 
-        std::cout << "after the close the server reads: " << server.read(1024, soon).await().size()
+        std::cout << "after the close the server reads: " << server.read(1024, soon).get().size()
                   << " bytes\n";
 
         const net::Udp here{net::Address::loopback(net::Family::four, 0)};
@@ -79,9 +79,9 @@ int main() {
 
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), spelt("a note without a connection"), soon).await();
+        there.send(here.mine(), spelt("a note without a connection"), soon).get();
 
-        const net::Datagram came = waiting.await();
+        const net::Datagram came = std::move(waiting).get();
 
         std::cout << "mailbox got from " << came.from.spelled() << ": " << read(came.bytes)
                   << "\n";

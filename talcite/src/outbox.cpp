@@ -3,6 +3,7 @@
 #include <deque>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 namespace talcite::net {
@@ -26,7 +27,7 @@ struct Outbox::State {
         Bytes what;
         Patience patience{};
         Source source;
-        std::shared_ptr<detail::Result<void>> made;
+        std::optional<Settle<void>> made;
     };
 
     std::mutex guard;
@@ -36,20 +37,11 @@ struct Outbox::State {
 
 namespace {
 
-// A promise settled from outside, by the writer, with no work of its own to start.
-class Owed : public Promise<void> {
-public:
-    explicit Owed(std::shared_ptr<detail::Result<void>> made) : Promise<void>(Callback{}, std::move(made)) {}
-};
-
-// Settles a piece. Settling runs what was chained to it, and an exception from there must not stop
-// the writer: the piece is settled before anything chained runs, so there is nobody left to tell.
-void told(detail::Result<void>& made, const std::exception_ptr& why) {
-    try {
-        if (why) detail::spoiled(made, why);
-        else detail::settled(made);
-    } catch (...) {
-    }
+// Settles a piece: with the error the queue broke on, or fulfilled. Settling runs nothing in this
+// call, so the writer goes on at once.
+void told(Settle<void>& made, const std::exception_ptr& why) {
+    if (why) (void)made.fail(why);
+    else (void)made.value();
 }
 
 }
@@ -62,19 +54,18 @@ Outbox::Outbox() : state_(std::make_shared<State>()) {}
 // under the same lock under which it numbers them. It neither writes nor settles anything, so it is
 // safe under any lock; `flush` then starts the writer, after the caller has let go of its lock.
 Promise<void> Outbox::queued(Bytes what, Patience patience, Source source) {
-    auto made = std::make_shared<detail::Result<void>>();
+    auto [made, settle] = promised<void>();
 
     const std::lock_guard<std::mutex> kept{state_->guard};
 
-    state_->waiting.push_back(State::Piece{std::move(what), patience, std::move(source), made});
+    state_->waiting.push_back(State::Piece{std::move(what), patience, std::move(source), std::move(settle)});
 
-    return Owed{made};
+    return std::move(made);
 }
 
-// Starts the writer when there is something to write and no writer is running. It is called
-// without the caller's locks held: a writer that cannot be started (the pool has no worker and
-// cannot make one) fails every piece waiting, as a failed write would, and failing them runs what
-// was chained to them. Left in the queue, they would wait for a writer that may never come.
+// Starts the writer when there is something to write and no writer is running. A writer that cannot
+// be started (the pool takes no more work) fails every piece waiting, as a failed write would; left
+// in the queue, they would wait for a writer that may never come.
 void Outbox::flush() {
     {
         const std::lock_guard<std::mutex> kept{state_->guard};
@@ -84,16 +75,8 @@ void Outbox::flush() {
         state_->writing = true;
     }
 
-    try {
-        Promise<void> writer{[state = state_](auto resolve, auto) {
-            served(state);
-
-            resolve();
-        }};
-
-        writer.start();
-    } catch (...) {
-        const std::exception_ptr why = std::current_exception();
+    if (!io().post([state = state_] { served(state); })) {
+        const std::exception_ptr why = std::make_exception_ptr(Trouble{"The pool takes no more work."});
 
         std::deque<State::Piece> failed;
 
@@ -133,7 +116,7 @@ void Outbox::served(const std::shared_ptr<State>& state) {
 
         if (!broken) {
             try {
-                next.source().write(std::move(next.what), next.patience).await();
+                next.source().write(std::move(next.what), next.patience).get();
             } catch (...) {
                 broken = std::current_exception();
             }

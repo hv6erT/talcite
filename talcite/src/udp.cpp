@@ -49,15 +49,11 @@ namespace {
 // A promise of `T` that has already failed with `Trouble`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said, int code = 0, Address where = {}) {
-    auto made = std::make_shared<detail::Result<T>>();
-
-    detail::spoiled(*made, std::make_exception_ptr(Trouble{said, code, std::move(where)}));
-
-    return HandPromise<T>{made};
+    return refused<T>(said, code, std::move(where));
 }
 
 // A receive request: the hub fills `buffer` and `where`, and the promise gets the datagram.
-struct FetchPromise : Doing, detail::Result<Datagram> {
+struct FetchPromise : Handing<Datagram> {
     std::shared_ptr<Udp::Held> mine;
 
     // Frees the receiving direction, if this request still holds it.
@@ -68,7 +64,7 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
     }
 
     // Withdraws the request from the hub and frees the direction. The withdrawal pattern, the
-    // marker identity and the `quitted` guard are described with connecting in the stream.
+    // marker identity and the late completion are described with connecting in the stream.
     void dropped() override {
         (void)withdraw(shared_from_this());
 
@@ -80,10 +76,8 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
     void done(std::size_t much, int code) override {
         yielded();
 
-        if (quitted.load()) return;
-
         if (code != 0) {
-            spoiled(*this, std::make_exception_ptr(
+            (void)settle->fail(std::make_exception_ptr(
                                Trouble{"Cannot receive: " + spoken(code) + ".", code,
                                        mine->mine}));
 
@@ -92,7 +86,7 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
 
         // Truncation is reported as a trouble instead of handing out a piece posing as the whole.
         if (cut) {
-            spoiled(*this, std::make_exception_ptr(
+            (void)settle->fail(std::make_exception_ptr(
                                Trouble{"The datagram did not fit in the buffer.", 0, where}));
 
             return;
@@ -104,21 +98,19 @@ struct FetchPromise : Doing, detail::Result<Datagram> {
         made.bytes = std::move(buffer);
         made.bytes.resize(much);
 
-        settled(*this, std::move(made));
+        (void)settle->value(std::move(made));
     }
 
     // The patience ran out: the promise fails with `Overdue`.
     void late() override {
         yielded();
 
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
+        (void)settle->fail(std::make_exception_ptr(Overdue{}));
     }
 };
 
 // A send request: the hub sends `buffer` to `where`.
-struct SendPromise : Doing, detail::Result<void> {
+struct SendPromise : Handing<void> {
     std::shared_ptr<Udp::Held> mine;
 
     // Frees the sending direction, if this request still holds it.
@@ -139,10 +131,8 @@ struct SendPromise : Doing, detail::Result<void> {
     void done(std::size_t much, int code) override {
         yielded();
 
-        if (quitted.load()) return;
-
         if (code != 0) {
-            spoiled(*this, std::make_exception_ptr(
+            (void)settle->fail(std::make_exception_ptr(
                                Trouble{"Cannot send: " + spoken(code) + ".", code, where}));
 
             return;
@@ -151,21 +141,19 @@ struct SendPromise : Doing, detail::Result<void> {
         // A datagram shorter than the one given does not happen; if it did, it would mean that a
         // packet nobody asked for went out. Better to say so plainly.
         if (much != buffer.size()) {
-            spoiled(*this, std::make_exception_ptr(Trouble{"The datagram went out truncated.", 0, where}));
+            (void)settle->fail(std::make_exception_ptr(Trouble{"The datagram went out truncated.", 0, where}));
 
             return;
         }
 
-        settled(*this);
+        (void)settle->value();
     }
 
     // The patience ran out: the promise fails with `Overdue`.
     void late() override {
         yielded();
 
-        if (quitted.load()) return;
-
-        spoiled(*this, std::make_exception_ptr(Overdue{}));
+        (void)settle->fail(std::make_exception_ptr(Overdue{}));
     }
 };
 
@@ -251,9 +239,11 @@ Promise<Datagram> Udp::receive(std::size_t most, Patience patience) const {
     one->ever = patience.count() > 0;
     one->until = std::chrono::steady_clock::now() + patience;
 
+    Promise<Datagram> made = handed<Datagram>(one);
+
     submit(one);
 
-    return HandPromise<Datagram>{one};
+    return made;
 }
 
 // Sends `what` as one datagram to `to` within `patience`. Only one send may be in progress at a
@@ -282,9 +272,11 @@ Promise<void> Udp::send(Address to, Bytes what, Patience patience) const {
     one->ever = patience.count() > 0;
     one->until = std::chrono::steady_clock::now() + patience;
 
+    Promise<void> made = handed<void>(one);
+
     submit(one);
 
-    return HandPromise<void>{one};
+    return made;
 }
 
 // Allows broadcast sending, only for this socket and only on request (a beacon in the local

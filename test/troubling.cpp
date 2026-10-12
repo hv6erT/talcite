@@ -46,12 +46,14 @@ TRIAL("Trouble: the system code sits in the root") {
 // A rejection with a string, a promise past its deadline and a seam's refusal come back as
 // `Trouble`; these are the paths by which an error reaches the application in practice.
 TRIAL("Trouble: a rejection with a string is caught as Trouble") {
-    Promise<int> one{[](auto, auto reject) { reject("Nie ma."); }};
+    auto [one, settle] = promised<int>();
+
+    (void)settle.fail("Nie ma.");
 
     bool caught = false;
 
     try {
-        (void)one.await();
+        (void)std::move(one).get();
     } catch (const Trouble& why) {
         caught = std::string{why.what()} == "Nie ma.";
     }

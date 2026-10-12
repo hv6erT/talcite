@@ -42,7 +42,6 @@ Command pretending(std::vector<std::string> what) {
 }
 
 
-
 }
 
 // --- Start and end -------------------------------------------------------------------------------
@@ -55,7 +54,7 @@ TRIAL("Child: an empty child knows nothing") {
 }
 
 TRIAL("Child: a started program gives its output and code zero") {
-    const Output made = Child::run(pretending({"said", "dzień dobry"})).await();
+    const Output made = Child::run(pretending({"said", "dzień dobry"})).get();
 
     same(text(made.out), std::string{"dzień dobry"});
     ought(made.err.empty());
@@ -64,7 +63,7 @@ TRIAL("Child: a started program gives its output and code zero") {
 }
 
 TRIAL("Child: the exit code comes back as the program gave it") {
-    const Output made = Child::run(pretending({"code", "7"})).await();
+    const Output made = Child::run(pretending({"code", "7"})).get();
 
     ought(made.exit.ended == Ended::normal);
     same(made.exit.code, 7);
@@ -72,7 +71,7 @@ TRIAL("Child: the exit code comes back as the program gave it") {
 
 // The two streams are separate until someone asks for them to be merged into one.
 TRIAL("Child: output and errors go separately") {
-    const Output made = Child::run(pretending({"both"})).await();
+    const Output made = Child::run(pretending({"both"})).get();
 
     same(text(made.out), std::string{"output"});
     same(text(made.err), std::string{"error"});
@@ -82,7 +81,7 @@ TRIAL("Child: merge pours errors into the output") {
     Command what = pretending({"both"});
     what.merge = true;
 
-    const Output made = Child::run(std::move(what)).await();
+    const Output made = Child::run(std::move(what)).get();
 
     ought(made.err.empty());
     same(made.out.size(), std::string{"output"}.size() + std::string{"error"}.size());
@@ -95,12 +94,12 @@ TRIAL("Child: a missing program is a refusal on every system") {
     Command what;
     what.program = fs::path{"nie-ma-takiego-programu-w-talcite"};
 
-    threw((void)Child::run(what).await());
-    threw((void)Child::start(what).await());
+    threw((void)Child::run(what).get());
+    threw((void)Child::start(what).get());
 
     what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
 
-    threw((void)Child::start(what).await());
+    threw((void)Child::start(what).get());
 }
 
 // A working directory that does not exist is a refusal as well, not a program started elsewhere.
@@ -109,17 +108,17 @@ TRIAL("Child: a missing working directory is a refusal") {
 
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
 
-    threw((void)Child::start(what).await());
+    threw((void)Child::start(what).get());
 }
 
 TRIAL("Child: no program is a refusal, not silence") {
-    threw((void)Child::run(Command{}).await());
+    threw((void)Child::run(Command{}).get());
 }
 
 // --- Input ---------------------------------------------------------------------------------------
 
 TRIAL("Child: the given input comes back as output") {
-    const Output made = Child::run(pretending({"echo"}), bytes("tam i z powrotem")).await();
+    const Output made = Child::run(pretending({"echo"}), bytes("tam i z powrotem")).get();
 
     same(text(made.out), std::string{"tam i z powrotem"});
     same(made.exit.code, 0);
@@ -129,22 +128,22 @@ TRIAL("Child: the given input comes back as output") {
 // ends of the pipes, a program started later would hold the first one's input open, and the first
 // would not see the end of its input while the second lived.
 TRIAL("Child: a second program does not hold the first one's input") {
-    const Child first = Child::start(pretending({"echo"})).await();
-    const Child second = Child::start(pretending({"sleeping", "8000"})).await();
+    const Child first = Child::start(pretending({"echo"})).get();
+    const Child second = Child::start(pretending({"sleeping", "8000"})).get();
 
     const auto began = std::chrono::steady_clock::now();
 
     first.close_input();
 
-    while (!first.read(4096).await().empty()) {
+    while (!first.read(4096).get().empty()) {
     }
 
-    same(first.wait().await().code, 0);
+    same(first.wait().get().code, 0);
 
     ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{4});
 
     second.kill();
-    (void)second.wait().await();
+    (void)second.wait().get();
 }
 
 #ifndef _WIN32
@@ -160,14 +159,14 @@ TRIAL("Child: a pipe on descriptor zero reaches the program") {
     std::string got;
 
     try {
-        const Child one = Child::start(pretending({"echo"})).await();
+        const Child one = Child::start(pretending({"echo"})).get();
 
-        (void)one.write(bytes("tam i z powrotem")).await();
+        (void)one.write(bytes("tam i z powrotem")).get();
         one.close_input();
 
-        for (Bytes part = one.read(4096).await(); !part.empty(); part = one.read(4096).await()) got += text(part);
+        for (Bytes part = one.read(4096).get(); !part.empty(); part = one.read(4096).get()) got += text(part);
 
-        (void)one.wait().await();
+        (void)one.wait().get();
     } catch (...) {
     }
 
@@ -187,7 +186,7 @@ TRIAL("Child: our sockets do not reach the program") {
     const net::Listener gate{net::Address::loopback(net::Family::four, 0)};
     const net::Udp post{net::Address::loopback(net::Family::four, 0)};
 
-    const Child one = Child::start(pretending({"sleeping", "3000"})).await();
+    const Child one = Child::start(pretending({"sleeping", "3000"})).get();
 
     // We count after exec, not before. Between fork and exec the child still holds all our
     // descriptors (only exec closes them, CLOEXEC), and start may hand over the child earlier.
@@ -210,7 +209,7 @@ TRIAL("Child: our sockets do not reach the program") {
     }
 
     one.kill();
-    (void)one.wait().await();
+    (void)one.wait().get();
 
     same(sockets, std::size_t{0});
 }
@@ -219,15 +218,15 @@ TRIAL("Child: our sockets do not reach the program") {
 
 // Closing the input is a command: without it echo would wait forever.
 TRIAL("Child: without closing the input the program waits, with it the program ends") {
-    const Child one = Child::start(pretending({"echo"})).await();
+    const Child one = Child::start(pretending({"echo"})).get();
 
-    (void)one.write(bytes("raz")).await();
+    (void)one.write(bytes("raz")).get();
     one.close_input();
 
     Bytes whole;
 
     for (;;) {
-        const Bytes got = one.read(4096).await();
+        const Bytes got = one.read(4096).get();
 
         if (got.empty()) break;
 
@@ -235,13 +234,13 @@ TRIAL("Child: without closing the input the program waits, with it the program e
     }
 
     same(text(whole), std::string{"raz"});
-    same(one.wait().await().code, 0);
+    same(one.wait().get().code, 0);
 }
 
 // A pipe has a bottom. A program that writes to both streams more than they hold deadlocks a reader
 // that watches only one of them, and that is exactly why taken exists.
 TRIAL("Child: taken does not deadlock on plentiful output") {
-    const Output made = Child::run(pretending({"much"})).await();
+    const Output made = Child::run(pretending({"much"})).get();
 
     same(made.out.size(), std::size_t{300 * 1000});
     same(made.err.size(), std::size_t{300 * 1000});
@@ -251,7 +250,7 @@ TRIAL("Child: taken does not deadlock on plentiful output") {
 // --- Command -------------------------------------------------------------------------------------
 
 TRIAL("Child: arguments go separately, also with spaces") {
-    const Output made = Child::run(pretending({"args", "jeden dwa", "trzy"})).await();
+    const Output made = Child::run(pretending({"args", "jeden dwa", "trzy"})).get();
 
     same(text(made.out), std::string{"jeden dwa\ntrzy\n"});
 }
@@ -260,20 +259,20 @@ TRIAL("Child: the working directory is the one given") {
     Command what = pretending({"where"});
     what.where = fs::temp();
 
-    const Output made = Child::run(std::move(what)).await();
+    const Output made = Child::run(std::move(what)).get();
 
     // We ask the system instead of comparing strings. The same path can be written differently
     // (Windows gives the temporary directory with a trailing backslash and the current directory
     // without one), so a character-by-character comparison would speak of the spelling, not of
     // what we ask.
-    ought(fs::equivalent(fs::path{text(made.out)}, fs::temp()).await());
+    ought(fs::equivalent(fs::path{text(made.out)}, fs::temp()).get());
 }
 
 TRIAL("Child: an environment variable reaches the program") {
     Command what = pretending({"around", "TALCITE_PROBA"});
     what.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
 
-    const Output made = Child::run(std::move(what)).await();
+    const Output made = Child::run(std::move(what)).get();
 
     same(text(made.out), std::string{"wartość"});
 }
@@ -285,7 +284,7 @@ TRIAL("Child: without inheritance only what was given remains") {
     what.inherit = false;
     what.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
 
-    const Output made = Child::run(std::move(what)).await();
+    const Output made = Child::run(std::move(what)).get();
 
     same(text(made.out), std::string{"<none>"});
 }
@@ -293,7 +292,7 @@ TRIAL("Child: without inheritance only what was given remains") {
 // --- Ending --------------------------------------------------------------------------------------
 
 TRIAL("Child: kill ends a program that is still sleeping") {
-    const Child one = Child::start(pretending({"sleeping", "30000"})).await();
+    const Child one = Child::start(pretending({"sleeping", "30000"})).get();
 
     Promise<Exit> waiting = one.wait();
 
@@ -301,7 +300,7 @@ TRIAL("Child: kill ends a program that is still sleeping") {
 
     one.kill();
 
-    const Exit made = waiting.await();
+    const Exit made = std::move(waiting).get();
 
     ought(made.ended != Ended::lost);
 
@@ -357,12 +356,12 @@ bool alive(std::int64_t which, std::chrono::milliseconds patience) {
 // grandchild the ordinary system way, just as a shell or a batch file starts the actual program;
 // the grandchild must not survive the parent's killing and sleep on.
 TRIAL("Child: kill also ends what the program started") {
-    const Child one = Child::start(pretending({"parent", "30000"})).await();
+    const Child one = Child::start(pretending({"parent", "30000"})).get();
 
     std::string line;
 
     for (int again = 0; again < 100 && line.find('\n') == std::string::npos; ++again)
-        line += text(one.read(64).await());
+        line += text(one.read(64).get());
 
     const std::int64_t grandchild = std::stoll(line);
 
@@ -370,25 +369,25 @@ TRIAL("Child: kill also ends what the program started") {
 
     one.kill();
 
-    (void)one.wait().await();
+    (void)one.wait().get();
 
     ought(!alive(grandchild, std::chrono::milliseconds{3000}));
 }
 
 // `stop()` asks the whole group to end (the parent and the grandchild), not the parent alone.
 TRIAL("Child: stop also asks what the program started to end") {
-    const Child one = Child::start(pretending({"parent", "30000"})).await();
+    const Child one = Child::start(pretending({"parent", "30000"})).get();
 
     std::string line;
 
     for (int again = 0; again < 100 && line.find('\n') == std::string::npos; ++again)
-        line += text(one.read(64).await());
+        line += text(one.read(64).get());
 
     const std::int64_t grandchild = std::stoll(line);
 
     one.stop();
 
-    (void)one.wait().await();
+    (void)one.wait().get();
 
     ought(!alive(grandchild, std::chrono::milliseconds{3000}));
 }
@@ -396,34 +395,34 @@ TRIAL("Child: stop also asks what the program started to end") {
 // Killing after reaping must be quiet and safe: the process id may then be given to someone else,
 // so a signal sent blindly would hit a foreign program.
 TRIAL("Child: kill after the end does nothing") {
-    const Child one = Child::start(pretending({"code", "3"})).await();
+    const Child one = Child::start(pretending({"code", "3"})).get();
 
-    same(one.wait().await().code, 3);
+    same(one.wait().get().code, 3);
 
     one.kill();
     one.stop();
 
-    same(one.wait().await().code, 3);
+    same(one.wait().get().code, 3);
 }
 
 TRIAL("Child: the end can be asked for many times and always says the same") {
-    const Child one = Child::start(pretending({"code", "5"})).await();
+    const Child one = Child::start(pretending({"code", "5"})).get();
 
-    same(one.wait().await().code, 5);
-    same(one.wait().await().code, 5);
-    same(one.wait().await().code, 5);
+    same(one.wait().get().code, 5);
+    same(one.wait().get().code, 5);
+    same(one.wait().get().code, 5);
 }
 
 // Letting go of the handle is not an order to die; the program should finish its work.
 TRIAL("Child: close does not kill the program") {
-    Child one = Child::start(pretending({"code", "0"})).await();
+    Child one = Child::start(pretending({"code", "0"})).get();
 
     Promise<Exit> waiting = one.wait();
 
     one.close();
 
     ought(!one.held());
-    same(waiting.await().code, 0);
+    same(std::move(waiting).get().code, 0);
 }
 
 #ifndef _WIN32
@@ -435,7 +434,7 @@ TRIAL("Child: an abandoned child is reaped without being asked") {
     std::int64_t which = -1;
 
     {
-        Child one = Child::start(pretending({"code", "0"})).await();
+        Child one = Child::start(pretending({"code", "0"})).get();
 
         which = one.pid();
 
@@ -457,24 +456,22 @@ TRIAL("Child: an abandoned child is reaped without being asked") {
 #endif
 
 TRIAL("Child: the process id is known at once") {
-    const Child one = Child::start(pretending({"code", "0"})).await();
+    const Child one = Child::start(pretending({"code", "0"})).get();
 
     ought(one.held());
     ought(one.pid() > 0);
 
-    (void)one.wait().await();
+    (void)one.wait().get();
 }
 
 // `close_input()` interrupts a write that is stuck on a full pipe. Without the wake-up pipe,
 // closing the descriptor does not wake a poll already waiting on it: the write would end only with
 // the child's death, and a pool worker would sit there all that time.
 TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
-    const Child one = Child::start(pretending({"sleeping", "5000"})).await();
+    const Child one = Child::start(pretending({"sleeping", "5000"})).get();
 
     // More than the pipe holds, to a child that does not read at all: the write is sure to stall.
     Promise<std::size_t> wrote = one.write(bytes(std::string(1024 * 1024, 'x')));
-
-    wrote.start();
 
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
 
@@ -485,7 +482,7 @@ TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
     bool told = false;
 
     try {
-        (void)wrote.await();
+        (void)std::move(wrote).get();
     } catch (const std::exception&) {
         told = true;
     }
@@ -512,28 +509,28 @@ TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
 
 // After sealing, a new write has nowhere to go and says so plainly instead of waiting.
 TRIAL("Child: a write after seal() is a refusal") {
-    const Child one = Child::start(pretending({"sleeping", "200"})).await();
+    const Child one = Child::start(pretending({"sleeping", "200"})).get();
 
     one.close_input();
 
     bool told = false;
 
     try {
-        (void)one.write(bytes("raz")).await();
+        (void)one.write(bytes("raz")).get();
     } catch (const std::exception&) {
         told = true;
     }
 
     ought(told);
 
-    (void)one.wait().await();
+    (void)one.wait().get();
 }
 
 // Sealing twice has no effect and is not an error, just like closing something closed.
 TRIAL("Child: seal() twice breaks nothing") {
-    const Child one = Child::start(pretending({"echo"})).await();
+    const Child one = Child::start(pretending({"echo"})).get();
 
-    (void)one.write(bytes("raz")).await();
+    (void)one.write(bytes("raz")).get();
 
     one.close_input();
     one.close_input();
@@ -541,7 +538,7 @@ TRIAL("Child: seal() twice breaks nothing") {
     Bytes whole;
 
     for (;;) {
-        const Bytes got = one.read(4096).await();
+        const Bytes got = one.read(4096).get();
 
         if (got.empty()) break;
 
@@ -549,7 +546,7 @@ TRIAL("Child: seal() twice breaks nothing") {
     }
 
     same(text(whole), std::string{"raz"});
-    same(one.wait().await().code, 0);
+    same(one.wait().get().code, 0);
 }
 
 #ifdef _WIN32
@@ -617,7 +614,7 @@ TRIAL("Child: a batch file run by name gets its arguments literally") {
     what.program = "pomoc";
     what.arguments = {"a & echo WSTRZYK", "b|c"};
 
-    const Output made = Child::run(what).await();
+    const Output made = Child::run(what).get();
 
     same(text(made.out), std::string{"\"a & echo WSTRZYK\"\r\n\"b|c\"\r\n"});
 }
@@ -636,7 +633,7 @@ TRIAL("Child: an argument with a percent sign does not go to a batch file") {
     what.program = "pomoc";
     what.arguments = {"%PATH%"};
 
-    threw((void)Child::run(what).await());
+    threw((void)Child::run(what).get());
 }
 
 // A program that lies only in the current directory does not start by its bare name: the current
@@ -663,7 +660,7 @@ TRIAL("Child: a program in the current directory does not start by name") {
     bool refused = false;
 
     try {
-        (void)Child::run(what).await();
+        (void)Child::run(what).get();
     } catch (const std::exception&) {
         refused = true;
     }
@@ -704,7 +701,7 @@ TRIAL("Child: detached, the program lives on its own and we know its id") {
 
     std::filesystem::remove(where, why);
 
-    const std::int64_t pid = Child::detached(pretending({"noted", where.string(), "200"})).await();
+    const std::int64_t pid = Child::detached(pretending({"noted", where.string(), "200"})).get();
 
     ought(pid > 0);
 
@@ -739,8 +736,8 @@ TRIAL("Child: detached, a missing program is a refusal, not silence") {
 
     what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
 
-    threw(Child::detached(what).await());
-    threw(Child::detached(Command{}).await());
+    threw(Child::detached(what).get());
+    threw(Child::detached(Command{}).get());
 }
 
 // A working directory that does not exist is a refusal too, not a program started elsewhere.
@@ -749,7 +746,7 @@ TRIAL("Child: detached, a missing working directory is a refusal") {
 
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
 
-    threw(Child::detached(what).await());
+    threw(Child::detached(what).get());
 }
 
 // --- Waiting and running to the end --------------------------------------------------------------
@@ -757,11 +754,11 @@ TRIAL("Child: detached, a missing working directory is a refusal") {
 // Every caller of `wait` gets a view of one shared wait. A caller who gives up (here a timeout)
 // lets go of its own view only; the next caller still gets the real end.
 TRIAL("Child: a caller who gives up waiting does not take the end from others") {
-    const Child one = Child::start(pretending({"sleeping", "300"})).await();
+    const Child one = Child::start(pretending({"sleeping", "300"})).get();
 
-    threw((void)one.wait().timeout(std::chrono::milliseconds{20}).await());
+    threw((void)one.wait().timeout(std::chrono::milliseconds{20}).get());
 
-    const Exit made = one.wait().await();
+    const Exit made = one.wait().get();
 
     ought(made.ended == Ended::normal);
     same(made.code, 0);
@@ -771,7 +768,7 @@ TRIAL("Child: a caller who gives up waiting does not take the end from others") 
 // input, not a failure: the output and the code still come. Four megabytes are far more than a
 // pipe holds, so the write is still going when the program ends.
 TRIAL("Child: run takes a program that stops reading as the end of its input") {
-    const Output made = Child::run(pretending({"said", "dosyć"}), Bytes(4 << 20, std::byte{'x'})).await();
+    const Output made = Child::run(pretending({"said", "dosyć"}), Bytes(4 << 20, std::byte{'x'})).get();
 
     same(text(made.out), std::string{"dosyć"});
     ought(made.exit.ended == Ended::normal);
@@ -789,8 +786,6 @@ TRIAL("Child: cancelling run kills the program") {
 
     Promise<Output> running = Child::run(pretending({"noted", where.string(), "30000"}));
 
-    running.start();
-
     const std::string told = awaited_note(where);
 
     ought(!told.empty());
@@ -800,8 +795,6 @@ TRIAL("Child: cancelling run kills the program") {
     ought(which > 0);
 
     running.cancel();
-
-    threw((void)running.await());
 
     ought(!alive(which, std::chrono::milliseconds{5000}));
 

@@ -46,15 +46,10 @@ Patience left(Clock::time_point until) {
     return rest.count() > 0 ? rest : Patience{1};
 }
 
-// An already fulfilled promise.
-Promise<void> already() {
-    return Promise<void>{[](auto resolve, auto) { resolve(); }};
-}
-
 // A promise already rejected with `Trouble` and the given text.
 template <typename T>
 Promise<T> refused(const char* said) {
-    return Promise<T>{[said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 // The empty address a closed channel reports as its peer.
@@ -155,7 +150,7 @@ std::optional<Bytes> whole(Channel::Held& held) {
 // of a frame breaks the channel.
 Promise<Bytes> framed(const std::shared_ptr<Channel::Held>& held, Clock::time_point until) {
     if (std::optional<Bytes> ready = whole(*held))
-        return Promise<Bytes>{[made = std::move(*ready)](auto resolve, auto) mutable { resolve(std::move(made)); }};
+        return run(io(), [made = std::move(*ready)]() mutable -> Bytes { return std::move(made); });
 
     return borrowed(held).read(65536, left(until)).then([held, until](const Bytes& came) {
         if (came.empty()) throw Trouble{"The other side closed the channel."};
@@ -191,13 +186,13 @@ Promise<void> shaking(const std::shared_ptr<Channel::Held>& held, const std::sha
         out.insert(out.end(), made.begin(), made.end());
     }
 
-    Promise<void> sent = out.empty() ? already() : posting(held, std::move(out), left(until));
+    Promise<void> sent = out.empty() ? ready() : posting(held, std::move(out), left(until));
 
     if (how->ready()) return sent;
 
     if (turn >= 16) throw Trouble{"The handshake will not finish."};
 
-    return sent.then([held, how, until, turn] {
+    return std::move(sent).then([held, how, until, turn] {
         return framed(held, until).then([held, how, until, turn](const Bytes& came) {
             how->heard(came);
 
@@ -225,9 +220,11 @@ Promise<Channel> Channel::opened(Stream one, std::shared_ptr<Handshake> how, Sea
 
                                     return Channel{held};
                                 })
-                                .fail([held](const std::exception&) { shut(*held); });
+                                .recover([held](const std::exception&) -> Channel {
+                                    shut(*held);
 
-    made.start();
+                                    throw;
+                                });
 
     return made;
 }
@@ -270,7 +267,7 @@ Promise<void> Channel::send(Bytes what, Patience patience) const {
 
     held->outbox.flush();
 
-    return *queued;
+    return std::move(*queued);
 }
 
 // The next message, opened and checked. A forged or lost message closes the channel and rejects the

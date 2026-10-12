@@ -43,23 +43,42 @@ using namespace core;
 
 namespace {
 
-// The ticket of an operation done in installments: it knows how many bytes or entries out of how
-// many are done. The virtual progress of `Ticket` is here so that the progress bar can ask, and
-// nobody has to pass anything upward.
-template <typename T>
-struct Counted : detail::Result<T> {
+// The counter of an operation done in installments: how many bytes or entries out of how many are
+// done. Every change goes to the promise of the operation (`Work::progress`), so the progress bar
+// asks the promise and nobody has to pass anything upward. A counter without work (a part counted
+// apart) only counts.
+struct Counted {
+    explicit Counted(const Work* given = nullptr) : work(given) {}
+
+    // Sets how much there is in all.
+    void total(std::uintmax_t much) {
+        whole.store(much);
+
+        told();
+    }
+
+    // Sets how much is done.
+    void reached(std::uintmax_t much) {
+        done.store(much);
+
+        told();
+    }
+
+    // Adds to what is done.
+    void added(std::uintmax_t much) {
+        done.fetch_add(much);
+
+        told();
+    }
+
+    // Reports the state to the promise.
+    void told() const {
+        if (work != nullptr) work->progress(Progress{done.load(), whole.load()});
+    }
+
     std::atomic<std::uintmax_t> done{0};
     std::atomic<std::uintmax_t> whole{0};
-
-    // The finished share between 0 and 1; a settled operation counts as complete.
-    [[nodiscard]] double progress() const override {
-        if (over(*this)) return 1.0;
-
-        const std::uintmax_t all = whole.load();
-        if (all == 0) return 0.0;
-
-        return std::min(1.0, static_cast<double>(done.load()) / static_cast<double>(all));
-    }
+    const Work* work = nullptr;
 };
 
 // Where the copy of one file reports its bytes. A file copied on its own owns the operation's
@@ -67,16 +86,9 @@ struct Counted : detail::Result<T> {
 // where it started (`base`), so that the bar of a folder moves with every byte, not only after
 // every entry.
 struct Tally {
-    Counted<void>& held;
+    Counted& held;
     std::uintmax_t base = 0;
     bool owning = true;
-};
-
-template <typename T>
-class HaulPromise : public Promise<T> {
-public:
-    HaulPromise(typename Promise<T>::Callback given, std::shared_ptr<Counted<T>> made)
-        : Promise<T>(std::move(given), std::move(made)) {}
 };
 
 // The installment size for a copy: the smaller of the two disks' preferred chunks.
@@ -217,7 +229,7 @@ DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_IN
                       LPVOID given) {
     const Tally& tally = *static_cast<const Tally*>(given);
 
-    tally.held.done.store(tally.base + static_cast<std::uintmax_t>(done.QuadPart));
+    tally.held.reached(tally.base + static_cast<std::uintmax_t>(done.QuadPart));
 
     return stopped() ? PROGRESS_CANCEL : PROGRESS_CONTINUE;
 }
@@ -232,10 +244,10 @@ bool file_at(const path& from, const path& to, Tally tally, bool durable = false
 
     const std::uintmax_t whole = sized(*mine);
 
-    if (tally.owning) tally.held.whole.store(whole);
+    if (tally.owning) tally.held.total(whole);
 
     // How much of this file is done, as the counter sees it.
-    const auto at_byte = [&tally](std::uintmax_t at) { tally.held.done.store(tally.base + at); };
+    const auto at_byte = [&tally](std::uintmax_t at) { tally.held.reached(tally.base + at); };
 
     const Instant when = instant_at(from);
 
@@ -343,7 +355,7 @@ void measured(const std::vector<Entry>& among, std::uintmax_t& whole, std::uintm
     }
 }
 
-bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how, Seen& seen,
+bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen,
              int deep);
 
 // One entry from the listing. A link is followed: what it points to is copied, not the link
@@ -369,7 +381,7 @@ bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& 
         if (kind == Kind::folder) {
             if (sighted(seen, onto)) return true;
 
-            Counted<void> apart;
+            Counted apart;
 
             return tree_at(onto, to, apart, how, seen, deep + 1);
         }
@@ -380,7 +392,7 @@ bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& 
         if (where.empty()) return true;
 
         // What a link points to is not in the folder's total, so its bytes are not counted.
-        Counted<void> apart;
+        Counted apart;
 
         return file_at(onto, where, Tally{apart});
     }
@@ -398,7 +410,7 @@ bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& 
 // The listing is sorted by path and a parent always precedes its children, so folders can be
 // created in order. The content of followed links has its own counter and is not added to this
 // one, because it is not in the total.
-bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how, Seen& seen,
+bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen,
              int deep) {
     if (deep > 64) return true;
 
@@ -409,12 +421,12 @@ bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how
 
     measured(among, bytes, largest);
 
-    held.whole.store(bytes + among.size() + 1);
+    held.total(bytes + among.size() + 1);
 
     Sweeping sweeping{to};
 
     make_folder_at(to);
-    held.done.fetch_add(1);
+    held.added(1);
 
     std::vector<std::pair<path, Instant>> folders;
 
@@ -428,11 +440,11 @@ bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how
         if (!spread_at(one.where, one.kind, where, how, seen, deep, Tally{held, base, false})) return false;
 
         // The listed size, not the copied one: the total was made from the listing.
-        if (one.kind == Kind::file) held.done.store(base + one.size);
+        if (one.kind == Kind::file) held.reached(base + one.size);
 
         if (one.kind == Kind::folder) folders.emplace_back(where, instant_or(one.where, one.modified));
 
-        held.done.fetch_add(1);
+        held.added(1);
     }
 
     sweeping.keep();
@@ -451,7 +463,7 @@ bool tree_at(const path& from, const path& to, Counted<void>& held, Conflict how
 // Copies a file or a folder (following a link given as `from`) to `to`, after checking that it
 // fits. Throws `Trouble` for nothing to copy, a dangling link, an entry that is neither file nor
 // folder, or a copy onto itself. False when cancelled.
-bool copy_at(const path& from, const path& to, Counted<void>& held, Conflict how) {
+bool copy_at(const path& from, const path& to, Counted& held, Conflict how) {
     Kind what = kind_at(from);
 
     if (what == Kind::none) amiss("Nothing to copy.", from);
@@ -558,7 +570,7 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally) {
     const path where = settled_on(to, how);
     if (where.empty()) return true;
 
-    Counted<void> apart;
+    Counted apart;
     Seen seen;
 
     if (kind_at(from) == Kind::link) {
@@ -588,7 +600,7 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally) {
 
 // Moves `from` to `to` entry by entry, for a move across media or a merge of folders. Throws
 // `Trouble` when something cannot be moved or entries stayed behind; false when cancelled.
-bool relocated(const path& from, const path& to, Counted<void>& held, Conflict how) {
+bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
     // A single file comes here only from another medium; within one, a rename was enough. Its
     // progress is its bytes; a link counts as one step.
     if (kind_at(from) != Kind::folder) {
@@ -603,11 +615,11 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
             else fits_at(to, much, much);
         }
 
-        held.whole.store(much > 0 ? much : 1);
+        held.total(much > 0 ? much : 1);
 
         if (!carried(from, to, how, Tally{held, 0, false})) return false;
 
-        held.done.store(held.whole.load());
+        held.reached(held.whole.load());
 
         return true;
     }
@@ -622,12 +634,12 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
     if (!together_at(from, to)) fits_at(to, bytes, largest);
 
     // As in a folder copy: the bytes of the files plus one for every entry.
-    held.whole.store(bytes + among.size() + 1);
+    held.total(bytes + among.size() + 1);
 
     const Instant stamp = instant_at(from);
 
     make_folder_at(to);
-    held.done.fetch_add(1);
+    held.added(1);
 
     std::vector<std::pair<path, Instant>> folders;
 
@@ -647,9 +659,9 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
 
         // A rename within one medium reports nothing, and the copied size may differ from the
         // listed one; the listed size keeps the count in step with the total.
-        if (one.kind == Kind::file) held.done.store(base + one.size);
+        if (one.kind == Kind::file) held.reached(base + one.size);
 
-        held.done.fetch_add(1);
+        held.added(1);
     }
 
     // From the deepest: a folder goes only when empty, and its modification time passes to the
@@ -673,90 +685,78 @@ bool relocated(const path& from, const path& to, Counted<void>& held, Conflict h
 
 }
 
-// Reads the whole file in installments, reporting progress; a cancelled read never settles.
+// Reads the whole file in installments, reporting progress; a cancelled read stops between them.
 Promise<Bytes> read(const path& where) {
-    auto held = std::make_shared<Counted<Bytes>>();
+    return run(io(), [where](Work& work) -> Bytes {
+        Counted held{&work};
 
-    return HaulPromise<Bytes>{[where, held](auto resolve, auto) {
-                              const std::shared_ptr<File::Held> one =
-                                  open_at(where, Mode::read);
+        const std::shared_ptr<File::Held> one = open_at(where, Mode::read);
 
-                              const std::uintmax_t whole = sized(*one);
-                              held->whole.store(whole);
+        const std::uintmax_t whole = sized(*one);
+        held.total(whole);
 
-                              const std::size_t rata = chunk_at(where);
+        const std::size_t rata = chunk_at(where);
 
-                              Bytes made;
-                              made.reserve(static_cast<std::size_t>(whole));
+        Bytes made;
+        made.reserve(static_cast<std::size_t>(whole));
 
-                              for (std::uintmax_t at = 0; at < whole;) {
-                                  if (stopped()) return;
+        for (std::uintmax_t at = 0; at < whole;) {
+            if (stopped()) throw Cancelled{};
 
-                                  Bytes part = read_at(*one, at, rata);
-                                  if (part.empty()) break;
+            Bytes part = read_at(*one, at, rata);
+            if (part.empty()) break;
 
-                                  at += part.size();
-                                  held->done.store(at);
+            at += part.size();
+            held.reached(at);
 
-                                  made.insert(made.end(), part.begin(), part.end());
-                              }
+            made.insert(made.end(), part.begin(), part.end());
+        }
 
-                              resolve(std::move(made));
-                          },
-                          held};
+        return made;
+    });
 }
 
 // Writing over an existing file goes beside it and renames onto the target (`poured_at`), so an
 // interrupted write leaves no stub under the real name.
 Promise<void> write(const path& where, Bytes what, Conflict how) {
-    auto held = std::make_shared<Counted<void>>();
+    return run(io(), [where, what = std::move(what), how](Work& work) {
+        Counted held{&work};
 
-    return HaulPromise<void>{[where, what = std::move(what), how, held](auto resolve, auto) {
-                             const path at_all = settled_on(where, how);
+        const path at_all = settled_on(where, how);
 
-                             if (at_all.empty()) {
-                                 resolve();
-                                 return;
-                             }
+        if (at_all.empty()) return;
 
-                             held->whole.store(what.size());
+        held.total(what.size());
 
-                             const std::size_t rata = chunk_at(at_all);
+        const std::size_t rata = chunk_at(at_all);
 
-                             const bool whole = poured_at(at_all, false, [&](const File::Held& one) {
-                                 for (std::size_t at = 0; at < what.size();) {
-                                     if (stopped()) return false;
+        const bool whole = poured_at(at_all, false, [&](const File::Held& one) {
+            for (std::size_t at = 0; at < what.size();) {
+                if (stopped()) return false;
 
-                                     const std::size_t much = std::min<std::size_t>(rata, what.size() - at);
+                const std::size_t much = std::min<std::size_t>(rata, what.size() - at);
 
-                                     Bytes part{what.begin() + static_cast<std::ptrdiff_t>(at),
-                                                what.begin() + static_cast<std::ptrdiff_t>(at + much)};
+                Bytes part{what.begin() + static_cast<std::ptrdiff_t>(at), what.begin() + static_cast<std::ptrdiff_t>(at + much)};
 
-                                     at += write_at(one, at, part);
-                                     held->done.store(at);
-                                 }
+                at += write_at(one, at, part);
+                held.reached(at);
+            }
 
-                                 return true;
-                             });
+            return true;
+        });
 
-                             if (!whole) return;
-
-                             resolve();
-                         },
-                         held};
+        if (!whole) throw Cancelled{};
+    });
 }
 
 // Copies a file or a folder in a pool task, with progress in bytes (for a folder, its files' bytes
 // plus one per entry); `how` settles a conflict with an existing target.
 Promise<void> copy(const path& from, const path& to, Conflict how) {
-    auto held = std::make_shared<Counted<void>>();
+    return run(io(), [from, to, how](Work& work) {
+        Counted held{&work};
 
-    return HaulPromise<void>{[from, to, how, held](auto resolve, auto) {
-                             if (!copy_at(from, to, *held, how)) return;
-
-                             resolve();
-                         },
-                         held};
+        if (!copy_at(from, to, held, how)) throw Cancelled{};
+    });
 }
 
 // First a plain rename, because within one medium it is instant. Only when the system answers
@@ -764,77 +764,65 @@ Promise<void> copy(const path& from, const path& to, Conflict how) {
 // refusal is an error: a file open in a player must not end up as a 40 GB copy, present twice.
 // A folder overwritten with a folder merges with it, also entry by entry.
 Promise<void> move(const path& from, const path& to, Conflict how) {
-    auto held = std::make_shared<Counted<void>>();
+    return run(io(), [from, to, how](Work& work) {
+        Counted held{&work};
 
-    return HaulPromise<void>{[from, to, how, held](auto resolve, auto) {
-                             if (kind_at(from) == Kind::none)
-                                 amiss("Nothing to move.", from);
+        if (kind_at(from) == Kind::none) amiss("Nothing to move.", from);
 
-                             if (how == Conflict::overwrite && kind_at(from) == Kind::folder &&
-                                 kind_at(to) == Kind::folder && !equivalent_at(from, to)) {
-                                 if (!relocated(from, to, *held, how)) return;
+        if (how == Conflict::overwrite && kind_at(from) == Kind::folder && kind_at(to) == Kind::folder &&
+            !equivalent_at(from, to)) {
+            if (!relocated(from, to, held, how)) throw Cancelled{};
 
-                                 resolve();
-                                 return;
-                             }
+            return;
+        }
 
-                             const Shift made = shifted(from, to, how);
+        const Shift made = shifted(from, to, how);
 
-                             // Another medium: the system did not even have to look at the target.
-                             // So the conflict is settled once more before anything is moved.
-                             const path where = made.where.empty() || made.done ? path{} : settled_on(to, how);
+        // Another medium: the system did not even have to look at the target. So the conflict is
+        // settled once more before anything is moved.
+        const path where = made.where.empty() || made.done ? path{} : settled_on(to, how);
 
-                             if (where.empty()) {
-                                 held->whole.store(1);
-                                 held->done.store(1);
+        if (where.empty()) {
+            held.total(1);
+            held.reached(1);
 
-                                 resolve();
-                                 return;
-                             }
+            return;
+        }
 
-                             if (!relocated(from, where, *held, how)) return;
-
-                             resolve();
-                         },
-                         held};
+        if (!relocated(from, where, held, how)) throw Cancelled{};
+    });
 }
 
 // Removes a file or a whole folder; a missing entry counts as already removed.
 Promise<void> erase(const path& where) {
-    auto held = std::make_shared<Counted<void>>();
+    return run(io(), [where](Work& work) {
+        Counted held{&work};
 
-    return HaulPromise<void>{[where, held](auto resolve, auto) {
-                             if (kind_at(where) == Kind::none) {
-                                 resolve();
-                                 return;
-                             }
+        if (kind_at(where) == Kind::none) return;
 
-                             std::vector<Entry> among;
+        std::vector<Entry> among;
 
-                             if (kind_at(where) == Kind::folder) among = walk_at(where);
+        if (kind_at(where) == Kind::folder) among = walk_at(where);
 
-                             held->whole.store(among.size() + 1);
+        held.total(among.size() + 1);
 
-                             // From the deepest, because a folder can be removed only when empty.
-                             for (auto at = among.rbegin(); at != among.rend(); ++at) {
-                                 if (stopped()) return;
+        // From the deepest, because a folder can be removed only when empty.
+        for (auto at = among.rbegin(); at != among.rend(); ++at) {
+            if (stopped()) throw Cancelled{};
 
-                                 std::error_code ignored;
-                                 stood::remove(at->where, ignored);
+            std::error_code ignored;
+            stood::remove(at->where, ignored);
 
-                                 held->done.fetch_add(1);
-                             }
+            held.added(1);
+        }
 
-                             std::error_code trouble;
-                             stood::remove(where, trouble);
+        std::error_code trouble;
+        stood::remove(where, trouble);
 
-                             if (trouble) amiss("Cannot remove.", where);
+        if (trouble) amiss("Cannot remove.", where);
 
-                             held->done.fetch_add(1);
-
-                             resolve();
-                         },
-                         held};
+        held.added(1);
+    });
 }
 
 }

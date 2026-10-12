@@ -1,9 +1,7 @@
 #include "proving.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <atomic>
-#include <deque>
 #include <chrono>
 #include <condition_variable>
 #include <exception>
@@ -13,809 +11,1209 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "talcite/bell.hpp"
+#include "talcite/clock.hpp"
 #include "talcite/loop.hpp"
+#include "talcite/place.hpp"
 #include "talcite/pool.hpp"
 #include "talcite/promise.hpp"
 
 #ifndef _WIN32
 #include <fcntl.h>
+#include <poll.h>
 #include <pthread.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
 
 using namespace talcite;
+using namespace std::chrono_literals;
 
 namespace {
 
-// A promise that resolves with the given value.
-template <typename T>
-Promise<T> gave(T given) {
-    return Promise<T>{[given](auto resolve, auto) { resolve(given); }};
+// Waits until the flag is up, at most five seconds; returns whether it came up.
+bool risen(const std::atomic<bool>& flag) {
+    for (int again = 0; again < 500 && !flag.load(); ++again) std::this_thread::sleep_for(10ms);
+
+    return flag.load();
 }
 
-// A promise that sleeps `wait` milliseconds and then resolves with `given`.
-Promise<int> slowly(int given, int wait) {
-    return Promise<int>{[given, wait](auto resolve, auto) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{wait});
-        resolve(given);
-    }};
+// Waits until the counter reaches `want`, at most five seconds; returns whether it did.
+bool reached(const std::atomic<int>& counter, int want) {
+    for (int again = 0; again < 500 && counter.load() < want; ++again) std::this_thread::sleep_for(10ms);
+
+    return counter.load() >= want;
 }
+
+// A job that holds its worker until it is let go, at most five seconds.
+struct Holding {
+    std::atomic<bool> held{false};
+    std::atomic<bool> released{false};
+
+    // The job itself.
+    void operator()() {
+        held.store(true);
+
+        (void)risen(released);
+    }
+};
+
+// An exception that is not a `std::exception`.
+struct Odd {};
 
 }
 
-TRIAL("Promise: does not start until someone says so") {
+// --- Making and getting -----------------------------------------------------------------------
+
+// Work starts when the promise is made, not when somebody asks for the result.
+TRIAL("run: the body starts at once, without anyone asking") {
     std::atomic<bool> ran{false};
 
-    Promise<int> one{[&ran](auto resolve, auto) {
+    Promise<int> one = run(io(), [&ran] {
         ran.store(true);
-        resolve(7);
-    }};
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+        return 7;
+    });
 
-    ought(!ran.load());
-
-    same(one.await(), 7);
-    ought(ran.load());
+    ought(risen(ran));
+    same(std::move(one).get(), 7);
 }
 
-TRIAL("Promise: await gives the result") {
-    Promise<std::string> one = gave<std::string>("gotowe");
+TRIAL("run: get gives the value and leaves the handle empty") {
+    Promise<std::string> one = run(io(), [] { return std::string{"siedem"}; });
 
-    same(one.await(), std::string{"gotowe"});
+    ought(static_cast<bool>(one));
+    same(std::move(one).get(), std::string{"siedem"});
+    ought(!static_cast<bool>(one));
 }
 
-TRIAL("Promise: the result stays, the work happens once") {
-    std::atomic<int> counted{0};
+TRIAL("run: what the body throws comes back from get as it was") {
+    Promise<int> one = run(io(), []() -> int { throw std::out_of_range{"za daleko"}; });
 
-    Promise<int> one{[&counted](auto resolve, auto) {
-        resolve(++counted);
-    }};
-
-    same(one.await(), 1);
-    same(one.await(), 1);
-    same(counted.load(), 1);
-}
-
-TRIAL("Promise: a rejection comes back from await as an exception") {
-    Promise<int> one{[](auto, auto reject) { reject("No such file."); }};
-
-    bool caught = false;
+    std::string said;
 
     try {
-        (void)one.await();
-    } catch (const std::exception& why) {
-        caught = std::string{why.what()} == "No such file.";
+        (void)std::move(one).get();
+    } catch (const std::out_of_range& why) {
+        said = why.what();
     }
 
-    ought(caught);
+    same(said, std::string{"za daleko"});
 }
 
-TRIAL("Promise: an exception thrown in the body becomes a rejection") {
-    Promise<int> one{[](auto, auto) -> void { throw std::runtime_error{"fell over"}; }};
+// Every error a promise holds is a `std::exception`, so every consumer can rely on it.
+TRIAL("run: something that is not an exception becomes Rejected") {
+    Promise<int> one = run(io(), []() -> int { throw Odd{}; });
 
-    threw((void)one.await());
+    bool rejected = false;
+
+    try {
+        (void)std::move(one).get();
+    } catch (const Rejected&) {
+        rejected = true;
+    }
+
+    ought(rejected);
 }
 
-TRIAL("Promise: then passes the result on") {
-    Promise<int> chain = gave(20).then([](const int& given) { return given + 2; });
+// A body that throws `Cancelled` ends its promise cancelled, not failed: `recover` does not see it.
+TRIAL("run: a body that throws Cancelled ends cancelled, and recover does not see it") {
+    std::atomic<bool> recovered{false};
 
-    same(chain.await(), 22);
+    Promise<int> one = run(io(), []() -> int { throw Cancelled{}; }).recover([&recovered](const std::exception&) {
+        recovered.store(true);
+
+        return 1;
+    });
+
+    bool cancelled = false;
+
+    try {
+        (void)std::move(one).get();
+    } catch (const Cancelled&) {
+        cancelled = true;
+    }
+
+    ought(cancelled);
+    ought(!recovered.load());
 }
 
-TRIAL("Promise: then changes the type") {
-    Promise<std::string> chain =
-        gave(7).then([](const int& given) { return std::to_string(given * 6); });
+TRIAL("run: a body may take its work, and its stop is the current one") {
+    std::atomic<bool> matched{false};
 
-    same(chain.await(), std::string{"42"});
+    Promise<void> one = run(io(), [&matched](Work& work) { matched.store(Stop::current() == &work.stop()); });
+
+    std::move(one).get();
+
+    ought(matched.load());
+    ought(Stop::current() == nullptr);
 }
 
-TRIAL("Promise: the whole chain starts from the last link") {
+TRIAL("run: a body that returns a promise is adopted") {
+    Promise<int> one = run(io(), [] { return run(io(), [] { return 41; }).then([](int got) { return got + 1; }); });
+
+    same(std::move(one).get(), 42);
+}
+
+TRIAL("ready and failed: already settled") {
+    Promise<int> one = ready(5);
+
+    ought(one.ready());
+    same(std::move(one).get(), 5);
+
+    Promise<void> none = ready();
+
+    ought(none.ready());
+    std::move(none).get();
+
+    Promise<int> bad = failed<int>(std::make_exception_ptr(std::runtime_error{"nie"}));
+
+    threw((void)std::move(bad).get());
+}
+
+TRIAL("Promise: an empty handle refuses everything that needs a promise") {
+    Promise<int> empty;
+
+    ought(!static_cast<bool>(empty));
+    ought(!empty.ready());
+    same(empty.progress(), (Progress{}));
+
+    bool refused = false;
+
+    try {
+        (void)std::move(empty).then([](int got) { return got; });
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+
+    ought(refused);
+
+    empty.cancel();
+}
+
+// --- The chain --------------------------------------------------------------------------------
+
+TRIAL("then: passes the value on and changes its type") {
+    Promise<std::string> one =
+        ready(20).then([](int got) { return got + 1; }).then([](int got) { return std::to_string(got); });
+
+    same(std::move(one).get(), std::string{"21"});
+}
+
+TRIAL("then: after void the callback takes nothing, and a void callback gives void") {
+    std::atomic<int> seen{0};
+
+    Promise<void> one = ready().then([] { return 3; }).then([&seen](int got) { seen.store(got); });
+
+    std::move(one).get();
+
+    same(seen.load(), 3);
+}
+
+TRIAL("then: a promise returned from the callback is adopted, a shared one too") {
+    Promise<int> one = ready(1).then([](int got) { return run(io(), [got] { return got * 10; }); });
+
+    same(std::move(one).get(), 10);
+
+    SharedPromise<int> shared = ready(4).share();
+
+    Promise<int> two = ready().then([shared] { return shared; });
+
+    same(std::move(two).get(), 4);
+}
+
+TRIAL("then: an error skips the callbacks and reaches the end") {
     std::atomic<bool> ran{false};
 
-    Promise<int> root{[&ran](auto resolve, auto) {
+    Promise<int> one = run(io(), []() -> int { throw std::runtime_error{"zepsute"}; }).then([&ran](int got) {
         ran.store(true);
-        resolve(1);
-    }};
 
-    Promise<int> chain = root.then([](const int& given) { return given + 1; })
-                             .then([](const int& given) { return given + 1; });
+        return got;
+    });
+
+    threw((void)std::move(one).get());
 
     ought(!ran.load());
-
-    same(chain.await(), 3);
 }
 
-TRIAL("Promise: a rejection skips then and reaches fail") {
-    std::atomic<int> ran{0};
+TRIAL("then: what the callback throws fails the next promise") {
+    Promise<int> one = ready(1).then([](int) -> int { throw std::runtime_error{"w środku"}; });
+
     std::string said;
 
-    Promise<int> chain = Promise<int>{[](auto, auto reject) { reject("zepsute"); }}
-                             .then([&ran](const int& given) {
-                                 ++ran;
-                                 return given;
-                             })
-                             .fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw((void)chain.await());
-
-    same(ran.load(), 0);
-    same(said, std::string{"zepsute"});
-}
-
-// A promise returned from `then` is unwrapped in the chain instead of giving
-// Promise<Promise<int>>. Without flattening a chain of asynchronous steps does not compose at all:
-// every step adds a layer of wrapping, and the caller has to take it off, that is wait, that is
-// block a thread.
-TRIAL("Promise: a promise returned from then unwraps in the chain") {
-    Promise<int> chain = gave(5).then([](const int& given) { return slowly(given * 2, 20); });
-
-    same(chain.await(), 10);
-}
-
-TRIAL("Promise: unwrapping works for a void promise too") {
-    std::atomic<int> ran{0};
-
-    Promise<void> chain = gave(1).then([&ran](const int&) {
-        return Promise<void>{[&ran](auto resolve, auto) {
-            ran.fetch_add(1);
-            resolve();
-        }};
-    });
-
-    chain.await();
-
-    same(ran.load(), 1);
-}
-
-TRIAL("Promise: a rejection in the middle of the chain comes to the surface") {
-    std::string said;
-
-    Promise<int> chain =
-        gave(2)
-            .then([](const int&) {
-                return Promise<int>{[](auto, auto reject) { reject("zepsute w środku"); }};
-            })
-            .fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw((void)chain.await());
-
-    same(said, std::string{"zepsute w środku"});
-}
-
-TRIAL("Promise: two asynchronous steps in a row") {
-    Promise<int> chain = gave(3)
-                             .then([](const int& given) { return slowly(given + 1, 10); })
-                             .then([](const int& given) { return slowly(given * 10, 10); });
-
-    same(chain.await(), 40);
-}
-
-TRIAL("Promise: an inner promise starts by itself, without await") {
-    std::atomic<int> ran{0};
-
-    Promise<int> chain = gave(1).then([&ran](const int&) {
-        return Promise<int>{[&ran](auto resolve, auto) {
-            ran.fetch_add(1);
-            resolve(7);
-        }};
-    });
-
-    same(chain.await(), 7);
-    same(ran.load(), 1);
-}
-
-TRIAL("Promise: void settles without a payload") {
-    std::atomic<bool> ran{false};
-
-    Promise<void> one{[&ran](auto resolve, auto) {
-        ran.store(true);
-        resolve();
-    }};
-
-    one.await();
-
-    ought(ran.load());
-}
-
-TRIAL("Promise: then after void calls without a parameter") {
-    Promise<int> chain = Promise<void>{[](auto resolve, auto) { resolve(); }}.then([] { return 9; });
-
-    same(chain.await(), 9);
-}
-
-TRIAL("Promise: registering on a settled one is not lost") {
-    Promise<int> one = gave(3);
-
-    same(one.await(), 3);
-
-    Promise<int> late = one.then([](const int& given) { return given * 3; });
-
-    same(late.await(), 9);
-}
-
-TRIAL("Promise: a copy of the handle shares the result") {
-    Promise<int> one = slowly(4, 20);
-    Promise<int> two = one;
-
-    same(one.await(), 4);
-    same(two.await(), 4);
-}
-
-TRIAL("Promise: a dead branch stays silent") {
-    std::atomic<int> ran{0};
-
-    Promise<int> root = slowly(1, 60);
-
-    {
-        Promise<int> doomed = root.then([&ran](const int& given) {
-            ++ran;
-            return given;
-        });
-        (void)doomed;
+    try {
+        (void)std::move(one).get();
+    } catch (const std::exception& why) {
+        said = why.what();
     }
 
-    Promise<int> kept = root.then([](const int& given) { return given + 1; });
-
-    same(kept.await(), 2);
-
-    pooling().drain();
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
-
-    same(ran.load(), 0);
+    same(said, std::string{"w środku"});
 }
 
-TRIAL("Pool: an own pool takes work and can be drained") {
-    Pool mine;
+// A callback for something that has already ended does not run inside the call that registers it:
+// the caller may still be setting up what the callback touches.
+TRIAL("then: on a settled promise the callback never runs inside then") {
+    const std::thread::id mine = std::this_thread::get_id();
 
-    std::atomic<int> counted{0};
+    std::atomic<bool> inside{true};
 
-    for (int at = 0; at < 24; ++at) mine.post([&counted] { ++counted; });
+    Promise<void> one = ready(1).then([&inside, mine](int) { inside.store(std::this_thread::get_id() == mine); });
+
+    std::move(one).get();
+
+    ought(!inside.load());
+}
+
+// A callback may hold what can only be moved, a promise or a settle, since the node keeps it.
+TRIAL("then: the callback may hold a promise") {
+    Promise<int> inner = ready(5);
+
+    Promise<int> one = ready(1).then([inner = std::move(inner)](int got) mutable { return std::move(inner).get() + got; });
+
+    same(std::move(one).get(), 6);
+}
+
+// A value that can only be moved goes through a promise that is not shared: through `then`, out of
+// `get`, from a settle and inside an outcome.
+TRIAL("then: a value that can only be moved passes through") {
+    Promise<int> one = ready(std::make_unique<int>(7)).then([](std::unique_ptr<int> got) { return *got + 1; });
+
+    same(std::move(one).get(), 8);
+
+    auto [two, settle] = promised<std::unique_ptr<int>>();
+
+    ought(settle.value(std::make_unique<int>(3)));
+    same(*std::move(two).get(), 3);
+
+    Outcome<std::unique_ptr<int>> three = ready(std::make_unique<int>(5)).outcome().get();
+
+    ought(three.ok());
+    same(*std::move(three).value(), 5);
+}
+
+// A value refused by a promise nobody holds any more is let go of at once, so whatever it guards is
+// released.
+TRIAL("settle: a refused value is let go of") {
+    const auto watched = std::make_shared<int>(0);
+
+    std::optional<Settle<std::shared_ptr<int>>> kept;
+
+    {
+        auto [made, settle] = promised<std::shared_ptr<int>>();
+
+        kept.emplace(std::move(settle));
+    }
+
+    ought(!kept->value(std::shared_ptr<int>{watched}));
+    same(watched.use_count(), 1L);
+}
+
+TRIAL("recover: turns an error into a value or into a promise") {
+    Promise<int> one = failed<int>(std::make_exception_ptr(std::runtime_error{"nie"})).recover([](const std::exception& why) {
+        return std::string{why.what()} == "nie" ? 9 : 0;
+    });
+
+    same(std::move(one).get(), 9);
+
+    Promise<int> two = failed<int>(std::make_exception_ptr(std::runtime_error{"nie"})).recover([](const std::exception&) {
+        return run(io(), [] { return 8; });
+    });
+
+    same(std::move(two).get(), 8);
+}
+
+TRIAL("recover: a value passes untouched, and what recover throws is the new error") {
+    std::atomic<bool> ran{false};
+
+    Promise<int> one = ready(3).recover([&ran](const std::exception&) {
+        ran.store(true);
+
+        return 0;
+    });
+
+    same(std::move(one).get(), 3);
+    ought(!ran.load());
+
+    Promise<int> two = failed<int>(std::make_exception_ptr(std::runtime_error{"pierwszy"})).recover([](const std::exception&) -> int {
+        throw std::runtime_error{"drugi"};
+    });
+
+    std::string said;
+
+    try {
+        (void)std::move(two).get();
+    } catch (const std::exception& why) {
+        said = why.what();
+    }
+
+    same(said, std::string{"drugi"});
+}
+
+TRIAL("finally: runs after a value and after an error, and the ending passes through") {
+    std::atomic<int> ran{0};
+
+    Promise<int> one = ready(4).finally([&ran] { ++ran; });
+
+    same(std::move(one).get(), 4);
+
+    Promise<int> two = failed<int>(std::make_exception_ptr(std::runtime_error{"nie"})).finally([&ran] { ++ran; });
+
+    threw((void)std::move(two).get());
+
+    same(ran.load(), 2);
+}
+
+TRIAL("finally: what it throws becomes the error") {
+    Promise<int> one = ready(4).finally([] { throw std::runtime_error{"sprzątanie"}; });
+
+    std::string said;
+
+    try {
+        (void)std::move(one).get();
+    } catch (const std::exception& why) {
+        said = why.what();
+    }
+
+    same(said, std::string{"sprzątanie"});
+}
+
+// After a cancellation `finally` runs only when the work really stopped: here when the producer
+// lets go of its settle, not when the owner gives up. And it never runs inside `cancel()`.
+TRIAL("finally: after a cancellation it waits for the end of the work, off the cancelling thread") {
+    auto [source, settle] = promised<int>();
+
+    std::atomic<bool> cleaned{false};
+    std::atomic<bool> other{false};
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    Promise<int> one = std::move(source).finally([&cleaned, &other, mine] {
+        other.store(std::this_thread::get_id() != mine);
+        cleaned.store(true);
+    });
+
+    one.cancel();
+
+    ought(settle.stop().stopped());
+
+    std::this_thread::sleep_for(50ms);
+
+    ought(!cleaned.load());
+
+    (void)settle.value(1);
+
+    ought(risen(cleaned));
+    ought(other.load());
+}
+
+// A chain moved to a place (a loop) cleans up there after a cancellation too, so that code bound to
+// that place's thread never runs on another one.
+TRIAL("finally: after a cancellation it runs on the place the chain moved to") {
+    ManualPlace place;
+
+    auto [source, settle] = promised<int>();
+
+    std::atomic<bool> cleaned{false};
+
+    Promise<int> one = std::move(source).on(place).finally([&cleaned] { cleaned.store(true); });
+
+    one.cancel();
+
+    (void)settle.value(1);
+
+    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+
+    ought(!cleaned.load());
+
+    (void)place.turn();
+
+    ought(cleaned.load());
+}
+
+TRIAL("outcome: gives the ending as a value") {
+    Outcome<int> good = ready(2).outcome().get();
+
+    ought(good.ok());
+    same(good.value(), 2);
+
+    Outcome<int> bad = failed<int>(std::make_exception_ptr(std::runtime_error{"nie"})).outcome().get();
+
+    ought(!bad.ok());
+    ought(!bad.cancelled());
+    ought(bad.error() != nullptr);
+    threw((void)bad.value());
+
+    Outcome<int> gone = run(io(), []() -> int { throw Cancelled{}; }).outcome().get();
+
+    ought(gone.cancelled());
+}
+
+// --- Owners -----------------------------------------------------------------------------------
+
+TRIAL("owners: destroying the tail stops the source") {
+    auto [source, settle] = promised<int>();
+
+    {
+        Promise<int> tail = std::move(source).then([](int got) { return got; }).then([](int got) { return got + 1; });
+
+        ought(!settle.stop().stopped());
+    }
+
+    ought(settle.stop().stopped());
+    ought(!settle.value(3));
+}
+
+TRIAL("owners: cancelling the tail stops a body that waits") {
+    std::atomic<bool> heard{false};
+    std::atomic<bool> began{false};
+
+    Promise<void> tail = run(io(), [&heard, &began](Work& work) {
+                             began.store(true);
+
+                             heard.store(work.stop().wait(5s));
+                         }).then([] {});
+
+    ought(risen(began));
+
+    tail.cancel();
+
+    ought(risen(heard));
+}
+
+TRIAL("owners: a body cancelled before it starts never runs") {
+    ManualPlace place;
+
+    std::atomic<bool> ran{false};
+
+    Promise<void> one = run(place, [&ran] { ran.store(true); });
+
+    one.cancel();
+
+    same(place.turn(), std::size_t{1});
+
+    ought(!ran.load());
+}
+
+// A pool lane takes a job back when its owners leave before it starts: it does not wait in the queue
+// for a worker to find it abandoned.
+TRIAL("owners: a job abandoned before it starts leaves the pool queue at once") {
+    Pool mine{1};
+
+    Holding blocking;
+
+    (void)mine.post([&blocking] { blocking(); }, Lane::cpu);
+
+    ought(risen(blocking.held));
+
+    std::atomic<bool> ran{false};
+
+    Promise<void> one = run(mine.cpu(), [&ran] { ran.store(true); });
+
+    one.cancel();
+
+    blocking.released.store(true);
 
     mine.drain();
 
-    same(counted.load(), 24);
-    ought(mine.staff() >= 1);
-}
-
-TRIAL("Pool: workers come back instead of multiplying without end") {
-    Pool mine;
-
-    for (int at = 0; at < 50; ++at) {
-        mine.post([] {});
-        mine.drain();
-    }
-
-    ought(mine.staff() <= 2);
-}
-
-TRIAL("Promise: cancel before the start does not run the work") {
-    std::atomic<bool> ran{false};
-
-    Promise<int> one{[&ran](auto resolve, auto) {
-        ran.store(true);
-        resolve(1);
-    }};
-
-    one.cancel();
-
-    bool caught = false;
-
-    try {
-        (void)one.await();
-    } catch (const Cancelled&) {
-        caught = true;
-    }
-
-    ought(caught);
-
-    pooling().drain();
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
-
     ought(!ran.load());
 }
 
-TRIAL("Promise: cancel midway, the late result is ignored") {
-    Promise<int> one = slowly(5, 80);
-
-    one.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-
-    one.cancel();
-
-    threw((void)one.await());
-
-    pooling().drain();
-
-    bool caught = false;
-
-    try {
-        (void)one.await();
-    } catch (const Cancelled&) {
-        caught = true;
-    }
-
-    ought(caught);
-}
-
-TRIAL("Promise: cancel skips then and reaches fail") {
-    std::atomic<int> ran{0};
-    std::atomic<bool> knew{false};
-
-    Promise<int> root = slowly(1, 60);
-
-    Promise<int> chain = root.then([&ran](const int& given) {
-                                 ++ran;
-                                 return given;
-                             })
-                             .fail([&knew](const std::exception& why) {
-                                 knew.store(dynamic_cast<const Cancelled*>(&why) != nullptr);
-                             });
-
-    root.cancel();
-
-    threw((void)chain.await());
-
-    same(ran.load(), 0);
-    ought(knew.load());
-}
-
-// Something thrown that is not a `std::exception` reaches `fail` too, as a fixed `Rejected` with an
-// English sentence, because `fail` takes `const std::exception&` and has nothing else to give.
-TRIAL("Promise: fail also gets a rejection that is not an exception") {
-    std::string said;
-
-    Promise<int> chain = Promise<int>{[](auto, auto) { throw 7; }}.fail(
-        [&said](const std::exception& why) { said = why.what(); });
-
-    // The reason itself goes on untouched: the tail throws whatever the body threw.
-    bool rethrown = false;
-
-    try {
-        (void)chain.await();
-    } catch (int) {
-        rethrown = true;
-    }
-
-    ought(rethrown);
-    same(said, std::string{"Unknown reason for rejection."});
-}
-
-TRIAL("Promise: finally runs after success and does not touch the result") {
-    std::atomic<int> ran{0};
-
-    Promise<int> chain = gave(11).finally([&ran] { ++ran; });
-
-    same(chain.await(), 11);
-    same(ran.load(), 1);
-}
-
-TRIAL("Promise: finally runs after a rejection, and the reason goes on") {
-    std::atomic<int> ran{0};
-    std::string said;
-
-    Promise<int> chain = Promise<int>{[](auto, auto reject) { reject("zepsute"); }}
-                             .finally([&ran] { ++ran; })
-                             .fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw((void)chain.await());
-
-    same(ran.load(), 1);
-    same(said, std::string{"zepsute"});
-}
-
-TRIAL("Promise: finally runs after cancelling too") {
-    std::atomic<int> ran{0};
-
-    Promise<int> root = slowly(2, 60);
-    Promise<int> chain = root.finally([&ran] { ++ran; });
-
-    root.cancel();
-
-    threw((void)chain.await());
-
-    same(ran.load(), 1);
-}
-
-// A callback that throws rejects the promise it made, with what it threw, rather than leaving it
-// waiting forever: `fail` instead of the reason it got, `finally` instead of the value. `finally`
-// still runs after a `fail` that threw, and the first exception wins.
-TRIAL("Promise: a fail or finally that throws rejects its promise with what it threw") {
-    std::string said;
-
-    Promise<int> failing = Promise<int>{[](auto, auto reject) { reject("zepsute"); }}
-                               .fail([](const std::exception&) { throw std::runtime_error{"z fail"}; })
-                               .fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw((void)failing.timeout(std::chrono::seconds{5}).await());
-    same(said, std::string{"z fail"});
-
-    std::atomic<int> ran{0};
-    std::string last;
-
-    Promise<int> after = gave(3)
-                             .finally([] { throw std::runtime_error{"z finally"}; })
-                             .finally([&ran] { ++ran; })
-                             .fail([&last](const std::exception& why) { last = why.what(); });
-
-    threw((void)after.timeout(std::chrono::seconds{5}).await());
-    same(ran.load(), 1);
-    same(last, std::string{"z finally"});
-
-    // A finally after a fail that threw still runs, and what it throws in turn goes on.
-    std::string final;
-
-    Promise<void> twice = Promise<void>{[](auto, auto reject) { reject("zepsute"); }}
-                              .fail([](const std::exception&) { throw std::runtime_error{"pierwszy"}; })
-                              .finally([] { throw std::runtime_error{"drugi"}; })
-                              .fail([&final](const std::exception& why) { final = why.what(); });
-
-    threw(twice.timeout(std::chrono::seconds{5}).await());
-    same(final, std::string{"drugi"});
-}
-
-// The continuations of one promise are woken together; one that throws does not keep the others
-// from settling.
-TRIAL("Promise: a throwing continuation does not stop its siblings") {
-    Promise<int> root = slowly(4, 30);
-
-    Promise<int> broken = root.finally([] { throw std::runtime_error{"z finally"}; });
-    Promise<int> sibling = root.then([](int given) { return given * 2; });
-
-    broken.start();
-    sibling.start();
-
-    same(sibling.timeout(std::chrono::seconds{5}).await(), 8);
-    threw((void)broken.timeout(std::chrono::seconds{5}).await());
-}
-
-// --- Cancelling goes to the source -----------------------------------------------------------
-
-// Cancelling stops the work, not a view of it. The caller usually holds the tail (the last link
-// from `then`, `fail` and `on`), and that is what it wants to stop, so cancelling the tail reaches
-// the source; the caller does not need to hold the head and the tail separately.
-TRIAL("cancel: the tail cancels the source before it starts") {
-    std::atomic<bool> ran{false};
-
-    Promise<int> root{[&ran](auto resolve, auto) {
-        ran.store(true);
-        resolve(1);
-    }};
-
-    Promise<int> tail = root.then([](const int& given) { return given + 1; })
-                            .fail([](const std::exception&) {})
-                            .finally([] {});
-
-    tail.cancel();
-
-    threw((void)tail.await());
-    threw((void)root.await());
-
-    pooling().drain();
-
-    ought(!ran.load());
-}
-
-TRIAL("cancel: the tail stops a source that is already running") {
-    Promise<int> root = slowly(1, 80);
-    Promise<int> tail = root.then([](const int& given) { return given; });
-
-    tail.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-
-    tail.cancel();
-
-    bool caught = false;
-
-    try {
-        (void)root.await();
-    } catch (const Cancelled&) {
-        caught = true;
-    }
-
-    ought(caught);
-}
-
-// A pool task that waits for other work hears its own cancellation in the wait: `await` stops,
-// throws `Cancelled`, and cancels the work it waited for, which nobody wants any more. Without that
-// the cancelled task would wait to the end and hold its worker.
-// A bell with an ear lent to it wakes that condition variable when it rings, from another thread,
-// and says it rang until cleared; `heed` gives back the ear heard before, and without an ear a ring
-// touches no condition variable.
-TRIAL("Bell: an ear lent to it wakes a condition variable, and rang lasts until clear") {
-    Bell bell;
-
+TRIAL("owners: detach lets the work go on and its error goes to lost") {
     std::mutex guard;
     std::condition_variable stirred;
+    std::string heard;
 
-    ought(!bell.rang());
+    lost([&](const std::exception& why) {
+        const std::lock_guard<std::mutex> held{guard};
 
-    const Bell::Ear before = bell.heed(Bell::Ear{&guard, &stirred});
+        heard = why.what();
 
-    ought(before.guard == nullptr && before.stirred == nullptr);
+        stirred.notify_all();
+    });
 
-    std::thread ringer{[&bell] {
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-        bell.ring();
-    }};
+    auto [source, settle] = promised<int>();
+
+    std::move(source).detach();
+
+    ought(!settle.stop().stopped());
+
+    (void)settle.fail("zgubione");
 
     {
         std::unique_lock<std::mutex> held{guard};
 
-        ought(stirred.wait_for(held, std::chrono::seconds{10}, [&bell] { return bell.rang(); }));
+        (void)stirred.wait_for(held, 5s, [&] { return !heard.empty(); });
     }
 
-    ringer.join();
+    lost({});
 
-    const Bell::Ear lent = bell.heed(Bell::Ear{});
-
-    ought(lent.guard == &guard && lent.stirred == &stirred);
-    ought(bell.rang());
-    ought(bell.wait(std::chrono::milliseconds{0}));
-
-    bell.clear();
-
-    ought(!bell.rang());
-    ought(!bell.wait(std::chrono::milliseconds{0}));
-
-    bell.ring();
-
-    ought(bell.rang());
+    same(heard, std::string{"zgubione"});
 }
 
-TRIAL("await: a cancelled pool task stops waiting and cancels what it waited for") {
-    const auto began = std::make_shared<std::atomic<bool>>(false);
-    const auto heard = std::make_shared<std::atomic<bool>>(false);
-    const auto dropped = std::make_shared<std::atomic<bool>>(false);
+TRIAL("owners: a stop hook runs on the io lane, and a withdrawn one does not") {
+    auto [source, settle] = promised<int>();
 
-    Promise<void> never{[](auto, auto) {}};
-    Promise<void> watched = never.fail([dropped](const std::exception& why) {
-        dropped->store(dynamic_cast<const Cancelled*>(&why) != nullptr);
-    });
+    std::atomic<bool> ran{false};
+    std::atomic<bool> withdrawn{false};
 
-    Promise<void> task{[never, began, heard](auto resolve, auto) mutable {
-        began->store(true);
+    Hook kept = settle.stop().when([&ran] { ran.store(true); });
 
-        try {
-            never.await();
-        } catch (const Cancelled&) {
-            heard->store(true);
-        }
+    {
+        Hook gone = settle.stop().when([&withdrawn] { withdrawn.store(true); });
+    }
 
-        resolve();
-    }};
+    source.cancel();
 
-    task.start();
+    ought(risen(ran));
 
-    for (int tries = 0; tries < 2000 && !began->load(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    std::this_thread::sleep_for(20ms);
 
-    ought(began->load());
-
-    task.cancel();
-
-    for (int tries = 0; tries < 2000 && !heard->load(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
-
-    ought(heard->load());
-    ought(dropped->load());
+    ought(!withdrawn.load());
 }
 
-// A promise returned from `then` is work just like the source, often the only one still running,
-// because the source settled long ago. Cancelling the tail must reach it too.
-TRIAL("cancel: reaches a promise returned from then") {
-    Promise<int> inner = slowly(2, 80);
+#ifndef _WIN32
 
-    Promise<int> tail = gave(1).then([inner](const int&) { return inner; });
+TRIAL("owners: the stop's descriptor becomes readable when the work is stopped") {
+    auto [source, settle] = promised<int>();
 
-    tail.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    const Stop::Handle heard = settle.stop().heard();
 
-    tail.cancel();
+    pollfd one{heard, POLLIN, 0};
 
-    bool caught = false;
+    same(::poll(&one, 1, 0), 0);
+
+    source.cancel();
+
+    same(::poll(&one, 1, 1000), 1);
+}
+
+#endif
+
+// --- Producers --------------------------------------------------------------------------------
+
+TRIAL("Settle: the first settling wins, the rest say no") {
+    auto [made, settle] = promised<int>();
+
+    ought(settle.value(1));
+    ought(!settle.value(2));
+    ought(!settle.fail("późno"));
+
+    same(std::move(made).get(), 1);
+}
+
+TRIAL("Settle: abandoned unsettled, it breaks its promise") {
+    std::optional<Promise<int>> made;
+
+    {
+        auto [one, settle] = promised<int>();
+
+        made.emplace(std::move(one));
+    }
+
+    bool broken = false;
 
     try {
-        (void)inner.await();
-    } catch (const Cancelled&) {
-        caught = true;
+        (void)std::move(*made).get();
+    } catch (const Broken&) {
+        broken = true;
     }
 
-    ought(caught);
+    ought(broken);
 }
 
-// The tail is cancelled before `then` has returned its promise: the returned one no longer starts.
-// Without that, cancelling would fall into the gap between the end of the `then` body and the start
-// of what it returned.
-TRIAL("cancel: a promise returned from then after cancelling no longer starts") {
-    std::atomic<bool> release{false};
-    std::atomic<bool> ran{false};
+// Settling runs no continuation in the call, so a producer may settle under its own lock even when
+// the continuation reaches for the same lock.
+TRIAL("Settle: settling under a lock the continuation needs does not deadlock") {
+    std::mutex guard;
 
-    Promise<int> tail = gave(1).then([&release, &ran](const int&) {
-        while (!release.load()) std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    auto [made, settle] = promised<int>();
 
-        return Promise<int>{[&ran](auto resolve, auto) {
-            ran.store(true);
-            resolve(2);
-        }};
+    Promise<int> after = std::move(made).then([&guard](int got) {
+        const std::lock_guard<std::mutex> held{guard};
+
+        return got + 1;
     });
 
-    tail.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
+    {
+        const std::lock_guard<std::mutex> held{guard};
 
-    tail.cancel();
-    release.store(true);
+        (void)settle.value(1);
 
-    threw((void)tail.await());
+        std::this_thread::sleep_for(20ms);
+    }
 
-    pooling().drain();
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
-
-    ought(!ran.load());
+    same(std::move(after).get(), 2);
 }
 
-TRIAL("cancel: a join cancels all its members") {
-    Promise<int> one = slowly(1, 80);
-    Promise<int> two = slowly(2, 80);
+TRIAL("Settle: void settles without a value") {
+    auto [made, settle] = promised<void>();
 
-    Promise<void> both = Promise<int>::all(one, two);
+    ought(settle.value());
 
-    both.start();
-    std::this_thread::sleep_for(std::chrono::milliseconds{10});
-
-    both.cancel();
-
-    threw((void)one.await());
-    threw((void)two.await());
-
-    std::vector<Promise<int>> many{slowly(3, 80), slowly(4, 80)};
-
-    Promise<void> all = Promise<int>::race(many);
-
-    all.start();
-    all.cancel();
-
-    threw((void)many[0].await());
-    threw((void)many[1].await());
+    std::move(made).get();
 }
 
-// A settled promise has nothing to stop: the result stays, and the source gets no cancel, even
-// though the tail still points to it.
-TRIAL("cancel: on a settled tail it changes nothing") {
-    Promise<int> root = gave(5);
-    Promise<int> tail = root.then([](const int& given) { return given * 2; });
+// --- Places -----------------------------------------------------------------------------------
 
-    same(tail.await(), 10);
+TRIAL("on: the rest of the chain runs on the given place, at its turn") {
+    ManualPlace place;
 
-    tail.cancel();
-
-    same(tail.await(), 10);
-    same(root.await(), 5);
-
-    // A join too: a race settled by its first member does not stop the second when it is cancelled
-    // later; what is settled no longer says anything down or up.
-    Promise<int> fast = gave(1);
-    Promise<int> slow = slowly(2, 60);
-    Promise<void> first = Promise<int>::race(fast, slow);
-
-    first.await();
-    first.cancel();
-
-    same(slow.await(), 2);
-}
-
-// A shared source shares its fate. Two branches from one promise point to the same work, so
-// cancelling one stops it for the other as well. That is deliberate: counting interested branches
-// would need state and locks in every link for a case nobody has.
-TRIAL("cancel: branches from a shared source share the cancel") {
-    Promise<int> root = slowly(1, 80);
-    Promise<int> left = root.then([](const int& given) { return given; });
-    Promise<int> right = root.then([](const int& given) { return given; });
-
-    left.start();
-    left.cancel();
-
-    threw((void)right.await());
-}
-
-TRIAL("all: waits for all, and the results stay in the promises") {
-    Promise<int> one = slowly(1, 60);
-    Promise<int> two = slowly(2, 10);
-    Promise<int> three = slowly(3, 30);
-
-    Promise<int>::all(one, two, three).await();
-
-    same(one.await(), 1);
-    same(two.await(), 2);
-    same(three.await(), 3);
-}
-
-TRIAL("all: then after it gets nothing") {
     std::atomic<bool> ran{false};
 
-    Promise<int> one = gave(1);
-    Promise<int> two = gave(2);
+    Promise<void> one = ready(1).on(place).then([&ran](int) { ran.store(true); });
 
-    Promise<void> joined = Promise<int>::all(one, two).then([&ran] { ran.store(true); });
+    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
 
-    joined.await();
-
+    ought(!ran.load());
+    same(place.turn(), std::size_t{1});
     ought(ran.load());
+    ought(one.ready());
 }
 
-TRIAL("all: nothing starts until someone says so") {
-    std::atomic<int> ran{0};
+TRIAL("on: a place that is gone cancels the rest") {
+    auto place = std::make_unique<ManualPlace>();
+
+    auto [made, settle] = promised<int>();
+
+    Promise<int> one = std::move(made).on(*place);
+
+    place.reset();
+
+    (void)settle.value(1);
+
+    threw((void)std::move(one).get());
+}
+
+TRIAL("here: moves the rest to the loop of this thread, and without a loop it refuses") {
+    {
+        Loop loop;
+
+        std::atomic<bool> ran{false};
+
+        const std::thread::id mine = std::this_thread::get_id();
+        std::atomic<bool> home{false};
+
+        Promise<void> one = run(io(), [] { return 1; }).here().then([&ran, &home, mine](int) {
+            home.store(std::this_thread::get_id() == mine);
+            ran.store(true);
+        });
+
+        for (int again = 0; again < 500 && !ran.load(); ++again) {
+            (void)loop.turn();
+
+            std::this_thread::sleep_for(5ms);
+        }
+
+        ought(ran.load());
+        ought(home.load());
+    }
+
+    Promise<int> kept = ready(1);
+
+    bool refused = false;
+
+    try {
+        (void)std::move(kept).here();
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+
+    ought(refused);
+    ought(static_cast<bool>(kept));
+}
+
+// --- Time -------------------------------------------------------------------------------------
+
+TRIAL("later: ends when the clock gets there, not before") {
+    ManualClock clock;
+
+    Promise<void> one = later(100ms, clock);
+
+    clock.advance(99ms);
+
+    std::this_thread::sleep_for(20ms);
+
+    ought(!one.ready());
+
+    clock.advance(1ms);
+
+    std::move(one).get();
+}
+
+TRIAL("later: abandoned, it leaves the clock at once") {
+    ManualClock clock;
+
+    Promise<void> one = later(1h, clock);
+
+    same(clock.waiting(), std::size_t{1});
+
+    one.cancel();
+
+    same(clock.waiting(), std::size_t{0});
+}
+
+TRIAL("timeout: a late one fails with Overdue and stops the work") {
+    ManualClock clock;
+
+    auto [made, settle] = promised<int>();
+
+    Promise<int> one = std::move(made).timeout(50ms, clock);
+
+    clock.advance(50ms);
+
+    bool overdue = false;
+
+    try {
+        (void)std::move(one).get();
+    } catch (const Overdue&) {
+        overdue = true;
+    }
+
+    ought(overdue);
+    ought(settle.stop().wait(5s));
+}
+
+TRIAL("timeout: one in time gives its value and leaves the clock") {
+    ManualClock clock;
+
+    auto [made, settle] = promised<int>();
+
+    Promise<int> one = std::move(made).timeout(50ms, clock);
+
+    (void)settle.value(6);
+
+    same(std::move(one).get(), 6);
+
+    for (int again = 0; again < 500 && clock.waiting() != 0; ++again) std::this_thread::sleep_for(10ms);
+
+    same(clock.waiting(), std::size_t{0});
+}
+
+TRIAL("timeout: on the real clock too") {
+    Promise<void> one = run(io(), [](Work& work) { (void)work.stop().wait(5s); }).timeout(20ms);
+
+    threw(std::move(one).get());
+}
+
+// --- Shared -----------------------------------------------------------------------------------
+
+TRIAL("SharedPromise: every view gets the value, and get gives it by reference") {
+    SharedPromise<std::string> shared = run(io(), [] { return std::string{"wspólne"}; }).share();
+
+    Promise<std::string> one = shared.view();
+    Promise<std::string> two = shared.view();
+
+    same(std::move(one).get(), std::string{"wspólne"});
+    same(std::move(two).get(), std::string{"wspólne"});
+    same(shared.get(), std::string{"wspólne"});
+    same(shared.view().get(), std::string{"wspólne"});
+}
+
+TRIAL("SharedPromise: a view that gives up takes nothing from the others") {
+    auto [made, settle] = promised<int>();
+
+    SharedPromise<int> shared = std::move(made).share();
+
+    Promise<int> impatient = shared.view();
+    Promise<int> patient = shared.view();
+
+    impatient.cancel();
+
+    ought(!settle.stop().stopped());
+
+    (void)settle.value(5);
+
+    same(std::move(patient).get(), 5);
+}
+
+TRIAL("SharedPromise: when every owner leaves, the work stops") {
+    auto [made, settle] = promised<int>();
+
+    {
+        SharedPromise<int> shared = std::move(made).share();
+        SharedPromise<int> copy = shared;
+
+        Promise<int> one = shared.view();
+
+        shared.cancel();
+        one.cancel();
+
+        ought(!settle.stop().stopped());
+    }
+
+    ought(settle.stop().stopped());
+}
+
+// --- Joins ------------------------------------------------------------------------------------
+
+TRIAL("all: the values in the order given, and an empty set at once") {
+    std::vector<Promise<int>> among;
+
+    for (int at = 0; at < 5; ++at) among.push_back(run(io(), [at] {
+        std::this_thread::sleep_for(std::chrono::milliseconds{(5 - at) * 5});
+
+        return at;
+    }));
+
+    same(all(std::move(among)).get(), (std::vector<int>{0, 1, 2, 3, 4}));
+
+    same(all(std::vector<Promise<int>>{}).get(), (std::vector<int>{}));
+
+    all(std::vector<Promise<void>>{}).get();
+}
+
+TRIAL("all: the first error fails it and stops the rest") {
+    auto [made, settle] = promised<int>();
 
     std::vector<Promise<int>> among;
-    for (int at = 0; at < 3; ++at)
-        among.push_back(Promise<int>{[&ran](auto resolve, auto) {
-            ++ran;
-            resolve(1);
-        }});
 
-    Promise<void> joined = Promise<int>::all(among);
+    among.push_back(std::move(made));
+    among.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"zepsute"})));
 
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+    threw((void)all(std::move(among)).get());
 
-    same(ran.load(), 0);
-
-    joined.await();
-
-    same(ran.load(), 3);
+    ought(settle.stop().wait(5s));
 }
 
-TRIAL("all: they run side by side, not one after another") {
-    const auto began = std::chrono::steady_clock::now();
+TRIAL("all: a list of different types, void among them") {
+    std::tuple<int, std::monostate, std::string> got = all(ready(1), ready(), ready(std::string{"trzy"})).get();
 
-    std::vector<Promise<int>> among;
-    for (int at = 0; at < 4; ++at) among.push_back(slowly(at, 80));
-
-    Promise<int>::all(among).await();
-
-    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - began)
-                           .count();
-
-    ought(spent < 240);
+    same(std::get<0>(got), 1);
+    same(std::get<2>(got), std::string{"trzy"});
 }
 
-TRIAL("all: an empty set settles at once") {
-    Promise<int>::all(std::vector<Promise<int>>{}).await();
-    Promise<int>::all().await();
-}
-
-TRIAL("all: one rejection brings the whole down") {
-    std::vector<Promise<int>> among;
-    among.push_back(gave(1));
-    among.push_back(Promise<int>{[](auto, auto reject) { reject("zepsute"); }});
-    among.push_back(gave(3));
-
-    std::string said;
-
-    Promise<void> joined =
-        Promise<int>::all(among).fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw(joined.await());
-
-    same(said, std::string{"zepsute"});
-}
-
-TRIAL("all: joins void promises too") {
+TRIAL("all: void promises") {
     std::atomic<int> ran{0};
 
     std::vector<Promise<void>> among;
-    for (int at = 0; at < 5; ++at)
-        among.push_back(Promise<void>{[&ran](auto resolve, auto) {
-            ++ran;
-            resolve();
-        }});
 
-    Promise<void>::all(among).await();
+    for (int at = 0; at < 5; ++at) among.push_back(run(io(), [&ran] { ++ran; }));
+
+    all(std::move(among)).get();
 
     same(ran.load(), 5);
 }
+
+TRIAL("any: the first value wins and the rest stop; all failing gives the last error") {
+    auto [slow, settle] = promised<int>();
+
+    std::vector<Promise<int>> among;
+
+    among.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"pierwszy"})));
+    among.push_back(std::move(slow));
+    among.push_back(ready(3));
+
+    same(any(std::move(among)).get(), 3);
+
+    ought(settle.stop().wait(5s));
+
+    std::vector<Promise<int>> bad;
+
+    bad.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"jeden"})));
+    bad.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"dwa"})));
+
+    threw((void)any(std::move(bad)).get());
+
+    threw((void)any(std::vector<Promise<int>>{}).get());
+}
+
+TRIAL("race: the first ending of any kind wins") {
+    auto [slow, settle] = promised<int>();
+
+    std::vector<Promise<int>> among;
+
+    among.push_back(std::move(slow));
+    among.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"szybki"})));
+
+    threw((void)race(std::move(among)).get());
+
+    ought(settle.stop().wait(5s));
+}
+
+TRIAL("settled: every ending in the order given, never failing") {
+    std::vector<Promise<int>> among;
+
+    among.push_back(ready(1));
+    among.push_back(failed<int>(std::make_exception_ptr(std::runtime_error{"nie"})));
+    among.push_back(run(io(), []() -> int { throw Cancelled{}; }));
+
+    const std::vector<Outcome<int>> got = settled(std::move(among)).get();
+
+    same(got.size(), std::size_t{3});
+    ought(got[0].ok());
+    ought(!got[1].ok() && !got[1].cancelled());
+    ought(got[2].cancelled());
+}
+
+// --- Progress ---------------------------------------------------------------------------------
+
+TRIAL("progress: what the producer reports, through the chain and summed in a join") {
+    auto [one, first] = promised<int>();
+    auto [two, second] = promised<int>();
+
+    first.progress(Progress{1, 4});
+    second.progress(Progress{3, 4});
+
+    Promise<int> chained = std::move(one).then([](int got) { return got; });
+
+    same(chained.progress(), (Progress{1, 4}));
+
+    std::vector<Promise<int>> among;
+
+    among.push_back(std::move(chained));
+    among.push_back(std::move(two));
+
+    Promise<std::vector<int>> joined = all(std::move(among));
+
+    same(joined.progress(), (Progress{4, 8}));
+
+    (void)first.value(1);
+    (void)second.value(2);
+
+    (void)std::move(joined).get();
+}
+
+TRIAL("progress: a body reports through its work, and an ended one is whole") {
+    std::atomic<bool> told{false};
+    std::atomic<bool> go{false};
+
+    Promise<void> one = run(io(), [&told, &go](Work& work) {
+        work.progress(Progress{5, 10});
+
+        told.store(true);
+
+        (void)risen(go);
+    });
+
+    ought(risen(told));
+
+    same(one.progress(), (Progress{5, 10}));
+
+    go.store(true);
+
+    for (int again = 0; again < 500 && !one.ready(); ++again) std::this_thread::sleep_for(10ms);
+
+    same(one.progress(), (Progress{10, 10}));
+    same(one.progress().fraction(), 1.0);
+}
+
+// --- Waiting inside work ----------------------------------------------------------------------
+
+// A body that waits in `get` hears the stop of its own work: it gives up the promise it waited for
+// (whose work stops in turn) and leaves with `Cancelled` at once.
+TRIAL("get: a stopped body stops waiting and stops what it waited for") {
+    auto [inner, settle] = promised<int>();
+
+    std::atomic<bool> waiting{false};
+    std::atomic<bool> left{false};
+
+    Promise<int> outer = run(io(), [&waiting, &left, inner = std::move(inner)]() mutable {
+        waiting.store(true);
+
+        try {
+            return std::move(inner).get();
+        } catch (const Cancelled&) {
+            left.store(true);
+
+            throw;
+        }
+    });
+
+    ought(risen(waiting));
+
+    std::this_thread::sleep_for(20ms);
+
+    outer.cancel();
+
+    ought(risen(left));
+    ought(settle.stop().stopped());
+}
+
+// A computing task that waits for other computing work gives its slot back for the wait. Twice as
+// many such tasks as slots would otherwise fill every slot with waiting, and the work they wait for
+// would never get one.
+TRIAL("get: a computing body waiting for computing work does not hold its slot") {
+    const int many = static_cast<int>(pooling().most()) * 2;
+
+    std::vector<Promise<int>> among;
+
+    for (int at = 0; at < many; ++at)
+        among.push_back(run(cpu(), [at] { return run(cpu(), [at] { return at; }).get() + 1; }));
+
+    const std::vector<int> got = all(std::move(among)).timeout(5s).get();
+
+    for (int at = 0; at < many; ++at) same(got[static_cast<std::size_t>(at)], at + 1);
+}
+
+// A callback that blocks in `get` on something whose continuation waits in the same thread's queue
+// does not wait for itself.
+TRIAL("get: inside a callback, waiting for a chain that ends on this thread does not deadlock") {
+    Promise<int> one = ready(1).then([](int got) { return ready(got).then([](int more) { return more + 1; }).get(); });
+
+    same(std::move(one).get(), 2);
+}
+
+// --- Coroutines -------------------------------------------------------------------------------
+
+namespace {
+
+// Adds two values that come from the pool.
+Promise<int> added(int one, int two) {
+    const int first = co_await run(io(), [one] { return one; });
+    const int second = co_await run(io(), [two] { return two; });
+
+    co_return first + second;
+}
+
+// Fails after one step.
+Promise<int> failing() {
+    co_await ready();
+
+    throw std::runtime_error{"w korutynie"};
+}
+
+// Counts up `many` times through promises that are already settled.
+Promise<int> counted(int many) {
+    int sum = 0;
+
+    for (int at = 0; at < many; ++at) sum += co_await ready(1);
+
+    co_return sum;
+}
+
+// Waits for `what` and notes whether it was cancelled there.
+Promise<void> waited(Promise<int> what, std::atomic<bool>& cancelled, std::atomic<bool>& done) {
+    try {
+        (void)co_await std::move(what);
+    } catch (const Cancelled&) {
+        cancelled.store(true);
+    }
+
+    done.store(true);
+}
+
+}
+
+TRIAL("coroutine: co_await gives the value, co_return ends the promise") {
+    same(added(2, 3).get(), 5);
+}
+
+TRIAL("coroutine: an error thrown inside fails the promise") {
+    std::string said;
+
+    try {
+        (void)failing().get();
+    } catch (const std::exception& why) {
+        said = why.what();
+    }
+
+    same(said, std::string{"w korutynie"});
+}
+
+// A loop in a coroutine is a loop, not a chain: a hundred thousand turns in constant memory and on
+// a constant stack.
+TRIAL("coroutine: a long loop of awaits") {
+    same(counted(100000).get(), 100000);
+}
+
+// When the owner leaves, the coroutine resumes with `Cancelled` where it waited, and what it waited
+// for is stopped.
+TRIAL("coroutine: abandoned while waiting, it resumes with Cancelled and stops what it waited for") {
+    auto [inner, settle] = promised<int>();
+
+    std::atomic<bool> cancelled{false};
+    std::atomic<bool> done{false};
+
+    Promise<void> one = waited(std::move(inner), cancelled, done);
+
+    one.cancel();
+
+    ought(risen(done));
+    ought(cancelled.load());
+    ought(settle.stop().stopped());
+}
+
+// --- Long chains ------------------------------------------------------------------------------
+
+// Settling, cancelling and freeing a chain do not descend the stack, link by link.
+TRIAL("chain: two hundred thousand links settle and are freed without a deep stack") {
+    std::atomic<int> passed{0};
+
+    {
+        auto [source, settle] = promised<void>();
+
+        Promise<void> chain = std::move(source);
+
+        for (int at = 0; at < 200000; ++at) chain = std::move(chain).then([&passed] { passed.fetch_add(1); });
+
+        (void)settle.value();
+
+        std::move(chain).get();
+    }
+
+    same(passed.load(), 200000);
+}
+
+#ifndef _WIN32
+
+// Teardown and cancelling on a thread with a small stack, 256 KB, a quarter of the Windows one.
+TRIAL("chain: building, settling and cancelling a long chain fit in a small stack") {
+    struct Job {
+        int built = 0;
+    };
+
+    Job job;
+
+    const auto work = [](void* given) -> void* {
+        auto* mine = static_cast<Job*>(given);
+
+        {
+            auto [source, settle] = promised<void>();
+
+            Promise<void> chain = std::move(source);
+
+            for (int at = 0; at < 50000; ++at) chain = std::move(chain).then([] {});
+
+            (void)settle.value();
+
+            std::move(chain).get();
+        }
+
+        {
+            auto [source, settle] = promised<void>();
+
+            Promise<void> idle = std::move(source);
+
+            for (int at = 0; at < 50000; ++at) idle = std::move(idle).then([] {});
+
+            idle.cancel();
+        }
+
+        mine->built = 50000;
+
+        return nullptr;
+    };
+
+    pthread_attr_t shape;
+    pthread_attr_init(&shape);
+    pthread_attr_setstacksize(&shape, 256 * 1024);
+
+    pthread_t thread;
+
+    ought(pthread_create(&thread, &shape, work, &job) == 0);
+
+    pthread_join(thread, nullptr);
+    pthread_attr_destroy(&shape);
+
+    same(job.built, 50000);
+}
+
+#endif
+
+// --- Pool -------------------------------------------------------------------------------------
 
 namespace {
 
@@ -835,81 +1233,6 @@ struct Highest {
 
     // Counts a job out.
     void left() { --now; }
-};
-
-}
-
-TRIAL("Pool: computing work does not exceed the ceiling") {
-    Pool mine{3};
-
-    Highest counted;
-
-    for (int at = 0; at < 24; ++at)
-        mine.post([&counted] {
-            counted.entered();
-            std::this_thread::sleep_for(std::chrono::milliseconds{20});
-            counted.left();
-        }, Lane::cpu);
-
-    mine.drain();
-
-    same(counted.most.load() <= 3, true);
-    ought(counted.most.load() >= 2);
-}
-
-TRIAL("Pool: ordinary work knows no ceiling") {
-    Pool mine{2};
-
-    Highest counted;
-
-    for (int at = 0; at < 12; ++at)
-        mine.post([&counted] {
-            counted.entered();
-            std::this_thread::sleep_for(std::chrono::milliseconds{40});
-            counted.left();
-        });
-
-    mine.drain();
-
-    ought(counted.most.load() > 2);
-}
-
-TRIAL("Pool: computing work is not starved by a busy team") {
-    Pool mine{2};
-
-    std::atomic<bool> done{false};
-
-    for (int at = 0; at < 4; ++at)
-        mine.post([] { std::this_thread::sleep_for(std::chrono::milliseconds{60}); });
-
-    mine.post([&done] { done.store(true); }, Lane::cpu);
-
-    mine.drain();
-
-    ought(done.load());
-}
-
-namespace {
-
-// Waits until the flag is up, at most five seconds; returns whether it came up.
-bool risen(const std::atomic<bool>& flag) {
-    for (int again = 0; again < 500 && !flag.load(); ++again)
-        std::this_thread::sleep_for(std::chrono::milliseconds{10});
-
-    return flag.load();
-}
-
-// A job that holds its worker until it is let go, at most five seconds.
-struct Holding {
-    std::atomic<bool> held{false};
-    std::atomic<bool> released{false};
-
-    // The job itself.
-    void operator()() {
-        held.store(true);
-
-        (void)risen(released);
-    }
 };
 
 // What a closure holds; its destructor comes back to the pool with more work.
@@ -936,20 +1259,79 @@ private:
 
 }
 
+TRIAL("Pool: an own pool takes work and can be drained") {
+    Pool mine;
+
+    std::atomic<int> counted{0};
+
+    for (int at = 0; at < 24; ++at) (void)mine.post([&counted] { ++counted; });
+
+    mine.drain();
+
+    same(counted.load(), 24);
+    ought(mine.staff() >= 1);
+}
+
+TRIAL("Pool: workers come back instead of multiplying without end") {
+    Pool mine;
+
+    for (int at = 0; at < 50; ++at) {
+        (void)mine.post([] {});
+        mine.drain();
+    }
+
+    ought(mine.staff() <= 2);
+}
+
+TRIAL("Pool: computing work does not exceed the ceiling, through promises too") {
+    Pool mine{3};
+
+    Highest counted;
+
+    std::vector<Promise<void>> among;
+
+    for (int at = 0; at < 24; ++at)
+        among.push_back(run(mine.cpu(), [&counted] {
+            counted.entered();
+            std::this_thread::sleep_for(20ms);
+            counted.left();
+        }));
+
+    all(std::move(among)).get();
+
+    ought(counted.most.load() <= 3);
+    ought(counted.most.load() >= 2);
+}
+
+TRIAL("Pool: ordinary work knows no ceiling") {
+    Pool mine{2};
+
+    Highest counted;
+
+    for (int at = 0; at < 12; ++at)
+        (void)mine.post([&counted] {
+            counted.entered();
+            std::this_thread::sleep_for(40ms);
+            counted.left();
+        });
+
+    mine.drain();
+
+    ought(counted.most.load() > 2);
+}
+
 // A burst of blocking work leaves many workers behind. Those above the ceiling leave after their
 // rest, each with its thread and its bell, and the pool still takes work afterwards.
 TRIAL("Pool: idle workers above the ceiling leave after their rest") {
-    Pool mine{1, std::chrono::milliseconds{30}};
+    Pool mine{1, 30ms};
 
-    for (int at = 0; at < 6; ++at)
-        (void)mine.post([] { std::this_thread::sleep_for(std::chrono::milliseconds{40}); });
+    for (int at = 0; at < 6; ++at) (void)mine.post([] { std::this_thread::sleep_for(40ms); });
 
     mine.drain();
 
     ought(mine.staff() >= 2);
 
-    for (int again = 0; again < 300 && mine.staff() > 1; ++again)
-        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+    for (int again = 0; again < 300 && mine.staff() > 1; ++again) std::this_thread::sleep_for(10ms);
 
     same(mine.staff(), std::size_t{1});
 
@@ -991,27 +1373,6 @@ TRIAL("Pool: computing work runs while blocking work holds every worker") {
     ought(timely);
 }
 
-// A computing task that waits for other computing work gives its slot back for the wait. Twice as
-// many such tasks as slots would otherwise fill every slot with waiting, and the work they wait
-// for would never get one. The timeout only keeps a broken pool from hanging the trials.
-TRIAL("Pool: a computing task waiting for computing work does not hold its slot") {
-    const int many = static_cast<int>(pooling().most()) * 2;
-
-    std::vector<Promise<int>> among;
-
-    for (int at = 0; at < many; ++at)
-        among.push_back(Promise<int>{[at](auto resolve, auto) {
-                                         Promise<int> inner{[at](auto give, auto) { give(at); }, Lane::cpu};
-
-                                         resolve(inner.await() + 1);
-                                     },
-                                     Lane::cpu});
-
-    Promise<void>::all(among).timeout(std::chrono::seconds{5}).await();
-
-    for (int at = 0; at < many; ++at) same(among[static_cast<std::size_t>(at)].await(), at + 1);
-}
-
 // A dropped job's closure is destroyed after the pool lets go of its lock: what it holds may come
 // back to the pool in its destructor, here with more work, and under the lock that would deadlock.
 // The jobs left keep the order in which they were posted.
@@ -1045,9 +1406,10 @@ TRIAL("Pool: a dropped job is let go outside the lock, and the rest keep their o
 
     returning.reset();
 
-    mine.drop(doomed);
-    mine.drop(jobs[1]);
-    mine.drop(jobs[4]);
+    ought(mine.drop(doomed));
+    ought(mine.drop(jobs[1]));
+    ought(mine.drop(jobs[4]));
+    ought(!mine.drop(jobs[4]));
 
     blocking.released.store(true);
 
@@ -1055,6 +1417,19 @@ TRIAL("Pool: a dropped job is let go outside the lock, and the rest keep their o
 
     same(order, (std::vector<int>{0, 2, 3, 5}));
     same(counted.load(), 100);
+}
+
+// After draining nobody holds a job's closure any more: whatever it captured may go.
+TRIAL("Pool: after draining nobody holds the job's closure") {
+    Pool mine;
+
+    auto held = std::make_shared<int>(1);
+
+    for (int at = 0; at < 10; ++at) (void)mine.post([held] {});
+
+    mine.drain();
+
+    same(held.use_count(), 1L);
 }
 
 #ifndef _WIN32
@@ -1113,7 +1488,7 @@ private:
 
 // A worker's bell is a pair of descriptors. Without a free one, a pool that has no worker refuses
 // the work to whoever posts it, and a pool that has a worker keeps the work until that worker is
-// free; neither ends the program from a worker thread.
+// free; neither ends the program from a worker thread. A promise on a refusing pool ends cancelled.
 TRIAL("Pool: without descriptors work is refused or waits, and the program goes on") {
     Pool fresh;
     Pool working{1};
@@ -1126,12 +1501,16 @@ TRIAL("Pool: without descriptors work is refused or waits, and the program goes 
 
     std::atomic<int> counted{0};
 
+    std::optional<Promise<void>> refused;
+
     {
         const Starving starving;
 
         ought(starving.held());
 
         threw((void)fresh.post([&counted] { ++counted; }));
+
+        refused.emplace(run(fresh.cpu(), [&counted] { ++counted; }));
 
         (void)working.post([&counted] { counted += 10; });
     }
@@ -1142,6 +1521,8 @@ TRIAL("Pool: without descriptors work is refused or waits, and the program goes 
 
     same(counted.load(), 10);
 
+    threw(std::move(*refused).get());
+
     (void)fresh.post([&counted] { ++counted; });
 
     fresh.drain();
@@ -1151,915 +1532,17 @@ TRIAL("Pool: without descriptors work is refused or waits, and the program goes 
 
 #endif
 
-// A shielded promise is a view of another: cancelling the view, or a timeout over it, leaves the
-// promise it looks at running for everyone else.
-TRIAL("Promise: a shielded view cancels only itself") {
-    Promise<int> shared = slowly(5, 120);
+TRIAL("Pool: work posted from many threads all runs") {
+    std::atomic<int> counted{0};
 
-    shared.start();
+    std::vector<std::thread> posting;
 
-    threw((void)shared.shielded().timeout(std::chrono::milliseconds{10}).await());
+    for (int who = 0; who < 8; ++who)
+        posting.emplace_back([&counted] {
+            for (int at = 0; at < 100; ++at) run(io(), [&counted] { ++counted; }).detach();
+        });
 
-    same(shared.shielded().await(), 5);
-    same(shared.await(), 5);
+    for (std::thread& one : posting) one.join();
 
-    Promise<int> fresh = slowly(7, 80);
-    Promise<int> look = fresh.shielded();
-
-    look.start();
-    look.cancel();
-
-    threw((void)look.await());
-
-    same(fresh.await(), 7);
+    ought(reached(counted, 800));
 }
-
-// --- Lanes -----------------------------------------------------------------------------------
-
-// The lane says where the source's body runs. It is given in the constructor and applies exactly
-// to the body.
-TRIAL("Lane: a body on the cpu lane does not exceed the ceiling, in a join too") {
-    Highest counted;
-
-    std::vector<Promise<int>> among;
-
-    for (int at = 0; at < 16; ++at)
-        among.push_back(Promise<int>{[&counted](auto resolve, auto) {
-                                         counted.entered();
-                                         std::this_thread::sleep_for(std::chrono::milliseconds{20});
-                                         counted.left();
-                                         resolve(1);
-                                     },
-                                     Lane::cpu});
-
-    Promise<int>::all(among).await();
-
-    ought(counted.most.load() <= static_cast<int>(pooling().most()));
-}
-
-TRIAL("Lane: the lane does not hasten the start, the promise is still lazy") {
-    std::atomic<bool> ran{false};
-
-    Promise<int> one{[&ran](auto resolve, auto) {
-                         ran.store(true);
-                         resolve(1);
-                     },
-                     Lane::cpu};
-
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
-
-    ought(!ran.load());
-
-    same(one.then([](const int& given) { return given * 2; }).await(), 2);
-    ought(ran.load());
-}
-
-// A continuation runs on the thread of whoever settled the promise, so computing in `then` after a
-// read would run on the lane without a ceiling. `on(Lane::cpu)` moves the rest of the chain to the
-// computing lane, just as `on(loop)` moves it to a loop.
-TRIAL("Lane: on(cpu) moves computing after an ordinary source under the ceiling") {
-    Highest counted;
-
-    const int many = static_cast<int>(pooling().most()) * 4;
-
-    std::vector<Promise<void>> among;
-
-    for (int at = 0; at < many; ++at)
-        among.push_back(Promise<void>{[](auto resolve, auto) { resolve(); }}
-                            .on(Lane::cpu)
-                            .then([&counted] {
-                                counted.entered();
-                                std::this_thread::sleep_for(std::chrono::milliseconds{20});
-                                counted.left();
-                            }));
-
-    Promise<void>::all(among).await();
-
-    ought(counted.most.load() <= static_cast<int>(pooling().most()));
-}
-
-// The other way round: waiting after a computing source would take a place under the ceiling, that
-// is a core that should be computing. `on(Lane::io)` frees it; the waiters run side by side, however
-// many there are.
-TRIAL("Lane: on(io) takes waiting out from under the ceiling") {
-    Highest counted;
-
-    const int many = static_cast<int>(pooling().most()) * 4;
-
-    std::vector<Promise<void>> among;
-
-    for (int at = 0; at < many; ++at)
-        among.push_back(Promise<void>{[](auto resolve, auto) { resolve(); }, Lane::cpu}
-                            .on(Lane::io)
-                            .then([&counted] {
-                                counted.entered();
-                                std::this_thread::sleep_for(std::chrono::milliseconds{40});
-                                counted.left();
-                            }));
-
-    Promise<void>::all(among).await();
-
-    ought(counted.most.load() > static_cast<int>(pooling().most()));
-}
-
-TRIAL("all_settled: waits for all and does not fall over on a rejection") {
-    Promise<int> good = slowly(7, 20);
-    Promise<int> bad{[](auto, auto reject) { reject("zepsute"); }};
-    Promise<int> other = slowly(9, 40);
-
-    Promise<int>::all_settled(good, bad, other).await();
-
-    same(good.await(), 7);
-    same(other.await(), 9);
-    threw((void)bad.await());
-}
-
-TRIAL("all_settled: the reasons stay in the promises, not in the join") {
-    std::atomic<bool> ran{false};
-
-    Promise<int> bad{[](auto, auto reject) { reject("padło"); }};
-
-    Promise<void> joined = Promise<int>::all_settled(bad).then([&ran] { ran.store(true); });
-
-    joined.await();
-
-    ought(ran.load());
-
-    std::string said;
-
-    try {
-        (void)bad.await();
-    } catch (const std::exception& why) {
-        said = why.what();
-    }
-
-    same(said, std::string{"padło"});
-}
-
-TRIAL("all: a list of arguments instead of a vector") {
-    Promise<int> one = slowly(1, 30);
-    Promise<int> two = slowly(2, 10);
-
-    Promise<int>::all(one, two).await();
-
-    same(one.await(), 1);
-    same(two.await(), 2);
-}
-
-TRIAL("all: a list of arguments joins promises of different types") {
-    Promise<int> counted = slowly(5, 20);
-    Promise<std::string> said{[](auto resolve, auto) { resolve(std::string{"gotowe"}); }};
-    Promise<void> done{[](auto resolve, auto) { resolve(); }};
-
-    Promise<void>::all(counted, said, done).await();
-
-    same(counted.await(), 5);
-    same(said.await(), std::string{"gotowe"});
-}
-
-TRIAL("all: a list of arguments falls over on a rejection") {
-    Promise<int> good = gave(1);
-    Promise<std::string> bad{[](auto, auto reject) { reject("zepsute"); }};
-
-    std::string said;
-
-    Promise<void> joined = Promise<void>::all(good, bad).fail(
-        [&said](const std::exception& why) { said = why.what(); });
-
-    threw(joined.await());
-
-    same(said, std::string{"zepsute"});
-}
-
-TRIAL("all_settled: a list of different types does not fall over") {
-    Promise<int> good = slowly(3, 20);
-    Promise<std::string> bad{[](auto, auto reject) { reject("padło"); }};
-
-    Promise<void>::all_settled(good, bad).await();
-
-    same(good.await(), 3);
-    threw((void)bad.await());
-}
-
-// A dropped join does not hold its inputs. The join keeps the links that wait on it, and those
-// links hold the join, a cycle that only the settling of the last input would break. An input that
-// never settles (in twa: a continuation on a loop that died earlier) would keep the whole in memory
-// together with the results of the inputs that did settle. Checked without a clock: the result of a
-// settled input must disappear together with the join.
-TRIAL("all and all_settled: a dropped join does not hold inputs that will never come") {
-    const auto dropped = [](auto joining) {
-        std::weak_ptr<int> seen;
-
-        {
-            auto kept = std::make_shared<int>(7);
-
-            seen = kept;
-
-            Promise<std::shared_ptr<int>> came{[kept](auto resolve, auto) { resolve(kept); }};
-            Promise<std::shared_ptr<int>> never{[](auto, auto) {}};
-
-            kept.reset();
-
-            Promise<void> joined = joining(came, never);
-
-            joined.start();
-
-            pooling().drain();
-
-            ought(!seen.expired());
-        }
-
-        pooling().drain();
-
-        ought(seen.expired());
-    };
-
-    dropped([](Promise<std::shared_ptr<int>>& came, Promise<std::shared_ptr<int>>& never) {
-        return Promise<void>::all_settled(came, never);
-    });
-
-    dropped([](Promise<std::shared_ptr<int>>& came, Promise<std::shared_ptr<int>>& never) {
-        return Promise<void>::all(std::vector<Promise<std::shared_ptr<int>>>{came, never});
-    });
-}
-
-TRIAL("race: settles with the first, does not wait for the rest") {
-    const auto began = std::chrono::steady_clock::now();
-
-    Promise<int> quick = slowly(1, 20);
-    Promise<int> slow = slowly(2, 400);
-
-    Promise<void>::race(quick, slow).await();
-
-    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - began)
-                           .count();
-
-    ought(spent < 200);
-
-    same(quick.await(), 1);
-}
-
-TRIAL("race: the first rejection settles it too") {
-    Promise<int> slow = slowly(1, 400);
-    Promise<std::string> bad{[](auto, auto reject) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-        reject("zepsute");
-    }};
-
-    std::string said;
-
-    Promise<void> joined = Promise<void>::race(slow, bad).fail(
-        [&said](const std::exception& why) { said = why.what(); });
-
-    threw(joined.await());
-
-    same(said, std::string{"zepsute"});
-}
-
-TRIAL("race: an already settled promise wins at once") {
-    Promise<int> done = gave(5);
-    (void)done.await();
-
-    Promise<int> slow = slowly(2, 400);
-
-    const auto began = std::chrono::steady_clock::now();
-
-    Promise<int>::race(done, slow).await();
-
-    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - began)
-                           .count();
-
-    ought(spent < 200);
-}
-
-TRIAL("race: also takes a set computed at run time") {
-    std::vector<Promise<int>> among;
-    among.push_back(slowly(1, 300));
-    among.push_back(slowly(2, 20));
-    among.push_back(slowly(3, 300));
-
-    const auto began = std::chrono::steady_clock::now();
-
-    Promise<int>::race(among).await();
-
-    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - began)
-                           .count();
-
-    ought(spent < 200);
-    same(among[1].await(), 2);
-}
-
-TRIAL("all: takes any range, not only a vector") {
-    std::deque<Promise<int>> among;
-    among.push_back(gave(1));
-    among.push_back(gave(2));
-
-    Promise<int>::all(among).await();
-
-    same(among[0].await(), 1);
-    same(among[1].await(), 2);
-}
-
-TRIAL("all: falls over at once, does not wait for the earlier ones") {
-    const auto began = std::chrono::steady_clock::now();
-
-    Promise<int> slow = slowly(1, 400);
-    Promise<int> bad{[](auto, auto reject) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-        reject("zepsute");
-    }};
-
-    std::string said;
-
-    Promise<void> joined =
-        Promise<int>::all(slow, bad).fail([&said](const std::exception& why) { said = why.what(); });
-
-    threw(joined.await());
-
-    const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now() - began)
-                           .count();
-
-    ought(spent < 200);
-    same(said, std::string{"zepsute"});
-}
-
-TRIAL("all: does not occupy a pool thread while waiting") {
-    Pool mine{2};
-
-    std::atomic<int> ran{0};
-
-    // Four long jobs in a pool that grows anyway; the point is that the waiting for all itself is
-    // not one of them.
-    std::vector<Promise<int>> among;
-    for (int at = 0; at < 4; ++at) among.push_back(slowly(at, 60));
-
-    Promise<void> joined = Promise<int>::all(among).then([&ran] { ++ran; });
-
-    joined.start();
-
-    pooling().drain();
-
-    std::this_thread::sleep_for(std::chrono::milliseconds{50});
-
-    same(ran.load(), 1);
-    (void)mine.staff();
-}
-
-TRIAL("any: the first success wins, even if another failed earlier") {
-    Promise<int> bad{[](auto, auto reject) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{10});
-        reject("zepsute");
-    }};
-    Promise<int> good = slowly(8, 40);
-
-    Promise<int>::any(bad, good).await();
-
-    same(good.await(), 8);
-}
-
-TRIAL("any: falls over only when all have failed") {
-    Promise<int> one{[](auto, auto reject) { reject("pierwsze"); }};
-    Promise<int> two{[](auto, auto reject) {
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-        reject("drugie");
-    }};
-
-    std::string said;
-
-    Promise<void> joined = Promise<int>::any(one, two).fail(
-        [&said](const std::exception& why) { said = why.what(); });
-
-    threw(joined.await());
-
-    ought(!said.empty());
-}
-
-TRIAL("any: takes a range too") {
-    std::vector<Promise<int>> among;
-    among.push_back(Promise<int>{[](auto, auto reject) { reject("zepsute"); }});
-    among.push_back(slowly(4, 30));
-
-    Promise<int>::any(among).await();
-
-    same(among[1].await(), 4);
-}
-
-TRIAL("then: the call never runs on the registering thread") {
-    Promise<int> one = gave(3);
-
-    same(one.await(), 3);
-
-    const std::thread::id mine = std::this_thread::get_id();
-    std::atomic<bool> aside{false};
-
-    Promise<int> late = one.then([&aside, mine](const int& given) {
-        aside.store(std::this_thread::get_id() != mine);
-        return given;
-    });
-
-    same(late.await(), 3);
-
-    ought(aside.load());
-}
-
-TRIAL("Pool: drop takes a job off the queue before it starts") {
-    Pool mine{1};
-
-    std::atomic<int> ran{0};
-    std::atomic<bool> late{false};
-
-    // The ceiling is one, so the second and the third stand in the queue waiting for their turn.
-    for (int at = 0; at < 2; ++at)
-        mine.post([&ran] {
-            ++ran;
-            std::this_thread::sleep_for(std::chrono::milliseconds{60});
-        }, Lane::cpu);
-
-    const Pool::Job doomed = mine.post([&late] { late.store(true); }, Lane::cpu);
-
-    mine.drop(doomed);
-    mine.drain();
-
-    same(ran.load(), 2);
-    ought(!late.load());
-}
-
-TRIAL("Pool: drop on a running one wakes it with the bell") {
-    Pool mine;
-
-    std::atomic<bool> woke{false};
-    std::atomic<bool> ready{false};
-
-    const Pool::Job one = mine.post([&woke, &ready] {
-        ready.store(true);
-
-        Bell* bell = ringing();
-        if (bell == nullptr) return;
-
-        woke.store(bell->wait(std::chrono::milliseconds{3000}));
-    });
-
-    for (int at = 0; at < 200 && !ready.load(); ++at)
-        std::this_thread::sleep_for(std::chrono::milliseconds{5});
-
-    std::this_thread::sleep_for(std::chrono::milliseconds{20});
-
-    mine.drop(one);
-    mine.drain();
-
-    ought(woke.load());
-}
-
-TRIAL("Pool: the bell does not carry over to the next job") {
-    Pool mine{1};
-
-    std::atomic<bool> woke{true};
-
-    const Pool::Job one =
-        mine.post([] { std::this_thread::sleep_for(std::chrono::milliseconds{40}); }, Lane::cpu);
-
-    mine.post([&woke] {
-        Bell* bell = ringing();
-        if (bell != nullptr) woke.store(bell->wait(std::chrono::milliseconds{0}));
-    }, Lane::cpu);
-
-    mine.drop(one);
-    mine.drain();
-
-    ought(!woke.load());
-}
-
-TRIAL("Promise: cancel does not run a job standing in the queue") {
-    std::atomic<int> ran{0};
-
-    std::vector<Promise<int>> among;
-
-    for (int at = 0; at < 40; ++at)
-        among.push_back(Promise<int>{[&ran](auto resolve, auto) {
-                                         ++ran;
-                                         std::this_thread::sleep_for(std::chrono::milliseconds{20});
-                                         resolve(1);
-                                     },
-                                     Lane::cpu});
-
-    for (auto& one : among) one.start();
-
-    for (std::size_t at = among.size() / 2; at < among.size(); ++at) among[at].cancel();
-
-    pooling().drain();
-
-    ought(ran.load() < 40);
-}
-
-namespace {
-
-// An example of what the virtual progress is about: a ticket that knows how many installments out
-// of how many are done.
-struct Counted : detail::Result<int> {
-    std::atomic<int> done{0};
-    std::atomic<int> whole{0};
-
-    // The share of installments done, from 0 to 1; zero while the total is unknown.
-    [[nodiscard]] double progress() const override {
-        const int all = whole.load();
-        if (all == 0) return 0.0;
-
-        return std::min(1.0, static_cast<double>(done.load()) / static_cast<double>(all));
-    }
-};
-
-// A promise that sleeps through `steps` installments and counts them in its ticket.
-class Stepping : public Promise<int> {
-public:
-    explicit Stepping(int steps) : Stepping(steps, std::make_shared<Counted>()) {}
-
-private:
-    Stepping(int steps, std::shared_ptr<Counted> made)
-        : Promise<int>(
-              [steps, made](auto resolve, auto) {
-                  made->whole.store(steps);
-
-                  for (int at = 0; at < steps; ++at) {
-                      std::this_thread::sleep_for(std::chrono::milliseconds{20});
-                      ++made->done;
-                  }
-
-                  resolve(steps);
-              },
-              made) {}
-};
-
-}
-
-TRIAL("progress: an ordinary promise knows only zero and one") {
-    Promise<int> one = slowly(1, 60);
-
-    same(one.progress(), 0.0);
-
-    same(one.await(), 1);
-    same(one.progress(), 1.0);
-}
-
-TRIAL("progress: a rejected one is finished too") {
-    Promise<int> one{[](auto, auto reject) { reject("zepsute"); }};
-
-    threw((void)one.await());
-
-    same(one.progress(), 1.0);
-}
-
-TRIAL("progress: a derived ticket counts its own way") {
-    Stepping one{5};
-
-    same(one.progress(), 0.0);
-
-    one.start();
-
-    bool grew = false;
-
-    for (int at = 0; at < 200; ++at) {
-        const double part = one.progress();
-        if (part > 0.0 && part < 1.0) grew = true;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{5});
-
-        if (part >= 1.0) break;
-    }
-
-    same(one.await(), 5);
-
-    ought(grew);
-    same(one.progress(), 1.0);
-}
-
-TRIAL("progress: cutting down to Promise does not lose the way of counting") {
-    Stepping made{4};
-    Promise<int> one = made;
-
-    one.start();
-
-    bool grew = false;
-
-    for (int at = 0; at < 200 && !grew; ++at) {
-        const double part = one.progress();
-        if (part > 0.0 && part < 1.0) grew = true;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{5});
-    }
-
-    same(one.await(), 4);
-
-    ought(grew);
-}
-
-namespace {
-
-// A promise that never starts; it serves only to set the progress by hand.
-class Sitting : public Promise<int> {
-public:
-    Sitting() : Sitting(std::make_shared<Counted>()) {}
-
-    // Sets the progress to `done` out of `whole`.
-    void set(int done, int whole) const {
-        held_->whole.store(whole);
-        held_->done.store(done);
-    }
-
-private:
-    explicit Sitting(std::shared_ptr<Counted> made)
-        : Promise<int>([](auto, auto) {}, made), held_(std::move(made)) {}
-
-    std::shared_ptr<Counted> held_;
-};
-
-}
-
-TRIAL("progress: all averages its parts") {
-    const Sitting one;
-    const Sitting two;
-    const Sitting three;
-
-    one.set(10, 10);
-    two.set(5, 10);
-    three.set(0, 10);
-
-    const Promise<void> joined = Promise<int>::all(one, two, three);
-
-    ought(std::abs(joined.progress() - 0.5) < 0.001);
-}
-
-TRIAL("progress: race and any take the largest") {
-    const Sitting one;
-    const Sitting two;
-
-    one.set(2, 10);
-    two.set(7, 10);
-
-    ought(std::abs(Promise<int>::race(one, two).progress() - 0.7) < 0.001);
-    ought(std::abs(Promise<int>::any(one, two).progress() - 0.7) < 0.001);
-}
-
-TRIAL("progress: all_settled averages too") {
-    const Sitting one;
-    const Sitting two;
-
-    one.set(1, 4);
-    two.set(3, 4);
-
-    ought(std::abs(Promise<int>::all_settled(one, two).progress() - 0.5) < 0.001);
-}
-
-TRIAL("progress: a settled join says one") {
-    Promise<int> one = gave(1);
-    Promise<int> two = gave(2);
-
-    Promise<void> joined = Promise<int>::all(one, two);
-
-    same(joined.progress(), 0.0);
-
-    joined.await();
-
-    same(joined.progress(), 1.0);
-}
-
-TRIAL("progress: the range form counts too") {
-    std::vector<Sitting> among(4);
-
-    among[0].set(4, 4);
-    among[1].set(2, 4);
-    among[2].set(0, 4);
-    among[3].set(2, 4);
-
-    std::vector<Promise<int>> plain{among.begin(), among.end()};
-
-    ought(std::abs(Promise<int>::all(plain).progress() - 0.5) < 0.001);
-}
-
-// A job lives shorter than the announcement of its end.
-//
-// A job's closure holds what the caller captured: a promise, its result, other handles. The worker
-// loop destroys it before it lowers `busy_` under the lock and wakes `drain()`. Otherwise the waiter
-// would move on while another thread still runs the destructors of what the waiter handed it, the
-// race that TSan reports when a promise's result is freed.
-//
-// Checked without a clock and without randomness: the closure's destructor sleeps, so if `drain()`
-// returned before it, the flag would still be down.
-TRIAL("Pool: after draining nobody holds the job's closure anymore") {
-    struct Watch {
-        std::shared_ptr<std::atomic<bool>> gone;
-
-        // A watch that raises `gone` when the closure holding it is destroyed.
-        Watch(std::shared_ptr<std::atomic<bool>> given) : gone(std::move(given)) {}
-
-        Watch(Watch&&) noexcept = default;
-        Watch(const Watch&) = default;
-        Watch& operator=(Watch&&) noexcept = default;
-        Watch& operator=(const Watch&) = default;
-
-        // Sleeps a while and then raises the flag, unless the watch was moved from.
-        ~Watch() {
-            if (!gone) return;
-
-            std::this_thread::sleep_for(std::chrono::milliseconds{50});
-
-            gone->store(true);
-        }
-    };
-
-    Pool pool;
-
-    const auto gone = std::make_shared<std::atomic<bool>>(false);
-    const auto ran = std::make_shared<std::atomic<bool>>(false);
-
-    (void)pool.post([watch = Watch{gone}, ran] { ran->store(true); });
-
-    pool.drain();
-
-    ought(ran->load());
-    ought(gone->load());
-}
-
-// Cancelling from another thread, in parallel with `start()`. The pool writes the job number under
-// its lock before the job becomes visible to the workers; otherwise `cancel()` could see zero, not
-// ring the bell, and the work would run all the way to the end.
-//
-// The check is one-sided, so the trial cannot be flaky: no body may reach the end after
-// cancelling. How many of them start at all depends on the interleaving and is not examined.
-TRIAL("Promise: cancelling in parallel with start() always reaches the body") {
-    std::atomic<int> ran{0};
-    std::atomic<int> heard{0};
-    std::atomic<int> whole{0};
-
-    for (int at = 0; at < 200; ++at) {
-        Promise<int> one{[&ran, &heard, &whole](auto resolve, auto) {
-            ran.fetch_add(1);
-
-            // Work in installments, as walking a tree and copying do: between installments we ask
-            // the bell whether we are still needed. The installments last up to two seconds in
-            // total, not two milliseconds: cancelling runs in a separate thread, and on a loaded
-            // machine that thread can stall for longer than the whole work takes. The work would
-            // then honestly finish before the cancel and the trial would fail with good code.
-            Bell* bell = ringing();
-
-            for (int step = 0; step < 400; ++step) {
-                if (bell != nullptr && bell->wait(std::chrono::milliseconds{5})) {
-                    heard.fetch_add(1);
-
-                    return;
-                }
-            }
-
-            whole.fetch_add(1);
-
-            resolve(1);
-        }};
-
-        std::thread other{[&one] { one.cancel(); }};
-
-        one.start();
-
-        other.join();
-
-        try {
-            (void)one.await();
-        } catch (...) {
-        }
-    }
-
-    // We wait until the pool calms down, and only then count. `await()` returns as soon as the
-    // promise is rejected, and the worker's body may still be running and hear the bell only a
-    // moment later. Without this the trial would fail once in a few runs, through no fault of the
-    // code.
-    pooling().drain();
-
-    same(whole.load(), 0);
-    same(heard.load(), ran.load());
-}
-
-// A long chain costs as much as it has links. Links share their parent; if each link held two
-// copies of its parent, and each copy its own two, building would cost 2^n: six seconds at
-// twenty-two links, and two thousand would never finish.
-TRIAL("Promise: two thousand links build and settle at once") {
-    Promise<int> chain = gave(0);
-
-    for (int at = 0; at < 2000; ++at) chain = chain.then([](int one) { return one + 1; });
-
-    same(chain.await(), 2000);
-}
-
-// The waking trampoline does not change the order: a continuation's descendant runs before its
-// siblings, just as when waking goes depth-first down the stack.
-TRIAL("Promise: continuations wake depth-first, the descendant before its siblings") {
-    std::mutex guard;
-    std::vector<std::string> order;
-
-    const auto noted = [&guard, &order](std::string one) {
-        const std::lock_guard<std::mutex> held{guard};
-
-        order.push_back(std::move(one));
-    };
-
-    Promise<void> first{[](auto resolve, auto) { resolve(); }};
-
-    Promise<void> left = first.then([&noted] { noted("b"); });
-    Promise<void> deeper = left.then([&noted] { noted("d"); });
-    Promise<void> right = first.then([&noted] { noted("c"); });
-
-    Promise<void>::all(deeper, right).await();
-
-    same(order, (std::vector<std::string>{"b", "d", "c"}));
-}
-
-// Teardown leaves the link empty, on every library. A moved-from `std::function` need not be empty
-// (libc++ copies a small object), so `buried` takes the contents out by swapping: after it the link
-// holds nothing, and the last reference is released in the trampoline, not in a member's
-// destructor, which would bring teardown back down the stack.
-TRIAL("Promise: teardown leaves the link empty, whatever the library") {
-    const auto held = std::make_shared<int>(7);
-
-    detail::Upward one{[held] {}, [held] {}};
-
-    same(held.use_count(), 3L);
-
-    detail::buried(one);
-
-    ought(!one.start);
-    ought(!one.cancel);
-    same(held.use_count(), 1L);
-}
-
-// Settling and teardown do not descend the stack. Waking the next continuations on the same stack,
-// and freeing the parent from inside the tail's destructor, would cost a stack frame per link: with
-// an 8 MB stack settling would fail at a hundred thousand links, with 1 MB (Windows) at a few
-// thousand. Two hundred thousand pass here on any stack.
-TRIAL("Promise: two hundred thousand links settle and are freed without a deep stack") {
-    std::atomic<int> passed{0};
-
-    {
-        std::optional<Promise<void>> chain;
-        chain.emplace([](auto resolve, auto) { resolve(); });
-
-        for (int at = 0; at < 200000; ++at) chain = chain->then([&passed] { passed.fetch_add(1); });
-
-        chain->await();
-
-        chain.reset();
-    }
-
-    same(passed.load(), 200000);
-}
-
-#ifndef _WIN32
-
-// Teardown and cancelling on a thread with a small stack, 256 KB, a quarter of the Windows one;
-// here with fifty thousand links.
-TRIAL("Promise: teardown and cancelling of a long chain fit in a small stack") {
-    struct Job {
-        int built = 0;
-    };
-
-    Job job;
-
-    const auto work = [](void* given) -> void* {
-        auto* mine = static_cast<Job*>(given);
-
-        std::optional<Promise<void>> chain;
-        chain.emplace([](auto resolve, auto) { resolve(); });
-
-        for (int at = 0; at < 50000; ++at) chain = chain->then([] {});
-
-        chain->await();
-        chain.reset();
-
-        std::optional<Promise<void>> idle;
-        idle.emplace([](auto resolve, auto) { resolve(); });
-
-        for (int at = 0; at < 50000; ++at) idle = idle->then([] {});
-
-        idle->cancel();
-        idle.reset();
-
-        mine->built = 50000;
-
-        return nullptr;
-    };
-
-    pthread_attr_t shape;
-    pthread_attr_init(&shape);
-    pthread_attr_setstacksize(&shape, 256 * 1024);
-
-    pthread_t thread;
-
-    ought(pthread_create(&thread, &shape, work, &job) == 0);
-
-    pthread_join(thread, nullptr);
-    pthread_attr_destroy(&shape);
-
-    same(job.built, 50000);
-}
-
-#endif

@@ -57,18 +57,14 @@ template <typename Fn>
 auto pooled(Fn what) {
     using Made = decltype(what());
 
-    return Promise<Made>{[what = std::move(what)](auto resolve, auto reject) mutable {
-        try {
-            if constexpr (std::is_void_v<Made>) {
-                what();
-                resolve();
-            } else {
-                resolve(what());
-            }
-        } catch (...) {
-            reject(std::current_exception());
+    return run(io(), [what = std::move(what)]() mutable -> Made {
+        if constexpr (std::is_void_v<Made>) {
+            what();
+            return;
+        } else {
+            return what();
         }
-    }};
+    });
 }
 
 #ifdef _WIN32

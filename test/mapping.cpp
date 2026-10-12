@@ -36,7 +36,7 @@ namespace {
 
 const net::Patience soon{6000};
 
-using Clock = std::chrono::steady_clock;
+using Steady = std::chrono::steady_clock;
 
 // An element with the given name and, when `text` is not empty, a single text child.
 xml::Node element(std::string name, std::string text = {}) {
@@ -153,10 +153,10 @@ struct Fake {
     }
 
     // The next datagram that reaches the fake port 5351.
-    net::Datagram heard(net::Patience patience = soon) const { return pcp.receive(1500, patience).await(); }
+    net::Datagram heard(net::Patience patience = soon) const { return pcp.receive(1500, patience).get(); }
 
     // Sends the bytes from the fake port 5351 to `to`.
-    void told(const net::Address& to, const Bytes& what) const { pcp.send(to, what, soon).await(); }
+    void told(const net::Address& to, const Bytes& what) const { pcp.send(to, what, soon).get(); }
 };
 
 // The 16-bit big-endian value at `at`.
@@ -253,7 +253,7 @@ struct Desk {
                 break;
             }
 
-            const Bytes got = plain.read(4096, soon).await();
+            const Bytes got = plain.read(4096, soon).get();
 
             if (got.empty()) return {};
 
@@ -266,7 +266,7 @@ struct Desk {
             much = std::stoul(head.substr(at + 16, head.find('\r', at) - at - 16));
 
         while (kept.size() < much) {
-            const Bytes got = plain.read(4096, soon).await();
+            const Bytes got = plain.read(4096, soon).get();
 
             if (got.empty()) break;
 
@@ -285,13 +285,13 @@ struct Desk {
         plain.write(bytes("HTTP/1.1 " + std::to_string(status) + " X\r\nContent-Type: text/xml\r\nContent-Length: " +
                           std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body),
                     soon)
-            .await();
+            .get();
         plain.close();
     }
 };
 
 // The next connection accepted on `gate`, as a desk.
-Desk accepted(const net::Listener& gate) { return Desk{gate.accept(soon).await(), {}}; }
+Desk accepted(const net::Listener& gate) { return Desk{gate.accept(soon).get(), {}}; }
 
 // Whether `what` occurs in `in`.
 bool has(const std::string& in, const std::string& what) { return in.find(what) != std::string::npos; }
@@ -301,7 +301,7 @@ std::string port_of(const net::Listener& gate) { return std::to_string(gate.mine
 
 // The answer to the first M-SEARCH: the description lies at the given address.
 std::string searched(const Fake& fake, const net::Listener& gate, const std::string& path = "/rootDesc.xml") {
-    const net::Datagram came = fake.ssdp.receive(1500, soon).await();
+    const net::Datagram came = fake.ssdp.receive(1500, soon).get();
     const std::string said = text(came.bytes);
 
     fake.ssdp
@@ -310,7 +310,7 @@ std::string searched(const Fake& fake, const net::Listener& gate, const std::str
                     "location: http://127.0.0.1:" +
                     port_of(gate) + path + "\r\n\r\n"),
               soon)
-        .await();
+        .get();
 
     return said;
 }
@@ -341,7 +341,7 @@ TRIAL("Router: the default route from the Linux table") {
 // answer is an IPv4 address or a clean refusal, and say what came out.
 TRIAL("Router: this computer's gateway, an IPv4 address or a refusal") {
     try {
-        const net::Address one = net::gateway().await();
+        const net::Address one = net::gateway().get();
 
         ought(one.family() == net::Family::four);
         same(one.port(), static_cast<std::uint16_t>(0));
@@ -353,25 +353,25 @@ TRIAL("Router: this computer's gateway, an IPv4 address or a refusal") {
 }
 
 TRIAL("Router: the address we leave by toward the destination") {
-    same(net::leaving(net::Address::loopback(net::Family::four, 0)).await().text(), std::string{"127.0.0.1"});
-    same(net::leaving(net::Address::loopback(net::Family::four, 53)).await().port(), static_cast<std::uint16_t>(0));
+    same(net::leaving(net::Address::loopback(net::Family::four, 0)).get().text(), std::string{"127.0.0.1"});
+    same(net::leaving(net::Address::loopback(net::Family::four, 53)).get().port(), static_cast<std::uint16_t>(0));
 
-    threw(net::leaving(net::Address{}).await());
+    threw(net::leaving(net::Address{}).get());
 }
 
 TRIAL("Router: empty, port zero and no gateway are refusals") {
-    threw(net::Router{}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).await());
-    threw(net::Router{}.close(net::Opening{}).await());
+    threw(net::Router{}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).get());
+    threw(net::Router{}.close(net::Opening{}).get());
 
     const Fake fake;
 
-    threw(net::Router{fake.routing()}.open(net::Carrier::tcp, 0, std::chrono::seconds{60}).await());
+    threw(net::Router{fake.routing()}.open(net::Carrier::tcp, 0, std::chrono::seconds{60}).get());
 
     net::Routing none = fake.routing();
 
     none.gateway = {};
 
-    threw(net::Router{none}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).await());
+    threw(net::Router{none}.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).get());
 }
 
 // RFC 6887: the header (version 2, MAP, lifetime, our address as ::ffff:a.b.c.d) and MAP (nonce,
@@ -399,7 +399,7 @@ TRIAL("Router: PCP opens a port, the MAP request byte for byte, the answer gives
 
     fake.told(came.from, pcp_answer(asked, 0, 1800, 4001, mapped_four(203, 0, 113, 7)));
 
-    const net::Opening one = opening.await();
+    const net::Opening one = std::move(opening).get();
 
     ought(one.by == net::Opener::pcp);
     ought(one.carrier == net::Carrier::tcp);
@@ -421,7 +421,7 @@ TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
     same(std::to_integer<int>(one.bytes[36]), 17);
     fake.told(one.from, pcp_answer(one.bytes, 0, 600, 5000, mapped_four(203, 0, 113, 7)));
 
-    const net::Opening opened = first.await();
+    const net::Opening opened = std::move(first).get();
 
     ought(opened.carrier == net::Carrier::udp);
 
@@ -430,14 +430,14 @@ TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
 
     ought(slice(two.bytes, 24, 12) == slice(one.bytes, 24, 12));
     fake.told(two.from, pcp_answer(two.bytes, 0, 600, 5000, mapped_four(203, 0, 113, 7)));
-    (void)second.await();
+    (void)std::move(second).get();
 
     auto other = router.open(net::Carrier::tcp, 5000, std::chrono::seconds{600});
     const net::Datagram three = fake.heard();
 
     ought(!(slice(three.bytes, 24, 12) == slice(one.bytes, 24, 12)));
     fake.told(three.from, pcp_answer(three.bytes, 0, 600, 5000, mapped_four(203, 0, 113, 7)));
-    (void)other.await();
+    (void)std::move(other).get();
 
     auto closing = router.close(opened);
     const net::Datagram four = fake.heard();
@@ -446,15 +446,15 @@ TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
     same(got16(four.bytes, 42), 0u);
     ought(slice(four.bytes, 24, 12) == slice(one.bytes, 24, 12));
     fake.told(four.from, pcp_answer(four.bytes, 0, 0, 0, mapped_four(0, 0, 0, 0)));
-    closing.await();
+    std::move(closing).get();
 
     // The second close refuses at once: the router no longer knows this mapping, so there is
     // nothing to ask.
-    const auto started = Clock::now();
+    const auto started = Steady::now();
 
-    threw(router.close(opened).await());
+    threw(router.close(opened).get());
 
-    ought(Clock::now() - started < std::chrono::seconds{2});
+    ought(Steady::now() - started < std::chrono::seconds{2});
 }
 
 TRIAL("Router: PCP repeats the request and skips others' answers") {
@@ -474,7 +474,7 @@ TRIAL("Router: PCP repeats the request and skips others' answers") {
     wrong_nonce[24] ^= std::byte{1};
 
     fake.told(again.from, wrong_nonce);
-    stranger.send(again.from, pcp_answer(again.bytes, 0, 60, 2, mapped_four(2, 2, 2, 2)), soon).await();
+    stranger.send(again.from, pcp_answer(again.bytes, 0, 60, 2, mapped_four(2, 2, 2, 2)), soon).get();
     fake.told(again.from, Bytes{std::byte{2}, std::byte{0x81}});
     // Our own request bounced back (without the response bit) and an answer about another port are
     // skipped too.
@@ -493,7 +493,7 @@ TRIAL("Router: PCP repeats the request and skips others' answers") {
     fake.told(again.from, other_protocol);
     fake.told(again.from, pcp_answer(again.bytes, 0, 60, 4000, mapped_four(203, 0, 113, 7)));
 
-    const net::Opening one = opening.await();
+    const net::Opening one = std::move(opening).get();
 
     same(one.outside.port(), static_cast<std::uint16_t>(4000));
     same(one.outside.text(), std::string{"203.0.113.7"});
@@ -509,7 +509,7 @@ TRIAL("Router: a PCP refusal comes back with its code when there is no other way
     fake.told(came.from, pcp_answer(came.bytes, 2, 0, 0, mapped_four(0, 0, 0, 0)));
 
     try {
-        (void)opening.await();
+        (void)std::move(opening).get();
         ought(false);
     } catch (const Trouble& why) {
         same(why.code(), 2);
@@ -560,7 +560,7 @@ TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away afte
 
     fake.told(address.from, told);
 
-    const net::Opening one = opening.await();
+    const net::Opening one = std::move(opening).get();
 
     ought(one.by == net::Opener::pmp);
     same(one.outside.text(), std::string{"198.51.100.4"});
@@ -577,7 +577,7 @@ TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away afte
     const net::Datagram again = fake.heard();
 
     fake.told(again.from, told);
-    ought(renewal.await().by == net::Opener::pmp);
+    ought(std::move(renewal).get().by == net::Opener::pmp);
 
     auto closing = router.close(one);
     const net::Datagram end = fake.heard();
@@ -585,12 +585,12 @@ TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away afte
     same(got16(end.bytes, 6), 0u);
     same(got32(end.bytes, 8), 0u);
     // Closing does not ask for the external address; it ends right after the answer.
-    const auto answered = Clock::now();
+    const auto answered = Steady::now();
 
     fake.told(end.from, pmp_answer(2, 0, 4000, 0, 0));
-    closing.await();
+    std::move(closing).get();
 
-    ought(Clock::now() - answered < std::chrono::milliseconds{1000});
+    ought(Steady::now() - answered < std::chrono::milliseconds{1000});
 }
 
 TRIAL("Router: a NAT-PMP refusal comes back with its code") {
@@ -607,7 +607,7 @@ TRIAL("Router: a NAT-PMP refusal comes back with its code") {
     fake.told(map.from, pmp_answer(2, 4, 4000, 0, 0));
 
     try {
-        (void)opening.await();
+        (void)std::move(opening).get();
         ought(false);
     } catch (const Trouble& why) {
         same(why.code(), 4);
@@ -621,11 +621,11 @@ TRIAL("Router: a NAT-PMP refusal comes back with its code") {
 TRIAL("Router: nobody answers, a refusal after one round") {
     const Fake fake;
     const net::Router router{fake.routing()};
-    const auto started = Clock::now();
+    const auto started = Steady::now();
 
-    threw(router.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).await());
+    threw(router.open(net::Carrier::tcp, 4000, std::chrono::seconds{60}).get());
 
-    ought(Clock::now() - started < std::chrono::seconds{5});
+    ought(Steady::now() - started < std::chrono::seconds{5});
 
     int heard = 0;
 
@@ -681,7 +681,7 @@ TRIAL("Router: UPnP search, description, add, address and removal") {
     ought(has(asking.asked(), "#GetExternalIPAddress\"\r\n"));
     asking.answered(200, "ADRES");
 
-    const net::Opening one = opening.await();
+    const net::Opening one = std::move(opening).get();
 
     ought(one.by == net::Opener::upnp);
     same(one.outside.text(), std::string{"198.51.100.9"});
@@ -701,7 +701,7 @@ TRIAL("Router: UPnP search, description, add, address and removal") {
     (void)asking_again.asked();
     asking_again.answered(200, "ADRES");
 
-    ought(renewal.await().by == net::Opener::upnp);
+    ought(std::move(renewal).get().by == net::Opener::upnp);
 
     auto closing = router.close(one);
 
@@ -712,7 +712,7 @@ TRIAL("Router: UPnP search, description, add, address and removal") {
     ought(has(removal, "<NewRemoteHost></NewRemoteHost><NewExternalPort>4000</NewExternalPort><NewProtocol>TCP</NewProtocol>"));
     deleting.answered(200, "USUNIETO");
 
-    closing.await();
+    std::move(closing).get();
 }
 
 // 718: the external port is taken, so another port. 725: permanent leases only, so a lease of zero,
@@ -759,7 +759,7 @@ TRIAL("Router: UPnP with a taken port and permanent leases only") {
     (void)asking.asked();
     asking.answered(500, "NIE");
 
-    const net::Opening one = opening.await();
+    const net::Opening one = std::move(opening).get();
 
     same(one.outside.port(), static_cast<std::uint16_t>(std::stoi(port)));
     same(one.outside.text(), std::string{"0.0.0.0"});
@@ -786,7 +786,7 @@ TRIAL("Router: a UPnP refusal comes back with its code") {
     adding.answered(500, "NIE");
 
     try {
-        (void)opening.await();
+        (void)std::move(opening).get();
         ought(false);
     } catch (const Trouble& why) {
         same(why.code(), 606);
@@ -832,7 +832,7 @@ TRIAL("Router: UPnP control address relative to the description, and the PPP ser
         (void)asking.asked();
         asking.answered(200, "ADRES");
 
-        ought(opening.await().by == net::Opener::upnp);
+        ought(std::move(opening).get().by == net::Opener::upnp);
     }
 
     {
@@ -854,7 +854,7 @@ TRIAL("Router: UPnP control address relative to the description, and the PPP ser
         (void)description.asked();
         description.answered(200, "OPIS");
 
-        threw(opening.await());
+        threw(std::move(opening).get());
     }
 }
 
@@ -868,14 +868,14 @@ TRIAL("Router: UPnP takes the description from the gateway itself before another
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{3600});
 
-    const net::Datagram came = fake.ssdp.receive(1500, soon).await();
+    const net::Datagram came = fake.ssdp.receive(1500, soon).get();
 
     fake.ssdp
         .send(came.from,
               bytes("HTTP/1.1 200 OK\r\nLOCATION: http://127.0.0.2:" + std::to_string(foreign.mine().port()) +
                     "/rootDesc.xml\r\n\r\n"),
               soon)
-        .await();
+        .get();
 
     (void)searched(fake, gate);
 
@@ -894,7 +894,7 @@ TRIAL("Router: UPnP takes the description from the gateway itself before another
     (void)asking.asked();
     asking.answered(200, "ADRES");
 
-    ought(opening.await().by == net::Opener::upnp);
+    ought(std::move(opening).get().by == net::Opener::upnp);
 }
 
 // The better service wins, even though it stands later in the description; the control address is
@@ -936,7 +936,7 @@ TRIAL("Router: UPnP, the better service and URLBase") {
     (void)asking.asked();
     asking.answered(200, "ADRES");
 
-    ought(opening.await().by == net::Opener::upnp);
+    ought(std::move(opening).get().by == net::Opener::upnp);
 }
 
 // An HTTP answer other than 200 and 500 is not SOAP; the trouble says what the router answered.
@@ -960,7 +960,7 @@ TRIAL("Router: UPnP, an answer outside SOAP is trouble with its status") {
     adding.answered(404, "DODANO");
 
     try {
-        (void)opening.await();
+        (void)std::move(opening).get();
         ought(false);
     } catch (const Trouble& why) {
         ought(has(why.what(), "HTTP 404"));

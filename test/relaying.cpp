@@ -118,7 +118,6 @@ void bearing(Bytes& made, const Bytes& what) {
 }
 
 
-
 // Appends a DATA attribute with the given text.
 void bearing(Bytes& made, const std::string& what) { bearing(made, bytes(what)); }
 
@@ -211,14 +210,14 @@ Bytes channelling(std::uint16_t channel, const std::string& what) {
 // An allocation on the fake server: it takes the request and hands out the lent address. It also
 // returns the address of the client's socket, because everything after goes there.
 net::Address allotted(net::Udp& server, const net::Patience& patience) {
-    const net::Datagram came = server.receive(1024, patience).await();
+    const net::Datagram came = server.receive(1024, patience).get();
 
     Bytes back = headed(0x0103, came.bytes);
 
     addressed(back, 0x0016, "203.0.113.5", 49152);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, patience).await();
+    server.send(came.from, back, patience).get();
 
     return came.from;
 }
@@ -239,12 +238,12 @@ Ready readied(net::Relay& relay, net::Udp& server, const net::Address& them) {
 
     made.whence = allotted(server, soon);
 
-    (void)asking.await();
+    (void)std::move(asking).get();
 
-    relay.send(them, bytes("raz"), soon).await();
+    relay.send(them, bytes("raz"), soon).get();
 
     for (int turn = 0; turn < 6 && made.channel == 0; ++turn) {
-        const net::Datagram came = server.receive(1024, soon).await();
+        const net::Datagram came = server.receive(1024, soon).get();
 
         net::Message told;
 
@@ -257,7 +256,7 @@ Ready readied(net::Relay& relay, net::Udp& server, const net::Address& them) {
 
         made.channel = channelled(came.bytes);
 
-        server.send(made.whence, headed(0x0109, came.bytes), soon).await();
+        server.send(made.whence, headed(0x0109, came.bytes), soon).get();
     }
 
     return made;
@@ -273,7 +272,7 @@ TRIAL("Relay: the allocation gives back the lent address") {
 
     auto asking = relay.open(soon);
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     // The request must be an allocation and must ask for UDP.
     net::Message told;
@@ -288,9 +287,9 @@ TRIAL("Relay: the allocation gives back the lent address") {
     addressed(back, 0x0020, "198.51.100.9", 40404);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
-    const net::Address lent = asking.await();
+    const net::Address lent = std::move(asking).get();
 
     same(lent.text(), std::string{"203.0.113.5"});
     same(lent.port(), static_cast<std::uint16_t>(49152));
@@ -306,7 +305,7 @@ TRIAL("Relay: a refused allocation comes out as trouble") {
 
     auto asking = relay.open(soon);
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0113, came.bytes);
 
@@ -328,12 +327,12 @@ TRIAL("Relay: a refused allocation comes out as trouble") {
 
     minded(back);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
     bool amiss = false;
 
     try {
-        (void)asking.await();
+        (void)std::move(asking).get();
     } catch (const net::Trouble& why) {
         amiss = true;
 
@@ -354,7 +353,7 @@ TRIAL("Relay: a demand for credentials without credentials ends plainly") {
 
     auto asking = relay.open(soon);
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0113, came.bytes);
 
@@ -386,12 +385,12 @@ TRIAL("Relay: a demand for credentials without credentials ends plainly") {
 
     minded(back);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
     bool amiss = false;
 
     try {
-        (void)asking.await();
+        (void)std::move(asking).get();
     } catch (const net::Trouble& why) {
         amiss = true;
 
@@ -410,7 +409,7 @@ TRIAL("Relay: the server's silence ends with the deadline") {
     bool late = false;
 
     try {
-        (void)relay.open(net::Patience{500}).await();
+        (void)relay.open(net::Patience{500}).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -426,20 +425,20 @@ TRIAL("Relay: a permission goes with the peer's address") {
 
     auto asking = relay.open(soon);
 
-    net::Datagram came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0103, came.bytes);
 
     addressed(back, 0x0016, "203.0.113.5", 49152);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
-    (void)asking.await();
+    (void)std::move(asking).get();
 
     auto second = relay.allow(net::Address{"198.51.100.77", 5555}, soon);
 
-    came = server.receive(1024, soon).await();
+    came = server.receive(1024, soon).get();
 
     net::Message told;
 
@@ -448,9 +447,9 @@ TRIAL("Relay: a permission goes with the peer's address") {
     same(told.peer.text(), std::string{"198.51.100.77"});
     same(told.peer.port(), static_cast<std::uint16_t>(5555));
 
-    server.send(came.from, headed(0x0108, came.bytes), soon).await();
+    server.send(came.from, headed(0x0108, came.bytes), soon).get();
 
-    second.await();
+    std::move(second).get();
 }
 
 TRIAL("Relay: sending goes as an indication with content") {
@@ -461,18 +460,18 @@ TRIAL("Relay: sending goes as an indication with content") {
 
     auto asking = relay.open(soon);
 
-    net::Datagram came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0103, came.bytes);
 
     addressed(back, 0x0016, "203.0.113.5", 49152);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
-    (void)asking.await();
+    (void)std::move(asking).get();
 
-    relay.send(net::Address{"198.51.100.77", 5555}, bytes("przez przekaźnik"), soon).await();
+    relay.send(net::Address{"198.51.100.77", 5555}, bytes("przez przekaźnik"), soon).get();
 
     // The first send goes as an indication, and next to it goes the channel request; the order of
     // two datagrams is nobody's promise, so we look for the one that matters.
@@ -481,7 +480,7 @@ TRIAL("Relay: sending goes as an indication with content") {
     bool sent = false;
 
     for (int turn = 0; turn < 6 && !sent; ++turn) {
-        came = server.receive(1024, soon).await();
+        came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
 
@@ -505,16 +504,16 @@ TRIAL("Relay: content from the peer comes with its address") {
 
     auto asking = relay.open(soon);
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0103, came.bytes);
 
     addressed(back, 0x0016, "203.0.113.5", 49152);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
-    (void)asking.await();
+    (void)std::move(asking).get();
 
     auto waiting = relay.receive(1024, soon);
 
@@ -523,9 +522,9 @@ TRIAL("Relay: content from the peer comes with its address") {
     addressed(data, 0x0012, "198.51.100.77", 5555);
     bearing(data, "od obcego");
 
-    server.send(came.from, data, soon).await();
+    server.send(came.from, data, soon).get();
 
-    const net::Datagram given = waiting.await();
+    const net::Datagram given = std::move(waiting).get();
 
     same(given.from.text(), std::string{"198.51.100.77"});
     same(given.from.port(), static_cast<std::uint16_t>(5555));
@@ -543,7 +542,7 @@ TRIAL("Relay: a stranger's datagram does not pose as the relay") {
 
     auto asking = relay.open(net::Patience{1500});
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     // The stranger poses as the allocation, with a valid transaction number.
     Bytes back = headed(0x0103, came.bytes);
@@ -551,12 +550,12 @@ TRIAL("Relay: a stranger's datagram does not pose as the relay") {
     addressed(back, 0x0016, "1.2.3.4", 1);
     numbered(back, 0x000D, 600);
 
-    evil.send(mine.mine(), back, soon).await();
+    evil.send(mine.mine(), back, soon).get();
 
     bool late = false;
 
     try {
-        (void)asking.await();
+        (void)std::move(asking).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -571,7 +570,7 @@ TRIAL("Relay: an empty one does nothing silently") {
     bool amiss = false;
 
     try {
-        (void)relay.open(soon).await();
+        (void)relay.open(soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -587,29 +586,29 @@ TRIAL("Relay: an oversized message is not lost on refusal") {
 
     auto asking = relay.open(soon);
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     Bytes back = headed(0x0103, came.bytes);
 
     addressed(back, 0x0016, "203.0.113.5", 49152);
     numbered(back, 0x000D, 600);
 
-    server.send(came.from, back, soon).await();
+    server.send(came.from, back, soon).get();
 
-    (void)asking.await();
+    (void)std::move(asking).get();
 
     Bytes data = headed(0x0017, came.bytes);
 
     addressed(data, 0x0012, "198.51.100.77", 5555);
     bearing(data, "dłuższe niż cztery bajty");
 
-    server.send(came.from, data, soon).await();
+    server.send(came.from, data, soon).get();
 
     bool amiss = false;
 
     for (int turn = 0; turn < 40 && !amiss; ++turn) {
         try {
-            (void)relay.receive(4, net::Patience{100}).await();
+            (void)relay.receive(4, net::Patience{100}).get();
         } catch (const Overdue&) {
             continue;
         } catch (const net::Trouble&) {
@@ -619,7 +618,7 @@ TRIAL("Relay: an oversized message is not lost on refusal") {
 
     ought(amiss);
 
-    same(text(relay.receive(1024, soon).await().bytes),
+    same(text(relay.receive(1024, soon).get().bytes),
          std::string{"dłuższe niż cztery bajty"});
 }
 
@@ -636,7 +635,7 @@ TRIAL("Peer: the relay adds the lent path to its own candidates") {
 
     (void)allotted(server, soon);
 
-    const std::vector<net::Candidate> ours = gathering.await();
+    const std::vector<net::Candidate> ours = std::move(gathering).get();
 
     bool lent = false;
 
@@ -660,7 +659,7 @@ TRIAL("Peer: the relay adds the lent path to its own candidates") {
 TRIAL("Peer: without a relay there is no lent path and no talking through a relay") {
     net::Peer left{standing()};
 
-    for (const net::Candidate& one : left.gather(net::StunClient{}, soon).await())
+    for (const net::Candidate& one : left.gather(net::StunClient{}, soon).get())
         ought(one.sort != net::Candidate::Sort::lent);
 
     ought(!left.relayed());
@@ -675,13 +674,13 @@ TRIAL("Peer: a permission goes by address, without the port") {
 
     (void)allotted(server, soon);
 
-    (void)gathering.await();
+    (void)std::move(gathering).get();
 
     left.add(net::Candidate{net::Address{"198.51.100.77", 5555}, net::Candidate::Sort::here});
 
     auto reaching = left.reach(net::Patience{3000});
 
-    const net::Datagram came = server.receive(1024, soon).await();
+    const net::Datagram came = server.receive(1024, soon).get();
 
     net::Message told;
 
@@ -693,10 +692,10 @@ TRIAL("Peer: a permission goes by address, without the port") {
     // will be different from the one in signaling anyway.
     same(told.peer.port(), static_cast<std::uint16_t>(0));
 
-    server.send(came.from, headed(0x0108, came.bytes), soon).await();
+    server.send(came.from, headed(0x0108, came.bytes), soon).get();
 
     try {
-        (void)reaching.await();
+        (void)std::move(reaching).get();
     } catch (const std::exception&) {
     }
 }
@@ -710,7 +709,7 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
     const net::Address whence = allotted(server, soon);
 
-    (void)gathering.await();
+    (void)std::move(gathering).get();
 
     const net::Address them{"198.51.100.77", 5555};
 
@@ -719,21 +718,21 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
     auto reaching = left.reach(net::Patience{10000});
 
     // The permission for the other side.
-    net::Datagram came = server.receive(1024, soon).await();
+    net::Datagram came = server.receive(1024, soon).get();
 
     net::Message told;
 
     ought(net::understood(came.bytes, told));
     same(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
 
-    server.send(whence, headed(0x0108, came.bytes), soon).await();
+    server.send(whence, headed(0x0108, came.bytes), soon).get();
 
     // The other side knocks on the lent address, so its check comes through the relay.
     net::Number theirs{};
 
     for (int which = 0; which < 12; ++which) theirs[which] = static_cast<std::byte>(100 + which);
 
-    server.send(whence, carrying(them, knocking(theirs)), soon).await();
+    server.send(whence, carrying(them, knocking(theirs)), soon).get();
 
     // The response must go out on the same channel, and together with it our own check.
     bool answered = false;
@@ -743,7 +742,7 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
     net::Number number{};
 
     for (int turn = 0; turn < 8 && !(answered && asked); ++turn) {
-        came = server.receive(1024, soon).await();
+        came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
 
@@ -772,9 +771,9 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
     ought(asked);
 
     // Their response to our check, also through the relay, completes the hole punch.
-    server.send(whence, carrying(them, answering(number)), soon).await();
+    server.send(whence, carrying(them, answering(number)), soon).get();
 
-    same(reaching.await(), them);
+    same(std::move(reaching).get(), them);
 
     same(left.met(), them);
     ought(left.relayed());
@@ -782,12 +781,12 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
     // From now on we talk through the relay, not directly.
     auto waiting = left.receive(1024, soon);
 
-    left.send(bytes("przez cudze pasmo"), soon).await();
+    left.send(bytes("przez cudze pasmo"), soon).get();
 
     bool sent = false;
 
     for (int turn = 0; turn < 8 && !sent; ++turn) {
-        came = server.receive(1024, soon).await();
+        came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
 
@@ -798,9 +797,9 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
     ought(sent);
 
-    server.send(whence, carrying(them, bytes("z drugiej strony")), soon).await();
+    server.send(whence, carrying(them, bytes("z drugiej strony")), soon).get();
 
-    same(text(waiting.await()), std::string{"z drugiej strony"});
+    same(text(std::move(waiting).get()), std::string{"z drugiej strony"});
 }
 
 TRIAL("Peer: an empty one does not fall over when asked") {
@@ -862,10 +861,10 @@ TRIAL("Relay: the channel is requested by itself, and then the header has four b
     bool tight = false;
 
     for (int turn = 0; turn < 40 && !tight; ++turn) {
-        relay.send(them, bytes("dwa"), soon).await();
+        relay.send(them, bytes("dwa"), soon).get();
 
         try {
-            const net::Datagram came = server.receive(1024, net::Patience{200}).await();
+            const net::Datagram came = server.receive(1024, net::Patience{200}).get();
 
             std::uint16_t channel = 0;
 
@@ -899,9 +898,9 @@ TRIAL("Relay: content from a channel comes with the peer's address") {
 
     auto waiting = relay.receive(1024, soon);
 
-    server.send(ready.whence, channelling(ready.channel, "z kanału"), soon).await();
+    server.send(ready.whence, channelling(ready.channel, "z kanału"), soon).get();
 
-    const net::Datagram given = waiting.await();
+    const net::Datagram given = std::move(waiting).get();
 
     same(given.from, them);
     same(text(given.bytes), std::string{"z kanału"});
@@ -921,12 +920,12 @@ TRIAL("Relay: a foreign channel number does not enter the conversation") {
 
     server.send(ready.whence, channelling(static_cast<std::uint16_t>(ready.channel + 1), "obce"),
                 soon)
-        .await();
+        .get();
 
     bool late = false;
 
     try {
-        (void)relay.receive(1024, net::Patience{600}).await();
+        (void)relay.receive(1024, net::Patience{600}).get();
     } catch (const Overdue&) {
         late = true;
     }

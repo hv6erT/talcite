@@ -15,7 +15,6 @@ namespace {
 const net::Patience soon{4000};
 
 
-
 // A UDP socket on an IPv4 loopback address with a port chosen by the system.
 net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 0)}; }
 
@@ -49,9 +48,9 @@ TRIAL("Post: a datagram arrives and knows who sent it") {
 
     auto waiting = here.receive(1024, soon);
 
-    there.send(here.mine(), bytes("kartka"), soon).await();
+    there.send(here.mine(), bytes("kartka"), soon).get();
 
-    const net::Datagram made = waiting.await();
+    const net::Datagram made = std::move(waiting).get();
 
     same(text(made.bytes), std::string{"kartka"});
     same(made.from.port(), there.mine().port());
@@ -64,9 +63,9 @@ TRIAL("Post: an empty datagram is not the same as no datagram") {
 
     auto waiting = here.receive(1024, soon);
 
-    there.send(here.mine(), Bytes{}, soon).await();
+    there.send(here.mine(), Bytes{}, soon).get();
 
-    const net::Datagram made = waiting.await();
+    const net::Datagram made = std::move(waiting).get();
 
     same(static_cast<int>(made.bytes.size()), 0);
     ought(made.from.held());
@@ -78,12 +77,12 @@ TRIAL("Post: a truncated datagram reports trouble, not a piece") {
 
     auto waiting = here.receive(4, soon);
 
-    there.send(here.mine(), bytes("dużo dłuższa treść"), soon).await();
+    there.send(here.mine(), bytes("dużo dłuższa treść"), soon).get();
 
     bool cut = false;
 
     try {
-        (void)waiting.await();
+        (void)std::move(waiting).get();
     } catch (const net::Trouble& why) {
         cut = true;
 
@@ -99,7 +98,7 @@ TRIAL("Post: silence ends with the deadline") {
     bool late = false;
 
     try {
-        (void)here.receive(1024, net::Patience{80}).await();
+        (void)here.receive(1024, net::Patience{80}).get();
     } catch (const Overdue&) {
         late = true;
     }
@@ -115,7 +114,7 @@ TRIAL("Post: a second receive at the same time is refused") {
     bool busy = false;
 
     try {
-        (void)here.receive(1024, net::Patience{300}).await();
+        (void)here.receive(1024, net::Patience{300}).get();
     } catch (const net::Trouble&) {
         busy = true;
     }
@@ -123,7 +122,7 @@ TRIAL("Post: a second receive at the same time is refused") {
     ought(busy);
 
     try {
-        (void)first.await();
+        (void)std::move(first).get();
     } catch (const Overdue&) {
     }
 }
@@ -134,7 +133,7 @@ TRIAL("Post: an empty address is not a destination") {
     bool amiss = false;
 
     try {
-        here.send(net::Address{}, bytes("nigdzie"), soon).await();
+        here.send(net::Address{}, bytes("nigdzie"), soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -149,9 +148,9 @@ TRIAL("Post: several datagrams in a row keep their order on loopback") {
     for (int which = 0; which < 5; ++which) {
         auto waiting = here.receive(1024, soon);
 
-        there.send(here.mine(), bytes(std::to_string(which)), soon).await();
+        there.send(here.mine(), bytes(std::to_string(which)), soon).get();
 
-        same(text(waiting.await().bytes), std::to_string(which));
+        same(text(std::move(waiting).get().bytes), std::to_string(which));
     }
 }
 
@@ -161,15 +160,15 @@ TRIAL("Post: the reply comes back to the sender's address") {
 
     auto waiting = here.receive(1024, soon);
 
-    there.send(here.mine(), bytes("pytanie"), soon).await();
+    there.send(here.mine(), bytes("pytanie"), soon).get();
 
-    const net::Datagram made = waiting.await();
+    const net::Datagram made = std::move(waiting).get();
 
     auto back = there.receive(1024, soon);
 
-    here.send(made.from, bytes("odpowiedź"), soon).await();
+    here.send(made.from, bytes("odpowiedź"), soon).get();
 
-    same(text(back.await().bytes), std::string{"odpowiedź"});
+    same(text(std::move(back).get().bytes), std::string{"odpowiedź"});
 }
 
 TRIAL("Post: a closed socket accepts no requests") {
@@ -180,7 +179,7 @@ TRIAL("Post: a closed socket accepts no requests") {
     bool amiss = false;
 
     try {
-        (void)here.receive(8, soon).await();
+        (void)here.receive(8, soon).get();
     } catch (const net::Trouble&) {
         amiss = true;
     }
@@ -198,7 +197,7 @@ TRIAL("Post: closing cancels a pending receive") {
     bool amiss = false;
 
     try {
-        (void)waiting.await();
+        (void)std::move(waiting).get();
     } catch (const net::Trouble&) {
         amiss = true;
     } catch (const Overdue&) {
@@ -228,25 +227,15 @@ TRIAL("Post: a cancelled receive frees the socket") {
 
     first.cancel();
 
-    bool quit = false;
-
-    try {
-        (void)first.await();
-    } catch (const Cancelled&) {
-        quit = true;
-    }
-
-    ought(quit);
-
-    there.send(here.mine(), bytes("paczka"), soon).await();
+    there.send(here.mine(), bytes("paczka"), soon).get();
 
     for (int tried = 0; tried < 200; ++tried) {
         try {
-            same(text(here.receive(1024, soon).await().bytes), std::string{"paczka"});
+            same(text(here.receive(1024, soon).get().bytes), std::string{"paczka"});
 
             return;
         } catch (const net::Trouble&) {
-            Time::later(std::chrono::milliseconds{5}).await();
+            later(std::chrono::milliseconds{5}).get();
         }
     }
 
@@ -264,16 +253,11 @@ TRIAL("Post: after cancelling, receiving again works at once") {
 
     first.cancel();
 
-    try {
-        (void)first.await();
-    } catch (const std::exception&) {
-    }
-
     auto waiting = one.receive(64, soon);
 
-    other.send(one.mine(), bytes("znowu"), soon).await();
+    other.send(one.mine(), bytes("znowu"), soon).get();
 
-    same(text(waiting.await().bytes), std::string{"znowu"});
+    same(text(std::move(waiting).get().bytes), std::string{"znowu"});
 }
 
 TRIAL("Post: a hundred cancels in a row do not leave it busy for good") {
@@ -284,18 +268,13 @@ TRIAL("Post: a hundred cancels in a row do not leave it busy for good") {
         auto waiting = one.receive(64, net::Patience{0});
 
         waiting.cancel();
-
-        try {
-            (void)waiting.await();
-        } catch (const std::exception&) {
-        }
     }
 
     auto waiting = one.receive(64, soon);
 
-    other.send(one.mine(), bytes("po stu"), soon).await();
+    other.send(one.mine(), bytes("po stu"), soon).get();
 
-    same(text(waiting.await().bytes), std::string{"po stu"});
+    same(text(std::move(waiting).get().bytes), std::string{"po stu"});
 }
 
 TRIAL("Post: a local socket refuses, because there are no datagrams there") {

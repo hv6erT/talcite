@@ -1,5 +1,7 @@
 #include "talcite/pool.hpp"
 
+#include "talcite/detail/promise.hpp"
+
 #include <algorithm>
 #include <system_error>
 #include <utility>
@@ -18,9 +20,9 @@ std::size_t roomy(std::size_t most) {
     return told == 0 ? 1 : static_cast<std::size_t>(told);
 }
 
-// The bell of the task that is running on this thread right now. A blocking operation written in
-// talcite waits on its descriptor together with this bell, so drop() wakes it normally instead of
-// interrupting its system call. Outside a task it is null.
+// The bell of this worker. A body of `run` lends it to its promise; a blocking operation written in
+// talcite waits on its descriptor together with this bell, so a stop of the promise wakes it
+// normally instead of interrupting its system call. Outside a worker it is null.
 thread_local Bell* standing = nullptr;
 
 // The pool whose worker this thread is, and whether the task it runs now holds a computing slot;
@@ -44,16 +46,66 @@ std::function<void()> pulled(std::map<Pool::Job, std::function<void()>>& from, P
 
 }
 
-// The bell of the pool task running on the calling thread, or null outside a task.
-Bell* ringing() { return standing; }
+// A lane of the pool as a place for promises (`run`, `on`). It can also take a job back, so that a
+// body whose owners left before it started leaves the queue at once.
+class Pool::Side : public Place, public detail::Withdrawing {
+public:
+    Side(Pool& pool, Lane lane) : pool_(pool), lane_(lane) {}
+
+    // Closes the gate first, so that no promise posts into a lane that is going away.
+    ~Side() override { close(); }
+
+    Side(const Side&) = delete;
+    Side& operator=(const Side&) = delete;
+    Side(Side&&) = delete;
+    Side& operator=(Side&&) = delete;
+
+    // Hands the work to the lane.
+    bool post(std::function<void()> what) override { return queued(std::move(what)) != 0; }
+
+    // Hands the work to the lane and returns its number for `withdrawn`; zero when the pool could not
+    // take it.
+    [[nodiscard]] std::uint64_t queued(std::function<void()> what) override {
+        try {
+            return pool_.post(std::move(what), lane_);
+        } catch (...) {
+            return 0;
+        }
+    }
+
+    // Takes the job back if no worker has taken it yet.
+    [[nodiscard]] bool withdrawn(std::uint64_t which) override { return pool_.drop(which); }
+
+    // Stops taking work, before the pool goes.
+    void shut() { close(); }
+
+private:
+    Pool& pool_;
+    Lane lane_;
+};
+
+// The bell of the pool task running on the calling thread, or null outside a task. A body lends it
+// to its promise, so that a stop rings it while the body waits in a system call.
+Bell* detail::worker_bell() { return standing; }
 
 // A pool whose computing lane runs at most `most` tasks at once (zero means one per core). A worker
 // that has had nothing to do for `rest` leaves, as long as more than `most` workers remain.
-Pool::Pool(std::size_t most, std::chrono::milliseconds rest) : most_(roomy(most)), rest_(rest) {}
+Pool::Pool(std::size_t most, std::chrono::milliseconds rest)
+    : most_(roomy(most)), rest_(rest), io_side_(std::make_unique<Side>(*this, Lane::io)),
+      cpu_side_(std::make_unique<Side>(*this, Lane::cpu)) {}
+
+// The lane for blocking work, as a place.
+Place& Pool::io() { return *io_side_; }
+
+// The lane for computing work, as a place.
+Place& Pool::cpu() { return *cpu_side_; }
 
 // Tells the workers to finish and joins them, those that have left on their own too. Queued
-// computing work still runs before they leave.
+// computing work still runs before they leave. The lanes stop taking work through promises first.
 Pool::~Pool() {
+    io_side_->shut();
+    cpu_side_->shut();
+
     {
         const std::lock_guard<std::mutex> held{guard_};
         closing_ = true;
@@ -76,30 +128,14 @@ Pool::~Pool() {
         if (one.joinable()) one.join();
 }
 
-// Hands work over for execution and returns its number for `drop`. There is one word for "hand
-// over for execution", the same as `Loop::post`: once to a loop, once to the pool. The lane says
-// whether the work waits for the system (`io`) or computes (`cpu`).
-Pool::Job Pool::post(std::function<void()> what, Lane lane) {
-    return handed(std::move(what), lane, nullptr);
-}
-
-// Hands work over and stores its number in `into` before the task becomes visible. The version
-// without that place returns the number only from `return`, that is, after the task has been
-// queued and a worker woken, and then whoever wants to cancel the task has a window in which it
-// already runs but there is no number yet. `drop()` then has nothing to take off and no bell to
-// ring, so cancelled work goes through the whole job to the end. Measured on 4000 promises: of
-// 1523 bodies that started, 467 did not hear the bell.
-Pool::Job Pool::post(std::function<void()> what, Lane lane, std::atomic<Job>& into) {
-    return handed(std::move(what), lane, &into);
-}
-
-// Queues the work and adds a worker when needed (`hired`). Two queues, one staff. Work on the `io`
-// lane may wait for a file or for a dead network share, so the pool grows for it without limit;
+// Hands work over for execution and returns its number for `drop`. The lane says whether the work
+// waits for the system (`io`) or computes (`cpu`). The work is queued and a worker added when
+// needed (`hired`). Two queues, one staff. Work on the `io` lane may wait for a file or for a dead network share, so the pool grows for it without limit;
 // otherwise the ninth such task would stop the whole program. Work on the `cpu` lane declares that
 // it only computes, so there is no point in running more of it at once than the machine has cores:
 // two hundred computing tasks on eight cores finish slower than eight. The queues are keyed by the
 // job's number, which grows, so they keep the order of posting and `drop` finds a job at once.
-Pool::Job Pool::handed(std::function<void()> what, Lane lane, std::atomic<Job>* into) {
+Pool::Job Pool::post(std::function<void()> what, Lane lane) {
     std::vector<std::thread> gone;
     Job which = 0;
 
@@ -108,11 +144,6 @@ Pool::Job Pool::handed(std::function<void()> what, Lane lane, std::atomic<Job>* 
 
         which = ++next_;
 
-        // Before queueing, not after. A worker takes the task off under the same lock, so whoever
-        // sees the number here is sure that the task is at least in the queue, and whoever sees
-        // zero knows that no worker has picked it up yet.
-        if (into != nullptr) into->store(which);
-
         if (lane == Lane::cpu) cpu_.emplace(which, std::move(what));
         else io_.emplace(which, std::move(what));
 
@@ -120,8 +151,6 @@ Pool::Job Pool::handed(std::function<void()> what, Lane lane, std::atomic<Job>* 
             hired(true);
         } catch (...) {
             std::function<void()> dropped = pulled(lane == Lane::cpu ? cpu_ : io_, which);
-
-            if (into != nullptr) into->store(0);
 
             held.unlock();
 
@@ -191,11 +220,10 @@ std::vector<std::thread> Pool::reaped() {
     return made;
 }
 
-// Cancels task `which`. A task that has not started yet simply falls out of the queue and costs
-// nothing; its closure is destroyed after the lock is released, since destructors may come back to
-// the pool. A task that runs gets its bell rung: its system call is not interrupted, it is only
-// woken from waiting, provided it was waiting on the bell together with its descriptor.
-void Pool::drop(Job which) {
+// Takes task `which` out of the queue if no worker has taken it yet, and says whether it did. Its
+// closure is destroyed after the lock is released, since destructors may come back to the pool. A
+// task that already runs is left alone: its promise stops it through the bell it lent.
+bool Pool::drop(Job which) {
     std::function<void()> dropped;
 
     {
@@ -205,16 +233,12 @@ void Pool::drop(Job which) {
 
         if (!dropped) dropped = pulled(cpu_, which);
 
-        if (!dropped) {
-            const auto at = running_.find(which);
-
-            if (at != running_.end()) at->second->ring();
-
-            return;
-        }
+        if (!dropped) return false;
     }
 
     emptied_.notify_all();
+
+    return true;
 }
 
 // Waits until both queues are empty and no task is running.
@@ -244,7 +268,6 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
 
     while (true) {
         std::function<void()> what;
-        Job which = 0;
         bool cpu = false;
 
         {
@@ -264,11 +287,9 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
             }
 
             if (!io_.empty()) {
-                which = io_.begin()->first;
                 what = std::move(io_.begin()->second);
                 io_.erase(io_.begin());
             } else if (!cpu_.empty() && (cpu_busy_ < most_ || closing_)) {
-                which = cpu_.begin()->first;
                 what = std::move(cpu_.begin()->second);
                 cpu_.erase(cpu_.begin());
 
@@ -288,11 +309,10 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
                 continue;
             }
 
-            // The bell is cleared under the same lock under which the task enters the running set.
-            // Otherwise a ring from drop() just before the previous task ended would leave the bell
-            // raised, and the next task would wake for no reason.
+            // The bell is cleared before every task. A stop rings it only while its body holds it
+            // (`detail::Core::begin` to `unlend`, under the promise's own lock), so nothing rings
+            // it for this task before the task lends it.
             bell.clear();
-            running_.emplace(which, &bell);
 
             --idle_;
             ++busy_;
@@ -300,8 +320,8 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
 
         computing = cpu;
 
-        // An exception from here has nowhere to go: the promise has already recorded it as a
-        // rejection, and a worker thread has no one to hand it to. It is swallowed deliberately.
+        // An exception from here has nowhere to go: a promise records what its body throws, and a
+        // worker thread has no one to hand anything else to. It is swallowed deliberately.
         try {
             what();
         } catch (...) {
@@ -322,8 +342,6 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            running_.erase(which);
-
             --busy_;
             ++idle_;
             if (cpu) --cpu_busy_;
@@ -342,7 +360,7 @@ void Pool::serve(std::unique_ptr<Bell> mine) {
     }
 }
 
-// A computing task that is about to wait for other work (`Promise::await`) gives its slot back for
+// A computing task that is about to wait for other work (`Promise::get`) gives its slot back for
 // the length of the wait: otherwise tasks that each wait for another computing task could fill
 // every slot with waiting and leave the work they wait for without a slot, for good. Outside a
 // computing task it does nothing.
@@ -383,5 +401,11 @@ Pool& pooling() {
 
     return only;
 }
+
+// The io lane of the shared pool: for blocking work.
+Place& io() { return pooling().io(); }
+
+// The cpu lane of the shared pool: for computing work.
+Place& cpu() { return pooling().cpu(); }
 
 }

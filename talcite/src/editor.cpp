@@ -1081,9 +1081,7 @@ Promise<void> Editor::save(Drain into) {
     Kept& kept = *kept_;
 
     if (!kept.quilt || !into || kept.saving)
-        return Promise<void>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(std::logic_error{"The editor cannot save now."}));
-        }};
+        return failed<void>(std::make_exception_ptr(std::logic_error{"The editor cannot save now."}));
 
     kept.saving = true;
 
@@ -1103,19 +1101,14 @@ Promise<void> Editor::save(Drain into) {
         auto* mine = dynamic_cast<Editor*>(held.get());
 
         if (mine == nullptr || !mine->kept_->quilt)
-            return Promise<void>{[](auto, auto reject) {
-                reject(std::make_exception_ptr(std::runtime_error{"The editor is gone."}));
-            }};
+            return failed<void>(std::make_exception_ptr(std::runtime_error{"The editor is gone."}));
 
         if (at >= whole) return into(Bytes{});
 
         Bytes got = mine->kept_->quilt->bytes(at, pouring);
 
         // The quilt promised more than it gives. Better to say "not saved" than to save a stub.
-        if (got.empty())
-            return Promise<void>{[](auto, auto reject) {
-                reject(std::make_exception_ptr(std::runtime_error{"The document ended early."}));
-            }};
+        if (got.empty()) return failed<void>(std::make_exception_ptr(std::runtime_error{"The document ended early."}));
 
         const std::size_t next = at + got.size();
 
@@ -1124,17 +1117,19 @@ Promise<void> Editor::save(Drain into) {
 
     // The first piece goes on the caller's thread: a quilt or a sink that throws before it returns
     // a promise must not leave the editor busy forever, so the exception becomes a rejection.
-    std::optional<Promise<void>> first;
+    Promise<void> first;
 
     try {
-        first.emplace((*step)(0));
+        first = (*step)(0);
     } catch (...) {
         kept.saving = false;
 
-        return Promise<void>{[why = std::current_exception()](auto, auto reject) { reject(why); }};
+        return failed<void>(std::current_exception());
     }
 
-    return std::move(*first)
+    // The editor stops being busy however the save ends: written, refused, or abandoned by the
+    // caller. `finally` after `here` does it on the loop's thread in every one of these cases.
+    return std::move(first)
         .here()
         .then([weak] {
             if (auto* mine = dynamic_cast<Editor*>(weak.lock().get()); mine != nullptr) {
@@ -1142,9 +1137,8 @@ Promise<void> Editor::save(Drain into) {
                 mine->clean();
             }
         })
-        .fail([weak](const std::exception&) {
-            if (auto* mine = dynamic_cast<Editor*>(weak.lock().get()); mine != nullptr)
-                mine->kept_->saving = false;
+        .finally([weak] {
+            if (auto* mine = dynamic_cast<Editor*>(weak.lock().get()); mine != nullptr) mine->kept_->saving = false;
         });
 }
 

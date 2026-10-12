@@ -134,7 +134,7 @@ std::optional<Address> routed(std::string_view table) {
 // The IPv4 address of this computer's default router; rejects with `Trouble` when there is none
 // or the system does not tell.
 Promise<Address> gateway() {
-    return Promise<Address>{[](auto giving, auto amiss) {
+    return run(io(), []() -> Address {
         starting();
 
 #ifdef _WIN32
@@ -149,16 +149,14 @@ Promise<Address> gateway() {
         const DWORD code = ::GetBestRoute(toward.S_un.S_addr, 0, &row);
 
         if (code != NO_ERROR || row.dwForwardNextHop == 0 || row.dwForwardType != MIB_IPROUTE_TYPE_INDIRECT) {
-            amiss(std::make_exception_ptr(Trouble{"This computer has no router.", static_cast<int>(code)}));
-
-            return;
+            throw Trouble{"This computer has no router.", static_cast<int>(code)};
         }
 
         std::array<std::byte, 16> raw{};
 
         std::memcpy(raw.data(), &row.dwForwardNextHop, 4);
 
-        giving(Address{Family::four, raw, 0});
+        return Address{Family::four, raw, 0};
 #elif defined(__linux__)
         std::ifstream in{"/proc/net/route"};
         std::stringstream read;
@@ -166,27 +164,23 @@ Promise<Address> gateway() {
         read << in.rdbuf();
 
         if (const std::optional<Address> made = routed(read.str())) {
-            giving(*made);
-
-            return;
+            return *made;
         }
 
-        amiss(std::make_exception_ptr(Trouble{"This computer has no router."}));
+        throw Trouble{"This computer has no router."};
 #else
-        amiss(std::make_exception_ptr(Trouble{"This system does not tell its router."}));
+        throw Trouble{"This system does not tell its router."};
 #endif
-    }};
+    });
 }
 
 // Which of our addresses leads toward the given one: a connected UDP socket sends nothing, and the
 // system picks its source address from the routing table, the same one a real conversation would
 // use. The result has port zero.
 Promise<Address> leaving(Address toward) {
-    return Promise<Address>{[toward](auto giving, auto amiss) mutable {
+    return run(io(), [toward]() mutable -> Address {
         if (toward.family() != Family::four && toward.family() != Family::six) {
-            amiss(std::make_exception_ptr(Trouble{"Only an IP address has a way out."}));
-
-            return;
+            throw Trouble{"Only an IP address has a way out."};
         }
 
         if (toward.port() == 0) toward.port(9);
@@ -194,9 +188,7 @@ Promise<Address> leaving(Address toward) {
         const Handle one = opened(toward.family(), false);
 
         if (one == nothing) {
-            amiss(std::make_exception_ptr(Trouble{"Cannot open a socket."}));
-
-            return;
+            throw Trouble{"Cannot open a socket."};
         }
 
         Address made = joined(one, toward) ? named(one, false) : Address{};
@@ -204,15 +196,13 @@ Promise<Address> leaving(Address toward) {
         ending(one);
 
         if (!made.held()) {
-            amiss(std::make_exception_ptr(Trouble{"No way leads to " + toward.text() + ".", 0, toward}));
-
-            return;
+            throw Trouble{"No way leads to " + toward.text() + ".", 0, toward};
         }
 
         made.port(0);
 
-        giving(made);
-    }};
+        return made;
+    });
 }
 
 namespace {
@@ -332,7 +322,7 @@ bool asked(const Udp& post, const Address& where, const Bytes& what, Clock::time
     Clock::time_point edge = Clock::now();
 
     while (edge < until) {
-        post.send(where, what, left(until)).await();
+        post.send(where, what, left(until)).get();
 
         edge = std::min(edge + wait, until);
 
@@ -340,7 +330,7 @@ bool asked(const Udp& post, const Address& where, const Bytes& what, Clock::time
             Datagram came;
 
             try {
-                came = post.receive(1500, left(edge)).await();
+                came = post.receive(1500, left(edge)).get();
             } catch (const Overdue&) {
                 break;
             } catch (const Trouble&) {
@@ -616,7 +606,7 @@ std::vector<Url> discovered(const Kept& held, Clock::time_point until) {
 
         for (const Address& to : targets) {
             try {
-                post.send(to, bytes(message), left(until)).await();
+                post.send(to, bytes(message), left(until)).get();
             } catch (const Trouble&) {
                 // A network without multicast; the direct question remains.
             }
@@ -631,7 +621,7 @@ std::vector<Url> discovered(const Kept& held, Clock::time_point until) {
         Datagram came;
 
         try {
-            came = post.receive(4096, left(edge)).await();
+            came = post.receive(4096, left(edge)).get();
         } catch (const Overdue&) {
             break;
         } catch (const Trouble&) {
@@ -772,7 +762,7 @@ xml::Document soap(const Kept& held, const Control& control, std::string_view ac
                           {{"Content-Type", "text/xml; charset=\"utf-8\""},
                            {"SOAPAction", "\"" + control.service + "#" + std::string{action} + "\""}}},
                   bytes(body))
-            .await();
+            .get();
 
     if (got.status != 200 && got.status != 500)
         throw Trouble{"The router answered UPnP with HTTP " + std::to_string(got.status) + "."};
@@ -815,7 +805,7 @@ std::optional<Control> found_control(const Kept& held, Clock::time_point until) 
         limits.patience = left(until);
 
         try {
-            const Response got = HttpClient{Seam<TlsProvider>{}, limits}.get(Request{one, {}}).await();
+            const Response got = HttpClient{Seam<TlsProvider>{}, limits}.get(Request{one, {}}).get();
 
             if (got.status != 200) continue;
 
@@ -909,7 +899,7 @@ std::optional<Opening> upnp(const Kept& held, const Address& mine, Carrier carri
 Address ours(const Kept& held) {
     if (held->routing.mine.held()) return held->routing.mine;
 
-    return leaving(held->routing.gateway).await();
+    return leaving(held->routing.gateway).get();
 }
 
 // Remembers which way worked, so that the next opening starts from it.
@@ -1031,7 +1021,7 @@ void closing(const Kept& held, const Opening& one) {
 // A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> refused(const char* said) {
-    return Promise<T>{[said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 }
@@ -1048,36 +1038,14 @@ Promise<Opening> Router::open(Carrier carrier, std::uint16_t inside, std::chrono
 
     if (!held_->routing.gateway.held()) return refused<Opening>("The router has no address.");
 
-    Promise<Opening> made{[held = held_, carrier, inside, lasting](auto giving, auto amiss) {
-        try {
-            giving(opening(held, carrier, inside, lasting));
-        } catch (...) {
-            amiss(std::current_exception());
-        }
-    }};
-
-    made.start();
-
-    return made;
+    return run(io(), [held = held_, carrier, inside, lasting] { return opening(held, carrier, inside, lasting); });
 }
 
 // Closes an opening made by this router, in the background.
 Promise<void> Router::close(Opening one) const {
     if (!held_) return refused<void>("The router is empty.");
 
-    Promise<void> made{[held = held_, one](auto giving, auto amiss) {
-        try {
-            closing(held, one);
-
-            giving();
-        } catch (...) {
-            amiss(std::current_exception());
-        }
-    }};
-
-    made.start();
-
-    return made;
+    return run(io(), [held = held_, one] { closing(held, one); });
 }
 
 }

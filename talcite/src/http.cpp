@@ -121,48 +121,11 @@ std::string authority(const Url& one) {
     return made;
 }
 
-// A promise that is already fulfilled.
-Promise<void> ready() {
-    return Promise<void>{[](auto resolve, auto) { resolve(); }};
-}
-
-// A promise that resolves with the given value.
-template <typename T>
-Promise<T> given(T value) {
-    return Promise<T>{[value = std::move(value)](auto resolve, auto) mutable { resolve(std::move(value)); }};
-}
-
-// A promise that rejects with the given exception.
-template <typename T>
-Promise<T> refused(std::exception_ptr why) {
-    return Promise<T>{[why](auto, auto reject) { reject(why); }};
-}
-
 // A protocol violation with the given message.
 HttpTrouble malformed(const std::string& said) { return HttpTrouble{HttpTrouble::Why::malformed, said}; }
 
 // A limit from `Limits` exceeded, with the given message.
 HttpTrouble oversized(const std::string& said) { return HttpTrouble{HttpTrouble::Why::oversized, said}; }
-
-// The result of a promise that no longer rejects: a value or a captured exception. This is how a
-// failure is caught in order to do something after it: retry on a fresh connection or try the next
-// address.
-template <typename T>
-struct Outcome {
-    std::optional<T> value;
-    std::exception_ptr why;
-};
-
-// Turns a promise into one that always resolves, carrying either the value or the exception.
-template <typename T>
-Promise<Outcome<T>> caught(Promise<T> one) {
-    auto slot = std::make_shared<Outcome<T>>();
-
-    Promise<void> tried = one.then([slot](T value) { slot->value = std::move(value); })
-                              .fail([slot](const std::exception&) { slot->why = std::current_exception(); });
-
-    return Promise<void>::all_settled(std::move(tried)).then([slot] { return std::move(*slot); });
-}
 
 // One connection: plain or encrypted, with bytes already read but not yet consumed. `heard` tells
 // whether at least one byte of the response has arrived: a pooled connection that failed before the
@@ -232,7 +195,7 @@ Promise<std::string> until(const Wire& wire, std::string_view mark, std::size_t 
 
         wire->kept.erase(wire->kept.begin(), wire->kept.begin() + static_cast<std::ptrdiff_t>(at + mark.size()));
 
-        return given(std::move(made));
+        return ready(std::move(made));
     }
 
     if (wire->kept.size() > most + mark.size())
@@ -486,8 +449,8 @@ bool reusable(const Head& head, Framing how, const Wire& wire) {
 // head and the framing, for the download's pool task to read the body (`poured`).
 struct Spilling {
     fs::File file;
-    std::atomic<std::uint64_t>* done = nullptr;
-    std::atomic<std::uint64_t>* whole = nullptr;
+    const Work* work = nullptr;
+    std::uint64_t whole = 0;
     Wire wire{};
     Head head{};
     Frame frame{};
@@ -903,7 +866,7 @@ Promise<Wire> wrapped(Stream stream, const Url& url, const Seam<TlsProvider>& tl
 
         made->plain = std::move(stream);
 
-        return given(std::move(made));
+        return ready(std::move(made));
     }
 
     return TlsStream::client(std::move(stream), tls, url.host, patience).then([](TlsStream secure) {
@@ -979,7 +942,7 @@ Promise<Wire> dialed(const Kept& held, const Url& url) {
             made->forwarded = true;
             made->login = gate.login;
 
-            return given(std::move(made));
+            return ready(std::move(made));
         }
 
         return tunneled(std::move(stream), gate, url, head, patience).then([url, tls, patience](Stream inside) {
@@ -1005,7 +968,7 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
             if (first.status >= 100 && first.status < 200)
                 return until(wire, "\r\n\r\n", held->limits.head, patience, true);
 
-            return given(std::move(head));
+            return ready(std::move(head));
         })
         .then([held, wire, patience, where, url = request.url, spill](const std::string& text) -> Promise<Response> {
             const Head head = parsed(text);
@@ -1019,9 +982,11 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
                 spill->wire = wire;
                 spill->head = head;
                 spill->frame = frame;
-                spill->whole->store(frame.how == Framing::sized ? frame.size : 0);
+                spill->whole = frame.how == Framing::sized ? frame.size : 0;
 
-                return given(Response{head.status, head.headers, {}, url});
+                if (spill->work != nullptr) spill->work->progress(Progress{0, spill->whole});
+
+                return ready(Response{head.status, head.headers, {}, url});
             }
 
             const auto sink = std::make_shared<Sink>();
@@ -1033,7 +998,7 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
                                  : frame.how == Framing::closing ? drained(wire, sink, patience)
                                                                  : ready();
 
-            return read.then([held, wire, where, url, head, frame, sink] {
+            return std::move(read).then([held, wire, where, url, head, frame, sink] {
                 if (reusable(head, frame.how, wire)) {
                     wire->heard = false;
 
@@ -1052,13 +1017,16 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
 // new one.
 Promise<Response> attempted(const Kept& held, const Request& request, const Spill& spill) {
     if (Wire idle = request.method == "GET" ? held->taken(place_of(request.url)) : Wire{}) {
-        return caught(exchanged(held, request, idle, spill))
+        return exchanged(held, request, idle, spill)
+            .outcome()
             .then([held, request, idle, spill](Outcome<Response> got) -> Promise<Response> {
-                if (got.value) return given(std::move(*got.value));
+                if (got.ok()) return ready(std::move(got).value());
+
+                if (got.cancelled()) throw Cancelled{};
 
                 idle->close();
 
-                if (idle->heard) return refused<Response>(got.why);
+                if (idle->heard) return failed<Response>(got.error());
 
                 return dialed(held, request.url).then([held, request, spill](Wire wire) { return exchanged(held, request, wire, spill); });
             });
@@ -1083,7 +1051,7 @@ Promise<Response> fetched(const Kept& held, Request request, int hops, Spill spi
     return attempted(held, request, spill).then([held, request, hops, spill](Response got) -> Promise<Response> {
         const std::string* location = got.header("location");
 
-        if (!redirecting(got.status) || location == nullptr) return given(std::move(got));
+        if (!redirecting(got.status) || location == nullptr) return ready(std::move(got));
 
         if (hops >= held->limits.redirects) throw HttpTrouble{HttpTrouble::Why::redirected, "Too many redirects."};
 
@@ -1124,13 +1092,9 @@ namespace {
 
 // Like every network promise, it starts at once, not at the first wait.
 Promise<Response> sent(const Kept& held, Request request) {
-    if (!held) return refused<Response>(std::make_exception_ptr(Trouble{"The HTTP client is empty."}));
+    if (!held) return failed<Response>(std::make_exception_ptr(Trouble{"The HTTP client is empty."}));
 
-    Promise<Response> made = given(0).then([held, request = std::move(request)](int) { return fetched(held, request, 0); });
-
-    made.start();
-
-    return made;
+    return run(io(), [held, request = std::move(request)] { return fetched(held, request, 0); });
 }
 
 }
@@ -1153,32 +1117,6 @@ Promise<Response> HttpClient::post(Request request, Bytes body) const {
 
 namespace {
 
-// The ticket of a download: the bytes written and the whole, for the progress bar.
-struct Saved : detail::Result<Response> {
-    std::atomic<std::uint64_t> done{0};
-    std::atomic<std::uint64_t> whole{0};
-
-    // The finished share between 0 and 1; a settled download counts as complete, one of unknown
-    // length as not begun.
-    [[nodiscard]] double progress() const override {
-        if (detail::over(*this)) return 1.0;
-
-        const std::uint64_t all = whole.load();
-
-        if (all == 0) return 0.0;
-
-        return std::min(1.0, static_cast<double>(done.load()) / static_cast<double>(all));
-    }
-};
-
-// A promise whose ticket counts the bytes of a download.
-class SavePromise : public Promise<Response> {
-public:
-    // Builds the promise around its callback and the counting ticket.
-    SavePromise(Promise<Response>::Callback given, std::shared_ptr<Saved> made)
-        : Promise<Response>(std::move(given), std::move(made)) {}
-};
-
 // Writes a piece of the body at the end of the download's file and counts it for the progress.
 void spilled(Spilling& spill, Bytes part, std::uint64_t& written) {
     if (part.empty()) return;
@@ -1187,9 +1125,9 @@ void spilled(Spilling& spill, Bytes part, std::uint64_t& written) {
 
     written += part.size();
 
-    (void)spill.file.write(at, std::move(part)).await();
+    (void)spill.file.write(at, std::move(part)).get();
 
-    spill.done->store(written);
+    if (spill.work != nullptr) spill.work->progress(Progress{written, spill.whole});
 }
 
 // Reads the body of a download from its connection into the file, in the download's own pool task:
@@ -1216,7 +1154,7 @@ void poured(const Kept& held, Spilling& spill, const Url& url) {
     // Exactly `much` bytes of the body, the buffer refilled from the connection as it empties.
     const auto exactly = [&](std::uint64_t much) {
         while (much > 0) {
-            if (wire->kept.empty() && !more(wire, patience).await()) throw malformed("The connection closed in the middle of the body.");
+            if (wire->kept.empty() && !more(wire, patience).get()) throw malformed("The connection closed in the middle of the body.");
 
             much -= drawn(much);
         }
@@ -1229,20 +1167,20 @@ void poured(const Kept& held, Spilling& spill, const Url& url) {
 
         case Framing::pieces:
             // A chunk is followed at once by CRLF: a limit of zero rejects any byte before it.
-            for (std::uint64_t much = chunk_size(until(wire, "\r\n", line_most, patience, false).await()); much != 0;
-                 much = chunk_size(until(wire, "\r\n", line_most, patience, false).await())) {
+            for (std::uint64_t much = chunk_size(until(wire, "\r\n", line_most, patience, false).get()); much != 0;
+                 much = chunk_size(until(wire, "\r\n", line_most, patience, false).get())) {
                 exactly(much);
 
-                (void)until(wire, "\r\n", 0, patience, false).await();
+                (void)until(wire, "\r\n", 0, patience, false).get();
             }
 
-            trailed(wire, patience).await();
+            trailed(wire, patience).get();
             break;
 
         case Framing::closing:
             do {
                 (void)drawn(wire->kept.size());
-            } while (more(wire, patience).await());
+            } while (more(wire, patience).get());
             break;
 
         case Framing::none:
@@ -1261,20 +1199,19 @@ void poured(const Kept& held, Spilling& spill, const Url& url) {
 // The work of a download on the pool: the file opened anew, the exchange awaited up to the head, the
 // body poured into the file (both waits hear a cancellation), and the file removed again unless a
 // whole 2xx body is in it.
-Response downloaded(const Kept& held, const Request& request, const std::filesystem::path& into, Saved& counted) {
+Response downloaded(const Kept& held, const Request& request, const std::filesystem::path& into, const Work& work) {
     if (!held) throw Trouble{"The HTTP client is empty."};
 
     const auto spill = std::make_shared<Spilling>();
 
-    spill->file = fs::open(into, fs::Mode::truncate).await();
-    spill->done = &counted.done;
-    spill->whole = &counted.whole;
+    spill->file = fs::open(into, fs::Mode::truncate).get();
+    spill->work = &work;
 
     Response got;
     std::error_code ignored;
 
     try {
-        got = fetched(held, request, 0, spill).await();
+        got = fetched(held, request, 0, spill).get();
 
         if (spill->wire) poured(held, *spill, got.url);
     } catch (...) {
@@ -1303,17 +1240,9 @@ Promise<Response> HttpClient::save(Request request, std::filesystem::path into) 
     request.method = "GET";
     request.body.clear();
 
-    auto counted = std::make_shared<Saved>();
-
-    const auto work = [held = held_, request = std::move(request), into = std::move(into), counted](auto resolve, auto) {
-        resolve(downloaded(held, request, into, *counted));
-    };
-
-    Promise<Response> made = SavePromise{work, counted};
-
-    made.start();
-
-    return made;
+    return run(io(), [held = held_, request = std::move(request), into = std::move(into)](Work& work) {
+        return downloaded(held, request, into, work);
+    });
 }
 
 }

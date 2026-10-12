@@ -184,10 +184,10 @@ TRIAL("Folders: entries from user-dirs.dirs") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", ""};
 
-    same(fs::folder(fs::Known::home).await(), std::optional<stood::path>{house});
-    same(fs::folder(fs::Known::downloads).await(), std::optional<stood::path>{house / "Pobrane"});
-    same(fs::folder(fs::Known::videos).await(), std::optional<stood::path>{house / "Wideo"});
-    same(fs::folder(fs::Known::music).await(), std::optional<stood::path>{nook.where() / "muzyka"});
+    same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{house});
+    same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Pobrane"});
+    same(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Wideo"});
+    same(fs::folder(fs::Known::music).get(), std::optional<stood::path>{nook.where() / "muzyka"});
 }
 
 // An entry equal to the home directory means "disabled"; without an entry, and with a malformed
@@ -211,11 +211,11 @@ TRIAL("Folders: disabled, customary and missing") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", (nook.where() / "konfiguracja").c_str()};
 
-    same(fs::folder(fs::Known::desktop).await(), std::optional<stood::path>{house / "Desktop"});
-    same(fs::folder(fs::Known::documents).await(), std::optional<stood::path>{});
-    same(fs::folder(fs::Known::pictures).await(), std::optional<stood::path>{});
-    same(fs::folder(fs::Known::downloads).await(), std::optional<stood::path>{house / "Downloads"});
-    same(fs::folder(fs::Known::music).await(), std::optional<stood::path>{});
+    same(fs::folder(fs::Known::desktop).get(), std::optional<stood::path>{house / "Desktop"});
+    same(fs::folder(fs::Known::documents).get(), std::optional<stood::path>{});
+    same(fs::folder(fs::Known::pictures).get(), std::optional<stood::path>{});
+    same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Downloads"});
+    same(fs::folder(fs::Known::music).get(), std::optional<stood::path>{});
 }
 
 // A relative XDG_CONFIG_HOME does not count: the specification says to ignore it then.
@@ -232,7 +232,7 @@ TRIAL("Folders: a relative XDG_CONFIG_HOME is ignored") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", "konfiguracja"};
 
-    same(fs::folder(fs::Known::videos).await(), std::optional<stood::path>{house / "Kino"});
+    same(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Kino"});
 }
 
 // Without a home directory there is no folder at all, also when `Downloads` exists in the current
@@ -253,8 +253,8 @@ TRIAL("Folders: without a home directory there are none") {
         const Planted home{"HOME", ""};
         const Planted config{"XDG_CONFIG_HOME", ""};
 
-        same(fs::folder(fs::Known::home).await(), std::optional<stood::path>{});
-        same(fs::folder(fs::Known::downloads).await(), std::optional<stood::path>{});
+        same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{});
+        same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{});
     }
 
     stood::current_path(was, why);
@@ -269,7 +269,7 @@ TRIAL("Language: Windows gives a tag with a hyphen") {
 }
 
 TRIAL("Folders: home is the user profile") {
-    same(fs::folder(fs::Known::home).await(), std::optional<stood::path>{fs::home()});
+    same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{fs::home()});
 }
 
 #endif
@@ -278,7 +278,7 @@ TRIAL("Folders: home is the user profile") {
 TRIAL("Folders: every folder returned is a directory") {
     for (const fs::Known one : {fs::Known::home, fs::Known::desktop, fs::Known::documents, fs::Known::downloads,
                                 fs::Known::music, fs::Known::pictures, fs::Known::videos}) {
-        const std::optional<stood::path> made = fs::folder(one).await();
+        const std::optional<stood::path> made = fs::folder(one).get();
 
         if (made) ought(stood::is_directory(*made));
     }

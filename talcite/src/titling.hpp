@@ -13,7 +13,7 @@ namespace talcite::ui {
 // A label set into a line: in a frame's border or in a separator. It lives in one place because
 // both `Frame` and `Line` draw it, and two copies of the same function in two translation units
 // violate the one-definition rule without the linker reporting it (the same trap as described at
-// `HandPromise`).
+// `Handing`).
 //
 // The label gets a space on each side so that it does not stick to the line; Midnight Commander
 // does this and it simply reads better. We shorten it when it does not fit in the given room.

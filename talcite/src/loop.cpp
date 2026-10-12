@@ -23,52 +23,39 @@ Loop::Loop() {
     standing = this;
 }
 
-// Frees the thread's place for another loop.
+// Frees the thread's place for another loop. The loop stops taking work first (`Place::close`), so
+// a continuation that arrives from the pool while the loop is going away is refused, not queued into
+// a dying object.
 Loop::~Loop() {
+    close();
+
     if (standing == this) standing = nullptr;
 }
 
 // The loop of the current thread, or `nullptr` when none stands on it.
 Loop* Loop::current() { return standing; }
 
-// Queues work for the loop and rings its bell. The queue and the bell live in the door
-// (`detail::Door`), not in the loop itself. The loop holds the door strongly, and promise
-// continuations (`here`, `on`) hold it weakly. With a raw pointer to the loop, pool work finishing
-// after the loop was destroyed would call `post` on a dead object, and if a new loop stood at the
-// same address, the continuation would run on someone else's loop. The door dies with the loop,
-// and anything that arrives after it is dropped, with nowhere to go.
-void detail::Door::post(std::function<void()> what) {
+// Queues work for the loop's thread at its next turn and rings its bell. Safe to call from any
+// thread. The work goes in under the lock and the bell rings after it, so a turn that clears the
+// bell first never loses what came in between (see `turn`).
+bool Loop::post(std::function<void()> what) {
     {
         const std::lock_guard<std::mutex> held{guard_};
+
         queued_.push_back(std::move(what));
     }
 
     bell_.ring();
+
+    return true;
 }
 
-// Takes the whole queue at once, leaving it empty.
-std::vector<std::function<void()>> detail::Door::taken() {
-    std::vector<std::function<void()>> made;
-
-    const std::lock_guard<std::mutex> held{guard_};
-
-    made.swap(queued_);
-
-    return made;
-}
-
-// The number of queued pieces of work.
-std::size_t detail::Door::waiting() const {
+// The number of pieces of work waiting for the next turn.
+std::size_t Loop::waiting() const {
     const std::lock_guard<std::mutex> held{guard_};
 
     return queued_.size();
 }
-
-// Queues work to run on this loop's thread at its next turn. Safe to call from any thread.
-void Loop::post(std::function<void()> what) { door_->post(std::move(what)); }
-
-// The number of pieces of work waiting for the next turn.
-std::size_t Loop::waiting() const { return door_->waiting(); }
 
 // Runs the queued work and returns how much ran. The queue is taken whole and the lock released
 // before running anything; otherwise a call that queues something itself would deadlock on its
@@ -85,9 +72,15 @@ std::size_t Loop::waiting() const { return door_->waiting(); }
 // continuation somebody waits for. Every piece runs, and the first exception is passed on after
 // the last one.
 std::size_t Loop::turn() {
-    door_->bell().clear();
+    bell_.clear();
 
-    const std::vector<std::function<void()>> taken = door_->taken();
+    std::vector<std::function<void()>> taken;
+
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        taken.swap(queued_);
+    }
 
     std::exception_ptr first;
 

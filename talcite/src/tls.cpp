@@ -43,15 +43,10 @@ struct TlsStream::Held {
 
 namespace {
 
-// A promise that is settled already.
-Promise<void> already() {
-    return Promise<void>{[](auto resolve, auto) { resolve(); }};
-}
-
-// A promise that already holds `what`.
-Promise<Bytes> already(Bytes what) {
-    return Promise<Bytes>{
-        [what = std::move(what)](auto resolve, auto) mutable { resolve(std::move(what)); }};
+// A promise rejected with `Trouble` and the given text.
+template <typename T>
+Promise<T> refused(const char* said) {
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 // The session hands out ciphertext in portions, so we take everything it has.
@@ -100,7 +95,7 @@ Stream borrowed(const std::shared_ptr<TlsStream::Held>& held) {
 // the other side would refuse the connection. The writer is started afterwards, without the lock
 // (`Outbox::flush`).
 Promise<void> queued(const std::shared_ptr<TlsStream::Held>& held, Bytes out, Patience patience) {
-    if (out.empty()) return already();
+    if (out.empty()) return ready();
 
     return held->outbox.queued(std::move(out), patience, [held] { return borrowed(held); });
 }
@@ -148,7 +143,7 @@ constexpr int rounds = 100;
 // per-operation deadline, renewable forever, so the handshake as a whole would have no end.
 Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_point until,
                       int turn) {
-    std::optional<Promise<void>> sent;
+    Promise<void> sent;
     bool done = false;
 
     {
@@ -164,11 +159,11 @@ Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_
 
     held->outbox.flush();
 
-    if (done) return *sent;
+    if (done) return sent;
 
     if (turn >= rounds) throw Trouble{"The handshake will not finish."};
 
-    return sent->then([held, until, turn] {
+    return std::move(sent).then([held, until, turn] {
         return borrowed(held).read(65536, left(until)).then([held, until, turn](const Bytes& came) {
             if (came.empty()) throw Trouble{"The handshake broke off halfway."};
 
@@ -191,12 +186,12 @@ Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_
 Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t most,
                        Patience patience) {
     Bytes plain;
-    std::optional<Promise<void>> sent;
+    Promise<void> sent;
 
     {
         const std::lock_guard<std::mutex> kept{held->minding};
 
-        if (!held->spare.empty()) return already(taken(*held, most));
+        if (!held->spare.empty()) return ready(taken(*held, most));
 
         plain = held->how->read();
         Bytes out = drained(*held->how);
@@ -214,14 +209,14 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
 
     held->outbox.flush();
 
-    if (!plain.empty()) return sent->then([plain = std::move(plain)]() mutable {
+    if (!plain.empty()) return std::move(sent).then([plain = std::move(plain)]() mutable {
         return std::move(plain);
     });
 
-    return sent->then([held, most, patience] {
+    return std::move(sent).then([held, most, patience] {
         return borrowed(held).read(65536, patience).then([held, most, patience](const Bytes& came) {
             // Emptiness means the same as on a bare stream: the other side has closed.
-            if (came.empty()) return already(Bytes{});
+            if (came.empty()) return ready(Bytes{});
 
             {
                 const std::lock_guard<std::mutex> kept{held->minding};
@@ -242,10 +237,7 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
 // A missing session ends in a rejection with a reason, so that an empty session never reaches
 // the handshake through a null pointer.
 Promise<TlsStream> opened(Stream one, std::unique_ptr<TlsSession> how, std::string host, Patience patience) {
-    if (!how)
-        return Promise<TlsStream>{[](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The provider gave no session."}));
-        }};
+    if (!how) return refused<TlsStream>("The provider gave no session.");
 
     auto held = std::make_shared<TlsStream::Held>();
 
@@ -253,22 +245,14 @@ Promise<TlsStream> opened(Stream one, std::unique_ptr<TlsSession> how, std::stri
     held->how = std::move(how);
     held->host = std::move(host);
 
-    Promise<TlsStream> made = turning(held, Clock::now() + patience, 0).then([held] {
-        return TlsStream{held};
-    });
-
-    made.start();
-
-    return made;
+    return turning(held, Clock::now() + patience, 0).then([held] { return TlsStream{held}; });
 }
 
 // A missing provider rejects the promise instead of throwing at the caller: a function that
 // returns a promise reports errors the same way as the rest of the module. The type is the same
 // one `Seam::provider()` throws.
 Promise<TlsStream> unbound() {
-    return Promise<TlsStream>{[](auto, auto reject) {
-        reject(std::make_exception_ptr(Unbound{TlsProvider::kind()}));
-    }};
+    return failed<TlsStream>(std::make_exception_ptr(Unbound{TlsProvider::kind()}));
 }
 
 }
@@ -326,19 +310,11 @@ const Address& TlsStream::mine() const {
 // Reads at most `most` bytes of plaintext within `patience`. Only one read may be in progress at
 // a time; an empty result means the other side has closed.
 Promise<Bytes> TlsStream::read(std::size_t most, Patience patience) const {
-    if (!held_)
-        return Promise<Bytes>{
-            [](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The connection is closed."}));
-        }};
+    if (!held_) return refused<Bytes>("The connection is closed.");
 
     bool was = false;
 
-    if (!held_->reading.compare_exchange_strong(was, true))
-        return Promise<Bytes>{
-            [](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"Already reading."}));
-        }};
+    if (!held_->reading.compare_exchange_strong(was, true)) return refused<Bytes>("Already reading.");
 
     auto held = held_;
 
@@ -347,39 +323,26 @@ Promise<Bytes> TlsStream::read(std::size_t most, Patience patience) const {
     // connection would never read again. A function that returns a promise reports errors through
     // the promise, not by throwing.
     try {
-        Promise<Bytes> made = reading(held, most, patience).finally([held] {
-            held->reading.store(false);
-        });
-
-        made.start();
-
-        return made;
+        return reading(held, most, patience).finally([held] { held->reading.store(false); });
     } catch (...) {
         held->reading.store(false);
 
-        std::exception_ptr why = std::current_exception();
-
-        return Promise<Bytes>{[why](auto, auto reject) { reject(why); }};
+        return failed<Bytes>(std::current_exception());
     }
 }
 
 // Encrypts `what` and sends it within `patience`. Only one write may be in progress at a time;
 // the ciphertext joins the common queue, so it never interleaves with the handshake.
 Promise<void> TlsStream::write(Bytes what, Patience patience) const {
-    if (!held_)
-        return Promise<void>{
-            [](auto, auto reject) {
-            reject(std::make_exception_ptr(Trouble{"The connection is closed."}));
-        }};
+    if (!held_) return refused<void>("The connection is closed.");
 
     bool was = false;
 
-    if (!held_->writing.compare_exchange_strong(was, true))
-        return Promise<void>{[](auto, auto reject) { reject(std::make_exception_ptr(Trouble{"Already writing."})); }};
+    if (!held_->writing.compare_exchange_strong(was, true)) return refused<void>("Already writing.");
 
     auto held = held_;
 
-    std::optional<Promise<void>> sent;
+    Promise<void> sent;
 
     try {
         const std::lock_guard<std::mutex> kept{held->minding};
@@ -394,18 +357,12 @@ Promise<void> TlsStream::write(Bytes what, Patience patience) const {
     } catch (...) {
         held->writing.store(false);
 
-        std::exception_ptr why = std::current_exception();
-
-        return Promise<void>{[why](auto, auto reject) { reject(why); }};
+        return failed<void>(std::current_exception());
     }
 
     held->outbox.flush();
 
-    Promise<void> made = sent->finally([held] { held->writing.store(false); });
-
-    made.start();
-
-    return made;
+    return std::move(sent).finally([held] { held->writing.store(false); });
 }
 
 // Closes the session and the stream under the same lock as the session, not because closing is

@@ -159,15 +159,13 @@ TRIAL("figured: decoding runs on the cpu lane") {
     Promise<Pixels> made =
         figured(lump(leaping), faking::images()).fetch(ui::Size{4, 4});
 
-    made.start();
-
     std::this_thread::sleep_for(std::chrono::milliseconds{50});
 
-    const bool early = made.progress() == 1.0;
+    const bool early = made.progress().fraction() == 1.0;
 
     hold->release.store(true);
 
-    (void)made.await();
+    (void)std::move(made).get();
 
     for (int at = 0; at < 500 && hold->left.load() < most; ++at)
         std::this_thread::sleep_for(std::chrono::milliseconds{2});
@@ -281,10 +279,8 @@ TRIAL("Image: the source is called with the size from the layout, and again afte
     made.fetch = [asked](ui::Size want) {
         asked->push_back(want);
 
-        return Promise<Pixels>{[want](auto resolve, auto) {
-            resolve(Pixels{want, {Still{Bytes(static_cast<std::size_t>(want.wide * want.high) * 4, std::byte{7}),
-                                        std::chrono::milliseconds{0}}}});
-        }};
+        return ready(Pixels{want, {Still{Bytes(static_cast<std::size_t>(want.wide * want.high) * 4, std::byte{7}),
+                                    std::chrono::milliseconds{0}}}});
     };
 
     const auto one = std::make_shared<ui::Image>();
@@ -339,7 +335,7 @@ TRIAL("Image: a rejected promise from the source empties the widget, the kind st
     made.format = Format::bmp;
     made.size = {16, 12};
     made.fetch = [](ui::Size) {
-        return Promise<Pixels>{[](auto, auto reject) { reject(std::make_exception_ptr(std::runtime_error{"no"})); }};
+        return failed<Pixels>(std::make_exception_ptr(std::runtime_error{"no"}));
     };
 
     const auto one = std::make_shared<ui::Image>();

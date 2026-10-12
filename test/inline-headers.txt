@@ -6,6 +6,7 @@ talcite/src/folding.hpp
 talcite/src/followed.hpp
 talcite/src/fscore.hpp
 talcite/src/handing.hpp
+talcite/src/hearing.hpp
 talcite/src/lighting.hpp
 talcite/src/lining.hpp
 talcite/src/marking.hpp

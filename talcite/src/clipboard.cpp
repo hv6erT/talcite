@@ -194,28 +194,21 @@ std::optional<Command> helped(const Console& from) {
 // loop.
 bool handed(const Command& what, std::string_view said) {
     try {
-        const Child one = Child::start(what).await();
+        const Child one = Child::start(what).get();
 
-        Promise<std::size_t> writing = one.write(bytes(std::string{said}));
-
-        (void)writing.await();
+        (void)one.write(bytes(std::string{said})).get();
 
         one.close_input();
 
-        Promise<Exit> ending = one.wait();
-        Promise<void> limit = Time::limit(std::chrono::milliseconds{1500});
+        Exit made;
 
         try {
-            Promise<void>::race(ending, limit).await();
+            made = one.wait().timeout(std::chrono::milliseconds{1500}).get();
         } catch (...) {
             one.kill();
 
             return false;
         }
-
-        limit.cancel();
-
-        const Exit made = ending.await();
 
         return made.ended == Ended::normal && made.code == 0;
     } catch (...) {
@@ -264,7 +257,7 @@ std::optional<std::string> fetched(const Command& what) {
     constexpr std::size_t most = 4 * 1024 * 1024;
 
     try {
-        const Child one = Child::start(what).await();
+        const Child one = Child::start(what).get();
 
         one.close_input();
 
@@ -281,46 +274,36 @@ std::optional<std::string> fetched(const Command& what) {
         std::string made;
 
         for (;;) {
-            const auto piece = std::make_shared<Bytes>();
-
-            Promise<void> sipping = one.read(64 * 1024).then([piece](Bytes got) { *piece = std::move(got); });
-            Promise<void> limit = Time::limit(left());
+            Bytes piece;
 
             try {
-                Promise<void>::race(sipping, limit).await();
+                piece = one.read(64 * 1024).timeout(left()).get();
             } catch (...) {
                 one.kill();
 
                 return std::nullopt;
             }
 
-            limit.cancel();
+            if (piece.empty()) break;
 
-            if (piece->empty()) break;
-
-            if (made.size() + piece->size() > most) {
+            if (made.size() + piece.size() > most) {
                 one.kill();
 
                 return std::nullopt;
             }
 
-            made += text(*piece);
+            made += text(piece);
         }
 
-        Promise<Exit> ending = one.wait();
-        Promise<void> limit = Time::limit(left());
+        Exit ended;
 
         try {
-            Promise<void>::race(ending, limit).await();
+            ended = one.wait().timeout(left()).get();
         } catch (...) {
             one.kill();
 
             return std::nullopt;
         }
-
-        limit.cancel();
-
-        const Exit ended = ending.await();
 
         if (ended.ended != Ended::normal || ended.code != 0) return std::nullopt;
 

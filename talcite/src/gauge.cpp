@@ -62,7 +62,7 @@ void Gauge::busy(bool given) {
     else beat_.reset();
 }
 
-// The bar spins by itself, on the library's clock. `Time::later` measures the interval, `here()`
+// The bar spins by itself, on the library's clock. `later` measures the interval, `here()`
 // moves the continuation to the loop's thread, and `Loop::post` inside the loop wakes the terminal
 // and forces a frame.
 //
@@ -81,15 +81,13 @@ void Gauge::beating() {
 
     const int mine = turn_;
 
-    // The promise has to be kept. A link hangs on its promise through a weak reference, so an
-    // abandoned then(...).start() simply never runs; this is the same rule by which an owner's
-    // death cuts off its calls, and the reason there is no clear() method. The type is hidden
-    // behind shared_ptr<void> so that the widget's header does not pull in the whole promise
-    // machinery; `Carry` does the same trick.
+    // The promise has to be kept: the handle is its owner, and a dropped handle stops the beat. The
+    // type is hidden behind shared_ptr<void> so that the widget's header does not pull in the whole
+    // promise machinery.
     //
-    // Replacing it inside the callback is safe: `Carry` holds itself while it moves to the loop, so
-    // releasing our handle does not kill the code that is running.
-    beat_ = std::make_shared<Promise<void>>(Time::later(pacing).here().then([weak, mine] {
+    // Replacing it inside the callback is safe: the running callback belongs to the promise's node,
+    // not to the handle, so letting go of the handle only cancels what has not run yet.
+    beat_ = std::make_shared<Promise<void>>(later(pacing).here().then([weak, mine] {
         const std::shared_ptr<Node> one = weak.lock();
 
         if (!one) return;
@@ -101,8 +99,6 @@ void Gauge::beating() {
         gauge.step();
         gauge.beating();
     }));
-
-    std::static_pointer_cast<Promise<void>>(beat_)->start();
 }
 
 // Draws the brackets, the bar (filled part or the bouncing block) and, when there is room, the

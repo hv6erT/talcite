@@ -28,7 +28,7 @@ namespace talcite {
 // is recognized in most programs. This table maps each byte to its linear brightness in [0, 1].
 //
 // It lives in one place because both scaling and the mosaic compute it; two copies of the same
-// table in two translation units are the same one-definition trap as described at `HandPromise`.
+// table in two translation units are the same one-definition trap as described at `Handing`.
 inline const std::array<double, 256>& straight() {
     static const std::array<double, 256> made = [] {
         std::array<double, 256> these{};

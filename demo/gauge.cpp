@@ -70,9 +70,8 @@ int main() {
     const auto running = std::make_shared<bool>(false);
     const auto again = std::make_shared<std::function<void()>>();
 
-    // The promise has to be kept until it settles. An abandoned `then(...).start()` never fires,
-    // because the chain hangs on the promise through a weak pointer; it is the same rule that cuts
-    // off the callbacks when their owner dies.
+    // The promise has to be kept until it settles: work goes on only while someone wants it, so a
+    // dropped wait is given up and its callback never runs.
     const auto beat = std::make_shared<std::optional<talcite::Promise<void>>>();
 
     *again = [known, told, running, again, beat] {
@@ -90,10 +89,7 @@ int main() {
             return;
         }
 
-        beat->emplace(
-            talcite::Time::later(std::chrono::milliseconds{50}).here().then([again] { (*again)(); }));
-
-        (*beat)->start();
+        beat->emplace(talcite::later(std::chrono::milliseconds{50}).here().then([again] { (*again)(); }));
     };
 
     (void)demo::doing(legend->add(talcite::ui::Code::f5, "Start"),

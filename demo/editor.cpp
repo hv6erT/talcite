@@ -358,7 +358,7 @@ int main(int argc, char** argv) {
                         if (got.empty()) {
                             file.close();
 
-                            return talcite::Promise<void>{[](auto resolve, auto) { resolve(); }};
+                            return talcite::ready();
                         }
 
                         const std::uintmax_t from = *at;
@@ -370,11 +370,9 @@ int main(int argc, char** argv) {
                 })
                 .here()
                 .then([where, saying] { saying("saved to " + *where); })
-                .fail([saying](const std::exception& why) {
+                .recover([saying](const std::exception& why) {
                     saying(std::string{"save failed: "} + why.what());
                 }));
-
-        (*saving)->start();
     });
 
     (void)demo::doing(legend->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
@@ -456,13 +454,11 @@ int main(int argc, char** argv) {
 
                                 shown->hold(std::move(got));
                             })
-                            .fail([shown, source, from](const std::exception&) {
+                            .recover([shown, source, from](const std::exception&) {
                                 *source = "could not open: " + talcite::fs::to_string(from);
 
                                 shown->hold(lump(sample));
                             }));
-
-        opening->start();
     } else {
         shown->hold(lump(sample));
 

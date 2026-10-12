@@ -11,14 +11,15 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 
-#include "talcite/bell.hpp"
-#include "talcite/pool.hpp"
+#include "talcite/place.hpp"
+#include "talcite/promise.hpp"
 
 #include "fscore.hpp"
 
@@ -58,13 +59,14 @@ struct Watch::Held {
     std::uint64_t which = 0;
 
     struct Wanting {
-        std::shared_ptr<detail::Result<std::vector<Change>>> result;
-        std::shared_ptr<detail::Waiter> gone;
+        std::uint64_t id = 0;
+        Settle<std::vector<Change>> settle;
     };
 
     std::mutex guard;
     std::deque<Change> pending;
-    std::vector<Wanting> waiting;
+    std::deque<Wanting> waiting;
+    std::uint64_t asked = 0;
 
     ~Held();
 
@@ -93,41 +95,28 @@ void reached(std::uint64_t which, std::vector<Change> among);
 // root gone) and hands it over to polling.
 void forsaken(std::uint64_t which);
 
-// A promise that reaches for the protected constructor to supply a ticket that the watcher
-// thread settles, not the promise's own callback.
-class Nexting : public Promise<std::vector<Change>> {
-public:
-    Nexting(Promise<std::vector<Change>>::Callback given,
-            std::shared_ptr<detail::Result<std::vector<Change>>> made)
-        : Promise<std::vector<Change>>(std::move(given), std::move(made)) {}
-};
+// A request whose promise was given up leaves the queue of waiting ones, otherwise the first
+// batch would go to nobody. It runs inside the cancelling call; the request is destroyed outside
+// the lock.
+void forgotten(const std::weak_ptr<Watch::Held>& whose, std::uint64_t id) {
+    const std::shared_ptr<Watch::Held> held = whose.lock();
 
-// A cancelled request must disappear from the queue of waiting ones, otherwise the first batch
-// would go to nobody. The same kind of watcher as Dropping in the timer.
-class Forgetting : public detail::Waiter {
-public:
-    Forgetting(std::weak_ptr<Watch::Held> whose, detail::Result<std::vector<Change>>* which)
-        : whose_(std::move(whose)), which_(which) {}
+    if (!held) return;
 
-    // The ticket has settled or been cancelled: removes it from the waiting queue, if the watch
-    // still exists.
-    void woke() override {
-        const std::shared_ptr<Watch::Held> held = whose_.lock();
-        if (!held) return;
+    std::optional<Watch::Held::Wanting> gone;
 
+    {
         const std::lock_guard<std::mutex> kept{held->guard};
 
-        const auto at = std::find_if(
-            held->waiting.begin(), held->waiting.end(),
-            [this](const Watch::Held::Wanting& one) { return one.result.get() == which_; });
+        const auto at = std::find_if(held->waiting.begin(), held->waiting.end(),
+                                     [id](const Watch::Held::Wanting& one) { return one.id == id; });
 
-        if (at != held->waiting.end()) held->waiting.erase(at);
+        if (at == held->waiting.end()) return;
+
+        gone.emplace(std::move(*at));
+        held->waiting.erase(at);
     }
-
-private:
-    std::weak_ptr<Watch::Held> whose_;
-    detail::Result<std::vector<Change>>* which_;
-};
+}
 
 // Repeated "modified" for the same path are merged: the file system produces bursts, and the
 // panel redraws once anyway. On overflow a single entry remains: count lost.
@@ -153,35 +142,30 @@ void noting(Watch::Held& held, Change made) {
 }
 
 // Adds the changes to the watch's pending ones and, if someone is waiting, hands all pending
-// changes to the first waiting request.
+// changes to the first waiting request. A request may have been given up a moment ago and not
+// have left the queue yet; it refuses the batch, and the next one gets it. The batch is handed
+// over as a copy, so that a refusal loses nothing: whatever nobody took stays pending. Settling
+// runs no code of the waiting side here, so it may happen under the lock.
 void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among) {
-    std::shared_ptr<detail::Result<std::vector<Change>>> lucky;
-    std::vector<Change> giving;
+    std::deque<Watch::Held::Wanting> gone;
 
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
         for (Change& one : among) noting(*held, std::move(one));
 
-        if (!held->waiting.empty() && !held->pending.empty()) {
-            lucky = held->waiting.front().result;
-            held->waiting.erase(held->waiting.begin());
+        while (!held->waiting.empty() && !held->pending.empty()) {
+            Watch::Held::Wanting first = std::move(held->waiting.front());
 
-            giving.assign(std::make_move_iterator(held->pending.begin()),
-                          std::make_move_iterator(held->pending.end()));
-            held->pending.clear();
+            held->waiting.pop_front();
+
+            const bool taken =
+                first.settle.value(std::vector<Change>(held->pending.begin(), held->pending.end()));
+
+            gone.push_back(std::move(first));
+
+            if (taken) held->pending.clear();
         }
-    }
-
-    // Outside the lock: settling wakes the watchers, among them our own one. It also runs what
-    // was chained to the request, on the watcher's own thread, where an exception would end the
-    // program. The request is settled before anything chained runs, so there is nobody left to
-    // tell, and the exception is swallowed.
-    if (!lucky) return;
-
-    try {
-        detail::settled(*lucky, std::move(giving));
-    } catch (...) {
     }
 }
 
@@ -200,8 +184,9 @@ struct Post {
     std::vector<int> spots;
 };
 
-// The directories under the root are collected by our own walk, not by walk_at: that one asks
-// the bell of the current task, and the watcher thread has no task.
+// The directories under the root are collected by our own walk, not by walk_at: only directories
+// are needed here, while walk_at gathers every entry and answers to the stop of the work running on
+// its thread, and the watcher thread runs none.
 std::vector<path> under(const path& where) {
     std::vector<path> made;
     std::vector<path> waiting{where};
@@ -1304,6 +1289,8 @@ void forsaken(std::uint64_t which) { watching().forsaken(which); }
 // Unregisters the watch when the last handle to it goes away.
 Watch::Held::~Held() {
     if (which != 0) watching().drop(which);
+
+    for (Wanting& one : waiting) (void)one.settle.fail(std::make_exception_ptr(Trouble{"The watch is closed.", where}));
 }
 
 // The watched path, or an empty path for a closed watch.
@@ -1316,7 +1303,7 @@ const path& Watch::where() const {
 // Starts watching a directory (the whole tree below it when `deep`) or a single file. Fails
 // when there is nothing at `where`.
 Promise<Watch> watch(const path& where, bool deep) {
-    return Promise<Watch>{[where, deep](auto resolve, auto) {
+    return run(io(), [where, deep]() -> Watch {
         if (kind_at(where) != Kind::folder && kind_at(where) != Kind::file)
             amiss("Nothing to watch.", where);
 
@@ -1326,52 +1313,39 @@ Promise<Watch> watch(const path& where, bool deep) {
         held->deep = deep;
         held->which = watching().add(held);
 
-        resolve(Watch{held});
-    }};
+        return Watch{held};
+    });
 }
 
-// The next batch of changes: everything pending at once, or the first batch that arrives.
+// The next batch of changes: everything pending at once, or the first batch that arrives. Giving
+// up the promise takes the request out of the queue.
 Promise<std::vector<Change>> Watch::next() {
-    auto held = held_;
+    const std::shared_ptr<Held> held = held_;
 
-    if (!held)
-        return Promise<std::vector<Change>>{
-            [](auto, auto) { amiss("The watch is closed.", path{}); }};
+    if (!held) return failed<std::vector<Change>>(std::make_exception_ptr(Trouble{"The watch is closed.", path{}}));
 
-    auto made = std::make_shared<detail::Result<std::vector<Change>>>();
+    std::vector<Change> giving;
 
-    return Nexting{[held, made](auto, auto) {
-                       // The ticket holds its watchers weakly, so the watcher needs an owner on
-                       // this side; otherwise it dies right after returning from here, and a
-                       // cancelled request stays in the queue and swallows the first batch.
-                       const std::shared_ptr<detail::Waiter> gone =
-                           std::make_shared<Forgetting>(held, made.get());
+    {
+        const std::lock_guard<std::mutex> kept{held->guard};
 
-                       std::vector<Change> giving;
+        if (held->pending.empty()) {
+            auto [made, settle] = promised<std::vector<Change>>();
 
-                       {
-                           const std::lock_guard<std::mutex> kept{held->guard};
+            const std::uint64_t id = ++held->asked;
 
-                           if (held->pending.empty()) {
-                               held->waiting.push_back(Watch::Held::Wanting{made, gone});
-                           } else {
-                               giving.assign(std::make_move_iterator(held->pending.begin()),
-                                             std::make_move_iterator(held->pending.end()));
-                               held->pending.clear();
-                           }
-                       }
+            (void)detail::stopping(settle.stop(), [weak = std::weak_ptr<Held>{held}, id] { forgotten(weak, id); });
 
-                       if (!giving.empty()) {
-                           settled(*made, std::move(giving));
-                           return;
-                       }
+            held->waiting.push_back(Held::Wanting{id, std::move(settle)});
 
-                       // Outside the lock, just as in the timer: a ticket that is already
-                       // settled calls the watcher at once, and it comes back here for the same
-                       // lock.
-                       if (hooked(*made, gone)) gone->woke();
-                   },
-                   made};
+            return std::move(made);
+        }
+
+        giving.assign(std::make_move_iterator(held->pending.begin()), std::make_move_iterator(held->pending.end()));
+        held->pending.clear();
+    }
+
+    return ready(std::move(giving));
 }
 
 }

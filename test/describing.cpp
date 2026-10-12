@@ -92,7 +92,7 @@ TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
     bool amiss = false;
 
     try {
-        (void)none.described(file).await();
+        (void)none.described(file).get();
     } catch (const Unbound& why) {
         amiss = std::string{why.what()} == "No provider for Meta.";
     }
@@ -102,7 +102,7 @@ TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
     amiss = false;
 
     try {
-        (void)none.pictured(file, 0).await();
+        (void)none.pictured(file, 0).get();
     } catch (const Unbound&) {
         amiss = true;
     }
@@ -116,11 +116,7 @@ TRIAL("Meta: the provider sees the file's size and bytes, and a read past the en
 
     const stdfs::path file = written("plain.bin", "fLaC....xyz");
 
-    Promise<meta::Description> asked = meta.described(file);
-
-    same(faked->asked.load(), 0);
-
-    const meta::Description got = asked.await();
+    const meta::Description got = meta.described(file).get();
 
     same(faked->asked.load(), 1);
     same(got.type, std::string{"fLaC"});
@@ -140,7 +136,7 @@ TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
     bool amiss = false;
 
     try {
-        (void)meta.described(written("refused.bin", "NOPE and more")).await();
+        (void)meta.described(written("refused.bin", "NOPE and more")).get();
     } catch (const Refused& why) {
         amiss = std::string{why.what()} == "Meta provider refused: not a file the fake would read";
     }
@@ -150,7 +146,7 @@ TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
     amiss = false;
 
     try {
-        (void)meta.pictured(written("pictured.bin", "abc"), 10).await();
+        (void)meta.pictured(written("pictured.bin", "abc"), 10).get();
     } catch (const Refused& why) {
         amiss = std::string{why.what()} == "Meta provider refused: no such picture";
     }
@@ -165,7 +161,7 @@ TRIAL("Meta: a missing file rejects with a file system error, and the provider i
     bool amiss = false;
 
     try {
-        (void)meta.described(stdfs::temp_directory_path() / "talcite-describing" / "nie ma.bin").await();
+        (void)meta.described(stdfs::temp_directory_path() / "talcite-describing" / "nie ma.bin").get();
     } catch (const fs::Trouble&) {
         amiss = true;
     }
@@ -177,7 +173,7 @@ TRIAL("Meta: a missing file rejects with a file system error, and the provider i
 TRIAL("Meta: the picture comes from the provider with the number asked for") {
     const Seam<MetaProvider> meta{std::make_shared<Faked>()};
 
-    const Bytes got = meta.pictured(written("picture.bin", "Zebra"), 7).await();
+    const Bytes got = meta.pictured(written("picture.bin", "Zebra"), 7).get();
 
     same(got.size(), std::size_t{4});
     same(std::to_integer<int>(got[0]), 7);

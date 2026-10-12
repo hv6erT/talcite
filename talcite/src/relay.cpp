@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <exception>
 #include <mutex>
@@ -11,10 +12,9 @@
 #include <vector>
 
 #include "talcite/address.hpp"
-#include "talcite/bell.hpp"
-#include "talcite/pool.hpp"
-#include "talcite/time.hpp"
+#include "talcite/place.hpp"
 
+#include "hearing.hpp"
 #include "stunning.hpp"
 
 namespace talcite::net {
@@ -116,36 +116,6 @@ constexpr std::size_t roomy = 65535;
 
 constexpr Patience listening{1000};
 
-// Lends the bell of the pool task running on this thread an ear on the relay's condition variable
-// for the length of a wait, so that cancelling the task wakes the wait at once instead of after its
-// whole patience. Outside a pool task there is no bell and it does nothing. It must be made before
-// the relay's lock is taken and outlive it, because `Bell::heed` must not be called under the
-// mutex it is lent.
-class Hearing {
-public:
-    // Lends the ear, remembering the one heard before.
-    explicit Hearing(Lasting& held) : bell_(ringing()) {
-        if (bell_ != nullptr) was_ = bell_->heed(Bell::Ear{&held.guard, &held.stirring});
-    }
-
-    // Gives the previous ear back.
-    ~Hearing() {
-        if (bell_ != nullptr) (void)bell_->heed(was_);
-    }
-
-    Hearing(const Hearing&) = delete;
-    Hearing& operator=(const Hearing&) = delete;
-    Hearing(Hearing&&) = delete;
-    Hearing& operator=(Hearing&&) = delete;
-
-    // Whether the task has been cancelled.
-    [[nodiscard]] bool rang() const { return bell_ != nullptr && bell_->rang(); }
-
-private:
-    Bell* bell_ = nullptr;
-    Bell::Ear was_{};
-};
-
 // How much life we ask for the allocation (seconds) and how long before its end we renew it. The
 // server may give less than we ask, and then its word counts, which is why the end time is taken
 // from the answer, not from the request.
@@ -194,7 +164,7 @@ void posting(const std::shared_ptr<Lasting>& held, const Address& to, Bytes what
 
         if (held->shutting.load()) return;
 
-        held->post.send(to, std::move(what), patience).await();
+        held->post.send(to, std::move(what), patience).get();
     } catch (const std::exception&) {
     }
 }
@@ -226,7 +196,7 @@ bool turning(const std::shared_ptr<Lasting>& held) {
     try {
         if (held->shutting.load()) return false;
 
-        came = held->post.receive(roomy, listening).await();
+        came = held->post.receive(roomy, listening).get();
     } catch (const Overdue&) {
         keeping(held);
         renewed(held);
@@ -335,13 +305,9 @@ void waking(const std::shared_ptr<Lasting>& held) {
 
     if (!held->living.compare_exchange_strong(was, true)) return;
 
-    Promise<void> made{[weak = std::weak_ptr<Lasting>{held}](auto resolve, auto) {
+    run(io(), [weak = std::weak_ptr<Lasting>{held}]() {
         minding(weak);
-
-        resolve();
-    }};
-
-    made.start();
+    }).detach();
 }
 
 // One request with retries, on the STUN schedule: half a second, then doubling. Returns the
@@ -353,7 +319,7 @@ Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Nu
                Patience patience) {
     const std::lock_guard<std::mutex> alone{held->talking};
 
-    const Hearing heard{*held};
+    const Hearing heard{held};
 
     {
         const std::lock_guard<std::mutex> kept{held->guard};
@@ -465,7 +431,7 @@ void renewed(const std::shared_ptr<Lasting>& held) {
         return;
     }
 
-    Promise<void> made{[held](auto resolve, auto) {
+    run(io(), [held]() {
         int lasting = 0;
 
         try {
@@ -496,11 +462,7 @@ void renewed(const std::shared_ptr<Lasting>& held) {
 
             held->renewing = false;
         }
-
-        resolve();
-    }};
-
-    made.start();
+    }).detach();
 }
 
 // Renews the permissions when they are due, all at once: one request carries as many peer
@@ -523,7 +485,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
         whom = held->allowed;
     }
 
-    Promise<void> made{[held, whom](auto resolve, auto) {
+    run(io(), [held, whom]() {
         bool done = false;
 
         try {
@@ -549,11 +511,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
 
             held->permitting = false;
         }
-
-        resolve();
-    }};
-
-    made.start();
+    }).detach();
 }
 
 // Binds a channel to peer `to`, or renews its binding, in the background. We choose the number
@@ -603,7 +561,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
         }
     }
 
-    Promise<void> made{[held, to, number](auto resolve, auto) {
+    run(io(), [held, to, number]() {
         bool done = false;
 
         try {
@@ -634,11 +592,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
                     }
                 }
         }
-
-        resolve();
-    }};
-
-    made.start();
+    }).detach();
 }
 
 // Renews the channels that are close to expiring. A channel lives ten minutes and traffic does not
@@ -686,8 +640,7 @@ void keeping(const std::shared_ptr<Lasting>& held) {
 // A promise already rejected with `Trouble` carrying `said`.
 template <typename T>
 Promise<T> amiss_now(const std::string& said) {
-    return Promise<T>{
-        [said](auto, auto reject) { reject(std::make_exception_ptr(Trouble{said})); }};
+    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 }
@@ -734,76 +687,68 @@ Promise<Address> Relay::open(Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<Address> made{[held, patience](auto resolve, auto reject) {
-        try {
-            waking(held);
+    return run(io(), [held, patience]() -> Address {
+        waking(held);
 
-            const Clock::time_point until = Clock::now() + patience;
+        const Clock::time_point until = Clock::now() + patience;
 
-            Number number = numbered();
+        Number number = numbered();
 
-            Bytes what = begun(Task::allocate, Sort::asking, number);
+        Bytes what = begun(Task::allocate, Sort::asking, number);
 
-            // The relay has to give us an address for UDP; 17 is the number of that protocol.
-            wording(what, 0x0019, 17u << 24);
+        // The relay has to give us an address for UDP; 17 is the number of that protocol.
+        wording(what, 0x0019, 17u << 24);
 
-            Message told = asking(held, what, number, left(until));
+        Message told = asking(held, what, number, left(until));
 
-            if (told.sort == Sort::amiss && (told.code == 401 || told.code == 438)) {
-                if (held->user.empty())
-                    throw Trouble{"The relay demands credentials and there are none.", told.code};
-
-                {
-                    const std::lock_guard<std::mutex> kept{held->guard};
-
-                    held->realm = told.realm;
-                    held->nonce = told.nonce;
-                    held->key = keyed(held->user, told.realm, held->word);
-                }
-
-                number = numbered();
-
-                what = begun(Task::allocate, Sort::asking, number);
-
-                wording(what, 0x0019, 17u << 24);
-
-                naming(held, what);
-
-                told = asking(held, what, number, left(until));
-            }
-
-            if (told.sort == Sort::amiss)
-                throw Trouble{"The relay refused allocation: " +
-                                  (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
-                              told.code, held->server};
-
-            if (!told.lent.held()) throw Trouble{"The relay gave no relayed address."};
+        if (told.sort == Sort::amiss && (told.code == 401 || told.code == 438)) {
+            if (held->user.empty())
+                throw Trouble{"The relay demands credentials and there are none.", told.code};
 
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                held->lent = told.lent;
-                held->seen = told.seen;
-
-                // The end time is taken from the answer, not from the request. The server may give
-                // less, and a refresh counted from what we asked for would be late by the
-                // difference.
-                held->until =
-                    Clock::now() +
-                    std::chrono::seconds{told.lifetime > 0 ? told.lifetime : living_for};
-
-                held->beat = Clock::now();
+                held->realm = told.realm;
+                held->nonce = told.nonce;
+                held->key = keyed(held->user, told.realm, held->word);
             }
 
-            resolve(told.lent);
-        } catch (...) {
-            reject(std::current_exception());
+            number = numbered();
+
+            what = begun(Task::allocate, Sort::asking, number);
+
+            wording(what, 0x0019, 17u << 24);
+
+            naming(held, what);
+
+            told = asking(held, what, number, left(until));
         }
-    }};
 
-    made.start();
+        if (told.sort == Sort::amiss)
+            throw Trouble{"The relay refused allocation: " +
+                              (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
+                          told.code, held->server};
 
-    return made;
+        if (!told.lent.held()) throw Trouble{"The relay gave no relayed address."};
+
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
+
+            held->lent = told.lent;
+            held->seen = told.seen;
+
+            // The end time is taken from the answer, not from the request. The server may give
+            // less, and a refresh counted from what we asked for would be late by the
+            // difference.
+            held->until =
+                Clock::now() +
+                std::chrono::seconds{told.lifetime > 0 ? told.lifetime : living_for};
+
+            held->beat = Clock::now();
+        }
+
+        return told.lent;
+    });
 }
 
 // Grants a permission for `peer`. The relay does not let through a single byte from someone it has
@@ -816,63 +761,53 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<void> made{[held, peer, patience](auto resolve, auto reject) {
-        try {
-            // A permission is a request, and the receive loop recognizes the answer to it, so the
-            // loop has to run. It usually runs since the allocation, but that cannot be relied on:
-            // otherwise a permission granted as the first move would wait for an answer nobody
-            // reads.
-            waking(held);
+    return run(io(), [held, peer, patience]() {
+        // A permission is a request, and the receive loop recognizes the answer to it, so the
+        // loop has to run. It usually runs since the allocation, but that cannot be relied on:
+        // otherwise a permission granted as the first move would wait for an answer nobody
+        // reads.
+        waking(held);
 
-            {
-                const std::lock_guard<std::mutex> kept{held->guard};
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
 
-                if (held->lost) throw Trouble{"The allocation is lost."};
-            }
-
-            const Number number = numbered();
-
-            Bytes what = begun(Task::permission, Sort::asking, number);
-
-            placing(what, 0x0012, peer, true);
-
-            naming(held, what);
-
-            const Message told = asking(held, what, number, patience);
-
-            if (told.sort == Sort::amiss)
-                throw Trouble{"The relay refused permission: " +
-                                  (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
-                              told.code, held->server};
-
-            {
-                const std::lock_guard<std::mutex> kept{held->guard};
-
-                bool known = false;
-
-                for (const Address& one : held->allowed)
-                    if (one.family() == peer.family() && one.bytes() == peer.bytes()) known = true;
-
-                // A permission covers an address, not a port, as the RFC prescribes. That is why it
-                // is remembered by address: a second port of the same host is already let through.
-                if (!known && held->allowed.size() < roomier) {
-                    // The renewal clock starts only from the first entry. Resetting it at every
-                    // following one would postpone the renewal of those that have waited long.
-                    if (held->allowed.empty()) held->granted = Clock::now();
-
-                    held->allowed.push_back(peer);
-                }
-            }
-
-            resolve();
-        } catch (...) {
-            reject(std::current_exception());
+            if (held->lost) throw Trouble{"The allocation is lost."};
         }
-    }};
 
-    made.start();
+        const Number number = numbered();
 
-    return made;
+        Bytes what = begun(Task::permission, Sort::asking, number);
+
+        placing(what, 0x0012, peer, true);
+
+        naming(held, what);
+
+        const Message told = asking(held, what, number, patience);
+
+        if (told.sort == Sort::amiss)
+            throw Trouble{"The relay refused permission: " +
+                              (told.said.empty() ? std::to_string(told.code) : told.said) + ".",
+                          told.code, held->server};
+
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
+
+            bool known = false;
+
+            for (const Address& one : held->allowed)
+                if (one.family() == peer.family() && one.bytes() == peer.bytes()) known = true;
+
+            // A permission covers an address, not a port, as the RFC prescribes. That is why it
+            // is remembered by address: a second port of the same host is already let through.
+            if (!known && held->allowed.size() < roomier) {
+                // The renewal clock starts only from the first entry. Resetting it at every
+                // following one would postpone the renewal of those that have waited long.
+                if (held->allowed.empty()) held->granted = Clock::now();
+
+                held->allowed.push_back(peer);
+            }
+        }
+    });
 }
 
 // Sends `what` to `to` through the relay, on a channel when one is bound. Sending goes by
@@ -885,55 +820,42 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<void> made{[held, to, what = std::move(what), patience](auto resolve,
-                                                                   auto reject) mutable {
-        try {
-            {
-                const std::lock_guard<std::mutex> kept{held->guard};
+    return run(io(), [held, to, what = std::move(what), patience]() mutable {
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
 
-                if (held->lost) throw Trouble{"The allocation is lost."};
-            }
-
-            std::uint16_t channel = 0;
-
-            {
-                const std::lock_guard<std::mutex> kept{held->guard};
-
-                for (const Bound& one : held->bound)
-                    if (one.peer == to && one.ready && Clock::now() < one.until)
-                        channel = one.number;
-            }
-
-            if (channel != 0) {
-                posting(held, held->server, wrapped(channel, what), patience);
-
-                resolve();
-
-                return;
-            }
-
-            // There is no channel yet, so this parcel goes by indication, and the channel is
-            // ordered in the background. Waiting for it would cost the whole conversation as much
-            // as one request to the server, while an indication works from the first byte.
-            binding(held, to);
-
-            Bytes one = begun(Task::sending, Sort::telling, numbered());
-
-            placing(one, 0x0012, to, true);
-
-            giving(one, what);
-
-            posting(held, held->server, std::move(one), patience);
-
-            resolve();
-        } catch (...) {
-            reject(std::current_exception());
+            if (held->lost) throw Trouble{"The allocation is lost."};
         }
-    }};
 
-    made.start();
+        std::uint16_t channel = 0;
 
-    return made;
+        {
+            const std::lock_guard<std::mutex> kept{held->guard};
+
+            for (const Bound& one : held->bound)
+                if (one.peer == to && one.ready && Clock::now() < one.until)
+                    channel = one.number;
+        }
+
+        if (channel != 0) {
+            posting(held, held->server, wrapped(channel, what), patience);
+
+            return;
+        }
+
+        // There is no channel yet, so this parcel goes by indication, and the channel is
+        // ordered in the background. Waiting for it would cost the whole conversation as much
+        // as one request to the server, while an indication works from the first byte.
+        binding(held, to);
+
+        Bytes one = begun(Task::sending, Sort::telling, numbered());
+
+        placing(one, 0x0012, to, true);
+
+        giving(one, what);
+
+        posting(held, held->server, std::move(one), patience);
+    });
 }
 
 // Receives the next datagram relayed from a peer, at most `most` bytes; rejects with `Overdue`
@@ -944,46 +866,38 @@ Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
 
     auto held = held_->alive;
 
-    Promise<Datagram> made{[held, most, patience](auto resolve, auto reject) {
-        try {
-            waking(held);
+    return run(io(), [held, most, patience]() -> Datagram {
+        waking(held);
 
-            const Hearing heard{*held};
+        const Hearing heard{held};
 
-            std::unique_lock<std::mutex> kept{held->guard};
+        std::unique_lock<std::mutex> kept{held->guard};
 
-            if (!held->stirring.wait_for(kept, patience, [&held, &heard] {
-                    return !held->spare.empty() || held->lost || held->shutting.load() ||
-                           !held->living.load() || heard.rang();
-                }))
-                throw Overdue{};
+        if (!held->stirring.wait_for(kept, patience, [&held, &heard] {
+                return !held->spare.empty() || held->lost || held->shutting.load() ||
+                       !held->living.load() || heard.rang();
+            }))
+            throw Overdue{};
 
-            if (heard.rang()) throw Cancelled{};
+        if (heard.rang()) throw Cancelled{};
 
-            // What was received earlier is handed over even when the allocation is already lost:
-            // those bytes really arrived and nobody invalidated them.
-            if (held->spare.empty() && held->lost) throw Trouble{"The allocation is lost."};
+        // What was received earlier is handed over even when the allocation is already lost:
+        // those bytes really arrived and nobody invalidated them.
+        if (held->spare.empty() && held->lost) throw Trouble{"The allocation is lost."};
 
-            if (held->spare.empty()) throw Trouble{"The relay is closed."};
+        if (held->spare.empty()) throw Trouble{"The relay is closed."};
 
-            if (held->spare.front().bytes.size() > most)
-                throw Trouble{"The parcel does not fit in the given space."};
+        if (held->spare.front().bytes.size() > most)
+            throw Trouble{"The parcel does not fit in the given space."};
 
-            Datagram one = std::move(held->spare.front());
+        Datagram one = std::move(held->spare.front());
 
-            held->spare.pop_front();
+        held->spare.pop_front();
 
-            kept.unlock();
+        kept.unlock();
 
-            resolve(std::move(one));
-        } catch (...) {
-            reject(std::current_exception());
-        }
-    }};
-
-    made.start();
-
-    return made;
+        return one;
+    });
 }
 
 // Closes the relay; the destructor of `Held` does the work, as when the last handle lets go.

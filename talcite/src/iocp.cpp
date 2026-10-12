@@ -114,7 +114,7 @@ std::atomic<Exchange::Held*> standing{nullptr};
 //
 // Zero means "bound"; anything else is an error code. The caller must not start the operation on
 // failure: its completion would have nowhere to go, because the port knows nothing about this
-// handle. The `Ticket` would stay fresh, a thread in `await` would never wake up, and the program
+// handle. The request would never settle, a thread in `get` would never wake up, and the program
 // would never finish exiting.
 //
 // The code comes from `GetLastError`, not from `amiss()`, because this is a Win32 call, not a
@@ -715,8 +715,8 @@ Exchange::~Exchange() {
     }
 
     // Each request is also the result of the caller's promise, so every one that passes through
-    //    here must be settled. An abandoned one leaves the `Ticket` fresh, a thread waiting in
-    //    `await()` never wakes up, and the program never finishes exiting. The POSIX backend does
+    //    here must be settled. An unsettled one leaves its promise running, a thread waiting in
+    //    `get()` never wakes up, and the program never finishes exiting. The POSIX backend does
     //    the same at the same point (`exchange.cpp`, `done(0, ECONNABORTED)`).
     //
     //    We call `done()` directly, not through `ended()`. The latter goes through `handed()`,
@@ -871,8 +871,8 @@ void submit(std::shared_ptr<Doing> one) {
 // the operation is already running in the kernel, and `CancelIoEx` only asks for it to be
 // interrupted; the completion still arrives at the port, with ERROR_OPERATION_ABORTED, and only
 // that completion clears the direction flag. So the result is always false: we removed nothing,
-// and the caller must not clean up after itself. Telling the waiter the right thing is the job of
-// `Ticket::quitted`, not of this function.
+// and the caller must not clean up after itself. Nobody has to be told: whoever cancelled has given
+// the promise up.
 //
 // Scanning `flying` linearly is deliberate. There are as many entries as operations in flight, and
 // cancellation is not a hot path; a separate map would cost an entry on every submission to speed

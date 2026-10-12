@@ -46,8 +46,8 @@ struct Desk {
 
     // Writes the text to the client and waits until it is written.
     void wrote(const std::string& what) {
-        if (secure.held()) secure.write(bytes(what), soon).await();
-        else plain.write(bytes(what), soon).await();
+        if (secure.held()) secure.write(bytes(what), soon).get();
+        else plain.write(bytes(what), soon).get();
     }
 
     // The request head up to the empty line, or nothing when the client closed first.
@@ -61,7 +61,7 @@ struct Desk {
                 return made;
             }
 
-            const Bytes got = secure.held() ? secure.read(4096, soon).await() : plain.read(4096, soon).await();
+            const Bytes got = secure.held() ? secure.read(4096, soon).get() : plain.read(4096, soon).get();
 
             if (got.empty()) return {};
 
@@ -73,7 +73,7 @@ struct Desk {
     // means "did not close".
     bool ended(net::Patience patience = soon) {
         try {
-            const Bytes got = secure.held() ? secure.read(64, patience).await() : plain.read(64, patience).await();
+            const Bytes got = secure.held() ? secure.read(64, patience).get() : plain.read(64, patience).get();
 
             return got.empty();
         } catch (const Overdue&) {
@@ -85,7 +85,7 @@ struct Desk {
     // further reading.
     std::string taken(std::size_t much) {
         while (kept.size() < much) {
-            const Bytes got = secure.held() ? secure.read(4096, soon).await() : plain.read(4096, soon).await();
+            const Bytes got = secure.held() ? secure.read(4096, soon).get() : plain.read(4096, soon).get();
 
             if (got.empty()) break;
 
@@ -110,7 +110,7 @@ struct Desk {
 Desk accepted(const net::Listener& gate) {
     Desk made;
 
-    made.plain = gate.accept(soon).await();
+    made.plain = gate.accept(soon).get();
 
     return made;
 }
@@ -120,7 +120,7 @@ Desk accepted(const net::Listener& gate) {
 Desk accepted(const net::Listener& gate, const Seam<net::TlsProvider>& tls) {
     Desk made;
 
-    made.secure = net::TlsStream::server(gate.accept(soon).await(), tls, soon).await();
+    made.secure = net::TlsStream::server(gate.accept(soon).get(), tls, soon).get();
 
     return made;
 }
@@ -142,7 +142,7 @@ std::string body(const net::Response& one) { return text(one.body); }
 // refuse).
 std::optional<net::HttpTrouble::Why> why(Promise<net::Response>& one) {
     try {
-        (void)one.await();
+        (void)std::move(one).get();
     } catch (const net::HttpTrouble& trouble) {
         return trouble.why();
     } catch (const std::exception&) {
@@ -155,7 +155,7 @@ std::optional<net::HttpTrouble::Why> why(Promise<net::Response>& one) {
 // Whether the request ended with any exception.
 bool refused(Promise<net::Response>& one) {
     try {
-        (void)one.await();
+        (void)std::move(one).get();
     } catch (const std::exception&) {
         return true;
     }
@@ -249,7 +249,7 @@ TRIAL("HTTP: GET sends the request and reads a response of the stated length") {
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"id\":550}\n");
 
-    const net::Response one = got.await();
+    const net::Response one = std::move(got).get();
 
     same(one.status, 200);
     same(body(one), std::string{"{\"id\":550}\n"});
@@ -280,7 +280,7 @@ TRIAL("HTTP: POST sends a body, always over a new connection") {
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(first.await()), std::string{"ok"});
+    same(body(std::move(first).get()), std::string{"ok"});
 
     auto second = client.post(asked(at(gate, "/ctl")), Bytes{});
 
@@ -289,7 +289,7 @@ TRIAL("HTTP: POST sends a body, always over a new connection") {
     same(other.heard().substr(0, 34), std::string{"POST /ctl HTTP/1.1\r\nHost: 127.0.0."});
     other.wrote("HTTP/1.1 500 Internal\r\nContent-Length: 0\r\n\r\n");
 
-    same(second.await().status, 500);
+    same(std::move(second).get().status, 500);
 
     // The method and body fields of the request mean nothing to `get`: it is always a GET without a
     // body.
@@ -308,7 +308,7 @@ TRIAL("HTTP: POST sends a body, always over a new connection") {
 
     other.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(third.await().status, 204);
+    same(std::move(third).get().status, 204);
 }
 
 // 307 and 308 repeat a POST together with its body; 301, 302 and 303 turn it into a GET without a
@@ -341,7 +341,7 @@ TRIAL("HTTP: redirecting a POST, 307 with the body, 303 as a GET") {
     ought(last.find("Content-Length") == std::string::npos);
     second.wrote("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
-    same(got.await().status, 200);
+    same(std::move(got).get().status, 200);
 }
 
 // A status is not an error: 404 and 429 come back as a response, with the Retry-After header along
@@ -359,14 +359,14 @@ TRIAL("HTTP: 404 and 429 are responses, not errors") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
 
-    same(first.await().status, 404);
+    same(std::move(first).get().status, 404);
 
     auto second = client.get(asked(at(gate, "/b")));
 
     (void)desk.heard();
     desk.wrote("HTTP/1.1 429\r\nRetry-After: \t 2 \t\r\nX-Limit-2: 5\r\nX.Dziwna_Nazwa!#: 1\r\nContent-Length: 0\r\n\r\n");
 
-    const net::Response two = second.await();
+    const net::Response two = std::move(second).get();
 
     same(two.status, 429);
     same(*two.header("retry-after"), std::string{"2"});
@@ -393,14 +393,14 @@ TRIAL("HTTP: a chunked body is joined into a whole") {
                "3 \r\nsa.\r\n"
                "0\r\nX-Przyczepka: tak\r\nX-Druga: też\r\n\r\n");
 
-    same(body(got.await()), std::string{"Ala ma kota i psa."});
+    same(body(std::move(got).get()), std::string{"Ala ma kota i psa."});
 
     auto again = client.get(asked(at(gate, "/2")));
 
     same(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(again.await()), std::string{"ok"});
+    same(body(std::move(again).get()), std::string{"ok"});
 }
 
 // A file of the trials for downloads, in a directory of its own, removed first so each trial
@@ -441,12 +441,15 @@ TRIAL("HTTP: a download takes the body into a file, beyond the body limit, by le
     same(desk.heard().substr(0, 14), std::string{"GET /plik HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(whole.size()) + "\r\n\r\n" + whole);
 
-    const net::Response one = got.await();
+    for (int tries = 0; tries < 5000 && !got.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+    same(got.progress().fraction(), 1.0);
+
+    const net::Response one = std::move(got).get();
 
     same(one.status, 200);
     ought(one.body.empty());
     same(inside(first), whole);
-    ought(got.progress() == 1.0);
 
     // The next request on the same connection: in chunks, through a redirect to another target.
     const std::filesystem::path second = saved_as("kawalki.bin");
@@ -459,7 +462,7 @@ TRIAL("HTTP: a download takes the body into a file, beyond the body limit, by le
     desk.wrote("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                "5\r\nAla m\r\nD\r\na kota i psa.\r\n0\r\n\r\n");
 
-    same(again.await().status, 200);
+    same(std::move(again).get().status, 200);
     same(inside(second), std::string{"Ala ma kota i psa."});
 }
 
@@ -480,7 +483,7 @@ TRIAL("HTTP: a download that is not 2xx or is cut off leaves no file") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 5\r\n\r\nbrak!");
 
-    const net::Response one = got.await();
+    const net::Response one = std::move(got).get();
 
     same(one.status, 404);
     same(body(one), std::string{"brak!"});
@@ -513,21 +516,11 @@ TRIAL("HTTP: a cancelled download stops and leaves no file") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + std::string(1000, 'a'));
 
-    for (int tries = 0; tries < 2000 && got.progress() == 0.0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    for (int tries = 0; tries < 2000 && got.progress().fraction() == 0.0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    ought(got.progress() > 0.0 && got.progress() < 1.0);
+    ought(got.progress().fraction() > 0.0 && got.progress().fraction() < 1.0);
 
     got.cancel();
-
-    bool cancelled = false;
-
-    try {
-        (void)got.await();
-    } catch (const Cancelled&) {
-        cancelled = true;
-    }
-
-    ought(cancelled);
 
     for (int tries = 0; tries < 2000 && std::filesystem::exists(place); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
@@ -552,7 +545,7 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     one.wrote("HTTP/1.1 200 OK\r\n\r\nwszystko, co jest");
     one.close();
 
-    same(body(first.await()), std::string{"wszystko, co jest"});
+    same(body(std::move(first).get()), std::string{"wszystko, co jest"});
 
     auto second = client.get(asked(at(gate, "/2")));
 
@@ -561,7 +554,7 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     (void)two.heard();
     two.wrote("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(second.await()), std::string{"ok"});
+    same(body(std::move(second).get()), std::string{"ok"});
     ought(two.ended());
 
     auto third = client.get(asked(at(gate, "/3")));
@@ -571,7 +564,7 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     (void)three.heard();
     three.wrote("HTTP/1.1 200 OK\r\nConnection: keep-alive, Close\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(third.await()), std::string{"ok"});
+    same(body(std::move(third).get()), std::string{"ok"});
     ought(three.ended());
 
     auto fourth = client.get(asked(at(gate, "/4")));
@@ -581,7 +574,7 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     same(four.heard().substr(0, 10), std::string{"GET /4 HTT"});
     four.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(fourth.await().status, 204);
+    same(std::move(fourth).get().status, 204);
 }
 
 // One connection per server: after a response with a known end the connection waits in the pool and
@@ -599,21 +592,21 @@ TRIAL("HTTP: a connection returns to the pool and carries the next requests") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(first.await().status, 204);
+    same(std::move(first).get().status, 204);
 
     auto second = client.get(asked(at(gate, "/2")));
 
     same(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
     desk.wrote("HTTP/1.1 304 Not Modified\r\n\r\n");
 
-    same(second.await().status, 304);
+    same(std::move(second).get().status, 304);
 
     auto third = client.get(asked(at(gate, "/3")));
 
     same(desk.heard().substr(0, 10), std::string{"GET /3 HTT"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntak");
 
-    same(body(third.await()), std::string{"tak"});
+    same(body(std::move(third).get()), std::string{"tak"});
 }
 
 // Bytes beyond the announced length are not the next response: a connection with them does not
@@ -630,7 +623,7 @@ TRIAL("HTTP: excess bytes close the connection") {
     (void)one.heard();
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nab");
 
-    same(body(first.await()), std::string{"a"});
+    same(body(std::move(first).get()), std::string{"a"});
 
     auto second = client.get(asked(at(gate, "/2")));
 
@@ -639,7 +632,7 @@ TRIAL("HTTP: excess bytes close the connection") {
     same(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
     two.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nc");
 
-    same(body(second.await()), std::string{"c"});
+    same(body(std::move(second).get()), std::string{"c"});
     ought(one.ended());
 }
 
@@ -658,7 +651,7 @@ TRIAL("HTTP: a connection closed while idle is replaced by a new one") {
     (void)one.heard();
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na");
 
-    same(body(first.await()), std::string{"a"});
+    same(body(std::move(first).get()), std::string{"a"});
 
     one.close();
 
@@ -669,7 +662,7 @@ TRIAL("HTTP: a connection closed while idle is replaced by a new one") {
     same(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
     two.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nb");
 
-    same(body(second.await()), std::string{"b"});
+    same(body(std::move(second).get()), std::string{"b"});
 }
 
 // A pooled connection that died in the middle of a response is not an idle one: the request is not
@@ -686,7 +679,7 @@ TRIAL("HTTP: a connection cut in the middle of a response does not repeat the re
     (void)one.heard();
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na");
 
-    (void)first.await();
+    (void)std::move(first).get();
 
     auto second = client.get(asked(at(gate, "/2")));
 
@@ -710,7 +703,7 @@ TRIAL("HTTP: an interim 1xx response lets the real one through") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    const net::Response one = got.await();
+    const net::Response one = std::move(got).get();
 
     same(one.status, 200);
     same(body(one), std::string{"ok"});
@@ -755,7 +748,7 @@ TRIAL("HTTP: limits of the head and the body") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789");
 
-    same(body(exact.await()), std::string{"0123456789"});
+    same(body(std::move(exact).get()), std::string{"0123456789"});
 }
 
 // Responses that cannot be read: a status line not from HTTP/1.x, a code that is not a number, a
@@ -871,7 +864,7 @@ TRIAL("HTTP: redirects lead to the target, and credentials stay with their serve
     same(other.heard().substr(0, 10), std::string{"GET /h HTT"});
     other.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    const net::Response one = got.await();
+    const net::Response one = std::move(got).get();
 
     same(one.status, 200);
     same(net::to_string(one.url), "http://localhost:" + port + "/h");
@@ -891,7 +884,7 @@ TRIAL("HTTP: a redirect without a target, with a malformed target and over the l
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nContent-Length: 0\r\n\r\n");
 
-    same(bare.await().status, 302);
+    same(std::move(bare).get().status, 302);
 
     auto crooked = client.get(asked(at(gate, "/")));
 
@@ -950,7 +943,7 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
     same(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nszyfr!");
 
-    same(body(got.await()), std::string{"szyfr!"});
+    same(body(std::move(got).get()), std::string{"szyfr!"});
 
     auto jump = client.get(asked(at(gate, "/skok", "https")));
 
@@ -961,7 +954,7 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
     same(desk.heard().substr(0, 13), std::string{"GET /cel HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(net::to_string(jump.await().url), at(gate, "/cel", "https"));
+    same(net::to_string(std::move(jump).get().url), at(gate, "/cel", "https"));
 
     auto down = client.get(asked(at(gate, "/znowu", "https")));
 
@@ -997,7 +990,7 @@ TRIAL("HTTP: a TLS handshake refusal reaches the caller with the reason and the 
     bool refused = false;
 
     try {
-        (void)got.await();
+        (void)std::move(got).get();
     } catch (const net::TlsTrouble& trouble) {
         refused = true;
 
@@ -1065,8 +1058,8 @@ TRIAL("HTTP: two requests at once, one connection in the pool") {
         desk->wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + path);
     }
 
-    same(body(first.await()), std::string{"/1"});
-    same(body(second.await()), std::string{"/2"});
+    same(body(std::move(first).get()), std::string{"/1"});
+    same(body(std::move(second).get()), std::string{"/2"});
 
     const int closed = static_cast<int>(one.ended(net::Patience{300})) + static_cast<int>(two.ended(net::Patience{300}));
 
@@ -1239,7 +1232,7 @@ TRIAL("Proxy: plain HTTP goes with the full URL and credentials") {
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(got.await()), std::string{"ok"});
+    same(body(std::move(got).get()), std::string{"ok"});
 }
 
 // HTTPS through a proxy: CONNECT with the name and port, a 200 response and TLS with the server
@@ -1261,12 +1254,12 @@ TRIAL("Proxy: HTTPS goes through a CONNECT tunnel, and a refused tunnel is a pro
 
     desk.wrote("HTTP/1.1 200 Connection established\r\nProxy-Agent: próba\r\n\r\n");
 
-    desk.secure = net::TlsStream::server(desk.plain, tls, soon).await();
+    desk.secure = net::TlsStream::server(desk.plain, tls, soon).get();
 
     same(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nszyfr!");
 
-    same(body(got.await()), std::string{"szyfr!"});
+    same(body(std::move(got).get()), std::string{"szyfr!"});
 
     net::HttpClient fresh{tls, {}, net::Proxy::from_strings("", proxy, "")};
 
@@ -1318,7 +1311,7 @@ TRIAL("Proxy: an exception goes directly to the server") {
     same(desk.heard().substr(0, 16), std::string{"GET /wprost HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(got.await()), std::string{"ok"});
+    same(body(std::move(got).get()), std::string{"ok"});
 }
 
 // --- Address race --------------------------------------------------------------------------------
@@ -1357,7 +1350,7 @@ TRIAL("Race: an immediate refusal lets the next address through") {
 
     Desk desk = accepted(gate);
 
-    net::Stream won = got.await();
+    net::Stream won = std::move(got).get();
 
     ought(watch.spent() < std::chrono::milliseconds{3000});
     same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
@@ -1376,7 +1369,7 @@ TRIAL("Race: a silent address gives way after the delay") {
 
     for (int at = 0; at < 4; ++at) {
         filled.push_back(net::Stream::connect(full.mine(), net::Patience{1500}));
-        (void)Time::later(std::chrono::milliseconds{30}).await();
+        (void)later(std::chrono::milliseconds{30}).get();
     }
 
     const net::Listener gate = standing();
@@ -1387,7 +1380,7 @@ TRIAL("Race: a silent address gives way after the delay") {
 
     Desk desk = accepted(gate);
 
-    net::Stream won = got.await();
+    net::Stream won = std::move(got).get();
 
     ought(watch.spent() < std::chrono::milliseconds{2500});
     same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
@@ -1397,7 +1390,7 @@ TRIAL("Race: a silent address gives way after the delay") {
 
     for (Promise<net::Stream>& one : filled) {
         try {
-            one.await().close();
+            std::move(one).get().close();
         } catch (const std::exception&) {
         }
     }
@@ -1423,7 +1416,7 @@ TRIAL("Race: the failure of all is the failure of the whole") {
     bool network = false;
 
     try {
-        (void)got.await();
+        (void)std::move(got).get();
     } catch (const net::Trouble&) {
         network = true;
     } catch (const std::exception&) {
@@ -1436,7 +1429,7 @@ TRIAL("Race: the failure of all is the failure of the whole") {
     bool empty = false;
 
     try {
-        (void)none.await();
+        (void)std::move(none).get();
     } catch (const std::exception&) {
         empty = true;
     }
@@ -1454,7 +1447,7 @@ TRIAL("Race: an address refused at once does not stop the race") {
 
     Desk desk = accepted(gate);
 
-    net::Stream won = got.await();
+    net::Stream won = std::move(got).get();
 
     same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
 

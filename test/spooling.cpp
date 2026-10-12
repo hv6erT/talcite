@@ -31,7 +31,7 @@ Feed fed(const Bytes& raw, std::size_t give = SIZE_MAX) {
 
         for (std::size_t one = at; one < raw.size() && one < at + much; ++one) made.push_back(raw[one]);
 
-        return Promise<Bytes>{[made](auto resolve, auto) { resolve(made); }};
+        return ready(made);
     };
 }
 
@@ -393,7 +393,7 @@ TRIAL("Spool: a refusal by the source ends the document where it got to") {
     const Feed feed = [&calls, raw](std::size_t at, std::size_t most) {
         ++calls;
 
-        if (at > 0) return Promise<Bytes>{[](auto, auto reject) { reject(std::make_exception_ptr(std::runtime_error{"gone"})); }};
+        if (at > 0) return failed<Bytes>(std::make_exception_ptr(std::runtime_error{"gone"}));
 
         return fed(raw)(at, most);
     };

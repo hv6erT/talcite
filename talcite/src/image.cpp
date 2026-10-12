@@ -319,7 +319,7 @@ void Image::spread(Size given) {
                                  self->still_ = std::min(self->still_, self->upto_.size() - 1);
                                  self->sharpened();
                              })
-                             .fail([weak, want, emptied](const std::exception&) {
+                             .recover([weak, want, emptied](const std::exception&) {
                                  const auto self = weak.lock();
 
                                  if (!self || self->ordering_ != want) return;
@@ -327,8 +327,6 @@ void Image::spread(Size given) {
                                  self->ordered_.reset();
                                  emptied(*self);
                              }));
-
-        ordered_->start();
 
         return;
     }
@@ -391,7 +389,7 @@ void Image::sharpened() {
 
     using Sixels = std::vector<std::shared_ptr<const std::string>>;
 
-    encoded_.emplace(Promise<Sixels>{[source = fit_](auto resolve, auto) {
+    encoded_.emplace(run(cpu(), [source = fit_]() -> Sixels {
                                          Sixels made;
 
                                          made.reserve(source.stills().size());
@@ -399,9 +397,8 @@ void Image::sharpened() {
                                          for (std::size_t at = 0; at < source.stills().size(); ++at)
                                              made.push_back(std::make_shared<const std::string>(sixel(source, at)));
 
-                                         resolve(std::move(made));
-                                     },
-                                     Lane::cpu}
+                                         return made;
+                                     })
                          .here()
                          .then([weak, room](Sixels made) {
                              const auto self = weak.lock();
@@ -413,8 +410,6 @@ void Image::sharpened() {
                              for (std::shared_ptr<const std::string>& one : made)
                                  self->pictures_.push_back(Picture{marked(), room, std::move(one)});
                          }));
-
-    encoded_->start();
 }
 
 // Placement in the area: centered, like the preview in Midnight Commander. The rest of the area is

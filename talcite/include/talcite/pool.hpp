@@ -10,10 +10,10 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
 #include "talcite/bell.hpp"
+#include "talcite/place.hpp"
 
 namespace talcite {
 
@@ -34,9 +34,11 @@ public:
 
     Job post(std::function<void()> what, Lane lane = Lane::io);
 
-    Job post(std::function<void()> what, Lane lane, std::atomic<Job>& into);
+    bool drop(Job which);
 
-    void drop(Job which);
+    [[nodiscard]] Place& io();
+
+    [[nodiscard]] Place& cpu();
 
     void drain();
 
@@ -47,7 +49,7 @@ public:
 private:
     friend class Waiting;
 
-    Job handed(std::function<void()> what, Lane lane, std::atomic<Job>* into);
+    class Side;
 
     [[nodiscard]] std::size_t runnable() const;
 
@@ -62,7 +64,6 @@ private:
     std::condition_variable emptied_;
     std::map<Job, std::function<void()>> io_;
     std::map<Job, std::function<void()>> cpu_;
-    std::unordered_map<Job, Bell*> running_;
     std::vector<std::thread> staff_;
     std::vector<std::thread::id> retired_;
     Job next_ = 0;
@@ -73,6 +74,8 @@ private:
     std::size_t idle_ = 0;
     std::size_t busy_ = 0;
     bool closing_ = false;
+    std::unique_ptr<Side> io_side_;
+    std::unique_ptr<Side> cpu_side_;
 };
 
 class Waiting {
@@ -91,7 +94,5 @@ private:
 };
 
 [[nodiscard]] Pool& pooling();
-
-[[nodiscard]] Bell* ringing();
 
 }

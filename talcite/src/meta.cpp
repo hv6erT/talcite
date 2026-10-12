@@ -61,7 +61,7 @@ MetaProvider& Seam<MetaProvider>::provider() const {
 // promise (`Unbound`) rather than throwing at once: the caller of a promise has one error path,
 // not two. A provider's refusal rejects it with `Refused`.
 Promise<meta::Description> Seam<MetaProvider>::described(fs::path where) const {
-    return Promise<meta::Description>{[held = provider_, where = std::move(where)](auto resolve, auto) {
+    return run(io(), [held = provider_, where = std::move(where)]() -> meta::Description {
         if (held == nullptr) throw Unbound{MetaProvider::kind()};
 
         Opened from{where};
@@ -70,14 +70,14 @@ Promise<meta::Description> Seam<MetaProvider>::described(fs::path where) const {
         if (const std::string said = held->describe(from, made); !said.empty())
             throw Refused{MetaProvider::kind(), said};
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 // Promises the bytes of the embedded picture with the given number, with the same errors as
 // `described`.
 Promise<Bytes> Seam<MetaProvider>::pictured(fs::path where, std::size_t which) const {
-    return Promise<Bytes>{[held = provider_, where = std::move(where), which](auto resolve, auto) {
+    return run(io(), [held = provider_, where = std::move(where), which]() -> Bytes {
         if (held == nullptr) throw Unbound{MetaProvider::kind()};
 
         Opened from{where};
@@ -86,8 +86,8 @@ Promise<Bytes> Seam<MetaProvider>::pictured(fs::path where, std::size_t which) c
         if (const std::string said = held->picture(from, which, made); !said.empty())
             throw Refused{MetaProvider::kind(), said};
 
-        resolve(std::move(made));
-    }};
+        return made;
+    });
 }
 
 }

@@ -39,8 +39,8 @@ int main(int count, char** args) {
             auto meeting = gate.accept(soon);
             auto joining = net::Stream::connect(gate.mine(), soon);
 
-            servers.push_back(meeting.await());
-            clients.push_back(joining.await());
+            servers.push_back(std::move(meeting).get());
+            clients.push_back(std::move(joining).get());
         }
 
         std::cout << many << " connections up\n";
@@ -68,9 +68,9 @@ int main(int count, char** args) {
             for (const int one_at : which) writing.push_back(clients[one_at].write(one, soon));
 
             for (std::size_t done = 0; done < which.size(); ++done) {
-                writing[done].await();
+                std::move(writing[done]).get();
 
-                (void)reading[which[done]].await();
+                (void)std::move(reading[which[done]]).get();
 
                 reading[which[done]] = servers[which[done]].read(64, soon);
             }

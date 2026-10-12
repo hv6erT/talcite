@@ -12,10 +12,13 @@ sibling project talcite-adapters.
 ## What is inside
 
 Asynchronous core
-- `Promise<T>`: lazy promises with `then`, `fail`, `finally`, timeouts, progress, cancellation and
-  `all`, `all_settled`, `race`, `any`.
-- `Loop` (one event loop per thread), `Pool` (a thread pool with separate lanes for I/O and CPU
-  work), `Bell`, `Time` and `Stopwatch`.
+- `Promise<T>` and `SharedPromise<T>`: work starts at once and lasts while someone wants its result;
+  the last owner to let go cancels it. Chains with `then`, `recover`, `finally`, `on`, timeouts,
+  outcomes and progress; joins `all`, `settled`, `race`, `any`; `Settle` for event-driven
+  producers; coroutines (`co_await`, `co_return`).
+- Places where code runs: `Loop` (one event loop per thread) and `Pool` (a thread pool with separate
+  lanes for I/O and CPU work), plus `ManualPlace` and `ManualClock` for deterministic tests; `Bell`,
+  `Time` and `Stopwatch`.
 
 Filesystem (`talcite::fs`)
 - Asynchronous queries and changes: listing, walking, reading, writing, copying, moving, erasing,
