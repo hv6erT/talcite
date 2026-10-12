@@ -245,7 +245,8 @@ public:
     [[nodiscard]] bool ready() const override { return said_ && heard_; }
 
     // Takes ciphertext and unpacks complete records (a length byte, then the XOR-ed content): the
-    // first must be the greeting, a poisoned one sets the error, the rest go to the plaintext.
+    // first must be the greeting, a poisoned one sets the error, a goodbye one marks the session
+    // closed, the rest go to the plaintext.
     void push(talcite::Bytes given) override {
         came_.insert(came_.end(), given.begin(), given.end());
 
@@ -278,6 +279,13 @@ public:
                 amiss_ = "Poison in the record.";
 
                 return;
+            }
+
+            // The fake close_notify: the other side says goodbye.
+            if (talcite::text(one) == "ZAMKNIJ") {
+                closed_ = true;
+
+                continue;
             }
 
             plain_.insert(plain_.end(), one.begin(), one.end());
@@ -328,6 +336,9 @@ public:
 
     void close() override {}
 
+    // Whether the other side sent its goodbye record.
+    [[nodiscard]] bool closed() const override { return closed_; }
+
     // The error message, empty while nothing went wrong.
     [[nodiscard]] std::string error() const override { return amiss_; }
 
@@ -351,6 +362,7 @@ private:
     bool said_ = false;
     bool heard_ = false;
     bool poison_ = false;
+    bool closed_ = false;
     std::optional<talcite::net::TlsTrouble::Why> refused_;
 };
 

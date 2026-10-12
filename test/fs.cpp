@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <fstream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -14,6 +15,8 @@
 
 #include "talcite/fs.hpp"
 #include "talcite/time.hpp"
+
+#include "looking.hpp"
 
 #ifndef _WIN32
 #include <csignal>
@@ -703,6 +706,90 @@ TRIAL("fs: copy reproduces a file to the byte") {
     same(fs::size(to).get(), static_cast<std::uintmax_t>(whole.size()));
     same(said_of(fs::read(to).get()), whole);
     ought(fs::exists(from).get());
+}
+
+// A copy that would end in success without a part of the tree is not a copy. A pipe in the tree
+// (opening it would hang the copy) and a folder that cannot be read refuse the whole copy before
+// the first byte, and no target is left.
+TRIAL("fs: a copy of a tree with a pipe or an unreadable folder refuses before writing") {
+#ifndef _WIN32
+    const Nook nook;
+
+    const fs::path from = nook.where() / "drzewo";
+    const fs::path to = nook.where() / "odbitka";
+
+    fs::make_folder(from / "w głąb").get();
+
+    {
+        std::ofstream making{from / "w głąb" / "plik.txt", std::ios::binary};
+        making << "treść";
+    }
+
+    if (::mkfifo((from / "w głąb" / "potok").c_str(), 0600) == 0) {
+        threw(fs::copy(from, to).get());
+        ought(!stood::exists(to));
+
+        std::error_code ignored;
+
+        stood::remove(from / "w głąb" / "potok", ignored);
+    }
+
+    fs::make_folder(from / "zamknięty").get();
+
+    if (::geteuid() != 0 && ::chmod((from / "zamknięty").c_str(), 0) == 0) {
+        threw(fs::copy(from, to).get());
+        ought(!stood::exists(to));
+
+        (void)::chmod((from / "zamknięty").c_str(), 0700);
+    }
+
+    fs::copy(from, to).get();
+
+    same(said_of(fs::read(to / "w głąb" / "plik.txt").get()), std::string{"treść"});
+#endif
+}
+
+// A file that someone keeps writing while it is copied is caught by the copy's own check: the bytes
+// copied, the length and the write time no longer agree with the source as it was opened. The copy
+// starts once more, and when the source changes again it refuses, leaving no target and the source
+// as it is.
+TRIAL("fs: a copy of a file that keeps changing refuses and leaves no target") {
+    const Nook nook;
+
+    const fs::path from = nook.made("rosnący.bin", std::string(std::size_t{16} << 20, 'x'));
+    const fs::path to = nook.where() / "kopia.bin";
+
+    std::atomic<bool> enough{false};
+    std::atomic<bool> growing{false};
+
+    std::thread writer{[&from, &enough, &growing] {
+        std::ofstream more{from, std::ios::binary | std::ios::app};
+
+        while (!enough.load()) {
+            more << 'y';
+            more.flush();
+            growing.store(true);
+        }
+    }};
+
+    // The copy starts only once the file is growing: on a busy machine the writer's thread may
+    // start later than a copy of sixteen megabytes ends.
+    while (!growing.load()) std::this_thread::yield();
+
+    std::string said;
+
+    try {
+        fs::copy(from, to).get();
+    } catch (const fs::Trouble& why) {
+        said = why.what();
+    }
+
+    enough.store(true);
+    writer.join();
+
+    same(said, std::string{"The file changed while it was being copied."});
+    ought(!stood::exists(to));
+    ought(stood::file_size(from) > (std::uintmax_t{16} << 20));
 }
 
 TRIAL("fs: copy carries the whole tree") {
@@ -2085,7 +2172,7 @@ TRIAL("fs: a link to an ancestor does not make copying loop") {
     same(said_of(fs::read(to / "plik.txt").get()), std::string{"treść"});
 }
 
-TRIAL("fs: a broken link in a tree does not break copying") {
+TRIAL("fs: a broken link in a tree refuses the copy before anything is written") {
     const Nook nook;
 
     const fs::path from = nook.where() / "drzewo";
@@ -2100,10 +2187,8 @@ TRIAL("fs: a broken link in a tree does not break copying") {
 
     const fs::path to = nook.where() / "odbitka";
 
-    fs::copy(from, to).get();
-
-    same(said_of(fs::read(to / "plik.txt").get()), std::string{"treść"});
-    ought(!fs::exists(to / "donikąd").get());
+    threw(fs::copy(from, to).get());
+    ought(!stood::exists(to));
 }
 
 TRIAL("fs: copying a broken link directly rejects") {
@@ -2549,6 +2634,54 @@ bool among(const std::vector<fs::Change>& given, const fs::path& where, fs::Chan
     return false;
 }
 
+}
+
+// A polling look that cannot read a folder (a NAS silent for a moment, rights taken away) does not
+// take its content for gone: what the previous look saw under it stays as it was, so nothing is
+// reported as removed, and nothing as created when the folder can be read again. A root that cannot
+// be told at all is blind, which is not the same as absent.
+TRIAL("Watch: a polling look does not report as removed what it could not read") {
+    using fs::core::Look;
+    using fs::core::Sight;
+
+    std::map<fs::path, Sight> was;
+
+    was["/r"] = Sight{fs::Kind::folder, 0, {}, {}};
+    was["/r/a"] = Sight{fs::Kind::folder, 0, {}, {}};
+    was["/r/a/x.mkv"] = Sight{fs::Kind::file, 5, {}, {}};
+    was["/r/a/b/y.mkv"] = Sight{fs::Kind::file, 6, {}, {}};
+    was["/r/z.mkv"] = Sight{fs::Kind::file, 7, {}, {}};
+
+    Look now;
+    now.seen["/r"] = Sight{fs::Kind::folder, 0, {}, {}};
+    now.seen["/r/a"] = Sight{fs::Kind::folder, 0, {}, {}};
+    now.unread = {"/r/a"};
+
+    const std::map<fs::path, Sight> kept = fs::core::filled(now, was);
+    const std::vector<fs::Change> changes = fs::core::apart(was, kept);
+
+    same(changes.size(), std::size_t{1});
+    ought(!changes.empty() && changes.front().where == fs::path{"/r/z.mkv"} && changes.front().kind == Changed::removed);
+    ought(kept.contains("/r/a/b/y.mkv"));
+
+    const Nook nook;
+
+    fs::make_folder(nook.where() / "zamknięty").get();
+    (void)nook.made("zamknięty/plik.txt", "treść");
+
+    ought(!fs::core::looked(nook.where(), true).blind);
+    same(fs::core::looked(nook.where() / "nie ma", true).seen.size(), std::size_t{0});
+
+#ifndef _WIN32
+    if (::geteuid() != 0 && ::chmod((nook.where() / "zamknięty").c_str(), 0) == 0) {
+        const Look shut = fs::core::looked(nook.where(), true);
+
+        (void)::chmod((nook.where() / "zamknięty").c_str(), 0700);
+
+        ought(shut.unread == std::vector<fs::path>{nook.where() / "zamknięty"});
+        ought(!shut.seen.contains(nook.where() / "zamknięty" / "plik.txt"));
+    }
+#endif
 }
 
 TRIAL("Watch: a new file is reported as created") {

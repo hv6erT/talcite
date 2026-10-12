@@ -8,6 +8,10 @@
 
 #include "talcite/scan.hpp"
 
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
 // Scanning with the system's antivirus program. There is no real antivirus here, so on POSIX we
 // put two programs with ClamAV names on PATH: a daemon that does not work (exit code 2) and a
 // scanner whose exit code says whether the file holds the "infection". On Windows we only check
@@ -111,9 +115,15 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
         ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
 
         // A scanner killed by a signal said nothing, even if the signal number looks like a threat code.
-        program(bin / "clamscan", "kill -HUP $$\n");
+        // Under nohup SIGHUP is ignored, and every program started from here inherits that, so the
+        // scanner would not die and the check would be about nothing.
+        struct sigaction hangup{};
 
-        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
+        if (::sigaction(SIGHUP, nullptr, &hangup) == 0 && hangup.sa_handler != SIG_IGN) {
+            program(bin / "clamscan", "kill -HUP $$\n");
+
+            ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
+        }
     }
 
     {

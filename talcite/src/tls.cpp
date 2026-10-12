@@ -39,6 +39,8 @@ struct TlsStream::Held {
 
     std::atomic<bool> reading{false};
     std::atomic<bool> writing{false};
+    // The last end of the connection came without the other side's close_notify.
+    std::atomic<bool> cut{false};
 };
 
 namespace {
@@ -182,11 +184,12 @@ Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_
 
 // Reads at most `most` bytes of plaintext: first what is left over, then what the session can
 // decrypt, and only then from the socket, sending on the way whatever the session wants to send.
-// An empty result means the other side has closed.
+// An empty result means the other side has closed: cleanly, with its close_notify, or not (`cut`).
 Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t most,
                        Patience patience) {
     Bytes plain;
     Promise<void> sent;
+    bool ended = false;
 
     {
         const std::lock_guard<std::mutex> kept{held->minding};
@@ -204,10 +207,19 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
             plain = taken(*held, most);
         }
 
+        // The other side said goodbye: a clean end, without waiting for its socket to close.
+        ended = plain.empty() && held->how->closed();
+
         sent = queued(held, std::move(out), patience);
     }
 
     held->outbox.flush();
+
+    if (ended) {
+        held->cut.store(false);
+
+        return std::move(sent).then([] { return Bytes{}; });
+    }
 
     if (!plain.empty()) return std::move(sent).then([plain = std::move(plain)]() mutable {
         return std::move(plain);
@@ -215,8 +227,16 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
 
     return std::move(sent).then([held, most, patience] {
         return borrowed(held).read(65536, patience).then([held, most, patience](const Bytes& came) {
-            // Emptiness means the same as on a bare stream: the other side has closed.
-            if (came.empty()) return ready(Bytes{});
+            // Emptiness means the same as on a bare stream: the other side has closed. Without its
+            // close_notify first, the end may be an attacker's or a broken line's, not the
+            // server's, and the stream remembers that (`cut`).
+            if (came.empty()) {
+                const std::lock_guard<std::mutex> kept{held->minding};
+
+                held->cut.store(!held->how->closed());
+
+                return ready(Bytes{});
+            }
 
             {
                 const std::lock_guard<std::mutex> kept{held->minding};
@@ -364,6 +384,10 @@ Promise<void> TlsStream::write(Bytes what, Patience patience) const {
 
     return std::move(sent).finally([held] { held->writing.store(false); });
 }
+
+// Whether the last end of the connection came without the other side's close_notify: a body read
+// until the connection closes is then not known to be whole.
+bool TlsStream::cut() const { return held_ && held_->cut.load(); }
 
 // Closes the session and the stream under the same lock as the session, not because closing is
 // dangerous in itself, but because it reassigns a `shared_ptr` in a member that a pool worker may

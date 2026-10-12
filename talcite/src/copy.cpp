@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <sstream>
 #include <system_error>
 #include <thread>
@@ -40,6 +41,28 @@
 namespace talcite::fs {
 
 using namespace core;
+
+// A file beside the target for the time of a replacement: a dot, the target's name, six random
+// characters and `.part`. Media servers do not take `.part` for a film, and the random tail does
+// not hit someone else's file.
+path core::aside_of(const path& to) {
+    static constexpr std::string_view digits = "0123456789abcdef";
+
+    std::string tail;
+
+    for (const std::byte one : random(3)) {
+        const auto value = static_cast<unsigned>(one);
+
+        tail += digits[value >> 4U];
+        tail += digits[value & 0x0fU];
+    }
+
+    path made = to;
+
+    made.replace_filename(path{"."}.native() + to.filename().native() + path{"." + tail + ".part"}.native());
+
+    return made;
+}
 
 namespace {
 
@@ -89,9 +112,12 @@ struct Tally {
     Counted& held;
     std::uintmax_t base = 0;
     bool owning = true;
+    std::size_t rata = 0;
 };
 
-// The installment size for a copy: the smaller of the two disks' preferred chunks.
+// The installment size for a copy: the smaller of the two disks' preferred chunks. A tree asks once
+// and hands the answer to every file (`Tally::rata`); each question is a `statfs`, and on FUSE and
+// GVfs a reading of /proc/mounts.
 std::size_t rated(const path& from, const path& to) {
     return std::min(chunk_at(from), chunk_at(to));
 }
@@ -144,28 +170,6 @@ private:
     bool was_ = false;
     bool kept_ = false;
 };
-
-// A file beside the target for the time of a replacement: a dot, the target's name, six random
-// characters and `.part`. Media servers do not take `.part` for a film, and the random tail does
-// not hit someone else's file.
-path aside_of(const path& to) {
-    static constexpr std::string_view digits = "0123456789abcdef";
-
-    std::string tail;
-
-    for (const std::byte one : random(3)) {
-        const auto value = static_cast<unsigned>(one);
-
-        tail += digits[value >> 4U];
-        tail += digits[value & 0x0fU];
-    }
-
-    path made = to;
-
-    made.replace_filename(path{"."}.native() + to.filename().native() + path{"." + tail + ".part"}.native());
-
-    return made;
-}
 
 // Three kinds of writing to a file: `Mode::truncate` writes directly (the target does not exist);
 // a replacement writes beside it and renames, so an interrupted or failed one does not touch the
@@ -236,24 +240,52 @@ DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_IN
 
 #endif
 
-// Copies one file to `to`: first the system's own copy (Windows), then a clone, then an in-kernel
-// copy in pieces, and finally our own read and write loop. The bytes go to `tally`. False when
+// A copy of a file that found its source changed while it went: thrown from inside the copy, so the
+// half-made target goes with the unwinding, and caught by `file_at` to start again.
+struct Shifting {};
+
+#ifdef _WIN32
+
+// Whether `CopyFileExW` refused only because it does not know this way (Wine, a medium without
+// it), so that our own loop may take over. Any other refusal (a broken connection, a full disk, no
+// rights) is the answer.
+bool unsupported(DWORD why) {
+    return why == ERROR_NOT_SUPPORTED || why == ERROR_INVALID_FUNCTION || why == ERROR_CALL_NOT_IMPLEMENTED ||
+           why == ERROR_INVALID_PARAMETER;
+}
+
+#endif
+
+// One attempt at copying a file to `to`: first the system's own copy (Windows), then a clone, then
+// an in-kernel copy in pieces, and finally our own read and write loop. The bytes go to `tally`.
+// Before the target is handed over, the copy checks itself: exactly as many bytes as the source had
+// when it was opened, the open source still of that length and write time, and the same file still
+// under the source's name. Anything else means someone changed the source meanwhile (a file still
+// being written, one cut shorter, one replaced), and the attempt throws `Shifting`. False when
 // cancelled halfway.
-bool file_at(const path& from, const path& to, Tally tally, bool durable = false) {
+bool copied_at(const path& from, const path& to, Tally tally, bool durable) {
     const std::shared_ptr<File::Held> mine = open_at(from, Mode::read);
 
-    const std::uintmax_t whole = sized(*mine);
+    const Facet before = facet_of(*mine);
+    const std::uintmax_t whole = before.size;
 
     if (tally.owning) tally.held.total(whole);
 
     // How much of this file is done, as the counter sees it.
     const auto at_byte = [&tally](std::uintmax_t at) { tally.held.reached(tally.base + at); };
 
-    const Instant when = instant_at(from);
+    // Whether, after `much` bytes, the source is still what it was when the copy began.
+    const auto unchanged = [&](std::uintmax_t much) {
+        if (much != whole || facet_of(*mine) != before) return false;
 
-    const std::size_t rata = rated(from, to);
+        const std::optional<Facet> there = facet_at(from);
 
-    return poured_at(to, durable, when, [&](const path& into) -> std::shared_ptr<File::Held> {
+        return there && there->device == before.device && there->node == before.node;
+    };
+
+    const std::size_t rata = tally.rata > 0 ? tally.rata : rated(from, to);
+
+    return poured_at(to, durable, before.changed, [&](const path& into) -> std::shared_ptr<File::Held> {
 #ifdef _WIN32
         BOOL cancel = FALSE;
 
@@ -269,25 +301,36 @@ bool file_at(const path& from, const path& to, Tally tally, bool durable = false
 
             at_byte(whole);
 
-            return open_at(into, Mode::write);
+            std::shared_ptr<File::Held> yours = open_at(into, Mode::write);
+
+            if (!unchanged(sized(*yours))) throw Shifting{};
+
+            return yours;
         }
 
-        if (GetLastError() == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
+        const DWORD why = GetLastError();
 
-        // Another refusal: a system without this path (Wine), a medium that does not like it. The
-        // plain loop will say what is really wrong, or simply copy.
+        if (why == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
+
+        if (!unsupported(why)) amiss("Cannot copy the file: " + std::system_category().message(static_cast<int>(why)), from);
 #endif
         std::shared_ptr<File::Held> yours = open_at(into, Mode::truncate);
 
         if (whole > 0 && cloned_on(*mine, *yours)) {
             at_byte(whole);
 
+            if (!unchanged(whole)) throw Shifting{};
+
             return yours;
         }
 
         bool ranged = true;
 
-        for (std::uintmax_t at = 0; at < whole;) {
+        std::uintmax_t at = 0;
+
+        Bytes buffer;
+
+        while (at < whole) {
             if (stopped()) return nullptr;
 
             if (ranged) {
@@ -307,15 +350,35 @@ bool file_at(const path& from, const path& to, Tally tally, bool durable = false
                 ranged = false;
             }
 
-            const Bytes part = read_at(*mine, at, rata);
-            if (part.empty()) break;
+            // One buffer for the whole file, allocated on the first installment that needs it.
+            buffer.resize(rata);
 
-            at += write_at(*yours, at, part);
+            const std::size_t got =
+                read_into(*mine, at, std::span{buffer}.first(static_cast<std::size_t>(std::min<std::uintmax_t>(rata, whole - at))));
+            if (got == 0) break;
+
+            at += write_from(*yours, at, std::span{buffer}.first(got));
             at_byte(at);
         }
 
+        if (!unchanged(at)) throw Shifting{};
+
         return yours;
     });
+}
+
+// Copies one file to `to` (see `copied_at`). A source that changed while it went is copied once
+// more from the start; a second change in a row is a refusal, and the source stays as it is. False
+// when cancelled halfway.
+bool file_at(const path& from, const path& to, Tally tally, bool durable = false) {
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        try {
+            return copied_at(from, to, tally, durable);
+        } catch (const Shifting&) {
+        }
+    }
+
+    amiss("The file changed while it was being copied.", from);
 }
 
 // The folder's time with full precision, or the one from the listing when the folder has vanished
@@ -344,105 +407,128 @@ void fits_at(const path& to, std::uintmax_t whole, std::uintmax_t largest) {
         amiss("Not enough free space.", to);
 }
 
-// How much the copy takes: the files only. What lies behind links is not counted, so the total is
-// a lower bound, enough to refuse what certainly does not fit.
-void measured(const std::vector<Entry>& among, std::uintmax_t& whole, std::uintmax_t& largest) {
+// One entry of a tree to copy, worked out before the first byte: where it comes from (for a followed
+// link, what it points to), where it goes, what it is, and whether its bytes count in the total
+// (what lies behind a followed link does not).
+struct Laid {
+    path from;
+    path to;
+    Kind kind = Kind::none;
+    std::uintmax_t size = 0;
+    std::chrono::sys_seconds modified{};
+    bool counted = true;
+};
+
+// The tree under `from` as it will be copied to `to`, parents before children, every folder read in
+// full. A folder that cannot be read, an entry that is neither a file nor a folder (a pipe, a
+// socket, a device) and a link that leads nowhere refuse the whole copy, with the place, before
+// anything is written: a copy that skipped them would end in success without a part of the tree,
+// and opening a pipe for reading would hang a pool thread beyond rescue. A link is followed: to a
+// file, the file is copied; to a folder, its tree, at most 64 links deep; a link back to a folder
+// already being copied is left out, since following it would never end. False when cancelled while
+// reading.
+bool charted(const path& from, const path& to, std::vector<Laid>& into, Seen& seen, int deep, bool counted) {
+    const std::vector<Entry> among = list_whole_at(from);
+
+    if (stopped()) return false;
+
     for (const Entry& one : among) {
-        if (one.kind != Kind::file) continue;
+        const path where = to / one.where.filename();
 
-        whole += one.size;
-        largest = std::max(largest, one.size);
-    }
-}
+        if (one.kind == Kind::folder) {
+            into.push_back(Laid{one.where, where, Kind::folder, 0, one.modified, counted});
 
-bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen,
-             int deep);
+            if (!charted(one.where, where, into, seen, deep, counted)) return false;
 
-// One entry from the listing. A link is followed: what it points to is copied, not the link
-// itself. A pipe, a socket and a device are skipped: opening a pipe for reading would hang a pool
-// thread beyond rescue, and that is worse than a missing copy.
-bool spread_at(const path& from, Kind kind, const path& to, Conflict how, Seen& seen, int deep, Tally tally) {
-    if (kind == Kind::folder) {
-        make_folder_at(to);
-
-        return true;
-    }
-
-    path onto = from;
-
-    if (kind == Kind::link) {
-        std::error_code trouble;
-
-        onto = stood::canonical(from, trouble);
-        if (trouble) return true;
-
-        kind = kind_at(onto);
-
-        if (kind == Kind::folder) {
-            if (sighted(seen, onto)) return true;
-
-            Counted apart;
-
-            return tree_at(onto, to, apart, how, seen, deep + 1);
+            continue;
         }
 
-        if (kind != Kind::file) return true;
+        if (one.kind == Kind::file) {
+            into.push_back(Laid{one.where, where, Kind::file, one.size, one.modified, counted});
 
-        const path where = settled_on(to, how);
-        if (where.empty()) return true;
+            continue;
+        }
 
-        // What a link points to is not in the folder's total, so its bytes are not counted.
-        Counted apart;
+        if (one.kind != Kind::link) amiss("This entry cannot be copied.", one.where);
 
-        return file_at(onto, where, Tally{apart});
+        std::error_code trouble;
+
+        const path onto = stood::canonical(one.where, trouble);
+
+        if (trouble) amiss("This entry cannot be copied.", one.where);
+
+        const Kind kind = kind_at(onto);
+
+        if (kind == Kind::file) {
+            into.push_back(Laid{onto, where, Kind::file, 0, one.modified, false});
+
+            continue;
+        }
+
+        if (kind != Kind::folder) amiss("This entry cannot be copied.", one.where);
+
+        if (sighted(seen, onto)) continue;
+
+        if (deep >= 64) amiss("This entry cannot be copied.", one.where);
+
+        into.push_back(Laid{onto, where, Kind::folder, 0, one.modified, false});
+
+        if (!charted(onto, where, into, seen, deep + 1, false)) return false;
     }
 
-    if (kind != Kind::file) return true;
-
-    const path where = settled_on(to, how);
-    if (where.empty()) return true;
-
-    return file_at(onto, where, tally);
+    return true;
 }
 
-// A folder goes entry by entry. Progress counts the bytes of its files plus one for every entry,
-// so a big file moves the bar while it is copied and a folder of empty entries still moves it.
-// The listing is sorted by path and a parent always precedes its children, so folders can be
-// created in order. The content of followed links has its own counter and is not added to this
-// one, because it is not in the total.
-bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen,
-             int deep) {
-    if (deep > 64) return true;
+// A folder goes entry by entry, from one reading of the whole tree (`charted`) that also gives the
+// total; with `fitting` it is checked against the target's room first. Progress counts the bytes of
+// its files plus one for every entry, so a big file moves the bar while it is copied and a folder
+// of empty entries still moves it. Parents come before their children, so folders are created in
+// order. The content of followed links has its own counter and is not added to this one, because
+// it is not in the total. False when cancelled.
+bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen, int deep, bool fitting) {
+    std::vector<Laid> laid;
 
-    const std::vector<Entry> among = walk_at(from);
+    if (!charted(from, to, laid, seen, deep, true)) return false;
 
     std::uintmax_t bytes = 0;
     std::uintmax_t largest = 0;
 
-    measured(among, bytes, largest);
+    for (const Laid& one : laid) {
+        if (one.kind != Kind::file || !one.counted) continue;
 
-    held.total(bytes + among.size() + 1);
+        bytes += one.size;
+        largest = std::max(largest, one.size);
+    }
+
+    if (fitting) fits_at(to, bytes, largest);
+
+    held.total(bytes + laid.size() + 1);
 
     Sweeping sweeping{to};
 
     make_folder_at(to);
     held.added(1);
 
+    const std::size_t rata = rated(from, to);
+
     std::vector<std::pair<path, Instant>> folders;
 
-    for (const Entry& one : among) {
+    for (const Laid& one : laid) {
         if (stopped()) return false;
-
-        const path where = to / one.where.lexically_relative(from);
 
         const std::uintmax_t base = held.done.load();
 
-        if (!spread_at(one.where, one.kind, where, how, seen, deep, Tally{held, base, false})) return false;
+        if (one.kind == Kind::folder) {
+            make_folder_at(one.to);
+            folders.emplace_back(one.to, instant_or(one.from, one.modified));
+        } else if (const path where = settled_on(one.to, how); !where.empty()) {
+            Counted apart;
+
+            if (!file_at(one.from, where, one.counted ? Tally{held, base, false, rata} : Tally{apart, 0, true, rata})) return false;
+        }
 
         // The listed size, not the copied one: the total was made from the listing.
-        if (one.kind == Kind::file) held.reached(base + one.size);
-
-        if (one.kind == Kind::folder) folders.emplace_back(where, instant_or(one.where, one.modified));
+        if (one.kind == Kind::file && one.counted) held.reached(base + one.size);
 
         held.added(1);
     }
@@ -459,6 +545,15 @@ bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen
     return true;
 }
 
+// How much a move takes: the files only.
+void measured(const std::vector<Entry>& among, std::uintmax_t& whole, std::uintmax_t& largest) {
+    for (const Entry& one : among) {
+        if (one.kind != Kind::file) continue;
+
+        whole += one.size;
+        largest = std::max(largest, one.size);
+    }
+}
 
 // Copies a file or a folder (following a link given as `from`) to `to`, after checking that it
 // fits. Throws `Trouble` for nothing to copy, a dangling link, an entry that is neither file nor
@@ -489,13 +584,7 @@ bool copy_at(const path& from, const path& to, Counted& held, Conflict how) {
 
         sighted(seen, canonical_at(onto));
 
-        std::uintmax_t whole = 0;
-        std::uintmax_t largest = 0;
-
-        measured(walk_at(onto), whole, largest);
-        fits_at(to, whole, largest);
-
-        return tree_at(onto, to, held, how, seen, 0);
+        return tree_at(onto, to, held, how, seen, 0, true);
     }
 
     if (what != Kind::file) amiss("This entry cannot be copied.", from);
@@ -541,7 +630,7 @@ std::vector<Entry> surveyed(const path& from) {
         const path here = std::move(waiting.back());
         waiting.pop_back();
 
-        for (Entry& one : list_at(here)) {
+        for (Entry& one : list_whole_at(here)) {
             if (one.kind == Kind::folder) waiting.push_back(one.where);
 
             const bool stale = one.kind == Kind::link && one.reach == Kind::none;
@@ -582,13 +671,18 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally) {
         if (kind_at(onto) == Kind::folder) {
             sighted(seen, onto);
 
-            if (!tree_at(onto, where, apart, how, seen, 1)) return false;
+            if (!tree_at(onto, where, apart, how, seen, 1, false)) return false;
         } else if (!file_at(onto, where, Tally{apart}, true)) {
             return false;
         }
     } else if (!file_at(from, where, tally, true)) {
         return false;
     }
+
+    // The copy is on the medium; its entry in the folder must be too, before the source goes, or a
+    // power loss right after the removal could leave neither (POSIX; NTFS keeps the entry with the
+    // file).
+    settled_folder(where.parent_path());
 
     std::error_code trouble;
 
@@ -697,20 +791,23 @@ Promise<Bytes> read(const path& where) {
 
         const std::size_t rata = chunk_at(where);
 
-        Bytes made;
-        made.reserve(static_cast<std::size_t>(whole));
+        // The bytes land in the result directly, in installments, so the file is not copied once
+        // more in memory.
+        Bytes made(static_cast<std::size_t>(whole));
 
-        for (std::uintmax_t at = 0; at < whole;) {
+        std::size_t at = 0;
+
+        while (at < made.size()) {
             if (stopped()) throw Cancelled{};
 
-            Bytes part = read_at(*one, at, rata);
-            if (part.empty()) break;
+            const std::size_t got = read_into(*one, at, std::span{made}.subspan(at, std::min(rata, made.size() - at)));
+            if (got == 0) break;
 
-            at += part.size();
+            at += got;
             held.reached(at);
-
-            made.insert(made.end(), part.begin(), part.end());
         }
+
+        made.resize(at);
 
         return made;
     });
@@ -736,9 +833,7 @@ Promise<void> write(const path& where, Bytes what, Conflict how) {
 
                 const std::size_t much = std::min<std::size_t>(rata, what.size() - at);
 
-                Bytes part{what.begin() + static_cast<std::ptrdiff_t>(at), what.begin() + static_cast<std::ptrdiff_t>(at + much)};
-
-                at += write_at(one, at, part);
+                at += write_from(one, at, std::span{what}.subspan(at, much));
                 held.reached(at);
             }
 

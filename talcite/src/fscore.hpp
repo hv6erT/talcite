@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,9 @@ inline constexpr std::size_t astray = 256 * 1024;
 
 [[nodiscard]] std::vector<Entry> list_at(const path& where);
 
+// The entries of a directory read in full, or a refusal; never a part passed off as the whole.
+[[nodiscard]] std::vector<Entry> list_whole_at(const path& where);
+
 void make_folder_at(const path& where);
 
 void unmade_at(const path& where);
@@ -80,6 +84,11 @@ void stamp_on(const File::Held& held, Instant when);
 [[nodiscard]] std::shared_ptr<File::Held> open_at(const path& where, Mode how);
 
 [[nodiscard]] Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much);
+
+// Reading into, and writing from, memory the caller already has, without a buffer per installment.
+[[nodiscard]] std::size_t read_into(const File::Held& held, std::uintmax_t at, std::span<std::byte> into);
+
+[[nodiscard]] std::size_t write_from(const File::Held& held, std::uintmax_t at, std::span<const std::byte> what);
 
 [[nodiscard]] path beside(const path& to, int at);
 
@@ -109,7 +118,25 @@ struct Shift {
 // Replaces the target by renaming, durably; false when the system refused.
 [[nodiscard]] bool replaced_at(const path& from, const path& to);
 
+// A free name beside the target for writing a replacement before it takes the target's place.
+[[nodiscard]] path aside_of(const path& to);
+
 [[nodiscard]] std::uintmax_t sized(const File::Held& held);
+
+// What tells one state of a file from another: its length, its write time at full precision, and
+// which file it is on which medium (device and inode on POSIX, volume and file index on Windows).
+struct Facet {
+    std::uintmax_t size = 0;
+    Instant changed{};
+    std::uint64_t device = 0;
+    std::uint64_t node = 0;
+
+    friend bool operator==(const Facet&, const Facet&) = default;
+};
+
+[[nodiscard]] Facet facet_of(const File::Held& held);
+
+[[nodiscard]] std::optional<Facet> facet_at(const path& where);
 
 void sync_at(const File::Held& held);
 

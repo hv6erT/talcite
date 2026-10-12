@@ -52,6 +52,8 @@ public:
 
     virtual void close() = 0;
 
+    [[nodiscard]] virtual bool closed() const = 0;
+
     [[nodiscard]] virtual std::string error() const = 0;
 
     [[nodiscard]] virtual TlsTrouble::Why why() const { return TlsTrouble::Why::other; }
@@ -92,6 +94,8 @@ public:
     [[nodiscard]] Promise<Bytes> read(std::size_t most, Patience patience) const;
 
     [[nodiscard]] Promise<void> write(Bytes what, Patience patience) const;
+
+    [[nodiscard]] bool cut() const;
 
     void close();
 

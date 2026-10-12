@@ -423,6 +423,18 @@ std::string inside(const std::filesystem::path& where) {
     return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
 }
 
+// The files beside the targets of downloads, left in the trials' folder: none may stay.
+std::size_t leftovers() {
+    std::size_t made = 0;
+
+    std::error_code why;
+
+    for (const auto& one : std::filesystem::directory_iterator{std::filesystem::temp_directory_path() / "talcite-fetching", why})
+        if (one.path().extension() == ".part") ++made;
+
+    return made;
+}
+
 // A download takes the body of a 2xx answer into the file, beyond the body limit, whether it comes
 // by length or in chunks, and through a redirect; the answer comes back with an empty body and the
 // progress reaches the end. The connection goes back to the pool afterwards.
@@ -499,6 +511,52 @@ TRIAL("HTTP: a download that is not 2xx or is cut off leaves no file") {
 
     same(why(broken), std::optional{net::HttpTrouble::Why::malformed});
     ought(!std::filesystem::exists(cut));
+    same(leftovers(), std::size_t{0});
+}
+
+// A download over a file that already stands leaves it as it was, byte for byte, when the answer is
+// not 2xx or the body is cut off: a poster that fails to come again is not lost. A whole 2xx body
+// replaces it at once.
+TRIAL("HTTP: a failed download leaves the file from before whole, and a whole one replaces it") {
+    const net::Listener gate = standing();
+
+    net::HttpClient client{nothing};
+
+    const std::filesystem::path poster = saved_as("plakat.jpg");
+
+    {
+        std::ofstream{poster, std::ios::binary} << "stary plakat";
+    }
+
+    auto missing = client.save(asked(at(gate, "/brak")), poster);
+
+    Desk desk = accepted(gate);
+
+    (void)desk.heard();
+    desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 5\r\n\r\nbrak!");
+
+    same(std::move(missing).get().status, 404);
+    same(inside(poster), std::string{"stary plakat"});
+
+    auto broken = client.save(asked(at(gate, "/urwany")), poster);
+
+    (void)desk.heard();
+    desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npoczatek");
+    desk.close();
+
+    same(why(broken), std::optional{net::HttpTrouble::Why::malformed});
+    same(inside(poster), std::string{"stary plakat"});
+
+    auto whole = client.save(asked(at(gate, "/nowy")), poster);
+
+    Desk again = accepted(gate);
+
+    (void)again.heard();
+    again.wrote("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nnowy plakat");
+
+    same(std::move(whole).get().status, 200);
+    same(inside(poster), std::string{"nowy plakat"});
+    same(leftovers(), std::size_t{0});
 }
 
 // A download cancelled while the body comes stops at once, from the pool, and leaves no file.
@@ -522,9 +580,10 @@ TRIAL("HTTP: a cancelled download stops and leaves no file") {
 
     got.cancel();
 
-    for (int tries = 0; tries < 2000 && std::filesystem::exists(place); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    for (int tries = 0; tries < 2000 && leftovers() > 0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
     ought(!std::filesystem::exists(place));
+    same(leftovers(), std::size_t{0});
 
     desk.close();
 }
@@ -973,6 +1032,40 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
     third.wrote("HTTP/1.1 301 Moved\r\nLocation: https://127.0.0.1/\r\nContent-Length: 0\r\n\r\n");
 
     same(why(upward), std::optional{net::HttpTrouble::Why::insecure});
+}
+
+// A body without a length lasts until the connection closes. Over TLS that end is whole only when
+// the server said goodbye first (close_notify); a connection that simply breaks off may have lost
+// the rest of the body on the way, so it is refused instead of passed off as the whole answer.
+TRIAL("HTTP: a body until close over TLS is whole only after the server's close notice") {
+    const net::Listener gate = standing();
+
+    const Seam<net::TlsProvider> tls{std::make_shared<faking::Watching>()};
+
+    net::HttpClient client{tls};
+
+    auto cut = client.get(asked(at(gate, "/urwany", "https")));
+
+    {
+        Desk desk = accepted(gate, tls);
+
+        (void)desk.heard();
+        desk.wrote("HTTP/1.1 200 OK\r\n\r\npołowa");
+        desk.close();
+    }
+
+    same(why(cut), std::optional{net::HttpTrouble::Why::malformed});
+
+    auto whole = client.get(asked(at(gate, "/caly", "https")));
+
+    Desk desk = accepted(gate, tls);
+
+    (void)desk.heard();
+    desk.wrote("HTTP/1.1 200 OK\r\n\r\ncałość");
+    desk.wrote("ZAMKNIJ");
+    desk.close();
+
+    same(body(std::move(whole).get()), std::string{"całość"});
 }
 
 // A handshake refusal with a reason passes through the HTTP client untouched: the caller gets a

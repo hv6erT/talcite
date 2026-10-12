@@ -22,6 +22,7 @@
 #include "talcite/promise.hpp"
 
 #include "fscore.hpp"
+#include "looking.hpp"
 
 #ifdef _WIN32
 
@@ -851,6 +852,10 @@ private:
 
 #endif
 
+}
+
+namespace core {
+
 // Polling. Where the system cannot tell by itself (and also where it can, but lies), we look into
 // the directory every so often and compare with what we saw the previous time. There are no
 // renames here: the old name disappears, a new one appears, and that is all that can honestly be
@@ -865,12 +870,7 @@ private:
 //
 // The root itself stands in a look without size and time: its disappearance and return are a
 // change, and a new file inside is not, just as in the system's notifications.
-struct Sight {
-    Kind kind = Kind::none;
-    std::uintmax_t size = 0;
-    std::chrono::sys_seconds modified{};
-    Instant fine{};
-};
+namespace {
 
 constexpr std::chrono::seconds fresh{60};
 
@@ -891,19 +891,45 @@ Instant finely(const path& where, Kind kind, std::chrono::sys_seconds modified,
     }
 }
 
-// One look at `where`: the root and, for a directory, its entries (the whole tree when `deep`).
-// Empty when `where` does not exist.
-std::map<path, Sight> sighted(const path& where, bool deep) {
-    std::map<path, Sight> made;
+// What stands at the path, or nothing when that cannot be told: unlike `kind_at`, which takes
+// every failure for absence, a failure other than "no such entry" stays unknown.
+std::optional<Kind> known_kind(const path& where) {
+    std::error_code why;
 
-    const Kind what = kind_at(where);
-    if (what == Kind::none) return made;
+    (void)stood::symlink_status(where, why);
+
+    if (why && why != std::errc::no_such_file_or_directory && why != std::errc::not_a_directory) return std::nullopt;
+
+    return kind_at(where);
+}
+
+}
+
+// One look at `where`: what was seen (the root and, for a directory, its entries, the whole tree
+// when `deep`), each as a `Sight` of kind, size, time in seconds and, for a fresh file, the exact
+// time (`fine`); the folders whose entries could not be read; and whether the root itself could not
+// be told (a share that does not answer, no right to look), which is not the same as its absence.
+// A folder that cannot be read is noted, not taken for empty: a NAS that does not answer for a
+// moment, or a folder whose rights were taken away, would otherwise report everything inside as
+// removed, and everything as created when it answers again.
+Look looked(const path& where, bool deep) {
+    Look made;
+
+    const std::optional<Kind> what = known_kind(where);
+
+    if (!what) {
+        made.blind = true;
+
+        return made;
+    }
+
+    if (*what == Kind::none) return made;
 
     const auto now = std::chrono::system_clock::now();
 
-    if (what != Kind::folder) {
+    if (*what != Kind::folder) {
         Sight mine;
-        mine.kind = what;
+        mine.kind = *what;
 
         std::error_code ignored;
         mine.size = stood::file_size(where, ignored);
@@ -913,27 +939,73 @@ std::map<path, Sight> sighted(const path& where, bool deep) {
         } catch (...) {
         }
 
-        mine.fine = finely(where, what, mine.modified, now);
+        mine.fine = finely(where, *what, mine.modified, now);
 
-        made[where] = mine;
+        made.seen[where] = mine;
 
         return made;
     }
 
-    made[where] = Sight{Kind::folder, 0, {}, {}};
+    made.seen[where] = Sight{Kind::folder, 0, {}, {}};
 
-    std::vector<Entry> among;
+    std::vector<path> waiting{where};
 
-    try {
-        among = deep ? walk_at(where) : list_at(where);
-    } catch (...) {
-        return made;
+    while (!waiting.empty()) {
+        const path here = std::move(waiting.back());
+        waiting.pop_back();
+
+        std::vector<Entry> among;
+
+        try {
+            among = list_whole_at(here);
+        } catch (...) {
+            made.unread.push_back(here);
+
+            continue;
+        }
+
+        for (const Entry& one : among) {
+            made.seen[one.where] = Sight{one.kind, one.size, one.modified, finely(one.where, one.kind, one.modified, now)};
+
+            if (deep && one.kind == Kind::folder) waiting.push_back(one.where);
+        }
     }
-
-    for (const Entry& one : among)
-        made[one.where] = Sight{one.kind, one.size, one.modified, finely(one.where, one.kind, one.modified, now)};
 
     return made;
+}
+
+namespace {
+
+// Whether the path lies under one of the folders, the folders themselves excluded.
+bool beneath(const path& where, const std::vector<path>& folders) {
+    for (const path& folder : folders) {
+        auto one = where.begin();
+        bool inside = true;
+
+        for (auto two = folder.begin(); two != folder.end(); ++two, ++one)
+            if (one == where.end() || *one != *two) {
+                inside = false;
+
+                break;
+            }
+
+        if (inside && one != where.end()) return true;
+    }
+
+    return false;
+}
+
+}
+
+// The new look with the gaps of its reading filled from the previous one: what the previous look saw
+// under a folder that could not be read now is taken as unchanged, so it is neither removed now nor
+// created again later.
+std::map<path, Sight> filled(Look now, const std::map<path, Sight>& was) {
+    if (!now.unread.empty())
+        for (const auto& [where, mine] : was)
+            if (!now.seen.contains(where) && beneath(where, now.unread)) now.seen.emplace(where, mine);
+
+    return std::move(now.seen);
 }
 
 // The changes between two looks: created, modified and removed entries.
@@ -963,6 +1035,10 @@ std::vector<Change> apart(const std::map<path, Sight>& was, const std::map<path,
     return made;
 }
 
+}
+
+namespace {
+
 // The polling backend: one thread that looks into every polled watch in turn.
 class Polling {
 public:
@@ -977,7 +1053,7 @@ public:
 
         post->where = where;
         post->deep = deep;
-        post->seen = sighted(where, deep);
+        post->seen = looked(where, deep).seen;
 
         {
             const std::lock_guard<std::mutex> kept{guard_};
@@ -1024,8 +1100,14 @@ private:
 
             const auto began = std::chrono::steady_clock::now();
 
+            // A look that could not tell the root keeps the previous one: nothing is known, so
+            // nothing is reported.
             for (const auto& [which, post] : among) {
-                std::map<path, Sight> now = sighted(post->where, post->deep);
+                Look look = looked(post->where, post->deep);
+
+                if (look.blind) continue;
+
+                std::map<path, Sight> now = filled(std::move(look), post->seen);
                 std::vector<Change> mine = apart(post->seen, now);
 
                 post->seen = std::move(now);
@@ -1081,7 +1163,7 @@ public:
         if (!polled && kind_at(held->where) != Kind::folder) {
             kept.peering = true;
             kept.only = held->where;
-            kept.seen = sighted(held->where, false);
+            kept.seen = looked(held->where, false).seen;
         }
 
         const path where = kept.peering ? held->where.parent_path() : held->where;
@@ -1193,7 +1275,11 @@ public:
 
         // The directory only said that something stirred at our name. What exactly is told only
         // by a look at the file itself, compared with the previous one.
-        std::map<path, Sight> now = sighted(only, false);
+        Look look = looked(only, false);
+
+        if (look.blind) return;
+
+        std::map<path, Sight> now = std::move(look.seen);
         std::vector<Change> mine;
 
         {

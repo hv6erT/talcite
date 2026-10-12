@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
+#include <cstdint>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -12,6 +14,8 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
 #include <sstream>
 #include <system_error>
 #include <thread>
@@ -145,30 +149,28 @@ std::shared_ptr<File::Held> open_at(const path& where, Mode how) {
     return made;
 }
 
-// Reads up to `much` bytes from offset `at`, looping over short reads; the result is shorter only
-// at the end of the file. Windows reads at most 1 GiB per call.
-Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
-    Bytes made(much);
-
+// Reads into `into` from offset `at`, looping over short reads, and returns how many bytes came;
+// fewer than asked only at the end of the file. The bytes land where the caller wants them, so a
+// whole file read in installments is not copied a second time.
+std::size_t read_into(const File::Held& held, std::uintmax_t at, std::span<std::byte> into) {
     std::size_t got = 0;
 
-    while (got < much) {
+    while (got < into.size()) {
 #ifdef _WIN32
         OVERLAPPED told{};
         told.Offset = static_cast<DWORD>((at + got) & 0xFFFFFFFFull);
         told.OffsetHigh = static_cast<DWORD>((at + got) >> 32);
 
         DWORD taken = 0;
-        const DWORD wanted = static_cast<DWORD>(std::min<std::size_t>(much - got, 1u << 30));
+        const DWORD wanted = static_cast<DWORD>(std::min<std::size_t>(into.size() - got, 1u << 30));
 
-        if (ReadFile(held.handle, made.data() + got, wanted, &taken, &told) == 0) {
+        if (ReadFile(held.handle, into.data() + got, wanted, &taken, &told) == 0) {
             if (GetLastError() == ERROR_HANDLE_EOF) break;
 
             amiss("Cannot read the file.", held.where);
         }
 #else
-        const ssize_t taken = ::pread(held.handle, made.data() + got, much - got,
-                                      static_cast<off_t>(at + got));
+        const ssize_t taken = ::pread(held.handle, into.data() + got, into.size() - got, static_cast<off_t>(at + got));
 
         if (taken < 0) amiss("Cannot read the file.", held.where);
 #endif
@@ -178,13 +180,21 @@ Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
         got += static_cast<std::size_t>(taken);
     }
 
-    made.resize(got);
+    return got;
+}
+
+// Reads up to `much` bytes from offset `at` into a new buffer; the result is shorter only at the
+// end of the file.
+Bytes read_at(const File::Held& held, std::uintmax_t at, std::size_t much) {
+    Bytes made(much);
+
+    made.resize(read_into(held, at, made));
 
     return made;
 }
 
 // Writes all of `what` at offset `at`, looping over short writes, and returns the byte count.
-std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what) {
+std::size_t write_from(const File::Held& held, std::uintmax_t at, std::span<const std::byte> what) {
     std::size_t put = 0;
 
     while (put < what.size()) {
@@ -194,14 +204,12 @@ std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& wha
         told.OffsetHigh = static_cast<DWORD>((at + put) >> 32);
 
         DWORD given = 0;
-        const DWORD wanted =
-            static_cast<DWORD>(std::min<std::size_t>(what.size() - put, 1u << 30));
+        const DWORD wanted = static_cast<DWORD>(std::min<std::size_t>(what.size() - put, 1u << 30));
 
         if (WriteFile(held.handle, what.data() + put, wanted, &given, &told) == 0)
             amiss("Cannot write the file.", held.where);
 #else
-        const ssize_t given = ::pwrite(held.handle, what.data() + put, what.size() - put,
-                                       static_cast<off_t>(at + put));
+        const ssize_t given = ::pwrite(held.handle, what.data() + put, what.size() - put, static_cast<off_t>(at + put));
 
         if (given < 0) amiss("Cannot write the file.", held.where);
 #endif
@@ -216,6 +224,9 @@ std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& wha
 
     return put;
 }
+
+// Writes all of `what` at offset `at` and returns the byte count.
+std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what) { return write_from(held, at, what); }
 
 // Making the data durable. A write ends in the system's memory; only this call waits until the data
 // is on the medium, also on a network share, where `FlushFileBuffers` becomes a FLUSH command to
@@ -315,6 +326,89 @@ std::uintmax_t sized(const File::Held& held) {
     if (::fstat(held.handle, &told) != 0) amiss("Cannot read the file size.", held.where);
 
     return static_cast<std::uintmax_t>(told.st_size);
+#endif
+}
+
+namespace {
+
+#ifdef _WIN32
+
+// The facet from what Windows tells about an open handle.
+Facet facet_from(const BY_HANDLE_FILE_INFORMATION& told) {
+    const std::uint64_t ticks = (static_cast<std::uint64_t>(told.ftLastWriteTime.dwHighDateTime) << 32) | told.ftLastWriteTime.dwLowDateTime;
+
+    Facet made;
+    made.size = (static_cast<std::uintmax_t>(told.nFileSizeHigh) << 32) | told.nFileSizeLow;
+    made.changed = Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(ticks) - 11644473600LL * 10000000LL) * 100}};
+    made.device = told.dwVolumeSerialNumber;
+    made.node = (static_cast<std::uint64_t>(told.nFileIndexHigh) << 32) | told.nFileIndexLow;
+
+    return made;
+}
+
+#else
+
+// The facet from what `stat` tells.
+Facet facet_from(const struct stat& told) {
+#ifdef __APPLE__
+    const timespec& when = told.st_mtimespec;
+#else
+    const timespec& when = told.st_mtim;
+#endif
+
+    Facet made;
+    made.size = static_cast<std::uintmax_t>(told.st_size);
+    made.changed = Instant{std::chrono::seconds{when.tv_sec} + std::chrono::nanoseconds{when.tv_nsec}};
+    made.device = static_cast<std::uint64_t>(told.st_dev);
+    made.node = static_cast<std::uint64_t>(told.st_ino);
+
+    return made;
+}
+
+#endif
+
+}
+
+// What the open file is now: its length, its write time and which file it is on which medium.
+Facet facet_of(const File::Held& held) {
+#ifdef _WIN32
+    BY_HANDLE_FILE_INFORMATION told{};
+
+    if (GetFileInformationByHandle(held.handle, &told) == 0) amiss("Cannot read the file.", held.where);
+
+    return facet_from(told);
+#else
+    struct stat told {};
+
+    if (::fstat(held.handle, &told) != 0) amiss("Cannot read the file.", held.where);
+
+    return facet_from(told);
+#endif
+}
+
+// What stands at the path now, as `facet_of` tells it; nothing when nothing can be read there.
+std::optional<Facet> facet_at(const path& where) {
+#ifdef _WIN32
+    const HANDLE handle = CreateFileW(longly(where).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+
+    if (handle == INVALID_HANDLE_VALUE) return std::nullopt;
+
+    BY_HANDLE_FILE_INFORMATION told{};
+
+    const bool read = GetFileInformationByHandle(handle, &told) != 0;
+
+    CloseHandle(handle);
+
+    if (!read) return std::nullopt;
+
+    return facet_from(told);
+#else
+    struct stat told {};
+
+    if (::stat(where.c_str(), &told) != 0) return std::nullopt;
+
+    return facet_from(told);
 #endif
 }
 

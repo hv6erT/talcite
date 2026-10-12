@@ -909,6 +909,43 @@ std::vector<Entry> list_at(const path& where) {
     return made;
 }
 
+// The entries of the directory, sorted by path, read in full or not at all: a directory that cannot
+// be opened, or a listing broken off in the middle, is a refusal with the place, where `list_at`
+// would give what it got. For operations that must not do less than they say (copying and moving a
+// tree). A cancelled reading gives what it got; the caller asks `stopped`.
+std::vector<Entry> list_whole_at(const path& where) {
+    if (kind_at(where) != Kind::folder) amiss("Not a directory.", where);
+
+#ifdef _WIN32
+
+    std::vector<Entry> made = found_in(where, false);
+
+#else
+
+    std::error_code trouble;
+    stood::directory_iterator at{where, trouble};
+
+    if (trouble) amiss("Cannot read the directory.", where);
+
+    std::vector<Entry> made;
+
+    for (const stood::directory_iterator end; at != end; at.increment(trouble)) {
+        if (trouble) amiss("Cannot read the directory.", where);
+
+        if (stopped()) return made;
+
+        made.push_back(noted(*at));
+    }
+
+    if (trouble) amiss("Cannot read the directory.", where);
+
+#endif
+
+    sorted(made);
+
+    return made;
+}
+
 // A directory we have no access to is skipped instead of failing the whole walk: losing the right
 // to one subdirectory must not invalidate the scan of a library. A symlink is followed only at the
 // root (`folder_at`); deeper down it stays an entry, because a link to an ancestor would close a

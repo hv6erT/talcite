@@ -16,6 +16,7 @@
 #include "talcite/fs.hpp"
 #include "talcite/stream.hpp"
 
+#include "fscore.hpp"
 #include "raced.hpp"
 
 // An HTTP/1.1 client, as much as is needed to talk to services such as TMDB and to download images:
@@ -148,6 +149,9 @@ struct Line {
         return secure.held() ? secure.write(std::move(what), patience) : plain.write(std::move(what), patience);
     }
 
+    // Whether the connection ended without the TLS close_notify; a plain one cannot tell.
+    [[nodiscard]] bool cut() const { return secure.held() && secure.cut(); }
+
     // Closes both the encrypted and the plain stream, whichever are held.
     void close() {
         if (secure.held()) secure.close();
@@ -256,12 +260,16 @@ Promise<void> exact(const Wire& wire, std::uint64_t much, const Sunk& sink, Pati
     });
 }
 
-// The body until the connection closes: a response without a length and without chunks.
+// The body until the connection closes: a response without a length and without chunks. Over TLS
+// the end must come with the server's close_notify; without it the body may be only a part, and
+// it is refused rather than passed off as whole.
 Promise<void> drained(const Wire& wire, const Sunk& sink, Patience patience) {
     Bytes part = taken_out(wire, wire->kept.size());
 
     return took(sink, std::move(part)).then([wire, sink, patience] {
         return more(wire, patience).then([wire, sink, patience](bool got) -> Promise<void> {
+            if (!got && wire->cut()) throw malformed("The answer was cut short.");
+
             if (!got) return ready();
 
             return drained(wire, sink, patience);
@@ -1181,6 +1189,8 @@ void poured(const Kept& held, Spilling& spill, const Url& url) {
             do {
                 (void)drawn(wire->kept.size());
             } while (more(wire, patience).get());
+
+            if (wire->cut()) throw malformed("The answer was cut short.");
             break;
 
         case Framing::none:
@@ -1196,15 +1206,18 @@ void poured(const Kept& held, Spilling& spill, const Url& url) {
     }
 }
 
-// The work of a download on the pool: the file opened anew, the exchange awaited up to the head, the
-// body poured into the file (both waits hear a cancellation), and the file removed again unless a
-// whole 2xx body is in it.
+// The work of a download on the pool. The body goes to a file beside the target, and only a whole
+// 2xx body, once on the medium, takes the target's place, replacing what stood there in one rename:
+// a refused, cut or cancelled download leaves an existing file as it was, byte for byte. Both waits
+// hear a cancellation; the file beside goes in every end but the whole one.
 Response downloaded(const Kept& held, const Request& request, const std::filesystem::path& into, const Work& work) {
     if (!held) throw Trouble{"The HTTP client is empty."};
 
+    const std::filesystem::path aside = fs::core::aside_of(into);
+
     const auto spill = std::make_shared<Spilling>();
 
-    spill->file = fs::open(into, fs::Mode::truncate).get();
+    spill->file = fs::open(aside, fs::Mode::truncate).get();
     spill->work = &work;
 
     Response got;
@@ -1214,28 +1227,41 @@ Response downloaded(const Kept& held, const Request& request, const std::filesys
         got = fetched(held, request, 0, spill).get();
 
         if (spill->wire) poured(held, *spill, got.url);
+
+        if (got.status >= 200 && got.status <= 299) spill->file.sync().get();
     } catch (...) {
         if (spill->wire) spill->wire->close();
 
         spill->file.close();
-        std::filesystem::remove(into, ignored);
+        std::filesystem::remove(aside, ignored);
 
         throw;
     }
 
     spill->file.close();
 
-    if (got.status < 200 || got.status > 299) std::filesystem::remove(into, ignored);
+    if (got.status < 200 || got.status > 299) {
+        std::filesystem::remove(aside, ignored);
+
+        return got;
+    }
+
+    if (!fs::core::replaced_at(aside, into)) {
+        std::filesystem::remove(aside, ignored);
+
+        throw fs::Trouble{"Cannot replace the file.", into};
+    }
 
     return got;
 }
 
 }
 
-// Downloads with a GET into the file at `into`, created anew: the body of a 2xx answer goes to the
-// file piece by piece, and the answer comes back with an empty body. Any other answer comes back as
-// usual, with its body in memory, and leaves no file; neither does a failed or cancelled download,
-// so a file at `into` is always a whole body. Like every network promise, it starts at once.
+// Downloads with a GET into the file at `into`: the body of a 2xx answer goes to the file piece by
+// piece, and the answer comes back with an empty body. Any other answer comes back as usual, with
+// its body in memory, and leaves the place as it was; so does a failed or cancelled download, so a
+// file at `into` is always a whole body, the new one or the one from before. Like every network
+// promise, it starts at once.
 Promise<Response> HttpClient::save(Request request, std::filesystem::path into) const {
     request.method = "GET";
     request.body.clear();
