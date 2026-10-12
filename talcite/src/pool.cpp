@@ -1,6 +1,7 @@
 #include "talcite/pool.hpp"
 
 #include <algorithm>
+#include <system_error>
 #include <utility>
 
 namespace talcite {
@@ -22,15 +23,36 @@ std::size_t roomy(std::size_t most) {
 // interrupting its system call. Outside a task it is null.
 thread_local Bell* standing = nullptr;
 
+// The pool whose worker this thread is, and whether the task it runs now holds a computing slot;
+// `Waiting` gives the slot back while the task waits.
+thread_local Pool* serving = nullptr;
+thread_local bool computing = false;
+
+// Takes the job `which` out of the queue `from`, if it is there; the closure comes back so that it
+// can be destroyed after the lock is released. The caller holds the lock.
+std::function<void()> pulled(std::map<Pool::Job, std::function<void()>>& from, Pool::Job which) {
+    const auto at = from.find(which);
+
+    if (at == from.end()) return {};
+
+    std::function<void()> made = std::move(at->second);
+
+    from.erase(at);
+
+    return made;
+}
+
 }
 
 // The bell of the pool task running on the calling thread, or null outside a task.
 Bell* ringing() { return standing; }
 
-// A pool whose computing lane runs at most `most` tasks at once (zero means one per core).
-Pool::Pool(std::size_t most) : most_(roomy(most)) {}
+// A pool whose computing lane runs at most `most` tasks at once (zero means one per core). A worker
+// that has had nothing to do for `rest` leaves, as long as more than `most` workers remain.
+Pool::Pool(std::size_t most, std::chrono::milliseconds rest) : most_(roomy(most)), rest_(rest) {}
 
-// Tells the workers to finish and joins them. Queued computing work still runs before they leave.
+// Tells the workers to finish and joins them, those that have left on their own too. Queued
+// computing work still runs before they leave.
 Pool::~Pool() {
     {
         const std::lock_guard<std::mutex> held{guard_};
@@ -71,73 +93,128 @@ Pool::Job Pool::post(std::function<void()> what, Lane lane, std::atomic<Job>& in
     return handed(std::move(what), lane, &into);
 }
 
-// Queues the work and adds a worker when needed. Two queues, one staff. Work on the `io` lane may
-// wait for a file or for a dead network share, so the pool grows for it without limit; otherwise
-// the ninth such task would stop the whole program. Work on the `cpu` lane declares that it only
-// computes, so there is no point in running more of it at once than the machine has cores: two
-// hundred computing tasks on eight cores finish slower than eight.
+// Queues the work and adds a worker when needed (`hired`). Two queues, one staff. Work on the `io`
+// lane may wait for a file or for a dead network share, so the pool grows for it without limit;
+// otherwise the ninth such task would stop the whole program. Work on the `cpu` lane declares that
+// it only computes, so there is no point in running more of it at once than the machine has cores:
+// two hundred computing tasks on eight cores finish slower than eight. The queues are keyed by the
+// job's number, which grows, so they keep the order of posting and `drop` finds a job at once.
 Pool::Job Pool::handed(std::function<void()> what, Lane lane, std::atomic<Job>* into) {
-    std::unique_lock<std::mutex> held{guard_};
+    std::vector<std::thread> gone;
+    Job which = 0;
 
-    const Job which = ++next_;
+    {
+        std::unique_lock<std::mutex> held{guard_};
 
-    // Before queueing, not after. A worker takes the task off under the same lock, so whoever sees
-    // the number here is sure that the task is at least in the queue, and whoever sees zero knows
-    // that no worker has picked it up yet.
-    if (into != nullptr) into->store(which);
+        which = ++next_;
 
-    if (lane == Lane::cpu) cpu_.push_back(Doing{which, std::move(what)});
-    else io_.push_back(Doing{which, std::move(what)});
+        // Before queueing, not after. A worker takes the task off under the same lock, so whoever
+        // sees the number here is sure that the task is at least in the queue, and whoever sees
+        // zero knows that no worker has picked it up yet.
+        if (into != nullptr) into->store(which);
 
-    // We compare with the length of the queue, not with zero. A worker woken a moment ago still
-    // counts as idle until it takes a task off itself, so the rule "add one when nobody is idle"
-    // would, for a handful of tasks posted at once, add one worker and make the rest wait in the
-    // queue.
-    const bool hasty = io_.size() > idle_;
-    const bool slack = !hasty && cpu_.size() > idle_ && spare_ < most_;
+        if (lane == Lane::cpu) cpu_.emplace(which, std::move(what));
+        else io_.emplace(which, std::move(what));
 
-    if (hasty || slack) {
-        staff_.emplace_back([this] { serve(); });
-        ++idle_;
+        try {
+            hired(true);
+        } catch (...) {
+            std::function<void()> dropped = pulled(lane == Lane::cpu ? cpu_ : io_, which);
 
-        // Workers added for computing work are counted separately: otherwise blocking work that
-        // occupied the whole staff would starve the computing work, with the ceiling used up by
-        // other threads.
-        if (slack) ++spare_;
+            if (into != nullptr) into->store(0);
+
+            held.unlock();
+
+            throw;
+        }
+
+        gone = reaped();
     }
 
-    held.unlock();
     stirred_.notify_one();
+
+    for (std::thread& one : gone) one.join();
 
     return which;
 }
 
-// Removes task `which` from the queue `from`; returns whether it was there. The caller holds the
-// lock.
-bool Pool::pulled(std::deque<Doing>& from, Job which) {
-    const auto at = std::find_if(from.begin(), from.end(),
-                                 [which](const Doing& one) { return one.which == which; });
+// How many queued tasks could start right now: every blocking one, and computing ones as far as
+// the ceiling has free slots. The caller holds the lock.
+std::size_t Pool::runnable() const {
+    const std::size_t free = cpu_busy_ < most_ ? most_ - cpu_busy_ : 0;
 
-    if (at == from.end()) return false;
+    return io_.size() + std::min(cpu_.size(), free);
+}
 
-    from.erase(at);
+// Adds a worker when more tasks could start than there are idle workers to start them. The count
+// compares with the length of the queues, not with zero: a worker woken a moment ago still counts
+// as idle until it takes a task off itself, so the rule "add one when nobody is idle" would, for a
+// handful of tasks posted at once, add one worker and make the rest wait. Computing work counts
+// only as far as the ceiling lets it run, so workers stuck in blocking work never leave computing
+// work without anyone to take it.
+//
+// The worker's bell is made here, before its thread: a bell is a pair of descriptors, and a pool
+// that has run out of them must say so to whoever posts, not end the program from a worker thread.
+// When nothing can be added, the work waits for a worker that frees itself; only a pool without any
+// worker, which nobody would ever serve, gives the error back (`strict`). The caller holds the lock.
+void Pool::hired(bool strict) {
+    if (closing_ || runnable() <= idle_) return;
 
-    return true;
+    try {
+        auto bell = std::make_unique<Bell>();
+
+        staff_.emplace_back([this, mine = std::move(bell)]() mutable { serve(std::move(mine)); });
+
+        ++alive_;
+        ++idle_;
+    } catch (...) {
+        if (strict && alive_ == 0) throw;
+    }
+}
+
+// The threads of the workers that have left on their own, taken out of the staff so that the caller
+// joins them after releasing the lock. The caller holds the lock.
+std::vector<std::thread> Pool::reaped() {
+    std::vector<std::thread> made;
+
+    for (const std::thread::id one : retired_) {
+        const auto at = std::find_if(staff_.begin(), staff_.end(), [one](const std::thread& each) { return each.get_id() == one; });
+
+        if (at == staff_.end()) continue;
+
+        made.push_back(std::move(*at));
+        staff_.erase(at);
+    }
+
+    retired_.clear();
+
+    return made;
 }
 
 // Cancels task `which`. A task that has not started yet simply falls out of the queue and costs
-// nothing. A task that runs gets its bell rung: its system call is not interrupted, it is only
+// nothing; its closure is destroyed after the lock is released, since destructors may come back to
+// the pool. A task that runs gets its bell rung: its system call is not interrupted, it is only
 // woken from waiting, provided it was waiting on the bell together with its descriptor.
 void Pool::drop(Job which) {
-    const std::lock_guard<std::mutex> held{guard_};
+    std::function<void()> dropped;
 
-    if (pulled(io_, which) || pulled(cpu_, which)) {
-        emptied_.notify_all();
-        return;
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        dropped = pulled(io_, which);
+
+        if (!dropped) dropped = pulled(cpu_, which);
+
+        if (!dropped) {
+            const auto at = running_.find(which);
+
+            if (at != running_.end()) at->second->ring();
+
+            return;
+        }
     }
 
-    const auto at = running_.find(which);
-    if (at != running_.end()) at->second->ring();
+    emptied_.notify_all();
 }
 
 // Waits until both queues are empty and no task is running.
@@ -146,43 +223,65 @@ void Pool::drain() {
     emptied_.wait(held, [this] { return io_.empty() && cpu_.empty() && busy_ == 0; });
 }
 
-// How many worker threads the pool has started.
+// How many worker threads the pool has now.
 std::size_t Pool::staff() const {
     const std::lock_guard<std::mutex> held{guard_};
 
-    return staff_.size();
+    return alive_;
 }
 
 // The loop of one worker: takes `io` work first, then `cpu` work while the computing ceiling
-// allows, and returns once the pool is closing and nothing is left for it.
-void Pool::serve() {
-    Bell bell;
+// allows, and returns once the pool is closing and nothing is left for it, or after `rest_` without
+// work while the staff is larger than the ceiling: a burst of blocking work on a dead share leaves
+// many workers behind, and each of them holds a thread and two descriptors.
+void Pool::serve(std::unique_ptr<Bell> mine) {
+    Bell& bell = *mine;
 
     standing = &bell;
+    serving = this;
+
+    const auto ready = [this] { return closing_ || !io_.empty() || (!cpu_.empty() && cpu_busy_ < most_); };
 
     while (true) {
-        Doing one;
+        std::function<void()> what;
+        Job which = 0;
         bool cpu = false;
 
         {
             std::unique_lock<std::mutex> held{guard_};
 
-            stirred_.wait(held, [this] {
-                return closing_ || !io_.empty() || (!cpu_.empty() && cpu_busy_ < most_);
-            });
+            if (!stirred_.wait_for(held, rest_, ready)) {
+                if (alive_ <= most_) continue;
+
+                --idle_;
+                --alive_;
+                retired_.push_back(std::this_thread::get_id());
+
+                standing = nullptr;
+                serving = nullptr;
+
+                return;
+            }
 
             if (!io_.empty()) {
-                one = std::move(io_.front());
-                io_.pop_front();
+                which = io_.begin()->first;
+                what = std::move(io_.begin()->second);
+                io_.erase(io_.begin());
             } else if (!cpu_.empty() && (cpu_busy_ < most_ || closing_)) {
-                one = std::move(cpu_.front());
-                cpu_.pop_front();
+                which = cpu_.begin()->first;
+                what = std::move(cpu_.begin()->second);
+                cpu_.erase(cpu_.begin());
 
                 cpu = true;
                 ++cpu_busy_;
             } else {
                 if (closing_) {
+                    --idle_;
+                    --alive_;
+
                     standing = nullptr;
+                    serving = nullptr;
+
                     return;
                 }
 
@@ -193,18 +292,22 @@ void Pool::serve() {
             // Otherwise a ring from drop() just before the previous task ended would leave the bell
             // raised, and the next task would wake for no reason.
             bell.clear();
-            running_.emplace(one.which, &bell);
+            running_.emplace(which, &bell);
 
             --idle_;
             ++busy_;
         }
 
+        computing = cpu;
+
         // An exception from here has nowhere to go: the promise has already recorded it as a
         // rejection, and a worker thread has no one to hand it to. It is swallowed deliberately.
         try {
-            one.what();
+            what();
         } catch (...) {
         }
+
+        computing = false;
 
         // The closure is released before we announce that we are idle. It holds what the caller
         // captured (a promise, its result, other handles), and `drain()` waits for `busy_ == 0` and
@@ -214,16 +317,20 @@ void Pool::serve() {
         //
         // It is released without the lock: destroying the closure runs other people's destructors,
         // and those may come back to the pool.
-        one.what = nullptr;
+        what = nullptr;
 
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            running_.erase(one.which);
+            running_.erase(which);
 
             --busy_;
             ++idle_;
             if (cpu) --cpu_busy_;
+
+            // A freed computing slot may let queued computing work start while this worker turns to
+            // blocking work, so the staff is checked again.
+            hired(false);
         }
 
         // A freed computing slot can take one waiting worker, so one is woken, not all. Blocking
@@ -233,6 +340,41 @@ void Pool::serve() {
 
         if (cpu) stirred_.notify_one();
     }
+}
+
+// A computing task that is about to wait for other work (`Promise::await`) gives its slot back for
+// the length of the wait: otherwise tasks that each wait for another computing task could fill
+// every slot with waiting and leave the work they wait for without a slot, for good. Outside a
+// computing task it does nothing.
+Waiting::Waiting() {
+    if (serving == nullptr || !computing) return;
+
+    pool_ = serving;
+    computing = false;
+
+    {
+        const std::lock_guard<std::mutex> held{pool_->guard_};
+
+        --pool_->cpu_busy_;
+
+        pool_->hired(false);
+    }
+
+    pool_->stirred_.notify_one();
+}
+
+// Takes the slot again after the wait. It does not wait for a free one: the task is already running,
+// and for a moment the ceiling is exceeded by the tasks that came back from waiting.
+Waiting::~Waiting() {
+    if (pool_ == nullptr) return;
+
+    {
+        const std::lock_guard<std::mutex> held{pool_->guard_};
+
+        ++pool_->cpu_busy_;
+    }
+
+    computing = true;
 }
 
 // The program's shared pool, created on first use.

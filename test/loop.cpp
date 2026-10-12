@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <thread>
 
@@ -24,6 +25,32 @@ TRIAL("Loop: turn runs the posted work and returns how much") {
     same(loop.turn(), std::size_t{2});
     same(counted, 11);
     same(loop.turn(), std::size_t{0});
+}
+
+// The batch has already left the queue when a piece of it throws, so whatever stood behind the
+// thrower must still run; the first exception comes out after the last piece.
+TRIAL("Loop: a piece of work that throws does not take the rest of the batch") {
+    Loop loop;
+
+    int counted = 0;
+
+    loop.post([&counted] { ++counted; });
+    loop.post([] { throw std::runtime_error{"pierwszy"}; });
+    loop.post([&counted] { counted += 10; });
+    loop.post([] { throw std::runtime_error{"drugi"}; });
+    loop.post([&counted] { counted += 100; });
+
+    std::string said;
+
+    try {
+        (void)loop.turn();
+    } catch (const std::runtime_error& why) {
+        said = why.what();
+    }
+
+    same(said, std::string{"pierwszy"});
+    same(counted, 111);
+    same(loop.waiting(), std::size_t{0});
 }
 
 TRIAL("Loop: current sees only its own thread") {

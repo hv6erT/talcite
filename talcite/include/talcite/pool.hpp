@@ -1,11 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <functional>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -21,7 +23,7 @@ class Pool {
 public:
     using Job = std::uint64_t;
 
-    explicit Pool(std::size_t most = 0);
+    explicit Pool(std::size_t most = 0, std::chrono::milliseconds rest = std::chrono::seconds{30});
 
     ~Pool();
 
@@ -43,31 +45,49 @@ public:
     [[nodiscard]] std::size_t most() const { return most_; }
 
 private:
-    struct Doing {
-        Job which = 0;
-        std::function<void()> what;
-    };
+    friend class Waiting;
 
     Job handed(std::function<void()> what, Lane lane, std::atomic<Job>* into);
 
-    [[nodiscard]] static bool pulled(std::deque<Doing>& from, Job which);
+    [[nodiscard]] std::size_t runnable() const;
 
-    void serve();
+    void hired(bool strict);
+
+    [[nodiscard]] std::vector<std::thread> reaped();
+
+    void serve(std::unique_ptr<Bell> mine);
 
     mutable std::mutex guard_;
     std::condition_variable stirred_;
     std::condition_variable emptied_;
-    std::deque<Doing> io_;
-    std::deque<Doing> cpu_;
+    std::map<Job, std::function<void()>> io_;
+    std::map<Job, std::function<void()>> cpu_;
     std::unordered_map<Job, Bell*> running_;
     std::vector<std::thread> staff_;
+    std::vector<std::thread::id> retired_;
     Job next_ = 0;
     std::size_t most_ = 0;
-    std::size_t spare_ = 0;
+    std::chrono::milliseconds rest_;
+    std::size_t alive_ = 0;
     std::size_t cpu_busy_ = 0;
     std::size_t idle_ = 0;
     std::size_t busy_ = 0;
     bool closing_ = false;
+};
+
+class Waiting {
+public:
+    Waiting();
+
+    ~Waiting();
+
+    Waiting(const Waiting&) = delete;
+    Waiting& operator=(const Waiting&) = delete;
+    Waiting(Waiting&&) = delete;
+    Waiting& operator=(Waiting&&) = delete;
+
+private:
+    Pool* pool_ = nullptr;
 };
 
 [[nodiscard]] Pool& pooling();

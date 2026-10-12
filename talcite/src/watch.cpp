@@ -173,8 +173,16 @@ void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among)
         }
     }
 
-    // Outside the lock: settling wakes the watchers, among them our own one.
-    if (lucky) detail::settled(*lucky, std::move(giving));
+    // Outside the lock: settling wakes the watchers, among them our own one. It also runs what
+    // was chained to the request, on the watcher's own thread, where an exception would end the
+    // program. The request is settled before anything chained runs, so there is nobody left to
+    // tell, and the exception is swallowed.
+    if (!lucky) return;
+
+    try {
+        detail::settled(*lucky, std::move(giving));
+    } catch (...) {
+    }
 }
 
 }

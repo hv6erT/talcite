@@ -21,7 +21,10 @@
 #include "talcite/promise.hpp"
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <pthread.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #endif
 
 using namespace talcite;
@@ -884,6 +887,291 @@ TRIAL("Pool: computing work is not starved by a busy team") {
     mine.drain();
 
     ought(done.load());
+}
+
+namespace {
+
+// Waits until the flag is up, at most five seconds; returns whether it came up.
+bool risen(const std::atomic<bool>& flag) {
+    for (int again = 0; again < 500 && !flag.load(); ++again)
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+
+    return flag.load();
+}
+
+// A job that holds its worker until it is let go, at most five seconds.
+struct Holding {
+    std::atomic<bool> held{false};
+    std::atomic<bool> released{false};
+
+    // The job itself.
+    void operator()() {
+        held.store(true);
+
+        (void)risen(released);
+    }
+};
+
+// What a closure holds; its destructor comes back to the pool with more work.
+class Returning {
+public:
+    Returning(Pool& into, std::atomic<int>& counted) : into_(into), counted_(counted) {}
+
+    // Posts one more job to the pool that the closure was dropped from.
+    ~Returning() {
+        std::atomic<int>& counted = counted_;
+
+        (void)into_.post([&counted] { counted += 100; });
+    }
+
+    Returning(const Returning&) = delete;
+    Returning& operator=(const Returning&) = delete;
+    Returning(Returning&&) = delete;
+    Returning& operator=(Returning&&) = delete;
+
+private:
+    Pool& into_;
+    std::atomic<int>& counted_;
+};
+
+}
+
+// A burst of blocking work leaves many workers behind. Those above the ceiling leave after their
+// rest, each with its thread and its bell, and the pool still takes work afterwards.
+TRIAL("Pool: idle workers above the ceiling leave after their rest") {
+    Pool mine{1, std::chrono::milliseconds{30}};
+
+    for (int at = 0; at < 6; ++at)
+        (void)mine.post([] { std::this_thread::sleep_for(std::chrono::milliseconds{40}); });
+
+    mine.drain();
+
+    ought(mine.staff() >= 2);
+
+    for (int again = 0; again < 300 && mine.staff() > 1; ++again)
+        std::this_thread::sleep_for(std::chrono::milliseconds{10});
+
+    same(mine.staff(), std::size_t{1});
+
+    std::atomic<int> counted{0};
+
+    for (int at = 0; at < 4; ++at) (void)mine.post([&counted] { ++counted; });
+
+    mine.drain();
+
+    same(counted.load(), 4);
+}
+
+// Workers stuck in blocking work do not use up the computing ceiling. The only worker, made for
+// computing work, then blocks on ordinary work, and a computing task posted meanwhile must get a
+// worker of its own instead of waiting for the blocked one.
+TRIAL("Pool: computing work runs while blocking work holds every worker") {
+    Pool mine{1};
+
+    (void)mine.post([] {}, Lane::cpu);
+
+    mine.drain();
+
+    Holding blocking;
+
+    (void)mine.post([&blocking] { blocking(); });
+
+    ought(risen(blocking.held));
+
+    std::atomic<bool> done{false};
+
+    (void)mine.post([&done] { done.store(true); }, Lane::cpu);
+
+    const bool timely = risen(done);
+
+    blocking.released.store(true);
+
+    mine.drain();
+
+    ought(timely);
+}
+
+// A computing task that waits for other computing work gives its slot back for the wait. Twice as
+// many such tasks as slots would otherwise fill every slot with waiting, and the work they wait
+// for would never get one. The timeout only keeps a broken pool from hanging the trials.
+TRIAL("Pool: a computing task waiting for computing work does not hold its slot") {
+    const int many = static_cast<int>(pooling().most()) * 2;
+
+    std::vector<Promise<int>> among;
+
+    for (int at = 0; at < many; ++at)
+        among.push_back(Promise<int>{[at](auto resolve, auto) {
+                                         Promise<int> inner{[at](auto give, auto) { give(at); }, Lane::cpu};
+
+                                         resolve(inner.await() + 1);
+                                     },
+                                     Lane::cpu});
+
+    Promise<void>::all(among).timeout(std::chrono::seconds{5}).await();
+
+    for (int at = 0; at < many; ++at) same(among[static_cast<std::size_t>(at)].await(), at + 1);
+}
+
+// A dropped job's closure is destroyed after the pool lets go of its lock: what it holds may come
+// back to the pool in its destructor, here with more work, and under the lock that would deadlock.
+// The jobs left keep the order in which they were posted.
+TRIAL("Pool: a dropped job is let go outside the lock, and the rest keep their order") {
+    Pool mine{1};
+
+    Holding blocking;
+
+    (void)mine.post([&blocking] { blocking(); }, Lane::cpu);
+
+    ought(risen(blocking.held));
+
+    std::mutex guard;
+    std::vector<int> order;
+    std::vector<Pool::Job> jobs;
+
+    for (int at = 0; at < 6; ++at)
+        jobs.push_back(mine.post(
+            [&guard, &order, at] {
+                const std::lock_guard<std::mutex> kept{guard};
+
+                order.push_back(at);
+            },
+            Lane::cpu));
+
+    std::atomic<int> counted{0};
+
+    auto returning = std::make_shared<Returning>(mine, counted);
+
+    const Pool::Job doomed = mine.post([returning] {}, Lane::cpu);
+
+    returning.reset();
+
+    mine.drop(doomed);
+    mine.drop(jobs[1]);
+    mine.drop(jobs[4]);
+
+    blocking.released.store(true);
+
+    mine.drain();
+
+    same(order, (std::vector<int>{0, 2, 3, 5}));
+    same(counted.load(), 100);
+}
+
+#ifndef _WIN32
+
+namespace {
+
+// Takes every free descriptor under a lowered limit for the length of a trial and gives them all
+// back at its end, so that nothing new (a pipe for a bell) can be opened meanwhile.
+class Starving {
+public:
+    // Lowers the limit and fills it up.
+    Starving() {
+        held_ = ::getrlimit(RLIMIT_NOFILE, &was_) == 0;
+
+        if (!held_) return;
+
+        rlimit now = was_;
+
+        now.rlim_cur = std::min<rlim_t>(was_.rlim_cur, 512);
+
+        held_ = ::setrlimit(RLIMIT_NOFILE, &now) == 0;
+
+        if (!held_) return;
+
+        for (int again = 0; again < 1024; ++again) {
+            const int one = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+
+            if (one < 0) break;
+
+            taken_.push_back(one);
+        }
+    }
+
+    // Closes what it took and restores the limit.
+    ~Starving() {
+        for (const int one : taken_) ::close(one);
+
+        if (held_) (void)::setrlimit(RLIMIT_NOFILE, &was_);
+    }
+
+    Starving(const Starving&) = delete;
+    Starving& operator=(const Starving&) = delete;
+    Starving(Starving&&) = delete;
+    Starving& operator=(Starving&&) = delete;
+
+    // Whether the limit could be lowered.
+    [[nodiscard]] bool held() const { return held_; }
+
+private:
+    rlimit was_{};
+    bool held_ = false;
+    std::vector<int> taken_;
+};
+
+}
+
+// A worker's bell is a pair of descriptors. Without a free one, a pool that has no worker refuses
+// the work to whoever posts it, and a pool that has a worker keeps the work until that worker is
+// free; neither ends the program from a worker thread.
+TRIAL("Pool: without descriptors work is refused or waits, and the program goes on") {
+    Pool fresh;
+    Pool working{1};
+
+    Holding blocking;
+
+    (void)working.post([&blocking] { blocking(); });
+
+    ought(risen(blocking.held));
+
+    std::atomic<int> counted{0};
+
+    {
+        const Starving starving;
+
+        ought(starving.held());
+
+        threw((void)fresh.post([&counted] { ++counted; }));
+
+        (void)working.post([&counted] { counted += 10; });
+    }
+
+    blocking.released.store(true);
+
+    working.drain();
+
+    same(counted.load(), 10);
+
+    (void)fresh.post([&counted] { ++counted; });
+
+    fresh.drain();
+
+    same(counted.load(), 11);
+}
+
+#endif
+
+// A shielded promise is a view of another: cancelling the view, or a timeout over it, leaves the
+// promise it looks at running for everyone else.
+TRIAL("Promise: a shielded view cancels only itself") {
+    Promise<int> shared = slowly(5, 120);
+
+    shared.start();
+
+    threw((void)shared.shielded().timeout(std::chrono::milliseconds{10}).await());
+
+    same(shared.shielded().await(), 5);
+    same(shared.await(), 5);
+
+    Promise<int> fresh = slowly(7, 80);
+    Promise<int> look = fresh.shielded();
+
+    look.start();
+    look.cancel();
+
+    threw((void)look.await());
+
+    same(fresh.await(), 7);
 }
 
 // --- Lanes -----------------------------------------------------------------------------------

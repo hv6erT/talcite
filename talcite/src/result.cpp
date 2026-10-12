@@ -22,7 +22,22 @@ namespace talcite::detail {
 // (`Bell::heed`): the ring wakes the waiting thread at once, with nothing woken up in between to
 // look. Then the awaited promise is cancelled too, since nobody wants its result any more, and
 // `await` throws `Cancelled` as that promise now does. Outside the pool there is no bell and the
-// wait is a plain one. The callers stay as they are: only the waiting changes.
+// wait is a plain one. The callers stay as they are: only the waiting changes. A computing task
+// gives its slot of the computing lane back for the length of such a wait (`Waiting`), since a
+// task that waits computes nothing, and tasks that all wait for other computing work would
+// otherwise hold every slot and leave that work none.
+//
+// Cancellation climbs: cancelling a derived promise (`then`, `fail`, `timeout` and the others)
+// cancels the one it was made from, because a chain is one piece of work. A promise that several
+// callers share is not; each of them gets a view (`Promise::shielded`), a derived promise whose
+// cancellation stops at itself, so that one caller giving up does not take the result from the
+// others (`Child::wait`).
+//
+// A promise holds its callback through a shared pointer, never by value. Handles are copied all
+// the time (every link keeps a copy of its parent to start and cancel it, and `start` hands the
+// callback to the pool), and a callback that captured a large buffer, the bytes of a write, would
+// otherwise be copied with every one of those copies. The values that pass from link to link are
+// still copied: a settled result may have more than one reader, so none of them may take it.
 //
 // A callback that throws becomes the rejection of the promise it made, whatever it is: in `then`
 // (`Carry`) instead of the value, in `fail` and `finally` (`Mirror`) instead of the reason or the

@@ -1,5 +1,6 @@
 #include "talcite/loop.hpp"
 
+#include <exception>
 #include <stdexcept>
 #include <utility>
 
@@ -78,12 +79,27 @@ std::size_t Loop::waiting() const { return door_->waiting(); }
 // and clearing would leave its work in the queue while its ring went to waste, and the loop would
 // stop in poll with no deadline until the next key. In this order the worst that can happen is
 // one idle turn.
+//
+// A piece of work that throws does not take the rest of the batch with it: the batch has already
+// left the queue, so whatever stood after the thrower would be lost for good, and with it the
+// continuation somebody waits for. Every piece runs, and the first exception is passed on after
+// the last one.
 std::size_t Loop::turn() {
     door_->bell().clear();
 
     const std::vector<std::function<void()>> taken = door_->taken();
 
-    for (const std::function<void()>& one : taken) one();
+    std::exception_ptr first;
+
+    for (const std::function<void()>& one : taken) {
+        try {
+            one();
+        } catch (...) {
+            if (!first) first = std::current_exception();
+        }
+    }
+
+    if (first) std::rethrow_exception(first);
 
     return taken.size();
 }

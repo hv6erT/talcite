@@ -64,7 +64,7 @@ public:
     using Callback = std::function<void(Resolve, Reject)>;
 
     explicit Promise(Callback given, Lane lane = Lane::io)
-        : callback_(std::move(given)), result_(std::make_shared<detail::Result<T>>()) {
+        : callback_(kept(std::move(given))), result_(std::make_shared<detail::Result<T>>()) {
         result_->lane = lane;
     }
 
@@ -91,7 +91,7 @@ public:
             return;
         }
 
-        if (!callback_) return;
+        if (callback_ == nullptr) return;
 
         detail::State want = detail::State::fresh;
         if (!result_->state.compare_exchange_strong(want, detail::State::running)) return;
@@ -104,9 +104,9 @@ public:
 
             try {
                 if constexpr (std::is_void_v<T>) {
-                    callback([result] { detail::settled(*result); }, reject);
+                    (*callback)([result] { detail::settled(*result); }, reject);
                 } else {
-                    callback([result](T given) { detail::settled(*result, std::move(given)); },
+                    (*callback)([result](T given) { detail::settled(*result, std::move(given)); },
                              reject);
                 }
             } catch (...) {
@@ -128,6 +128,8 @@ public:
             result_->stirred.wait(held, settled);
         } else {
             held.unlock();
+
+            const Waiting aside;
 
             const Bell::Ear was = bell->heed(Bell::Ear{&result_->guard, &result_->stirred});
 
@@ -188,6 +190,13 @@ public:
             throw std::logic_error("talcite::Promise::here: no loop on this thread");
 
         return on(*where);
+    }
+
+    [[nodiscard]] Promise shielded() {
+        Promise child = mirrored({}, {}, std::nullopt, {});
+        child.upstream_.cancel = {};
+
+        return child;
     }
 
     [[nodiscard]] Promise timeout(std::chrono::milliseconds patience) {
@@ -277,7 +286,7 @@ public:
 
 protected:
     Promise(Callback given, std::shared_ptr<detail::Result<T>> made)
-        : callback_(std::move(given)), result_(std::move(made)) {}
+        : callback_(kept(std::move(given))), result_(std::move(made)) {}
 
 private:
     template <typename Other> friend class Promise;
@@ -353,6 +362,12 @@ private:
         if (detail::hooked(*one.result_, link)) detail::afterwards(link);
     }
 
+    [[nodiscard]] static std::shared_ptr<const Callback> kept(Callback given) {
+        if (!given) return nullptr;
+
+        return std::make_shared<const Callback>(std::move(given));
+    }
+
     [[nodiscard]] std::shared_ptr<Promise> shared() const { return std::make_shared<Promise>(*this); }
 
     [[nodiscard]] detail::Upward upward() const {
@@ -377,7 +392,7 @@ private:
         return child;
     }
 
-    Callback callback_;
+    std::shared_ptr<const Callback> callback_;
     std::shared_ptr<detail::Result<T>> result_;
     std::shared_ptr<void> link_;
     detail::Upward upstream_;

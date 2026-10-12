@@ -235,6 +235,32 @@ TRIAL("Time: a cancelled wait disappears from the clock") {
     Time::later(30ms).await();
 }
 
+// Many waits with deadlines in no order, half of them cancelled on the way: the rest come due, each
+// not before its time, and the cancelled ones never do.
+TRIAL("Time: of many waits the cancelled ones never come due and the rest do on time") {
+    std::vector<Promise<void>> among;
+    std::vector<std::chrono::milliseconds> patience;
+
+    for (int at = 0; at < 400; ++at) {
+        patience.push_back(std::chrono::milliseconds{20 + (at * 37) % 120});
+        among.push_back(Time::later(patience.back()));
+    }
+
+    Stopwatch held;
+
+    for (Promise<void>& one : among) one.start();
+
+    for (std::size_t at = 1; at < among.size(); at += 2) among[at].cancel();
+
+    for (std::size_t at = 0; at < among.size(); at += 2) {
+        among[at].await();
+
+        ought(held.spent() + 5ms >= patience[at]);
+    }
+
+    for (std::size_t at = 1; at < among.size(); at += 2) threw(among[at].await());
+}
+
 TRIAL("Time: the calendar stamp moves forward") {
     const std::chrono::sys_seconds one = Time::stamp();
 

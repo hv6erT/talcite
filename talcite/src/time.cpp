@@ -4,9 +4,12 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace talcite {
@@ -20,9 +23,9 @@ class Timing;
 // The ticket of a wait. Its progress is known exactly (so much of so much has passed), so a
 // countdown draws a progress bar for free. The start moment is recorded only at start(), because
 // the promise is lazy and there is nothing to count before it runs.
-class Waiting : public detail::Result<void> {
+class Countdown : public detail::Result<void> {
 public:
-    explicit Waiting(std::chrono::milliseconds whole) : whole_(whole) {}
+    explicit Countdown(std::chrono::milliseconds whole) : whole_(whole) {}
 
     // Records the moment the wait started; until then progress stays at zero.
     void begun(Moment when) {
@@ -52,7 +55,7 @@ private:
 // A promise that reaches for the protected constructor of Promise to supply its own ticket.
 class Awaiting : public Promise<void> {
 public:
-    Awaiting(Promise<void>::Callback given, std::shared_ptr<Waiting> made)
+    Awaiting(Promise<void>::Callback given, std::shared_ptr<Countdown> made)
         : Promise<void>(std::move(given), std::move(made)) {}
 };
 
@@ -72,6 +75,11 @@ private:
 // One thread for the whole library. It sleeps until the nearest deadline; a new deadline nearer
 // than the current one wakes it through the condition variable. A hundred waits are still one
 // thread, not a hundred.
+//
+// The entries stand in two indexes: by number, for `drop`, and by deadline, for the thread, so
+// each operation costs a logarithm instead of a walk through every wait. A screen full of
+// countdowns, or ten thousand timeouts dropped as their work ends first, would otherwise pay for
+// each one with the whole list, under the lock that every other wait needs.
 class Timing {
 public:
     Timing() = default;
@@ -98,7 +106,15 @@ public:
             which = ++next_;
             watch = std::make_shared<Dropping>(*this, which);
 
-            waiting_.push_back(Entry{which, when, result, watch, bad});
+            const auto placed = order_.emplace(when, which).first;
+
+            try {
+                waiting_.emplace(which, Entry{when, result, watch, bad});
+            } catch (...) {
+                order_.erase(placed);
+
+                throw;
+            }
         }
 
         stirred_.notify_all();
@@ -117,12 +133,13 @@ public:
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            const auto at = std::find_if(waiting_.begin(), waiting_.end(),
-                                         [which](const Entry& one) { return one.which == which; });
+            const auto at = waiting_.find(which);
 
             if (at == waiting_.end()) return;
 
-            taken = std::move(*at);
+            taken = std::move(at->second);
+
+            order_.erase({taken.when, which});
             waiting_.erase(at);
         }
 
@@ -131,7 +148,6 @@ public:
 
 private:
     struct Entry {
-        std::uint64_t which = 0;
         Moment when;
         std::shared_ptr<detail::Result<void>> result;
         std::shared_ptr<detail::Waiter> watch;
@@ -147,48 +163,48 @@ private:
             {
                 std::unique_lock<std::mutex> held{guard_};
 
-                if (waiting_.empty()) {
+                if (order_.empty()) {
                     stirred_.wait(held);
                     continue;
                 }
 
-                const Moment nearest =
-                    std::min_element(waiting_.begin(), waiting_.end(),
-                                     [](const Entry& one, const Entry& two) {
-                                         return one.when < two.when;
-                                     })
-                        ->when;
-
                 const Moment now = std::chrono::steady_clock::now();
+                const Moment nearest = order_.begin()->first;
 
                 if (now < nearest) {
                     stirred_.wait_until(held, nearest);
                     continue;
                 }
 
-                for (auto at = waiting_.begin(); at != waiting_.end();) {
-                    if (at->when > now) {
-                        ++at;
-                        continue;
-                    }
+                while (!order_.empty() && order_.begin()->first <= now) {
+                    const auto at = waiting_.find(order_.begin()->second);
 
-                    due.push_back(std::move(*at));
-                    at = waiting_.erase(at);
+                    due.push_back(std::move(at->second));
+
+                    waiting_.erase(at);
+                    order_.erase(order_.begin());
                 }
             }
 
             // Settling happens outside the lock: it wakes the watchers, among them our own
-            // watcher that removes the entry and comes back here for the lock.
+            // watcher that removes the entry and comes back here for the lock. Settling also runs
+            // whatever was chained to the promise, and an exception from there would end the
+            // program from this thread; the promise is settled before the watchers run, so there
+            // is nobody left to tell, and the exception is swallowed so the rest still settle.
             for (Entry& one : due) {
-                if (one.bad) detail::spoiled(*one.result, std::make_exception_ptr(Overdue{}));
-                else detail::settled(*one.result);
+                try {
+                    if (one.bad) detail::spoiled(*one.result, std::make_exception_ptr(Overdue{}));
+                    else detail::settled(*one.result);
+                } catch (...) {
+                }
             }
         }
     }
 
     std::mutex guard_;
     std::condition_variable stirred_;
-    std::vector<Entry> waiting_;
+    std::map<std::uint64_t, Entry> waiting_;
+    std::set<std::pair<Moment, std::uint64_t>> order_;
     std::uint64_t next_ = 0;
     std::thread keeper_;
 };
@@ -214,7 +230,7 @@ void Dropping::woke() { whose_.drop(which_); }
 // A lazy promise that settles `patience` after it is started: with success, or with `Overdue`
 // when `bad` is set.
 Promise<void> counted(std::chrono::milliseconds patience, bool bad) {
-    auto held = std::make_shared<Waiting>(patience);
+    auto held = std::make_shared<Countdown>(patience);
 
     return Awaiting{[patience, held, bad](auto, auto) {
                         const Moment now = std::chrono::steady_clock::now();
