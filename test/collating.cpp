@@ -7,6 +7,7 @@
 #include "talcite/collate.hpp"
 
 using talcite::Collation;
+using talcite::CollationShape;
 
 namespace {
 
@@ -126,4 +127,40 @@ TRIAL("Collation: the language code picks the tailoring, region and case aside")
     ought(Collation{"pl"}.compare("łza", "lza") > 0);
     ought(Collation{"xx"}.compare("ąb", "az") < 0);
     same(Collation{"pt-BR"}.language(), std::string{"pt-BR"});
+}
+
+// Numbers are numbers: a shorter one comes first, then digit by digit, so "Part 2" stands before
+// "Part 10"; leading zeros make no other number, and only the bytes tell "007" from "7". Without
+// the shape's numeric reading digits go one by one.
+TRIAL("Collation: numbers in a text compare as numbers") {
+    const Collation common;
+
+    same(ordered(common, {"Part 10", "Part 2", "Part 1", "Part 100", "Part 02", "Part"}),
+         (std::vector<std::string>{"Part", "Part 1", "Part 02", "Part 2", "Part 10", "Part 100"}));
+    same(ordered(common, {"2001", "1999", "300", "0"}), (std::vector<std::string>{"0", "300", "1999", "2001"}));
+    same(ordered(common, {"S01E10", "S01E9", "S02E01", "S1E2"}), (std::vector<std::string>{"S1E2", "S01E9", "S01E10", "S02E01"}));
+
+    ought(common.compare("007", "7") != 0);
+    ought(common.compare("007", "8") < 0);
+
+    // Numbers stand before letters, as digits do, and a number of any length before a letter.
+    ought(common.compare("99999 x", "a") < 0);
+
+    const Collation digits{"", CollationShape{.numeric = false}};
+
+    same(ordered(digits, {"Part 10", "Part 2"}), (std::vector<std::string>{"Part 10", "Part 2"}));
+}
+
+// An exact collation keeps the order of code points, uppercase before lowercase and ASCII before
+// the rest, as the bytes have it, but reads numbers as numbers.
+TRIAL("Collation: an exact order goes by code points, with numbers as numbers") {
+    const Collation exact{"pl", CollationShape{.exact = true}};
+
+    same(ordered(exact, {"b", "a", "B", "ą", "Z", "file10", "file9", "file-", "file:"}),
+         (std::vector<std::string>{"B", "Z", "a", "b", "file-", "file9", "file10", "file:", "ą"}));
+
+    const Collation bytes{"pl", CollationShape{.numeric = false, .exact = true}};
+
+    same(ordered(bytes, {"file10", "file9"}), (std::vector<std::string>{"file10", "file9"}));
+    same(exact.shape().exact, true);
 }

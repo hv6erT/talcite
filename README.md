@@ -51,8 +51,8 @@ Utilities
 - UTF-8 decoding and display width, Base64, JSON and XML trees, text search with regular
   expressions, digests (MD5, SHA-1, SHA-256, SHA-512), HMAC and HKDF.
 - `Collation`: alphabetical order as a language expects it, for Latin, Greek and Cyrillic, with
-  the letters of Polish, Czech, Slovak and Spanish in their own places, and sort keys that compare
-  as plain bytes.
+  the letters of Polish, Czech, Slovak and Spanish in their own places, numbers read as numbers
+  ("Part 2" before "Part 10"), and sort keys that compare as plain bytes.
 
 ## Platforms
 

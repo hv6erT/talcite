@@ -1,5 +1,6 @@
 #include "talcite/collate.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,15 @@ namespace talcite {
 // ß, æ, œ and ĳ are two letters. Cyrillic goes by its alphabet (`cyrillic`), in which й, ї, ґ and є
 // are letters of their own, as Russian and Ukrainian dictionaries have them, while ё is е with a
 // mark.
+//
+// Numbers are read as numbers (`CollationShape::numeric`, on by default): a run of digits weighs as a
+// mark of a number, then its length without leading zeros, then its digits, so "Part 2" stands
+// before "Part 10" and "1999" before "2001". Leading zeros tell texts apart only on the last level:
+// "007" and "7" are the same number.
+//
+// An exact collation (`CollationShape::exact`) compares the code points themselves, uppercase before
+// lowercase as the bytes of UTF-8 have them, and only numbers are read as numbers; it serves sorting
+// that cares about case, where letters must not meet.
 //
 // A language may place a letter with marks after its base as a letter of its own, or read two
 // letters as one (`Tailoring`, chosen by the constructor): in Polish ą comes after a and ż after ź,
@@ -1235,13 +1245,71 @@ std::uint32_t weighed(char32_t one) {
 // The secondary byte of a combining mark.
 char marked(char32_t one) { return static_cast<char>(one - 0x0300 + lowest); }
 
-// The units of a text under a tailoring (null for none).
-std::vector<Unit> units(std::string_view text, const Tailoring* tailoring) {
+// Whether a byte is an ASCII digit.
+bool digit(char one) { return one >= '0' && one <= '9'; }
+
+// Where the run of digits that starts at `from` ends.
+std::size_t run(std::string_view text, std::size_t from) {
+    while (from < text.size() && digit(text[from])) ++from;
+
+    return from;
+}
+
+// The units of a number: its mark (`sign`, one weight for every number), its length without
+// leading zeros, then its digits from `zero` up, so that a shorter number comes first and numbers of
+// one length go digit by digit. The number zero keeps one digit.
+void numbered(std::vector<Unit>& into, std::string_view digits, std::uint32_t sign, std::uint32_t zero) {
+    std::size_t first = 0;
+
+    while (first + 1 < digits.size() && digits[first] == '0') ++first;
+
+    const std::string_view significant = digits.substr(first);
+
+    into.push_back(Unit{sign, {}, 0x02});
+    into.push_back(Unit{static_cast<std::uint32_t>(std::min<std::size_t>(significant.size(), 0xFFFF)), {}, 0x02});
+
+    for (const char one : significant) into.push_back(Unit{zero + static_cast<std::uint32_t>(one - '0'), {}, 0x02});
+}
+
+// The units of an exact collation: every code point weighs as itself, twice over so that the mark of
+// a number fits between "/" and ":", where the digits stand among the bytes.
+std::vector<Unit> exacted(std::string_view text, bool numeric) {
     std::vector<Unit> made;
 
     std::size_t at = 0;
 
     while (at < text.size()) {
+        if (numeric && digit(text[at])) {
+            const std::size_t end = run(text, at);
+
+            numbered(made, text.substr(at, end - at), (U'0' << 1) | 1, 0);
+            at = end;
+
+            continue;
+        }
+
+        made.push_back(Unit{static_cast<std::uint32_t>(utf8::decode(text, at)) << 1, {}, 0x02});
+    }
+
+    return made;
+}
+
+// The units of a text under a tailoring (null for none), numbers as numbers when `numeric`.
+std::vector<Unit> units(std::string_view text, const Tailoring* tailoring, bool numeric) {
+    std::vector<Unit> made;
+
+    std::size_t at = 0;
+
+    while (at < text.size()) {
+        if (numeric && digit(text[at])) {
+            const std::size_t end = run(text, at);
+
+            numbered(made, text.substr(at, end - at), counting + 0x100, counting);
+            at = end;
+
+            continue;
+        }
+
         const char32_t one = utf8::decode(text, at);
 
         // A combining mark written apart belongs to the letter before it.
@@ -1334,8 +1402,9 @@ void written(std::string& into, std::uint32_t weight) {
 }
 
 // The order of a language, given as a code ("pl-PL", "cs", "pt_BR"): the part before the region
-// picks the tailoring, and a language without one (or an empty code) takes the common order.
-Collation::Collation(std::string_view language) : language_(language) {
+// picks the tailoring, and a language without one (or an empty code) takes the common order. The
+// shape says whether numbers are numbers and whether the order is exact.
+Collation::Collation(std::string_view language, CollationShape shape) : language_(language), shape_(shape) {
     std::string spoken;
 
     for (const char one : language) {
@@ -1349,13 +1418,26 @@ Collation::Collation(std::string_view language) : language_(language) {
 }
 
 // The sort key of a text: the primary weights, the marks of every unit, the case of every unit and
-// the text itself, the levels apart. Keys compare as plain bytes (`std::string::compare`) in the
-// order of the language.
+// the text itself, the levels apart; an exact key has the primary weights and the text alone. Keys
+// compare as plain bytes (`std::string::compare`) in the order of the language.
 std::string Collation::key(std::string_view text) const {
-    const Tailoring* tailoring = tailored_ < 0 ? nullptr : &tailorings[static_cast<std::size_t>(tailored_)];
-    const std::vector<Unit> made = units(text, tailoring);
-
     std::string key;
+
+    if (shape_.exact) {
+        const std::vector<Unit> made = exacted(text, shape_.numeric);
+
+        key.reserve(made.size() * 3 + text.size() + 1);
+
+        for (const Unit& one : made) written(key, one.primary);
+
+        key += level;
+        key += text;
+
+        return key;
+    }
+
+    const Tailoring* tailoring = tailored_ < 0 ? nullptr : &tailorings[static_cast<std::size_t>(tailored_)];
+    const std::vector<Unit> made = units(text, tailoring, shape_.numeric);
 
     key.reserve(made.size() * 6 + text.size() + 3);
 
