@@ -17,9 +17,10 @@ namespace talcite::ui {
 
 namespace {
 
-// How many document lines we take from the roll at a time. With wrapping one document line gives
-// several screen lines, so asking for exactly as many as the window is high would almost always
-// ask for too many.
+// How many document lines we take from the roll at a time, at most. With wrapping one document
+// line gives several screen lines, so the layout asks for no more lines than rows are still empty,
+// and with wrapping it starts from one line and doubles (`spread`): a few long lines would otherwise
+// bring whole kilobytes of text that never reach the screen, on every key.
 constexpr std::size_t batch = 32;
 
 // How many lines one wheel step scrolls. The same number as in the scrollers.
@@ -750,8 +751,15 @@ void Page::spread(Size given) {
 
     kept.walked = 0;
 
+    std::size_t asked = kept.wrapped ? 1 : batch;
+
     while (kept.shown.size() < want) {
-        const std::optional<std::vector<std::string>> got = kept.roll(which, batch);
+        const std::size_t empty = want - kept.shown.size();
+        const std::size_t most = std::min({asked, batch, empty + static_cast<std::size_t>(skip)});
+
+        asked *= 2;
+
+        const std::optional<std::vector<std::string>> got = kept.roll(which, std::max<std::size_t>(most, 1));
 
         if (!got.has_value() || got->empty()) break;
 

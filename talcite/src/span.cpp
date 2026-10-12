@@ -3,6 +3,7 @@
 #include "talcite/skin.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 #include "talcite/encoding.hpp"
@@ -74,12 +75,15 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
     std::string line;
     int much = 0;
 
-    for (std::string word : words) {
+    for (std::string whole : words) {
+        std::string_view word = whole;
         int room = measured(word).wide;
 
         // A word longer than the whole row is cut as many times as needed. If not even one
         // character fits (the row is one cell wide and the character is double-width), the word is
-        // left whole and the view clips it; pretending that something fitted would be worse.
+        // left whole and the view clips it; pretending that something fitted would be worse. The
+        // cutting walks along the word, and what is left is measured by what each piece took, so
+        // a word of a hundred thousand characters costs one pass, not one per row.
         while (room > wide) {
             if (!line.empty()) {
                 into.push_back(std::move(line));
@@ -92,17 +96,18 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
 
             if (piece.empty()) break;
 
-            word.erase(0, piece.size());
+            word.remove_prefix(piece.size());
+
+            // A tab's width depends on where it stands, so a word holding one is measured anew.
+            room = word.find('\t') == std::string_view::npos ? room - measured(piece).wide : measured(word).wide;
 
             into.push_back(std::move(piece));
-
-            room = measured(word).wide;
         }
 
         if (word.empty()) continue;
 
         if (line.empty()) {
-            line = std::move(word);
+            line = std::string{word};
             much = room;
         } else if (much + 1 + room <= wide) {
             line += ' ';
@@ -111,7 +116,7 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
         } else {
             into.push_back(std::move(line));
 
-            line = std::move(word);
+            line = std::string{word};
             much = room;
         }
     }

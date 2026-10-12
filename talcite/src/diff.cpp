@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <utility>
 
 #include "talcite/encoding.hpp"
@@ -399,9 +400,10 @@ struct DiffViewer::Kept {
     std::string right_title;
 
     // The window of hunks at hand: from `from`, as many as the source returned. The source is
-    // asked only when a needed hunk falls outside the window.
+    // asked only when a needed hunk falls outside the window. Each hunk is shared, so that the
+    // visible rows can hold on to theirs after the window moves without copying it.
     std::size_t from = 0;
-    std::vector<DiffHunk> cached;
+    std::vector<std::shared_ptr<const DiffHunk>> cached;
 
     std::vector<bool> open;
 
@@ -417,12 +419,13 @@ struct DiffViewer::Kept {
 
     std::optional<bool> unify;
 
-    // What is visible: the screen rows with a copy of their hunk. Computed only after a change.
+    // What is visible: the screen rows, each holding its hunk, shared by all the rows of that hunk.
+    // Computed only after a change.
     struct Shown {
         std::size_t hunk = 0;
         Stripe line;
         bool first = false;
-        DiffHunk data;
+        std::shared_ptr<const DiffHunk> data;
     };
 
     std::vector<Shown> shown;
@@ -443,11 +446,11 @@ struct DiffViewer::Kept {
     Grip grip;
 
     // The hunk with the given number, or nothing past the end or when the source says to wait.
-    // The pointer lives until the next question: a new window replaces the old one.
-    const DiffHunk* fetched(std::size_t which) {
+    // Whoever keeps the pointer keeps the hunk, also when a new window replaces the old one.
+    std::shared_ptr<const DiffHunk> held(std::size_t which) {
         if (which >= hunks || !source) return nullptr;
 
-        if (which >= from && which < from + cached.size()) return &cached[which - from];
+        if (which >= from && which < from + cached.size()) return cached[which - from];
 
         const std::size_t start = which >= batch / 2 ? which - batch / 2 : 0;
 
@@ -456,15 +459,23 @@ struct DiffViewer::Kept {
         if (!got.has_value()) return nullptr;
 
         from = start;
-        cached = std::move(*got);
+        cached.clear();
+        cached.reserve(got->size());
 
-        for (const DiffHunk& one : cached)
+        for (DiffHunk& one : *got) {
             if (one.tickable) ticks = true;
+
+            cached.push_back(std::make_shared<const DiffHunk>(std::move(one)));
+        }
 
         if (which >= from + cached.size()) return nullptr;
 
-        return &cached[which - from];
+        return cached[which - from];
     }
+
+    // The hunk with the given number, for a look that ends before the next question: a new window
+    // may drop it.
+    const DiffHunk* fetched(std::size_t which) { return held(which).get(); }
 
     // Whether the hunk is unfolded.
     [[nodiscard]] bool opened(std::size_t hunk) const { return hunk < open.size() && open[hunk]; }
@@ -687,8 +698,8 @@ int DiffViewer::capacity() const { return 0; }
 // The viewer takes all the room it is given.
 Size DiffViewer::wants(Size room) const { return room; }
 
-// The screen rows from the first visible one, with a copy of the hunk at each: the source may
-// return a new window halfway, and what already stands on the screen must not change.
+// The screen rows from the first visible one, each holding its hunk: the source may return a new
+// window halfway, and what already stands on the screen must not change.
 void DiffViewer::spread(Size given) {
     Kept& kept = *kept_;
 
@@ -716,14 +727,13 @@ void DiffViewer::spread(Size given) {
     std::size_t one = kept.top;
 
     for (; one < kept.hunks && static_cast<int>(kept.shown.size()) < room; ++one) {
-        const DiffHunk* got = kept.fetched(one);
+        std::shared_ptr<const DiffHunk> data = kept.held(one);
 
         // A hunk the source says to wait for stops the loop before the end; the condition after
         // the loop says that there is still something to show.
-        if (got == nullptr) break;
+        if (data == nullptr) break;
 
-        const DiffHunk data = *got;
-        const std::vector<Stripe> lines = lined(data, kept.opened(one), unify);
+        const std::vector<Stripe> lines = lined(*data, kept.opened(one), unify);
 
         if (static_cast<int>(kept.shown.size() + lines.size()) - skip > room) kept.more = true;
 
@@ -780,7 +790,7 @@ View DiffViewer::paint(Size given, Area seen) {
     for (const Kept::Shown& one : kept.shown) {
         if (one.line.face == Face::title) continue;
 
-        const DiffRow& row = one.data.rows[one.line.row];
+        const DiffRow& row = one.data->rows[one.line.row];
 
         for (const std::optional<DiffSide>& side : {row.left, row.right})
             if (side.has_value() && side->number.has_value()) number = std::max(number, digits(*side->number));
@@ -839,19 +849,19 @@ View DiffViewer::paint(Size given, Area seen) {
 
         Style look = how.style(here ? base + ".focus" : base);
 
-        if (!one.data.role.empty()) look = Style::merge(look, how.style(one.data.role));
+        if (!one.data->role.empty()) look = Style::merge(look, how.style(one.data->role));
 
         const int x = -seen.at.x;
 
         made.fill({{x, y}, {wide, 1}}, look);
 
-        if (one.first && one.data.tickable)
+        if (one.first && one.data->tickable)
             made.put({x, y}, chosen_.contains(one.hunk) ? "[x] " : "[ ] ", look);
 
         if (one.line.face == Face::title) {
             const Style title = Style::merge(look, how.style(base + ".title"));
 
-            made.put({x + ticks, y}, elided(one.data.title, wide - ticks, Elide::right, how.glyph("talcite.elide")),
+            made.put({x + ticks, y}, elided(one.data->title, wide - ticks, Elide::right, how.glyph("talcite.elide")),
                      title);
 
             ++y;
@@ -859,7 +869,7 @@ View DiffViewer::paint(Size given, Area seen) {
             continue;
         }
 
-        const DiffRow& row = one.data.rows[one.line.row];
+        const DiffRow& row = one.data->rows[one.line.row];
         const bool even = same(row);
 
         const Style gone = even ? look : Style::merge(look, how.style(base + ".gone"));
@@ -873,10 +883,10 @@ View DiffViewer::paint(Size given, Area seen) {
         // hunk tells that it unfolds before anyone tries.
         std::string folded;
 
-        if (one.line.row == 0 && one.data.rows.size() > 1)
+        if (one.line.row == 0 && one.data->rows.size() > 1)
             folded = kept.opened(one.hunk)
                          ? " " + utf8::encode(how.glyph("talcite.diff.open"))
-                         : " +" + std::to_string(one.data.rows.size() - 1) + " " + utf8::encode(how.glyph("talcite.diff.closed"));
+                         : " +" + std::to_string(one.data->rows.size() - 1) + " " + utf8::encode(how.glyph("talcite.diff.closed"));
 
         const int tag = measured(folded).wide;
 
@@ -1223,9 +1233,9 @@ bool DiffViewer::handle(ClickEvent& what) {
 
     const Kept::Shown& one = kept.shown[static_cast<std::size_t>(y)];
     const std::size_t hunk = one.hunk;
-    const bool box = one.first && one.data.tickable && at.x < ticking;
+    const bool box = one.first && one.data->tickable && at.x < ticking;
 
-    if (one.data.rows.empty()) return true;
+    if (one.data->rows.empty()) return true;
 
     which(hunk);
 

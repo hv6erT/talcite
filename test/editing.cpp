@@ -2103,6 +2103,28 @@ TRIAL("Editor: replacing all takes every match") {
     same(one->text(), std::string{"ola ma ola\nola kot"});
 }
 
+// A line ends in LF or in CRLF, and a line's text holds neither. The place of a hit is counted from
+// where the spool says the line starts, not by adding the lengths of the lines before it, so a
+// document from Windows is searched and replaced at the right bytes.
+TRIAL("Editor: searching and replacing all hit the right bytes in a CRLF document") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "foo\r\nfoo\r\nx foo\r\n");
+
+    const Comb how{"foo", {}};
+
+    const std::optional<Hit> second = one->find(how, 1, false);
+
+    ought(second.has_value() && second->from == 5 && second->upto == 8);
+
+    const std::optional<Hit> back = one->find(how, 15, true);
+
+    ought(back.has_value() && back->from == 12 && back->upto == 15);
+
+    same(one->replace_all(how, "bar"), std::size_t{3});
+    same(one->text(), std::string{"bar\r\nbar\r\nx bar\r\n"});
+}
+
 // All the replacements are tied to the first, so they are undone in one step.
 TRIAL("Editor: replacing all is undone in one step") {
     Sheet sheet;

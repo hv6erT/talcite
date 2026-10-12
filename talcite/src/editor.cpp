@@ -839,22 +839,20 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     const std::size_t at = std::min(from, spool()->whole());
     const std::size_t which = spool()->found(at);
 
-    // The lines from the given number, together with the byte each one starts at.
+    // The lines from the given number, together with the byte each one starts at. The start comes
+    // from the spool for every line, not from adding up lengths: a line holds its text without its
+    // ending, which is one byte (LF) or two (CRLF).
     const auto batch = [this](std::size_t first, std::size_t most) {
         std::vector<std::pair<std::size_t, std::string>> made;
 
-        const std::optional<std::size_t> began = spool()->at(first);
+        std::vector<std::string> got = spool()->lines(first, most).value_or(std::vector<std::string>{});
 
-        if (!began.has_value()) return made;
+        for (std::size_t one = 0; one < got.size(); ++one) {
+            const std::optional<std::size_t> began = spool()->at(first + one);
 
-        std::size_t where = *began;
+            if (!began.has_value()) break;
 
-        for (std::string& one : spool()->lines(first, most).value_or(std::vector<std::string>{})) {
-            const std::size_t size = one.size();
-
-            made.emplace_back(where, std::move(one));
-
-            where += size + 1;
+            made.emplace_back(*began, std::move(got[one]));
         }
 
         return made;
@@ -976,30 +974,28 @@ std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
     std::vector<Kept::Splice> many;
 
     for (std::size_t line = 0;;) {
-        const std::optional<std::size_t> began = spool()->at(line);
-
-        if (!began.has_value()) break;
-
         const std::vector<std::string> got = spool()->lines(line, combing).value_or(std::vector<std::string>{});
 
         if (got.empty()) break;
 
-        std::size_t where = *began;
-
         // The comb never returns empty hits (it skips them itself), so every hit moves the search
-        // forward.
-        for (const std::string& text : got) {
+        // forward. Every line's first byte comes from the spool, since a line ends in LF or CRLF.
+        for (std::size_t each = 0; each < got.size(); ++each) {
+            const std::optional<std::size_t> began = spool()->at(line + each);
+
+            if (!began.has_value()) break;
+
+            const std::string& text = got[each];
+
             for (std::size_t start = 0; start <= text.size();) {
                 const std::optional<Hit> one = how.forth(text, start);
 
                 if (!one.has_value()) break;
 
-                many.push_back(Kept::Splice{where + one->from, text.substr(one->from, one->upto - one->from)});
+                many.push_back(Kept::Splice{*began + one->from, text.substr(one->from, one->upto - one->from)});
 
                 start = one->upto;
             }
-
-            where += text.size() + 1;
         }
 
         line += got.size();

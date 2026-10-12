@@ -37,6 +37,13 @@ protected:
     }
 };
 
+// The red root with its caret in the third column of the first row, as an editor would have it.
+class Pointed : public Red {
+public:
+    // The place of the caret.
+    [[nodiscard]] std::optional<ui::Spot> caret() const override { return ui::Spot{2, 0}; }
+};
+
 // What went to the terminal after the probe: the probe says its piece through the same console, and
 // what matters here is what `Term` itself writes.
 std::string drawn(const std::shared_ptr<faking::Terminal>& line, Setup given = {}) {
@@ -197,6 +204,32 @@ TRIAL("Term: Pause takes off once and puts on once") {
     ought(away.find("\x1b[?1049l") == away.rfind("\x1b[?1049l"));
     ought(holds(back, "\x1b[?1049h"));
     ought(back.find("\x1b[?1049h") == back.rfind("\x1b[?1049h"));
+}
+
+// The dressing hides the cursor. Coming back from another program, or resuming after Ctrl+Z, dresses
+// the terminal again, so the next frame has to show the cursor again; an editor would otherwise go
+// on without one.
+TRIAL("Term: the cursor shows again after stepping aside") {
+    auto line = faking::terminal();
+
+    Pointed root;
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+    term.draw();
+
+    ought(holds(line->written, "\x1b[?25h"));
+
+    {
+        const Term::Pause away{term};
+    }
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "\x1b[?25h"));
 }
 
 TRIAL("Term: draws nothing while stepped aside") {

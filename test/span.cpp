@@ -1,5 +1,6 @@
 #include "proving.hpp"
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -420,3 +421,18 @@ TRIAL("Span: alignment is computed for each hard line separately") {
     same(read(made, 1), std::string{"   kot"});
 }
 
+
+// A word longer than the row is cut into rows by walking along it once. Cutting it by erasing the
+// head and measuring the rest again for every row costs the square of its length: a pasted address
+// or a line of base64 in a message would freeze the screen.
+TRIAL("Span: a very long word wraps in one pass") {
+    ui::Span one{std::string(400000, 'x') + " koniec", ui::SpanShape{true}};
+
+    const auto began = std::chrono::steady_clock::now();
+
+    const ui::Size want = one.wants({40, 100});
+
+    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
+    same(want.high, 10001);
+    same(want.wide, 40);
+}

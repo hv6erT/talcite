@@ -326,19 +326,23 @@ View List::paint(Size given, Area seen) {
 
     shift_ = std::clamp(shift_, 0, std::max(much - given.high, 0));
 
-    // No row is skipped, even outside the view: an invisible row gets a rectangle of zero height,
-    // so its `area()` tells the truth about this frame. Otherwise a row that just scrolled away
-    // would catch the mouse where it stood before. The same rule as in the column; if it ever
-    // becomes costly, only the rows that just disappeared need to be zeroed.
+    // An invisible row gets a rectangle of zero height, so its `area()` tells the truth about this
+    // frame; otherwise a row that just scrolled away would catch the mouse where it stood before.
+    // Only a row that still has a rectangle from an earlier frame needs that: the others already
+    // stand at zero height, so a list of a hundred thousand rows renders its window, not all of
+    // them.
     for (int at = 0; at < much; ++at) {
+        Node& row = *children()[static_cast<std::size_t>(at)];
+
         const int y = at - shift_;
         const bool shown = y >= 0 && y < given.high;
+
+        if (!shown && row.area().size.high == 0 && row.area().at == Spot{0, 0}) continue;
 
         const Area where{{0, shown ? y : 0}, {wide, shown ? 1 : 0}};
         const Area part = Area::crossed(seen, where);
 
-        made.draw(children()[static_cast<std::size_t>(at)]->render(where, part - where.at),
-                    part.at - seen.at);
+        made.draw(row.render(where, part - where.at), part.at - seen.at);
     }
 
     if (aside != 0) {

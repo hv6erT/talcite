@@ -628,6 +628,46 @@ TRIAL("Viewer: movement asks for each row at most once") {
     for (const auto& [line, much] : asked) same(much, 1);
 }
 
+// With wrapping one long row may fill the whole screen. The layout asks for no more rows than it
+// may still show, starting from one: a document of long rows does not bring thirty of them, whole,
+// on every repaint and so on every key in an editor.
+TRIAL("Viewer: a layout asks only for the rows it can show") {
+    std::size_t brought = 0;
+
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Viewer>();
+
+    one->hold([&brought](std::size_t which, std::size_t most) {
+        std::vector<std::string> made;
+
+        for (std::size_t at = which; at < 100 && made.size() < most; ++at) {
+            made.push_back(std::string(10000, 'x'));
+
+            ++brought;
+        }
+
+        return std::optional{made};
+    },
+              100);
+
+    sheet.children().add(one);
+
+    one->scrollbar(false);
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    ought(brought >= 1 && brought <= 2);
+
+    brought = 0;
+
+    one->wrapped(false);
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    ought(brought >= 10 && brought <= 11);
+}
+
 // A row that waits for its window stops clipping to the end in both directions: a walk of the
 // screen that runs into it does not know where the end is, so it clips nothing, and a step back
 // that enters it stops on it.

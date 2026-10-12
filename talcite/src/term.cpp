@@ -519,9 +519,13 @@ Term::Pause::~Pause() {
 
     // After the other program nothing of our frame is left on screen, and with `Screen::none` there
     // is no alternate screen that could have kept it. To `draw()`, `shifted` means exactly what a size change
-    // means: compare with a blank sheet, that is, repaint everything.
+    // means: compare with a blank sheet, that is, repaint everything. The dressing hid the cursor
+    // and nobody knows where the other program left it, so the next frame shows it and places it
+    // anew; otherwise the editor would go on without a visible cursor.
     held.shifted = true;
     held.fresh = true;
+    held.showing = false;
+    held.at = ui::Spot{-1, -1};
 
     // The size may have changed while we were away; the changes went to someone else then.
     (void)measured(console, held.wide, held.high);
@@ -546,6 +550,10 @@ void Term::reconfigure(Setup given) {
         held->wish = std::move(given);
 
         shifting(held->console.provider(), was, sending(held->compat, held->wish));
+
+        // Another screen hides the cursor; the next frame shows and places it again.
+        held->showing = false;
+        held->at = ui::Spot{-1, -1};
 
         if (held->onto != nullptr) {
             held->onto->blocks(blocked(held->compat, held->wish));
@@ -907,11 +915,13 @@ bool Term::turn() {
 
     // Resumed after a stop: meanwhile the terminal belonged to the shell, which removed our
     // dressing and wrote on the screen. We dress it again and redraw everything, as after another
-    // program.
+    // program, cursor included.
     if (console.resumed()) {
         if (held.entered) dressed(console, sending(held.compat, held.wish));
 
         held.shifted = true;
+        held.showing = false;
+        held.at = ui::Spot{-1, -1};
         doing = true;
     }
 
