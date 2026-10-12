@@ -25,6 +25,10 @@
 #include <cwchar>
 #include <cwctype>
 
+#ifndef PIPE_REJECT_REMOTE_CLIENTS
+#define PIPE_REJECT_REMOTE_CLIENTS 0x00000008
+#endif
+
 #else
 
 #include <cerrno>
@@ -47,15 +51,6 @@ namespace {
 // about, so the only thing we can choose is how often to come back for the answer to "am I still
 // needed".
 constexpr std::size_t brim = 64 * 1024;
-
-#ifdef _WIN32
-
-// An anonymous pipe cannot be read with a timeout, and `ReadFile` on it blocks until something
-// arrives, that is until the end of the other program. Peeking every so often is the only way for
-// cancellation to ever get a chance to work.
-constexpr std::chrono::milliseconds peeking{20};
-
-#endif
 
 // Throws `fs::Trouble` with the text and the program's path.
 [[noreturn]] void amiss(const std::string& said, const fs::path& where) {
@@ -230,33 +225,74 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
     if (one == nullptr) return made;
 
+    // Our end of the pipe is overlapped (`reared`), so the read waits for its completion and for the
+    // worker's bell at once, the same shape as `poll` on POSIX: a cancelled read wakes at once,
+    // and an idle one costs nothing while it waits.
+    const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+    if (ready == nullptr) amiss("Cannot read from the program.", held.program);
+
+    // It is closed on every way out, including an exception from `amiss`.
+    const std::shared_ptr<void> closing{ready, [](void* which) { CloseHandle(which); }};
+
     Bell* bell = ringing();
 
+    const DWORD asked = most < static_cast<std::size_t>(MAXDWORD) ? static_cast<DWORD>(most) : MAXDWORD;
+
+    made.resize(asked);
+
+    // The end of the pipe is a broken pipe, not an empty read. A program that writes zero bytes
+    // completes a waiting read with nothing, and that must not be taken for the end, so such a read
+    // is simply made again.
     for (;;) {
-        DWORD ready = 0;
+        OVERLAPPED over{};
 
-        if (PeekNamedPipe(one, nullptr, 0, nullptr, &ready, nullptr) == 0) return made;
+        ResetEvent(ready);
 
-        if (ready == 0) {
-            if (bell != nullptr && bell->wait(peeking)) throw Cancelled{};
-
-            if (bell == nullptr) Sleep(static_cast<DWORD>(peeking.count()));
-
-            continue;
-        }
-
-        const DWORD asked = ready < static_cast<DWORD>(most) ? ready
-                                                             : static_cast<DWORD>(most);
-
-        made.resize(asked);
+        over.hEvent = ready;
 
         DWORD given = 0;
 
-        if (ReadFile(one, made.data(), asked, &given, nullptr) == 0) {
+        if (ReadFile(one, made.data(), asked, &given, &over) == 0) {
+            const DWORD why = GetLastError();
+
+            if (why == ERROR_BROKEN_PIPE || why == ERROR_HANDLE_EOF) {
+                made.clear();
+
+                return made;
+            }
+
+            if (why != ERROR_IO_PENDING) amiss("Cannot read from the program.", held.program);
+
+            const HANDLE these[2] = {ready, bell != nullptr ? static_cast<HANDLE>(bell->waited()) : nullptr};
+            const DWORD many = bell != nullptr ? 2 : 1;
+
+            const DWORD which = WaitForMultipleObjects(many, these, FALSE, INFINITE);
+
+            if (which != WAIT_OBJECT_0) {
+                // A read taken back has to be finished before its `OVERLAPPED` and buffer
+                // disappear: `GetOverlappedResult` with waiting gives the certainty that the kernel
+                // no longer touches that memory.
+                (void)CancelIoEx(one, &over);
+                (void)GetOverlappedResult(one, &over, &given, TRUE);
+
+                if (which == WAIT_OBJECT_0 + 1) throw Cancelled{};
+
+                amiss("Cannot read from the program.", held.program);
+            }
+        }
+
+        if (GetOverlappedResult(one, &over, &given, TRUE) == 0) {
+            const DWORD why = GetLastError();
+
             made.clear();
 
-            return made;
+            if (why == ERROR_BROKEN_PIPE || why == ERROR_HANDLE_EOF) return made;
+
+            amiss("Cannot read from the program.", held.program);
         }
+
+        if (given == 0) continue;
 
         made.resize(given);
 
@@ -423,6 +459,8 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
 
     const Writing counted{held};
 
+    Bell* bell = ringing();
+
     // The event for the completion of a write. Our own, not shared: each chunk waits for its own.
     const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
@@ -452,26 +490,44 @@ std::size_t poured(Child::Held& held, const Bytes& what) {
             if (GetLastError() != ERROR_IO_PENDING)
                 amiss("Cannot write to the program.", held.program);
 
-            // We wait for two things at once: the chunk going through and the sealing. This is the
-            // same shape as `poll` on POSIX, and for the same reason: closing the input has to
-            // interrupt a write stuck on a full pipe, not wait for the child to die.
-            const HANDLE these[2] = {ready, wake};
-            const DWORD many = wake != nullptr ? 2 : 1;
+            // We wait for three things at once: the chunk going through, the sealing and the
+            // worker's bell. This is the same shape as `poll` on POSIX, and for the same reason:
+            // closing the input or cancelling the write has to interrupt a write stuck on a full
+            // pipe, not wait for the child to die.
+            constexpr DWORD none = 3;
+
+            HANDLE these[3] = {ready, nullptr, nullptr};
+            DWORD many = 1;
+            DWORD sealed = none;
+            DWORD rung = none;
+
+            if (wake != nullptr) {
+                sealed = many;
+                these[many++] = wake;
+            }
+
+            if (bell != nullptr) {
+                rung = many;
+                these[many++] = static_cast<HANDLE>(bell->waited());
+            }
 
             const DWORD which = WaitForMultipleObjects(many, these, FALSE, INFINITE);
 
-            if (which == WAIT_OBJECT_0 + 1) {
+            if (which != WAIT_OBJECT_0) {
                 // An interrupted chunk has to be taken back from the kernel before its `OVERLAPPED`
                 // and buffer disappear. `CancelIoEx` asks for the interruption, and
                 // `GetOverlappedResult` with waiting gives the certainty that the kernel no longer
-                // touches that memory.
+                // touches that memory. The same holds when the wait itself failed.
                 (void)CancelIoEx(one, &over);
                 (void)GetOverlappedResult(one, &over, &given, TRUE);
 
-                amiss("The program input is already closed.", held.program);
-            }
+                if (rung != none && which == WAIT_OBJECT_0 + rung) throw Cancelled{};
 
-            if (which != WAIT_OBJECT_0) amiss("Cannot write to the program.", held.program);
+                if (sealed != none && which == WAIT_OBJECT_0 + sealed)
+                    amiss("The program input is already closed.", held.program);
+
+                amiss("Cannot write to the program.", held.program);
+            }
         }
 
         if (GetOverlappedResult(one, &over, &given, TRUE) == 0 || given == 0)
@@ -970,6 +1026,54 @@ std::vector<std::string> surrounded(const Command& what) {
 
 #endif
 
+#ifdef _WIN32
+
+// A pipe whose end on our side is overlapped and whose end for the child is ordinary, the way every
+// program expects its standard handles. CreatePipe gives only synchronous handles, and a
+// synchronous call stuck on a pipe can be woken only by CancelSynchronousIo with another thread's
+// handle, which leaves a window that cannot be closed: between checking the flag and entering the
+// call, the interruption hits nothing. An overlapped end lets our reader and writer wait for the
+// completion and for whatever should interrupt them at the same time, as `poll` does on POSIX.
+// `inbound` says that we read from the pipe and the child writes. Both ends come out inheritable;
+// the caller takes the right away from ours. The name has to be unique in the whole system, so it
+// takes the process number and a counter; the first instance only, and local clients only, so that
+// nobody else can take the name over or connect from another machine.
+bool paired(bool inbound, SECURITY_ATTRIBUTES& how, HANDLE& ours, HANDLE& theirs) {
+    static std::atomic<unsigned> counted{0};
+
+    wchar_t named[64];
+
+    // `swprintf`, not _snwprintf_s: the latter exists only in MSVC, and the file should also build
+    // under MinGW.
+    (void)swprintf(named, sizeof(named) / sizeof(named[0]), L"\\\\.\\pipe\\talcite-%lu-%u",
+                   static_cast<unsigned long>(GetCurrentProcessId()), counted.fetch_add(1));
+
+    const DWORD side = (inbound ? PIPE_ACCESS_INBOUND : PIPE_ACCESS_OUTBOUND) | FILE_FLAG_OVERLAPPED |
+                       FILE_FLAG_FIRST_PIPE_INSTANCE;
+
+    ours = CreateNamedPipeW(named, side, PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 65536,
+                            65536, 0, &how);
+
+    if (ours == INVALID_HANDLE_VALUE) {
+        ours = nullptr;
+
+        return false;
+    }
+
+    theirs = CreateFileW(named, inbound ? GENERIC_WRITE : GENERIC_READ, 0, &how, OPEN_EXISTING,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+
+    if (theirs == INVALID_HANDLE_VALUE) {
+        theirs = nullptr;
+
+        return false;
+    }
+
+    return true;
+}
+
+#endif
+
 // Starting. `ahead` means "this program gets our terminal": then we create no pipes at all, because
 // its input is the keyboard and its output the screen, and we also put it in the foreground, so
 // that Ctrl-C goes to it and not to us.
@@ -1004,56 +1108,21 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     };
 
     if (!ahead) {
-        // The input pipe is made differently from the other two, and that is the price of a working
-        // `close_input()`. `CreatePipe` gives only synchronous handles, and a synchronous write
-        // stuck on a full pipe can be woken only by CancelSynchronousIo with another thread's
-        // handle, which leaves a window that cannot be closed: between checking the flag and
-        // entering `WriteFile`, the interruption hits nothing.
-        //
-        // So we make our end overlapped, and then the writer waits for the completion of the write
-        // and for the wake-up event at the same time, exactly as `poll` on POSIX waits for the
-        // descriptor and for the wake-up pipe. The child gets its end ordinary and inheritable,
-        // because that is what every program reading its input expects.
-        //
-        // The name has to be unique in the whole system, so it takes the process number and a
-        // counter.
-        {
-            static std::atomic<unsigned> counted{0};
-
-            wchar_t named[64];
-
-            // `swprintf`, not _snwprintf_s: the latter exists only in MSVC, and the file should
-            // also build under MinGW.
-            (void)swprintf(named, sizeof(named) / sizeof(named[0]), L"\\\\.\\pipe\\talcite-%lu-%u",
-                           static_cast<unsigned long>(GetCurrentProcessId()), counted.fetch_add(1));
-
-            in_write = CreateNamedPipeW(named, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
-                                        PIPE_TYPE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, &how);
-
-            if (in_write == INVALID_HANDLE_VALUE) {
-                in_write = nullptr;
-
-                undone();
-                amiss("Cannot create the input pipe.", what.program);
-            }
-
-            in_read = CreateFileW(named, GENERIC_READ, 0, &how, OPEN_EXISTING,
-                                  FILE_ATTRIBUTE_NORMAL, nullptr);
-
-            if (in_read == INVALID_HANDLE_VALUE) {
-                in_read = nullptr;
-
-                undone();
-                amiss("Cannot create the input pipe.", what.program);
-            }
+        // All three pipes have an overlapped end on our side (`paired`): the writer waits for the
+        // completion and for the wake-up event of `close_input()`, the readers for the completion
+        // and for the worker's bell, so both a sealed input and a cancelled read or write wake at
+        // once instead of waiting for the child.
+        if (!paired(false, how, in_write, in_read)) {
+            undone();
+            amiss("Cannot create the input pipe.", what.program);
         }
 
-        if (CreatePipe(&out_read, &out_write, &how, 0) == 0) {
+        if (!paired(true, how, out_read, out_write)) {
             undone();
             amiss("Cannot create the output pipe.", what.program);
         }
 
-        if (!what.merge && CreatePipe(&err_read, &err_write, &how, 0) == 0) {
+        if (!what.merge && !paired(true, how, err_read, err_write)) {
             undone();
             amiss("Cannot create the error pipe.", what.program);
         }
@@ -1178,10 +1247,11 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     int in_pipe[2] = {-1, -1};
     int out_pipe[2] = {-1, -1};
     int err_pipe[2] = {-1, -1};
+    int starting[2] = {-1, -1};
 
     const auto undone = [&] {
         for (int* one : {&in_pipe[0], &in_pipe[1], &out_pipe[0], &out_pipe[1], &err_pipe[0],
-                         &err_pipe[1]})
+                         &err_pipe[1], &starting[0], &starting[1]})
             closed(*one);
     };
 
@@ -1200,6 +1270,16 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
             undone();
             amiss("Cannot create the error pipe.", what.program);
         }
+    }
+
+    // The start pipe, also closed on exec. A successful `execve` closes the child's end and we
+    // read the end of the pipe; a failed `chdir` or `execve` writes its errno there first. Without
+    // it a program that cannot be started would start anyway and end with 127, as from a shell,
+    // while on Windows the same command is a refusal; this way both systems refuse alike, and with
+    // the reason.
+    if (!sealed::piped(starting, false)) {
+        undone();
+        amiss("Cannot create the start pipe.", what.program);
     }
 
     // Everything the child will need is put together here. After the fork it may call only what is
@@ -1224,6 +1304,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     for (std::string& one : among) envp.push_back(one.data());
 
     envp.push_back(nullptr);
+
+    // The reason of a failed start, for the parent. No memory allocation: this runs between `fork`
+    // and `exec`.
+    const auto say = [&starting](int why) { (void)!::write(starting[1], &why, sizeof why); };
 
     const pid_t which = ::fork();
 
@@ -1265,9 +1349,15 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         // ignored SIGPIPE behaves differently from one started from a shell.
         std::signal(SIGPIPE, SIG_DFL);
 
-        if (!where.empty() && ::chdir(where.c_str()) != 0) ::_exit(127);
+        if (!where.empty() && ::chdir(where.c_str()) != 0) {
+            say(errno);
+
+            ::_exit(127);
+        }
 
         ::execve(program.c_str(), argv.data(), envp.data());
+
+        say(errno);
 
         ::_exit(127);
     }
@@ -1283,6 +1373,49 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         (void)::tcsetpgrp(STDIN_FILENO, which);
 
         std::signal(SIGTTOU, was == nullptr ? SIG_DFL : was);
+    }
+
+    // Waits for the child to either execute the program or say why it could not.
+    closed(starting[1]);
+
+    int why = 0;
+    std::size_t heard = 0;
+
+    while (heard < sizeof why) {
+        const ssize_t much = ::read(starting[0], reinterpret_cast<char*>(&why) + heard, sizeof why - heard);
+
+        if (much > 0) {
+            heard += static_cast<std::size_t>(much);
+
+            continue;
+        }
+
+        if (much < 0 && errno == EINTR) continue;
+
+        break;
+    }
+
+    closed(starting[0]);
+
+    if (heard == sizeof why) {
+        // The child ends at once; it is buried here, since no wait for it exists yet. The terminal
+        // it took comes back to us, because nobody will run `Term::execute` to its end.
+        int status = 0;
+
+        while (::waitpid(which, &status, 0) < 0 && errno == EINTR) {
+        }
+
+        if (ahead) {
+            void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
+
+            (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());
+
+            std::signal(SIGTTOU, was == nullptr ? SIG_DFL : was);
+        }
+
+        undone();
+
+        throw fs::Trouble{"Cannot start the program: " + std::string{std::strerror(why)} + ".", what.program};
     }
 
     closed(in_pipe[0]);
@@ -1526,6 +1659,30 @@ std::int64_t loosed(const Command& what) {
 #endif
 }
 
+// Kills the program on the way out, unless told it may live (`spare`). `Child::run` leaves through
+// it by every exception, a cancellation above all.
+class Killing {
+public:
+    explicit Killing(const Child& one) : one_(one) {}
+
+    // Kills the program, unless spared.
+    ~Killing() {
+        if (!spared_) one_.kill();
+    }
+
+    Killing(const Killing&) = delete;
+    Killing& operator=(const Killing&) = delete;
+    Killing(Killing&&) = delete;
+    Killing& operator=(Killing&&) = delete;
+
+    // Lets the program live.
+    void spare() { spared_ = true; }
+
+private:
+    const Child& one_;
+    bool spared_ = false;
+};
+
 // A loop reading one pipe to the end. A separate promise for each side, because both have to be
 // read at once: a program that fills the one we are not looking at will stop and never end.
 [[nodiscard]] Promise<void> sipping(std::shared_ptr<Child::Held> held, bool errors,
@@ -1676,13 +1833,16 @@ Promise<Bytes> Child::read_errors(std::size_t most) const {
     }};
 }
 
-// The child's exit, the same promise for every caller. An empty handle resolves to `Ended::lost` at
-// once.
+// The child's exit. Every caller gets its own view of the one shared wait, shielded from it: a
+// caller who gives up (a timeout, a cancelled chain) cancels only that view. Handing out the shared
+// promise itself would let the first impatient caller cancel the burial for everyone; later callers
+// would then get `Cancelled` instead of the exit code, and the dead child would stay unburied. An
+// empty handle resolves to `Ended::lost` at once.
 Promise<Exit> Child::wait() const {
     if (held_ == nullptr || !held_->waiting.has_value())
         return Promise<Exit>{[](auto resolve, Reject) { resolve(Exit{Ended::lost, 0, 0}); }};
 
-    return *held_->waiting;
+    return held_->waiting->shielded();
 }
 
 // Asks the program to end: SIGTERM to its whole group on POSIX, Ctrl-Break on Windows. Does nothing
@@ -1742,11 +1902,20 @@ void Child::close() { held_.reset(); }
 
 // Runs the program to the end on pipes: feeds it the input, collects both outputs and resolves to
 // them with the exit.
+//
+// A program may stop reading before it has taken the whole input: it has what it needs, or it does
+// not read at all. That is not a failure of the run but the end of the input; the outputs and the
+// exit code still come, and they say how the program fared. And a run abandoned on the way (a
+// cancellation, above all) kills the program, which otherwise would go on with nobody to read it.
+// The program is started on this worker, not through `start`, so that no moment exists in which it
+// runs and no handle to kill it is held.
 Promise<Output> Child::run(Command what, Bytes input) {
     return Promise<Output>{[what = std::move(what), input = std::move(input)](auto resolve,
                                                                        Reject reject) mutable {
         try {
-            const Child one = Child::start(what).await();
+            const Child one = Rearing::made(reared(what, false));
+
+            Killing guarded{one};
 
             const std::shared_ptr<Child::Held>& held = Rearing::inside(one);
 
@@ -1765,7 +1934,13 @@ Promise<Output> Child::run(Command what, Bytes input) {
 
             both.start();
 
-            if (!input.empty()) (void)one.write(std::move(input)).await();
+            if (!input.empty()) {
+                try {
+                    (void)one.write(std::move(input)).await();
+                } catch (const fs::Trouble&) {
+                    // The program stopped reading; its input ends here.
+                }
+            }
 
             one.close_input();
 
@@ -1776,6 +1951,8 @@ Promise<Output> Child::run(Command what, Bytes input) {
             made.exit = one.wait().await();
             made.out = std::move(*read);
             made.err = std::move(*errors);
+
+            guarded.spare();
 
             resolve(std::move(made));
         } catch (...) {

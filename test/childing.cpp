@@ -88,20 +88,28 @@ TRIAL("Child: merge pours errors into the output") {
     same(made.out.size(), std::string{"output"}.size() + std::string{"error"}.size());
 }
 
-// The systems report this in different ways, and both are correct. On POSIX the fork succeeds and
-// exec does not; the child then exits with code 127, because there is nobody to tell about the
-// failure earlier. On Windows CreateProcessW refuses at once, and the refusal comes back as a
-// rejected promise. The trial guards the one thing in common: neither way gives a silent zero.
-TRIAL("Child: a missing program does not pretend it worked") {
+// A program that cannot be started is a refusal on every system. On Windows CreateProcessW
+// refuses at once; on POSIX the fork succeeds and exec does not, and the child tells the parent so
+// through the start pipe before it ends, instead of passing for a program that ended with 127.
+TRIAL("Child: a missing program is a refusal on every system") {
     Command what;
     what.program = fs::path{"nie-ma-takiego-programu-w-talcite"};
 
-    try {
-        const Output made = Child::run(std::move(what)).await();
+    threw((void)Child::run(what).await());
+    threw((void)Child::start(what).await());
 
-        ought(made.exit.code != 0);
-    } catch (const std::exception&) {
-    }
+    what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
+
+    threw((void)Child::start(what).await());
+}
+
+// A working directory that does not exist is a refusal as well, not a program started elsewhere.
+TRIAL("Child: a missing working directory is a refusal") {
+    Command what = pretending({"code", "0"});
+
+    what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
+
+    threw((void)Child::start(what).await());
 }
 
 TRIAL("Child: no program is a refusal, not silence") {
@@ -742,4 +750,60 @@ TRIAL("Child: detached, a missing working directory is a refusal") {
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
 
     threw(Child::detached(what).await());
+}
+
+// --- Waiting and running to the end --------------------------------------------------------------
+
+// Every caller of `wait` gets a view of one shared wait. A caller who gives up (here a timeout)
+// lets go of its own view only; the next caller still gets the real end.
+TRIAL("Child: a caller who gives up waiting does not take the end from others") {
+    const Child one = Child::start(pretending({"sleeping", "300"})).await();
+
+    threw((void)one.wait().timeout(std::chrono::milliseconds{20}).await());
+
+    const Exit made = one.wait().await();
+
+    ought(made.ended == Ended::normal);
+    same(made.code, 0);
+}
+
+// A program may stop reading before it has taken its whole input. For `run` that is the end of the
+// input, not a failure: the output and the code still come. Four megabytes are far more than a
+// pipe holds, so the write is still going when the program ends.
+TRIAL("Child: run takes a program that stops reading as the end of its input") {
+    const Output made = Child::run(pretending({"said", "dosyć"}), Bytes(4 << 20, std::byte{'x'})).await();
+
+    same(text(made.out), std::string{"dosyć"});
+    ought(made.exit.ended == Ended::normal);
+    same(made.exit.code, 0);
+}
+
+// A run given up on the way kills its program, which would otherwise go on with nobody to read
+// it. The program notes its number in a file, so the trial can see whether it lives.
+TRIAL("Child: cancelling run kills the program") {
+    const std::filesystem::path where = fs::temp() / "talcite-przerwany.txt";
+
+    std::error_code why;
+
+    std::filesystem::remove(where, why);
+
+    Promise<Output> running = Child::run(pretending({"noted", where.string(), "30000"}));
+
+    running.start();
+
+    const std::string told = awaited_note(where);
+
+    ought(!told.empty());
+
+    const std::int64_t which = std::atoll(told.c_str());
+
+    ought(which > 0);
+
+    running.cancel();
+
+    threw((void)running.await());
+
+    ought(!alive(which, std::chrono::milliseconds{5000}));
+
+    std::filesystem::remove(where, why);
 }
