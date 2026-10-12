@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -494,6 +495,72 @@ TRIAL("Channel: many sends at once arrive in order") {
     for (int at = 0; at < 50; ++at) ought(ends.answering.receive(soon).await() == bytes(std::to_string(at)));
 
     for (auto& one : sending) one.await();
+}
+
+// Sends from many threads at once: each frame is sealed with the next number, and the frames must
+// reach the wire in the order of their numbers, or the other side refuses them. Every thread's
+// messages arrive, each one whole, and in the order that thread sent them.
+TRIAL("Channel: sends from many threads at once keep the order of their seals") {
+    const net::Listener gate = standing();
+    const Ends ends = greeted(gate);
+
+    constexpr int threads = 8;
+    constexpr int each = 40;
+
+    std::vector<std::thread> sending;
+    std::vector<std::vector<Promise<void>>> sent(threads);
+
+    for (int who = 0; who < threads; ++who)
+        sending.emplace_back([&ends, &sent, who] {
+            for (int at = 0; at < each; ++at)
+                sent[static_cast<std::size_t>(who)].push_back(
+                    ends.calling.send(bytes(std::to_string(who) + ":" + std::to_string(at)), soon));
+        });
+
+    for (std::thread& one : sending) one.join();
+
+    std::vector<int> next(threads, 0);
+
+    for (int got = 0; got < threads * each; ++got) {
+        const std::string came = text(ends.answering.receive(soon).await());
+        const std::size_t colon = came.find(':');
+
+        ought(colon != std::string::npos);
+
+        const int who = std::stoi(came.substr(0, colon));
+        const int at = std::stoi(came.substr(colon + 1));
+
+        same(at, next[static_cast<std::size_t>(who)]);
+
+        ++next[static_cast<std::size_t>(who)];
+    }
+
+    for (auto& among : sent)
+        for (auto& one : among) one.await();
+}
+
+// Cancelling one send lets go of its result only: the sends before it are not cancelled with it,
+// and its frame, already sealed, still goes out whole and in its place, so the channel goes on.
+TRIAL("Channel: a cancelled send cancels nothing before it and breaks nothing after it") {
+    const net::Listener gate = standing();
+    const Ends ends = greeted(gate);
+
+    const Bytes big = random(4 << 20);
+
+    Promise<void> first = ends.calling.send(big, soon);
+    Promise<void> second = ends.calling.send(bytes("druga"), soon);
+
+    second.cancel();
+
+    Promise<void> third = ends.calling.send(bytes("trzecia"), soon);
+
+    ought(ends.answering.receive(soon).await() == big);
+    ought(ends.answering.receive(soon).await() == bytes("druga"));
+    ought(ends.answering.receive(soon).await() == bytes("trzecia"));
+
+    first.await();
+    threw(second.await());
+    third.await();
 }
 
 TRIAL("Channel: there is no plain text on the wire") {

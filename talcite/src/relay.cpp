@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "talcite/address.hpp"
+#include "talcite/bell.hpp"
+#include "talcite/pool.hpp"
 #include "talcite/time.hpp"
 
 #include "stunning.hpp"
@@ -113,6 +115,36 @@ using Clock = std::chrono::steady_clock;
 constexpr std::size_t roomy = 65535;
 
 constexpr Patience listening{1000};
+
+// Lends the bell of the pool task running on this thread an ear on the relay's condition variable
+// for the length of a wait, so that cancelling the task wakes the wait at once instead of after its
+// whole patience. Outside a pool task there is no bell and it does nothing. It must be made before
+// the relay's lock is taken and outlive it, because `Bell::heed` must not be called under the
+// mutex it is lent.
+class Hearing {
+public:
+    // Lends the ear, remembering the one heard before.
+    explicit Hearing(Lasting& held) : bell_(ringing()) {
+        if (bell_ != nullptr) was_ = bell_->heed(Bell::Ear{&held.guard, &held.stirring});
+    }
+
+    // Gives the previous ear back.
+    ~Hearing() {
+        if (bell_ != nullptr) (void)bell_->heed(was_);
+    }
+
+    Hearing(const Hearing&) = delete;
+    Hearing& operator=(const Hearing&) = delete;
+    Hearing(Hearing&&) = delete;
+    Hearing& operator=(Hearing&&) = delete;
+
+    // Whether the task has been cancelled.
+    [[nodiscard]] bool rang() const { return bell_ != nullptr && bell_->rang(); }
+
+private:
+    Bell* bell_ = nullptr;
+    Bell::Ear was_{};
+};
 
 // How much life we ask for the allocation (seconds) and how long before its end we renew it. The
 // server may give less than we ask, and then its word counts, which is why the end time is taken
@@ -315,10 +347,13 @@ void waking(const std::shared_ptr<Lasting>& held) {
 // One request with retries, on the STUN schedule: half a second, then doubling. Returns the
 // answer; throws `Overdue` when the patience runs out and `Trouble` when the relay closes. It runs
 // on a pool thread and blocks it, just like the scout and for the same reason: there is a handful
-// of requests for the whole life of an allocation, not one per packet.
+// of requests for the whole life of an allocation, not one per packet. A cancelled task stops
+// waiting at once and throws `Cancelled`.
 Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Number& number,
                Patience patience) {
     const std::lock_guard<std::mutex> alone{held->talking};
+
+    const Hearing heard{*held};
 
     {
         const std::lock_guard<std::mutex> kept{held->guard};
@@ -339,9 +374,15 @@ Message asking(const std::shared_ptr<Lasting>& held, const Bytes& what, const Nu
 
         const Patience edge = std::min(wait, left(until));
 
-        if (held->stirring.wait_for(kept, edge, [&held] {
-                return held->answered || held->shutting.load();
+        if (held->stirring.wait_for(kept, edge, [&held, &heard] {
+                return held->answered || held->shutting.load() || heard.rang();
             })) {
+            if (heard.rang()) {
+                held->waiting = false;
+
+                throw Cancelled{};
+            }
+
             if (held->shutting.load()) {
                 held->waiting = false;
 
@@ -897,7 +938,7 @@ Promise<void> Relay::send(Address to, Bytes what, Patience patience) {
 
 // Receives the next datagram relayed from a peer, at most `most` bytes; rejects with `Overdue`
 // when nothing arrives within the patience, and with `Trouble` when the allocation is lost, the
-// relay is closed or the datagram does not fit.
+// relay is closed or the datagram does not fit. Cancelling the promise ends the wait at once.
 Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
     if (!held_) return amiss_now<Datagram>("The relay is empty.");
 
@@ -907,13 +948,17 @@ Promise<Datagram> Relay::receive(std::size_t most, Patience patience) {
         try {
             waking(held);
 
+            const Hearing heard{*held};
+
             std::unique_lock<std::mutex> kept{held->guard};
 
-            if (!held->stirring.wait_for(kept, patience, [&held] {
+            if (!held->stirring.wait_for(kept, patience, [&held, &heard] {
                     return !held->spare.empty() || held->lost || held->shutting.load() ||
-                           !held->living.load();
+                           !held->living.load() || heard.rang();
                 }))
                 throw Overdue{};
+
+            if (heard.rang()) throw Cancelled{};
 
             // What was received earlier is handed over even when the allocation is already lost:
             // those bytes really arrived and nobody invalidated them.

@@ -4,11 +4,14 @@
 #include <chrono>
 #include <exception>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 
 #include "talcite/address.hpp"
 #include "talcite/time.hpp"
+
+#include "outbox.hpp"
 
 namespace talcite::net {
 
@@ -32,9 +35,7 @@ struct TlsStream::Held {
 
     // Everything that goes out to the socket lines up in one queue, because the stream accepts
     // one write at a time, and the handshake can write in the middle of a read.
-    std::mutex sending;
-    Promise<void> tail{[](auto resolve, auto) { resolve(); }};
-    int queued = 0;
+    Outbox outbox;
 
     std::atomic<bool> reading{false};
     std::atomic<bool> writing{false};
@@ -92,34 +93,16 @@ Stream borrowed(const std::shared_ptr<TlsStream::Held>& held) {
     return held->one;
 }
 
-// The queue is a chain: every new write is attached to the previous one, so two never go to the
-// socket at once.
-//
-// But the chain keeps its whole history. `then` stores a copy of the parent in the child (through
-// upstream_), so the tail after a thousand writes would hold a thousand promises together with
-// their buffers; only ASan shows this, the tests pass. So we count how many writes are on the
-// way, and when the last one finishes, the tail goes back to a fresh, settled promise. The
-// history is cut off.
-Promise<void> posting(const std::shared_ptr<TlsStream::Held>& held, Bytes what, Patience patience) {
-    const std::lock_guard<std::mutex> kept{held->sending};
+// Puts the ciphertext into the common write queue, or gives a settled promise when there is none.
+// The caller holds `minding`: the session hands out its records numbered and in order, and they
+// must join the queue in the same order. Queued after the lock is released, the records of a
+// write and of a read draining the session at the same time on two threads could swap places, and
+// the other side would refuse the connection. The writer is started afterwards, without the lock
+// (`Outbox::flush`).
+Promise<void> queued(const std::shared_ptr<TlsStream::Held>& held, Bytes out, Patience patience) {
+    if (out.empty()) return already();
 
-    ++held->queued;
-
-    Promise<void> made = held->tail
-                             .then([held, what = std::move(what), patience]() mutable {
-                                 return borrowed(held).write(std::move(what), patience);
-                             })
-                             .finally([held] {
-                                 const std::lock_guard<std::mutex> kept{held->sending};
-
-                                 if (--held->queued == 0) held->tail = already();
-                             });
-
-    held->tail = made;
-
-    made.start();
-
-    return made;
+    return held->outbox.queued(std::move(out), patience, [held] { return borrowed(held); });
 }
 
 // Takes at most `most` bytes of the plaintext already decrypted and kept in `spare`.
@@ -165,25 +148,27 @@ constexpr int rounds = 100;
 // per-operation deadline, renewable forever, so the handshake as a whole would have no end.
 Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_point until,
                       int turn) {
-    Bytes out;
+    std::optional<Promise<void>> sent;
     bool done = false;
 
     {
         const std::lock_guard<std::mutex> kept{held->minding};
 
-        out = drained(*held->how);
+        Bytes out = drained(*held->how);
         done = held->how->ready();
 
         amiss(*held);
+
+        sent = queued(held, std::move(out), left(until));
     }
 
-    Promise<void> sent = out.empty() ? already() : posting(held, std::move(out), left(until));
+    held->outbox.flush();
 
-    if (done) return sent;
+    if (done) return *sent;
 
     if (turn >= rounds) throw Trouble{"The handshake will not finish."};
 
-    return sent.then([held, until, turn] {
+    return sent->then([held, until, turn] {
         return borrowed(held).read(65536, left(until)).then([held, until, turn](const Bytes& came) {
             if (came.empty()) throw Trouble{"The handshake broke off halfway."};
 
@@ -205,8 +190,8 @@ Promise<void> turning(const std::shared_ptr<TlsStream::Held>& held, Clock::time_
 // An empty result means the other side has closed.
 Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t most,
                        Patience patience) {
-    Bytes out;
     Bytes plain;
+    std::optional<Promise<void>> sent;
 
     {
         const std::lock_guard<std::mutex> kept{held->minding};
@@ -214,7 +199,7 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
         if (!held->spare.empty()) return already(taken(*held, most));
 
         plain = held->how->read();
-        out = drained(*held->how);
+        Bytes out = drained(*held->how);
 
         amiss(*held);
 
@@ -223,15 +208,17 @@ Promise<Bytes> reading(const std::shared_ptr<TlsStream::Held>& held, std::size_t
 
             plain = taken(*held, most);
         }
+
+        sent = queued(held, std::move(out), patience);
     }
 
-    Promise<void> sent = out.empty() ? already() : posting(held, std::move(out), patience);
+    held->outbox.flush();
 
-    if (!plain.empty()) return sent.then([plain = std::move(plain)]() mutable {
+    if (!plain.empty()) return sent->then([plain = std::move(plain)]() mutable {
         return std::move(plain);
     });
 
-    return sent.then([held, most, patience] {
+    return sent->then([held, most, patience] {
         return borrowed(held).read(65536, patience).then([held, most, patience](const Bytes& came) {
             // Emptiness means the same as on a bare stream: the other side has closed.
             if (came.empty()) return already(Bytes{});
@@ -392,16 +379,18 @@ Promise<void> TlsStream::write(Bytes what, Patience patience) const {
 
     auto held = held_;
 
-    Bytes out;
+    std::optional<Promise<void>> sent;
 
     try {
         const std::lock_guard<std::mutex> kept{held->minding};
 
         held->how->write(std::move(what));
 
-        out = drained(*held->how);
+        Bytes out = drained(*held->how);
 
         amiss(*held);
+
+        sent = queued(held, std::move(out), patience);
     } catch (...) {
         held->writing.store(false);
 
@@ -410,10 +399,9 @@ Promise<void> TlsStream::write(Bytes what, Patience patience) const {
         return Promise<void>{[why](auto, auto reject) { reject(why); }};
     }
 
-    Promise<void> made =
-        (out.empty() ? already() : posting(held, std::move(out), patience)).finally([held] {
-            held->writing.store(false);
-        });
+    held->outbox.flush();
+
+    Promise<void> made = sent->finally([held] { held->writing.store(false); });
 
     made.start();
 

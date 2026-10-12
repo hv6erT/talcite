@@ -10,6 +10,8 @@
 
 #include "talcite/trouble.hpp"
 
+#include "outbox.hpp"
+
 namespace talcite::net {
 
 // An encrypted channel over a stream: first key agreement (any implementation of the `Handshake`
@@ -21,7 +23,7 @@ namespace talcite::net {
 // message breaks the seal of the next one. The channel speaks in messages, not bytes: exactly what
 // was sent arrives on the other side.
 //
-// Writes go in order through a tail of promises (as in `TlsStream`), and a read takes from the
+// Writes go in order through one queue (`Outbox`, as in `TlsStream`), and a read takes from the
 // spare buffer whatever came beyond the current frame. The stream is read and closed under
 // `minding`, and asynchronous work runs on a copy: the same rule and the same reason as in
 // `TlsStream` (`close()` replaces the `shared_ptr` in the member). A forged frame or a failed
@@ -94,8 +96,7 @@ struct Channel::Held {
     std::uint64_t taken = 0;
 
     std::mutex sending;
-    Promise<void> tail{[](auto resolve, auto) { resolve(); }};
-    int queued = 0;
+    Outbox outbox;
 };
 
 namespace {
@@ -114,26 +115,12 @@ void shut(Channel::Held& held) {
     held.one.close();
 }
 
-// Writing in order: each write waits for the previous one, and the tail goes back to a fulfilled
-// promise when the queue is empty.
+// Writing in order: the bytes join the write queue, and each write waits for the previous one.
+// The caller holds no lock (`Outbox::flush`).
 Promise<void> posting(const std::shared_ptr<Channel::Held>& held, Bytes what, Patience patience) {
-    const std::lock_guard<std::mutex> kept{held->sending};
+    Promise<void> made = held->outbox.queued(std::move(what), patience, [held] { return borrowed(held); });
 
-    ++held->queued;
-
-    Promise<void> made = held->tail
-                             .then([held, what = std::move(what), patience]() mutable {
-                                 return borrowed(held).write(std::move(what), patience);
-                             })
-                             .finally([held] {
-                                 const std::lock_guard<std::mutex> kept{held->sending};
-
-                                 if (--held->queued == 0) held->tail = already();
-                             });
-
-    held->tail = made;
-
-    made.start();
+    held->outbox.flush();
 
     return made;
 }
@@ -254,28 +241,36 @@ const Address& Channel::peer() const {
     return held_->one.peer();
 }
 
-// Sends one message. The seal is computed right away, under the lock, so the counter advances in
-// the same order in which the frames enter the write queue.
+// Sends one message. The seal is computed right away, and the frame joins the write queue under the
+// same lock, so the counter advances in the same order in which the frames enter the queue. Taking
+// the lock twice, once to seal and once to queue, would let a send from another thread squeeze in
+// between with the next number and go out first, and the other side would refuse both.
 Promise<void> Channel::send(Bytes what, Patience patience) const {
     if (!held_) return refused<void>("The channel is closed.");
 
     if (what.size() + 16 > biggest) return refused<void>("The message is too long for the channel.");
 
-    Bytes made;
+    const std::shared_ptr<Held> held = held_;
+
+    std::optional<Promise<void>> queued;
 
     {
-        const std::lock_guard<std::mutex> kept{held_->sending};
+        const std::lock_guard<std::mutex> kept{held->sending};
 
         const Bytes head = headed(what.size() + 16);
 
-        made = head;
+        Bytes made = head;
 
-        const Bytes sealed = held_->cipher.provider().sealed(held_->keys.sending, nonce(held_->sent++), head, what);
+        const Bytes sealed = held->cipher.provider().sealed(held->keys.sending, nonce(held->sent++), head, what);
 
         made.insert(made.end(), sealed.begin(), sealed.end());
+
+        queued = held->outbox.queued(std::move(made), patience, [held] { return borrowed(held); });
     }
 
-    return posting(held_, std::move(made), patience);
+    held->outbox.flush();
+
+    return *queued;
 }
 
 // The next message, opened and checked. A forged or lost message closes the channel and rejects the
