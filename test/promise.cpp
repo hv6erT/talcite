@@ -418,6 +418,58 @@ TRIAL("Promise: finally runs after cancelling too") {
     same(ran.load(), 1);
 }
 
+// A callback that throws rejects the promise it made, with what it threw, rather than leaving it
+// waiting forever: `fail` instead of the reason it got, `finally` instead of the value. `finally`
+// still runs after a `fail` that threw, and the first exception wins.
+TRIAL("Promise: a fail or finally that throws rejects its promise with what it threw") {
+    std::string said;
+
+    Promise<int> failing = Promise<int>{[](auto, auto reject) { reject("zepsute"); }}
+                               .fail([](const std::exception&) { throw std::runtime_error{"z fail"}; })
+                               .fail([&said](const std::exception& why) { said = why.what(); });
+
+    threw((void)failing.timeout(std::chrono::seconds{5}).await());
+    same(said, std::string{"z fail"});
+
+    std::atomic<int> ran{0};
+    std::string last;
+
+    Promise<int> after = gave(3)
+                             .finally([] { throw std::runtime_error{"z finally"}; })
+                             .finally([&ran] { ++ran; })
+                             .fail([&last](const std::exception& why) { last = why.what(); });
+
+    threw((void)after.timeout(std::chrono::seconds{5}).await());
+    same(ran.load(), 1);
+    same(last, std::string{"z finally"});
+
+    // A finally after a fail that threw still runs, and what it throws in turn goes on.
+    std::string final;
+
+    Promise<void> twice = Promise<void>{[](auto, auto reject) { reject("zepsute"); }}
+                              .fail([](const std::exception&) { throw std::runtime_error{"pierwszy"}; })
+                              .finally([] { throw std::runtime_error{"drugi"}; })
+                              .fail([&final](const std::exception& why) { final = why.what(); });
+
+    threw(twice.timeout(std::chrono::seconds{5}).await());
+    same(final, std::string{"drugi"});
+}
+
+// The continuations of one promise are woken together; one that throws does not keep the others
+// from settling.
+TRIAL("Promise: a throwing continuation does not stop its siblings") {
+    Promise<int> root = slowly(4, 30);
+
+    Promise<int> broken = root.finally([] { throw std::runtime_error{"z finally"}; });
+    Promise<int> sibling = root.then([](int given) { return given * 2; });
+
+    broken.start();
+    sibling.start();
+
+    same(sibling.timeout(std::chrono::seconds{5}).await(), 8);
+    threw((void)broken.timeout(std::chrono::seconds{5}).await());
+}
+
 // --- Cancelling goes to the source -----------------------------------------------------------
 
 // Cancelling stops the work, not a view of it. The caller usually holds the tail (the last link

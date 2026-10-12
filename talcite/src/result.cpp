@@ -1,6 +1,7 @@
 #include "talcite/detail/result.hpp"
 
 #include <deque>
+#include <exception>
 #include <functional>
 #include <iterator>
 #include <vector>
@@ -22,6 +23,12 @@ namespace talcite::detail {
 // look. Then the awaited promise is cancelled too, since nobody wants its result any more, and
 // `await` throws `Cancelled` as that promise now does. Outside the pool there is no bell and the
 // wait is a plain one. The callers stay as they are: only the waiting changes.
+//
+// A callback that throws becomes the rejection of the promise it made, whatever it is: in `then`
+// (`Carry`) instead of the value, in `fail` and `finally` (`Mirror`) instead of the reason or the
+// value that would have passed through. A promise is thus always settled, and a throwing callback
+// can neither leave its promise waiting forever nor run off with the continuations still to be woken
+// (`woken`).
 //
 // A rejection with something that is not a `std::exception` reaches `fail` as this one constant
 // `Rejected`. It stands here, not in the header, because the links in `detail` are defined before
@@ -200,7 +207,9 @@ void buried(Upward& gone) {
 
 // Wakes everyone waiting on a settled ticket, through the waking trampoline. Observers are held
 // weakly, so one that has already died simply drops out. That is the whole cutting off of callbacks
-// when their owner dies: there is no separate mechanism, only the absence of a pointer.
+// when their owner dies: there is no separate mechanism, only the absence of a pointer. An exception
+// from one observer does not stop the others: the trampoline wakes everyone queued and only then
+// lets the first exception go on to whoever settled the ticket.
 void woken(Ticket& ticket) {
     std::vector<std::shared_ptr<Waiter>> live;
 
@@ -227,20 +236,30 @@ void woken(Ticket& ticket) {
     Wakes mine;
     mine.pending.assign(std::make_move_iterator(live.begin()), std::make_move_iterator(live.end()));
 
-    const Draining held{mine};
+    std::exception_ptr first;
 
-    while (!mine.pending.empty()) {
-        const std::shared_ptr<Waiter> one = std::move(mine.pending.front());
-        mine.pending.pop_front();
+    {
+        const Draining held{mine};
 
-        one->woke();
+        while (!mine.pending.empty()) {
+            const std::shared_ptr<Waiter> one = std::move(mine.pending.front());
+            mine.pending.pop_front();
 
-        if (mine.batch.empty()) continue;
+            try {
+                one->woke();
+            } catch (...) {
+                if (!first) first = std::current_exception();
+            }
 
-        mine.pending.insert(mine.pending.begin(), std::make_move_iterator(mine.batch.begin()),
-                            std::make_move_iterator(mine.batch.end()));
-        mine.batch.clear();
+            if (mine.batch.empty()) continue;
+
+            mine.pending.insert(mine.pending.begin(), std::make_move_iterator(mine.batch.begin()),
+                                std::make_move_iterator(mine.batch.end()));
+            mine.batch.clear();
+        }
     }
+
+    if (first) std::rethrow_exception(first);
 }
 
 // Rejects the ticket with `why` and wakes its observers; a settled ticket stays as it is.

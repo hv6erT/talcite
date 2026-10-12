@@ -198,8 +198,12 @@ public:
 
 private:
     void carry() {
-        if (from_->state.load() == State::rejected) {
-            if (fail_) {
+        const bool rejected = from_->state.load() == State::rejected;
+
+        std::exception_ptr thrown;
+
+        if (rejected && fail_) {
+            try {
                 try {
                     std::rethrow_exception(from_->why);
                 } catch (const std::exception& why) {
@@ -207,15 +211,28 @@ private:
                 } catch (...) {
                     fail_(unknown());
                 }
+            } catch (...) {
+                thrown = std::current_exception();
             }
+        }
 
-            if (always_) always_();
+        if (always_) {
+            try {
+                always_();
+            } catch (...) {
+                if (!thrown) thrown = std::current_exception();
+            }
+        }
 
-            spoiled(*to_, from_->why);
+        if (thrown) {
+            spoiled(*to_, thrown);
             return;
         }
 
-        if (always_) always_();
+        if (rejected) {
+            spoiled(*to_, from_->why);
+            return;
+        }
 
         if constexpr (std::is_void_v<T>) {
             settled(*to_);
