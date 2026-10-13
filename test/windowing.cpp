@@ -77,7 +77,7 @@ std::string read(const View& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x)
-        if (const char32_t letter = one.at({x, y}).letter; letter != 0) talcite::utf8::encode(letter, made);
+        if (const char32_t letter = one.at({x, y}).letter; letter != 0) made += talcite::spelled(letter);
 
     return made;
 }

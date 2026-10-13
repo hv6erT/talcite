@@ -1,10 +1,8 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "talcite/encoding.hpp"
 #include "talcite/shape.hpp"
@@ -21,10 +19,10 @@ namespace talcite::ui {
 constexpr int tabbing = 8;
 
 // How many cells the start of a line takes up to the given byte. A tab advances to the next
-// multiple of eight, a double-width character takes two cells, a combining character zero: the same
-// rule by which `Page` cuts a line into pieces. It lives here so that it exists in one place: if the
-// cutting and the status bar counted separately, sooner or later they would show two different
-// columns for the same cursor.
+// multiple of eight, and every other cluster takes the cells it takes (`width`): a double-width
+// character two, a letter with its combining marks one. The same rule by which `Page` cuts a line
+// into pieces. It lives here so that it exists in one place: if the cutting and the status bar
+// counted separately, sooner or later they would show two different columns for the same cursor.
 //
 // No window width is involved, so a tab is not clipped at the edge. `Page` does that because it
 // has to fit a piece; counting a column asks about the line, not the screen.
@@ -33,69 +31,55 @@ constexpr int tabbing = 8;
     std::size_t at = 0;
 
     while (at < what.size() && at < upto) {
-        const std::size_t was = at;
-        const char32_t sign = utf8::decode(what, at);
+        const std::size_t next = cluster_after(what, at);
 
-        if (sign == U'\t')
+        if (what[at] == '\t')
             much = ((much / tabbing) + 1) * tabbing;
         else
-            much += std::max(width(sign), 0);
+            much += width(what.substr(at, next - at));
 
-        if (was == at) break;
+        at = next;
     }
 
     return much;
 }
 
-// The head of a string that fits in the given number of cells. We count by characters, not bytes,
-// and by their widths; otherwise the first CJK character or the first diacritic would break the
-// wrapping.
+// The head of a string that fits in the given number of cells. We count by clusters, not bytes
+// or characters, and by their widths; otherwise the first CJK character would break the wrapping,
+// and a cut between a letter and its accent would leave the accent for the next row.
 inline std::string cut(std::string_view what, int wide) {
     std::size_t at = 0;
-    std::size_t upto = 0;
     int much = 0;
 
     while (at < what.size()) {
-        const std::size_t began = at;
-        const int one = width(utf8::decode(what, at));
+        const std::size_t next = cluster_after(what, at);
+        const int one = width(what.substr(at, next - at));
 
         if (much + one > wide) break;
 
         much += one;
-        upto = at;
-
-        if (began == at) break;
+        at = next;
     }
 
-    return std::string{what.substr(0, upto)};
+    return std::string{what.substr(0, at)};
 }
 
-// The same from the end: the tail of the given width. We walk character by character from the
-// start, because UTF-8 reads only in that direction, and only then count back from the end.
+// The same from the end: the tail of the given width, whole clusters only.
 inline std::string tail(std::string_view what, int wide) {
-    std::vector<std::size_t> spots;
-    std::vector<int> much;
-
-    std::size_t at = 0;
-
-    while (at < what.size()) {
-        const std::size_t began = at;
-
-        much.push_back(width(utf8::decode(what, at)));
-        spots.push_back(began);
-    }
-
+    std::size_t at = what.size();
     int room = 0;
-    std::size_t which = spots.size();
 
-    while (which > 0 && room + much[which - 1] <= wide) {
-        room += much[which - 1];
-        --which;
+    while (at > 0) {
+        const std::size_t before = cluster_before(what, at);
+        const int one = width(what.substr(before, at - before));
+
+        if (room + one > wide) break;
+
+        room += one;
+        at = before;
     }
 
-    if (which >= spots.size()) return {};
-
-    return std::string{what.substr(spots[which])};
+    return std::string{what.substr(at)};
 }
 
 // Shortens a string to the given width with an ellipsis on the side chosen by `how`. The ellipsis

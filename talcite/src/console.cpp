@@ -55,6 +55,26 @@ constexpr std::chrono::milliseconds deciding{400};
 // size this often, regardless of records.
 constexpr std::chrono::milliseconds glancing{100};
 
+// The UTF-16 unit an old console cell shows for a glyph. Its cell holds one unit and draws no
+// marks over letters, so a cluster goes in composed (NFC: "e" with U+0301 is "é"), and one that
+// has no composed form of one unit shows its first character alone. A character outside the BMP
+// never gets here: the screen already stands a "?" in for it.
+WCHAR unit(char32_t glyph) {
+    if (glyph <= 0xFFFF) return static_cast<WCHAR>(glyph);
+
+    const std::wstring wide = to_wstring(spelled(glyph));
+
+    if (wide.empty()) return L' ';
+
+    WCHAR composed[8];
+
+    const int much = NormalizeString(NormalizationC, wide.data(), static_cast<int>(wide.size()), composed, 8);
+
+    if (much == 1) return composed[0];
+
+    return wide.front();
+}
+
 // The trace of listening, for finding out on a real Windows console why the program waits. It is
 // written only when the environment variable TALCITE_TRACE names a file; the file is opened once,
 // appended to, and every line is flushed at once, so the trace survives the program being killed.
@@ -469,7 +489,7 @@ private:
 
                 CHAR_INFO& into = line[static_cast<std::size_t>(x)];
 
-                into.Char.UnicodeChar = static_cast<WCHAR>(one.glyph);
+                into.Char.UnicodeChar = unit(one.glyph);
                 into.Attributes = static_cast<WORD>(one.ink | (one.paper << 4) | (one.under ? COMMON_LVB_UNDERSCORE : 0));
             }
 

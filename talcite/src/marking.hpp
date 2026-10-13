@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 
 #include "talcite/area.hpp"
 #include "talcite/encoding.hpp"
@@ -20,7 +21,8 @@ namespace talcite::ui {
 // It is shared by the button, the menu item, the checkbox, the key bar and the menu bar, which
 // would otherwise each repeat the same loop over the label's characters.
 //
-// We walk by cells, not bytes, because the label is UTF-8 and wide characters take two cells. The
+// We walk by clusters and cells, not bytes, because the label is UTF-8, wide characters take two
+// cells and a letter with its accent is one character to repaint. The
 // label must be the same one that went into the view, that is, already trimmed: a column counted
 // over the whole label would land on the ellipsis.
 //
@@ -44,18 +46,17 @@ inline void marking(View& into, Spot at, const std::string& shown, int which, St
     int wide = 0;
 
     while (where < shown.size()) {
-        const std::size_t began = where;
-        const char32_t sign = utf8::decode(shown, where);
-
-        if (began == where) return;
+        const std::size_t next = cluster_after(shown, where);
+        const std::string_view one = std::string_view{shown}.substr(where, next - where);
 
         if (wide == which) {
-            into.put({at.x + which, at.y}, utf8::encode(sign), how);
+            into.put({at.x + which, at.y}, one, how);
 
             return;
         }
 
-        wide += width(sign);
+        wide += width(one);
+        where = next;
     }
 }
 

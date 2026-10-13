@@ -18,7 +18,28 @@ void encode(char32_t one, std::string& into);
 
 namespace talcite {
 
+struct Rendering {
+    bool joined = true;
+    bool presented = true;
+
+    friend constexpr bool operator==(Rendering, Rendering) = default;
+};
+
+void rendered(Rendering how);
+
+[[nodiscard]] Rendering rendering();
+
 [[nodiscard]] int width(char32_t one);
+
+[[nodiscard]] int width(std::string_view text);
+
+[[nodiscard]] std::size_t cluster_after(std::string_view text, std::size_t at);
+
+[[nodiscard]] std::size_t cluster_before(std::string_view text, std::size_t at);
+
+[[nodiscard]] char32_t glyph(std::string_view cluster);
+
+[[nodiscard]] std::string spelled(char32_t glyph);
 
 [[nodiscard]] bool in_word(char32_t one);
 

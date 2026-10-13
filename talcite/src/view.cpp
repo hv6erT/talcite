@@ -37,16 +37,8 @@ Style Style::merge(Style base, Style over) {
 }
 
 // Text is measured in cells, not in characters or bytes: a letter with a diacritic counts as
-// one, an East Asian wide character as two.
-ui::Size measured(std::string_view what) {
-    ui::Size made{0, what.empty() ? 0 : 1};
-
-    std::size_t at = 0;
-
-    while (at < what.size()) made.wide += width(utf8::decode(what, at));
-
-    return made;
-}
+// one, an East Asian wide character as two, a cluster as the cells it takes (`width`).
+ui::Size measured(std::string_view what) { return ui::Size{width(what), what.empty() ? 0 : 1}; }
 
 // A blank view of the given size, with every cell empty.
 View::View(ui::Size given) {
@@ -87,14 +79,36 @@ void View::broken(ui::Spot where) {
     }
 }
 
-// Puts one character at `at`. Every character goes through `shown`, so a cell never carries a
-// control character to the terminal.
+// Puts one cell's content at `at`: a character or a cluster's glyph (see `glyph`). Every character
+// goes through `shown`, so a cell never carries a control character to the terminal. A character
+// that takes no cell of its own (a combining mark, ZWJ, a selector) joins the glyph to the left of
+// `at`, past the second half of a wide one: code that puts text character by character and moves
+// by `width` thus still draws "e" with U+0301 as one letter. With nothing to its left in the view
+// it is not drawn.
 void View::put(ui::Spot at, char32_t what, const Style& how) {
     if (what == 0 || !holds(at)) return;
 
     what = shown(what);
 
     const int much = width(what);
+
+    if (much == 0) {
+        ui::Spot left{at.x - 1, at.y};
+
+        if (holds(left) && cell(left).letter == 0) --left.x;
+
+        if (!holds(left) || cell(left).letter == 0) return;
+
+        Cell& one = cell(left);
+
+        const char32_t made = glyph(spelled(one.letter) + utf8::encode(what));
+
+        // A mark that would change the glyph's width (a selector that widens) is left out rather
+        // than shift what lies to the right.
+        if (made != 0 && width(made) == width(one.letter)) one.letter = made;
+
+        return;
+    }
 
     // Half of a double-width character is garbage, so the last column gets a space instead.
     if (much == 2 && !holds({at.x + 1, at.y})) {
@@ -114,13 +128,19 @@ void View::put(ui::Spot at, char32_t what, const Style& how) {
     if (much == 2) cell({at.x + 1, at.y}) = Cell{0, how};
 }
 
-// Puts UTF-8 text starting at `at`, advancing by each character's width and stopping at the
-// right edge.
+// Puts UTF-8 text starting at `at`, cluster by cluster, advancing by each glyph's width and
+// stopping at the right edge. A cluster that shows nothing (a lone format character) takes no
+// cell.
 void View::put(ui::Spot at, std::string_view what, const Style& how) {
     std::size_t which = 0;
 
     while (which < what.size() && at.x < size_.wide) {
-        const char32_t one = ::talcite::utf8::decode(what, which);
+        const std::size_t next = cluster_after(what, which);
+        const char32_t one = glyph(what.substr(which, next - which));
+
+        which = next;
+
+        if (one == 0) continue;
 
         put(at, one, how);
 

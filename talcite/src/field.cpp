@@ -14,49 +14,30 @@ namespace talcite::ui {
 
 namespace {
 
-// One step back in UTF-8: we walk back over continuation bytes until we stand at the start of a
-// character. Forward, `utf8::decode` does this; backward we have to do it ourselves, because the
-// encoding reads in one direction only.
-std::size_t before(const std::string& text, std::size_t at) {
-    if (at == 0) return 0;
+// One character back from byte offset `at`: the whole cluster, as the screen shows it, so the arrow
+// and Backspace never stop between a letter and its accent.
+std::size_t before(const std::string& text, std::size_t at) { return cluster_before(text, at); }
 
-    --at;
-
-    while (at > 0 && (static_cast<unsigned char>(text[at]) & 0xC0) == 0x80) --at;
-
-    return at;
-}
-
-// One character forward from byte offset `at`; the end of the text when there is nothing left to
-// decode.
-std::size_t after(const std::string& text, std::size_t at) {
-    if (at >= text.size()) return text.size();
-
-    const std::size_t began = at;
-
-    (void)utf8::decode(text, at);
-
-    return at > began ? at : text.size();
-}
+// One character forward from byte offset `at`, the whole cluster; the end of the text when there
+// is nothing left.
+std::size_t after(const std::string& text, std::size_t at) { return cluster_after(text, at); }
 
 }
 
 // How many cells a piece of the text takes. We count widths, not bytes and not characters;
 // otherwise the first double-width character would throw off both the cursor and the scrolling. A
-// concealed field draws every character as one dot, so there a cell is a character; the width would
-// reveal which characters were typed.
+// concealed field draws every character (cluster) as one dot, so there a cell is a character; the
+// width would reveal which characters were typed.
 int Field::spanned(std::size_t from, std::size_t upto) const {
     int made = 0;
 
     std::size_t at = from;
 
     while (at < upto && at < text_.size()) {
-        const std::size_t began = at;
-        const char32_t one = utf8::decode(text_, at);
+        const std::size_t next = cluster_after(text_, at);
 
-        made += concealed_ ? 1 : width(one);
-
-        if (began == at) break;
+        made += concealed_ ? 1 : width(std::string_view{text_}.substr(at, next - at));
+        at = next;
     }
 
     return made;
@@ -88,20 +69,12 @@ std::optional<Spot> Field::caret() const {
     return Spot{spanned(from_, at_), 0};
 }
 
-// The cursor position in characters, counted from the start of the text.
+// The cursor position in characters (clusters, as the screen shows them), counted from the start
+// of the text.
 std::size_t Field::cursor() const {
     std::size_t made = 0;
-    std::size_t at = 0;
 
-    while (at < at_ && at < text_.size()) {
-        const std::size_t began = at;
-
-        (void)utf8::decode(text_, at);
-
-        if (began == at) break;
-
-        ++made;
-    }
+    for (std::size_t at = 0; at < at_ && at < text_.size(); at = cluster_after(text_, at)) ++made;
 
     return made;
 }
@@ -239,16 +212,13 @@ View Field::paint(Size given, Area seen) {
     int wide = 0;
 
     while (upto < text_.size()) {
-        const std::size_t began = upto;
         const std::size_t next = after(text_, upto);
-        const int much = spanned(began, next);
+        const int much = spanned(upto, next);
 
         if (wide + much > room) break;
 
         wide += much;
         upto = next;
-
-        if (began == upto) break;
     }
 
     if (concealed_) {

@@ -1,6 +1,15 @@
 #include "talcite/encoding.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <deque>
+#include <mutex>
+#include <shared_mutex>
+#include <string>
+#include <unordered_map>
+
+#include "unicode.hpp"
 
 namespace talcite {
 
@@ -118,25 +127,357 @@ char32_t shown(char32_t one) {
     return one;
 }
 
-// The width of a character in cells. There is no full Unicode table here, and there need not be:
-// what matters are the ranges that really take two cells, East Asian scripts and emoji. Combining
-// characters are treated as ordinary ones, because merging them with the previous cell is a
-// separate matter that is not needed yet, and pretending they have zero width would throw the
-// line out of alignment.
+// Characters on a terminal: their width and the clusters they make.
+//
+// A cluster is what a terminal draws in one place: a letter with the marks that join it (U+0301
+// after an "e", the vowel signs of Hangul jamo), a flag of two regional indicators, and, on a
+// terminal that joins them, an emoji with its skin tone or a sequence of emoji held together by
+// ZWJ (U+200D). The boundaries follow the extended grapheme clusters of UAX #29, with two
+// departures for the terminal's sake. Spacing combining marks (Mc) stand alone, because
+// terminals give each of them a cell of its own and a cluster would then be wider than the cells
+// it takes. And what an emoji sequence is depends on the terminal: one that does not join them
+// draws a woman and a laptop where Unicode sees a programmer, so there the skin tone and the
+// emoji after a ZWJ start clusters of their own. Prepend characters (a few Indic and Arabic signs)
+// are not attached; terminals do not attach them either.
+//
+// The width of a cluster is the width of its first character (East Asian W and F take two cells,
+// the rest one), with three exceptions: a flag takes two cells, a narrow pictograph with the
+// emoji selector (U+FE0F) takes two on a terminal that presents it as an emoji, and the joined
+// parts of an emoji sequence take nothing beyond the first. Marks with nothing before them (the
+// start of a text, a mark after a control) are drawn on a dotted circle, U+25CC, and take a cell;
+// zero-width format characters standing alone (ZWSP, word joiner, BOM, a lone ZWJ) show nothing
+// and take nothing, as on a terminal.
+//
+// `Rendering` says how this terminal draws the emoji sequences; `Term` sets it from the probe's
+// measurements. Without a terminal (trials, output into a pipe), the default is what Unicode
+// says: sequences joined, the selector widening.
+namespace {
+
+constexpr char32_t zwj = 0x200D;
+constexpr char32_t presenting = 0xFE0F;
+constexpr char32_t dotted = 0x25CC;
+
+// Handles of clusters start above the last code point, so a cell tells them apart at a glance.
+constexpr char32_t handles = 0x110000;
+
+// Distinct clusters a process remembers. Past this, a new cluster shows as its first character
+// alone: text that is foreign and hostile (file names made of thousands of distinct combinations)
+// must not make the table grow without end.
+constexpr std::size_t most_glyphs = 65536;
+
+std::atomic<unsigned> drawing{3};
+
+// One remembered cluster: what is written to the terminal for it, and how many cells it takes.
+struct Remembered {
+    std::string text;
+    int wide = 1;
+};
+
+// The clusters met so far. Entries are never removed, so a handle stays valid for the life of the
+// process and two frames with the same cluster have the same handle. It is created once and never
+// destroyed: static objects that draw while the process ends must still find it.
+struct Remembering {
+    std::shared_mutex guard;
+    std::deque<Remembered> all;
+    std::unordered_map<std::string, char32_t> known;
+};
+
+// The one table of the process.
+Remembering& remembering() {
+    static Remembering* made = new Remembering;
+
+    return *made;
+}
+
+// The width of a code point on its own, as it is shown: a control that `shown` replaces by a
+// visible picture takes its cell, a format character that shows nothing takes none, a character
+// that joins the one before it takes none, and the rest take one or two cells.
+int alone(char32_t one) {
+    if (shown(one) != one) return 1;
+
+    if (one < 0x300) return 1;
+
+    if (unicode::control(one) || unicode::zero(one) || one == zwj || unicode::vowel(one) ||
+        unicode::trailing(one))
+        return 0;
+
+    return unicode::wide(one) ? 2 : 1;
+}
+
+// Whether the character joins the one before it on this terminal. `pictorial` says whether the
+// cluster began with a pictograph, for the emoji after a ZWJ; `before` is the character before.
+bool joining(char32_t before, char32_t one, bool pictorial, Rendering how) {
+    if (unicode::control(one)) return false;
+
+    if (unicode::modifier(one)) return how.joined;
+
+    if (unicode::zero(one) || one == zwj) return true;
+
+    if (before == zwj) return how.joined && pictorial && unicode::pictograph(one);
+
+    if (unicode::leading(before)) return unicode::leading(one) || unicode::vowel(one) || unicode::syllable(one);
+
+    if (unicode::vowel(before) || unicode::open(before)) return unicode::vowel(one) || unicode::trailing(one);
+
+    if (unicode::trailing(before) || unicode::syllable(before)) return unicode::trailing(one);
+
+    return false;
+}
+
+// The end of the cluster that starts at `at`, for a given rendering.
+std::size_t ended(std::string_view text, std::size_t at, Rendering how) {
+    if (at >= text.size()) return text.size();
+
+    // Plain ASCII followed by ASCII: nothing to join, the common case by far.
+    if (static_cast<unsigned char>(text[at]) < 0x80 && (at + 1 == text.size() || static_cast<unsigned char>(text[at + 1]) < 0x80))
+        return at + 1;
+
+    std::size_t next = at;
+
+    const char32_t first = utf8::decode(text, next);
+
+    if (unicode::control(first)) return next;
+
+    const bool pictorial = unicode::pictograph(first);
+
+    char32_t before = first;
+    int flags = unicode::regional(first) ? 1 : 0;
+
+    while (next < text.size()) {
+        std::size_t after = next;
+
+        const char32_t one = utf8::decode(text, after);
+
+        if (unicode::regional(before) && unicode::regional(one)) {
+            if (flags % 2 == 0) break;
+
+            ++flags;
+        } else if (!joining(before, one, pictorial, how)) {
+            break;
+        }
+
+        before = one;
+        next = after;
+    }
+
+    return next;
+}
+
+// The cells a cluster takes, for a given rendering.
+int cells(std::string_view cluster, Rendering how) {
+    std::size_t at = 0;
+
+    const char32_t first = utf8::decode(cluster, at);
+
+    // A skin tone standing alone shows its colour, two cells wide.
+    if (unicode::modifier(first)) return 2;
+
+    const int own = alone(first);
+
+    // A mark with nothing before it goes on a dotted circle; a format character alone shows
+    // nothing.
+    if (own == 0) return unicode::mark(first) ? 1 : 0;
+
+    if (at == cluster.size()) return own;
+
+    int made = own;
+    int flags = unicode::regional(first) ? 1 : 0;
+
+    while (at < cluster.size()) {
+        const char32_t one = utf8::decode(cluster, at);
+
+        if (unicode::regional(one)) ++flags;
+
+        if (one == presenting && how.presented && unicode::pictograph(first)) made = 2;
+    }
+
+    if (flags == 2) made = 2;
+
+    return made;
+}
+
+// What is written to the terminal for a cluster: its characters passed through `shown`, after a
+// dotted circle when it starts with a mark.
+std::string written(std::string_view cluster) {
+    std::string made;
+
+    std::size_t at = 0;
+
+    const char32_t first = utf8::decode(cluster, at);
+
+    if (!unicode::modifier(first) && alone(first) == 0) utf8::encode(dotted, made);
+
+    at = 0;
+
+    while (at < cluster.size()) utf8::encode(shown(utf8::decode(cluster, at)), made);
+
+    return made;
+}
+
+// The rendering packed into the bits of the setting and of a remembered cluster's key.
+unsigned packed(Rendering how) { return (how.joined ? 1u : 0u) | (how.presented ? 2u : 0u); }
+
+}
+
+// Sets how this terminal draws emoji sequences; `Term` does it once, from the probe.
+void rendered(Rendering how) { drawing.store(packed(how)); }
+
+// How this terminal draws emoji sequences.
+Rendering rendering() {
+    const unsigned bits = drawing.load();
+
+    return Rendering{(bits & 1u) != 0, (bits & 2u) != 0};
+}
+
+// The width of one cell's content in cells: of a code point standing alone, or of a remembered
+// cluster. A character that joins the one before it takes nothing; a skin tone takes nothing when
+// the terminal joins it to its emoji and two cells when it does not.
 int width(char32_t one) {
-    if (one < 0x1100) return 1;
+    if (one >= handles) {
+        Remembering& known = remembering();
 
-    if ((one >= 0x1100 && one <= 0x115F) || (one >= 0x2E80 && one <= 0x303E) ||
-        (one >= 0x3041 && one <= 0x33FF) || (one >= 0x3400 && one <= 0x4DBF) ||
-        (one >= 0x4E00 && one <= 0x9FFF) || (one >= 0xA000 && one <= 0xA4CF) ||
-        (one >= 0xAC00 && one <= 0xD7A3) || (one >= 0xF900 && one <= 0xFAFF) ||
-        (one >= 0xFE10 && one <= 0xFE19) || (one >= 0xFE30 && one <= 0xFE6F) ||
-        (one >= 0xFF00 && one <= 0xFF60) || (one >= 0xFFE0 && one <= 0xFFE6) ||
-        (one >= 0x1F300 && one <= 0x1F64F) || (one >= 0x1F900 && one <= 0x1F9FF) ||
-        (one >= 0x20000 && one <= 0x3FFFD))
-        return 2;
+        const std::shared_lock reading{known.guard};
 
-    return 1;
+        const std::size_t which = one - handles;
+
+        return which < known.all.size() ? known.all[which].wide : 1;
+    }
+
+    if (unicode::modifier(one)) return rendering().joined ? 0 : 2;
+
+    return alone(one);
+}
+
+// How many cells the text takes, cluster by cluster.
+int width(std::string_view text) {
+    const Rendering how = rendering();
+
+    int made = 0;
+
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t next = ended(text, at, how);
+
+        if (next == at + 1 && static_cast<unsigned char>(text[at]) < 0x80) made += alone(static_cast<unsigned char>(text[at]));
+        else made += cells(text.substr(at, next - at), how);
+
+        at = next;
+    }
+
+    return made;
+}
+
+// The end of the cluster that starts at `at`.
+std::size_t cluster_after(std::string_view text, std::size_t at) { return ended(text, at, rendering()); }
+
+// The start of the cluster that ends at `at` (or holds the byte before it): where the cursor goes
+// to the left, and what Backspace takes. It walks back to a character that surely starts a cluster
+// (not a joining one, not after a ZWJ, not inside a run of flags or of Hangul jamo) and comes forward
+// from there. A pathological run of thousands of marks stops the walk after 512 characters, and the
+// answer is then counted from there.
+std::size_t cluster_before(std::string_view text, std::size_t at) {
+    at = std::min(at, text.size());
+
+    if (at == 0) return 0;
+
+    const Rendering how = rendering();
+
+    // The start of the code point that ends at `end`.
+    const auto stepped = [&text](std::size_t end) {
+        std::size_t made = end - 1;
+
+        while (made > 0 && end - made < 4 && (static_cast<unsigned char>(text[made]) & 0xC0) == 0x80) --made;
+
+        return made;
+    };
+
+    std::size_t from = stepped(at);
+
+    for (int steps = 0; from > 0 && steps < 512; ++steps) {
+        std::size_t at_one = from;
+
+        const char32_t one = utf8::decode(text, at_one);
+
+        std::size_t at_before = stepped(from);
+
+        const char32_t before = utf8::decode(text, at_before);
+
+        const bool tied = joining(before, one, unicode::pictograph(before) || before == zwj, how) ||
+                          (unicode::regional(before) && unicode::regional(one)) || before == zwj;
+
+        if (!tied) break;
+
+        from = stepped(from);
+    }
+
+    for (;;) {
+        const std::size_t next = ended(text, from, how);
+
+        if (next >= at) return from;
+
+        from = next;
+    }
+}
+
+// The content of one cell for a cluster: a code point standing alone is itself (passed through
+// `shown`), a longer cluster gets the handle under which it is remembered, and a cluster that
+// shows nothing gives zero.
+char32_t glyph(std::string_view cluster) {
+    if (cluster.empty()) return 0;
+
+    const Rendering how = rendering();
+
+    std::size_t at = 0;
+
+    const char32_t first = utf8::decode(cluster, at);
+
+    if (at == cluster.size() && alone(first) > 0) return shown(first);
+
+    Remembered made{written(cluster), cells(cluster, how)};
+
+    if (made.wide == 0) return 0;
+
+    std::string key(1, static_cast<char>('0' + packed(how)));
+
+    key += made.text;
+
+    Remembering& known = remembering();
+
+    {
+        const std::shared_lock reading{known.guard};
+
+        if (const auto found = known.known.find(key); found != known.known.end()) return found->second;
+    }
+
+    const std::unique_lock writing{known.guard};
+
+    if (const auto found = known.known.find(key); found != known.known.end()) return found->second;
+
+    if (known.all.size() >= most_glyphs) return alone(first) > 0 ? shown(first) : dotted;
+
+    const auto handle = static_cast<char32_t>(handles + known.all.size());
+
+    known.all.push_back(std::move(made));
+    known.known.emplace(std::move(key), handle);
+
+    return handle;
+}
+
+// What is written to the terminal for one cell's content: the remembered text of a cluster, the
+// UTF-8 of a code point, and nothing for an empty cell's zero.
+std::string spelled(char32_t glyph) {
+    if (glyph == 0) return {};
+
+    if (glyph >= handles) {
+        Remembering& known = remembering();
+
+        const std::shared_lock reading{known.guard};
+
+        const std::size_t which = glyph - handles;
+
+        return which < known.all.size() ? known.all[which].text : std::string{};
+    }
+
+    return utf8::encode(glyph);
 }
 
 // Whether a character belongs to a word. This is an approximation and is meant to stay one:

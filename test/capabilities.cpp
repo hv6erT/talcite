@@ -148,7 +148,9 @@ TRIAL("Capabilities: a silent terminal stays at the floor") {
     same(static_cast<int>(one.screen()), static_cast<int>(Screen::older));
     ought(!one.bracketed_paste());
     ought(!one.synchronized());
-    same(one.wide(), 1);
+    same(one.wide(), 0);
+    same(one.varied(), 0);
+    same(one.joined(), 0);
 }
 
 TRIAL("Capabilities: without a terminal not a single byte is sent") {

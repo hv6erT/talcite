@@ -48,9 +48,10 @@ struct Cut {
 // Without wrapping there is one piece, whatever fits, and the rest simply does not exist for the
 // view.
 //
-// We cut by columns, not by bytes or characters: a Chinese character occupies two cells and a
-// combining character zero. Otherwise a line with one such character would run off the page or
-// break off one cell too early.
+// We cut by columns and clusters, not by bytes or characters: a Chinese character occupies two
+// cells, a letter with its combining marks one, and a piece never ends between a letter and its
+// accent. Otherwise a line with one such character would run off the page or break off one cell
+// too early.
 template <typename Taker>
 void walked(const std::string& what, int wide, bool wrap, Taker& taker) {
     int much = 0;
@@ -74,9 +75,12 @@ void walked(const std::string& what, int wide, bool wrap, Taker& taker) {
 
     for (std::size_t at = 0; at < what.size();) {
         const std::size_t was = at;
-        const char32_t sign = utf8::decode(what, at);
 
-        if (sign == U'\t') {
+        at = cluster_after(what, at);
+
+        const std::string_view sign = std::string_view{what}.substr(was, at - was);
+
+        if (sign == "\t") {
             const int upto = std::min(((much / tabbing) + 1) * tabbing, wide);
 
             taker.spaced(was, upto - much);
@@ -84,7 +88,7 @@ void walked(const std::string& what, int wide, bool wrap, Taker& taker) {
             much = upto;
             any = true;
         } else {
-            const int room = std::max(width(sign), 0);
+            const int room = width(sign);
 
             if (much + room > wide) {
                 if (!wrap) {
@@ -133,11 +137,12 @@ struct Builder {
         }
     }
 
-    // Adds a character. Every occupied column points at the byte of the character that occupies
-    // it, including the second column of a double-width character and every column of an expanded
-    // tab. Without that there would be no way to tell whether a cell falls within a mark's range.
-    void lettered(char32_t sign, std::size_t was, int room) {
-        utf8::encode(sign, one.text);
+    // Adds a character, a whole cluster. Every occupied column points at the byte where the
+    // character that occupies it starts, including the second column of a double-width character
+    // and every column of an expanded tab. Without that there would be no way to tell whether a
+    // cell falls within a mark's range.
+    void lettered(std::string_view sign, std::size_t was, int room) {
+        one.text += sign;
 
         for (int step = 0; step < room; ++step) one.bytes.push_back(was);
     }
@@ -156,7 +161,7 @@ struct Counter {
 
     void spaced(std::size_t, int) {}
 
-    void lettered(char32_t, std::size_t, int) {}
+    void lettered(std::string_view, std::size_t, int) {}
 
     // Counts one finished piece.
     void flushed(std::size_t) { ++made; }

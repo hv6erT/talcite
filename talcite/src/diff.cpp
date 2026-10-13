@@ -271,8 +271,9 @@ struct Glyph {
     bool marked = false;
 };
 
-// The characters of one side, with tabs expanded to spaces and each character marked when it lies
-// in a marked range.
+// The characters of one side, cluster by cluster (a letter with its accent is one), with tabs
+// expanded to spaces and each character marked when it starts in a marked range. A cluster that
+// shows nothing (a lone format character) is left out.
 std::vector<Glyph> glyphed(const DiffSide& side) {
     std::vector<Glyph> made;
 
@@ -281,13 +282,14 @@ std::vector<Glyph> glyphed(const DiffSide& side) {
 
     for (std::size_t at = 0; at < side.text.size();) {
         const std::size_t was = at;
-        const char32_t sign = utf8::decode(side.text, at);
+
+        at = cluster_after(side.text, at);
 
         while (span < side.marked.size() && side.marked[span].upto <= was) ++span;
 
         const bool marked = span < side.marked.size() && side.marked[span].from <= was;
 
-        if (sign == U'\t') {
+        if (side.text[was] == '\t') {
             const int upto = ((column / tabbing) + 1) * tabbing;
 
             for (; column < upto; ++column) made.push_back(Glyph{" ", 1, marked});
@@ -295,13 +297,14 @@ std::vector<Glyph> glyphed(const DiffSide& side) {
             continue;
         }
 
-        const int wide = std::max(width(sign), 0);
+        const std::string_view one = std::string_view{side.text}.substr(was, at - was);
+        const int wide = width(one);
 
-        made.push_back(Glyph{side.text.substr(was, at - was), wide, marked});
+        if (wide == 0) continue;
+
+        made.push_back(Glyph{std::string{one}, wide, marked});
 
         column += wide;
-
-        if (was == at) break;
     }
 
     return made;

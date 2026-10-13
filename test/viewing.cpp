@@ -39,7 +39,7 @@ std::string said(const View& one, int y) {
 
         if (letter == 0) continue;
 
-        utf8::encode(letter, made);
+        made += spelled(letter);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();

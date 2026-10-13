@@ -46,7 +46,7 @@ std::string said_at(const View& one, int y) {
 
         if (letter == 0) continue;
 
-        utf8::encode(letter, made);
+        made += spelled(letter);
     }
 
     return made;

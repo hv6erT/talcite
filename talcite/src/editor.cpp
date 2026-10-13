@@ -1210,33 +1210,29 @@ void Editor::redo() {
 
 namespace {
 
-// How many bytes the character before this place has. Deleting counts in bytes, and a typed
-// character can be multibyte; without this Backspace would cut a diacritic in half and leave
-// garbage.
+// How far the editor looks around the cursor for the character it stands at. A cluster longer than
+// this (hundreds of stacked marks) is taken in pieces of this size; nothing real comes close.
+constexpr std::size_t glance = 256;
+
+// How many bytes the character before this place has: the whole cluster, as it stands on the
+// screen. Deleting counts in bytes, and a character can be several code points; without this
+// Backspace would take the accent off "e" with U+0301 and leave the letter, or cut a family emoji
+// into its members, where the screen shows one character.
 std::size_t behind(Quilt& quilt, std::size_t at) {
     if (at == 0) return 0;
 
-    const std::size_t look = at < 4 ? at : 4;
+    const std::size_t look = std::min(at, glance);
     const std::string what = talcite::text(quilt.bytes(at - look, look));
 
-    std::size_t much = 1;
-
-    while (much < what.size() &&
-           (static_cast<unsigned char>(what[what.size() - much]) & 0xC0) == 0x80)
-        ++much;
-
-    return much;
+    return what.size() - cluster_before(what, what.size());
 }
 
-// How many bytes the character at this place has, so that Delete and the arrow take it whole.
+// How many bytes the character at this place has, so that Delete and the arrow take the whole
+// cluster.
 std::size_t ahead(Quilt& quilt, std::size_t at) {
-    const std::string what = talcite::text(quilt.bytes(at, 4));
+    const std::string what = talcite::text(quilt.bytes(at, glance));
 
-    if (what.empty()) return 0;
-
-    const std::size_t much = utf8::trailing(static_cast<unsigned char>(what.front())) + 1;
-
-    return std::min(much, what.size());
+    return cluster_after(what, 0);
 }
 
 // A jump by words. The "word byte" rule comes from `encoding.hpp`, the same one by which the comb

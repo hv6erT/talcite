@@ -126,9 +126,10 @@ struct Capabilities::Held {
     bool unicode = false;
     bool titles = false;
 
-    int wide = 1;
-    int varied = 1;
-    int joined = 1;
+    // The measured widths of the test characters, as in the cursor reports. Zero means no answer.
+    int wide = 0;
+    int varied = 0;
+    int joined = 0;
 
     Graphics graphics = Graphics::none;
 
@@ -589,21 +590,24 @@ bool Capabilities::titles() const {
     return held_->titles;
 }
 
-// The measured width, in columns, of a Chinese character, the first of three test characters.
+// The measured width, in columns, of a Chinese character, the first of three test characters;
+// zero when the terminal did not answer.
 int Capabilities::wide() const {
     ready();
 
     return held_->wide;
 }
 
-// The measured width, in columns, of an emoji with a variation selector.
+// The measured width, in columns, of an emoji with a variation selector; zero when the terminal
+// did not answer.
 int Capabilities::varied() const {
     ready();
 
     return held_->varied;
 }
 
-// The measured width, in columns, of an emoji joined with a zero-width joiner.
+// The measured width, in columns, of an emoji joined with a zero-width joiner; zero when the
+// terminal did not answer.
 int Capabilities::joined() const {
     ready();
 

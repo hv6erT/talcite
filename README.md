@@ -5,7 +5,8 @@ layer, networking, process control and a set of terminal UI widgets in the style
 Commander. It is the foundation of twa, a terminal file manager for film and music libraries.
 
 The library has no third-party code and no required dependencies beyond the C++ standard library
-and threads. Everything that needs an outside implementation (TLS, ciphers, image decoders, parsers,
+and threads. Its character tables (widths, grapheme clusters) are generated from the Unicode
+Character Database; see `LICENSE-UNICODE`. Everything that needs an outside implementation (TLS, ciphers, image decoders, parsers,
 embedded tags) is plugged in through small interfaces; ready implementations live in the
 sibling project talcite-adapters.
 
@@ -45,7 +46,9 @@ Terminal and widgets (`talcite::ui`)
 - A tree of nodes with events (keys, mouse, paste, resize) and layout containers (`Column`, `Row`,
   `Stack`, `Box`, `Scroll`, `Frame`). Input is read in every form terminals send it: xterm, VT220,
   rxvt, the Linux console, the kitty keyboard protocol and modifyOtherKeys; the mouse in SGR, urxvt
-  and X10 encoding, with the tilted wheel and the back and forward buttons; bracketed paste.
+  and X10 encoding, with the tilted wheel and the back and forward buttons; bracketed paste. Text is
+  drawn by grapheme clusters: a letter with its combining marks (as macOS writes names) is one
+  character in one cell, and emoji sequences take the room the terminal measured for them.
 - Widgets: spans, buttons, fields with history, check boxes, choices, drop-down lists, lists,
   tables, gauges, menus with a menu bar, a key legend, windows, dialogs and message boxes, a
   streaming viewer, a multi-window editor, a diff viewer and an image widget (sixel or block

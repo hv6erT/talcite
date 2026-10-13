@@ -41,8 +41,10 @@ target_link_libraries(talcite PUBLIC Threads::Threads)
 # Windows.
 # shell32 and ole32: known folders (`fs::folder`: SHGetKnownFolderPath and CoTaskMemFree) and the
 # program's arguments in wide form (`arguments`: CommandLineToArgvW).
+# normaliz: NormalizeString, which composes a letter with its marks for the old console, whose cell
+# holds one UTF-16 unit; present since Vista.
 if(WIN32)
-    target_link_libraries(talcite PUBLIC mpr netapi32 ws2_32 iphlpapi bcrypt advapi32 shell32 ole32 crypt32)
+    target_link_libraries(talcite PUBLIC mpr netapi32 ws2_32 iphlpapi bcrypt advapi32 shell32 ole32 crypt32 normaliz)
 endif()
 
 # MinGW: the GCC runtime libraries (libstdc++, libgcc and winpthread) go into the executable.

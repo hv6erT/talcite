@@ -626,11 +626,33 @@ Cell& Screen::cell(int x, int y) {
 // A two-cell character: the left cell carries the glyph, the right one is empty. Outside the CJK
 // code pages the older conhost does not draw a glyph wider than one cell, so the second cell stays
 // a space; the layout is right and nothing runs into the neighbor.
+//
+// A character that takes no cell (a combining mark, ZWJ, a selector) joins the glyph written last,
+// as long as the cursor has not moved since: the cell then holds the cluster, and the glue sends
+// the console its composed form when there is one. A stand-in "?" joins nothing.
 void Screen::put(char32_t one) {
     if (one >= 0x80 && one <= 0x9F) return;
 
     const bool beyond = one > 0xFFFF;
     const int much = beyond ? 2 : width(one);
+
+    if (much == 0) {
+        if (!(cursor_ == after_) || last_.x < 0) return;
+
+        Cell& before = cell(last_.x, last_.y);
+
+        if (before.glyph == U'?') return;
+
+        const char32_t made = talcite::glyph(spelled(before.glyph) + utf8::encode(one));
+
+        if (made != 0 && width(made) == width(before.glyph)) {
+            before.glyph = made;
+
+            touched(last_.y);
+        }
+
+        return;
+    }
     const char32_t glyph = beyond || one == 0xFFFD ? U'?' : one;
 
     if (pending_) {
@@ -648,6 +670,8 @@ void Screen::put(char32_t one) {
 
     written(cursor_.x, cursor_.y, inked(glyph));
 
+    last_ = cursor_;
+
     if (much == 2) {
         Cell half = inked(U' ');
         half.trailing = true;
@@ -661,6 +685,8 @@ void Screen::put(char32_t one) {
         cursor_.x = size_.wide - 1;
         pending_ = wrapping_;
     }
+
+    after_ = cursor_;
 }
 
 // Writing to a cell breaks up a two-cell character whose half it covers: the other half becomes
@@ -712,6 +738,7 @@ void Screen::control(unsigned char one) {
 // A new line; at the bottom the grid moves up by one.
 void Screen::lined() {
     pending_ = false;
+    last_ = ui::Spot{-1, -1};
 
     if (cursor_.y + 1 < size_.high) {
         ++cursor_.y;

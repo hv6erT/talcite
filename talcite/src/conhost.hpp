@@ -114,6 +114,8 @@ private:
     ui::Spot kept_cursor_{};
     std::vector<bool> dirty_;
     ui::Spot cursor_{};
+    ui::Spot last_{-1, -1};
+    ui::Spot after_{-1, -1};
     bool pending_ = false;
     bool shown_ = true;
     bool wrapping_ = true;

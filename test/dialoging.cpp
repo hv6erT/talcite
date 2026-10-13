@@ -93,7 +93,7 @@ std::string read(const View& one, int y) {
     for (int x = 0; x < one.size().wide; ++x) {
         const char32_t letter = one.at({x, y}).letter;
 
-        if (letter != 0) talcite::utf8::encode(letter, made);
+        if (letter != 0) made += talcite::spelled(letter);
     }
 
     while (!made.empty() && made.back() == ' ') made.pop_back();

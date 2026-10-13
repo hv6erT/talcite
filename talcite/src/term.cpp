@@ -52,6 +52,10 @@ struct Term::Held {
     ui::Root* onto = nullptr;
 
     std::string spare;
+
+    // How emoji sequences were drawn before this terminal, given back when it goes.
+    Rendering before = rendering();
+
     bool running = true;
     bool entered = false;
     bool fresh = true;
@@ -261,6 +265,13 @@ void forgotten(Console& out, std::vector<Placement>& placed, Sent& sent) {
     sent.clear();
 }
 
+// Appends what is written to the terminal for one cell: the UTF-8 of a character, or the text of a
+// cluster.
+void written(char32_t letter, std::string& into) {
+    if (letter < 0x110000) utf8::encode(letter, into);
+    else into += spelled(letter);
+}
+
 // The longest gap between changed cells that is rewritten rather than jumped over.
 constexpr int nearby = 4;
 
@@ -280,7 +291,7 @@ bool bridged(const View& made, int y, int from, int upto, const Style& now, std:
         if (!(one.style == now)) return false;
     }
 
-    for (int x = from; x < upto; ++x) utf8::encode(made.at({x, y}).letter, into);
+    for (int x = from; x < upto; ++x) written(made.at({x, y}).letter, into);
 
     return true;
 }
@@ -324,6 +335,19 @@ ui::Blocks blocked(const Capabilities& compat, const Setup& wish) {
 // Whether frames are wrapped in synchronized output (mode 2026).
 bool synchronized(const Capabilities& compat, const Setup& wish) {
     return wish.synchronized.value_or(compat.synchronized());
+}
+
+// How this terminal draws emoji sequences, from the probe's widths: a programmer (woman, ZWJ,
+// laptop) two columns wide means it joins the sequence, a red heart with the emoji selector two
+// columns wide means the selector widens. Without an answer the setting stays as it was.
+Rendering drawn(const Capabilities& compat, Rendering was) {
+    Rendering made = was;
+
+    if (compat.joined() > 0) made.joined = compat.joined() <= 2;
+
+    if (compat.varied() > 0) made.presented = compat.varied() >= 2;
+
+    return made;
 }
 
 // Whether the window title may be set.
@@ -455,6 +479,10 @@ Term::Term(Setup given, Seam<Console> with) : held_(std::make_unique<Held>(std::
 
     held.spare = held.compat.rest();
 
+    held.before = rendering();
+
+    rendered(drawn(held.compat, held.before));
+
     dressed(console, sending(held.compat, held.wish));
 
     held.entered = true;
@@ -475,6 +503,8 @@ Term::~Term() {
     //
     // When the terminal is handed to someone else right now, there is nothing to undo: `Pause`
     // removed both the dressing and raw mode on entry.
+    rendered(held.before);
+
     if (held.away > 0) return;
 
     forgotten(held.console.provider(), held.placed, held.sent);
@@ -734,7 +764,7 @@ void Term::draw() {
                 held.now = one.style;
             }
 
-            utf8::encode(one.letter, into);
+            written(one.letter, into);
 
             const bool broad = x + 1 < made.size().wide && made.at({x + 1, y}).letter == 0;
 

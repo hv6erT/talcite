@@ -95,14 +95,14 @@ int shortcut_column(const Keys& these, const std::string& shown) {
         int wide = 0;
 
         while (at < shown.size()) {
-            const std::size_t began = at;
-            const char32_t sign = utf8::decode(shown, at);
+            const std::size_t next = cluster_after(shown, at);
 
-            if (began == at) break;
+            std::size_t first = at;
 
-            if (folded(sign) == folded(which)) return wide;
+            if (folded(utf8::decode(shown, first)) == folded(which)) return wide;
 
-            wide += width(sign);
+            wide += width(std::string_view{shown}.substr(at, next - at));
+            at = next;
         }
     }
 
