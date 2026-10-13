@@ -222,8 +222,10 @@ bool List::handle(KeyEvent& what) {
 // in the file manager the preview refresh hangs on that.
 //
 // At the end of the scroll range we return false, so the movement goes up and a scroller above
-// the list gets it.
+// the list gets it; so does the tilted wheel, since the list does not scroll sideways.
 bool List::handle(WheelEvent& what) {
+    if (what.axis() != Axis::vertical) return false;
+
     const int much = static_cast<int>(children().many());
     const int window = std::max(area().size.high, 0);
     const int was = shift_;

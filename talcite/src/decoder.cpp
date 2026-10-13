@@ -1,72 +1,51 @@
 #include "talcite/decoder.hpp"
 
-#include "talcite/encoding.hpp"
-
-#include <algorithm>
-#include <cstdint>
+#include <cstddef>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "vt.hpp"
+
+// What the bytes from the terminal mean: keys, the mouse, the wheel, pastes and the terminal's
+// focus. The syntax is read by `vt::Reader`; here each token gets its meaning, or none when it is
+// a terminal's answer or something no key sends. The decoder knows neither the tree nor the clock:
+// it gets bytes with the moment they came and gives values, and `dispatched` turns a value into an
+// event for a root. `Term` can thus take the current root for every value, and a key in the middle
+// of a read that switches the screen sends the rest to the new one.
+//
+// Keys. A letter is a letter; Esc before it is Alt. A control character is a letter with Ctrl
+// (0x01 is Ctrl+A), except Tab, Enter and Backspace, which have their own codes. 0x7F is Backspace
+// and 0x08 is Ctrl+Backspace, as xterm, VTE and Windows Terminal send them. The keys with
+// sequences come in the forms terminals use: `CSI` with a letter (arrows, Home, End, F1–F4) and
+// with a number and a tilde (Insert, Delete, PgUp, PgDn, F1–F20), `SS3` with a letter, the Linux
+// console's F1–F5 (`CSI [ A`–`E`), rxvt's modified tilde keys and arrows, Shift+Tab (`CSI Z`), and
+// the keys of the kitty keyboard protocol (`CSI code ; mods u`) and of xterm's modifyOtherKeys
+// (`CSI 27 ; mods ; code ~`). Nobody turns the last two on yet, but a terminal that has them on
+// by default, or a program around us that turned them on, gets its keys understood. The modifiers
+// in a sequence are a mask plus one: shift 1, alt 2, ctrl 4.
+//
+// The mouse comes in three encodings with one mask: SGR (`CSI < b ; x ; y M` or `m`), urxvt
+// (`CSI b ; x ; y M`, each number plus 32) and X10 (`CSI M` and three bytes plus 32). The mask
+// carries the button in its lowest two bits, shift 4, alt 8, ctrl 16, motion 32, the wheel 64 and
+// the extra buttons 128. The wheel's buttons 64 and 65 are up and down, 66 and 67 left and right;
+// a step towards the start (up, left) is positive. Buttons 128 and 129 are back and forward; 130
+// and 131 have no agreed meaning and are left out. SGR names the released button; urxvt and X10
+// say only "released" (3), so the decoder remembers which button went down. X10 cannot encode a
+// cell past 223; a report with a coordinate it could not give is dropped, not guessed.
+//
+// Answers that come late (after the capability probe, over SSH) are not keys: CSI with a private
+// marker (DA, DECRPM, the kitty flags), a cursor position report and control strings are
+// swallowed. A position report has the shape of F3 with a modifier, but F3 always has a one in
+// front.
 namespace talcite {
 
 namespace {
 
-constexpr char esc = '\x1b';
-
-// More bytes than this allowance in an unclosed sequence mean that it is not a sequence but
-// garbage. Without this limit broken input would grow in the buffer without end.
-constexpr std::size_t most = 64;
-
-// Control strings (OSC `Esc ]`, DCS `Esc P`, APC `Esc _`, PM `Esc ^` and SOS `Esc X`) are terminal
-// replies, not keys: the background color, XTGETTCAP, the reply of the kitty image protocol. They
-// end with ST (`Esc \`), and OSC also with BEL. They can be long, so they have their own allowance.
-constexpr std::size_t stretched = 4096;
-
-// Whether the byte after Esc opens a control string.
-bool stringed(char lead) { return lead == ']' || lead == 'P' || lead == '_' || lead == '^' || lead == 'X'; }
-
-// The end of a control string that starts at `from`; `npos` when it has not arrived yet.
-std::size_t ended(const std::string& rest, std::size_t from, char lead) {
-    for (std::size_t at = from; at < rest.size(); ++at) {
-        if (lead == ']' && rest[at] == '\x07') return at + 1;
-
-        if (rest[at] == esc && at + 1 < rest.size() && rest[at + 1] == '\\') return at + 2;
-    }
-
-    return std::string::npos;
-}
-
-// The numeric parameters of a sequence, split at semicolons; an empty parameter counts as zero.
-std::vector<int> numbers(std::string_view body) {
-    std::vector<int> made;
-
-    int one = 0;
-    bool any = false;
-
-    for (const char sign : body) {
-        if (sign >= '0' && sign <= '9') {
-            one = one * 10 + (sign - '0');
-            any = true;
-
-            continue;
-        }
-
-        if (sign == ';') {
-            made.push_back(any ? one : 0);
-
-            one = 0;
-            any = false;
-        }
-    }
-
-    if (any) made.push_back(one);
-
-    return made;
-}
-
-// The modifier value in a sequence is the mask plus one: after subtracting one, 1 is shift alone,
-// 4 is ctrl alone and 5 is shift with ctrl. Zero and one mean no modifiers.
+// The modifiers of a mask plus one, as sequences carry them. Zero and one mean none.
 ui::Mods marked(int given) {
     ui::Mods made;
 
@@ -81,410 +60,455 @@ ui::Mods marked(int given) {
     return made;
 }
 
-// A control character is really a letter with ctrl: 0x01 is Ctrl+A. Tab, Enter and Backspace
-// have their own codes, so they are taken out before they fall under that rule.
-ui::Key steering(unsigned char byte, ui::Mods& mods) {
+// A control character as a key. Tab, Enter and Backspace keep their codes; 0x08 is Backspace with
+// Ctrl; the rest are letters with Ctrl: 0x01 is Ctrl+A, 0x00 Ctrl+Space, 0x1C–0x1F Ctrl+\ ] ^ _.
+ui::Key steering(unsigned char byte, bool alt) {
+    ui::Mods mods;
+    mods.alt = alt;
+
     switch (byte) {
-        case 0x09: return ui::Key{ui::Code::tab};
+        case 0x09: return ui::Key{ui::Code::tab, mods};
         case 0x0D:
-        case 0x0A: return ui::Key{ui::Code::enter};
-        case 0x08:
-        case 0x7F: return ui::Key{ui::Code::backspace};
+        case 0x0A: return ui::Key{ui::Code::enter, mods};
+        case 0x7F: return ui::Key{ui::Code::backspace, mods};
+        case 0x08: mods.ctrl = true; return ui::Key{ui::Code::backspace, mods};
         default: break;
     }
 
     mods.ctrl = true;
 
-    if (byte == 0x00) return ui::Key{U' '};
-    if (byte <= 0x1A) return ui::Key{static_cast<char32_t>(U'a' + byte - 1)};
+    if (byte == 0x00) return ui::Key{U' ', mods};
+    if (byte <= 0x1A) return ui::Key{static_cast<char32_t>(U'a' + byte - 1), mods};
 
-    return ui::Key{static_cast<char32_t>(byte + 0x40)};
+    return ui::Key{static_cast<char32_t>(byte + 0x40), mods};
 }
 
-// The key of a `Esc [ n ~` sequence, by its number; an empty key for a number that means nothing.
-ui::Key tilde(int given) {
+// The key of `CSI n ~` by its number; nothing for a number that means no key. 25–34 are F13–F20
+// as the Linux console and VT220 number them.
+std::optional<ui::Code> tilde(int given) {
     switch (given) {
         case 1:
-        case 7: return ui::Key{ui::Code::home};
-        case 2: return ui::Key{ui::Code::insert};
-        case 3: return ui::Key{ui::Code::remove};
+        case 7: return ui::Code::home;
+        case 2: return ui::Code::insert;
+        case 3: return ui::Code::remove;
         case 4:
-        case 8: return ui::Key{ui::Code::end};
-        case 5: return ui::Key{ui::Code::pageup};
-        case 6: return ui::Key{ui::Code::pagedown};
-        case 11: return ui::Key{ui::Code::f1};
-        case 12: return ui::Key{ui::Code::f2};
-        case 13: return ui::Key{ui::Code::f3};
-        case 14: return ui::Key{ui::Code::f4};
-        case 15: return ui::Key{ui::Code::f5};
-        case 17: return ui::Key{ui::Code::f6};
-        case 18: return ui::Key{ui::Code::f7};
-        case 19: return ui::Key{ui::Code::f8};
-        case 20: return ui::Key{ui::Code::f9};
-        case 21: return ui::Key{ui::Code::f10};
-        case 23: return ui::Key{ui::Code::f11};
-        case 24: return ui::Key{ui::Code::f12};
-        default: return {};
+        case 8: return ui::Code::end;
+        case 5: return ui::Code::pageup;
+        case 6: return ui::Code::pagedown;
+        case 11: return ui::Code::f1;
+        case 12: return ui::Code::f2;
+        case 13: return ui::Code::f3;
+        case 14: return ui::Code::f4;
+        case 15: return ui::Code::f5;
+        case 17: return ui::Code::f6;
+        case 18: return ui::Code::f7;
+        case 19: return ui::Code::f8;
+        case 20: return ui::Code::f9;
+        case 21: return ui::Code::f10;
+        case 23: return ui::Code::f11;
+        case 24: return ui::Code::f12;
+        case 25: return ui::Code::f13;
+        case 26: return ui::Code::f14;
+        case 28: return ui::Code::f15;
+        case 29: return ui::Code::f16;
+        case 31: return ui::Code::f17;
+        case 32: return ui::Code::f18;
+        case 33: return ui::Code::f19;
+        case 34: return ui::Code::f20;
+        default: return std::nullopt;
     }
 }
 
-// The key of a sequence ending in a letter (arrows, Home, End, F1–F4); an empty key otherwise.
-ui::Key lettered(char last) {
+// The key of a sequence ending in a letter (arrows, Home, End, F1–F4), the same after CSI and SS3.
+std::optional<ui::Code> lettered(char last) {
     switch (last) {
-        case 'A': return ui::Key{ui::Code::up};
-        case 'B': return ui::Key{ui::Code::down};
-        case 'C': return ui::Key{ui::Code::right};
-        case 'D': return ui::Key{ui::Code::left};
-        case 'H': return ui::Key{ui::Code::home};
-        case 'F': return ui::Key{ui::Code::end};
-        case 'P': return ui::Key{ui::Code::f1};
-        case 'Q': return ui::Key{ui::Code::f2};
-        case 'R': return ui::Key{ui::Code::f3};
-        case 'S': return ui::Key{ui::Code::f4};
-        default: return {};
+        case 'A': return ui::Code::up;
+        case 'B': return ui::Code::down;
+        case 'C': return ui::Code::right;
+        case 'D': return ui::Code::left;
+        case 'H': return ui::Code::home;
+        case 'F': return ui::Code::end;
+        case 'P': return ui::Code::f1;
+        case 'Q': return ui::Code::f2;
+        case 'R': return ui::Code::f3;
+        case 'S': return ui::Code::f4;
+        default: return std::nullopt;
     }
+}
+
+// rxvt's arrows with a lowercase letter: Shift after CSI, Ctrl after SS3.
+std::optional<ui::Code> slanted(char last) {
+    switch (last) {
+        case 'a': return ui::Code::up;
+        case 'b': return ui::Code::down;
+        case 'c': return ui::Code::right;
+        case 'd': return ui::Code::left;
+        default: return std::nullopt;
+    }
+}
+
+// A key by its Unicode number, as the kitty protocol and modifyOtherKeys give it: the control keys
+// by their codes, the keypad and F13–F20 from the private-use numbers kitty gives them, and
+// anything else as a letter. A private-use number without a meaning here (the modifier keys
+// themselves, media keys) gives nothing.
+std::optional<ui::Key> numbered(int code, ui::Mods mods) {
+    switch (code) {
+        case 9: return ui::Key{ui::Code::tab, mods};
+        case 13: return ui::Key{ui::Code::enter, mods};
+        case 27: return ui::Key{ui::Code::escape, mods};
+        case 8:
+        case 127: return ui::Key{ui::Code::backspace, mods};
+        default: break;
+    }
+
+    if (code >= 57376 && code <= 57383)
+        return ui::Key{static_cast<ui::Code>(static_cast<int>(ui::Code::f13) + code - 57376), mods};
+
+    if (code >= 57399 && code <= 57408) return ui::Key{static_cast<char32_t>(U'0' + code - 57399), mods};
+
+    switch (code) {
+        case 57409: return ui::Key{U'.', mods};
+        case 57410: return ui::Key{U'/', mods};
+        case 57411: return ui::Key{U'*', mods};
+        case 57412: return ui::Key{U'-', mods};
+        case 57413: return ui::Key{U'+', mods};
+        case 57414: return ui::Key{ui::Code::enter, mods};
+        case 57415: return ui::Key{U'=', mods};
+        case 57416: return ui::Key{U',', mods};
+        case 57417: return ui::Key{ui::Code::left, mods};
+        case 57418: return ui::Key{ui::Code::right, mods};
+        case 57419: return ui::Key{ui::Code::up, mods};
+        case 57420: return ui::Key{ui::Code::down, mods};
+        case 57421: return ui::Key{ui::Code::pageup, mods};
+        case 57422: return ui::Key{ui::Code::pagedown, mods};
+        case 57423: return ui::Key{ui::Code::home, mods};
+        case 57424: return ui::Key{ui::Code::end, mods};
+        case 57425: return ui::Key{ui::Code::insert, mods};
+        case 57426: return ui::Key{ui::Code::remove, mods};
+        default: break;
+    }
+
+    if (code < 0x20 || (code >= 0x7F && code < 0xA0) || (code >= 0xE000 && code <= 0xF8FF) ||
+        (code >= 0xD800 && code <= 0xDFFF) || code > 0x10FFFF)
+        return std::nullopt;
+
+    return ui::Key{static_cast<char32_t>(code), mods};
+}
+
+// The keypad in application mode after SS3: Enter, the operators and the digits.
+std::optional<ui::Key> keypad(char last) {
+    if (last == 'M') return ui::Key{ui::Code::enter};
+    if (last == 'X') return ui::Key{U'='};
+
+    static constexpr std::u32string_view signs = U"*+,-./0123456789";
+
+    if (last >= 'j' && last <= 'y') return ui::Key{signs[static_cast<std::size_t>(last - 'j')]};
+
+    return std::nullopt;
 }
 
 }
 
 struct Decoder::Held {
-    std::string rest;
-    std::string pasted;
-    bool pasting = false;
+    vt::Reader reader;
+
+    // The button that went down last, for the encodings whose release does not name it.
+    ui::Mouse pressed = ui::Mouse::none;
+
+    std::vector<Heard> heard(const std::vector<vt::Token>& tokens);
+
+    std::optional<Heard> heard(const vt::Csi& one);
+
+    std::optional<Heard> heard(const vt::Ss3& one) const;
+
+    std::optional<Heard> pointed(int mask, int x, int y, std::optional<bool> released);
 };
+
+// The meanings of the tokens in order; a token without one adds nothing.
+std::vector<Heard> Decoder::Held::heard(const std::vector<vt::Token>& tokens) {
+    std::vector<Heard> made;
+
+    for (const vt::Token& one : tokens) {
+        std::optional<Heard> told;
+
+        if (const auto* plain = std::get_if<vt::Plain>(&one.what)) {
+            ui::Mods mods;
+            mods.alt = plain->alt;
+
+            told = Struck{ui::Key{plain->letter, mods}};
+        } else if (const auto* steered = std::get_if<vt::Steered>(&one.what)) {
+            told = Struck{steering(steered->byte, steered->alt)};
+        } else if (std::holds_alternative<vt::Lone>(one.what)) {
+            told = Struck{ui::Key{ui::Code::escape}};
+        } else if (const auto* csi = std::get_if<vt::Csi>(&one.what)) {
+            told = heard(*csi);
+        } else if (const auto* ss3 = std::get_if<vt::Ss3>(&one.what)) {
+            told = heard(*ss3);
+        } else if (const auto* tracked = std::get_if<vt::Tracked>(&one.what)) {
+            told = pointed(tracked->mask, tracked->x, tracked->y, std::nullopt);
+        } else if (const auto* glued = std::get_if<vt::Glued>(&one.what)) {
+            told = Pasted{glued->text, glued->whole};
+        }
+
+        if (told.has_value()) made.push_back(std::move(*told));
+    }
+
+    return made;
+}
+
+// A mouse report from its mask and 1-based cell. `released` is whether SGR said the button went
+// up; for urxvt and X10 it is empty, and "released" is the button number 3.
+std::optional<Heard> Decoder::Held::pointed(int mask, int x, int y, std::optional<bool> released) {
+    if (x < 1 || y < 1) return std::nullopt;
+
+    const ui::Spot where{x - 1, y - 1};
+
+    ui::Mods mods;
+    mods.shift = (mask & 4) != 0;
+    mods.alt = (mask & 8) != 0;
+    mods.ctrl = (mask & 16) != 0;
+
+    const int low = mask & 3;
+    const bool moving = (mask & 32) != 0;
+    const bool wheeled = (mask & 64) != 0;
+    const bool extra = (mask & 128) != 0;
+
+    if (wheeled && extra) return std::nullopt;
+
+    if (wheeled) {
+        const ui::Axis axis = low < 2 ? ui::Axis::vertical : ui::Axis::horizontal;
+
+        return Wheeled{where, low % 2 == 0 ? 1 : -1, axis, mods};
+    }
+
+    ui::Mouse button = ui::Mouse::none;
+
+    if (extra) {
+        if (low > 1) return std::nullopt;
+
+        button = low == 0 ? ui::Mouse::back : ui::Mouse::forward;
+    } else if (low < 3) {
+        button = low == 0 ? ui::Mouse::left : low == 1 ? ui::Mouse::middle : ui::Mouse::right;
+    }
+
+    if (moving) return Moused{where, ui::Press::move, button, mods};
+
+    if (released.has_value()) {
+        if (*released) {
+            pressed = ui::Mouse::none;
+
+            return Moused{where, ui::Press::up, button, mods};
+        }
+
+        pressed = button;
+
+        return Moused{where, ui::Press::down, button, mods};
+    }
+
+    if (button == ui::Mouse::none) {
+        const ui::Mouse was = pressed;
+
+        pressed = ui::Mouse::none;
+
+        return Moused{where, ui::Press::up, was, mods};
+    }
+
+    pressed = button;
+
+    return Moused{where, ui::Press::down, button, mods};
+}
+
+// The meaning of a control sequence.
+std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
+    if (one.lead == '<') {
+        if ((one.last != 'M' && one.last != 'm') || one.params.size() < 3) return std::nullopt;
+
+        return pointed(one.at(0), one.at(1), one.at(2), one.last == 'm');
+    }
+
+    if (one.lead == '[') {
+        if (one.last >= 'A' && one.last <= 'E')
+            return Struck{ui::Key{static_cast<ui::Code>(static_cast<int>(ui::Code::f1) + (one.last - 'A'))}};
+
+        return std::nullopt;
+    }
+
+    // Answers with a private marker (DA, DECRPM, the kitty flags) and sequences with intermediate
+    // bytes are no keys. rxvt's `CSI n $` would be one, but `vt::Reader` gives it `$` as its final
+    // byte.
+    if (one.lead != 0 || !one.between.empty()) return std::nullopt;
+
+    const ui::Mods mods = one.params.size() > 1 ? marked(one.at(1)) : ui::Mods{};
+
+    switch (one.last) {
+        case 'M':
+            if (one.params.size() < 3) return std::nullopt;
+
+            return pointed(one.at(0) - 32, one.at(1), one.at(2), std::nullopt);
+
+        case 'I':
+            if (!one.params.empty()) return std::nullopt;
+
+            return Focused{true};
+
+        case 'O':
+            if (!one.params.empty()) return std::nullopt;
+
+            return Focused{false};
+
+        case 'Z': {
+            ui::Mods shifted = mods;
+            shifted.shift = true;
+
+            return Struck{ui::Key{ui::Code::tab, shifted}};
+        }
+
+        case 'u': {
+            // The kitty keyboard protocol: the key's number, then the modifiers with the kind of
+            // event after a colon (1 press, 2 repeat, 3 release). Only presses and repeats are
+            // keys.
+            if (one.params.empty() || one.part(1, 1, 1) == 3) return std::nullopt;
+
+            const std::optional<ui::Key> key = numbered(one.at(0), marked(one.at(1)));
+
+            if (!key.has_value()) return std::nullopt;
+
+            return Struck{*key};
+        }
+
+        case '~': {
+            if (one.params.empty()) return std::nullopt;
+
+            if (one.at(0) == 27) {
+                if (one.params.size() < 3) return std::nullopt;
+
+                const std::optional<ui::Key> key = numbered(one.at(2), marked(one.at(1)));
+
+                if (!key.has_value()) return std::nullopt;
+
+                return Struck{*key};
+            }
+
+            const std::optional<ui::Code> code = tilde(one.at(0));
+
+            if (!code.has_value()) return std::nullopt;
+
+            return Struck{ui::Key{*code, mods}};
+        }
+
+        case '$':
+        case '^':
+        case '@': {
+            // rxvt marks the modifiers of a tilde key by the final byte instead of a parameter.
+            if (one.params.size() != 1) return std::nullopt;
+
+            const std::optional<ui::Code> code = tilde(one.at(0));
+
+            if (!code.has_value()) return std::nullopt;
+
+            ui::Mods own;
+            own.shift = one.last != '^';
+            own.ctrl = one.last != '$';
+
+            return Struck{ui::Key{*code, own}};
+        }
+
+        case 'R':
+            // A cursor position report, unless it is F3 with a modifier, which has a one in front.
+            if (one.params.size() >= 2 && one.at(0) != 1) return std::nullopt;
+
+            return Struck{ui::Key{ui::Code::f3, mods}};
+
+        default: break;
+    }
+
+    if (const std::optional<ui::Code> code = lettered(one.last)) return Struck{ui::Key{*code, mods}};
+
+    if (const std::optional<ui::Code> code = slanted(one.last)) {
+        ui::Mods shifted = mods;
+        shifted.shift = true;
+
+        return Struck{ui::Key{*code, shifted}};
+    }
+
+    return std::nullopt;
+}
+
+// The meaning of a single shift: the keys with a letter, rxvt's Ctrl with an arrow and the keypad
+// in application mode. A number before the letter is a modifier, as old xterms send it.
+std::optional<Heard> Decoder::Held::heard(const vt::Ss3& one) const {
+    const ui::Mods mods = marked(one.number);
+
+    if (const std::optional<ui::Code> code = lettered(one.last)) return Struck{ui::Key{*code, mods}};
+
+    if (const std::optional<ui::Code> code = slanted(one.last)) {
+        ui::Mods held = mods;
+        held.ctrl = true;
+
+        return Struck{ui::Key{*code, held}};
+    }
+
+    if (const std::optional<ui::Key> key = keypad(one.last)) return Struck{ui::Key{*key, mods}};
+
+    return std::nullopt;
+}
 
 Decoder::Decoder() : held_(std::make_unique<Held>()) {}
 
 Decoder::~Decoder() = default;
 
-// True when the buffer holds an Esc that may still be a key on its own or the start of a sequence;
-// the caller waits a moment and then calls `flush`.
-bool Decoder::pending() const {
-    return !held_->rest.empty() && held_->rest.front() == esc;
+// The meanings of the bytes that came at `now`. What is unfinished waits for more bytes or for
+// `lapsed`.
+std::vector<Heard> Decoder::fed(std::string_view bytes, Clock::Moment now) {
+    std::vector<vt::Token> tokens;
+
+    held_->reader.fed(bytes, now, tokens);
+
+    return held_->heard(tokens);
 }
 
-// A pending Esc is settled by whoever has the clock; the decoder only says that it holds
-// something. When the time is up, the Esc becomes a key and what was left behind it is fed again.
-//
-// An Esc with the start of a control string that nothing closed is Alt with a letter after all
-// (Alt+P, Alt+]): that key goes out, and the rest goes as ordinary characters.
-void Decoder::flush(ui::Root& onto) {
-    if (!pending()) return;
+// When the decoder wants to be asked again without new bytes: a lone Esc after 50 ms, a paste
+// without its end after two seconds; nothing when it holds nothing that time settles.
+std::optional<Clock::Moment> Decoder::due() const { return held_->reader.due(); }
 
-    if (held_->rest.size() >= 2 && stringed(held_->rest[1])) {
-        ui::Mods mods;
-        mods.alt = true;
+// What time has settled by `now`: Esc alone, Alt with the second byte of an unfinished escape and
+// the bytes after it, a paste closed by silence. Before `due()` it gives nothing.
+std::vector<Heard> Decoder::lapsed(Clock::Moment now) {
+    std::vector<vt::Token> tokens;
 
-        ui::KeyEvent what{ui::Key{ui::Key{static_cast<char32_t>(held_->rest[1])}, mods}};
+    held_->reader.lapsed(now, tokens);
 
-        held_->rest.erase(0, 2);
-
-        (void)onto.dispatch(what);
-
-        std::string spare;
-        spare.swap(held_->rest);
-
-        fed(spare, onto);
-
-        return;
-    }
-
-    held_->rest.erase(0, 1);
-
-    ui::KeyEvent what{ui::Key{ui::Code::escape}};
-
-    (void)onto.dispatch(what);
-
-    std::string spare;
-    spare.swap(held_->rest);
-
-    fed(spare, onto);
+    return held_->heard(tokens);
 }
 
-// Turns the bytes from the terminal into events dispatched to `onto`: keys, mouse and wheel
-// events, and pastes. An incomplete sequence or character stays in the buffer for the next call;
-// terminal replies are swallowed.
-void Decoder::fed(std::string_view bytes, ui::Root& onto) {
-    Held& held = *held_;
-
-    held.rest += bytes;
-
-    std::size_t at = 0;
-
-    while (at < held.rest.size()) {
-        // Bracketed paste: everything up to the end marker is content, not keys.
-        if (held.pasting) {
-            const std::size_t end = held.rest.find("\x1b[201~", at);
-
-            if (end == std::string::npos) {
-                // A tail that may be the start of the end marker has to stay in the buffer.
-                // Otherwise a "\e[20" cut off by the read would go into the content and the paste
-                // would never close.
-                const std::string_view rest{held.rest};
-                const std::string_view mark{"\x1b[201~"};
-
-                std::size_t keep = held.rest.size();
-
-                for (std::size_t back = std::min<std::size_t>(mark.size() - 1,
-                                                              held.rest.size() - at);
-                     back >= 1; --back)
-                    if (rest.substr(held.rest.size() - back) == mark.substr(0, back)) {
-                        keep = held.rest.size() - back;
-
-                        break;
-                    }
-
-                held.pasted.append(held.rest, at, keep - at);
-                at = keep;
-
-                break;
-            }
-
-            held.pasted.append(held.rest, at, end - at);
-            at = end + 6;
-
-            held.pasting = false;
-
-            ui::PasteEvent what{std::move(held.pasted)};
-            held.pasted.clear();
-
-            (void)onto.dispatch(what);
-
-            continue;
-        }
-
-        const auto byte = static_cast<unsigned char>(held.rest[at]);
-
-        if (byte == 0x1B) {
-            if (at + 1 >= held.rest.size()) break;
-
-            const char lead = held.rest[at + 1];
-
-            // Esc after Esc is two presses, not one with a modifier. The second one stays in the
-            // buffer and settles itself.
-            if (lead == esc) {
-                ui::KeyEvent what{ui::Key{ui::Code::escape}};
-
-                (void)onto.dispatch(what);
-
-                ++at;
-
-                continue;
-            }
-
-            // Late terminal replies are not keys. The capability probe waits for them only a
-            // moment; over SSH or on a slow terminal the reply comes later and arrives here, and
-            // without this the background color from OSC 11 would become Alt+] and a string of
-            // letters typed into a field.
-            if (stringed(lead)) {
-                const std::size_t end = ended(held.rest, at + 2, lead);
-
-                if (end != std::string::npos) {
-                    at = end;
-
-                    continue;
-                }
-
-                if (held.rest.size() - at <= stretched) break;
-            }
-
-            if (lead == '[' || lead == 'O') {
-                std::size_t end = at + 2;
-
-                while (end < held.rest.size() &&
-                       !(held.rest[end] >= 0x40 && held.rest[end] <= 0x7E))
-                    ++end;
-
-                if (end >= held.rest.size()) {
-                    if (held.rest.size() - at > most) {
-                        at = held.rest.size();
-
-                        break;
-                    }
-
-                    break;
-                }
-
-                const std::string_view body{held.rest.data() + at + 2, end - at - 2};
-                const char last = held.rest[end];
-
-                at = end + 1;
-
-                // Mouse in the SGR encoding. The mask carries the button, motion, the wheel and the
-                // modifiers at once.
-                if (!body.empty() && body.front() == '<') {
-                    const std::vector<int> among = numbers(body.substr(1));
-
-                    if (among.size() < 3) continue;
-
-                    const int mask = among[0];
-                    const ui::Spot where{among[1] - 1, among[2] - 1};
-
-                    ui::Mods mods;
-                    mods.shift = (mask & 4) != 0;
-                    mods.alt = (mask & 8) != 0;
-                    mods.ctrl = (mask & 16) != 0;
-
-                    if ((mask & 64) != 0) {
-                        ui::WheelEvent what{where, (mask & 1) != 0 ? -1 : 1, mods};
-
-                        (void)onto.dispatch(what);
-
-                        continue;
-                    }
-
-                    const ui::Mouse button = (mask & 3) == 0   ? ui::Mouse::left
-                                              : (mask & 3) == 1 ? ui::Mouse::middle
-                                              : (mask & 3) == 2 ? ui::Mouse::right
-                                                                : ui::Mouse::none;
-
-                    const ui::Press press = last == 'm'          ? ui::Press::up
-                                            : (mask & 32) != 0 ? ui::Press::move
-                                                               : ui::Press::down;
-
-                    ui::MouseEvent what{where, press, button, mods};
-
-                    (void)onto.dispatch(what);
-
-                    continue;
-                }
-
-                // Replies with a private marker (Primary and Secondary DA, DECRPM, the DECXCPR cursor
-                // position report, kitty keyboard flags) are never keys.
-                if (!body.empty() && (body.front() == '?' || body.front() == '>' || body.front() == '='))
-                    continue;
-
-                const std::vector<int> among = numbers(body);
-
-                // The cursor position report (CPR) is `Esc [ row ; column R`. F3 with a modifier has
-                // the same shape, but always with a one in front.
-                if (last == 'R' && among.size() >= 2 && among[0] != 1) continue;
-
-                if (last == '~') {
-                    if (!among.empty() && among[0] == 200) {
-                        held.pasting = true;
-
-                        continue;
-                    }
-
-                    if (!among.empty() && among[0] == 201) continue;
-
-                    const ui::Key key = among.empty() ? ui::Key{} : tilde(among[0]);
-
-                    if (key.empty()) continue;
-
-                    ui::KeyEvent what{ui::Key{key, among.size() > 1 ? marked(among[1]) : ui::Mods{}}};
-
-                    (void)onto.dispatch(what);
-
-                    continue;
-                }
-
-                const ui::Key key = lettered(last);
-
-                if (key.empty()) continue;
-
-                ui::KeyEvent what{ui::Key{key, among.size() > 1 ? marked(among[1]) : ui::Mods{}}};
-
-                (void)onto.dispatch(what);
-
-                continue;
-            }
-
-            // Esc as the Alt prefix. The character after it is taken apart like any other.
-            const auto next = static_cast<unsigned char>(lead);
-
-            ui::Mods mods;
-            mods.alt = true;
-
-            if (next < 0x80) {
-                const ui::Key key = next < 0x20 || next == 0x7F
-                                        ? steering(next, mods)
-                                        : ui::Key{static_cast<char32_t>(next)};
-
-                ui::KeyEvent what{ui::Key{key, mods}};
-
-                (void)onto.dispatch(what);
-
-                at += 2;
-
-                continue;
-            }
-
-            const std::size_t more = utf8::trailing(next);
-
-            if (more == 0) {
-                at += 2;
-
-                continue;
-            }
-
-            if (at + 2 + more > held.rest.size()) break;
-
-            char32_t code = next & (0x3F >> more);
-
-            for (std::size_t step = 0; step < more; ++step)
-                code = (code << 6) |
-                       (static_cast<unsigned char>(held.rest[at + 2 + step]) & 0x3F);
-
-            ui::KeyEvent what{ui::Key{code, mods}};
-
-            (void)onto.dispatch(what);
-
-            at += 2 + more;
-
-            continue;
-        }
-
-        if (byte < 0x20 || byte == 0x7F) {
-            ui::Mods mods;
-
-            const ui::Key key = steering(byte, mods);
-
-            ui::KeyEvent what{ui::Key{key, mods}};
-
-            (void)onto.dispatch(what);
-
-            ++at;
-
-            continue;
-        }
-
-        if (byte < 0x80) {
-            ui::KeyEvent what{ui::Key{static_cast<char32_t>(byte)}};
-
-            (void)onto.dispatch(what);
-
-            ++at;
-
-            continue;
-        }
-
-        const std::size_t more = utf8::trailing(byte);
-
-        if (more == 0) {
-            ++at;
-
-            continue;
-        }
-
-        // A read can end in the middle of a character. The tail stays in the buffer until the next
-        // feed; that is the whole reason the decoder is a state machine.
-        if (at + 1 + more > held.rest.size()) break;
-
-        char32_t code = byte & (0x3F >> more);
-
-        for (std::size_t step = 0; step < more; ++step)
-            code = (code << 6) | (static_cast<unsigned char>(held.rest[at + 1 + step]) & 0x3F);
-
-        ui::KeyEvent what{ui::Key{code}};
-
-        (void)onto.dispatch(what);
-
-        at += 1 + more;
+// Delivers a value to the root as its event, and returns whether someone handled it. The
+// terminal's focus has no event yet and goes nowhere.
+bool dispatched(const Heard& one, ui::Root& onto) {
+    if (const auto* struck = std::get_if<Struck>(&one)) {
+        ui::KeyEvent what{struck->key};
+
+        return onto.dispatch(what);
     }
 
-    held.rest.erase(0, at);
+    if (const auto* moused = std::get_if<Moused>(&one)) {
+        ui::MouseEvent what{moused->where, moused->press, moused->button, moused->mods};
+
+        return onto.dispatch(what);
+    }
+
+    if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
+        ui::WheelEvent what{wheeled->where, wheeled->steps, wheeled->mods, wheeled->axis};
+
+        return onto.dispatch(what);
+    }
+
+    if (const auto* pasted = std::get_if<Pasted>(&one)) {
+        ui::PasteEvent what{pasted->text};
+
+        return onto.dispatch(what);
+    }
+
+    return false;
 }
 
 }

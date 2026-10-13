@@ -1127,8 +1127,13 @@ bool DiffViewer::handle(KeyEvent& what) {
     return false;
 }
 
-// The wheel moves the view itself and leaves the cursor, as in the table.
-bool DiffViewer::handle(WheelEvent& what) { return slid(-what.steps() * stepping); }
+// The wheel moves the view itself and leaves the cursor, as in the table. The view does not scroll
+// sideways, so the tilted wheel goes on up.
+bool DiffViewer::handle(WheelEvent& what) {
+    if (what.axis() != Axis::vertical) return false;
+
+    return slid(-what.steps() * stepping);
+}
 
 // The mouse on the bar: an arrow scrolls a row, the track a page, the thumb jumps to a hunk. The
 // bar counts hunks, so a dragged thumb puts the view at the start of a hunk, as Home does.

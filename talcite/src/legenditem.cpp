@@ -41,7 +41,7 @@ std::string LegendItem::tag() const {
 
     const Code code = which.code();
 
-    if (code >= Code::f1 && code <= Code::f12)
+    if (code >= Code::f1 && code <= Code::f20)
         return std::to_string(static_cast<int>(code) - static_cast<int>(Code::f1) + 1);
 
     if (const char32_t letter = which.letter(); letter != 0) return utf8::encode(letter);

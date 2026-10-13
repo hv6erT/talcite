@@ -43,7 +43,9 @@ Terminal and widgets (`talcite::ui`)
 - `Term` and `Capabilities`: drawing on the terminal and probing what it supports (colors, mouse,
   alternate screen, sixel and kitty graphics).
 - A tree of nodes with events (keys, mouse, paste, resize) and layout containers (`Column`, `Row`,
-  `Stack`, `Box`, `Scroll`, `Frame`).
+  `Stack`, `Box`, `Scroll`, `Frame`). Input is read in every form terminals send it: xterm, VT220,
+  rxvt, the Linux console, the kitty keyboard protocol and modifyOtherKeys; the mouse in SGR, urxvt
+  and X10 encoding, with the tilted wheel and the back and forward buttons; bracketed paste.
 - Widgets: spans, buttons, fields with history, check boxes, choices, drop-down lists, lists,
   tables, gauges, menus with a menu bar, a key legend, windows, dialogs and message boxes, a
   streaming viewer, a multi-window editor, a diff viewer and an image widget (sixel or block

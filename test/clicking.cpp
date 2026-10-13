@@ -508,3 +508,22 @@ TRIAL("Root: a captor that left the tree gets nothing") {
     same(pair.left->moves, 0);
     same(pair.right->moves, 1);
 }
+
+// The back and forward buttons are commands, not pointing: they make no click, and a back press in
+// the middle of a left click does not break it.
+TRIAL("Click: the back and forward buttons make no clicks") {
+    Sheet top;
+
+    pressed(top, {3, 2}, ui::Mouse::back);
+    freed(top, {3, 2}, ui::Mouse::back);
+
+    same(top.told.size(), std::size_t{2});
+
+    pressed(top, {3, 2});
+    pressed(top, {3, 2}, ui::Mouse::forward);
+    freed(top, {3, 2}, ui::Mouse::forward);
+    freed(top, {3, 2});
+
+    same(top.told.size(), std::size_t{7});
+    same(top.told.back(), std::string{"kliknięcie 3,2"});
+}

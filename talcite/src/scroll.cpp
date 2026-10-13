@@ -211,12 +211,18 @@ bool Scroll::handle(FocusEvent&) {
 
 // The wheel scrolls vertically, and horizontally with Shift: most programs do this, and it is the
 // only way for a mouse with a single wheel. A horizontal-only scroller scrolls horizontally with
-// the wheel, without Shift. At the end of the range we return false, so the event goes up: a
-// scroller inside a scroller passes the motion on instead of swallowing it.
+// the wheel, without Shift. The tilted wheel (a touchpad's sideways swipe) scrolls horizontally
+// wherever there is a horizontal axis, and a vertical-only scroller passes it on. At the end of the
+// range we return false, so the event goes up: a scroller inside a scroller passes the motion on
+// instead of swallowing it.
 bool Scroll::handle(WheelEvent& what) {
     const Spot was = shift_;
 
-    const bool sideways = axis_ == Axis::horizontal || (axis_ == Axis::both && what.mods().shift);
+    const bool tilted = what.axis() == Axis::horizontal;
+
+    if (tilted && axis_ == Axis::vertical) return false;
+
+    const bool sideways = tilted || axis_ == Axis::horizontal || (axis_ == Axis::both && what.mods().shift);
 
     if (sideways)
         shift_.x = std::clamp(shift_.x - what.steps() * stepping, 0,

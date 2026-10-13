@@ -36,10 +36,32 @@ std::string named(talcite::ui::Code code) {
         case talcite::ui::Code::f10: return "F10";
         case talcite::ui::Code::f11: return "F11";
         case talcite::ui::Code::f12: return "F12";
+        case talcite::ui::Code::f13: return "F13";
+        case talcite::ui::Code::f14: return "F14";
+        case talcite::ui::Code::f15: return "F15";
+        case talcite::ui::Code::f16: return "F16";
+        case talcite::ui::Code::f17: return "F17";
+        case talcite::ui::Code::f18: return "F18";
+        case talcite::ui::Code::f19: return "F19";
+        case talcite::ui::Code::f20: return "F20";
         case talcite::ui::Code::none: break;
     }
 
     return "?";
+}
+
+// The printed name of a mouse button; empty for none.
+std::string button(talcite::ui::Mouse which) {
+    switch (which) {
+        case talcite::ui::Mouse::left: return "left";
+        case talcite::ui::Mouse::middle: return "middle";
+        case talcite::ui::Mouse::right: return "right";
+        case talcite::ui::Mouse::back: return "back";
+        case talcite::ui::Mouse::forward: return "forward";
+        case talcite::ui::Mouse::none: break;
+    }
+
+    return {};
 }
 
 // The modifiers held with a key, as a prefix such as "Ctrl+Alt+"; empty when none is held.
@@ -80,7 +102,7 @@ protected:
         return true;
     }
 
-    // Logs a mouse press, release or move, with the cell where it happened.
+    // Logs a mouse press, release or move, with the button and the cell where it happened.
     bool handle(talcite::ui::MouseEvent& what) override {
         const std::string where =
             std::to_string(what.where().x) + ", " + std::to_string(what.where().y);
@@ -89,7 +111,9 @@ protected:
                                   : what.press() == talcite::ui::Press::up   ? "release"
                                                                           : "move";
 
-        shown("mouse", doing + " at " + where);
+        const std::string which = button(what.button());
+
+        shown("mouse", doing + (which.empty() ? std::string{} : " " + which) + " at " + where);
 
         return true;
     }
@@ -109,9 +133,10 @@ protected:
         return true;
     }
 
-    // Logs which way the wheel turned.
+    // Logs which way the wheel turned or tilted.
     bool handle(talcite::ui::WheelEvent& what) override {
-        shown("wheel", what.steps() > 0 ? "up" : "down");
+        if (what.axis() == talcite::ui::Axis::horizontal) shown("wheel", what.steps() > 0 ? "left" : "right");
+        else shown("wheel", what.steps() > 0 ? "up" : "down");
 
         return true;
     }

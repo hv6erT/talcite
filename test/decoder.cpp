@@ -1,600 +1,364 @@
 #include "proving.hpp"
 
+#include <chrono>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <variant>
 #include <vector>
 
 #include "talcite/decoder.hpp"
+#include "talcite/encoding.hpp"
 
 using namespace talcite;
 
+// The decoder gives values, so most trials compare what it heard written out as text: "Ctrl+Up",
+// "down left at 12,4", "wheel +1 vertical", "paste 'ala'". A failure then shows the whole sequence
+// of what came out, not a field that differed. Time is a parameter: an `Ear` keeps its own moment
+// and moves it by hand, so the trials of the Esc and of the paste's silence do not sleep.
+
 namespace {
 
-// One event as the recording root saw it.
-struct Told {
-    enum class What : int { key, mouse, wheel, paste };
+using namespace std::chrono_literals;
 
-    What what = What::key;
-    ui::Key key;
-    ui::Mods mods;
-    ui::Spot where;
-    ui::Press press = ui::Press::move;
-    ui::Mouse button = ui::Mouse::none;
-    int steps = 0;
-    std::string said;
+// The modifiers as a prefix: "Ctrl+Alt+Shift+".
+std::string prefixed(ui::Mods mods) {
+    std::string made;
+
+    if (mods.ctrl) made += "Ctrl+";
+    if (mods.alt) made += "Alt+";
+    if (mods.shift) made += "Shift+";
+
+    return made;
+}
+
+// The name of a mouse button, or "none".
+std::string named(ui::Mouse button) {
+    switch (button) {
+        case ui::Mouse::left: return "left";
+        case ui::Mouse::middle: return "middle";
+        case ui::Mouse::right: return "right";
+        case ui::Mouse::back: return "back";
+        case ui::Mouse::forward: return "forward";
+        case ui::Mouse::none: break;
+    }
+
+    return "none";
+}
+
+// One value written out.
+std::string spoken(const Heard& one) {
+    if (const auto* struck = std::get_if<Struck>(&one)) {
+        const ui::Key key = struck->key;
+
+        if (key.letter() != 0) return prefixed(key.mods()) + "'" + utf8::encode(key.letter()) + "'";
+
+        return prefixed(key.mods()) + ui::to_string(ui::Key{key.code()});
+    }
+
+    if (const auto* moused = std::get_if<Moused>(&one)) {
+        const std::string press = moused->press == ui::Press::down ? "down" : moused->press == ui::Press::up ? "up" : "move";
+
+        return prefixed(moused->mods) + press + " " + named(moused->button) + " at " + std::to_string(moused->where.x) +
+               "," + std::to_string(moused->where.y);
+    }
+
+    if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
+        return prefixed(wheeled->mods) + "wheel " + (wheeled->steps > 0 ? "+" : "") + std::to_string(wheeled->steps) +
+               (wheeled->axis == ui::Axis::horizontal ? " horizontal" : " vertical") + " at " +
+               std::to_string(wheeled->where.x) + "," + std::to_string(wheeled->where.y);
+    }
+
+    if (const auto* pasted = std::get_if<Pasted>(&one)) return "paste '" + pasted->text + "'" + (pasted->whole ? "" : " cut");
+
+    if (const auto* focused = std::get_if<Focused>(&one)) return focused->in ? "focus in" : "focus out";
+
+    return "?";
+}
+
+// All values written out, separated by " | ".
+std::string told(const std::vector<Heard>& all) {
+    std::string made;
+
+    for (const Heard& one : all) {
+        if (!made.empty()) made += " | ";
+
+        made += spoken(one);
+    }
+
+    return made;
+}
+
+// A decoder with its own moment.
+struct Ear {
+    Decoder decoder;
+    Clock::Moment now{};
+
+    // What the bytes mean, fed at the current moment.
+    std::string heard(std::string_view bytes) { return told(decoder.fed(bytes, now)); }
+
+    // What time settled once `by` has passed.
+    std::string after(std::chrono::milliseconds by) {
+        now += by;
+
+        return told(decoder.lapsed(now));
+    }
+
+    // Whether the decoder waits for time to settle something.
+    [[nodiscard]] bool waiting() const { return decoder.due().has_value(); }
 };
 
-// A recording root. The decoder feeds a real tree, so the cases check the whole way from a byte
-// to handle, not the parsing alone.
-class Sheet : public ui::Root {
-public:
-    // Everything recorded so far, in order.
-    [[nodiscard]] const std::vector<Told>& among() const { return among_; }
-
-    // How many events were recorded.
-    [[nodiscard]] std::size_t much() const { return among_.size(); }
-
-protected:
-    // Records a key with its modifiers.
-    bool handle(ui::KeyEvent& what) override {
-        Told one;
-        one.what = Told::What::key;
-        one.key = what.key();
-        one.mods = what.mods();
-
-        among_.push_back(one);
-
-        return true;
-    }
-
-    // Records a mouse event with its cell, press, button and modifiers.
-    bool handle(ui::MouseEvent& what) override {
-        Told one;
-        one.what = Told::What::mouse;
-        one.where = what.where();
-        one.press = what.press();
-        one.button = what.button();
-        one.mods = what.mods();
-
-        among_.push_back(one);
-
-        return true;
-    }
-
-    // Records a wheel event with its cell, steps and modifiers.
-    bool handle(ui::WheelEvent& what) override {
-        Told one;
-        one.what = Told::What::wheel;
-        one.where = what.where();
-        one.steps = what.steps();
-        one.mods = what.mods();
-
-        among_.push_back(one);
-
-        return true;
-    }
-
-    // Records a paste with its text.
-    bool handle(ui::PasteEvent& what) override {
-        Told one;
-        one.what = Told::What::paste;
-        one.said = what.text();
-
-        among_.push_back(one);
-
-        return true;
-    }
-
-private:
-    std::vector<Told> among_;
-};
-
 }
 
-TRIAL("Decoder: a plain letter") {
-    Sheet sheet;
-    Decoder decoder;
+// --- Letters and control characters -------------------------------------------------------------
 
-    decoder.fed("q", sheet);
+TRIAL("Decoder: letters, one value each") {
+    Ear ear;
 
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'q');
-    ought(!sheet.among()[0].mods.ctrl);
-    ought(!decoder.pending());
+    same(ear.heard("q"), std::string{"'q'"});
+    same(ear.heard("abc"), std::string{"'a' | 'b' | 'c'"});
+    ought(!ear.waiting());
 }
 
-TRIAL("Decoder: several letters in a row") {
-    Sheet sheet;
-    Decoder decoder;
+TRIAL("Decoder: a control character is a letter with Ctrl") {
+    Ear ear;
 
-    decoder.fed("abc", sheet);
-
-    same(sheet.much(), std::size_t{3});
-    ought(sheet.among()[0].key.letter() == U'a');
-    ought(sheet.among()[2].key.letter() == U'c');
+    same(ear.heard("\x01"), std::string{"Ctrl+'a'"});
+    same(ear.heard(std::string_view{"\x00", 1}), std::string{"Ctrl+' '"});
+    same(ear.heard("\x1c\x1d"), std::string{"Ctrl+'\\' | Ctrl+']'"});
 }
 
-TRIAL("Decoder: a control character becomes a letter with ctrl") {
-    Sheet sheet;
-    Decoder decoder;
+// 0x7F is Backspace and 0x08 Ctrl+Backspace, as xterm, VTE and Windows Terminal send them.
+TRIAL("Decoder: Tab, Enter and Backspace have their own codes, 0x08 is Ctrl+Backspace") {
+    Ear ear;
 
-    decoder.fed("\x01", sheet);
-
-    ought(sheet.among()[0].key.letter() == U'a');
-    ought(sheet.among()[0].mods.ctrl);
+    same(ear.heard("\x09\x0d\x0a\x7f\x08"), std::string{"Tab | Enter | Enter | Backspace | Ctrl+Backspace"});
+    same(ear.heard("\x1b\x08"), std::string{"Ctrl+Alt+Backspace"});
 }
 
-TRIAL("Decoder: tab, enter and backspace have their own codes, not ctrl") {
-    Sheet sheet;
-    Decoder decoder;
+TRIAL("Decoder: UTF-8 becomes one character, also when a read cuts it") {
+    Ear ear;
 
-    decoder.fed("\x09\x0d\x7f\x08", sheet);
+    same(ear.heard("ł🙂"), std::string{"'ł' | '🙂'"});
 
-    same(sheet.much(), std::size_t{4});
-    ought(sheet.among()[0].key.code() == ui::Code::tab);
-    ought(sheet.among()[1].key.code() == ui::Code::enter);
-    ought(sheet.among()[2].key.code() == ui::Code::backspace);
-    ought(sheet.among()[3].key.code() == ui::Code::backspace);
-    ought(!sheet.among()[0].mods.ctrl);
-    ought(!sheet.among()[1].mods.ctrl);
+    const std::string said = "ż";
+
+    same(ear.heard(said.substr(0, 1)), std::string{});
+    ought(!ear.waiting());
+    same(ear.heard(said.substr(1)), std::string{"'ż'"});
 }
 
-TRIAL("Decoder: UTF-8 is put together into one character") {
-    Sheet sheet;
-    Decoder decoder;
+// An overlong form, a surrogate, a stray continuation and a lead cut by an ASCII byte are dropped;
+// the bytes around them are not lost.
+TRIAL("Decoder: broken UTF-8 is dropped without taking its neighbours") {
+    Ear ear;
 
-    decoder.fed("ł", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'ł');
+    same(ear.heard("a\xc0\x80" "b\xed\xa0\x80" "c\x80" "d\xc5" "e"), std::string{"'a' | 'b' | 'c' | 'd' | 'e'"});
 }
 
-TRIAL("Decoder: a character split between feeds is put back together") {
-    Sheet sheet;
-    Decoder decoder;
+// --- Keys with sequences -------------------------------------------------------------------------
 
-    const std::string said = "ł";
+TRIAL("Decoder: arrows, Home and End in the CSI and SS3 forms") {
+    Ear ear;
 
-    decoder.fed(said.substr(0, 1), sheet);
-
-    same(sheet.much(), std::size_t{0});
-
-    decoder.fed(said.substr(1), sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'ł');
+    same(ear.heard("\x1b[A\x1b[B\x1b[C\x1b[D\x1bOA\x1b[H\x1b[F\x1b[1~\x1b[4~\x1bOH"),
+         std::string{"Up | Down | Right | Left | Up | Home | End | Home | End | Home"});
 }
 
-TRIAL("Decoder: an emoji outside the basic plane") {
-    Sheet sheet;
-    Decoder decoder;
+TRIAL("Decoder: modifiers are a mask plus one") {
+    Ear ear;
 
-    decoder.fed("🙂", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'🙂');
-}
-
-TRIAL("Decoder: arrows") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[A\x1b[B\x1b[C\x1b[D", sheet);
-
-    same(sheet.much(), std::size_t{4});
-    ought(sheet.among()[0].key.code() == ui::Code::up);
-    ought(sheet.among()[1].key.code() == ui::Code::down);
-    ought(sheet.among()[2].key.code() == ui::Code::right);
-    ought(sheet.among()[3].key.code() == ui::Code::left);
-}
-
-TRIAL("Decoder: an arrow with a modifier") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[1;5C", sheet);
-
-    ought(sheet.among()[0].key.code() == ui::Code::right);
-    ought(sheet.among()[0].mods.ctrl);
-    ought(!sheet.among()[0].mods.alt);
-    ought(!sheet.among()[0].mods.shift);
-}
-
-TRIAL("Decoder: the modifier mask splits into three") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[1;8A", sheet);
-
-    ought(sheet.among()[0].mods.shift);
-    ought(sheet.among()[0].mods.alt);
-    ought(sheet.among()[0].mods.ctrl);
+    same(ear.heard("\x1b[1;5C\x1b[1;2A\x1b[1;3B\x1b[1;8D\x1b[3;5~"),
+         std::string{"Ctrl+Right | Shift+Up | Alt+Down | Ctrl+Alt+Shift+Left | Ctrl+Del"});
 }
 
 TRIAL("Decoder: keys with a tilde") {
-    Sheet sheet;
-    Decoder decoder;
+    Ear ear;
 
-    decoder.fed("\x1b[2~\x1b[3~\x1b[5~\x1b[6~", sheet);
-
-    same(sheet.much(), std::size_t{4});
-    ought(sheet.among()[0].key.code() == ui::Code::insert);
-    ought(sheet.among()[1].key.code() == ui::Code::remove);
-    ought(sheet.among()[2].key.code() == ui::Code::pageup);
-    ought(sheet.among()[3].key.code() == ui::Code::pagedown);
+    same(ear.heard("\x1b[2~\x1b[3~\x1b[5~\x1b[6~"), std::string{"Ins | Del | PgUp | PgDn"});
 }
 
-TRIAL("Decoder: F1 to F4 in both encodings") {
-    Sheet sheet;
-    Decoder decoder;
+TRIAL("Decoder: F1 to F20 in every form terminals send them") {
+    Ear ear;
 
-    decoder.fed("\x1bOP\x1bOQ\x1b[11~\x1b[14~", sheet);
-
-    same(sheet.much(), std::size_t{4});
-    ought(sheet.among()[0].key.code() == ui::Code::f1);
-    ought(sheet.among()[1].key.code() == ui::Code::f2);
-    ought(sheet.among()[2].key.code() == ui::Code::f1);
-    ought(sheet.among()[3].key.code() == ui::Code::f4);
+    same(ear.heard("\x1bOP\x1bOQ\x1bOR\x1bOS\x1b[11~\x1b[14~"), std::string{"F1 | F2 | F3 | F4 | F1 | F4"});
+    same(ear.heard("\x1b[15~\x1b[17~\x1b[21~\x1b[23~\x1b[24~"), std::string{"F5 | F6 | F10 | F11 | F12"});
+    same(ear.heard("\x1b[25~\x1b[26~\x1b[28~\x1b[29~\x1b[31~\x1b[32~\x1b[33~\x1b[34~"),
+         std::string{"F13 | F14 | F15 | F16 | F17 | F18 | F19 | F20"});
 }
 
-TRIAL("Decoder: F5 to F12") {
-    Sheet sheet;
-    Decoder decoder;
+// The Linux console sends F1–F5 as `CSI [ A` to `CSI [ E`; before, they came out as arrows.
+TRIAL("Decoder: the Linux console's F1 to F5") {
+    Ear ear;
 
-    decoder.fed("\x1b[15~\x1b[21~\x1b[23~\x1b[24~", sheet);
-
-    ought(sheet.among()[0].key.code() == ui::Code::f5);
-    ought(sheet.among()[1].key.code() == ui::Code::f10);
-    ought(sheet.among()[2].key.code() == ui::Code::f11);
-    ought(sheet.among()[3].key.code() == ui::Code::f12);
+    same(ear.heard("\x1b[[A\x1b[[B\x1b[[C\x1b[[D\x1b[[E"), std::string{"F1 | F2 | F3 | F4 | F5"});
 }
 
-TRIAL("Decoder: home and end in both encodings") {
-    Sheet sheet;
-    Decoder decoder;
+// Shift+Tab is `CSI Z` in every VT terminal and in the translation of the old Windows console.
+TRIAL("Decoder: Shift+Tab") {
+    Ear ear;
 
-    decoder.fed("\x1b[H\x1b[F\x1b[1~\x1b[4~", sheet);
-
-    ought(sheet.among()[0].key.code() == ui::Code::home);
-    ought(sheet.among()[1].key.code() == ui::Code::end);
-    ought(sheet.among()[2].key.code() == ui::Code::home);
-    ought(sheet.among()[3].key.code() == ui::Code::end);
+    same(ear.heard("\x1b[Z"), std::string{"Shift+Tab"});
+    same(ear.heard("\x1b[1;5Z"), std::string{"Ctrl+Shift+Tab"});
 }
 
-TRIAL("Decoder: a sequence split between feeds") {
-    Sheet sheet;
-    Decoder decoder;
+// Old xterms put the modifier between SS3 and the letter.
+TRIAL("Decoder: SS3 with a modifier") {
+    Ear ear;
 
-    decoder.fed("\x1b", sheet);
-    same(sheet.much(), std::size_t{0});
-    ought(decoder.pending());
-
-    decoder.fed("[", sheet);
-    same(sheet.much(), std::size_t{0});
-
-    decoder.fed("A", sheet);
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.code() == ui::Code::up);
-    ought(!decoder.pending());
+    same(ear.heard("\x1bO5P\x1bO2A"), std::string{"Ctrl+F1 | Shift+Up"});
 }
 
-TRIAL("Decoder: a lone Esc waits until someone decides") {
-    Sheet sheet;
-    Decoder decoder;
+TRIAL("Decoder: the keypad in application mode") {
+    Ear ear;
 
-    decoder.fed("\x1b", sheet);
-
-    same(sheet.much(), std::size_t{0});
-    ought(decoder.pending());
-
-    decoder.flush(sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.code() == ui::Code::escape);
-    ought(!decoder.pending());
+    same(ear.heard("\x1bOM\x1bOp\x1bOy\x1bOj\x1bOn\x1bOX"), std::string{"Enter | '0' | '9' | '*' | '.' | '='"});
 }
 
-TRIAL("Decoder: flush without a pending Esc does nothing") {
-    Sheet sheet;
-    Decoder decoder;
+// rxvt marks the modifiers of a tilde key by the final byte, and Shift and Ctrl of an arrow by a
+// lowercase letter. Its Shift form, `CSI n $`, has no final byte at all and is settled by time.
+TRIAL("Decoder: rxvt's modified keys") {
+    Ear ear;
 
-    decoder.flush(sheet);
-    decoder.fed("q", sheet);
-    decoder.flush(sheet);
+    same(ear.heard("\x1b[3^\x1b[5@\x1b[a\x1bOd"), std::string{"Ctrl+Del | Ctrl+Shift+PgUp | Shift+Up | Ctrl+Left"});
 
-    same(sheet.much(), std::size_t{1});
+    same(ear.heard("\x1b[2$"), std::string{});
+    ought(ear.waiting());
+    same(ear.after(50ms), std::string{"Shift+Ins"});
 }
 
-TRIAL("Decoder: flush on an unfinished sequence gives Esc and the rest") {
-    Sheet sheet;
-    Decoder decoder;
+// The kitty keyboard protocol and xterm's modifyOtherKeys give keys that the old forms cannot:
+// Ctrl+Enter, Shift+Enter, Ctrl with any letter. A release is not a key.
+TRIAL("Decoder: keys of the kitty protocol and of modifyOtherKeys") {
+    Ear ear;
 
-    decoder.fed("\x1b[", sheet);
-
-    ought(decoder.pending());
-
-    decoder.flush(sheet);
-
-    same(sheet.much(), std::size_t{2});
-    ought(sheet.among()[0].key.code() == ui::Code::escape);
-    ought(sheet.among()[1].key.letter() == U'[');
-}
-
-TRIAL("Decoder: Esc with a letter is Alt") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b" "f", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'f');
-    ought(sheet.among()[0].mods.alt);
-}
-
-TRIAL("Decoder: Esc after Esc is two presses") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b\x1b", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.code() == ui::Code::escape);
-    ought(decoder.pending());
-
-    decoder.flush(sheet);
-
-    same(sheet.much(), std::size_t{2});
-    ought(sheet.among()[1].key.code() == ui::Code::escape);
-}
-
-TRIAL("Decoder: mouse pressed and released") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<0;13;5M\x1b[<0;13;5m", sheet);
-
-    same(sheet.much(), std::size_t{2});
-
-    same(static_cast<int>(sheet.among()[0].what), static_cast<int>(Told::What::mouse));
-    same(sheet.among()[0].where.x, 12);
-    same(sheet.among()[0].where.y, 4);
-    same(static_cast<int>(sheet.among()[0].press), static_cast<int>(ui::Press::down));
-    same(static_cast<int>(sheet.among()[0].button), static_cast<int>(ui::Mouse::left));
-
-    same(static_cast<int>(sheet.among()[1].press), static_cast<int>(ui::Press::up));
-}
-
-TRIAL("Decoder: mouse buttons") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<0;1;1M\x1b[<1;1;1M\x1b[<2;1;1M", sheet);
-
-    same(static_cast<int>(sheet.among()[0].button), static_cast<int>(ui::Mouse::left));
-    same(static_cast<int>(sheet.among()[1].button), static_cast<int>(ui::Mouse::middle));
-    same(static_cast<int>(sheet.among()[2].button), static_cast<int>(ui::Mouse::right));
-}
-
-// Mask 35 is motion without a pressed button, exactly what the terminal sends after ?1003. The
-// missing button matters here as much as the motion flag itself: by it a widget recognizes hovering
-// and tells it apart from a drag, which has the same flag but carries a button.
-TRIAL("Decoder: mouse motion carries the motion flag") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<35;7;9M", sheet);
-
-    same(static_cast<int>(sheet.among()[0].press), static_cast<int>(ui::Press::move));
-    same(static_cast<int>(sheet.among()[0].button), static_cast<int>(ui::Mouse::none));
-    same(sheet.among()[0].where.x, 6);
-    same(sheet.among()[0].where.y, 8);
-}
-
-TRIAL("Decoder: a drag carries motion together with the button") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<32;7;9M", sheet);
-
-    same(static_cast<int>(sheet.among()[0].press), static_cast<int>(ui::Press::move));
-    same(static_cast<int>(sheet.among()[0].button), static_cast<int>(ui::Mouse::left));
-}
-
-TRIAL("Decoder: the wheel both ways") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<64;3;3M\x1b[<65;3;3M", sheet);
-
-    same(static_cast<int>(sheet.among()[0].what), static_cast<int>(Told::What::wheel));
-    same(sheet.among()[0].steps, 1);
-    same(sheet.among()[1].steps, -1);
-}
-
-TRIAL("Decoder: mouse modifiers") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[<16;1;1M", sheet);
-
-    ought(sheet.among()[0].mods.ctrl);
-    ought(!sheet.among()[0].mods.shift);
-}
-
-TRIAL("Decoder: a paste becomes one event") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[200~ala ma kota\x1b[201~", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    same(static_cast<int>(sheet.among()[0].what), static_cast<int>(Told::What::paste));
-    same(sheet.among()[0].said, std::string{"ala ma kota"});
-}
-
-TRIAL("Decoder: a paste split between feeds") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[200~ala ", sheet);
-    same(sheet.much(), std::size_t{0});
-
-    decoder.fed("ma kota", sheet);
-    same(sheet.much(), std::size_t{0});
-
-    decoder.fed("\x1b[20", sheet);
-    same(sheet.much(), std::size_t{0});
-
-    decoder.fed("1~", sheet);
-    same(sheet.much(), std::size_t{1});
-    same(sheet.among()[0].said, std::string{"ala ma kota"});
-}
-
-TRIAL("Decoder: a paste with a newline does not become Enter") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[200~dwa\nwiersze\x1b[201~", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    same(sheet.among()[0].said, std::string{"dwa\nwiersze"});
-}
-
-TRIAL("Decoder: keys after a paste go back to normal") {
-    Sheet sheet;
-    Decoder decoder;
-
-    decoder.fed("\x1b[200~x\x1b[201~q", sheet);
-
-    same(sheet.much(), std::size_t{2});
-    same(static_cast<int>(sheet.among()[0].what), static_cast<int>(Told::What::paste));
-    ought(sheet.among()[1].key.letter() == U'q');
+    same(ear.heard("\x1b[97;5u\x1b[13;2u\x1b[27u\x1b[9;5u\x1b[127;3u"),
+         std::string{"Ctrl+'a' | Shift+Enter | Esc | Ctrl+Tab | Alt+Backspace"});
+    same(ear.heard("\x1b[97;5:3u\x1b[97;5:2u"), std::string{"Ctrl+'a'"});
+    same(ear.heard("\x1b[57399u\x1b[57414u\x1b[57376;5u\x1b[57441u"), std::string{"'0' | Enter | Ctrl+F13"});
+    same(ear.heard("\x1b[27;5;13~\x1b[27;6;65~"), std::string{"Ctrl+Enter | Ctrl+Shift+'A'"});
 }
 
 TRIAL("Decoder: an unknown sequence does not spoil what follows it") {
-    Sheet sheet;
-    Decoder decoder;
+    Ear ear;
 
-    decoder.fed("\x1b[99;99Z" "q", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'q');
+    same(ear.heard("\x1b[99;99Y\x1b[E\x1b[9~q"), std::string{"'q'"});
 }
 
-TRIAL("Decoder: broken input does not grow in the buffer without end") {
-    Sheet sheet;
-    Decoder decoder;
+// A number past what any sequence means saturates instead of overflowing.
+TRIAL("Decoder: a run of digits does not overflow") {
+    Ear ear;
 
-    decoder.fed("\x1b[" + std::string(200, '1'), sheet);
-
-    decoder.fed("q", sheet);
-
-    ought(sheet.much() >= 1);
+    same(ear.heard("\x1b[" + std::string(40, '9') + "~q"), std::string{"'q'"});
+    same(ear.heard("\x1b[" + std::string(40, '9') + ";5Aq"), std::string{"Ctrl+Up | 'q'"});
 }
 
-TRIAL("Decoder: two roots get their own, one decoder is enough") {
-    Sheet first;
-    Sheet second;
+// A sequence longer than any key's is garbage: it is read to its final byte and dropped whole, so
+// its digits do not turn into keys, and what follows is read as before.
+TRIAL("Decoder: an overlong sequence is dropped whole") {
+    Ear ear;
 
-    Decoder decoder;
-
-    decoder.fed("a", first);
-    decoder.fed("b", second);
-
-    same(first.much(), std::size_t{1});
-    same(second.much(), std::size_t{1});
-    ought(first.among()[0].key == U'a');
-    ought(second.among()[0].key == U'b');
+    same(ear.heard("\x1b[" + std::string(200, '1') + "Aqw"), std::string{"'q' | 'w'"});
 }
 
-TRIAL("Decoder: a character split between roots goes to the second one") {
-    Sheet first;
-    Sheet second;
+// Inside a sequence CAN cancels it, Esc starts a new one and another control character takes
+// effect at once, as in a terminal's own parser.
+TRIAL("Decoder: control characters inside a sequence") {
+    Ear ear;
 
-    Decoder decoder;
-
-    const std::string said = "ł";
-
-    decoder.fed(said.substr(0, 1), first);
-    decoder.fed(said.substr(1), second);
-
-    same(first.much(), std::size_t{0});
-    same(second.much(), std::size_t{1});
-    ought(second.among()[0].key == U'ł');
+    same(ear.heard("\x1b[1;\x18q"), std::string{"'q'"});
+    same(ear.heard("\x1b[1;\x1b[B"), std::string{"Down"});
+    same(ear.heard("\x1b[1;\x03" "5A"), std::string{"Ctrl+'c' | Ctrl+Up"});
 }
 
-// Byte by byte gives the same as whole. `Term` feeds the decoder byte by byte and takes the current
-// root for each one, because a key in the middle of a chunk that was read can switch the screen
-// (`Term::show`), and keys typed ahead must already go to the new one. This works only if the feed
-// boundary means nothing to the decoder: letters, UTF-8, keys from sequences, Alt, the mouse, the
-// wheel and a bracketed paste come out the same, in the same order.
-TRIAL("Decoder: feeding byte by byte gives the same events as feeding whole") {
-    const std::string said = std::string{"aż"} + "\x1b[A" + "\x1b[1;5C" + "\x1bx" + "\x1b[15~" +
-                             "\x1b[<0;10;5M" + "\x1b[<0;10;5m" + "\x1b[<64;3;4M" +
-                             "\x1b[200~wklej\nto\x1b[201~" + "🙂" + "\t";
+// --- Esc and time -------------------------------------------------------------------------------
 
-    Sheet whole;
-    Sheet bytes;
+TRIAL("Decoder: a sequence cut between reads waits and comes out whole") {
+    Ear ear;
 
-    Decoder one;
-    Decoder other;
-
-    one.fed(said, whole);
-
-    for (const char each : said) other.fed(std::string_view{&each, 1}, bytes);
-
-    ought(!one.pending());
-    ought(!other.pending());
-    same(whole.much(), bytes.much());
-    same(whole.much(), std::size_t{12});
-
-    for (std::size_t at = 0; at < whole.much() && at < bytes.much(); ++at) {
-        const Told& left = whole.among()[at];
-        const Told& right = bytes.among()[at];
-
-        same(static_cast<int>(left.what), static_cast<int>(right.what));
-        ought(left.key == right.key);
-        same(left.mods.ctrl, right.mods.ctrl);
-        same(left.mods.alt, right.mods.alt);
-        same(left.mods.shift, right.mods.shift);
-        same(left.where.x, right.where.x);
-        same(left.where.y, right.where.y);
-        same(static_cast<int>(left.press), static_cast<int>(right.press));
-        same(static_cast<int>(left.button), static_cast<int>(right.button));
-        same(left.steps, right.steps);
-        same(left.said, right.said);
-    }
+    same(ear.heard("\x1b"), std::string{});
+    ought(ear.waiting());
+    same(ear.heard("["), std::string{});
+    same(ear.heard("A"), std::string{"Up"});
+    ought(!ear.waiting());
 }
 
-// Switching the root in the middle of a chunk: the handler of the first key changes the target,
-// and the rest, fed byte by byte as `Term` does it, already goes to the second root.
-TRIAL("Decoder: byte by byte the rest of a chunk goes to the root switched in its middle") {
-    Sheet first;
-    Sheet second;
+TRIAL("Decoder: a lone Esc becomes the key once fifty milliseconds pass") {
+    Ear ear;
 
-    ui::Root* onto = &first;
-
-    Decoder decoder;
-
-    const std::string said = std::string{"x"} + "yż" + "\x1b[A";
-
-    for (std::size_t at = 0; at < said.size(); ++at) {
-        decoder.fed(std::string_view{said}.substr(at, 1), *onto);
-
-        if (first.much() == 1) onto = &second;
-    }
-
-    same(first.much(), std::size_t{1});
-    ought(first.among()[0].key == U'x');
-    same(second.much(), std::size_t{3});
-    ought(second.among()[0].key == U'y');
-    ought(second.among()[1].key == U'ż');
-    ought(second.among()[2].key == ui::Key{ui::Code::up});
+    same(ear.heard("\x1b"), std::string{});
+    ought(ear.decoder.due() == std::optional<Clock::Moment>{ear.now + 50ms});
+    same(ear.after(49ms), std::string{});
+    same(ear.after(1ms), std::string{"Esc"});
+    ought(!ear.waiting());
+    same(ear.after(100ms), std::string{});
 }
 
+// The time counts from the last bytes, so the rest of a sequence that comes a moment later still
+// finds it waiting.
+TRIAL("Decoder: the wait counts from the last bytes") {
+    Ear ear;
 
-// Terminal answers that arrive late (after the capability probe, over SSH) are not keys.
-// Otherwise the background color would become Alt+] and a string of letters, a cursor position
-// report Ctrl+F3, and an XTGETTCAP answer Alt+P with the rest typed into a field.
+    same(ear.heard("\x1b"), std::string{});
+    ear.now += 40ms;
+    same(ear.heard("["), std::string{});
+    same(ear.after(40ms), std::string{});
+    same(ear.heard("A"), std::string{"Up"});
+}
+
+TRIAL("Decoder: Esc with a letter is Alt") {
+    Ear ear;
+
+    same(ear.heard("\x1b" "f\x1bż\x1b\x0d"), std::string{"Alt+'f' | Alt+'ż' | Alt+Enter"});
+}
+
+TRIAL("Decoder: Esc after Esc is two presses") {
+    Ear ear;
+
+    same(ear.heard("\x1b\x1b"), std::string{"Esc"});
+    ought(ear.waiting());
+    same(ear.after(50ms), std::string{"Esc"});
+}
+
+// `Esc [` and `Esc O` with nothing after them are what a terminal sends for Alt+[ and Alt+O, not Esc
+// and a letter; an unfinished sequence is Alt with its second byte and the rest typed after it.
+TRIAL("Decoder: an unfinished escape is Alt with its second byte") {
+    Ear ear;
+
+    same(ear.heard("\x1b["), std::string{});
+    same(ear.after(50ms), std::string{"Alt+'['"});
+
+    same(ear.heard("\x1bO"), std::string{});
+    same(ear.after(50ms), std::string{"Alt+'O'"});
+
+    same(ear.heard("\x1b[1;5"), std::string{});
+    same(ear.after(50ms), std::string{"Alt+'[' | '1' | ';' | '5'"});
+}
+
+// Alt+O typed quickly before a character that cannot end a single shift.
+TRIAL("Decoder: Alt+O before a space is not a single shift") {
+    Ear ear;
+
+    same(ear.heard("\x1bO x"), std::string{"Alt+'O' | ' ' | 'x'"});
+}
+
+// Esc with a letter that opens a control string waits for the timer: a finished string vanishes,
+// an unfinished one is Alt with that letter and plain characters after it.
+TRIAL("Decoder: the timer decides Alt with a letter that opens a string") {
+    Ear ear;
+
+    same(ear.heard("\x1bP"), std::string{});
+    same(ear.after(50ms), std::string{"Alt+'P'"});
+
+    same(ear.heard("\x1b]ab"), std::string{});
+    same(ear.after(50ms), std::string{"Alt+']' | 'a' | 'b'"});
+}
+
+// --- Terminal answers and focus -----------------------------------------------------------------
+
+// Answers that come late (after the capability probe, over SSH) are not keys. Otherwise the
+// background color would become Alt+] and a string of letters, a position report Ctrl+F3, and an
+// XTGETTCAP answer Alt+P with the rest typed into a field.
 TRIAL("Decoder: late terminal answers are not keys") {
     const std::string late =
         "\x1b]11;rgb:0000/0000/0000\x1b\\"
@@ -608,70 +372,233 @@ TRIAL("Decoder: late terminal answers are not keys") {
         "\x1b[12;5R"
         "\x1b[?1u"
         "\x1b]11;rgb:ffff/ffff/ffff\x07"
+        "\x1bP1+r524742\x07"
         "q";
 
-    Sheet whole;
-    Decoder once;
+    Ear whole;
 
-    once.fed(late, whole);
+    same(whole.heard(late), std::string{"'q'"});
+    ought(!whole.waiting());
 
-    same(whole.much(), std::size_t{1});
-    ought(whole.among()[0].key.letter() == U'q');
-    ought(!once.pending());
+    Ear slowly;
+    std::string said;
 
-    // Byte by byte, as `Term` feeds it: the same.
-    Sheet piece;
-    Decoder slowly;
+    for (const char one : late) said += slowly.heard(std::string(1, one));
 
-    for (const char one : late) slowly.fed(std::string(1, one), piece);
-
-    same(piece.much(), std::size_t{1});
-    ought(piece.among()[0].key.letter() == U'q');
+    same(said, std::string{"'q'"});
 }
 
-// F3 with a modifier has the shape of a position report, but with a one in front, so it stays a
-// key.
+// F3 with a modifier has the shape of a position report, but with a one in front.
 TRIAL("Decoder: Ctrl+F3 stays a key") {
-    Sheet sheet;
-    Decoder decoder;
+    Ear ear;
 
-    decoder.fed("\x1b[1;5R", sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.code() == ui::Code::f3);
-    ought(sheet.among()[0].mods.ctrl);
+    same(ear.heard("\x1b[1;5R\x1b[R"), std::string{"Ctrl+F3 | F3"});
 }
 
-// Esc with a letter that starts a control string waits for the timer: a finished string vanishes,
-// an unfinished one is Alt with that letter and plain characters after it.
-TRIAL("Decoder: the timer decides Alt with a letter that starts a string") {
+// A string longer than any answer is garbage: dropped whole, so its text does not come out as
+// keys.
+TRIAL("Decoder: an overlong control string is dropped whole") {
+    Ear ear;
+
+    same(ear.heard("\x1b]52;c;" + std::string(100000, 'A') + "\x07q"), std::string{"'q'"});
+}
+
+TRIAL("Decoder: the terminal's focus") {
+    Ear ear;
+
+    same(ear.heard("\x1b[I\x1b[O"), std::string{"focus in | focus out"});
+}
+
+// --- The mouse ----------------------------------------------------------------------------------
+
+TRIAL("Decoder: SGR mouse: press, release, buttons and modifiers") {
+    Ear ear;
+
+    same(ear.heard("\x1b[<0;13;5M\x1b[<0;13;5m"), std::string{"down left at 12,4 | up left at 12,4"});
+    same(ear.heard("\x1b[<1;1;1M\x1b[<2;1;1M\x1b[<16;1;1M\x1b[<12;1;1M"),
+         std::string{"down middle at 0,0 | down right at 0,0 | Ctrl+down left at 0,0 | Alt+Shift+down left at 0,0"});
+}
+
+// Mask 35 is motion without a pressed button, exactly what the terminal sends after ?1003. By the
+// missing button a widget tells hovering from a drag, which has the same flag but carries a
+// button.
+TRIAL("Decoder: SGR mouse: hovering and dragging") {
+    Ear ear;
+
+    same(ear.heard("\x1b[<35;7;9M\x1b[<32;7;9M"), std::string{"move none at 6,8 | move left at 6,8"});
+}
+
+// Up and down are 64 and 65, left and right 66 and 67; a step towards the start is positive.
+TRIAL("Decoder: the wheel in both axes") {
+    Ear ear;
+
+    same(ear.heard("\x1b[<64;3;3M\x1b[<65;3;3M"), std::string{"wheel +1 vertical at 2,2 | wheel -1 vertical at 2,2"});
+    same(ear.heard("\x1b[<66;3;3M\x1b[<67;3;3M\x1b[<68;3;3M"),
+         std::string{"wheel +1 horizontal at 2,2 | wheel -1 horizontal at 2,2 | Shift+wheel +1 vertical at 2,2"});
+}
+
+// Buttons 8 and 9 are back and forward; 10 and 11 have no agreed meaning and are left out.
+TRIAL("Decoder: the back and forward buttons") {
+    Ear ear;
+
+    same(ear.heard("\x1b[<128;4;2M\x1b[<128;4;2m\x1b[<129;4;2M\x1b[<130;4;2M\x1b[<131;4;2M"),
+         std::string{"down back at 3,1 | up back at 3,1 | down forward at 3,1"});
+}
+
+TRIAL("Decoder: a report outside the window is dropped") {
+    Ear ear;
+
+    same(ear.heard("\x1b[<0;0;5M\x1b[<0;5;0M\x1b[<0;5Mq"), std::string{"'q'"});
+}
+
+// X10 (DECSET 1000 without 1006) is `CSI M` and three bytes plus 32. Its release does not say
+// which button went up, so the decoder remembers which one went down. Before, the three bytes were
+// typed into the field under the pointer.
+TRIAL("Decoder: X10 mouse") {
+    Ear ear;
+
+    same(ear.heard("\x1b[M ,%\x1b[M#,%"), std::string{"down left at 11,4 | up left at 11,4"});
+    same(ear.heard("\x1b[M\"!!\x1b[M#!!"), std::string{"down right at 0,0 | up right at 0,0"});
+    same(ear.heard("\x1b[MC!!\x1b[M`!!\x1b[Mb!!"),
+         std::string{"move none at 0,0 | wheel +1 vertical at 0,0 | wheel +1 horizontal at 0,0"});
+    same(ear.heard("\x1b[M"), std::string{});
+    same(ear.heard(" "), std::string{});
+    same(ear.heard("!!q"), std::string{"down left at 0,0 | 'q'"});
+}
+
+// A cell past 223 cannot be written in X10; xterm sends a zero byte, which is no cell.
+TRIAL("Decoder: an X10 report it could not encode is dropped") {
+    Ear ear;
+
+    same(ear.heard(std::string{"\x1b[M ", 4} + std::string(1, '\0') + "!q"), std::string{"'q'"});
+}
+
+// urxvt (DECSET 1015) writes the X10 mask and the cell in decimal.
+TRIAL("Decoder: urxvt mouse") {
+    Ear ear;
+
+    same(ear.heard("\x1b[32;10;5M\x1b[35;10;5M\x1b[96;10;5M"),
+         std::string{"down left at 9,4 | up left at 9,4 | wheel +1 vertical at 9,4"});
+}
+
+// --- Pastes -------------------------------------------------------------------------------------
+
+TRIAL("Decoder: a paste is one value, with its newlines and escapes as text") {
+    Ear ear;
+
+    same(ear.heard("\x1b[200~ala ma kota\x1b[201~"), std::string{"paste 'ala ma kota'"});
+    same(ear.heard("\x1b[200~dwa\nwiersze \x1b[A\x1b[201~q"), std::string{"paste 'dwa\nwiersze \x1b[A' | 'q'"});
+}
+
+TRIAL("Decoder: a paste split between reads, also in its end marker") {
+    Ear ear;
+
+    same(ear.heard("\x1b[200~ala "), std::string{});
+    same(ear.heard("ma kota"), std::string{});
+    same(ear.heard("\x1b[20"), std::string{});
+    same(ear.heard("1~"), std::string{"paste 'ala ma kota'"});
+}
+
+// The end marker cut between two reads further apart than the Esc's wait: before, the Esc's timer
+// took the marker's start for the Esc key, and the paste never ended.
+TRIAL("Decoder: a paste does not end by the Esc's timer") {
+    Ear ear;
+
+    same(ear.heard("\x1b[200~ala\x1b[20"), std::string{});
+    ought(ear.decoder.due() == std::optional<Clock::Moment>{ear.now + 2s});
+    same(ear.after(60ms), std::string{});
+    same(ear.after(1s), std::string{});
+    same(ear.heard("1~q"), std::string{"paste 'ala' | 'q'"});
+}
+
+// A paste whose end never comes (a terminal that died, a broken SSH connection) is closed with
+// what came after two seconds of silence, and says so; the keys after it are keys again.
+TRIAL("Decoder: a paste without its end closes after two seconds of silence") {
+    Ear ear;
+
+    same(ear.heard("\x1b[200~ala\x1b[2"), std::string{});
+    same(ear.after(1999ms), std::string{});
+    same(ear.after(1ms), std::string{"paste 'ala\x1b[2' cut"});
+    same(ear.heard("q"), std::string{"'q'"});
+}
+
+// --- The whole way -------------------------------------------------------------------------------
+
+// Byte by byte gives the same as whole: the feed boundary means nothing to the decoder.
+TRIAL("Decoder: feeding byte by byte gives the same values as feeding whole") {
+    const std::string said = std::string{"aż"} + "\x1b[A" + "\x1b[1;5C" + "\x1bx" + "\x1b[15~" + "\x1b[<0;10;5M" +
+                             "\x1b[<0;10;5m" + "\x1b[<64;3;4M" + "\x1b[M ,%" + "\x1b[200~wklej\nto\x1b[201~" + "🙂" +
+                             "\t" + "\x1b[97;5u" + "\x1b[[B" + "\x1b]11;rgb:0/0/0\x07" + "\x1bOM";
+
+    Ear whole;
+    Ear bytes;
+
+    const std::string all = whole.heard(said);
+
+    std::vector<Heard> pieces;
+
+    for (const char each : said) {
+        std::vector<Heard> some = bytes.decoder.fed(std::string_view{&each, 1}, bytes.now);
+
+        pieces.insert(pieces.end(), some.begin(), some.end());
+    }
+
+    same(told(pieces), all);
+    ought(!whole.waiting());
+    ought(!bytes.waiting());
+    same(all, std::string{"'a' | 'ż' | Up | Ctrl+Right | Alt+'x' | F5 | down left at 9,4 | up left at 9,4 | wheel +1 "
+                          "vertical at 2,3 | down left at 11,4 | paste 'wklej\nto' | '🙂' | Tab | Ctrl+'a' | F2 | Enter"});
+}
+
+namespace {
+
+// A root that writes down every event it gets, the way `spoken` writes values, so a trial sees
+// that `dispatched` gives each value its event with everything in it.
+class Sheet : public ui::Root {
+public:
+    std::vector<std::string> among;
+
+protected:
+    // Records a key.
+    bool handle(ui::KeyEvent& what) override {
+        among.push_back(spoken(Struck{what.key()}));
+
+        return true;
+    }
+
+    // Records a mouse event.
+    bool handle(ui::MouseEvent& what) override {
+        among.push_back(spoken(Moused{what.where(), what.press(), what.button(), what.mods()}));
+
+        return true;
+    }
+
+    // Records a wheel event with its axis.
+    bool handle(ui::WheelEvent& what) override {
+        among.push_back(spoken(Wheeled{what.where(), what.steps(), what.axis(), what.mods()}));
+
+        return true;
+    }
+
+    // Records a paste.
+    bool handle(ui::PasteEvent& what) override {
+        among.push_back(spoken(Pasted{what.text()}));
+
+        return true;
+    }
+};
+
+}
+
+TRIAL("Decoder: every value reaches the root as its event") {
+    Ear ear;
     Sheet sheet;
-    Decoder decoder;
 
-    decoder.fed("\x1bP", sheet);
+    const std::vector<Heard> all = ear.decoder.fed("q\x1b[1;5A\x1b[<2;4;3M\x1b[<67;1;1M\x1b[200~x\x1b[201~\x1b[I", ear.now);
 
-    ought(decoder.pending());
-    same(sheet.much(), std::size_t{0});
+    for (const Heard& one : all) (void)dispatched(one, sheet);
 
-    decoder.flush(sheet);
-
-    same(sheet.much(), std::size_t{1});
-    ought(sheet.among()[0].key.letter() == U'P');
-    ought(sheet.among()[0].mods.alt);
-
-    Sheet more;
-    Decoder other;
-
-    other.fed("\x1b]ab", more);
-
-    ought(other.pending());
-
-    other.flush(more);
-
-    same(more.much(), std::size_t{3});
-    ought(more.among()[0].key.letter() == U']');
-    ought(more.among()[0].mods.alt);
-    ought(more.among()[1].key.letter() == U'a');
-    ought(!more.among()[1].mods.alt);
-    ought(more.among()[2].key.letter() == U'b');
+    ought(sheet.among == std::vector<std::string>{"'q'", "Ctrl+Up", "down right at 3,2", "wheel -1 horizontal at 0,0",
+                                                 "paste 'x'"});
+    ought(!dispatched(Focused{true}, sheet));
 }

@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <limits>
 
 namespace talcite::ui {
 
 inline constexpr int plenty = std::numeric_limits<int>::max();
+
+enum class Axis : std::uint8_t { vertical, horizontal, both };
 
 struct Size {
     int wide = 0;

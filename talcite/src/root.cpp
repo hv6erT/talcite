@@ -183,7 +183,13 @@ bool Root::dispatch(DoubleClickEvent& what) { return sent(*under(what.where()), 
 //
 // Each root waits for its own: a click on one screen and a click on another do not combine into a
 // double click, because those are two different roots.
+//
+// The back and forward buttons make no clicks. They are commands, not pointing: a dialog button
+// under the pointer must not be pressed by "back", and a left click must not be broken by a back
+// press in its middle. Whoever wants them takes their presses as `MouseEvent`.
 void Root::minded(const MouseEvent& what) {
+    if (what.button() == Mouse::back || what.button() == Mouse::forward) return;
+
     if (what.press() == Press::down) {
         began_ = what.where();
         pressing_ = what.button();

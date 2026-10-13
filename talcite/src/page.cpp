@@ -962,8 +962,11 @@ bool Page::handle(KeyEvent& what) {
     }
 }
 
-// Scrolls `stepping` rows per wheel step; returns whether the view moved.
+// Scrolls `stepping` rows per wheel step; returns whether the view moved. The page has no
+// sideways scrolling (long lines are wrapped or cut), so the tilted wheel goes on up.
 bool Page::handle(WheelEvent& what) {
+    if (what.axis() != Axis::vertical) return false;
+
     const std::size_t was = kept_->top;
     const int part = kept_->part;
 

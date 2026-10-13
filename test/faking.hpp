@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -94,7 +95,10 @@ public:
 // depend on what the run was started from. Replies wait in the queue `replies`, one per hearing;
 // those given at construction go whole or, when `piece` is given, that many bytes at a time.
 // Everything written to it stays in `written`, and each hearing records its patience and whether
-// it was handed a bell.
+// it was handed a bell. A hearing with a bell is a turn of `Term`; when no reply waits, it lasts
+// its patience, as a real console's does, because `Term` asks the clock whether the time it waited
+// for has come. A hearing without a bell (the capability probe) returns at once, so that trials do
+// not sit through the probe's patience.
 class Terminal : public talcite::Console {
 public:
     // Queues `said` as one reply, or split into replies of `piece` bytes when `piece` is non-zero.
@@ -186,7 +190,11 @@ public:
 
         if (also != nullptr) ++belled;
 
-        if (replies.empty()) return {};
+        if (replies.empty()) {
+            if (also != nullptr && waited.has_value()) std::this_thread::sleep_for(*waited);
+
+            return {};
+        }
 
         std::string made = std::move(replies.front());
 

@@ -504,8 +504,10 @@ bool Table::handle(KeyEvent& what) {
 
 // The wheel moves only the view and leaves the current row alone, the same as in the list and in
 // Midnight Commander's panel. At the end of the range we return false, so that a scroller higher
-// up gets the motion.
+// up gets the motion; so does the tilted wheel, since the table does not scroll sideways.
 bool Table::handle(WheelEvent& what) {
+    if (what.axis() != Axis::vertical) return false;
+
     Kept& kept = *kept_;
 
     const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);

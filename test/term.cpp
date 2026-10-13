@@ -166,6 +166,28 @@ TRIAL("Term: dressing and undressing go in opposite order") {
     ought(holds(off, "\x1b[?25h"));
 }
 
+// A terminal without SGR gets drags and the urxvt encoding too, and loses them in reverse order.
+TRIAL("Term: the mouse without SGR asks for drags and the decimal encoding") {
+    auto line = faking::terminal();
+
+    std::string on;
+
+    {
+        Setup wish;
+        wish.mouse = Mouse::basic;
+
+        Term term{wish, Seam<Console>{line}};
+
+        on = line->written;
+
+        line->written.clear();
+    }
+
+    ought(holds(on, "\x1b[?1000h\x1b[?1002h\x1b[?1015h"));
+    ought(!holds(on, "\x1b[?1006h"));
+    ought(holds(line->written, "\x1b[?1015l\x1b[?1002l\x1b[?1000l"));
+}
+
 TRIAL("Term: without wishes the mouse and the screen follow the measurement") {
     auto line = faking::terminal();
 

@@ -6,7 +6,10 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
+
+#include "vt.hpp"
 
 namespace talcite {
 
@@ -143,12 +146,19 @@ struct Capabilities::Held {
     int version = 0;
 
     std::string rest;
-    std::string tail;
+
+    // The answers are read with the decoder's syntax; the reader keeps each token's bytes, so what
+    // is not an answer goes back to the caller as it came.
+    vt::Reader reader{true};
 
     std::vector<int> measured;
 
     bool asked = false;
     bool done = false;
+
+    bool answered(const vt::Csi& one);
+
+    bool answered(const vt::Told& one);
 };
 
 // A probe of the terminal behind the console; nothing is asked until the first question.
@@ -264,8 +274,7 @@ void Capabilities::probe() const {
     // Bytes we did not recognize are most likely keys pressed during startup. They have to be
     // handed to the caller, not thrown away; otherwise the first key after starting would sometimes
     // get lost, in a way that cannot be reproduced.
-    held_->rest += held_->tail;
-    held_->tail.clear();
+    held_->rest += held_->reader.drained();
 
     if (held_->measured.size() > 0) held_->wide = held_->measured[0];
     if (held_->measured.size() > 1) held_->varied = held_->measured[1];
@@ -356,204 +365,129 @@ std::string calling(int family) {
     }
 }
 
-// Every decimal number in the text, in order; any other character separates them.
-std::vector<int> numbers(std::string_view body) {
-    std::vector<int> made;
-
-    int one = 0;
-    bool any = false;
-
-    for (const char sign : body) {
-        if (sign >= '0' && sign <= '9') {
-            one = one * 10 + (sign - '0');
-            any = true;
-
-            continue;
-        }
-
-        if (any) made.push_back(one);
-
-        one = 0;
-        any = false;
-    }
-
-    if (any) made.push_back(one);
-
-    return made;
 }
 
-}
-
-// Parsing the answers. We scan from the start: what is recognized is taken, what is unfinished is
-// left for later, and what is foreign is set aside as someone else's bytes.
+// Parsing the answers. What is recognized is taken, what is unfinished waits in the reader, and
+// what is foreign is set aside as someone else's bytes: a key pressed during startup looks like
+// any other sequence and goes back whole.
 void Capabilities::fed(std::string_view bytes) const {
     Held& held = *held_;
 
-    held.tail += bytes;
+    std::vector<vt::Token> tokens;
 
-    std::size_t at = 0;
+    held.reader.fed(bytes, std::chrono::steady_clock::now(), tokens);
 
-    while (at < held.tail.size()) {
-        if (held.tail[at] != '\x1b') {
-            held.rest += held.tail[at];
-            ++at;
-
-            continue;
-        }
-
-        if (at + 1 >= held.tail.size()) break;
-
-        const char lead = held.tail[at + 1];
-
-        if (lead == '[') {
-            std::size_t end = at + 2;
-
-            while (end < held.tail.size() &&
-                   !(held.tail[end] >= 0x40 && held.tail[end] <= 0x7E))
-                ++end;
-
-            if (end >= held.tail.size()) break;
-
-            const std::string_view body{held.tail.data() + at + 2, end - at - 2};
-            const char last = held.tail[end];
-
-            bool known = true;
-
-            if (last == 'y' && !body.empty() && body.front() == '?') {
-                const std::vector<int> among = numbers(body);
-
-                if (among.size() >= 2 && knowing(among[1])) switch (among[0]) {
-                        case 1006: held.mouse = Mouse::sgr; break;
-                        case 1000:
-                            if (held.mouse == Mouse::none) held.mouse = Mouse::basic;
-                            break;
-                        case 2004: held.bracketed_paste = true; break;
-                        case 1004: held.focus_events = true; break;
-                        case 2026: held.synchronized = true; break;
-                        case 1049: held.screen = Screen::apart; break;
-                        default: break;
-                    }
-            } else if (last == 'R') {
-                const std::vector<int> among = numbers(body);
-
-                if (among.size() >= 2) held.measured.push_back(std::max(1, among[1] - 1));
-            } else if (last == 'c' && !body.empty() && body.front() == '>') {
-                const std::vector<int> among = numbers(body);
-
-                if (among.size() >= 2) held.version = among[1];
-                if (!among.empty()) {
-                    const std::string mine = calling(among[0]);
-
-                    if (!mine.empty()) held.named = mine;
-                }
-            } else if (last == 't') {
-                // The answer to `16t` reads `6;height;width`; other window reports start with
-                // another number and are not ours.
-                const std::vector<int> among = numbers(body);
-
-                if (among.size() >= 3 && among[0] == 6)
-                    held.cell = ui::Size{among[2], among[1]};
-            } else if (last == 'c') {
-                // Sixel is recognized from an answer we get anyway. Primary DA is sent as the
-                // probe's terminator, and a 4 in its list means "I can do sixel".
-                //
-                // Outside a multiplexer only. tmux accepts sixel since version 3.4 and answers with
-                // a 4, but it keeps the picture its own way: it loses it when switching windows and
-                // scrolling, and with a split screen it can draw it in the neighboring pane. Pixels
-                // in tmux are therefore an explicit wish of the application (`Setup::graphics`),
-                // not a conclusion from the probe.
-                const std::vector<int> among = numbers(body);
-
-                if (!held.muxed && std::find(among.begin(), among.end(), 4) != among.end() &&
-                    held.graphics < Graphics::sixel)
-                    held.graphics = Graphics::sixel;
-
-                held.done = true;
-            } else {
-                known = false;
-            }
-
-            // An unrecognized sequence is complete, but that does not mean it is ours: an arrow
-            // pressed during startup looks the same. We hand it back whole.
-            if (!known) held.rest.append(held.tail, at, end + 1 - at);
-
-            at = end + 1;
+    for (const vt::Token& one : tokens) {
+        if (const auto* csi = std::get_if<vt::Csi>(&one.what)) {
+            if (!held.answered(*csi)) held.rest += one.raw;
 
             continue;
         }
 
-        // The kitty protocol answers in APC. That is the only reason this is here: no other
-        // sequence we expect starts with `ESC _`.
-        if (lead == '_') {
-            std::size_t end = at + 2;
+        if (const auto* told = std::get_if<vt::Told>(&one.what)) {
+            if (!held.answered(*told)) held.rest += one.raw;
 
-            while (end < held.tail.size()) {
-                if (held.tail[end] == '\x1b' && end + 1 < held.tail.size() &&
-                    held.tail[end + 1] == '\\')
+            continue;
+        }
+
+        held.rest += one.raw;
+    }
+}
+
+// Takes an answer in a control sequence: a mode report (DECRPM), a cursor position report (the
+// width measurements), Secondary DA (the terminal's family and version), the cell size and, as the
+// end of the probe, Primary DA. False for a sequence that is not one of these.
+bool Capabilities::Held::answered(const vt::Csi& one) {
+    if (one.last == 'y' && one.lead == '?') {
+        if (one.params.size() >= 2 && knowing(one.at(1))) switch (one.at(0)) {
+                case 1006: mouse = Mouse::sgr; break;
+                case 1000:
+                    if (mouse == Mouse::none) mouse = Mouse::basic;
                     break;
-
-                ++end;
+                case 2004: bracketed_paste = true; break;
+                case 1004: focus_events = true; break;
+                case 2026: synchronized = true; break;
+                case 1049: screen = Screen::apart; break;
+                default: break;
             }
 
-            if (end >= held.tail.size()) break;
-
-            const std::string_view body{held.tail.data() + at + 2, end - at - 2};
-
-            if (holds(body, "OK")) held.graphics = Graphics::kitty;
-
-            at = end + 2;
-
-            continue;
-        }
-
-        if (lead == 'P' || lead == ']') {
-            std::size_t end = at + 2;
-
-            while (end < held.tail.size()) {
-                if (held.tail[end] == '\x07') break;
-                if (held.tail[end] == '\x1b' && end + 1 < held.tail.size() &&
-                    held.tail[end + 1] == '\\')
-                    break;
-
-                ++end;
-            }
-
-            if (end >= held.tail.size()) break;
-
-            const std::string_view body{held.tail.data() + at + 2, end - at - 2};
-
-            bool known = false;
-
-            if (lead == 'P' && body.rfind("1+r", 0) == 0) {
-                known = true;
-
-                if (holds(body, "5463") || holds(body, "524742")) held.colors = Colors::rgb;
-            }
-
-            if (lead == 'P' && body.rfind("0+r", 0) == 0) known = true;
-
-            if (lead == ']' && body.rfind("11;", 0) == 0) {
-                known = true;
-
-                const Shade told = shading(body.substr(3));
-
-                if (told != Shade::neutral) held.shade = told;
-            }
-
-            const std::size_t after = end + (held.tail[end] == '\x07' ? 1 : 2);
-
-            if (!known) held.rest.append(held.tail, at, after - at);
-
-            at = after;
-
-            continue;
-        }
-
-        held.rest += held.tail[at];
-        ++at;
+        return true;
     }
 
-    held.tail.erase(0, at);
+    if (one.last == 'R') {
+        if (one.params.size() >= 2) measured.push_back(std::max(1, one.at(1) - 1));
+
+        return true;
+    }
+
+    if (one.last == 'c' && one.lead == '>') {
+        if (one.params.size() >= 2) version = one.at(1);
+
+        if (!one.params.empty()) {
+            const std::string mine = calling(one.at(0));
+
+            if (!mine.empty()) named = mine;
+        }
+
+        return true;
+    }
+
+    // The answer to `16t` reads `6;height;width`; other window reports start with another number
+    // and are not ours.
+    if (one.last == 't') {
+        if (one.params.size() >= 3 && one.at(0) == 6) cell = ui::Size{one.at(2), one.at(1)};
+
+        return true;
+    }
+
+    // Sixel is recognized from an answer we get anyway. Primary DA is sent as the probe's
+    // terminator, and a 4 in its list means "I can do sixel".
+    //
+    // Outside a multiplexer only. tmux accepts sixel since version 3.4 and answers with a 4, but it
+    // keeps the picture its own way: it loses it when switching windows and scrolling, and with a
+    // split screen it can draw it in the neighboring pane. Pixels in tmux are therefore an explicit
+    // wish of the application (`Setup::graphics`), not a conclusion from the probe.
+    if (one.last == 'c') {
+        const bool sixel = std::any_of(one.params.begin(), one.params.end(),
+                                       [](const vt::Param& each) { return each.part(0) == 4; });
+
+        if (!muxed && sixel && graphics < Graphics::sixel) graphics = Graphics::sixel;
+
+        done = true;
+
+        return true;
+    }
+
+    return false;
+}
+
+// Takes an answer in a control string: the kitty graphics reply (APC, the only one we expect, so
+// every APC is taken), XTGETTCAP (DCS) and the background color (OSC 11). False for a string that
+// is not one of these.
+bool Capabilities::Held::answered(const vt::Told& one) {
+    if (one.lead == '_') {
+        if (holds(one.body, "OK")) graphics = Graphics::kitty;
+
+        return true;
+    }
+
+    if (one.lead == 'P' && one.body.rfind("1+r", 0) == 0) {
+        if (holds(one.body, "5463") || holds(one.body, "524742")) colors = Colors::rgb;
+
+        return true;
+    }
+
+    if (one.lead == 'P' && one.body.rfind("0+r", 0) == 0) return true;
+
+    if (one.lead == ']' && one.body.rfind("11;", 0) == 0) {
+        const Shade told = shading(std::string_view{one.body}.substr(3));
+
+        if (told != Shade::neutral) shade = told;
+
+        return true;
+    }
+
+    return false;
 }
 
 // How many colors the terminal shows; `NO_COLOR` makes it monochrome.

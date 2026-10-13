@@ -20,7 +20,7 @@ struct Named {
 // One spelling per key. The written form is read regardless of case, but there are no synonyms:
 // Ins, and not also Insert. Two spellings of the same key in the language files would be two
 // places where the collision test would have to know that they mean one key.
-constexpr std::array<Named, 26> names{{
+constexpr std::array<Named, 34> names{{
     {Code::escape, "Esc"},     {Code::enter, "Enter"},   {Code::tab, "Tab"},
     {Code::backspace, "Backspace"}, {Code::insert, "Ins"}, {Code::remove, "Del"},
     {Code::up, "Up"},          {Code::down, "Down"},     {Code::left, "Left"},
@@ -29,7 +29,10 @@ constexpr std::array<Named, 26> names{{
     {Code::f2, "F2"},          {Code::f3, "F3"},         {Code::f4, "F4"},
     {Code::f5, "F5"},          {Code::f6, "F6"},         {Code::f7, "F7"},
     {Code::f8, "F8"},          {Code::f9, "F9"},         {Code::f10, "F10"},
-    {Code::f11, "F11"},        {Code::f12, "F12"},
+    {Code::f11, "F11"},        {Code::f12, "F12"},       {Code::f13, "F13"},
+    {Code::f14, "F14"},        {Code::f15, "F15"},       {Code::f16, "F16"},
+    {Code::f17, "F17"},        {Code::f18, "F18"},       {Code::f19, "F19"},
+    {Code::f20, "F20"},
 }};
 
 // Whether two ASCII spellings are equal ignoring case.

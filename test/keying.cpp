@@ -33,7 +33,7 @@ TRIAL("Key: every code round-trips through its written form, with every set of m
     const std::vector<Mods> sets{{}, {true, false, false}, {false, true, false}, {false, false, true},
                                  {true, true, true}};
 
-    for (int which = static_cast<int>(Code::escape); which <= static_cast<int>(Code::f12); ++which)
+    for (int which = static_cast<int>(Code::escape); which <= static_cast<int>(Code::f20); ++which)
         for (const Mods with : sets) {
             const Key one{static_cast<Code>(which), with};
 

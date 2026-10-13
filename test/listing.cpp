@@ -675,6 +675,22 @@ TRIAL("List: the wheel at the end of scrolling passes the event up") {
     ought(top.dispatch(down));
 }
 
+// The list does not scroll sideways, so the tilted wheel passes on instead of scrolling down.
+TRIAL("List: the tilted wheel passes the event up") {
+    Sheet top;
+
+    const auto one = listed(10);
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    ui::WheelEvent tilted{{2, 1}, -1, {}, ui::Axis::horizontal};
+
+    ought(!top.dispatch(tilted));
+    same(one->first(), 0);
+}
+
 TRIAL("List: the event speaks once per change of row") {
     Sheet top;
 

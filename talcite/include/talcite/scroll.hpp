@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -11,8 +10,6 @@
 namespace talcite::ui {
 
 class Grip;
-
-enum class Axis : std::uint8_t { vertical, horizontal, both };
 
 class Scroll : public Node {
 public:

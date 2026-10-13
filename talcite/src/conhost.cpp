@@ -878,7 +878,15 @@ std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
         return said(delta > 0 ? 64 : 65, false);
     }
 
-    if ((one.flags & hwheeled) != 0) return {};
+    // The tilted wheel: a positive delta is to the right, xterm's button 7 (67); to the left is
+    // button 6 (66).
+    if ((one.flags & hwheeled) != 0) {
+        if (!reporting) return {};
+
+        const auto delta = static_cast<std::int16_t>(one.buttons >> 16);
+
+        return said(delta > 0 ? 67 : 66, false);
+    }
 
     const std::uint32_t now = one.buttons & 0x7;
     const std::uint32_t was = held_;

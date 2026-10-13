@@ -20,10 +20,6 @@ namespace talcite {
 
 namespace {
 
-// A lone Esc is settled by time, because the terminal does not say whether more is coming. Twenty
-// milliseconds is too short: over ssh an arrow key would fall apart into Esc and a letter.
-constexpr std::chrono::milliseconds hesitating{50};
-
 // How long one turn waits for the loop's bell while the terminal is handed over.
 constexpr std::chrono::milliseconds glancing{100};
 
@@ -339,9 +335,13 @@ bool titles(const Capabilities& compat, const Setup& wish) {
 // without mouse reporting at all nobody would send that motion. It is turned off first (in
 // `unmoused`), because it covers what ?1002 does; turned off last, it would leave the terminal with
 // the wider tracking for a moment.
+//
+// A terminal without SGR (1006) gets drags (1002) too, or selecting with the mouse would not work
+// at all, and the urxvt encoding (1015), which writes cells in decimal: one that knows it reports
+// past the 223rd column, where X10 cannot, and one that does not ignores the request.
 void mousing(Console& out, Mouse given, bool hover) {
     if (given == Mouse::sgr) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
-    else if (given == Mouse::basic) out.write("\x1b[?1000h");
+    else if (given == Mouse::basic) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1015h");
 
     if (given != Mouse::none && hover) out.write("\x1b[?1003h");
 }
@@ -351,7 +351,7 @@ void unmoused(Console& out, Mouse given, bool hover) {
     if (given != Mouse::none && hover) out.write("\x1b[?1003l");
 
     if (given == Mouse::sgr) out.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
-    else if (given == Mouse::basic) out.write("\x1b[?1000l");
+    else if (given == Mouse::basic) out.write("\x1b[?1015l\x1b[?1002l\x1b[?1000l");
 }
 
 // Switches to the alternate screen (1049, or the older 47).
@@ -820,12 +820,10 @@ void Term::draw() {
 
 namespace {
 
-// Feeds the decoder byte by byte, with the current root for each: a key in the middle of a chunk
-// may switch the root (`Term::show`), and keys typed ahead must go to the new one. The decoder
-// attaches no meaning to feeding boundaries (a test checks that feeding byte by byte equals
-// feeding whole), so this is the only difference. The cost: a chunk is at most a kilobyte.
-void fed(Decoder& decoder, std::string_view given, ui::Root* const& onto) {
-    for (std::size_t at = 0; at < given.size(); ++at) decoder.fed(given.substr(at, 1), *onto);
+// Delivers what the decoder heard, each value to the root shown at that moment: a key in the
+// middle of a read may switch the root (`Term::show`), and keys typed ahead must go to the new one.
+void delivered(const std::vector<Heard>& heard, ui::Root* const& onto) {
+    for (const Heard& one : heard) (void)dispatched(one, *onto);
 }
 
 }
@@ -871,7 +869,7 @@ bool Term::turn() {
         const std::string given = std::move(held.spare);
         held.spare.clear();
 
-        fed(held.decoder, given, held.onto);
+        delivered(held.decoder.fed(given, std::chrono::steady_clock::now()), held.onto);
 
         doing = true;
     }
@@ -884,12 +882,18 @@ bool Term::turn() {
         draw();
     }
 
-    // No limit while there is nothing to settle. A lone Esc gives fifty milliseconds. A click
-    // waiting for its second one does not wake the loop: the root settles it by the time of the
-    // second when that comes, and when it does not come, there is nothing to settle.
+    // No limit while there is nothing to settle. The decoder says when it wants to settle what it
+    // holds (a lone Esc, a paste without its end); the wait is rounded up, so the turn does not wake
+    // a fraction of a millisecond too early and go round once more for nothing. A click waiting for
+    // its second one does not wake the loop: the root settles it by the time of the second when
+    // that comes, and when it does not come, there is nothing to settle.
     std::optional<std::chrono::milliseconds> patience;
 
-    if (held.decoder.pending()) patience = hesitating;
+    if (const std::optional<Clock::Moment> settling = held.decoder.due()) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(*settling - std::chrono::steady_clock::now());
+
+        patience = std::max(left, std::chrono::milliseconds{0});
+    }
 
     // The tree may ask for a turn too. An animated image computes its frame from the clock, so it
     // says only when at the latest it wants to be woken; nobody here knows it is about a frame.
@@ -927,15 +931,19 @@ bool Term::turn() {
 
     const bool spoken = !given.empty();
 
-    if (spoken) fed(held.decoder, given, held.onto);
+    const Clock::Moment now = std::chrono::steady_clock::now();
+
+    if (spoken) delivered(held.decoder.fed(given, now), held.onto);
 
     // The size is checked at every turn, not only after an empty read: a turn also happens after a
     // key and after the loop's bell, and the window may have changed just then.
     const bool sized = measured(console, held.wide, held.high);
 
-    // Nothing came and the decoder holds something: the Esc was alone.
-    if (!spoken && held.decoder.pending()) {
-        held.decoder.flush(*held.onto);
+    // The decoder's time has come: the Esc was alone, or the paste lost its end. The clock decides,
+    // not an empty read: the loop's bell also ends the wait early, and a paste must not be cut
+    // short because some download finished.
+    if (const std::optional<Clock::Moment> settling = held.decoder.due(); settling.has_value() && now >= *settling) {
+        delivered(held.decoder.lapsed(now), held.onto);
 
         doing = true;
     }

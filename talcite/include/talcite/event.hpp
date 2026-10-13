@@ -42,12 +42,20 @@ enum class Code : std::uint8_t {
     f9,
     f10,
     f11,
-    f12
+    f12,
+    f13,
+    f14,
+    f15,
+    f16,
+    f17,
+    f18,
+    f19,
+    f20
 };
 
 enum class Press : std::uint8_t { down, up, move };
 
-enum class Mouse : std::uint8_t { none, left, middle, right };
+enum class Mouse : std::uint8_t { none, left, middle, right, back, forward };
 
 struct Mods {
     bool ctrl = false;
@@ -184,8 +192,8 @@ private:
 
 class WheelEvent : public Event {
 public:
-    WheelEvent(Spot where, int steps, Mods mods = {})
-        : where_(where), steps_(steps), mods_(mods) {}
+    WheelEvent(Spot where, int steps, Mods mods = {}, Axis axis = Axis::vertical)
+        : where_(where), steps_(steps), mods_(mods), axis_(axis) {}
 
     [[nodiscard]] Spot where() const { return where_; }
 
@@ -193,10 +201,13 @@ public:
 
     [[nodiscard]] Mods mods() const { return mods_; }
 
+    [[nodiscard]] Axis axis() const { return axis_; }
+
 private:
     Spot where_;
     int steps_ = 0;
     Mods mods_;
+    Axis axis_ = Axis::vertical;
 };
 
 class SizeEvent : public Event {

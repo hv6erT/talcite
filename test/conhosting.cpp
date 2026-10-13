@@ -474,11 +474,17 @@ TRIAL("Console without VT: press and release come from the memory of buttons") {
 TRIAL("Console without VT: the wheel, motion without a button and a button pressed before tracking") {
     conhost::Pointing one;
 
-    // Without 1006 nothing: the decoder does not know the old X10 encoding.
+    // Without 1006 nothing: the translation speaks only SGR, and the console's own answers tell
+    // the probe that it does.
     same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, false}), std::string{});
 
     same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, true}), std::string{"\x1b[<64;1;1M"});
     same(one.pointed({{0, 0}, 0xFF880000u, 0x04, 0x08}, {true, false, false, true}), std::string{"\x1b[<81;1;1M"});
+
+    // The tilted wheel: to the right is button 7 (67), to the left button 6 (66).
+    same(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<67;1;1M"});
+    same(one.pointed({{0, 0}, 0xFF880000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<66;1;1M"});
+    same(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, false}), std::string{});
     same(one.pointed({{2, 3}, 0, 0x01, 0}, {true, true, true, true}), std::string{"\x1b[<35;3;4M"});
     same(one.pointed({{2, 3}, 0x1, 0, 0}, {}), std::string{});
     same(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, false, false, true}), std::string{});

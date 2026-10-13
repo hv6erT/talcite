@@ -244,6 +244,26 @@ TRIAL("Capabilities: keys pressed during startup are not lost") {
     same(one.rest(), std::string{"\x1b[A" "q"});
 }
 
+// The probe reads the answers with the decoder's own syntax and hands every other token back as
+// the bytes it came in: Alt with a letter, a character, a paste, a single shift, a mouse report,
+// and the unfinished tail. An XTGETTCAP answer ended with BEL counts as an answer.
+TRIAL("Capabilities: keys of every form come back as they came") {
+    const Taped one{
+        "\x1bx"
+        "ł"
+        "\x1b[?1006;2$y"
+        "\x1b[200~wklej\x1b[201~"
+        "\x1bP1+r5463=78\x07"
+        "\x1bOP"
+        "\x1b[<0;3;4M"
+        "\x1b[?62;1c"
+        "\x1b[1;5"};
+
+    same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
+    same(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
+    same(one.rest(), std::string{"\x1bx" "ł" "\x1b[200~wklej\x1b[201~" "\x1bOP" "\x1b[<0;3;4M" "\x1b[1;5"});
+}
+
 TRIAL("Capabilities: an unknown OSC answer also comes back whole") {
     const Taped one{
         "\x1b]10;rgb:1111/1111/1111\x1b\\"

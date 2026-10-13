@@ -970,3 +970,36 @@ TRIAL("Vertical scroll: the wheel with Shift does not scroll horizontally") {
     same(scroll->shift().y, 3);
     same(scroll->shift().x, 0);
 }
+
+// The tilted wheel (a touchpad's sideways swipe) scrolls sideways wherever there is a horizontal
+// axis, and a vertical-only scroller passes it on instead of scrolling down.
+TRIAL("Scroll: the tilted wheel scrolls sideways, and a vertical scroller passes it on") {
+    ui::Root top;
+
+    const auto both = std::make_shared<ui::Scroll>(ui::Axis::both);
+
+    both->children().add(std::make_shared<Sheet>(ui::Size{20, 20}, U'a'));
+    top.children().add(both);
+
+    (void)top.render({{0, 0}, {5, 5}});
+
+    ui::WheelEvent right{{1, 1}, -1, {}, ui::Axis::horizontal};
+
+    ought(top.dispatch(right));
+    same(both->shift().x, 3);
+    same(both->shift().y, 0);
+
+    ui::Root other;
+
+    const auto upright = std::make_shared<ui::Scroll>(ui::Axis::vertical);
+
+    upright->children().add(rows(10));
+    other.children().add(upright);
+
+    (void)other.render({{0, 0}, {10, 3}});
+
+    ui::WheelEvent tilted{{1, 1}, -1, {}, ui::Axis::horizontal};
+
+    ought(!other.dispatch(tilted));
+    same(upright->shift().y, 0);
+}
