@@ -1155,3 +1155,31 @@ TRIAL("List: accepts rows, not a foreign child") {
     ought(threw);
     same(one->children().many(), std::size_t{1});
 }
+
+// The number of the current row is found from the row the list stood on, not from the first one:
+// walking with the arrow deep in a long list costs a step per key, so holding the key does not grow
+// quadratic. Ten thousand steps from row 150 000 of 200 000 take a fraction of a second, where
+// counting from the top took seconds.
+TRIAL("List: an arrow deep in a long list finds its row at once") {
+    Sheet top;
+
+    const auto one = listed(200000);
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {20, 10}});
+
+    one->focus();
+    one->which(150000);
+
+    const auto began = std::chrono::steady_clock::now();
+
+    for (int step = 0; step < 10000; ++step) {
+        ui::KeyEvent down{ui::Code::down};
+
+        ought(top.dispatch(down));
+    }
+
+    ought(std::chrono::steady_clock::now() - began < std::chrono::milliseconds{500});
+    same(one->which(), std::optional<std::size_t>{160000});
+}

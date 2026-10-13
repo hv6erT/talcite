@@ -16,6 +16,25 @@ namespace {
 // Three rows per wheel notch, the same constant and the same reason as in the scroller.
 constexpr int stepping = 3;
 
+// The position of `one` among `all`, or -1, looked for from `near` outward, both ways at once. The
+// row a focus or a program goes to is almost always the current one or its neighbor, so an arrow
+// in a list of a hundred thousand rows looks at a couple of them, not at all the rows above.
+int index_near(const Children& all, const Node* one, int near) {
+    const int much = static_cast<int>(all.many());
+
+    if (much == 0) return -1;
+
+    near = std::clamp(near, 0, much - 1);
+
+    for (int step = 0; near - step >= 0 || near + step < much; ++step) {
+        if (near - step >= 0 && all[static_cast<std::size_t>(near - step)].get() == one) return near - step;
+
+        if (near + step < much && all[static_cast<std::size_t>(near + step)].get() == one) return near + step;
+    }
+
+    return -1;
+}
+
 }
 
 List::List(int wide, int high, ScrollShape shape)
@@ -137,7 +156,7 @@ void List::which(std::size_t given) {
 
 // Makes the given row current. A row that is not in the list changes nothing.
 void List::current(ListItem& one) {
-    if (const std::optional<std::size_t> at = children().find(one)) which(*at);
+    if (const int at = index_near(children(), &one, which_); at >= 0) which(static_cast<std::size_t>(at));
 }
 
 // The number of the first visible row.
@@ -279,9 +298,9 @@ bool List::handle(FocusEvent& what) {
 
     if (one == nullptr || one == this) return false;
 
-    for (int at = 0; at < static_cast<int>(children().many()); ++at) {
-        if (children()[static_cast<std::size_t>(at)].get() != one) continue;
+    const int at = index_near(children(), one, which_);
 
+    if (at >= 0) {
         follow_ = true;
 
         if (which_ != at) {
@@ -289,8 +308,6 @@ bool List::handle(FocusEvent& what) {
 
             (void)trigger(ScrollEvent{});
         }
-
-        break;
     }
 
     return false;
