@@ -1,6 +1,7 @@
 #include "talcite/table.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "talcite/skin.hpp"
@@ -84,6 +85,68 @@ void Table::source(TableSource given, std::size_t rows) {
 
     kept.shown.clear();
     kept.fresh = true;
+}
+
+// Follows rows replaced in the middle of the source: the rows [at, at + gone) give way to `came` new
+// ones. The current row, the first visible row and the selection stay with the rows they stood on,
+// so a list whose part opens or folds keeps its place on the screen. A current row among the
+// replaced ones goes to `at` (or to the last row), and an empty table that gets rows stands on the
+// first; only then a `ScrollEvent` is sent, because only then the cursor stands on another row than
+// before. The visible rows are fetched again on the
+// next frame.
+void Table::changed(std::size_t at, std::size_t gone, std::size_t came) {
+    Kept& kept = *kept_;
+
+    at = std::min(at, kept.rows);
+    gone = std::min(gone, kept.rows - at);
+
+    const std::size_t rows = kept.rows - gone + came;
+
+    // A row before the change keeps its number, one after it moves by the difference, and one
+    // inside it is gone.
+    const auto moved = [at, gone, came](std::size_t row) -> std::optional<std::size_t> {
+        if (row < at) return row;
+
+        if (row >= at + gone) return row - gone + came;
+
+        return std::nullopt;
+    };
+
+    bool other = false;
+
+    if (kept.which) {
+        if (const std::optional<std::size_t> now = moved(*kept.which)) {
+            kept.which = now;
+        } else {
+            kept.which = rows > 0 ? std::optional<std::size_t>{std::min(at, rows - 1)} : std::nullopt;
+            other = true;
+        }
+    } else if (rows > 0) {
+        // An empty table that gets rows stands on the first, as one given a source does.
+        kept.which = 0;
+        other = true;
+    }
+
+    kept.top = rows > 0 ? std::min(moved(kept.top).value_or(at), rows - 1) : 0;
+    kept.rows = rows;
+
+    // The current row stays in view: the change may have pushed it below the window.
+    if (kept.which) {
+        const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
+
+        if (*kept.which < kept.top)
+            kept.top = *kept.which;
+        else if (*kept.which >= kept.top + static_cast<std::size_t>(high))
+            kept.top = *kept.which - static_cast<std::size_t>(high) + 1;
+    }
+
+    chosen().moved(at, gone, came);
+    chosen().keep(rows);
+
+    kept.shown.clear();
+    kept.fresh = true;
+
+    if (other) (void)trigger(ScrollEvent{});
 }
 
 // Whether a source has been set.

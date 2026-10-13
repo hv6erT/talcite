@@ -63,4 +63,20 @@ void Chosen::keep(std::size_t rows) {
     inside_.resize(rows);
 }
 
+// Follows rows replaced in the middle of the table: the rows [at, at + gone) give way to `came` new
+// ones, which are not chosen, and the chosen rows after them move with them. The choices of the
+// replaced rows go, since those rows are gone.
+void Chosen::moved(std::size_t at, std::size_t gone, std::size_t came) {
+    if (at >= inside_.size()) return;
+
+    const auto from = inside_.begin() + static_cast<std::ptrdiff_t>(at);
+    const auto upto = inside_.begin() + static_cast<std::ptrdiff_t>(std::min(at + gone, inside_.size()));
+
+    many_ -= static_cast<std::size_t>(std::count(from, upto, true));
+
+    const auto rest = inside_.erase(from, upto);
+
+    if (rest != inside_.end()) (void)inside_.insert(rest, came, false);
+}
+
 }

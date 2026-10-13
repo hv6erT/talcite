@@ -39,6 +39,8 @@ private:
 
     void keep(std::size_t rows);
 
+    void moved(std::size_t at, std::size_t gone, std::size_t came);
+
     std::vector<bool> inside_;
     std::size_t many_ = 0;
 };

@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -640,6 +641,161 @@ TRIAL("Table: a new source resets the position and the selection") {
     same(one->first(), std::size_t{0});
     ought(one->chosen().all().empty());
     same(one->rows(), std::size_t{4});
+}
+
+// --- Rows replaced in the middle -----------------------------------------------------------------
+
+namespace {
+
+// A table over a list of names that the trial changes, one column, no heading, hung on `sheet`.
+std::shared_ptr<ui::Table> listed(Sheet& sheet, const std::shared_ptr<std::vector<std::string>>& names) {
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 0, ui::Justify::left}});
+    one->source(
+        [names](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            for (std::size_t at = which; at < names->size() && made.size() < most; ++at)
+                made.push_back(ui::TableRow{ui::TableCell{(*names)[at], {}}});
+
+            return made;
+        },
+        names->size());
+
+    sheet.children().add(one);
+
+    return one;
+}
+
+// Names "r0" to "r<much - 1>".
+std::shared_ptr<std::vector<std::string>> named_rows(std::size_t much) {
+    const auto made = std::make_shared<std::vector<std::string>>();
+
+    for (std::size_t at = 0; at < much; ++at) made->push_back("r" + std::to_string(at));
+
+    return made;
+}
+
+}
+
+// Rows opening below the cursor and folding above it leave the cursor on its row and the view where
+// it stood; the new rows are fetched, and no event says the cursor moved, because it did not.
+TRIAL("Table: rows replaced around the cursor keep its row and the view") {
+    Sheet sheet;
+
+    const auto names = named_rows(20);
+    const auto one = listed(sheet, names);
+
+    int moves = 0;
+
+    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+        ++moves;
+
+        return false;
+    });
+
+    (void)sheet.render({{0, 0}, {10, 5}});
+
+    one->first(4);
+    one->which(6);
+    moves = 0;
+
+    // Three rows open under r6.
+    names->insert(names->begin() + 7, {"a", "b", "c"});
+    one->changed(7, 0, 3);
+
+    same(*one->which(), std::size_t{6});
+    same(one->first(), std::size_t{4});
+    same(one->rows(), std::size_t{23});
+
+    View made = sheet.render({{0, 0}, {10, 5}});
+
+    same(said(made, 2), std::string{"r6"});
+    same(said(made, 3), std::string{"a"});
+
+    // r2 and r3 fold away above the view: everything below moves up by two, with the cursor.
+    names->erase(names->begin() + 2, names->begin() + 4);
+    one->changed(2, 2, 0);
+
+    same(*one->which(), std::size_t{4});
+    same(one->first(), std::size_t{2});
+
+    made = sheet.render({{0, 0}, {10, 5}});
+
+    same(said(made, 2), std::string{"r6"});
+    same(moves, 0);
+}
+
+// A cursor on a row that went away stands where the rows were, and that is a move; rows pushed
+// below the window pull the view after the cursor.
+TRIAL("Table: a cursor on replaced rows moves to their place, and stays in view") {
+    Sheet sheet;
+
+    const auto names = named_rows(10);
+    const auto one = listed(sheet, names);
+
+    int moves = 0;
+
+    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+        ++moves;
+
+        return false;
+    });
+
+    (void)sheet.render({{0, 0}, {10, 4}});
+
+    one->which(3);
+    moves = 0;
+
+    one->changed(2, 3, 1);
+
+    same(*one->which(), std::size_t{2});
+    same(one->rows(), std::size_t{8});
+    same(moves, 1);
+
+    // Six rows open above the cursor at the top of the view: the cursor goes down with its row, and
+    // the view follows it so it is still seen.
+    one->which(1);
+    one->first(0);
+    moves = 0;
+
+    one->changed(1, 0, 6);
+
+    same(*one->which(), std::size_t{7});
+    same(one->first(), std::size_t{4});
+    same(moves, 0);
+
+    // Everything goes: no current row. Rows that come again bring the cursor to the first.
+    one->changed(0, 14, 0);
+
+    ought(!one->which().has_value());
+    same(one->rows(), std::size_t{0});
+
+    moves = 0;
+
+    one->changed(0, 0, 3);
+
+    same(one->which(), std::optional<std::size_t>{0});
+    same(moves, 1);
+}
+
+// The selection stays with its rows: those after the change move, those replaced go.
+TRIAL("Table: the selection follows rows replaced in the middle") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 10);
+
+    one->chosen().add(1);
+    one->chosen().add(4);
+    one->chosen().add(8);
+
+    one->changed(3, 2, 5);
+
+    ought(one->chosen().all() == std::vector<std::size_t>({1, 11}));
+    same(one->chosen().many(), std::size_t{2});
+    same(one->rows(), std::size_t{13});
 }
 
 // --- Scrollbar -----------------------------------------------------------------------------------

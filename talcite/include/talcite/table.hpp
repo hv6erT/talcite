@@ -42,6 +42,8 @@ public:
 
     void source(TableSource given, std::size_t rows);
 
+    void changed(std::size_t at, std::size_t gone, std::size_t came);
+
     [[nodiscard]] bool sourced() const;
 
     void refresh();
