@@ -144,6 +144,21 @@ TRIAL("Clusters: letters with their marks, as names from macOS have them") {
 }
 
 // Korean from macOS comes as jamo: an initial, a vowel and a final make one syllable.
+// A letter with a hundred combining marks does not make one cell of two hundred bytes: a cluster
+// holds at most 30 characters after its first (UAX #15), and the marks past it start clusters of
+// their own. Walking back finds the same boundaries as walking forward.
+TRIAL("Clusters: a cluster holds at most thirty marks after its letter") {
+    std::string text = "e";
+
+    for (int one = 0; one < 100; ++one) text += acute;
+
+    same(cluster_after(text, 0), std::size_t{1 + 30 * 2});
+    same(cluster_after(text, 61), std::size_t{61 + 31 * 2});
+    same(cluster_before(text, 61), std::size_t{0});
+    same(cluster_before(text, text.size()), std::size_t{61 + 31 * 2 + 31 * 2});
+    same(width(text), 4);
+}
+
 TRIAL("Clusters: Hangul jamo make syllables") {
     const std::string han = "\xe1\x84\x92\xe1\x85\xa1\xe1\x86\xab";
     const std::string geul = "\xe1\x84\x80\xe1\x85\xb3\xe1\x86\xaf";

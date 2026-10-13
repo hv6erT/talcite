@@ -40,7 +40,7 @@ public:
 
     [[nodiscard]] Sift how() const;
 
-    [[nodiscard]] std::optional<Hit> forth(std::string_view where, std::size_t from) const;
+    [[nodiscard]] std::optional<Hit> forth(std::string_view where, std::size_t from, bool cut = false) const;
 
     [[nodiscard]] std::optional<Hit> back(std::string_view where, std::size_t upto) const;
 

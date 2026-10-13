@@ -66,6 +66,37 @@ private:
 // through a weak handle.
 std::shared_ptr<Spool> spooled(const Feed& feed, std::size_t whole) { return std::make_shared<Spool>(feed, whole); }
 
+// Up to `most` lines from `which`, read the way a page reads them: the extent of each line, then its
+// bytes in pieces. Nothing while a window is on its way; fewer lines at the end of the document.
+std::optional<std::vector<std::string>> texts(Spool& one, std::size_t which, std::size_t most) {
+    std::vector<std::string> made;
+
+    for (std::size_t line = which; line < which + most; ++line) {
+        const std::optional<Spool::Line> got = one.line(line);
+
+        if (!got.has_value()) {
+            if (one.stalled()) return {};
+
+            break;
+        }
+
+        std::string text;
+
+        for (std::size_t at = got->at; at < got->upto;) {
+            const std::optional<std::string_view> piece = one.read(at, got->upto - at);
+
+            if (!piece.has_value()) return {};
+
+            text += *piece;
+            at += piece->size();
+        }
+
+        made.push_back(std::move(text));
+    }
+
+    return made;
+}
+
 // Asks until the spool stops waiting for a window; between the questions it turns the loop, as
 // `Term` would. Throws if the spool does not settle within 4000 turns.
 template <typename Fn>
@@ -84,7 +115,7 @@ auto settled(Loop& loop, Spool& one, Fn fn) {
 
 // Rows from `which` on, at most `most` of them, once the spool has them; empty if it has none.
 std::vector<std::string> rolled(Loop& loop, Spool& one, std::size_t which, std::size_t most) {
-    return settled(loop, one, [&] { return one.lines(which, most); }).value_or(std::vector<std::string>{});
+    return settled(loop, one, [&] { return texts(one, which, most); }).value_or(std::vector<std::string>{});
 }
 
 // The starting byte of row `which`, once the spool knows it.
@@ -116,7 +147,7 @@ TRIAL("Spool: counts the rows when given") {
 TRIAL("Spool: gives the content without the line end") {
     Spool one{bytes("a\nbb\nccc")};
 
-    const std::vector<std::string> got = *one.lines(0, 10);
+    const std::vector<std::string> got = *texts(one, 0, 10);
 
     same(got.size(), std::size_t{3});
     same(got[0], std::string{"a"});
@@ -145,31 +176,39 @@ TRIAL("Spool: an empty document has zero rows") {
     Spool one{bytes("")};
 
     same(*one.counted(), std::size_t{0});
-    same(one.lines(0, 5)->size(), std::size_t{0});
+    same(texts(one, 0, 5)->size(), std::size_t{0});
     ought(!one.at(0).has_value());
 }
 
 TRIAL("Spool: a carriage return disappears from the end of a row") {
     Spool one{bytes("x\r\ny\r\n")};
 
-    const std::vector<std::string> got = *one.lines(0, 5);
+    const std::vector<std::string> got = *texts(one, 0, 5);
 
     same(got.size(), std::size_t{2});
     same(got[0], std::string{"x"});
     same(got[1], std::string{"y"});
 }
 
-// A binary file has not a single `\n`. Without a limit it would be sucked whole into one string, so
-// it falls apart into equal pieces of a megabyte.
-TRIAL("Spool: a document without line ends falls apart into pieces") {
-    Spool one{bytes(std::string(3u * 1024 * 1024 + 7, 'z'))};
+// A binary file has not a single `\n`, and the spool has no limit on a line: it is one line, however
+// long, and any piece of it can be read without the rest.
+TRIAL("Spool: a document without line ends is one line, however long") {
+    const std::string said(3u * 1024 * 1024 + 7, 'z');
 
-    same(*one.counted(), std::size_t{4});
+    Spool one{bytes(said)};
 
-    const std::vector<std::string> got = *one.lines(3, 1);
+    same(*one.counted(), std::size_t{1});
 
-    same(got.size(), std::size_t{1});
-    same(got[0].size(), std::size_t{7});
+    const std::optional<Spool::Line> got = one.line(0);
+
+    ought(got.has_value());
+    same(got->at, std::size_t{0});
+    same(got->upto, said.size());
+    same(got->next, said.size());
+
+    same(*one.read(2u * 1024 * 1024, 5), std::string_view{"zzzzz"});
+    same(one.read(said.size() - 3, 100)->size(), std::size_t{3});
+    same(one.found(2u * 1024 * 1024), std::size_t{0});
 }
 
 // --- A streaming source --------------------------------------------------------------------------
@@ -200,7 +239,7 @@ TRIAL("Spool: the first question is answered with a request, and after a turn of
 
     one->awoken([&woken] { ++woken; });
 
-    const std::optional<std::vector<std::string>> first = one->lines(0, 5);
+    const std::optional<std::vector<std::string>> first = texts(*one, 0, 5);
 
     ought(!first.has_value());
     ought(one->stalled());
@@ -208,7 +247,7 @@ TRIAL("Spool: the first question is answered with a request, and after a turn of
     same(woken, 0);
 
     // A second question before the turn does not request again: one window in flight at a time.
-    ought(!one->lines(0, 5).has_value());
+    ought(!texts(*one, 0, 5).has_value());
     same(tape.calls(), 1);
 
     const std::vector<std::string> got = rolled(loop, *one, 0, 5);
@@ -281,7 +320,7 @@ TRIAL("Spool: a jump forward and back gives the same as a document in memory") {
     for (const std::size_t which : {std::size_t{0}, std::size_t{15000}, std::size_t{14999},
                                     std::size_t{1}, std::size_t{19999}}) {
         const std::vector<std::string> got = rolled(loop, *one, which, 2);
-        const std::vector<std::string> want = *wzor.lines(which, 2);
+        const std::vector<std::string> want = *texts(wzor, which, 2);
 
         same(got, want);
         same(*placed(loop, *one, which), *wzor.at(which));
@@ -350,7 +389,7 @@ TRIAL("Spool: the window is on its way before scrolling reaches it") {
     same(woken, 2);
 
     // Row 5000 is already in the second window: answered at once, without a request.
-    const std::optional<std::vector<std::string>> got = one->lines(5000, 40);
+    const std::optional<std::vector<std::string>> got = texts(*one, 5000, 40);
 
     ought(got.has_value());
     same(got->size(), std::size_t{40});
@@ -579,4 +618,70 @@ TRIAL("Spool: rewriting from a place throws away the anchors right after it") {
     same(spool->found(at + 2), std::size_t{127});
     same(spool->found(joined + 1), std::size_t{127});
     same(spool->at(128), std::optional<std::size_t>{doc.find('\n', joined) + 1});
+}
+
+// --- Long lines through a stream -----------------------------------------------------------------
+
+// A line far longer than the window comes through: the walk to its end goes window after window and
+// never starts again from the start of the line, so the source is asked about every window once.
+// Before, a line of a megabyte or more was never answered, and the spool kept reading it forever.
+TRIAL("Spool: a line far longer than the window comes through a stream") {
+    Loop loop;
+    Taped tape{std::string(2u * 1024 * 1024, 'x') + "\nkoniec\n"};
+
+    const auto one = spooled(tape.feed(), tape.whole());
+
+    const std::optional<Spool::Line> first = settled(loop, *one, [&] { return one->line(0); });
+
+    ought(first.has_value());
+    same(first->upto, std::size_t{2u * 1024 * 1024});
+    same(first->next, std::size_t{2u * 1024 * 1024 + 1});
+    ought(tape.calls() <= 2 * 1024 / 64 + 4);
+
+    same(rolled(loop, *one, 1, 1), std::vector<std::string>{"koniec"});
+}
+
+// Stepping back over a long line searches backward window by window and goes on from where it
+// stopped while a window was on its way.
+TRIAL("Spool: stepping back over a line longer than the window finds its start") {
+    Loop loop;
+    Taped tape{"a\n" + std::string(2u * 1024 * 1024, 'y') + "\nb\n"};
+
+    const auto one = spooled(tape.feed(), tape.whole());
+
+    same(*placed(loop, *one, 2), std::size_t{2u * 1024 * 1024 + 3});
+
+    const int was = tape.calls();
+
+    one->screen(1);
+
+    same(*placed(loop, *one, 1), std::size_t{2});
+    ought(tape.calls() - was <= 2 * 1024 / 64 + 4);
+}
+
+// The line holding a byte deep in a long line is known as soon as there is no line end between the
+// line's start and the byte: what lies after the byte is never read.
+TRIAL("Spool: the line of a byte in a long line is found without reading the rest of it") {
+    Loop loop;
+    Taped tape{"a\n" + std::string(4u * 1024 * 1024, 'y') + "\nb\n"};
+
+    const auto one = spooled(tape.feed(), tape.whole());
+
+    same(settled(loop, *one, [&] { return one->found(2 + 1024 * 1024); }), std::size_t{1});
+    ought(tape.calls() <= 1024 / 64 + 3);
+}
+
+// A piece far into the document is read on its own, without walking to it.
+TRIAL("Spool: a piece far into the document is read without walking there") {
+    Loop loop;
+    Taped tape{std::string(3u * 1024 * 1024, 'q') + "!"};
+
+    const auto one = spooled(tape.feed(), tape.whole());
+
+    const std::optional<std::string_view> got =
+        settled(loop, *one, [&] { return one->read(3u * 1024 * 1024 - 2, 10); });
+
+    ought(got.has_value());
+    same(std::string{*got}, std::string{"qq!"});
+    same(tape.calls(), 1);
 }

@@ -224,7 +224,14 @@ bool joining(char32_t before, char32_t one, bool pictorial, Rendering how) {
     return false;
 }
 
-// The end of the cluster that starts at `at`, for a given rendering.
+// The most characters a cluster holds after its first (UAX #15, Stream-Safe Text Format).
+constexpr int stream_safe = 30;
+
+// The end of the cluster that starts at `at`, for a given rendering. A cluster holds at most 30
+// characters after its first, the limit of the Stream-Safe Text Format (UAX #15): a letter followed
+// by a million combining marks would otherwise make one cell of a megabyte, read whole to be drawn
+// and taken whole by Backspace. The marks past the limit start a cluster of their own, as a mark
+// with nothing before it does.
 std::size_t ended(std::string_view text, std::size_t at, Rendering how) {
     if (at >= text.size()) return text.size();
 
@@ -242,8 +249,9 @@ std::size_t ended(std::string_view text, std::size_t at, Rendering how) {
 
     char32_t before = first;
     int flags = unicode::regional(first) ? 1 : 0;
+    int joined = 0;
 
-    while (next < text.size()) {
+    while (next < text.size() && joined < stream_safe) {
         std::size_t after = next;
 
         const char32_t one = utf8::decode(text, after);
@@ -258,6 +266,8 @@ std::size_t ended(std::string_view text, std::size_t at, Rendering how) {
 
         before = one;
         next = after;
+
+        ++joined;
     }
 
     return next;

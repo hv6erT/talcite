@@ -19,8 +19,6 @@ public:
     void hold(Bytes given);
 
     void hold(Feed given, std::size_t whole, Bytes head = {});
-
-    void hold(Roll given, std::size_t lines);
 };
 
 }

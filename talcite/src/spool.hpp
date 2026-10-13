@@ -1,10 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
-#include <string>
+#include <string_view>
 #include <vector>
 
 #include "talcite/bytes.hpp"
@@ -17,21 +18,31 @@ class Spool : public std::enable_shared_from_this<Spool> {
 public:
     using Peek = std::function<Bytes(std::size_t at, std::size_t most)>;
 
+    struct Line {
+        std::size_t at = 0;
+        std::size_t upto = 0;
+        std::size_t next = 0;
+    };
+
     Spool(Feed feed, std::size_t whole, Bytes head = {});
 
     Spool(Peek peek, std::size_t whole);
 
     explicit Spool(Bytes given);
 
-    [[nodiscard]] std::optional<std::vector<std::string>> lines(std::size_t which, std::size_t most);
-
     [[nodiscard]] std::optional<std::size_t> at(std::size_t which);
 
-    [[nodiscard]] std::size_t found(std::size_t at);
+    [[nodiscard]] std::optional<Line> line(std::size_t which);
+
+    [[nodiscard]] std::size_t found(std::size_t byte);
+
+    [[nodiscard]] std::optional<std::string_view> read(std::size_t at, std::size_t much, std::size_t least = SIZE_MAX);
 
     [[nodiscard]] std::size_t whole() const { return whole_; }
 
     [[nodiscard]] std::optional<std::size_t> counted() const { return counted_; }
+
+    void counted(std::size_t lines);
 
     [[nodiscard]] bool stalled() const { return stalled_; }
 
@@ -51,9 +62,33 @@ private:
         std::size_t at = 0;
     };
 
+    struct Known {
+        std::size_t line = 0;
+        Line extent;
+        bool open = false;
+    };
+
+    struct Walk {
+        Anchor from;
+        std::size_t reached = 0;
+        bool carriage = false;
+    };
+
+    struct Behind {
+        std::size_t from = 0;
+        std::size_t reached = 0;
+    };
+
     struct Want {
         std::size_t at = 0;
         std::size_t upto = 0;
+    };
+
+    enum class Ended : std::uint8_t { line, short_of, waiting };
+
+    struct Step {
+        Ended how = Ended::waiting;
+        Line extent;
     };
 
     [[nodiscard]] bool cached(std::size_t at, std::size_t upto) const;
@@ -64,15 +99,29 @@ private:
 
     void arrived(std::size_t from, Bytes got);
 
+    void ahead(std::size_t from);
+
     [[nodiscard]] char sign(std::size_t at) const;
 
-    [[nodiscard]] std::size_t forth(std::size_t at, std::string* into);
+    [[nodiscard]] Step forth(Anchor from, std::size_t limit);
 
-    [[nodiscard]] std::size_t back(std::size_t at);
+    [[nodiscard]] std::optional<std::size_t> back(std::size_t at);
 
     [[nodiscard]] Anchor nearest(std::size_t which) const;
 
+    [[nodiscard]] Anchor start_for(std::size_t which) const;
+
+    [[nodiscard]] Anchor start_at(std::size_t byte) const;
+
     void anchored(std::size_t which, std::size_t at);
+
+    void remember(std::size_t which, Line extent, bool open);
+
+    [[nodiscard]] const Known* known(std::size_t which) const;
+
+    [[nodiscard]] const Known* holding(std::size_t byte) const;
+
+    [[nodiscard]] const Known* ending(std::size_t byte) const;
 
     Feed feed_;
     Peek peek_;
@@ -90,9 +139,13 @@ private:
     std::function<void()> awoken_;
 
     Anchor here_;
+    std::optional<Walk> walk_;
+    std::optional<Behind> behind_;
 
     std::vector<Anchor> anchors_;
     std::size_t stride_ = 64;
+
+    std::vector<Known> known_;
 
     std::optional<std::size_t> counted_;
 };

@@ -14,7 +14,6 @@
 #include "talcite/encoding.hpp"
 #include "talcite/root.hpp"
 
-#include "eliding.hpp"
 #include "quilt.hpp"
 #include "spool.hpp"
 
@@ -96,11 +95,15 @@ struct Editor::Kept {
     bool marking = false;
     Block held;
 
-    // The remembered place in the line for vertical arrows. A byte is kept, not a column: a column
-    // would need the tab rule repeated here, which the cutting into pieces already knows. As a
-    // result, on lines with tabs the cursor can drift when moving vertically; to be fixed when it
-    // gets in the way.
-    std::size_t offset = 0;
+    // The remembered column for vertical arrows, counted as the page draws (a tab to the next
+    // multiple of eight, a double-width character two): going down past a short line and on keeps
+    // the column, and a line of other characters is entered at the same place on the screen, not
+    // at the same byte, which could fall in the middle of a letter.
+    std::size_t column = 0;
+
+    // The editor itself, so that a change can tell the page from which line on its memories of
+    // rows and columns are no longer true.
+    Editor* owner = nullptr;
 
     bool readonly = false;
 
@@ -237,6 +240,8 @@ void Editor::Kept::apply(Spool& spool, std::size_t at, const Quilt::Scrap& gone,
     if (was > 0 && before != '\n') --lines;
 
     spool.changed(at, gone.much, came.much, lines);
+
+    if (owner != nullptr) owner->changed(spool.found(at));
 }
 
 // The end of the last insertion after the whole change: its place from before the change moved
@@ -318,6 +323,8 @@ void Editor::Kept::splice(Spool& spool, const std::vector<Splice>& many, const s
     if (was > 0 && before != '\n') --lines;
 
     spool.rewritten(cuts.front().at, static_cast<std::ptrdiff_t>(now) - static_cast<std::ptrdiff_t>(was), lines);
+
+    if (owner != nullptr) owner->changed(spool.found(cuts.front().at));
 }
 
 // A new change cuts off the redo branch: after undoing and typing something else there is nowhere
@@ -387,6 +394,7 @@ Editor::Editor() : Editor(clipboard()) {}
 // An editor with the given clipboard.
 Editor::Editor(Seam<Clipboard> with) : kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
     kept_->clipboard = std::move(with);
+    kept_->owner = this;
 
     role("talcite.editor");
 }
@@ -395,6 +403,7 @@ Editor::Editor(Seam<Clipboard> with) : kept_(std::make_unique<Kept>()), selectio
 Editor::Editor(ScrollShape shape, Seam<Clipboard> with)
     : Page(shape), kept_(std::make_unique<Kept>()), selection_(*this), block_(*this) {
     kept_->clipboard = std::move(with);
+    kept_->owner = this;
 
     role("talcite.editor");
 }
@@ -419,7 +428,7 @@ void Editor::hold(Bytes given) {
 
     kept_->cursor = 0;
     kept_->anchor = 0;
-    kept_->offset = 0;
+    kept_->column = 0;
     kept_->block.reset();
     kept_->marking = false;
 
@@ -551,10 +560,11 @@ void Editor::Selection::extend(std::size_t to) {
     kept.joining = false;
 
     const std::size_t which = owner.spool()->found(want);
+    const std::size_t offset = want - owner.spool()->at(which).value_or(want);
 
-    kept.offset = want - owner.spool()->at(which).value_or(want);
+    kept.column = owner.column_of(Place{which, offset}).value_or(0);
 
-    (void)owner.reveal(which);
+    (void)owner.reveal(Place{which, offset});
 
     // The selection is drawn with tags assembled at every paint, but the picture itself has to be
     // assembled anew; otherwise a moved cursor would change nothing on the screen.
@@ -597,11 +607,7 @@ std::size_t Editor::column() const {
 
     if (!began.has_value() || kept.cursor < *began) return 0;
 
-    const std::optional<std::vector<std::string>> got = spool()->lines(which, 1);
-
-    if (!got.has_value() || got->empty()) return 0;
-
-    return static_cast<std::size_t>(columns(got->front(), kept.cursor - *began));
+    return column_of(Place{which, kept.cursor - *began}).value_or(0);
 }
 
 // The whole document directly.
@@ -740,10 +746,11 @@ void Editor::settled(std::size_t where) {
     kept.anchor = kept.cursor;
 
     const std::size_t which = spool()->found(kept.cursor);
+    const std::size_t offset = kept.cursor - spool()->at(which).value_or(kept.cursor);
 
-    kept.offset = kept.cursor - spool()->at(which).value_or(kept.cursor);
+    kept.column = column_of(Place{which, offset}).value_or(0);
 
-    (void)reveal(which);
+    (void)reveal(Place{which, offset});
 
     invalidate();
     (void)trigger(ScrollEvent{});
@@ -820,10 +827,68 @@ void Editor::front_erase(std::size_t much) {
 
 namespace {
 
-// How many lines are taken from the spool at once. The starting byte is asked only for the first
-// of them, and the rest are counted on; asking for each one would cost a walk from the anchor once
-// per line.
-constexpr std::size_t combing = 64;
+// How far one window of a search reaches. A line is searched in windows of twice this many bytes,
+// one window every this many bytes, and a window takes only the hits that start in its first half:
+// every hit of up to this many bytes is found exactly and in order, whatever the length of the
+// line, and a longer one is not found. `std::regex` cannot read a stream, and a line may be a
+// gigabyte long.
+constexpr std::size_t span = 64 * 1024;
+
+// The bytes [from, upto) of the document, read through the spool in pieces.
+std::string fetched(Spool& spool, std::size_t from, std::size_t upto) {
+    std::string made;
+
+    while (from < upto) {
+        const std::optional<std::string_view> got = spool.read(from, upto - from);
+
+        if (!got.has_value() || got->empty()) break;
+
+        made += *got;
+        from += got->size();
+    }
+
+    return made;
+}
+
+// Every hit of `how` in the line content [at, upto) that starts at or after byte `from`, in order,
+// as document bytes, given to `take`, which returns false to stop. A hit never crosses a line end,
+// as before. A window that does not reach the end of the line is cut (`Comb::forth` is told so:
+// "$" does not match at its end) and holds one byte more at each side, so that a whole word sees
+// what stands next to it.
+template <typename Take>
+void combed(Spool& spool, const Comb& how, std::size_t at, std::size_t upto, std::size_t from, Take take) {
+    std::size_t go = std::max(from, at);
+
+    while (go <= upto) {
+        const std::size_t view = go > at ? go - 1 : at;
+        const std::size_t reach = std::min(upto, go + 2 * span);
+        const bool cut = reach < upto;
+
+        const std::string text = fetched(spool, view, cut ? reach + 1 : upto);
+
+        const std::size_t limit = go + span;
+
+        std::size_t off = go - view;
+        std::size_t next = limit;
+
+        while (true) {
+            const std::optional<Hit> one = how.forth(text, off, cut);
+
+            if (!one.has_value()) break;
+
+            if (cut && (view + one->from >= limit || view + one->upto > reach)) break;
+
+            if (!take(Hit{view + one->from, view + one->upto})) return;
+
+            off = one->upto > one->from ? one->upto : one->from + 1;
+            next = std::max(next, view + off);
+        }
+
+        if (!cut) return;
+
+        go = next;
+    }
+}
 
 }
 
@@ -839,81 +904,55 @@ std::optional<Hit> Editor::find(const Comb& how, std::size_t from, bool back) {
     const std::size_t at = std::min(from, spool()->whole());
     const std::size_t which = spool()->found(at);
 
-    // The lines from the given number, together with the byte each one starts at. The start comes
-    // from the spool for every line, not from adding up lengths: a line holds its text without its
-    // ending, which is one byte (LF) or two (CRLF).
-    const auto batch = [this](std::size_t first, std::size_t most) {
-        std::vector<std::pair<std::size_t, std::string>> made;
+    const auto picked = [this](Hit one) {
+        selection_.set(one.from, one.upto);
 
-        std::vector<std::string> got = spool()->lines(first, most).value_or(std::vector<std::string>{});
-
-        for (std::size_t one = 0; one < got.size(); ++one) {
-            const std::optional<std::size_t> began = spool()->at(first + one);
-
-            if (!began.has_value()) break;
-
-            made.emplace_back(*began, std::move(got[one]));
-        }
-
-        return made;
-    };
-
-    const auto picked = [this](std::size_t began, Hit one) {
-        selection_.set(began + one.from, began + one.upto);
-
-        return std::optional<Hit>{Hit{began + one.from, began + one.upto}};
+        return std::optional<Hit>{one};
     };
 
     if (!back) {
-        std::size_t line = which;
+        for (std::size_t line = which;; ++line) {
+            const std::optional<Spool::Line> got = spool()->line(line);
 
-        while (true) {
-            const auto got = batch(line, combing);
+            if (!got.has_value()) break;
 
-            if (got.empty()) break;
+            std::optional<Hit> hit;
 
-            for (std::size_t one = 0; one < got.size(); ++one) {
-                const std::size_t began = got[one].first;
-                const std::string& text = got[one].second;
+            combed(*spool(), how, got->at, got->upto, line == which ? at : got->at, [&hit](Hit one) {
+                hit = one;
 
-                const std::size_t start = line + one == which ? at - began : 0;
+                return false;
+            });
 
-                if (start > text.size()) continue;
-
-                const std::optional<Hit> found = how.forth(text, start);
-
-                if (found.has_value()) return picked(began, *found);
-            }
-
-            line += got.size();
+            if (hit.has_value()) return picked(*hit);
         }
 
         return {};
     }
 
-    std::size_t high = which;
+    // Backward: the last hit that starts before the place, in the line of the place, then in the
+    // lines above. A regular expression reads in one direction only, so each line is walked from
+    // its start and the last hit kept.
+    for (std::size_t line = which;; --line) {
+        const std::optional<Spool::Line> got = spool()->line(line);
 
-    while (true) {
-        const std::size_t low = high >= combing ? high - combing + 1 : 0;
+        if (got.has_value()) {
+            const std::size_t limit = line == which ? at : SIZE_MAX;
 
-        const auto got = batch(low, high - low + 1);
+            std::optional<Hit> hit;
 
-        if (got.empty()) break;
+            combed(*spool(), how, got->at, got->upto, got->at, [&hit, limit](Hit one) {
+                if (one.from >= limit) return false;
 
-        for (std::size_t one = got.size(); one > 0; --one) {
-            const std::size_t began = got[one - 1].first;
-            const std::string& text = got[one - 1].second;
+                hit = one;
 
-            const std::size_t upto = low + one - 1 == which ? at - began : text.size();
+                return true;
+            });
 
-            const std::optional<Hit> found = how.back(text, std::min(upto, text.size()));
-
-            if (found.has_value()) return picked(began, *found);
+            if (hit.has_value()) return picked(*hit);
         }
 
-        if (low == 0) break;
-
-        high = low - 1;
+        if (line == 0) break;
     }
 
     return {};
@@ -973,32 +1012,18 @@ std::size_t Editor::replace_all(const Comb& how, const std::string& with) {
 
     std::vector<Kept::Splice> many;
 
-    for (std::size_t line = 0;;) {
-        const std::vector<std::string> got = spool()->lines(line, combing).value_or(std::vector<std::string>{});
+    // The comb never returns empty hits (it skips them itself), so every hit moves the search
+    // forward.
+    for (std::size_t line = 0;; ++line) {
+        const std::optional<Spool::Line> got = spool()->line(line);
 
-        if (got.empty()) break;
+        if (!got.has_value()) break;
 
-        // The comb never returns empty hits (it skips them itself), so every hit moves the search
-        // forward. Every line's first byte comes from the spool, since a line ends in LF or CRLF.
-        for (std::size_t each = 0; each < got.size(); ++each) {
-            const std::optional<std::size_t> began = spool()->at(line + each);
+        combed(*spool(), how, got->at, got->upto, got->at, [&many, &kept](Hit one) {
+            many.push_back(Kept::Splice{one.from, kept.text(one.from, one.upto)});
 
-            if (!began.has_value()) break;
-
-            const std::string& text = got[each];
-
-            for (std::size_t start = 0; start <= text.size();) {
-                const std::optional<Hit> one = how.forth(text, start);
-
-                if (!one.has_value()) break;
-
-                many.push_back(Kept::Splice{*began + one->from, text.substr(one->from, one->upto - one->from)});
-
-                start = one->upto;
-            }
-        }
-
-        line += got.size();
+            return true;
+        });
     }
 
     if (many.empty()) return 0;
@@ -1235,58 +1260,59 @@ std::size_t ahead(Quilt& quilt, std::size_t at) {
     return cluster_after(what, 0);
 }
 
+// The byte at `at`, read through the spool; a zero byte past the end of the document.
+char byte_at(Spool& spool, std::size_t at) {
+    const std::optional<std::string_view> got = spool.read(at, 1);
+
+    return got.has_value() && !got->empty() ? got->front() : '\0';
+}
+
+// Whether the byte at `at` belongs to a word, by the "word byte" rule of `encoding.hpp`.
+bool lettered(Spool& spool, std::size_t at) {
+    return in_word(static_cast<char32_t>(static_cast<unsigned char>(byte_at(spool, at))));
+}
+
 // A jump by words. The "word byte" rule comes from `encoding.hpp`, the same one by which the comb
 // searches for whole words and a double click takes a word.
 //
 // Forward: skip the run of the same kind you stand on, then what is not a word, that is, land at
 // the start of the next word. Backward, symmetrically: skip what is not a word, then the word
 // itself, that is, land at the start of this word or the previous one. At the edge of a line the
-// jump goes to the neighboring line; the search is within a line, because the spool speaks in
-// lines.
+// jump goes to the neighboring line. The bytes are read one by one around the cursor, so a jump in
+// a long line costs the word, not the line.
 std::size_t worded(Spool& spool, std::size_t at, bool forth) {
     const std::size_t which = spool.found(at);
-    const std::optional<std::size_t> began = spool.at(which);
+    const std::optional<Spool::Line> line = spool.line(which);
 
-    if (!began.has_value() || at < *began) return at;
+    if (!line.has_value() || at < line->at) return at;
 
-    const std::vector<std::string> got = spool.lines(which, 1).value_or(std::vector<std::string>{});
-    const std::string text = got.empty() ? std::string{} : got.front();
-
-    std::size_t off = std::min(at - *began, text.size());
-
-    const auto lettered = [&text](std::size_t one) {
-        return in_word(static_cast<char32_t>(static_cast<unsigned char>(text[one])));
-    };
+    std::size_t go = std::min(at, line->upto);
 
     if (forth) {
-        if (off >= text.size()) return spool.at(which + 1).value_or(at);
+        if (go >= line->upto) return line->next < spool.whole() ? line->next : at;
 
-        const bool kind = lettered(off);
+        const bool kind = lettered(spool, go);
 
-        while (off < text.size() && lettered(off) == kind) ++off;
+        while (go < line->upto && lettered(spool, go) == kind) ++go;
 
-        while (off < text.size() && !lettered(off)) ++off;
+        while (go < line->upto && !lettered(spool, go)) ++go;
 
-        return *began + off;
+        return go;
     }
 
-    if (off == 0) {
+    if (go == line->at) {
         if (which == 0) return at;
 
-        const std::optional<std::size_t> prev = spool.at(which - 1);
+        const std::optional<Spool::Line> before = spool.line(which - 1);
 
-        if (!prev.has_value()) return at;
-
-        const std::vector<std::string> before = spool.lines(which - 1, 1).value_or(std::vector<std::string>{});
-
-        return *prev + (before.empty() ? 0 : before.front().size());
+        return before.has_value() ? before->upto : at;
     }
 
-    while (off > 0 && !lettered(off - 1)) --off;
+    while (go > line->at && !lettered(spool, go - 1)) --go;
 
-    while (off > 0 && lettered(off - 1)) --off;
+    while (go > line->at && lettered(spool, go - 1)) --go;
 
-    return *began + off;
+    return go;
 }
 
 }
@@ -1325,17 +1351,18 @@ bool Editor::handle(KeyEvent& what) {
             cursor(where);
     };
 
-    // The line with the given number and its start, needed by the vertical arrows, the page keys,
-    // and Home and End.
-    const auto along = [this](std::size_t which, std::size_t offset) {
+    // The place in line `which` at the given column, needed by the vertical arrows and the page
+    // keys: the start of the character in which the column falls, or the end of a shorter line.
+    const auto along = [this](std::size_t which, std::size_t column) -> std::optional<std::size_t> {
         const std::optional<std::size_t> began = spool()->at(which);
 
-        if (!began.has_value()) return std::optional<std::size_t>{};
+        if (!began.has_value()) return {};
 
-        const std::vector<std::string> got = spool()->lines(which, 1).value_or(std::vector<std::string>{});
-        const std::size_t much = got.empty() ? 0 : got.front().size();
+        const std::optional<std::size_t> byte = byte_of(which, column);
 
-        return std::optional<std::size_t>{*began + std::min(offset, much)};
+        if (!byte.has_value()) return {};
+
+        return *began + *byte;
     };
 
     switch (what.key().code()) {
@@ -1382,9 +1409,9 @@ bool Editor::handle(KeyEvent& what) {
             if (upwards && which == 0) return false;
 
             const std::size_t want = upwards ? (much > which ? 0 : which - much) : which + much;
-            const std::size_t offset = kept.offset;
+            const std::size_t column = kept.column;
 
-            std::optional<std::size_t> where = along(want, offset);
+            std::optional<std::size_t> where = along(want, column);
 
             // Paging down near the end of the document has to reach the last line, not refuse to
             // move; otherwise PageDown would stop working on the second-to-last page.
@@ -1392,16 +1419,16 @@ bool Editor::handle(KeyEvent& what) {
                 const std::optional<std::size_t> lines = this->lines();
 
                 if (lines.has_value() && *lines > 0 && which + 1 < *lines)
-                    where = along(*lines - 1, offset);
+                    where = along(*lines - 1, column);
             }
 
             if (!where.has_value()) return false;
 
             went(*where);
 
-            // `extend` stored the new offset, and the old one has to be remembered; otherwise the
+            // `extend` stored the new column, and the old one has to be remembered; otherwise the
             // cursor going down past a short line would lose its column for good.
-            kept.offset = offset;
+            kept.column = column;
 
             return true;
         }
@@ -1415,12 +1442,11 @@ bool Editor::handle(KeyEvent& what) {
         }
 
         case Code::end: {
-            const std::optional<std::size_t> where =
-                along(spool()->found(kept.cursor), SIZE_MAX);
+            const std::optional<Spool::Line> line = spool()->line(spool()->found(kept.cursor));
 
-            if (!where.has_value()) return false;
+            if (!line.has_value()) return false;
 
-            went(*where);
+            went(line->upto);
 
             return true;
         }
@@ -1549,32 +1575,24 @@ bool Editor::handle(DoubleClickEvent& what) {
 
     if (!where.has_value()) return true;
 
-    const std::optional<std::size_t> began = spool()->at(where->line);
+    const std::optional<Spool::Line> line = spool()->line(where->line);
 
-    if (!began.has_value()) return true;
+    if (!line.has_value() || line->upto == line->at) return true;
 
-    const std::vector<std::string> got = spool()->lines(where->line, 1).value_or(std::vector<std::string>{});
+    Spool& one = *spool();
 
-    if (got.empty() || got.front().empty()) return true;
+    const std::size_t at = std::min(line->at + where->byte, line->upto - 1);
 
-    const std::string& text = got.front();
-
-    const std::size_t at = std::min(where->byte, text.size() - 1);
-
-    const auto lettered = [](char one) {
-        return in_word(static_cast<char32_t>(static_cast<unsigned char>(one)));
-    };
-
-    const bool kind = lettered(text[at]);
+    const bool kind = lettered(one, at);
 
     std::size_t from = at;
     std::size_t upto = at + 1;
 
-    while (from > 0 && lettered(text[from - 1]) == kind) --from;
+    while (from > line->at && lettered(one, from - 1) == kind) --from;
 
-    while (upto < text.size() && lettered(text[upto]) == kind) ++upto;
+    while (upto < line->upto && lettered(one, upto) == kind) ++upto;
 
-    selection_.set(*began + from, *began + upto);
+    selection_.set(from, upto);
 
     return true;
 }

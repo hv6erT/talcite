@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-#include "talcite/feed.hpp"
 #include "talcite/markednode.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
@@ -44,7 +43,11 @@ public:
 
     void end();
 
-    bool slide(int lines);
+    bool slide(int rows);
+
+    [[nodiscard]] std::size_t left() const;
+
+    void left(std::size_t columns);
 
     [[nodiscard]] bool wrapped() const;
 
@@ -77,15 +80,17 @@ protected:
 
     void hold(std::shared_ptr<Spool> given);
 
-    void hold(Roll given, std::size_t lines);
-
     [[nodiscard]] const std::shared_ptr<Spool>& spool() const;
 
-    [[nodiscard]] int pieces(std::size_t which) const;
+    [[nodiscard]] std::optional<std::size_t> column_of(Place where) const;
+
+    [[nodiscard]] std::optional<std::size_t> byte_of(std::size_t line, std::size_t column);
 
     void invalidate();
 
-    bool reveal(std::size_t line);
+    void changed(std::size_t line);
+
+    bool reveal(Place where);
 
     [[nodiscard]] std::optional<Spot> spot_of(Place where) const;
 
@@ -110,7 +115,7 @@ private:
 
     void page(int pages);
 
-    bool move_by(int lines);
+    bool move_by(int rows);
 
     void spread(Size given);
 

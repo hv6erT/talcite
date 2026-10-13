@@ -127,7 +127,7 @@ namespace {
 
 // The first match from the given byte on, still without the whole-word condition.
 std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::string_view where,
-                            std::size_t from, bool cased) {
+                            std::size_t from, bool cased, bool cut) {
     if (from > where.size()) return {};
 
     if (exp == nullptr) {
@@ -154,6 +154,10 @@ std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::s
         // before it.
         if (at > 0) flags |= std::regex_constants::match_prev_avail;
 
+        // A piece cut out of a longer line does not end where the line does, so "$" must not match
+        // at its end.
+        if (cut) flags |= std::regex_constants::match_not_eol;
+
         if (!std::regex_search(where.data() + at, end, got, *exp, flags)) return {};
 
         const std::size_t began = at + static_cast<std::size_t>(got.position(0));
@@ -170,8 +174,9 @@ std::optional<Hit> earliest(const std::regex* exp, std::string_view what, std::s
 }
 
 // The first hit that begins at or after `from`, honoring the whole-word option; nothing when the
-// pattern is not ready or there is no further hit.
-std::optional<Hit> Comb::forth(std::string_view where, std::size_t from) const {
+// pattern is not ready or there is no further hit. `cut` says that `where` is a piece of a longer
+// line that goes on past its end, as when a long line is searched window by window.
+std::optional<Hit> Comb::forth(std::string_view where, std::size_t from, bool cut) const {
     const Kept& kept = *kept_;
 
     if (!kept.ready) return {};
@@ -180,7 +185,7 @@ std::optional<Hit> Comb::forth(std::string_view where, std::size_t from) const {
 
     while (at <= where.size()) {
         const std::optional<Hit> one =
-            earliest(kept.exp.has_value() ? &*kept.exp : nullptr, kept.what, where, at, kept.how.cased);
+            earliest(kept.exp.has_value() ? &*kept.exp : nullptr, kept.what, where, at, kept.how.cased, cut);
 
         if (!one.has_value()) return {};
 

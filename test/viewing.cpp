@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <map>
 #include <memory>
 #include <optional>
 #include <random>
@@ -120,64 +119,9 @@ TRIAL("Viewer: a document in memory gives the full set of values at once") {
     same(*one->whole(), std::size_t{8});
 }
 
-// A row source does not think in bytes, so `at` and `whole` stay empty. That is not something
-// missing but the truth about what was given.
-TRIAL("Viewer: a row source does not know bytes") {
-    Sheet sheet;
-
-    const auto one = std::make_shared<ui::Viewer>();
-
-    one->hold([](std::size_t which, std::size_t most) {
-        std::vector<std::string> made;
-
-        for (std::size_t at = which; at < 10 && made.size() < most; ++at)
-            made.push_back("w" + std::to_string(at));
-
-        return std::optional{made};
-    },
-              10);
-
-    sheet.children().add(one);
-
-    ought(one->held());
-    same(*one->lines(), std::size_t{10});
-    same(*one->first(), std::size_t{0});
-    ought(!one->at().has_value());
-    ought(!one->whole().has_value());
-}
-
 // The page holds the document, and a new one replaces the previous one entirely, including its row
-// count.
-TRIAL("Viewer: a roll after bytes replaces the document entirely") {
-    Sheet sheet;
-
-    const auto one = shown(sheet, "a\nbb\nccc");
-
-    same(*one->lines(), std::size_t{3});
-
-    one->hold([](std::size_t which, std::size_t most) {
-        std::vector<std::string> made;
-
-        for (std::size_t at = which; at < 10 && made.size() < most; ++at) made.push_back("w" + std::to_string(at));
-
-        return std::optional{made};
-    },
-              10);
-
-    same(*one->lines(), std::size_t{10});
-    ought(!one->at().has_value());
-    ought(!one->whole().has_value());
-
-    one->hold(bytes("x\ny"));
-
-    same(*one->lines(), std::size_t{2});
-    same(*one->at(), std::size_t{0});
-    same(*one->whole(), std::size_t{3});
-}
-
-// A jump by byte lives in the page, so a roll, which does not know bytes, ignores it, and a spool
-// carries it out.
-TRIAL("Viewer: a jump by byte works with bytes and does nothing with a roll") {
+// count and its place.
+TRIAL("Viewer: a new document replaces the previous one entirely") {
     Sheet sheet;
 
     const auto one = shown(sheet, "a\nbb\nccc");
@@ -187,33 +131,16 @@ TRIAL("Viewer: a jump by byte works with bytes and does nothing with a roll") {
     same(*one->first(), std::size_t{2});
     same(*one->at(), std::size_t{5});
 
-    one->hold([](std::size_t which, std::size_t most) {
-        std::vector<std::string> made;
+    one->hold(bytes("x\ny"));
 
-        for (std::size_t at = which; at < 10 && made.size() < most; ++at) made.push_back("w" + std::to_string(at));
-
-        return std::optional{made};
-    },
-              10);
-
-    one->at(std::size_t{5});
-
+    same(*one->lines(), std::size_t{2});
     same(*one->first(), std::size_t{0});
+    same(*one->at(), std::size_t{0});
+    same(*one->whole(), std::size_t{3});
 }
 
-// What can no longer be written: a bare page, a roll in the editor (which can edit only what it
-// holds in its own quilt), and a document given to the page from outside.
-namespace {
-
-template <typename One>
-concept rolled = requires(One& one, Roll given) { one.hold(given, std::size_t{0}); };
-
-}
-
+// What can no longer be written: a bare page, and a document given to the page from outside.
 static_assert(!std::is_default_constructible_v<ui::Page>);
-static_assert(!rolled<ui::Editor>);
-static_assert(!rolled<ui::Page>);
-static_assert(rolled<ui::Viewer>);
 
 // --- Drawing -------------------------------------------------------------------------------------
 
@@ -574,146 +501,116 @@ TRIAL("Viewer: stepping by pieces agrees with what is drawn") {
     }
 }
 
-// Movement looks at every row of the document once. A step within a wrapped row must not cut it
-// again for every screen row, and clipping to the end must not walk the screen again after every
-// step back; otherwise a page down near the end would fetch the same rows dozens of times.
-TRIAL("Viewer: movement asks for each row at most once") {
-    std::map<std::size_t, int> asked;
+// Moving about a document that fits in one window of the spool never goes back to the source: the
+// rows are read from the window, whatever the movement.
+TRIAL("Viewer: movement within a window does not go back to the source") {
+    std::string text;
 
+    for (int at = 0; at < 40; ++at) text += std::string(at % 3 == 0 ? 25 : 3, 'x') + "\n";
+
+    const Bytes raw = bytes(text);
+
+    int calls = 0;
+
+    Loop loop;
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Viewer>();
 
-    one->hold([&asked](std::size_t which, std::size_t most) {
-        std::vector<std::string> made;
+    one->hold([&calls, raw](std::size_t at, std::size_t most) {
+        ++calls;
 
-        for (std::size_t at = which; at < 40 && made.size() < most; ++at) {
-            ++asked[at];
-
-            made.push_back(std::string(at % 3 == 0 ? 25 : 3, 'x'));
-        }
-
-        return std::optional{made};
+        return fed(raw)(at, most);
     },
-              40);
+              raw.size());
 
     sheet.children().add(one);
 
     one->scrollbar(false);
+
+    ought(turned(loop, sheet, {10, 6}, [&one] { return one->shown() > 0; }));
+
+    const int was = calls;
+
+    for (int step = 0; step < 16; ++step) one->slide(4);
+
+    for (int step = 0; step < 16; ++step) one->slide(-5);
+
+    one->first(39);
+    one->end();
 
     (void)sheet.render({{0, 0}, {10, 6}});
 
-    const auto once = [&asked, &one](int lines) {
-        asked.clear();
-
-        one->slide(lines);
-
-        ought(!asked.empty());
-
-        for (const auto& [line, much] : asked) same(much, 1);
-    };
-
-    for (int step = 0; step < 16; ++step) once(4);
-
-    same(*one->first(), std::size_t{36});
-
-    for (int step = 0; step < 16; ++step) once(-5);
-
-    same(*one->first(), std::size_t{0});
-
-    asked.clear();
-
-    one->first(39);
-
-    for (const auto& [line, much] : asked) same(much, 1);
+    same(calls, was);
 }
 
-// With wrapping one long row may fill the whole screen. The layout asks for no more rows than it
-// may still show, starting from one: a document of long rows does not bring thirty of them, whole,
-// on every repaint and so on every key in an editor.
-TRIAL("Viewer: a layout asks only for the rows it can show") {
-    std::size_t brought = 0;
+// A frame reads only what it shows. A line of four megabytes, wrapped, shows its first rows, and the
+// source is asked for one window, not for the line; scrolling down through it asks for the windows
+// it passes, no more.
+TRIAL("Viewer: a frame of a very long line reads only what it shows") {
+    const Bytes raw = bytes(std::string(4u * 1024 * 1024, 'x'));
 
+    int calls = 0;
+
+    Loop loop;
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Viewer>();
 
-    one->hold([&brought](std::size_t which, std::size_t most) {
-        std::vector<std::string> made;
+    one->hold([&calls, raw](std::size_t at, std::size_t most) {
+        ++calls;
 
-        for (std::size_t at = which; at < 100 && made.size() < most; ++at) {
-            made.push_back(std::string(10000, 'x'));
-
-            ++brought;
-        }
-
-        return std::optional{made};
+        return fed(raw)(at, most);
     },
-              100);
+              raw.size());
 
     sheet.children().add(one);
 
     one->scrollbar(false);
 
-    (void)sheet.render({{0, 0}, {40, 10}});
+    ought(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    same(calls, 1);
 
-    ought(brought >= 1 && brought <= 2);
+    for (int step = 0; step < 100; ++step) one->slide(10);
 
-    brought = 0;
-
-    one->wrapped(false);
-
-    (void)sheet.render({{0, 0}, {40, 10}});
-
-    ought(brought >= 10 && brought <= 11);
+    ought(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    same(*one->at(), std::size_t{100 * 10 * 40});
+    ought(calls <= 2);
 }
 
-// A row that waits for its window stops clipping to the end in both directions: a walk of the
-// screen that runs into it does not know where the end is, so it clips nothing, and a step back
-// that enters it stops on it.
-TRIAL("Viewer: clipping to the end stops on a row that waits") {
+// A source that has not answered yet stops clipping to the end: a walk of the screen that runs into
+// a missing window does not know where the end is, so it clips nothing. Here the first window holds
+// eight rows and the next one never comes.
+TRIAL("Viewer: clipping to the end stops on a window that waits") {
+    const std::string head = many(8);
+
+    auto waiting = std::make_shared<std::vector<Settle<Bytes>>>();
+
+    Loop loop;
     Sheet sheet;
 
     const auto one = std::make_shared<ui::Viewer>();
 
-    one->hold([](std::size_t which, std::size_t most) -> std::optional<std::vector<std::string>> {
-        if (which == 5) return {};
+    one->hold([waiting](std::size_t, std::size_t) {
+        auto [made, settle] = promised<Bytes>();
 
-        std::vector<std::string> made;
+        waiting->push_back(std::move(settle));
 
-        for (std::size_t at = which; at < 8 && at != 5 && made.size() < most; ++at) made.push_back("w" + std::to_string(at));
-
-        return made;
+        return std::move(made);
     },
-              8);
+              head.size() + 100000, bytes(head));
 
     sheet.children().add(one);
 
     (void)sheet.render({{0, 0}, {10, 5}});
 
-    one->first(7);
-
-    same(*one->first(), std::size_t{5});
-
-    one->first(3);
-
-    same(*one->first(), std::size_t{3});
-
-    // A step back onto a row that waits stops at its start; its pieces are unknown, so a step
-    // forward goes straight to the next row. A low screen, so that clipping does not move anything.
-    (void)sheet.render({{0, 0}, {10, 2}});
-
     one->first(6);
 
     same(*one->first(), std::size_t{6});
 
-    one->slide(-1);
-
-    same(*one->first(), std::size_t{5});
-
     one->slide(1);
 
-    same(*one->first(), std::size_t{6});
+    same(*one->first(), std::size_t{7});
 }
 
 // A tab after the cut, alone at the end of a row, is a screen row of spaces, not emptiness that can
@@ -849,21 +746,23 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
     // A source that does not yet have the later rows also gives a scrollbar: the page does not know
     // it is the end, though the four rows that have arrived fill the window exactly.
     {
+        const std::string head = "w0\nw1\nw2\nw3\n";
+
+        auto waiting = std::make_shared<std::vector<Settle<Bytes>>>();
+
+        Loop loop;
         Sheet sheet;
 
         const auto one = std::make_shared<ui::Viewer>(ui::ScrollShape{true, true});
 
-        one->hold(
-            [](std::size_t which, std::size_t most) -> std::optional<std::vector<std::string>> {
-                if (which >= 4) return std::nullopt;
+        one->hold([waiting](std::size_t, std::size_t) {
+            auto [made, settle] = promised<Bytes>();
 
-                std::vector<std::string> made;
+            waiting->push_back(std::move(settle));
 
-                for (std::size_t at = which; at < 4 && made.size() < most; ++at) made.push_back("w" + std::to_string(at));
-
-                return made;
-            },
-            10);
+            return std::move(made);
+        },
+                  head.size() + 100, bytes(head));
         sheet.children().add(one);
 
         same(sheet.render({{0, 0}, {5, 4}}).at({4, 0}).letter, U'▲');
@@ -1499,4 +1398,118 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     (void)sheet.dispatch(drop);
 
     ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 9", 0) == 0; }));
+}
+
+// --- Long lines ----------------------------------------------------------------------------------
+
+// Without wrapping the view goes sideways: the arrows to the sides move it a column, the rows show
+// the columns from the first one shown, a shorter line shows nothing, and Home goes back to the
+// first column.
+TRIAL("Viewer: without wrapping the view scrolls sideways") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "abcdefghij\nxy");
+
+    one->wrapped(false);
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {4, 2}});
+
+    one->left(3);
+
+    View made = sheet.render({{0, 0}, {4, 2}});
+
+    same(said(made, 0), std::string{"defg"});
+    same(said(made, 1), std::string{});
+
+    ui::KeyEvent right{ui::Code::right};
+
+    ought(sheet.dispatch(right));
+    same(one->left(), std::size_t{4});
+    same(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"efgh"});
+
+    ui::KeyEvent home{ui::Code::home};
+
+    ought(sheet.dispatch(home));
+    same(one->left(), std::size_t{0});
+    same(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"abcd"});
+}
+
+// A tab or a double-width character cut by the left edge shows its visible part as spaces, and the
+// columns after it stand where they belong.
+TRIAL("Viewer: a character cut by the left edge shows its visible part") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "\tX\na\xe6\xbc\xa2Y");
+
+    one->wrapped(false);
+
+    (void)sheet.render({{0, 0}, {4, 2}});
+
+    one->left(6);
+
+    const View made = sheet.render({{0, 0}, {4, 2}});
+
+    same(said(made, 0), std::string{"  X"});
+
+    one->left(2);
+
+    same(said(sheet.render({{0, 0}, {4, 2}}), 1), std::string{" Y"});
+}
+
+// A jump to a byte deep in a long wrapped line lands on the row holding it, not on the start of the
+// line, and End stands on the last row of the line.
+TRIAL("Viewer: a jump into a long wrapped line lands on its row") {
+    Sheet sheet;
+
+    std::string text;
+
+    for (int at = 0; at < 10000; ++at) text += static_cast<char>('a' + at % 26);
+
+    const auto one = shown(sheet, text);
+
+    one->scrollbar(false);
+
+    (void)sheet.render({{0, 0}, {10, 3}});
+
+    one->at(std::size_t{5005});
+
+    same(*one->at(), std::size_t{5000});
+    same(said(sheet.render({{0, 0}, {10, 3}}), 0), text.substr(5000, 10));
+
+    one->end();
+
+    const View made = sheet.render({{0, 0}, {10, 3}});
+
+    same(said(made, 2), text.substr(9990, 10));
+    same(*one->at(), std::size_t{9970});
+}
+
+// The scrollbar counts lines while lines are short, and bytes in a document of long lines, where
+// a line scrollbar would stand still over the whole length of each of them.
+TRIAL("Viewer: the scrollbar counts bytes in a document of long lines") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Viewer>(ui::ScrollShape{true});
+
+    one->hold(bytes(std::string(5000, 'a') + "\n" + std::string(5000, 'b') + "\n" + std::string(5000, 'c')));
+
+    sheet.children().add(one);
+
+    (void)sheet.render({{0, 0}, {11, 5}});
+
+    one->focus();
+
+    // The thumb dragged to the middle of the track jumps to the middle of the document in bytes:
+    // into the line of b, not to its start.
+    ui::MouseEvent grab{{10, 1}, ui::Press::down, ui::Mouse::left};
+    ui::MouseEvent pull{{10, 2}, ui::Press::move, ui::Mouse::left};
+    ui::MouseEvent drop{{10, 2}, ui::Press::up, ui::Mouse::left};
+
+    (void)sheet.dispatch(grab);
+    (void)sheet.dispatch(pull);
+    (void)sheet.dispatch(drop);
+
+    same(*one->first(), std::size_t{1});
+    ought(*one->at() > 5001);
 }

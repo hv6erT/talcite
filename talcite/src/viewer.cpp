@@ -7,10 +7,9 @@
 
 namespace talcite::ui {
 
-// The viewer is a page plus three ways for a document to come in. All the drawing, scrolling,
+// The viewer is a page plus two ways for a document to come in. All the drawing, scrolling,
 // marks, questions about bytes and intents waiting for a window live in `Page`; what stays here is
-// only how the document arrives: bytes in memory, a byte source read in windows, or a roll of
-// lines.
+// only how the document arrives: bytes in memory or a byte source read in windows.
 //
 // The spool does not wait for bytes, so the viewer does not wait either: the two things that need
 // a pass over the document, `End` (the line count) and a jump to a byte, leave an intent behind,
@@ -33,9 +32,5 @@ void Viewer::hold(Bytes given) { Page::hold(std::make_shared<Spool>(std::move(gi
 void Viewer::hold(Feed given, std::size_t whole, Bytes head) {
     Page::hold(std::make_shared<Spool>(std::move(given), whole, std::move(head)));
 }
-
-// A roll of lines: there are no bytes, so `at()` and `whole()` are empty, and the line count is
-// the one given.
-void Viewer::hold(Roll given, std::size_t lines) { Page::hold(std::move(given), lines); }
 
 }

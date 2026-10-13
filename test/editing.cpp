@@ -3086,3 +3086,162 @@ TRIAL("Editor: a deleted line end is a separate step") {
 
     same(one->text(), std::string{"\ncd"});
 }
+
+// --- Long lines and columns ----------------------------------------------------------------------
+
+// Going down keeps the column on the screen, not the byte: a line of two-byte letters is entered at
+// the same column, past a shorter line the column comes back, and the cursor never lands in the
+// middle of a letter.
+TRIAL("Editor: the vertical arrows keep the column, not the byte") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "abcd\n\xc4\x85\xc4\x85xyz\nab\nabcd");
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {20, 5}});
+
+    one->cursor(3);
+
+    ui::KeyEvent down{ui::Code::down};
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{5 + 5});
+    same(one->column(), std::size_t{3});
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{13 + 2});
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{16 + 3});
+    same(one->column(), std::size_t{3});
+}
+
+// The column of the cursor deep in a long line is counted from the remembered columns, and agrees
+// with counting from the start of the line.
+TRIAL("Editor: the column deep in a long line") {
+    Sheet sheet;
+
+    std::string text;
+
+    for (int at = 0; at < 20000; ++at) text += at % 7 == 0 ? "\t" : "\xc4\x85";
+
+    const auto one = shown(sheet, text);
+
+    std::size_t column = 0;
+    std::size_t byte = 0;
+
+    for (int at = 0; at < 20000; ++at) {
+        if (at % 997 == 0) {
+            one->cursor(byte);
+
+            same(one->column(), column);
+        }
+
+        if (at % 7 == 0) {
+            column = (column / 8 + 1) * 8;
+            byte += 1;
+        } else {
+            column += 1;
+            byte += 2;
+        }
+    }
+}
+
+// Without wrapping the view follows the cursor sideways: past the right edge the view moves so that
+// the cursor stands in its last column, and the caret is on the screen.
+TRIAL("Editor: without wrapping the view follows the cursor sideways") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, std::string(100, 'a') + "b\nkoniec");
+
+    one->wrapped(false);
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {10, 3}});
+
+    one->cursor(100);
+
+    const View made = sheet.render({{0, 0}, {10, 3}});
+
+    same(one->left(), std::size_t{91});
+    same(said(made, 0), std::string{"aaaaaaaaab"});
+    same(*one->caret(), (ui::Spot{9, 0}));
+
+    one->cursor(0);
+
+    (void)sheet.render({{0, 0}, {10, 3}});
+
+    same(one->left(), std::size_t{0});
+}
+
+// A line longer than the search windows: a hit past them is found at its byte, a hit lying across
+// the boundary of two windows too, and "$" does not match at the end of a window, only at the end
+// of the line.
+TRIAL("Editor: searching a line longer than the search windows") {
+    Sheet sheet;
+
+    const std::string text = std::string(64 * 1024 - 2, 'x') + "igla" + std::string(300 * 1024, 'x') + "igla" + "b";
+
+    const auto one = shown(sheet, text);
+
+    const Comb plain{"igla", Sift{false, false, false}};
+
+    same(one->find(plain, 0, false)->from, std::size_t{64 * 1024 - 2});
+    same(one->find(plain, 64 * 1024, false)->from, text.size() - 5);
+    same(one->find(plain, text.size(), true)->from, text.size() - 5);
+
+    const Comb pattern{"ig.a", Sift{true, false, false}};
+
+    same(one->find(pattern, 64 * 1024, false)->from, text.size() - 5);
+
+    const Comb end{"x$", Sift{true, false, false}};
+
+    ought(!one->find(end, 0, false).has_value());
+
+    const Comb last{"b$", Sift{true, false, false}};
+
+    same(one->find(last, 0, false)->from, text.size() - 1);
+}
+
+// "Replace all" in a long line finds every hit exactly once, those across window boundaries
+// included.
+TRIAL("Editor: replacing all in a long line takes every hit once") {
+    Sheet sheet;
+
+    std::string text;
+
+    for (int at = 0; at < 3000; ++at) text += std::string(97, 'x') + "abc";
+
+    const auto one = shown(sheet, text);
+
+    const Comb how{"abc", Sift{false, false, false}};
+
+    same(one->replace_all(how, "d"), std::size_t{3000});
+    same(one->text().size(), std::size_t{3000 * 98});
+    ought(one->text().find("abc") == std::string::npos);
+}
+
+// With wrapping, the caret of a cursor in the second row of a line stands in that row, where the
+// character is drawn, not at the end of the first row.
+TRIAL("Editor: the caret in a wrapped line stands in the row of its character") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "abcdefghij");
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {4, 3}});
+
+    one->cursor(6);
+
+    (void)sheet.render({{0, 0}, {4, 3}});
+
+    same(*one->caret(), (ui::Spot{2, 1}));
+
+    one->cursor(10);
+
+    (void)sheet.render({{0, 0}, {4, 3}});
+
+    same(*one->caret(), (ui::Spot{2, 2}));
+}
