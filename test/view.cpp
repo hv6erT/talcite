@@ -421,6 +421,110 @@ TRIAL("View: the edge of a paste leaves no half of a double-width character") {
     same(one.at({2, 0}).letter, U' ');
 }
 
+// A window is a view with a transparent rim and a shadow, so the edge of what it covers lies inside
+// its rectangle. A double-width character below is cut there and nowhere else: one under the rim
+// stays whole.
+TRIAL("View: a window cuts double-width characters below only at its own edge") {
+    View one{{8, 1}};
+    one.put({0, 0}, U'映', Style{});
+    one.put({2, 0}, U'画', Style{});
+    one.put({4, 0}, U'の', Style{});
+    one.put({6, 0}, U'名', Style{});
+
+    View two{{8, 1}};
+    two.clear({{0, 0}, {8, 1}});
+    two.put({3, 0}, U'|', Style{});
+    two.put({4, 0}, U'x', Style{});
+    two.put({5, 0}, U'|', Style{});
+
+    one.draw(two, {0, 0});
+
+    same(one.at({0, 0}).letter, U'映');
+    same(one.at({1, 0}).letter, char32_t{0});
+    same(one.at({2, 0}).letter, U' ');
+    same(one.at({3, 0}).letter, U'|');
+    same(one.at({4, 0}).letter, U'x');
+    same(one.at({5, 0}).letter, U'|');
+    same(one.at({6, 0}).letter, U'名');
+    same(one.at({7, 0}).letter, char32_t{0});
+}
+
+TRIAL("View: a shadow keeps a double-width character whole and a window cuts it") {
+    View one{{6, 1}};
+    one.put({0, 0}, U'映', Style{});
+    one.put({2, 0}, U'画', Style{});
+    one.put({4, 0}, U'名', Style{});
+
+    Style dark;
+    dark.faint = true;
+
+    View two{{6, 1}};
+    two.clear({{0, 0}, {6, 1}});
+    two.put({1, 0}, U'a', Style{});
+    two.shade({{2, 0}, {2, 1}}, dark);
+    two.put({4, 0}, U'b', Style{});
+
+    one.draw(two, {0, 0});
+
+    same(one.at({0, 0}).letter, U' ');
+    same(one.at({1, 0}).letter, U'a');
+    same(one.at({2, 0}).letter, U'画');
+    same(one.at({3, 0}).letter, char32_t{0});
+    ought(one.at({2, 0}).style.faint);
+    ought(one.at({3, 0}).style.faint);
+    same(one.at({4, 0}).letter, U'b');
+    same(one.at({5, 0}).letter, U' ');
+}
+
+TRIAL("View: a double-width character drawn without its other half becomes a space") {
+    View one = painted({4, 1}, U'x');
+
+    Style dark;
+    dark.faint = true;
+
+    View two{{4, 1}};
+    two.put({0, 0}, U'漢', Style{});
+    two.put({2, 0}, U'漢', Style{});
+    two.shade({{1, 0}, {1, 1}}, dark);
+    two.shade({{2, 0}, {1, 1}}, dark);
+
+    one.draw(two, {0, 0});
+
+    same(one.at({0, 0}).letter, U' ');
+    same(one.at({1, 0}).letter, U'x');
+    ought(one.at({1, 0}).style.faint);
+    same(one.at({2, 0}).letter, U'x');
+    same(one.at({3, 0}).letter, U' ');
+
+    View three = painted({3, 1}, U'x');
+
+    View four{{3, 1}};
+    four.put({0, 0}, U'漢', Style{});
+    four.put({2, 0}, U'z', Style{});
+
+    three.draw(four, {-1, 0});
+
+    same(three.at({0, 0}).letter, U' ');
+    same(three.at({1, 0}).letter, U'z');
+    same(three.at({2, 0}).letter, U'x');
+}
+
+TRIAL("View: clearing half of a double-width character leaves no half behind") {
+    View one{{4, 1}};
+    one.put({0, 0}, U'漢', Style{});
+    one.put({2, 0}, U'漢', Style{});
+
+    one.clear({{1, 0}, {2, 1}});
+
+    same(one.at({0, 0}).letter, U' ');
+    same(one.at({3, 0}).letter, U' ');
+
+    one.put({1, 0}, U'y', Style{});
+
+    same(one.at({0, 0}).letter, U' ');
+    same(one.at({1, 0}).letter, U'y');
+}
+
 TRIAL("View: asking for a cell outside the page gives an empty one") {
     const View one{{2, 2}};
 

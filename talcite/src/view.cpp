@@ -188,14 +188,21 @@ void View::foreground(ui::Spot at, char32_t what, const Style& how) {
 // Marks cells that the node does not draw although they lie in its rectangle. This happens
 // whenever the shape is not a rectangle: a menu takes the title strip and the box below it, and
 // the corners between them belong to the neighbors. Without this the node would paint them over
-// with spaces.
+// with spaces. A double-width character cut by the edge of `where` loses its other half, so that
+// half becomes a space, as it would under `put`.
 void View::clear(const ui::Area& where) {
-    for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
+    if (where.size.wide <= 0) return;
+
+    for (int y = where.at.y; y < where.at.y + where.size.high; ++y) {
+        broken({where.at.x, y});
+        broken({where.at.x + where.size.wide - 1, y});
+
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
             if (!holds({x, y})) continue;
 
             cell({x, y}) = Cell{U' ', Style{}, Shown::none};
         }
+    }
 }
 
 // Draws `one` onto this view with its top left corner at `at`, clipped to this view, resolving
@@ -213,39 +220,25 @@ void View::draw(const View& one, ui::Spot at) {
     const int upto_x = std::min(at.x + one.size_.wide, size_.wide);
     const int upto_y = std::min(at.y + one.size_.high, size_.high);
 
+    // Whether a cell of `one` puts a character in place of what lies below; a cell that only dims
+    // or leaves what it finds does not.
+    const auto putting = [](const Cell& said) {
+        return said.shown == Shown::own || said.shown == Shown::foreground;
+    };
+
     if (upto_x > from_x)
         for (int y = from_y; y < upto_y; ++y) {
-            // Pairs of characters cut by the edge of the drawn view, on both sides.
-            broken({from_x, y});
-            broken({upto_x - 1, y});
+            const Cell* const row =
+                &one.cells_[static_cast<std::size_t>(y - at.y) * static_cast<std::size_t>(one.size_.wide)];
 
-            for (int x = from_x; x < upto_x; ++x) {
-                const Cell& said = one.cells_[static_cast<std::size_t>(y - at.y) *
-                                                  static_cast<std::size_t>(one.size_.wide) +
-                                              static_cast<std::size_t>(x - at.x)];
+            for (int x = from_x; x < upto_x;) {
+                const Cell& said = row[x - at.x];
 
                 // A cell without its own character only changes the style of what it finds; this
                 // is how a shadow looks: the text below stays visible, only dimmed. A cell that the
                 // node did not draw at all changes nothing.
-                if (said.shown == Shown::none) continue;
-
-                // A foreground cell over emptiness stays what it is and waits one level up, like
-                // a shadow; over anything else it takes that background and becomes an ordinary
-                // cell.
-                if (said.shown == Shown::foreground) {
-                    Cell& under = cell({x, y});
-
-                    if (under.shown == Shown::none) {
-                        under = said;
-
-                        continue;
-                    }
-
-                    const Color paper = under.style.background;
-
-                    under = said;
-                    under.style.background = paper;
-                    under.shown = Shown::own;
+                if (said.shown == Shown::none) {
+                    ++x;
 
                     continue;
                 }
@@ -266,15 +259,54 @@ void View::draw(const View& one, ui::Spot at) {
                     // shadow goes away.
                     under.picture = 0;
 
+                    ++x;
+
                     continue;
                 }
 
-                cell({x, y}) = said;
+                // A run of cells that put characters. Where it starts and where it stops, it may
+                // cover half of a double-width character below, and the half it leaves becomes a
+                // space. This is the real edge of a window with a transparent rim or a shadow,
+                // inside its rectangle. Within the run both halves go together, so the edges are
+                // all there is to check.
+                const int start = x;
+
+                if (x > 0 && cell({x, y}).letter == 0) cell({x - 1, y}).letter = U' ';
+
+                char32_t covered = U' ';
+
+                for (; x < upto_x && putting(row[x - at.x]); ++x) {
+                    const Cell& put = row[x - at.x];
+                    Cell& under = cell({x, y});
+
+                    covered = under.letter;
+
+                    // A foreground cell over emptiness stays what it is and waits one level up,
+                    // like a shadow; over anything else it takes that background and becomes an
+                    // ordinary cell.
+                    if (put.shown == Shown::foreground && under.shown != Shown::none) {
+                        const Color paper = under.style.background;
+
+                        under = put;
+                        under.style.background = paper;
+                        under.shown = Shown::own;
+                    } else {
+                        under = put;
+                    }
+                }
+
+                if (x < size_.wide && width(covered) == 2 && cell({x, y}).letter == 0)
+                    cell({x, y}).letter = U' ';
+
+                // A double-width character of `one` whose other half does not come with it (cut off
+                // by the edge of this view, or dimmed or left out in `one`) would cover a column it
+                // does not own or leave a hole, so a space stands in for it. `put` and `clear` keep
+                // the two halves together within a view, so this too can happen only at the ends of
+                // a run.
+                if (cell({start, y}).letter == 0) cell({start, y}).letter = U' ';
+
+                if (width(cell({x - 1, y}).letter) == 2) cell({x - 1, y}).letter = U' ';
             }
-
-            if (cell({from_x, y}).letter == 0) cell({from_x, y}).letter = U' ';
-
-            if (width(cell({upto_x - 1, y}).letter) == 2) cell({upto_x - 1, y}).letter = U' ';
         }
 }
 
