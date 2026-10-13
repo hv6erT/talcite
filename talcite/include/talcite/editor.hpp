@@ -125,7 +125,7 @@ public:
 
     void line(std::size_t which);
 
-    [[nodiscard]] std::size_t column() const;
+    [[nodiscard]] std::size_t column();
 
     [[nodiscard]] Selection& selection() { return selection_; }
 

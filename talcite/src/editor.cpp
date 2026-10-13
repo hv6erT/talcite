@@ -95,10 +95,11 @@ struct Editor::Kept {
     bool marking = false;
     Block held;
 
-    // The remembered column for vertical arrows, counted as the page draws (a tab to the next
-    // multiple of eight, a double-width character two): going down past a short line and on keeps
-    // the column, and a line of other characters is entered at the same place on the screen, not
-    // at the same byte, which could fall in the middle of a letter.
+    // The remembered column for vertical arrows: the column in the cursor's screen row, counted as
+    // the page draws it (a tab to the next multiple of eight, a double-width character two). Going
+    // down past a short row and on keeps the column, and a row of other characters is entered at
+    // the same place on the screen, not at the same byte, which could fall in the middle of a
+    // letter.
     std::size_t column = 0;
 
     // The editor itself, so that a change can tell the page from which line on its memories of
@@ -562,7 +563,7 @@ void Editor::Selection::extend(std::size_t to) {
     const std::size_t which = owner.spool()->found(want);
     const std::size_t offset = want - owner.spool()->at(which).value_or(want);
 
-    kept.column = owner.column_of(Place{which, offset}).value_or(0);
+    kept.column = owner.column_in_row(Place{which, offset}).value_or(0);
 
     (void)owner.reveal(Place{which, offset});
 
@@ -597,7 +598,7 @@ void Editor::line(std::size_t which) {
 // The column counted in cells, not in bytes: the status bar shows what is visible, and a tab is
 // visible as eight places. `cursor()` returns the byte, so both measures are available, just as
 // with the scroll bar, which goes by lines at one time and by bytes at another.
-std::size_t Editor::column() const {
+std::size_t Editor::column() {
     Kept& kept = *kept_;
 
     if (!spool()) return 0;
@@ -607,7 +608,7 @@ std::size_t Editor::column() const {
 
     if (!began.has_value() || kept.cursor < *began) return 0;
 
-    return column_of(Place{which, kept.cursor - *began}).value_or(0);
+    return column_in_line(Place{which, kept.cursor - *began}).value_or(0);
 }
 
 // The whole document directly.
@@ -748,7 +749,7 @@ void Editor::settled(std::size_t where) {
     const std::size_t which = spool()->found(kept.cursor);
     const std::size_t offset = kept.cursor - spool()->at(which).value_or(kept.cursor);
 
-    kept.column = column_of(Place{which, offset}).value_or(0);
+    kept.column = column_in_row(Place{which, offset}).value_or(0);
 
     (void)reveal(Place{which, offset});
 
@@ -1351,20 +1352,6 @@ bool Editor::handle(KeyEvent& what) {
             cursor(where);
     };
 
-    // The place in line `which` at the given column, needed by the vertical arrows and the page
-    // keys: the start of the character in which the column falls, or the end of a shorter line.
-    const auto along = [this](std::size_t which, std::size_t column) -> std::optional<std::size_t> {
-        const std::optional<std::size_t> began = spool()->at(which);
-
-        if (!began.has_value()) return {};
-
-        const std::optional<std::size_t> byte = byte_of(which, column);
-
-        if (!byte.has_value()) return {};
-
-        return *began + *byte;
-    };
-
     switch (what.key().code()) {
         case Code::enter: insert("\n"); return true;
 
@@ -1390,6 +1377,9 @@ bool Editor::handle(KeyEvent& what) {
                            : kept.cursor + ahead(*kept.quilt, kept.cursor));
             return true;
 
+        // The vertical arrows and the page keys go by screen rows, as they are drawn: with wrapping
+        // a long line is walked row by row, not jumped over, and without wrapping a row is a line.
+        // The column stays the one remembered, not the one of the row passed through.
         case Code::up:
         case Code::down:
         case Code::pageup:
@@ -1397,37 +1387,30 @@ bool Editor::handle(KeyEvent& what) {
             const Code code = what.key().code();
             const bool upwards = code == Code::up || code == Code::pageup;
 
-            const std::size_t much =
-                code == Code::up || code == Code::down
-                    ? 1
-                    : static_cast<std::size_t>(std::max(shown(), std::size_t{1}));
+            const int much = code == Code::up || code == Code::down ? 1 : std::max(area().size.high, 1);
 
             const std::size_t which = spool()->found(kept.cursor);
+            const std::optional<std::size_t> began = spool()->at(which);
 
-            // There is nowhere to go above the first line or below the last one. The key is then
-            // handed to an ancestor instead of being eaten: a tab or a list above may use it.
-            if (upwards && which == 0) return false;
+            if (!began.has_value()) return false;
 
-            const std::size_t want = upwards ? (much > which ? 0 : which - much) : which + much;
             const std::size_t column = kept.column;
 
-            std::optional<std::size_t> where = along(want, column);
+            // There is nowhere to go above the first row or below the last one. The key is then
+            // handed to an ancestor instead of being eaten: a tab or a list above may use it. A page
+            // key near an edge goes as far as there is.
+            const std::optional<Place> to = rows_away(Place{which, kept.cursor - *began}, upwards ? -much : much, column);
 
-            // Paging down near the end of the document has to reach the last line, not refuse to
-            // move; otherwise PageDown would stop working on the second-to-last page.
-            if (!where.has_value() && !upwards && much > 1) {
-                const std::optional<std::size_t> lines = this->lines();
+            if (!to.has_value()) return false;
 
-                if (lines.has_value() && *lines > 0 && which + 1 < *lines)
-                    where = along(*lines - 1, column);
-            }
+            const std::optional<std::size_t> start = spool()->at(to->line);
 
-            if (!where.has_value()) return false;
+            if (!start.has_value()) return false;
 
-            went(*where);
+            went(*start + to->byte);
 
             // `extend` stored the new column, and the old one has to be remembered; otherwise the
-            // cursor going down past a short line would lose its column for good.
+            // cursor going down past a short row would lose its column for good.
             kept.column = column;
 
             return true;

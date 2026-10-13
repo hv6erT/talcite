@@ -661,6 +661,71 @@ struct Page::Kept {
             [column](std::size_t much, std::size_t room, std::size_t) { return much + std::max<std::size_t>(room, 1) > column; });
     }
 
+    // The column of byte `byte` in the wrapped row starting at `at`, counted from the row's start as
+    // the row is drawn; past the end of the row, the column after its last character.
+    std::optional<std::size_t> column_in(std::size_t at, std::size_t byte) {
+        Reader reader{*spool, at};
+
+        int much = 0;
+
+        while (reader.at() < byte) {
+            const std::optional<bool> end = reader.ending();
+
+            if (!end.has_value()) return {};
+
+            if (*end || much >= wide()) break;
+
+            const std::string_view sign = *reader.next();
+
+            if (sign == "\t") {
+                much = std::min(((much / tabbing) + 1) * tabbing, wide());
+            } else {
+                const int room = width(sign);
+
+                if (much > 0 && much + room > wide()) break;
+
+                much += room;
+            }
+        }
+
+        return static_cast<std::size_t>(much);
+    }
+
+    // The byte of the character in which column `column` falls in the wrapped row starting at `at`;
+    // past the end of a row that ends its line, the end of the line, and past the end of a row that
+    // does not, its last character, because the byte after it already belongs to the next row.
+    std::optional<std::size_t> byte_in(std::size_t at, std::size_t column) {
+        Reader reader{*spool, at};
+
+        std::size_t much = 0;
+        std::size_t last = at;
+
+        const std::size_t wide_row = static_cast<std::size_t>(wide());
+
+        while (true) {
+            const std::optional<bool> end = reader.ending();
+
+            if (!end.has_value()) return {};
+
+            if (*end) return reader.at();
+
+            if (much >= wide_row) return last;
+
+            const std::size_t was = reader.at();
+            const std::string_view sign = *reader.next();
+
+            const std::size_t room = sign == "\t" ? std::min(((much / tabbing) + 1) * tabbing, wide_row) - much
+                                                  : static_cast<std::size_t>(width(sign));
+
+            if (much > 0 && sign != "\t" && much + room > wide_row) return last;
+
+            if (much + std::max<std::size_t>(room, 1) > column) return was;
+
+            last = was;
+            much += room;
+        }
+    }
+
     // Where the row after the one starting at `at` in line `line` starts, as a line and a byte; nothing
     // at the end of the document or while a window is on its way (`waiting` then).
     std::optional<std::pair<std::size_t, std::size_t>> after(std::size_t line, std::size_t at, bool& waiting) {
@@ -1128,8 +1193,8 @@ bool Page::reach(std::size_t which) {
 
 // The column (counted from the start of the line, a tab to the next multiple of eight) where the
 // character at this place starts; past the end of the line, the column after it. Nothing while a
-// window is on its way. A question, like `at()`: what it walks it remembers, as the spool does.
-std::optional<std::size_t> Page::column_of(Place where) const {
+// window is on its way. This is the column of a status line; what it walks it remembers.
+std::optional<std::size_t> Page::column_in_line(Place where) {
     Kept& kept = *kept_;
 
     if (!kept.spool) return {};
@@ -1141,23 +1206,118 @@ std::optional<std::size_t> Page::column_of(Place where) const {
     return kept.column_at(where.line, *from, *from + where.byte);
 }
 
-// The byte, counted from the start of the line, of the character of line `line` in which column
-// `column` falls; past the end of the line, the end. Nothing while a window is on its way or past
-// the last line.
-std::optional<std::size_t> Page::byte_of(std::size_t line, std::size_t column) {
+// The column where the character at this place starts, counted from the start of its screen row
+// as the row is drawn (with wrapping a tab goes to the next multiple of eight from the row's
+// start); without wrapping a row is the whole line, so this is the column in the line. Nothing
+// while a window is on its way.
+std::optional<std::size_t> Page::column_in_row(Place where) {
     Kept& kept = *kept_;
 
     if (!kept.spool) return {};
 
-    const std::optional<std::size_t> from = kept.spool->at(line);
+    const std::optional<std::size_t> from = kept.spool->at(where.line);
 
     if (!from.has_value()) return {};
 
-    const std::optional<std::pair<std::size_t, std::size_t>> got = kept.boundary_at(line, *from, column);
+    if (!kept.cutting()) return kept.column_at(where.line, *from, *from + where.byte);
 
-    if (!got.has_value()) return {};
+    const std::optional<std::size_t> row = kept.row_holding(where.line, *from, *from + where.byte);
 
-    return got->second - *from;
+    if (!row.has_value()) return {};
+
+    return kept.column_in(*row, *from + where.byte);
+}
+
+// The place `rows` screen rows away from the row of `from` (up when negative), at column `column` of
+// that row: the start of the character in which the column falls, or the end of a shorter row. The
+// walk stops at the edges of the document, so a page down near the end lands on the last row;
+// nothing when there was nowhere to go at all, or while a window is on its way. The end of a row
+// that does not end its line is the start of the next row, so a column past such a row lands on
+// its last character instead. Without wrapping a row is a line.
+std::optional<Place> Page::rows_away(Place from, int rows, std::size_t column) {
+    Kept& kept = *kept_;
+
+    if (!kept.spool || rows == 0) return {};
+
+    std::size_t line = from.line;
+
+    const std::optional<std::size_t> start = kept.spool->at(line);
+
+    if (!start.has_value()) return {};
+
+    std::size_t line_at = *start;
+    std::size_t at = *start;
+
+    if (kept.cutting()) {
+        const std::optional<std::size_t> row = kept.row_holding(line, line_at, line_at + from.byte);
+
+        if (!row.has_value()) return {};
+
+        at = *row;
+    }
+
+    int moved = 0;
+
+    for (; moved < rows; ++moved) {
+        bool waiting = false;
+
+        const auto next = kept.after(line, at, waiting);
+
+        if (waiting) return {};
+
+        if (!next.has_value()) break;
+
+        if (next->first != line) line_at = next->second;
+
+        line = next->first;
+        at = next->second;
+    }
+
+    for (; moved > rows; --moved) {
+        if (kept.cutting() && at > line_at) {
+            const std::optional<std::size_t> before = kept.row_before(line, line_at, at);
+
+            if (!before.has_value()) return {};
+
+            at = *before;
+
+            continue;
+        }
+
+        if (line == 0) break;
+
+        const std::optional<std::size_t> above = kept.spool->at(line - 1);
+
+        if (!above.has_value()) return {};
+
+        --line;
+        line_at = *above;
+        at = *above;
+
+        if (kept.cutting()) {
+            const std::optional<std::size_t> last = kept.last_row(line, line_at);
+
+            if (!last.has_value()) return {};
+
+            at = *last;
+        }
+    }
+
+    if (moved == 0) return {};
+
+    if (!kept.cutting()) {
+        const std::optional<std::pair<std::size_t, std::size_t>> got = kept.boundary_at(line, line_at, column);
+
+        if (!got.has_value()) return {};
+
+        return Place{line, got->second - line_at};
+    }
+
+    const std::optional<std::size_t> byte = kept.byte_in(at, column);
+
+    if (!byte.has_value()) return {};
+
+    return Place{line, *byte - line_at};
 }
 
 // Scrolls as little as possible to make this place visible: a place already visible does not move
@@ -1185,7 +1345,7 @@ bool Page::reveal(Place where) {
     bool moved = false;
 
     if (!kept.wrapped) {
-        if (const std::optional<std::size_t> column = column_of(where); column.has_value()) {
+        if (const std::optional<std::size_t> column = column_in_line(where); column.has_value()) {
             const std::size_t wide = static_cast<std::size_t>(kept.sized.wide);
 
             if (*column < kept.left) {

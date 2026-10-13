@@ -3245,3 +3245,82 @@ TRIAL("Editor: the caret in a wrapped line stands in the row of its character") 
 
     same(*one->caret(), (ui::Spot{2, 2}));
 }
+
+// With wrapping the vertical arrows go by screen rows: a wrapped line is walked row by row at the
+// same column, and past the last row of the document the key goes up to an ancestor.
+TRIAL("Editor: with wrapping the arrows go by screen rows") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "abcdefghij");
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {4, 3}});
+
+    one->cursor(1);
+
+    ui::KeyEvent down{ui::Code::down};
+    ui::KeyEvent up{ui::Code::up};
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{5});
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{9});
+
+    ui::KeyEvent again{ui::Code::down};
+
+    ought(!sheet.dispatch(again));
+    same(one->cursor(), std::size_t{9});
+
+    ought(sheet.dispatch(up));
+    same(one->cursor(), std::size_t{5});
+
+    ought(sheet.dispatch(up));
+    same(one->cursor(), std::size_t{1});
+}
+
+// A row that does not end its line ends where the next row starts, so a column past its end lands
+// on its last character, not on the byte after it, which would be drawn on the next row. Here a
+// double-width character does not fit at the end of the first row of the second line.
+TRIAL("Editor: past the end of a row that does not end its line the cursor stays in the row") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "wxyz\nabc\xe6\xbc\xa2"
+                                  "d");
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {4, 4}});
+
+    one->cursor(3);
+
+    ui::KeyEvent down{ui::Code::down};
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{7});
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{12});
+}
+
+// A page key goes by the height of the screen in rows, also inside one long wrapped line.
+TRIAL("Editor: a page goes by screen rows") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, std::string(40, 'a'));
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {4, 3}});
+
+    ui::KeyEvent down{ui::Code::pagedown};
+
+    ought(sheet.dispatch(down));
+    same(one->cursor(), std::size_t{12});
+
+    ui::KeyEvent up{ui::Code::pageup};
+
+    ought(sheet.dispatch(up));
+    same(one->cursor(), std::size_t{0});
+}

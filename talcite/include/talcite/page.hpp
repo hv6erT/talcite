@@ -82,9 +82,11 @@ protected:
 
     [[nodiscard]] const std::shared_ptr<Spool>& spool() const;
 
-    [[nodiscard]] std::optional<std::size_t> column_of(Place where) const;
+    [[nodiscard]] std::optional<std::size_t> column_in_line(Place where);
 
-    [[nodiscard]] std::optional<std::size_t> byte_of(std::size_t line, std::size_t column);
+    [[nodiscard]] std::optional<std::size_t> column_in_row(Place where);
+
+    [[nodiscard]] std::optional<Place> rows_away(Place from, int rows, std::size_t column);
 
     void invalidate();
 
