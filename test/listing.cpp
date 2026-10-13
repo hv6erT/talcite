@@ -1,9 +1,13 @@
 #include "proving.hpp"
 
+#include <chrono>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <random>
 #include <string>
+#include <vector>
 
 #include "talcite/encoding.hpp"
 #include "talcite/list.hpp"
@@ -971,6 +975,126 @@ TRIAL("List: a row out of view does not catch the mouse") {
 
     same(top.focused_node(), static_cast<ui::Node*>(one->children()[3].get()));
     same(one->which(), std::optional<std::size_t>{3});
+}
+
+// A row brought from another parent carries the rectangle it had there, and this list never laid
+// it. Out of view here, it must not catch the mouse with that old place: being later among the
+// children, it would win over the row really standing there.
+TRIAL("List: a row brought from another list does not catch the mouse with its old place") {
+    const auto other = listed(3);
+
+    (void)other->render({{0, 0}, {12, 3}});
+
+    const std::shared_ptr<ui::Node> moved = other->children().remove(other->children()[1].get());
+
+    same(moved->area(), (ui::Area{{0, 1}, {12, 1}}));
+
+    Sheet top;
+
+    const auto one = listed(10);
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    one->children().add(moved);
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    same(moved->area().size.high, 0);
+
+    ui::ClickEvent what{{2, 1}, ui::Mouse::left};
+
+    ought(top.dispatch(what));
+
+    same(one->which(), std::optional<std::size_t>{1});
+}
+
+// After every frame, whatever happened in between (scrolling, rows added at the front, removed,
+// replaced one for one, brought from another list), exactly the rows in view have a rectangle,
+// each where it is drawn, and every other row has none. Checked against the definition, row by
+// row, over a long random run.
+TRIAL("List: after every frame exactly the rows in view have a rectangle") {
+    std::mt19937 dice{1234};
+
+    const auto other = listed(4);
+    const auto one = listed(30);
+
+    constexpr int high = 5;
+
+    for (int round = 0; round < 400; ++round) {
+        const int much = static_cast<int>(one->children().many());
+
+        switch (dice() % 6) {
+            case 0:
+            case 1: one->first(dice() % static_cast<unsigned>(much + 1)); break;
+
+            case 2:
+                if (much > 1) (void)one->children().remove(one->children()[dice() % static_cast<unsigned>(much)].get());
+                break;
+
+            case 3: {
+                const auto made = std::make_shared<ui::ListItem>("nowy " + std::to_string(round));
+
+                one->children().add(made);
+                break;
+            }
+
+            case 4: {
+                if (much > 1) (void)one->children().remove(one->children()[dice() % static_cast<unsigned>(much)].get());
+
+                one->children().add(std::make_shared<ui::ListItem>("zamiana " + std::to_string(round)));
+                break;
+            }
+
+            default: {
+                (void)other->render({{0, 0}, {12, static_cast<int>(other->children().many())}});
+
+                if (other->children().many() > 1) {
+                    const std::shared_ptr<ui::Node> moved = other->children().remove(other->children()[1].get());
+
+                    one->children().add(moved);
+                }
+
+                other->children().add(std::make_shared<ui::ListItem>("obcy " + std::to_string(round)));
+                break;
+            }
+        }
+
+        (void)one->render({{0, 0}, {12, high}});
+
+        const int shift = static_cast<int>(one->first());
+        const int total = static_cast<int>(one->children().many());
+
+        for (int at = 0; at < total; ++at) {
+            const ui::Area& box = one->children()[static_cast<std::size_t>(at)]->area();
+
+            if (at >= shift && at < shift + high) {
+                same(box, (ui::Area{{0, at - shift}, {12, 1}}));
+            } else {
+                same(box.size.high, 0);
+            }
+        }
+    }
+}
+
+// A frame of a long list costs its window, not its length: a thousand frames of a list of two
+// hundred thousand rows take a fraction of a second, where walking all the rows in every frame
+// took several seconds.
+TRIAL("List: a frame of a long list costs its window") {
+    const auto one = listed(200000);
+
+    (void)one->render({{0, 0}, {40, 20}});
+
+    const auto began = std::chrono::steady_clock::now();
+
+    for (int frame = 0; frame < 1000; ++frame) {
+        one->first(static_cast<std::size_t>(frame % 2));
+
+        (void)one->render({{0, 0}, {40, 20}});
+    }
+
+    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
 }
 
 TRIAL("List: a click on a row makes it current") {

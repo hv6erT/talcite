@@ -74,6 +74,11 @@ void Node::unfocus() {
 
 // Attaches a child. A null node, a node that already has a parent, one more child than
 // `capacity()` allows, a kind the parent does not accept, and a cycle all throw std::logic_error.
+//
+// Every attach and every detach counts in `changes()`. A parent that does not draw all its children
+// in every frame (a list draws the rows in view) tells by it that the set has changed since it last
+// looked; each one keeps the count it saw, so reading it changes nothing and nobody can spoil the
+// answer for another.
 void Children::add(std::shared_ptr<Node> given) {
     if (!given) throw std::logic_error("talcite::ui::Node: nothing to attach");
 
@@ -94,6 +99,8 @@ void Children::add(std::shared_ptr<Node> given) {
     given->up_ = whose_;
 
     inside_.push_back(std::move(given));
+
+    ++changes_;
 }
 
 // Attaches several children: all or none. On an error halfway, what has already gone in is
@@ -126,6 +133,8 @@ std::shared_ptr<Node> Children::remove(Node* one) {
 
     inside_.erase(at);
 
+    ++changes_;
+
     made->up_ = nullptr;
 
     // The root drops the focus and the hover, and then keeps the node alive until the end of the
@@ -148,6 +157,8 @@ void Children::clear() {
         std::shared_ptr<Node> made = std::move(inside_.back());
 
         inside_.pop_back();
+
+        ++changes_;
 
         made->up_ = nullptr;
 

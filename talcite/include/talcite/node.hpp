@@ -37,6 +37,8 @@ public:
 
     [[nodiscard]] bool empty() const { return inside_.empty(); }
 
+    [[nodiscard]] std::size_t changes() const { return changes_; }
+
     [[nodiscard]] bool contains(const Node* one) const;
 
     [[nodiscard]] std::optional<std::size_t> find(const Node& one) const;
@@ -75,6 +77,7 @@ private:
 
     Node* whose_;
     std::vector<std::shared_ptr<Node>> inside_;
+    std::size_t changes_ = 0;
 };
 
 class Node : public Handler, public std::enable_shared_from_this<Node> {

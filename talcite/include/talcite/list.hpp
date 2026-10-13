@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
@@ -83,10 +84,11 @@ private:
 
     void slid(int to);
 
-
     std::string scrollbar_role_ = "talcite.scroll";
     ScrollShape shape_;
     std::shared_ptr<Grip> grip_;
+    std::vector<std::weak_ptr<Node>> laid_;
+    std::size_t swept_ = 0;
     int which_ = -1;
     int shift_ = 0;
     int wide_ = plenty;

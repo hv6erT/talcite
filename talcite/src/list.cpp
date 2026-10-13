@@ -328,24 +328,64 @@ View List::paint(Size given, Area seen) {
 
     shift_ = std::clamp(shift_, 0, std::max(much - given.high, 0));
 
-    // An invisible row gets a rectangle of zero height, so its `area()` tells the truth about this
-    // frame; otherwise a row that just scrolled away would catch the mouse where it stood before.
-    // Only a row that still has a rectangle from an earlier frame needs that: the others already
-    // stand at zero height, so a list of a hundred thousand rows renders its window, not all of
-    // them.
-    for (int at = 0; at < much; ++at) {
-        Node& row = *children()[static_cast<std::size_t>(at)];
+    // The rows in view are drawn, and their list is kept for the next frame.
+    const int from = shift_;
+    const int upto = std::clamp(shift_ + std::max(given.high, 0), from, much);
 
-        const int y = at - shift_;
-        const bool shown = y >= 0 && y < given.high;
+    std::vector<std::weak_ptr<Node>> laid;
+    std::vector<const Node*> now;
 
-        if (!shown && row.area().size.high == 0 && row.area().at == Spot{0, 0}) continue;
+    laid.reserve(static_cast<std::size_t>(upto - from));
+    now.reserve(static_cast<std::size_t>(upto - from));
 
-        const Area where{{0, shown ? y : 0}, {wide, shown ? 1 : 0}};
+    for (int at = from; at < upto; ++at) {
+        const std::shared_ptr<Node>& row = children()[static_cast<std::size_t>(at)];
+
+        const Area where{{0, at - shift_}, {wide, 1}};
         const Area part = Area::crossed(seen, where);
 
-        made.draw(row.render(where, part - where.at), part.at - seen.at);
+        made.draw(row->render(where, part - where.at), part.at - seen.at);
+
+        laid.push_back(row);
+        now.push_back(row.get());
     }
+
+    // A row out of view gets a rectangle of zero height, so its `area()` tells the truth about this
+    // frame; otherwise a row that just scrolled away would catch the mouse where it stood before.
+    // Only a row that still has a rectangle needs that, and such a row was laid in the previous
+    // frame, so only those are looked at: a list of a hundred thousand rows costs its window, not
+    // all of them. A row laid then may since have been removed or moved under another parent;
+    // its rectangle there is not ours to touch.
+    //
+    // The exception is a change in the set of rows. A row brought from another parent carries the
+    // rectangle it had there, and this list never laid it, so after every change all rows are
+    // looked at once; that frame follows someone adding or removing rows, which costs as much.
+    const auto hidden = [&](Node& row) {
+        if (row.area().size.high == 0 && row.area().at == Spot{0, 0}) return;
+
+        const Area where{{0, 0}, {wide, 0}};
+
+        (void)row.render(where, Area::crossed(seen, where) - where.at);
+    };
+
+    if (children().changes() != swept_) {
+        for (int at = 0; at < much; ++at)
+            if (at < from || at >= upto) hidden(*children()[static_cast<std::size_t>(at)]);
+
+        swept_ = children().changes();
+    } else {
+        std::sort(now.begin(), now.end());
+
+        for (const std::weak_ptr<Node>& one : laid_) {
+            const std::shared_ptr<Node> row = one.lock();
+
+            if (!row || row->parent() != this) continue;
+
+            if (!std::binary_search(now.begin(), now.end(), row.get())) hidden(*row);
+        }
+    }
+
+    laid_ = std::move(laid);
 
     if (aside != 0) {
         const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
