@@ -896,7 +896,7 @@ Instant finely(const path& where, Kind kind, std::chrono::sys_seconds modified,
 std::optional<Kind> known_kind(const path& where) {
     std::error_code why;
 
-    (void)stood::symlink_status(where, why);
+    (void)stood::symlink_status(long_form(where), why);
 
     if (why && why != std::errc::no_such_file_or_directory && why != std::errc::not_a_directory) return std::nullopt;
 
@@ -932,7 +932,7 @@ Look looked(const path& where, bool deep) {
         mine.kind = *what;
 
         std::error_code ignored;
-        mine.size = stood::file_size(where, ignored);
+        mine.size = stood::file_size(long_form(where), ignored);
 
         try {
             mine.modified = modified_at(where);

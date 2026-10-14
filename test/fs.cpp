@@ -227,6 +227,24 @@ TRIAL("fs: make creates the whole path and does not mind that it exists") {
     ought(fs::exists(deep).get());
 }
 
+// The parents are found on the path as given: a link to a folder on the way is entered, a file on
+// the way refuses, and so does an empty path, which names no place.
+TRIAL("fs: make goes through a link on the way and refuses a file on the way and an empty path") {
+    const Nook nook;
+
+    fs::make_folder(nook.where() / "prawdziwy").get();
+    fs::link(nook.where() / "skrót", nook.where() / "prawdziwy").get();
+
+    fs::make_folder(nook.where() / "skrót" / "nowy" / "głębiej").get();
+
+    ought(fs::exists(nook.where() / "prawdziwy" / "nowy" / "głębiej").get());
+
+    const fs::path file = nook.made("plik.txt", "x");
+
+    threw(fs::make_folder(file / "pod").get());
+    threw(fs::make_folder(fs::path{}).get());
+}
+
 TRIAL("fs: rename moves") {
     const Nook nook;
 
@@ -1384,6 +1402,49 @@ TRIAL("fs: the policy applies to every entry of the tree separately") {
 
     same(said_of(fs::read(to / "jeden.txt").get()), std::string{"stare"});
     same(said_of(fs::read(to / "dwa.txt").get()), std::string{"nowe"});
+}
+
+// A copy onto a folder that stands merges with it: a subfolder that stood too asks about every
+// file in it, however deep, while a subfolder the copy creates takes its files as they are, since
+// nothing stands in it.
+TRIAL("fs: a merging copy asks in the folders that stood and not in the ones it made") {
+    const Nook nook;
+
+    const fs::path from = nook.where() / "drzewo";
+    const fs::path to = nook.where() / "cel";
+
+    for (const fs::path& one : {from / "stary" / "głębiej", from / "nowy" / "głębiej", to / "stary" / "głębiej"})
+        fs::make_folder(one).get();
+
+    for (const fs::path& one : {from / "stary" / "a.txt", from / "stary" / "głębiej" / "b.txt", from / "nowy" / "c.txt",
+                                from / "nowy" / "głębiej" / "d.txt"}) {
+        std::ofstream making{one, std::ios::binary};
+        making << "nowe";
+    }
+
+    for (const fs::path& one : {to / "stary" / "a.txt", to / "stary" / "głębiej" / "b.txt"}) {
+        std::ofstream making{one, std::ios::binary};
+        making << "stare";
+    }
+
+    fs::copy(from, to, fs::Conflict::rename).get();
+
+    same(said_of(fs::read(to / "stary" / "a.txt").get()), std::string{"stare"});
+    same(said_of(fs::read(to / "stary" / "a (2).txt").get()), std::string{"nowe"});
+    same(said_of(fs::read(to / "stary" / "głębiej" / "b.txt").get()), std::string{"stare"});
+    same(said_of(fs::read(to / "stary" / "głębiej" / "b (2).txt").get()), std::string{"nowe"});
+    same(said_of(fs::read(to / "nowy" / "c.txt").get()), std::string{"nowe"});
+    same(said_of(fs::read(to / "nowy" / "głębiej" / "d.txt").get()), std::string{"nowe"});
+    ought(!fs::exists(to / "nowy" / "c (2).txt").get());
+
+    // Into a fresh folder: the whole tree arrives as it was.
+    const fs::path anew = nook.where() / "świeży";
+
+    fs::copy(from, anew, fs::Conflict::fail).get();
+
+    for (const fs::path& one : {anew / "stary" / "a.txt", anew / "stary" / "głębiej" / "b.txt", anew / "nowy" / "c.txt",
+                                anew / "nowy" / "głębiej" / "d.txt"})
+        same(said_of(fs::read(one).get()), std::string{"nowe"});
 }
 
 TRIAL("fs: move refuses when the target exists") {

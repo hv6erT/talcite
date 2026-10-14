@@ -104,7 +104,7 @@ DWORD attributes_beyond(const path& where) {
 bool exists_at(const path& where) {
     std::error_code why;
 
-    if (stood::exists(where, why)) return true;
+    if (stood::exists(long_form(where), why)) return true;
 
 #ifdef _WIN32
     if (why) return GetFileAttributesW(longly(where).c_str()) != INVALID_FILE_ATTRIBUTES;
@@ -120,7 +120,7 @@ bool exists_at(const path& where) {
 Kind kind_at(const path& where) {
     std::error_code trouble;
 
-    const stood::file_status told = stood::symlink_status(where, trouble);
+    const stood::file_status told = stood::symlink_status(long_form(where), trouble);
 
 #ifdef _WIN32
     if (trouble || !stood::exists(told)) {
@@ -152,7 +152,7 @@ Kind kind_at(const path& where) {
 std::uintmax_t size_at(const path& where) {
     std::error_code trouble;
 
-    const std::uintmax_t told = stood::file_size(where, trouble);
+    const std::uintmax_t told = stood::file_size(long_form(where), trouble);
     if (trouble) amiss("Cannot read the file size.", where);
 
     return told;
@@ -239,7 +239,7 @@ void attributed_at(const path& where, Attributes what) {
 bool equivalent_at(const path& one, const path& two) {
     std::error_code trouble;
 
-    const bool told = stood::equivalent(one, two, trouble);
+    const bool told = stood::equivalent(long_form(one), long_form(two), trouble);
     if (trouble) amiss("Cannot compare the paths.", one);
 
     return told;
@@ -249,7 +249,7 @@ bool equivalent_at(const path& one, const path& two) {
 path target_at(const path& where) {
     std::error_code trouble;
 
-    const path told = stood::read_symlink(where, trouble);
+    const path told = stood::read_symlink(long_form(where), trouble);
     if (trouble) amiss("Not a link.", where);
 
     return told;
@@ -260,9 +260,9 @@ path target_at(const path& where) {
 void linking_at(const path& where, const path& onto, bool hard) {
     std::error_code trouble;
 
-    if (hard) stood::create_hard_link(onto, where, trouble);
-    else if (kind_at(onto) == Kind::folder) stood::create_directory_symlink(onto, where, trouble);
-    else stood::create_symlink(onto, where, trouble);
+    if (hard) stood::create_hard_link(long_form(onto), long_form(where), trouble);
+    else if (kind_at(onto) == Kind::folder) stood::create_directory_symlink(onto, long_form(where), trouble);
+    else stood::create_symlink(onto, long_form(where), trouble);
 
     if (trouble) amiss("Cannot create the link.", where);
 }
@@ -333,7 +333,7 @@ std::chrono::sys_seconds modified_at(const path& where) {
 Space space_at(const path& where) {
     std::error_code trouble;
 
-    const stood::space_info told = stood::space(where, trouble);
+    const stood::space_info told = stood::space(long_form(where), trouble);
     if (trouble) amiss("Cannot check the free space.", where);
 
     return Space{told.capacity, told.available};
@@ -393,6 +393,87 @@ std::wstring longly(const path& where) {
 }
 
 #endif
+
+// The path as a call into `std::filesystem` should get it. On Windows that is the \\?\ form
+// (`longly`): the standard library hands the path to the system as it is, and without the prefix the
+// system refuses anything longer than 260 characters unless the program's manifest and the registry
+// both allow long paths, which neither the tests nor every program on the library can promise.
+// Elsewhere it is the path itself. Every such call in the shared code of `fs` goes through here,
+// which a trial checks; an empty path stays empty, since the prefix would make it the current
+// folder.
+path long_form(const path& where) {
+#ifdef _WIN32
+    if (where.empty()) return where;
+
+    return path{longly(where)};
+#else
+    return where;
+#endif
+}
+
+// A path the system handed back for one given through `long_form`, as the caller wrote it:
+// \\?\C:\... becomes C:\..., and \\?\UNC\server\share becomes \\server\share, so that paths in
+// entries and answers look the same whichever way they were asked. Any other prefixed path (a volume
+// by its GUID) has no plain form and stays as it is.
+path plain_form(const path& where) {
+#ifdef _WIN32
+    const std::wstring& named = where.native();
+
+    if (named.rfind(L"\\\\?\\UNC\\", 0) == 0) return path{L"\\\\" + named.substr(8)};
+
+    const bool lettered = named.size() >= 6 && named.rfind(L"\\\\?\\", 0) == 0 && std::iswalpha(named[4]) != 0 &&
+                          named[5] == L':';
+
+    if (lettered) return path{named.substr(4)};
+#endif
+
+    return where;
+}
+
+// Where a path really leads, every link on the way followed; the entry must exist. On Windows the
+// system says it from an open handle (`GetFinalPathNameByHandleW`), since `std::filesystem` given a
+// prefixed path does not resolve it the same way in every library; elsewhere `canonical`.
+path real_at(const path& where, std::error_code& trouble) {
+    trouble.clear();
+
+#ifdef _WIN32
+    const HANDLE opened = CreateFileW(longly(where).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+
+    if (opened == INVALID_HANDLE_VALUE) {
+        trouble = std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+
+        return {};
+    }
+
+    constexpr DWORD asked = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+
+    std::wstring made(MAX_PATH, L'\0');
+
+    DWORD much = GetFinalPathNameByHandleW(opened, made.data(), static_cast<DWORD>(made.size()), asked);
+
+    if (much >= made.size()) {
+        made.resize(much + 1);
+        much = GetFinalPathNameByHandleW(opened, made.data(), static_cast<DWORD>(made.size()), asked);
+    }
+
+    const DWORD why = GetLastError();
+
+    CloseHandle(opened);
+
+    if (much == 0 || much >= made.size()) {
+        trouble = std::error_code{static_cast<int>(why), std::system_category()};
+
+        return {};
+    }
+
+    made.resize(much);
+
+    return plain_form(path{made});
+#else
+    return stood::canonical(long_form(where), trouble);
+#endif
+}
 
 #ifndef _WIN32
 
@@ -557,7 +638,7 @@ bool together_at(const path& one, const path& two) {
 std::optional<std::uintmax_t> room_at(const path& where) {
     std::error_code trouble;
 
-    const stood::space_info told = stood::space(present_at(where), trouble);
+    const stood::space_info told = stood::space(long_form(present_at(where)), trouble);
 
     if (trouble || told.available == static_cast<std::uintmax_t>(-1)) return std::nullopt;
 
@@ -762,11 +843,11 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     if (made.kind == Kind::link) {
         std::error_code ignored;
 
-        const path told = stood::read_symlink(made.where, ignored);
+        const path told = stood::read_symlink(long_form(made.where), ignored);
 
         if (!ignored) made.target = told;
 
-        const stood::file_status through = stood::status(made.where, ignored);
+        const stood::file_status through = stood::status(long_form(made.where), ignored);
 
         made.reach = ignored ? Kind::none
                      : stood::is_directory(through)    ? Kind::folder
@@ -872,7 +953,7 @@ bool folder_at(const path& where) {
 
     std::error_code trouble;
 
-    return stood::is_directory(stood::status(where, trouble));
+    return stood::is_directory(stood::status(long_form(where), trouble));
 }
 
 }
@@ -995,14 +1076,42 @@ std::vector<Entry> walk_at(const path& where) {
     return made;
 }
 
-// Creates the directory together with any missing parents; an existing directory is fine.
+// Creates the directory together with any missing parents; an existing directory is fine, an
+// empty path is not. The missing ones are found on the path as given and created one by one from
+// the outermost, each through `long_form`: `create_directories` would walk the parents of the
+// prefixed path itself, and what the parent of a \\?\ root is differs between standard libraries.
+// Whatever the system enters as a folder ends the search: a folder, a link to one, and on Windows
+// a junction or a mount point, which `kind_at` may read as neither. A parent that someone else
+// creates in the meantime is fine too.
 void make_folder_at(const path& where) {
-    if (kind_at(where) == Kind::folder) return;
+    if (where.empty()) amiss("Cannot create the directory.", where);
 
-    std::error_code trouble;
+    std::vector<path> missing;
 
-    stood::create_directories(where, trouble);
-    if (trouble) amiss("Cannot create the directory.", where);
+    for (path at = where; !at.empty(); at = at.parent_path()) {
+        const Kind kind = kind_at(at);
+
+        if (kind == Kind::none) {
+            missing.push_back(at);
+
+            if (at.parent_path() == at) break;
+
+            continue;
+        }
+
+        std::error_code trouble;
+
+        if (kind == Kind::folder || stood::is_directory(stood::status(long_form(at), trouble))) break;
+
+        amiss("Cannot create the directory.", where);
+    }
+
+    for (auto at = missing.rbegin(); at != missing.rend(); ++at) {
+        std::error_code trouble;
+
+        if (!stood::create_directory(long_form(*at), trouble) && kind_at(*at) != Kind::folder)
+            amiss("Cannot create the directory.", where);
+    }
 }
 
 // Removes an empty folder and nothing else: a missing entry counts as removed, a file, a link (also
@@ -1102,7 +1211,8 @@ bool respelled(const path& from, const path& to) {
                              static_cast<int>(right.size()), TRUE) != CSTR_EQUAL)
         return false;
 
-    return one.parent_path() == two.parent_path() || stood::equivalent(one.parent_path(), two.parent_path(), trouble);
+    return one.parent_path() == two.parent_path() ||
+           stood::equivalent(long_form(one.parent_path()), long_form(two.parent_path()), trouble);
 }
 
 #endif
@@ -1356,7 +1466,7 @@ bool spelled_exactly(const path& to) {
 
     const path folder = to.has_parent_path() ? to.parent_path() : path{"."};
 
-    for (const stood::directory_entry& one : stood::directory_iterator{folder, trouble})
+    for (const stood::directory_entry& one : stood::directory_iterator{long_form(folder), trouble})
         if (one.path().filename() == to.filename()) return true;
 
     return false;
@@ -1541,7 +1651,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(one.where, ignored);
+    const stood::space_info told = stood::space(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -1802,7 +1912,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(one.where, ignored);
+    const stood::space_info told = stood::space(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -1884,7 +1994,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(one.where, ignored);
+    const stood::space_info told = stood::space(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -1912,7 +2022,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(one.where, ignored);
+    const stood::space_info told = stood::space(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -2022,13 +2132,37 @@ void stamp_at(const path& where, Instant when) {
 #endif
 }
 
-// The path with symlinks resolved as far as it exists; the path unchanged when that fails.
+// The path with symlinks resolved as far as it exists; the path unchanged when that fails. On
+// Windows the nearest part that exists is resolved by the system (`real_at`) and the rest joined to
+// it as written.
 path canonical_at(const path& where) {
+#ifdef _WIN32
+    std::error_code ignored;
+
+    const path whole = (where.is_absolute() ? where : stood::absolute(where, ignored)).lexically_normal();
+
+    path rest;
+
+    for (path at = whole; !at.empty(); at = at.parent_path()) {
+        std::error_code trouble;
+
+        const path real = real_at(at, trouble);
+
+        if (!trouble) return rest.empty() ? real : (real / rest).lexically_normal();
+
+        if (at.parent_path() == at) break;
+
+        rest = rest.empty() ? at.filename() : at.filename() / rest;
+    }
+
+    return where;
+#else
     std::error_code trouble;
 
-    const path told = stood::weakly_canonical(where, trouble);
+    const path told = stood::weakly_canonical(long_form(where), trouble);
 
     return trouble ? where : told;
+#endif
 }
 
 }
@@ -2298,7 +2432,7 @@ Promise<void> rights(const path& where, std::filesystem::perms what) {
     return run(io(), [where, what]() {
         std::error_code why;
 
-        stood::permissions(where, what, stood::perm_options::replace, why);
+        stood::permissions(long_form(where), what, stood::perm_options::replace, why);
 
         if (why) amiss("Cannot change the rights.", where);
 
@@ -2500,7 +2634,7 @@ Promise<std::optional<path>> folder(Known which) {
 
         std::error_code ignored;
 
-        if (made && !stood::is_directory(*made, ignored)) made.reset();
+        if (made && !stood::is_directory(long_form(*made), ignored)) made.reset();
 
         return made;
     });

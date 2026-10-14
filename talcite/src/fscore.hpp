@@ -9,6 +9,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "talcite/fs.hpp"
@@ -172,6 +173,14 @@ void stamp_at(const path& where, Instant when);
 [[nodiscard]] std::vector<Entry> walk_at(const path& where);
 
 [[nodiscard]] std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what);
+
+// The path for a call into `std::filesystem` (the \\?\ form on Windows), and back.
+[[nodiscard]] path long_form(const path& where);
+
+[[nodiscard]] path plain_form(const path& where);
+
+// Where a path really leads, every link followed; the entry must exist.
+[[nodiscard]] path real_at(const path& where, std::error_code& trouble);
 
 #ifdef _WIN32
 

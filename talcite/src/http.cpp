@@ -166,13 +166,16 @@ using Place = std::tuple<bool, std::string, std::uint16_t>;
 // The key of the idle pool: scheme, host and port.
 Place place_of(const Url& one) { return Place{one.secure, one.host, one.port}; }
 
-// Adds more bytes to the buffer; false when the other side has closed.
+// Adds more bytes to the buffer; false when the other side has closed. An empty buffer, which is
+// what a body read through usually leaves, takes the read bytes over whole instead of copying them.
 Promise<bool> more(const Wire& wire, Patience patience) {
     return wire->read(piece, patience).then([wire](Bytes got) {
         if (got.empty()) return false;
 
         wire->heard = true;
-        wire->kept.insert(wire->kept.end(), got.begin(), got.end());
+
+        if (wire->kept.empty()) wire->kept = std::move(got);
+        else wire->kept.insert(wire->kept.end(), got.begin(), got.end());
 
         return true;
     });
@@ -221,23 +224,32 @@ struct Sink {
 
 using Sunk = std::shared_ptr<Sink>;
 
-// Takes a piece of the body into memory, within the limit.
-Promise<void> took(const Sunk& sink, Bytes part) {
-    if (part.size() > sink->most || sink->memory.size() > sink->most - part.size())
-        throw oversized("The response body is too large.");
+// Moves at most `much` bytes from the front of the buffer into the body in memory, within its
+// limit, and says how many. The bytes are copied once, from the buffer straight into the body.
+std::size_t took(const Wire& wire, std::uint64_t much, Sink& sink) {
+    const auto now = static_cast<std::size_t>(std::min<std::uint64_t>(much, wire->kept.size()));
 
-    sink->memory.insert(sink->memory.end(), part.begin(), part.end());
+    if (now > sink.most || sink.memory.size() > sink.most - now) throw oversized("The response body is too large.");
 
-    return ready();
+    const auto end = wire->kept.begin() + static_cast<std::ptrdiff_t>(now);
+
+    sink.memory.insert(sink.memory.end(), wire->kept.begin(), end);
+    wire->kept.erase(wire->kept.begin(), end);
+
+    return now;
 }
 
-// The bytes the buffer holds, at most `much` of them, taken out of it.
+// The bytes the buffer holds, at most `much` of them, taken out of it. Taking all of them hands the
+// buffer over whole, without a copy; that is the usual case, since a read rarely brings more than
+// the part of the body still wanted.
 Bytes taken_out(const Wire& wire, std::uint64_t much) {
-    const auto now = static_cast<std::ptrdiff_t>(std::min<std::uint64_t>(much, wire->kept.size()));
+    if (much >= wire->kept.size()) return std::exchange(wire->kept, Bytes{});
 
-    Bytes made(wire->kept.begin(), wire->kept.begin() + now);
+    const auto end = wire->kept.begin() + static_cast<std::ptrdiff_t>(much);
 
-    wire->kept.erase(wire->kept.begin(), wire->kept.begin() + now);
+    Bytes made(wire->kept.begin(), end);
+
+    wire->kept.erase(wire->kept.begin(), end);
 
     return made;
 }
@@ -246,12 +258,7 @@ Bytes taken_out(const Wire& wire, std::uint64_t much) {
 Promise<void> exact(const Wire& wire, std::uint64_t much, const Sunk& sink, Patience patience) {
     if (much == 0) return ready();
 
-    if (!wire->kept.empty()) {
-        Bytes part = taken_out(wire, much);
-        const std::uint64_t left = much - part.size();
-
-        return took(sink, std::move(part)).then([wire, left, sink, patience] { return exact(wire, left, sink, patience); });
-    }
+    if (!wire->kept.empty()) return exact(wire, much - took(wire, much, *sink), sink, patience);
 
     return more(wire, patience).then([wire, much, sink, patience](bool got) -> Promise<void> {
         if (!got) throw malformed("The connection closed in the middle of the body.");
@@ -264,16 +271,14 @@ Promise<void> exact(const Wire& wire, std::uint64_t much, const Sunk& sink, Pati
 // the end must come with the server's close_notify; without it the body may be only a part, and
 // it is refused rather than passed off as whole.
 Promise<void> drained(const Wire& wire, const Sunk& sink, Patience patience) {
-    Bytes part = taken_out(wire, wire->kept.size());
+    (void)took(wire, wire->kept.size(), *sink);
 
-    return took(sink, std::move(part)).then([wire, sink, patience] {
-        return more(wire, patience).then([wire, sink, patience](bool got) -> Promise<void> {
-            if (!got && wire->cut()) throw malformed("The answer was cut short.");
+    return more(wire, patience).then([wire, sink, patience](bool got) -> Promise<void> {
+        if (!got && wire->cut()) throw malformed("The answer was cut short.");
 
-            if (!got) return ready();
+        if (!got) return ready();
 
-            return drained(wire, sink, patience);
-        });
+        return drained(wire, sink, patience);
     });
 }
 
@@ -1001,6 +1006,10 @@ Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill 
 
             sink->most = held->limits.body;
 
+            // A body of a stated length, already checked against the limit (`framed`), gets its
+            // memory at once, instead of growing by doubling as it comes.
+            if (frame.how == Framing::sized) sink->memory.reserve(static_cast<std::size_t>(frame.size));
+
             Promise<void> read = frame.how == Framing::sized   ? exact(wire, frame.size, sink, patience)
                                  : frame.how == Framing::pieces ? chunked(wire, sink, patience)
                                  : frame.how == Framing::closing ? drained(wire, sink, patience)
@@ -1233,7 +1242,7 @@ Response downloaded(const Kept& held, const Request& request, const std::filesys
         if (spill->wire) spill->wire->close();
 
         spill->file.close();
-        std::filesystem::remove(aside, ignored);
+        std::filesystem::remove(fs::core::long_form(aside), ignored);
 
         throw;
     }
@@ -1241,13 +1250,13 @@ Response downloaded(const Kept& held, const Request& request, const std::filesys
     spill->file.close();
 
     if (got.status < 200 || got.status > 299) {
-        std::filesystem::remove(aside, ignored);
+        std::filesystem::remove(fs::core::long_form(aside), ignored);
 
         return got;
     }
 
     if (!fs::core::replaced_at(aside, into)) {
-        std::filesystem::remove(aside, ignored);
+        std::filesystem::remove(fs::core::long_form(aside), ignored);
 
         throw fs::Trouble{"Cannot replace the file.", into};
     }

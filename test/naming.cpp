@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -951,4 +952,268 @@ TRIAL("Names: the split keeps strings and raw strings as code") {
     ought(made.code.find("// not a comment") != std::string::npos);
     ought(made.code.find("one") == std::string::npos);
     same(std::count(made.code.begin(), made.code.end(), '\n'), std::ptrdiff_t{4});
+}
+
+namespace {
+
+// What a preprocessor condition is on Windows: true, false, or not known (nothing). Only the names
+// the shared code of `fs` asks about are known: `_WIN32` is defined there, the POSIX file system
+// paths (`TALCITE_LINUX_FS`, `TALCITE_BSD_FS`) and the POSIX systems are not. A condition of several
+// parts joined by `&&` or `||` is worked out from its parts.
+std::optional<bool> windowed(std::string_view condition) {
+    const auto trimmed = [](std::string_view one) {
+        while (!one.empty() && std::isspace(static_cast<unsigned char>(one.front())) != 0) one.remove_prefix(1);
+        while (!one.empty() && std::isspace(static_cast<unsigned char>(one.back())) != 0) one.remove_suffix(1);
+
+        return one;
+    };
+
+    condition = trimmed(condition);
+
+    for (const std::string_view joint : {"||", "&&"}) {
+        const std::size_t at = condition.find(joint);
+
+        if (at == std::string_view::npos) continue;
+
+        const std::optional<bool> left = windowed(condition.substr(0, at));
+        const std::optional<bool> right = windowed(condition.substr(at + 2));
+
+        if (joint == "&&") {
+            if (left == false || right == false) return false;
+            if (left == true && right == true) return true;
+        } else {
+            if (left == true || right == true) return true;
+            if (left == false && right == false) return false;
+        }
+
+        return std::nullopt;
+    }
+
+    const bool negated = !condition.empty() && condition.front() == '!';
+
+    if (negated) condition = trimmed(condition.substr(1));
+
+    if (condition.rfind("defined", 0) == 0) condition = trimmed(condition.substr(7));
+
+    while (!condition.empty() && condition.front() == '(' && condition.back() == ')')
+        condition = trimmed(condition.substr(1, condition.size() - 2));
+
+    std::optional<bool> made;
+
+    if (condition == "_WIN32") made = true;
+
+    for (const char* posix : {"TALCITE_LINUX_FS", "TALCITE_BSD_FS", "__linux__", "__APPLE__", "__FreeBSD__"})
+        if (condition == posix) made = false;
+
+    if (made && negated) made = !*made;
+
+    return made;
+}
+
+// For every line of the code, whether it can be compiled on Windows, from the `#if` directives
+// around it. A branch is out when its condition is false there, or when an earlier branch of the
+// same `#if` is surely taken; a condition that is not known keeps the branch in.
+std::vector<bool> on_windows(const std::string& code) {
+    struct Branch {
+        bool outer = true;
+        bool taken = false;
+        bool live = true;
+    };
+
+    std::vector<Branch> open;
+    std::vector<bool> made{true};
+
+    std::istringstream lines{code};
+    std::string line;
+
+    while (std::getline(lines, line)) {
+        const std::size_t first = line.find_first_not_of(" \t");
+        const bool live = open.empty() || open.back().live;
+
+        if (first == std::string::npos || line[first] != '#') {
+            made.push_back(live);
+
+            continue;
+        }
+
+        std::string_view directive = std::string_view{line}.substr(first + 1);
+
+        while (!directive.empty() && directive.front() == ' ') directive.remove_prefix(1);
+
+        const auto opened = [&open, live](std::optional<bool> condition) {
+            open.push_back(Branch{live, condition == true, live && condition != false});
+        };
+
+        if (directive.rfind("ifdef", 0) == 0) opened(windowed("defined(" + std::string{directive.substr(5)} + ")"));
+        else if (directive.rfind("ifndef", 0) == 0) opened(windowed("!defined(" + std::string{directive.substr(6)} + ")"));
+        else if (directive.rfind("if", 0) == 0) opened(windowed(directive.substr(2)));
+        else if (!open.empty() && directive.rfind("elif", 0) == 0) {
+            const std::optional<bool> condition = windowed(directive.substr(4));
+            Branch& one = open.back();
+
+            one.live = one.outer && !one.taken && condition != false;
+            one.taken = one.taken || condition == true;
+        } else if (!open.empty() && directive.rfind("else", 0) == 0) {
+            Branch& one = open.back();
+
+            one.live = one.outer && !one.taken;
+            one.taken = true;
+        } else if (!open.empty() && directive.rfind("endif", 0) == 0) {
+            open.pop_back();
+        }
+
+        made.push_back(open.empty() || open.back().live);
+    }
+
+    return made;
+}
+
+// The arguments of a call whose opening bracket is at `at`, split at the commas of the top level,
+// and where the call ends.
+std::vector<std::string> arguments(const std::string& code, std::size_t at, std::size_t& end) {
+    std::vector<std::string> made{std::string{}};
+
+    int depth = 0;
+
+    for (end = at; end < code.size(); ++end) {
+        const char one = code[end];
+
+        if (one == '(' || one == '{' || one == '[') {
+            if (depth++ > 0) made.back() += one;
+
+            continue;
+        }
+
+        if (one == ')' || one == '}' || one == ']') {
+            if (--depth == 0) break;
+
+            made.back() += one;
+
+            continue;
+        }
+
+        if (one == ',' && depth == 1) made.emplace_back();
+        else made.back() += one;
+    }
+
+    return made;
+}
+
+// Which arguments of a `std::filesystem` call are paths that reach the system, by the function's
+// name and the number of its arguments; nothing for a call that does not reach it (a status asked
+// about, a path taken apart). A symlink's target is text stored in the link, not a path the system
+// opens, so only the link's own path counts.
+std::vector<std::size_t> reaching(std::string_view name, std::size_t many) {
+    for (const char* one : {"exists", "is_directory", "is_regular_file", "is_symlink"})
+        if (name == one) return many == 2 ? std::vector<std::size_t>{0} : std::vector<std::size_t>{};
+
+    for (const char* one : {"equivalent", "rename", "create_hard_link", "copy", "copy_file"})
+        if (name == one) return {0, 1};
+
+    for (const char* one : {"create_symlink", "create_directory_symlink"})
+        if (name == one) return {1};
+
+    for (const char* one : {"status", "symlink_status", "file_size", "read_symlink", "space", "canonical", "weakly_canonical",
+                            "remove", "remove_all", "create_directory", "create_directories", "permissions", "is_empty",
+                            "hard_link_count", "last_write_time", "resize_file", "directory_iterator",
+                            "recursive_directory_iterator"})
+        if (name == one) return {0};
+
+    return {};
+}
+
+}
+
+// The shared code of `fs` hands every path to `std::filesystem` through `long_form`, so that on
+// Windows a path beyond 260 characters works whatever the manifest and the registry say. A call that
+// reaches the system with a path given as it is passes on Linux and on a short path, and breaks only
+// deep in a real tree on Windows; this trial finds it where it is written. Code that is never
+// compiled on Windows (the POSIX branches) is left out, and so are calls that do not reach the
+// system.
+TRIAL("Names: on Windows the shared fs code gives std::filesystem every path through long_form") {
+    std::vector<std::string> bad;
+
+    for (const char* name : {"copy.cpp", "file.cpp", "fs.cpp", "http.cpp", "watch.cpp"}) {
+        const std::string code = split(slurped(root() / "talcite" / "src" / name)).code;
+        const std::vector<bool> live = on_windows(code);
+
+        for (const std::string_view spelled : {"stood::", "std::filesystem::"}) {
+            std::size_t line = 1;
+            std::size_t counted = 0;
+
+            for (std::size_t at = code.find(spelled); at != std::string::npos; at = code.find(spelled, at + 1)) {
+                line += static_cast<std::size_t>(std::count(code.begin() + static_cast<std::ptrdiff_t>(counted),
+                                                            code.begin() + static_cast<std::ptrdiff_t>(at), '\n'));
+                counted = at;
+
+                std::size_t upto = at + spelled.size();
+
+                while (upto < code.size() && wordy(code[upto])) ++upto;
+
+                const std::string called = code.substr(at + spelled.size(), upto - at - spelled.size());
+
+                while (upto < code.size() && code[upto] == ' ') ++upto;
+
+                // An object made on the spot (`stood::directory_iterator at{...}`) is a call too.
+                if (upto < code.size() && wordy(code[upto])) {
+                    while (upto < code.size() && wordy(code[upto])) ++upto;
+
+                    while (upto < code.size() && code[upto] == ' ') ++upto;
+                }
+
+                if (upto >= code.size() || (code[upto] != '(' && code[upto] != '{')) continue;
+
+                if (line >= live.size() || !live[line]) continue;
+
+                std::size_t end = 0;
+
+                const std::vector<std::string> given = arguments(code, upto, end);
+
+                for (const std::size_t which : reaching(called, given.size())) {
+                    std::string_view one = which < given.size() ? std::string_view{given[which]} : std::string_view{};
+
+                    while (!one.empty() && one.front() == ' ') one.remove_prefix(1);
+
+                    if (one.rfind("long_form(", 0) != 0 && one.rfind("fs::core::long_form(", 0) != 0)
+                        bad.push_back("  " + std::string{name} + ":" + std::to_string(line) + ": " + std::string{spelled} + called);
+                }
+            }
+        }
+    }
+
+    if (!bad.empty()) {
+        std::string said = "std::filesystem calls that reach the system with a path not given through long_form:";
+
+        for (const std::string& one : bad) said += '\n' + one;
+
+        ::proving::fell(__FILE__, __LINE__, said);
+    }
+}
+
+// The reading of `#if` directives keeps a branch in unless it surely is not compiled on Windows.
+TRIAL("Names: the Windows branches are told from the POSIX ones") {
+    const std::vector<bool> live = on_windows("a\n"
+                                              "#ifdef _WIN32\n"
+                                              "b\n"
+                                              "#else\n"
+                                              "c\n"
+                                              "#endif\n"
+                                              "#if defined(TALCITE_LINUX_FS)\n"
+                                              "d\n"
+                                              "#elif defined(SOMETHING)\n"
+                                              "e\n"
+                                              "#else\n"
+                                              "f\n"
+                                              "#endif\n"
+                                              "#if !defined(_WIN32) && !defined(TALCITE_GENERIC_POSIX)\n"
+                                              "g\n"
+                                              "#endif\n");
+
+    same(live.size(), std::size_t{17});
+
+    if (live.size() == 17) {
+        ought(live[1] && live[3] && !live[5]);
+        ought(!live[8] && live[10] && live[12]);
+        ought(!live[15]);
+    }
 }

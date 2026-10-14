@@ -142,19 +142,21 @@ bool sighted(Seen& seen, const path& real) {
 bool asked(Conflict how) { return how == Conflict::overwrite || how == Conflict::fail; }
 
 
-// A copy interrupted halfway must not leave behind a file that looks complete. The target
-// disappears unless the copy reached the end.
+// A copy of a file interrupted halfway must not leave behind a file that looks complete. The target
+// disappears unless the copy reached the end, and only when the copy created it: a flag the copy
+// raises once its exclusive creation succeeded (`made`). A file that someone else put under the name
+// in the meantime makes that creation fail, the flag stays down, and their file is not removed.
 class Sweeping {
 public:
-    // Remembers whether the target existed before; an existing one is never removed.
-    explicit Sweeping(path where) : where_(std::move(where)), was_(exists_at(where_)) {}
+    // Watches the target, which goes only when `made` says the copy created it.
+    Sweeping(path where, const bool* made) : where_(std::move(where)), made_(made) {}
 
-    // Removes the target, unless `keep` was called or it existed before.
+    // Removes the target, unless `keep` was called or it is not the copy's own.
     ~Sweeping() {
-        if (kept_ || was_) return;
+        if (kept_ || !*made_) return;
 
         std::error_code ignored;
-        stood::remove_all(where_, ignored);
+        stood::remove(long_form(where_), ignored);
     }
 
     Sweeping(const Sweeping&) = delete;
@@ -167,29 +169,78 @@ public:
 
 private:
     path where_;
-    bool was_ = false;
+    const bool* made_ = nullptr;
     bool kept_ = false;
 };
 
-// Three kinds of writing to a file: `Mode::truncate` writes directly (the target does not exist);
-// a replacement writes beside it and renames, so an interrupted or failed one does not touch the
-// old target, and a second hard link to the old file keeps the old content; and `durable`
+// What a folder copy has made, taken back when the copy does not finish: the files it wrote and the
+// folders it created, newest first, a folder only when it is empty by then. Only what the copy made
+// goes: a file someone else put into one of its new folders meanwhile stays, and so does the folder
+// that holds it. A copy into a folder that stood before (`owning` false) takes nothing back, since
+// what arrived is merged with what was there.
+class Undoing {
+public:
+    // Starts with nothing made.
+    explicit Undoing(bool owning) : owning_(owning) {}
+
+    // Takes back what was made, unless `keep` was called or the target folder stood before.
+    ~Undoing() {
+        if (kept_ || !owning_) return;
+
+        for (auto at = made_.rbegin(); at != made_.rend(); ++at) {
+            std::error_code ignored;
+            stood::remove(long_form(*at), ignored);
+        }
+    }
+
+    Undoing(const Undoing&) = delete;
+    Undoing& operator=(const Undoing&) = delete;
+    Undoing(Undoing&&) = delete;
+    Undoing& operator=(Undoing&&) = delete;
+
+    // Notes a file written or a folder created by the copy.
+    void made(path where) { made_.push_back(std::move(where)); }
+
+    // Marks the copy as complete, so that everything stays.
+    void keep() { kept_ = true; }
+
+private:
+    std::vector<path> made_;
+    bool owning_ = false;
+    bool kept_ = false;
+};
+
+// A file that stood under a name in a folder the copy created itself, where nothing should stand:
+// two source names that the target takes for one (A.txt and a.txt on a disk that ignores case,
+// two spellings of one accented letter), or a file someone else put there meanwhile. Thrown from
+// the exclusive creation, and caught by `placed_at`, which then settles the conflict as anywhere
+// else.
+struct Taken {};
+
+// Three kinds of writing to a file: a new one is created exclusively (`Mode::exclusive`) and written
+// directly, so a file that someone else put under the name in the meantime is refused, not
+// overwritten; a replacement writes beside it and renames, so an interrupted or failed one does not
+// touch the old target, and a second hard link to the old file keeps the old content; and `durable`
 // additionally waits until the data is on the medium before it says "done". A replacement is
 // always made durable: without that, a power loss right after the rename could leave an empty
-// file in place of the target.
+// file in place of the target. In a folder the copy has just created (`fresh`) nothing can stand
+// under the name, so the target is not asked about.
 //
-// `fill` gets the path where the content is to appear and returns an open handle to it, or
-// nothing when the task was cancelled halfway; then the promise is not settled at all. The
-// modification time, when there is one, is written through the same handle before syncing.
+// `fill` gets the path where the content is to appear and a flag to raise once it has created the
+// file there, and returns an open handle to it, or nothing when the task was cancelled halfway;
+// then the promise is not settled at all. The modification time, when there is one, is written
+// through the same handle before syncing.
 template <typename Fill>
-bool poured_at(const path& to, bool durable, std::optional<Instant> when, Fill fill) {
-    const bool there = kind_at(to) != Kind::none;
+bool poured_at(const path& to, bool durable, std::optional<Instant> when, bool fresh, Fill fill) {
+    const bool there = !fresh && kind_at(to) != Kind::none;
     const path into = there ? aside_of(to) : to;
 
-    Sweeping sweeping{into};
+    bool made = false;
+
+    Sweeping sweeping{into, &made};
 
     {
-        const std::shared_ptr<File::Held> yours = fill(into);
+        const std::shared_ptr<File::Held> yours = fill(into, made);
 
         if (!yours) return false;
 
@@ -209,13 +260,17 @@ bool poured_at(const path& to, bool durable, std::optional<Instant> when, Fill f
 // system cannot copy on its own.
 template <typename Pour>
 bool poured_at(const path& to, bool durable, Pour pour) {
-    return poured_at(to, durable, std::nullopt, [&](const path& into) -> std::shared_ptr<File::Held> {
-        std::shared_ptr<File::Held> yours = open_at(into, Mode::truncate);
+    const auto fill = [&](const path& into, bool& made) -> std::shared_ptr<File::Held> {
+        std::shared_ptr<File::Held> yours = open_at(into, Mode::exclusive);
+
+        made = true;
 
         if (!pour(*yours)) return nullptr;
 
         return yours;
-    });
+    };
+
+    return poured_at(to, durable, std::nullopt, false, fill);
 }
 
 // The piece for an in-kernel copy: larger than a read installment, because with a server-side
@@ -244,6 +299,18 @@ DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_IN
 // half-made target goes with the unwinding, and caught by `file_at` to start again.
 struct Shifting {};
 
+// Creates the target of a copy exclusively. In a folder the copy made itself (`fresh`) a name that
+// is taken all the same is `Taken`, a conflict still to settle; anywhere else the refusal stands.
+std::shared_ptr<File::Held> created_at(const path& into, bool fresh) {
+    try {
+        return open_at(into, Mode::exclusive);
+    } catch (const Trouble&) {
+        if (fresh && kind_at(into) != Kind::none) throw Taken{};
+
+        throw;
+    }
+}
+
 #ifdef _WIN32
 
 // Whether `CopyFileExW` refused only because it does not know this way (Wine, a medium without
@@ -261,9 +328,9 @@ bool unsupported(DWORD why) {
 // Before the target is handed over, the copy checks itself: exactly as many bytes as the source had
 // when it was opened, the open source still of that length and write time, and the same file still
 // under the source's name. Anything else means someone changed the source meanwhile (a file still
-// being written, one cut shorter, one replaced), and the attempt throws `Shifting`. False when
-// cancelled halfway.
-bool copied_at(const path& from, const path& to, Tally tally, bool durable) {
+// being written, one cut shorter, one replaced), and the attempt throws `Shifting`. In a folder the
+// copy has just created (`fresh`) the target is not asked about. False when cancelled halfway.
+bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool fresh) {
     const std::shared_ptr<File::Held> mine = open_at(from, Mode::read);
 
     const Facet before = facet_of(*mine);
@@ -285,12 +352,14 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable) {
 
     const std::size_t rata = tally.rata > 0 ? tally.rata : rated(from, to);
 
-    return poured_at(to, durable, before.changed, [&](const path& into) -> std::shared_ptr<File::Held> {
+    return poured_at(to, durable, before.changed, fresh, [&](const path& into, bool& made) -> std::shared_ptr<File::Held> {
 #ifdef _WIN32
         BOOL cancel = FALSE;
 
         if (CopyFileExW(longly(from).c_str(), longly(into).c_str(), copied, &tally, &cancel,
                         COPY_FILE_FAIL_IF_EXISTS) != 0) {
+            made = true;
+
             // The read-only attribute came from the source; left in place, it would block syncing
             // here and every later overwrite of the target. Our own loop does not carry it over
             // either.
@@ -309,12 +378,30 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable) {
         }
 
         const DWORD why = GetLastError();
+        const bool foreign = why == ERROR_FILE_EXISTS || why == ERROR_ALREADY_EXISTS;
+
+        // Unless the name was taken before it began, whatever the system's copy left under it is its
+        // own, and so the copy's.
+        if (!foreign) made = true;
 
         if (why == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
 
+        if (foreign && fresh) throw Taken{};
+
         if (!unsupported(why)) amiss("Cannot copy the file: " + std::system_category().message(static_cast<int>(why)), from);
+
+        // A system that does not know the way may still have left an empty target behind; it goes,
+        // and our own loop creates the file anew.
+        {
+            std::error_code ignored;
+            stood::remove(long_form(into), ignored);
+        }
+
+        made = false;
 #endif
-        std::shared_ptr<File::Held> yours = open_at(into, Mode::truncate);
+        std::shared_ptr<File::Held> yours = created_at(into, fresh);
+
+        made = true;
 
         if (whole > 0 && cloned_on(*mine, *yours)) {
             at_byte(whole);
@@ -370,15 +457,38 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable) {
 // Copies one file to `to` (see `copied_at`). A source that changed while it went is copied once
 // more from the start; a second change in a row is a refusal, and the source stays as it is. False
 // when cancelled halfway.
-bool file_at(const path& from, const path& to, Tally tally, bool durable = false) {
+bool file_at(const path& from, const path& to, Tally tally, bool durable = false, bool fresh = false) {
     for (int attempt = 0; attempt < 2; ++attempt) {
         try {
-            return copied_at(from, to, tally, durable);
+            return copied_at(from, to, tally, durable, fresh);
         } catch (const Shifting&) {
         }
     }
 
     amiss("The file changed while it was being copied.", from);
+}
+
+// Copies one file into a folder entry, settling a conflict by `how`. In a folder the copy made
+// itself (`fresh`) the target is not asked about first, since nothing should stand there; only when
+// the exclusive creation finds the name taken all the same (`Taken`) is the conflict settled, as
+// anywhere else. Returns where the file went, empty when it was skipped, and nothing when cancelled.
+std::optional<path> placed_at(const path& from, const path& to, Tally tally, Conflict how, bool durable, bool fresh) {
+    if (fresh) {
+        try {
+            if (!file_at(from, to, tally, durable, true)) return std::nullopt;
+
+            return to;
+        } catch (const Taken&) {
+        }
+    }
+
+    const path where = settled_on(to, how);
+
+    if (where.empty()) return path{};
+
+    if (!file_at(from, where, tally, durable, false)) return std::nullopt;
+
+    return where;
 }
 
 // The folder's time with full precision, or the one from the listing when the folder has vanished
@@ -453,7 +563,7 @@ bool charted(const path& from, const path& to, std::vector<Laid>& into, Seen& se
 
         std::error_code trouble;
 
-        const path onto = stood::canonical(one.where, trouble);
+        const path onto = real_at(one.where, trouble);
 
         if (trouble) amiss("This entry cannot be copied.", one.where);
 
@@ -484,7 +594,9 @@ bool charted(const path& from, const path& to, std::vector<Laid>& into, Seen& se
 // its files plus one for every entry, so a big file moves the bar while it is copied and a folder
 // of empty entries still moves it. Parents come before their children, so folders are created in
 // order. The content of followed links has its own counter and is not added to this one, because
-// it is not in the total. False when cancelled.
+// it is not in the total. A folder the copy creates itself is empty, so what goes into it asks no
+// question about a conflict (`fresh`); only a folder that stood before (a merge) asks, and so does
+// every folder under it that stood too. False when cancelled.
 bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen, int deep, bool fitting) {
     std::vector<Laid> laid;
 
@@ -504,27 +616,52 @@ bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen
 
     held.total(bytes + laid.size() + 1);
 
-    Sweeping sweeping{to};
+    const bool standing = kind_at(to) != Kind::none;
+
+    Undoing undoing{!standing};
 
     make_folder_at(to);
     held.added(1);
+
+    if (!standing) undoing.made(to);
 
     const std::size_t rata = rated(from, to);
 
     std::vector<std::pair<path, Instant>> folders;
 
+    // Which target folders the copy created, by path; a child's path is its parent's joined with a
+    // name, so the parent is found by `parent_path`.
+    std::map<path, bool> fresh{{to, !standing}};
+
+    const auto anew = [&fresh](const path& where) {
+        const auto found = fresh.find(where.parent_path());
+
+        return found != fresh.end() && found->second;
+    };
+
     for (const Laid& one : laid) {
         if (stopped()) return false;
 
         const std::uintmax_t base = held.done.load();
+        const bool inside = anew(one.to);
 
         if (one.kind == Kind::folder) {
+            const bool there = !inside && kind_at(one.to) != Kind::none;
+
             make_folder_at(one.to);
+            fresh[one.to] = !there;
             folders.emplace_back(one.to, instant_or(one.from, one.modified));
-        } else if (const path where = settled_on(one.to, how); !where.empty()) {
+
+            if (!there) undoing.made(one.to);
+        } else {
             Counted apart;
 
-            if (!file_at(one.from, where, one.counted ? Tally{held, base, false, rata} : Tally{apart, 0, true, rata})) return false;
+            const Tally tally = one.counted ? Tally{held, base, false, rata} : Tally{apart, 0, true, rata};
+            const std::optional<path> went = placed_at(one.from, one.to, tally, how, false, inside);
+
+            if (!went) return false;
+
+            if (!went->empty()) undoing.made(*went);
         }
 
         // The listed size, not the copied one: the total was made from the listing.
@@ -533,7 +670,7 @@ bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen
         held.added(1);
     }
 
-    sweeping.keep();
+    undoing.keep();
 
     // The folders' times only at the end and from the deepest: every entry put inside changes the
     // time, so stamping earlier would leave the copy's subfolders with the time of copying instead
@@ -568,7 +705,7 @@ bool copy_at(const path& from, const path& to, Counted& held, Conflict how) {
     if (what == Kind::link) {
         std::error_code trouble;
 
-        onto = stood::canonical(from, trouble);
+        onto = real_at(from, trouble);
         if (trouble) amiss("The link leads nowhere.", from);
 
         what = kind_at(onto);
@@ -603,7 +740,7 @@ bool copy_at(const path& from, const path& to, Counted& held, Conflict how) {
     {
         std::error_code ignored;
 
-        const std::uintmax_t much = stood::file_size(onto, ignored);
+        const std::uintmax_t much = stood::file_size(long_form(onto), ignored);
 
         if (!ignored) fits_at(where, much, much);
     }
@@ -647,36 +784,49 @@ std::vector<Entry> surveyed(const path& from) {
     return made;
 }
 
-// One file or link; the bytes of a plain file go to `tally`. False when cancelled during the copy;
-// the source then stays whole.
-bool carried(const path& from, const path& to, Conflict how, Tally tally) {
+// One file or link; the bytes of a plain file go to `tally`. In a folder the move has just created
+// (`fresh`) nothing stands under the name, so the copy to another medium does not ask about it.
+// False when cancelled during the copy; the source then stays whole.
+bool carried(const path& from, const path& to, Conflict how, Tally tally, bool fresh) {
     const Shift made = shifted(from, to, how);
 
     if (made.where.empty() || made.done) return true;
 
     // Another medium: the system refused before it looked at the target, so the conflict is
-    // settled once more.
-    const path where = settled_on(to, how);
-    if (where.empty()) return true;
-
+    // settled once more (`placed_at`), unless the folder is the move's own.
     Counted apart;
     Seen seen;
+
+    path where;
 
     if (kind_at(from) == Kind::link) {
         std::error_code trouble;
 
-        const path onto = stood::canonical(from, trouble);
+        const path onto = real_at(from, trouble);
         if (trouble) amiss("The link leads nowhere.", from);
 
         if (kind_at(onto) == Kind::folder) {
+            where = fresh ? to : settled_on(to, how);
+            if (where.empty()) return true;
+
             sighted(seen, onto);
 
             if (!tree_at(onto, where, apart, how, seen, 1, false)) return false;
-        } else if (!file_at(onto, where, Tally{apart}, true)) {
-            return false;
+        } else {
+            const std::optional<path> went = placed_at(onto, to, Tally{apart}, how, true, fresh);
+
+            if (!went) return false;
+            if (went->empty()) return true;
+
+            where = *went;
         }
-    } else if (!file_at(from, where, tally, true)) {
-        return false;
+    } else {
+        const std::optional<path> went = placed_at(from, to, tally, how, true, fresh);
+
+        if (!went) return false;
+        if (went->empty()) return true;
+
+        where = *went;
     }
 
     // The copy is on the medium; its entry in the folder must be too, before the source goes, or a
@@ -686,7 +836,7 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally) {
 
     std::error_code trouble;
 
-    stood::remove(from, trouble);
+    stood::remove(long_form(from), trouble);
     if (trouble) amiss("Cannot remove the source after copying.", from);
 
     return true;
@@ -703,7 +853,7 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
         if (kind_at(from) == Kind::file) {
             std::error_code ignored;
 
-            much = stood::file_size(from, ignored);
+            much = stood::file_size(long_form(from), ignored);
 
             if (ignored) much = 0;
             else fits_at(to, much, much);
@@ -711,7 +861,7 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
 
         held.total(much > 0 ? much : 1);
 
-        if (!carried(from, to, how, Tally{held, 0, false})) return false;
+        if (!carried(from, to, how, Tally{held, 0, false}, false)) return false;
 
         held.reached(held.whole.load());
 
@@ -731,11 +881,16 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
     held.total(bytes + among.size() + 1);
 
     const Instant stamp = instant_at(from);
+    const bool standing = kind_at(to) != Kind::none;
 
     make_folder_at(to);
     held.added(1);
 
     std::vector<std::pair<path, Instant>> folders;
+
+    // Which target folders the move created, as in a folder copy (`tree_at`): the entries come
+    // sorted by path, so a folder comes before what lies in it.
+    std::map<path, bool> fresh{{to, !standing}};
 
     for (const Entry& one : among) {
         if (stopped()) return false;
@@ -744,10 +899,16 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
 
         const std::uintmax_t base = held.done.load();
 
+        const auto parent = fresh.find(where.parent_path());
+        const bool inside = parent != fresh.end() && parent->second;
+
         if (one.kind == Kind::folder) {
+            const bool there = !inside && kind_at(where) != Kind::none;
+
             make_folder_at(where);
+            fresh[where] = !there;
             folders.emplace_back(one.where, instant_or(one.where, one.modified));
-        } else if (!carried(one.where, where, how, Tally{held, base, false})) {
+        } else if (!carried(one.where, where, how, Tally{held, base, false}, inside)) {
             return false;
         }
 
@@ -764,12 +925,12 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
         std::error_code ignored;
 
         stamp_at(to / at->first.lexically_relative(from), at->second);
-        stood::remove(at->first, ignored);
+        stood::remove(long_form(at->first), ignored);
     }
 
     std::error_code ignored;
 
-    stood::remove(from, ignored);
+    stood::remove(long_form(from), ignored);
     stamp_at(to, stamp);
 
     if (how != Conflict::skip && exists_at(from)) amiss("Some entries stayed behind.", from);
@@ -906,13 +1067,13 @@ Promise<void> erase(const path& where) {
             if (stopped()) throw Cancelled{};
 
             std::error_code ignored;
-            stood::remove(at->where, ignored);
+            stood::remove(long_form(at->where), ignored);
 
             held.added(1);
         }
 
         std::error_code trouble;
-        stood::remove(where, trouble);
+        stood::remove(long_form(where), trouble);
 
         if (trouble) amiss("Cannot remove.", where);
 
