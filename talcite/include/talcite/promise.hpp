@@ -383,7 +383,13 @@ public:
         : from_(std::move(from)), to_(std::move(to)), f_(std::move(f)) {}
 
     void ended() override {
-        if (!to_->running()) return;
+        to_->hold();
+
+        if (!to_->running()) {
+            to_->let_go();
+
+            return;
+        }
 
         switch (from_->ending()) {
         case Ending::value:
@@ -400,6 +406,8 @@ public:
             (void)to_->quit(Delivery::here);
             break;
         }
+
+        to_->let_go();
     }
 
 private:
@@ -415,21 +423,27 @@ public:
         : from_(std::move(from)), to_(std::move(to)), f_(std::move(f)) {}
 
     void ended() override {
-        if (!to_->running()) return;
+        to_->hold();
 
-        if (from_->ending() != Ending::error) {
-            (void)passed(*from_, *to_, Delivery::here);
+        if (!to_->running()) {
+            to_->let_go();
 
             return;
         }
 
-        try {
-            std::rethrow_exception(from_->why());
-        } catch (const std::exception& why) {
-            produced<T>(to_, f_, why);
-        } catch (...) {
-            (void)to_->failed(caught(), Delivery::here);
+        if (from_->ending() != Ending::error) {
+            (void)passed(*from_, *to_, Delivery::here);
+        } else {
+            try {
+                std::rethrow_exception(from_->why());
+            } catch (const std::exception& why) {
+                produced<T>(to_, f_, why);
+            } catch (...) {
+                (void)to_->failed(caught(), Delivery::here);
+            }
         }
+
+        to_->let_go();
     }
 
 private:
@@ -492,9 +506,13 @@ public:
         : from_(std::move(from)), to_(std::move(to)), where_(std::move(where)) {}
 
     void ended() override {
-        if (!to_->running()) return;
-
         to_->hold();
+
+        if (!to_->running()) {
+            to_->let_go();
+
+            return;
+        }
 
         const bool taken = posted(where_, [from = from_, to = to_] {
             (void)passed(*from, *to, Delivery::here);

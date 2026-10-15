@@ -409,6 +409,57 @@ TRIAL("finally: after a cancellation it waits for the end of the work, off the c
     ought(other.load());
 }
 
+// A value from `Settle` sends the callbacks and the finish of the settled node to the pool apart,
+// so a cancellation of the chain can meet a callback just as it starts, on another thread. The
+// callback that starts then is already counted: `finally` comes only after it, never before, and
+// the callback never starts after `finally` has run. Many rounds, each cancelling at another moment.
+TRIAL("finally: a cancellation that meets a callback as it starts does not let finally run first") {
+    for (int round = 0; round < 400; ++round) {
+        struct Seen {
+            std::atomic<int> started{0};
+            std::atomic<bool> busy{false};
+            std::atomic<bool> finished{false};
+            std::atomic<bool> early{false};
+        };
+
+        const auto seen = std::make_shared<Seen>();
+
+        auto [source, settle] = promised<void>();
+
+        std::optional<Promise<void>> tail;
+
+        tail.emplace(std::move(source)
+                         .then([seen] {
+                             if (seen->finished.load()) seen->early.store(true);
+
+                             seen->busy.store(true);
+                             seen->started.fetch_add(1);
+
+                             std::this_thread::sleep_for(200us);
+
+                             seen->busy.store(false);
+                         })
+                         .finally([seen] {
+                             if (seen->busy.load()) seen->early.store(true);
+
+                             seen->finished.store(true);
+                         }));
+
+        std::thread settling{[settle = std::move(settle)]() mutable { (void)settle.value(); }};
+
+        std::this_thread::sleep_for(std::chrono::microseconds{round % 40 * 5});
+
+        tail.reset();
+        settling.join();
+
+        ought(risen(seen->finished));
+
+        std::this_thread::sleep_for(1ms);
+
+        ought(!seen->early.load());
+    }
+}
+
 // A chain moved to a place (a loop) cleans up there after a cancellation too, so that code bound to
 // that place's thread never runs on another one.
 TRIAL("finally: after a cancellation it runs on the place the chain moved to") {

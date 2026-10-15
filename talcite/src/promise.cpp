@@ -26,7 +26,12 @@ namespace talcite {
 // a body that has not noticed the stop yet, a producer still holding its `Settle`. The node counts
 // what has to finish (`work_`: its own work, its predecessors, a callback running, an adopted
 // promise), and only when that count reaches zero after the ending is the node finished. `finally`
-// waits for that moment, which is what makes it fit for cleaning up.
+// waits for that moment, which is what makes it fit for cleaning up. A reaction that may run a
+// callback (`then`, `recover`, and `on`, which hands the ending on elsewhere) holds its node first
+// and only then looks whether the node still runs: an ending from `Settle` sends the reactions and
+// the finish of the predecessor to the io lane apart, so they may run on two threads at once, and a
+// look before the hold would let a cancellation finish the node, and `finally` run, while the
+// callback is just starting.
 //
 // Nothing internal recurses: releasing a chain, delivering an ending and announcing that work has
 // finished are all steps of one trampoline per thread (`stepped`), so a chain of any length runs at
