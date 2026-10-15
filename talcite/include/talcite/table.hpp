@@ -22,6 +22,7 @@ struct TableColumn {
 struct TableCell {
     std::string text;
     std::string role;
+    bool spans = false;
 };
 
 using TableRow = std::vector<TableCell>;

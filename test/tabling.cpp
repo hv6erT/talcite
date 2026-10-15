@@ -162,6 +162,39 @@ TRIAL("Table: the flexible column does not vanish in an extremely narrow window"
     same(made.at({0, 1}).letter, U'p');
 }
 
+// A spanning cell takes the rest of its row, the gaps included, so a heading among the rows is not
+// cut at its column; the cells after it are not drawn. A cell that does not span keeps to its
+// column.
+TRIAL("Table: a spanning cell takes the rest of the row") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 3, ui::Justify::left}, ui::TableColumn{"", 0, ui::Justify::left},
+                  ui::TableColumn{"", 0, ui::Justify::left}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            const ui::TableRow rows[] = {
+                {ui::TableCell{}, ui::TableCell{"Uporządkowane i zatwierdzone: 12", {}, true}, ui::TableCell{"ukryte", {}}},
+                {ui::TableCell{"[ ]", {}}, ui::TableCell{"Uporządkowane i zatwierdzone: 12", {}}, ui::TableCell{"x", {}}}};
+
+            for (std::size_t at = which; at < 2 && made.size() < most; ++at) made.push_back(rows[at]);
+
+            return made;
+        },
+        2);
+
+    sheet.children().add(one);
+
+    const View made = sheet.render({{0, 0}, {40, 2}});
+
+    same(said(made, 0), std::string{"    Uporządkowane i zatwierdzone: 12"});
+    same(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
+}
+
 TRIAL("Table: without a heading the first row stands at the top") {
     Sheet sheet;
 
