@@ -17,6 +17,10 @@ struct Timers;
 
 }
 
+#if defined(_MSC_VER) && !defined(__clang__)
+class Clock;
+#endif
+
 class [[nodiscard]] Timer {
 public:
     Timer() = default;

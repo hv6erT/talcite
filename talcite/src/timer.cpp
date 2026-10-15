@@ -52,6 +52,11 @@ void dropped(detail::Timers& timers, std::uint64_t number) {
 // the timer, and dropping the timer takes it back. The timer reaches the clock only weakly, so one
 // that outlives its root has nothing to take back. Moving hands the appointment over; the timer
 // moved from is empty.
+//
+// Only the root's clock makes a timer with an appointment (`friend class Clock` in the header). The
+// friend declaration names `talcite::ui::Clock`, declared after the timer: the standard looks for a
+// first-declared friend only in the innermost namespace. MSVC looks further out, finds
+// `talcite::Clock` and befriends that one, so under MSVC the header declares `Clock` beforehand.
 Timer::Timer(Timer&& other) noexcept : timers_(std::move(other.timers_)), number_(std::exchange(other.number_, 0)) {}
 
 // Takes back what this timer held, then takes over the other one's appointment.
