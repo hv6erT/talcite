@@ -84,6 +84,8 @@ talcite::ui::Skin coloured() {
 // confirming the line. Only whoever builds the window knows that, and it is the one that calls
 // `add`.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -142,7 +144,7 @@ int main() {
 
     // Enter does not belong to the field: the field lets it through, so we catch it here, and this
     // is the place where a command counts as given.
-    (void)said->on<talcite::ui::KeyEvent>([said, done](talcite::ui::KeyEvent& what) {
+    heard.push_back(said->on<talcite::ui::KeyEvent>([said, done](talcite::ui::KeyEvent& what) {
         if (what.key() != talcite::ui::Code::enter) return false;
 
         if (said->text().empty()) return true;
@@ -153,26 +155,26 @@ int main() {
         said->text("");
 
         return true;
-    });
+    }));
 
     // Taking an entry from the past announces one event, whether it was done with an arrow or from
     // the unfolded list.
-    (void)said->on<talcite::ui::PickEvent>([said, told](talcite::ui::PickEvent&) {
+    heard.push_back(said->on<talcite::ui::PickEvent>([said, told](talcite::ui::PickEvent&) {
         told->text("taken from history: " + said->text());
 
         return true;
-    });
+    }));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "History"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "History"),
                       [said] { said->open(); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f8, "Forget"), [said, told] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f8, "Forget"), [said, told] {
         said->clear();
 
         told->text("history cleared");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());

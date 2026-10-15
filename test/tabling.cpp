@@ -289,7 +289,7 @@ TRIAL("Table: movement notifies through an event, not a callback") {
 
     int moves = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
         ++moves;
 
         return false;
@@ -505,7 +505,7 @@ TRIAL("Table: marking with Insert can be added through a handler") {
 
     const std::weak_ptr<ui::Table> weak = one;
 
-    (void)one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
+    const ui::Hook heard_key = one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
         if (what.key().code() != ui::Code::insert) return false;
 
         const auto mine = weak.lock();
@@ -690,7 +690,7 @@ TRIAL("Table: rows replaced around the cursor keep its row and the view") {
 
     int moves = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
         ++moves;
 
         return false;
@@ -738,7 +738,7 @@ TRIAL("Table: a cursor on replaced rows moves to their place, and stays in view"
 
     int moves = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
         ++moves;
 
         return false;

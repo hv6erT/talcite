@@ -115,6 +115,8 @@ std::shared_ptr<talcite::ui::Row> setting(const std::string& said,
 // box below itself, or above itself when there is no room below. The box lies on top of everything,
 // because it is a veil in the same window as the dialogs.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -150,20 +152,20 @@ int main() {
 
     // Every choice announces the same event, whether it was made with the mouse, with Enter or with
     // an arrow on the closed row.
-    const auto watching = [said](const std::shared_ptr<talcite::ui::Select>& one,
+    const auto watching = [said, &heard](const std::shared_ptr<talcite::ui::Select>& one,
                                  const std::string& named) {
-        (void)one->on<talcite::ui::PickEvent>([said, one, named](talcite::ui::PickEvent&) {
+        heard.push_back(one->on<talcite::ui::PickEvent>([said, one, named](talcite::ui::PickEvent&) {
             said->text(named + ": " + one->value().value_or(std::string{}));
 
             return true;
-        });
+        }));
     };
 
     watching(coding, "Encoding");
     watching(ending, "Line endings");
     watching(sorting, "Sorting");
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Set"), [coding, said] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Set"), [coding, said] {
         // A value set by the program is silent: filling a window with initial values is not
         // choosing. The index and the text are the same selected option; the index is easier to
         // step on from, and the text is what is shown.
@@ -176,7 +178,7 @@ int main() {
                    coding->value().value_or(std::string{}));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());

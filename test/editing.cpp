@@ -1640,7 +1640,7 @@ TRIAL("Editor: clipboard on ctrl can be added with a hook") {
 
     const std::weak_ptr<ui::Editor> weak = one;
 
-    (void)one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
+    const ui::Hook heard_key = one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
         if (!what.mods().ctrl || what.key().letter() != U'c') return false;
 
         const auto mine = weak.lock();

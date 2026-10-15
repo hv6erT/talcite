@@ -41,6 +41,8 @@ private:
 // A menu bar over a long scrolling page, with hot letters on titles and items and one disabled
 // item.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -84,20 +86,20 @@ int main() {
     file->keys().add(U'l');
 
     file->children().add(
-        lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Preview", "F3"),
+        lettered(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Preview", "F3"),
                              [said] { said->text("chosen: Preview"); }),
                  U'p'));
     file->children().add(
-        lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Edit", "F4"),
+        lettered(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Edit", "F4"),
                              [said] { said->text("chosen: Edit"); }),
                  U'e'));
     file->children().add(
-        lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"),
+        lettered(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Copy", "F5"),
                              [said] { said->text("chosen: Copy"); }),
                  U'c'));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
     file->children().add(
-        lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
+        lettered(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                              [&term] { term.stop(); }),
                  U'x'));
 
@@ -106,7 +108,7 @@ int main() {
     view->keys().add(U'v');
 
     view->children().add(
-        lettered(demo::doing(std::make_shared<talcite::ui::MenuItem>("Reload", "Ctrl-R"),
+        lettered(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Reload", "Ctrl-R"),
                              [said] { said->text("chosen: Reload"); }),
                  U'o'));
 
@@ -121,10 +123,10 @@ int main() {
 
     help->keys().add(U'h');
 
-    help->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("About"),
+    help->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("About"),
                           [said] { said->text("talcite — a universal framework of views"); }));
     help->children().add(
-        demo::doing(std::make_shared<talcite::ui::MenuItem>("A very long item near the edge"),
+        demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("A very long item near the edge"),
                     [said] { said->text("chosen: the long item"); }));
 
     sheet.children().add(window);

@@ -73,6 +73,9 @@ struct Opened {
     int said = -99;
     int closed = 0;
 
+    // The hooks of those actions and of the close count, kept as long as the window is.
+    std::vector<ui::Hook> heard;
+
     // Builds the message with the given answers, hangs on each one an action that records it and
     // closes the message, counts the closes, and opens the message in the window.
     Opened(std::string title, std::string text, std::vector<Said> answers = {},
@@ -91,20 +94,20 @@ struct Opened {
 
             // Closing is part of the answer's action, so the caller calls it; the window does not
             // leave the screen by itself.
-            (void)made->on<ui::PickEvent>([this, which](ui::PickEvent&) {
+            heard.push_back(made->on<ui::PickEvent>([this, which](ui::PickEvent&) {
                 said = which;
 
                 one->close();
 
                 return true;
-            });
+            }));
         }
 
-        (void)one->on<ui::CloseEvent>([this](ui::CloseEvent&) {
+        heard.push_back(one->on<ui::CloseEvent>([this](ui::CloseEvent&) {
             ++closed;
 
             return true;
-        });
+        }));
 
         window->open(one);
     }
@@ -313,7 +316,7 @@ TRIAL("Message: Esc closes only with a handler, and the close is announced") {
 
     const std::weak_ptr<ui::Message> weak = made.one;
 
-    (void)made.one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
+    const ui::Hook heard_key = made.one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
         if (what.key().code() != ui::Code::escape) return false;
 
         if (const auto mine = weak.lock()) mine->close();
@@ -552,7 +555,7 @@ TRIAL("Message: an answer added after construction works like any other") {
 
     more->keys().add(U'n');
 
-    (void)more->on<ui::PickEvent>([&seen](ui::PickEvent&) {
+    const ui::Hook heard_pick = more->on<ui::PickEvent>([&seen](ui::PickEvent&) {
         ++seen;
 
         return true;

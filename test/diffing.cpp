@@ -441,7 +441,7 @@ TRIAL("DiffViewer: space, plus and minus toggle the boxes") {
 
     int heard = 0;
 
-    (void)sheet.on<ui::PickEvent>([&heard](ui::PickEvent&) {
+    const ui::Hook heard_pick = sheet.on<ui::PickEvent>([&heard](ui::PickEvent&) {
         ++heard;
 
         return false;
@@ -496,7 +496,7 @@ TRIAL("DiffViewer: keys move through hunks and sections") {
 
     int moved = 0;
 
-    (void)sheet.on<ui::ScrollEvent>([&moved](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&moved](ui::ScrollEvent&) {
         ++moved;
 
         return false;

@@ -40,6 +40,8 @@ private:
 // Two bars: one knows how much it has done, the other only that something is happening. The second
 // one spins by itself, on the library's clock, without a single line on the program's side.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -92,7 +94,7 @@ int main() {
         beat->emplace(talcite::later(std::chrono::milliseconds{50}).here().then([again] { (*again)(); }));
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Start"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Start"),
                       [known, told, running, again] {
                           known->part(0.0);
                           told->text("copying…");
@@ -104,10 +106,10 @@ int main() {
                           (*again)();
                       });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Wait"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Wait"),
                       [guess] { guess->busy(!guess->busy()); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 

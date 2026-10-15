@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <optional>
@@ -127,8 +126,6 @@ public:
     [[nodiscard]] virtual Area placement(Size room) const;
 
     [[nodiscard]] virtual std::optional<Spot> caret() const;
-
-    [[nodiscard]] virtual std::optional<std::chrono::milliseconds> due() const;
 
 protected:
     bool broadcast(KeyEvent& what) {

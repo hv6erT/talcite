@@ -34,6 +34,20 @@ bool Rolled::handle(KeyEvent& what) {
     return Modal::handle(what);
 }
 
+// A click beside the rolled-out list rolls it up, as a click beside an open menu does: the list is
+// a part of the widget below, not a window waiting for an answer, so the click is not an answer
+// either and goes no further. A click on the list hits its rows or its frame, and only one beside it
+// lands on the veil itself. The veil closes itself, so this holds also after the widget is gone.
+bool Rolled::handle(ClickEvent& what) {
+    if (what.target() == this) {
+        close();
+
+        return true;
+    }
+
+    return Modal::handle(what);
+}
+
 // The box stands under its anchor. When there is not enough room below, it goes above; when it
 // sticks out to the right, it moves left. Just like the last menu in a menu bar, and for the same
 // reason: only the one who has the whole screen knows its edges, and the veil has it.
@@ -146,18 +160,16 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
     // `PickEvent`, and we listen to it on the list we assembled ourselves. `Rolled` takes no part
     // in this and does not need to know why it carries the list.
     //
-    // The handler holds a weak pointer to the widget: the rolled-out list can outlive the widget
-    // if someone takes the widget off the tree while the list is open. As long as the widget
-    // lives, this object lives too, so `this` is valid exactly when the pointer can be locked.
-    // First closing, then the choice: the widget that gets the row already has its list rolled up.
-    const std::weak_ptr<Node> mine = under_->weak_from_this();
+    // The hooks are this object's: the rolled-out list can outlive the widget if someone takes the
+    // widget off the tree while the list is open, and then nothing chooses any more; the veil can
+    // still be closed. A new list replaces the hooks of the last one. First closing, then the
+    // choice: the widget that gets the row already has its list rolled up.
     const std::weak_ptr<List> theirs = list;
 
-    (void)list->on<PickEvent>([this, mine, theirs, took = std::move(took)](PickEvent&) {
-        const std::shared_ptr<Node> kept = mine.lock();
+    picked_ = list->on<PickEvent>([this, theirs, took = std::move(took)](PickEvent&) {
         const std::shared_ptr<List> from = theirs.lock();
 
-        if (!kept || !from) return true;
+        if (!from) return true;
 
         const std::optional<std::size_t> at = from->which();
 
@@ -171,7 +183,7 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
     // A single click on a row chooses it, as in every drop-down list: the list was rolled out to be
     // chosen from, and the double click a plain list asks for would leave the first click doing
     // nothing visible. The row takes the click and the focus first; then it is picked like Enter.
-    (void)list->on<ClickEvent>([](ClickEvent& what) {
+    clicked_ = list->on<ClickEvent>([](ClickEvent& what) {
         auto* row = dynamic_cast<ListItem*>(what.target());
 
         if (row == nullptr || !row->enabled()) return false;
@@ -188,24 +200,6 @@ void Popup::open(const std::vector<std::string>& among, std::size_t which,
     const auto veil = std::make_shared<Rolled>(under_->weak_from_this());
 
     veil->children().add(frame);
-
-    // A click beside the rolled-out list rolls it up, as a click beside an open menu does: the list
-    // is a part of the widget below, not a window waiting for an answer, so the click is not an
-    // answer either and goes no further. A click on the list hits its rows or its frame, and only
-    // one beside it lands on the veil itself. While the widget lives, this object lives too; a
-    // widget gone meanwhile leaves only the veil to close.
-    const std::weak_ptr<Modal> drawn = veil;
-
-    (void)veil->on<ClickEvent>([this, mine, drawn](ClickEvent& what) {
-        const std::shared_ptr<Modal> one = drawn.lock();
-
-        if (!one || what.target() != one.get()) return false;
-
-        if (mine.lock()) close();
-        else one->close();
-
-        return true;
-    });
 
     window->open(veil);
 

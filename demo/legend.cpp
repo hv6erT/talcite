@@ -41,6 +41,8 @@ private:
 // it, so an unfolded menu gets the rows down to the last but one and has no way to paint over the
 // key bar.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -72,10 +74,10 @@ int main() {
 
     const auto file = menus->add("File");
 
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"),
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Copy", "F5"),
                           [said] { said->text("from the menu: Copy"); }));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
     (void)menus->add("View");
@@ -84,26 +86,26 @@ int main() {
         return [said, what = std::move(what)] { said->text("pressed: " + what); };
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f1, "Help"), told("Help"));
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Menu"), told("Menu"));
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "View"), told("View"));
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Edit"), told("Edit"));
-    const auto kopiuj = demo::doing(legend->add(talcite::ui::Code::f5, "Copy"), told("Copy"));
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "RenMov"), told("Move"));
-    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Mkdir"), told("New directory"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f1, "Help"), told("Help"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Menu"), told("Menu"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "View"), told("View"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Edit"), told("Edit"));
+    const auto kopiuj = demo::doing(heard, legend->add(talcite::ui::Code::f5, "Copy"), told("Copy"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "RenMov"), told("Move"));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f7, "Mkdir"), told("New directory"));
 
     // A disabled field: the tag is visible, the name is dimmed, and the key is silent.
-    const auto gone = demo::doing(legend->add(talcite::ui::Code::f8, "Delete"), told("Delete"));
+    const auto gone = demo::doing(heard, legend->add(talcite::ui::Code::f8, "Delete"), told("Delete"));
 
     gone->enabled(false);
 
     // F9 is swallowed by the menu bar, because it stands closer to the focus. A click on this field
     // has to do the same as the key, though, so the action opens the menu directly.
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     // A letter key is underlined in the name. A field has a set of keys, so the copy field answers
     // both F5 and "c", and since the letter occurs in "Copy", it is underlined there. The tag "5"

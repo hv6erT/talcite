@@ -266,15 +266,6 @@ View Node::render(const Area& where, const Area& seen) {
 // majority of widgets have nothing to show.
 std::optional<Spot> Node::caret() const { return {}; }
 
-// "Wake me up in this much time at the latest." Empty means never, and that is the answer of the
-// vast majority of nodes, because the picture usually changes on an event, not on the clock.
-//
-// The contract is one-sided and the node has to keep it: the time must be positive. A node that
-// keeps returning zero makes the loop spin forever, and the loop cannot tell that from a real
-// need. A node that computes its frame from the clock does this naturally: it returns the rest of
-// the current frame, which is never zero.
-std::optional<std::chrono::milliseconds> Node::due() const { return {}; }
-
 // A plain node wants as much as its only child and gives it its whole rectangle. Laying out
 // several children is the business of `Row` and `Column`.
 Size Node::wants(Size room) const {

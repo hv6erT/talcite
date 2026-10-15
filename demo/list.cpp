@@ -49,8 +49,8 @@ std::string named(int which) {
 // A window with a list: choosing one entry. Tab goes field, list, buttons, and the arrows inside
 // the list do not take Tab away: for the tour the list is one stop, even though it has a hundred
 // willing rows inside.
-std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::Span>& told) {
-    const auto made = std::make_shared<talcite::ui::Dialog>();
+std::shared_ptr<demo::Kept<talcite::ui::Dialog>> asking(const std::shared_ptr<talcite::ui::Span>& told) {
+    const auto made = std::make_shared<demo::Kept<talcite::ui::Dialog>>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>(
         "Choose a file", talcite::ui::FrameShape{talcite::ui::Border::twin});
@@ -74,12 +74,12 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
     // the listener takes it from `current()`, since the list holds it anyway.
     const std::weak_ptr<talcite::ui::List> weakly = list;
 
-    (void)list->on<talcite::ui::ScrollEvent>([field, weakly](talcite::ui::ScrollEvent&) {
+    made->heard.push_back(list->on<talcite::ui::ScrollEvent>([field, weakly](talcite::ui::ScrollEvent&) {
         if (const auto one = weakly.lock())
             if (const talcite::ui::ListItem* item = one->current()) field->text(item->text());
 
         return false;
-    });
+    }));
 
     column->children().add(list);
     column->children().add(std::make_shared<talcite::ui::Span>(" "));
@@ -110,27 +110,27 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
         };
     };
 
-    (void)yes->on<talcite::ui::PickEvent>([what = shutting("opened: ")](talcite::ui::PickEvent&) {
+    made->heard.push_back(yes->on<talcite::ui::PickEvent>([what = shutting("opened: ")](talcite::ui::PickEvent&) {
         what();
 
         return true;
-    });
-    (void)no->on<talcite::ui::PickEvent>(
+    }));
+    made->heard.push_back(no->on<talcite::ui::PickEvent>(
         [what = shutting("canceled, the field holds: ")](talcite::ui::PickEvent&) {
             what();
 
             return true;
-        });
+        }));
 
     // Enter and a double click on a row do the same as the primary button.
     for (const std::shared_ptr<talcite::ui::Node>& one : list->children())
         if (const auto item = std::dynamic_pointer_cast<talcite::ui::ListItem>(one))
-            (void)item->on<talcite::ui::PickEvent>(
+            made->heard.push_back(item->on<talcite::ui::PickEvent>(
                 [what = shutting("opened: ")](talcite::ui::PickEvent&) {
                     what();
 
                     return true;
-                });
+                }));
 
     return made;
 }
@@ -141,6 +141,8 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::shared_ptr<talcite::ui::S
 // above it says what is current. F3 opens a window in which the same kind of list stands next to a
 // field and buttons.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -166,23 +168,23 @@ int main() {
 
     const std::weak_ptr<talcite::ui::List> weakly = list;
 
-    (void)list->on<talcite::ui::ScrollEvent>([told, weakly](talcite::ui::ScrollEvent&) {
+    heard.push_back(list->on<talcite::ui::ScrollEvent>([told, weakly](talcite::ui::ScrollEvent&) {
         if (const auto one = weakly.lock())
             if (const talcite::ui::ListItem* item = one->current())
                 told->text("row " + std::to_string(one->which().value_or(0)) + ": " + item->text());
 
         return false;
-    });
+    }));
 
     for (const std::shared_ptr<talcite::ui::Node>& one : list->children())
         if (const auto item = std::dynamic_pointer_cast<talcite::ui::ListItem>(one)) {
             const std::weak_ptr<talcite::ui::ListItem> weak = item;
 
-            (void)item->on<talcite::ui::PickEvent>([told, weak](talcite::ui::PickEvent&) {
+            heard.push_back(item->on<talcite::ui::PickEvent>([told, weak](talcite::ui::PickEvent&) {
                 if (const auto which = weak.lock()) told->text("opened: " + which->text());
 
                 return true;
-            });
+            }));
         }
 
     column->children().add(told);
@@ -192,10 +194,10 @@ int main() {
     legend->content(frame);
     dialogs->content(legend);
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Choose"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Choose"),
                       [dialogs, told] { dialogs->open(demo::closing(asking(told))); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(dialogs);
 

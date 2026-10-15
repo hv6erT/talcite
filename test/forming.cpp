@@ -274,7 +274,7 @@ TRIAL("Form: a button does what the caller attached, and the window does not clo
     ok->primary(true);
     ok->keys().add(ui::Key{U'O'});
 
-    (void)ok->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = ok->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -390,7 +390,7 @@ TRIAL("Form: Esc closes only with a handler") {
 
     const std::weak_ptr<ui::Form> weak = made.one;
 
-    (void)made.one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
+    const ui::Hook heard_key = made.one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
         if (what.key().code() != ui::Code::escape) return false;
 
         if (const auto mine = weak.lock()) mine->close();

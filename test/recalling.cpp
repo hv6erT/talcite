@@ -25,9 +25,9 @@ ui::List* rolled(const ui::Modals& window) {
     return dynamic_cast<ui::List*>(veil->children().front()->children().front().get());
 }
 
-// Counts in `done` every pick that the history field announces.
-void counted(const std::shared_ptr<ui::HistoryField>& one, int& done) {
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+// Counts in `done` every pick that the history field announces, while the returned hook is kept.
+ui::Hook counted(const std::shared_ptr<ui::HistoryField>& one, int& done) {
+    return one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -252,7 +252,7 @@ TRIAL("HistoryField: taking an entry notifies, returning to your own does not") 
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     ui::KeyEvent up{ui::Code::up};
 
@@ -278,7 +278,7 @@ TRIAL("HistoryField: typing does not notify") {
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     ui::KeyEvent letter{U'x'};
 
@@ -494,7 +494,7 @@ TRIAL("HistoryField: a pick from the list goes into the field and notifies") {
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     stage.one->open();
 

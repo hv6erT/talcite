@@ -336,7 +336,7 @@ TRIAL("Viewer: slide returns whether it moved, and notifies only then") {
 
     int heard = 0;
 
-    (void)sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
         ++heard;
 
         return false;
@@ -1028,7 +1028,7 @@ TRIAL("Viewer: a jump notifies with a single event") {
 
     int heard = 0;
 
-    (void)sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
         ++heard;
 
         return false;
@@ -1095,7 +1095,7 @@ TRIAL("Viewer: a shift notifies the ancestor") {
 
     int heard = 0;
 
-    (void)sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
         ++heard;
 
         return false;
@@ -1120,7 +1120,7 @@ TRIAL("Viewer: no movement notifies nobody") {
 
     int heard = 0;
 
-    (void)sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent&) {
         ++heard;
 
         return false;

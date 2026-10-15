@@ -8,7 +8,9 @@
 
 namespace talcite::ui {
 
-Root::Root() = default;
+// The root reads the time from `time` for its clock (`clock`): the real one in a program, a manual
+// one in a trial.
+Root::Root(talcite::Clock& time) : clock_(time) {}
 
 Root::~Root() = default;
 
@@ -291,39 +293,24 @@ void Root::linger(std::shared_ptr<Node> one) {
     if (busy_ > 0) dying_.push_back(std::move(one));
 }
 
-namespace {
+// Calls what the clock has due by now (`Clock::elapse`), inside a delivery like an event: a node
+// that a call takes off the tree lives until the calls are over. Says whether anything was called;
+// the loop then draws a frame, since a call changes what is on the screen, or asks for a frame for
+// a node that computes its picture from the time.
+bool Root::elapse() {
+    ++busy_;
 
-// The nearest repaint request in the subtree. We walk the whole tree, because a covered node or one
-// with a zero area may animate too, and a user interface tree has dozens of nodes, not thousands.
-[[nodiscard]] std::optional<std::chrono::milliseconds> soonest(const Node& one) {
-    std::optional<std::chrono::milliseconds> made = one.due();
+    bool made = false;
 
-    for (const std::shared_ptr<Node>& child : one.children()) {
-        const std::optional<std::chrono::milliseconds> said = soonest(*child);
+    try {
+        made = clock_.elapse();
+    } catch (...) {
+        released();
 
-        if (!said.has_value()) continue;
-
-        if (!made.has_value() || *said < *made) made = said;
+        throw;
     }
 
-    return made;
-}
-
-}
-
-// How soon the tree wants to be repainted, or nothing. The root has no request of its own; it
-// collects the others'. Thanks to that, `Term` asks one place and does not need to know that there
-// is an image inside.
-std::optional<std::chrono::milliseconds> Root::due() const {
-    std::optional<std::chrono::milliseconds> made;
-
-    for (const std::shared_ptr<Node>& one : children()) {
-        const std::optional<std::chrono::milliseconds> said = soonest(*one);
-
-        if (!said.has_value()) continue;
-
-        if (!made.has_value() || *said < *made) made = said;
-    }
+    released();
 
     return made;
 }

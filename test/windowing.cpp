@@ -216,7 +216,7 @@ TRIAL("Window: closing announces itself and gives focus to the top one") {
 
     // The window is held in the handler by a plain pointer: the handler lives in the window itself,
     // so a strong pointer would keep it alive forever and leak it.
-    (void)two->on<ui::CloseEvent>([&said, &stood, window = two.get()](ui::CloseEvent&) {
+    const ui::Hook heard_close = two->on<ui::CloseEvent>([&said, &stood, window = two.get()](ui::CloseEvent&) {
         ++said;
         stood = window->root() != nullptr;
 

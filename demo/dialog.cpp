@@ -43,9 +43,9 @@ private:
 // A dialog's box is an ordinary frame with content. The dialog does three things to it: centers it,
 // casts a shadow and swallows everything that did not land in it. The double line is as in Midnight
 // Commander.
-std::shared_ptr<talcite::ui::Dialog> asking(const std::string& title, const std::string& said,
+std::shared_ptr<demo::Kept<talcite::ui::Dialog>> asking(const std::string& title, const std::string& said,
                                          const std::shared_ptr<talcite::ui::Span>& told) {
-    const auto made = std::make_shared<talcite::ui::Dialog>();
+    const auto made = std::make_shared<demo::Kept<talcite::ui::Dialog>>();
 
     const auto frame =
         std::make_shared<talcite::ui::Frame>(title, talcite::ui::FrameShape{talcite::ui::Border::twin});
@@ -91,29 +91,29 @@ std::shared_ptr<talcite::ui::Dialog> asking(const std::string& title, const std:
         };
     };
 
-    (void)yes->on<talcite::ui::PickEvent>([what = answered("Yes")](talcite::ui::PickEvent&) {
+    made->heard.push_back(yes->on<talcite::ui::PickEvent>([what = answered("Yes")](talcite::ui::PickEvent&) {
         what();
 
         return true;
-    });
-    (void)no->on<talcite::ui::PickEvent>([what = answered("No")](talcite::ui::PickEvent&) {
+    }));
+    made->heard.push_back(no->on<talcite::ui::PickEvent>([what = answered("No")](talcite::ui::PickEvent&) {
         what();
 
         return true;
-    });
-    (void)stop->on<talcite::ui::PickEvent>([what = answered("Stop")](talcite::ui::PickEvent&) {
+    }));
+    made->heard.push_back(stop->on<talcite::ui::PickEvent>([what = answered("Stop")](talcite::ui::PickEvent&) {
         what();
 
         return true;
-    });
+    }));
 
     return made;
 }
 
 // A window with a field: asking for a name. Enter confirms, Esc closes, and Tab completes the
 // suggestion; when there is nothing to complete, it moves on to the button.
-std::shared_ptr<talcite::ui::Dialog> named(const std::shared_ptr<talcite::ui::Span>& told) {
-    const auto made = std::make_shared<talcite::ui::Dialog>();
+std::shared_ptr<demo::Kept<talcite::ui::Dialog>> named(const std::shared_ptr<talcite::ui::Span>& told) {
+    const auto made = std::make_shared<demo::Kept<talcite::ui::Dialog>>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>(
         "Rename", talcite::ui::FrameShape{talcite::ui::Border::twin});
@@ -166,21 +166,21 @@ std::shared_ptr<talcite::ui::Dialog> named(const std::shared_ptr<talcite::ui::Sp
 
     const std::weak_ptr<talcite::ui::Dialog> weak = made;
 
-    (void)yes->on<talcite::ui::PickEvent>([weak, told, field](talcite::ui::PickEvent&) {
+    made->heard.push_back(yes->on<talcite::ui::PickEvent>([weak, told, field](talcite::ui::PickEvent&) {
         told->text("new name: " + field->text());
 
         if (const auto one = weak.lock()) one->close();
 
         return true;
-    });
+    }));
 
-    (void)no->on<talcite::ui::PickEvent>([weak, told](talcite::ui::PickEvent&) {
+    made->heard.push_back(no->on<talcite::ui::PickEvent>([weak, told](talcite::ui::PickEvent&) {
         told->text("rename canceled");
 
         if (const auto one = weak.lock()) one->close();
 
         return true;
-    });
+    }));
 
     return made;
 }
@@ -190,6 +190,8 @@ std::shared_ptr<talcite::ui::Dialog> named(const std::shared_ptr<talcite::ui::Sp
 // A full screen, in the order that follows from what lies on top of what: the dialog covers the
 // legend, the legend covers the menu bar, and the menu bar covers the content.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -224,32 +226,32 @@ int main() {
 
     const auto file = menus->add("File");
 
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"), [dialogs, said] {
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Copy", "F5"), [dialogs, said] {
         dialogs->open(demo::closing(asking("Copy", "Copy the selected files?", said)));
     }));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
     (void)menus->add("View");
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f1, "Help"), [dialogs, said] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f1, "Help"), [dialogs, said] {
         dialogs->open(
             asking("Help", "The dialog is modal: nothing underneath responds.", said));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Copy"), [dialogs, said] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Copy"), [dialogs, said] {
         dialogs->open(demo::closing(asking("Copy", "Copy the selected files?", said)));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Rename"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Rename"),
                       [dialogs, said] { dialogs->open(demo::closing(named(said))); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(dialogs);
 

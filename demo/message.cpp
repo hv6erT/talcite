@@ -111,6 +111,8 @@ talcite::ui::Skin coloured() {
 // question with several answers, an error box, and a box without buttons shown while work goes on.
 // The number of answers and the role stem make the difference, nothing else.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -150,7 +152,7 @@ int main() {
 
     file->children().add(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
     (void)menus->add("View");
@@ -161,7 +163,7 @@ int main() {
     //
     // "Closed without an answer" is a separate notice, because Esc has no button on which an action
     // could hang. A flag tells one from the other, because an answer also ends the window.
-    const auto answering = [told](const std::shared_ptr<talcite::ui::Message>& one,
+    const auto answering = [told](const std::shared_ptr<demo::Kept<talcite::ui::Message>>& one,
                                   std::vector<std::pair<std::string, char32_t>> these) {
         const auto answered = std::make_shared<bool>(false);
 
@@ -176,7 +178,7 @@ int main() {
 
             if (what.second != 0) made->keys().add(what.second);
 
-            (void)demo::doing(made, [told, answered, weak, name = what.first] {
+            (void)demo::doing(one->heard, made, [told, answered, weak, name = what.first] {
                 *answered = true;
 
                 told->text("answer: " + name);
@@ -185,24 +187,24 @@ int main() {
             });
         }
 
-        (void)one->on<talcite::ui::CloseEvent>([told, answered](talcite::ui::CloseEvent&) {
+        one->heard.push_back(one->on<talcite::ui::CloseEvent>([told, answered](talcite::ui::CloseEvent&) {
             if (!*answered) told->text("answer: Esc");
 
             return true;
-        });
+        }));
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Msg"), [dialogs, answering] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Msg"), [dialogs, answering] {
         const auto one =
-            std::make_shared<talcite::ui::Message>("Notice", "All changes have been saved.");
+            std::make_shared<demo::Kept<talcite::ui::Message>>("Notice", "All changes have been saved.");
 
         answering(one, {{"OK", U'O'}});
 
         dialogs->open(demo::closing(one));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Ask"), [dialogs, answering] {
-        const auto one = std::make_shared<talcite::ui::Message>(
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Ask"), [dialogs, answering] {
+        const auto one = std::make_shared<demo::Kept<talcite::ui::Message>>(
             "File exists",
             "The file “ca-certificates"
             "” already exists.\nWhat should be done with it?");
@@ -216,9 +218,9 @@ int main() {
 
     // An error is the same widget with a different stem. No separate class, no flag in the code:
     // one call, and the palette says the rest.
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Error"), [dialogs, answering] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Error"), [dialogs, answering] {
         const auto one =
-            std::make_shared<talcite::ui::Message>("Error", "Cannot operate on “..”!");
+            std::make_shared<demo::Kept<talcite::ui::Message>>("Error", "Cannot operate on “..”!");
 
         one->role("talcite.error");
 
@@ -230,23 +232,23 @@ int main() {
     // Without answers: a box that the program closes, not the user. Esc closes it too, because it
     // is still a dialog; talcite has no means to make a dialog impossible to close, and will not
     // have one.
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Wait"), [dialogs] {
-        dialogs->open(demo::closing(std::make_shared<talcite::ui::Message>("Wait", "Scanning the directory…")));
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Wait"), [dialogs] {
+        dialogs->open(demo::closing(std::make_shared<demo::Kept<talcite::ui::Message>>("Wait", "Scanning the directory…")));
     });
 
     const auto plain = std::make_shared<bool>(false);
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Skin"), [&sheet, plain] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Skin"), [&sheet, plain] {
         *plain = !*plain;
 
         sheet.skin(*plain ? talcite::ui::Skin{} : coloured());
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());

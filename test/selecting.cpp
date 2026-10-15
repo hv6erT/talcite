@@ -49,9 +49,9 @@ ui::List* rolled(const ui::Modals& window) {
     return dynamic_cast<ui::List*>(veil->children().front()->children().front().get());
 }
 
-// Counts in `done` every `ui::PickEvent` that `one` sends.
-void counted(const std::shared_ptr<ui::Select>& one, int& done) {
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+// Counts in `done` every `ui::PickEvent` that `one` sends, while the returned hook is kept.
+ui::Hook counted(const std::shared_ptr<ui::Select>& one, int& done) {
+    return one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -167,7 +167,7 @@ TRIAL("Select: the side arrows change the value and notify, up and down pass") {
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     ui::KeyEvent right{ui::Code::right};
 
@@ -247,7 +247,7 @@ TRIAL("Select: setting the value is silent") {
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     stage.one->value("CP1250");
 
@@ -440,7 +440,7 @@ TRIAL("Select: an item chosen with Enter comes back as an event and closes the l
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     stage.one->open();
 
@@ -466,7 +466,7 @@ TRIAL("Select: the pick event arrives with the list rolled up") {
 
     bool open = true;
 
-    (void)stage.one->on<ui::PickEvent>([&open, &stage](ui::PickEvent&) {
+    const ui::Hook heard_pick = stage.one->on<ui::PickEvent>([&open, &stage](ui::PickEvent&) {
         open = stage.one->opened();
 
         return true;
@@ -497,7 +497,7 @@ TRIAL("Select: choosing the same item does not notify") {
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     stage.one->open();
 
@@ -541,7 +541,7 @@ TRIAL("Select: a click beside the rolled-out list closes it, a click on a row ch
 
     int done = 0;
 
-    counted(stage.one, done);
+    const ui::Hook counting = counted(stage.one, done);
 
     (void)stage.drawn();
 

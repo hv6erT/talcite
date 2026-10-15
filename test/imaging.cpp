@@ -58,23 +58,15 @@ public:
     }
 };
 
-// A node asking to be woken up after a fixed time, to check the gathering in the root by itself,
-// without a picture and without a clock.
-class Ticking : public ui::Node {
-public:
-    explicit Ticking(int after) : after_(after) {}
+// How long until the root's nearest appointment, by the root's own clock, or nothing when it has
+// none: what an animated picture asked for when it was last drawn.
+std::optional<std::chrono::milliseconds> waiting(ui::Root& top) {
+    const std::optional<Clock::Moment> next = top.clock().next();
 
-    // Room for a few children, so the node can stand above others.
-    [[nodiscard]] int capacity() const override { return 4; }
+    if (!next) return std::nullopt;
 
-    // Always asks to be woken up after the fixed time.
-    [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override {
-        return std::chrono::milliseconds{after_};
-    }
-
-private:
-    int after_ = 0;
-};
+    return std::chrono::ceil<std::chrono::milliseconds>(*next - top.clock().now());
+}
 
 // A 16x12 GIF, four frames of 40, 100, 100 and 120 ms.
 constexpr std::string_view leaping =
@@ -175,11 +167,16 @@ TRIAL("figured: decoding runs on the cpu lane") {
 }
 
 TRIAL("Image: an empty one holds nothing and asks for nothing") {
-    const ui::Image one;
+    Sheet sheet;
 
-    ought(!one.held());
-    same(one.wants({40, 20}).wide, 0);
-    ought(!one.due().has_value());
+    const auto one = std::make_shared<ui::Image>();
+
+    sheet.children().add(one);
+    (void)sheet.render({{0, 0}, {40, 20}});
+
+    ought(!one->held());
+    same(one->wants({40, 20}).wide, 0);
+    ought(!waiting(sheet).has_value());
 }
 
 // The size must be known before painting, because the layout asks for it, so `hold` reads it from
@@ -453,10 +450,14 @@ TRIAL("Image: the picture's edge takes the background of the window it stands in
 
 // --- Clock ---------------------------------------------------------------------------------------
 
-TRIAL("Image: before layout there is nothing to ask for") {
+TRIAL("Image: before it is drawn there is nothing to ask for") {
+    Sheet sheet;
+
     const auto one = shown(leaping);
 
-    ought(!one->due().has_value());
+    sheet.children().add(one);
+
+    ought(!waiting(sheet).has_value());
 }
 
 TRIAL("Image: a decoded animation asks to be woken up") {
@@ -468,9 +469,11 @@ TRIAL("Image: a decoded animation asks to be woken up") {
     sheet.children().add(one);
     ought(settled(loop, sheet, *one, {40, 20}));
 
-    ought(one->due().has_value());
-    ought(*one->due() > std::chrono::milliseconds{0});
-    ought(*one->due() <= std::chrono::milliseconds{40});
+    (void)sheet.render({{0, 0}, {40, 20}});
+
+    ought(waiting(sheet).has_value());
+    ought(*waiting(sheet) > std::chrono::milliseconds{0});
+    ought(*waiting(sheet) <= std::chrono::milliseconds{40});
 }
 
 // Setting the frame is seeking: it moves the start of the countdown as if the animation had just
@@ -494,9 +497,11 @@ TRIAL("Image: seeking sets the frame together with the time") {
     for (std::size_t at = 0; at < 4; ++at) {
         one->still(at);
 
+        (void)sheet.render({{0, 0}, {40, 20}});
+
         held = held && one->still() == at;
-        held = held && one->due()->count() <= these[at];
-        held = held && one->due()->count() > these[at] - 10;
+        held = held && waiting(sheet).has_value() && waiting(sheet)->count() <= these[at];
+        held = held && waiting(sheet).has_value() && waiting(sheet)->count() > these[at] - 10;
     }
 
     ought(held);
@@ -527,12 +532,16 @@ TRIAL("Image: pausing freezes the visible frame") {
     sheet.children().add(one);
     ought(settled(loop, sheet, *one, {40, 20}));
 
+    (void)sheet.render({{0, 0}, {40, 20}});
+
+    ought(waiting(sheet).has_value());
+
     one->still(2);
     one->play(false);
 
     ought(!one->play());
     same(one->still(), std::size_t{2});
-    ought(!one->due().has_value());
+    ought(!waiting(sheet).has_value());
 }
 
 // Resuming starts from the frozen frame, not from the one the clock started at `hold` would point
@@ -555,9 +564,11 @@ TRIAL("Image: resuming starts from the frozen frame") {
 
     one->play(true);
 
+    (void)sheet.render({{0, 0}, {40, 20}});
+
     ought(one->play());
     same(one->still(), std::size_t{1});
-    ought(one->due().has_value());
+    ought(waiting(sheet).has_value());
 }
 
 // The only trial that really waits. The first frame lasts twenty milliseconds, the second three
@@ -603,7 +614,7 @@ TRIAL("Image: frames without delays are not an animation") {
     (void)sheet.render({{0, 0}, {20, 10}});
 
     ought(one->held());
-    ought(!one->due().has_value());
+    ought(!waiting(sheet).has_value());
 }
 
 // --- Color depth and characters from the root ----------------------------------------------------
@@ -692,35 +703,3 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
     same(alone->render({{0, 0}, {1, 1}}, {{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 }
 
-// --- Gathering in the root -----------------------------------------------------------------------
-
-// The root has no request of its own: it gathers the others' and returns the nearest. Thanks to
-// that, `Term` asks one place and does not have to know that there is a picture inside.
-TRIAL("Root: takes the nearest request from the subtree") {
-    Sheet sheet;
-
-    const auto outer = std::make_shared<Ticking>(500);
-    const auto inner = std::make_shared<Ticking>(70);
-    const auto quiet = std::make_shared<ui::Node>();
-
-    // The root takes one child, so the requests lie deeper than one level, and that is the point of
-    // this trial: the gathering has to go all the way down.
-    outer->children().add(quiet);
-    outer->children().add(inner);
-    sheet.children().add(outer);
-
-    ought(sheet.due().has_value());
-    same(sheet.due()->count(), 70LL);
-}
-
-TRIAL("Root: a tree without animation asks for nothing") {
-    Sheet sheet;
-
-    const auto one = std::make_shared<ui::Node>();
-    const auto two = std::make_shared<ui::Node>();
-
-    one->children().add(two);
-    sheet.children().add(one);
-
-    ought(!sheet.due().has_value());
-}

@@ -22,6 +22,8 @@ protected:
 
     bool handle(KeyEvent& what) override;
 
+    bool handle(ClickEvent& what) override;
+
 private:
     std::weak_ptr<Node> under_;
 };
@@ -46,6 +48,8 @@ public:
 private:
     Node* under_;
     std::weak_ptr<Modal> rolled_;
+    Hook picked_;
+    Hook clicked_;
     int rows_ = 8;
 };
 

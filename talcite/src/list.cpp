@@ -171,8 +171,8 @@ void List::pick() {
 // it depends on a height not known at this moment; painting cuts it.
 //
 // The change is announced with an event, not with a callback of its own: one thing has one path,
-// and events go through `on` and `off`. The event carries no row number, because whoever asks has
-// it at hand in `which()`, and the view in `first()`.
+// and events go through `on` and the hook it gives. The event carries no row number, because
+// whoever asks has it at hand in `which()`, and the view in `first()`.
 void List::first(std::size_t given) {
     const int was = shift_;
 

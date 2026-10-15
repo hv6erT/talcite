@@ -177,7 +177,7 @@ TRIAL("Modal: closing with Escape can be added with a hook") {
 
     const std::weak_ptr<ui::Modal> weak = one;
 
-    (void)one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
+    const ui::Hook heard_key = one->on<ui::KeyEvent>([weak](ui::KeyEvent& what) {
         if (what.key().code() != ui::Code::escape) return false;
 
         if (const auto mine = weak.lock()) mine->close();
@@ -265,7 +265,7 @@ TRIAL("Modal: Enter does not press the primary button") {
 
     press->primary(true);
 
-    (void)press->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = press->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -298,7 +298,7 @@ TRIAL("Dialog: Enter does not press the primary button either") {
 
     press->primary(true);
 
-    (void)press->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = press->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -383,7 +383,7 @@ TRIAL("Modal: a close hook may open the next veil, and the focus returns after b
 
         std::shared_ptr<ui::Modal> second;
 
-        (void)first->on<ui::CloseEvent>([&stage, &second](ui::CloseEvent&) {
+        const ui::Hook heard = first->on<ui::CloseEvent>([&stage, &second](ui::CloseEvent&) {
             second = std::make_shared<ui::Modal>();
             second->children().add(std::make_shared<Box>(ui::Size{4, 2}, U'x'));
 
@@ -490,13 +490,13 @@ TRIAL("Modal: a deferred request sends no focus events") {
     int came = 0;
     int went = 0;
 
-    (void)other->on<ui::FocusEvent>([&came](ui::FocusEvent&) {
+    const ui::Hook heard_focus = other->on<ui::FocusEvent>([&came](ui::FocusEvent&) {
         ++came;
 
         return false;
     });
 
-    (void)other->on<ui::UnfocusEvent>([&went](ui::UnfocusEvent&) {
+    const ui::Hook heard_unfocus = other->on<ui::UnfocusEvent>([&went](ui::UnfocusEvent&) {
         ++went;
 
         return false;
@@ -626,7 +626,7 @@ TRIAL("Layer: outside a container close does nothing and current is false") {
 
     int closed = 0;
 
-    (void)alone->on<ui::CloseEvent>([&closed](ui::CloseEvent&) {
+    const ui::Hook heard_close = alone->on<ui::CloseEvent>([&closed](ui::CloseEvent&) {
         ++closed;
 
         return true;
@@ -645,7 +645,7 @@ TRIAL("Layer: closing is announced once and the layer leaves the tree") {
 
     int closed = 0;
 
-    (void)one->on<ui::CloseEvent>([&closed, &one](ui::CloseEvent&) {
+    const ui::Hook heard_close = one->on<ui::CloseEvent>([&closed, &one](ui::CloseEvent&) {
         ++closed;
 
         ought(one->parent() != nullptr);

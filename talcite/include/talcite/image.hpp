@@ -10,6 +10,7 @@
 #include "talcite/node.hpp"
 #include "talcite/pixels.hpp"
 #include "talcite/promise.hpp"
+#include "talcite/timer.hpp"
 
 namespace talcite::ui {
 
@@ -45,8 +46,6 @@ public:
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override;
-
 protected:
     View paint(Size given, Area seen) override;
 
@@ -54,6 +53,8 @@ private:
     void spread(Size given);
 
     [[nodiscard]] std::size_t chosen() const;
+
+    [[nodiscard]] std::optional<std::chrono::milliseconds> until_next() const;
 
     void sharpened();
 
@@ -80,6 +81,7 @@ private:
     std::chrono::steady_clock::time_point began_ = std::chrono::steady_clock::now();
     std::size_t still_ = 0;
     bool play_ = true;
+    Timer frame_;
 };
 
 }

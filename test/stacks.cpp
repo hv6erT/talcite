@@ -175,7 +175,7 @@ TRIAL("Stack: a click hits the overlay only where it is") {
 
     int hits = 0;
 
-    (void)over->on<ui::ClickEvent>([&hits](ui::ClickEvent&) {
+    const ui::Hook heard_click = over->on<ui::ClickEvent>([&hits](ui::ClickEvent&) {
         ++hits;
 
         return true;

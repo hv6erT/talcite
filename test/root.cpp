@@ -327,7 +327,7 @@ TRIAL("Root: dispatch returns what the walk said") {
     top.children().add(one);
     one->focus();
 
-    (void)one->on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+    const ui::Hook heard_key = one->on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
     ui::KeyEvent what{U'a'};
 
@@ -408,7 +408,7 @@ TRIAL("Root: a node closing during its own reaction does not break the walk") {
 
     Leaf* stale = mid.get();
 
-    (void)low->on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
+    const ui::Hook heard_key = low->on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
         (void)top.children().remove(stale);
 
         return false;
@@ -438,7 +438,7 @@ TRIAL("Root: a deferred release happens after delivery") {
 
     Leaf* stale = mid.get();
 
-    (void)top.on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
+    const ui::Hook heard_key = top.on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
         (void)top.children().remove(stale);
 
         return false;
@@ -466,7 +466,7 @@ TRIAL("Root: a deferred release really releases") {
 
     Leaf* stale = static_cast<Leaf*>(top.children().front().get());
 
-    (void)top.on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
+    const ui::Hook heard_key = top.on<ui::KeyEvent>([&top, stale](ui::KeyEvent&) {
         (void)top.children().remove(stale);
 
         return false;
@@ -494,16 +494,15 @@ TRIAL("Root: an exception from a handler does not leave the root in the delivery
 
     Leaf* stale = static_cast<Leaf*>(top.children().front().get());
 
-    ui::Hook which =
-        top.on<ui::KeyEvent>([](ui::KeyEvent&) -> bool {
+    {
+        const ui::Hook which = top.on<ui::KeyEvent>([](ui::KeyEvent&) -> bool {
             throw std::runtime_error("the handler fell over");
         });
 
-    ui::KeyEvent what{U'a'};
+        ui::KeyEvent what{U'a'};
 
-    threw((void)top.dispatch(what));
-
-    top.off(which);
+        threw((void)top.dispatch(what));
+    }
 
     // If the exception left the delivery counter raised, the removal would be deferred instead of
     // freeing at once, and this is the only way to see that from outside.
@@ -684,7 +683,7 @@ TRIAL("Root: a focus event travels up like any other") {
 
     bool seen = false;
 
-    (void)mid->on<ui::FocusEvent>([&seen](ui::FocusEvent&) {
+    const ui::Hook heard_focus = mid->on<ui::FocusEvent>([&seen](ui::FocusEvent&) {
         seen = true;
 
         return false;

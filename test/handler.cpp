@@ -1,6 +1,8 @@
 #include "proving.hpp"
 
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "talcite/handler.hpp"
@@ -125,7 +127,7 @@ TRIAL("Handler: a hook from on receives the event when handle did not take it") 
 
     Knot one{told, "jeden"};
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook heard_key = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("uchwyt");
 
         return false;
@@ -150,7 +152,7 @@ TRIAL("Handler: a handle that took the event does not silence the hooks") {
 
     one.takes(true);
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook heard_key = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("uchwyt");
 
         return false;
@@ -169,13 +171,13 @@ TRIAL("Handler: all hooks run, even when the first one took the event") {
 
     Knot one{told, "jeden"};
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook heard_key_1 = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("pierwszy");
 
         return true;
     });
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook heard_key_2 = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("drugi");
 
         return false;
@@ -202,9 +204,9 @@ TRIAL("Handler: a hook that took the event stops only its own channel") {
 
     int seen = 0;
 
-    (void)down.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+    const ui::Hook heard_key_1 = down.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
-    (void)up.on<ui::KeyEvent>([&seen](ui::KeyEvent&) {
+    const ui::Hook heard_key_2 = up.on<ui::KeyEvent>([&seen](ui::KeyEvent&) {
         ++seen;
 
         return true;
@@ -226,7 +228,7 @@ TRIAL("Handler: hooks of another kind stay silent") {
 
     Knot one{told, "jeden"};
 
-    (void)one.on<ui::MouseEvent>([&told](ui::MouseEvent&) {
+    const ui::Hook heard_mouse = one.on<ui::MouseEvent>([&told](ui::MouseEvent&) {
         told.push_back("mysz");
 
         return true;
@@ -239,28 +241,37 @@ TRIAL("Handler: hooks of another kind stay silent") {
     same(told[0], std::string{"jeden:handle"});
 }
 
-TRIAL("Handler: off removes a hook") {
+// A hook unhooks its listener when it goes: the listener lasts exactly as long as whoever keeps the
+// hook.
+TRIAL("Handler: a hook that goes unhooks its listener") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
 
-    ui::Hook which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
-        told.push_back("uchwyt");
+    {
+        const ui::Hook which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+            told.push_back("uchwyt");
 
-        return true;
-    });
+            return true;
+        });
 
-    one.off(which);
+        ui::KeyEvent what{U'a'};
+
+        ought(one.send(what));
+        same(told.size(), std::size_t{2});
+    }
 
     ui::KeyEvent what{U'a'};
 
     ought(!one.send(what));
-    same(told.size(), std::size_t{1});
+    same(told.size(), std::size_t{3});
+    same(told[2], std::string{"jeden:handle"});
 }
 
-// A hook knows its type and whether something hangs on it. Mixing up the type when detaching is
-// impossible; a hook is empty when fresh and when detached, and only `on` gives a non-empty one.
-TRIAL("Handler: a hook is empty when fresh and after detaching, and full after attaching") {
+// A hook is empty when fresh, after it gave its listener away and after it was emptied by
+// assignment; only `on` gives a full one. Moving hands the listener over without unhooking it, and
+// assigning an empty hook unhooks it.
+TRIAL("Handler: a hook moves its listener and empties when given away") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -273,26 +284,51 @@ TRIAL("Handler: a hook is empty when fresh and after detaching, and full after a
 
     ought(!which.empty());
 
-    ui::Hook copy = which;
-
-    one.off(which);
+    ui::Hook moved = std::move(which);
 
     ought(which.empty());
+    ought(!moved.empty());
 
-    // The copy points to what is already detached: detaching it does nothing and breaks nothing.
-    ought(!copy.empty());
+    ui::KeyEvent first{U'a'};
 
-    one.off(copy);
+    ought(one.send(first));
 
-    ought(copy.empty());
+    moved = ui::Hook{};
+
+    ought(moved.empty());
+
+    ui::KeyEvent second{U'a'};
+
+    ought(!one.send(second));
+}
+
+// Assigning a hook over a full one unhooks what the old one held and keeps the new listener.
+TRIAL("Handler: a hook assigned over another unhooks the old listener") {
+    std::vector<std::string> told;
+
+    Knot one{told, "jeden"};
+
+    ui::Hook which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+        told.push_back("stary");
+
+        return false;
+    });
+
+    which = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+        told.push_back("nowy");
+
+        return false;
+    });
 
     ui::KeyEvent what{U'a'};
 
     ought(!one.send(what));
+    same(told.size(), std::size_t{2});
+    same(told[1], std::string{"nowy"});
 }
 
 // A hook with the same number on a different type does not remove someone else's: the type is in
-// the hook, not in the call, so exactly what was attached is detached.
+// the hook, so exactly what was attached is detached.
 TRIAL("Handler: a hook detaches only its own type") {
     std::vector<std::string> told;
 
@@ -300,16 +336,16 @@ TRIAL("Handler: a hook detaches only its own type") {
 
     ui::Hook mouse = one.on<ui::MouseEvent>([](ui::MouseEvent&) { return true; });
 
-    (void)one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
+    const ui::Hook key = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
-    one.off(mouse);
+    mouse = ui::Hook{};
 
     ui::KeyEvent what{U'a'};
 
     ought(one.send(what));
 }
 
-TRIAL("Handler: off removes one hook, not all") {
+TRIAL("Handler: a hook that goes removes one listener, not all") {
     std::vector<std::string> told;
 
     Knot one{told, "jeden"};
@@ -320,13 +356,13 @@ TRIAL("Handler: off removes one hook, not all") {
         return false;
     });
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook second = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("drugi");
 
         return false;
     });
 
-    one.off(first);
+    first = ui::Hook{};
 
     ui::KeyEvent what{U'a'};
 
@@ -335,21 +371,26 @@ TRIAL("Handler: off removes one hook, not all") {
     same(told[1], std::string{"drugi"});
 }
 
-TRIAL("Handler: off on an empty hook breaks nothing") {
+// A hook that outlives its handler has nothing left to unhook: it is empty, and its end breaks
+// nothing.
+TRIAL("Handler: a hook outliving its handler is empty and goes quietly") {
     std::vector<std::string> told;
 
-    Knot one{told, "jeden"};
+    ui::Hook which;
 
-    ui::Hook none;
+    {
+        Knot one{told, "jeden"};
 
-    one.off(none);
-    one.off(none);
+        which = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
-    ought(none.empty());
+        ought(!which.empty());
+    }
 
-    ui::KeyEvent what{U'a'};
+    ought(which.empty());
 
-    ought(!one.send(what));
+    which = ui::Hook{};
+
+    ought(which.empty());
 }
 
 TRIAL("Handler: a hook sees the target") {
@@ -362,7 +403,7 @@ TRIAL("Handler: a hook sees the target") {
 
     const ui::Handler* seen = nullptr;
 
-    (void)up.on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
+    const ui::Hook heard_key = up.on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
         seen = what.target();
 
         return true;
@@ -418,14 +459,14 @@ TRIAL("Handler: a hook detached while it runs does not break the loop") {
 
     ui::Hook which;
 
-    which = one.on<ui::KeyEvent>([&one, &which, &told](ui::KeyEvent&) {
+    which = one.on<ui::KeyEvent>([&which, &told](ui::KeyEvent&) {
         told.push_back("pierwszy");
-        one.off(which);
+        which = ui::Hook{};
 
         return false;
     });
 
-    (void)one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+    const ui::Hook heard_key = one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
         told.push_back("drugi");
 
         return false;
@@ -436,6 +477,41 @@ TRIAL("Handler: a hook detached while it runs does not break the loop") {
     ought(!one.send(what));
     same(told.size(), std::size_t{3});
     same(told[2], std::string{"drugi"});
+
+    ui::KeyEvent again{U'a'};
+
+    ought(!one.send(again));
+    same(told.size(), std::size_t{5});
+    same(told[4], std::string{"drugi"});
+}
+
+// A listener unhooked by an earlier one during the same delivery is not called any more: its keeper
+// may be gone, and the delivery already holds its own copy of the listeners.
+TRIAL("Handler: a listener unhooked during a delivery is skipped in it") {
+    std::vector<std::string> told;
+
+    Knot one{told, "jeden"};
+
+    std::optional<ui::Hook> later;
+
+    const ui::Hook first = one.on<ui::KeyEvent>([&later, &told](ui::KeyEvent&) {
+        told.push_back("pierwszy");
+        later.reset();
+
+        return false;
+    });
+
+    later.emplace(one.on<ui::KeyEvent>([&told](ui::KeyEvent&) {
+        told.push_back("drugi");
+
+        return false;
+    }));
+
+    ui::KeyEvent what{U'a'};
+
+    ought(!one.send(what));
+    same(told.size(), std::size_t{2});
+    same(told[1], std::string{"pierwszy"});
 }
 
 TRIAL("Handler: a node detached from its parent during handle still passes the event up") {
@@ -446,7 +522,7 @@ TRIAL("Handler: a node detached from its parent during handle still passes the e
 
     down.under(&up);
 
-    (void)down.on<ui::KeyEvent>([&down](ui::KeyEvent&) {
+    const ui::Hook heard_key = down.on<ui::KeyEvent>([&down](ui::KeyEvent&) {
         down.under(nullptr);
 
         return false;
@@ -496,12 +572,12 @@ TRIAL("Handler: a program's event travels up to the hooks") {
 
     std::vector<std::string> heard;
 
-    (void)middle.on<Own>([&heard](Own&) {
+    const ui::Hook heard_own_1 = middle.on<Own>([&heard](Own&) {
         heard.emplace_back("środek");
 
         return false;
     });
-    (void)above.on<Own>([&heard](Own&) {
+    const ui::Hook heard_own_2 = above.on<Own>([&heard](Own&) {
         heard.emplace_back("góra");
 
         return true;
@@ -522,7 +598,7 @@ TRIAL("Handler: a program's event that nobody took returns false") {
 
     int heard = 0;
 
-    (void)above.on<Own>([&heard](Own&) {
+    const ui::Hook heard_own = above.on<Own>([&heard](Own&) {
         ++heard;
 
         return false;

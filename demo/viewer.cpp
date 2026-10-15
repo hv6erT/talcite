@@ -172,6 +172,8 @@ talcite::Style turned() {
 // A viewer over the file named on the command line, read as a stream, or over the built-in text
 // with every occurrence of one word marked.
 int main(int argc, char** argv) {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -233,31 +235,31 @@ int main(int argc, char** argv) {
     // The listener hangs on the column, not on the bar. The event bubbles up from the viewer, and
     // the bar is its sibling, so on the bar it would hear nothing. The observer returns false so as
     // not to hide the event from anyone above.
-    (void)column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
+    heard.push_back(column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
         naming();
 
         return false;
-    });
+    }));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Wrap"), [shown, naming] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Next"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Next"),
                       [shown] { (void)shown->step(1); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Prev"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Prev"),
                       [shown] { (void)shown->step(-1); });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Pos"), [counted, naming] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Pos"), [counted, naming] {
         *counted = !*counted;
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
     // The file is read as a stream and asynchronously. `fs::open` and `File::read` go through the

@@ -157,6 +157,8 @@ std::string told(talcite::ui::Blocks kind) {
 // difference between the two grid densities. Animation from a file and real files from the disk are
 // viewed by the program that checks the adapter (talcite-stb-check).
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -219,16 +221,16 @@ int main() {
         };
     };
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Wheel"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Wheel"),
                       picking("color wheel", painted(240, 240, wheeled)));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Ring"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Ring"),
                       picking("ring with a hole", painted(240, 240, ringed)));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Slant"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Slant"),
                       picking("slant", painted(240, 240, slanted)));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Gradient"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Gradient"),
                       picking("gradient", painted(240, 240, faded)));
 
     // Sextants are not turned on from a measurement. The probe only tells whether the character
@@ -239,7 +241,7 @@ int main() {
     // The widget has nothing to switch: the density lies on the root, and `Term` puts it there. So
     // the key tells the terminal, and the picture learns about it on the next frame by itself,
     // through the comparison in `spread()`. This is the only call to `reconfigure` in the demos.
-    (void)demo::doing(legend->add(talcite::ui::Code::f6, "Grid"), [&term, wish, naming] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Grid"), [&term, wish, naming] {
         wish->blocks = wish->blocks.value_or(talcite::ui::Blocks::basic) <
                                talcite::ui::Blocks::sextants
                            ? talcite::ui::Blocks::sextants
@@ -250,13 +252,13 @@ int main() {
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Motion"), [shown, naming] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f7, "Motion"), [shown, naming] {
         shown->play(!shown->play());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 

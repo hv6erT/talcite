@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "faking.hpp"
+#include "talcite/clock.hpp"
 #include "talcite/term.hpp"
 
 using namespace talcite;
@@ -21,6 +22,9 @@ namespace {
 
 // A root that has a single letter in pure red in its upper left corner.
 class Red : public ui::Root {
+public:
+    using ui::Root::Root;
+
 protected:
     // Draws the red `x` at (0, 0) on an otherwise empty page.
     View paint(ui::Size given, ui::Area seen) override {
@@ -355,15 +359,13 @@ TRIAL("Term: reconfigure sends just the difference") {
 
 namespace {
 
-// A root that records what reached it, and asks for a turn when told to.
+// A root that records what reached it.
 class Heard : public Red {
 public:
+    using Red::Red;
+
     std::u32string keys;
     std::vector<ui::Size> sizes;
-    std::optional<std::chrono::milliseconds> wanted;
-
-    // The turn the root asks for, as set by the trial.
-    [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override { return wanted; }
 
 protected:
     using Red::handle;
@@ -514,12 +516,15 @@ TRIAL("Term: with no reason it waits without a limit, but with the bell") {
     same(line->belled, before + 1);
 }
 
-TRIAL("Term: the tree's request for a turn goes to the console as patience") {
+// The nearest appointment with the root's clock bounds the wait for the console; the tree itself is
+// not asked. The root stands on a manual clock, so the wait is exact however long the turn takes.
+TRIAL("Term: an appointment with the root's clock goes to the console as patience") {
     auto line = faking::terminal();
 
-    Heard root;
+    ManualClock time;
+    Heard root{time};
 
-    root.wanted = std::chrono::milliseconds{30};
+    const ui::Timer later = root.clock().after(std::chrono::milliseconds{30}, [] {});
 
     Term term{Setup{}, Seam<Console>{line}};
 
@@ -527,7 +532,31 @@ TRIAL("Term: the tree's request for a turn goes to the console as patience") {
 
     (void)term.turn();
 
-    ought(line->patience.back() == std::chrono::milliseconds{30});
+    ought(line->patience.back().has_value());
+    same(*line->patience.back(), std::chrono::milliseconds{30});
+}
+
+// What the clock has due is called in the turn after the wait, once.
+TRIAL("Term: an appointment due is called in the turn") {
+    auto line = faking::terminal();
+
+    Heard root;
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+
+    (void)term.turn();
+
+    int called = 0;
+
+    const ui::Timer now = root.clock().after(std::chrono::milliseconds{0}, [&called] { ++called; });
+
+    (void)term.turn();
+    (void)term.turn();
+
+    same(called, 1);
+    ought(!now.active());
 }
 
 TRIAL("Term: the size from the console at startup, and 80×25 without it") {

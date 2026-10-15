@@ -25,15 +25,13 @@ std::string read(const View& one, int y) {
     return made;
 }
 
-// Counts in `done` every `ui::PickEvent` that `one` sends; returns the count so far.
-int counted(const std::shared_ptr<ui::Tick>& one, int& done) {
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+// Counts in `done` every `ui::PickEvent` that `one` sends, while the returned hook is kept.
+ui::Hook counted(const std::shared_ptr<ui::Tick>& one, int& done) {
+    return one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
     });
-
-    return done;
 }
 
 }
@@ -121,7 +119,7 @@ TRIAL("Tick: setting the state is silent, toggling notifies") {
 
     int done = 0;
 
-    (void)counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     one->ticked(true);
 
@@ -144,7 +142,7 @@ TRIAL("Tick: space toggles, and Enter goes up") {
 
     int done = 0;
 
-    (void)counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     ui::KeyEvent space{U' '};
 
@@ -170,7 +168,7 @@ TRIAL("Tick: a click takes focus and toggles") {
 
     int done = 0;
 
-    (void)counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
@@ -195,7 +193,7 @@ TRIAL("Tick: when disabled it does not toggle and does not take focus") {
 
     int done = 0;
 
-    (void)counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     one->pick();
 

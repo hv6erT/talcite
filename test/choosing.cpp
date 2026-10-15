@@ -35,9 +35,9 @@ std::string read(const View& one, int y) {
 // Three options to choose from.
 std::vector<std::string> three() { return {"Nazwa", "Rozszerzenie", "Rozmiar"}; }
 
-// Counts in `done` every time `one` notifies about a pick.
-void counted(const std::shared_ptr<ui::Choice>& one, int& done) {
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+// Counts in `done` every time `one` notifies about a pick, while the returned hook is kept.
+ui::Hook counted(const std::shared_ptr<ui::Choice>& one, int& done) {
+    return one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -183,7 +183,7 @@ TRIAL("Choice: the arrows change the choice and notify") {
 
     int done = 0;
 
-    counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     ui::KeyEvent down{ui::Code::down};
 
@@ -254,7 +254,7 @@ TRIAL("Choice: setting the choice is silent") {
 
     int done = 0;
 
-    counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     one->value("Rozmiar");
 
@@ -292,7 +292,7 @@ TRIAL("Choice: a click chooses its option and takes the focus") {
 
     int done = 0;
 
-    counted(one, done);
+    const ui::Hook counting = counted(one, done);
 
     ui::ClickEvent what{{6, 2}, ui::Mouse::left};
 

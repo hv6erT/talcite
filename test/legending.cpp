@@ -135,6 +135,8 @@ TRIAL("Legend: the tag comes from the key") {
 }
 
 TRIAL("Legend: the key bubbles up from the focus") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -143,7 +145,7 @@ TRIAL("Legend: the key bubbles up from the focus") {
     int done = 0;
 
     window->content(body);
-    (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    (void)proving::doing(heard, window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
     body->focus();
@@ -165,6 +167,8 @@ TRIAL("Legend: the key bubbles up from the focus") {
 // Ctrl+F5 and Alt+F5 are by design different shortcuts from F5, and the legend does not model
 // layers under modifiers, so it does not take them instead of pretending they are the same.
 TRIAL("Legend: does not catch a key with a modifier") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -173,7 +177,7 @@ TRIAL("Legend: does not catch a key with a modifier") {
     int done = 0;
 
     window->content(body);
-    (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    (void)proving::doing(heard, window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
     body->focus();
@@ -194,6 +198,8 @@ TRIAL("Legend: does not catch a key with a modifier") {
 // A click does the same as the key and does not take the focus: after clicking "Kopiuj" (copy),
 // what was selected is to be copied, not whatever happened to get the focus.
 TRIAL("Legend: a click does the same and does not take the focus") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Legend>();
@@ -202,7 +208,7 @@ TRIAL("Legend: a click does the same and does not take the focus") {
     int done = 0;
 
     window->content(body);
-    (void)proving::doing(window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    (void)proving::doing(heard, window->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(window);
 
     body->focus();
@@ -225,7 +231,7 @@ TRIAL("Legend: a disabled item stays silent on a key and on a click") {
 
     int done = 0;
 
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
         return true;
     });
@@ -314,7 +320,7 @@ TRIAL("Legend: a letter answers regardless of case") {
 
     const auto one = window->add(ui::Key{U'Q'}, "Wyjdź");
 
-    (void)one->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = one->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -393,6 +399,8 @@ TRIAL("Legend: an open menu does not paint over the key bar") {
 // An open menu is modal: a key it does not handle itself is not to go further up. Without that, F5
 // with an open menu would start copying.
 TRIAL("Legend: with a menu open, the legend's key does not work") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto legend = std::make_shared<ui::Legend>();
@@ -408,7 +416,7 @@ TRIAL("Legend: with a menu open, the legend's key does not work") {
 
     menus->content(body);
     legend->content(menus);
-    (void)proving::doing(legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    (void)proving::doing(heard, legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     top.children().add(legend);
 
     body->focus();
@@ -511,7 +519,7 @@ TRIAL("Legend: an item answers to each of its keys") {
 
     one->keys().add(ui::Key{U'q'});
 
-    (void)one->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = one->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -547,7 +555,7 @@ TRIAL("Legend: an item answers a key through a hook attached from outside") {
 
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
-    (void)one->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut = one->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
         ++said;
 
         return true;
@@ -574,7 +582,7 @@ TRIAL("Legend: the handing out does not enter the content") {
 
     int said = 0;
 
-    (void)body->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut = body->on<ui::ShortcutEvent>([&said](ui::ShortcutEvent&) {
         ++said;
 
         return true;
@@ -680,8 +688,8 @@ TRIAL("Legend: an item with a modifier answers only to its own combination") {
     const auto one = window->add(ui::Code::f5, "Kopiuj");
     const auto two = window->add(ui::Key{ui::Code::f5, ctrl}, "Inne");
 
-    (void)one->on<ui::PickEvent>([&plain](ui::PickEvent&) { ++plain; return true; });
-    (void)two->on<ui::PickEvent>([&held](ui::PickEvent&) { ++held; return true; });
+    const ui::Hook heard_pick_1 = one->on<ui::PickEvent>([&plain](ui::PickEvent&) { ++plain; return true; });
+    const ui::Hook heard_pick_2 = two->on<ui::PickEvent>([&held](ui::PickEvent&) { ++held; return true; });
 
     window->content(body);
     top.children().add(window);

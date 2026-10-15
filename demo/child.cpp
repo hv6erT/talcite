@@ -108,6 +108,8 @@ talcite::Bytes joined(talcite::Bytes read, const talcite::Bytes& errors) {
 // the program and waits: this is how Midnight Commander opens an editor or less, and it is the only
 // way programs that draw on the screen themselves can work.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -152,26 +154,26 @@ int main() {
                           }));
     };
 
-    (void)field->on<talcite::ui::KeyEvent>([gathering](talcite::ui::KeyEvent& what) {
+    heard.push_back(field->on<talcite::ui::KeyEvent>([gathering](talcite::ui::KeyEvent& what) {
         if (what.key() != talcite::ui::Code::enter) return false;
 
         gathering();
 
         return true;
-    });
+    }));
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Collect"), gathering);
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Collect"), gathering);
 
     // Handing over the screen is an ordinary call that takes time: the drawing loop stands still,
     // because the terminal now belongs to someone else. The pool threads (the clock, the network,
     // file reading) keep running.
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Hand over"), [&term, field, told] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Hand over"), [&term, field, told] {
         const talcite::Exit made = term.execute(spoken(field->text()));
 
         told->text("returned with code " + std::to_string(made.code));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
     sheet.skin(coloured());

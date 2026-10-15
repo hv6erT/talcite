@@ -156,11 +156,15 @@ int Image::capacity() const { return 0; }
 // Pausing freezes the frame that is visible, not frame zero; otherwise a pause would make the
 // picture jump. Resuming starts from the frozen frame: it winds the clock as if the animation had
 // just reached it, so that after a pause the picture does not jump by as many frames as time has
-// passed since it was shown.
+// passed since it was shown. A pause also takes back the appointment of the next frame.
 void Image::play(bool given) {
     if (play_ == given) return;
 
-    if (!given) still_ = chosen();
+    if (!given) {
+        still_ = chosen();
+
+        frame_.stop();
+    }
 
     play_ = given;
 
@@ -195,7 +199,7 @@ Size Image::wants(Size room) const {
 }
 
 // How long until the next frame is due; nothing for a still picture or a paused animation.
-std::optional<std::chrono::milliseconds> Image::due() const {
+std::optional<std::chrono::milliseconds> Image::until_next() const {
     if (!play_ || upto_.size() < 2 || total_ <= std::chrono::milliseconds{0}) return {};
 
     const std::chrono::milliseconds gone =
@@ -433,6 +437,15 @@ View Image::paint(Size given, Area seen) {
     drawn(made, from, fine_ != Graphics::none ? coarse_ : fit_, which, made_, look, colored(*this), unicode_);
 
     if (fine_ != Graphics::none && which < pictures_.size()) made.picture({from, placed_}, pictures_[which]);
+
+    // The next frame of an animation is an appointment with the root's clock, made anew at every
+    // frame; it only wakes the loop, since the frame is chosen by the time when it is drawn. A still
+    // picture and a paused animation make none, and neither does a picture off the tree, which is
+    // not drawn.
+    if (Root* const top = root(); top != nullptr) {
+        if (const std::optional<std::chrono::milliseconds> left = until_next()) frame_ = top->clock().after(*left, {});
+        else frame_.stop();
+    }
 
     return made;
 }

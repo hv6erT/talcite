@@ -47,12 +47,12 @@ TRIAL("EnabledNode: a change is announced once, the same value announces nothing
     int off = 0;
     int on = 0;
 
-    (void)stage.one->on<ui::DisableEvent>([&off](ui::DisableEvent&) {
+    const ui::Hook heard_disable = stage.one->on<ui::DisableEvent>([&off](ui::DisableEvent&) {
         ++off;
 
         return true;
     });
-    (void)stage.one->on<ui::EnableEvent>([&on](ui::EnableEvent&) {
+    const ui::Hook heard_enable = stage.one->on<ui::EnableEvent>([&on](ui::EnableEvent&) {
         ++on;
 
         return true;
@@ -94,7 +94,7 @@ TRIAL("EnabledNode: disabling bubbles up and tells where it came from") {
 
     const ui::Handler* from = nullptr;
 
-    (void)stage.column->on<ui::DisableEvent>([&from](ui::DisableEvent& what) {
+    const ui::Hook heard_disable = stage.column->on<ui::DisableEvent>([&from](ui::DisableEvent& what) {
         from = what.target();
 
         return true;
@@ -114,7 +114,7 @@ TRIAL("EnabledNode: the event arrives before the focus leaves") {
 
     bool held = false;
 
-    (void)stage.one->on<ui::DisableEvent>([&held, &stage](ui::DisableEvent&) {
+    const ui::Hook heard_disable = stage.one->on<ui::DisableEvent>([&held, &stage](ui::DisableEvent&) {
         held = stage.one->focused();
 
         return true;
@@ -135,12 +135,12 @@ TRIAL("EnabledNode: re-enabled in a handler, it keeps the focus") {
 
     int on = 0;
 
-    (void)stage.one->on<ui::EnableEvent>([&on](ui::EnableEvent&) {
+    const ui::Hook heard_enable = stage.one->on<ui::EnableEvent>([&on](ui::EnableEvent&) {
         ++on;
 
         return true;
     });
-    (void)stage.one->on<ui::DisableEvent>([&stage](ui::DisableEvent&) {
+    const ui::Hook heard_disable = stage.one->on<ui::DisableEvent>([&stage](ui::DisableEvent&) {
         stage.one->enabled(true);
 
         return true;
@@ -160,7 +160,7 @@ TRIAL("EnabledNode: a disabled node does not take its hot key, an enabled one do
 
     stage.other->focus();
     stage.one->keys().add(ui::Key{ui::Code::f2});
-    (void)stage.one->on<ui::PickEvent>([&picked](ui::PickEvent&) {
+    const ui::Hook heard_pick = stage.one->on<ui::PickEvent>([&picked](ui::PickEvent&) {
         ++picked;
 
         return true;

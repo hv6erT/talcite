@@ -276,15 +276,16 @@ TRIAL("Node: a broadcast goes down in order and ends at the first that takes it"
     up.children().add(three);
 
     std::vector<std::string> said;
+    std::vector<ui::Hook> heard;
 
     for (const auto& [named, which] :
          {std::pair{std::string{"raz"}, one}, std::pair{std::string{"dwa"}, two},
           std::pair{std::string{"trzy"}, three}})
-        (void)which->on<ui::ShortcutEvent>([&said, named](ui::ShortcutEvent&) {
+        heard.push_back(which->on<ui::ShortcutEvent>([&said, named](ui::ShortcutEvent&) {
             said.push_back(named);
 
             return named == "dwa";
-        });
+        }));
 
     ui::KeyEvent what{U'x'};
 
@@ -307,7 +308,7 @@ TRIAL("Node: a broadcast survives the tree being rebuilt in a handler") {
     up.children().add(one);
     up.children().add(two);
 
-    (void)one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_1 = one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
         for (int at = 0; at < 64; ++at) up.children().add(twig("dokładka"));
 
         return false;
@@ -315,7 +316,7 @@ TRIAL("Node: a broadcast survives the tree being rebuilt in a handler") {
 
     int done = 0;
 
-    (void)two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_2 = two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
         ++done;
 
         return true;
@@ -339,7 +340,7 @@ TRIAL("Node: a broadcast survives the tree being emptied in a handler") {
     up.children().add(one);
     up.children().add(two);
 
-    (void)one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_1 = one->on<ui::ShortcutEvent>([&up](ui::ShortcutEvent&) {
         up.children().clear();
 
         return false;
@@ -347,7 +348,7 @@ TRIAL("Node: a broadcast survives the tree being emptied in a handler") {
 
     int done = 0;
 
-    (void)two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_2 = two->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent&) {
         ++done;
 
         return true;
@@ -486,7 +487,7 @@ TRIAL("Node: a handler attached to the parent catches an event from the child") 
 
     const ui::Handler* seen = nullptr;
 
-    (void)up->on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
+    const ui::Hook heard_key = up->on<ui::KeyEvent>([&seen](ui::KeyEvent& what) {
         seen = what.target();
 
         return true;

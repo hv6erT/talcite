@@ -454,6 +454,7 @@ struct Asked {
     std::shared_ptr<ui::Field> field;
     std::shared_ptr<ui::Button> yes;
     std::shared_ptr<ui::Button> no;
+    proving::Hooks heard;
 };
 
 // Opens a dialog with a field and two buttons, "Tak" (primary, hot key T, counting its presses in
@@ -464,7 +465,7 @@ Asked naming(ui::Root& top, int* done) {
     made.window = std::make_shared<ui::Modals>();
     made.dialog = std::make_shared<ui::Dialog>();
     made.field = std::make_shared<ui::Field>(12);
-    made.yes = proving::doing(std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
+    made.yes = proving::doing(made.heard, std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
     made.no = std::make_shared<ui::Button>("Nie");
 
     made.yes->keys().add(U'T');
@@ -547,7 +548,7 @@ TRIAL("Dialog: Enter in a field announces a SubmitEvent that the window hears") 
 
     int submitted = 0;
 
-    (void)asked.dialog->on<ui::SubmitEvent>([&submitted, yes = asked.yes](ui::SubmitEvent&) {
+    const ui::Hook heard_submit = asked.dialog->on<ui::SubmitEvent>([&submitted, yes = asked.yes](ui::SubmitEvent&) {
         ++submitted;
 
         yes->pick();
@@ -567,7 +568,7 @@ TRIAL("Dialog: Enter in a field announces a SubmitEvent that the window hears") 
 
     int refused = 0;
 
-    (void)asked.no->on<ui::PickEvent>([&refused](ui::PickEvent&) {
+    const ui::Hook heard_pick = asked.no->on<ui::PickEvent>([&refused](ui::PickEvent&) {
         ++refused;
 
         return true;

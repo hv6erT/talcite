@@ -383,7 +383,7 @@ TRIAL("Scrollbar: in a list the arrow, track and thumb move the view, not the ch
 
     int moved = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moved](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moved](ui::ScrollEvent&) {
         ++moved;
 
         return false;

@@ -172,6 +172,8 @@ TRIAL("Pane: a disabled one passes the click further up") {
 // to the root and the path ends there. A window without a button and without a text field would
 // then have no working F keys.
 TRIAL("Pane: the legend gets keys only with focus") {
+    proving::Hooks heard;
+
     Sheet top;
 
     const auto legend = std::make_shared<ui::Legend>();
@@ -182,7 +184,7 @@ TRIAL("Pane: the legend gets keys only with focus") {
     one->children().add(std::make_shared<ui::Frame>("treść"));
     legend->content(one);
 
-    (void)proving::doing(legend->add(ui::Code::f5, "Coś"), [&hits] { ++hits; });
+    (void)proving::doing(heard, legend->add(ui::Code::f5, "Coś"), [&hits] { ++hits; });
 
     top.children().add(legend);
     (void)top.render({{0, 0}, {30, 10}});

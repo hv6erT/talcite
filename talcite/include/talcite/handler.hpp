@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <concepts>
 #include <cstdint>
 #include <functional>
@@ -16,17 +17,41 @@ namespace talcite::ui {
 
 class Root;
 
-class Hook {
+namespace detail {
+
+struct Hands;
+
+struct Hand {
+    std::shared_ptr<void> what;
+    std::atomic<bool> live{true};
+};
+
+}
+
+class [[nodiscard]] Hook {
 public:
     Hook() = default;
 
-    [[nodiscard]] bool empty() const { return number_ == 0; }
+    Hook(Hook&& other) noexcept;
+
+    Hook& operator=(Hook&& other) noexcept;
+
+    Hook(const Hook&) = delete;
+    Hook& operator=(const Hook&) = delete;
+
+    ~Hook();
+
+    [[nodiscard]] bool empty() const;
 
 private:
     friend class Handler;
 
-    Hook(std::type_index type, std::uint64_t number) : type_(type), number_(number) {}
+    Hook(std::weak_ptr<detail::Hands> hands, std::type_index type, std::uint64_t number)
+        : hands_(std::move(hands)), type_(type), number_(number) {}
 
+    void unhooked();
+
+    std::weak_ptr<detail::Hands> hands_;
     std::type_index type_ = typeid(void);
     std::uint64_t number_ = 0;
 };
@@ -43,11 +68,9 @@ public:
     Handler& operator=(Handler&&) = delete;
 
     template <std::derived_from<Event> One>
-    Hook on(std::function<bool(One&)> what) {
+    [[nodiscard]] Hook on(std::function<bool(One&)> what) {
         return kept(typeid(One), std::make_shared<std::function<bool(One&)>>(std::move(what)));
     }
-
-    void off(Hook& which);
 
     [[nodiscard]] virtual Handler* parent() const;
 
@@ -130,19 +153,17 @@ private:
     bool handed(One& what) {
         bool took = false;
 
-        for (const std::shared_ptr<void>& one : among(typeid(One)))
-            if ((*std::static_pointer_cast<std::function<bool(One&)>>(one))(what)) took = true;
+        for (const std::shared_ptr<detail::Hand>& one : among(typeid(One)))
+            if (one->live.load() && (*std::static_pointer_cast<std::function<bool(One&)>>(one->what))(what)) took = true;
 
         return took;
     }
 
-    struct Hands;
+    [[nodiscard]] Hook kept(std::type_index which, std::shared_ptr<void> what);
 
-    Hook kept(std::type_index which, std::shared_ptr<void> what);
+    [[nodiscard]] std::vector<std::shared_ptr<detail::Hand>> among(std::type_index which) const;
 
-    [[nodiscard]] std::vector<std::shared_ptr<void>> among(std::type_index which) const;
-
-    std::unique_ptr<Hands> hands_;
+    std::shared_ptr<detail::Hands> hands_;
 };
 
 }

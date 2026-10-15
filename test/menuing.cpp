@@ -530,7 +530,7 @@ TRIAL("Menu: the highlight is the item's focus") {
 
     int seen = 0;
 
-    second->on<ui::KeyEvent>([&seen](ui::KeyEvent&) {
+    const ui::Hook heard = second->on<ui::KeyEvent>([&seen](ui::KeyEvent&) {
         ++seen;
 
         return true;
@@ -583,7 +583,7 @@ TRIAL("Menu: a hotkey picks an item in an open menu") {
 
     int said = 0;
 
-    (void)second->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = second->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -616,7 +616,7 @@ TRIAL("Menu: a closed one does not take letters") {
 
     int said = 0;
 
-    (void)first->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = first->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -646,7 +646,7 @@ TRIAL("Menu: a letter nobody took picks nothing") {
 
     int said = 0;
 
-    (void)first->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = first->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -679,7 +679,7 @@ TRIAL("Menu: a grayed-out item does not answer its letter") {
 
     int said = 0;
 
-    (void)first->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = first->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -712,7 +712,7 @@ TRIAL("Menu: a letter with a modifier does not pick an item") {
 
     int said = 0;
 
-    (void)first->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = first->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;
@@ -783,6 +783,8 @@ TRIAL("Menu: graying out the highlighted item does not close the menu") {
 }
 
 TRIAL("Menu: Enter calls the task and closes") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -792,7 +794,7 @@ TRIAL("Menu: Enter calls the task and closes") {
 
     int done = 0;
 
-    one->children().add(proving::doing(std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
+    one->children().add(proving::doing(heard, std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
     top.children().add(window);
 
     one->open();
@@ -809,6 +811,8 @@ TRIAL("Menu: Enter calls the task and closes") {
 }
 
 TRIAL("Menu: a click picks the item under the cursor, not the highlighted one") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -819,8 +823,8 @@ TRIAL("Menu: a click picks the item under the cursor, not the highlighted one") 
     int first = 0;
     int second = 0;
 
-    one->children().add(proving::doing(std::make_shared<ui::MenuItem>("Kopiuj"), [&first] { ++first; }));
-    one->children().add(proving::doing(std::make_shared<ui::MenuItem>("Wyjście"), [&second] { ++second; }));
+    one->children().add(proving::doing(heard, std::make_shared<ui::MenuItem>("Kopiuj"), [&first] { ++first; }));
+    one->children().add(proving::doing(heard, std::make_shared<ui::MenuItem>("Wyjście"), [&second] { ++second; }));
     top.children().add(window);
 
     one->open();
@@ -909,7 +913,7 @@ TRIAL("Menu: without items it does not unroll, Enter and a click call the title'
 
     int picked = 0;
 
-    (void)left->on<ui::PickEvent>([&picked](ui::PickEvent&) {
+    const ui::Hook heard_pick = left->on<ui::PickEvent>([&picked](ui::PickEvent&) {
         ++picked;
 
         return true;
@@ -1071,6 +1075,8 @@ TRIAL("Menu: the content stands below the row of titles") {
 }
 
 TRIAL("Menu: an open one covers the content for hit testing") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1081,7 +1087,7 @@ TRIAL("Menu: an open one covers the content for hit testing") {
 
     int done = 0;
 
-    one->children().add(proving::doing(std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
+    one->children().add(proving::doing(heard, std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
     window->content(body);
     top.children().add(window);
 
@@ -1098,6 +1104,8 @@ TRIAL("Menu: an open one covers the content for hit testing") {
 }
 
 TRIAL("Menu: a closed one does not catch clicks where it was open") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Menubar>();
@@ -1108,7 +1116,7 @@ TRIAL("Menu: a closed one does not catch clicks where it was open") {
 
     int done = 0;
 
-    one->children().add(proving::doing(std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
+    one->children().add(proving::doing(heard, std::make_shared<ui::MenuItem>("Kopiuj"), [&done] { ++done; }));
     window->content(body);
     top.children().add(window);
 
@@ -1159,7 +1167,7 @@ TRIAL("Menu: a grayed-out item cannot be picked") {
 
     int done = 0;
 
-    (void)item->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = item->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -1637,7 +1645,7 @@ TRIAL("Menu: an item's letter wins over a title's letter") {
 
     int said = 0;
 
-    (void)item->on<ui::PickEvent>([&said](ui::PickEvent&) {
+    const ui::Hook heard_pick = item->on<ui::PickEvent>([&said](ui::PickEvent&) {
         ++said;
 
         return true;

@@ -139,10 +139,10 @@ talcite::Style turned() {
 //
 // Focus lands in the field by itself: the window puts it on the first node that wants it, and the
 // field stands here before the buttons.
-std::shared_ptr<talcite::ui::Dialog>
+std::shared_ptr<demo::Kept<talcite::ui::Dialog>>
 hunting(const std::string& title, bool swapping,
         std::function<void(std::string, std::string, talcite::Sift)> after) {
-    const auto made = std::make_shared<talcite::ui::Dialog>();
+    const auto made = std::make_shared<demo::Kept<talcite::ui::Dialog>>();
 
     const auto frame =
         std::make_shared<talcite::ui::Frame>(title, talcite::ui::FrameShape{talcite::ui::Border::twin});
@@ -199,7 +199,7 @@ hunting(const std::string& title, bool swapping,
 
     const std::weak_ptr<talcite::ui::Dialog> weak = made;
 
-    (void)yes->on<talcite::ui::PickEvent>(
+    made->heard.push_back(yes->on<talcite::ui::PickEvent>(
         [weak, what, with, regex, cased, whole, after = std::move(after)](talcite::ui::PickEvent&) {
             if (after)
                 after(what->text(), with->text(),
@@ -208,13 +208,13 @@ hunting(const std::string& title, bool swapping,
             if (const auto one = weak.lock()) one->close();
 
             return true;
-        });
+        }));
 
-    (void)no->on<talcite::ui::PickEvent>([weak](talcite::ui::PickEvent&) {
+    made->heard.push_back(no->on<talcite::ui::PickEvent>([weak](talcite::ui::PickEvent&) {
         if (const auto one = weak.lock()) one->close();
 
         return true;
-    });
+    }));
 
     return made;
 }
@@ -224,6 +224,8 @@ hunting(const std::string& title, bool swapping,
 // An editor over the file named on the command line, or over the built-in text when there is none.
 // Saving writes next to the file, to the same name with `.new` appended.
 int main(int argc, char** argv) {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -244,7 +246,7 @@ int main(int argc, char** argv) {
     {
         const std::weak_ptr<talcite::ui::Editor> weak = shown;
 
-        (void)shown->on<talcite::ui::KeyEvent>([weak](talcite::ui::KeyEvent& what) {
+        heard.push_back(shown->on<talcite::ui::KeyEvent>([weak](talcite::ui::KeyEvent& what) {
             const talcite::ui::Mods mods = what.mods();
 
             if (mods.alt) return false;
@@ -270,7 +272,7 @@ int main(int argc, char** argv) {
                 case U'v': return mine->paste();
                 default: return false;
             }
-        });
+        }));
     }
 
     bar->role("demo.bar");
@@ -310,11 +312,11 @@ int main(int argc, char** argv) {
     // The listener hangs on the column, not on the bar: the event bubbles up from the editor, and
     // the bar is its sibling. The observer returns false so as not to hide the event from anyone
     // above.
-    (void)column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
+    heard.push_back(column->on<talcite::ui::ScrollEvent>([naming](talcite::ui::ScrollEvent&) {
         naming();
 
         return false;
-    });
+    }));
 
     const auto saying = [told, naming](std::string what) {
         *told = std::move(what);
@@ -329,7 +331,7 @@ int main(int argc, char** argv) {
     // kept, or it would die with this closure.
     const auto saving = std::make_shared<std::optional<talcite::Promise<void>>>();
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Save"), [shown, where, saying, saving] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Save"), [shown, where, saying, saving] {
         if (where->empty()) {
             saying("nowhere to save");
 
@@ -375,7 +377,7 @@ int main(int argc, char** argv) {
                 }));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
             "Search", false,
             [shown, saying](std::string what, std::string, talcite::Sift how) {
@@ -396,7 +398,7 @@ int main(int argc, char** argv) {
             })));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "Replace"), [dialogs, shown, saying] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Replace"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
             "Replace", true,
             [shown, saying](std::string what, std::string with, talcite::Sift how) {
@@ -417,25 +419,25 @@ int main(int argc, char** argv) {
             })));
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f5, "Wrap"), [shown, naming] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f7, "Undo"), [shown, saying] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f7, "Undo"), [shown, saying] {
         shown->undo();
 
         saying({});
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f8, "Redo"), [shown, saying] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f8, "Redo"), [shown, saying] {
         shown->redo();
 
         saying({});
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"),
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
     // The file is read in whole, because the editor is resident, but the pool reads it (`fs::read`)

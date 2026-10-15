@@ -6,14 +6,16 @@
 #include <vector>
 
 #include "talcite/blocks.hpp"
+#include "talcite/clock.hpp"
 #include "talcite/node.hpp"
 #include "talcite/skin.hpp"
+#include "talcite/timer.hpp"
 
 namespace talcite::ui {
 
 class Root : public Node {
 public:
-    Root();
+    explicit Root(talcite::Clock& time = talcite::Clock::real());
 
     ~Root() override;
 
@@ -43,7 +45,9 @@ public:
 
     [[nodiscard]] std::optional<Spot> caret() const override;
 
-    [[nodiscard]] std::optional<std::chrono::milliseconds> due() const override;
+    [[nodiscard]] Clock& clock() { return clock_; }
+
+    bool elapse();
 
     [[nodiscard]] Node* focused_node() const { return focus_; }
 
@@ -76,6 +80,7 @@ private:
     friend class Children;
     friend class Node;
 
+    Clock clock_;
     Skin skin_;
     Blocks blocks_ = Blocks::basic;
     Size cell_;

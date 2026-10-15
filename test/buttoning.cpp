@@ -93,7 +93,7 @@ public:
 bool hotly(Top& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
     int done = 0;
 
-    ui::Hook held = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook held = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -102,8 +102,6 @@ bool hotly(Top& top, const std::shared_ptr<ui::Button>& one, ui::Key what) {
     ui::KeyEvent key{what};
 
     (void)top.broadcast(key);
-
-    one->off(held);
 
     return done != 0;
 }
@@ -420,11 +418,13 @@ TRIAL("Button: when too narrow it cuts the label, not the bracket") {
 }
 
 TRIAL("Button: Enter presses the focused one, space does not") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
     top.children().add(one);
 
@@ -453,11 +453,13 @@ TRIAL("Button: Enter presses the focused one, space does not") {
 // Ctrl+Enter and Alt+Space are other shortcuts by design. The legend filters them out the same
 // way.
 TRIAL("Button: does not catch keys with a modifier") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
     top.children().add(one);
 
@@ -475,11 +477,13 @@ TRIAL("Button: does not catch keys with a modifier") {
 }
 
 TRIAL("Button: a disabled one takes no focus and does not answer") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
     one->enabled(false);
 
@@ -530,11 +534,13 @@ TRIAL("Button: disabling gives up the focus") {
 }
 
 TRIAL("Button: a click takes the focus and presses") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
     top.children().add(one);
 
@@ -556,6 +562,7 @@ struct Both {
     std::shared_ptr<ui::Dialog> dialog;
     std::shared_ptr<ui::Button> first;
     std::shared_ptr<ui::Button> second;
+    proving::Hooks heard;
 };
 
 // Opens a `Both` dialog in `top`; pressing the first button increments `*done`.
@@ -564,7 +571,7 @@ Both asking(ui::Root& top, int* done) {
 
     made.window = std::make_shared<ui::Modals>();
     made.dialog = std::make_shared<ui::Dialog>();
-    made.first = proving::doing(std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
+    made.first = proving::doing(made.heard, std::make_shared<ui::Button>("Tak"), [done] { ++*done; });
     made.second = std::make_shared<ui::Button>("Nie");
 
     made.first->keys().add(U'T');
@@ -674,6 +681,8 @@ TRIAL("Dialog: Tab does not leave the dialog") {
 // focus is off the buttons, Enter presses nothing. Whoever wants "Enter submits the form" hangs a
 // handler where the focus really is, on the field, and knows what should happen then.
 TRIAL("Dialog: Enter does not press the default button when the focus is off the buttons") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     int done = 0;
@@ -681,7 +690,7 @@ TRIAL("Dialog: Enter does not press the default button when the focus is off the
     const auto window = std::make_shared<ui::Modals>();
     const auto dialog = std::make_shared<ui::Dialog>();
     const auto aside = std::make_shared<Box>(ui::Size{6, 1});
-    const auto one = proving::doing(std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&done] { ++done; });
 
     one->primary(true);
 
@@ -715,7 +724,7 @@ TRIAL("Dialog: Enter on a button presses that one, not the default") {
 
     int other = 0;
 
-    (void)both.second->on<ui::PickEvent>([&other](ui::PickEvent&) {
+    const ui::Hook heard_pick = both.second->on<ui::PickEvent>([&other](ui::PickEvent&) {
         ++other;
 
         return true;
@@ -784,7 +793,7 @@ TRIAL("Dialog: opening with a text field lands on the field") {
     // Enter stays with the focus: the button marked as default is not pressed because of it.
     int done = 0;
 
-    (void)yes->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = yes->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;

@@ -119,6 +119,8 @@ talcite::ui::Skin plainly() {
 // One screen, three palettes. Switching is one call on the root: no notifications, no walk over the
 // tree and no rebuilding of anything; the next frame simply reads something else.
 int main() {
+    demo::Hooks heard;
+
     talcite::Term term;
 
     Sheet sheet{term};
@@ -176,31 +178,31 @@ int main() {
 
     file->children().add(std::make_shared<talcite::ui::MenuItem>("Copy", "F5"));
     file->children().add(std::make_shared<talcite::ui::MenuSeparator>());
-    file->children().add(demo::doing(std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
+    file->children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>("Exit", "F10"),
                           [&term] { term.stop(); }));
 
     (void)menus->add("View");
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f2, "Plain"), [&sheet, told] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Plain"), [&sheet, told] {
         sheet.skin(talcite::ui::Skin{});
         told->text("built-in skin");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f3, "Color"), [&sheet, told] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Color"), [&sheet, told] {
         sheet.skin(coloured());
         told->text("color skin — the same roles, different values");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f4, "ASCII"), [&sheet, told] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "ASCII"), [&sheet, told] {
         sheet.skin(plainly());
         told->text("ASCII skin — plain characters, no box drawing");
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(legend);
 

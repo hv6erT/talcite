@@ -215,13 +215,15 @@ TRIAL("ListItem: disabling with the focus hands it to the ancestor") {
 }
 
 TRIAL("ListItem: Enter calls the task") {
+    proving::Hooks heard;
+
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
 
     nest->children().add(one);
     top.children().add(nest);
@@ -238,13 +240,15 @@ TRIAL("ListItem: Enter calls the task") {
 
 // Enter with Control does not belong to the item, just as in the field and in the legend.
 TRIAL("ListItem: Enter with Control goes up") {
+    proving::Hooks heard;
+
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
 
     nest->children().add(one);
     top.children().add(nest);
@@ -296,7 +300,7 @@ TRIAL("ListItem: an attached handler sees the key before the ancestor") {
     int seen = 0;
     int meanwhile = -1;
 
-    one->on<ui::KeyEvent>([&seen, &meanwhile, &top](ui::KeyEvent&) {
+    const ui::Hook heard = one->on<ui::KeyEvent>([&seen, &meanwhile, &top](ui::KeyEvent&) {
         ++seen;
         meanwhile = top.keys;
 
@@ -335,6 +339,8 @@ TRIAL("ListItem: a click takes the focus") {
 }
 
 TRIAL("ListItem: a double click takes the focus and calls the task") {
+    proving::Hooks heard;
+
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
@@ -342,7 +348,7 @@ TRIAL("ListItem: a double click takes the focus and calls the task") {
     int done = 0;
 
     const auto first = std::make_shared<ui::ListItem>("jeden");
-    const auto other = proving::doing(std::make_shared<ui::ListItem>("dwa"), [&done] { ++done; });
+    const auto other = proving::doing(heard, std::make_shared<ui::ListItem>("dwa"), [&done] { ++done; });
 
     nest->children().add(first);
     nest->children().add(other);
@@ -363,13 +369,15 @@ TRIAL("ListItem: a double click takes the focus and calls the task") {
 // An unavailable item lets the click through: since it does not answer its key, there is no reason
 // for it to answer the mouse, and the list underneath may do with that click what it wants.
 TRIAL("ListItem: a disabled one lets the click through and does not take the focus") {
+    proving::Hooks heard;
+
     Sheet top;
 
     const auto nest = std::make_shared<Nest>();
 
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
 
     one->enabled(false);
 
@@ -392,9 +400,11 @@ TRIAL("ListItem: a disabled one lets the click through and does not take the foc
 }
 
 TRIAL("ListItem: pick on a disabled one does nothing") {
+    proving::Hooks heard;
+
     int done = 0;
 
-    const auto one = proving::doing(std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
+    const auto one = proving::doing(heard, std::make_shared<ui::ListItem>("plik"), [&done] { ++done; });
 
     one->pick();
 
@@ -425,7 +435,7 @@ TRIAL("ListItem: the text and the task can be replaced along the way") {
 
     int done = 0;
 
-    (void)one->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = one->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -633,7 +643,7 @@ TRIAL("List: the wheel scrolls the view and does not move the row") {
 
     int moves = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
         ++moves;
 
         return false;
@@ -704,10 +714,10 @@ TRIAL("List: the event speaks once per change of row") {
     std::optional<std::size_t> last;
 
     // The event carries no row number; the listener reads it from `which()`. One way of notifying
-    // instead of two: `on` and `off` as everywhere else.
+    // instead of two: `on` and the hook it gives, as everywhere else.
     const std::weak_ptr<ui::List> weakly = one;
 
-    (void)one->on<ui::ScrollEvent>([&moves, &last, weakly](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves, &last, weakly](ui::ScrollEvent&) {
         ++moves;
 
         if (const auto got = weakly.lock()) last = got->which();
@@ -813,7 +823,7 @@ TRIAL("List: Enter calls the task of the current row") {
 
     int done = 0;
 
-    (void)one->children()[1]->on<ui::PickEvent>([&done](ui::PickEvent&) {
+    const ui::Hook heard_pick = one->children()[1]->on<ui::PickEvent>([&done](ui::PickEvent&) {
         ++done;
 
         return true;
@@ -1104,7 +1114,7 @@ TRIAL("List: a click on a row makes it current") {
 
     int moves = 0;
 
-    (void)one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&moves](ui::ScrollEvent&) {
         ++moves;
 
         return false;

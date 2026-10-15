@@ -925,17 +925,12 @@ bool Term::turn() {
         patience = std::max(left, std::chrono::milliseconds{0});
     }
 
-    // The tree may ask for a turn too. An animated image computes its frame from the clock, so it
-    // says only when at the latest it wants to be woken; nobody here knows it is about a frame.
-    const std::optional<std::chrono::milliseconds> wanted = held.onto->due();
-
-    std::optional<std::chrono::steady_clock::time_point> awaited;
-
-    if (wanted.has_value()) {
-        const std::chrono::milliseconds soon =
-            *wanted > std::chrono::milliseconds{0} ? *wanted : std::chrono::milliseconds{0};
-
-        awaited = std::chrono::steady_clock::now() + soon;
+    // The root's clock may have an appointment, the nearest of which bounds the wait as well; the
+    // tree is not asked, because whoever needs time has made an appointment with the clock
+    // (`ui::Clock::after`, `ui::Clock::every`). The wait is measured by the clock's own time.
+    if (const std::optional<Clock::Moment> next = held.onto->clock().next()) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(*next - held.onto->clock().now());
+        const std::chrono::milliseconds soon = std::max(left, std::chrono::milliseconds{0});
 
         if (!patience.has_value() || soon < *patience) patience = soon;
     }
@@ -988,11 +983,9 @@ bool Term::turn() {
         doing = true;
     }
 
-    // The time the tree asked for has passed, so some node now paints differently than a moment
-    // ago. Asking again would not help: a node that computes its frame from the clock always
-    // returns the rest of the current frame, a positive number, and past the boundary it looks the
-    // same as before it. So the moment recorded before waiting decides, not a second question.
-    if (awaited.has_value() && std::chrono::steady_clock::now() >= *awaited) doing = true;
+    // What the clock has due by now is called, and a call changes what is on the screen, or asks
+    // for a frame for a node that computes its picture from the time.
+    if (held.onto->elapse()) doing = true;
 
     // Work from the loop is an event too. A callback moved over by `here()` or `Loop::post` reaches
     // the node tree for exactly that purpose, so without this the change would show only after the

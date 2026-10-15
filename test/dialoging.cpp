@@ -228,6 +228,8 @@ TRIAL("Dialog: a click beside the box does not reach below") {
 // Keyboard modality: the focus sits in the dialog, so a key has no way to reach the legend below.
 // This is the same way an open menu swallows F5.
 TRIAL("Dialog: a key does not reach the legend below") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -237,7 +239,7 @@ TRIAL("Dialog: a key does not reach the legend below") {
     int done = 0;
 
     legend->content(body);
-    (void)proving::doing(legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    (void)proving::doing(heard, legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
     window->content(legend);
     top.children().add(window);
 
@@ -302,7 +304,7 @@ TRIAL("Dialog: Esc closes only with the caller's handler") {
 
     const std::weak_ptr<ui::Dialog> weak = one;
 
-    (void)one->on<ui::KeyEvent>([weak](ui::KeyEvent& said) {
+    const ui::Hook heard_key = one->on<ui::KeyEvent>([weak](ui::KeyEvent& said) {
         if (said.key().code() != ui::Code::escape) return false;
 
         if (const auto mine = weak.lock()) mine->close();
@@ -526,6 +528,8 @@ TRIAL("Dialog: the focus inside a widget counts as the focus on it") {
 // inside a focusable widget does not answer from the whole window. If it did, a letter typed inside
 // such a widget would press something that cannot be seen from it.
 TRIAL("Dialog: a shortcut key does not reach inside a focusable widget") {
+    proving::Hooks heard;
+
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
@@ -537,8 +541,8 @@ TRIAL("Dialog: a shortcut key does not reach inside a focusable widget") {
     int plain = 0;
 
     const auto inside =
-        proving::doing(std::make_shared<ui::Button>("Tak"), [&hidden] { ++hidden; });
-    const auto outside = proving::doing(std::make_shared<ui::Button>("Nie"), [&plain] { ++plain; });
+        proving::doing(heard, std::make_shared<ui::Button>("Tak"), [&hidden] { ++hidden; });
+    const auto outside = proving::doing(heard, std::make_shared<ui::Button>("Nie"), [&plain] { ++plain; });
 
     inside->keys().add(U'T');
     inside->primary(true);
@@ -607,7 +611,7 @@ TRIAL("Dialog: a handler for a shortcut key works like the built-in one") {
 
     int done = 0;
 
-    (void)span->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent& what) {
+    const ui::Hook heard_shortcut = span->on<ui::ShortcutEvent>([&done](ui::ShortcutEvent& what) {
         if (what.key() != ui::Key{U'z'}) return false;
 
         ++done;
@@ -644,7 +648,7 @@ TRIAL("Dialog: a delivered key does not come back up") {
 
     int above = 0;
 
-    (void)column->on<ui::ShortcutEvent>([&above](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_1 = column->on<ui::ShortcutEvent>([&above](ui::ShortcutEvent&) {
         ++above;
 
         return false;
@@ -652,7 +656,7 @@ TRIAL("Dialog: a delivered key does not come back up") {
 
     int under = 0;
 
-    (void)span->on<ui::ShortcutEvent>([&under](ui::ShortcutEvent&) {
+    const ui::Hook heard_shortcut_2 = span->on<ui::ShortcutEvent>([&under](ui::ShortcutEvent&) {
         ++under;
 
         return false;
