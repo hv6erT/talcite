@@ -195,6 +195,32 @@ TRIAL("Table: a spanning cell takes the rest of the row") {
     same(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
 }
 
+// A spanning cell reaches the edge of the table, also past columns that together are narrower than
+// the window.
+TRIAL("Table: a spanning cell reaches the edge past narrow columns") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 2, ui::Justify::left}, ui::TableColumn{"", 4, ui::Justify::left},
+                  ui::TableColumn{"", 4, ui::Justify::left}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            if (which == 0 && most > 0)
+                made.push_back(ui::TableRow{ui::TableCell{"ab", {}}, ui::TableCell{"a heading that is long", {}, true}});
+
+            return made;
+        },
+        1);
+
+    sheet.children().add(one);
+
+    same(said(sheet.render({{0, 0}, {30, 1}}), 0), std::string{"ab a heading that is long"});
+}
+
 TRIAL("Table: without a heading the first row stands at the top") {
     Sheet sheet;
 

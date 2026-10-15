@@ -481,21 +481,19 @@ View Table::paint(Size given, Area seen) {
         int at = -seen.at.x;
 
         for (std::size_t one = 0; one < kept.spread.size(); ++one) {
-            int room = kept.spread[one];
+            const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : TableCell{};
+
+            // A spanning cell takes the rest of the row: from where its column starts to the edge
+            // of the content, whatever room the columns after it were given, its own included.
+            const int room = cell.spans ? wide - seen.at.x - at : kept.spread[one];
 
             if (room <= 0) {
+                if (cell.spans) break;
+
                 at += room + spacing;
 
                 continue;
             }
-
-            const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : TableCell{};
-
-            // A spanning cell takes the rest of the row: its own column, and every column after it
-            // that has room, with the gaps between them.
-            if (cell.spans)
-                for (std::size_t next = one + 1; next < kept.spread.size(); ++next)
-                    if (kept.spread[next] > 0) room += spacing + kept.spread[next];
 
             // The cell's role is laid over the role of the row's state, so the color of a file
             // type does not cancel the highlight: a marked row still turns yellow as a whole.
