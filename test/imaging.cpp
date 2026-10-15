@@ -58,14 +58,14 @@ public:
     }
 };
 
-// How long until the root's nearest appointment, by the root's own clock, or nothing when it has
-// none: what an animated picture asked for when it was last drawn.
+// How long until the root's nearest appointment, by the time of the root's schedule, or nothing
+// when it has none: what an animated picture asked for when it was last drawn.
 std::optional<std::chrono::milliseconds> waiting(ui::Root& top) {
-    const std::optional<Clock::Moment> next = top.clock().next();
+    const std::optional<Clock::Moment> next = top.schedule().next();
 
     if (!next) return std::nullopt;
 
-    return std::chrono::ceil<std::chrono::milliseconds>(*next - top.clock().now());
+    return std::chrono::ceil<std::chrono::milliseconds>(*next - top.schedule().now());
 }
 
 // A 16x12 GIF, four frames of 40, 100, 100 and 120 ms.

@@ -17,10 +17,6 @@ struct Timers;
 
 }
 
-#if defined(_MSC_VER) && !defined(__clang__)
-class Clock;
-#endif
-
 class [[nodiscard]] Timer {
 public:
     Timer() = default;
@@ -39,7 +35,7 @@ public:
     void stop();
 
 private:
-    friend class Clock;
+    friend class Schedule;
 
     Timer(std::weak_ptr<detail::Timers> timers, std::uint64_t number) : timers_(std::move(timers)), number_(number) {}
 
@@ -47,16 +43,16 @@ private:
     std::uint64_t number_ = 0;
 };
 
-class Clock {
+class Schedule {
 public:
-    explicit Clock(talcite::Clock& time);
+    explicit Schedule(talcite::Clock& time);
 
-    ~Clock();
+    ~Schedule();
 
-    Clock(const Clock&) = delete;
-    Clock& operator=(const Clock&) = delete;
-    Clock(Clock&&) = delete;
-    Clock& operator=(Clock&&) = delete;
+    Schedule(const Schedule&) = delete;
+    Schedule& operator=(const Schedule&) = delete;
+    Schedule(Schedule&&) = delete;
+    Schedule& operator=(Schedule&&) = delete;
 
     [[nodiscard]] Timer after(std::chrono::milliseconds delay, std::function<void()> then);
 

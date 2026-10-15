@@ -925,11 +925,12 @@ bool Term::turn() {
         patience = std::max(left, std::chrono::milliseconds{0});
     }
 
-    // The root's clock may have an appointment, the nearest of which bounds the wait as well; the
-    // tree is not asked, because whoever needs time has made an appointment with the clock
-    // (`ui::Clock::after`, `ui::Clock::every`). The wait is measured by the clock's own time.
-    if (const std::optional<Clock::Moment> next = held.onto->clock().next()) {
-        const auto left = std::chrono::ceil<std::chrono::milliseconds>(*next - held.onto->clock().now());
+    // The root's schedule may have an appointment, the nearest of which bounds the wait as well; the
+    // tree is not asked, because whoever needs time has made an appointment with the schedule
+    // (`ui::Schedule::after`, `ui::Schedule::every`). The wait is measured by the schedule's own
+    // time.
+    if (const std::optional<Clock::Moment> next = held.onto->schedule().next()) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(*next - held.onto->schedule().now());
         const std::chrono::milliseconds soon = std::max(left, std::chrono::milliseconds{0});
 
         if (!patience.has_value() || soon < *patience) patience = soon;
@@ -983,7 +984,7 @@ bool Term::turn() {
         doing = true;
     }
 
-    // What the clock has due by now is called, and a call changes what is on the screen, or asks
+    // What the schedule has due by now is called, and a call changes what is on the screen, or asks
     // for a frame for a node that computes its picture from the time.
     if (held.onto->elapse()) doing = true;
 

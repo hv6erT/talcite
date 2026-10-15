@@ -516,15 +516,15 @@ TRIAL("Term: with no reason it waits without a limit, but with the bell") {
     same(line->belled, before + 1);
 }
 
-// The nearest appointment with the root's clock bounds the wait for the console; the tree itself is
-// not asked. The root stands on a manual clock, so the wait is exact however long the turn takes.
-TRIAL("Term: an appointment with the root's clock goes to the console as patience") {
+// The nearest appointment with the root's schedule bounds the wait for the console; the tree itself
+// is not asked. The root stands on a manual clock, so the wait is exact however long the turn takes.
+TRIAL("Term: an appointment with the root's schedule goes to the console as patience") {
     auto line = faking::terminal();
 
     ManualClock time;
     Heard root{time};
 
-    const ui::Timer later = root.clock().after(std::chrono::milliseconds{30}, [] {});
+    const ui::Timer later = root.schedule().after(std::chrono::milliseconds{30}, [] {});
 
     Term term{Setup{}, Seam<Console>{line}};
 
@@ -536,7 +536,7 @@ TRIAL("Term: an appointment with the root's clock goes to the console as patienc
     same(*line->patience.back(), std::chrono::milliseconds{30});
 }
 
-// What the clock has due is called in the turn after the wait, once.
+// What the schedule has due is called in the turn after the wait, once.
 TRIAL("Term: an appointment due is called in the turn") {
     auto line = faking::terminal();
 
@@ -550,7 +550,7 @@ TRIAL("Term: an appointment due is called in the turn") {
 
     int called = 0;
 
-    const ui::Timer now = root.clock().after(std::chrono::milliseconds{0}, [&called] { ++called; });
+    const ui::Timer now = root.schedule().after(std::chrono::milliseconds{0}, [&called] { ++called; });
 
     (void)term.turn();
     (void)term.turn();

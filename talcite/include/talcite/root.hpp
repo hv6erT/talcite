@@ -45,7 +45,7 @@ public:
 
     [[nodiscard]] std::optional<Spot> caret() const override;
 
-    [[nodiscard]] Clock& clock() { return clock_; }
+    [[nodiscard]] Schedule& schedule() { return schedule_; }
 
     bool elapse();
 
@@ -80,7 +80,7 @@ private:
     friend class Children;
     friend class Node;
 
-    Clock clock_;
+    Schedule schedule_;
     Skin skin_;
     Blocks blocks_ = Blocks::basic;
     Size cell_;

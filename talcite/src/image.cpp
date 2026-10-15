@@ -412,7 +412,7 @@ void Image::sharpened() {
                              self->encoded_.reset();
 
                              for (std::shared_ptr<const std::string>& one : made)
-                                 self->pictures_.push_back(Picture{marked(), room, std::move(one)});
+                                 self->pictures_.push_back(Picture{marked(), room, std::move(one), nullptr, 0});
                          }));
 }
 
@@ -438,12 +438,12 @@ View Image::paint(Size given, Area seen) {
 
     if (fine_ != Graphics::none && which < pictures_.size()) made.picture({from, placed_}, pictures_[which]);
 
-    // The next frame of an animation is an appointment with the root's clock, made anew at every
+    // The next frame of an animation is an appointment with the root's schedule, made anew at every
     // frame; it only wakes the loop, since the frame is chosen by the time when it is drawn. A still
     // picture and a paused animation make none, and neither does a picture off the tree, which is
     // not drawn.
     if (Root* const top = root(); top != nullptr) {
-        if (const std::optional<std::chrono::milliseconds> left = until_next()) frame_ = top->clock().after(*left, {});
+        if (const std::optional<std::chrono::milliseconds> left = until_next()) frame_ = top->schedule().after(*left, {});
         else frame_.stop();
     }
 

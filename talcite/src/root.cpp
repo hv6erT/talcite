@@ -8,9 +8,9 @@
 
 namespace talcite::ui {
 
-// The root reads the time from `time` for its clock (`clock`): the real one in a program, a manual
-// one in a trial.
-Root::Root(talcite::Clock& time) : clock_(time) {}
+// The root reads the time for its schedule (`schedule`) from `time`: the real clock in a program,
+// a manual one in a trial.
+Root::Root(talcite::Clock& time) : schedule_(time) {}
 
 Root::~Root() = default;
 
@@ -293,7 +293,7 @@ void Root::linger(std::shared_ptr<Node> one) {
     if (busy_ > 0) dying_.push_back(std::move(one));
 }
 
-// Calls what the clock has due by now (`Clock::elapse`), inside a delivery like an event: a node
+// Calls what the schedule has due by now (`Schedule::elapse`), inside a delivery like an event: a node
 // that a call takes off the tree lives until the calls are over. Says whether anything was called;
 // the loop then draws a frame, since a call changes what is on the screen, or asks for a frame for
 // a node that computes its picture from the time.
@@ -303,7 +303,7 @@ bool Root::elapse() {
     bool made = false;
 
     try {
-        made = clock_.elapse();
+        made = schedule_.elapse();
     } catch (...) {
         released();
 

@@ -9,7 +9,7 @@
 
 namespace talcite::ui {
 
-// The appointments of a root's clock: each under its number, with the moment it is due, its period
+// The appointments of a root's schedule: each under its number, with the moment it is due, its period
 // (zero for a single one) and what it calls; the order of moments and numbers says which comes
 // first, and for one moment the earlier made. The lock guards both, because a timer may be dropped
 // on another thread than the one the root runs on, together with whatever held it.
@@ -28,7 +28,7 @@ struct detail::Timers {
 
 namespace {
 
-// Takes appointment `number` out of the clock, if it is still there; what it would have called goes
+// Takes appointment `number` out of the schedule, if it is still there; what it would have called goes
 // after the lock, since its captures may hold timers of their own.
 void dropped(detail::Timers& timers, std::uint64_t number) {
     std::shared_ptr<std::function<void()>> gone;
@@ -49,14 +49,9 @@ void dropped(detail::Timers& timers, std::uint64_t number) {
 }
 
 // A timer is the appointment it stands for: the appointment lasts exactly as long as whoever keeps
-// the timer, and dropping the timer takes it back. The timer reaches the clock only weakly, so one
+// the timer, and dropping the timer takes it back. The timer reaches the schedule only weakly, so one
 // that outlives its root has nothing to take back. Moving hands the appointment over; the timer
 // moved from is empty.
-//
-// Only the root's clock makes a timer with an appointment (`friend class Clock` in the header). The
-// friend declaration names `talcite::ui::Clock`, declared after the timer: the standard looks for a
-// first-declared friend only in the innermost namespace. MSVC looks further out, finds
-// `talcite::Clock` and befriends that one, so under MSVC the header declares `Clock` beforehand.
 Timer::Timer(Timer&& other) noexcept : timers_(std::move(other.timers_)), number_(std::exchange(other.number_, 0)) {}
 
 // Takes back what this timer held, then takes over the other one's appointment.
@@ -98,36 +93,36 @@ void Timer::stop() {
     if (gone != 0 && timers) dropped(*timers, gone);
 }
 
-// The clock of a root reads the time from `time`, the real one in a program and a manual one in
-// trials, so that a trial moves time on by itself instead of waiting for it.
-Clock::Clock(talcite::Clock& time) : time_(&time), timers_(std::make_shared<detail::Timers>()) {}
+// The schedule of a root reads the time from `time`, the real clock in a program and a manual one
+// in trials, so that a trial moves time on by itself instead of waiting for it.
+Schedule::Schedule(talcite::Clock& time) : time_(&time), timers_(std::make_shared<detail::Timers>()) {}
 
-// The appointments go together with the clock: a timer that outlives it has nothing left to take
-// back.
-Clock::~Clock() = default;
+// The appointments go together with the schedule: a timer that outlives it has nothing left to
+// take back.
+Schedule::~Schedule() = default;
 
 // An appointment to call `then` once, `delay` from now. A negative delay counts as none: the call
 // comes at the next turn of the loop. An empty `then` only wakes the loop, for a frame of a node
 // that computes its picture from the time. The timer given back keeps the appointment.
-Timer Clock::after(std::chrono::milliseconds delay, std::function<void()> then) {
+Timer Schedule::after(std::chrono::milliseconds delay, std::function<void()> then) {
     return kept(now() + std::max(delay, std::chrono::milliseconds{0}), std::chrono::milliseconds{0}, std::move(then));
 }
 
 // An appointment to call `then` every `period`, the first time a period from now. A period shorter
 // than a millisecond counts as one, so an appointment cannot hold the loop in one turn. The timer
 // given back keeps the appointment.
-Timer Clock::every(std::chrono::milliseconds period, std::function<void()> then) {
+Timer Schedule::every(std::chrono::milliseconds period, std::function<void()> then) {
     const std::chrono::milliseconds step = std::max(period, std::chrono::milliseconds{1});
 
     return kept(now() + step, step, std::move(then));
 }
 
-// The time as the clock reads it.
-talcite::Clock::Moment Clock::now() const { return time_->now(); }
+// The time as the schedule's clock reads it.
+talcite::Clock::Moment Schedule::now() const { return time_->now(); }
 
 // The moment of the nearest appointment, or nothing when none waits: the loop sleeps until then, or
 // until something else wakes it.
-std::optional<talcite::Clock::Moment> Clock::next() const {
+std::optional<talcite::Clock::Moment> Schedule::next() const {
     const std::lock_guard<std::mutex> held{timers_->guard};
 
     if (timers_->order.empty()) return std::nullopt;
@@ -136,7 +131,7 @@ std::optional<talcite::Clock::Moment> Clock::next() const {
 }
 
 // Makes an appointment and gives back the timer that keeps it.
-Timer Clock::kept(talcite::Clock::Moment when, std::chrono::milliseconds period, std::function<void()> then) {
+Timer Schedule::kept(talcite::Clock::Moment when, std::chrono::milliseconds period, std::function<void()> then) {
     const std::lock_guard<std::mutex> held{timers_->guard};
 
     const std::uint64_t number = ++timers_->next;
@@ -155,7 +150,7 @@ Timer Clock::kept(talcite::Clock::Moment when, std::chrono::milliseconds period,
 // appointment moves on along its own grid of periods, not from now, so it does not drift; one late
 // by several periods (a sleeping computer, a long block) is called once and moves to the first of
 // its moments still ahead, rather than catching up on the missed ones.
-bool Clock::elapse() {
+bool Schedule::elapse() {
     const std::shared_ptr<detail::Timers> timers = timers_;
     const talcite::Clock::Moment at = now();
 
