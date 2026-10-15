@@ -1157,6 +1157,45 @@ template <typename T>
 
 [[nodiscard]] Promise<void> all(std::vector<Promise<void>> among);
 
+#if defined(_MSC_VER) && !defined(__clang__)
+namespace detail {
+
+template <std::size_t I, typename Whole, typename Got, typename T>
+void joined_at(const std::shared_ptr<Node<Whole>>& to, const std::shared_ptr<Got>& got,
+               const std::shared_ptr<Counting>& left, Promise<T>& one) {
+    joined<T>(to, one, [to, got, left](Node<T>& from) {
+        if (!to->running()) return;
+
+        switch (from.ending()) {
+        case Ending::value:
+            if constexpr (std::is_void_v<T>) {
+                std::get<I>(*got).emplace();
+            } else {
+                std::get<I>(*got).emplace(from.taken());
+            }
+
+            if (left->last())
+                (void)to->valued(std::apply([](auto&... each) { return Whole{std::move(*each)...}; }, *got), Delivery::here);
+            break;
+        case Ending::error:
+            (void)to->failed(from.why(), Delivery::here);
+            break;
+        default:
+            (void)to->quit(Delivery::here);
+            break;
+        }
+    });
+}
+
+template <typename Whole, typename Got, std::size_t... I, typename... P>
+void joined_each(const std::shared_ptr<Node<Whole>>& to, const std::shared_ptr<Got>& got,
+                 const std::shared_ptr<Counting>& left, std::index_sequence<I...>, P&... among) {
+    (joined_at<I>(to, got, left, among), ...);
+}
+
+}
+#endif
+
 template <typename... P>
     requires(sizeof...(P) > 0 && (detail::promised_v<std::decay_t<P>> && ...))
 [[nodiscard]] auto all(P... among) {
@@ -1170,6 +1209,9 @@ template <typename... P>
 
     std::vector<std::shared_ptr<detail::Core>> summed{detail::Access::claim(among).core()...};
 
+#if defined(_MSC_VER) && !defined(__clang__)
+    detail::joined_each(to, got, left, std::index_sequence_for<P...>{}, among...);
+#else
     const auto each = [&]<std::size_t... I>(std::index_sequence<I...>) {
         (detail::joined<typename P::value_type>(
              to, among, [to, got, left](detail::Node<typename P::value_type>& from) {
@@ -1199,6 +1241,7 @@ template <typename... P>
     };
 
     each(std::index_sequence_for<P...>{});
+#endif
 
     to->sum(std::move(summed));
 

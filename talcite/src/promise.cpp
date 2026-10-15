@@ -1030,6 +1030,12 @@ Promise<void> ready() {
 
 // All of `among`: fulfilled when every one is, failed by the first failure, cancelled by the first
 // cancellation; the rest are released either way.
+//
+// The `all` of promises of different types, in the header, hangs the same handler on each promise.
+// Under MSVC it goes through `detail::joined_each`, which hangs it on one promise at a time
+// (`joined_at`), instead of a generic lambda: MSVC does not expand the function's own pack
+// (`among`) inside the pack of a lambda (error C3520), which the standard allows and GCC and Clang
+// build.
 Promise<void> all(std::vector<Promise<void>> among) {
     auto to = std::make_shared<detail::Node<void>>(0);
     Promise<void> made = detail::Access::made<void>(detail::Core::claimed(to));
