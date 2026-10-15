@@ -378,4 +378,101 @@ TRIAL("Quilt: pieces merge at the seams") {
 
     same(kept.pieces.size(), std::size_t{1});
     same(kept.much, std::size_t{4});
+
+    // A scrap of two pieces whose ends go one into each neighbor leaves the neighbors side by side,
+    // and they are sewn too: typing a character and taking it back, then cutting across that place
+    // and undoing the cut, gives the one piece of the start.
+    Quilt third{bytes("abcdef")};
+
+    third.insert(3, "X");
+    third.erase(3, 1);
+
+    const Quilt::Scrap middle = third.taken(1, 4);
+
+    same(middle.pieces.size(), std::size_t{2});
+
+    third.erase(1, 4);
+    third.put(1, middle);
+
+    same(whole(third), std::string{"abcdef"});
+    same(third.taken(0, third.whole()).pieces.size(), std::size_t{1});
+}
+
+// Thousands of pieces lie in many patches: random insertions cut the document into pieces of one
+// byte, erasures and scraps then span patches, and a scrap of thousands of pieces goes back in one
+// put, which divides the patch it lands in. After each change the quilt agrees with a plain string,
+// and a scrap taken across patches gives the same text.
+TRIAL("Quilt: changes across patches agree with the model") {
+    std::mt19937 gen{11};
+
+    std::string want(3000, '.');
+
+    for (std::size_t at = 0; at < want.size(); ++at) want[at] = static_cast<char>('a' + at % 26);
+
+    Quilt one{bytes(want)};
+
+    for (int step = 0; step < 6000; ++step) {
+        const std::size_t at = gen() % (want.size() + 1);
+        const std::string what(1, static_cast<char>('A' + gen() % 26));
+
+        want.insert(at, what);
+        one.insert(at, what);
+    }
+
+    same(whole(one), want);
+    ought(one.taken(0, one.whole()).pieces.size() > 4096);
+
+    for (int step = 0; step < 300; ++step) {
+        const std::size_t kind = gen() % 4;
+
+        if (kind == 0 && want.size() > 10) {
+            const std::size_t at = gen() % want.size();
+            const std::size_t much = 1 + gen() % std::min<std::size_t>(want.size() - at, 2500);
+
+            want.erase(at, much);
+            one.erase(at, much);
+        } else if (kind == 1 && !want.empty()) {
+            const std::size_t at = gen() % want.size();
+            const std::size_t much = 1 + gen() % std::min<std::size_t>(want.size() - at, 3000);
+
+            const Quilt::Scrap cut = one.taken(at, much);
+
+            same(one.text(cut), want.substr(at, much));
+
+            const std::string moved = want.substr(at, much);
+
+            want.erase(at, much);
+            one.erase(at, much);
+
+            const std::size_t to = gen() % (want.size() + 1);
+
+            want.insert(to, moved);
+            one.put(to, cut);
+        } else {
+            const std::size_t at = gen() % (want.size() + 1);
+            const std::string what(1 + gen() % 3, static_cast<char>('0' + gen() % 10));
+
+            want.insert(at, what);
+            one.insert(at, what);
+        }
+
+        same(one.whole(), want.size());
+
+        if (step % 10 == 0) same(whole(one), want);
+    }
+
+    same(whole(one), want);
+
+    const Quilt::Scrap all = one.taken(0, one.whole());
+
+    one.erase(0, one.whole());
+
+    same(one.whole(), std::size_t{0});
+    same(whole(one), std::string{});
+
+    one.put(0, all);
+
+    same(whole(one), want);
+
+    for (std::size_t at = 0; at + 4096 <= want.size(); at += 997) same(text(one.bytes(at, 4096)), want.substr(at, 4096));
 }

@@ -57,15 +57,30 @@ public:
     void spliced(const std::vector<Cut>& cuts);
 
 private:
-    [[nodiscard]] std::size_t split(std::size_t at);
+    struct Patch {
+        std::vector<Piece> pieces;
+        std::size_t much = 0;
+    };
 
-    [[nodiscard]] std::size_t located(std::size_t at);
+    struct Spot {
+        std::size_t patch = 0;
+        std::size_t piece = 0;
+        std::size_t gone = 0;
+    };
+
+    [[nodiscard]] Spot located(std::size_t at);
+
+    [[nodiscard]] Spot split(std::size_t at);
+
+    bool sewn(Spot left);
+
+    void mended(std::size_t patch);
 
     Bytes held_;
 
     std::string added_;
 
-    std::vector<Piece> pieces_;
+    std::vector<Patch> patches_;
     std::size_t whole_ = 0;
 
     std::vector<std::size_t> starts_;
