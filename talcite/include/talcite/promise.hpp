@@ -333,7 +333,7 @@ void linked(const std::shared_ptr<Core>& to, Claim from, std::shared_ptr<Reactio
     to->hold();
     whose->when_finished([to] { to->let_go(); });
     to->follow(whose);
-    to->dwell(whose->home());
+    to->inherit(whose->home());
 
     if (reaction) whose->react(from, std::move(reaction));
 
@@ -542,6 +542,52 @@ public:
         to_->let_go();
     }
 
+    [[nodiscard]] bool placed() const override { return true; }
+
+private:
+    std::shared_ptr<Node<T>> from_;
+    std::shared_ptr<Node<T>> to_;
+    std::shared_ptr<Gate> where_;
+};
+
+template <typename T>
+class Homing final : public Reaction {
+public:
+    Homing(std::shared_ptr<Node<T>> from, std::shared_ptr<Node<T>> to, std::shared_ptr<Gate> where)
+        : from_(std::move(from)), to_(std::move(to)), where_(std::move(where)) {}
+
+    void ended() override {
+        to_->hold();
+
+        if (!to_->running()) {
+            to_->let_go();
+
+            return;
+        }
+
+        if (homed(where_)) {
+            (void)passed(*from_, *to_, Delivery::here);
+
+            to_->let_go();
+
+            return;
+        }
+
+        const bool taken = posted(where_, [from = from_, to = to_] {
+            (void)passed(*from, *to, Delivery::here);
+
+            to->let_go();
+        });
+
+        if (taken) return;
+
+        (void)to_->quit(Delivery::here);
+
+        to_->let_go();
+    }
+
+    [[nodiscard]] bool placed() const override { return true; }
+
 private:
     std::shared_ptr<Node<T>> from_;
     std::shared_ptr<Node<T>> to_;
@@ -699,6 +745,8 @@ public:
         auto from = taken();
         auto to = std::make_shared<detail::Node<T>>(0);
         Promise made{detail::Core::claimed(to)};
+
+        to->inherit(from->home());
 
         const std::uint64_t which = detail::timed(to, clock, patience);
 
@@ -1012,8 +1060,15 @@ void adopted(const std::shared_ptr<Node<U>>& to, Promise<U> given) {
     }
 
     auto from = node_of<U>(claim);
+    const std::shared_ptr<Gate> home = to->home();
 
-    linked<U>(to, std::move(claim), std::make_shared<Passing<U>>(from, to));
+    if (home == nullptr) {
+        linked<U>(to, std::move(claim), std::make_shared<Passing<U>>(from, to));
+
+        return;
+    }
+
+    linked<U>(to, std::move(claim), std::make_shared<Homing<U>>(from, to, home));
 }
 
 template <typename U>
@@ -1165,6 +1220,7 @@ template <typename T>
             }
         });
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;
@@ -1258,6 +1314,7 @@ template <typename... P>
     each(std::index_sequence_for<P...>{});
 #endif
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;
@@ -1296,6 +1353,7 @@ template <typename T>
             else (void)to->failed(std::make_exception_ptr(Cancelled{}), detail::Delivery::here);
         });
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;
@@ -1319,6 +1377,7 @@ template <typename T>
     for (Promise<T>& one : among)
         detail::joined<T>(to, one, [to](detail::Node<T>& from) { (void)detail::passed(from, *to, detail::Delivery::here); });
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;
@@ -1348,6 +1407,7 @@ template <typename T>
             if (got->put(at, detail::Access::outcome(from))) (void)to->valued(got->whole(), detail::Delivery::here);
         });
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;

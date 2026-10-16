@@ -41,6 +41,19 @@ bool risen(const std::atomic<bool>& flag) {
     return flag.load();
 }
 
+// Turns the loop until the flag rises, at most five seconds; returns whether it did.
+bool turned(Loop& loop, const std::atomic<bool>& flag) {
+    const auto until = std::chrono::steady_clock::now() + 5s;
+
+    while (!flag.load() && std::chrono::steady_clock::now() < until) {
+        (void)loop.turn();
+
+        std::this_thread::sleep_for(1ms);
+    }
+
+    return flag.load();
+}
+
 // Waits until the counter reaches `want`, at most five seconds; returns whether it did.
 bool reached(const std::atomic<int>& counter, int want) {
     for (int again = 0; again < 500 && counter.load() < want; ++again) std::this_thread::sleep_for(10ms);
@@ -874,6 +887,175 @@ TRIAL("here: moves the rest to the loop of this thread, and without a loop it re
     ought(static_cast<bool>(kept));
 }
 
+// --- Home places -------------------------------------------------------------------------------
+
+// After `here` the rest of the chain runs on the loop's thread, also where its ending comes from
+// elsewhere: a deadline that passes on the clock's thread, a promise a callback returned and that
+// ends on the pool, a continuation hung on a promise that has already ended. A join keeps a place
+// only when all its members share it.
+
+TRIAL("timeout: after here a deadline that passes fails the chain on the loop, so recover runs there") {
+    Loop loop;
+    ManualClock clock;
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    auto [made, settle] = promised<int>();
+
+    std::atomic<bool> recovered{false};
+    std::atomic<bool> home{false};
+
+    Promise<int> one = std::move(made).here().timeout(50ms, clock).recover([&recovered, &home, mine](const std::exception&) {
+        home.store(std::this_thread::get_id() == mine);
+        recovered.store(true);
+
+        return 0;
+    });
+
+    clock.advance(50ms);
+
+    ought(turned(loop, recovered));
+    ought(home.load());
+}
+
+TRIAL("then: a promise a callback returns after here brings its ending back to the loop") {
+    Loop loop;
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    std::atomic<bool> ran{false};
+    std::atomic<bool> home{false};
+
+    Promise<void> one = run(io(), [] { return 1; })
+                            .here()
+                            .then([](int) { return run(io(), [] { return 2; }); })
+                            .then([&ran, &home, mine](int got) {
+                                home.store(std::this_thread::get_id() == mine && got == 2);
+                                ran.store(true);
+                            });
+
+    ought(turned(loop, ran));
+    ought(home.load());
+}
+
+TRIAL("here: a continuation hung on a promise that has already ended runs on the loop") {
+    Loop loop;
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    Promise<int> ended = run(io(), [] { return 1; }).here();
+
+    for (int again = 0; again < 500 && !ended.ready(); ++again) {
+        (void)loop.turn();
+
+        std::this_thread::sleep_for(10ms);
+    }
+
+    ought(ended.ready());
+
+    std::atomic<bool> ran{false};
+    std::atomic<bool> home{false};
+
+    Promise<void> one = std::move(ended).then([&ran, &home, mine](int) {
+        home.store(std::this_thread::get_id() == mine);
+        ran.store(true);
+    });
+
+    ought(turned(loop, ran));
+    ought(home.load());
+}
+
+// A promise that has ended on the loop and moves on to the pool goes there straight: `on` takes the
+// ending to its own place, with no detour through the loop, so it needs no turn of the loop.
+TRIAL("on: a promise that has ended on the loop moves to the pool without the loop") {
+    Loop loop;
+
+    Promise<int> ended = run(io(), [] { return 1; }).here();
+
+    for (int again = 0; again < 500 && !ended.ready(); ++again) {
+        (void)loop.turn();
+
+        std::this_thread::sleep_for(10ms);
+    }
+
+    ought(ended.ready());
+
+    std::atomic<bool> ran{false};
+
+    Promise<void> moved = std::move(ended).on(io()).then([&ran](int) { ran.store(true); });
+
+    ought(risen(ran));
+}
+
+// Waiting on the loop's thread for what ends only when that loop turns would hang for ever: it is
+// refused at once. What has already ended there, or ends elsewhere, can be waited for.
+TRIAL("get: waiting on the loop's thread for what ends on that loop is refused") {
+    Loop loop;
+
+    auto [made, settle] = promised<int>();
+
+    Promise<int> stuck = std::move(made).here();
+
+    bool refused = false;
+
+    try {
+        (void)std::move(stuck).get();
+    } catch (const std::logic_error&) {
+        refused = true;
+    }
+
+    ought(refused);
+
+    same(run(io(), [] { return 3; }).get(), 3);
+}
+
+TRIAL("all: a join dwells at the place its members share, and nowhere when they differ") {
+    Loop loop;
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    const auto joined = [&loop](std::vector<Promise<int>> among) {
+        Promise<std::vector<int>> made = all(std::move(among));
+
+        for (int again = 0; again < 500 && !made.ready(); ++again) {
+            (void)loop.turn();
+
+            std::this_thread::sleep_for(10ms);
+        }
+
+        return made;
+    };
+
+    std::vector<Promise<int>> both;
+
+    both.push_back(run(io(), [] { return 1; }).here());
+    both.push_back(run(io(), [] { return 2; }).here());
+
+    std::atomic<bool> ran{false};
+    std::atomic<bool> home{false};
+
+    Promise<void> shared = joined(std::move(both)).then([&ran, &home, mine](std::vector<int>) {
+        home.store(std::this_thread::get_id() == mine);
+        ran.store(true);
+    });
+
+    ought(turned(loop, ran));
+    ought(home.load());
+
+    // One member on the loop, one on the pool: the join has no place, so what hangs on it after its
+    // end does not wait for the loop.
+    std::vector<Promise<int>> mixed;
+
+    mixed.push_back(run(io(), [] { return 1; }).here());
+    mixed.push_back(run(io(), [] { return 2; }));
+
+    std::atomic<bool> loose{false};
+
+    Promise<void> apart = joined(std::move(mixed)).then([&loose](std::vector<int>) { loose.store(true); });
+
+    ought(risen(loose));
+}
+
 // --- Time -------------------------------------------------------------------------------------
 
 TRIAL("later: ends when the clock gets there, not before") {
@@ -1233,6 +1415,17 @@ Promise<int> counted(int many) {
     co_return sum;
 }
 
+// Waits for `what` and notes whether it went on with `Cancelled` on the thread `mine`.
+Promise<void> resumed(Promise<int> what, std::thread::id mine, std::atomic<bool>& home, std::atomic<bool>& done) {
+    try {
+        (void)co_await std::move(what);
+    } catch (const Cancelled&) {
+        home.store(std::this_thread::get_id() == mine);
+    }
+
+    done.store(true);
+}
+
 // Waits for `what` and notes whether it was cancelled there.
 Promise<void> waited(Promise<int> what, std::atomic<bool>& cancelled, std::atomic<bool>& done) {
     try {
@@ -1283,6 +1476,24 @@ TRIAL("coroutine: abandoned while waiting, it resumes with Cancelled and stops w
     ought(risen(done));
     ought(cancelled.load());
     ought(settle.stop().stopped());
+}
+
+// A coroutine that waits for a promise after `here` and is abandoned resumes on the loop, where it
+// would have resumed with the ending, not on the pool.
+TRIAL("coroutine: abandoned while waiting after here, it resumes on the loop") {
+    Loop loop;
+
+    auto [inner, settle] = promised<int>();
+
+    std::atomic<bool> home{false};
+    std::atomic<bool> done{false};
+
+    Promise<void> one = resumed(std::move(inner).here(), std::this_thread::get_id(), home, done);
+
+    one.cancel();
+
+    ought(turned(loop, done));
+    ought(home.load());
 }
 
 // --- Long chains ------------------------------------------------------------------------------

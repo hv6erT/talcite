@@ -102,6 +102,8 @@ public:
     Reaction& operator=(Reaction&&) = delete;
 
     virtual void ended() = 0;
+
+    [[nodiscard]] virtual bool placed() const { return false; }
 };
 
 class Claim {
@@ -165,9 +167,13 @@ public:
 
     void dwell(std::shared_ptr<Gate> where);
 
+    void inherit(std::shared_ptr<Gate> where);
+
     [[nodiscard]] std::shared_ptr<Gate> home() const;
 
     void sum(std::vector<std::shared_ptr<Core>> among);
+
+    void dwell_among(const std::vector<std::shared_ptr<Core>>& among);
 
     void detach();
 

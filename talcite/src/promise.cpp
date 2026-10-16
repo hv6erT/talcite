@@ -253,8 +253,16 @@ Claim Core::claimed(const std::shared_ptr<Core>& core) {
 
 // Registers `reaction` for the ending of this node, tied to `claim`: releasing the claim withdraws
 // it. When the node has already ended, the reaction is delivered at once, but never inside this
-// call: after the current step, or on the io lane outside a trampoline.
+// call: after the current step, or on the io lane outside a trampoline. A node that dwells at a
+// place (`on`, `here`) delivers it there, as it delivered its ending: after the current step when
+// this thread is that loop's and a trampoline runs, otherwise as a task of the place. So a
+// continuation hung on a promise that has already ended on the loop runs on the loop, not on the
+// pool. A reaction that takes the ending to a place of its own (`on`, the return to the chain's place
+// in `adopted`) needs no detour through this one. A place that no longer takes work leaves the old
+// way: the reaction runs on the io lane, where code bound to the gone loop must guard itself.
 void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
+    std::shared_ptr<Gate> place;
+
     {
         const std::lock_guard<std::mutex> held{guard_};
 
@@ -264,7 +272,13 @@ void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
 
             return;
         }
+
+        place = home_;
     }
+
+    if (place != nullptr && !reaction->placed() && !(stepping() && homed(place)) &&
+        posted(place, [reaction] { stepped([reaction] { reaction->ended(); }); }))
+        return;
 
     if (stepping()) {
         stepped([reaction] { reaction->ended(); });
@@ -298,9 +312,11 @@ void Core::follow(std::shared_ptr<Core> whose) {
     if (ending_ == Ending::running) following_ = std::move(whose);
 }
 
-// Remembers the place the chain moved to (`on`, `here`), for a `finally` that runs after a
-// cancellation: it goes back there rather than to the io lane, so that code bound to a loop's thread
-// cleans up on that thread. A node without a place of its own takes its predecessor's.
+// Remembers the place the chain moved to (`on`, `here`): what this node delivers later goes there,
+// so that code bound to a loop's thread runs on that thread — a `finally`, a deadline that passes
+// (`timed`), the ending of a promise a callback returned (`adopted`), a continuation hung on the
+// node after it ended (`react`), a coroutine resumed after a cancellation. A node without a place of
+// its own takes its predecessor's (`inherit`).
 void Core::dwell(std::shared_ptr<Gate> where) {
     if (where == nullptr) return;
 
@@ -309,11 +325,41 @@ void Core::dwell(std::shared_ptr<Gate> where) {
     home_ = std::move(where);
 }
 
+// Takes the place of a predecessor, only when the node has none yet: a node linked to several
+// predecessors (a join, a callback's returned promise) keeps the place it has, so a promise a
+// callback returns does not move the chain to its own place.
+void Core::inherit(std::shared_ptr<Gate> where) {
+    if (where == nullptr) return;
+
+    const std::lock_guard<std::mutex> held{guard_};
+
+    if (home_ == nullptr) home_ = std::move(where);
+}
+
 // The place the chain moved to before this node, or null.
 std::shared_ptr<Gate> Core::home() const {
     const std::lock_guard<std::mutex> held{guard_};
 
     return home_;
+}
+
+// Takes the place that every one of `among` (the members of a join) dwells at, or none when they
+// differ or one of them dwells nowhere. A join ends where whichever member ends it does, so only a
+// place they all share is the join's own; linking the members one by one would leave it the first
+// member's.
+void Core::dwell_among(const std::vector<std::shared_ptr<Core>>& among) {
+    std::shared_ptr<Gate> common = among.empty() ? nullptr : among.front()->home();
+
+    for (const std::shared_ptr<Core>& one : among)
+        if (one->home() != common) {
+            common = nullptr;
+
+            break;
+        }
+
+    const std::lock_guard<std::mutex> held{guard_};
+
+    home_ = std::move(common);
 }
 
 // Reports the summed progress of `among` (a join) until it ends.
@@ -644,9 +690,14 @@ void Core::unhooked(std::uint64_t which) {
 
 // Waits for the ending; `running` when the stop of `also` (the work the waiting thread does itself)
 // came first. What this thread's trampoline has queued runs first, so the wait never waits for a
-// step queued behind itself.
+// step queued behind itself. A node that dwells at the loop of this thread ends only when that loop
+// turns, which a waiting thread never does: such a wait is a mistake of the caller, refused with
+// `std::logic_error` rather than left to hang.
 Ending Core::waited(Core* also) {
     drained();
+
+    if (running() && homed(home()))
+        throw std::logic_error("talcite::Promise: waiting on a loop's thread for what ends on that loop");
 
     const std::shared_ptr<Core> self = shared_from_this();
 
@@ -870,8 +921,9 @@ bool Node<void>::valued(Delivery delivery) {
 }
 
 // The work a coroutine waited for was abandoned with its owners: the claim on it goes, and the
-// coroutine resumes on the io lane with `Cancelled` where it waited. A resumption that has already
-// begun wins.
+// coroutine resumes with `Cancelled` where it waited — at the place what it waited for dwells at
+// (`on`, `here`), as it would have resumed with the ending, and on the io lane when that dwells
+// nowhere or the place no longer takes work. A resumption that has already begun wins.
 void Suspension::stopped() {
     std::shared_ptr<Waited> now;
 
@@ -897,7 +949,11 @@ void Suspension::stopped() {
         gone = std::move(now->claim);
     }
 
+    const std::shared_ptr<Gate> place = gone ? gone.get()->home() : nullptr;
+
     gone.release();
+
+    if (place != nullptr && posted(place, [now] { stepped([now] { now->handle.resume(); }); })) return;
 
     away([now] { now->handle.resume(); });
 }
@@ -915,17 +971,35 @@ void Resuming::ended() {
     waited_->handle.resume();
 }
 
-// Arms the deadline of `timeout`: when it passes first, the node fails with `Overdue` on the io lane
-// and releases what it waited for. The deadline is withdrawn before the node can end otherwise: by
-// the reaction that passes the ending on (`Timing`), and at once when the owners leave. Withdrawn
-// later, after the ending is visible, it would reach for a clock its owner may already have
-// destroyed.
+// Arms the deadline of `timeout`: when it passes first, the node fails with `Overdue` and releases
+// what it waited for — at the place the chain dwells at (`on`, `here`), so that a `recover` after it
+// runs there, and on the io lane when it dwells nowhere. When that place no longer takes work, the
+// node ends cancelled instead, as `on` does: a `recover` bound to a gone loop must not run. The
+// deadline is withdrawn before the node can end otherwise: by the reaction that passes the ending
+// on (`Timing`), and at once when the owners leave. Withdrawn later, after the ending is visible, it
+// would reach for a clock its owner may already have destroyed.
 std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::milliseconds patience) {
     const std::weak_ptr<Core> weak = to;
 
     const std::uint64_t which = clock.scheduled(clock.now() + patience, [weak] {
-        away([weak] {
+        const auto overdue = [weak] {
             if (const std::shared_ptr<Core> one = weak.lock()) (void)one->failed(std::make_exception_ptr(Overdue{}), Delivery::here);
+        };
+
+        std::shared_ptr<Gate> place;
+
+        if (const std::shared_ptr<Core> one = weak.lock()) place = one->home();
+
+        if (place == nullptr) {
+            away(overdue);
+
+            return;
+        }
+
+        if (posted(place, [overdue] { stepped(overdue); })) return;
+
+        away([weak] {
+            if (const std::shared_ptr<Core> one = weak.lock()) (void)one->quit(Delivery::here);
         });
     });
 
@@ -1079,6 +1153,7 @@ Promise<void> all(std::vector<Promise<void>> among) {
             }
         });
 
+    to->dwell_among(summed);
     to->sum(std::move(summed));
 
     return made;
