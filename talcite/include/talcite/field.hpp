@@ -8,6 +8,7 @@
 
 #include "talcite/enablednode.hpp"
 #include "talcite/node.hpp"
+#include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
@@ -37,6 +38,10 @@ public:
 
     void concealed(bool on);
 
+    [[nodiscard]] Justify justify() const { return justify_; }
+
+    void justify(Justify given) { justify_ = given; }
+
     [[nodiscard]] Size wants(Size room) const override;
 
     [[nodiscard]] std::optional<Spot> caret() const override;
@@ -65,7 +70,9 @@ private:
     std::function<bool(char32_t one)> allows_;
     std::size_t at_ = 0;
     std::size_t from_ = 0;
+    int shift_ = 0;
     int wide_ = 0;
+    Justify justify_ = Justify::left;
     bool concealed_ = false;
 };
 

@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "talcite/button.hpp"
@@ -297,6 +298,49 @@ TRIAL("Field: a click puts the cursor where it clicked") {
     ought(top.dispatch(aside));
 
     same(one->cursor(), static_cast<std::size_t>(6));
+}
+
+// A field justified to the right stands its content at the right edge with one cell to spare, where
+// the cursor after the last character goes; the cursor and a click count from where the content
+// stands. A content that fills the field stands at its left edge, and the center splits the free
+// cells.
+TRIAL("Field: justified to the right, the content and the cursor stand at the right edge") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Field>(8, "750");
+
+    one->justify(ui::Justify::right);
+    top.children().add(one);
+    one->focus();
+
+    const View shown = top.render({{0, 0}, {8, 1}});
+
+    same(read(shown, 0), std::string{"    750"});
+    same(one->caret(), (std::optional{ui::Spot{7, 0}}));
+
+    ui::ClickEvent what{{5, 0}, ui::Mouse::left};
+
+    ought(top.dispatch(what));
+    same(one->cursor(), static_cast<std::size_t>(1));
+
+    // Before the content the cursor goes to its start.
+    ui::ClickEvent before{{1, 0}, ui::Mouse::left};
+
+    ought(top.dispatch(before));
+    same(one->cursor(), static_cast<std::size_t>(0));
+
+    typed(top, "1");
+
+    same(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"   1750"});
+
+    one->text("12345678");
+
+    same(read(top.render({{0, 0}, {8, 1}}), 0).substr(0, 1), std::string{"2"});
+
+    one->text("12");
+    one->justify(ui::Justify::center);
+
+    same(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"  12"});
 }
 
 TRIAL("Field: a disabled field takes neither the focus nor characters") {

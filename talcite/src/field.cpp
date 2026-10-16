@@ -61,12 +61,13 @@ Size Field::wants(Size room) const {
 
 // The field is the only widget that has something to say about the cursor, and it says it in its
 // own coordinates, without looking at the visible part: clipping is the root's job. The answer is
-// true only after the frame is composed, because `from_` (how far the content is scrolled) is
-// computed in `paint`, once the width the field really got is known.
+// true only after the frame is composed, because `from_` (how far the content is scrolled) and
+// `shift_` (how far a justified content stands from the left edge) are computed in `paint`, once
+// the width the field really got is known.
 std::optional<Spot> Field::caret() const {
     if (!focused()) return {};
 
-    return Spot{spanned(from_, at_), 0};
+    return Spot{shift_ + spanned(from_, at_), 0};
 }
 
 // The cursor position in characters (clusters, as the screen shows them), counted from the start
@@ -181,7 +182,10 @@ void Field::insert(const std::string& what) {
 }
 
 // Draws the visible part of the content (or dots, when concealed) and the dimmed suggestion after
-// it.
+// it. A field justified to the right (numbers) or to the center moves the visible part that way,
+// keeping one cell free at the right edge, so the cursor after the last character stays inside the
+// field and the content does not jump when the focus comes or goes. A content that fills the field
+// stands at its left edge, as in any field.
 View Field::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -221,6 +225,13 @@ View Field::paint(Size given, Area seen) {
         upto = next;
     }
 
+    const bool cut = !concealed_ && !focused() && (from_ > 0 || upto < text_.size());
+    const int free = room - wide - 1;
+
+    shift_ = 0;
+
+    if (!cut && free > 0) shift_ = justify_ == Justify::right ? free : justify_ == Justify::center ? free / 2 : 0;
+
     if (concealed_) {
         const std::string dot = utf8::encode(how.glyph("talcite.input.conceal"));
 
@@ -228,8 +239,8 @@ View Field::paint(Size given, Area seen) {
 
         for (int which = 0; which < wide; ++which) dots += dot;
 
-        made.put({-seen.at.x, -seen.at.y}, dots, look);
-    } else if (!focused() && (from_ > 0 || upto < text_.size())) {
+        made.put({shift_ - seen.at.x, -seen.at.y}, dots, look);
+    } else if (cut) {
         // A field at rest that cannot hold its whole text shows the beginning and ends with the
         // ellipsis, so a list cut in mid-word does not look like a typing error. Only the drawing
         // changes: the scroll offset stays for when the focus comes back.
@@ -239,15 +250,15 @@ View Field::paint(Size given, Area seen) {
 
         wide = measured(shown).wide;
     } else {
-        made.put({-seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
+        made.put({shift_ - seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
     }
 
     // The suggestion is dimmed, after the content, as far as room allows. It is not part of the
     // text and does not enter `text()` until someone accepts it.
-    if (!ahead_.empty() && wide < room) {
+    if (!ahead_.empty() && shift_ + wide < room) {
         const Style dim = Style::merge(look, how.style(role() + ".guess"));
 
-        made.put({wide - seen.at.x, -seen.at.y}, ahead_, dim);
+        made.put({shift_ + wide - seen.at.x, -seen.at.y}, ahead_, dim);
     }
 
     return made;
@@ -353,13 +364,14 @@ bool Field::handle(PasteEvent& what) {
 }
 
 // A click puts the cursor where it landed and takes focus. The column is converted with the same
-// measure that `paint` uses; otherwise the cursor would land next to the spot that was aimed at.
+// measure and the same shift that `paint` uses; otherwise the cursor would land next to the spot
+// that was aimed at. A click before a justified content puts the cursor at its start.
 bool Field::handle(ClickEvent& what) {
     if (!enabled()) return true;
 
     if (root() != nullptr) focus();
 
-    const int wanted = local(what.where()).x;
+    const int wanted = local(what.where()).x - shift_;
 
     std::size_t at = from_;
     int wide = 0;
