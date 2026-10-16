@@ -79,7 +79,7 @@ public:
     [[nodiscard]] virtual bool withdrawn(std::uint64_t which) = 0;
 };
 
-[[nodiscard]] bool posted(const std::shared_ptr<Gate>& where, std::function<void()> what);
+[[nodiscard]] bool posted(const std::shared_ptr<Gate>& where, std::function<void()> what, std::function<void()> abandoned);
 
 }
 

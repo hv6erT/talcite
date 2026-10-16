@@ -321,6 +321,8 @@ public:
 
     void ended() override { (void)passed(*from_, *to_, Delivery::here); }
 
+    void abandoned() override { (void)to_->quit(Delivery::here); }
+
 private:
     std::shared_ptr<Node<T>> from_;
     std::shared_ptr<Node<T>> to_;
@@ -412,6 +414,8 @@ public:
         to_->let_go();
     }
 
+    void abandoned() override { (void)to_->quit(Delivery::here); }
+
 private:
     std::shared_ptr<Node<T>> from_;
     std::shared_ptr<Node<U>> to_;
@@ -448,6 +452,8 @@ public:
         to_->let_go();
     }
 
+    void abandoned() override { (void)to_->quit(Delivery::here); }
+
 private:
     std::shared_ptr<Node<T>> from_;
     std::shared_ptr<Node<T>> to_;
@@ -463,20 +469,34 @@ public:
     void finished() {
         const std::shared_ptr<Gate> home = to_->home();
 
-        if (!to_->running()) {
-            if (home != nullptr && posted(home, [self = this->shared_from_this()] { self->late(); })) return;
+        const auto self = this->shared_from_this();
 
-            away([self = this->shared_from_this()] { self->late(); });
+        if (!to_->running()) {
+            if (home != nullptr && posted(home, [self] { self->late(); }, [self] { self->abandoned(); })) return;
+
+            if (home != nullptr && homed(home)) {
+                late();
+
+                return;
+            }
+
+            away([self] { self->late(); });
 
             return;
         }
 
-        if (home != nullptr && !homed(home) && posted(home, [self = this->shared_from_this()] { self->concluded(); })) return;
+        if (home != nullptr && !homed(home) && posted(home, [self] { self->concluded(); }, [self] { self->abandoned(); })) return;
 
         concluded();
     }
 
 private:
+    void abandoned() {
+        (void)to_->quit(Delivery::here);
+
+        late();
+    }
+
     void concluded() {
         if (!to_->running()) {
             late();
@@ -529,11 +549,18 @@ public:
             return;
         }
 
-        const bool taken = posted(where_, [from = from_, to = to_] {
-            (void)passed(*from, *to, Delivery::here);
+        const bool taken = posted(
+            where_,
+            [from = from_, to = to_] {
+                (void)passed(*from, *to, Delivery::here);
 
-            to->let_go();
-        });
+                to->let_go();
+            },
+            [to = to_] {
+                (void)to->quit(Delivery::here);
+
+                to->let_go();
+            });
 
         if (taken) return;
 
@@ -541,6 +568,8 @@ public:
 
         to_->let_go();
     }
+
+    void abandoned() override { (void)to_->quit(Delivery::here); }
 
     [[nodiscard]] bool placed() const override { return true; }
 
@@ -573,11 +602,18 @@ public:
             return;
         }
 
-        const bool taken = posted(where_, [from = from_, to = to_] {
-            (void)passed(*from, *to, Delivery::here);
+        const bool taken = posted(
+            where_,
+            [from = from_, to = to_] {
+                (void)passed(*from, *to, Delivery::here);
 
-            to->let_go();
-        });
+                to->let_go();
+            },
+            [to = to_] {
+                (void)to->quit(Delivery::here);
+
+                to->let_go();
+            });
 
         if (taken) return;
 
@@ -585,6 +621,8 @@ public:
 
         to_->let_go();
     }
+
+    void abandoned() override { (void)to_->quit(Delivery::here); }
 
     [[nodiscard]] bool placed() const override { return true; }
 
@@ -605,6 +643,8 @@ public:
         (void)to_->valued(Access::outcome(*from_), Delivery::here);
     }
 
+    void abandoned() override { (void)to_->quit(Delivery::here); }
+
 private:
     std::shared_ptr<Node<T>> from_;
     std::shared_ptr<Node<Outcome<T>>> to_;
@@ -622,6 +662,12 @@ public:
         (void)clock_->unscheduled(which_);
 
         (void)passed(*from_, *to_, Delivery::here);
+    }
+
+    void abandoned() override {
+        (void)clock_->unscheduled(which_);
+
+        (void)to_->quit(Delivery::here);
     }
 
 private:
@@ -1085,12 +1131,15 @@ void adopted(const std::shared_ptr<Node<U>>& to, SharedPromise<U> given) {
 template <typename T, typename F>
 class Joined final : public Reaction {
 public:
-    Joined(std::shared_ptr<Node<T>> from, F f) : from_(std::move(from)), f_(std::move(f)) {}
+    Joined(std::shared_ptr<Node<T>> from, std::shared_ptr<Core> to, F f) : from_(std::move(from)), to_(std::move(to)), f_(std::move(f)) {}
 
     void ended() override { f_(*from_); }
 
+    void abandoned() override { (void)to_->quit(Delivery::here); }
+
 private:
     std::shared_ptr<Node<T>> from_;
+    std::shared_ptr<Core> to_;
     F f_;
 };
 
@@ -1102,7 +1151,7 @@ void joined(const std::shared_ptr<Core>& to, Promise<T>& one, F f) {
 
     auto from = node_of<T>(claim);
 
-    linked<T>(to, std::move(claim), std::make_shared<Joined<T, F>>(from, std::move(f)));
+    linked<T>(to, std::move(claim), std::make_shared<Joined<T, F>>(from, to, std::move(f)));
 }
 
 template <typename T>
@@ -1457,6 +1506,8 @@ public:
     explicit Resuming(std::shared_ptr<Suspension::Waited> waited) : waited_(std::move(waited)) {}
 
     void ended() override;
+
+    void abandoned() override;
 
 private:
     std::shared_ptr<Suspension::Waited> waited_;

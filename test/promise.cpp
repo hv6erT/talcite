@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -1494,6 +1495,254 @@ TRIAL("coroutine: abandoned while waiting after here, it resumes on the loop") {
 
     ought(turned(loop, done));
     ought(home.load());
+}
+
+// --- A place that ends ---------------------------------------------------------------------------
+
+// A place that ends with work of promises in its queue throws it away, and each chain that waited
+// for it ends cancelled at once instead of never: no `then` or `recover` runs, only the cleanup
+// (`finally`, a coroutine going on with `Cancelled`), on the loop's thread, while the loop goes
+// away. The work before the loop comes from a manual place turned on this thread, so that it has
+// fully finished when the loop ends.
+
+TRIAL("Loop: an ending loop abandons the chains it holds: they end cancelled, and finally runs on its thread") {
+    ManualPlace before;
+
+    const std::thread::id mine = std::this_thread::get_id();
+
+    std::atomic<bool> ran{false};
+    std::atomic<bool> cleaned{false};
+    std::atomic<bool> home{false};
+
+    std::optional<Promise<int>> tail;
+
+    {
+        Loop loop;
+
+        tail.emplace(run(before, [] { return 1; })
+                         .here()
+                         .then([&ran](int got) {
+                             ran.store(true);
+
+                             return got;
+                         })
+                         .finally([&cleaned, &home, mine] {
+                             home.store(std::this_thread::get_id() == mine);
+                             cleaned.store(true);
+                         }));
+
+        same(before.turn(), std::size_t{1});
+        same(loop.waiting(), std::size_t{1});
+    }
+
+    ought(tail->ready());
+
+    // A chain left hanging would make the wait below hang the trial too.
+    if (!tail->ready()) return;
+
+    ought(!ran.load());
+    ought(cleaned.load());
+    ought(home.load());
+
+    const Outcome<int> got = std::move(*tail).outcome().get();
+
+    ought(got.cancelled());
+}
+
+TRIAL("Loop: an ending loop resumes a coroutine waiting there with Cancelled, on its thread") {
+    ManualPlace before;
+
+    std::atomic<bool> home{false};
+    std::atomic<bool> done{false};
+
+    std::optional<Promise<void>> one;
+
+    {
+        Loop loop;
+
+        one.emplace(resumed(run(before, [] { return 1; }).here(), std::this_thread::get_id(), home, done));
+
+        same(before.turn(), std::size_t{1});
+        ought(!done.load());
+    }
+
+    ought(done.load());
+    ought(home.load());
+    ought(one->ready());
+}
+
+TRIAL("Loop: an ending loop cancels a deadline and a continuation it was to deliver") {
+    ManualClock clock;
+
+    std::atomic<bool> recovered{false};
+    std::atomic<bool> ran{false};
+
+    std::optional<Promise<int>> late;
+    std::optional<Promise<void>> hung;
+
+    auto [made, settle] = promised<int>();
+
+    {
+        Loop loop;
+
+        late.emplace(std::move(made).here().timeout(50ms, clock).recover([&recovered](const std::exception&) {
+            recovered.store(true);
+
+            return 0;
+        }));
+
+        Promise<int> ended = run(io(), [] { return 2; }).here();
+
+        for (int again = 0; again < 500 && !ended.ready(); ++again) {
+            (void)loop.turn();
+
+            std::this_thread::sleep_for(10ms);
+        }
+
+        ought(ended.ready());
+
+        hung.emplace(std::move(ended).then([&ran](int) { ran.store(true); }));
+
+        clock.advance(50ms);
+
+        ought(loop.waiting() >= 2);
+    }
+
+    ought(late->ready());
+    ought(hung->ready());
+
+    if (!late->ready() || !hung->ready()) return;
+
+    ought(!recovered.load());
+    ought(std::move(*late).outcome().get().cancelled());
+
+    ought(!ran.load());
+    ought(std::move(*hung).outcome().get().cancelled());
+}
+
+// A `finally` waiting for its own task on a place that ends runs then, and the chain after it ends
+// cancelled; one whose chain the owner gave up before runs too, on the loop's thread while the loop
+// goes away; and what it throws, with nowhere to go, reaches the sink of `lost`.
+TRIAL("finally: a place that ends runs the cleanup it held, also one given up before, and loses what it throws") {
+    ManualPlace before;
+
+    {
+        auto place = std::make_unique<ManualPlace>();
+
+        std::atomic<bool> cleaned{false};
+
+        Promise<int> tail = run(before, [] { return 1; }).on(*place).finally([&cleaned] { cleaned.store(true); });
+
+        same(before.turn(), std::size_t{1});
+        same(place->turn(), std::size_t{1});
+        same(place->waiting(), std::size_t{1});
+        ought(!cleaned.load());
+
+        place.reset();
+
+        ought(cleaned.load());
+        ought(tail.ready());
+
+        if (tail.ready()) ought(std::move(tail).outcome().get().cancelled());
+    }
+
+    {
+        const std::thread::id mine = std::this_thread::get_id();
+
+        std::atomic<bool> cleaned{false};
+        std::atomic<bool> home{false};
+
+        {
+            Loop loop;
+
+            Promise<int> tail = run(before, [] { return 1; }).here().finally([&cleaned, &home, mine] {
+                home.store(std::this_thread::get_id() == mine);
+                cleaned.store(true);
+            });
+
+            same(before.turn(), std::size_t{1});
+
+            tail.cancel();
+
+            ought(!cleaned.load());
+        }
+
+        ought(cleaned.load());
+        ought(home.load());
+    }
+
+    {
+        std::atomic<bool> seen{false};
+
+        lost([&seen](const std::exception& why) {
+            if (std::string_view{why.what()} == "sprzątanie") seen.store(true);
+        });
+
+        auto place = std::make_unique<ManualPlace>();
+
+        Promise<int> tail = run(before, [] { return 1; }).on(*place).finally([] { throw std::runtime_error{"sprzątanie"}; });
+
+        same(before.turn(), std::size_t{1});
+        same(place->turn(), std::size_t{1});
+
+        place.reset();
+
+        ought(risen(seen));
+        ought(tail.ready());
+
+        if (tail.ready()) ought(std::move(tail).outcome().get().cancelled());
+
+        lost({});
+    }
+}
+
+// A coroutine that waits for a promise that has already ended on the loop resumes there; when the
+// loop ends first, it goes on with `Cancelled`, on the loop's thread.
+TRIAL("coroutine: waiting for what ended on a loop that then ends, it resumes with Cancelled there") {
+    ManualPlace before;
+
+    std::atomic<bool> home{false};
+    std::atomic<bool> done{false};
+
+    std::optional<Promise<void>> one;
+
+    {
+        Loop loop;
+
+        Promise<int> ended = run(before, [] { return 1; }).here();
+
+        same(before.turn(), std::size_t{1});
+        same(loop.turn(), std::size_t{1});
+        ought(ended.ready());
+
+        one.emplace(resumed(std::move(ended), std::this_thread::get_id(), home, done));
+
+        ought(!done.load());
+    }
+
+    ought(done.load());
+    ought(home.load());
+}
+
+TRIAL("ManualPlace: one that ends cancels the bodies it was to run") {
+    auto place = std::make_unique<ManualPlace>();
+
+    std::atomic<bool> ran{false};
+
+    Promise<int> one = run(*place, [&ran] {
+        ran.store(true);
+
+        return 1;
+    });
+
+    place.reset();
+
+    ought(one.ready());
+
+    if (!one.ready()) return;
+
+    ought(!ran.load());
+    ought(std::move(one).outcome().get().cancelled());
 }
 
 // --- Long chains ------------------------------------------------------------------------------

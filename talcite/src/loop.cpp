@@ -25,9 +25,22 @@ Loop::Loop() {
 
 // Frees the thread's place for another loop. The loop stops taking work first (`Place::close`), so
 // a continuation that arrives from the pool while the loop is going away is refused, not queued into
-// a dying object.
+// a dying object. Then the work still queued is thrown away, while the loop still stands on this
+// thread: what a promise handed over is abandoned (`posted`), so its chain ends cancelled and only
+// its cleanup runs (`finally`, a coroutine going on with `Cancelled`), here, on the loop's thread.
+// No `then` or `recover` runs against objects that are being destroyed.
 Loop::~Loop() {
     close();
+
+    std::vector<std::function<void()>> left;
+
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        left.swap(queued_);
+    }
+
+    left.clear();
 
     if (standing == this) standing = nullptr;
 }

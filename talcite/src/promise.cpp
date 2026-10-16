@@ -258,8 +258,11 @@ Claim Core::claimed(const std::shared_ptr<Core>& core) {
 // this thread is that loop's and a trampoline runs, otherwise as a task of the place. So a
 // continuation hung on a promise that has already ended on the loop runs on the loop, not on the
 // pool. A reaction that takes the ending to a place of its own (`on`, the return to the chain's place
-// in `adopted`) needs no detour through this one. A place that no longer takes work leaves the old
-// way: the reaction runs on the io lane, where code bound to the gone loop must guard itself.
+// in `adopted`) needs no detour through this one. A place that ends with the reaction in its queue
+// abandons it (`posted`): the rest of the chain ends cancelled. A place already gone has no say any
+// more: what is hung on its promises afterwards (an `outcome`, a `then`) is delivered the old way,
+// on this thread inside a trampoline, otherwise on the io lane, and code bound to the gone loop must
+// guard itself, as it always had to.
 void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
     std::shared_ptr<Gate> place;
 
@@ -277,7 +280,9 @@ void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
     }
 
     if (place != nullptr && !reaction->placed() && !(stepping() && homed(place)) &&
-        posted(place, [reaction] { stepped([reaction] { reaction->ended(); }); }))
+        posted(
+            place, [reaction] { stepped([reaction] { reaction->ended(); }); },
+            [reaction] { stepped([reaction] { reaction->abandoned(); }); }))
         return;
 
     if (stepping()) {
@@ -922,8 +927,9 @@ bool Node<void>::valued(Delivery delivery) {
 
 // The work a coroutine waited for was abandoned with its owners: the claim on it goes, and the
 // coroutine resumes with `Cancelled` where it waited — at the place what it waited for dwells at
-// (`on`, `here`), as it would have resumed with the ending, and on the io lane when that dwells
-// nowhere or the place no longer takes work. A resumption that has already begun wins.
+// (`on`, `here`), as it would have resumed with the ending; at once when that place is a loop ending
+// on this thread; and on the io lane when it dwells nowhere or its place is gone. A resumption that
+// has already begun wins.
 void Suspension::stopped() {
     std::shared_ptr<Waited> now;
 
@@ -953,9 +959,34 @@ void Suspension::stopped() {
 
     gone.release();
 
-    if (place != nullptr && posted(place, [now] { stepped([now] { now->handle.resume(); }); })) return;
+    const auto resumed = [now] { stepped([now] { now->handle.resume(); }); };
+
+    if (place != nullptr && posted(place, resumed, resumed)) return;
+
+    // A loop ending on this thread refuses work but still stands here: the coroutine goes on now.
+    if (place != nullptr && homed(place)) {
+        resumed();
+
+        return;
+    }
 
     away([now] { now->handle.resume(); });
+}
+
+// The place what a coroutine waited for dwells at threw the delivery away (it went away itself):
+// the coroutine resumes here with `Cancelled`, as after the abandonment of its owners, unless a
+// resumption has already begun.
+void Resuming::abandoned() {
+    {
+        const std::lock_guard<std::mutex> held{waited_->guard};
+
+        if (waited_->resumed) return;
+
+        waited_->resumed = true;
+        waited_->cancelled = true;
+    }
+
+    waited_->handle.resume();
 }
 
 // What a coroutine waited for has ended: it resumes here, unless a cancellation resumed it first.
@@ -996,11 +1027,13 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
             return;
         }
 
-        if (posted(place, [overdue] { stepped(overdue); })) return;
-
-        away([weak] {
+        const auto gone = [weak] {
             if (const std::shared_ptr<Core> one = weak.lock()) (void)one->quit(Delivery::here);
-        });
+        };
+
+        if (posted(place, [overdue] { stepped(overdue); }, [gone] { stepped(gone); })) return;
+
+        away(gone);
     });
 
     Clock* const whose = &clock;
@@ -1010,14 +1043,19 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
     return which;
 }
 
-// Hands the job of a body to its place. A place that refuses ends the node cancelled. A pool lane
-// can also take a job back: when the owners leave before the body starts, the job leaves the queue
-// at once instead of waiting for a worker to find it abandoned.
+// Hands the job of a body to its place. A place that refuses, or throws the job away unrun (a loop
+// that ends with it in its queue), ends the node cancelled. A pool lane can also take a job back:
+// when the owners leave before the body starts, the job leaves the queue at once instead of waiting
+// for a worker to find it abandoned.
 void launched(Place& where, const std::shared_ptr<Core>& node, std::function<void()> job) {
     auto* lane = dynamic_cast<Withdrawing*>(&where);
 
     if (lane == nullptr) {
-        if (where.post(std::move(job))) return;
+        if (posted(where.gate(), std::move(job), [node] {
+                (void)node->quit(Delivery::here);
+                node->let_go();
+            }))
+            return;
 
         (void)node->quit(Delivery::here);
         node->let_go();
