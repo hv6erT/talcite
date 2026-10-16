@@ -293,7 +293,9 @@ void Table::end() {
 namespace {
 
 // The column widths for a given window width. A column with a positive `wide` takes its own, and
-// those with zero share the rest equally. When space runs out, we cut from the right: a panel does
+// those with zero share the rest by their `share`, as the stretch factors of a layout in Qt: two
+// columns of share 2 and 3 take two fifths and three fifths of it, and equal shares take equal
+// parts. A share below one counts as one. When space runs out, we cut from the right: a panel does
 // not scroll horizontally, it clips, and neither do we.
 std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
     std::vector<int> made(columns.size(), 0);
@@ -302,6 +304,8 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
 
     const int between = spacing * static_cast<int>(columns.size() - 1);
 
+    const auto weight = [](const TableColumn& one) { return std::max(one.share, 1); };
+
     int fixed = 0;
     int loose = 0;
 
@@ -309,7 +313,7 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
         if (one.wide > 0)
             fixed += one.wide;
         else
-            ++loose;
+            loose += weight(one);
     }
 
     int rest = wide - between - fixed;
@@ -323,13 +327,15 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
 
         // A flexible column gets at least one cell. Otherwise a fixed-width column that does not
         // fit in the window by itself would take everything and the file name would vanish
-        // entirely, and in a panel the name is the content, not the size.
-        const int part = loose > 0 ? std::max(rest / loose, 1) : 0;
+        // entirely, and in a panel the name is the content, not the size. Each column takes its
+        // part of what is left after the ones before it, so the last one gets what rounding left.
+        const int share = weight(columns[at]);
+        const int part = loose > 0 ? std::max(static_cast<int>(static_cast<long long>(rest) * share / loose), 1) : 0;
 
         made[at] = part;
 
         rest -= part;
-        --loose;
+        loose -= share;
     }
 
     // Cutting from the right when the sum still does not fit. The gap counts only between columns,

@@ -150,6 +150,44 @@ TRIAL("Table: a narrower window gives the flexible column less") {
     same(said(sheet.render({{0, 0}, {14, 3}}), 1), std::string{"plik0        0"});
 }
 
+// Flexible columns share the room by their weights: in twenty-six cells, one taken by the gap,
+// shares of 2 and 3 give ten and fifteen. A share below one counts as one, so 0 and 1 split
+// equally.
+TRIAL("Table: flexible columns share the room by their weights") {
+    const auto lettered = [](std::size_t which, std::size_t most) {
+        std::vector<ui::TableRow> made;
+
+        if (which == 0 && most > 0)
+            made.push_back(ui::TableRow{ui::TableCell{"abcdefghijklmnopqrstuvwxyz", {}}, ui::TableCell{"ABCDEFGHIJKLMNOPQRSTUVWXYZ", {}}});
+
+        return made;
+    };
+
+    Sheet weighed;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 0, ui::Justify::left, 2}, ui::TableColumn{"", 0, ui::Justify::left, 3}});
+    one->source(lettered, 1);
+
+    weighed.children().add(one);
+
+    same(said(weighed.render({{0, 0}, {26, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJKLMNO"});
+
+    Sheet even;
+
+    const auto other = std::make_shared<ui::Table>();
+
+    other->heading(false);
+    other->columns({ui::TableColumn{"", 0, ui::Justify::left, 0}, ui::TableColumn{"", 0, ui::Justify::left, 1}});
+    other->source(lettered, 1);
+
+    even.children().add(other);
+
+    same(said(even.render({{0, 0}, {21, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJ"});
+}
+
 // A fixed-width column that does not fit in the window by itself must not take everything: the
 // name is the content in a panel, so it keeps at least one cell.
 TRIAL("Table: the flexible column does not vanish in an extremely narrow window") {

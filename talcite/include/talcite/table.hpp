@@ -17,6 +17,7 @@ struct TableColumn {
     std::string title;
     int wide = 0;
     Justify justify = Justify::left;
+    int share = 1;
 };
 
 struct TableCell {
