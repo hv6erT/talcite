@@ -484,6 +484,104 @@ TRIAL("finally: after a cancellation it runs on the place the chain moved to") {
     ought(cleaned.load());
 }
 
+// A chain moved to a place cleans up there also when nothing cancels it. A manual place has no
+// thread of its own, so `finally` runs there as a task of its own, after the task that brought the
+// value, never inside it, whichever thread finished the work before it.
+TRIAL("finally: after a move to a place it runs there, as a task of its own") {
+    ManualPlace place;
+
+    std::atomic<bool> cleaned{false};
+
+    Promise<int> one = ready(4).on(place).finally([&cleaned] { cleaned.store(true); });
+
+    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+
+    same(place.turn(), std::size_t{1});
+    ought(!cleaned.load());
+    ought(!one.ready());
+
+    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+
+    same(place.turn(), std::size_t{1});
+    ought(cleaned.load());
+    ought(one.ready());
+    same(std::move(one).get(), 4);
+}
+
+// The work before the move may finish on a thread of the pool after the place has already taken the
+// value: a producer's `Settle` sends the value and its own finish to the pool apart. `finally` still
+// runs on the thread that turns the place, never on the one where the work finished. Many rounds,
+// since which of the two comes first is the pool's to decide.
+TRIAL("finally: after a move to a place it never runs where the work finished") {
+    const std::thread::id mine = std::this_thread::get_id();
+
+    ManualPlace place;
+
+    for (int round = 0; round < 200; ++round) {
+        auto [source, settle] = promised<int>();
+
+        std::atomic<bool> cleaned{false};
+        std::atomic<bool> elsewhere{false};
+
+        Promise<int> one = std::move(source).on(place).finally([&cleaned, &elsewhere, mine] {
+            if (std::this_thread::get_id() != mine) elsewhere.store(true);
+
+            cleaned.store(true);
+        });
+
+        std::thread settling{[settle = std::move(settle), round]() mutable { (void)settle.value(round); }};
+
+        const auto until = std::chrono::steady_clock::now() + 5s;
+
+        while (!cleaned.load() && std::chrono::steady_clock::now() < until) {
+            (void)place.turn();
+
+            std::this_thread::sleep_for(std::chrono::microseconds{round % 20 * 50 + 10});
+        }
+
+        settling.join();
+
+        ought(cleaned.load());
+        ought(!elsewhere.load());
+    }
+}
+
+// The same after `here`: on the loop's thread `finally` may run at once, where the work finishes
+// there, and goes to the loop where it finishes on the pool; either way it runs on the loop's thread.
+TRIAL("finally: after here it never runs where the work finished") {
+    const std::thread::id mine = std::this_thread::get_id();
+
+    Loop loop;
+
+    for (int round = 0; round < 200; ++round) {
+        auto [source, settle] = promised<int>();
+
+        std::atomic<bool> cleaned{false};
+        std::atomic<bool> elsewhere{false};
+
+        Promise<int> one = std::move(source).here().finally([&cleaned, &elsewhere, mine] {
+            if (std::this_thread::get_id() != mine) elsewhere.store(true);
+
+            cleaned.store(true);
+        });
+
+        std::thread settling{[settle = std::move(settle), round]() mutable { (void)settle.value(round); }};
+
+        const auto until = std::chrono::steady_clock::now() + 5s;
+
+        while (!cleaned.load() && std::chrono::steady_clock::now() < until) {
+            (void)loop.turn();
+
+            std::this_thread::sleep_for(std::chrono::microseconds{round % 20 * 50 + 10});
+        }
+
+        settling.join();
+
+        ought(cleaned.load());
+        ought(!elsewhere.load());
+    }
+}
+
 TRIAL("outcome: gives the ending as a value") {
     Outcome<int> good = ready(2).outcome().get();
 

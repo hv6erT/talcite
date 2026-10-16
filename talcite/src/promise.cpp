@@ -205,6 +205,16 @@ const Stop*& current_stop() {
     return now;
 }
 
+// Whether this thread is the one of the place behind `home`: it is when the loop standing on it is
+// that place. Work for a loop runs only on the loop's thread, so code that finishes there may go on
+// at once; on any other thread it must go to the place. Other places (the pool's lanes, a manual
+// place) have no thread of their own to tell, so for them the answer is no.
+bool homed(const std::shared_ptr<Gate>& home) {
+    const Loop* mine = Loop::current();
+
+    return mine != nullptr && mine->gate() == home;
+}
+
 // The loop of this thread, for `here`; without one it is a mistake of the caller.
 Place& here_loop() {
     Loop* where = Loop::current();

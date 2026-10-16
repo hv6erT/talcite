@@ -109,6 +109,8 @@ const Stop*& current_stop();
 
 Place& here_loop();
 
+[[nodiscard]] bool homed(const std::shared_ptr<Gate>& home);
+
 }
 
 template <typename T>
@@ -459,9 +461,9 @@ public:
         : from_(std::move(from)), to_(std::move(to)), f_(std::move(f)) {}
 
     void finished() {
-        if (!to_->running()) {
-            const std::shared_ptr<Gate> home = to_->home();
+        const std::shared_ptr<Gate> home = to_->home();
 
+        if (!to_->running()) {
             if (home != nullptr && posted(home, [self = this->shared_from_this()] { self->late(); })) return;
 
             away([self = this->shared_from_this()] { self->late(); });
@@ -469,10 +471,24 @@ public:
             return;
         }
 
+        if (home != nullptr && !homed(home) && posted(home, [self = this->shared_from_this()] { self->concluded(); })) return;
+
+        concluded();
+    }
+
+private:
+    void concluded() {
+        if (!to_->running()) {
+            late();
+
+            return;
+        }
+
         try {
             f_();
         } catch (...) {
-            (void)to_->failed(caught(), Delivery::here);
+            if (!to_->failed(caught(), Delivery::here)) lose(caught());
+
             to_->let_go();
 
             return;
@@ -483,7 +499,6 @@ public:
         to_->let_go();
     }
 
-private:
     void late() {
         try {
             f_();
