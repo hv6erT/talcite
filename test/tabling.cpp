@@ -233,6 +233,40 @@ TRIAL("Table: a spanning cell takes the rest of the row") {
     same(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
 }
 
+// A cell elides only when it asks: from the start it keeps the end of the text, a path's file name,
+// behind the skin's mark; in the middle it keeps both ends; without asking it is cut at the right,
+// as before. Text that fits is never touched.
+TRIAL("Table: a cell elides at the end it asks for, and only then") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 12, ui::Justify::left}, ui::TableColumn{"", 6, ui::Justify::left}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            const ui::TableRow rows[] = {
+                {ui::TableCell{"Alien.1979.BluRay.en.srt", {}, false, ui::Elide::left}, ui::TableCell{"a.srt", {}, false, ui::Elide::left}},
+                {ui::TableCell{"Alien.1979.BluRay.en.srt", {}, false, ui::Elide::middle}, ui::TableCell{}},
+                {ui::TableCell{"Alien.1979.BluRay.en.srt", {}}, ui::TableCell{}}};
+
+            for (std::size_t at = which; at < 3 && made.size() < most; ++at) made.push_back(rows[at]);
+
+            return made;
+        },
+        3);
+
+    sheet.children().add(one);
+
+    const View made = sheet.render({{0, 0}, {19, 3}});
+
+    same(said(made, 0), std::string{"…uRay.en.srt a.srt"});
+    same(said(made, 1), std::string{"Alien…en.srt"});
+    same(said(made, 2), std::string{"Alien.1979.B"});
+}
+
 // A spanning cell reaches the edge of the table, also past columns that together are narrower than
 // the window.
 TRIAL("Table: a spanning cell reaches the edge past narrow columns") {

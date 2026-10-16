@@ -509,7 +509,11 @@ View Table::paint(Size given, Area seen) {
             const Justify justify =
                 one < kept.columns.size() ? kept.columns[one].justify : Justify::left;
 
-            made.put({at, y}, ranged(cell.text, room, justify), look_one);
+            // A cell that asks for it is elided with the skin's mark, at the end it names (a path
+            // keeps its file name with `Elide::left`); otherwise it is cut at the right edge.
+            const std::string shown = elided(cell.text, room, cell.elide, how.glyph("talcite.elide"));
+
+            made.put({at, y}, ranged(shown, room, justify), look_one);
 
             if (cell.spans) break;
 

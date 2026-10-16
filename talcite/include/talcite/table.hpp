@@ -24,6 +24,7 @@ struct TableCell {
     std::string text;
     std::string role;
     bool spans = false;
+    Elide elide = Elide::none;
 };
 
 using TableRow = std::vector<TableCell>;
