@@ -11,9 +11,11 @@
 
 namespace talcite::ui {
 
-// A scrollbar is one cell wide: an arrow at the start, an arrow at the end, and between them a
-// track with a thumb. The thumb says two things at once, where we are and how much of the whole
-// fits in the window, because its length is the same fraction of the track.
+// A scrollbar is one cell wide: a thin line for the track and a solid thumb on it, with no arrows
+// at the ends. The thumb says two things at once, where we are and how much of the whole fits in
+// the window, because its length is the same fraction of the track. The bar of a widget with the
+// focus (or, for a scroller, with the focus inside it) takes the skin's `.focus` styles, so the
+// eye sees at once which of two bars the keys move.
 //
 // This is an internal header: the library's API does not draw bars, the widgets do. The name of the
 // bar's role stays public in the widgets (`scrollbar_role`), because that is what reaches the skin.
@@ -21,22 +23,24 @@ namespace talcite::ui {
 // `Scrollbar` is one bar as a single object. The caller fills the fields by name and calls `draw`:
 //
 //     Scrollbar{.at = Scrollbar::edge(given, seen, true), .much = given.high, .shift = shift_,
-//               .whole = rows, .window = given.high, .skin = skin(), .role = role}.draw(made);
+//               .whole = rows, .window = given.high, .focused = focused(), .skin = skin(),
+//               .role = role}.draw(made);
 //
 // `at` is the bar's first cell in the coordinates of the view being painted (the top one for a
-// vertical bar, the left one for a horizontal bar); `much` is the bar's length in cells, arrows
-// included; `shift`, `whole` and `window` are the scroll offset, the length of the whole and the
-// length of the window, in any units as long as they are the same: rows, columns or bytes. Both
-// references (`skin`, `role`) live shorter than the expression that creates the bar: the object is
-// not for keeping, only for one drawing. `Scrollbar::track` (inline in the header) copies the
-// position and numbers into a `Track`.
+// vertical bar, the left one for a horizontal bar); `much` is the bar's length in cells; `shift`,
+// `whole` and `window` are the scroll offset, the length of the whole and the length of the
+// window, in any units as long as they are the same: rows, columns or bytes. Both references
+// (`skin`, `role`) live shorter than the expression that creates the bar: the object is not for
+// keeping, only for one drawing. `Scrollbar::track` (inline in the header) copies the position and
+// numbers into a `Track`.
 //
 // `Track` holds the position and numbers of one bar, all that is needed to draw it and to hit it
 // with the mouse. It has no skin and no role, so it can be kept until the next frame.
 //
-// `Part` is the part of the bar under a cell: the arrows (one row), the track before and after the
-// thumb (one page), the thumb (dragging). `Asked` says what to do after a mouse event on the bar:
-// the part the press hit and, while the thumb is dragged, the new offset in the bar's units.
+// `Part` is the part of the bar under a cell: the track before and after the thumb (one page) or
+// the thumb (dragging); a row at a time is the wheel's. `Asked` says what to do after a mouse event
+// on the bar: the part the press hit and, while the thumb is dragged, the new offset in the bar's
+// units.
 //
 // `Grip` is the mouse handling on a bar, shared by every scrolling widget: the table, the page, the
 // list and the scroller each draw the bar their own way, but hitting, grabbing and dragging work
@@ -88,12 +92,12 @@ struct Laid {
     int most = 0;
 };
 
-// The track length (the bar without its two arrows), the thumb length, the thumb's first cell on
-// the track and the largest scaled offset.
+// The track length (the whole bar), the thumb length, the thumb's first cell on the track and the
+// largest scaled offset.
 Laid laid_out(const Track& one) {
     Laid made;
 
-    made.track = one.much - 2;
+    made.track = one.much;
 
     if (made.track <= 0) return made;
 
@@ -130,34 +134,42 @@ Spot Scrollbar::edge(Size given, Area seen, bool upright) {
                    : Spot{-seen.at.x, given.high - 1 - seen.at.y};
 }
 
-// Draws the arrows, the track and the thumb into `into`, with the glyphs and styles of `role` and
-// its .up/.down/.left/.right, .track and .thumb variants from the skin.
+// Whether the focus of the owner's root rests on the owner or on a node inside it: a list hands
+// the focus to its rows and a scroller to what it holds, and their bar is still the one the keys
+// move.
+bool Scrollbar::focused_in(const Node& owner) {
+    const Root* top = owner.root();
+
+    if (top == nullptr) return false;
+
+    for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
+        if (at == &owner) return true;
+
+    return false;
+}
+
+// Draws the track and the thumb into `into`, with the glyphs of `role` and its .track.upright or
+// .track.across and .thumb variants, and the styles of `role` and `role`.thumb, or of
+// `role`.focus and `role`.thumb.focus when the bar's widget has the focus.
 void Scrollbar::draw(View& into) const {
     if (much <= 0) return;
 
     // The bar asks the skin itself, because it is not a node and has no ancestor through which
     // to reach it. The caller passes it from `Node::skin()`: one reference instead of two styles in
     // the fields.
-    const Style look = skin.style(role);
-    const Style full = skin.style(role + ".thumb");
+    const std::string state = focused ? ".focus" : "";
 
-    const char32_t empty = skin.glyph(role + ".track");
+    const Style look = skin.style(role + state);
+    const Style full = skin.style(role + ".thumb" + state);
+
+    const char32_t empty = skin.glyph(role + (upright ? ".track.upright" : ".track.across"));
     const char32_t block = skin.glyph(role + ".thumb");
-
-    into.put(at, skin.glyph(role + (upright ? ".up" : ".left")), look);
-
-    if (much == 1) return;
-
-    const Spot last = upright ? Spot{at.x, at.y + much - 1} : Spot{at.x + much - 1, at.y};
-
-    into.put(last, skin.glyph(role + (upright ? ".down" : ".right")), look);
 
     const Laid laid = laid_out(track());
 
     for (int which = 0; which < laid.track; ++which) {
         const bool kept = which >= laid.from && which < laid.from + laid.thumb;
-        const Spot spot =
-            upright ? Spot{at.x, at.y + 1 + which} : Spot{at.x + 1 + which, at.y};
+        const Spot spot = upright ? Spot{at.x, at.y + which} : Spot{at.x + which, at.y};
 
         into.put(spot, kept ? block : empty, kept ? full : look);
     }
@@ -180,17 +192,11 @@ Part Grip::part(Spot here) const {
 
     if (across != 0 || along < 0 || along >= one.much) return Part::none;
 
-    if (along == 0) return Part::back;
-
-    if (along == one.much - 1) return Part::forth;
-
     const Laid laid = laid_out(one);
 
-    const int cell = along - 1;
+    if (along < laid.from) return Part::before;
 
-    if (cell < laid.from) return Part::before;
-
-    if (cell >= laid.from + laid.thumb) return Part::after;
+    if (along >= laid.from + laid.thumb) return Part::after;
 
     return Part::thumb;
 }
@@ -220,7 +226,7 @@ Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
         if (room <= 0 || laid.most == 0) return Asked{Part::thumb, std::nullopt};
 
         const int along = one.upright ? here.y - one.at.y : here.x - one.at.x;
-        const int cell = std::clamp(along - 1 - *grip_, 0, room);
+        const int cell = std::clamp(along - *grip_, 0, room);
 
         const auto scaled_to = static_cast<std::size_t>(
             (static_cast<std::int64_t>(cell) * laid.most + room / 2) / room);
@@ -239,7 +245,7 @@ Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
     if (hit == Part::thumb && track_.has_value()) {
         const int along = track_->upright ? here.y - track_->at.y : here.x - track_->at.x;
 
-        grip_ = along - 1 - laid_out(*track_).from;
+        grip_ = along - laid_out(*track_).from;
 
         if (Root* top = owner.root(); top != nullptr) top->capture(owner);
     }

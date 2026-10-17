@@ -23,7 +23,7 @@ struct Track {
     std::size_t window = 0;
 };
 
-enum class Part : std::uint8_t { none, back, forth, before, after, thumb };
+enum class Part : std::uint8_t { none, before, after, thumb };
 
 struct Asked {
     Part part = Part::none;
@@ -58,6 +58,8 @@ struct Scrollbar {
     std::size_t whole = 0;
     std::size_t window = 0;
 
+    bool focused = false;
+
     const Skin& skin;
     const std::string& role;
 
@@ -66,6 +68,8 @@ struct Scrollbar {
     [[nodiscard]] Track track() const { return Track{at, upright, much, shift, whole, window}; }
 
     [[nodiscard]] static Spot edge(Size given, Area seen, bool upright);
+
+    [[nodiscard]] static bool focused_in(const Node& owner);
 };
 
 }

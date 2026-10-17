@@ -102,10 +102,9 @@ talcite::ui::Skin plainly() {
                               {"talcite.line.thin.left.joint", U'+'},
                               {"talcite.line.thin.right.joint", U'+'},
 
-                              {"talcite.scroll.up", U'^'},
-                              {"talcite.scroll.down", U'v'},
                               {"talcite.scroll.thumb", U'#'},
-                              {"talcite.scroll.track", U'.'},
+                              {"talcite.scroll.track.upright", U'|'},
+                              {"talcite.scroll.track.across", U'-'},
 
                               {"talcite.gauge.done", U'#'},
                               {"talcite.gauge.rest", U'.'},

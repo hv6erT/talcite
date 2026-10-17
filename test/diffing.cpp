@@ -828,8 +828,8 @@ TRIAL("DiffViewer: a jump to a hunk scrolled halfway, and a click beside the box
     ought(one->chosen().empty());
 }
 
-// The mouse on the diff scroll bar: an arrow scrolls by a row, the track by a page, the thumb to
-// a hunk; the view moves, the cursor does not. A click on the bar does not put the cursor on the
+// The mouse on the diff scroll bar: the track scrolls by a page, the thumb to a hunk; the view
+// moves, the cursor does not. A click on the bar does not put the cursor on the
 // row under it.
 TRIAL("DiffViewer: the mouse on the scroll bar scrolls the view, not the cursor") {
     Sheet sheet;
@@ -859,11 +859,11 @@ TRIAL("DiffViewer: the mouse on the scroll bar scrolls the view, not the cursor"
 
     clicked({39, 4});
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f1", 0) == 0);
+    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f5", 0) == 0);
 
     clicked({39, 3});
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f6", 0) == 0);
+    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f10", 0) == 0);
 
     clicked({39, 0});
 

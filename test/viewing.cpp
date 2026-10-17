@@ -708,7 +708,9 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
 
         const View made = sheet.render({{0, 0}, size});
 
-        return std::pair{made.at({size.wide - 1, 0}).letter == U'▲', said(made, 0)};
+        const char32_t edge = made.at({size.wide - 1, 0}).letter;
+
+        return std::pair{edge == U'█' || edge == U'│', said(made, 0)};
     };
 
     const auto [fits, first] = barred("aaaabbbb", {5, 4});
@@ -740,7 +742,8 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
 
         const View made = sheet.render({{0, 0}, {5, 4}});
 
-        same(made.at({4, 0}).letter, U'▲');
+        same(made.at({4, 0}).letter, U'│');
+        same(made.at({4, 3}).letter, U'█');
     }
 
     // A source that does not yet have the later rows also gives a scrollbar: the page does not know
@@ -765,11 +768,11 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
                   head.size() + 100, bytes(head));
         sheet.children().add(one);
 
-        same(sheet.render({{0, 0}, {5, 4}}).at({4, 0}).letter, U'▲');
+        same(sheet.render({{0, 0}, {5, 4}}).at({4, 0}).letter, U'█');
     }
 }
 
-// The scrollbar's arrows stand in the last column, at the top and at the bottom.
+// The scrollbar stands in the last column, from the top to the bottom.
 TRIAL("Viewer: the scrollbar stands at the right edge") {
     Sheet sheet;
 
@@ -1389,7 +1392,7 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 0", 0) == 0; }));
     ought(!one->lines().has_value());
 
-    ui::MouseEvent grab{{39, 1}, ui::Press::down, ui::Mouse::left};
+    ui::MouseEvent grab{{39, 0}, ui::Press::down, ui::Mouse::left};
     ui::MouseEvent pull{{39, 20}, ui::Press::move, ui::Mouse::left};
     ui::MouseEvent drop{{39, 20}, ui::Press::up, ui::Mouse::left};
 
@@ -1502,7 +1505,7 @@ TRIAL("Viewer: the scrollbar counts bytes in a document of long lines") {
 
     // The thumb dragged to the middle of the track jumps to the middle of the document in bytes:
     // into the line of b, not to its start.
-    ui::MouseEvent grab{{10, 1}, ui::Press::down, ui::Mouse::left};
+    ui::MouseEvent grab{{10, 0}, ui::Press::down, ui::Mouse::left};
     ui::MouseEvent pull{{10, 2}, ui::Press::move, ui::Mouse::left};
     ui::MouseEvent drop{{10, 2}, ui::Press::up, ui::Mouse::left};
 

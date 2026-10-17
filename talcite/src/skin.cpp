@@ -197,6 +197,8 @@ Styles building() {
 
         {"talcite.scroll", Style{}},
         {"talcite.scroll.thumb", Style{}},
+        {"talcite.scroll.focus", Style{}},
+        {"talcite.scroll.thumb.focus", Style{}},
 
         {"talcite.gauge", Style{}},
         {"talcite.gauge.done", Style{}},
@@ -224,8 +226,7 @@ void ruled(Glyphs& into, std::string_view named, Border how) {
 // The built-in glyph table, the counterpart of `building()`, which assembles the styles.
 Glyphs glyphing() {
     Glyphs made{
-        {"talcite.scroll.up", U'▲'},   {"talcite.scroll.down", U'▼'}, {"talcite.scroll.left", U'◀'},
-        {"talcite.scroll.right", U'▶'}, {"talcite.scroll.thumb", U'█'}, {"talcite.scroll.track", U'░'},
+        {"talcite.scroll.thumb", U'█'}, {"talcite.scroll.track.upright", U'│'}, {"talcite.scroll.track.across", U'─'},
 
         {"talcite.gauge.done", U'█'},  {"talcite.gauge.rest", U'░'},  {"talcite.gauge.left", U'['},
         {"talcite.gauge.right", U']'},

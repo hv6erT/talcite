@@ -948,6 +948,7 @@ View DiffViewer::paint(Size given, Area seen) {
                             .shift = kept.top,
                             .whole = kept.hunks,
                             .window = std::max<std::size_t>(shown, 1),
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = how,
                             .role = kept.scrollbar_role};
 
@@ -1138,7 +1139,7 @@ bool DiffViewer::handle(WheelEvent& what) {
     return slid(-what.steps() * stepping);
 }
 
-// The mouse on the bar: an arrow scrolls a row, the track a page, the thumb jumps to a hunk. The
+// The mouse on the bar: the track scrolls a page, the thumb jumps to a hunk. The
 // bar counts hunks, so a dragged thumb puts the view at the start of a hunk, as Home does.
 bool DiffViewer::handle(MouseEvent& what) {
     Kept& kept = *kept_;
@@ -1150,8 +1151,6 @@ bool DiffViewer::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::back: (void)slid(-1); break;
-        case Part::forth: (void)slid(1); break;
         case Part::before: (void)slid(-page); break;
         case Part::after: (void)slid(page); break;
         case Part::thumb:

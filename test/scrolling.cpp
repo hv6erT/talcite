@@ -385,7 +385,8 @@ TRIAL("Scrollbar: without turning it on there is none") {
     same(read(made, 0), std::string{"wiersz 0"});
 }
 
-TRIAL("Scrollbar: arrows at the ends, the slider in between") {
+// The bar is a thin line with a solid slider on it, from edge to edge, without arrows.
+TRIAL("Scrollbar: a line from edge to edge, the slider on it") {
     ui::Scroll one{ui::Axis::vertical, ui::ScrollShape{true}};
 
     one.children().add(rows(20));
@@ -393,10 +394,9 @@ TRIAL("Scrollbar: arrows at the ends, the slider in between") {
     const View made = one.render({{0, 0}, {10, 5}});
 
     ought(one.scrollbar());
-    same(made.at({9, 0}).letter, U'▲');
-    same(made.at({9, 4}).letter, U'▼');
-    same(made.at({9, 1}).letter, U'█');
-    same(made.at({9, 3}).letter, U'░');
+    same(made.at({9, 0}).letter, U'█');
+    same(made.at({9, 1}).letter, U'│');
+    same(made.at({9, 4}).letter, U'│');
 }
 
 TRIAL("Scrollbar: the slider moves down together with scrolling") {
@@ -408,13 +408,14 @@ TRIAL("Scrollbar: the slider moves down together with scrolling") {
 
     const View made = one.render({{0, 0}, {10, 5}});
 
-    same(made.at({9, 3}).letter, U'█');
-    same(made.at({9, 1}).letter, U'░');
+    same(made.at({9, 4}).letter, U'█');
+    same(made.at({9, 0}).letter, U'│');
 }
 
 // The pager computes the bar in bytes, so a file larger than `int` is an ordinary case, not a
 // curiosity. Three billion bytes, scrolled to the middle: the slider must stand in the middle of
-// the track; ten cells of track, one for the slider, so the fifth from the top below the arrow.
+// the track; twelve cells of track, one for the slider, eleven to move it in, so the seventh from
+// the top.
 TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
     const ui::Skin how;
     const std::string role = "talcite.scroll";
@@ -430,11 +431,11 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
                   .role = role}
         .draw(made);
 
-    same(made.at({0, 0}).letter, U'▲');
-    same(made.at({0, 11}).letter, U'▼');
-    same(made.at({0, 5}).letter, U'░');
+    same(made.at({0, 0}).letter, U'│');
+    same(made.at({0, 11}).letter, U'│');
+    same(made.at({0, 5}).letter, U'│');
     same(made.at({0, 6}).letter, U'█');
-    same(made.at({0, 7}).letter, U'░');
+    same(made.at({0, 7}).letter, U'│');
 }
 
 // The other half of the same trap: the slider's length is the track times the window over the
@@ -455,8 +456,8 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
                   .role = role}
         .draw(made);
 
-    for (int y = 1; y <= 5; ++y) same(made.at({0, y}).letter, U'█');
-    for (int y = 6; y <= 10; ++y) same(made.at({0, y}).letter, U'░');
+    for (int y = 0; y <= 5; ++y) same(made.at({0, y}).letter, U'█');
+    for (int y = 6; y <= 11; ++y) same(made.at({0, y}).letter, U'│');
 }
 
 TRIAL("Scrollbar: content that fits in the window gives a slider over the whole track") {
@@ -466,9 +467,7 @@ TRIAL("Scrollbar: content that fits in the window gives a slider over the whole 
 
     const View made = one.render({{0, 0}, {10, 5}});
 
-    same(made.at({9, 1}).letter, U'█');
-    same(made.at({9, 2}).letter, U'█');
-    same(made.at({9, 3}).letter, U'█');
+    for (int y = 0; y < 5; ++y) same(made.at({9, y}).letter, U'█');
 }
 
 // The scrollbar "when needed" (`needed`): content that fits in the window gets the full width and
@@ -490,8 +489,9 @@ TRIAL("Scrollbar when needed: content that fits has no bar, longer content has o
     const View tight = one.render({{0, 0}, {10, 3}});
 
     same(inner->area().size.wide, 9);
-    same(tight.at({9, 0}).letter, U'▲');
-    same(tight.at({9, 2}).letter, U'▼');
+    same(tight.at({9, 0}).letter, U'█');
+    same(tight.at({9, 1}).letter, U'█');
+    same(tight.at({9, 2}).letter, U'│');
     same(one.wants({80, 3}).wide, 11);
 
     // Content equal to the window fits too; the last column belongs to the content (row 3 is "d").
@@ -510,8 +510,10 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     const View made = one.render({{0, 0}, {6, 6}});
 
-    same(made.at({5, 0}).letter, U'▲');
-    same(made.at({0, 5}).letter, U'◀');
+    same(made.at({5, 0}).letter, U'█');
+    same(made.at({5, 4}).letter, U'│');
+    same(made.at({0, 5}).letter, U'█');
+    same(made.at({4, 5}).letter, U'─');
 
     ui::Scroll wide{ui::Axis::both, ui::ScrollShape{true, true}};
 
@@ -538,7 +540,8 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
     const View flat = across.render({{0, 0}, {6, 3}});
 
     same(flat.at({5, 0}).letter, U'a');
-    same(flat.at({0, 2}).letter, U'◀');
+    same(flat.at({0, 2}).letter, U'█');
+    same(flat.at({5, 2}).letter, U'─');
 }
 
 TRIAL("Scrollbar: takes one column from the content") {
@@ -567,15 +570,16 @@ TRIAL("Scrollbar: also counts in what the scroller wants") {
     same(one.wants({80, 5}).wide, 4);
 }
 
-TRIAL("Horizontal scrollbar: arrows to the sides and the bottom row") {
+TRIAL("Horizontal scrollbar: a line in the bottom row, the slider on it") {
     ui::Scroll one{ui::Axis::horizontal, ui::ScrollShape{true}};
 
     one.children().add(std::make_shared<ui::Span>("abcdefghijklmnoprst"));
 
     const View made = one.render({{0, 0}, {6, 2}});
 
-    same(made.at({0, 1}).letter, U'◀');
-    same(made.at({5, 1}).letter, U'▶');
+    same(made.at({0, 1}).letter, U'█');
+    same(made.at({1, 1}).letter, U'─');
+    same(made.at({5, 1}).letter, U'─');
     same(read(made, 0), std::string{"abcdef"});
 }
 
@@ -586,10 +590,10 @@ TRIAL("Scroll: two bars and an empty corner") {
 
     const View made = one.render({{0, 0}, {6, 6}});
 
-    same(made.at({5, 0}).letter, U'▲');
-    same(made.at({5, 4}).letter, U'▼');
-    same(made.at({0, 5}).letter, U'◀');
-    same(made.at({4, 5}).letter, U'▶');
+    same(made.at({5, 0}).letter, U'█');
+    same(made.at({5, 4}).letter, U'│');
+    same(made.at({0, 5}).letter, U'█');
+    same(made.at({4, 5}).letter, U'─');
     same(made.at({5, 5}).letter, U' ');
 }
 
@@ -643,7 +647,54 @@ TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
 
     const View made = top.render({{0, 0}, {6, 5}});
 
-    same(made.at({5, 0}).style.foreground, (Color{false, 6, 6, 6}));
+    same(made.at({5, 4}).style.foreground, (Color{false, 6, 6, 6}));
+}
+
+// The bar of a widget the keys move takes the .focus styles: a scroller's bar while the focus is
+// on a field inside it, the track from `role`.focus and the slider from `role`.thumb.focus; with
+// the focus elsewhere, the plain ones.
+TRIAL("Scrollbar: with the focus inside, the bar takes the .focus styles") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Scroll>(ui::Axis::vertical, ui::ScrollShape{true});
+    const auto inner = std::make_shared<ui::Column>();
+
+    for (int which = 0; which < 20; ++which) inner->children().add(std::make_shared<ui::Field>(6, std::to_string(which)));
+
+    const auto outside = std::make_shared<ui::Field>(6, "poza");
+    const auto column = std::make_shared<ui::Column>();
+
+    one->children().add(inner);
+    column->children().add(one);
+    column->children().add(outside);
+    top.children().add(column);
+
+    const auto colored = [](std::uint8_t level) {
+        Style made{};
+
+        made.foreground = Color{false, level, level, level};
+
+        return made;
+    };
+
+    top.skin(ui::Skin{ui::Styles{{"talcite.scroll", colored(1)},
+                                 {"talcite.scroll.thumb", colored(2)},
+                                 {"talcite.scroll.focus", colored(3)},
+                                 {"talcite.scroll.thumb.focus", colored(4)}}});
+
+    outside->focus();
+
+    View made = top.render({{0, 0}, {8, 6}});
+
+    same(made.at({7, 0}).style.foreground, (Color{false, 2, 2, 2}));
+    same(made.at({7, 4}).style.foreground, (Color{false, 1, 1, 1}));
+
+    inner->children()[0]->focus();
+
+    made = top.render({{0, 0}, {8, 6}});
+
+    same(made.at({7, 0}).style.foreground, (Color{false, 4, 4, 4}));
+    same(made.at({7, 4}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 // --- Following the focus --------------------------------------------------------------------

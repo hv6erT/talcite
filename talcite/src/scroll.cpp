@@ -166,6 +166,7 @@ View Scroll::paint(Size given, Area seen) {
                             .shift = static_cast<std::size_t>(shift_.y),
                             .whole = static_cast<std::size_t>(whole_.high),
                             .window = static_cast<std::size_t>(window_.high),
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = skin(),
                             .role = scrollbar_role_};
 
@@ -185,6 +186,7 @@ View Scroll::paint(Size given, Area seen) {
                             .shift = static_cast<std::size_t>(shift_.x),
                             .whole = static_cast<std::size_t>(whole_.wide),
                             .window = static_cast<std::size_t>(window_.wide),
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = skin(),
                             .role = scrollbar_role_};
 
@@ -238,9 +240,9 @@ bool Scroll::handle(WheelEvent& what) {
     return true;
 }
 
-// The mouse on a scrollbar, with a separate grip for each axis: an arrow moves by one cell, the
-// track by one window, the thumb is dragged. While a grip is held, motion goes to the bar that was
-// grabbed, wherever the pointer is.
+// The mouse on a scrollbar, with a separate grip for each axis: the track moves by one window, the
+// thumb is dragged. While a grip is held, motion goes to the bar that was grabbed, wherever the
+// pointer is.
 bool Scroll::handle(MouseEvent& what) {
     const Spot here = local(what.where());
 
@@ -262,8 +264,6 @@ bool Scroll::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::back: moved(now - 1); break;
-        case Part::forth: moved(now + 1); break;
         case Part::before: moved(now - std::max(window, 1)); break;
         case Part::after: moved(now + std::max(window, 1)); break;
         case Part::thumb:

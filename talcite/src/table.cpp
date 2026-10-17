@@ -529,6 +529,7 @@ View Table::paint(Size given, Area seen) {
                             .shift = kept.top,
                             .whole = kept.rows,
                             .window = static_cast<std::size_t>(std::max(given.high - head, 1)),
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = how,
                             .role = kept.scrollbar_role};
 
@@ -644,7 +645,7 @@ std::optional<std::size_t> Table::column_under(Spot where) const {
     return std::nullopt;
 }
 
-// The mouse on the scrollbar: an arrow moves one row, the track one page, the thumb is dragged.
+// The mouse on the scrollbar: the track moves one page, the thumb is dragged.
 // Only the view moves, as with the wheel, and the current row does not: the same as in MC and in
 // the scroller.
 bool Table::handle(MouseEvent& what) {
@@ -657,8 +658,6 @@ bool Table::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::back: first(kept.top > 0 ? kept.top - 1 : 0); break;
-        case Part::forth: first(std::min(kept.top + 1, most)); break;
         case Part::before: first(kept.top > high ? kept.top - high : 0); break;
         case Part::after: first(std::min(kept.top + high, most)); break;
         case Part::thumb:

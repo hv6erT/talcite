@@ -1722,6 +1722,7 @@ View Page::paint(Size given, Area seen) {
                             .shift = shift,
                             .whole = whole,
                             .window = window,
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = skin(),
                             .role = kept_->scrollbar_role};
 
@@ -1814,15 +1815,13 @@ bool Page::handle(ClickEvent&) {
     return true;
 }
 
-// The mouse on the scrollbar: an arrow scrolls a row, the track a page, and the thumb jumps to
-// where it was put, to a line when the scrollbar counts lines and to a byte when it counts bytes.
+// The mouse on the scrollbar: the track scrolls a page, and the thumb jumps to where it was put, to
+// a line when the scrollbar counts lines and to a byte when it counts bytes.
 bool Page::handle(MouseEvent& what) {
     const Asked asked = kept_->grip.mouse(what, local(what.where()), *this);
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::back: slide(-1); break;
-        case Part::forth: slide(1); break;
         case Part::before: page(-1); break;
         case Part::after: page(1); break;
         case Part::thumb:

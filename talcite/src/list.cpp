@@ -270,7 +270,7 @@ void List::slid(int to) {
     if (shift_ != was) (void)trigger(ScrollEvent{});
 }
 
-// The mouse on the scrollbar: an arrow moves one row, the track one page, the thumb is dragged.
+// The mouse on the scrollbar: the track moves one page, the thumb is dragged.
 // Like the wheel, it moves the view but not the current row.
 bool List::handle(MouseEvent& what) {
     const Asked asked = grip_->mouse(what, local(what.where()), *this);
@@ -278,8 +278,6 @@ bool List::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::back: slid(shift_ - 1); break;
-        case Part::forth: slid(shift_ + 1); break;
         case Part::before: slid(shift_ - window); break;
         case Part::after: slid(shift_ + window); break;
         case Part::thumb:
@@ -410,6 +408,7 @@ View List::paint(Size given, Area seen) {
                             .shift = static_cast<std::size_t>(shift_),
                             .whole = static_cast<std::size_t>(much),
                             .window = static_cast<std::size_t>(given.high),
+                            .focused = Scrollbar::focused_in(*this),
                             .skin = skin(),
                             .role = scrollbar_role_};
 

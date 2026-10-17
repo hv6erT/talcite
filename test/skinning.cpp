@@ -477,7 +477,7 @@ TRIAL("Skin: the ellipsis comes from the skin") {
     same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku~"});
 }
 
-TRIAL("Skin: the scroller's arrows and thumb take their glyphs from the skin") {
+TRIAL("Skin: the scroller's track and thumb take their glyphs from the skin") {
     ui::Root top;
 
     const auto list = std::make_shared<ui::List>(ui::plenty, ui::plenty, ui::ScrollShape{true});
@@ -489,23 +489,20 @@ TRIAL("Skin: the scroller's arrows and thumb take their glyphs from the skin") {
 
     View made = top.render({{0, 0}, {8, 4}});
 
-    same(made.at({7, 0}).letter, U'▲');
-    same(made.at({7, 3}).letter, U'▼');
+    same(made.at({7, 0}).letter, U'█');
+    same(made.at({7, 3}).letter, U'│');
 
     top.skin(ui::Skin{{},
                       {
-                          {"talcite.scroll.up", U'^'},
-                          {"talcite.scroll.down", U'v'},
                           {"talcite.scroll.thumb", U'#'},
-                          {"talcite.scroll.track", U'.'},
+                          {"talcite.scroll.track.upright", U'.'},
                       }});
 
     made = top.render({{0, 0}, {8, 4}});
 
-    same(made.at({7, 0}).letter, U'^');
-    same(made.at({7, 3}).letter, U'v');
-    same(made.at({7, 1}).letter, U'#');
-    same(made.at({7, 2}).letter, U'.');
+    same(made.at({7, 0}).letter, U'#');
+    same(made.at({7, 1}).letter, U'.');
+    same(made.at({7, 3}).letter, U'.');
 }
 
 // --- The role stem given to a widget -----------------------------------------------------------
