@@ -650,6 +650,45 @@ TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
     same(made.at({5, 4}).style.foreground, (Color{false, 6, 6, 6}));
 }
 
+// The bar is drawn in the foreground only: a style that gives no background leaves the ground of
+// what lies below, as a window or a panel colors it, and a style that gives one keeps it.
+TRIAL("Scrollbar: a style without a background takes the ground below") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Scroll>(ui::Axis::vertical, ui::ScrollShape{true});
+
+    one->children().add(rows(20));
+    top.children().add(one);
+
+    Style ground{};
+
+    ground.background = Color{false, 0, 0, 9};
+
+    Style lit{};
+
+    lit.foreground = Color{false, 7, 7, 7};
+
+    top.skin(ui::Skin{ui::Styles{{"talcite.normal", ground}, {"talcite.scroll", lit}, {"talcite.scroll.thumb", lit}}});
+
+    View under{{10, 5}};
+
+    under.fill({{0, 0}, {10, 5}}, ground);
+    under.draw(top.render({{0, 0}, {10, 5}}), {0, 0});
+
+    same(under.at({9, 0}).letter, U'█');
+    same(under.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
+    same(under.at({9, 3}).style.background, (Color{false, 0, 0, 9}));
+    same(under.at({9, 3}).style.foreground, (Color{false, 7, 7, 7}));
+
+    Style own = lit;
+
+    own.background = Color{false, 3, 3, 3};
+
+    top.skin(ui::Skin{ui::Styles{{"talcite.scroll", own}, {"talcite.scroll.thumb", own}}});
+
+    same(top.render({{0, 0}, {10, 5}}).at({9, 3}).style.background, (Color{false, 3, 3, 3}));
+}
+
 // The bar of a widget the keys move takes the .focus styles: a scroller's bar while the focus is
 // on a field inside it, the track from `role`.focus and the slider from `role`.thumb.focus; with
 // the focus elsewhere, the plain ones.

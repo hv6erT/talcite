@@ -171,7 +171,8 @@ void Scrollbar::draw(View& into) const {
         const bool kept = which >= laid.from && which < laid.from + laid.thumb;
         const Spot spot = upright ? Spot{at.x, at.y + which} : Spot{at.x + which, at.y};
 
-        into.put(spot, kept ? block : empty, kept ? full : look);
+        // The bar lies on its widget's ground: a style without a background takes the one below.
+        into.foreground(spot, kept ? block : empty, kept ? full : look);
     }
 }
 
