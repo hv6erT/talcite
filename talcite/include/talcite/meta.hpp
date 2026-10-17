@@ -51,9 +51,30 @@ struct Properties {
     friend bool operator==(const Properties&, const Properties&) = default;
 };
 
+enum class Transfer : std::uint8_t { standard, pq, hlg };
+
+struct Stream {
+    enum class Kind : std::uint8_t { video, audio, subtitle };
+
+    Kind kind = Kind::video;
+    std::string codec;
+    std::string language;
+    std::string name;
+    std::optional<std::uint32_t> width;
+    std::optional<std::uint32_t> height;
+    std::optional<std::uint16_t> depth;
+    std::optional<Transfer> transfer;
+    std::optional<std::uint16_t> channels;
+    std::optional<std::uint32_t> rate;
+    std::optional<std::uint32_t> bitrate;
+
+    friend bool operator==(const Stream&, const Stream&) = default;
+};
+
 struct Description {
     std::string type;
     Properties properties;
+    std::vector<Stream> streams;
     std::vector<Field> fields;
     std::vector<Picture> pictures;
     bool damaged = false;
