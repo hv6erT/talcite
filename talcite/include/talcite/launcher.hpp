@@ -11,13 +11,13 @@
 
 namespace talcite {
 
-enum class Opened : std::uint8_t { opened, copied, refused };
+enum class Launched : std::uint8_t { opened, copied, refused };
 
 class Launcher : public Provider {
 public:
     [[nodiscard]] static constexpr std::string_view kind() { return "launcher"; }
 
-    [[nodiscard]] virtual Promise<Opened> open(std::string address) = 0;
+    [[nodiscard]] virtual Promise<Launched> open(std::string address) = 0;
 };
 
 [[nodiscard]] Seam<Launcher> launcher();

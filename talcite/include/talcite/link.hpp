@@ -1,43 +1,19 @@
 #pragma once
 
-#include <optional>
 #include <string>
 #include <utility>
 
 #include "talcite/enablednode.hpp"
 #include "talcite/event.hpp"
+#include "talcite/following.hpp"
 #include "talcite/launcher.hpp"
-#include "talcite/promise.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
 
-class FollowEvent : public Event {
+class Link : public FollowingNode<EnabledNode<Node>> {
 public:
-    explicit FollowEvent(std::string address) : address_(std::move(address)) {}
-
-    [[nodiscard]] const std::string& address() const { return address_; }
-
-private:
-    std::string address_;
-};
-
-class FollowedEvent : public Event {
-public:
-    FollowedEvent(std::string address, Opened how) : address_(std::move(address)), how_(how) {}
-
-    [[nodiscard]] const std::string& address() const { return address_; }
-
-    [[nodiscard]] Opened how() const { return how_; }
-
-private:
-    std::string address_;
-    Opened how_;
-};
-
-class Link : public EnabledNode<Node> {
-public:
-    Link(std::string text, std::string address, Seam<Launcher> with = launcher());
+    Link(std::string text, std::string address, Seam<Launcher> with = {});
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
@@ -65,8 +41,6 @@ private:
 
     std::string text_;
     Hyperlink target_;
-    Seam<Launcher> launcher_;
-    std::optional<Promise<void>> following_;
 };
 
 }

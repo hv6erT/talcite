@@ -1,7 +1,11 @@
 #include "talcite/view.hpp"
 
 #include <algorithm>
-#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "talcite/encoding.hpp"
@@ -37,16 +41,34 @@ Style Style::merge(Style base, Style over) {
     return made;
 }
 
-// A hyperlink to `address` under a mark of its own. The mark is what the cells carry and what
-// comparing frames sees, so it is never reused within the process: a link that changes its address
-// takes a new one, otherwise its cells would equal the old ones and the terminal would keep the old
-// address. It also goes to the terminal as the link's id, by which a terminal lights up the whole
-// link under the pointer, also when it spans several rows. Zero is no link, so the count starts at
-// one.
+// The hyperlink to `address`: its mark and the address. The mark is what the cells carry and what
+// comparing frames sees, so one address keeps one mark, frame after frame, whoever draws it (a link
+// in a label, a mark in a page), and two addresses never share one: a link that changes its address
+// gets another mark, otherwise its cells would equal the old ones and the terminal would keep the
+// old address. The mark also goes to the terminal as the link's id, by which a terminal lights up
+// the whole link under the pointer, also when it spans several rows; two places with the same
+// address light up together, which is what they are. Zero is no link, so the count starts at one.
+//
+// The marks live in a table of the process. A program that draws ever new addresses (a viewer
+// over a long list of them) would grow it without end, so past `remembered` addresses it is
+// forgotten whole: the count goes on, so a forgotten address gets a new mark, never one another
+// address had, and the only cost is that its cells are written once more.
 Hyperlink hyperlink(std::string address) {
-    static std::atomic<std::uint32_t> issued{0};
+    static constexpr std::size_t remembered = 4096;
 
-    return Hyperlink{++issued, std::move(address)};
+    static std::mutex guard;
+    static std::unordered_map<std::string, std::uint32_t> known;
+    static std::uint32_t issued = 0;
+
+    const std::lock_guard<std::mutex> held{guard};
+
+    if (const auto found = known.find(address); found != known.end()) return Hyperlink{found->second, std::move(address)};
+
+    if (known.size() >= remembered) known.clear();
+
+    known.emplace(address, ++issued);
+
+    return Hyperlink{issued, std::move(address)};
 }
 
 // Text is measured in cells, not in characters or bytes: a letter with a diacritic counts as

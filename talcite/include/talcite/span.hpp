@@ -4,18 +4,24 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/event.hpp"
+#include "talcite/following.hpp"
+#include "talcite/markednode.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class Span : public Node {
+class Span : public FollowingNode<MarkedNode<Node>> {
 public:
     explicit Span(std::string text, SpanShape shape = {});
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
-    void text(std::string given) { text_ = std::move(given); }
+    void text(std::string given) {
+        text_ = std::move(given);
+        marks().clear();
+    }
 
     [[nodiscard]] bool wrapped() const { return shape_.wrapped; }
 
@@ -35,6 +41,8 @@ public:
 
 protected:
     View paint(Size given, Area seen) override;
+
+    bool handle(ClickEvent& what) override;
 
 private:
     [[nodiscard]] std::vector<std::string> lines(int wide) const;

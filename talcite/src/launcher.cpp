@@ -95,8 +95,8 @@ bool windowed(const Console& from) {
 }
 
 // The address on the clipboard: copied when the clipboard took it, refused otherwise.
-Opened copied(const Seam<Clipboard>& copying, std::string_view address) {
-    return copying.provider().copy(address) ? Opened::copied : Opened::refused;
+Launched copied(const Seam<Clipboard>& copying, std::string_view address) {
+    return copying.provider().copy(address) ? Launched::copied : Launched::refused;
 }
 
 #ifdef _WIN32
@@ -152,8 +152,8 @@ public:
     // started on the pool and let loose: a browser may stay as long as it likes, and it is not ours
     // to wait for. When it cannot start (no xdg-open, the shell refused), the address goes to the
     // clipboard after all, back on the caller's loop.
-    [[nodiscard]] Promise<Opened> open(std::string address) override {
-        if (!sound(address)) return ready(Opened::refused);
+    [[nodiscard]] Promise<Launched> open(std::string address) override {
+        if (!sound(address)) return ready(Launched::refused);
 
         const Console& from = console_.provider();
 
@@ -163,13 +163,13 @@ public:
 
         return run(io(), [address] { return shelled(address); })
             .here()
-            .then([copying = copying_, address](bool done) { return done ? Opened::opened : copied(copying, address); });
+            .then([copying = copying_, address](bool done) { return done ? Launched::opened : copied(copying, address); });
 
 #else
 
         return Child::detached(opening(address))
             .here()
-            .then([](std::int64_t) { return Opened::opened; })
+            .then([](std::int64_t) { return Launched::opened; })
             .recover([copying = copying_, address](const std::exception&) { return copied(copying, address); });
 
 #endif

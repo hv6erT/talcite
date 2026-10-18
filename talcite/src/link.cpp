@@ -1,7 +1,6 @@
 #include "talcite/link.hpp"
 
 #include <algorithm>
-#include <memory>
 #include <utility>
 
 #include "talcite/root.hpp"
@@ -14,12 +13,9 @@
 // a terminal that takes them as OSC 8 (`Capabilities::links`): such a terminal shows the address
 // under the pointer and opens it itself on Ctrl+click (Cmd+click on macOS).
 //
-// Enter, or a click, follows the link. First `FollowEvent` goes up the tree with the address, so
-// that the application may do something else with it (show a page of its own, ask first); whoever
-// takes it takes the link with it. Otherwise the launcher opens it (`Launcher::open`): in the
-// browser, or onto the clipboard over ssh and without a graphical session, and when its answer
-// comes, `FollowedEvent` says how it went, so that the application can tell the user that the
-// address was copied rather than opened.
+// Enter, or a click, follows the link the way every widget of the library follows an address
+// (`FollowingNode`): `FollowEvent` first, which the application may take, then the launcher, and
+// `FollowedEvent` with its answer.
 //
 // A click with Ctrl is not ours. A terminal that takes hyperlinks opens the link itself on
 // Ctrl+click and still passes the click on to the program (Windows Terminal and iTerm2 do), so
@@ -27,13 +23,16 @@
 // plain click, which follows the link, and Enter.
 namespace talcite::ui {
 
-// A link with its text and address, opened through `with`. Empty text shows the address itself.
+// A link with its text and address, opened through `with`, or through the system's launcher when
+// it is not given. Empty text shows the address itself.
 Link::Link(std::string text, std::string address, Seam<Launcher> with)
-    : text_(std::move(text)), target_(hyperlink(std::move(address))), launcher_(std::move(with)) {
+    : text_(std::move(text)), target_(hyperlink(std::move(address))) {
     role("talcite.link");
+
+    if (with.bound()) launcher(std::move(with));
 }
 
-// A new address takes a new hyperlink: under the old mark the cells would not change, and the
+// A new address takes its own hyperlink: under the old mark the cells would not change, and the
 // terminal would keep the old address (`hyperlink`).
 void Link::address(std::string given) { target_ = hyperlink(std::move(given)); }
 
@@ -72,27 +71,12 @@ View Link::paint(Size given, Area seen) {
     return made;
 }
 
-// Follows the link, unless it is disabled or has no address: `FollowEvent` first, then the
-// launcher, then `FollowedEvent` with its answer, as the head of this file says. The answer comes
-// back on the loop of the thread that follows (`Promise::here`), which is the loop of the screen.
-// The link holds the way there (`following_`), because a chain nobody holds is given up: so the
-// answer comes while the link lives, and a link that has gone, with the window it stood in, says
-// nothing to anyone. Following again before the answer came waits for the new answer only; the
-// address already went its way either way.
+// Follows the link, unless it is disabled (`FollowingNode::followed`; a link without an address
+// follows nowhere).
 void Link::follow() {
-    if (!enabled() || target_.address.empty()) return;
+    if (!enabled()) return;
 
-    if (trigger(FollowEvent{target_.address})) return;
-
-    const std::weak_ptr<Node> self = weak_from_this();
-
-    following_ = launcher_.provider()
-                     .open(target_.address)
-                     .here()
-                     .then([self, address = target_.address](Opened how) {
-                         if (const std::shared_ptr<Node> kept = self.lock())
-                             (void)static_cast<Link&>(*kept).trigger(FollowedEvent{address, how});
-                     });
+    followed(target_.address);
 }
 
 // Enter follows the link that has the focus, as it presses a button. Nothing is caught with a

@@ -1636,8 +1636,9 @@ namespace {
 // Overlays the marks on one drawn piece. Marks are overlaid after the content is drawn, cell by
 // cell: the letter already there stays, and the style is merged through `Style::merge`. Thanks to
 // that, a role that sets only the background keeps the color of the letters, and a role that sets
-// only the letters keeps the background. Only the marks of the piece's line are looked at; they
-// are found by bisection, since the marks are sorted.
+// only the letters keeps the background. A mark with an address also lays its hyperlink over its
+// cells (`View::link`). Only the marks of the piece's line are looked at; they are found by
+// bisection, since the marks are sorted.
 //
 // A cell with a zero letter is the continuation of a double-width character; it is skipped,
 // because the first half has already repainted both.
@@ -1654,6 +1655,7 @@ void painted(View& into, const Cut& piece, Spot at, const Style& look, const std
         const bool here = which.has_value() && *which == nth;
 
         const Style over = Style::merge(look, how.style(here ? chosen : one.role));
+        const Hyperlink target = one.address.empty() ? Hyperlink{} : hyperlink(one.address);
 
         for (std::size_t col = 0; col < piece.bytes.size(); ++col) {
             const std::size_t byte = piece.bytes[col];
@@ -1666,6 +1668,8 @@ void painted(View& into, const Cut& piece, Spot at, const Style& look, const std
             if (said.letter == 0) continue;
 
             into.put(spot, said.letter, over);
+
+            if (target.mark != 0) into.link({spot, {width(said.letter) == 2 ? 2 : 1, 1}}, target);
         }
     }
 }
@@ -1745,15 +1749,27 @@ View Page::paint(Size given, Area seen) {
 }
 
 // Scrolls with the arrows, PageUp, PageDown, Home and End; without wrapping, the arrows to the
-// sides scroll sideways by a column, and Home goes back to the first column too. It returns false
-// for everything it did not use: the F-keys have to reach the legend, which is an ancestor, and
-// with wrapping the side arrows go up as well (an application may give them to something else).
+// sides scroll sideways by a column, and Home goes back to the first column too. Enter follows the
+// current mark when it has an address (`FollowingNode::followed`): stepping from mark to mark
+// (`MarkedNode::step`) is how a key reaches the links of a page. It returns false for everything it
+// did not use: the F-keys have to reach the legend, which is an ancestor, and with wrapping the
+// side arrows go up as well (an application may give them to something else).
 bool Page::handle(KeyEvent& what) {
     // Nothing with a modifier is taken: Ctrl+Home and Alt+PageDown are by design different
     // shortcuts than Home and PageDown, so the combination is passed on to the application.
     if (what.mods().ctrl || what.mods().alt) return false;
 
     switch (what.key().code()) {
+        case Code::enter: {
+            const std::optional<std::size_t> current = which();
+
+            if (!current || marks()[*current].address.empty()) return false;
+
+            followed(marks()[*current].address);
+
+            return true;
+        }
+
         case Code::up: slide(-1); return true;
         case Code::down: slide(1); return true;
         case Code::pageup: page(-1); return true;
@@ -1807,10 +1823,24 @@ bool Page::handle(WheelEvent& what) {
     return kept_->top != was || kept_->row_at != was_at;
 }
 
-// Takes the focus on a click. The guard on the root is there because a widget is sometimes
+// Takes the focus on a click, and a click with the left button on a mark with an address follows it
+// (`FollowingNode::followed`); a click with Ctrl is left to the terminal, which opens a hyperlink
+// itself, as on a link (`Link`). The guard on the root is there because a widget is sometimes
 // rendered in a test without a root.
-bool Page::handle(ClickEvent&) {
+bool Page::handle(ClickEvent& what) {
     if (root() != nullptr) focus();
+
+    if (what.mods().ctrl || what.button() != Mouse::left) return true;
+
+    const std::optional<Place> place = place_of(local(what.where()));
+
+    if (!place) return true;
+
+    const auto found = std::find_if(marks().begin(), marks().end(), [&place](const Mark& one) {
+        return !one.address.empty() && one.line == place->line && place->byte >= one.from && place->byte < one.upto;
+    });
+
+    if (found != marks().end()) followed(found->address);
 
     return true;
 }

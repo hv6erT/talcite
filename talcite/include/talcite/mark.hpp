@@ -10,6 +10,7 @@ struct Mark {
     std::size_t from = 0;
     std::size_t upto = 0;
     std::string role;
+    std::string address{};
 };
 
 }

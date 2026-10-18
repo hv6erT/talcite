@@ -10,11 +10,16 @@
 #include <vector>
 
 #include "faking.hpp"
+#include "talcite/bytes.hpp"
+#include "talcite/encoding.hpp"
+#include "talcite/following.hpp"
 #include "talcite/launcher.hpp"
 #include "talcite/link.hpp"
 #include "talcite/loop.hpp"
 #include "talcite/root.hpp"
 #include "talcite/row.hpp"
+#include "talcite/span.hpp"
+#include "talcite/viewer.hpp"
 
 using namespace talcite;
 
@@ -29,13 +34,13 @@ namespace {
 class Opening : public Launcher {
 public:
     std::vector<std::string> asked;
-    Opened answer = Opened::opened;
+    Launched answer = Launched::opened;
 
     // The launcher's name.
     [[nodiscard]] std::string_view name() const override { return "fake launcher"; }
 
     // Keeps the address and answers at once.
-    [[nodiscard]] Promise<Opened> open(std::string address) override {
+    [[nodiscard]] Promise<Launched> open(std::string address) override {
         asked.push_back(std::move(address));
 
         return ready(answer);
@@ -48,7 +53,7 @@ std::shared_ptr<ui::Link> linked(std::string text, std::string address, const st
 }
 
 // What the launcher behind the console and the clipboard answers about the address.
-Opened answered(const std::shared_ptr<faking::Terminal>& line, const std::shared_ptr<faking::Clipboard>& board, std::string address) {
+Launched answered(const std::shared_ptr<faking::Terminal>& line, const std::shared_ptr<faking::Clipboard>& board, std::string address) {
     return launcher(Seam<Console>{line}, Seam<Clipboard>{board}).provider().open(std::move(address)).get();
 }
 
@@ -172,7 +177,7 @@ TRIAL("Link: Enter follows it through the launcher, and the answer comes as Foll
 
     const auto opening = std::make_shared<Opening>();
 
-    opening->answer = Opened::copied;
+    opening->answer = Launched::copied;
 
     const auto one = linked("strona", "https://example.org/", opening);
 
@@ -180,7 +185,7 @@ TRIAL("Link: Enter follows it through the launcher, and the answer comes as Foll
 
     one->focus();
 
-    std::optional<Opened> told;
+    std::optional<Launched> told;
 
     const ui::Hook heard = one->on<ui::FollowedEvent>([&told](ui::FollowedEvent& what) {
         told = what.how();
@@ -196,7 +201,7 @@ TRIAL("Link: Enter follows it through the launcher, and the answer comes as Foll
     ought(awaited(loop, [&told] { return told.has_value(); }));
 
     same(opening->asked, (std::vector<std::string>{"https://example.org/"}));
-    same(static_cast<int>(told.value_or(Opened::refused)), static_cast<int>(Opened::copied));
+    same(static_cast<int>(told.value_or(Launched::refused)), static_cast<int>(Launched::copied));
 }
 
 // `FollowEvent` goes first, and whoever takes it takes the link: the launcher is not asked.
@@ -299,7 +304,7 @@ TRIAL("Launcher: over ssh the address goes to the clipboard") {
     line->environment["SSH_CONNECTION"] = "10.0.0.2 50000 10.0.0.1 22";
     line->environment["DISPLAY"] = ":0";
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Opened::copied));
+    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
     same(board->kept, std::optional<std::string>{"https://example.org/"});
 }
 
@@ -311,10 +316,10 @@ TRIAL("Launcher: an address that is not a page or a mail address goes to the cli
 
     line->environment["DISPLAY"] = ":0";
 
-    same(static_cast<int>(answered(line, board, "file:///etc/passwd")), static_cast<int>(Opened::copied));
+    same(static_cast<int>(answered(line, board, "file:///etc/passwd")), static_cast<int>(Launched::copied));
     same(board->kept, std::optional<std::string>{"file:///etc/passwd"});
 
-    same(static_cast<int>(answered(line, board, "ms-settings:privacy")), static_cast<int>(Opened::copied));
+    same(static_cast<int>(answered(line, board, "ms-settings:privacy")), static_cast<int>(Launched::copied));
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -324,7 +329,7 @@ TRIAL("Launcher: without a graphical session the address goes to the clipboard")
     auto line = faking::terminal();
     const auto board = faking::clipboard();
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Opened::copied));
+    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
     same(board->kept, std::optional<std::string>{"https://example.org/"});
 }
 
@@ -338,11 +343,200 @@ TRIAL("Launcher: an address with a control character is refused, and so is a ref
 
     line->environment["SSH_TTY"] = "/dev/pts/3";
 
-    same(static_cast<int>(answered(line, board, "https://example.org/\n")), static_cast<int>(Opened::refused));
-    same(static_cast<int>(answered(line, board, "")), static_cast<int>(Opened::refused));
+    same(static_cast<int>(answered(line, board, "https://example.org/\n")), static_cast<int>(Launched::refused));
+    same(static_cast<int>(answered(line, board, "")), static_cast<int>(Launched::refused));
     same(board->copies, 0);
 
     board->refusing = true;
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Opened::refused));
+    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::refused));
+}
+
+// --- Addresses in text ---------------------------------------------------------------------------
+
+namespace {
+
+// The addresses `addressed` finds in the text, in order.
+std::vector<std::string> found(std::string_view text) {
+    std::vector<std::string> made;
+
+    for (const ui::Mark& one : ui::addressed(text, "r")) made.push_back(one.address);
+
+    return made;
+}
+
+// The text of a view's row, with the spaces on the right trimmed.
+std::string row_of(const View& one, int y) {
+    std::string made;
+
+    for (int x = 0; x < one.size().wide; ++x)
+        if (const char32_t letter = one.at({x, y}).letter; letter != 0) made += spelled(letter);
+
+    while (!made.empty() && made.back() == ' ') made.pop_back();
+
+    return made;
+}
+
+}
+
+// Every http and https address is found where a word may start, with its line and its bytes counted
+// from the line's start, as labels and pages count them; the marks of a sentence after it and a
+// parenthesis it did not open stay outside, a parenthesis of its own stays inside.
+TRIAL("Addresses: found in text with their lines, without the sentence around them") {
+    const std::vector<ui::Mark> marks = ui::addressed("see https://example.org/a.\nand (http://x.example/b) too", "twa.link");
+
+    same(marks.size(), std::size_t{2});
+    same(marks[0].line, std::size_t{0});
+    same(marks[0].from, std::size_t{4});
+    same(marks[0].upto, std::size_t{25});
+    same(marks[0].address, std::string{"https://example.org/a"});
+    same(marks[0].role, std::string{"twa.link"});
+    same(marks[1].line, std::size_t{1});
+    same(marks[1].from, std::size_t{5});
+    same(marks[1].address, std::string{"http://x.example/b"});
+
+    same(found("https://en.wikipedia.org/wiki/Heat_(1995_film)"), (std::vector<std::string>{"https://en.wikipedia.org/wiki/Heat_(1995_film)"}));
+    same(found("„https://pl.wikipedia.org/wiki/Łódź”, i tyle"), (std::vector<std::string>{"https://pl.wikipedia.org/wiki/Łódź"}));
+    same(found("<https://example.org/x> \"https://example.org/y\""), (std::vector<std::string>{"https://example.org/x", "https://example.org/y"}));
+    ought(found("xhttps://example.org/ https:// ftp://example.org/").empty());
+    same(found("HTTPS://Example.org/"), (std::vector<std::string>{"HTTPS://Example.org/"}));
+}
+
+// --- Links in a label ----------------------------------------------------------------------------
+
+// A mark lays its role over the text it covers and, with an address, its hyperlink; wrapping joins
+// the words with one space where the text had several, and the mark covers the gap too.
+TRIAL("Span: a mark with an address lays its role and hyperlink over its text, wrapped too") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Span>("go  to example now", ui::SpanShape{.wrapped = true});
+
+    one->marks().add(ui::Mark{0, 4, 14, "talcite.link", "https://example.org/"});
+
+    top.children().add(one);
+
+    const View made = top.render({{0, 0}, {8, 3}});
+
+    same(row_of(made, 0), std::string{"go to"});
+    same(row_of(made, 1), std::string{"example"});
+    same(row_of(made, 2), std::string{"now"});
+
+    ought(!made.at({0, 0}).style.under);
+    same(made.at({0, 0}).link, std::uint32_t{0});
+    ought(made.at({3, 0}).style.under);
+    ought(made.at({3, 0}).link != 0);
+    ought(made.at({6, 1}).link != 0);
+    same(made.at({6, 1}).link, made.at({3, 0}).link);
+    same(made.at({0, 2}).link, std::uint32_t{0});
+    same(made.links().size(), std::size_t{1});
+    same(made.links().front().address, std::string{"https://example.org/"});
+}
+
+// A mark without an address only lays its role; a mark over what the ellipsis hides covers nothing.
+TRIAL("Span: a mark without an address is only a role, and what is elided carries no link") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Span>("abc https://example.org/long", ui::SpanShape{.elide = ui::Elide::right});
+
+    one->marks().all(ui::addressed(one->text(), "talcite.link"));
+    one->marks().add(ui::Mark{0, 0, 1, "talcite.link"});
+
+    top.children().add(one);
+
+    const View made = top.render({{0, 0}, {10, 1}});
+
+    ought(made.at({0, 0}).style.under);
+    same(made.at({0, 0}).link, std::uint32_t{0});
+    ought(made.at({4, 0}).link != 0);
+    same(made.at({9, 0}).letter, char32_t{U'…'});
+    same(made.at({9, 0}).link, std::uint32_t{0});
+}
+
+// A click on a link of a label follows it; elsewhere, with Ctrl or another button the click is not
+// the label's and goes on to whoever holds it.
+TRIAL("Span: a click on a link follows it, a click elsewhere is not the label's") {
+    Loop loop;
+    ui::Root top;
+
+    const auto opening = std::make_shared<Opening>();
+    const auto one = std::make_shared<ui::Span>("go to example");
+
+    one->marks().add(ui::Mark{0, 6, 13, "talcite.link", "https://example.org/"});
+    one->launcher(Seam<Launcher>{opening});
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {20, 1}});
+
+    ui::ClickEvent beside{{1, 0}, ui::Mouse::left};
+
+    (void)top.dispatch(beside);
+
+    ui::Mods ctrl;
+
+    ctrl.ctrl = true;
+
+    ui::ClickEvent held{{7, 0}, ui::Mouse::left, ctrl};
+
+    (void)top.dispatch(held);
+
+    settled(loop);
+
+    ought(opening->asked.empty());
+
+    ui::ClickEvent on{{7, 0}, ui::Mouse::left};
+
+    ought(top.dispatch(on));
+    ought(awaited(loop, [&opening] { return !opening->asked.empty(); }));
+
+    same(opening->asked.front(), std::string{"https://example.org/"});
+}
+
+// --- Links in a page -----------------------------------------------------------------------------
+
+// A mark with an address in a page lays its hyperlink over its cells; Enter follows the current
+// mark when it leads somewhere, and a click follows the mark under it.
+TRIAL("Viewer: a mark with an address is a hyperlink, Enter and a click follow it") {
+    Loop loop;
+    ui::Root top;
+
+    const auto opening = std::make_shared<Opening>();
+    const auto one = std::make_shared<ui::Viewer>();
+
+    one->hold(bytes(std::string{"read https://example.org/a\nor https://example.org/b"}));
+    one->marks().all(ui::addressed("read https://example.org/a\nor https://example.org/b", "talcite.viewer.mark"));
+    one->launcher(Seam<Launcher>{opening});
+
+    top.children().add(one);
+
+    one->focus();
+
+    const View made = top.render({{0, 0}, {40, 3}});
+
+    same(made.at({0, 0}).link, std::uint32_t{0});
+    ought(made.at({5, 0}).link != 0);
+    ought(made.at({3, 1}).link != 0);
+    ought(made.at({3, 1}).link != made.at({5, 0}).link);
+
+    ui::KeyEvent enter{ui::Key{ui::Code::enter}};
+
+    // No current mark yet: Enter follows nothing.
+    (void)top.dispatch(enter);
+
+    settled(loop);
+
+    ought(opening->asked.empty());
+
+    ought(one->step(1));
+    ought(top.dispatch(enter));
+    ought(awaited(loop, [&opening] { return opening->asked.size() == 1; }));
+
+    same(opening->asked.front(), std::string{"https://example.org/a"});
+
+    ui::ClickEvent click{{5, 1}, ui::Mouse::left};
+
+    ought(top.dispatch(click));
+    ought(awaited(loop, [&opening] { return opening->asked.size() == 2; }));
+
+    same(opening->asked.back(), std::string{"https://example.org/b"});
 }

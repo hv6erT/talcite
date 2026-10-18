@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "talcite/following.hpp"
 #include "talcite/markednode.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
@@ -23,7 +24,7 @@ struct Place {
     std::size_t byte = 0;
 };
 
-class Page : public MarkedNode<Node> {
+class Page : public FollowingNode<MarkedNode<Node>> {
 public:
     ~Page() override;
 

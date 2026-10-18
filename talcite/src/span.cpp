@@ -3,13 +3,27 @@
 #include "talcite/skin.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
 #include <string_view>
 #include <utility>
 
 #include "talcite/encoding.hpp"
+#include "talcite/root.hpp"
 
 #include "eliding.hpp"
 
+// A label: text in rows, wrapped or not, elided and justified when drawn. Its marks (`marks`) lay a
+// role over a stretch of the text, counted as a page counts them: the line is the paragraph (the
+// text between hard line breaks) and the bytes count from its start. A mark with an address is a
+// link: its cells carry the hyperlink (`View::link`, OSC 8 in a terminal that takes it), and a
+// click on it follows the address the way every widget follows one (`FollowingNode`). A label takes
+// no focus, so a key does not reach its links; a click does, and a terminal with hyperlinks opens
+// them itself on Ctrl+click, which is why a click with Ctrl is left to it, as on a link (`Link`).
+//
+// To lay marks over the rows, every row knows where each of its bytes came from in the text.
+// Wrapping joins words with one space wherever the text had several, and eliding drops what does
+// not fit, so the row's own byte numbers say nothing about the text without that.
 namespace talcite::ui {
 
 // A label with the given text and shape, in the "talcite.normal" role until told otherwise.
@@ -22,6 +36,36 @@ int Span::capacity() const { return 0; }
 
 namespace {
 
+// No byte of the text: what eliding puts in (the ellipsis).
+constexpr std::size_t nowhere = static_cast<std::size_t>(-1);
+
+// One row of the label: its text, the paragraph it belongs to, and for every byte of the text the
+// byte of the paragraph it came from (`nowhere` for the ellipsis).
+struct Row {
+    std::string text;
+    std::size_t line = 0;
+    std::vector<std::size_t> bytes;
+
+    // Appends a stretch of the paragraph that starts at its byte `from`.
+    void taken(std::string_view what, std::size_t from) {
+        text += what;
+
+        for (std::size_t at = 0; at < what.size(); ++at) bytes.push_back(from + at);
+    }
+
+    // Appends what the paragraph does not have, such as the ellipsis.
+    void added(std::string_view what) {
+        text += what;
+        bytes.insert(bytes.end(), what.size(), nowhere);
+    }
+};
+
+// A paragraph of the text: where it starts and what it holds.
+struct Paragraph {
+    std::size_t at = 0;
+    std::string_view text;
+};
+
 // Splits the text at hard line breaks. A hard line break always splits, also without wrapping:
 // sent to the view like any other byte, it would come out as a replacement character in the middle
 // of a sentence, and two-sentence messages are written exactly that way. Splitting gives one piece
@@ -30,20 +74,20 @@ namespace {
 //
 // A carriage return is removed from the end of each piece, because text from Windows carries
 // "\r\n", and a lone "\r" left in the text would show up on screen as garbage.
-std::vector<std::string> parted(const std::string& what) {
-    std::vector<std::string> made;
+std::vector<Paragraph> parted(std::string_view what) {
+    std::vector<Paragraph> made;
 
     for (std::size_t at = 0;;) {
         const std::size_t end = what.find('\n', at);
-        const std::size_t upto = end == std::string::npos ? what.size() : end;
+        const std::size_t upto = end == std::string_view::npos ? what.size() : end;
 
-        std::string one = what.substr(at, upto - at);
+        std::string_view one = what.substr(at, upto - at);
 
-        if (!one.empty() && one.back() == '\r') one.pop_back();
+        if (!one.empty() && one.back() == '\r') one.remove_suffix(1);
 
-        made.push_back(std::move(one));
+        made.push_back(Paragraph{at, one});
 
-        if (end == std::string::npos) break;
+        if (end == std::string_view::npos) break;
 
         at = end + 1;
     }
@@ -51,32 +95,49 @@ std::vector<std::string> parted(const std::string& what) {
     return made;
 }
 
-// Wraps one paragraph to `wide` columns, appending the rows to `into`. It breaks at spaces, and a
-// word longer than a row is broken in place, because the only alternative would be running off the
-// view, which `View` would not let out anyway. Each paragraph wraps separately, so a hard line
-// break never merges with the neighboring sentence.
-//
-// A file-local function rather than a method: it touches nothing that belongs to the label, and
-// the public header has no reason to know there is one more step inside.
-void wrap_into(const std::string& what, int wide, std::vector<std::string>& into) {
-    std::vector<std::string> words;
+// Wraps one paragraph (the `line`-th) to `wide` columns, appending the rows to `into`. It breaks at
+// spaces, and a word longer than a row is broken in place, because the only alternative would be
+// running off the view, which `View` would not let out anyway. Each paragraph wraps separately, so
+// a hard line break never merges with the neighboring sentence. Words in a row stand one space
+// apart, whatever stood between them; that space comes from the first space after the word before
+// it, so that a mark over a whole phrase covers the gaps too.
+void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Row>& into) {
+    struct Word {
+        std::size_t at = 0;
+        std::string_view text;
+    };
+
+    std::vector<Word> words;
 
     for (std::size_t at = 0; at <= what.size();) {
         const std::size_t space = what.find(' ', at);
-        const std::size_t upto = space == std::string::npos ? what.size() : space;
+        const std::size_t upto = space == std::string_view::npos ? what.size() : space;
 
-        if (upto > at) words.push_back(what.substr(at, upto - at));
+        if (upto > at) words.push_back(Word{at, what.substr(at, upto - at)});
 
-        if (space == std::string::npos) break;
+        if (space == std::string_view::npos) break;
 
         at = space + 1;
     }
 
-    std::string line;
+    Row row;
+
+    row.line = line;
+
     int much = 0;
 
-    for (std::string whole : words) {
-        std::string_view word = whole;
+    // Starts a fresh row of the paragraph.
+    const auto fresh = [line] {
+        Row made;
+
+        made.line = line;
+
+        return made;
+    };
+
+    for (const Word& whole : words) {
+        std::string_view word = whole.text;
+        std::size_t from = whole.at;
         int room = measured(word).wide;
 
         // A word longer than the whole row is cut as many times as needed. If not even one
@@ -85,69 +146,212 @@ void wrap_into(const std::string& what, int wide, std::vector<std::string>& into
         // cutting walks along the word, and what is left is measured by what each piece took, so
         // a word of a hundred thousand characters costs one pass, not one per row.
         while (room > wide) {
-            if (!line.empty()) {
-                into.push_back(std::move(line));
+            if (!row.text.empty()) {
+                into.push_back(std::move(row));
 
-                line.clear();
+                row = fresh();
                 much = 0;
             }
 
-            std::string piece = cut(word, wide);
+            const std::string piece = cut(word, wide);
 
             if (piece.empty()) break;
 
+            Row alone = fresh();
+
+            alone.taken(piece, from);
+
             word.remove_prefix(piece.size());
+            from += piece.size();
 
             // A tab's width depends on where it stands, so a word holding one is measured anew.
             room = word.find('\t') == std::string_view::npos ? room - measured(piece).wide : measured(word).wide;
 
-            into.push_back(std::move(piece));
+            into.push_back(std::move(alone));
         }
 
         if (word.empty()) continue;
 
-        if (line.empty()) {
-            line = std::string{word};
+        if (row.text.empty()) {
+            row.taken(word, from);
             much = room;
         } else if (much + 1 + room <= wide) {
-            line += ' ';
-            line += word;
+            const std::size_t gap = row.bytes.back() + 1;
+
+            row.taken(" ", gap);
+            row.taken(word, from);
             much += 1 + room;
         } else {
-            into.push_back(std::move(line));
+            into.push_back(std::move(row));
 
-            line = std::string{word};
+            row = fresh();
+            row.taken(word, from);
             much = room;
         }
     }
 
-    if (!line.empty()) into.push_back(std::move(line));
+    if (!row.text.empty()) into.push_back(std::move(row));
 }
 
-}
+// The rows of the text for a width of `wide`, wrapped when told so. An empty paragraph stays an
+// empty row instead of vanishing: it is a gap someone wrote on purpose.
+std::vector<Row> rows_of(std::string_view text, bool wrapped, int wide) {
+    if (text.empty()) return {};
 
-// The rows of the label for a width of `wide`, wrapped when the shape says so. An empty paragraph
-// stays an empty row instead of vanishing: it is a gap someone wrote on purpose.
-std::vector<std::string> Span::lines(int wide) const {
-    if (text_.empty()) return {};
+    std::vector<Row> made;
 
-    const std::vector<std::string> parts = parted(text_);
+    const std::vector<Paragraph> parts = parted(text);
 
-    if (!shape_.wrapped) return parts;
+    if (!wrapped) {
+        for (std::size_t line = 0; line < parts.size(); ++line) {
+            Row one;
+
+            one.line = line;
+            one.taken(parts[line].text, 0);
+
+            made.push_back(std::move(one));
+        }
+
+        return made;
+    }
 
     if (wide <= 0) return {};
 
-    std::vector<std::string> made;
+    for (std::size_t line = 0; line < parts.size(); ++line) {
+        if (parts[line].text.empty()) {
+            Row one;
 
-    for (const std::string& one : parts) {
-        if (one.empty()) {
-            made.emplace_back();
+            one.line = line;
+
+            made.push_back(std::move(one));
 
             continue;
         }
 
-        wrap_into(one, wide, made);
+        wrap_into(parts[line].text, line, wide, made);
     }
+
+    return made;
+}
+
+// The row shortened to `wide` with an ellipsis on the side `how` says, with what each byte came
+// from; the same cut as `elided`, which makes the text alone.
+Row elided_row(const Row& one, int wide, Elide how, char32_t mark) {
+    if (how == Elide::none || measured(one.text).wide <= wide) return one;
+
+    Row made;
+
+    made.line = one.line;
+
+    if (wide <= 0) return made;
+
+    const std::string dots = utf8::encode(mark);
+
+    // The head and the tail of the row kept whole, with where their bytes came from.
+    const auto head = [&one, &made](int room) {
+        const std::string kept = cut(one.text, room);
+
+        made.text += kept;
+        made.bytes.insert(made.bytes.end(), one.bytes.begin(), one.bytes.begin() + static_cast<std::ptrdiff_t>(kept.size()));
+    };
+
+    const auto tailed = [&one, &made](int room) {
+        const std::string kept = tail(one.text, room);
+
+        made.text += kept;
+        made.bytes.insert(made.bytes.end(), one.bytes.end() - static_cast<std::ptrdiff_t>(kept.size()), one.bytes.end());
+    };
+
+    if (wide == 1) {
+        made.added(dots);
+
+        return made;
+    }
+
+    if (how == Elide::right) {
+        head(wide - 1);
+        made.added(dots);
+    } else if (how == Elide::left) {
+        made.added(dots);
+        tailed(wide - 1);
+    } else {
+        const int half = (wide - 1) / 2;
+
+        head(half);
+        made.added(dots);
+        tailed(wide - 1 - half);
+    }
+
+    return made;
+}
+
+// A row as drawn: shortened, at its column, on its screen row.
+struct Placed {
+    Row row;
+    int x = 0;
+    int y = 0;
+};
+
+// The rows as they are drawn in `given`: shortened (`elided_row`) and justified. Rows below the
+// height are left out; `upto` stops earlier, so that painting reads no further than it shows.
+std::vector<Placed> placed(std::string_view text, const SpanShape& shape, Size given, char32_t mark, int upto) {
+    std::vector<Placed> made;
+
+    int y = 0;
+
+    for (const Row& one : rows_of(text, shape.wrapped, given.wide)) {
+        if (y >= given.high || y >= upto) break;
+
+        Placed it{elided_row(one, given.wide, shape.elide, mark), 0, y};
+
+        if (shape.justify != Justify::left) {
+            const int room = given.wide - measured(it.row.text).wide;
+
+            it.x = std::max(shape.justify == Justify::right ? room : room / 2, 0);
+        }
+
+        made.push_back(std::move(it));
+
+        ++y;
+    }
+
+    return made;
+}
+
+// Calls `each` for every cluster of a drawn row that came from the text, with its column, its
+// width, its glyph and the paragraph byte it came from, advancing as `View::put` does.
+template <typename Each>
+void walked(const Placed& one, Each each) {
+    int x = one.x;
+
+    for (std::size_t at = 0; at < one.row.text.size();) {
+        const std::size_t next = cluster_after(one.row.text, at);
+        const char32_t letter = glyph(std::string_view{one.row.text}.substr(at, next - at));
+
+        if (letter != 0) {
+            const int much = width(letter);
+
+            if (one.row.bytes[at] != nowhere) each(x, much, letter, one.row.bytes[at]);
+
+            x += much;
+        }
+
+        at = next;
+    }
+}
+
+// Whether the mark covers the paragraph byte of the line.
+bool covers(const Mark& one, std::size_t line, std::size_t byte) {
+    return one.line == line && byte >= one.from && byte < one.upto;
+}
+
+}
+
+// The rows of the label for a width of `wide`, wrapped when the shape says so.
+std::vector<std::string> Span::lines(int wide) const {
+    std::vector<std::string> made;
+
+    for (Row& one : rows_of(text_, shape_.wrapped, wide)) made.push_back(std::move(one.text));
 
     return made;
 }
@@ -166,9 +370,15 @@ Size Span::wants(Size room) const {
     return want;
 }
 
-// Draws the rows, elided and justified. Eliding and justifying happen only here, when drawing:
-// `wants` says how much the label really wants; if it returned the length after eliding, the
-// parent would never learn that space is too tight, and an elided label would stay elided forever.
+// Draws the rows, elided and justified, and the marks over them. Eliding and justifying happen only
+// here, when drawing: `wants` says how much the label really wants; if it returned the length after
+// eliding, the parent would never learn that space is too tight, and an elided label would stay
+// elided forever.
+//
+// A mark is laid over the cells of the text it covers: the letter stays, and the mark's role is
+// merged over the label's (`Style::merge`), so a role that sets only an underline keeps the colors.
+// A mark with an address also lays its hyperlink there. A mark over an ellipsis covers nothing:
+// what the ellipsis stands for is not shown.
 View Span::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -184,39 +394,66 @@ View Span::paint(Size given, Area seen) {
     const Style look = how.style(role());
     const char32_t mark = how.glyph("talcite.elide");
 
-    const std::vector<std::string> said = lines(given.wide);
+    // A row above the visible area is drawn into nothing and costs only its layout; for a scrolled
+    // label, the rows below it are not even laid out.
+    for (const Placed& one : placed(text_, shape_, given, mark, seen.at.y + seen.size.high)) {
+        if (one.y < seen.at.y) continue;
 
-    int y = 0;
+        const Spot at{-seen.at.x, one.y - seen.at.y};
 
-    for (const std::string& one : said) {
-        if (y >= given.high || y - seen.at.y >= seen.size.high) break;
+        made.put({one.x + at.x, at.y}, one.row.text, look);
 
-        // A row above the visible area is skipped without drawing; for a scrolled label this is
-        // the difference between twenty rows and all of them.
-        if (y < seen.at.y) {
-            ++y;
+        for (const Mark& marked : marks()) {
+            if (marked.line != one.row.line) continue;
 
-            continue;
+            const Style over = Style::merge(look, how.style(marked.role));
+            const Hyperlink target = marked.address.empty() ? Hyperlink{} : hyperlink(marked.address);
+
+            walked(one, [&](int x, int much, char32_t letter, std::size_t byte) {
+                if (!covers(marked, one.row.line, byte)) return;
+
+                const Spot spot{x + at.x, at.y};
+
+                made.put(spot, letter, over);
+
+                if (target.mark != 0) made.link({spot, {much, 1}}, target);
+            });
         }
-
-        const std::string shown = elided(one, given.wide, shape_.elide, mark);
-
-        int x = 0;
-
-        if (shape_.justify != Justify::left) {
-            const int room = given.wide - measured(shown).wide;
-
-            x = shape_.justify == Justify::right ? room : room / 2;
-
-            if (x < 0) x = 0;
-        }
-
-        made.put({x - seen.at.x, y - seen.at.y}, shown, look);
-
-        ++y;
     }
 
     return made;
+}
+
+// A click with the left button on a mark with an address follows it (`FollowingNode::followed`); a
+// click with Ctrl is the terminal's, and a click anywhere else is not the label's, so it goes on to
+// whoever holds the label.
+bool Span::handle(ClickEvent& what) {
+    if (what.mods().ctrl || what.button() != Mouse::left) return false;
+
+    const Spot at = local(what.where());
+
+    std::optional<std::string> found;
+
+    for (const Placed& one : placed(text_, shape_, area().size, skin().glyph("talcite.elide"), at.y + 1)) {
+        if (one.y != at.y) continue;
+
+        walked(one, [&](int x, int much, char32_t, std::size_t byte) {
+            if (found || at.x < x || at.x >= x + much) return;
+
+            for (const Mark& marked : marks())
+                if (!marked.address.empty() && covers(marked, one.row.line, byte)) {
+                    found = marked.address;
+
+                    return;
+                }
+        });
+    }
+
+    if (!found) return false;
+
+    followed(std::move(*found));
+
+    return true;
 }
 
 }

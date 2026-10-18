@@ -590,15 +590,17 @@ TRIAL("View: a hyperlink marks the cells that show something, and the list keeps
     same(one.links().size(), std::size_t{1});
 }
 
-// Every link has a mark of its own, never zero, so that frames tell two links, and a link with a new
-// address, apart.
-TRIAL("View: two hyperlinks get two marks, none of them zero") {
+// One address keeps one mark, frame after frame and whoever draws it, so that frames compare equal;
+// two addresses never share one, so that a new address rewrites the cells. None is zero.
+TRIAL("View: one address keeps its hyperlink mark, two addresses get two") {
     const Hyperlink one = hyperlink("https://a.example/");
-    const Hyperlink two = hyperlink("https://a.example/");
+    const Hyperlink again = hyperlink("https://a.example/");
+    const Hyperlink two = hyperlink("https://b.example/");
 
     ought(one.mark != 0);
+    same(again.mark, one.mark);
+    ought(two.mark != one.mark);
     ought(two.mark != 0);
-    ought(one.mark != two.mark);
 }
 
 // Composing carries the mark with the cell and the address with the list; whatever is put over a
