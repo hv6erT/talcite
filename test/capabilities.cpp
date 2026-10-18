@@ -322,6 +322,48 @@ TRIAL("Capabilities: TERM dumb means nothing") {
     ought(!told.titles());
 }
 
+// Hyperlinks have no question a terminal answers, so the floor decides: every terminal that skips an
+// OSC it does not know takes them, and dumb takes nothing. The Linux console prints what follows
+// `Esc ]` unless it is a palette command, so there they would come out as text. On Windows the
+// console decides: only one that takes escape sequences gets them.
+TRIAL("Capabilities: hyperlinks wherever an unknown OSC is skipped, not on the Linux console") {
+#ifdef _WIN32
+    const bool sequences = true;
+#else
+    const bool sequences = false;
+#endif
+
+    auto line = mute(sequences);
+
+    line->environment["TERM"] = "xterm-256color";
+
+    ought(Taped{line}.links());
+
+    auto kernel = mute(sequences);
+
+    kernel->environment["TERM"] = "linux";
+
+#ifdef _WIN32
+    ought(Taped{kernel}.links());
+#else
+    ought(!Taped{kernel}.links());
+#endif
+
+    auto dumb = mute(sequences);
+
+    dumb->environment["TERM"] = "dumb";
+
+    ought(!Taped{dumb}.links());
+
+#ifdef _WIN32
+    auto old = mute(false);
+
+    old->environment["TERM"] = "xterm-256color";
+
+    ought(!Taped{old}.links());
+#endif
+}
+
 // On this path the console decides, not TERM, and only here, because all the earlier branches
 // (NO_COLOR, COLORTERM, 256, dumb) end before the console is asked. The fake supplies the console's
 // answer, so both sides of this decision are checked on every system, and the result does not

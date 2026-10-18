@@ -3,11 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -70,6 +73,7 @@ struct Term::Held {
     std::vector<std::pair<std::uint32_t, std::weak_ptr<const Pixels>>> sent;
 
     Style now;
+    std::uint32_t linked = 0;
     ui::Spot at{-1, -1};
     bool showing = false;
 
@@ -272,15 +276,82 @@ void written(char32_t letter, std::string& into) {
     else into += spelled(letter);
 }
 
+// The longest address that goes to the terminal as a hyperlink, in bytes once escaped. Terminals
+// keep a link's address in their own limits and cut or drop a longer one without a word; this is
+// the limit of the strictest of them (VTE), and what is longer stays plain text.
+constexpr std::size_t farthest = 2083;
+
+// The address as a hyperlink may carry it, or nothing for an empty one or one above `farthest`.
+// OSC 8 takes only printable ASCII, so every other byte (a space, a control character, each byte of
+// a multibyte character) goes as %XX, the way an address is written anyway; an escape or a BEL can
+// thus never end the control string early.
+std::optional<std::string> addressed(std::string_view address) {
+    static constexpr char digits[] = "0123456789ABCDEF";
+
+    if (address.empty()) return std::nullopt;
+
+    std::string made;
+
+    for (const char letter : address) {
+        const auto one = static_cast<unsigned char>(letter);
+
+        if (one > 0x20 && one < 0x7F) {
+            made += letter;
+        } else {
+            made += '%';
+            made += digits[one >> 4];
+            made += digits[one & 0x0F];
+        }
+    }
+
+    if (made.size() > farthest) return std::nullopt;
+
+    return made;
+}
+
+// The hyperlinks of a frame the terminal is given, by mark, with their addresses as OSC 8 carries
+// them; none when the terminal does not take them.
+using Addresses = std::map<std::uint32_t, std::string>;
+
+// The addresses of the frame's hyperlinks (`addressed`), when links go to the terminal at all.
+Addresses addresses_of(const View& made, bool linking) {
+    Addresses found;
+
+    if (!linking) return found;
+
+    for (const Hyperlink& one : made.links())
+        if (std::optional<std::string> written = addressed(one.address)) found.emplace(one.mark, std::move(*written));
+
+    return found;
+}
+
+// The hyperlink a cell is written under: its mark when the frame has an address for it, otherwise
+// none.
+std::uint32_t link_of(const Cell& one, const Addresses& known) { return known.contains(one.link) ? one.link : 0; }
+
+// Appends the switch to the hyperlink `mark` (OSC 8 with the mark as its id), or its end for zero.
+// A link is a state of the terminal like the style: it covers every character written until the
+// next switch, wherever the cursor jumps in between.
+void linking(std::uint32_t mark, const Addresses& known, std::string& into) {
+    if (mark == 0) {
+        into += "\x1b]8;;\x1b\\";
+
+        return;
+    }
+
+    into += "\x1b]8;id=" + std::to_string(mark) + ";" + known.at(mark) + "\x1b\\";
+}
+
 // The longest gap between changed cells that is rewritten rather than jumped over.
 constexpr int nearby = 4;
 
 // Rewrites the cells [from, upto) of row `y` instead of jumping over them, when that is possible;
 // returns whether it did. A cursor jump costs several bytes, a character one. A short gap between
 // changed cells is cheaper to rewrite than to jump over, provided the rewritten cells come out
-// exactly as they already are: the same style as the current one, no double-width character and
-// nothing that is only its continuation.
-bool bridged(const View& made, int y, int from, int upto, const Style& now, std::string& into) {
+// exactly as they already are: the same style and the same hyperlink as the current ones, no
+// double-width character and nothing that is only its continuation.
+bool bridged(const View& made, int y, int from, int upto, const Style& now, std::uint32_t linked, const Addresses& known,
+             std::string& into) {
     if (upto - from > nearby) return false;
 
     for (int x = from; x < upto; ++x) {
@@ -288,7 +359,7 @@ bool bridged(const View& made, int y, int from, int upto, const Style& now, std:
 
         if (one.letter == 0 || width(one.letter) == 2) return false;
 
-        if (!(one.style == now)) return false;
+        if (!(one.style == now) || link_of(one, known) != linked) return false;
     }
 
     for (int x = from; x < upto; ++x) written(made.at({x, y}).letter, into);
@@ -349,6 +420,9 @@ Rendering drawn(const Capabilities& compat, Rendering was) {
 
     return made;
 }
+
+// Whether hyperlinks go to the terminal.
+bool links(const Capabilities& compat, const Setup& wish) { return wish.links.value_or(compat.links()); }
 
 // Whether the window title may be set.
 bool titles(const Capabilities& compat, const Setup& wish) {
@@ -741,6 +815,10 @@ void Term::draw() {
 
     const Colors palette = colors();
 
+    // The frame's hyperlinks by mark. A cell under a link the terminal is not given is written as
+    // plain text, and so is every cell when the terminal takes no links.
+    const Addresses known = addresses_of(made, links(held.compat, held.wish));
+
     for (int y = 0; y < made.size().high; ++y)
         for (int x = 0; x < made.size().wide; ++x) {
             const Cell one = made.at({x, y});
@@ -752,7 +830,7 @@ void Term::draw() {
 
             if (!(held.at == ui::Spot{x, y})) {
                 if (held.at.y != y || held.at.x < 0 || held.at.x > x ||
-                    !bridged(made, y, held.at.x, x, held.now, into))
+                    !bridged(made, y, held.at.x, x, held.now, held.linked, known, into))
                     placed({x, y}, into);
 
                 held.at = ui::Spot{x, y};
@@ -762,6 +840,12 @@ void Term::draw() {
                 painted(one.style, palette, into);
 
                 held.now = one.style;
+            }
+
+            if (const std::uint32_t link = link_of(one, known); link != held.linked) {
+                linking(link, known, into);
+
+                held.linked = link;
             }
 
             written(one.letter, into);
@@ -774,6 +858,15 @@ void Term::draw() {
             // next character gets its own jump.
             if (held.at.x >= made.size().wide) held.at = ui::Spot{-1, -1};
         }
+
+    // No link stays open past the frame: whatever reaches the terminal outside a frame (a title,
+    // a copy through OSC 52, another program after stepping aside, the shell after the end) must
+    // not land inside one. The next frame opens it again where its cells need it.
+    if (held.linked != 0) {
+        linking(0, known, into);
+
+        held.linked = 0;
+    }
 
     // After an image the cursor stands wherever the terminal put it; the next character gets its
     // own jump.

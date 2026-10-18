@@ -20,9 +20,17 @@ struct Cell {
     Style style;
     Shown shown = Shown::own;
     std::uint32_t picture = 0;
+    std::uint32_t link = 0;
 
     friend constexpr bool operator==(Cell, Cell) = default;
 };
+
+struct Hyperlink {
+    std::uint32_t mark = 0;
+    std::string address;
+};
+
+[[nodiscard]] Hyperlink hyperlink(std::string address);
 
 class Pixels;
 
@@ -67,6 +75,10 @@ public:
 
     [[nodiscard]] const std::vector<Picture>& pictures() const { return pictures_; }
 
+    void link(const ui::Area& where, Hyperlink what);
+
+    [[nodiscard]] const std::vector<Hyperlink>& links() const { return links_; }
+
     [[nodiscard]] std::vector<Placement> bared(const ui::Area& room);
 
     [[nodiscard]] Cell at(ui::Spot where) const;
@@ -81,6 +93,7 @@ private:
     ui::Size size_;
     std::vector<Cell> cells_;
     std::vector<Picture> pictures_;
+    std::vector<Hyperlink> links_;
 };
 
 }

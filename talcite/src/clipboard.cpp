@@ -3,6 +3,8 @@
 #include "talcite/encoding.hpp"
 #include "talcite/fs.hpp"
 
+#include "remoting.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -101,14 +103,6 @@ bool sent(Console& out, std::string_view what) {
     out.write("\x1b]52;c;" + sixed(what) + "\x07");
 
     return true;
-}
-
-// Over ssh the clipboard of this process is the clipboard of a machine other than the one the user
-// sits at. Then the only correct way is to ask the terminal. The environment is read from the
-// console, because the console knows where the user sits, and thanks to that a test can pretend to
-// be ssh on any system.
-bool remote(const Console& from) {
-    return from.variable("SSH_CONNECTION").has_value() || from.variable("SSH_TTY").has_value();
 }
 
 // The files as text, one path per line: what a text paste gets after files were copied, the same

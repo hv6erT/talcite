@@ -718,3 +718,124 @@ TRIAL("Term: text with an escape sequence does not command the terminal") {
     ought(!holds(said, "\x07"));
     ought(holds(said, "\xe2\x90\x9b]52;c;"));
 }
+
+// --- Hyperlinks ----------------------------------------------------------------------------------
+
+namespace {
+
+// A root with the word "go" at (1, 0) under a hyperlink, and "x" after it, outside the link.
+class Linking : public ui::Root {
+public:
+    explicit Linking(std::string address) : target(hyperlink(std::move(address))) {}
+
+    Hyperlink target;
+
+protected:
+    // Puts "go" with its link and the plain "x" on an otherwise empty page.
+    View paint(ui::Size given, ui::Area seen) override {
+        (void)seen;
+
+        View made{given};
+
+        made.put({1, 0}, "go x", Style{});
+        made.link({{1, 0}, {2, 1}}, target);
+
+        return made;
+    }
+};
+
+// What `Term` writes for one frame of the root, after the probe.
+std::string linked(const std::shared_ptr<faking::Terminal>& line, Linking& root, Setup given = {}) {
+    Term term{std::move(given), Seam<Console>{line}};
+
+    term.show(root);
+
+    line->written.clear();
+
+    term.draw();
+
+    return line->written;
+}
+
+}
+
+// The link opens right before its first cell, with its mark as the id, and ends right after its last
+// one, before the plain text; an address goes out in printable ASCII, every other byte escaped.
+TRIAL("Term: a hyperlink goes out as OSC 8 around its cells, its address escaped") {
+    Linking root{"https://example.org/a b/\xc3\xbc"};
+
+    const std::string said = linked(faking::terminal(), root);
+
+    const std::string opening = "\x1b]8;id=" + std::to_string(root.target.mark) + ";https://example.org/a%20b/%C3%BC\x1b\\";
+    const std::string closing = "\x1b]8;;\x1b\\";
+
+    const std::size_t opened = said.find(opening);
+    const std::size_t word = said.find("go");
+    const std::size_t closed = said.find(closing);
+    const std::size_t after = said.find('x', word);
+
+    ought(opened != std::string::npos);
+    ought(opened < word);
+    ought(word < closed);
+    ought(closed < after);
+    ought(said.find("\x1b]8", closed + closing.size()) == std::string::npos);
+}
+
+// A terminal that is not given links gets the cells as plain text: forbidden in `Setup`, on the
+// Linux console, and for an address longer than terminals keep.
+TRIAL("Term: without hyperlinks the cells go out as plain text") {
+    Setup forbidding;
+
+    forbidding.links = false;
+
+    Linking root{"https://example.org/"};
+
+    const std::string forbidden = linked(faking::terminal(), root, forbidding);
+
+    ought(!holds(forbidden, "\x1b]8"));
+    ought(holds(forbidden, "go"));
+
+    auto kernel = faking::terminal();
+
+    kernel->environment["TERM"] = "linux";
+
+#ifndef _WIN32
+    ought(!holds(linked(kernel, root), "\x1b]8"));
+#endif
+
+    Linking far{"https://example.org/" + std::string(3000, 'a')};
+
+    const std::string long_one = linked(faking::terminal(), far);
+
+    ought(!holds(long_one, "\x1b]8"));
+    ought(holds(long_one, "go"));
+}
+
+// A link is part of the cell for comparing frames: the same frame again sends nothing, and a new
+// address, which comes with a new mark, rewrites the link's cells under it.
+TRIAL("Term: the same link sends nothing again, a new address rewrites its cells") {
+    auto line = faking::terminal();
+
+    Linking root{"https://example.org/one"};
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+    term.draw();
+
+    line->written.clear();
+
+    term.draw();
+
+    same(line->written, std::string{});
+
+    root.target = hyperlink("https://example.org/two");
+
+    term.draw();
+
+    ought(holds(line->written, "\x1b]8;id=" + std::to_string(root.target.mark) + ";https://example.org/two\x1b\\go"));
+
+    const std::string tail = std::string{"go"} + "\x1b]8;;\x1b\\";
+
+    ought(line->written.size() >= tail.size() && line->written.compare(line->written.size() - tail.size(), tail.size(), tail) == 0);
+}

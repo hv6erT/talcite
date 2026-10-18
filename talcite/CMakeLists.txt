@@ -39,8 +39,9 @@ target_link_libraries(talcite PUBLIC Threads::Threads)
 # advapi32: access lists of files (owner-only permissions from `fs::rights`); in every Windows.
 # crypt32: a secret readable only by this user (`shielded`: CryptProtectData, DPAPI); in every
 # Windows.
-# shell32 and ole32: known folders (`fs::folder`: SHGetKnownFolderPath and CoTaskMemFree) and the
-# program's arguments in wide form (`arguments`: CommandLineToArgvW).
+# shell32 and ole32: known folders (`fs::folder`: SHGetKnownFolderPath and CoTaskMemFree), the
+# program's arguments in wide form (`arguments`: CommandLineToArgvW), and opening an address in its
+# program (`launcher`: ShellExecuteW, with COM around it).
 # normaliz: NormalizeString, which composes a letter with its marks for the old console, whose cell
 # holds one UTF-16 unit; present since Vista.
 if(WIN32)

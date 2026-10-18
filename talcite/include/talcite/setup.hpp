@@ -22,6 +22,7 @@ struct Setup {
     std::optional<bool> bracketed_paste;
     std::optional<bool> synchronized;
     std::optional<bool> titles;
+    std::optional<bool> links;
 };
 
 }

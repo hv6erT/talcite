@@ -115,6 +115,12 @@ Styles building() {
         {"talcite.button.key", lined()},
         {"talcite.button.disabled", faded()},
 
+        // A link is underlined, as links are everywhere, and that shows on every terminal; in focus
+        // it is reversed like any other focus, with the underline kept, so it stays a link.
+        {"talcite.link", lined()},
+        {"talcite.link.focus", pointed()},
+        {"talcite.link.disabled", faded()},
+
         // A message has its own family of roles, not the same as the rest of the window: an error
         // box looks different from an ordinary window, and one role cannot be red and navy at once.
         // The buttons in a message repeat the values of ordinary ones, so the built-in skin shows

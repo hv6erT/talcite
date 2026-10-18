@@ -46,6 +46,7 @@ public:
     [[nodiscard]] bool synchronized() const;
     [[nodiscard]] bool unicode() const;
     [[nodiscard]] bool titles() const;
+    [[nodiscard]] bool links() const;
 
     [[nodiscard]] int wide() const;
     [[nodiscard]] int varied() const;

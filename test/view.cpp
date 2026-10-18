@@ -1,5 +1,7 @@
 #include "proving.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -560,4 +562,77 @@ TRIAL("View: control characters become visible instead of being executed") {
 
     same(shown(0), char32_t{0x2400});
     same(shown(0x1F), char32_t{0x241F});
+}
+
+// --- Hyperlinks ----------------------------------------------------------------------------------
+
+// A link marks the cells that show something and keeps its address in the list; a cell the node did
+// not draw stays without it, so a link never reaches over what lies below.
+TRIAL("View: a hyperlink marks the cells that show something, and the list keeps its address") {
+    View one{{6, 1}};
+
+    one.clear({{0, 0}, {6, 1}});
+    one.put({0, 0}, "abc", Style{});
+
+    const Hyperlink made = hyperlink("https://example.org/");
+
+    one.link({{0, 0}, {5, 1}}, made);
+
+    same(one.at({0, 0}).link, made.mark);
+    same(one.at({2, 0}).link, made.mark);
+    same(one.at({3, 0}).link, std::uint32_t{0});
+    same(one.links().size(), std::size_t{1});
+    same(one.links().front().address, std::string{"https://example.org/"});
+
+    // The same link once more is one entry, not two.
+    one.link({{0, 0}, {1, 1}}, made);
+
+    same(one.links().size(), std::size_t{1});
+}
+
+// Every link has a mark of its own, never zero, so that frames tell two links, and a link with a new
+// address, apart.
+TRIAL("View: two hyperlinks get two marks, none of them zero") {
+    const Hyperlink one = hyperlink("https://a.example/");
+    const Hyperlink two = hyperlink("https://a.example/");
+
+    ought(one.mark != 0);
+    ought(two.mark != 0);
+    ought(one.mark != two.mark);
+}
+
+// Composing carries the mark with the cell and the address with the list; whatever is put over a
+// cell takes the mark away, and a shadow keeps it, since the text below it stays.
+TRIAL("View: a hyperlink goes up with the cells, a cover takes it away and a shadow keeps it") {
+    View child{{3, 1}};
+
+    child.put({0, 0}, "abc", Style{});
+
+    const Hyperlink made = hyperlink("https://example.org/");
+
+    child.link({{0, 0}, {3, 1}}, made);
+
+    View page{{8, 1}};
+
+    page.draw(child, {2, 0});
+
+    same(page.at({2, 0}).link, made.mark);
+    same(page.at({4, 0}).link, made.mark);
+    same(page.links().size(), std::size_t{1});
+
+    page.put({2, 0}, U'x', Style{});
+
+    same(page.at({2, 0}).link, std::uint32_t{0});
+
+    View shadow{{1, 1}};
+
+    shadow.shade({{0, 0}, {1, 1}}, Style{});
+
+    page.draw(shadow, {3, 0});
+
+    same(page.at({3, 0}).link, made.mark);
+
+    page.clear({{4, 0}, {1, 1}});
+
+    same(page.at({4, 0}).link, std::uint32_t{0});
 }

@@ -1,6 +1,7 @@
 #include "talcite/view.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include "talcite/encoding.hpp"
@@ -34,6 +35,18 @@ Style Style::merge(Style base, Style over) {
     made.crossed = base.crossed || over.crossed;
 
     return made;
+}
+
+// A hyperlink to `address` under a mark of its own. The mark is what the cells carry and what
+// comparing frames sees, so it is never reused within the process: a link that changes its address
+// takes a new one, otherwise its cells would equal the old ones and the terminal would keep the old
+// address. It also goes to the terminal as the link's id, by which a terminal lights up the whole
+// link under the pointer, also when it spans several rows. Zero is no link, so the count starts at
+// one.
+Hyperlink hyperlink(std::string address) {
+    static std::atomic<std::uint32_t> issued{0};
+
+    return Hyperlink{++issued, std::move(address)};
 }
 
 // Text is measured in cells, not in characters or bytes: a letter with a diacritic counts as
@@ -210,10 +223,15 @@ void View::clear(const ui::Area& where) {
 void View::draw(const View& one, ui::Spot at) {
     // Pictures go up together with the cells. Where they stand is told by the cells, not by the
     // list (the list only says what to draw them with), so there is nothing in it to shift or clip.
+    // Hyperlinks the same way: the cells say where a link stands, the list what its address is.
     for (const Picture& one_picture : one.pictures_)
         if (std::none_of(pictures_.begin(), pictures_.end(),
                          [&one_picture](const Picture& mine) { return mine.mark == one_picture.mark; }))
             pictures_.push_back(one_picture);
+
+    for (const Hyperlink& one_link : one.links_)
+        if (std::none_of(links_.begin(), links_.end(), [&one_link](const Hyperlink& mine) { return mine.mark == one_link.mark; }))
+            links_.push_back(one_link);
 
     const int from_x = std::max(at.x, 0);
     const int from_y = std::max(at.y, 0);
@@ -331,6 +349,28 @@ void View::picture(const ui::Area& where, Picture what) {
     std::erase_if(pictures_, [&what](const Picture& one) { return one.mark == what.mark; });
 
     pictures_.push_back(std::move(what));
+}
+
+// A hyperlink over `where`: its cells carry the link's mark, and the list keeps the address. Only
+// cells that show something take it; a cell the node did not draw stays as it is, so a link never
+// reaches over what lies below. Whatever is put over a cell afterwards (`put`, `fill`, `clear`, a
+// window drawn over it) takes the mark away with the old content, and a shadow keeps it, since the
+// text below it stays what it was, only dimmed.
+void View::link(const ui::Area& where, Hyperlink what) {
+    if (what.mark == 0) return;
+
+    for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
+        for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
+            if (!holds({x, y})) continue;
+
+            Cell& one = cell({x, y});
+
+            if (one.shown == Shown::own || one.shown == Shown::foreground) one.link = what.mark;
+        }
+
+    std::erase_if(links_, [&what](const Hyperlink& one) { return one.mark == what.mark; });
+
+    links_.push_back(std::move(what));
 }
 
 // A picture visible in full (every cell of its rectangle carries its mark, and the rectangle lies
