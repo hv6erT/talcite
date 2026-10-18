@@ -11,6 +11,7 @@
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
 #include "talcite/scroll.hpp"
+#include "talcite/submenu.hpp"
 
 #include "doing.hpp"
 
@@ -118,6 +119,20 @@ int main() {
     niedostepna->keys().add(U'p');
     niedostepna->enabled(false);
     view->children().add(niedostepna);
+
+    // A submenu: a group of items in a list of its own, opened with the right arrow, Enter, its
+    // letter or a click, and closed with the left arrow or Esc. Meant for groups that would make a
+    // menu too tall, not for every few items.
+    const auto sorted = std::make_shared<talcite::ui::Submenu>("Sort by");
+
+    sorted->keys().add(U's');
+
+    for (const char* by : {"Name", "Size", "Time"})
+        sorted->menu().children().add(demo::doing(heard, std::make_shared<talcite::ui::MenuItem>(by),
+                                                  [said, by] { said->text(std::string{"sorted by: "} + by); }));
+
+    view->children().add(std::make_shared<talcite::ui::MenuSeparator>());
+    view->children().add(sorted);
 
     const auto help = window->add("Help");
 

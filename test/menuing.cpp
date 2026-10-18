@@ -13,6 +13,7 @@
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
+#include "talcite/submenu.hpp"
 
 using namespace talcite;
 
@@ -1792,4 +1793,413 @@ TRIAL("Menu: double-width characters widen the box by the width of the sides") {
     same(read(made, 3), std::string{"卜一一一一一一一卜"});
     same(read(made, 4), std::string{"丨 Wyjście  F10 丨"});
     same(read(made, 5), std::string{"口一一一一一一一口"});
+}
+
+namespace {
+
+// A bar with one menu, "Plik", drawn without a shadow, whose first item is the submenu "Biblioteka"
+// with the hint "Filmy" and the list "Ustawienia", "Historia", and whose second item is "Wyjście".
+// The trial gets the parts it asks about.
+struct Cascade {
+    std::shared_ptr<ui::Menubar> window = std::make_shared<ui::Menubar>();
+    std::shared_ptr<ui::Menu> menu;
+    std::shared_ptr<ui::Submenu> deeper = std::make_shared<ui::Submenu>("Biblioteka", "Filmy");
+    std::shared_ptr<ui::MenuItem> settings = std::make_shared<ui::MenuItem>("Ustawienia");
+    std::shared_ptr<ui::MenuItem> history = std::make_shared<ui::MenuItem>("Historia");
+    std::shared_ptr<ui::MenuItem> quit = std::make_shared<ui::MenuItem>("Wyjście");
+
+    // Puts the bar together in `top`, with the box `body` as its content.
+    Cascade(ui::Root& top, const std::shared_ptr<ui::Node>& body) {
+        window->keys().add(ui::Key{ui::Code::f9});
+        menu = window->add("Plik", ui::MenuShape{ui::Border::thin, false});
+
+        deeper->menu().children().add(settings);
+        deeper->menu().children().add(history);
+
+        menu->children().add(deeper);
+        menu->children().add(quit);
+
+        window->content(body);
+        top.children().add(window);
+    }
+};
+
+// Sends one key to the root.
+bool pressed(ui::Root& top, ui::KeyEvent what) { return top.dispatch(what); }
+
+}
+
+TRIAL("Submenu: the right arrow opens the list beside the item, with its first item in the item's row") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    top.unicode(true);
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(made.deeper->focused());
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+
+    ought(made.deeper->menu().opened());
+    ought(made.menu->opened());
+    ought(made.settings->focused());
+
+    const View seen = top.render({{0, 0}, {40, 8}});
+
+    same(read(seen, 1), std::string{"┌─────────────────────┌────────────┐"});
+    same(read(seen, 2), std::string{"│ Biblioteka  Filmy ▸ │ Ustawienia │"});
+    same(read(seen, 3), std::string{"│ Wyjście             │ Historia   │"});
+    same(read(seen, 4), std::string{"└─────────────────────└────────────┘"});
+}
+
+TRIAL("Submenu: Esc and the left arrow close the list alone and give the focus back to the item") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    for (const ui::Code key : {ui::Code::escape, ui::Code::left}) {
+        ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+        ought(made.deeper->menu().opened());
+
+        ought(pressed(top, ui::KeyEvent{key}));
+
+        ought(!made.deeper->menu().opened());
+        ought(made.menu->opened());
+        ought(made.deeper->focused());
+        same(made.menu->which(), std::optional<std::size_t>{0});
+    }
+
+    // The second Esc is the bar's again: it leaves, and the focus goes back to the content.
+    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+
+    ought(!made.menu->opened());
+    ought(body->focused());
+}
+
+TRIAL("Submenu: Enter on an item of the list picks it and leaves the bar") {
+    proving::Hooks heard;
+
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    int done = 0;
+
+    (void)proving::doing(heard, made.history, [&done] { ++done; });
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::enter}));
+    ought(made.deeper->menu().opened());
+    same(done, 0);
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::down}));
+    ought(made.history->focused());
+    ought(pressed(top, ui::KeyEvent{ui::Code::enter}));
+
+    same(done, 1);
+    ought(!made.deeper->menu().opened());
+    ought(!made.menu->opened());
+    ought(body->focused());
+    same(made.window->children().many(), std::size_t{1});
+}
+
+TRIAL("Submenu: picking it fires no PickEvent of its own") {
+    proving::Hooks heard;
+
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    int done = 0;
+
+    (void)proving::doing(heard, made.deeper, [&done] { ++done; });
+
+    made.menu->open();
+    made.deeper->pick();
+
+    same(done, 0);
+    ought(made.deeper->menu().opened());
+}
+
+TRIAL("Submenu: the right arrow in the list goes on to the next menu of the bar") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    const auto second = made.window->add("Widok");
+
+    second->children().add(std::make_shared<ui::MenuItem>("Odśwież"));
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    ought(made.deeper->menu().opened());
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+
+    ought(!made.deeper->menu().opened());
+    ought(!made.menu->opened());
+    ought(second->opened());
+    same(made.window->children().many(), std::size_t{2});
+
+    // Esc then leaves the bar for the content, which had the focus before the bar was entered.
+    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    ought(body->focused());
+}
+
+TRIAL("Submenu: a letter and a click open the list") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    made.deeper->keys().add(U'b');
+
+    body->focus();
+    made.menu->open();
+    made.menu->which(1);
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(pressed(top, ui::KeyEvent{U'b'}));
+    ought(made.deeper->menu().opened());
+    ought(made.menu->opened());
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    ought(!made.deeper->menu().opened());
+
+    made.menu->which(1);
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ui::ClickEvent what{{3, 2}, ui::Mouse::left};
+
+    ought(top.dispatch(what));
+    ought(made.deeper->menu().opened());
+    ought(made.settings->focused());
+}
+
+TRIAL("Submenu: another item of the menu closes the list") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    body->focus();
+    made.menu->open();
+    made.deeper->pick();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(made.deeper->menu().opened());
+
+    ui::MouseEvent over{{3, 3}, ui::Press::move, ui::Mouse::none};
+
+    (void)top.dispatch(over);
+
+    ought(made.quit->focused());
+    ought(!made.deeper->menu().opened());
+    ought(made.menu->opened());
+}
+
+TRIAL("Submenu: while its list is open, the item stays highlighted") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    made.menu->open();
+    made.deeper->pick();
+
+    const View seen = top.render({{0, 0}, {40, 8}});
+
+    ought(!made.deeper->focused());
+    ought(seen.at({3, 2}).style == top.skin().style("talcite.menu.focus"));
+    ought(seen.at({3, 3}).style == top.skin().style("talcite.menu"));
+}
+
+TRIAL("Submenu: closing the menu or leaving the bar closes the list") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    made.menu->open();
+    made.deeper->pick();
+
+    made.menu->close();
+
+    ought(!made.deeper->menu().opened());
+    same(made.window->children().many(), std::size_t{1});
+
+    made.menu->open();
+    made.deeper->pick();
+
+    body->focus();
+
+    ought(!made.deeper->menu().opened());
+    ought(!made.menu->opened());
+    same(made.window->children().many(), std::size_t{1});
+}
+
+TRIAL("Submenu: at the right edge the list opens on the left, its right border over the menu's left") {
+    ui::Root top;
+
+    const auto window = std::make_shared<ui::Menubar>();
+    const auto first = window->add("Plik");
+    const auto middle = window->add("Edycja");
+    const auto second = window->add("Widok", ui::MenuShape{ui::Border::thin, false});
+    const auto deeper = std::make_shared<ui::Submenu>("Biblioteka");
+
+    first->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
+    middle->children().add(std::make_shared<ui::MenuItem>("Wytnij"));
+    deeper->menu().children().add(std::make_shared<ui::MenuItem>("Ustawienia"));
+    second->children().add(deeper);
+    top.children().add(window);
+
+    second->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    deeper->pick();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    const ui::Area menu = second->area();
+    const ui::Area list = deeper->menu().area();
+
+    ought(menu.at.x + menu.size.wide + list.size.wide > 40);
+    same(list.at.x + list.size.wide - 1, menu.at.x);
+    same(list.at.y, menu.at.y);
+}
+
+TRIAL("Submenu: a disabled one does not open, and the arrows pass over it") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    made.deeper->enabled(false);
+
+    made.menu->open();
+
+    ought(made.quit->focused());
+
+    made.deeper->pick();
+
+    ought(!made.deeper->menu().opened());
+}
+
+TRIAL("Submenu: the mark has a plain form, and the hint stands before it") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    top.unicode(false);
+    made.menu->open();
+
+    const View seen = top.render({{0, 0}, {40, 8}});
+
+    same(read(seen, 2), std::string{"│ Biblioteka  Filmy > │"});
+}
+
+TRIAL("Submenu: a list whose item went away is closed by the bar") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 8}, U' ');
+    Cascade made{top, body};
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 8}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+
+    std::weak_ptr<ui::Submenu> gone = made.deeper;
+
+    (void)made.menu->children().remove(made.deeper.get());
+    made.deeper.reset();
+
+    ought(gone.expired());
+    same(made.window->children().many(), std::size_t{3});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+
+    same(made.window->children().many(), std::size_t{1});
+    ought(body->focused());
+}
+
+TRIAL("Submenu: a list inside a list closes from the deepest, and the menu takes all of them") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{60, 10}, U' ');
+    Cascade made{top, body};
+
+    const auto deepest = std::make_shared<ui::Submenu>("Więcej");
+    const auto last = std::make_shared<ui::MenuItem>("Ostatnia");
+
+    deepest->menu().children().add(last);
+    made.deeper->menu().children().add(deepest);
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {60, 10}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    ought(pressed(top, ui::KeyEvent{ui::Code::up}));
+    ought(deepest->focused());
+
+    (void)top.render({{0, 0}, {60, 10}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    ought(last->focused());
+    same(made.window->children().many(), std::size_t{4});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    ought(deepest->focused());
+    ought(made.deeper->menu().opened());
+
+    deepest->pick();
+    made.menu->close();
+
+    same(made.window->children().many(), std::size_t{1});
+    ought(!deepest->menu().opened());
+}
+
+TRIAL("Submenu: the bar does not take a menu that is not its own") {
+    ui::Menubar window;
+
+    bool threw = false;
+
+    try {
+        window.children().add(std::make_shared<ui::Menu>("Obce"));
+    } catch (const std::logic_error&) {
+        threw = true;
+    }
+
+    ought(threw);
+    same(static_cast<int>(window.children().many()), 1);
 }

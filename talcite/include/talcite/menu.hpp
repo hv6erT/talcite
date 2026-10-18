@@ -13,6 +13,7 @@ namespace talcite::ui {
 
 class MenuItem;
 class Menubar;
+class Submenu;
 
 class Menu : public KeyedNode<Node> {
 public:
@@ -74,6 +75,7 @@ protected:
 private:
     friend class Menubar;
     friend class MenuTitle;
+    friend class Submenu;
 
     [[nodiscard]] Size fold() const;
 
@@ -83,11 +85,14 @@ private:
 
     void aim(int given);
 
+    void shut(const Node* kept);
+
     std::string title_;
     MenuShape shape_;
     int which_ = -1;
     Menubar* bar_ = nullptr;
     Node* head_ = nullptr;
+    Submenu* owner_ = nullptr;
 };
 
 }

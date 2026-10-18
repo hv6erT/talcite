@@ -24,7 +24,7 @@ public:
 
     void hint(std::string given) { hint_ = std::move(given); }
 
-    void pick();
+    virtual void pick();
 
     [[nodiscard]] Size wants(Size room) const override;
 

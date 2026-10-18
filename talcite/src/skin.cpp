@@ -246,6 +246,15 @@ Glyphs glyphing() {
         {"talcite.diff.closed", U'▸'}, {"talcite.diff.open", U'▾'},
     };
 
+    // The mark of a submenu has a plain form of its own: a terminal without Unicode gets ">", the
+    // way it gets "+" for a corner.
+    Signs more;
+
+    more.ascii = U'>';
+    more.unicode = U'▸';
+
+    made.emplace("talcite.menu.more", more);
+
     ruled(made, "talcite.line.thin", Border::thin);
     ruled(made, "talcite.line.twin", Border::twin);
     ruled(made, "talcite.line.thick", Border::thick);

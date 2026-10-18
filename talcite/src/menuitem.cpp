@@ -88,7 +88,8 @@ void MenuItem::activate() {
 }
 
 // Picks the item by firing a `PickEvent`, unless it is disabled. Closing the menu is the job of
-// `Menu`, because the item does not know that it lies in something that opens.
+// `Menu`, because the item does not know that it lies in something that opens. A submenu picks
+// differently: it opens its list (`Submenu::pick`).
 void MenuItem::pick() {
     if (!enabled()) return;
 

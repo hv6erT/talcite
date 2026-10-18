@@ -21,7 +21,8 @@ namespace talcite::ui {
 //     ├── Column
 //     │   ├── Row  ← MenuTitle × N
 //     │   └── Row  ← slot for the application's content
-//     └── [Menu]  ← attached only while open; placed under its title
+//     ├── [Menu]  ← attached only while open; placed under its title
+//     └── [Menu]  ← the list of a submenu, while open; placed beside its item
 //
 // An open menu is a child of the bar, so a key from an item bubbles item → menu → bar, and the
 // side arrows and Esc arrive by that path. The menu is not a curtain, so a click on a neighboring
@@ -43,18 +44,19 @@ Node* Menubar::content() const { return held(*body_); }
 // Puts the given node in the content slot, replacing what was there.
 void Menubar::content(std::shared_ptr<Node> given) { hold(*body_, std::move(given)); }
 
-// Two places: the column and at most one open menu.
-int Menubar::capacity() const { return 2; }
+// The column, at most one open menu, and the lists of submenus opened from it, one inside the
+// other.
+int Menubar::capacity() const { return plenty; }
 
-// Only our own children are accepted: the column and our own menus. A foreign child cannot come
-// in, because the stack would give it a place and the bar would not know what to do with it.
+// Only our own children are accepted: the column, our own menus and the lists of their submenus,
+// which know this bar once they have been opened from it. A foreign child cannot come in, because
+// the stack would give it a place and the bar would not know what to do with it.
 bool Menubar::accepts(const Node& one) const {
     if (&one == frame_.get()) return true;
 
-    for (const std::shared_ptr<Menu>& mine : menus_)
-        if (mine.get() == &one) return true;
+    const auto* menu = dynamic_cast<const Menu*>(&one);
 
-    return false;
+    return menu != nullptr && menu->bar_ == this;
 }
 
 // Creates a menu with the given title and returns it. The bar makes the menu, not the caller. The
@@ -113,24 +115,30 @@ int Menubar::find(const Menu* one) const {
     return -1;
 }
 
-// Whether the node belongs to the bar: everything in the row of titles or in an open menu is
-// ours. The whole branch upward is checked, because the focus sits on an item or a title, not on
-// the bar.
+// Whether the node belongs to the bar: everything in the row of titles, in a menu or in the list of
+// a submenu is ours. The whole branch upward is checked, because the focus sits on an item or a
+// title, not on the bar.
 bool Menubar::ours(const Node* one) const {
     for (const Node* at = one; at != nullptr; at = at->parent()) {
         if (at == bar_.get()) return true;
 
-        for (const std::shared_ptr<Menu>& mine : menus_)
-            if (mine.get() == at) return true;
+        if (const auto* menu = dynamic_cast<const Menu*>(at); menu != nullptr && menu->bar_ == this) return true;
     }
 
     return false;
 }
 
 // Opening is attaching. At most one menu is open at a time, so whatever stood open is closed
-// first, and then the new menu is attached as the last child of the stack, that is, on top.
+// first, and then the new menu is attached as the last child of the stack, that is, on top. The
+// list of a submenu goes on top of what is open and closes nothing: the menu it comes from stays.
 void Menubar::unfold(Menu& one) {
     if (one.parent() == this) return;
+
+    if (one.owner_ != nullptr) {
+        children().add(one.shared_from_this());
+
+        return;
+    }
 
     fold();
 
@@ -144,10 +152,17 @@ void Menubar::unfold(Menu& one) {
         }
 }
 
-// Closes the current menu. The menu closes itself (`Menu::close`); the bar does not touch its item
-// number. A current menu that is only a highlighted title is left alone by the close.
+// Closes the current menu. The menu closes itself (`Menu::close`), with the lists of its submenus;
+// the bar does not touch its item number. A current menu that is only a highlighted title is left
+// alone by the close. A list whose submenu has gone away is left in the bar with nobody to close
+// it, so whatever menu is still attached after that closes too.
 void Menubar::fold() {
     if (Menu* one = current()) one->close();
+
+    const std::vector<std::shared_ptr<Node>> these{children().begin(), children().end()};
+
+    for (const std::shared_ptr<Node>& one : these)
+        if (auto* left = dynamic_cast<Menu*>(one.get())) left->close();
 }
 
 // Entering the bar puts the focus on the first title with nothing open, as in Midnight Commander

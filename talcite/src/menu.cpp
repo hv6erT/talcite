@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <climits>
+#include <memory>
+#include <vector>
 
 #include "talcite/line.hpp"
 #include "talcite/menuitem.hpp"
@@ -9,6 +11,7 @@
 #include "talcite/menubar.hpp"
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
+#include "talcite/submenu.hpp"
 
 #include "lining.hpp"
 
@@ -34,6 +37,10 @@ Sides boxed(const Skin& how, Border border) {
 // A closed menu is not in the tree: the bar attaches it when it opens and detaches it when it
 // closes. So "open" is a single question, whether the menu has a parent, and not a computation
 // over the focus.
+//
+// The list of a submenu is a menu too, attached to the same bar on top of the menu it comes from.
+// It has no title; the item it hangs on (`owner_`) stands in for one, as the place it opens beside
+// and the place the focus goes back to when it closes.
 Menu::Menu(std::string title, MenuShape shape) : title_(std::move(title)), shape_(shape) {
     role("talcite.menubar");
 }
@@ -100,6 +107,8 @@ void Menu::close() {
 
     if (up == nullptr) return;
 
+    shut(nullptr);
+
     which_ = -1;
 
     if (Root* top = root(); top != nullptr && head_ != nullptr)
@@ -111,6 +120,17 @@ void Menu::close() {
             }
 
     (void)up->children().remove(this);
+}
+
+// Closes the open lists of this menu's submenus, all but the one of `kept`. A list lies in the bar,
+// not in this menu, so closing this menu would not take it away by itself. The children are walked
+// over a snapshot, because closing a list moves the focus, and a handler may rebuild the menu.
+void Menu::shut(const Node* kept) {
+    const std::vector<std::shared_ptr<Node>> these{children().begin(), children().end()};
+
+    for (const std::shared_ptr<Node>& one : these)
+        if (auto* deeper = dynamic_cast<Submenu*>(one.get()); deeper != nullptr && deeper != kept && deeper->menu().opened())
+            deeper->menu().close();
 }
 
 // A menu can always take the focus, which opens it.
@@ -155,8 +175,33 @@ Size Menu::wants(Size room) const {
 // into the bar's coordinates, because the stack asks for a place in its own coordinates. When the
 // box does not fit at the right edge, it moves left; the title stays where it was, because it is a
 // separate node in its own row.
+//
+// The list of a submenu stands beside its item instead, with its first item in the item's row: on
+// the right, its left border over the right border of the menu it comes from, and when there is no
+// room there, on the left, its right border over the left border. A list too tall for the rows
+// below moves up.
 Area Menu::placement(Size room) const {
     const Size wanted = wants(room);
+
+    if (owner_ != nullptr && bar_ != nullptr) {
+        const std::optional<Area> item = owner_->screen_area();
+        const std::optional<Area> bar = bar_->screen_area();
+
+        if (item.has_value() && bar.has_value()) {
+            const int left = item->at.x - bar->at.x;
+            const int aside = shape_.shade ? 2 : 0;
+
+            int x = left + item->size.wide;
+
+            if (x + wanted.wide > room.wide) x = left - (wanted.wide - aside);
+
+            x = std::clamp(x, 0, std::max(room.wide - wanted.wide, 0));
+
+            const int y = std::clamp(item->at.y - bar->at.y - 1, 0, std::max(room.high - wanted.high, 0));
+
+            return {{x, y}, wanted};
+        }
+    }
 
     int x = 0;
 
@@ -227,7 +272,8 @@ int Menu::nearest(int from, int step) const {
 
 // Picks the highlighted item. Order is everything here: first the bar is left, only then the
 // entrusted action runs. The other way round, the menu would still be on top if the action opened
-// a window. A menu without items fires its own `PickEvent`; the title is then the action.
+// a window. A menu without items fires its own `PickEvent`; the title is then the action. A
+// submenu is not an action: picking it opens its list, and the bar stays.
 void Menu::pick() {
     if (children().empty()) {
         if (bar_ != nullptr) bar_->leave();
@@ -240,6 +286,12 @@ void Menu::pick() {
     MenuItem* one = item(which_);
 
     if (one == nullptr || !one->enabled()) return;
+
+    if (auto* deeper = dynamic_cast<Submenu*>(one)) {
+        deeper->pick();
+
+        return;
+    }
 
     if (bar_ != nullptr) bar_->leave();
 
@@ -328,6 +380,9 @@ View Menu::paint(Size, Area seen) {
 //
 // When nobody takes it, we return false and the key goes up to the bar, because the menu is its
 // child.
+//
+// The list of a submenu has two keys more: the left arrow and Esc close it alone and give the focus
+// back to its item. Up in the bar they would switch menus or leave the bar altogether.
 bool Menu::handle(KeyEvent& what) {
     // With Ctrl or Alt nothing is caught, not even the arrows and Enter. Ctrl+Enter and Alt+arrow
     // are different shortcuts by design, and filtering them only after recognizing the key would
@@ -336,6 +391,12 @@ bool Menu::handle(KeyEvent& what) {
     const Mods mods = what.mods();
 
     if (mods.ctrl || mods.alt) return false;
+
+    if (owner_ != nullptr && (what.key().code() == Code::left || what.key().code() == Code::escape)) {
+        close();
+
+        return true;
+    }
 
     switch (what.key().code()) {
         case Code::up: aim(nearest(which_, -1)); return true;
@@ -371,6 +432,11 @@ bool Menu::handle(FocusEvent& what) {
 
             break;
         }
+
+    // Another item takes the highlight, so a list opened from a different item goes away, as in a
+    // cascading menu of a desktop. The list of the item that now has the focus stays: the focus
+    // comes back to it when its list closes.
+    shut(one);
 
     return false;
 }
