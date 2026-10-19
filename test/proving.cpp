@@ -18,6 +18,7 @@
 #include <windows.h>
 
 #else
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
@@ -300,6 +301,69 @@ int pretending(const std::vector<std::string>& given) {
         if (given.size() > 2) std::this_thread::sleep_for(std::chrono::milliseconds{std::atoi(given[2].c_str())});
 
         return why ? 4 : 0;
+    }
+
+    // A program in a terminal: it says whether its input and output are a terminal and how large
+    // that is, then answers line by line: `size` gives the size again, `bar` asks for a blinking
+    // bar for a cursor and `usual` for the terminal's usual one, `quit` ends it, anything else
+    // comes back after "got:". The size is the window's on Windows, the terminal's on POSIX.
+    if (what == "tty") {
+        const auto measured = [] {
+#ifdef _WIN32
+            CONSOLE_SCREEN_BUFFER_INFO told{};
+
+            if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &told) == 0) return std::string{"?"};
+
+            return std::to_string(told.srWindow.Right - told.srWindow.Left + 1) + "x" +
+                   std::to_string(told.srWindow.Bottom - told.srWindow.Top + 1);
+#else
+            winsize told{};
+
+            if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &told) != 0) return std::string{"?"};
+
+            return std::to_string(told.ws_col) + "x" + std::to_string(told.ws_row);
+#endif
+        };
+
+#ifdef _WIN32
+        const bool typed = _isatty(_fileno(stdin)) != 0 && _isatty(_fileno(stdout)) != 0;
+#else
+        const bool typed = ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
+#endif
+
+        said(stdout, std::string{"tty "} + (typed ? "1 " : "0 ") + measured() + "\n");
+
+        std::string line;
+
+        while (std::getline(std::cin, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+
+            if (line == "quit") return 0;
+
+            if (line == "size") said(stdout, "size " + measured() + "\n");
+            else if (line == "bar") said(stdout, "\x1b[5 qbarred\n");
+            else if (line == "usual") said(stdout, "\x1b[0 qas usual\n");
+            else said(stdout, "got:" + line + "\n");
+        }
+
+        return 0;
+    }
+
+    // A shell's prompt as a shell integrated with its terminal gives it: two lines of output, the
+    // folder (OSC 7) and the marks of the prompt (OSC 133), then the prompt itself. It waits for a
+    // line and ends at `quit`.
+    if (what == "prompted") {
+        said(stdout, "one\ntwo\n\x1b]7;file://here/tmp/prompted\x07\x1b]133;A\x07$ \x1b]133;B\x07");
+
+        std::string line;
+
+        while (std::getline(std::cin, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+
+            if (line == "quit") return 0;
+        }
+
+        return 0;
     }
 
     if (what == "where") {

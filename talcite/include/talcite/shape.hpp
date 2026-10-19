@@ -65,4 +65,13 @@ struct FormShape {
     bool shade = true;
 };
 
+enum class Caret : std::uint8_t { usual, block, underline, bar };
+
+struct CaretShape {
+    Caret form = Caret::usual;
+    bool blink = true;
+
+    friend bool operator==(const CaretShape&, const CaretShape&) = default;
+};
+
 }

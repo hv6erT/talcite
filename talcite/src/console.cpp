@@ -447,7 +447,7 @@ private:
     }
 
     // Switches buffers when the grid entered or left the alternate screen, copies the changed rows,
-    // and carries over the cursor, its visibility and the window title.
+    // and carries over the cursor, its visibility and shape, and the window title.
     void flushed() {
         if (screen_.apart() && own_ == nullptr) {
             own_ = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -503,12 +503,23 @@ private:
 
         SetConsoleCursorPosition(target, COORD{static_cast<SHORT>(origin.x + cursor.x), static_cast<SHORT>(origin.y + cursor.y)});
 
+        // The old console knows the cursor's visibility and its height in percent of the cell, not
+        // blinking, which it always does, nor a bar, for which the underline stands. The usual
+        // height is the one it had when we first saw it.
         CONSOLE_CURSOR_INFO shape{};
 
-        if (GetConsoleCursorInfo(target, &shape) != 0 && (shape.bVisible != 0) != screen_.shown()) {
-            shape.bVisible = screen_.shown() ? TRUE : FALSE;
+        if (GetConsoleCursorInfo(target, &shape) != 0) {
+            if (!usual_.has_value()) usual_ = shape.dwSize;
 
-            SetConsoleCursorInfo(target, &shape);
+            const int asked = screen_.caret();
+            const DWORD height = asked == 0 ? *usual_ : asked <= 2 ? 100 : 25;
+
+            if ((shape.bVisible != 0) != screen_.shown() || shape.dwSize != height) {
+                shape.bVisible = screen_.shown() ? TRUE : FALSE;
+                shape.dwSize = height;
+
+                SetConsoleCursorInfo(target, &shape);
+            }
         }
 
         if (const std::optional<std::string> title = screen_.title(); title.has_value())
@@ -518,6 +529,7 @@ private:
     HANDLE original_;
     HANDLE own_ = nullptr;
     std::optional<CONSOLE_FONT_INFOEX> was_;
+    std::optional<DWORD> usual_;
     conhost::Screen screen_;
     conhost::Pointing pointing_;
     char16_t pending_ = 0;
@@ -557,7 +569,7 @@ termios raw_kept{};
 volatile std::sig_atomic_t rawly = 0;
 volatile std::sig_atomic_t returned = 0;
 
-constexpr char farewell[] = "\x1b[?2004l\x1b[?1003l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l";
+constexpr char farewell[] = "\x1b[?2004l\x1b[?1003l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[0 q\x1b[?25h\x1b[?1049l";
 
 // Gives the terminal back: the mode from before and the farewell string. Safe in a signal handler.
 void restored() {

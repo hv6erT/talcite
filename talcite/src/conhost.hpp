@@ -63,6 +63,8 @@ public:
 
     [[nodiscard]] bool shown() const { return shown_; }
 
+    [[nodiscard]] int caret() const { return caret_; }
+
     [[nodiscard]] bool apart() const { return apart_; }
 
     [[nodiscard]] const Tracking& tracking() const { return tracking_; }
@@ -118,6 +120,7 @@ private:
     ui::Spot after_{-1, -1};
     bool pending_ = false;
     bool shown_ = true;
+    int caret_ = 0;
     bool wrapping_ = true;
     bool apart_ = false;
     Tracking tracking_;

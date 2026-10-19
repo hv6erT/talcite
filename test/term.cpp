@@ -48,6 +48,17 @@ public:
     [[nodiscard]] std::optional<ui::Spot> caret() const override { return ui::Spot{2, 0}; }
 };
 
+// The pointed root whose cursor asks for a shape.
+class Shaped : public Pointed {
+public:
+    using Pointed::caret_shape;
+
+    // The shape asked for.
+    [[nodiscard]] ui::CaretShape caret_shape() const override { return shape; }
+
+    ui::CaretShape shape{ui::Caret::underline, true};
+};
+
 // What went to the terminal after the probe: the probe says its piece through the same console, and
 // what matters here is what `Term` itself writes.
 std::string drawn(const std::shared_ptr<faking::Terminal>& line, Setup given = {}) {
@@ -256,6 +267,68 @@ TRIAL("Term: the cursor shows again after stepping aside") {
     term.draw();
 
     ought(holds(line->written, "\x1b[?25h"));
+}
+
+// The cursor's shape goes to the terminal once, when it changes, before the cursor shows; a root
+// that asks for none sends nothing about it. At the end the terminal's usual cursor comes back, and
+// after stepping aside the shape goes again, since another program may have changed it.
+TRIAL("Term: the cursor's shape goes once, comes again after stepping aside, and goes back at the end") {
+    {
+        auto line = faking::terminal();
+
+        Pointed root;
+
+        Term term{Setup{}, Seam<Console>{line}};
+
+        term.show(root);
+        term.draw();
+
+        ought(!holds(line->written, " q"));
+    }
+
+    auto line = faking::terminal();
+
+    Shaped root;
+
+    {
+        Term term{Setup{}, Seam<Console>{line}};
+
+        term.show(root);
+        term.draw();
+
+        ought(holds(line->written, "\x1b[3 q"));
+        ought(line->written.find("\x1b[3 q") < line->written.rfind("\x1b[?25h"));
+
+        line->written.clear();
+
+        root.shape = ui::CaretShape{ui::Caret::bar, false};
+
+        term.draw();
+
+        ought(holds(line->written, "\x1b[6 q"));
+
+        line->written.clear();
+
+        term.draw();
+
+        ought(!holds(line->written, " q"));
+
+        {
+            const Term::Pause away{term};
+        }
+
+        ought(holds(line->written, "\x1b[0 q"));
+
+        line->written.clear();
+
+        term.draw();
+
+        ought(holds(line->written, "\x1b[6 q"));
+
+        line->written.clear();
+    }
+
+    ought(holds(line->written, "\x1b[0 q"));
 }
 
 TRIAL("Term: draws nothing while stepped aside") {

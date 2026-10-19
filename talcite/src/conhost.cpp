@@ -410,11 +410,19 @@ int Screen::parameter(std::size_t which, int fallback) const {
 }
 
 // Carries out a finished CSI sequence: cursor position, erasing, SGR, DSR, DA, the cell size in
-// pixels (16t, answered only when the console knows it) and the private modes.
+// pixels (16t, answered only when the console knows it), the cursor's shape and the private modes.
 void Screen::dispatched(char last) {
     if (marker_ == '?') {
         if (intermediate_ == '$' && last == 'p') asked_mode();
         else if (intermediate_ == 0 && (last == 'h' || last == 'l')) moded(last == 'h');
+
+        return;
+    }
+
+    // The cursor's shape (DECSCUSR): 0 the usual one, 1 and 2 a block, 3 and 4 an underline, 5 and
+    // 6 a bar.
+    if (marker_ == 0 && intermediate_ == ' ' && last == 'q') {
+        caret_ = std::clamp(parameter(0, 0), 0, 6);
 
         return;
     }

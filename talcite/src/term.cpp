@@ -77,6 +77,10 @@ struct Term::Held {
     ui::Spot at{-1, -1};
     bool showing = false;
 
+    // The cursor's shape the terminal was last asked for; at the start its usual one. Nothing when
+    // it is not known: another program had the terminal meanwhile.
+    std::optional<ui::CaretShape> shaped = ui::CaretShape{};
+
     int wide = 80;
     int high = 25;
 
@@ -464,6 +468,29 @@ void unscreened(Console& out, Screen given) {
     else if (given == Screen::older) out.write("\x1b[?47l");
 }
 
+// The sequence that asks the terminal for a cursor's shape (DECSCUSR, `CSI Ps SP q`): 0 for its
+// usual one, 1 and 2 a block, 3 and 4 an underline, 5 and 6 a bar, the odd ones blinking.
+std::string shaping(ui::CaretShape shape) {
+    int number = 0;
+
+    switch (shape.form) {
+        case ui::Caret::usual: number = 0; break;
+        case ui::Caret::block: number = shape.blink ? 1 : 2; break;
+        case ui::Caret::underline: number = shape.blink ? 3 : 4; break;
+        case ui::Caret::bar: number = shape.blink ? 5 : 6; break;
+    }
+
+    return "\x1b[" + std::to_string(number) + " q";
+}
+
+// The terminal's usual cursor back, when it was asked for another one; afterwards the shape is
+// not known, since whoever takes the terminal may change it.
+void unshaped(Console& out, std::optional<ui::CaretShape>& shaped) {
+    if (shaped != ui::CaretShape{}) out.write(shaping(ui::CaretShape{}));
+
+    shaped.reset();
+}
+
 // Dressing the terminal: the screen, a hidden cursor, no autowrap, a cleared screen, the mouse and
 // bracketed paste. Dressing and undressing are two halves of one thing, so they stand side by side
 // and have one place: the constructor, the destructor and stepping aside for another program all
@@ -583,7 +610,11 @@ Term::~Term() {
 
     forgotten(held.console.provider(), held.placed, held.sent);
 
-    if (held.entered) undressed(held.console.provider(), sending(held.compat, held.wish));
+    if (held.entered) {
+        unshaped(held.console.provider(), held.shaped);
+
+        undressed(held.console.provider(), sending(held.compat, held.wish));
+    }
 
     held.console.provider().raw(false);
 }
@@ -604,7 +635,11 @@ Term::Pause::Pause(Term& given) : term_(given) {
 
     forgotten(held.console.provider(), held.placed, held.sent);
 
-    if (held.entered) undressed(held.console.provider(), sending(held.compat, held.wish));
+    if (held.entered) {
+        unshaped(held.console.provider(), held.shaped);
+
+        undressed(held.console.provider(), sending(held.compat, held.wish));
+    }
 
     held.console.provider().raw(false);
 }
@@ -907,6 +942,13 @@ void Term::draw() {
 
         held.at = *spot;
 
+        // The shape before the cursor shows, so it never shows in the shape of the focus before.
+        if (const ui::CaretShape shape = held.onto->caret_shape(); held.shaped != shape) {
+            into += shaping(shape);
+
+            held.shaped = shape;
+        }
+
         if (!held.showing) {
             into += "\x1b[?25h";
 
@@ -1044,6 +1086,7 @@ bool Term::turn() {
 
         held.shifted = true;
         held.showing = false;
+        held.shaped.reset();
         held.at = ui::Spot{-1, -1};
         doing = true;
     }

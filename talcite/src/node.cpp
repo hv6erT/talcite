@@ -266,6 +266,14 @@ View Node::render(const Area& where, const Area& seen) {
 // majority of widgets have nothing to show.
 std::optional<Spot> Node::caret() const { return {}; }
 
+// How the cursor of this node looks while it has one: the shape it was given (`caret_shape`), by
+// default the terminal's usual cursor. A shape is a wish to the terminal, which draws the cursor:
+// a terminal that knows no shapes, or one where blinking is turned off, shows its own.
+CaretShape Node::caret_shape() const { return caret_shape_; }
+
+// Gives the cursor of this node a shape and blinking, for the frames in which it has the focus.
+void Node::caret_shape(CaretShape given) { caret_shape_ = given; }
+
 // A plain node wants as much as its only child and gives it its whole rectangle. Laying out
 // several children is the business of `Row` and `Column`.
 Size Node::wants(Size room) const {

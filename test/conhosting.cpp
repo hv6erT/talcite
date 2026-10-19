@@ -116,6 +116,26 @@ TRIAL("Console without VT: text lands at the cursor, and CUP counts from one") {
     ought(one.cursor() == ui::Spot{6, 2});
 }
 
+// The cursor's shape (DECSCUSR) is kept for the console, which shows a block or an underline; 0 is
+// its usual cursor.
+TRIAL("Console without VT: the cursor's shape is kept") {
+    conhost::Screen one = screen();
+
+    same(one.caret(), 0);
+
+    one.fed("\x1b[3 q");
+
+    same(one.caret(), 3);
+
+    one.fed("\x1b[6 q");
+
+    same(one.caret(), 6);
+
+    one.fed("\x1b[ q");
+
+    same(one.caret(), 0);
+}
+
 TRIAL("Console without VT: UTF-8 cut off halfway comes out as a question mark") {
     conhost::Screen one = screen();
 

@@ -9,6 +9,7 @@
 
 #include "talcite/area.hpp"
 #include "talcite/handler.hpp"
+#include "talcite/shape.hpp"
 #include "talcite/view.hpp"
 
 namespace talcite::ui {
@@ -127,6 +128,10 @@ public:
 
     [[nodiscard]] virtual std::optional<Spot> caret() const;
 
+    [[nodiscard]] virtual CaretShape caret_shape() const;
+
+    void caret_shape(CaretShape given);
+
 protected:
     bool broadcast(KeyEvent& what) {
         const std::vector<std::shared_ptr<Node>> these{inside_.begin(), inside_.end()};
@@ -159,6 +164,7 @@ private:
     Children inside_;
     Area area_;
     Area seen_;
+    CaretShape caret_shape_;
 };
 
 }

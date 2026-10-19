@@ -45,6 +45,10 @@ public:
 
     [[nodiscard]] std::optional<Spot> caret() const override;
 
+    [[nodiscard]] CaretShape caret_shape() const override;
+
+    using Node::caret_shape;
+
     [[nodiscard]] Schedule& schedule() { return schedule_; }
 
     bool elapse();

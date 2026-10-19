@@ -346,6 +346,10 @@ std::optional<Spot> Root::caret() const {
     return at;
 }
 
+// The shape of the cursor is that of the focus, the node the cursor belongs to; without a focus,
+// the terminal's usual one.
+CaretShape Root::caret_shape() const { return focus_ == nullptr ? CaretShape{} : focus_->caret_shape(); }
+
 // Clears the focus when it is on the node being removed or anywhere under it. Otherwise it would
 // point at a dead node, and that would come out only at the next key.
 void Root::losing(const Node* one) {

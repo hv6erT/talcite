@@ -17,6 +17,7 @@
 
 #include "launching.hpp"
 #include "sealed.hpp"
+#include "teletype.hpp"
 
 #ifdef _WIN32
 
@@ -36,7 +37,9 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 extern char** environ;
@@ -56,6 +59,96 @@ constexpr std::size_t brim = 64 * 1024;
 [[noreturn]] void amiss(const std::string& said, const fs::path& where) {
     throw fs::Trouble{said, where};
 }
+
+#ifdef _WIN32
+
+// The attribute that hands a pseudoconsole to a new process. Older SDK headers, MinGW's among them,
+// may not know it; the value is fixed by the system.
+constexpr DWORD_PTR given_console = 0x00020016;
+
+// The pseudoconsole functions of the system: Windows 10 1809 and later have them, older systems do
+// not, so they are looked up at run time and a program built here still starts there. The
+// pseudoconsole's handle is a plain pointer, written here as such, because headers without ConPTY
+// do not know its name.
+struct Consoles {
+    HRESULT(WINAPI* open)(COORD, HANDLE, HANDLE, DWORD, void**) = nullptr;
+    HRESULT(WINAPI* resize)(void*, COORD) = nullptr;
+    void(WINAPI* close)(void*) = nullptr;
+};
+
+// Looks the three functions up in kernel32 once; all three or none.
+const Consoles& consoles() {
+    static const Consoles found = [] {
+        Consoles made;
+
+        const HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+
+        if (kernel == nullptr) return made;
+
+        // Through `void*`: a direct cast between unrelated function pointer types is what MinGW
+        // warns about, and the address the system gives is such a type.
+        made.open = reinterpret_cast<decltype(made.open)>(reinterpret_cast<void*>(GetProcAddress(kernel, "CreatePseudoConsole")));
+        made.resize = reinterpret_cast<decltype(made.resize)>(reinterpret_cast<void*>(GetProcAddress(kernel, "ResizePseudoConsole")));
+        made.close = reinterpret_cast<decltype(made.close)>(reinterpret_cast<void*>(GetProcAddress(kernel, "ClosePseudoConsole")));
+
+        if (made.open == nullptr || made.resize == nullptr || made.close == nullptr) made = Consoles{};
+
+        return made;
+    }();
+
+    return found;
+}
+
+// The size of a pseudoconsole, within what `COORD` holds and at least one cell each way.
+COORD measured(ui::Size size) {
+    return COORD{static_cast<SHORT>(std::clamp(size.wide, 1, 32767)), static_cast<SHORT>(std::clamp(size.high, 1, 32767))};
+}
+
+#else
+
+// Opens the master side of a new pseudoterminal, closed on exec from birth where the system takes
+// the flag in the call (Linux and the BSDs), otherwise right after, as `sealed::piped` does; -1 on
+// failure.
+int mastered() {
+#if defined(__linux__) || defined(__FreeBSD__)
+    return ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+#else
+    const int made = ::posix_openpt(O_RDWR | O_NOCTTY);
+
+    if (made >= 0) ::fcntl(made, F_SETFD, ::fcntl(made, F_GETFD, 0) | FD_CLOEXEC);
+
+    return made;
+#endif
+}
+
+// Opens the slave side of the pseudoterminal on `master`, without making it our controlling
+// terminal; -1 on failure. `ptsname` answers in a buffer of its own that the next call overwrites,
+// so the calls take turns.
+int slaved(int master) {
+    static std::mutex naming;
+
+    const std::lock_guard<std::mutex> kept{naming};
+
+    if (::grantpt(master) != 0 || ::unlockpt(master) != 0) return -1;
+
+    const char* name = ::ptsname(master);
+
+    if (name == nullptr) return -1;
+
+    return ::open(name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+}
+
+// The size of a pseudoterminal, within what `winsize` holds and at least one cell each way.
+winsize measured(ui::Size size) {
+    winsize made{};
+
+    made.ws_col = static_cast<unsigned short>(std::clamp(size.wide, 1, 65535));
+    made.ws_row = static_cast<unsigned short>(std::clamp(size.high, 1, 65535));
+
+    return made;
+}
+
+#endif
 
 }
 
@@ -106,8 +199,29 @@ struct Grave {
     // its fate.
     HANDLE job = nullptr;
 
-    // Closes the process and job handles.
+    // The pseudoconsole of a program in a terminal (`teletype`). It lives here, not with the pipes,
+    // because the burial closes it once the program has ended: only then does the output pipe reach
+    // its end, and a reader learns that the terminal is over.
+    void* console = nullptr;
+
+    // Takes the pseudoconsole out under the lock and closes it; whoever comes second finds nothing.
+    void unconsoled() {
+        void* one = nullptr;
+
+        {
+            const std::lock_guard<std::mutex> kept{guard};
+
+            one = console;
+            console = nullptr;
+        }
+
+        if (one != nullptr && consoles().close != nullptr) consoles().close(one);
+    }
+
+    // Closes the pseudoconsole, the process and the job handles.
     ~Grave() {
+        unconsoled();
+
         if (process != nullptr) CloseHandle(process);
         if (job != nullptr) CloseHandle(job);
     }
@@ -150,6 +264,10 @@ struct Child::Held {
     bool sealing = false;
 
     bool merge = false;
+
+    // Whether the program sits in a pseudoterminal (`teletype`): one stream each way, and on POSIX
+    // the end of the terminal reads as an error (EIO), not as an empty read.
+    bool terminal = false;
 
     SharedPromise<Exit> waiting;
 
@@ -352,6 +470,10 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
             made.clear();
 
             if (errno == EINTR || errno == EAGAIN) continue;
+
+            // The master side of a pseudoterminal whose last slave has closed answers with EIO:
+            // that is its end, as an empty read is a pipe's.
+            if (errno == EIO && held.terminal) return made;
 
             amiss("Cannot read from the program.", held.program);
         }
@@ -1076,12 +1198,16 @@ bool paired(bool inbound, SECURITY_ATTRIBUTES& how, HANDLE& ours, HANDLE& theirs
 
 // Starting. `ahead` means "this program gets our terminal": then we create no pipes at all, because
 // its input is the keyboard and its output the screen, and we also put it in the foreground, so
-// that Ctrl-C goes to it and not to us.
-std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
+// that Ctrl-C goes to it and not to us. `terminal` means "this program gets a pseudoterminal of its
+// own, of that size": one stream each way instead of three pipes, the program leads a session of
+// its own with that terminal as its controlling one (on Windows, a pseudoconsole), and line
+// editing, echo and Ctrl-C are the terminal's business, as in any terminal window.
+std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::optional<ui::Size> terminal = std::nullopt) {
     auto held = std::make_shared<Child::Held>();
 
     held->program = what.program;
     held->merge = what.merge;
+    held->terminal = terminal.has_value();
 
     if (what.program.empty()) amiss("No program given.", what.program);
 
@@ -1107,7 +1233,38 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         closed(err_write);
     };
 
-    if (!ahead) {
+    void* console = nullptr;
+
+    if (terminal) {
+        // Two pipes, overlapped on our side as below, and the pseudoconsole between them and the
+        // program: it reads what we write, writes what the program shows, and the program sees a
+        // console. Nothing is inherited: the program reaches the pseudoconsole through the
+        // attribute below, not through handles.
+        if (consoles().open == nullptr) amiss("This system has no pseudoconsole (Windows 10 1809 or later).", what.program);
+
+        how.bInheritHandle = FALSE;
+
+        if (!paired(false, how, in_write, in_read)) {
+            undone();
+            amiss("Cannot create the input pipe.", what.program);
+        }
+
+        if (!paired(true, how, out_read, out_write)) {
+            undone();
+            amiss("Cannot create the output pipe.", what.program);
+        }
+
+        if (FAILED(consoles().open(measured(*terminal), in_read, out_write, 0, &console))) {
+            undone();
+            amiss("Cannot create the pseudoconsole.", what.program);
+        }
+
+        // The pseudoconsole holds its own copies of its two ends.
+        closed(in_read);
+        closed(out_write);
+
+        held->rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    } else if (!ahead) {
         // All three pipes have an overlapped end on our side (`paired`): the writer waits for the
         // completion and for the wake-up event of `close_input()`, the readers for the completion
         // and for the worker's bell, so both a sealed input and a cancelled read or write wake at
@@ -1140,12 +1297,19 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         if (err_read != nullptr) SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0);
     }
 
+    const auto unconsoled = [&console] {
+        if (console != nullptr) consoles().close(console);
+
+        console = nullptr;
+    };
+
     Launch launch;
 
     try {
         launch = commanded(what);
     } catch (...) {
         undone();
+        unconsoled();
         throw;
     }
 
@@ -1162,7 +1326,30 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     std::vector<char> room;
     HANDLE passed[3] = {nullptr, nullptr, nullptr};
 
-    if (!ahead) {
+    if (terminal) {
+        // One attribute: the pseudoconsole, given as the handle itself, not as a pointer to it.
+        SIZE_T much = 0;
+
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &much);
+
+        room.resize(much);
+
+        setting.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(room.data());
+
+        if (InitializeProcThreadAttributeList(setting.lpAttributeList, 1, 0, &much) == 0) {
+            undone();
+            unconsoled();
+            amiss("Cannot prepare the pseudoconsole.", what.program);
+        }
+
+        if (UpdateProcThreadAttribute(setting.lpAttributeList, 0, given_console, console, sizeof(console), nullptr, nullptr) ==
+            0) {
+            DeleteProcThreadAttributeList(setting.lpAttributeList);
+            undone();
+            unconsoled();
+            amiss("Cannot pass the pseudoconsole.", what.program);
+        }
+    } else if (!ahead) {
         setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         setting.StartupInfo.hStdInput = in_read;
         setting.StartupInfo.hStdOutput = out_write;
@@ -1203,17 +1390,22 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     // pressed by the user would not reach it.
     //
     // It starts suspended, so that it enters the job before it starts anything itself.
+    //
+    // A program in a pseudoconsole needs no group of its own: Ctrl-C reaches it through the
+    // pseudoconsole, and it inherits no handles.
     const DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED |
-                        (ahead ? 0u : (EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_PROCESS_GROUP));
+                        (terminal ? EXTENDED_STARTUPINFO_PRESENT
+                                  : ahead ? 0u : (EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_PROCESS_GROUP));
 
-    const BOOL done =
-        CreateProcessW(launch.application.c_str(), launch.line.data(), nullptr, nullptr, ahead ? FALSE : TRUE,
-                       flags, around.data(), where.empty() ? nullptr : where.c_str(), &setting.StartupInfo, &told);
+    const BOOL done = CreateProcessW(launch.application.c_str(), launch.line.data(), nullptr, nullptr,
+                                     ahead || terminal ? FALSE : TRUE, flags, around.data(),
+                                     where.empty() ? nullptr : where.c_str(), &setting.StartupInfo, &told);
 
     if (!ahead) DeleteProcThreadAttributeList(setting.lpAttributeList);
 
     if (done == 0) {
         undone();
+        unconsoled();
         amiss("Cannot start the program.", what.program);
     }
 
@@ -1240,7 +1432,8 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     held->grave->which = static_cast<std::int64_t>(told.dwProcessId);
     held->grave->process = told.hProcess;
     held->grave->job = job;
-    held->grave->grouped = !ahead;
+    held->grave->grouped = !ahead && !terminal;
+    held->grave->console = console;
 
 #else
 
@@ -1248,17 +1441,39 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     int out_pipe[2] = {-1, -1};
     int err_pipe[2] = {-1, -1};
     int starting[2] = {-1, -1};
+    int master = -1;
+    int slave = -1;
 
     const auto undone = [&] {
         for (int* one : {&in_pipe[0], &in_pipe[1], &out_pipe[0], &out_pipe[1], &err_pipe[0],
-                         &err_pipe[1], &starting[0], &starting[1]})
+                         &err_pipe[1], &starting[0], &starting[1], &master, &slave})
             closed(*one);
     };
+
+    // A pseudoterminal instead of pipes: both sides closed on exec, the slave opened here, before
+    // the fork, so that the child needs no `ptsname`, which is not safe between `fork` and `exec`.
+    // The size is set before the program starts, so its first look at the terminal is right.
+    if (terminal) {
+        master = mastered();
+
+        if (master < 0) amiss("Cannot open a pseudoterminal.", what.program);
+
+        slave = slaved(master);
+
+        if (slave < 0) {
+            undone();
+            amiss("Cannot open a pseudoterminal.", what.program);
+        }
+
+        const winsize size = measured(*terminal);
+
+        (void)::ioctl(master, TIOCSWINSZ, &size);
+    }
 
     // All three pipes are closed on exec from birth (`sealed::piped`): another program starting at
     // the same moment from another thread will not get the ends of this one. The child moves its
     // ends to 0, 1 and 2, and `dup2` does not carry the flag over.
-    if (!ahead) {
+    if (!ahead && !terminal) {
         if (!sealed::piped(in_pipe, false)) amiss("Cannot create the input pipe.", what.program);
 
         if (!sealed::piped(out_pipe, false)) {
@@ -1317,7 +1532,34 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     }
 
     if (which == 0) {
-        if (ahead) {
+        if (terminal) {
+            // A session of its own, led by the program, with the slave as its controlling terminal:
+            // the line discipline then sends Ctrl-C and SIGWINCH to whatever the program puts in
+            // the foreground, as in any terminal window. Linux takes the controlling terminal on
+            // the first open after `setsid`, but the slave is open already, so it is asked for.
+            (void)::setsid();
+            (void)::ioctl(slave, TIOCSCTTY, 0);
+
+            (void)::dup2(slave, STDIN_FILENO);
+            (void)::dup2(slave, STDOUT_FILENO);
+            (void)::dup2(slave, STDERR_FILENO);
+
+            if (slave > STDERR_FILENO) ::close(slave);
+            if (master > STDERR_FILENO) ::close(master);
+
+            for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
+
+            // A terminal's program starts with the signals as a terminal window gives them: none
+            // blocked and none ignored. Both survive `exec`, so a program started under nohup
+            // would otherwise give its shell an ignored SIGHUP, and hanging up would not end it.
+            sigset_t none;
+
+            sigemptyset(&none);
+            (void)::sigprocmask(SIG_SETMASK, &none, nullptr);
+
+            for (const int one : {SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU, SIGCHLD, SIGWINCH})
+                std::signal(one, SIG_DFL);
+        } else if (ahead) {
             // Its own process group and the foreground: without this Ctrl-C would go to us, and an
             // attempt to read from the terminal would stop the child with SIGTTIN. `tcsetpgrp`
             // itself also sends a signal, SIGTTOU, so we silence it first.
@@ -1364,8 +1606,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
 
     // The child does the same, and both do it on purpose. Whoever is first sets it; the second call
     // changes nothing. Otherwise a gap remains in which the child already reads and the foreground
-    // is not there yet, or `kill()` hits a group that does not exist yet.
-    ::setpgid(which, which);
+    // is not there yet, or `kill()` hits a group that does not exist yet. Not for a program in a
+    // pseudoterminal: it makes its own session, and `setsid` refuses a process that already leads
+    // a group, so a parent who came first would leave it without a terminal.
+    if (!terminal) ::setpgid(which, which);
 
     if (ahead) {
         void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
@@ -1421,10 +1665,20 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     closed(in_pipe[0]);
     closed(out_pipe[1]);
     closed(err_pipe[1]);
+    closed(slave);
 
     held->into = in_pipe[1];
     held->from = out_pipe[0];
     held->wrong = err_pipe[0];
+
+    // The master side is both the input and the output. The output gets a copy of its own, so that
+    // closing one side never closes the other's number under it.
+    if (terminal) {
+        held->into = master;
+        held->from = ::fcntl(master, F_DUPFD_CLOEXEC, 0);
+
+        master = -1;
+    }
 
     // Our pipe ends are non-blocking. The read and write loops are written for this (they ask
     // `poll`, handle `EAGAIN` and keep the bell next to them), but without this setting `EAGAIN`
@@ -1461,6 +1715,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
     // callers of `wait` look at. A child whose end nobody ever asks about is still buried and leaves
     // no zombie in the process table, and the right to let go of the handle without asking anything
     // is exactly what `close()` promises.
+    //
+    // On Windows a pseudoconsole outlives its program: the output pipe ends only when it is closed.
+    // So the burial closes it, after the end is reported, because closing may wait until what is
+    // left of the output has been read, and the end must not wait for a reader.
     auto [ending, settle] = promised<Exit>();
 
     run(io(), [grave, program_named, settle = std::move(settle)]() mutable {
@@ -1469,6 +1727,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead) {
         } catch (...) {
             (void)settle.fail(std::current_exception());
         }
+
+#ifdef _WIN32
+        grave->unconsoled();
+#endif
     }).detach();
 
     held->waiting = std::move(ending).share();
@@ -1700,6 +1962,73 @@ private:
     });
 }
 
+}
+
+// Whether this system has pseudoterminals: every POSIX one does, Windows from 10 1809 on.
+bool teletyped() {
+#ifdef _WIN32
+    return consoles().open != nullptr;
+#else
+    return true;
+#endif
+}
+
+// Starts a program in a pseudoterminal of the given size, on the calling thread; see `reared`.
+Child teletype(const Command& what, ui::Size size) { return Rearing::made(reared(what, false, size)); }
+
+// Tells the pseudoterminal of a program its new size. On POSIX the line discipline then sends
+// SIGWINCH to the program in its foreground; on Windows the pseudoconsole tells the program itself.
+// Does nothing for a program without one or once it is gone.
+void resized(const Child& one, ui::Size size) {
+    const std::shared_ptr<Child::Held>& held = Rearing::inside(one);
+
+    if (held == nullptr || !held->terminal) return;
+
+#ifdef _WIN32
+
+    const std::lock_guard<std::mutex> kept{held->grave->guard};
+
+    if (held->grave->console != nullptr) (void)consoles().resize(held->grave->console, measured(size));
+
+#else
+
+    const std::lock_guard<std::mutex> kept{held->guard};
+
+    if (held->into < 0) return;
+
+    const winsize told = measured(size);
+
+    (void)::ioctl(held->into, TIOCSWINSZ, &told);
+
+#endif
+}
+
+// Hangs up the terminal of a program, as closing a terminal window does: SIGHUP to its session on
+// POSIX, the closed pseudoconsole on Windows, which sends its programs the close event. A shell
+// then ends, and with it what it started in the foreground. Does nothing once the program is
+// buried.
+void hung_up(const Child& one) {
+    const std::shared_ptr<Child::Held>& held = Rearing::inside(one);
+
+    if (held == nullptr || !held->terminal) return;
+
+    const std::shared_ptr<Grave> grave = held->grave;
+
+#ifdef _WIN32
+
+    // On a worker: closing may wait until what is left of the output has been read.
+    run(io(), [grave] { grave->unconsoled(); }).detach();
+
+#else
+
+    const std::lock_guard<std::mutex> kept{grave->guard};
+
+    if (grave->gone) return;
+
+    // The session leader leads its group too, so the group's number is its own.
+    (void)::kill(-static_cast<pid_t>(grave->which), SIGHUP);
+
+#endif
 }
 
 // Starts a program let loose and resolves to its process number; see `loosed`.
