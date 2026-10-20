@@ -359,6 +359,38 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
     return made;
 }
 
+// The marks of a cell laid over it as it was drawn at `at` in `room` columns: the letters stay, and
+// each mark's role is merged over the cell's look, as a label does with its marks (`Span`), so a
+// meter of colored segments or one emphasized word stands in a single cell. The cell is traced the
+// way it was drawn, elided and then cut and justified as `ranged` does, so a mark follows its
+// bytes wherever eliding moved them, and a mark over the ellipsis covers nothing. A mark with an
+// address lays its hyperlink too. A cell holds one line, so only marks of line 0 count.
+void marked(View& made, const TableCell& cell, Spot at, int room, Justify justify, const Style& look, const Skin& how) {
+    const Traced whole = elided(traced(cell.text, 0), room, cell.elide, how.glyph("talcite.elide"));
+    const std::string got = cut(whole.text, room);
+
+    Traced kept;
+
+    kept.text = got;
+    kept.bytes.assign(whole.bytes.begin(), whole.bytes.begin() + static_cast<std::ptrdiff_t>(got.size()));
+
+    const int rest = std::max(room - columns(got, got.size()), 0);
+    const int x = at.x + (justify == Justify::right ? rest : justify == Justify::center ? rest / 2 : 0);
+
+    for (const Mark& one : cell.marks) {
+        const Style over = Style::merge(look, how.style(one.role));
+        const Hyperlink target = one.address.empty() ? Hyperlink{} : hyperlink(one.address);
+
+        walked(kept, x, [&](int column, int much, char32_t letter, std::size_t byte) {
+            if (!covers(one, 0, byte)) return;
+
+            made.put({column, at.y}, letter, over);
+
+            if (target.mark != 0) made.link({{column, at.y}, {much, 1}}, target);
+        });
+    }
+}
+
 // The text padded to the column width according to the justification. It is cut with `cut` from
 // `eliding.hpp`, that is by columns and character widths, not by bytes.
 std::string ranged(const std::string& what, int wide, Justify justify) {
@@ -514,6 +546,8 @@ View Table::paint(Size given, Area seen) {
             const std::string shown = elided(cell.text, room, cell.elide, how.glyph("talcite.elide"));
 
             made.put({at, y}, ranged(shown, room, justify), look_one);
+
+            if (!cell.marks.empty()) marked(made, cell, {at, y}, room, justify, look_one, how);
 
             if (cell.spans) break;
 

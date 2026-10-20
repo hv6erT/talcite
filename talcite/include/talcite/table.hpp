@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "talcite/chosen.hpp"
+#include "talcite/mark.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
@@ -25,6 +26,7 @@ struct TableCell {
     std::string role;
     bool spans = false;
     Elide elide = Elide::none;
+    std::vector<Mark> marks{};
 };
 
 using TableRow = std::vector<TableCell>;

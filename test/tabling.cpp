@@ -711,6 +711,63 @@ TRIAL("Table: a cell's role is laid over the row's role") {
     ought(!made.at({5, 0}).style.bold);
 }
 
+// A cell's marks lay their roles over stretches of its text, as a label's do: a meter of five
+// segments takes one color on the lit ones and another on the rest, and keeps the row's reverse
+// video. The marks follow their bytes through eliding and justification: a mark over what eliding
+// dropped covers nothing, nor does it cover the ellipsis, and a right-justified cell moves its
+// marks with its text.
+TRIAL("Table: a cell's marks lay roles over stretches of its text") {
+    Sheet sheet;
+
+    Style lit;
+    lit.foreground = Color{false, 200, 0, 0};
+
+    Style dim;
+    dim.foreground = Color{false, 0, 0, 200};
+
+    sheet.skin(ui::Skin{{{"probe.lit", lit}, {"probe.dim", dim}}});
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 5, ui::Justify::left}, ui::TableColumn{"", 6, ui::Justify::left},
+                  ui::TableColumn{"", 6, ui::Justify::right}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            const std::string meter = "\u25AC\u25AC\u25AC\u25AC\u25AC";
+
+            if (which == 0 && most > 0)
+                made.push_back(ui::TableRow{
+                    ui::TableCell{meter, {}, false, ui::Elide::none, {ui::Mark{0, 0, 9, "probe.lit"}, ui::Mark{0, 9, 15, "probe.dim"}}},
+                    ui::TableCell{"abcdefghij", {}, false, ui::Elide::left, {ui::Mark{0, 0, 2, "probe.lit"}, ui::Mark{0, 7, 10, "probe.dim"}}},
+                    ui::TableCell{"ok", {}, false, ui::Elide::none, {ui::Mark{0, 0, 2, "probe.lit"}}}});
+
+            return made;
+        },
+        1);
+
+    sheet.children().add(one);
+
+    const View made = sheet.render({{0, 0}, {19, 1}});
+
+    same(said(made, 0), std::string{"\u25AC\u25AC\u25AC\u25AC\u25AC \u2026fghij     ok"});
+
+    for (int x = 0; x < 3; ++x) ought(made.at({x, 0}).style.foreground == lit.foreground);
+    for (int x = 3; x < 5; ++x) ought(made.at({x, 0}).style.foreground == dim.foreground);
+    for (int x = 0; x < 5; ++x) ought(made.at({x, 0}).style.reverse);
+
+    ought(made.at({6, 0}).style.foreground != lit.foreground);
+    ought(made.at({7, 0}).style.foreground != lit.foreground);
+    ought(made.at({8, 0}).style.foreground != dim.foreground);
+    for (int x = 9; x < 12; ++x) ought(made.at({x, 0}).style.foreground == dim.foreground);
+
+    ought(made.at({16, 0}).style.foreground != lit.foreground);
+    ought(made.at({17, 0}).style.foreground == lit.foreground);
+    ought(made.at({18, 0}).style.foreground == lit.foreground);
+}
+
 // --- Refreshing ----------------------------------------------------------------------------------
 
 // `refresh` throws away the remembered rows and asks the source again, but does not clear the

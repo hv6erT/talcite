@@ -36,30 +36,6 @@ int Span::capacity() const { return 0; }
 
 namespace {
 
-// No byte of the text: what eliding puts in (the ellipsis).
-constexpr std::size_t nowhere = static_cast<std::size_t>(-1);
-
-// One row of the label: its text, the paragraph it belongs to, and for every byte of the text the
-// byte of the paragraph it came from (`nowhere` for the ellipsis).
-struct Row {
-    std::string text;
-    std::size_t line = 0;
-    std::vector<std::size_t> bytes;
-
-    // Appends a stretch of the paragraph that starts at its byte `from`.
-    void taken(std::string_view what, std::size_t from) {
-        text += what;
-
-        for (std::size_t at = 0; at < what.size(); ++at) bytes.push_back(from + at);
-    }
-
-    // Appends what the paragraph does not have, such as the ellipsis.
-    void added(std::string_view what) {
-        text += what;
-        bytes.insert(bytes.end(), what.size(), nowhere);
-    }
-};
-
 // A paragraph of the text: where it starts and what it holds.
 struct Paragraph {
     std::size_t at = 0;
@@ -101,7 +77,7 @@ std::vector<Paragraph> parted(std::string_view what) {
 // a hard line break never merges with the neighboring sentence. Words in a row stand one space
 // apart, whatever stood between them; that space comes from the first space after the word before
 // it, so that a mark over a whole phrase covers the gaps too.
-void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Row>& into) {
+void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Traced>& into) {
     struct Word {
         std::size_t at = 0;
         std::string_view text;
@@ -120,7 +96,7 @@ void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Ro
         at = space + 1;
     }
 
-    Row row;
+    Traced row;
 
     row.line = line;
 
@@ -128,7 +104,7 @@ void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Ro
 
     // Starts a fresh row of the paragraph.
     const auto fresh = [line] {
-        Row made;
+        Traced made;
 
         made.line = line;
 
@@ -157,7 +133,7 @@ void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Ro
 
             if (piece.empty()) break;
 
-            Row alone = fresh();
+            Traced alone = fresh();
 
             alone.taken(piece, from);
 
@@ -195,22 +171,15 @@ void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Ro
 
 // The rows of the text for a width of `wide`, wrapped when told so. An empty paragraph stays an
 // empty row instead of vanishing: it is a gap someone wrote on purpose.
-std::vector<Row> rows_of(std::string_view text, bool wrapped, int wide) {
+std::vector<Traced> rows_of(std::string_view text, bool wrapped, int wide) {
     if (text.empty()) return {};
 
-    std::vector<Row> made;
+    std::vector<Traced> made;
 
     const std::vector<Paragraph> parts = parted(text);
 
     if (!wrapped) {
-        for (std::size_t line = 0; line < parts.size(); ++line) {
-            Row one;
-
-            one.line = line;
-            one.taken(parts[line].text, 0);
-
-            made.push_back(std::move(one));
-        }
+        for (std::size_t line = 0; line < parts.size(); ++line) made.push_back(traced(parts[line].text, line));
 
         return made;
     }
@@ -219,11 +188,7 @@ std::vector<Row> rows_of(std::string_view text, bool wrapped, int wide) {
 
     for (std::size_t line = 0; line < parts.size(); ++line) {
         if (parts[line].text.empty()) {
-            Row one;
-
-            one.line = line;
-
-            made.push_back(std::move(one));
+            made.push_back(traced({}, line));
 
             continue;
         }
@@ -234,75 +199,24 @@ std::vector<Row> rows_of(std::string_view text, bool wrapped, int wide) {
     return made;
 }
 
-// The row shortened to `wide` with an ellipsis on the side `how` says, with what each byte came
-// from; the same cut as `elided`, which makes the text alone.
-Row elided_row(const Row& one, int wide, Elide how, char32_t mark) {
-    if (how == Elide::none || measured(one.text).wide <= wide) return one;
-
-    Row made;
-
-    made.line = one.line;
-
-    if (wide <= 0) return made;
-
-    const std::string dots = utf8::encode(mark);
-
-    // The head and the tail of the row kept whole, with where their bytes came from.
-    const auto head = [&one, &made](int room) {
-        const std::string kept = cut(one.text, room);
-
-        made.text += kept;
-        made.bytes.insert(made.bytes.end(), one.bytes.begin(), one.bytes.begin() + static_cast<std::ptrdiff_t>(kept.size()));
-    };
-
-    const auto tailed = [&one, &made](int room) {
-        const std::string kept = tail(one.text, room);
-
-        made.text += kept;
-        made.bytes.insert(made.bytes.end(), one.bytes.end() - static_cast<std::ptrdiff_t>(kept.size()), one.bytes.end());
-    };
-
-    if (wide == 1) {
-        made.added(dots);
-
-        return made;
-    }
-
-    if (how == Elide::right) {
-        head(wide - 1);
-        made.added(dots);
-    } else if (how == Elide::left) {
-        made.added(dots);
-        tailed(wide - 1);
-    } else {
-        const int half = (wide - 1) / 2;
-
-        head(half);
-        made.added(dots);
-        tailed(wide - 1 - half);
-    }
-
-    return made;
-}
-
 // A row as drawn: shortened, at its column, on its screen row.
 struct Placed {
-    Row row;
+    Traced row;
     int x = 0;
     int y = 0;
 };
 
-// The rows as they are drawn in `given`: shortened (`elided_row`) and justified. Rows below the
+// The rows as they are drawn in `given`: shortened (`elided`) and justified. Rows below the
 // height are left out; `upto` stops earlier, so that painting reads no further than it shows.
 std::vector<Placed> placed(std::string_view text, const SpanShape& shape, Size given, char32_t mark, int upto) {
     std::vector<Placed> made;
 
     int y = 0;
 
-    for (const Row& one : rows_of(text, shape.wrapped, given.wide)) {
+    for (const Traced& one : rows_of(text, shape.wrapped, given.wide)) {
         if (y >= given.high || y >= upto) break;
 
-        Placed it{elided_row(one, given.wide, shape.elide, mark), 0, y};
+        Placed it{elided(one, given.wide, shape.elide, mark), 0, y};
 
         if (shape.justify != Justify::left) {
             const int room = given.wide - measured(it.row.text).wide;
@@ -318,40 +232,13 @@ std::vector<Placed> placed(std::string_view text, const SpanShape& shape, Size g
     return made;
 }
 
-// Calls `each` for every cluster of a drawn row that came from the text, with its column, its
-// width, its glyph and the paragraph byte it came from, advancing as `View::put` does.
-template <typename Each>
-void walked(const Placed& one, Each each) {
-    int x = one.x;
-
-    for (std::size_t at = 0; at < one.row.text.size();) {
-        const std::size_t next = cluster_after(one.row.text, at);
-        const char32_t letter = glyph(std::string_view{one.row.text}.substr(at, next - at));
-
-        if (letter != 0) {
-            const int much = width(letter);
-
-            if (one.row.bytes[at] != nowhere) each(x, much, letter, one.row.bytes[at]);
-
-            x += much;
-        }
-
-        at = next;
-    }
-}
-
-// Whether the mark covers the paragraph byte of the line.
-bool covers(const Mark& one, std::size_t line, std::size_t byte) {
-    return one.line == line && byte >= one.from && byte < one.upto;
-}
-
 }
 
 // The rows of the label for a width of `wide`, wrapped when the shape says so.
 std::vector<std::string> Span::lines(int wide) const {
     std::vector<std::string> made;
 
-    for (Row& one : rows_of(text_, shape_.wrapped, wide)) made.push_back(std::move(one.text));
+    for (Traced& one : rows_of(text_, shape_.wrapped, wide)) made.push_back(std::move(one.text));
 
     return made;
 }
@@ -409,7 +296,7 @@ View Span::paint(Size given, Area seen) {
             const Style over = Style::merge(look, how.style(marked.role));
             const Hyperlink target = marked.address.empty() ? Hyperlink{} : hyperlink(marked.address);
 
-            walked(one, [&](int x, int much, char32_t letter, std::size_t byte) {
+            walked(one.row, one.x, [&](int x, int much, char32_t letter, std::size_t byte) {
                 if (!covers(marked, one.row.line, byte)) return;
 
                 const Spot spot{x + at.x, at.y};
@@ -437,7 +324,7 @@ bool Span::handle(ClickEvent& what) {
     for (const Placed& one : placed(text_, shape_, area().size, skin().glyph("talcite.elide"), at.y + 1)) {
         if (one.y != at.y) continue;
 
-        walked(one, [&](int x, int much, char32_t, std::size_t byte) {
+        walked(one.row, one.x, [&](int x, int much, char32_t, std::size_t byte) {
             if (found || at.x < x || at.x >= x + much) return;
 
             for (const Mark& marked : marks())
