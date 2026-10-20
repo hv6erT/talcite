@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -171,10 +172,17 @@ View Gauge::paint(Size given, Area seen) {
 
     if (shown >= 100 && part_ < 1.0) shown = 99;
 
-    std::string said = std::to_string(shown) + "%";
+    const std::string said = std::to_string(shown) + "%";
+    const Style text = how.style(role() + ".text");
 
-    made.put({given.wide - static_cast<int>(said.size()) - seen.at.x, -seen.at.y}, said,
-                how.style(role() + ".text"));
+    // The percentage stands on whatever the gauge stands on (a hint line, a window, a panel), and
+    // only what lies below knows its background: without one of its own in the skin it takes that
+    // one (`View::foreground`), as the scroll bar's track does; a background the skin gives wins.
+    // Drawn as plain text, it would show the terminal's own background there instead.
+    const int start = given.wide - static_cast<int>(said.size());
+
+    for (std::size_t at = 0; at < said.size(); ++at)
+        made.foreground({start + static_cast<int>(at) - seen.at.x, -seen.at.y}, static_cast<char32_t>(said[at]), text);
 
     return made;
 }

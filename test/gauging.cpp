@@ -241,3 +241,50 @@ TRIAL("Gauge: the role root can be replaced") {
 
     same(made.at({1, 0}).style.foreground, (Color{false, 4, 4, 4}));
 }
+
+// The percentage stands on whatever the gauge stands on: without a background of its own in the
+// skin it takes the one below, as a hint line gives it, instead of the terminal's own; a
+// background the skin gives the percentage wins.
+TRIAL("Gauge: the percentage takes the background it stands on") {
+    ui::Gauge one{20};
+
+    one.part(0.5);
+
+    Style paper{};
+
+    paper.background = Color{false, 9, 9, 9};
+
+    View under{{20, 1}};
+
+    under.fill({{0, 0}, {20, 1}}, paper);
+    under.draw(one.render({{0, 0}, {20, 1}}), {0, 0});
+
+    same(read(under), std::string{"[███████░░░░░░]  50%"});
+
+    for (int x = 17; x < 20; ++x) same(under.at({x, 0}).style.background, (Color{false, 9, 9, 9}));
+
+    ui::Root top;
+
+    const auto own = std::make_shared<ui::Gauge>(20);
+
+    own->part(0.5);
+
+    top.children().add(own);
+
+    ui::Styles these;
+
+    Style text{};
+
+    text.background = Color{false, 4, 4, 4};
+
+    these["talcite.gauge.text"] = text;
+
+    top.skin(ui::Skin{these});
+
+    View again{{20, 1}};
+
+    again.fill({{0, 0}, {20, 1}}, paper);
+    again.draw(top.render({{0, 0}, {20, 1}}), {0, 0});
+
+    same(again.at({19, 0}).style.background, (Color{false, 4, 4, 4}));
+}
