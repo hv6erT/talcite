@@ -18,7 +18,7 @@
 
 namespace talcite::meta {
 
-enum class Scheme : std::uint8_t { id3v2, id3v1, vorbis, ape, itunes, pdf };
+enum class Scheme : std::uint8_t { id3v2, id3v1, vorbis, ape, itunes, pdf, matroska };
 
 using Value = std::variant<std::string, std::int64_t>;
 
