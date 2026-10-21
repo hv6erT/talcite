@@ -18,7 +18,7 @@
 
 namespace talcite::meta {
 
-enum class Scheme : std::uint8_t { id3v2, id3v1, vorbis, ape, itunes };
+enum class Scheme : std::uint8_t { id3v2, id3v1, vorbis, ape, itunes, pdf };
 
 using Value = std::variant<std::string, std::int64_t>;
 
@@ -71,12 +71,45 @@ struct Stream {
     friend bool operator==(const Stream&, const Stream&) = default;
 };
 
+struct Sheet {
+    double width = 0;
+    double height = 0;
+    std::uint32_t pages = 0;
+
+    friend bool operator==(const Sheet&, const Sheet&) = default;
+};
+
+struct Protection {
+    bool opened = false;
+    bool printing = false;
+    bool copying = false;
+    bool changing = false;
+
+    friend bool operator==(const Protection&, const Protection&) = default;
+};
+
+struct Document {
+    std::string version;
+    std::uint32_t pages = 0;
+    std::vector<Sheet> sheets;
+    std::uint32_t with_text = 0;
+    std::uint32_t fonts = 0;
+    std::uint32_t embedded = 0;
+    std::uint32_t bookmarks = 0;
+    std::uint32_t links = 0;
+    bool form = false;
+    std::optional<Protection> protection;
+
+    friend bool operator==(const Document&, const Document&) = default;
+};
+
 struct Description {
     std::string type;
     Properties properties;
     std::vector<Stream> streams;
     std::vector<Field> fields;
     std::vector<Picture> pictures;
+    std::optional<Document> document;
     bool damaged = false;
 
     friend bool operator==(const Description&, const Description&) = default;

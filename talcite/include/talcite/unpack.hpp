@@ -10,7 +10,7 @@
 
 namespace talcite {
 
-enum class Packing : std::uint8_t { gzip, deflate };
+enum class Packing : std::uint8_t { gzip, deflate, zlib };
 
 class Unpacking {
 public:
