@@ -79,15 +79,6 @@ struct Sheet {
     friend bool operator==(const Sheet&, const Sheet&) = default;
 };
 
-struct Protection {
-    bool opened = false;
-    bool printing = false;
-    bool copying = false;
-    bool changing = false;
-
-    friend bool operator==(const Protection&, const Protection&) = default;
-};
-
 struct Document {
     std::string version;
     std::uint32_t pages = 0;
@@ -98,7 +89,7 @@ struct Document {
     std::uint32_t bookmarks = 0;
     std::uint32_t links = 0;
     bool form = false;
-    std::optional<Protection> protection;
+    bool encrypted = false;
 
     friend bool operator==(const Document&, const Document&) = default;
 };
