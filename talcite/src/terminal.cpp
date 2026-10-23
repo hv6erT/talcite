@@ -1,6 +1,7 @@
 #include "talcite/terminal.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
@@ -18,13 +19,20 @@
 // tree what the program told the terminal (`FolderEvent`, `MarkEvent`, `SwitchEvent`,
 // `TitleEvent`, `EndEvent`). What the program writes is read on the pool and fed to the screen on
 // the loop, which then draws a new frame; what goes to the program goes in the order it was given,
-// one write after another.
+// one write after another. The end comes after what the program wrote, never before it, and after
+// the end the terminal tells nothing more.
 namespace talcite::ui {
 
 namespace {
 
 // How much one read asks for: a screenful of a busy program in one go.
 constexpr std::size_t chunk = 64 * 1024;
+
+// How long the end waits, after the program's exit, for the rest of what it wrote. Output and exit
+// come on their own threads, so the exit may come first. When the program was the terminal's only
+// user, the end of the output follows at once, and the end goes then. A program it left behind
+// may hold the terminal open for as long as it likes; this much later the end goes anyway.
+constexpr std::chrono::milliseconds lingering{500};
 
 // Appends text to bytes.
 void added(Bytes& into, std::string_view said) {
@@ -87,7 +95,8 @@ bool Terminal::focusable() const { return true; }
 Size Terminal::wants(Size room) const { return room; }
 
 // Starts the program in a pseudoterminal of the screen's size, once; then reads what it writes and
-// waits for its end. A program that cannot be started ends at once, with `Ended::lost`.
+// waits for its end, which comes once both are over (`exited`, `drained`). A program that cannot be
+// started ends at once, with `Ended::lost`.
 void Terminal::run() {
     if (running_ || starting_) return;
 
@@ -107,11 +116,20 @@ void Terminal::run() {
                        self.pty_ = std::move(got);
                        self.running_ = true;
                        self.starting_ = false;
+                       self.exit_.reset();
+                       self.drained_ = false;
 
-                       self.reading_ = self.listened();
+                       self.reading_ = self.listened()
+                                           .here()
+                                           .then([weak] {
+                                               if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).drained();
+                                           })
+                                           .recover([weak](const std::exception&) {
+                                               if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).drained();
+                                           });
 
                        self.waiting_ = self.pty_.wait().here().then([weak](const Exit& exit) {
-                           if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).ended(exit);
+                           if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).exited(exit);
                        });
 
                        if (!self.outbox_.empty()) self.flushed();
@@ -147,15 +165,18 @@ Promise<void> Terminal::listened() {
 
 // A chunk of what the program wrote: onto the screen, the terminal's answers back to the program,
 // and what the program told the terminal up the tree. New output brings the view back from the
-// history to the live screen.
+// history to the live screen. After the end, what a program left behind still writes only goes onto
+// the screen: nobody answers it, and the tree has already heard the end.
 void Terminal::heard(const Bytes& got) {
     const std::string was = emulator_.folder();
 
     Fed fed = emulator_.feed(got);
 
-    if (!fed.replies.empty()) write(std::move(fed.replies));
-
     scrolled_ = 0;
+
+    if (!running_) return;
+
+    if (!fed.replies.empty()) write(std::move(fed.replies));
 
     if (fed.switched) {
         SwitchEvent told{emulator_.modes().alternate};
@@ -182,6 +203,38 @@ void Terminal::heard(const Bytes& got) {
 
         (void)trigger(told);
     }
+}
+
+// The program has exited. Its end goes once what it wrote has been read (`drained`), or after a
+// while (`lingering`) when something it left behind keeps the terminal open.
+void Terminal::exited(const Exit& exit) {
+    exit_ = exit;
+
+    if (drained_) {
+        ended(exit);
+
+        return;
+    }
+
+    const std::weak_ptr<Node> weak = weak_from_this();
+
+    lingering_ = later(lingering).here().then([weak] {
+        const std::shared_ptr<Node> kept = weak.lock();
+
+        if (!kept) return;
+
+        auto& self = static_cast<Terminal&>(*kept);
+
+        if (self.running_) self.ended(*self.exit_);
+    });
+}
+
+// The output is over: its end was read, or reading it failed. A program that has already exited
+// ends now; otherwise its exit brings the end.
+void Terminal::drained() {
+    drained_ = true;
+
+    if (exit_ && running_) ended(*exit_);
 }
 
 // The program has ended: the terminal no longer runs, and the tree hears of it.

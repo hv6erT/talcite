@@ -226,6 +226,72 @@ TRIAL("Terminal: the folder and the prompt of a shell") {
     ought(awaited(loop, top, {30, 3}, [&one](const View&) { return !one->running(); }));
 }
 
+// What the program writes and its exit come on their own threads, so the exit may be known first.
+// The end still comes after all it wrote, its marks included, and nothing is told after the end.
+TRIAL("Terminal: the end comes after all that the program wrote") {
+    Loop loop;
+    Root top;
+
+    const auto one = std::make_shared<Terminal>(pretending("farewell"), Size{60, 4});
+
+    std::vector<Marked> marks;
+    std::size_t before = 0;
+    std::optional<Exit> end;
+
+    const ui::Hook marked = one->on<MarkEvent>([&marks](MarkEvent& what) {
+        marks.push_back(what.mark().kind);
+
+        return true;
+    });
+
+    const ui::Hook heard = one->on<EndEvent>([&end, &marks, &before](EndEvent& what) {
+        end = what.exit();
+        before = marks.size();
+
+        return true;
+    });
+
+    top.children().add(one);
+
+    one->run();
+
+    ought(awaited(loop, top, {60, 4}, [&end](const View&) { return end.has_value(); }));
+    ought(end.has_value() && end->ended == Ended::normal && end->code == 0);
+    ought(marks == (std::vector<Marked>{Marked::done}));
+    same(before, std::size_t{1});
+    ought(showing(top.render({{0, 0}, {60, 4}}), "bye"));
+    ought(!one->running());
+}
+
+// A program may leave another one behind that holds the terminal open, so the end of what is
+// written to it does not come. The end of the program comes anyway, soon after its exit, with what
+// it wrote.
+TRIAL("Terminal: a program that leaves another holding the terminal still ends") {
+    Loop loop;
+    Root top;
+
+    const auto one = std::make_shared<Terminal>(pretending("forsaking"), Size{30, 3});
+
+    std::optional<Exit> end;
+
+    const ui::Hook heard = one->on<EndEvent>([&end](EndEvent& what) {
+        end = what.exit();
+
+        return true;
+    });
+
+    top.children().add(one);
+
+    const auto began = std::chrono::steady_clock::now();
+
+    one->run();
+
+    ought(awaited(loop, top, {30, 3}, [&end](const View&) { return end.has_value(); }));
+    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{2});
+    ought(showing(top.render({{0, 0}, {30, 3}}), "left"));
+    ought(!one->running());
+}
+
 // Shift+Page Up walks the history back and Shift+Page Down forward again; the program gets neither.
 TRIAL("Terminal: Shift with the page keys walks the history") {
     Loop loop;

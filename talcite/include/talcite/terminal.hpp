@@ -131,6 +131,10 @@ private:
 
     void heard(const Bytes& got);
 
+    void exited(const Exit& exit);
+
+    void drained();
+
     void ended(const Exit& exit);
 
     void write(Bytes what);
@@ -154,6 +158,9 @@ private:
     std::optional<Promise<void>> started_;
     std::optional<Promise<void>> reading_;
     std::optional<Promise<void>> waiting_;
+    std::optional<Promise<void>> lingering_;
+    std::optional<Exit> exit_;
+    bool drained_ = false;
     std::optional<Promise<void>> sending_;
 };
 

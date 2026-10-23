@@ -366,6 +366,37 @@ int pretending(const std::vector<std::string>& given) {
         return 0;
     }
 
+    // A program that says much and goes at once: three thousand numbered lines, more than one read
+    // of the terminal takes, then the mark of a finished command (OSC 133 D) and "bye". Its exit is
+    // known while the rest of what it said still waits to be read.
+    if (what == "farewell") {
+        std::string made;
+
+        for (int at = 0; at < 3000; ++at) made += "line " + std::to_string(at) + " of what goes before the end\n";
+
+        made += "\x1b]133;D;0\x07" "bye\n";
+
+        said(stdout, made);
+
+        return 0;
+    }
+
+    // A program that leaves another one holding its terminal: on POSIX a child that sleeps three
+    // seconds with the terminal for its output. It says "left" and goes.
+    if (what == "forsaking") {
+#ifndef _WIN32
+        if (::fork() == 0) {
+            (void)::sleep(3);
+
+            ::_exit(0);
+        }
+#endif
+
+        said(stdout, "left\n");
+
+        return 0;
+    }
+
     if (what == "where") {
         said(stdout, here());
 
