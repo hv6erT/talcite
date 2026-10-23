@@ -18,6 +18,7 @@
 #include "talcite/encoding.hpp"
 #include "talcite/decoder.hpp"
 #include "talcite/pixels.hpp"
+#include "unicode.hpp"
 
 namespace talcite {
 
@@ -273,10 +274,13 @@ void forgotten(Console& out, std::vector<Placement>& placed, Sent& sent) {
     sent.clear();
 }
 
+// The first handle of a cluster: a cell's letter from here on stands for several characters.
+constexpr char32_t clustered = 0x110000;
+
 // Appends what is written to the terminal for one cell: the UTF-8 of a character, or the text of a
 // cluster.
 void written(char32_t letter, std::string& into) {
-    if (letter < 0x110000) utf8::encode(letter, into);
+    if (letter < clustered) utf8::encode(letter, into);
     else into += spelled(letter);
 }
 
@@ -369,6 +373,44 @@ bool bridged(const View& made, int y, int from, int upto, const Style& now, std:
     for (int x = from; x < upto; ++x) written(made.at({x, y}).letter, into);
 
     return true;
+}
+
+// Whether the terminal may count the cell's letter in other cells than talcite does: a cluster of
+// several characters, which the terminal cuts and measures by its own rules (the conjuncts of Indic
+// scripts, the vowels of Thai, the emoji sequences), a spacing mark or a prepended character, which
+// a terminal following UAX #29 joins to the character beside it, unlike talcite. The terminal
+// moves its cursor by its own count, so what is written after such a letter in one piece lands
+// elsewhere than in its cells.
+bool uncertain(char32_t letter) {
+    return letter >= clustered || unicode::spacing(letter) || unicode::prepending(letter);
+}
+
+// The end of the stretch of row `y` that starts at `x`: a space alone, or a word, the cells up to
+// the next space. The terminal joins and shapes characters only within a word.
+int worded(const View& made, int y, int x) {
+    if (made.at({x, y}).letter == U' ') return x + 1;
+
+    int end = x + 1;
+
+    while (end < made.size().wide && made.at({end, y}).letter != U' ') ++end;
+
+    return end;
+}
+
+// Whether a cell in [from, upto) of row `y` has a letter the terminal may count otherwise.
+bool unsure(const View& made, int y, int from, int upto) {
+    for (int x = from; x < upto; ++x)
+        if (uncertain(made.at({x, y}).letter)) return true;
+
+    return false;
+}
+
+// Whether a cell in [from, upto) of row `y` differs from what the terminal has.
+bool altered(const View& made, const View& standing, int y, int from, int upto) {
+    for (int x = from; x < upto; ++x)
+        if (!(made.at({x, y}) == standing.at({x, y}))) return true;
+
+    return false;
 }
 
 // The settings the terminal cannot guess from a frame: it has to be told them with a sequence and
@@ -810,9 +852,10 @@ void Term::draw() {
     // Images in pixels (sixel). The frame already knows which images are visible whole (`bared`):
     // their cells are empty and carry the image mark. The last screen row stays for characters,
     // because after an image the terminal moves the cursor below it, and below the last row there
-    // is only scrolling. An image goes to the terminal when any of its cells changed in this frame:
-    // new, moved, another animation frame, uncovered, the screen cleared. The cells go first:
-    // rewriting them erases the pixels underneath, and the image is laid on a clean area.
+    // is only scrolling. An image goes to the terminal when any of its cells changed in this frame
+    // (new, moved, another animation frame, uncovered, the screen cleared) or went out again with
+    // the rest of a row. The cells go first: rewriting them erases the pixels underneath, and the
+    // image is laid on a clean area.
     std::vector<Placement> pictured;
     std::vector<Placement> standing;
 
@@ -840,59 +883,123 @@ void Term::draw() {
         if (std::none_of(standing.begin(), standing.end(), [&one](const Placement& now) { return same_place(one, now); }))
             unstood(one.picture.mark, false, into);
 
-    std::erase_if(pictured, [&held, &made](const Placement& one) {
-        for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
-            for (int x = one.at.x; x < one.at.x + one.picture.size.wide; ++x)
-                if (!(made.at({x, y}) == held.standing.at({x, y}))) return false;
-
-        return true;
-    });
-
     const Colors palette = colors();
 
     // The frame's hyperlinks by mark. A cell under a link the terminal is not given is written as
     // plain text, and so is every cell when the terminal takes no links.
     const Addresses known = addresses_of(made, links(held.compat, held.wish));
 
-    for (int y = 0; y < made.size().high; ++y)
-        for (int x = 0; x < made.size().wide; ++x) {
-            const Cell one = made.at({x, y});
+    // Brings the cursor to (x, y): rewriting a short stretch of cells when that is cheaper than a
+    // jump, otherwise a jump.
+    const auto reached = [&](int x, int y) {
+        if (held.at == ui::Spot{x, y}) return;
 
-            // The continuation of a wide character went out together with its first half.
-            if (one.letter == 0) continue;
+        if (held.at.y != y || held.at.x < 0 || held.at.x > x ||
+            !bridged(made, y, held.at.x, x, held.now, held.linked, known, into))
+            placed({x, y}, into);
 
-            if (one == held.standing.at({x, y})) continue;
+        held.at = ui::Spot{x, y};
+    };
 
-            if (!(held.at == ui::Spot{x, y})) {
-                if (held.at.y != y || held.at.x < 0 || held.at.x > x ||
-                    !bridged(made, y, held.at.x, x, held.now, held.linked, known, into))
-                    placed({x, y}, into);
+    // Switches the terminal to the style, unless it has it already.
+    const auto dressed = [&](const Style& style) {
+        if (style == held.now) return;
 
-                held.at = ui::Spot{x, y};
-            }
+        painted(style, palette, into);
 
-            if (!(one.style == held.now)) {
-                painted(one.style, palette, into);
+        held.now = style;
+    };
 
-                held.now = one.style;
-            }
+    // Writes the cell at (x, y), where the cursor stands, after switching the style and the link
+    // where they differ from the terminal's.
+    const auto lettered = [&](int x, int y) {
+        const Cell one = made.at({x, y});
 
-            if (const std::uint32_t link = link_of(one, known); link != held.linked) {
-                linking(link, known, into);
+        dressed(one.style);
 
-                held.linked = link;
-            }
+        if (const std::uint32_t link = link_of(one, known); link != held.linked) {
+            linking(link, known, into);
 
-            written(one.letter, into);
-
-            const bool broad = x + 1 < made.size().wide && made.at({x + 1, y}).letter == 0;
-
-            held.at.x += broad ? 2 : 1;
-
-            // Autowrap is off, so at the last column the cursor stands in an undefined place; the
-            // next character gets its own jump.
-            if (held.at.x >= made.size().wide) held.at = ui::Spot{-1, -1};
+            held.linked = link;
         }
+
+        written(one.letter, into);
+
+        const bool broad = x + 1 < made.size().wide && made.at({x + 1, y}).letter == 0;
+
+        held.at.x += broad ? 2 : 1;
+
+        // Autowrap is off, so at the last column the cursor stands in an undefined place; the
+        // next character gets its own jump.
+        if (held.at.x >= made.size().wide) held.at = ui::Spot{-1, -1};
+    };
+
+    // A row goes out by stretches: spaces and words. A word with a letter the terminal may count
+    // otherwise (`uncertain`) goes out whole whenever any of its cells changed, because the
+    // terminal joins its characters by its own rules: its cells are erased first (ECH), so that
+    // nothing of the previous picture stays where the terminal draws it narrower, and after it
+    // the cursor jumps to the next cell instead of trusting the terminal's count. A terminal that
+    // drew it wider covered the cells after it, so once such a word went out, the rest of the row
+    // goes out again too. Elsewhere only the changed cells go.
+    //
+    // `covered` keeps for each row the column from which it went out again; the row's width means
+    // nowhere.
+    std::vector<int> covered(static_cast<std::size_t>(made.size().high), made.size().wide);
+
+    for (int y = 0; y < made.size().high; ++y) {
+        bool covering = false;
+
+        for (int x = 0; x < made.size().wide;) {
+            const int end = worded(made, y, x);
+
+            if (unsure(made, y, x, end)) {
+                if (covering || altered(made, held.standing, y, x, end)) {
+                    reached(x, y);
+
+                    // ECH erases in the background of the current style, so the word's own goes
+                    // first.
+                    dressed(made.at({x, y}).style);
+
+                    into += "\x1b[" + std::to_string(end - x) + "X";
+
+                    for (int at = x; at < end; ++at)
+                        if (made.at({at, y}).letter != 0) lettered(at, y);
+
+                    if (!covering) covered[static_cast<std::size_t>(y)] = x;
+
+                    covering = true;
+                }
+
+                // Where the terminal's cursor stands after the word is not known, and the word
+                // must not be rewritten as a mere gap either.
+                held.at = ui::Spot{-1, -1};
+                x = end;
+
+                continue;
+            }
+
+            for (; x < end; ++x) {
+                const Cell one = made.at({x, y});
+
+                // The continuation of a wide character went out together with its first half.
+                if (one.letter == 0) continue;
+
+                if (!covering && one == held.standing.at({x, y})) continue;
+
+                reached(x, y);
+                lettered(x, y);
+            }
+        }
+    }
+
+    std::erase_if(pictured, [&held, &made, &covered](const Placement& one) {
+        for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
+            for (int x = one.at.x; x < one.at.x + one.picture.size.wide; ++x)
+                if (!(made.at({x, y}) == held.standing.at({x, y})) || x >= covered[static_cast<std::size_t>(y)])
+                    return false;
+
+        return true;
+    });
 
     // No link stays open past the frame: whatever reaches the terminal outside a frame (a title,
     // a copy through OSC 52, another program after stepping aside, the shell after the end) must

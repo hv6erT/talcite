@@ -194,6 +194,22 @@ TRIAL("Console without VT: with wrapping text moves a row down, and at the botto
     same(row(one, 1), std::u32string{U"g"});
 }
 
+TRIAL("Console without VT: ECH blanks cells from the cursor without moving it, up to the edge") {
+    conhost::Screen one = screen(6, 1);
+
+    one.fed("abcdef\x1b[1;2H\x1b[3Xz");
+
+    same(row(one, 0), std::u32string{U"az  ef"});
+
+    one.fed("\x1b[1;5H\x1b[9X");
+
+    same(row(one, 0), std::u32string{U"az"});
+
+    one.fed("\x1b[1;1H\x1b[X");
+
+    same(row(one, 0), std::u32string{U" z"});
+}
+
 TRIAL("Console without VT: EL and ED clear from the cursor, up to the cursor and everything") {
     conhost::Screen one = screen(6, 3);
 

@@ -26,4 +26,8 @@ namespace talcite::unicode {
 
 [[nodiscard]] bool modifier(char32_t one);
 
+[[nodiscard]] bool spacing(char32_t one);
+
+[[nodiscard]] bool prepending(char32_t one);
+
 }

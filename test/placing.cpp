@@ -93,11 +93,13 @@ public:
     bool bare = false;
     char32_t elsewhere = U' ';
     ui::Spot other{0, 0};
+    char32_t yonder = U' ';
+    ui::Spot afar{0, 0};
     std::shared_ptr<const Pixels> pixels = dotted({3, 2}, 2);
     std::size_t still = 0;
 
 protected:
-    // Fills the background, puts the extra letter, fills the image's cells and marks them with the
+    // Fills the background, puts the extra letters, fills the image's cells and marks them with the
     // picture, and covers one of them when `covered` is set.
     View paint(ui::Size given, ui::Area seen) override {
         (void)seen;
@@ -106,6 +108,8 @@ protected:
 
         made.fill({{0, 0}, given}, paper(0, 0, 90));
         made.put(other, elsewhere, paper(0, 0, 90));
+
+        if (yonder != U' ') made.put(afar, yonder, paper(0, 0, 90));
 
         for (int y = 0; y < size.high; ++y)
             for (int x = 0; x < size.wide; ++x) made.put({at.x + x, at.y + y}, U'▒', paper(200, 100, 0));
@@ -356,6 +360,40 @@ TRIAL("Term: an unchanged image does not go a second time, and a change beside i
 
     ought(holds(said, "k"));
     ought(!holds(said, sixel_head));
+}
+
+// A changed word the terminal may count otherwise takes the rest of its row with it, the image's
+// cells too; rewriting them erases the pixels, so the image goes again.
+TRIAL("Term: an image in a row going out again after a word the terminal counts otherwise goes anew") {
+    Rig rig;
+
+    rig.root.other = {0, 1};
+    rig.root.elsewhere = U'\u093E';
+
+    (void)rig.drawn();
+
+    rig.root.elsewhere = U'\u0940';
+
+    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+
+    // The row goes out again from the first such word, not from the last.
+    rig.root.yonder = U'\u093E';
+    rig.root.afar = {7, 1};
+
+    (void)rig.drawn();
+
+    rig.root.elsewhere = U'\u093E';
+    rig.root.yonder = U'\u0940';
+
+    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+
+    rig.root.other = {0, 4};
+
+    (void)rig.drawn();
+
+    rig.root.elsewhere = U'\u093E';
+
+    ought(!holds(rig.drawn(), sixel_head));
 }
 
 TRIAL("Term: a covered image goes back to characters, an uncovered one gets its pixels anew") {

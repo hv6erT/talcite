@@ -39,6 +39,8 @@ marks = {c for c in extend if cat.get(c) in ("Mn", "Me")}
 control = gcb["Control"] | gcb["CR"] | gcb["LF"]
 leading = gcb["L"]; vowel = gcb["V"]; trailing = gcb["T"]
 pictographic = emo["Extended_Pictographic"]
+spacing = gcb["SpacingMark"] | {c for c in extend if cat.get(c) == "Mc"}
+prepend = gcb["Prepend"]
 
 def spans(s):
     out = []
@@ -61,7 +63,7 @@ def table(name, s):
 
 parts = []
 counts = {}
-for name, s in [("wides", wide), ("zeros", zero), ("marks", marks), ("controls", control), ("leadings", leading), ("vowels", vowel), ("trailings", trailing), ("pictographs", pictographic)]:
+for name, s in [("wides", wide), ("zeros", zero), ("marks", marks), ("controls", control), ("leadings", leading), ("vowels", vowel), ("trailings", trailing), ("pictographs", pictographic), ("spacings", spacing), ("prependings", prepend)]:
     t, n = table(name, s); parts.append(t); counts[name] = n
 
 out = f'''#include "unicode.hpp"
@@ -84,6 +86,12 @@ out = f'''#include "unicode.hpp"
 // `leadings`, `vowels` and `trailings` are the Hangul jamo L, V and T; the precomposed syllables
 // LV and LVT are recognized by arithmetic. `pictographs` are the characters with
 // Extended_Pictographic: the emoji, and the places reserved for future ones.
+//
+// `spacings` and `prependings` are where the clusters here part from UAX #29, which a terminal may
+// follow: `spacings` are the spacing marks (Grapheme_Cluster_Break=SpacingMark and the Mc among
+// the extenders), which stand in a cell of their own here and which UAX #29 joins to the character
+// before; `prependings` are Grapheme_Cluster_Break=Prepend, which UAX #29 joins to the character
+// after.
 namespace talcite::unicode {{
 
 namespace {{
@@ -140,6 +148,14 @@ bool regional(char32_t one) {{ return one >= 0x1F1E6 && one <= 0x1F1FF; }}
 
 // Whether the character is an emoji modifier, a skin tone.
 bool modifier(char32_t one) {{ return one >= 0x1F3FB && one <= 0x1F3FF; }}
+
+// Whether the character is a spacing mark: a cell of its own here, joined to the character before
+// by UAX #29.
+bool spacing(char32_t one) {{ return one >= 0x900 && among(spacings, one); }}
+
+// Whether the character is a prepended one: a cell of its own here, joined to the character after
+// by UAX #29.
+bool prepending(char32_t one) {{ return one >= 0x600 && among(prependings, one); }}
 
 }}
 '''

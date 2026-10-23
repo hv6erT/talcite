@@ -15,10 +15,10 @@
 // This file is the portable part of the translation, without Win32, so it is tested on every
 // system:
 //
-// - `Screen` is a small terminal: it reads what `Term` writes (UTF-8 text, CUP, SGR, EL, ED, DEC
-//   modes, the title in OSC), keeps a grid of cells in the sixteen console colors and answers the
-//   probe's questions (DECRQM, DSR, DA, OSC 11, 16t) as a terminal would that can do exactly what
-//   the translation can. The glue in `console.cpp` copies the changed rows to the console.
+// - `Screen` is a small terminal: it reads what `Term` writes (UTF-8 text, CUP, SGR, EL, ED, ECH,
+//   DEC modes, the title in OSC), keeps a grid of cells in the sixteen console colors and answers
+//   the probe's questions (DECRQM, DSR, DA, OSC 11, 16t) as a terminal would that can do exactly
+//   what the translation can. The glue in `console.cpp` copies the changed rows to the console.
 // - `typed` and `Pointing` go the other way: they turn the console's keyboard and mouse records
 //   into the same bytes that conhost in VT mode would give the decoder.
 //
@@ -441,6 +441,7 @@ void Screen::dispatched(char last) {
             return;
         case 'J': erased_screen(parameter(0, 0)); return;
         case 'K': erased_line(parameter(0, 0)); return;
+        case 'X': cleared(cursor_.x, cursor_.y, parameter(0, 1)); return;
         case 'm': styled(); return;
         case 'n':
             if (parameter(0, 0) == 6)

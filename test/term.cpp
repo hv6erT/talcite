@@ -1,5 +1,6 @@
 #include "proving.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -10,6 +11,7 @@
 
 #include "faking.hpp"
 #include "talcite/clock.hpp"
+#include "talcite/encoding.hpp"
 #include "talcite/term.hpp"
 
 using namespace talcite;
@@ -911,4 +913,353 @@ TRIAL("Term: the same link sends nothing again, a new address rewrites its cells
     const std::string tail = std::string{"go"} + "\x1b]8;;\x1b\\";
 
     ought(line->written.size() >= tail.size() && line->written.compare(line->written.size() - tail.size(), tail.size(), tail) == 0);
+}
+
+// --- Words the terminal counts otherwise ---------------------------------------------------------
+
+namespace {
+
+// A root that writes its text at (0, 0) in its style.
+class Worded : public ui::Root {
+public:
+    std::string text;
+    Style style;
+
+protected:
+    // Puts the text at the start of an otherwise empty page.
+    View paint(ui::Size given, ui::Area seen) override {
+        (void)seen;
+
+        View made{given};
+
+        made.put({0, 0}, text, style);
+
+        return made;
+    }
+};
+
+// How a modelled terminal moves its cursor after a character: by `advance` cells, where zero joins
+// the character to the cell before.
+using Counting = int (*)(char32_t before, char32_t one);
+
+// A terminal following UAX #29 with conjuncts: a spacing mark, a virama and a consonant after a
+// virama join the cell before, so it draws "इक्का" in two cells where talcite counts four.
+int narrower(char32_t before, char32_t one) {
+    if ((one >= 0x93E && one <= 0x940) || one == 0x94D) return 0;
+
+    return before == 0x94D ? 0 : 1;
+}
+
+// A terminal that gives the Devanagari spacing vowels two cells each.
+int wider(char32_t before, char32_t one) {
+    (void)before;
+
+    if (one >= 0x93E && one <= 0x940) return 2;
+
+    return one == 0x94D ? 0 : 1;
+}
+
+// The first row of a modelled terminal: it reads cursor jumps (CUP), erasing (ECH, ED 2) and text,
+// passes over every other sequence, and moves its cursor by its own count.
+struct Modelled {
+    Counting counting;
+    std::vector<std::string> cells = std::vector<std::string>(24, " ");
+    int x = 0;
+    int y = 0;
+    char32_t before = 0;
+
+    // Reads everything the terminal was sent.
+    void fed(const std::string& bytes) {
+        std::size_t at = 0;
+
+        while (at < bytes.size()) {
+            if (bytes[at] != '\x1b') {
+                const char32_t one = utf8::decode(bytes, at);
+
+                lettered(one);
+
+                continue;
+            }
+
+            ++at;
+
+            if (at < bytes.size() && bytes[at] == '[') {
+                std::size_t end = ++at;
+
+                while (end < bytes.size() && !(bytes[end] >= 0x40 && bytes[end] <= 0x7E)) ++end;
+
+                commanded(bytes.substr(at, end - at), bytes[end]);
+
+                at = end + 1;
+            } else {
+                // A string (OSC, APC, DCS) ends with ST or BEL; any other escape is two bytes.
+                const std::size_t st = bytes.find("\x1b\\", at);
+                const std::size_t bel = bytes.find('\a', at);
+                const bool stringed = at < bytes.size() && (bytes[at] == ']' || bytes[at] == '_' || bytes[at] == 'P');
+
+                at = !stringed ? at + 1 : bel < st ? bel + 1 : st + 2;
+            }
+        }
+    }
+
+    // The number of digits at `at`, zero when there is none.
+    static int number(const std::string& parameters, std::size_t at) {
+        int made = 0;
+
+        for (; at < parameters.size() && parameters[at] >= '0' && parameters[at] <= '9'; ++at)
+            made = made * 10 + (parameters[at] - '0');
+
+        return made;
+    }
+
+    // Carries out a CSI sequence with its parameters and final byte.
+    void commanded(const std::string& parameters, char last) {
+        const int first = number(parameters, 0);
+
+        if (last == 'H') {
+            const std::size_t semicolon = parameters.find(';');
+
+            y = std::max(first, 1) - 1;
+            x = semicolon == std::string::npos ? 0 : std::max(number(parameters, semicolon + 1), 1) - 1;
+            before = 0;
+        } else if (last == 'X' && y == 0) {
+            for (int at = x; at < x + std::max(first, 1) && at < 24; ++at) cells[static_cast<std::size_t>(at)] = " ";
+        } else if (last == 'J' && first == 2) {
+            cells.assign(24, " ");
+        }
+    }
+
+    // Draws one character at the cursor, or joins it to the cell before.
+    void lettered(char32_t one) {
+        const int advance = counting(before, one);
+
+        before = one;
+
+        if (y != 0) return;
+
+        if (advance == 0) {
+            if (x > 0) cells[static_cast<std::size_t>(x - 1)] += utf8::encode(one);
+
+            return;
+        }
+
+        if (x < 24) cells[static_cast<std::size_t>(x)] = utf8::encode(one);
+
+        for (int more = 1; more < advance && x + more < 24; ++more) cells[static_cast<std::size_t>(x + more)] = "";
+
+        x += advance;
+    }
+
+    // The cells from `from` on, joined.
+    [[nodiscard]] std::string from(int from) const {
+        std::string made;
+
+        for (int at = from; at < 24; ++at) made += cells[static_cast<std::size_t>(at)];
+
+        return made;
+    }
+};
+
+// Whether the bytes hold an ECH.
+bool erasing(const std::string& said) {
+    for (std::size_t at = said.find("\x1b["); at != std::string::npos; at = said.find("\x1b[", at + 1)) {
+        std::size_t end = at + 2;
+
+        while (end < said.size() && said[end] >= '0' && said[end] <= '9') ++end;
+
+        if (end < said.size() && said[end] == 'X') return true;
+    }
+
+    return false;
+}
+
+}
+
+// A word with a cluster goes out whole: erased first, then the jump to the cell after it, because
+// the terminal's cursor stands where its own count put it.
+TRIAL("Term: a word the terminal may count otherwise is erased, written whole and followed by a jump") {
+    auto line = faking::terminal();
+
+    line->window = ui::Size{24, 2};
+
+    Worded root;
+
+    root.text = "\xe0\xa4\x87\xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\x95\xe0\xa4\xbe (2026)";
+
+    const std::string word = root.text.substr(0, root.text.find(' '));
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "\x1b[1;1H\x1b[4X" + word + "\x1b[1;5H (2026)"));
+
+    // An unchanged word stays; a change after it goes by itself.
+    root.text = word + " (2027)";
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(!holds(line->written, word));
+    ought(!erasing(line->written));
+    ought(holds(line->written, "7"));
+
+    // A changed word takes the rest of the row with it.
+    root.text = word.substr(0, word.size() - 3) + "\xe0\xa5\x80 (2027)";
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "\x1b[4X" + root.text.substr(0, root.text.find(' ')) + "\x1b[1;5H (2027)"));
+}
+
+// A cluster is cut and measured by the terminal's own rules; talcite gives a spacing mark and a
+// prepended character a cell of their own, a terminal following UAX #29 joins them to their
+// neighbour. Their words go out whole, a double-width character in them as one letter.
+TRIAL("Term: a cluster, a spacing mark and a prepended character make their word one the terminal may count otherwise") {
+    const std::pair<std::string, int> words[] = {{"\xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\x95", 2},
+                                                 {"\xe0\xa4\x95\xe0\xa4\xbe", 2},
+                                                 {"\xd8\x80\xd9\xa1", 2},
+                                                 {"\xe6\x97\xa5\xe0\xa4\x95\xe0\xa4\xbe", 4}};
+
+    for (const auto& [word, wide] : words) {
+        auto line = faking::terminal();
+
+        line->window = ui::Size{24, 2};
+
+        Worded root;
+
+        root.text = "ab " + word + " cd";
+
+        Term term{Setup{}, Seam<Console>{line}};
+
+        term.show(root);
+
+        line->written.clear();
+
+        term.draw();
+
+        ought(holds(line->written, "\x1b[1;1Hab \x1b[" + std::to_string(wide) + "X" + word + "\x1b[1;" +
+                                       std::to_string(4 + wide) + "H cd"));
+
+        // Changes on both sides of an unchanged word close to it: the word is not rewritten as a
+        // gap between them.
+        root.text = "ax " + word + " yd";
+
+        line->written.clear();
+
+        term.draw();
+
+        ought(!holds(line->written, word));
+        ought(holds(line->written, "\x1b[1;" + std::to_string(5 + wide) + "Hy"));
+    }
+}
+
+// ECH erases in the current background, so the word's style is set before it.
+TRIAL("Term: the erasing before a word goes in the word's own style") {
+    auto line = faking::terminal();
+
+    line->window = ui::Size{24, 2};
+
+    Worded root;
+
+    root.text = "\xe0\xa4\x95\xe0\xa4\xbe";
+    root.style.background = Color{false, 0, 0, 200};
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "m\x1b[2X" + root.text));
+}
+
+TRIAL("Term: plain words go out in one piece, without erasing and without extra jumps") {
+    auto line = faking::terminal();
+
+    line->window = ui::Size{24, 2};
+
+    Worded root;
+
+    root.text = "Heat (1995) abc";
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "\x1b[1;1HHeat (1995) abc"));
+    ought(!erasing(line->written));
+}
+
+// Whatever the terminal's count, the columns after the word stay where talcite put them, and
+// nothing of the previous picture is left under a word drawn narrower.
+TRIAL("Term: after a word the terminal counts otherwise, the columns stay in place") {
+    const std::string word = "\xe0\xa4\x87\xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\x95\xe0\xa4\xbe";
+    const std::string other = "\xe0\xa4\x87\xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\x95\xe0\xa5\x80";
+
+    for (const Counting counting : {&narrower, &wider}) {
+        auto line = faking::terminal();
+
+        line->window = ui::Size{24, 2};
+
+        Worded root;
+
+        root.text = "Heat (1995) abc";
+
+        Term term{Setup{}, Seam<Console>{line}};
+
+        term.show(root);
+
+        Modelled shown{counting};
+
+        // Draws the text and lets the model read what went out.
+        const auto drawing = [&](const std::string& text) {
+            root.text = text;
+
+            line->written.clear();
+
+            term.draw();
+
+            shown.fed(line->written);
+        };
+
+        drawing("Heat (1995) abc");
+        drawing(word + " (2026) abc");
+
+        same(shown.from(4), std::string{" (2026) abc         "});
+
+        if (counting == &narrower) same(shown.cells[2] + shown.cells[3], std::string{"  "});
+
+        drawing(word + " (2026) abd");
+
+        same(shown.from(4), std::string{" (2026) abd         "});
+
+        drawing(other + " (2026) abd");
+
+        same(shown.from(4), std::string{" (2026) abd         "});
+
+        // A word that went out again takes the next one with it, though that one is unchanged: a
+        // terminal counting wider drew over it.
+        const std::string twice = "\xe0\xa4\x95\xe0\xa4\xbe\xe0\xa4\x95\xe0\xa4\xbe";
+        const std::string changed = "\xe0\xa4\x95\xe0\xa5\x80\xe0\xa4\x95\xe0\xa4\xbe";
+
+        drawing(twice + " " + word + " abc");
+        drawing(changed + " " + word + " abc");
+
+        same(shown.cells[5], std::string{"\xe0\xa4\x87"});
+        same(shown.from(10), std::string{"abc           "});
+    }
 }
