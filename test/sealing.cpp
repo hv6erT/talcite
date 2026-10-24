@@ -41,9 +41,20 @@ const net::Patience soon{4000};
 
 constexpr std::uint64_t prime = (std::uint64_t{1} << 61) - 1;
 
-// The product of two numbers modulo `prime`.
+// The product of two numbers modulo `prime`, by doubling and adding: every partial sum stays below
+// 2^62, so 64 bits are enough and no 128-bit type is needed (MSVC has none).
 std::uint64_t times(std::uint64_t one, std::uint64_t two) {
-    return static_cast<std::uint64_t>((static_cast<unsigned __int128>(one) * two) % prime);
+    std::uint64_t made = 0;
+
+    one %= prime;
+
+    for (; two != 0; two >>= 1) {
+        if ((two & 1) != 0) made = (made + one) % prime;
+
+        one = (one + one) % prime;
+    }
+
+    return made;
 }
 
 // `base` raised to `exponent` modulo `prime`, by square and multiply.
