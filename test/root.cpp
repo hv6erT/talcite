@@ -33,6 +33,10 @@ public:
         if (alive_ != nullptr) --*alive_;
     }
 
+    // Sends a pick from the leaf itself, as a widget does when the program presses it, outside any
+    // delivery of the root.
+    bool picked() { return trigger(ui::PickEvent{}); }
+
 protected:
     // Records the leaf's name and lets the key go on.
     bool handle(ui::KeyEvent& what) override {
@@ -478,6 +482,93 @@ TRIAL("Root: a deferred release really releases") {
 
     ought(!top.dispatch(what));
 
+    same(alive, 0);
+}
+
+// An event a node starts itself (a button pressed by the program, not by a key) is a delivery of
+// its root too: a listener that removes the branch it climbs through, as an OK closing its window
+// does, leaves the nodes alive until the event is over, the climb goes on over them, and they go
+// only then. Before, only the root's own deliveries counted, and the climb went on over freed nodes
+// (ThreadSanitizer in twa: the genres window's OK).
+TRIAL("Root: an event a node starts itself is a delivery, so its branch lives until it ends") {
+    std::vector<std::string> heard;
+    int alive = 0;
+
+    Crown top;
+
+    {
+        const std::shared_ptr<Leaf> mid = leaf("środek", nullptr, &alive);
+        const std::shared_ptr<Leaf> low = leaf("spód", nullptr, &alive);
+
+        top.children().add(mid);
+        mid->children().add(low);
+    }
+
+    Leaf* const window = static_cast<Leaf*>(top.children().front().get());
+    Leaf* const button = static_cast<Leaf*>(window->children().front().get());
+
+    const ui::Hook closing = button->on<ui::PickEvent>([&top, &alive, &heard, window](ui::PickEvent&) {
+        (void)top.children().remove(window);
+
+        heard.push_back("spód:" + std::to_string(alive));
+
+        return false;
+    });
+
+    const ui::Hook above = window->on<ui::PickEvent>([&alive, &heard](ui::PickEvent&) {
+        heard.push_back("środek:" + std::to_string(alive));
+
+        return false;
+    });
+
+    same(alive, 2);
+
+    ought(!button->picked());
+
+    same(heard, (std::vector<std::string>{"spód:2", "środek:2"}));
+    same(alive, 0);
+}
+
+// The same inside the root's own delivery: the inner event changes nothing, the branch goes when
+// the outer one ends.
+TRIAL("Root: an event a node starts inside a delivery of the root is part of it") {
+    int alive = 0;
+
+    Crown top;
+
+    {
+        const std::shared_ptr<Leaf> mid = leaf("środek", nullptr, &alive);
+        const std::shared_ptr<Leaf> low = leaf("spód", nullptr, &alive);
+
+        top.children().add(mid);
+        mid->children().add(low);
+        low->focus();
+    }
+
+    Leaf* const window = static_cast<Leaf*>(top.children().front().get());
+    Leaf* const button = static_cast<Leaf*>(window->children().front().get());
+
+    int during = -1;
+
+    const ui::Hook closing = button->on<ui::PickEvent>([&top, window](ui::PickEvent&) {
+        (void)top.children().remove(window);
+
+        return true;
+    });
+
+    const ui::Hook pressing = button->on<ui::KeyEvent>([&alive, &during, button](ui::KeyEvent&) {
+        (void)button->picked();
+
+        during = alive;
+
+        return true;
+    });
+
+    ui::KeyEvent what{U'a'};
+
+    ought(top.dispatch(what));
+
+    same(during, 2);
     same(alive, 0);
 }
 

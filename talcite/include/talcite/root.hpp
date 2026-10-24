@@ -82,6 +82,7 @@ protected:
 
 private:
     friend class Children;
+    friend class Handler;
     friend class Node;
 
     Schedule schedule_;

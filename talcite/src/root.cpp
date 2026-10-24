@@ -276,8 +276,9 @@ Node* Root::under(Spot where) {
 // Ends one delivery and, when it was the last, releases the nodes removed in the meantime.
 // Deliveries are counted, because no node may be released during one: a removed node waits in
 // `dying_` until the last delivery ends. A counter, not a flag, because a handler may deliver
-// another event in the middle of the first. The `sent` template in the header raises it, and this
-// function lowers it, also when a handler throws.
+// another event in the middle of the first. The `sent` template in the header raises it for the
+// root's own deliveries, `Handler::delivering` for every event started in the tree (a button
+// pressed by the program), and this function lowers it, also when a handler throws.
 void Root::released() {
     if (--busy_ > 0) return;
 

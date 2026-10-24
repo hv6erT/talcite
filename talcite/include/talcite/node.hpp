@@ -92,7 +92,7 @@ public:
 
     [[nodiscard]] Node* parent() const override { return up_; }
 
-    [[nodiscard]] Root* root() const;
+    [[nodiscard]] Root* root() const override;
 
     [[nodiscard]] const Area& area() const { return area_; }
 

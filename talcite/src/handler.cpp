@@ -1,5 +1,7 @@
 #include "talcite/handler.hpp"
 
+#include "talcite/root.hpp"
+
 #include <algorithm>
 #include <memory>
 #include <mutex>
@@ -101,6 +103,25 @@ Handler::~Handler() {
 
 // A bare handler has no parent, so events stop with it.
 Handler* Handler::parent() const { return nullptr; }
+
+// A bare handler belongs to no tree with a root, so its events are no root's delivery.
+Root* Handler::root() const { return nullptr; }
+
+// Every event is a delivery of the root of the tree it starts in, whoever starts it: the root with
+// a key or the mouse, but also a widget itself (`Button::pick` called by a program, a reaction
+// after a promise). During a delivery no node removed from the tree is released (`Root::linger`),
+// so a listener may close the window the event is still climbing through, and the climb goes on
+// over the nodes as they were. Before, only the root's own deliveries counted, and a press started
+// by the program climbed over a window freed under it. The count is a counter, so an event inside
+// another one changes nothing; outside a tree with a root there is nothing to count.
+void Handler::delivering(Root* top) {
+    if (top != nullptr) ++top->busy_;
+}
+
+// Ends the delivery begun by `delivering`; the last one releases the nodes removed during it.
+void Handler::delivered(Root* top) {
+    if (top != nullptr) top->released();
+}
 
 // The widget channel knows only the library's events, with one `handle` per type. A program's own
 // event (QuitEvent in twa) travels only through the callers' channel, via `on<>`: `carried` checks

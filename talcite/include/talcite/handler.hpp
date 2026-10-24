@@ -74,12 +74,30 @@ public:
 
     [[nodiscard]] virtual Handler* parent() const;
 
+    [[nodiscard]] virtual Root* root() const;
+
 protected:
     template <std::derived_from<Event> One>
     bool trigger(One& what) {
         if (what.target_ == nullptr) what.target_ = this;
 
-        return carried(what);
+        Root* const top = root();
+
+        delivering(top);
+
+        bool made = false;
+
+        try {
+            made = carried(what);
+        } catch (...) {
+            delivered(top);
+
+            throw;
+        }
+
+        delivered(top);
+
+        return made;
     }
 
     template <std::derived_from<Event> One>
@@ -105,6 +123,10 @@ protected:
 
 private:
     friend class Root;
+
+    static void delivering(Root* top);
+
+    static void delivered(Root* top);
 
     template <class One>
     [[nodiscard]] static consteval bool known() {
