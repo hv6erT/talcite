@@ -1,5 +1,6 @@
 #include "talcite/root.hpp"
 
+#include "talcite/float.hpp"
 #include "talcite/modal.hpp"
 #include "talcite/modals.hpp"
 
@@ -237,29 +238,43 @@ void Root::minded(const MouseEvent& what) {
 //
 // "On top" has one source: the order of children. Every container attaches its overlay after the
 // content, so a veil or an open menu is on top because it comes later.
+//
+// A float occupies only what it holds. Its rectangle is the room its parent had to spare, and the
+// margins in it belong to nobody: a click there is not a click on the float, so the float does not
+// match and the search goes on among the siblings below it, as if it were not there. Otherwise a
+// float over the whole room of a stack would take the mouse from every layer under it.
 Node* Root::under(Spot where) {
+    // Whether `one` covers the spot `at` given in its parent's coordinates, with a visible cell.
+    // Only what is visible: a scroller's child stands in a rectangle larger than the window: a row
+    // scrolled under the bar or past the bottom edge has its rectangle there, although it has not
+    // drawn a single cell. Without this check, a click on the scroller's bar would hit the row
+    // under it.
+    const auto covers = [](const Node& one, Spot at) {
+        const Area& box = one.area();
+
+        if (at.x < box.at.x || at.x >= box.at.x + box.size.wide || at.y < box.at.y || at.y >= box.at.y + box.size.high)
+            return false;
+
+        const Area& seen = one.seen_;
+        const Spot inner{at.x - box.at.x, at.y - box.at.y};
+
+        return inner.x >= seen.at.x && inner.x < seen.at.x + seen.size.wide && inner.y >= seen.at.y &&
+               inner.y < seen.at.y + seen.size.high;
+    };
+
     Node* at = this;
 
     for (;;) {
         Node* into = nullptr;
 
         for (const std::shared_ptr<Node>& one : at->children()) {
-            const Area& box = one->area();
+            if (!covers(*one, where)) continue;
 
-            if (where.x < box.at.x || where.x >= box.at.x + box.size.wide || where.y < box.at.y ||
-                where.y >= box.at.y + box.size.high)
-                continue;
+            if (dynamic_cast<const Float*>(one.get()) != nullptr) {
+                const Spot inner{where.x - one->area().at.x, where.y - one->area().at.y};
 
-            // Only what is visible. A scroller's child stands in a rectangle larger than the
-            // window: a row scrolled under the bar or past the bottom edge has its rectangle there,
-            // although it has not drawn a single cell. Without this check, a click on the
-            // scroller's bar would hit the row under it.
-            const Area& seen = one->seen_;
-            const Spot inner{where.x - box.at.x, where.y - box.at.y};
-
-            if (inner.x < seen.at.x || inner.x >= seen.at.x + seen.size.wide || inner.y < seen.at.y ||
-                inner.y >= seen.at.y + seen.size.high)
-                continue;
+                if (one->children().empty() || !covers(*one->children().front(), inner)) continue;
+            }
 
             into = one.get();
         }

@@ -6,7 +6,7 @@
 
 #include "talcite/buttons.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/row.hpp"
+#include "talcite/flow.hpp"
 #include "talcite/shape.hpp"
 
 namespace talcite::ui {
@@ -39,7 +39,7 @@ private:
     std::shared_ptr<Span> title_;
     std::shared_ptr<Span> text_;
     std::vector<std::shared_ptr<Frame>> boxes_;
-    std::shared_ptr<Row> row_ = std::make_shared<Row>(RowShape{1, true});
+    std::shared_ptr<Flow> row_ = std::make_shared<Flow>(1);
     Buttons buttons_{*row_};
     MessageShape shape_;
 };

@@ -7,7 +7,6 @@
 
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/row.hpp"
 #include "talcite/span.hpp"
 
 #include "amid.hpp"
@@ -127,7 +126,7 @@ protected:
 //                  │   └── Frame(.box) → Span(text)
 //                  ├── Gap           ← an empty row; disappears when either box is missing
 //                  └── Boxed         ← the answer box; disappears when there are no buttons
-//                      └── Frame(.box) → Amid → Row(spacing 1) → buttons
+//                      └── Frame(.box) → Flow(spacing 1) → buttons
 //
 // The column is assembled once and never changes. Everything that is or is not visible follows
 // from `wants`, so `text()` and adding buttons may be called at any time, also on a window that
@@ -142,7 +141,7 @@ protected:
 //                  └── Column
 //                      ├── Aired → Span(text)
 //                      ├── Gap
-//                      └── Amid → Row(spacing 1) → buttons
+//                      └── Flow(spacing 1) → buttons
 //
 // The edge of the outer frame does double duty: it is drawn with the role <stem>, so the skin
 // decides whether a line shows in it or only the background color. In Midnight Commander the
@@ -161,12 +160,6 @@ Message::Message(std::string title, std::string text, MessageShape shape)
 
     text_ = std::make_shared<Span>(std::move(text),
                                    SpanShape{true, Justify::center, Elide::none});
-
-    // The spacing between buttons belongs to the row, not to the content, so a button shrunk to
-    // zero leaves no hole behind.
-    const auto amid = std::make_shared<Amid>();
-
-    amid->children().add(row_);
 
     // A box around the text and around the buttons: that is how a message looks in Midnight
     // Commander. Whoever prefers bare content turns `boxed` off and gets just the column in a
@@ -188,8 +181,8 @@ Message::Message(std::string title, std::string text, MessageShape shape)
         const auto titled = std::make_shared<Titled>(*frame_);
 
         column->children().add(said);
-        column->children().add(std::make_shared<Gap>(*said, *amid));
-        column->children().add(amid);
+        column->children().add(std::make_shared<Gap>(*said, *row_));
+        column->children().add(row_);
 
         titled->children().add(column);
         frame_->children().add(titled);
@@ -203,7 +196,7 @@ Message::Message(std::string title, std::string text, MessageShape shape)
     }
 
     const auto said = std::make_shared<Boxed>(text_, boxing());
-    const auto asks = std::make_shared<Boxed>(amid, boxing());
+    const auto asks = std::make_shared<Boxed>(row_, boxing());
 
     column->children().add(title_);
     column->children().add(said);

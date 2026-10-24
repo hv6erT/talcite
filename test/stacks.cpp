@@ -4,6 +4,7 @@
 #include <optional>
 
 #include "talcite/column.hpp"
+#include "talcite/float.hpp"
 #include "talcite/root.hpp"
 #include "talcite/row.hpp"
 #include "talcite/stack.hpp"
@@ -190,6 +191,63 @@ TRIAL("Stack: a click hits the overlay only where it is") {
 
     (void)top.dispatch(outside);
     same(hits, 1);
+}
+
+// A float occupies only what it holds: over the whole room of a stack, a click beside its child
+// goes to the layer below, as if the float were not there, and a click on the child hits the child.
+// The float itself is never the target.
+TRIAL("Stack: a click beside what a float holds goes to the layer below") {
+    Sheet top;
+
+    const auto stack = std::make_shared<ui::Stack>();
+    const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
+    const auto held = std::make_shared<Box>(ui::Size{2, 1}, U'b');
+    const auto right = std::make_shared<ui::Right>();
+
+    right->children().add(held);
+    stack->children().add(under);
+    stack->children().add(right);
+    top.children().add(stack);
+
+    (void)top.render({{0, 0}, {6, 3}});
+
+    same(right->area(), (ui::Area{{0, 0}, {6, 3}}));
+    same(held->area().at.x, 4);
+
+    int below = 0;
+    int above = 0;
+    int floated = 0;
+
+    const ui::Hook heard_below = under->on<ui::ClickEvent>([&below](ui::ClickEvent&) {
+        ++below;
+
+        return true;
+    });
+
+    const ui::Hook heard_above = held->on<ui::ClickEvent>([&above](ui::ClickEvent&) {
+        ++above;
+
+        return true;
+    });
+
+    const ui::Hook heard_float = right->on<ui::ClickEvent>([&floated](ui::ClickEvent&) {
+        ++floated;
+
+        return true;
+    });
+
+    ui::ClickEvent beside{{1, 0}, ui::Mouse::left, {}};
+
+    (void)top.dispatch(beside);
+    same(below, 1);
+    same(above, 0);
+
+    ui::ClickEvent on{{5, 0}, ui::Mouse::left, {}};
+
+    (void)top.dispatch(on);
+    same(below, 1);
+    same(above, 1);
+    same(floated, 0);
 }
 
 // --- screen_area, area_in -----------------------------------------------------------------------

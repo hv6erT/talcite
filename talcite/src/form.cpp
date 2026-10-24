@@ -7,7 +7,6 @@
 
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/row.hpp"
 
 #include "amid.hpp"
 
@@ -88,7 +87,7 @@ private:
 //         └── Footed            ← room counted from the bottom: buttons first, the rest to content
 //             ├── Column(body)  ← the caller's slot
 //             ├── Gap           ← an empty row; vanishes when there is no content or no buttons
-//             └── Amid → Row(1) ← buttons centered, as in the message box
+//             └── Flow(1)       ← buttons in centered lines, as in the message box
 //
 // No roles of its own. The frame draws as a frame and a button as a button, so a skin that knows
 // `talcite.frame` and `talcite.button` already knows the whole form. The message box has a family
@@ -101,13 +100,10 @@ Form::Form(std::string title, FormShape shape) : Dialog(ModalShape{shape.shade})
     frame_ = std::make_shared<Frame>(std::move(title), FrameShape{shape_.border});
     body_ = std::make_shared<Column>();
     const auto column = std::make_shared<Footed>();
-    const auto amid = std::make_shared<Amid>();
-
-    amid->children().add(row_);
 
     column->children().add(body_);
     column->children().add(std::make_shared<Gap>(*body_, *row_));
-    column->children().add(amid);
+    column->children().add(row_);
 
     const auto titled = std::make_shared<Titled>(*frame_);
 

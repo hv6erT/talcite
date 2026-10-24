@@ -5,6 +5,7 @@
 
 #include "talcite/column.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/flow.hpp"
 #include "talcite/root.hpp"
 #include "talcite/row.hpp"
 #include "talcite/span.hpp"
@@ -172,11 +173,11 @@ TRIAL("Row: children stand side by side") {
     same(read(made, 0), std::string{"aabbb"});
 }
 
-// A wrapping row: a child that does not fit in the rest of the line starts the next one, and each
+// A flow: a child that does not fit in the rest of the line starts the next one, and each
 // line is centered. A child of zero width opens neither a gap nor a line; one wider than the whole
-// row stands alone, clipped.
-TRIAL("Row: wrapping carries over what does not fit and centers the lines") {
-    ui::Row one{ui::RowShape{1, true}};
+// flow stands alone, clipped.
+TRIAL("Flow: carries over what does not fit and centers the lines") {
+    ui::Flow one{1};
 
     const auto first = box({5, 1}, U'a');
     const auto empty = box({0, 1}, U'x');
@@ -190,7 +191,6 @@ TRIAL("Row: wrapping carries over what does not fit and centers the lines") {
     one.children().add(third);
     one.children().add(wide);
 
-    ought(one.wrapping());
     same(one.wants({12, 10}), (ui::Size{12, 3}));
     same(one.wants({12, 2}), (ui::Size{12, 2}));
 
@@ -217,10 +217,6 @@ TRIAL("Row: wrapping carries over what does not fit and centers the lines") {
 
     // Enough room: one line, as without wrapping.
     same(one.wants({60, 10}), (ui::Size{38, 1}));
-
-    one.wrapping(false);
-
-    same(one.wants({12, 10}).high, 1);
 }
 
 TRIAL("Row: a child gets the full height") {
@@ -256,40 +252,6 @@ TRIAL("Column: wants the sum of heights, but no more than it got") {
     same(one.wants({10, 10}).high, 6);
     same(one.wants({10, 4}).high, 4);
     same(one.wants({2, 10}).wide, 2);
-}
-
-// A spread row gives the room it does not need to the place after its first child that occupies
-// something: that child stays at the left edge, the rest stand at the right one with their gaps. A
-// first child of zero width does not count. Without room to spare, and when asked for its size, it
-// is an ordinary row.
-TRIAL("Row: a spread row puts its first child left and the rest right") {
-    ui::Row one{ui::RowShape{1, false, true}};
-
-    const auto empty = box({0, 1}, U'0');
-    const auto note = box({3, 1}, U'n');
-    const auto yes = box({2, 1}, U'y');
-    const auto no = box({2, 1}, U'z');
-
-    one.children().add(empty);
-    one.children().add(note);
-    one.children().add(yes);
-    one.children().add(no);
-
-    same(one.wants({20, 1}).wide, 9);
-
-    const View made = one.render({{0, 0}, {14, 1}});
-
-    same(read(made, 0), std::string{"nnn      yy zz"});
-    same(note->area().at.x, 0);
-    same(yes->area().at.x, 9);
-    same(no->area().at.x, 12);
-
-    same(read(one.render({{0, 0}, {9, 1}}), 0), std::string{"nnn yy zz"});
-
-    one.spread(false);
-
-    same(read(one.render({{0, 0}, {14, 1}}), 0), std::string{"nnn yy zz"});
-    ought(!one.spread());
 }
 
 TRIAL("Row: wants the sum of widths, but no more than it got") {

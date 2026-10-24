@@ -54,30 +54,4 @@ private:
     const Frame* frame_;
 };
 
-// Centers its child horizontally. A row lays buttons out from the left, and a column gives it its
-// whole width, so without this the button row would stick to the left edge, whereas in Midnight
-// Commander it sits in the middle. Shared by the message and the form, hence an internal header.
-class Amid : public Node {
-protected:
-    // Clears the visible area and draws the first child at its wanted width (at most the given
-    // width), centered horizontally and given the full height.
-    View paint(Size given, Area seen) override {
-        View made{seen.size};
-
-        made.clear({{0, 0}, seen.size});
-
-        if (children().empty()) return made;
-
-        const Size wants = children().front()->wants(given);
-        const int wide = std::clamp(wants.wide, 0, given.wide);
-
-        const Area where{{std::max((given.wide - wide) / 2, 0), 0}, {wide, given.high}};
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
-
-        return made;
-    }
-};
-
 }

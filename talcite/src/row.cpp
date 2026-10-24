@@ -1,13 +1,13 @@
 #include "talcite/row.hpp"
 
 #include <algorithm>
-#include <utility>
+#include <cstddef>
+
+#include "talcite/float.hpp"
 
 namespace talcite::ui {
 
 Row::Row(int gap) : gap_(std::max(gap, 0)) {}
-
-Row::Row(RowShape shape) : gap_(std::max(shape.gap, 0)), wrapping_(shape.wrapping), spread_(shape.spread) {}
 
 // Sets the gap between children, in columns; a negative gap counts as zero.
 void Row::gap(int given) { gap_ = std::max(given, 0); }
@@ -15,75 +15,71 @@ void Row::gap(int given) { gap_ = std::max(given, 0); }
 // A row takes any number of children.
 int Row::capacity() const { return plenty; }
 
-// Splits the children into lines for a wrapping row of size `room`. A gap is due only between
-// children that occupy something. A child of zero width (an empty label, a disabled button, a node
-// without content) opens no gap, because it would leave a hole where nothing is visible. That is
-// why we remember not "which child in turn this is" but "whether something already stands here".
-// This is a matter of layout, not of content: otherwise every window would have to separate its
-// buttons with empty nodes and fix them at every removal.
+// Where each child stands when every one gets the width it wants, left to right, in one line; the
+// height is the child's wish. One answer for both questions a row hears: `wants` measures it and
+// `paint` widens it, so the size a row reports and the places it draws in cannot drift apart.
 //
-// A row that wraps (`wrapping`): a child that does not fit in what is left of the line starts the
-// next one; each line is centered. That way a window's row of buttons does not lose the last ones
-// when there are more than the screen can hold, in 80 columns and in a language with long labels.
-// A child wider than the whole row gets a line to itself, trimmed.
-std::vector<Row::Line> Row::laid(Size room) const {
-    std::vector<Line> made(1);
+// A gap is due only between children that occupy something. A child of zero width (an empty label,
+// a disabled button, a node without content) opens no gap, because it would leave a hole where
+// nothing is visible. That is why we remember not "which child in turn this is" but "whether
+// something already stands here". This is a matter of layout, not of content: otherwise every
+// window would have to separate its buttons with empty nodes and fix them at every removal.
+//
+// Nobody drops out, even when the room has run out: a node that is not visible gets a rectangle of
+// zero width, so that its area() tells the truth about this frame. But it opens no gap before
+// itself.
+std::vector<Area> Row::placed(Size room) const {
+    std::vector<Area> made;
+
+    made.reserve(children().many());
+
+    int x = 0;
 
     for (const std::shared_ptr<Node>& one : children()) {
-        const Size wants = one->wants({room.wide, room.high});
-        const int wide = std::min(wants.wide, room.wide);
+        const int apart = x > 0 ? gap_ : 0;
+        const int left = std::max(room.wide - x - apart, 0);
+        const Size wants = one->wants({left, room.high});
+        const int wide = std::clamp(wants.wide, 0, left);
+        const int from = wide > 0 ? x + apart : x;
 
-        if (wide == 0) continue;
+        made.push_back({{from, 0}, {wide, wide > 0 ? std::clamp(wants.high, 0, std::max(room.high, 0)) : 0}});
 
-        if (!made.back().placed.empty() && made.back().wide + gap_ + wide > room.wide) made.emplace_back();
-
-        Line& line = made.back();
-
-        line.wide += (line.placed.empty() ? 0 : gap_) + wide;
-        line.high = std::max(line.high, wants.high);
-        line.placed.emplace_back(one.get(), Size{wide, wants.high});
+        x = from + wide;
     }
 
     return made;
 }
 
-// The size the children want side by side, with gaps, or line under line when the row wraps,
-// clamped to `room`.
+// The size the children want side by side, with gaps, clamped to `room`. Floats count with the
+// width of what they hold and nothing more: the room they stand in is what the row has to spare,
+// and a row that asked for it would take the whole width of every window it stands in.
 Size Row::wants(Size room) const {
-    if (wrapping_) {
-        Size made;
-
-        for (const Line& line : laid(room)) {
-            made.wide = std::max(made.wide, line.wide);
-            made.high += line.high;
-        }
-
-        return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
-    }
-
     Size made;
 
-    for (const std::shared_ptr<Node>& one : children()) {
-        const int apart = made.wide > 0 ? gap_ : 0;
-        const Size wants =
-            one->wants({std::max(room.wide - made.wide - apart, 0), room.high});
-
-        if (wants.wide == 0) continue;
-
-        made.wide += apart + wants.wide;
-        made.high = std::max(made.high, wants.high);
+    for (const Area& one : placed(room)) {
+        made.wide = std::max(made.wide, one.at.x + one.size.wide);
+        made.high = std::max(made.high, one.size.high);
     }
 
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Lays the children out left to right, or in centered lines when the row wraps, and draws them.
+// Lays the children out left to right, each over the full height, and draws them.
 //
-// A spread row (`spread`) that gets more room than it wants gives the rest to the place after its
-// first child that occupies something: that child stays at the left edge and the others stand at
-// the right one. A window's last row is made so, with what the window says on the left and its
-// buttons on the right. Without room to spare it is an ordinary row; a wrapping row centers its
-// lines and does not spread.
+// The width the children do not need goes to the floats among them (`Left`, `Right`, `Center`),
+// by the rule of automatic margins, as `margin: auto` in a flexible box: a float has an empty
+// margin on its free side (a left float on its right, a right float on its left, a centered one on
+// both), and the spare width is split equally between all those margins. The odd cells of the
+// split go to the last margins, so a centered child with an odd cell to spare stands where `Center`
+// would put it on its own. A float widened so stands its child in its side of the widened
+// rectangle; the children after it move along.
+//
+// So a counter followed by a right float with buttons puts the counter at the left edge and the
+// buttons at the right one; a centered float between two labels stands in the middle between them.
+// Without floats the spare width stays after the last child, as it always did. A float that
+// occupies nothing gets no margin, for the reason a gap is not due before it.
+//
+// Only the children themselves count: a float deeper in the tree is placed by its own parent.
 View Row::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -91,60 +87,49 @@ View Row::paint(Size given, Area seen) {
 
     made.clear({{0, 0}, seen.size});
 
-    if (wrapping_) {
-        const std::vector<Line> lines = laid(given);
+    const std::vector<Area> places = placed(given);
+    const std::size_t many = places.size();
 
-        // A child that occupies nothing still gets a zero rectangle, as in a row without wrapping.
-        for (const std::shared_ptr<Node>& one : children()) {
-            const bool placed = std::any_of(lines.begin(), lines.end(), [&one](const Line& line) {
-                return std::any_of(line.placed.begin(), line.placed.end(), [&one](const auto& each) { return each.first == one.get(); });
-            });
+    std::vector<const Float*> floats(many, nullptr);
 
-            if (!placed) static_cast<void>(one->render({{0, 0}, {0, 0}}, {{0, 0}, {0, 0}}));
-        }
+    int end = 0;
+    int sides = 0;
 
-        int y = 0;
+    for (std::size_t which = 0; which < many; ++which) {
+        end = std::max(end, places[which].at.x + places[which].size.wide);
 
-        for (const Line& line : lines) {
-            int x = std::max((given.wide - line.wide) / 2, 0);
+        if (places[which].size.wide == 0) continue;
 
-            for (const auto& [one, size] : line.placed) {
-                const Area where{{x, y}, {size.wide, line.high}};
-                const Area part = Area::crossed(seen, where);
+        floats[which] = dynamic_cast<const Float*>(children()[which].get());
 
-                made.draw(one->render(where, part - where.at), part.at - seen.at);
-
-                x += size.wide + gap_;
-            }
-
-            y += line.high;
-        }
-
-        return made;
+        if (floats[which] != nullptr) sides += floats[which]->side() == Justify::center ? 2 : 1;
     }
 
-    int x = 0;
-    int spare = spread_ ? std::max(given.wide - wants(given).wide, 0) : 0;
+    const int spare = std::max(given.wide - end, 0);
 
-    for (const std::shared_ptr<Node>& one : children()) {
-        const int apart = x > 0 ? gap_ : 0;
-        const int left = std::max(given.wide - x - apart, 0);
-        const Size wants = one->wants({left, given.high});
-        const Size gets{std::min(wants.wide, left), given.high};
+    // The width of margin number `k` of `sides`, counted from the left.
+    const auto share = [spare, sides](int k) { return spare / sides + (k >= sides - spare % sides ? 1 : 0); };
 
-        // Nobody drops out of the loop, even when the room has run out: a node that is not
-        // visible gets a rectangle of zero width, so that its area() tells the truth about this
-        // frame. But it opens no gap before itself.
-        const int from = gets.wide > 0 ? x + apart : x;
+    int shift = 0;
+    int k = 0;
 
-        const Area where{{from, 0}, gets};
+    for (std::size_t which = 0; which < many; ++which) {
+        Area where = places[which];
+
+        where.at.x += shift;
+        where.size.high = std::max(given.high, 0);
+
+        if (const Float* one = floats[which]; one != nullptr) {
+            const int before = one->side() != Justify::left ? share(k++) : 0;
+            const int after = one->side() != Justify::right ? share(k++) : 0;
+
+            where.size.wide += before + after;
+            shift += before + after;
+        }
+
         const Area part = Area::crossed(seen, where);
 
-        made.draw(one->render(where, part - where.at), part.at - seen.at);
-
-        x = from + gets.wide;
-
-        if (gets.wide > 0) x += std::exchange(spare, 0);
+        made.draw(children()[which]->render(where, part - where.at), part.at - seen.at);
     }
 
     return made;

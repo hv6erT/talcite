@@ -10,7 +10,7 @@ namespace talcite::ui {
 class Button;
 class Form;
 class Message;
-class Row;
+class Node;
 
 class Buttons {
 public:
@@ -35,13 +35,13 @@ private:
     friend class Form;
     friend class Message;
 
-    explicit Buttons(Row& row) : row_(&row) {}
+    explicit Buttons(Node& row) : row_(&row) {}
 
     ~Buttons() = default;
 
     void role(std::string given);
 
-    Row* row_;
+    Node* row_;
     std::string role_;
     std::vector<std::shared_ptr<Button>> all_;
 };
