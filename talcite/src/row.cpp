@@ -1,12 +1,13 @@
 #include "talcite/row.hpp"
 
 #include <algorithm>
+#include <utility>
 
 namespace talcite::ui {
 
 Row::Row(int gap) : gap_(std::max(gap, 0)) {}
 
-Row::Row(RowShape shape) : gap_(std::max(shape.gap, 0)), wrapping_(shape.wrapping) {}
+Row::Row(RowShape shape) : gap_(std::max(shape.gap, 0)), wrapping_(shape.wrapping), spread_(shape.spread) {}
 
 // Sets the gap between children, in columns; a negative gap counts as zero.
 void Row::gap(int given) { gap_ = std::max(given, 0); }
@@ -77,6 +78,12 @@ Size Row::wants(Size room) const {
 }
 
 // Lays the children out left to right, or in centered lines when the row wraps, and draws them.
+//
+// A spread row (`spread`) that gets more room than it wants gives the rest to the place after its
+// first child that occupies something: that child stays at the left edge and the others stand at
+// the right one. A window's last row is made so, with what the window says on the left and its
+// buttons on the right. Without room to spare it is an ordinary row; a wrapping row centers its
+// lines and does not spread.
 View Row::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -117,6 +124,7 @@ View Row::paint(Size given, Area seen) {
     }
 
     int x = 0;
+    int spare = spread_ ? std::max(given.wide - wants(given).wide, 0) : 0;
 
     for (const std::shared_ptr<Node>& one : children()) {
         const int apart = x > 0 ? gap_ : 0;
@@ -135,6 +143,8 @@ View Row::paint(Size given, Area seen) {
         made.draw(one->render(where, part - where.at), part.at - seen.at);
 
         x = from + gets.wide;
+
+        if (gets.wide > 0) x += std::exchange(spare, 0);
     }
 
     return made;

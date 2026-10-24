@@ -10,6 +10,7 @@ namespace talcite::ui {
 struct RowShape {
     int gap = 0;
     bool wrapping = false;
+    bool spread = false;
 };
 
 class Row : public Node {
@@ -25,6 +26,10 @@ public:
     [[nodiscard]] bool wrapping() const { return wrapping_; }
 
     void wrapping(bool given) { wrapping_ = given; }
+
+    [[nodiscard]] bool spread() const { return spread_; }
+
+    void spread(bool given) { spread_ = given; }
 
     [[nodiscard]] int capacity() const override;
 
@@ -44,6 +49,7 @@ private:
 
     int gap_ = 0;
     bool wrapping_ = false;
+    bool spread_ = false;
 };
 
 }
