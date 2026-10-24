@@ -23,6 +23,8 @@ public:
 
     [[nodiscard]] const std::shared_ptr<Column>& body() const { return body_; }
 
+    [[nodiscard]] const std::shared_ptr<Column>& footer() const { return footer_; }
+
     [[nodiscard]] Buttons& buttons() { return buttons_; }
 
     [[nodiscard]] const Buttons& buttons() const { return buttons_; }
@@ -30,9 +32,9 @@ public:
 private:
     std::shared_ptr<Frame> frame_;
     std::shared_ptr<Column> body_;
+    std::shared_ptr<Column> footer_;
     std::shared_ptr<Flow> row_ = std::make_shared<Flow>(1);
     Buttons buttons_{*row_};
-    FormShape shape_;
 };
 
 }

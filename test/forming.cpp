@@ -196,7 +196,35 @@ TRIAL("Form: content filling the height stands right above the buttons, with no 
     ought(lined(seen, at + 10).starts_with("╚"));
 }
 
-// Without buttons there is neither their row nor the gap before them: `Gap` asks both neighbors.
+// The footer is the caller's too: what stands in it (here what a filter window says beside its own
+// buttons) comes under the content, an empty row apart, and keeps its place when the room is short;
+// the content gets what is left.
+TRIAL("Form: the footer stands under the content and keeps its place when the room is short") {
+    Opened made{"Filter"};
+
+    const auto lines = std::make_shared<ui::Column>();
+
+    for (int at = 0; at < 20; ++at) lines->children().add(std::make_shared<ui::Span>("line " + std::to_string(at)));
+
+    made.one->body()->children().add(lines);
+    made.one->footer()->children().add(std::make_shared<ui::Span>("Matches 2 of 4"));
+    made.open();
+
+    const View seen = made.drawn({30, 8});
+    const int at = framed(seen);
+
+    // Eight rows, one for the shadow: the frame, three rows of content, the gap, the footer, the
+    // frame.
+    same(at, 0);
+    ought(lined(seen, at + 1).starts_with("║line 0"));
+    ought(lined(seen, at + 3).starts_with("║line 2"));
+    ought(lined(seen, at + 4).find_first_not_of("║ ") == std::string::npos);
+    ought(lined(seen, at + 5).starts_with("║Matches 2 of 4"));
+    ought(lined(seen, at + 6).starts_with("╚"));
+}
+
+// Without buttons there is neither their row nor the gap before them: the gap stands only between
+// content and footer that both take some height.
 TRIAL("Form: without buttons there is no gap and no button row") {
     Opened made{"Note"};
 

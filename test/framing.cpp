@@ -291,7 +291,10 @@ TRIAL("Frame: an empty frame is drawn without a child") {
     const View made = one.render({{0, 0}, {7, 3}});
 
     same(read(made, 1), std::string{"│     │"});
-    same(one.wants({80, 25}).wide, 2);
+
+    // Empty, it still fits its title: three letters, a cell of padding on each side and one more
+    // beyond, and the two edges.
+    same(one.wants({80, 25}).wide, 9);
 }
 
 TRIAL("Frame: without the top edge the line runs across the full width") {
@@ -315,6 +318,9 @@ TRIAL("Frame: without the top edge there is no title") {
 
     ought(read(made, 0).find("kot") == std::string::npos);
     ought(read(made, 2).find("stopka") != std::string::npos);
+
+    // A title that does not show takes no room: the frame is as wide as its edges.
+    same(one.wants({80, 25}).wide, 2);
 }
 
 TRIAL("Frame: without the bottom edge there is no footer") {

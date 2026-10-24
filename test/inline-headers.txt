@@ -1,5 +1,4 @@
 demo/doing.hpp
-talcite/src/amid.hpp
 talcite/src/cpacing.hpp
 talcite/src/eliding.hpp
 talcite/src/folding.hpp

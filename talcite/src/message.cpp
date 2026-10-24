@@ -9,11 +9,38 @@
 #include "talcite/frame.hpp"
 #include "talcite/span.hpp"
 
-#include "amid.hpp"
 
 namespace talcite::ui {
 
 namespace {
+
+// A gap that disappears together with a neighbor. An empty row between two parts makes sense only
+// when both are present: a message without content or without answers has nothing to separate. We
+// ask on every frame rather than once at construction, because both the content and the buttons
+// may be added later, and then the row has to appear by itself, without rebuilding the column.
+//
+// Only the boxed message needs it: there the title stands right above the text box, so a column
+// with a gap of its own would open a row under the title too. Elsewhere `Column`'s gap does the
+// same, because it also stands only between two children that both take some height.
+class Gap : public Node {
+public:
+    // Remembers the two neighbors whose height decides whether the gap shows; both must outlive it.
+    Gap(const Node& above, const Node& below) : above_(&above), below_(&below) {}
+
+    // A gap holds no children.
+    [[nodiscard]] int capacity() const override { return 0; }
+
+    // One row (if the room allows) when both neighbors want some height, otherwise nothing.
+    [[nodiscard]] Size wants(Size room) const override {
+        if (above_->wants(room).high == 0 || below_->wants(room).high == 0) return {};
+
+        return {0, std::min(1, room.high)};
+    }
+
+private:
+    const Node* above_;
+    const Node* below_;
+};
 
 // How many cells are left around the box so it does not stick to the screen edge. Four, because
 // two on each side read as a margin, while one looks like a mistake.
@@ -136,12 +163,10 @@ protected:
 // the frame, the text has a cell of breathing room on both sides, and the buttons stand centered
 // under an empty row:
 //
-//     Capped → Frame(title, stem)
-//              └── Titled          ← no narrower than the title, as in a form
-//                  └── Column
-//                      ├── Aired → Span(text)
-//                      ├── Gap
-//                      └── Flow(spacing 1) → buttons
+//     Capped → Frame(title, stem)  ← no narrower than the title, which the frame measures
+//              └── Column(1)       ← the empty row only between text and buttons that both show
+//                  ├── Aired → Span(text)
+//                  └── Flow(spacing 1) → buttons
 //
 // The edge of the outer frame does double duty: it is drawn with the role <stem>, so the skin
 // decides whether a line shows in it or only the background color. In Midnight Commander the
@@ -178,14 +203,12 @@ Message::Message(std::string title, std::string text, MessageShape shape)
         frame_->title(title_->text());
 
         const auto said = std::make_shared<Aired>(text_);
-        const auto titled = std::make_shared<Titled>(*frame_);
 
+        column->gap(1);
         column->children().add(said);
-        column->children().add(std::make_shared<Gap>(*said, *row_));
         column->children().add(row_);
 
-        titled->children().add(column);
-        frame_->children().add(titled);
+        frame_->children().add(column);
         capped->children().add(frame_);
 
         children().add(capped);

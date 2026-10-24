@@ -8,70 +8,92 @@
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
 
-#include "amid.hpp"
-
 namespace talcite::ui {
 
 namespace {
 
-// Buttons first. The button row and the gap above it are taken out of the room before the content
-// is asked, both when asked for the size and when painting. Asking the content first would give it
-// the room including the place for the buttons when sizing, but only what it wanted earlier when
-// painting. Content that is meant to fill the height (a scrolled page in a box asking "as much as I
-// want, but leave room for what is below me") would then get two different rooms, give two
-// different answers, and leave empty rows below it.
+// Content above, a footer below, and the room counted from the bottom: the footer first. The
+// footer and the gap above it are taken out of the room before the content is asked, both when
+// asked for the size and when painting. Asking the content first would give it the room including
+// the place for the footer when sizing, but only what it wanted earlier when painting. Content that
+// is meant to fill the height (a scrolled page in a box asking "as much as I want, but leave room
+// for what is below me") would then get two different rooms, give two different answers, and leave
+// empty rows below it.
 //
-// Children: content, gap, buttons, in this order, as in a column; only the room is computed from
-// the bottom.
+// The gap stands only between two parts that both take some height, the rule of `Column`: a form
+// without content or without anything in its footer has no empty row to separate them.
 class Footed : public Node {
 public:
-    // Content, gap and button row.
-    [[nodiscard]] int capacity() const override { return 3; }
+    // Footed parts `gap` rows apart; a negative gap counts as zero.
+    explicit Footed(int gap) : gap_(std::max(gap, 0)) {}
 
-    // The content's wish within what the buttons leave, plus the footing; as wide as the wider of
-    // the two.
+    // Content and footer.
+    [[nodiscard]] int capacity() const override { return 2; }
+
+    // The content's wish within what the footer leaves, plus the gap and the footer; as wide as the
+    // wider of the two, within the room.
     [[nodiscard]] Size wants(Size room) const override {
-        const Size foot = footing(room);
-        const Size body = children()[0]->wants({room.wide, std::max(room.high - foot.high, 0)});
+        const Laid parts = laid(room);
 
-        return {std::min(std::max(body.wide, foot.wide), room.wide), std::min(body.high + foot.high, room.high)};
+        return {std::min(std::max(parts.body.wide, parts.foot.wide), room.wide),
+                std::min(parts.body.high + parts.apart + parts.foot.high, room.high)};
     }
 
 protected:
-    // Stacks content, gap and buttons, giving the content only what remains after the footing.
+    // Stacks content, gap and footer, giving the content only what remains after the footer and
+    // the footer what remains after the content.
     View paint(Size given, Area seen) override {
         View made{seen.size};
 
         made.clear({{0, 0}, seen.size});
 
-        const Size foot = footing(given);
-        const int left = std::max(given.high - foot.high, 0);
-        const int body = std::min(children()[0]->wants({given.wide, left}).high, left);
-        const int gap = children()[1]->wants({given.wide, given.high}).high;
+        if (children().many() < 2) return made;
 
-        int y = 0;
+        const Laid parts = laid(given);
+        const int left = std::max(given.high - parts.apart - parts.foot.high, 0);
+        const int body = std::min(parts.body.high, left);
+        const int apart = std::min(parts.apart, std::max(given.high - body, 0));
 
-        for (const auto& [at, high] : {std::pair{0, body}, std::pair{1, std::min(gap, given.high - body)},
-                                       std::pair{2, std::max(given.high - body - gap, 0)}}) {
-            const Area where{{0, y}, {given.wide, high}};
-            const Area part = Area::crossed(seen, where);
+        const Area places[] = {{{0, 0}, {given.wide, body}},
+                               {{0, body + apart}, {given.wide, std::max(given.high - body - apart, 0)}}};
 
-            made.draw(children()[static_cast<std::size_t>(at)]->render(where, part - where.at), part.at - seen.at);
+        for (std::size_t which = 0; which < 2; ++which) {
+            const Area part = Area::crossed(seen, places[which]);
 
-            y += high;
+            made.draw(children()[which]->render(places[which], part - places[which].at), part.at - seen.at);
         }
 
         return made;
     }
 
 private:
-    // The gap and the buttons together: the height of both and the width of the row.
-    [[nodiscard]] Size footing(Size room) const {
-        const int gap = children()[1]->wants(room).high;
-        const Size row = children()[2]->wants({room.wide, std::max(room.high - gap, 0)});
+    // The sizes of both parts and of the gap between them, for the room `room`.
+    struct Laid {
+        Size body;
+        Size foot;
+        int apart = 0;
+    };
 
-        return {row.wide, std::min(gap + row.high, room.high)};
+    // Asks the footer first and the content with what is left. Whether the gap shows is asked of
+    // both with the whole room, before either is cut down by the other.
+    [[nodiscard]] Laid laid(Size room) const {
+        if (children().many() < 2) return {};
+
+        const Node& body = *children()[0];
+        const Node& foot = *children()[1];
+
+        Laid made;
+
+        if (body.wants(room).high > 0 && foot.wants(room).high > 0) made.apart = std::min(gap_, std::max(room.high, 0));
+
+        made.foot = foot.wants({room.wide, std::max(room.high - made.apart, 0)});
+        made.foot.high = std::min(made.foot.high, std::max(room.high - made.apart, 0));
+        made.body = body.wants({room.wide, std::max(room.high - made.apart - made.foot.high, 0)});
+
+        return made;
     }
+
+    int gap_ = 0;
 };
 
 }
@@ -82,12 +104,16 @@ private:
 //
 // Layout:
 //
-//     Frame(title, border)
-//     └── Titled                ← not narrower than the title
-//         └── Footed            ← room counted from the bottom: buttons first, the rest to content
-//             ├── Column(body)  ← the caller's slot
-//             ├── Gap           ← an empty row; vanishes when there is no content or no buttons
-//             └── Flow(1)       ← buttons in centered lines, as in the message box
+//     Frame(title, border)     ← no narrower than the title, which the frame measures
+//     └── Footed(1)            ← room from the bottom: the footer first, the rest to the content
+//         ├── Column(body)     ← the caller's slot
+//         └── Column(footer)   ← the caller's slot under the content, an empty row above it
+//             └── Flow(1)      ← buttons in centered lines, as in the message box
+//
+// The footer holds the buttons, and anything a window wants to stand under its content with the
+// same priority: a window that says something beside its buttons (how many entries pass a filter)
+// builds that row itself and puts it in the footer, where the content cannot push it out of the
+// window. The buttons stay a `Flow` of their own, so `buttons()` works in every form the same.
 //
 // No roles of its own. The frame draws as a frame and a button as a button, so a skin that knows
 // `talcite.frame` and `talcite.button` already knows the whole form. The message box has a family
@@ -96,19 +122,19 @@ private:
 //
 // Escape does not close it: talcite leaves that to the caller, together with the default button
 // (described at `Modal`), and the form does not reverse that decision.
-Form::Form(std::string title, FormShape shape) : Dialog(ModalShape{shape.shade}), shape_(shape) {
-    frame_ = std::make_shared<Frame>(std::move(title), FrameShape{shape_.border});
+Form::Form(std::string title, FormShape shape) : Dialog(ModalShape{shape.shade}) {
+    frame_ = std::make_shared<Frame>(std::move(title), FrameShape{shape.border});
     body_ = std::make_shared<Column>();
-    const auto column = std::make_shared<Footed>();
+    footer_ = std::make_shared<Column>();
 
-    column->children().add(body_);
-    column->children().add(std::make_shared<Gap>(*body_, *row_));
-    column->children().add(row_);
+    const auto parts = std::make_shared<Footed>(1);
 
-    const auto titled = std::make_shared<Titled>(*frame_);
+    footer_->children().add(row_);
 
-    titled->children().add(column);
-    frame_->children().add(titled);
+    parts->children().add(body_);
+    parts->children().add(footer_);
+
+    frame_->children().add(parts);
 
     children().add(frame_);
 }

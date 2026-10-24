@@ -32,16 +32,25 @@ Frame::Edges Frame::edges() const {
 // The frame takes a cell from every side it draws, just like the bar in a scroller and for the same
 // reason: it is part of the frame, not something painted over the content. A switched-off edge
 // takes nothing.
+//
+// The title takes room too: the frame draws it, so the frame measures it. Without that, a frame
+// computes its width from its content and draws the title in whatever is left, so a narrow window
+// with a long title would cut it off. The interior is therefore no narrower than the title with a
+// cell of padding on each side and one more beyond it (four cells more than the text), within the
+// room. Only where the title shows, on a drawn top edge. The footer is not measured: it says how
+// things stand (a count, a total) and gives way to the content, as it always did.
 Size Frame::wants(Size room) const {
     const Edges edge = edges();
 
     const int aside = edge.left + edge.right;
     const int apart = edge.top + edge.bottom;
 
-    if (children().empty()) return {std::min(aside, room.wide), std::min(apart, room.high)};
+    const Size inside{std::max(room.wide - aside, 0), std::max(room.high - apart, 0)};
 
-    const Size wants = children().front()->wants(
-        {std::max(room.wide - aside, 0), std::max(room.high - apart, 0)});
+    Size wants = children().empty() ? Size{} : children().front()->wants(inside);
+
+    if (edge.top != 0 && !title_.empty())
+        wants.wide = std::max(wants.wide, std::min(measured(title_).wide + 4, inside.wide));
 
     return {std::min(wants.wide + aside, room.wide), std::min(wants.high + apart, room.high)};
 }

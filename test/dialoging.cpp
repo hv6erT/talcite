@@ -424,8 +424,9 @@ TRIAL("Dialog: the box is an ordinary frame with a title") {
 
     const View made = top.render({{0, 0}, {21, 6}});
 
-    // The frame adds a cell on each side: nine by three.
-    same(frame->area(), (ui::Area{{5, 1}, {9, 3}}));
+    // The frame adds a cell on each side and fits its title, which is longer than the content
+    // (five letters and four cells around them): eleven by three.
+    same(frame->area(), (ui::Area{{4, 1}, {11, 3}}));
 
     ought(read(made, 1).find("Uwaga") != std::string::npos);
     ought(read(made, 2).find("ooooooo") != std::string::npos);
