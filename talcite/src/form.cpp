@@ -1,102 +1,13 @@
 #include "talcite/form.hpp"
 
-#include <algorithm>
-#include <cstddef>
 #include <memory>
 #include <utility>
 
 #include "talcite/column.hpp"
+#include "talcite/footed.hpp"
 #include "talcite/frame.hpp"
 
 namespace talcite::ui {
-
-namespace {
-
-// Content above, a footer below, and the room counted from the bottom: the footer first. The
-// footer and the gap above it are taken out of the room before the content is asked, both when
-// asked for the size and when painting. Asking the content first would give it the room including
-// the place for the footer when sizing, but only what it wanted earlier when painting. Content that
-// is meant to fill the height (a scrolled page in a box asking "as much as I want, but leave room
-// for what is below me") would then get two different rooms, give two different answers, and leave
-// empty rows below it.
-//
-// The gap stands only between two parts that both take some height, the rule of `Column`: a form
-// without content or without anything in its footer has no empty row to separate them.
-class Footed : public Node {
-public:
-    // Footed parts `gap` rows apart; a negative gap counts as zero.
-    explicit Footed(int gap) : gap_(std::max(gap, 0)) {}
-
-    // Content and footer.
-    [[nodiscard]] int capacity() const override { return 2; }
-
-    // The content's wish within what the footer leaves, plus the gap and the footer; as wide as the
-    // wider of the two, within the room.
-    [[nodiscard]] Size wants(Size room) const override {
-        const Laid parts = laid(room);
-
-        return {std::min(std::max(parts.body.wide, parts.foot.wide), room.wide),
-                std::min(parts.body.high + parts.apart + parts.foot.high, room.high)};
-    }
-
-protected:
-    // Stacks content, gap and footer, giving the content only what remains after the footer and
-    // the footer what remains after the content.
-    View paint(Size given, Area seen) override {
-        View made{seen.size};
-
-        made.clear({{0, 0}, seen.size});
-
-        if (children().many() < 2) return made;
-
-        const Laid parts = laid(given);
-        const int left = std::max(given.high - parts.apart - parts.foot.high, 0);
-        const int body = std::min(parts.body.high, left);
-        const int apart = std::min(parts.apart, std::max(given.high - body, 0));
-
-        const Area places[] = {{{0, 0}, {given.wide, body}},
-                               {{0, body + apart}, {given.wide, std::max(given.high - body - apart, 0)}}};
-
-        for (std::size_t which = 0; which < 2; ++which) {
-            const Area part = Area::crossed(seen, places[which]);
-
-            made.draw(children()[which]->render(places[which], part - places[which].at), part.at - seen.at);
-        }
-
-        return made;
-    }
-
-private:
-    // The sizes of both parts and of the gap between them, for the room `room`.
-    struct Laid {
-        Size body;
-        Size foot;
-        int apart = 0;
-    };
-
-    // Asks the footer first and the content with what is left. Whether the gap shows is asked of
-    // both with the whole room, before either is cut down by the other.
-    [[nodiscard]] Laid laid(Size room) const {
-        if (children().many() < 2) return {};
-
-        const Node& body = *children()[0];
-        const Node& foot = *children()[1];
-
-        Laid made;
-
-        if (body.wants(room).high > 0 && foot.wants(room).high > 0) made.apart = std::min(gap_, std::max(room.high, 0));
-
-        made.foot = foot.wants({room.wide, std::max(room.high - made.apart, 0)});
-        made.foot.high = std::min(made.foot.high, std::max(room.high - made.apart, 0));
-        made.body = body.wants({room.wide, std::max(room.high - made.apart - made.foot.high, 0)});
-
-        return made;
-    }
-
-    int gap_ = 0;
-};
-
-}
 
 // A form is a sibling of the message box: a title, content and a row of buttons, except that the
 // content is not text but a slot where the caller puts fields, switches and lists. This is what the

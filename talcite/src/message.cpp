@@ -7,6 +7,7 @@
 
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
+#include "talcite/inset.hpp"
 #include "talcite/span.hpp"
 
 
@@ -103,40 +104,6 @@ public:
     }
 };
 
-// One cell of breathing room on each side of the content, in a message without boxes. A box gives
-// it with its edge; without one the text would touch the window frame. It asks the content with
-// room two cells narrower and wants what the content wants plus those two, at the content's
-// height, so empty content is zero rows and `Gap` sees emptiness.
-class Aired : public Node {
-public:
-    // Holds the given content as its only child.
-    explicit Aired(std::shared_ptr<Node> inside) { children().add(std::move(inside)); }
-
-    // The content's wish for room two cells narrower, widened by those two cells.
-    [[nodiscard]] Size wants(Size room) const override {
-        const Size inside = children().front()->wants({std::max(room.wide - 2, 0), room.high});
-
-        // This exceeds the room only on a screen narrower than the breathing room itself, and
-        // there the window frame cuts it.
-        return {inside.wide + 2, inside.high};
-    }
-
-protected:
-    // Paints the content one cell in from the left, transparent elsewhere.
-    View paint(Size given, Area seen) override {
-        View made{seen.size};
-
-        made.clear({{0, 0}, seen.size});
-
-        const Area where{{1, 0}, {std::max(given.wide - 2, 0), given.high}};
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
-
-        return made;
-    }
-};
-
 }
 
 // A message box with a title, a text and buttons. A message paints nothing of its own. It is an
@@ -165,7 +132,7 @@ protected:
 //
 //     Capped → Frame(title, stem)  ← no narrower than the title, which the frame measures
 //              └── Column(1)       ← the empty row only between text and buttons that both show
-//                  ├── Aired → Span(text)
+//                  ├── Inset(1) → Span(text)
 //                  └── Flow(spacing 1) → buttons
 //
 // The edge of the outer frame does double duty: it is drawn with the role <stem>, so the skin
@@ -202,7 +169,9 @@ Message::Message(std::string title, std::string text, MessageShape shape)
     if (!shape_.boxed) {
         frame_->title(title_->text());
 
-        const auto said = std::make_shared<Aired>(text_);
+        const auto said = std::make_shared<Inset>(1);
+
+        said->children().add(text_);
 
         column->gap(1);
         column->children().add(said);
