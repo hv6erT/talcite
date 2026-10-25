@@ -206,6 +206,10 @@ Styles building() {
         {"talcite.scroll.focus", Style{}},
         {"talcite.scroll.thumb.focus", Style{}},
 
+        {"talcite.tab", Style{}},
+        {"talcite.tab.current", bolded()},
+        {"talcite.tab.key", lined()},
+
         {"talcite.gauge", Style{}},
         {"talcite.gauge.done", Style{}},
         {"talcite.gauge.text", Style{}},
@@ -254,6 +258,18 @@ Glyphs glyphing() {
     more.unicode = U'▸';
 
     made.emplace("talcite.menu.more", more);
+
+    // The arrows of a strip of tabs too narrow for all the names, with plain forms of their own.
+    Signs left;
+    Signs right;
+
+    left.ascii = U'<';
+    left.unicode = U'◀';
+    right.ascii = U'>';
+    right.unicode = U'▶';
+
+    made.emplace("talcite.tab.left", left);
+    made.emplace("talcite.tab.right", right);
 
     ruled(made, "talcite.line.thin", Border::thin);
     ruled(made, "talcite.line.twin", Border::twin);
