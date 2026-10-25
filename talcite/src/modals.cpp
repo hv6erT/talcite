@@ -22,7 +22,7 @@ namespace talcite::ui {
 // It stands outermost of all three frames. In Midnight Commander a window covers both the key bar
 // and the menu bar, so it has to be their ancestor. The nesting order is not a matter of taste: it
 // follows from what has to lie on top of what, and from the path a key takes, because the curtain
-// swallows it before it reaches the legend.
+// swallows it before it reaches the key bar.
 Modals::Modals() : body_(std::make_shared<Row>()) { children().add(body_); }
 
 // The content underneath, or `nullptr` when there is none. The slot is described in `slot.hpp`.

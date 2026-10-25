@@ -174,7 +174,7 @@ bool Root::dispatch(DoubleClickEvent& what) { return sent(*under(what.where()), 
 // Turns presses and releases into clicks and double clicks. A click goes at once, and a double
 // click is an additional event; that is what Windows does (WM_LBUTTONDOWN at once, WM_LBUTTONDBLCLK
 // instead of the second press), and X11 and browsers too. A single click does not wait for the
-// double-click window to pass, so buttons, menu titles and key bar fields react without delay;
+// double-click window to pass, so buttons, menu titles and key bar items react without delay;
 // the receivers of a double click tolerate the click before it (a list sets the focus, then
 // chooses; an editor places the cursor, then selects a word).
 //
@@ -323,10 +323,10 @@ void Root::linger(std::shared_ptr<Node> one) {
     if (busy_ > 0) dying_.push_back(std::move(one));
 }
 
-// Calls what the schedule has due by now (`Schedule::elapse`), inside a delivery like an event: a node
-// that a call takes off the tree lives until the calls are over. Says whether anything was called;
-// the loop then draws a frame, since a call changes what is on the screen, or asks for a frame for
-// a node that computes its picture from the time.
+// Calls what the schedule has due by now (`Schedule::elapse`), inside a delivery like an event: a
+// node that a call takes off the tree lives until the calls are over. Says whether anything was
+// called; the loop then draws a frame, since a call changes what is on the screen, or asks for a
+// frame for a node that computes its picture from the time.
 bool Root::elapse() {
     ++busy_;
 

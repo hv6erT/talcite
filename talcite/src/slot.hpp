@@ -7,7 +7,7 @@
 
 namespace talcite::ui {
 
-// A slot for the application's content. Modals, the legend and the menu bar place a row beneath
+// A slot for the application's content. Modals, the key bar and the menu bar place a row beneath
 // them, into which the application puts what is to stand under them. The content is a single node
 // and is set directly with `content`, so the caller does not reach through someone else's node into
 // its children. The row stays inside as the slot, because it is what gives the content the whole

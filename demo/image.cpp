@@ -6,13 +6,14 @@
 #include <string_view>
 #include <vector>
 
+#include "talcite/box.hpp"
 #include "talcite/column.hpp"
+#include "talcite/focusholder.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/image.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybar.hpp"
+#include "talcite/keybaritem.hpp"
 #include "talcite/mosaic.hpp"
-#include "talcite/pane.hpp"
 #include "talcite/pixels.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
@@ -163,7 +164,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — images");
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -173,16 +174,20 @@ int main() {
 
     shown->hold(painted(240, 240, wheeled));
 
-    // The pane covers the whole content of the window, as in the other demos: a click anywhere in
-    // the frame takes the focus, and without focus the legend would not get the keys.
-    const auto pane = std::make_shared<talcite::ui::Pane>();
+    const auto holder = std::make_shared<talcite::ui::FocusHolder>();
 
     column->children().add(said);
     column->children().add(shown);
 
     frame->children().add(column);
-    pane->children().add(frame);
-    legend->content(pane);
+    holder->children().add(frame);
+
+    // The holder covers the whole content of the window, whatever the frame wants: a click anywhere
+    // in it takes the focus, and without focus the key bar would not get the keys.
+    const auto room = std::make_shared<talcite::ui::Box>();
+
+    room->children().add(holder);
+    bar->content(room);
 
     // What is shown now, kept separately rather than extracted from the text on the screen: the
     // text is for a human, not a store of program state.
@@ -221,16 +226,16 @@ int main() {
         };
     };
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Wheel"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f2, "Wheel"),
                       picking("color wheel", painted(240, 240, wheeled)));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Ring"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "Ring"),
                       picking("ring with a hole", painted(240, 240, ringed)));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Slant"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f4, "Slant"),
                       picking("slant", painted(240, 240, slanted)));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Gradient"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f5, "Gradient"),
                       picking("gradient", painted(240, 240, faded)));
 
     // Sextants are not turned on from a measurement. The probe only tells whether the character
@@ -241,7 +246,7 @@ int main() {
     // The widget has nothing to switch: the density lies on the root, and `Term` puts it there. So
     // the key tells the terminal, and the picture learns about it on the next frame by itself,
     // through the comparison in `spread()`. This is the only call to `reconfigure` in the demos.
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Grid"), [&term, wish, naming] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f6, "Grid"), [&term, wish, naming] {
         wish->blocks = wish->blocks.value_or(talcite::ui::Blocks::basic) <
                                talcite::ui::Blocks::sextants
                            ? talcite::ui::Blocks::sextants
@@ -252,17 +257,17 @@ int main() {
         naming();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f7, "Motion"), [shown, naming] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f7, "Motion"), [shown, naming] {
         shown->play(!shown->play());
 
         naming();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
 
-    pane->focus();
+    holder->focus();
 
     // Animation runs by itself when there is something to animate: the widget tells the root when
     // it wants to be woken at the latest, and `Term` puts that into its limiter; F7 only stops and

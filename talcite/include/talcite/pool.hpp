@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "talcite/bell.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 
 namespace talcite {
 
@@ -36,9 +36,9 @@ public:
 
     bool drop(Job which);
 
-    [[nodiscard]] Place& io();
+    [[nodiscard]] Executor& io();
 
-    [[nodiscard]] Place& cpu();
+    [[nodiscard]] Executor& cpu();
 
     void drain();
 

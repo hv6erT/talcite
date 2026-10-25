@@ -6,11 +6,11 @@
 #include <vector>
 
 #include "talcite/bell.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 
 namespace talcite {
 
-class Loop : public Place {
+class Loop : public Executor {
 public:
     Loop();
 

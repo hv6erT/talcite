@@ -1,17 +1,18 @@
 #include <memory>
 #include <string>
 
+#include "talcite/box.hpp"
 #include "talcite/column.hpp"
+#include "talcite/focusholder.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/menu.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/menuitem.hpp"
 #include "talcite/menuseparator.hpp"
-#include "talcite/menubar.hpp"
-#include "talcite/pane.hpp"
-#include "talcite/span.hpp"
-#include "talcite/term.hpp"
 #include "talcite/scroll.hpp"
+#include "talcite/span.hpp"
 #include "talcite/submenu.hpp"
+#include "talcite/term.hpp"
 
 #include "doing.hpp"
 
@@ -35,8 +36,8 @@ private:
     talcite::Term& term_;
 };
 
-// A pane is greedy: it takes as much as it is given. The row below the bar gives its child exactly
-// as much as the child wants, so content meant to fill the screen has to ask for it.
+// A holder is greedy: it takes as much as it is given. The row below the bar gives its child
+// exactly as much as the child wants, so content meant to fill the screen has to ask for it.
 }
 
 // A menu bar over a long scrolling page, with hot letters on titles and items and one disabled
@@ -54,7 +55,7 @@ int main() {
     window->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
 
 
-    const auto pane = std::make_shared<talcite::ui::Pane>();
+    const auto holder = std::make_shared<talcite::ui::FocusHolder>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — menu");
     const auto scroll = std::make_shared<talcite::ui::Scroll>(talcite::ui::Axis::vertical, talcite::ui::ScrollShape{true});
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -67,8 +68,14 @@ int main() {
 
     scroll->children().add(column);
     frame->children().add(scroll);
-    pane->children().add(frame);
-    window->content(pane);
+    holder->children().add(frame);
+
+    // The holder covers the whole content of the window, whatever the frame wants: a click anywhere
+    // in it takes the focus, and without focus the key bar would not get the keys.
+    const auto room = std::make_shared<talcite::ui::Box>();
+
+    room->children().add(holder);
+    window->content(room);
 
     // A hot letter in a menu item, as in Midnight Commander: with File open, pressing "p" previews
     // and "c" copies. The letters are given separately, so the label stays plain, with no ampersand
@@ -146,7 +153,7 @@ int main() {
 
     sheet.children().add(window);
 
-    pane->focus();
+    holder->focus();
 
     term.show(sheet);
     term.title("talcite — menu");

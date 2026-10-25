@@ -238,7 +238,7 @@ TRIAL("ListItem: Enter calls the task") {
     same(top.keys, 0);
 }
 
-// Enter with Control does not belong to the item, just as in the field and in the legend.
+// Enter with Control does not belong to the item, just as in the field and in the key bar.
 TRIAL("ListItem: Enter with Control goes up") {
     proving::Hooks heard;
 

@@ -81,7 +81,7 @@ TRIAL("Button: the label is drawn in full, with no conventions about characters"
 
 namespace {
 
-// A root that broadcasts a shortcut key itself. In a program a dialog, the legend or a menu does
+// A root that broadcasts a shortcut key itself. In a program a dialog, the key bar or a menu does
 // this, but broadcasting is protected, so the trial needs its own way in.
 class Top : public ui::Root {
 public:
@@ -450,7 +450,7 @@ TRIAL("Button: Enter presses the focused one, space does not") {
     same(done, 1);
 }
 
-// Ctrl+Enter and Alt+Space are other shortcuts by design. The legend filters them out the same
+// Ctrl+Enter and Alt+Space are other shortcuts by design. The key bar filters them out the same
 // way.
 TRIAL("Button: does not catch keys with a modifier") {
     proving::Hooks heard;

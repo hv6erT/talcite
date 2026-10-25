@@ -17,8 +17,8 @@ namespace talcite {
 // The model in one sentence: work lasts as long as somebody wants it. Every handle of a promise is
 // one owner of a node (`detail::Core`); when the last owner leaves, the node ends with a
 // cancellation at once and its work is asked to stop. A derived node (`then`, `recover`, `finally`,
-// `on`, `timeout`, `outcome`, a join, a view of a shared promise) is itself the owner of the nodes it
-// was made from, so the tail of a chain owns the whole chain, and a node several consumers share
+// `on`, `timeout`, `outcome`, a join, a view of a shared promise) is itself the owner of the nodes
+// it was made from, so the tail of a chain owns the whole chain, and a node several consumers share
 // lives while any of them does.
 //
 // An ending and the end of the work are two moments. The ending (a value, an error, a cancellation)
@@ -35,9 +35,10 @@ namespace talcite {
 //
 // Nothing internal recurses: releasing a chain, delivering an ending and announcing that work has
 // finished are all steps of one trampoline per thread (`stepped`), so a chain of any length runs at
-// a constant depth of the stack. User code (callbacks, coroutines) runs only inside such steps, never
-// under a lock of the library, never inside `cancel()`, a destructor or `Settle`. An ending reported
-// from an arbitrary place (`Settle`, the clock, a stop) is delivered on the io lane of the pool.
+// a constant depth of the stack. User code (callbacks, coroutines) runs only inside such steps,
+// never under a lock of the library, never inside `cancel()`, a destructor or `Settle`. An ending
+// reported from an arbitrary executor (`Settle`, the clock, a stop) is delivered on the io lane of
+// the pool.
 
 // The share of the work done, from 0 to 1; zero when the whole is unknown.
 double Progress::fraction() const {
@@ -131,8 +132,8 @@ void drained() {
     ran(mine);
 }
 
-// Hands `what` to the io lane of the pool, as a fresh trampoline there. When the pool no longer takes
-// work (the program is ending), it runs here and now: late, but not lost.
+// Hands `what` to the io lane of the pool, as a fresh trampoline there. When the pool no longer
+// takes work (the program is ending), it runs here and now: late, but not lost.
 void away(std::function<void()> what) {
     auto shared = std::make_shared<std::function<void()>>(std::move(what));
 
@@ -205,10 +206,10 @@ const Stop*& current_stop() {
     return now;
 }
 
-// Whether this thread is the one of the place behind `home`: it is when the loop standing on it is
-// that place. Work for a loop runs only on the loop's thread, so code that finishes there may go on
-// at once; on any other thread it must go to the place. Other places (the pool's lanes, a manual
-// place) have no thread of their own to tell, so for them the answer is no.
+// Whether this thread is the one of the executor behind `home`: it is when the loop standing on it
+// is that executor. Work for a loop runs only on the loop's thread, so code that finishes there may
+// go on at once; on any other thread it must go to the executor. Other executors (the pool's lanes,
+// a manual executor) have no thread of their own to tell, so for them the answer is no.
 bool homed(const std::shared_ptr<Gate>& home) {
     const Loop* mine = Loop::current();
 
@@ -216,7 +217,7 @@ bool homed(const std::shared_ptr<Gate>& home) {
 }
 
 // The loop of this thread, for `here`; without one it is a mistake of the caller.
-Place& here_loop() {
+Executor& here_loop() {
     Loop* where = Loop::current();
 
     if (where == nullptr) throw std::logic_error("talcite::Promise::here: no loop on this thread");
@@ -254,17 +255,17 @@ Claim Core::claimed(const std::shared_ptr<Core>& core) {
 // Registers `reaction` for the ending of this node, tied to `claim`: releasing the claim withdraws
 // it. When the node has already ended, the reaction is delivered at once, but never inside this
 // call: after the current step, or on the io lane outside a trampoline. A node that dwells at a
-// place (`on`, `here`) delivers it there, as it delivered its ending: after the current step when
-// this thread is that loop's and a trampoline runs, otherwise as a task of the place. So a
+// executor (`on`, `here`) delivers it there, as it delivered its ending: after the current step
+// when this thread is that loop's and a trampoline runs, otherwise as a task of the executor. So a
 // continuation hung on a promise that has already ended on the loop runs on the loop, not on the
-// pool. A reaction that takes the ending to a place of its own (`on`, the return to the chain's place
-// in `adopted`) needs no detour through this one. A place that ends with the reaction in its queue
-// abandons it (`posted`): the rest of the chain ends cancelled. A place already gone has no say any
-// more: what is hung on its promises afterwards (an `outcome`, a `then`) is delivered the old way,
-// on this thread inside a trampoline, otherwise on the io lane, and code bound to the gone loop must
-// guard itself, as it always had to.
+// pool. A reaction that takes the ending to an executor of its own (`on`, the return to the chain's
+// executor in `adopted`) needs no detour through this one. An executor that ends with the reaction
+// in its queue abandons it (`posted`): the rest of the chain ends cancelled. An executor already
+// gone has no say any more: what is hung on its promises afterwards (an `outcome`, a `then`) is
+// delivered the old way, on this thread inside a trampoline, otherwise on the io lane, and code
+// bound to the gone loop must guard itself, as it always had to.
 void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
-    std::shared_ptr<Gate> place;
+    std::shared_ptr<Gate> gate;
 
     {
         const std::lock_guard<std::mutex> held{guard_};
@@ -276,12 +277,12 @@ void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
             return;
         }
 
-        place = home_;
+        gate = home_;
     }
 
-    if (place != nullptr && !reaction->placed() && !(stepping() && homed(place)) &&
+    if (gate != nullptr && !reaction->routed() && !(stepping() && homed(gate)) &&
         posted(
-            place, [reaction] { stepped([reaction] { reaction->ended(); }); },
+            gate, [reaction] { stepped([reaction] { reaction->ended(); }); },
             [reaction] { stepped([reaction] { reaction->abandoned(); }); }))
         return;
 
@@ -317,11 +318,11 @@ void Core::follow(std::shared_ptr<Core> whose) {
     if (ending_ == Ending::running) following_ = std::move(whose);
 }
 
-// Remembers the place the chain moved to (`on`, `here`): what this node delivers later goes there,
-// so that code bound to a loop's thread runs on that thread — a `finally`, a deadline that passes
-// (`timed`), the ending of a promise a callback returned (`adopted`), a continuation hung on the
-// node after it ended (`react`), a coroutine resumed after a cancellation. A node without a place of
-// its own takes its predecessor's (`inherit`).
+// Remembers the executor the chain moved to (`on`, `here`): what this node delivers later goes
+// there, so that code bound to a loop's thread runs on that thread — a `finally`, a deadline that
+// passes (`timed`), the ending of a promise a callback returned (`adopted`), a continuation hung on
+// the node after it ended (`react`), a coroutine resumed after a cancellation. A node without an
+// executor of its own takes its predecessor's (`inherit`).
 void Core::dwell(std::shared_ptr<Gate> where) {
     if (where == nullptr) return;
 
@@ -330,9 +331,9 @@ void Core::dwell(std::shared_ptr<Gate> where) {
     home_ = std::move(where);
 }
 
-// Takes the place of a predecessor, only when the node has none yet: a node linked to several
-// predecessors (a join, a callback's returned promise) keeps the place it has, so a promise a
-// callback returns does not move the chain to its own place.
+// Takes the executor of a predecessor, only when the node has none yet: a node linked to several
+// predecessors (a join, a callback's returned promise) keeps the executor it has, so a promise a
+// callback returns does not move the chain to its own executor.
 void Core::inherit(std::shared_ptr<Gate> where) {
     if (where == nullptr) return;
 
@@ -341,17 +342,17 @@ void Core::inherit(std::shared_ptr<Gate> where) {
     if (home_ == nullptr) home_ = std::move(where);
 }
 
-// The place the chain moved to before this node, or null.
+// The executor the chain moved to before this node, or null.
 std::shared_ptr<Gate> Core::home() const {
     const std::lock_guard<std::mutex> held{guard_};
 
     return home_;
 }
 
-// Takes the place that every one of `among` (the members of a join) dwells at, or none when they
+// Takes the executor that every one of `among` (the members of a join) dwells at, or none when they
 // differ or one of them dwells nowhere. A join ends where whichever member ends it does, so only a
-// place they all share is the join's own; linking the members one by one would leave it the first
-// member's.
+// executor they all share is the join's own; linking the members one by one would leave it the
+// first member's.
 void Core::dwell_among(const std::vector<std::shared_ptr<Core>>& among) {
     std::shared_ptr<Gate> common = among.empty() ? nullptr : among.front()->home();
 
@@ -452,8 +453,8 @@ bool Core::failed(std::exception_ptr why, Delivery delivery) {
     return true;
 }
 
-// Ends the node with a cancellation that comes from its own work, not from its owners; false when it
-// has already ended.
+// Ends the node with a cancellation that comes from its own work, not from its owners; false when
+// it has already ended.
 bool Core::quit(Delivery delivery) {
     Concluded made;
 
@@ -492,7 +493,7 @@ void Core::let_go() {
     for (std::function<void()>& one : then) stepped(std::move(one));
 }
 
-// `let_go` on the io lane, for producers that report from an arbitrary place (`Settle`).
+// `let_go` on the io lane, for producers that report from an arbitrary executor (`Settle`).
 void Core::let_go_away() {
     away([self = shared_from_this()] { self->let_go(); });
 }
@@ -530,8 +531,8 @@ void Core::when_ended(std::function<void()> then) {
 }
 
 // A body is about to run: false when the node has already ended (the owners left before the body
-// started), and then the body must not run. Otherwise the worker's bell is lent to the node, so that
-// a stop rings it while the body waits in a system call.
+// started), and then the body must not run. Otherwise the worker's bell is lent to the node, so
+// that a stop rings it while the body waits in a system call.
 bool Core::begin(Bell* bell) {
     const std::lock_guard<std::mutex> held{guard_};
 
@@ -550,8 +551,8 @@ bool Core::started() const {
     return started_;
 }
 
-// The body has returned: the worker's bell goes back to the worker. Under the same lock as the ring,
-// so a late stop can no longer ring it for the worker's next task.
+// The body has returned: the worker's bell goes back to the worker. Under the same lock as the
+// ring, so a late stop can no longer ring it for the worker's next task.
 void Core::unlend() {
     const std::lock_guard<std::mutex> held{guard_};
 
@@ -926,10 +927,10 @@ bool Node<void>::valued(Delivery delivery) {
 }
 
 // The work a coroutine waited for was abandoned with its owners: the claim on it goes, and the
-// coroutine resumes with `Cancelled` where it waited — at the place what it waited for dwells at
-// (`on`, `here`), as it would have resumed with the ending; at once when that place is a loop ending
-// on this thread; and on the io lane when it dwells nowhere or its place is gone. A resumption that
-// has already begun wins.
+// coroutine resumes with `Cancelled` where it waited — at the executor what it waited for dwells at
+// (`on`, `here`), as it would have resumed with the ending; at once when that executor is a loop
+// ending on this thread; and on the io lane when it dwells nowhere or its executor is gone. A
+// resumption that has already begun wins.
 void Suspension::stopped() {
     std::shared_ptr<Waited> now;
 
@@ -955,16 +956,16 @@ void Suspension::stopped() {
         gone = std::move(now->claim);
     }
 
-    const std::shared_ptr<Gate> place = gone ? gone.get()->home() : nullptr;
+    const std::shared_ptr<Gate> gate = gone ? gone.get()->home() : nullptr;
 
     gone.release();
 
     const auto resumed = [now] { stepped([now] { now->handle.resume(); }); };
 
-    if (place != nullptr && posted(place, resumed, resumed)) return;
+    if (gate != nullptr && posted(gate, resumed, resumed)) return;
 
     // A loop ending on this thread refuses work but still stands here: the coroutine goes on now.
-    if (place != nullptr && homed(place)) {
+    if (gate != nullptr && homed(gate)) {
         resumed();
 
         return;
@@ -973,7 +974,7 @@ void Suspension::stopped() {
     away([now] { now->handle.resume(); });
 }
 
-// The place what a coroutine waited for dwells at threw the delivery away (it went away itself):
+// The executor what a coroutine waited for dwells at threw the delivery away (it went away itself):
 // the coroutine resumes here with `Cancelled`, as after the abandonment of its owners, unless a
 // resumption has already begun.
 void Resuming::abandoned() {
@@ -1003,12 +1004,12 @@ void Resuming::ended() {
 }
 
 // Arms the deadline of `timeout`: when it passes first, the node fails with `Overdue` and releases
-// what it waited for — at the place the chain dwells at (`on`, `here`), so that a `recover` after it
-// runs there, and on the io lane when it dwells nowhere. When that place no longer takes work, the
-// node ends cancelled instead, as `on` does: a `recover` bound to a gone loop must not run. The
-// deadline is withdrawn before the node can end otherwise: by the reaction that passes the ending
-// on (`Timing`), and at once when the owners leave. Withdrawn later, after the ending is visible, it
-// would reach for a clock its owner may already have destroyed.
+// what it waited for — at the executor the chain dwells at (`on`, `here`), so that a `recover`
+// after it runs there, and on the io lane when it dwells nowhere. When that executor no longer
+// takes work, the node ends cancelled instead, as `on` does: a `recover` bound to a gone loop must
+// not run. The deadline is withdrawn before the node can end otherwise: by the reaction that passes
+// the ending on (`Timing`), and at once when the owners leave. Withdrawn later, after the ending is
+// visible, it would reach for a clock its owner may already have destroyed.
 std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::milliseconds patience) {
     const std::weak_ptr<Core> weak = to;
 
@@ -1017,11 +1018,11 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
             if (const std::shared_ptr<Core> one = weak.lock()) (void)one->failed(std::make_exception_ptr(Overdue{}), Delivery::here);
         };
 
-        std::shared_ptr<Gate> place;
+        std::shared_ptr<Gate> gate;
 
-        if (const std::shared_ptr<Core> one = weak.lock()) place = one->home();
+        if (const std::shared_ptr<Core> one = weak.lock()) gate = one->home();
 
-        if (place == nullptr) {
+        if (gate == nullptr) {
             away(overdue);
 
             return;
@@ -1031,7 +1032,7 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
             if (const std::shared_ptr<Core> one = weak.lock()) (void)one->quit(Delivery::here);
         };
 
-        if (posted(place, [overdue] { stepped(overdue); }, [gone] { stepped(gone); })) return;
+        if (posted(gate, [overdue] { stepped(overdue); }, [gone] { stepped(gone); })) return;
 
         away(gone);
     });
@@ -1043,11 +1044,11 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
     return which;
 }
 
-// Hands the job of a body to its place. A place that refuses, or throws the job away unrun (a loop
-// that ends with it in its queue), ends the node cancelled. A pool lane can also take a job back:
-// when the owners leave before the body starts, the job leaves the queue at once instead of waiting
-// for a worker to find it abandoned.
-void launched(Place& where, const std::shared_ptr<Core>& node, std::function<void()> job) {
+// Hands the job of a body to its executor. An executor that refuses, or throws the job away unrun
+// (a loop that ends with it in its queue), ends the node cancelled. A pool lane can also take a job
+// back: when the owners leave before the body starts, the job leaves the queue at once instead of
+// waiting for a worker to find it abandoned.
+void launched(Executor& where, const std::shared_ptr<Core>& node, std::function<void()> job) {
     auto* lane = dynamic_cast<Withdrawing*>(&where);
 
     if (lane == nullptr) {
@@ -1082,7 +1083,7 @@ void launched(Place& where, const std::shared_ptr<Core>& node, std::function<voi
         {
             const std::lock_guard<std::mutex> held{gate->guard};
 
-            if (auto* taking = dynamic_cast<Withdrawing*>(gate->place)) gone = taking->withdrawn(which);
+            if (auto* taking = dynamic_cast<Withdrawing*>(gate->executor)) gone = taking->withdrawn(which);
         }
 
         if (gone) one->let_go();

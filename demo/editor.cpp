@@ -18,8 +18,8 @@
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/fs.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/line.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/row.hpp"
@@ -233,16 +233,17 @@ int main(int argc, char** argv) {
     sheet.skin(talcite::ui::Skin{{{"demo.bar", turned()}}});
 
     const auto dialogs = std::make_shared<talcite::ui::Modals>();
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto keybar = std::make_shared<talcite::ui::KeyBar>();
     const auto column = std::make_shared<talcite::ui::Column>();
 
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
     const auto shown = std::make_shared<talcite::ui::Editor>(talcite::ui::ScrollShape{true});
 
-    // The application binds the clipboard keys, because the editor assigns no key to an action: both
-    // sets call the same methods, Ctrl+C, Ctrl+X and Ctrl+V as elsewhere and Ctrl+Ins, Shift+Del and
-    // Shift+Ins as in Midnight Commander. In raw mode Ctrl+C is not an interrupt but an ordinary key,
-    // and a widget that swallowed it would take away the application's chance to use it for quitting.
+    // The application binds the clipboard keys, because the editor assigns no key to an action:
+    // both sets call the same methods, Ctrl+C, Ctrl+X and Ctrl+V as elsewhere and Ctrl+Ins,
+    // Shift+Del and Shift+Ins as in Midnight Commander. In raw mode Ctrl+C is not an interrupt but
+    // an ordinary key, and a widget that swallowed it would take away the application's chance to
+    // use it for quitting.
     {
         const std::weak_ptr<talcite::ui::Editor> weak = shown;
 
@@ -281,8 +282,8 @@ int main(int argc, char** argv) {
     column->children().add(bar);
     column->children().add(shown);
 
-    legend->content(column);
-    dialogs->content(legend);
+    keybar->content(column);
+    dialogs->content(keybar);
 
     sheet.children().add(dialogs);
 
@@ -331,7 +332,7 @@ int main(int argc, char** argv) {
     // kept, or it would die with this closure.
     const auto saving = std::make_shared<std::optional<talcite::Promise<void>>>();
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Save"), [shown, where, saying, saving] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f2, "Save"), [shown, where, saying, saving] {
         if (where->empty()) {
             saying("nowhere to save");
 
@@ -377,7 +378,7 @@ int main(int argc, char** argv) {
                 }));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f3, "Search"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
             "Search", false,
             [shown, saying](std::string what, std::string, talcite::Sift how) {
@@ -398,7 +399,7 @@ int main(int argc, char** argv) {
             })));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Replace"), [dialogs, shown, saying] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f4, "Replace"), [dialogs, shown, saying] {
         dialogs->open(demo::closing(hunting(
             "Replace", true,
             [shown, saying](std::string what, std::string with, talcite::Sift how) {
@@ -419,25 +420,25 @@ int main(int argc, char** argv) {
             })));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Wrap"), [shown, naming] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f5, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f7, "Undo"), [shown, saying] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f7, "Undo"), [shown, saying] {
         shown->undo();
 
         saying({});
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f8, "Redo"), [shown, saying] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f8, "Redo"), [shown, saying] {
         shown->redo();
 
         saying({});
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"),
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
     // The file is read in whole, because the editor is resident, but the pool reads it (`fs::read`)

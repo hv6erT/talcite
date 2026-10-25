@@ -18,7 +18,7 @@
 #include "talcite/bell.hpp"
 #include "talcite/clock.hpp"
 #include "talcite/loop.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 #include "talcite/pool.hpp"
 #include "talcite/promise.hpp"
 
@@ -426,7 +426,8 @@ TRIAL("finally: after a cancellation it waits for the end of the work, off the c
 // A value from `Settle` sends the callbacks and the finish of the settled node to the pool apart,
 // so a cancellation of the chain can meet a callback just as it starts, on another thread. The
 // callback that starts then is already counted: `finally` comes only after it, never before, and
-// the callback never starts after `finally` has run. Many rounds, each cancelling at another moment.
+// the callback never starts after `finally` has run. Many rounds, each cancelling at another
+// moment.
 TRIAL("finally: a cancellation that meets a callback as it starts does not let finally run first") {
     for (int round = 0; round < 400; ++round) {
         struct Seen {
@@ -474,62 +475,62 @@ TRIAL("finally: a cancellation that meets a callback as it starts does not let f
     }
 }
 
-// A chain moved to a place (a loop) cleans up there after a cancellation too, so that code bound to
-// that place's thread never runs on another one.
-TRIAL("finally: after a cancellation it runs on the place the chain moved to") {
-    ManualPlace place;
+// A chain moved to an executor (a loop) cleans up there after a cancellation too, so that code
+// bound to that executor's thread never runs on another one.
+TRIAL("finally: after a cancellation it runs on the executor the chain moved to") {
+    ManualExecutor executor;
 
     auto [source, settle] = promised<int>();
 
     std::atomic<bool> cleaned{false};
 
-    Promise<int> one = std::move(source).on(place).finally([&cleaned] { cleaned.store(true); });
+    Promise<int> one = std::move(source).on(executor).finally([&cleaned] { cleaned.store(true); });
 
     one.cancel();
 
     (void)settle.value(1);
 
-    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
 
     ought(!cleaned.load());
 
-    (void)place.turn();
+    (void)executor.turn();
 
     ought(cleaned.load());
 }
 
-// A chain moved to a place cleans up there also when nothing cancels it. A manual place has no
-// thread of its own, so `finally` runs there as a task of its own, after the task that brought the
-// value, never inside it, whichever thread finished the work before it.
-TRIAL("finally: after a move to a place it runs there, as a task of its own") {
-    ManualPlace place;
+// A chain moved to an executor cleans up there also when nothing cancels it. A manual executor has
+// no thread of its own, so `finally` runs there as a task of its own, after the task that brought
+// the value, never inside it, whichever thread finished the work before it.
+TRIAL("finally: after a move to an executor it runs there, as a task of its own") {
+    ManualExecutor executor;
 
     std::atomic<bool> cleaned{false};
 
-    Promise<int> one = ready(4).on(place).finally([&cleaned] { cleaned.store(true); });
+    Promise<int> one = ready(4).on(executor).finally([&cleaned] { cleaned.store(true); });
 
-    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
 
-    same(place.turn(), std::size_t{1});
+    same(executor.turn(), std::size_t{1});
     ought(!cleaned.load());
     ought(!one.ready());
 
-    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
 
-    same(place.turn(), std::size_t{1});
+    same(executor.turn(), std::size_t{1});
     ought(cleaned.load());
     ought(one.ready());
     same(std::move(one).get(), 4);
 }
 
-// The work before the move may finish on a thread of the pool after the place has already taken the
-// value: a producer's `Settle` sends the value and its own finish to the pool apart. `finally` still
-// runs on the thread that turns the place, never on the one where the work finished. Many rounds,
-// since which of the two comes first is the pool's to decide.
-TRIAL("finally: after a move to a place it never runs where the work finished") {
+// The work before the move may finish on a thread of the pool after the executor has already taken
+// the value: a producer's `Settle` sends the value and its own finish to the pool apart. `finally`
+// still runs on the thread that turns the executor, never on the one where the work finished. Many
+// rounds, since which of the two comes first is the pool's to decide.
+TRIAL("finally: after a move to an executor it never runs where the work finished") {
     const std::thread::id mine = std::this_thread::get_id();
 
-    ManualPlace place;
+    ManualExecutor executor;
 
     for (int round = 0; round < 200; ++round) {
         auto [source, settle] = promised<int>();
@@ -537,7 +538,7 @@ TRIAL("finally: after a move to a place it never runs where the work finished") 
         std::atomic<bool> cleaned{false};
         std::atomic<bool> elsewhere{false};
 
-        Promise<int> one = std::move(source).on(place).finally([&cleaned, &elsewhere, mine] {
+        Promise<int> one = std::move(source).on(executor).finally([&cleaned, &elsewhere, mine] {
             if (std::this_thread::get_id() != mine) elsewhere.store(true);
 
             cleaned.store(true);
@@ -548,7 +549,7 @@ TRIAL("finally: after a move to a place it never runs where the work finished") 
         const auto until = std::chrono::steady_clock::now() + 5s;
 
         while (!cleaned.load() && std::chrono::steady_clock::now() < until) {
-            (void)place.turn();
+            (void)executor.turn();
 
             std::this_thread::sleep_for(std::chrono::microseconds{round % 20 * 50 + 10});
         }
@@ -561,7 +562,8 @@ TRIAL("finally: after a move to a place it never runs where the work finished") 
 }
 
 // The same after `here`: on the loop's thread `finally` may run at once, where the work finishes
-// there, and goes to the loop where it finishes on the pool; either way it runs on the loop's thread.
+// there, and goes to the loop where it finishes on the pool; either way it runs on the loop's
+// thread.
 TRIAL("finally: after here it never runs where the work finished") {
     const std::thread::id mine = std::this_thread::get_id();
 
@@ -647,21 +649,21 @@ TRIAL("owners: cancelling the tail stops a body that waits") {
 }
 
 TRIAL("owners: a body cancelled before it starts never runs") {
-    ManualPlace place;
+    ManualExecutor executor;
 
     std::atomic<bool> ran{false};
 
-    Promise<void> one = run(place, [&ran] { ran.store(true); });
+    Promise<void> one = run(executor, [&ran] { ran.store(true); });
 
     one.cancel();
 
-    same(place.turn(), std::size_t{1});
+    same(executor.turn(), std::size_t{1});
 
     ought(!ran.load());
 }
 
-// A pool lane takes a job back when its owners leave before it starts: it does not wait in the queue
-// for a worker to find it abandoned.
+// A pool lane takes a job back when its owners leave before it starts: it does not wait in the
+// queue for a worker to find it abandoned.
 TRIAL("owners: a job abandoned before it starts leaves the pool queue at once") {
     Pool mine{1};
 
@@ -819,31 +821,31 @@ TRIAL("Settle: void settles without a value") {
     std::move(made).get();
 }
 
-// --- Places -----------------------------------------------------------------------------------
+// --- Executors -----------------------------------------------------------------------------------
 
-TRIAL("on: the rest of the chain runs on the given place, at its turn") {
-    ManualPlace place;
+TRIAL("on: the rest of the chain runs on the given executor, at its turn") {
+    ManualExecutor executor;
 
     std::atomic<bool> ran{false};
 
-    Promise<void> one = ready(1).on(place).then([&ran](int) { ran.store(true); });
+    Promise<void> one = ready(1).on(executor).then([&ran](int) { ran.store(true); });
 
-    for (int again = 0; again < 500 && place.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
 
     ought(!ran.load());
-    same(place.turn(), std::size_t{1});
+    same(executor.turn(), std::size_t{1});
     ought(ran.load());
     ought(one.ready());
 }
 
-TRIAL("on: a place that is gone cancels the rest") {
-    auto place = std::make_unique<ManualPlace>();
+TRIAL("on: an executor that is gone cancels the rest") {
+    auto executor = std::make_unique<ManualExecutor>();
 
     auto [made, settle] = promised<int>();
 
-    Promise<int> one = std::move(made).on(*place);
+    Promise<int> one = std::move(made).on(*executor);
 
-    place.reset();
+    executor.reset();
 
     (void)settle.value(1);
 
@@ -888,12 +890,12 @@ TRIAL("here: moves the rest to the loop of this thread, and without a loop it re
     ought(static_cast<bool>(kept));
 }
 
-// --- Home places -------------------------------------------------------------------------------
+// --- Home executors ------------------------------------------------------------------------------
 
 // After `here` the rest of the chain runs on the loop's thread, also where its ending comes from
 // elsewhere: a deadline that passes on the clock's thread, a promise a callback returned and that
-// ends on the pool, a continuation hung on a promise that has already ended. A join keeps a place
-// only when all its members share it.
+// ends on the pool, a continuation hung on a promise that has already ended. A join keeps an
+// executor only when all its members share it.
 
 TRIAL("timeout: after here a deadline that passes fails the chain on the loop, so recover runs there") {
     Loop loop;
@@ -967,7 +969,7 @@ TRIAL("here: a continuation hung on a promise that has already ended runs on the
 }
 
 // A promise that has ended on the loop and moves on to the pool goes there straight: `on` takes the
-// ending to its own place, with no detour through the loop, so it needs no turn of the loop.
+// ending to its own executor, with no detour through the loop, so it needs no turn of the loop.
 TRIAL("on: a promise that has ended on the loop moves to the pool without the loop") {
     Loop loop;
 
@@ -1010,7 +1012,7 @@ TRIAL("get: waiting on the loop's thread for what ends on that loop is refused")
     same(run(io(), [] { return 3; }).get(), 3);
 }
 
-TRIAL("all: a join dwells at the place its members share, and nowhere when they differ") {
+TRIAL("all: a join dwells at the executor its members share, and nowhere when they differ") {
     Loop loop;
 
     const std::thread::id mine = std::this_thread::get_id();
@@ -1043,8 +1045,8 @@ TRIAL("all: a join dwells at the place its members share, and nowhere when they 
     ought(turned(loop, ran));
     ought(home.load());
 
-    // One member on the loop, one on the pool: the join has no place, so what hangs on it after its
-    // end does not wait for the loop.
+    // One member on the loop, one on the pool: the join has no executor, so what hangs on it after
+    // its end does not wait for the loop.
     std::vector<Promise<int>> mixed;
 
     mixed.push_back(run(io(), [] { return 1; }).here());
@@ -1497,16 +1499,16 @@ TRIAL("coroutine: abandoned while waiting after here, it resumes on the loop") {
     ought(home.load());
 }
 
-// --- A place that ends ---------------------------------------------------------------------------
+// --- An executor that ends -----------------------------------------------------------------------
 
-// A place that ends with work of promises in its queue throws it away, and each chain that waited
-// for it ends cancelled at once instead of never: no `then` or `recover` runs, only the cleanup
-// (`finally`, a coroutine going on with `Cancelled`), on the loop's thread, while the loop goes
-// away. The work before the loop comes from a manual place turned on this thread, so that it has
-// fully finished when the loop ends.
+// An executor that ends with work of promises in its queue throws it away, and each chain that
+// waited for it ends cancelled at once instead of never: no `then` or `recover` runs, only the
+// cleanup (`finally`, a coroutine going on with `Cancelled`), on the loop's thread, while the loop
+// goes away. The work before the loop comes from a manual executor turned on this thread, so that
+// it has fully finished when the loop ends.
 
 TRIAL("Loop: an ending loop abandons the chains it holds: they end cancelled, and finally runs on its thread") {
-    ManualPlace before;
+    ManualExecutor before;
 
     const std::thread::id mine = std::this_thread::get_id();
 
@@ -1550,7 +1552,7 @@ TRIAL("Loop: an ending loop abandons the chains it holds: they end cancelled, an
 }
 
 TRIAL("Loop: an ending loop resumes a coroutine waiting there with Cancelled, on its thread") {
-    ManualPlace before;
+    ManualExecutor before;
 
     std::atomic<bool> home{false};
     std::atomic<bool> done{false};
@@ -1620,25 +1622,25 @@ TRIAL("Loop: an ending loop cancels a deadline and a continuation it was to deli
     ought(std::move(*hung).outcome().get().cancelled());
 }
 
-// A `finally` waiting for its own task on a place that ends runs then, and the chain after it ends
-// cancelled; one whose chain the owner gave up before runs too, on the loop's thread while the loop
-// goes away; and what it throws, with nowhere to go, reaches the sink of `lost`.
-TRIAL("finally: a place that ends runs the cleanup it held, also one given up before, and loses what it throws") {
-    ManualPlace before;
+// A `finally` waiting for its own task on an executor that ends runs then, and the chain after it
+// ends cancelled; one whose chain the owner gave up before runs too, on the loop's thread while the
+// loop goes away; and what it throws, with nowhere to go, reaches the sink of `lost`.
+TRIAL("finally: an executor that ends runs the cleanup it held, also one given up before, and loses what it throws") {
+    ManualExecutor before;
 
     {
-        auto place = std::make_unique<ManualPlace>();
+        auto executor = std::make_unique<ManualExecutor>();
 
         std::atomic<bool> cleaned{false};
 
-        Promise<int> tail = run(before, [] { return 1; }).on(*place).finally([&cleaned] { cleaned.store(true); });
+        Promise<int> tail = run(before, [] { return 1; }).on(*executor).finally([&cleaned] { cleaned.store(true); });
 
         same(before.turn(), std::size_t{1});
-        same(place->turn(), std::size_t{1});
-        same(place->waiting(), std::size_t{1});
+        same(executor->turn(), std::size_t{1});
+        same(executor->waiting(), std::size_t{1});
         ought(!cleaned.load());
 
-        place.reset();
+        executor.reset();
 
         ought(cleaned.load());
         ought(tail.ready());
@@ -1678,14 +1680,14 @@ TRIAL("finally: a place that ends runs the cleanup it held, also one given up be
             if (std::string_view{why.what()} == "sprzątanie") seen.store(true);
         });
 
-        auto place = std::make_unique<ManualPlace>();
+        auto executor = std::make_unique<ManualExecutor>();
 
-        Promise<int> tail = run(before, [] { return 1; }).on(*place).finally([] { throw std::runtime_error{"sprzątanie"}; });
+        Promise<int> tail = run(before, [] { return 1; }).on(*executor).finally([] { throw std::runtime_error{"sprzątanie"}; });
 
         same(before.turn(), std::size_t{1});
-        same(place->turn(), std::size_t{1});
+        same(executor->turn(), std::size_t{1});
 
-        place.reset();
+        executor.reset();
 
         ought(risen(seen));
         ought(tail.ready());
@@ -1699,7 +1701,7 @@ TRIAL("finally: a place that ends runs the cleanup it held, also one given up be
 // A coroutine that waits for a promise that has already ended on the loop resumes there; when the
 // loop ends first, it goes on with `Cancelled`, on the loop's thread.
 TRIAL("coroutine: waiting for what ended on a loop that then ends, it resumes with Cancelled there") {
-    ManualPlace before;
+    ManualExecutor before;
 
     std::atomic<bool> home{false};
     std::atomic<bool> done{false};
@@ -1724,18 +1726,18 @@ TRIAL("coroutine: waiting for what ended on a loop that then ends, it resumes wi
     ought(home.load());
 }
 
-TRIAL("ManualPlace: one that ends cancels the bodies it was to run") {
-    auto place = std::make_unique<ManualPlace>();
+TRIAL("ManualExecutor: one that ends cancels the bodies it was to run") {
+    auto executor = std::make_unique<ManualExecutor>();
 
     std::atomic<bool> ran{false};
 
-    Promise<int> one = run(*place, [&ran] {
+    Promise<int> one = run(*executor, [&ran] {
         ran.store(true);
 
         return 1;
     });
 
-    place.reset();
+    executor.reset();
 
     ought(one.ready());
 

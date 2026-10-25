@@ -13,7 +13,7 @@
 namespace talcite::ui {
 
 // Trimming strings to a number of cells. It lives in one place because both the label and the
-// legend need it; a similar template repeated in several files violates the one-definition rule,
+// key bar need it; a similar template repeated in several files violates the one-definition rule,
 // which the linker does not report.
 
 // Tabs are everywhere in licenses and manual pages. We expand them when drawing, not in the data:

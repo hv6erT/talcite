@@ -7,8 +7,8 @@
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/gauge.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/line.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/span.hpp"
@@ -46,7 +46,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — progress bar");
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -64,7 +64,7 @@ int main() {
     column->children().add(guess);
 
     frame->children().add(column);
-    legend->content(frame);
+    bar->content(frame);
 
     // Pretend progress: one step further every fifty milliseconds. In a real program, instead of
     // the counter, this would be `one.progress()` from the copy promise: the same number, the same
@@ -94,7 +94,7 @@ int main() {
         beat->emplace(talcite::later(std::chrono::milliseconds{50}).here().then([again] { (*again)(); }));
     };
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Start"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f5, "Start"),
                       [known, told, running, again] {
                           known->part(0.0);
                           told->text("copying…");
@@ -106,12 +106,12 @@ int main() {
                           (*again)();
                       });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Wait"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f6, "Wait"),
                       [guess] { guess->busy(!guess->busy()); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
 
     term.show(sheet);
     term.title("talcite — progress bar");

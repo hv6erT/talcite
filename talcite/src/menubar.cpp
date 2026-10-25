@@ -28,7 +28,7 @@ namespace talcite::ui {
 //
 // An open menu is a child of the bar, so a key from an item bubbles item → menu → bar, and the
 // side arrows and Esc arrive by that path. The menu is not a curtain, so a click on a neighboring
-// title hits the title, and the bar stands under the legend, so the list does not cover the key
+// title hits the title, and the bar stands under the key bar, so the list does not cover the key
 // bar. The three costs a curtain menu would have do not arise here at all.
 Menubar::Menubar()
     : frame_(std::make_shared<Column>()),
@@ -224,7 +224,7 @@ void Menubar::fold() {
 // `dropdown()` entering opens the first menu at once, as MC does with "Drop down menus", and sets
 // the open bit, so the side arrows keep menus open; it is the same path as the down arrow after
 // F9, only without waiting for it. A first menu without items stays folded, as with the arrow.
-// Public, paired with `leave()`, because a key bar field has to enter by the same path as the key;
+// Public, paired with `leave()`, because a key bar item has to enter by the same path as the key;
 // otherwise a click on the field would do something other than F9. A bar already active stays as
 // it is.
 void Menubar::enter() {
@@ -328,7 +328,7 @@ bool Menubar::handle(KeyEvent& what) {
         // The loop runs over a snapshot, because a handler may rebuild the bar in response.
         //
         // An active bar swallows everything it did not handle itself. In Midnight Commander an
-        // open menu is modal: F5 does not copy while it is open. The legend stands higher up and
+        // open menu is modal: F5 does not copy while it is open. The key bar stands higher up and
         // would catch the key, performing an action nobody asked for.
         default: {
             if (one == nullptr) return false;

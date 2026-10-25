@@ -15,16 +15,16 @@ struct Gate;
 
 }
 
-class Place {
+class Executor {
 public:
-    Place();
+    Executor();
 
-    virtual ~Place();
+    virtual ~Executor();
 
-    Place(const Place&) = delete;
-    Place& operator=(const Place&) = delete;
-    Place(Place&&) = delete;
-    Place& operator=(Place&&) = delete;
+    Executor(const Executor&) = delete;
+    Executor& operator=(const Executor&) = delete;
+    Executor(Executor&&) = delete;
+    Executor& operator=(Executor&&) = delete;
 
     virtual bool post(std::function<void()> what) = 0;
 
@@ -37,16 +37,16 @@ private:
     std::shared_ptr<detail::Gate> gate_;
 };
 
-class ManualPlace : public Place {
+class ManualExecutor : public Executor {
 public:
-    ManualPlace() = default;
+    ManualExecutor() = default;
 
-    ~ManualPlace() override;
+    ~ManualExecutor() override;
 
-    ManualPlace(const ManualPlace&) = delete;
-    ManualPlace& operator=(const ManualPlace&) = delete;
-    ManualPlace(ManualPlace&&) = delete;
-    ManualPlace& operator=(ManualPlace&&) = delete;
+    ManualExecutor(const ManualExecutor&) = delete;
+    ManualExecutor& operator=(const ManualExecutor&) = delete;
+    ManualExecutor(ManualExecutor&&) = delete;
+    ManualExecutor& operator=(ManualExecutor&&) = delete;
 
     bool post(std::function<void()> what) override;
 
@@ -59,15 +59,15 @@ private:
     std::vector<std::function<void()>> queued_;
 };
 
-[[nodiscard]] Place& io();
+[[nodiscard]] Executor& io();
 
-[[nodiscard]] Place& cpu();
+[[nodiscard]] Executor& cpu();
 
 namespace detail {
 
 struct Gate {
     std::mutex guard;
-    Place* place = nullptr;
+    Executor* executor = nullptr;
 };
 
 class Withdrawing {

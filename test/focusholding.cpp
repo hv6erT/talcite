@@ -4,10 +4,11 @@
 #include <memory>
 #include <string>
 
+#include "talcite/box.hpp"
+#include "talcite/focusholder.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
-#include "talcite/pane.hpp"
+#include "talcite/keybar.hpp"
+#include "talcite/keybaritem.hpp"
 #include "talcite/root.hpp"
 #include "talcite/span.hpp"
 
@@ -23,7 +24,7 @@ public:
 
 protected:
     // The root swallows every key, as in every demo and as the application will. This shows that
-    // the legend gets its keys from below, not from here.
+    // the key bar gets its keys from below, not from here.
     bool handle(ui::KeyEvent&) override { return true; }
 
     // Counts the clicks that reach the root and takes each of them.
@@ -77,10 +78,10 @@ void clicked(ui::Root& onto, ui::Spot where) {
 
 // --- Focus --------------------------------------------------------------------------------------
 
-TRIAL("Pane: takes focus by default, since that is what it is for") {
+TRIAL("FocusHolder: takes focus by default, since that is what it is for") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     ought(one->focusable());
 
@@ -93,10 +94,10 @@ TRIAL("Pane: takes focus by default, since that is what it is for") {
     ought(one->focused());
 }
 
-TRIAL("Pane: a disabled one does not take focus") {
+TRIAL("FocusHolder: a disabled one does not take focus") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     one->enabled(false);
 
@@ -113,10 +114,10 @@ TRIAL("Pane: a disabled one does not take focus") {
 // The container does not take clicks away from its children. The mouse goes from the deepest node
 // under the cursor upward, so the child comes first; whoever takes the click ends the path. The
 // container gets only what nobody below wanted, and only then takes focus.
-TRIAL("Pane: a click taken by the child does not reach the container") {
+TRIAL("FocusHolder: a click taken by the child does not reach the container") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
     const auto said = std::make_shared<Noted>(true);
 
     one->children().add(said);
@@ -130,10 +131,10 @@ TRIAL("Pane: a click taken by the child does not reach the container") {
     same(top.clicks, 0);
 }
 
-TRIAL("Pane: a click refused by the child gives focus to the container") {
+TRIAL("FocusHolder: a click refused by the child gives focus to the container") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
     const auto said = std::make_shared<Noted>(false);
 
     one->children().add(said);
@@ -149,10 +150,10 @@ TRIAL("Pane: a click refused by the child gives focus to the container") {
 
 // A disabled container is transparent to the mouse too: the click goes further up, as if the
 // container were not there.
-TRIAL("Pane: a disabled one passes the click further up") {
+TRIAL("FocusHolder: a disabled one passes the click further up") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
     const auto said = std::make_shared<Noted>(false);
 
     one->enabled(false);
@@ -167,26 +168,26 @@ TRIAL("Pane: a disabled one passes the click further up") {
     same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
-// This is the real reason this element exists. A key bubbles up from the focus, and the legend is
+// This is the real reason this element exists. A key bubbles up from the focus, and the key bar is
 // an ancestor of the content, so without something to hold the focus `Root::dispatch` hands the key
 // to the root and the path ends there. A window without a button and without a text field would
 // then have no working F keys.
-TRIAL("Pane: the legend gets keys only with focus") {
+TRIAL("FocusHolder: the key bar gets keys only with focus") {
     proving::Hooks heard;
 
     Sheet top;
 
-    const auto legend = std::make_shared<ui::Legend>();
-    const auto one = std::make_shared<ui::Pane>();
+    const auto bar = std::make_shared<ui::KeyBar>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     int hits = 0;
 
     one->children().add(std::make_shared<ui::Frame>("treść"));
-    legend->content(one);
+    bar->content(one);
 
-    (void)proving::doing(heard, legend->add(ui::Code::f5, "Coś"), [&hits] { ++hits; });
+    (void)proving::doing(heard, bar->add(ui::Code::f5, "Coś"), [&hits] { ++hits; });
 
-    top.children().add(legend);
+    top.children().add(bar);
     (void)top.render({{0, 0}, {30, 10}});
 
     ui::KeyEvent before{ui::Code::f5};
@@ -206,36 +207,47 @@ TRIAL("Pane: the legend gets keys only with focus") {
 
 // --- Room ---------------------------------------------------------------------------------------
 
-// The whole room, even when the child wants less, and that is the container's entire part in
-// sizing. It is fixed, not a setting; setting a size is what `Box` is for.
-TRIAL("Pane: asks for all the room, even if the child wants less") {
-    const auto one = std::make_shared<ui::Pane>();
+// The room its child wants, as any node with one child, and none without a child: sizing is the
+// job of `Box`.
+TRIAL("FocusHolder: wants what its child wants, and nothing without one") {
+    const auto one = std::make_shared<ui::FocusHolder>();
+
+    same(one->wants({20, 10}).wide, 0);
+    same(one->wants({20, 10}).high, 0);
+
     const auto said = std::make_shared<ui::Span>(std::string{"trzy"});
 
     one->children().add(said);
 
-    ought(said->wants({20, 10}).wide < 20);
-
-    same(one->wants({20, 10}).wide, 20);
-    same(one->wants({20, 10}).high, 10);
+    same(one->wants({20, 10}), said->wants({20, 10}));
 }
 
-// An empty one takes everything too, unlike `Node`, which asks for nothing without a child.
-TRIAL("Pane: an empty one asks for all the room") {
-    const auto one = std::make_shared<ui::Pane>();
+// In a `Box` it covers the whole room, however small its content: a click beside the content
+// takes the focus, which is how a window gives its F-keys to a key bar.
+TRIAL("FocusHolder: in a box it covers the room, a click beside the content takes the focus") {
+    Sheet top;
 
-    same(one->wants({20, 10}).wide, 20);
-    same(one->wants({20, 10}).high, 10);
+    const auto room = std::make_shared<ui::Box>();
+    const auto one = std::make_shared<ui::FocusHolder>();
+
+    one->children().add(std::make_shared<ui::Span>(std::string{"trzy"}));
+    room->children().add(one);
+    top.children().add(room);
+    (void)top.render({{0, 0}, {20, 10}});
+
+    clicked(top, {15, 8});
+
+    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
 }
 
 // --- Painting -----------------------------------------------------------------------------------
 
 // The container paints nothing of its own: it inherits the transparent pass-through of a child and
 // with it the rule "paint what you are, not the rectangle you were given".
-TRIAL("Pane: an empty one leaves no trace on the sheet") {
+TRIAL("FocusHolder: an empty one leaves no trace on the sheet") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     top.children().add(one);
 
@@ -249,10 +261,10 @@ TRIAL("Pane: an empty one leaves no trace on the sheet") {
     ought(held);
 }
 
-TRIAL("Pane: the child gets the whole assigned rectangle") {
+TRIAL("FocusHolder: the child gets the whole assigned rectangle") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
     const auto said = std::make_shared<ui::Span>(std::string{"abc"});
 
     one->children().add(said);
@@ -266,11 +278,11 @@ TRIAL("Pane: the child gets the whole assigned rectangle") {
 
 // Disabling gives up the focus, as in the button, the field and the list row; a node that says it
 // is not willing must not keep the focus.
-TRIAL("Pane: a disabled one under focus hands it to the ancestor") {
+TRIAL("FocusHolder: a disabled one under focus hands it to the ancestor") {
     Sheet top;
 
-    const auto up = std::make_shared<ui::Pane>();
-    const auto one = std::make_shared<ui::Pane>();
+    const auto up = std::make_shared<ui::FocusHolder>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     up->children().add(one);
     top.children().add(up);
@@ -287,10 +299,10 @@ TRIAL("Pane: a disabled one under focus hands it to the ancestor") {
     ought(up->focused());
 }
 
-TRIAL("Pane: a disabled one without a willing ancestor clears the focus") {
+TRIAL("FocusHolder: a disabled one without a willing ancestor clears the focus") {
     Sheet top;
 
-    const auto one = std::make_shared<ui::Pane>();
+    const auto one = std::make_shared<ui::FocusHolder>();
 
     top.children().add(one);
 

@@ -105,7 +105,7 @@ public:
 
     virtual void abandoned() = 0;
 
-    [[nodiscard]] virtual bool placed() const { return false; }
+    [[nodiscard]] virtual bool routed() const { return false; }
 };
 
 class Claim {

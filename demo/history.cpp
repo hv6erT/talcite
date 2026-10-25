@@ -5,8 +5,8 @@
 #include "talcite/column.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/historyfield.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/row.hpp"
@@ -90,7 +90,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto modals = std::make_shared<talcite::ui::Modals>();
 
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -140,7 +140,7 @@ int main() {
     column->children().add(frame);
 
     modals->content(column);
-    legend->content(modals);
+    bar->content(modals);
 
     // Enter does not belong to the field: the field lets it through, so we catch it here, and this
     // is the place where a command counts as given.
@@ -165,18 +165,18 @@ int main() {
         return true;
     }));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "History"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "History"),
                       [said] { said->open(); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f8, "Forget"), [said, told] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f8, "Forget"), [said, told] {
         said->clear();
 
         told->text("history cleared");
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
     sheet.skin(coloured());
 
     said->focus();

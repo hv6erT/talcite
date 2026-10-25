@@ -7,8 +7,8 @@
 #include "talcite/modals.hpp"
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/row.hpp"
@@ -148,7 +148,7 @@ int main() {
     Sheet sheet{term};
 
     const auto dialogs = std::make_shared<talcite::ui::Modals>();
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — list");
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -191,13 +191,13 @@ int main() {
     column->children().add(list);
     frame->children().add(column);
 
-    legend->content(frame);
-    dialogs->content(legend);
+    bar->content(frame);
+    dialogs->content(bar);
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Choose"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "Choose"),
                       [dialogs, told] { dialogs->open(demo::closing(asking(told))); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(dialogs);
 

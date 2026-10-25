@@ -12,8 +12,8 @@
 #include "talcite/bytes.hpp"
 #include "talcite/column.hpp"
 #include "talcite/fs.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/mark.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/skin.hpp"
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
     // names begin with `talcite.` and nobody else's may cover them.
     sheet.skin(talcite::ui::Skin{{{"demo.bar", turned()}}});
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto keybar = std::make_shared<talcite::ui::KeyBar>();
     const auto column = std::make_shared<talcite::ui::Column>();
 
     const auto bar = std::make_shared<talcite::ui::Span>(std::string{});
@@ -195,9 +195,9 @@ int main(int argc, char** argv) {
     column->children().add(bar);
     column->children().add(shown);
 
-    legend->content(column);
+    keybar->content(column);
 
-    sheet.children().add(legend);
+    sheet.children().add(keybar);
 
     const auto source = std::make_shared<std::string>("built-in text");
     const auto counted = std::make_shared<bool>(false);
@@ -241,25 +241,25 @@ int main(int argc, char** argv) {
         return false;
     }));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Wrap"), [shown, naming] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f2, "Wrap"), [shown, naming] {
         shown->wrapped(!shown->wrapped());
 
         naming();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Next"),
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f3, "Next"),
                       [shown] { (void)shown->step(1); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Prev"),
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f5, "Prev"),
                       [shown] { (void)shown->step(-1); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Pos"), [counted, naming] {
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f4, "Pos"), [counted, naming] {
         *counted = !*counted;
 
         naming();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"),
+    (void)demo::doing(heard, keybar->add(talcite::ui::Code::f10, "Quit"),
                       [&term] { term.stop(); });
 
     // The file is read as a stream and asynchronously. `fs::open` and `File::read` go through the
@@ -305,8 +305,8 @@ int main(int argc, char** argv) {
 
     term.show(sheet);
 
-    // Without focus, keys end their journey at the root and the legend never sees them. The viewer
-    // takes them itself, so a `Pane` is not needed here.
+    // Without focus, keys end their journey at the root and the key bar never sees them. The viewer
+    // takes them itself, so a `FocusHolder` is not needed here.
     shown->focus();
 
     naming();

@@ -69,9 +69,9 @@ struct Cut {
     std::size_t line = 0;
 
     // Where the row starts and ends in the document; `from` and `upto` are the same counted from
-    // the start of the line. The end is the byte just past the last character of the row: the column
-    // map says where each character starts but not where it ends, and a click past the end of a
-    // line has to land exactly there.
+    // the start of the line. The end is the byte just past the last character of the row: the
+    // column map says where each character starts but not where it ends, and a click past the end
+    // of a line has to land exactly there.
     std::size_t at = 0;
     std::size_t end = 0;
     std::size_t from = 0;
@@ -161,8 +161,8 @@ private:
     }
 
     // Makes sure the piece holds enough from the reader on; returns false while a window is on its
-    // way. What the spool has at hand is taken first, so the head of a file is shown before the rest
-    // arrives; only when that is not enough is a whole piece asked for.
+    // way. What the spool has at hand is taken first, so the head of a file is shown before the
+    // rest arrives; only when that is not enough is a whole piece asked for.
     bool filled() {
         if (enough()) return true;
 
@@ -445,8 +445,8 @@ struct Page::Kept {
     // The width rows are cut to: what the last layout gave, at least one column.
     [[nodiscard]] int wide() const { return std::max(sized.wide, 1); }
 
-    // Whether lines are cut into rows: with wrapping, once the page has a width. Before layout there
-    // is nothing to cut, and a step goes by lines of the document.
+    // Whether lines are cut into rows: with wrapping, once the page has a width. Before layout
+    // there is nothing to cut, and a step goes by lines of the document.
     [[nodiscard]] bool cutting() const { return wrapped && sized.wide > 0; }
 
     // Makes sure the start of the top line is known; false while a window is on its way or when the
@@ -592,11 +592,11 @@ struct Page::Kept {
         return one;
     }
 
-    // Walks `line` (starting at `at`) cluster by cluster from the latest remembered column mark that
-    // `before` accepts, until `stop` says to stop before a cluster (given its column, width and byte)
-    // or the line ends; returns the column and byte where it stopped, or nothing while a window is on
-    // its way. Marks on the spacing are remembered on the way; a tab advances to the next multiple
-    // of eight counted from the line's start.
+    // Walks `line` (starting at `at`) cluster by cluster from the latest remembered column mark
+    // that `before` accepts, until `stop` says to stop before a cluster (given its column, width
+    // and byte) or the line ends; returns the column and byte where it stopped, or nothing while a
+    // window is on its way. Marks on the spacing are remembered on the way; a tab advances to the
+    // next multiple of eight counted from the line's start.
     template <typename Before, typename Stop>
     std::optional<std::pair<std::size_t, std::size_t>> columns_to(std::size_t line, std::size_t at, Before before, Stop stop) {
         Columns& memory = columned(line, at);
@@ -641,8 +641,8 @@ struct Page::Kept {
         }
     }
 
-    // The column of byte `byte`, which starts a character, in `line` (starting at `at`); past the end
-    // of the line, the column after its last character.
+    // The column of byte `byte`, which starts a character, in `line` (starting at `at`); past the
+    // end of the line, the column after its last character.
     std::optional<std::size_t> column_at(std::size_t line, std::size_t at, std::size_t byte) {
         const auto got = columns_to(
             line, at, [byte](const auto& one) { return one.second <= byte; },
@@ -661,8 +661,8 @@ struct Page::Kept {
             [column](std::size_t much, std::size_t room, std::size_t) { return much + std::max<std::size_t>(room, 1) > column; });
     }
 
-    // The column of byte `byte` in the wrapped row starting at `at`, counted from the row's start as
-    // the row is drawn; past the end of the row, the column after its last character.
+    // The column of byte `byte` in the wrapped row starting at `at`, counted from the row's start
+    // as the row is drawn; past the end of the row, the column after its last character.
     std::optional<std::size_t> column_in(std::size_t at, std::size_t byte) {
         Reader reader{*spool, at};
 
@@ -726,8 +726,8 @@ struct Page::Kept {
         }
     }
 
-    // Where the row after the one starting at `at` in line `line` starts, as a line and a byte; nothing
-    // at the end of the document or while a window is on its way (`waiting` then).
+    // Where the row after the one starting at `at` in line `line` starts, as a line and a byte;
+    // nothing at the end of the document or while a window is on its way (`waiting` then).
     std::optional<std::pair<std::size_t, std::size_t>> after(std::size_t line, std::size_t at, bool& waiting) {
         waiting = false;
 
@@ -819,8 +819,8 @@ struct Page::Kept {
         return true;
     }
 
-    // How many screen rows there are from the top on, counting at most `most`; nothing while a window
-    // is on its way, because then it is not known where the end is.
+    // How many screen rows there are from the top on, counting at most `most`; nothing while a
+    // window is on its way, because then it is not known where the end is.
     std::optional<int> ahead_of(int most) {
         if (!placed()) return {};
 
@@ -1230,12 +1230,12 @@ std::optional<std::size_t> Page::column_in_row(Place where) {
     return kept.column_in(*row, *from + where.byte);
 }
 
-// The place `rows` screen rows away from the row of `from` (up when negative), at column `column` of
-// that row: the start of the character in which the column falls, or the end of a shorter row. The
-// walk stops at the edges of the document, so a page down near the end lands on the last row;
+// The place `rows` screen rows away from the row of `from` (up when negative), at column `column`
+// of that row: the start of the character in which the column falls, or the end of a shorter row.
+// The walk stops at the edges of the document, so a page down near the end lands on the last row;
 // nothing when there was nowhere to go at all, or while a window is on its way. The end of a row
-// that does not end its line is the start of the next row, so a column past such a row lands on
-// its last character instead. Without wrapping a row is a line.
+// that does not end its line is the start of the next row, so a column past such a row lands on its
+// last character instead. Without wrapping a row is a line.
 std::optional<Place> Page::rows_away(Place from, int rows, std::size_t column) {
     Kept& kept = *kept_;
 
@@ -1324,8 +1324,8 @@ std::optional<Place> Page::rows_away(Place from, int rows, std::size_t column) {
 
 // Scrolls as little as possible to make this place visible: a place already visible does not move
 // the picture, one above lands at the top, one below at the bottom, and without wrapping one to the
-// side of the view brings the view sideways just as far as needed. Returns whether the view changed.
-// It does not notify; the caller does, so that a compound move gives one event.
+// side of the view brings the view sideways just as far as needed. Returns whether the view
+// changed. It does not notify; the caller does, so that a compound move gives one event.
 bool Page::reveal(Place where) {
     Kept& kept = *kept_;
 
@@ -1563,8 +1563,8 @@ void Page::spread(Size given) {
 
         kept.shown.push_back(std::move(made));
 
-        // Where the next row starts: with wrapping the row just walked says it, without wrapping the
-        // spool, which walks the rest of the line to its end once and remembers it.
+        // Where the next row starts: with wrapping the row just walked says it, without wrapping
+        // the spool, which walks the rest of the line to its end once and remembers it.
         bool waiting = false;
 
         std::optional<std::pair<std::size_t, std::size_t>> next;
@@ -1753,8 +1753,8 @@ View Page::paint(Size given, Area seen) {
 // Scrolls with the arrows, PageUp, PageDown, Home and End; without wrapping, the arrows to the
 // sides scroll sideways by a column, and Home goes back to the first column too. Enter follows the
 // current mark when it has an address (`FollowingMixin::followed`): stepping from mark to mark
-// (`MarkedMixin::step`) is how a key reaches the links of a page. It returns false for everything it
-// did not use: the F-keys have to reach the legend, which is an ancestor, and with wrapping the
+// (`MarkedMixin::step`) is how a key reaches the links of a page. It returns false for everything
+// it did not use: the F-keys have to reach the key bar, which is an ancestor, and with wrapping the
 // side arrows go up as well (an application may give them to something else).
 bool Page::handle(KeyEvent& what) {
     // Nothing with a modifier is taken: Ctrl+Home and Alt+PageDown are by design different

@@ -11,9 +11,9 @@
 
 namespace talcite::ui {
 
-class LegendItem : public KeyedMixin<EnabledMixin<Node>> {
+class KeyBarItem : public KeyedMixin<EnabledMixin<Node>> {
 public:
-    LegendItem(Key key, std::string text);
+    KeyBarItem(Key key, std::string text);
 
     [[nodiscard]] const std::string& text() const { return text_; }
 

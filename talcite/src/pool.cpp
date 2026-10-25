@@ -46,9 +46,9 @@ std::function<void()> pulled(std::map<Pool::Job, std::function<void()>>& from, P
 
 }
 
-// A lane of the pool as a place for promises (`run`, `on`). It can also take a job back, so that a
-// body whose owners left before it started leaves the queue at once.
-class Pool::Side : public Place, public detail::Withdrawing {
+// A lane of the pool as an executor for promises (`run`, `on`). It can also take a job back, so
+// that a body whose owners left before it started leaves the queue at once.
+class Pool::Side : public Executor, public detail::Withdrawing {
 public:
     Side(Pool& pool, Lane lane) : pool_(pool), lane_(lane) {}
 
@@ -63,8 +63,8 @@ public:
     // Hands the work to the lane.
     bool post(std::function<void()> what) override { return queued(std::move(what)) != 0; }
 
-    // Hands the work to the lane and returns its number for `withdrawn`; zero when the pool could not
-    // take it.
+    // Hands the work to the lane and returns its number for `withdrawn`; zero when the pool could
+    // not take it.
     [[nodiscard]] std::uint64_t queued(std::function<void()> what) override {
         try {
             return pool_.post(std::move(what), lane_);
@@ -94,11 +94,11 @@ Pool::Pool(std::size_t most, std::chrono::milliseconds rest)
     : most_(roomy(most)), rest_(rest), io_side_(std::make_unique<Side>(*this, Lane::io)),
       cpu_side_(std::make_unique<Side>(*this, Lane::cpu)) {}
 
-// The lane for blocking work, as a place.
-Place& Pool::io() { return *io_side_; }
+// The lane for blocking work, as an executor.
+Executor& Pool::io() { return *io_side_; }
 
-// The lane for computing work, as a place.
-Place& Pool::cpu() { return *cpu_side_; }
+// The lane for computing work, as an executor.
+Executor& Pool::cpu() { return *cpu_side_; }
 
 // Tells the workers to finish and joins them, those that have left on their own too. Queued
 // computing work still runs before they leave. The lanes stop taking work through promises first.
@@ -130,11 +130,12 @@ Pool::~Pool() {
 
 // Hands work over for execution and returns its number for `drop`. The lane says whether the work
 // waits for the system (`io`) or computes (`cpu`). The work is queued and a worker added when
-// needed (`hired`). Two queues, one staff. Work on the `io` lane may wait for a file or for a dead network share, so the pool grows for it without limit;
-// otherwise the ninth such task would stop the whole program. Work on the `cpu` lane declares that
-// it only computes, so there is no point in running more of it at once than the machine has cores:
-// two hundred computing tasks on eight cores finish slower than eight. The queues are keyed by the
-// job's number, which grows, so they keep the order of posting and `drop` finds a job at once.
+// needed (`hired`). Two queues, one staff. Work on the `io` lane may wait for a file or for a dead
+// network share, so the pool grows for it without limit; otherwise the ninth such task would stop
+// the whole program. Work on the `cpu` lane declares that it only computes, so there is no point in
+// running more of it at once than the machine has cores: two hundred computing tasks on eight cores
+// finish slower than eight. The queues are keyed by the job's number, which grows, so they keep the
+// order of posting and `drop` finds a job at once.
 Pool::Job Pool::post(std::function<void()> what, Lane lane) {
     std::vector<std::thread> gone;
     Job which = 0;
@@ -185,7 +186,8 @@ std::size_t Pool::runnable() const {
 // The worker's bell is made here, before its thread: a bell is a pair of descriptors, and a pool
 // that has run out of them must say so to whoever posts, not end the program from a worker thread.
 // When nothing can be added, the work waits for a worker that frees itself; only a pool without any
-// worker, which nobody would ever serve, gives the error back (`strict`). The caller holds the lock.
+// worker, which nobody would ever serve, gives the error back (`strict`). The caller holds the
+// lock.
 void Pool::hired(bool strict) {
     if (closing_ || runnable() <= idle_) return;
 
@@ -381,8 +383,8 @@ Waiting::Waiting() {
     pool_->stirred_.notify_one();
 }
 
-// Takes the slot again after the wait. It does not wait for a free one: the task is already running,
-// and for a moment the ceiling is exceeded by the tasks that came back from waiting.
+// Takes the slot again after the wait. It does not wait for a free one: the task is already
+// running, and for a moment the ceiling is exceeded by the tasks that came back from waiting.
 Waiting::~Waiting() {
     if (pool_ == nullptr) return;
 
@@ -403,9 +405,9 @@ Pool& pooling() {
 }
 
 // The io lane of the shared pool: for blocking work.
-Place& io() { return pooling().io(); }
+Executor& io() { return pooling().io(); }
 
 // The cpu lane of the shared pool: for computing work.
-Place& cpu() { return pooling().cpu(); }
+Executor& cpu() { return pooling().cpu(); }
 
 }

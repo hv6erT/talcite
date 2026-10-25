@@ -9,8 +9,8 @@
 #include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/root.hpp"
 #include "talcite/span.hpp"
 
@@ -225,29 +225,29 @@ TRIAL("Dialog: a click beside the box does not reach below") {
     same(under->hit, 0);
 }
 
-// Keyboard modality: the focus sits in the dialog, so a key has no way to reach the legend below.
+// Keyboard modality: the focus sits in the dialog, so a key has no way to reach the key bar below.
 // This is the same way an open menu swallows F5.
-TRIAL("Dialog: a key does not reach the legend below") {
+TRIAL("Dialog: a key does not reach the key bar below") {
     proving::Hooks heard;
 
     ui::Root top;
 
     const auto window = std::make_shared<ui::Modals>();
-    const auto legend = std::make_shared<ui::Legend>();
+    const auto bar = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
 
-    legend->content(body);
-    (void)proving::doing(heard, legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
-    window->content(legend);
+    bar->content(body);
+    (void)proving::doing(heard, bar->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    window->content(bar);
     top.children().add(window);
 
     body->focus();
 
     (void)top.render({{0, 0}, {20, 10}});
 
-    // Without a dialog the legend works.
+    // Without a dialog the key bar works.
     ui::KeyEvent first{ui::Code::f5};
 
     ought(top.dispatch(first));

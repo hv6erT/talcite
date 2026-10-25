@@ -18,7 +18,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 #include "talcite/promise.hpp"
 
 #include "fscore.hpp"
@@ -997,9 +997,9 @@ bool beneath(const path& where, const std::vector<path>& folders) {
 
 }
 
-// The new look with the gaps of its reading filled from the previous one: what the previous look saw
-// under a folder that could not be read now is taken as unchanged, so it is neither removed now nor
-// created again later.
+// The new look with the gaps of its reading filled from the previous one: what the previous look
+// saw under a folder that could not be read now is taken as unchanged, so it is neither removed now
+// nor created again later.
 std::map<path, Sight> filled(Look now, const std::map<path, Sight>& was) {
     if (!now.unread.empty())
         for (const auto& [where, mine] : was)

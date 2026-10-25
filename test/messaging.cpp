@@ -287,7 +287,7 @@ TRIAL("Message: short content does not inflate the window") {
 
 // --- Answer -----------------------------------------------------------------------------------
 
-// The answer's action lives on the button, just as in a menu item and in a legend field, and
+// The answer's action lives on the button, just as in a menu item and in a key bar item, and
 // closing the window is part of it; the message does not close by itself.
 TRIAL("Message: an answer does what the caller attached") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}, {"Przerwij", U'P'}}};

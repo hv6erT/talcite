@@ -7,8 +7,8 @@
 #include "talcite/column.hpp"
 #include "talcite/modals.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
 #include "talcite/menu.hpp"
@@ -117,7 +117,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // The application gives the key that opens the menus; the library assigns none by itself.
@@ -146,7 +146,7 @@ int main() {
     frame->children().add(column);
     dialogs->content(frame);
     menus->content(dialogs);
-    legend->content(menus);
+    bar->content(menus);
 
     const auto file = menus->add("File");
 
@@ -157,7 +157,7 @@ int main() {
 
     (void)menus->add("View");
 
-    // The action of an answer sits on its button, exactly as in a legend field and in a menu item.
+    // The action of an answer sits on its button, exactly as in a key bar item and in a menu item.
     // The message does not number the answers and does not hand them back to the caller; after a
     // press it simply closes.
     //
@@ -194,7 +194,7 @@ int main() {
         }));
     };
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Msg"), [dialogs, answering] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f2, "Msg"), [dialogs, answering] {
         const auto one =
             std::make_shared<demo::Kept<talcite::ui::Message>>("Notice", "All changes have been saved.");
 
@@ -203,7 +203,7 @@ int main() {
         dialogs->open(demo::closing(one));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Ask"), [dialogs, answering] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "Ask"), [dialogs, answering] {
         const auto one = std::make_shared<demo::Kept<talcite::ui::Message>>(
             "File exists",
             "The file “ca-certificates"
@@ -218,7 +218,7 @@ int main() {
 
     // An error is the same widget with a different stem. No separate class, no flag in the code:
     // one call, and the palette says the rest.
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Error"), [dialogs, answering] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f4, "Error"), [dialogs, answering] {
         const auto one =
             std::make_shared<demo::Kept<talcite::ui::Message>>("Error", "Cannot operate on “..”!");
 
@@ -232,25 +232,25 @@ int main() {
     // Without answers: a box that the program closes, not the user. Esc closes it too, because it
     // is still a dialog; talcite has no means to make a dialog impossible to close, and will not
     // have one.
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Wait"), [dialogs] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f5, "Wait"), [dialogs] {
         dialogs->open(demo::closing(std::make_shared<demo::Kept<talcite::ui::Message>>("Wait", "Scanning the directory…")));
     });
 
     const auto plain = std::make_shared<bool>(false);
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Skin"), [&sheet, plain] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f6, "Skin"), [&sheet, plain] {
         *plain = !*plain;
 
         sheet.skin(*plain ? talcite::ui::Skin{} : coloured());
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
     sheet.skin(coloured());
 
     list->focus();

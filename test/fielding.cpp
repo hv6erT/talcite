@@ -861,7 +861,7 @@ TRIAL("Caret: a field without the focus reports none, even when visible") {
     same(*top.caret(), (ui::Spot{2, 0}));
 }
 
-// The role root can be replaced, just as in a button, a menu item and a legend item.
+// The role root can be replaced, just as in a button, a menu item and a key bar item.
 TRIAL("Field: the role root can be replaced") {
     ui::Root top;
 

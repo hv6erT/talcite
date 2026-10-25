@@ -16,7 +16,7 @@ HistoryField::HistoryField(int wide, std::string text)
 HistoryField::~HistoryField() = default;
 
 // The hotkey's action: opening the list. In the same way `activate()` presses a menu item, picks in
-// a legend field, and toggles the menu bar.
+// a key bar item, and toggles the menu bar.
 void HistoryField::activate() { open(); }
 
 // The set of options is public, and the caller adds through it: `options().insert(0, one)` puts a

@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "talcite/address.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 
 #include "stunning.hpp"
 
@@ -63,8 +63,8 @@ Promise<T> refused(const char* said) {
 }
 
 // One question to one server, retransmissions included; the reflexive address, or an empty one when
-// the deadline passes, and `Trouble` when the server refuses. It runs on a pool thread and blocks it,
-// on purpose. For TLS that choice would be bad, because there the waiting is per connection and
+// the deadline passes, and `Trouble` when the server refuses. It runs on a pool thread and blocks
+// it, on purpose. For TLS that choice would be bad, because there the waiting is per connection and
 // grows with their number; here there is one question per socket, asked once, before the
 // conversation. And the pool for ordinary work grows without limit, so the hub's completions cannot
 // starve.

@@ -8,8 +8,8 @@
 #include "talcite/dialog.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/row.hpp"
 #include "talcite/select.hpp"
 #include "talcite/skin.hpp"
@@ -121,7 +121,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto modals = std::make_shared<talcite::ui::Modals>();
 
     const auto frame = std::make_shared<talcite::ui::Frame>("Settings");
@@ -148,7 +148,7 @@ int main() {
 
     frame->children().add(column);
     modals->content(frame);
-    legend->content(modals);
+    bar->content(modals);
 
     // Every choice announces the same event, whether it was made with the mouse, with Enter or with
     // an arrow on the closed row.
@@ -165,7 +165,7 @@ int main() {
     watching(ending, "Line endings");
     watching(sorting, "Sorting");
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Set"), [coding, said] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f2, "Set"), [coding, said] {
         // A value set by the program is silent: filling a window with initial values is not
         // choosing. The index and the text are the same selected option; the index is easier to
         // step on from, and the text is what is shown.
@@ -178,9 +178,9 @@ int main() {
                    coding->value().value_or(std::string{}));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
     sheet.skin(coloured());
 
     coding->focus();

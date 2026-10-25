@@ -23,8 +23,8 @@ Loop::Loop() {
     standing = this;
 }
 
-// Frees the thread's place for another loop. The loop stops taking work first (`Place::close`), so
-// a continuation that arrives from the pool while the loop is going away is refused, not queued into
+// Frees the thread for another loop. The loop stops taking work first (`Executor::close`), so a
+// continuation that arrives from the pool while the loop is going away is refused, not queued into
 // a dying object. Then the work still queued is thrown away, while the loop still stands on this
 // thread: what a promise handed over is abandoned (`posted`), so its chain ends cancelled and only
 // its cleanup runs (`finally`, a coroutine going on with `Cancelled`), here, on the loop's thread.

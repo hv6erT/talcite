@@ -8,8 +8,8 @@
 #include "talcite/column.hpp"
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
@@ -51,7 +51,7 @@ talcite::Style painted(talcite::Color foreground, talcite::Color background) {
     return made;
 }
 
-// The demo's skin: light text on blue, with cyan input fields and a black-and-cyan legend.
+// The demo's skin: light text on blue, with cyan input fields and a black-and-cyan key bar.
 talcite::ui::Skin coloured() {
     const talcite::Color blue = tinted(0, 0, 160);
     const talcite::Color light = tinted(200, 200, 200);
@@ -114,7 +114,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto frame = std::make_shared<talcite::ui::Frame>("output");
     const auto column = std::make_shared<talcite::ui::Column>();
 
@@ -128,7 +128,7 @@ int main() {
     column->children().add(frame);
     column->children().add(field);
 
-    legend->content(column);
+    bar->content(column);
 
     const auto showing = [told, viewer](const talcite::Output& made) {
         viewer->hold(joined(made.out, made.err));
@@ -139,8 +139,8 @@ int main() {
     // Collecting runs alongside. `here()` moves the continuation onto the drawing loop, so the node
     // tree is touched on the same thread that draws it, and the window responds in the meantime.
     //
-    // We keep the promise: work goes on only while someone wants it, so a dropped promise would stop
-    // the program and its callbacks would never run.
+    // We keep the promise: work goes on only while someone wants it, so a dropped promise would
+    // stop the program and its callbacks would never run.
     const auto kept = std::make_shared<std::optional<talcite::Promise<void>>>();
 
     const auto gathering = [field, told, showing, kept] {
@@ -162,20 +162,20 @@ int main() {
         return true;
     }));
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Collect"), gathering);
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "Collect"), gathering);
 
     // Handing over the screen is an ordinary call that takes time: the drawing loop stands still,
     // because the terminal now belongs to someone else. The pool threads (the clock, the network,
     // file reading) keep running.
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "Hand over"), [&term, field, told] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f4, "Hand over"), [&term, field, told] {
         const talcite::Exit made = term.execute(spoken(field->text()));
 
         told->text("returned with code " + std::to_string(made.code));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
     sheet.skin(coloured());
 
     field->focus();

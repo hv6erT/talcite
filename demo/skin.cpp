@@ -6,8 +6,8 @@
 #include "talcite/field.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/gauge.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/line.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
@@ -124,7 +124,7 @@ int main() {
 
     Sheet sheet{term};
 
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // The application gives the key that opens the menus; the library assigns none by itself.
@@ -171,7 +171,7 @@ int main() {
 
     frame->children().add(column);
     menus->content(frame);
-    legend->content(menus);
+    bar->content(menus);
 
     const auto file = menus->add("File");
 
@@ -182,28 +182,28 @@ int main() {
 
     (void)menus->add("View");
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f2, "Plain"), [&sheet, told] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f2, "Plain"), [&sheet, told] {
         sheet.skin(talcite::ui::Skin{});
         told->text("built-in skin");
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f3, "Color"), [&sheet, told] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f3, "Color"), [&sheet, told] {
         sheet.skin(coloured());
         told->text("color skin — the same roles, different values");
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f4, "ASCII"), [&sheet, told] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f4, "ASCII"), [&sheet, told] {
         sheet.skin(plainly());
         told->text("ASCII skin — plain characters, no box drawing");
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
-    sheet.children().add(legend);
+    sheet.children().add(bar);
 
     list->focus();
 

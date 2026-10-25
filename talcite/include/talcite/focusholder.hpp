@@ -5,11 +5,9 @@
 
 namespace talcite::ui {
 
-class Pane : public EnabledMixin<Node> {
+class FocusHolder : public EnabledMixin<Node> {
 public:
-    Pane() = default;
-
-    [[nodiscard]] Size wants(Size room) const override;
+    FocusHolder() = default;
 
 protected:
     bool handle(ClickEvent& what) override;

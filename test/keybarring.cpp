@@ -4,8 +4,8 @@
 #include <string>
 
 #include "talcite/encoding.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybaritem.hpp"
+#include "talcite/keybar.hpp"
 #include "talcite/menu.hpp"
 #include "talcite/menuitem.hpp"
 #include "talcite/menubar.hpp"
@@ -14,7 +14,7 @@
 
 using namespace talcite;
 
-// The legend is the outer window and everything else sits in its content, so almost every trial
+// The key bar is the outer window and everything else sits in its content, so almost every trial
 // starts the same way: a root, a window, something inside that takes the focus.
 #include "doing.hpp"
 
@@ -26,7 +26,7 @@ class Box : public ui::Node {
 public:
     Box(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
-    // Always focusable, so that it can hold the focus while the legend's keys are pressed.
+    // Always focusable, so that it can hold the focus while the key bar's keys are pressed.
     [[nodiscard]] bool focusable() const override { return true; }
 
     // The fixed size, whatever space is offered.
@@ -75,10 +75,10 @@ std::string read(const View& one, int y) {
 
 }
 
-TRIAL("Legend: the items share the row and touch side by side") {
+TRIAL("KeyBar: the items share the row and touch side by side") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
 
     (void)window->add(ui::Code::f1, "Kopiuj");
     (void)window->add(ui::Code::f2, "Wyjdź");
@@ -95,10 +95,10 @@ TRIAL("Legend: the items share the row and touch side by side") {
 
 // The remainder of the division goes to the items from the left, so the bar fills the row to the
 // cell and no stub is left at the right edge.
-TRIAL("Legend: the remainder of the division goes to the items from the left") {
+TRIAL("KeyBar: the remainder of the division goes to the items from the left") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
 
     for (int at = 0; at < 3; ++at) (void)window->add(ui::Code::f1, "");
 
@@ -112,9 +112,9 @@ TRIAL("Legend: the remainder of the division goes to the items from the left") {
 }
 
 // The tag is derived from the key rather than standing next to it in a separate field; otherwise
-// one could write a legend that lies about what to press.
-TRIAL("Legend: an item does not take the focus, even when enabled") {
-    ui::Legend window;
+// one could write a key bar that lies about what to press.
+TRIAL("KeyBar: an item does not take the focus, even when enabled") {
+    ui::KeyBar window;
 
     const auto one = window.add(ui::Code::f5, "Kopiuj");
 
@@ -122,24 +122,24 @@ TRIAL("Legend: an item does not take the focus, even when enabled") {
     ought(!one->focusable());
 }
 
-TRIAL("Legend: the tag comes from the key") {
-    same((ui::LegendItem{ui::Code::f1, ""}.tag()), std::string{"1"});
-    same((ui::LegendItem{ui::Code::f5, ""}.tag()), std::string{"5"});
-    same((ui::LegendItem{ui::Code::f10, ""}.tag()), std::string{"10"});
-    same((ui::LegendItem{ui::Code::f12, ""}.tag()), std::string{"12"});
-    same((ui::LegendItem{U'q', ""}.tag()), std::string{"q"});
+TRIAL("KeyBar: the tag comes from the key") {
+    same((ui::KeyBarItem{ui::Code::f1, ""}.tag()), std::string{"1"});
+    same((ui::KeyBarItem{ui::Code::f5, ""}.tag()), std::string{"5"});
+    same((ui::KeyBarItem{ui::Code::f10, ""}.tag()), std::string{"10"});
+    same((ui::KeyBarItem{ui::Code::f12, ""}.tag()), std::string{"12"});
+    same((ui::KeyBarItem{U'q', ""}.tag()), std::string{"q"});
 
     // Escape and the other named keys have no tag in Midnight Commander.
-    same((ui::LegendItem{ui::Code::escape, ""}.tag()), std::string{});
-    same((ui::LegendItem{ui::Key{}, ""}.tag()), std::string{});
+    same((ui::KeyBarItem{ui::Code::escape, ""}.tag()), std::string{});
+    same((ui::KeyBarItem{ui::Key{}, ""}.tag()), std::string{});
 }
 
-TRIAL("Legend: the key bubbles up from the focus") {
+TRIAL("KeyBar: the key bubbles up from the focus") {
     proving::Hooks heard;
 
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
@@ -157,21 +157,21 @@ TRIAL("Legend: the key bubbles up from the focus") {
     ought(top.dispatch(what));
     same(done, 1);
 
-    // A key the legend does not hold is none of its business.
+    // A key the key bar does not hold is none of its business.
     ui::KeyEvent other{ui::Code::f6};
 
     ought(!top.dispatch(other));
     same(done, 1);
 }
 
-// Ctrl+F5 and Alt+F5 are by design different shortcuts from F5, and the legend does not model
+// Ctrl+F5 and Alt+F5 are by design different shortcuts from F5, and the key bar does not model
 // layers under modifiers, so it does not take them instead of pretending they are the same.
-TRIAL("Legend: does not catch a key with a modifier") {
+TRIAL("KeyBar: does not catch a key with a modifier") {
     proving::Hooks heard;
 
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
@@ -197,12 +197,12 @@ TRIAL("Legend: does not catch a key with a modifier") {
 
 // A click does the same as the key and does not take the focus: after clicking "Kopiuj" (copy),
 // what was selected is to be copied, not whatever happened to get the focus.
-TRIAL("Legend: a click does the same and does not take the focus") {
+TRIAL("KeyBar: a click does the same and does not take the focus") {
     proving::Hooks heard;
 
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int done = 0;
@@ -222,10 +222,10 @@ TRIAL("Legend: a click does the same and does not take the focus") {
     same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
-TRIAL("Legend: a disabled item stays silent on a key and on a click") {
+TRIAL("KeyBar: a disabled item stays silent on a key and on a click") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
@@ -256,10 +256,10 @@ TRIAL("Legend: a disabled item stays silent on a key and on a click") {
     same(done, 0);
 }
 
-TRIAL("Legend: the content gets all rows but the last") {
+TRIAL("KeyBar: the content gets all rows but the last") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
 
     window->content(body);
@@ -274,10 +274,10 @@ TRIAL("Legend: the content gets all rows but the last") {
 }
 
 // An empty bar is a bar that is not there, not an empty strip at the bottom of the screen.
-TRIAL("Legend: without items it takes no row") {
+TRIAL("KeyBar: without items it takes no row") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{ui::plenty, ui::plenty}, U'x');
 
     window->content(body);
@@ -288,10 +288,10 @@ TRIAL("Legend: without items it takes no row") {
     same(read(made, 2), std::string{"xxxxxx"});
 }
 
-TRIAL("Legend: an item that is too narrow cuts the name, then the tag") {
+TRIAL("KeyBar: an item that is too narrow cuts the name, then the tag") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
 
     (void)window->add(ui::Code::f1, "Kopiuj");
     (void)window->add(ui::Code::f2, "Wyjdź");
@@ -310,10 +310,10 @@ TRIAL("Legend: an item that is too narrow cuts the name, then the tag") {
 
 // A letter regardless of case: the same rule as in a button and in a menu. With F keys there is
 // nothing to fold, but an item registered with a letter is to answer to both its forms.
-TRIAL("Legend: a letter answers regardless of case") {
+TRIAL("KeyBar: a letter answers regardless of case") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -342,10 +342,10 @@ TRIAL("Legend: a letter answers regardless of case") {
     same(said, 2);
 }
 
-TRIAL("Legend: clearing lets the bar be put together again") {
+TRIAL("KeyBar: clearing lets the bar be put together again") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
 
     (void)window->add(ui::Code::f1, "Raz");
     (void)window->add(ui::Code::f2, "Dwa");
@@ -366,13 +366,13 @@ TRIAL("Legend: clearing lets the bar be put together again") {
     same(read(made, 1), std::string{"3Trzy"});
 }
 
-// The legend is the outer window, and the menu bar sits in its content. Thanks to that, an open
+// The key bar is the outer window, and the menu bar sits in its content. Thanks to that, an open
 // menu gets the rows down to the second to last and has no way to paint over the key bar, as in
 // Midnight Commander.
-TRIAL("Legend: an open menu does not paint over the key bar") {
+TRIAL("KeyBar: an open menu does not paint over the key bar") {
     ui::Root top;
 
-    const auto legend = std::make_shared<ui::Legend>();
+    const auto bar = std::make_shared<ui::KeyBar>();
     const auto menus = std::make_shared<ui::Menubar>();
 
     menus->keys().add(ui::Key{ui::Code::f9});
@@ -382,9 +382,9 @@ TRIAL("Legend: an open menu does not paint over the key bar") {
     one->children().add(std::make_shared<ui::MenuItem>("Wyjście"));
     one->children().add(std::make_shared<ui::MenuItem>("Jeszcze"));
 
-    legend->content(menus);
-    (void)legend->add(ui::Code::f5, "Kopiuj");
-    top.children().add(legend);
+    bar->content(menus);
+    (void)bar->add(ui::Code::f5, "Kopiuj");
+    top.children().add(bar);
 
     one->open();
 
@@ -392,18 +392,18 @@ TRIAL("Legend: an open menu does not paint over the key bar") {
 
     ought(one->opened());
 
-    // The last row belongs to the legend and nothing touches it.
+    // The last row belongs to the key bar and nothing touches it.
     same(read(made, 6), std::string{"5Kopiuj"});
 }
 
 // An open menu is modal: a key it does not handle itself is not to go further up. Without that, F5
 // with an open menu would start copying.
-TRIAL("Legend: with a menu open, the legend's key does not work") {
+TRIAL("KeyBar: with a menu open, the key bar's key does not work") {
     proving::Hooks heard;
 
     ui::Root top;
 
-    const auto legend = std::make_shared<ui::Legend>();
+    const auto bar = std::make_shared<ui::KeyBar>();
     const auto menus = std::make_shared<ui::Menubar>();
 
     menus->keys().add(ui::Key{ui::Code::f9});
@@ -415,15 +415,15 @@ TRIAL("Legend: with a menu open, the legend's key does not work") {
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
 
     menus->content(body);
-    legend->content(menus);
-    (void)proving::doing(heard, legend->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
-    top.children().add(legend);
+    bar->content(menus);
+    (void)proving::doing(heard, bar->add(ui::Code::f5, "Kopiuj"), [&done] { ++done; });
+    top.children().add(bar);
 
     body->focus();
 
     (void)top.render({{0, 0}, {16, 7}});
 
-    // With the menu closed, the legend works.
+    // With the menu closed, the key bar works.
     ui::KeyEvent first{ui::Code::f5};
 
     ought(top.dispatch(first));
@@ -449,10 +449,10 @@ TRIAL("Legend: with a menu open, the legend's key does not work") {
 
 // The item is made by the bar, not by the caller: then the role, the place in the tree and the
 // place in capacity() all come from one call and cannot drift apart.
-TRIAL("Legend: a removed item also leaves the tree") {
+TRIAL("KeyBar: a removed item also leaves the tree") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
     const auto two = window->add(ui::Code::f2, "Wyjdź");
 
@@ -475,10 +475,10 @@ TRIAL("Legend: a removed item also leaves the tree") {
     same(read(top.render({{0, 0}, {16, 4}}), 3), std::string{"1Kopiuj"});
 }
 
-TRIAL("Legend: the role root of an item can be replaced") {
+TRIAL("KeyBar: the role root of an item can be replaced") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
 
     same(one->role(), std::string{"talcite.legend"});
@@ -507,10 +507,10 @@ TRIAL("Legend: the role root of an item can be replaced") {
 
 // An item has a set of keys, not one key: the first of them draws the tag, but every one answers.
 // This is the same ability as in a menu item, and it comes from the same place.
-TRIAL("Legend: an item answers to each of its keys") {
+TRIAL("KeyBar: an item answers to each of its keys") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -545,10 +545,10 @@ TRIAL("Legend: an item answers to each of its keys") {
 
 // The bar hands out items with a shortcut event, so a hook attached from outside answers on equal
 // terms with `handle`, just as in a dialog and in a menu.
-TRIAL("Legend: an item answers a key through a hook attached from outside") {
+TRIAL("KeyBar: an item answers a key through a hook attached from outside") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -573,11 +573,11 @@ TRIAL("Legend: an item answers a key through a hook attached from outside") {
 }
 
 // The handing out goes only over the bar's items: the content has no right to get a shortcut from
-// the legend, because the bar is beside the layout, not above the content.
-TRIAL("Legend: the handing out does not enter the content") {
+// the key bar, because the bar is beside the layout, not above the content.
+TRIAL("KeyBar: the handing out does not enter the content") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int said = 0;
@@ -603,10 +603,10 @@ TRIAL("Legend: the handing out does not enter the content") {
 
 // A hot letter replaces the tag rather than standing next to it: an item whose key is a letter
 // present in its name draws only the name and underlines that letter in it, like a menu item.
-TRIAL("Legend: a letter key is underlined in the name instead of a tag") {
+TRIAL("KeyBar: a letter key is underlined in the name instead of a tag") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Key{U'k'}, "Kopiuj");
 
     top.children().add(window);
@@ -620,10 +620,10 @@ TRIAL("Legend: a letter key is underlined in the name instead of a tag") {
 
 // A letter that is not in the name has nothing to underline, so the tag comes back; otherwise it
 // would be a shortcut nobody learns about.
-TRIAL("Legend: a letter key not in the name stays a tag") {
+TRIAL("KeyBar: a letter key not in the name stays a tag") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Key{U'q'}, "Wyjdź");
 
     top.children().add(window);
@@ -636,10 +636,10 @@ TRIAL("Legend: a letter key not in the name stays a tag") {
 }
 
 // A function key has no letter, so the tag always stays, as in Midnight Commander.
-TRIAL("Legend: a function key keeps its digit") {
+TRIAL("KeyBar: a function key keeps its digit") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
 
     (void)window->add(ui::Code::f5, "Kopiuj");
 
@@ -654,10 +654,10 @@ TRIAL("Legend: a function key keeps its digit") {
 // reserve: the bar reads as a sequence of numbers, and a gap in the sequence would be worse than a
 // missing underline. The letter still works and is underlined the same way; it just does not cost
 // the digit.
-TRIAL("Legend: the digit stays, though the item also has a letter") {
+TRIAL("KeyBar: the digit stays, though the item also has a letter") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Code::f5, "Kopiuj");
 
     one->keys().add(ui::Key{U'k'});
@@ -673,10 +673,10 @@ TRIAL("Legend: the digit stays, though the item also has a letter") {
 
 // Modifiers are part of the key, so the bar does not have to filter them: an item registered for F5
 // does not answer Ctrl+F5, and an item registered for Ctrl+F5 answers only to it.
-TRIAL("Legend: an item with a modifier answers only to its own combination") {
+TRIAL("KeyBar: an item with a modifier answers only to its own combination") {
     ui::Root top;
 
-    const auto window = std::make_shared<ui::Legend>();
+    const auto window = std::make_shared<ui::KeyBar>();
     const auto body = std::make_shared<Box>(ui::Size{10, 3}, U'x');
 
     int plain = 0;
@@ -711,8 +711,8 @@ TRIAL("Legend: an item with a modifier answers only to its own combination") {
 
 // There is one content: a new one displaces the old, and a null pointer empties the slot. The old
 // content leaves the tree completely, so it can be put somewhere else.
-TRIAL("Legend: new content displaces the old, and an empty one empties the slot") {
-    ui::Legend window;
+TRIAL("KeyBar: new content displaces the old, and an empty one empties the slot") {
+    ui::KeyBar window;
 
     const auto one = std::make_shared<Box>(ui::Size{4, 1}, U'a');
     const auto two = std::make_shared<Box>(ui::Size{4, 1}, U'b');

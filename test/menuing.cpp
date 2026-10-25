@@ -107,7 +107,7 @@ TRIAL("Menu: a closed one is just the title in row zero") {
     ought(one->parent() == nullptr);
 }
 
-// Emptying the bar, just as in the legend and for the same reason: switching context removes the
+// Emptying the bar, just as in the key bar and for the same reason: switching context removes the
 // old menus and lets in new ones, and `capacity()` has to go hand in hand with the tree.
 TRIAL("Menu: emptying the bar allows putting it together anew") {
     ui::Root top;
@@ -696,7 +696,7 @@ TRIAL("Menu: a grayed-out item does not answer its letter") {
     ought(one->opened());
 }
 
-// With Control we do not catch it; the same rule as in the button and in the legend.
+// With Control we do not catch it; the same rule as in the button and in the key bar.
 TRIAL("Menu: a letter with a modifier does not pick an item") {
     ui::Root top;
 
@@ -1556,7 +1556,7 @@ TRIAL("MenuSeparator: the line follows the stem of the item's role") {
 }
 
 // A title's letter switches menus while the bar is active. The title is a node with keys, so it
-// takes the letter by the same mechanism as a menu item and a legend field.
+// takes the letter by the same mechanism as a menu item and a key bar item.
 TRIAL("Menu: a title's letter switches menus while the bar is active") {
     ui::Root top;
 
@@ -1726,7 +1726,7 @@ TRIAL("Menu: without a given key the bar does not open from the keyboard") {
 }
 
 // The key given by the caller toggles the bar: it opens a closed one and closes an open one. And it
-// does not have to be F9: the bar is a node with keys, like a menu item and a legend field.
+// does not have to be F9: the bar is a node with keys, like a menu item and a key bar item.
 TRIAL("Menu: the given key toggles the bar") {
     ui::Root top;
 

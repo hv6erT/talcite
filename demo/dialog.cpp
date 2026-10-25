@@ -1,24 +1,25 @@
 #include <memory>
 #include <string>
 
+#include "talcite/box.hpp"
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
 #include "talcite/dialog.hpp"
-#include "talcite/modals.hpp"
 #include "talcite/field.hpp"
+#include "talcite/focusholder.hpp"
 #include "talcite/frame.hpp"
-#include "talcite/legenditem.hpp"
-#include "talcite/legend.hpp"
+#include "talcite/keybar.hpp"
+#include "talcite/keybaritem.hpp"
 #include "talcite/line.hpp"
 #include "talcite/menu.hpp"
+#include "talcite/menubar.hpp"
 #include "talcite/menuitem.hpp"
 #include "talcite/menuseparator.hpp"
-#include "talcite/menubar.hpp"
-#include "talcite/pane.hpp"
+#include "talcite/modals.hpp"
 #include "talcite/row.hpp"
+#include "talcite/scroll.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/scroll.hpp"
 
 #include "doing.hpp"
 
@@ -188,7 +189,7 @@ std::shared_ptr<demo::Kept<talcite::ui::Dialog>> named(const std::shared_ptr<tal
 }
 
 // A full screen, in the order that follows from what lies on top of what: the dialog covers the
-// legend, the legend covers the menu bar, and the menu bar covers the content.
+// key bar, the key bar covers the menu bar, and the menu bar covers the content.
 int main() {
     demo::Hooks heard;
 
@@ -197,14 +198,14 @@ int main() {
     Sheet sheet{term};
 
     const auto dialogs = std::make_shared<talcite::ui::Modals>();
-    const auto legend = std::make_shared<talcite::ui::Legend>();
+    const auto bar = std::make_shared<talcite::ui::KeyBar>();
     const auto menus = std::make_shared<talcite::ui::Menubar>();
 
     // The application gives the key that opens the menus; the library assigns none by itself.
     menus->keys().add(talcite::ui::Key{talcite::ui::Code::f9});
 
 
-    const auto pane = std::make_shared<talcite::ui::Pane>();
+    const auto holder = std::make_shared<talcite::ui::FocusHolder>();
     const auto frame = std::make_shared<talcite::ui::Frame>("talcite — dialog box");
     const auto scroll = std::make_shared<talcite::ui::Scroll>(talcite::ui::Axis::vertical, talcite::ui::ScrollShape{true});
     const auto column = std::make_shared<talcite::ui::Column>();
@@ -219,10 +220,16 @@ int main() {
 
     scroll->children().add(column);
     frame->children().add(scroll);
-    pane->children().add(frame);
-    menus->content(pane);
-    legend->content(menus);
-    dialogs->content(legend);
+    holder->children().add(frame);
+
+    // The holder covers the whole content of the window, whatever the frame wants: a click anywhere
+    // in it takes the focus, and without focus the key bar would not get the keys.
+    const auto room = std::make_shared<talcite::ui::Box>();
+
+    room->children().add(holder);
+    menus->content(room);
+    bar->content(menus);
+    dialogs->content(bar);
 
     const auto file = menus->add("File");
 
@@ -235,27 +242,27 @@ int main() {
 
     (void)menus->add("View");
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f1, "Help"), [dialogs, said] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f1, "Help"), [dialogs, said] {
         dialogs->open(
             asking("Help", "The dialog is modal: nothing underneath responds.", said));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f5, "Copy"), [dialogs, said] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f5, "Copy"), [dialogs, said] {
         dialogs->open(demo::closing(asking("Copy", "Copy the selected files?", said)));
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f6, "Rename"),
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f6, "Rename"),
                       [dialogs, said] { dialogs->open(demo::closing(named(said))); });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f9, "PullDn"), [menus] {
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f9, "PullDn"), [menus] {
         if (!menus->menus().empty()) menus->menus().front()->focus();
     });
 
-    (void)demo::doing(heard, legend->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
+    (void)demo::doing(heard, bar->add(talcite::ui::Code::f10, "Quit"), [&term] { term.stop(); });
 
     sheet.children().add(dialogs);
 
-    pane->focus();
+    holder->focus();
 
     term.show(sheet);
     term.title("talcite — dialog box");

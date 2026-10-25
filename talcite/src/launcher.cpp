@@ -16,7 +16,7 @@
 #include <shellapi.h>
 
 #include "talcite/encoding.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 
 #else
 
@@ -182,9 +182,9 @@ private:
 
 }
 
-// The launcher of the user's system, on the program's console and its shared clipboard (`clipboard`),
-// so that an address it copies is the same copy an editor would paste. One per process: it holds
-// nothing but the two seams.
+// The launcher of the user's system, on the program's console and its shared clipboard
+// (`clipboard`), so that an address it copies is the same copy an editor would paste. One per
+// process: it holds nothing but the two seams.
 Seam<Launcher> launcher() {
     static const Seam<Launcher> shared{std::make_shared<System>(console(), clipboard())};
 

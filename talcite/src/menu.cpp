@@ -340,7 +340,7 @@ bool Menu::handle(KeyEvent& what) {
     // With Ctrl or Alt nothing is caught, not even the arrows and Enter. Ctrl+Enter and Alt+arrow
     // are different shortcuts by design, and filtering them only after recognizing the key would
     // take them from the application whenever the menu is open. The button, the text field and
-    // the legend leave them alone the same way.
+    // the key bar leave them alone the same way.
     const Mods mods = what.mods();
 
     if (mods.ctrl || mods.alt) return false;

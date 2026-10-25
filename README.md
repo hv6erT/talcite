@@ -17,9 +17,9 @@ Asynchronous core
   the last owner to let go cancels it. Chains with `then`, `recover`, `finally`, `on`, timeouts,
   outcomes and progress; joins `all`, `settled`, `race`, `any`; `Settle` for event-driven
   producers; coroutines (`co_await`, `co_return`).
-- Places where code runs: `Loop` (one event loop per thread) and `Pool` (a thread pool with separate
-  lanes for I/O and CPU work), plus `ManualPlace` and `ManualClock` for deterministic tests; `Bell`,
-  `Time` and `Stopwatch`.
+- Executors, where code runs: `Loop` (one event loop per thread) and `Pool` (a thread pool with
+  separate lanes for I/O and CPU work), plus `ManualExecutor` and `ManualClock` for deterministic
+  tests; `Bell`, `Time` and `Stopwatch`.
 
 Filesystem (`talcite::fs`)
 - Asynchronous queries and changes: listing, walking, reading, writing, copying, moving, erasing,
@@ -50,7 +50,7 @@ Terminal and widgets (`talcite::ui`)
   drawn by grapheme clusters: a letter with its combining marks (as macOS writes names) is one
   character in one cell, and emoji sequences take the room the terminal measured for them.
 - Widgets: spans, buttons, fields with history, check boxes, choices, drop-down lists, lists,
-  tables, gauges, menus with a menu bar, a key legend, windows, dialogs and message boxes, a
+  tables, gauges, menus with a menu bar, a key bar, windows, dialogs and message boxes, a
   streaming viewer, a multi-window editor, a diff viewer and an image widget (sixel or block
   characters).
 - Skins: colors and frame characters for every role, switchable at run time.
@@ -116,7 +116,7 @@ talcite-test --only "<name>"       # run one trial by its exact name
 ## Demos
 
 Each file in `demo/` becomes a program `talcite-<name>`: `text`, `scroll`, `list`, `menu`,
-`legend`, `dialog`, `message`, `select`, `gauge`, `history`, `skin`, `keys`, `editor`, `viewer`,
+`keybar`, `dialog`, `message`, `select`, `gauge`, `history`, `skin`, `keys`, `editor`, `viewer`,
 `image`, `child`, `terminal`, `net`, `many`, `stunning` and `punching`. For example,
 `talcite-keys` prints every key, mouse, paste and resize event the terminal sends, and
 `talcite-terminal` shows what the capability probe found.

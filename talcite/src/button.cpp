@@ -112,7 +112,7 @@ void Button::pick() {
 // those are the window's behaviors, not the button's.
 //
 // Nothing is caught with a modifier: Ctrl+Enter and Alt+space are meant as other shortcuts. The
-// legend filters them the same way.
+// key bar filters them the same way.
 bool Button::handle(KeyEvent& what) {
     if (!enabled()) return false;
 
@@ -132,7 +132,7 @@ bool Button::handle(KeyEvent& what) {
 // do, and the button does the same as on Enter and on a click.
 void Button::activate() { pick(); }
 
-// A click on the button takes the focus, unlike a legend field, which leaves it alone. There what
+// A click on the button takes the focus, unlike a key bar item, which leaves it alone. There what
 // mattered was the selection in the panel; here the clicked button becomes the one you stand on.
 bool Button::handle(ClickEvent&) {
     if (!enabled()) return true;

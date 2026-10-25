@@ -10,15 +10,15 @@
 
 namespace talcite::ui {
 
-class LegendItem;
+class KeyBarItem;
 
-class Legend : public Node {
+class KeyBar : public Node {
 public:
-    Legend();
+    KeyBar();
 
-    std::shared_ptr<LegendItem> add(Key key, std::string text);
+    std::shared_ptr<KeyBarItem> add(Key key, std::string text);
 
-    [[nodiscard]] const std::vector<std::shared_ptr<LegendItem>>& items() const { return items_; }
+    [[nodiscard]] const std::vector<std::shared_ptr<KeyBarItem>>& items() const { return items_; }
 
     void clear();
 
@@ -41,7 +41,7 @@ private:
     [[nodiscard]] int along(int which, int wide) const;
 
     std::shared_ptr<Row> body_;
-    std::vector<std::shared_ptr<LegendItem>> items_;
+    std::vector<std::shared_ptr<KeyBarItem>> items_;
 };
 
 }

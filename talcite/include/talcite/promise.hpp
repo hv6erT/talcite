@@ -21,7 +21,7 @@
 
 #include "talcite/clock.hpp"
 #include "talcite/detail/promise.hpp"
-#include "talcite/place.hpp"
+#include "talcite/executor.hpp"
 #include "talcite/pool.hpp"
 #include "talcite/progress.hpp"
 #include "talcite/trouble.hpp"
@@ -107,7 +107,7 @@ struct Called<void, F> {
 
 const Stop*& current_stop();
 
-Place& here_loop();
+Executor& here_loop();
 
 [[nodiscard]] bool homed(const std::shared_ptr<Gate>& home);
 
@@ -571,7 +571,7 @@ public:
 
     void abandoned() override { (void)to_->quit(Delivery::here); }
 
-    [[nodiscard]] bool placed() const override { return true; }
+    [[nodiscard]] bool routed() const override { return true; }
 
 private:
     std::shared_ptr<Node<T>> from_;
@@ -624,7 +624,7 @@ public:
 
     void abandoned() override { (void)to_->quit(Delivery::here); }
 
-    [[nodiscard]] bool placed() const override { return true; }
+    [[nodiscard]] bool routed() const override { return true; }
 
 private:
     std::shared_ptr<Node<T>> from_;
@@ -677,7 +677,7 @@ private:
     std::uint64_t which_;
 };
 
-void launched(Place& where, const std::shared_ptr<Core>& node, std::function<void()> job);
+void launched(Executor& where, const std::shared_ptr<Core>& node, std::function<void()> job);
 
 template <typename U, typename F>
 class Running {
@@ -774,7 +774,7 @@ public:
         return made;
     }
 
-    [[nodiscard]] Promise on(Place& where) && {
+    [[nodiscard]] Promise on(Executor& where) && {
         auto from = taken();
         auto to = std::make_shared<detail::Node<T>>(0);
         Promise made{detail::Core::claimed(to)};
@@ -1078,7 +1078,7 @@ template <typename T>
 }
 
 template <typename F>
-[[nodiscard]] auto run(Place& where, F body) {
+[[nodiscard]] auto run(Executor& where, F body) {
     using R = std::conditional_t<std::is_invocable_v<F&, Work&>, std::invoke_result<F&, Work&>, std::invoke_result<F&>>;
     using U = typename detail::Flat<std::remove_cvref_t<typename R::type>>::type;
 
