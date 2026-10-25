@@ -481,7 +481,7 @@ TRIAL("KeyBar: the role root of an item can be replaced") {
     const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
 
-    same(one->role(), std::string{"talcite.legend"});
+    same(one->role(), std::string{"talcite.keybar"});
 
     top.children().add(window);
 

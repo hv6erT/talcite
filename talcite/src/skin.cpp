@@ -196,10 +196,10 @@ Styles building() {
 
         {"talcite.shade", faded()},
 
-        {"talcite.legend.tag", Style{}},
-        {"talcite.legend.key", lined()},
-        {"talcite.legend.text", turned()},
-        {"talcite.legend.disabled", faded()},
+        {"talcite.keybar.tag", Style{}},
+        {"talcite.keybar.key", lined()},
+        {"talcite.keybar.text", turned()},
+        {"talcite.keybar.disabled", faded()},
 
         {"talcite.scroll", Style{}},
         {"talcite.scroll.thumb", Style{}},

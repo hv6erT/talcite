@@ -76,7 +76,7 @@ talcite::ui::Skin coloured() {
         {"talcite.menu", painted(black, light)},        {"talcite.menu.focus", painted(black, cyan)},
         {"talcite.menu.frame", painted(black, light)},
 
-        {"talcite.legend.key", painted(light, black)},  {"talcite.legend.text", painted(black, cyan)},
+        {"talcite.keybar.key", painted(light, black)},  {"talcite.keybar.text", painted(black, cyan)},
 
         {"talcite.input", painted(black, cyan)},        {"talcite.button", painted(black, light)},
         {"talcite.button.focus", painted(black, cyan)}, {"talcite.button.key", painted(yellow, light)},

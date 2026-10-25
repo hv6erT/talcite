@@ -80,8 +80,8 @@ talcite::ui::Skin coloured() {
         {"talcite.menu.focus", painted(black, light)},
         {"talcite.menu.frame", painted(black, cyan)},
 
-        {"talcite.legend.key", painted(light, black)},
-        {"talcite.legend.text", painted(black, cyan)},
+        {"talcite.keybar.key", painted(light, black)},
+        {"talcite.keybar.text", painted(black, cyan)},
 
         // An ordinary message: the same window as a panel, only with its own family of roles.
         {"talcite.message", painted(light, blue)},

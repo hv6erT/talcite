@@ -12,9 +12,9 @@
 
 namespace talcite::ui {
 
-// A key bar item for one key and its label, with the role "talcite.legend" (the name skins know).
+// A key bar item for one key and its label, with the role "talcite.keybar".
 KeyBarItem::KeyBarItem(Key key, std::string text) : text_(std::move(text)) {
-    role("talcite.legend");
+    role("talcite.keybar");
 
     keys().add(key);
 }

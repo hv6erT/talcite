@@ -69,8 +69,8 @@ talcite::ui::Skin coloured() {
         {"talcite.list", painted(light, blue)},
         {"talcite.list.focus", painted(black, cyan)},
 
-        {"talcite.legend.key", painted(light, black)},
-        {"talcite.legend.text", painted(black, cyan)},
+        {"talcite.keybar.key", painted(light, black)},
+        {"talcite.keybar.text", painted(black, cyan)},
     }};
 }
 
