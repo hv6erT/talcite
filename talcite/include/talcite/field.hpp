@@ -6,13 +6,13 @@
 #include <string>
 #include <utility>
 
-#include "talcite/enablednode.hpp"
+#include "talcite/enabledmixin.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class Field : public EnabledNode<Node> {
+class Field : public EnabledMixin<Node> {
 public:
     explicit Field(int wide, std::string text = {});
 

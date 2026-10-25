@@ -41,7 +41,7 @@ private:
 };
 
 template <std::derived_from<Node> Base>
-class FollowingNode : public Base {
+class FollowingMixin : public Base {
 public:
     void launcher(Seam<Launcher> with) { launcher_ = std::move(with); }
 
@@ -58,7 +58,7 @@ protected:
 
         following_ = with.provider().open(address).here().then([self, address](Launched how) {
             if (const std::shared_ptr<Node> kept = self.lock())
-                (void)static_cast<FollowingNode&>(*kept).trigger(FollowedEvent{address, how});
+                (void)static_cast<FollowingMixin&>(*kept).trigger(FollowedEvent{address, how});
         });
     }
 

@@ -45,7 +45,7 @@ public:
 
 private:
     template <std::derived_from<Node> Base>
-    friend class KeyedNode;
+    friend class KeyedMixin;
 
     Keys() = default;
 
@@ -57,7 +57,7 @@ private:
 [[nodiscard]] int shortcut_column(const Keys& these, const std::string& shown);
 
 template <std::derived_from<Node> Base>
-class KeyedNode : public Base {
+class KeyedMixin : public Base {
 public:
     [[nodiscard]] Keys& keys() { return keys_; }
 

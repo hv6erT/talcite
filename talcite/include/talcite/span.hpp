@@ -6,13 +6,13 @@
 
 #include "talcite/event.hpp"
 #include "talcite/following.hpp"
-#include "talcite/markednode.hpp"
+#include "talcite/markedmixin.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class Span : public FollowingNode<MarkedNode<Node>> {
+class Span : public FollowingMixin<MarkedMixin<Node>> {
 public:
     explicit Span(std::string text, SpanShape shape = {});
 

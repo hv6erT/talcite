@@ -12,7 +12,7 @@
 
 using namespace talcite;
 
-// Being enabled is one mixin, and a change of it is an event. `EnabledNode` holds the flag, derives
+// Being enabled is one mixin, and a change of it is an event. `EnabledMixin` holds the flag, derives
 // `focusable()` from it and gives up the focus when disabled. Whoever wants to react to the change
 // (a widget through `handle`, a caller through `on<>`) listens for `EnableEvent` and
 // `DisableEvent`.
@@ -41,7 +41,7 @@ struct Stage {
 
 }
 
-TRIAL("EnabledNode: a change is announced once, the same value announces nothing") {
+TRIAL("EnabledMixin: a change is announced once, the same value announces nothing") {
     Stage stage;
 
     int off = 0;
@@ -75,7 +75,7 @@ TRIAL("EnabledNode: a change is announced once, the same value announces nothing
     ought(stage.one->enabled());
 }
 
-TRIAL("EnabledNode: a disabled node is not focusable, an enabled one is again") {
+TRIAL("EnabledMixin: a disabled node is not focusable, an enabled one is again") {
     Stage stage;
 
     ought(stage.one->focusable());
@@ -89,7 +89,7 @@ TRIAL("EnabledNode: a disabled node is not focusable, an enabled one is again") 
     ought(stage.one->focusable());
 }
 
-TRIAL("EnabledNode: disabling bubbles up and tells where it came from") {
+TRIAL("EnabledMixin: disabling bubbles up and tells where it came from") {
     Stage stage;
 
     const ui::Handler* from = nullptr;
@@ -107,7 +107,7 @@ TRIAL("EnabledNode: disabling bubbles up and tells where it came from") {
 
 // The order is a contract that `Select` relies on: the event arrives while the focus is still on
 // the node being disabled, and giving up the focus comes after it.
-TRIAL("EnabledNode: the event arrives before the focus leaves") {
+TRIAL("EnabledMixin: the event arrives before the focus leaves") {
     Stage stage;
 
     stage.one->focus();
@@ -128,7 +128,7 @@ TRIAL("EnabledNode: the event arrives before the focus leaves") {
 
 // A handler that enables the node again in response wins: the focus stays, because the node is
 // focusable again.
-TRIAL("EnabledNode: re-enabled in a handler, it keeps the focus") {
+TRIAL("EnabledMixin: re-enabled in a handler, it keeps the focus") {
     Stage stage;
 
     stage.one->focus();
@@ -153,7 +153,7 @@ TRIAL("EnabledNode: re-enabled in a handler, it keeps the focus") {
     same(on, 1);
 }
 
-TRIAL("EnabledNode: a disabled node does not take its hot key, an enabled one does") {
+TRIAL("EnabledMixin: a disabled node does not take its hot key, an enabled one does") {
     Stage stage;
 
     int picked = 0;

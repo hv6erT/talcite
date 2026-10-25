@@ -55,7 +55,7 @@ public:
 
 private:
     template <std::derived_from<Node> Base>
-    friend class OptionsNode;
+    friend class OptionsMixin;
 
     friend class HistoryField;
 
@@ -67,7 +67,7 @@ private:
 };
 
 template <std::derived_from<Node> Base>
-class OptionsNode : public Base {
+class OptionsMixin : public Base {
 public:
     [[nodiscard]] Options& options() { return options_; }
 
@@ -98,7 +98,7 @@ public:
     [[nodiscard]] int capacity() const override { return 0; }
 
 protected:
-    explicit OptionsNode(std::string role) { this->role(std::move(role)); }
+    explicit OptionsMixin(std::string role) { this->role(std::move(role)); }
 
 private:
     Options options_;

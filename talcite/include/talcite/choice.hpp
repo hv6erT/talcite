@@ -5,12 +5,12 @@
 #include <utility>
 #include <vector>
 
-#include "talcite/enablednode.hpp"
-#include "talcite/optionsnode.hpp"
+#include "talcite/enabledmixin.hpp"
+#include "talcite/optionsmixin.hpp"
 
 namespace talcite::ui {
 
-class Choice : public OptionsNode<EnabledNode<Node>> {
+class Choice : public OptionsMixin<EnabledMixin<Node>> {
 public:
     Choice();
 

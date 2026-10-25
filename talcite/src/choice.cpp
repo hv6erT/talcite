@@ -19,7 +19,7 @@ constexpr int around = 4;
 
 }
 
-Choice::Choice() : OptionsNode("talcite.choice") {}
+Choice::Choice() : OptionsMixin("talcite.choice") {}
 
 // A group of radio options with the given one chosen.
 Choice::Choice(std::vector<std::string> options, std::size_t which) : Choice() {

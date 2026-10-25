@@ -1,4 +1,4 @@
-#include "talcite/optionsnode.hpp"
+#include "talcite/optionsmixin.hpp"
 
 #include <algorithm>
 #include <stdexcept>

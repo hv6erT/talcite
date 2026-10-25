@@ -11,7 +11,7 @@ namespace talcite::ui {
 // Whoever wants to open the list from the keyboard adds a key through `keys()`; the arrows walk the
 // history without it, because that is movement within the field's own content, not an action.
 HistoryField::HistoryField(int wide, std::string text)
-    : KeyedNode<Field>(wide, std::move(text)), popup_(std::make_unique<Popup>(*this)) {}
+    : KeyedMixin<Field>(wide, std::move(text)), popup_(std::make_unique<Popup>(*this)) {}
 
 HistoryField::~HistoryField() = default;
 

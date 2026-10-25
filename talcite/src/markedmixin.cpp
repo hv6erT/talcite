@@ -1,4 +1,4 @@
-#include "talcite/markednode.hpp"
+#include "talcite/markedmixin.hpp"
 
 #include <algorithm>
 #include <stdexcept>

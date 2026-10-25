@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include "talcite/keyednode.hpp"
+#include "talcite/keyedmixin.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
@@ -15,7 +15,7 @@ class MenuItem;
 class Menubar;
 class Submenu;
 
-class Menu : public KeyedNode<Node> {
+class Menu : public KeyedMixin<Node> {
 public:
     explicit Menu(std::string title, MenuShape shape = {});
 
@@ -64,7 +64,7 @@ protected:
 
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(KeyEvent& what) override;
 

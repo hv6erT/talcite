@@ -10,7 +10,7 @@ target_include_directories(talcite PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 # by -Woverloaded-virtual: level 1 on GCC, because level 2 complains about each of the dozens of
 # classes that override one react(...) and so hide the other Handler overloads by name, which is
 # how events are dispatched, not a mistake. Clang has a single level; the using ...::react
-# declarations in the classes derived from KeyedNode and in Editor keep it quiet.
+# declarations in the classes derived from KeyedMixin and in Editor keep it quiet.
 # PRIVATE: this is a rule for the library's sources, not for those who link it. Level =1 exists
 # only from GCC 13; older GCC (Debian 12, Ubuntu 22.04, RHEL 9) rejects the whole build over an
 # unknown option, so there the warning comes from -Wsuggest-override alone.

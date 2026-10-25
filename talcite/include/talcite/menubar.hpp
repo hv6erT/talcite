@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "talcite/column.hpp"
-#include "talcite/keyednode.hpp"
+#include "talcite/keyedmixin.hpp"
 #include "talcite/row.hpp"
 #include "talcite/stack.hpp"
 #include "talcite/shape.hpp"
@@ -14,7 +14,7 @@ namespace talcite::ui {
 
 class Menu;
 
-class Menubar : public KeyedNode<Stack> {
+class Menubar : public KeyedMixin<Stack> {
 public:
     Menubar();
 
@@ -47,7 +47,7 @@ public:
 protected:
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(KeyEvent& what) override;
 

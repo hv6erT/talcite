@@ -604,7 +604,7 @@ TRIAL("HistoryField: rolling up the list does not hide the disabling from ancest
     same(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
 }
 
-// A hotkey checks availability in `KeyedNode`, and the history gets it from the text field. A
+// A hotkey checks availability in `KeyedMixin`, and the history gets it from the text field. A
 // disabled one must not swallow its key, or the same shortcut would reach nobody else.
 TRIAL("HistoryField: a disabled one does not take its key") {
     Stage stage;

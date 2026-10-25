@@ -5,12 +5,12 @@
 #include <utility>
 
 #include "talcite/event.hpp"
-#include "talcite/enablednode.hpp"
-#include "talcite/keyednode.hpp"
+#include "talcite/enabledmixin.hpp"
+#include "talcite/keyedmixin.hpp"
 
 namespace talcite::ui {
 
-class MenuItem : public KeyedNode<EnabledNode<Node>> {
+class MenuItem : public KeyedMixin<EnabledMixin<Node>> {
 public:
     explicit MenuItem(std::string text);
 
@@ -35,7 +35,7 @@ protected:
 
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(MouseEvent& what) override;
 

@@ -21,7 +21,7 @@ constexpr int aside = 2;
 }
 
 // An empty selection with the "talcite.select" role and its drop-down list.
-Select::Select() : OptionsNode("talcite.select"), popup_(std::make_unique<Popup>(*this)) {}
+Select::Select() : OptionsMixin("talcite.select"), popup_(std::make_unique<Popup>(*this)) {}
 
 // A selection with the given options, the one at `which` chosen.
 Select::Select(std::vector<std::string> options, std::size_t which) : Select() {

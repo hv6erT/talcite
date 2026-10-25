@@ -1,11 +1,11 @@
 #pragma once
 
-#include "talcite/enablednode.hpp"
+#include "talcite/enabledmixin.hpp"
 #include "talcite/node.hpp"
 
 namespace talcite::ui {
 
-class Pane : public EnabledNode<Node> {
+class Pane : public EnabledMixin<Node> {
 public:
     Pane() = default;
 

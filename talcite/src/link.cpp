@@ -14,7 +14,7 @@
 // under the pointer and opens it itself on Ctrl+click (Cmd+click on macOS).
 //
 // Enter, or a click, follows the link the way every widget of the library follows an address
-// (`FollowingNode`): `FollowEvent` first, which the application may take, then the launcher, and
+// (`FollowingMixin`): `FollowEvent` first, which the application may take, then the launcher, and
 // `FollowedEvent` with its answer.
 //
 // A click with Ctrl is not ours. A terminal that takes hyperlinks opens the link itself on
@@ -71,7 +71,7 @@ View Link::paint(Size given, Area seen) {
     return made;
 }
 
-// Follows the link, unless it is disabled (`FollowingNode::followed`; a link without an address
+// Follows the link, unless it is disabled (`FollowingMixin::followed`; a link without an address
 // follows nowhere).
 void Link::follow() {
     if (!enabled()) return;

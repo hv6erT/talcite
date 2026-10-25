@@ -1,4 +1,4 @@
-#include "talcite/keyednode.hpp"
+#include "talcite/keyedmixin.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -83,7 +83,7 @@ Key Keys::back() const {
 // land on the ellipsis or on a bracket.
 //
 // This is a free function and not part of the template body so that case folding stays in src/:
-// `KeyedNode` is a template, so its members have to live in the header, and that header is
+// `KeyedMixin` is a template, so its members have to live in the header, and that header is
 // public.
 int shortcut_column(const Keys& these, const std::string& shown) {
     for (const Key one : these) {

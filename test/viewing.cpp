@@ -1184,17 +1184,17 @@ TRIAL("Viewer: marks are ordered by place, not by the order of adding") {
     same(counted, std::size_t{3});
 }
 
-// `MarkedNode` is a base, not just a field of the page. A foreign document widget gets both the set
+// `MarkedMixin` is a base, not just a field of the page. A foreign document widget gets both the set
 // of marks and the walk cursor with its lazy dropping, without writing a single line.
-TRIAL("MarkedNode: a foreign widget gets marks and a cursor without writing anything") {
-    class Mine : public ui::MarkedNode<ui::Node> {
+TRIAL("MarkedMixin: a foreign widget gets marks and a cursor without writing anything") {
+    class Mine : public ui::MarkedMixin<ui::Node> {
     public:
         // The only thing the widget adds: its own way of pointing at the current mark. `topmost()`
         // and `reach()` have default behavior in the base, so a widget that scrolls nothing gets
         // the walk through marks without writing anything.
         void stand(std::size_t given) { which(given); }
 
-        using ui::MarkedNode<ui::Node>::step;
+        using ui::MarkedMixin<ui::Node>::step;
     };
 
     Mine one;

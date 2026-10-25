@@ -131,7 +131,7 @@ View Legend::paint(Size given, Area seen) {
 //
 // The bar hands out the hotkey; it does not decide for the fields. It only passes the event to its
 // fields in turn, and the matching, the skipping of disabled fields and the action itself belong
-// to `KeyedNode` and to `LegendItem::activate()`.
+// to `KeyedMixin` and to `LegendItem::activate()`.
 //
 // The key is offered only to `items_`, not through `broadcast(what)`, because that would go into
 // the content row first. The key bar stands beside the layout and has to get the key instead of

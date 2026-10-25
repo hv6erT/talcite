@@ -4,14 +4,14 @@
 #include <utility>
 
 #include "talcite/event.hpp"
-#include "talcite/enablednode.hpp"
-#include "talcite/keyednode.hpp"
+#include "talcite/enabledmixin.hpp"
+#include "talcite/keyedmixin.hpp"
 #include "talcite/node.hpp"
 #include "talcite/shape.hpp"
 
 namespace talcite::ui {
 
-class LegendItem : public KeyedNode<EnabledNode<Node>> {
+class LegendItem : public KeyedMixin<EnabledMixin<Node>> {
 public:
     LegendItem(Key key, std::string text);
 
@@ -34,7 +34,7 @@ protected:
 
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(ClickEvent& what) override;
 

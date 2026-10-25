@@ -4,12 +4,12 @@
 #include <string>
 #include <utility>
 
-#include "talcite/enablednode.hpp"
+#include "talcite/enabledmixin.hpp"
 #include "talcite/node.hpp"
 
 namespace talcite::ui {
 
-class ListItem : public EnabledNode<Node> {
+class ListItem : public EnabledMixin<Node> {
 public:
     explicit ListItem(std::string text);
 

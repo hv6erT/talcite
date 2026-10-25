@@ -8,7 +8,7 @@
 #include <vector>
 
 // Following an address is one thing in the whole library, whoever does it: a link (`Link`), a mark
-// with an address in a label (`Span`) or in a page (`Page`). `FollowingNode` holds it for them:
+// with an address in a label (`Span`) or in a page (`Page`). `FollowingMixin` holds it for them:
 // `FollowEvent` goes up the tree first, so that the application may do something else with the
 // address (show a page of its own, ask first), and whoever takes it takes the address with it.
 // Otherwise the launcher opens it (`Launcher::open`): the one the node was given, or the system's
@@ -20,7 +20,7 @@
 // Following again before the answer came waits for the new answer only; the address already went
 // its way either way.
 //
-// The mixin lives in its header, as every mixin of the library does (`EnabledNode`, `MarkedNode`),
+// The mixin lives in its header, as every mixin of the library does (`EnabledMixin`, `MarkedMixin`),
 // and so do the two events: they belong to following, not to the event loop.
 //
 // Here lives what text needs to have its addresses found (`addressed`).

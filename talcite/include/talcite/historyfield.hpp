@@ -7,14 +7,14 @@
 
 #include "talcite/event.hpp"
 #include "talcite/field.hpp"
-#include "talcite/keyednode.hpp"
-#include "talcite/optionsnode.hpp"
+#include "talcite/keyedmixin.hpp"
+#include "talcite/optionsmixin.hpp"
 
 namespace talcite::ui {
 
 class Popup;
 
-class HistoryField : public KeyedNode<Field> {
+class HistoryField : public KeyedMixin<Field> {
 public:
     explicit HistoryField(int wide, std::string text = {});
 
@@ -45,7 +45,7 @@ protected:
 
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(KeyEvent& what) override;
 

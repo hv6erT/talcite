@@ -60,7 +60,7 @@ void LegendItem::pick() {
 
 // The action of a field is picking it, and that is the whole reason the field derives from the
 // keyed node. Matching the key, folding letter case and skipping disabled fields are done by
-// `KeyedNode`; only what is specific to the legend is left here.
+// `KeyedMixin`; only what is specific to the legend is left here.
 void LegendItem::activate() { pick(); }
 
 // Paints the field in the Midnight Commander look: the number in the plain style, the name in

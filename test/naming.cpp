@@ -631,7 +631,7 @@ Named taken() {
 }
 
 // A qualified name either appears in the code as written, or its member lies in the body of the
-// class, its own or inherited: `Select::options` comes from `OptionsNode`.
+// class, its own or inherited: `Select::options` comes from `OptionsMixin`.
 bool inherited(const Named& all, const std::string& owner, const std::string& stem, int deep) {
     if (deep > 4) return false;
 

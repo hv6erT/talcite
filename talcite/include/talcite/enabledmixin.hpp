@@ -8,7 +8,7 @@
 namespace talcite::ui {
 
 template <std::derived_from<Node> Base>
-class EnabledNode : public Base {
+class EnabledMixin : public Base {
 public:
     [[nodiscard]] bool enabled() const { return enabled_; }
 

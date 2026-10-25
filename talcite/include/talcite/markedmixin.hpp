@@ -40,7 +40,7 @@ public:
 
 private:
     template <std::derived_from<Node> Base>
-    friend class MarkedNode;
+    friend class MarkedMixin;
 
     Marks() = default;
 
@@ -50,7 +50,7 @@ private:
 };
 
 template <std::derived_from<Node> Base>
-class MarkedNode : public Base {
+class MarkedMixin : public Base {
 public:
     [[nodiscard]] Marks& marks() { return marks_; }
 

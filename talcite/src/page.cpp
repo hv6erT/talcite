@@ -1182,7 +1182,7 @@ std::size_t Page::shown() const { return kept_->walked; }
 // visible does not move the picture, one above lands at the top, one below at the bottom. One event
 // is sent, even when the move consists of two steps.
 bool Page::reach(std::size_t which) {
-    MarkedNode::which(which);
+    MarkedMixin::which(which);
 
     (void)reveal(Place{marks()[which].line, marks()[which].from});
 
@@ -1750,8 +1750,8 @@ View Page::paint(Size given, Area seen) {
 
 // Scrolls with the arrows, PageUp, PageDown, Home and End; without wrapping, the arrows to the
 // sides scroll sideways by a column, and Home goes back to the first column too. Enter follows the
-// current mark when it has an address (`FollowingNode::followed`): stepping from mark to mark
-// (`MarkedNode::step`) is how a key reaches the links of a page. It returns false for everything it
+// current mark when it has an address (`FollowingMixin::followed`): stepping from mark to mark
+// (`MarkedMixin::step`) is how a key reaches the links of a page. It returns false for everything it
 // did not use: the F-keys have to reach the legend, which is an ancestor, and with wrapping the
 // side arrows go up as well (an application may give them to something else).
 bool Page::handle(KeyEvent& what) {
@@ -1824,7 +1824,7 @@ bool Page::handle(WheelEvent& what) {
 }
 
 // Takes the focus on a click, and a click with the left button on a mark with an address follows it
-// (`FollowingNode::followed`); a click with Ctrl is left to the terminal, which opens a hyperlink
+// (`FollowingMixin::followed`); a click with Ctrl is left to the terminal, which opens a hyperlink
 // itself, as on a link (`Link`). The guard on the root is there because a widget is sometimes
 // rendered in a test without a root.
 bool Page::handle(ClickEvent& what) {

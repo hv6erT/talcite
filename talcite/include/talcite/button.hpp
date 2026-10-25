@@ -5,12 +5,12 @@
 #include <utility>
 
 #include "talcite/event.hpp"
-#include "talcite/enablednode.hpp"
-#include "talcite/keyednode.hpp"
+#include "talcite/enabledmixin.hpp"
+#include "talcite/keyedmixin.hpp"
 
 namespace talcite::ui {
 
-class Button : public KeyedNode<EnabledNode<Node>> {
+class Button : public KeyedMixin<EnabledMixin<Node>> {
 public:
     explicit Button(std::string text);
 
@@ -33,7 +33,7 @@ protected:
 
     void activate() override;
 
-    using KeyedNode::handle;
+    using KeyedMixin::handle;
 
     bool handle(KeyEvent& what) override;
 

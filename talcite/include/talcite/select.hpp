@@ -6,15 +6,15 @@
 #include <utility>
 #include <vector>
 
-#include "talcite/enablednode.hpp"
+#include "talcite/enabledmixin.hpp"
 #include "talcite/event.hpp"
-#include "talcite/optionsnode.hpp"
+#include "talcite/optionsmixin.hpp"
 
 namespace talcite::ui {
 
 class Popup;
 
-class Select : public OptionsNode<EnabledNode<Node>> {
+class Select : public OptionsMixin<EnabledMixin<Node>> {
 public:
     Select();
 

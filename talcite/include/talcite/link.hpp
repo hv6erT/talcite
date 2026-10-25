@@ -3,7 +3,7 @@
 #include <string>
 #include <utility>
 
-#include "talcite/enablednode.hpp"
+#include "talcite/enabledmixin.hpp"
 #include "talcite/event.hpp"
 #include "talcite/following.hpp"
 #include "talcite/launcher.hpp"
@@ -11,7 +11,7 @@
 
 namespace talcite::ui {
 
-class Link : public FollowingNode<EnabledNode<Node>> {
+class Link : public FollowingMixin<EnabledMixin<Node>> {
 public:
     Link(std::string text, std::string address, Seam<Launcher> with = {});
 
