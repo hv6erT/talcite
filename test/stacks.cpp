@@ -250,6 +250,61 @@ TRIAL("Stack: a click beside what a float holds goes to the layer below") {
     same(floated, 0);
 }
 
+// Icons in the top right corner of a window: two floats, one in the other, over the content. A
+// click in the empty margin of either goes to the content, as with one float; only the icons
+// themselves are hit.
+TRIAL("Stack: through nested floats a click hits only what the innermost holds") {
+    Sheet top;
+
+    const auto stack = std::make_shared<ui::Stack>();
+    const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
+    const auto icons = std::make_shared<Box>(ui::Size{2, 1}, U'i');
+    const auto upper = std::make_shared<ui::Top>();
+    const auto right = std::make_shared<ui::Right>();
+
+    right->children().add(icons);
+    upper->children().add(right);
+    stack->children().add(under);
+    stack->children().add(upper);
+    top.children().add(stack);
+
+    const View made = top.render({{0, 0}, {6, 3}});
+
+    same(icons->screen_area()->at, (ui::Spot{4, 0}));
+    same(made.at({4, 0}).letter, U'i');
+    same(made.at({0, 0}).letter, U'a');
+
+    int below = 0;
+    int hit = 0;
+
+    const ui::Hook heard_below = under->on<ui::ClickEvent>([&below](ui::ClickEvent&) {
+        ++below;
+
+        return true;
+    });
+
+    const ui::Hook heard_icons = icons->on<ui::ClickEvent>([&hit](ui::ClickEvent&) {
+        ++hit;
+
+        return true;
+    });
+
+    for (const ui::Spot at : {ui::Spot{1, 0}, ui::Spot{3, 2}}) {
+        ui::ClickEvent beside{at, ui::Mouse::left, {}};
+
+        (void)top.dispatch(beside);
+    }
+
+    same(below, 2);
+    same(hit, 0);
+
+    ui::ClickEvent on{{5, 0}, ui::Mouse::left, {}};
+
+    (void)top.dispatch(on);
+    same(below, 2);
+    same(hit, 1);
+}
+
 // --- screen_area, area_in -----------------------------------------------------------------------
 
 // The place on the screen is assembled from rectangles up the tree and is computed on every

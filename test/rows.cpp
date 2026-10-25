@@ -254,6 +254,24 @@ TRIAL("Column: wants the sum of heights, but no more than it got") {
     same(one.wants({2, 10}).wide, 2);
 }
 
+// A child of zero height, an empty line or a hidden part, opens no gap and adds no width: the rule
+// of `Row` with the axes swapped.
+TRIAL("Column: a child of zero height opens no gap and adds no width") {
+    ui::Column one{1};
+
+    const auto last = box({2, 1}, U'b');
+
+    one.children().add(box({2, 1}, U'a'));
+    one.children().add(box({5, 0}, U'e'));
+    one.children().add(last);
+
+    same(one.wants({10, 10}), (ui::Size{2, 3}));
+
+    (void)one.render({{0, 0}, {10, 3}});
+
+    same(last->area().at.y, 2);
+}
+
 TRIAL("Row: wants the sum of widths, but no more than it got") {
     ui::Row one;
 

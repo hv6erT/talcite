@@ -262,6 +262,22 @@ Node* Root::under(Spot where) {
                inner.y < seen.at.y + seen.size.high;
     };
 
+    // Whether a float holds the spot `at`, given in the float's own coordinates. A float occupies
+    // only what it holds, so it is hit only where its child is, and through a chain of floats
+    // (`Top{Right{icons}}`) only where the first node that is not a float is; a click in the empty
+    // margin of any of them goes to what lies below.
+    const auto holds = [&covers](const auto& self, const Node& one, Spot at) -> bool {
+        if (one.children().empty()) return false;
+
+        const Node& inside = *one.children().front();
+
+        if (!covers(inside, at)) return false;
+
+        if (dynamic_cast<const Float*>(&inside) == nullptr) return true;
+
+        return self(self, inside, {at.x - inside.area().at.x, at.y - inside.area().at.y});
+    };
+
     Node* at = this;
 
     for (;;) {
@@ -270,11 +286,9 @@ Node* Root::under(Spot where) {
         for (const std::shared_ptr<Node>& one : at->children()) {
             if (!covers(*one, where)) continue;
 
-            if (dynamic_cast<const Float*>(one.get()) != nullptr) {
-                const Spot inner{where.x - one->area().at.x, where.y - one->area().at.y};
-
-                if (one->children().empty() || !covers(*one->children().front(), inner)) continue;
-            }
+            if (dynamic_cast<const Float*>(one.get()) != nullptr &&
+                !holds(holds, *one, {where.x - one->area().at.x, where.y - one->area().at.y}))
+                continue;
 
             into = one.get();
         }

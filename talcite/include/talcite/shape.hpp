@@ -6,6 +6,8 @@ namespace talcite::ui {
 
 enum class Justify : std::uint8_t { left, right, center };
 
+enum class Align : std::uint8_t { start, middle, end };
+
 enum class Elide : std::uint8_t { none, left, middle, right };
 
 enum class Border : std::uint8_t { none, thin, twin, thick };

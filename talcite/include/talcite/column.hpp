@@ -2,6 +2,8 @@
 
 #include "talcite/node.hpp"
 
+#include <vector>
+
 namespace talcite::ui {
 
 class Column : public Node {
@@ -20,6 +22,8 @@ protected:
     View paint(Size given, Area seen) override;
 
 private:
+    [[nodiscard]] std::vector<Area> placed(Size room) const;
+
     int gap_ = 0;
 };
 

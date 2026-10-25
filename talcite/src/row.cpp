@@ -66,7 +66,8 @@ Size Row::wants(Size room) const {
 
 // Lays the children out left to right, each over the full height, and draws them.
 //
-// The width the children do not need goes to the floats among them (`Left`, `Right`, `Center`),
+// The width the children do not need goes to the horizontal floats among them (`Left`, `Right`,
+// `Center`; a vertical float is an ordinary child here, placing its own child in the full height),
 // by the rule of automatic margins, as `margin: auto` in a flexible box: a float has an empty
 // margin on its free side (a left float on its right, a right float on its left, a centered one on
 // both), and the spare width is split equally between all those margins. The odd cells of the
@@ -102,7 +103,9 @@ View Row::paint(Size given, Area seen) {
 
         floats[which] = dynamic_cast<const Float*>(children()[which].get());
 
-        if (floats[which] != nullptr) sides += floats[which]->side() == Justify::center ? 2 : 1;
+        if (floats[which] != nullptr && floats[which]->axis() != Axis::horizontal) floats[which] = nullptr;
+
+        if (floats[which] != nullptr) sides += floats[which]->align() == Align::middle ? 2 : 1;
     }
 
     const int spare = std::max(given.wide - end, 0);
@@ -120,8 +123,8 @@ View Row::paint(Size given, Area seen) {
         where.size.high = std::max(given.high, 0);
 
         if (const Float* one = floats[which]; one != nullptr) {
-            const int before = one->side() != Justify::left ? share(k++) : 0;
-            const int after = one->side() != Justify::right ? share(k++) : 0;
+            const int before = one->align() != Align::start ? share(k++) : 0;
+            const int after = one->align() != Align::end ? share(k++) : 0;
 
             where.size.wide += before + after;
             shift += before + after;
