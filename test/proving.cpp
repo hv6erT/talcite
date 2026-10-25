@@ -3,12 +3,15 @@
 #include "talcite/host.hpp"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -58,6 +61,77 @@ void fell(std::string_view file, int line, const std::string& said) {
 namespace {
 
 using proving::Trial;
+
+// How long one trial may run before the watch calls it hung: `TALCITE_TRIAL_LIMIT` in seconds, five
+// minutes without it. The slowest honest trial takes a few seconds, a few tens under a sanitizer,
+// so five minutes leaves a wide margin; the trial of the watch itself sets one second.
+std::chrono::seconds longest() {
+    const char* given = std::getenv("TALCITE_TRIAL_LIMIT");
+    const int seconds = given != nullptr ? std::atoi(given) : 0;
+
+    return std::chrono::seconds{seconds > 0 ? seconds : 300};
+}
+
+// A watch over the trial that is running. A trial that hangs (a deadlock, a wait without a
+// deadline) would otherwise hold the run until the outer timeout of the verify script, two hours,
+// and the log would not say which trial it was; on Windows the log even ended several trials
+// earlier, with the rest still in the buffer. The watch names the trial, flushes, and ends the
+// program at once (`_Exit`): an orderly exit would wait for the hung work.
+class Watch {
+public:
+    // Starts the watching thread; a trial may run for `limit`.
+    explicit Watch(std::chrono::seconds limit) : limit_(limit), thread_([this] { watched(); }) {}
+
+    Watch(const Watch&) = delete;
+    Watch& operator=(const Watch&) = delete;
+
+    // Stops the watching thread.
+    ~Watch() {
+        {
+            const std::lock_guard<std::mutex> lock{guard_};
+
+            done_ = true;
+        }
+
+        wake_.notify_all();
+        thread_.join();
+    }
+
+    // The trial `named` starts now; the time between two trials counts to the next one, and it is
+    // only the printing of a verdict.
+    void begun(std::string_view named) {
+        const std::lock_guard<std::mutex> lock{guard_};
+
+        named_ = std::string{named};
+        since_ = std::chrono::steady_clock::now();
+    }
+
+private:
+    // Looks once a second whether the running trial has run longer than the limit.
+    void watched() {
+        std::unique_lock<std::mutex> lock{guard_};
+
+        while (!done_) {
+            wake_.wait_for(lock, std::chrono::seconds{1});
+
+            if (!named_.empty() && std::chrono::steady_clock::now() - since_ > limit_) {
+                std::fflush(stdout);
+                std::fprintf(stdout, "  HUNG  %s\n        still running after %d s\n", named_.c_str(),
+                             static_cast<int>(limit_.count()));
+                std::fflush(stdout);
+                std::_Exit(3);
+            }
+        }
+    }
+
+    std::chrono::seconds limit_;
+    std::mutex guard_;
+    std::condition_variable wake_;
+    std::string named_;
+    std::chrono::steady_clock::time_point since_{};
+    bool done_ = false;
+    std::thread thread_;
+};
 
 // The file name without its directories.
 [[nodiscard]] std::string_view bared(std::string_view file) {
@@ -472,11 +546,15 @@ int main(int count, char** given) {
     std::size_t passed = 0;
     std::size_t ran = 0;
 
+    Watch watch{longest()};
+
     for (const Trial& one : held) {
         if (!only.empty() && one.named != only) continue;
         if (!chosen.empty() && bared(one.file) != chosen) continue;
 
         ++ran;
+
+        watch.begun(one.named);
 
         try {
             one.run();
