@@ -60,15 +60,16 @@ Scroll::Scroll(Axis axis, ScrollShape shape)
 // and only from here. Clamping to the current window happens in `paint`, so notifying on every
 // change of `shift_` would mean replacing the tree while a frame is being composed. The known and
 // accepted consequence: narrowing the window, which moves the content by itself, notifies nobody.
-// The component of a closed axis is ignored.
-void Scroll::shift(Spot given) {
+// The component of a closed axis is ignored. The event says how the move came: the wheel and the
+// bars pass `Moved::by_hand`, a call from the program leaves the default.
+void Scroll::shift(Spot given, Moved how) {
     const Spot want{across() ? std::max(given.x, 0) : 0, down() ? std::max(given.y, 0) : 0};
 
     if (want == shift_) return;
 
     shift_ = want;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // The size the scroller wants: the child's size plus the bars, but at most `room`. We ask for
@@ -235,7 +236,7 @@ bool Scroll::handle(WheelEvent& what) {
 
     if (shift_ == was) return false;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{Moved::by_hand});
 
     return true;
 }
@@ -259,7 +260,7 @@ bool Scroll::handle(MouseEvent& what) {
         const int most = sideways ? std::max(whole_.wide - window_.wide, 0) : std::max(whole_.high - window_.high, 0);
         const int fitted = std::clamp(to, 0, most);
 
-        shift(sideways ? Spot{fitted, shift_.y} : Spot{shift_.x, fitted});
+        shift(sideways ? Spot{fitted, shift_.y} : Spot{shift_.x, fitted}, Moved::by_hand);
     };
 
     switch (asked.part) {

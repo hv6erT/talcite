@@ -34,21 +34,21 @@ public:
 
     [[nodiscard]] std::optional<std::size_t> lines() const;
 
-    void first(std::size_t given);
+    void first(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] std::optional<std::size_t> at() const;
 
-    void at(std::size_t given);
+    void at(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] std::optional<std::size_t> whole() const;
 
-    void end();
+    void end(Moved how = Moved::by_program);
 
-    bool slide(int rows);
+    bool slide(int rows, Moved how = Moved::by_program);
 
     [[nodiscard]] std::size_t left() const;
 
-    void left(std::size_t columns);
+    void left(std::size_t columns, Moved how = Moved::by_program);
 
     [[nodiscard]] bool wrapped() const;
 
@@ -116,7 +116,7 @@ protected:
 private:
     struct Kept;
 
-    void page(int pages);
+    void page(int pages, Moved how = Moved::by_program);
 
     bool move_by(int rows);
 

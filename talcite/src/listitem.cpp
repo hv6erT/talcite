@@ -1,6 +1,8 @@
 #include "talcite/listitem.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
 #include <utility>
 
 #include "eliding.hpp"
@@ -100,18 +102,31 @@ bool ListItem::handle(KeyEvent& what) {
     return true;
 }
 
-// A click takes the focus and so makes the item current. The rest (the row number, pulling the
-// view along, notifying the application) happens in the list, which the `FocusEvent` bubbles up
-// to anyway.
+// A click makes the item current and takes the focus. In a list the list does it (`List::going`),
+// so that it announces the move as made by hand, the same as its arrows; the row number, pulling
+// the view along and notifying the application are the list's. An item outside a list only takes
+// the focus.
 bool ListItem::handle(ClickEvent&) {
     // A disabled item lets the click pass up instead of swallowing it: since it does not answer
     // to its key, there is no reason for it to answer to the mouse, and the list underneath may do
     // with the click whatever it sees fit.
     if (!enabled()) return false;
 
-    if (root() != nullptr) focus();
+    chosen();
 
     return true;
+}
+
+// Makes the item current by hand: through its list when it stands in one, otherwise by the focus
+// alone. Nothing happens outside a tree, where there is no focus to take.
+void ListItem::chosen() {
+    if (root() == nullptr) return;
+
+    auto* list = dynamic_cast<List*>(parent());
+    const std::optional<std::size_t> at = list != nullptr ? list->children().find(*this) : std::nullopt;
+
+    if (at.has_value()) (void)list->going(static_cast<int>(*at), Moved::by_hand);
+    else focus();
 }
 
 // A double click on a row does what Enter does, and also puts the focus on it on the way, because
@@ -119,7 +134,7 @@ bool ListItem::handle(ClickEvent&) {
 bool ListItem::handle(DoubleClickEvent&) {
     if (!enabled()) return false;
 
-    if (root() != nullptr) focus();
+    chosen();
 
     pick();
 

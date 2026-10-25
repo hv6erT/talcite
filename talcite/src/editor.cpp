@@ -464,14 +464,14 @@ std::size_t Editor::cursor() const { return kept_->cursor; }
 // Placing the cursor takes the anchor with it, which turns the selection off. A move with Shift
 // does not touch the anchor and therefore goes through `Selection::extend`; apart from that one
 // thing both ways are the same work, so one calls the other.
-void Editor::cursor(std::size_t given) {
+void Editor::cursor(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     if (!spool()) return;
 
     kept.anchor = std::min(given, spool()->whole());
 
-    selection_.extend(given);
+    selection_.extend(given, how);
 }
 
 // --- Selection -----------------------------------------------------------------------------------
@@ -505,7 +505,7 @@ std::string Editor::Selection::text() const {
 
 // The parameters are named for what they are: `set(5, 2)` selects backward, the cursor lands on 2,
 // and `from()` and `upto()` still return 2 and 5.
-void Editor::Selection::set(std::size_t anchor, std::size_t cursor) {
+void Editor::Selection::set(std::size_t anchor, std::size_t cursor, Moved how) {
     Kept& kept = *owner_.kept_;
 
     if (!owner_.spool()) return;
@@ -517,7 +517,7 @@ void Editor::Selection::set(std::size_t anchor, std::size_t cursor) {
     kept.joining = false;
 
     owner_.invalidate();
-    (void)owner_.trigger(ScrollEvent{});
+    (void)owner_.trigger(ScrollEvent{how});
 }
 
 // Turns the selection off without moving the cursor.
@@ -529,7 +529,7 @@ void Editor::Selection::clear() {
 
 // Deleting the selection as one change in the log, the same for Backspace, Delete, cutting and
 // replacing with nothing. False when there is nothing to delete or it is not allowed.
-bool Editor::Selection::erase() {
+bool Editor::Selection::erase(Moved how) {
     Kept& kept = *owner_.kept_;
 
     if (kept.readonly || kept.saving || !kept.quilt || empty()) return false;
@@ -540,13 +540,13 @@ bool Editor::Selection::erase() {
     kept.apply(*owner_.spool(), at, gone, {});
     kept.note(at, gone, {}, kept.cursor);
 
-    owner_.settled(at);
+    owner_.settled(at, how);
 
     return true;
 }
 
 // The cursor moves and the anchor stays: a move with Shift and a mouse drag.
-void Editor::Selection::extend(std::size_t to) {
+void Editor::Selection::extend(std::size_t to, Moved how) {
     Editor& owner = owner_;
     Kept& kept = *owner.kept_;
 
@@ -570,7 +570,7 @@ void Editor::Selection::extend(std::size_t to) {
     // The selection is drawn with tags assembled at every paint, but the picture itself has to be
     // assembled anew; otherwise a moved cursor would change nothing on the screen.
     owner.invalidate();
-    (void)owner.trigger(ScrollEvent{});
+    (void)owner.trigger(ScrollEvent{how});
 }
 
 // The line of the cursor, from zero.
@@ -739,8 +739,10 @@ std::optional<Spot> Editor::caret() const {
 
 // The cursor after a change: the spool recomputes the line, and the picture has to be assembled
 // anew anyway. Separate, because all four ways of changing do it: typing, both deletions, undo
-// and redo.
-void Editor::settled(std::size_t where) {
+// and redo. Like every move of the cursor it says how it came (`ScrollEvent::by_hand`): the
+// editor's own keys, mouse and paste pass `Moved::by_hand`, a call from the program leaves the
+// default.
+void Editor::settled(std::size_t where, Moved how) {
     Kept& kept = *kept_;
 
     kept.cursor = std::min(where, spool()->whole());
@@ -754,12 +756,12 @@ void Editor::settled(std::size_t where) {
     (void)reveal(Place{which, offset});
 
     invalidate();
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Typing over a selection is one change, not a deletion followed by typing; otherwise one undo
 // would give back an empty document instead of what was selected.
-void Editor::insert(std::string what) {
+void Editor::insert(std::string what, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.readonly || kept.saving || !kept.quilt || what.empty()) return;
@@ -774,17 +776,17 @@ void Editor::insert(std::string what) {
     kept.apply(*spool(), from, gone, came);
     kept.note(from, gone, came, was);
 
-    settled(from + what.size());
+    settled(from + what.size(), how);
 }
 
 // Deletes `much` bytes before the cursor, or the selection when there is one.
-void Editor::back_erase(std::size_t much) {
+void Editor::back_erase(std::size_t much, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.readonly || kept.saving || !kept.quilt) return;
 
     // With a selection Backspace deletes the selection, however much it was told.
-    if (selection_.erase()) return;
+    if (selection_.erase(how)) return;
 
     const std::size_t upto = kept.cursor;
     const std::size_t from = much >= kept.cursor ? 0 : kept.cursor - much;
@@ -796,16 +798,16 @@ void Editor::back_erase(std::size_t much) {
     kept.apply(*spool(), from, gone, {});
     kept.note(from, gone, {}, kept.cursor);
 
-    settled(from);
+    settled(from, how);
 }
 
 // Deletes `much` bytes after the cursor, or the selection when there is one.
-void Editor::front_erase(std::size_t much) {
+void Editor::front_erase(std::size_t much, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.readonly || kept.saving || !kept.quilt) return;
 
-    if (selection_.erase()) return;
+    if (selection_.erase(how)) return;
 
     const std::size_t whole = kept.quilt->whole();
 
@@ -821,7 +823,7 @@ void Editor::front_erase(std::size_t much) {
     kept.apply(*spool(), at, gone, {});
     kept.note(at, gone, {}, at);
 
-    settled(at);
+    settled(at, how);
 }
 
 // --- Search --------------------------------------------------------------------------------------
@@ -1337,7 +1339,7 @@ bool Editor::handle(KeyEvent& what) {
     const Mods mods = what.mods();
 
     if (what.key().letter() != 0 && !mods.ctrl && !mods.alt) {
-        insert(utf8::encode(what.key().letter()));
+        insert(utf8::encode(what.key().letter()), Moved::by_hand);
 
         return true;
     }
@@ -1347,22 +1349,22 @@ bool Editor::handle(KeyEvent& what) {
     // difference between them.
     const auto went = [this, &mods](std::size_t where) {
         if (mods.shift)
-            selection_.extend(where);
+            selection_.extend(where, Moved::by_hand);
         else
-            cursor(where);
+            cursor(where, Moved::by_hand);
     };
 
     switch (what.key().code()) {
-        case Code::enter: insert("\n"); return true;
+        case Code::enter: insert("\n", Moved::by_hand); return true;
 
-        case Code::backspace: back_erase(behind(*kept.quilt, kept.cursor)); return true;
+        case Code::backspace: back_erase(behind(*kept.quilt, kept.cursor), Moved::by_hand); return true;
 
         // Delete with Shift is not a deletion: it is the cut key of Midnight Commander, and goes on
         // to the application like Insert with a modifier.
         case Code::remove:
             if (mods.shift) break;
 
-            front_erase(ahead(*kept.quilt, kept.cursor));
+            front_erase(ahead(*kept.quilt, kept.cursor), Moved::by_hand);
             return true;
 
         // With Ctrl the arrow goes by words, without it by characters. A character, not a byte:
@@ -1457,7 +1459,7 @@ bool Editor::handle(ClickEvent& what) {
 
     if (!began.has_value()) return true;
 
-    cursor(*began + where->byte);
+    cursor(*began + where->byte, Moved::by_hand);
 
     return true;
 }
@@ -1505,9 +1507,9 @@ bool Editor::handle(MouseEvent& what) {
         if (!began.has_value()) return;
 
         if (anchored)
-            cursor(*began + place->byte);
+            cursor(*began + place->byte, Moved::by_hand);
         else
-            selection_.extend(*began + place->byte);
+            selection_.extend(*began + place->byte, Moved::by_hand);
     };
 
     if (what.press() == Press::down) {
@@ -1533,9 +1535,9 @@ bool Editor::handle(MouseEvent& what) {
 
     if (high > 1) {
         if (where.y >= high - 1)
-            slide(1);
+            slide(1, Moved::by_hand);
         else if (where.y <= 0)
-            slide(-1);
+            slide(-1, Moved::by_hand);
     }
 
     reached({where.x, std::clamp(where.y, 0, std::max(high - 1, 0))}, false);
@@ -1575,14 +1577,14 @@ bool Editor::handle(DoubleClickEvent& what) {
 
     while (upto < line->upto && lettered(one, upto) == kind) ++upto;
 
-    selection_.set(from, upto);
+    selection_.set(from, upto, Moved::by_hand);
 
     return true;
 }
 
 // A bracketed paste goes in as one insertion at the cursor.
 bool Editor::handle(PasteEvent& what) {
-    insert(what.text());
+    insert(what.text(), Moved::by_hand);
 
     return true;
 }

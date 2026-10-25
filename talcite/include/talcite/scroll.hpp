@@ -19,7 +19,7 @@ public:
 
     [[nodiscard]] Spot shift() const { return shift_; }
 
-    void shift(Spot given);
+    void shift(Spot given, Moved how = Moved::by_program);
 
     [[nodiscard]] bool scrollbar() const { return shape_.scrollbar; }
 

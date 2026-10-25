@@ -66,7 +66,7 @@ public:
 
     [[nodiscard]] std::optional<std::size_t> which() const;
 
-    void which(std::size_t given);
+    void which(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] bool opened(std::size_t hunk) const;
 
@@ -106,7 +106,7 @@ private:
 
     void spread(Size given);
 
-    bool slid(int lines);
+    bool slid(int lines, Moved how);
 
     std::unique_ptr<Kept> kept_;
     Chosen chosen_;

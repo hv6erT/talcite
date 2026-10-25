@@ -173,27 +173,42 @@ void List::pick() {
 // The change is announced with an event, not with a callback of its own: one thing has one path,
 // and events go through `on` and the hook it gives. The event carries no row number, because
 // whoever asks has it at hand in `which()`, and the view in `first()`.
-void List::first(std::size_t given) {
+void List::first(std::size_t given, Moved how) {
     const int was = shift_;
 
     shift_ = static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX)));
 
-    if (shift_ != was) (void)trigger(ScrollEvent{});
+    if (shift_ != was) (void)trigger(ScrollEvent{how});
 }
 
-// Moves the focus to the given row; a negative number means there is nowhere to go. The key is
-// consumed either way.
-bool List::going(int to) {
+// Makes the given row current and moves the focus to it; a negative number means there is nowhere
+// to go. The key is consumed either way. The list's own keys and a click on an item come this way,
+// and the list announces the move here, saying how it came (`ScrollEvent::by_hand`), before the
+// focus follows; the focus arriving at the row then finds it current already. A focus put on an
+// item from elsewhere (Tab, the program) still meets the list in `handle(FocusEvent&)`.
+bool List::going(int to, Moved how) {
     if (to < 0) return true;
 
-    if (ListItem* one = item(to)) one->focus();
+    ListItem* one = item(to);
+
+    if (one == nullptr) return true;
+
+    follow_ = true;
+
+    if (which_ != to) {
+        which_ = to;
+
+        (void)trigger(ScrollEvent{how});
+    }
+
+    one->focus();
 
     return true;
 }
 
 // Steps the given number of rows, item by item, so that disabled items do not count as passed and
 // the movement stops at the end instead of going past it.
-bool List::walking(int step, int times) {
+bool List::walking(int step, int times, Moved how) {
     int at = which_;
 
     for (int which = 0; which < times; ++which) {
@@ -204,7 +219,7 @@ bool List::walking(int step, int times) {
         at = to;
     }
 
-    return going(at);
+    return going(at, how);
 }
 
 // The arrows and the page keys belong to the list; Enter has already been taken by the item,
@@ -220,17 +235,17 @@ bool List::handle(KeyEvent& what) {
     const int page = std::max(area().size.high, 1);
 
     switch (what.key().code()) {
-        case Code::up: return walking(-1, 1);
+        case Code::up: return walking(-1, 1, Moved::by_hand);
 
-        case Code::down: return walking(1, 1);
+        case Code::down: return walking(1, 1, Moved::by_hand);
 
-        case Code::pageup: return walking(-1, page);
+        case Code::pageup: return walking(-1, page, Moved::by_hand);
 
-        case Code::pagedown: return walking(1, page);
+        case Code::pagedown: return walking(1, page, Moved::by_hand);
 
-        case Code::home: return going(nearest(-1, 1));
+        case Code::home: return going(nearest(-1, 1), Moved::by_hand);
 
-        case Code::end: return going(nearest(static_cast<int>(children().many()), -1));
+        case Code::end: return going(nearest(static_cast<int>(children().many()), -1), Moved::by_hand);
 
         default: return false;
     }
@@ -253,21 +268,21 @@ bool List::handle(WheelEvent& what) {
 
     if (shift_ == was) return false;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{Moved::by_hand});
 
     return true;
 }
 
 // Moves the view to a new place, cut to the content; it announces only an actual change, as with
 // the wheel.
-void List::slid(int to) {
+void List::slid(int to, Moved how) {
     const int much = static_cast<int>(children().many());
     const int window = std::max(area().size.high, 0);
     const int was = shift_;
 
     shift_ = std::clamp(to, 0, std::max(much - window, 0));
 
-    if (shift_ != was) (void)trigger(ScrollEvent{});
+    if (shift_ != was) (void)trigger(ScrollEvent{how});
 }
 
 // The mouse on the scrollbar: the track moves one page, the thumb is dragged.
@@ -278,10 +293,10 @@ bool List::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::before: slid(shift_ - window); break;
-        case Part::after: slid(shift_ + window); break;
+        case Part::before: slid(shift_ - window, Moved::by_hand); break;
+        case Part::after: slid(shift_ + window, Moved::by_hand); break;
         case Part::thumb:
-            if (asked.to.has_value()) slid(static_cast<int>(*asked.to));
+            if (asked.to.has_value()) slid(static_cast<int>(*asked.to), Moved::by_hand);
             break;
     }
 

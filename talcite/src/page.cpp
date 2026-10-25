@@ -954,7 +954,7 @@ std::optional<std::size_t> Page::whole() const {
 // Jumps to the row holding byte `given`. When the spool has not reached the byte because it waits
 // for a window, the jump stays an intention and completes when the window arrives; the walk does
 // not start again, it goes on from where it got.
-void Page::at(std::size_t given) {
+void Page::at(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     if (!kept.spool) return;
@@ -996,12 +996,12 @@ void Page::at(std::size_t given) {
 
     (void)move_by(0);
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Puts document line `given` at the top, clamped to the last line when the count is known, and
 // reports a `ScrollEvent` when the position changes.
-void Page::first(std::size_t given) {
+void Page::first(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     if (!held()) return;
@@ -1020,14 +1020,14 @@ void Page::first(std::size_t given) {
 
     (void)move_by(0);
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Scrolls so that the last line stands at the bottom of the screen. Without an index the end can
 // be found only one way: by walking the document. The spool counts the lines along the way, and
 // from then on `lines()` is no longer empty. With an asynchronous source the walk goes window by
 // window and the jump to the end completes by itself once the count is known.
-void Page::end() {
+void Page::end(Moved how) {
     Kept& kept = *kept_;
 
     if (!held()) return;
@@ -1075,7 +1075,7 @@ void Page::end() {
 
     (void)move_by(-std::max(kept.sized.high - 1, 0));
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Moves the view by `rows` screen rows without notifying anyone; returns whether the position
@@ -1116,23 +1116,25 @@ bool Page::move_by(int rows) {
 }
 
 // Scrolls by `rows` screen rows and reports a `ScrollEvent` when the view moved; returns whether it
-// moved. The notification travels the ordinary event path, so it bubbles up to the ancestors.
-bool Page::slide(int rows) {
+// moved. The notification travels the ordinary event path, so it bubbles up to the ancestors. Like
+// every move of the page it says how it came (`ScrollEvent::by_hand`): the page's own keys, wheel
+// and bars pass `Moved::by_hand`, a call from the program leaves the default.
+bool Page::slide(int rows, Moved how) {
     if (!move_by(rows)) return false;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 
     return true;
 }
 
 // Scrolls by `pages` screen heights.
-void Page::page(int pages) { slide(pages * std::max(kept_->sized.high, 1)); }
+void Page::page(int pages, Moved how) { slide(pages * std::max(kept_->sized.high, 1), how); }
 
 // The first column shown without wrapping.
 std::size_t Page::left() const { return kept_->left; }
 
 // Scrolls sideways so that column `columns` is the first shown; it matters only without wrapping.
-void Page::left(std::size_t columns) {
+void Page::left(std::size_t columns, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.left == columns) return;
@@ -1140,7 +1142,7 @@ void Page::left(std::size_t columns) {
     kept.left = columns;
     kept.fresh = true;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Whether long lines are wrapped.
@@ -1770,29 +1772,29 @@ bool Page::handle(KeyEvent& what) {
             return true;
         }
 
-        case Code::up: slide(-1); return true;
-        case Code::down: slide(1); return true;
-        case Code::pageup: page(-1); return true;
-        case Code::pagedown: page(1); return true;
+        case Code::up: slide(-1, Moved::by_hand); return true;
+        case Code::down: slide(1, Moved::by_hand); return true;
+        case Code::pageup: page(-1, Moved::by_hand); return true;
+        case Code::pagedown: page(1, Moved::by_hand); return true;
 
         case Code::home:
-            if (!kept_->wrapped) left(0);
+            if (!kept_->wrapped) left(0, Moved::by_hand);
 
-            first(0);
+            first(0, Moved::by_hand);
             return true;
 
-        case Code::end: end(); return true;
+        case Code::end: end(Moved::by_hand); return true;
 
         case Code::left:
             if (kept_->wrapped) return false;
 
-            if (kept_->left > 0) left(kept_->left - 1);
+            if (kept_->left > 0) left(kept_->left - 1, Moved::by_hand);
             return true;
 
         case Code::right:
             if (kept_->wrapped) return false;
 
-            left(kept_->left + 1);
+            left(kept_->left + 1, Moved::by_hand);
             return true;
 
         default: return false;
@@ -1808,7 +1810,7 @@ bool Page::handle(WheelEvent& what) {
         const std::size_t was = kept_->left;
         const std::ptrdiff_t to = static_cast<std::ptrdiff_t>(was) - static_cast<std::ptrdiff_t>(what.steps() * stepping);
 
-        left(static_cast<std::size_t>(std::max<std::ptrdiff_t>(to, 0)));
+        left(static_cast<std::size_t>(std::max<std::ptrdiff_t>(to, 0)), Moved::by_hand);
 
         return kept_->left != was;
     }
@@ -1818,7 +1820,7 @@ bool Page::handle(WheelEvent& what) {
     const std::size_t was = kept_->top;
     const std::size_t was_at = kept_->row_at;
 
-    slide(-what.steps() * stepping);
+    slide(-what.steps() * stepping, Moved::by_hand);
 
     return kept_->top != was || kept_->row_at != was_at;
 }
@@ -1852,12 +1854,12 @@ bool Page::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::before: page(-1); break;
-        case Part::after: page(1); break;
+        case Part::before: page(-1, Moved::by_hand); break;
+        case Part::after: page(1, Moved::by_hand); break;
         case Part::thumb:
             if (asked.to.has_value()) {
-                if (kept_->bytes) at(*asked.to);
-                else first(*asked.to);
+                if (kept_->bytes) at(*asked.to, Moved::by_hand);
+                else first(*asked.to, Moved::by_hand);
             }
             break;
     }

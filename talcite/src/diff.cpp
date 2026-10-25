@@ -634,8 +634,9 @@ std::size_t DiffViewer::hunks() const { return kept_->hunks; }
 std::optional<std::size_t> DiffViewer::which() const { return kept_->which; }
 
 // Moves the cursor to the hunk (clamped to the last one), brings it into view and triggers a
-// `ScrollEvent`.
-void DiffViewer::which(std::size_t given) {
+// `ScrollEvent`, saying how the move came: the viewer's own keys, wheel and mouse pass
+// `Moved::by_hand`, a call from the program leaves the default.
+void DiffViewer::which(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.hunks == 0) return;
@@ -648,7 +649,7 @@ void DiffViewer::which(std::size_t given) {
 
     kept.reveal(want);
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Whether the hunk is unfolded.
@@ -1005,7 +1006,7 @@ bool DiffViewer::handle(KeyEvent& what) {
             for (std::size_t one = at + 1; one < kept.hunks; ++one)
                 if (heading(one))
                     if (const std::optional<std::size_t> got = next(one, 1); got.has_value()) {
-                        which(*got);
+                        which(*got, Moved::by_hand);
 
                         return true;
                     }
@@ -1024,9 +1025,9 @@ bool DiffViewer::handle(KeyEvent& what) {
         }
 
         if (kept.steady(start))
-            which(start);
+            which(start, Moved::by_hand);
         else if (const std::optional<std::size_t> got = next(start, 1); got.has_value() && *got < at)
-            which(*got);
+            which(*got, Moved::by_hand);
 
         return true;
     }
@@ -1042,7 +1043,7 @@ bool DiffViewer::handle(KeyEvent& what) {
             here = *got;
         }
 
-        which(here);
+        which(here, Moved::by_hand);
     };
 
     const int page = std::max(static_cast<int>(kept.shown.size()), 1);
@@ -1058,17 +1059,17 @@ bool DiffViewer::handle(KeyEvent& what) {
 
         case Code::home:
             if (kept.steady(0))
-                which(0);
+                which(0, Moved::by_hand);
             else if (const std::optional<std::size_t> got = next(0, 1); got.has_value())
-                which(*got);
+                which(*got, Moved::by_hand);
 
             return true;
 
         case Code::end:
             if (kept.steady(kept.hunks - 1))
-                which(kept.hunks - 1);
+                which(kept.hunks - 1, Moved::by_hand);
             else if (const std::optional<std::size_t> got = next(kept.hunks - 1, -1); got.has_value())
-                which(*got);
+                which(*got, Moved::by_hand);
 
             return true;
 
@@ -1136,7 +1137,7 @@ bool DiffViewer::handle(KeyEvent& what) {
 bool DiffViewer::handle(WheelEvent& what) {
     if (what.axis() != Axis::vertical) return false;
 
-    return slid(-what.steps() * stepping);
+    return slid(-what.steps() * stepping, Moved::by_hand);
 }
 
 // The mouse on the bar: the track scrolls a page, the thumb jumps to a hunk. The
@@ -1151,8 +1152,8 @@ bool DiffViewer::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::before: (void)slid(-page); break;
-        case Part::after: (void)slid(page); break;
+        case Part::before: (void)slid(-page, Moved::by_hand); break;
+        case Part::after: (void)slid(page, Moved::by_hand); break;
         case Part::thumb:
             if (asked.to.has_value() && kept.hunks > 0) {
                 const std::size_t want = std::min(*asked.to, kept.hunks - 1);
@@ -1165,7 +1166,7 @@ bool DiffViewer::handle(MouseEvent& what) {
 
                     kept.fresh = true;
 
-                    (void)trigger(ScrollEvent{});
+                    (void)trigger(ScrollEvent{Moved::by_hand});
                 }
             }
             break;
@@ -1175,8 +1176,9 @@ bool DiffViewer::handle(MouseEvent& what) {
 }
 
 // Moves the view by the given number of rows (positive is down), over hunks and their rows; the
-// cursor does not move. False when the view stayed.
-bool DiffViewer::slid(int lines) {
+// cursor does not move. False when the view stayed. Only the viewer's own wheel and bar move it
+// so, so the event says by hand.
+bool DiffViewer::slid(int lines, Moved how) {
     Kept& kept = *kept_;
 
     const std::size_t was = kept.top;
@@ -1218,7 +1220,7 @@ bool DiffViewer::slid(int lines) {
 
     kept.fresh = true;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 
     return true;
 }
@@ -1244,7 +1246,7 @@ bool DiffViewer::handle(ClickEvent& what) {
 
     if (one.data->rows.empty()) return true;
 
-    which(hunk);
+    which(hunk, Moved::by_hand);
 
     if (box) {
         if (chosen_.contains(hunk))

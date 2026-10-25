@@ -362,6 +362,41 @@ TRIAL("Viewer: slide returns whether it moved, and notifies only then") {
     same(heard, 0);
 }
 
+// The page's own keys and wheel move it by hand, a call from the program does not.
+TRIAL("Viewer: a move says whether it came by hand") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, many(100));
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    ui::KeyEvent down{ui::Code::down};
+    ui::WheelEvent wheel{{1, 1}, -1};
+
+    ought(sheet.dispatch(down));
+    ought(sheet.dispatch(wheel));
+
+    same(heard, (std::vector<bool>{true, true}));
+
+    heard.clear();
+
+    ought(one->slide(2));
+    one->first(0);
+    one->end();
+
+    same(heard, (std::vector<bool>{false, false, false}));
+}
+
 TRIAL("Viewer: end shows the last page") {
     Sheet sheet;
 

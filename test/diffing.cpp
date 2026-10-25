@@ -543,6 +543,43 @@ TRIAL("DiffViewer: keys move through hunks and sections") {
     ought(!pressed(sheet, ui::Key{U'x', ui::Mods{.alt = true}}));
 }
 
+// The viewer's own keys and wheel move it by hand, a call from the program does not.
+TRIAL("DiffViewer: a move says whether it came by hand") {
+    Sheet sheet;
+
+    std::vector<ui::DiffHunk> all = planned();
+
+    for (int at = 0; at < 6; ++at) all.push_back(hunk({row("d.mkv", "D/d.mkv")}));
+
+    const auto one = shown(sheet, all);
+
+    (void)sheet.render({{0, 0}, {70, 6}});
+
+    one->focus();
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    ought(pressed(sheet, ui::Code::down));
+
+    ui::WheelEvent wheel{{2, 2}, -1};
+
+    ought(sheet.dispatch(wheel));
+
+    same(heard, (std::vector<bool>{true, true}));
+
+    heard.clear();
+
+    one->which(0);
+
+    same(heard, (std::vector<bool>{false}));
+}
+
 // A long list: the cursor going down drags the view along, and the end lands at the bottom of the
 // screen, not at the top with emptiness below. The wheel moves the view alone.
 TRIAL("DiffViewer: the view follows the cursor and does not go past the end") {

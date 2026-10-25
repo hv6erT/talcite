@@ -438,6 +438,65 @@ TRIAL("Table: movement notifies through an event, not a callback") {
     same(moves, 2);
 }
 
+// The event says how the move came: the table's own keys, wheel and click by hand, a call from the
+// program not, unless the caller says it carries out a person's key itself. A panel's quick search
+// ends on the first and not on the second.
+TRIAL("Table: a move says whether it came by hand") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 30);
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {30, 6}});
+
+    heard.clear();
+
+    ui::KeyEvent down{ui::Code::down};
+    ui::KeyEvent end{ui::Code::end};
+    ui::KeyEvent home{ui::Code::home};
+    ui::KeyEvent page{ui::Code::pagedown};
+
+    ought(sheet.dispatch(down));
+    ought(sheet.dispatch(page));
+    ought(sheet.dispatch(end));
+    ought(sheet.dispatch(home));
+
+    ui::WheelEvent wheel{{2, 2}, -1};
+
+    ought(sheet.dispatch(wheel));
+
+    ui::ClickEvent click{{2, 3}, ui::Mouse::left, {}};
+
+    ought(sheet.dispatch(click));
+
+    same(heard, (std::vector<bool>{true, true, true, true, true, true}));
+
+    heard.clear();
+
+    one->which(7);
+    one->first(2);
+    one->step(1);
+    one->page(1);
+    one->end();
+
+    same(heard, (std::vector<bool>{false, false, false, false, false}));
+
+    heard.clear();
+
+    one->step(-1, ui::Moved::by_hand);
+
+    same(heard, (std::vector<bool>{true}));
+}
+
 // --- Clicking ------------------------------------------------------------------------------------
 
 TRIAL("Table: a click sets the current row below the heading") {

@@ -221,7 +221,15 @@ Size Table::wants(Size room) const { return room; }
 // Makes `given` (clamped to the last row) the current row and sends a `ScrollEvent`. Setting the
 // current row pulls the view to it if it has fallen off the screen. The height comes from the
 // rectangle of the previous frame: only that knows how much the table really got.
-void Table::which(std::size_t given) {
+//
+// The event says how the move came (`ScrollEvent::by_hand`): the table's own keys, wheel and mouse
+// pass `Moved::by_hand`, a call from the program leaves the default. Only the table knows it, and a
+// listener needs it: a panel's quick search ends when the person moves in the table, not when the
+// search itself puts the cursor on a match or a refresh keeps it on its entry. Before, the panel
+// switched its search off around its own moves, which hid the answer in the order of the calls.
+// An application that carries out a person's key on the table itself (marking with Shift) may say
+// so too.
+void Table::which(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.rows == 0) return;
@@ -245,12 +253,12 @@ void Table::which(std::size_t given) {
     // costs the source a row's worth of work per row.
     if (kept.top != was) kept.fresh = true;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Scrolls so that `given` (clamped to the last row) is the first visible row, and sends a
-// `ScrollEvent` on a change.
-void Table::first(std::size_t given) {
+// `ScrollEvent` on a change, saying how the move came, as at `which`.
+void Table::first(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     const std::size_t want = kept.rows == 0 ? 0 : std::min(given, kept.rows - 1);
@@ -260,12 +268,12 @@ void Table::first(std::size_t given) {
     kept.top = want;
     kept.fresh = true;
 
-    (void)trigger(ScrollEvent{});
+    (void)trigger(ScrollEvent{how});
 }
 
 // Moves the current row by `rows`, and the view follows it. A negative number goes up, the same
 // contract as in `Page::step`, so there are not two names for one motion.
-void Table::step(int rows) {
+void Table::step(int rows, Moved how) {
     Kept& kept = *kept_;
 
     if (kept.rows == 0 || rows == 0) return;
@@ -273,19 +281,19 @@ void Table::step(int rows) {
     const auto at = static_cast<std::ptrdiff_t>(kept.which.value_or(0));
     const auto much = static_cast<std::ptrdiff_t>(kept.rows) - 1;
 
-    which(static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(at + rows, 0, much)));
+    which(static_cast<std::size_t>(std::clamp<std::ptrdiff_t>(at + rows, 0, much)), how);
 }
 
 // Moves the current row by whole screens of rows.
-void Table::page(int pages) {
+void Table::page(int pages, Moved how) {
     const int high = std::max(area().size.high - (kept_->shape.heading ? 1 : 0), 1);
 
-    step(pages * high);
+    step(pages * high, how);
 }
 
 // Makes the last row current.
-void Table::end() {
-    if (kept_->rows > 0) which(kept_->rows - 1);
+void Table::end(Moved how) {
+    if (kept_->rows > 0) which(kept_->rows - 1, how);
 }
 
 
@@ -592,17 +600,17 @@ bool Table::handle(KeyEvent& what) {
     if (kept.rows == 0) return false;
 
     switch (what.key().code()) {
-        case Code::up: step(-1); return true;
+        case Code::up: step(-1, Moved::by_hand); return true;
 
-        case Code::down: step(1); return true;
+        case Code::down: step(1, Moved::by_hand); return true;
 
-        case Code::pageup: page(-1); return true;
+        case Code::pageup: page(-1, Moved::by_hand); return true;
 
-        case Code::pagedown: page(1); return true;
+        case Code::pagedown: page(1, Moved::by_hand); return true;
 
-        case Code::home: which(0); return true;
+        case Code::home: which(0, Moved::by_hand); return true;
 
-        case Code::end: end(); return true;
+        case Code::end: end(Moved::by_hand); return true;
 
         // The table does not take Insert. Marking and stepping one row down, a habit from Midnight
         // Commander's panel, would be the only key in the whole library at which `handle` changes
@@ -635,7 +643,7 @@ bool Table::handle(WheelEvent& what) {
 
     if (want == was) return false;
 
-    first(static_cast<std::size_t>(want));
+    first(static_cast<std::size_t>(want), Moved::by_hand);
 
     return true;
 }
@@ -692,10 +700,10 @@ bool Table::handle(MouseEvent& what) {
 
     switch (asked.part) {
         case Part::none: return false;
-        case Part::before: first(kept.top > high ? kept.top - high : 0); break;
-        case Part::after: first(std::min(kept.top + high, most)); break;
+        case Part::before: first(kept.top > high ? kept.top - high : 0, Moved::by_hand); break;
+        case Part::after: first(std::min(kept.top + high, most), Moved::by_hand); break;
         case Part::thumb:
-            if (asked.to.has_value()) first(std::min(*asked.to, most));
+            if (asked.to.has_value()) first(std::min(*asked.to, most), Moved::by_hand);
             break;
     }
 
@@ -709,7 +717,7 @@ bool Table::handle(ClickEvent& what) {
 
     if (root() != nullptr) focus();
 
-    if (const std::optional<std::size_t> at = row_under(what.where())) which(*at);
+    if (const std::optional<std::size_t> at = row_under(what.where())) which(*at, Moved::by_hand);
 
     return true;
 }
@@ -725,7 +733,7 @@ bool Table::handle(DoubleClickEvent& what) {
 
     if (!at) return true;
 
-    which(*at);
+    which(*at, Moved::by_hand);
 
     return false;
 }

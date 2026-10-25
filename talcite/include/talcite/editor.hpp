@@ -34,13 +34,13 @@ public:
 
         [[nodiscard]] std::string text() const;
 
-        void set(std::size_t anchor, std::size_t cursor);
+        void set(std::size_t anchor, std::size_t cursor, Moved how = Moved::by_program);
 
-        void extend(std::size_t to);
+        void extend(std::size_t to, Moved how = Moved::by_program);
 
         void clear();
 
-        bool erase();
+        bool erase(Moved how = Moved::by_program);
 
     private:
         friend class Editor;
@@ -119,7 +119,7 @@ public:
 
     [[nodiscard]] std::size_t cursor() const;
 
-    void cursor(std::size_t given);
+    void cursor(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] std::size_t line() const;
 
@@ -143,11 +143,11 @@ public:
 
     bool paste();
 
-    void insert(std::string what);
+    void insert(std::string what, Moved how = Moved::by_program);
 
-    void back_erase(std::size_t much);
+    void back_erase(std::size_t much, Moved how = Moved::by_program);
 
-    void front_erase(std::size_t much);
+    void front_erase(std::size_t much, Moved how = Moved::by_program);
 
     std::optional<Hit> find(const Comb& how, std::size_t from, bool back);
 
@@ -173,7 +173,7 @@ protected:
     bool handle(PasteEvent& what) override;
 
 private:
-    void settled(std::size_t where);
+    void settled(std::size_t where, Moved how = Moved::by_program);
 
     struct Kept;
 

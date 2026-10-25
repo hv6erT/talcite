@@ -616,7 +616,7 @@ TRIAL("List: the view catches up with the current row") {
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), 0);
+    same(one->first(), std::size_t{0});
 
     ui::KeyEvent last{ui::Code::end};
 
@@ -625,14 +625,14 @@ TRIAL("List: the view catches up with the current row") {
 
     // Ten rows, three visible, we stand on the ninth, so the view starts at the seventh.
     same(one->which(), std::optional<std::size_t>{9});
-    same(one->first(), 7);
+    same(one->first(), std::size_t{7});
 
     ui::KeyEvent first{ui::Code::home};
 
     (void)top.dispatch(first);
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), 0);
+    same(one->first(), std::size_t{0});
 }
 
 // The wheel moves only the view: the current row stays, and `moved` stays silent.
@@ -664,9 +664,59 @@ TRIAL("List: the wheel scrolls the view and does not move the row") {
     (void)top.render({{0, 0}, {12, 3}});
 
     // The view moved, so the event goes out, but the current row stayed where it was.
-    same(one->first(), 3);
+    same(one->first(), std::size_t{3});
     same(one->which(), std::optional<std::size_t>{0});
     same(moves, 2);
+}
+
+// The list's own keys, the wheel and a click on an item move it by hand; a call from the program
+// (`first`) and a focus put on an item from elsewhere do not. The event comes once per move: the
+// focus that follows a key finds the row current already.
+TRIAL("List: a move says whether it came by hand") {
+    Sheet top;
+
+    const auto one = listed(10);
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = one->on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    top.children().add(one);
+
+    one->focus();
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    heard.clear();
+
+    ui::KeyEvent down{ui::Code::down};
+
+    ought(top.dispatch(down));
+    same(one->which(), std::optional<std::size_t>{1});
+
+    ui::WheelEvent wheel{{2, 1}, -1};
+
+    ought(top.dispatch(wheel));
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    ui::ClickEvent click{{2, 1}, ui::Mouse::left, {}};
+
+    ought(top.dispatch(click));
+
+    same(heard, (std::vector<bool>{true, true, true}));
+
+    heard.clear();
+
+    one->first(0);
+    one->children()[6]->focus();
+
+    same(heard, (std::vector<bool>{false, false}));
+    same(one->which(), std::optional<std::size_t>{6});
 }
 
 TRIAL("List: the wheel at the end of scrolling passes the event up") {
@@ -702,7 +752,7 @@ TRIAL("List: the tilted wheel passes the event up") {
     ui::WheelEvent tilted{{2, 1}, -1, {}, ui::Axis::horizontal};
 
     ought(!top.dispatch(tilted));
-    same(one->first(), 0);
+    same(one->first(), std::size_t{0});
 }
 
 TRIAL("List: the event speaks once per change of row") {

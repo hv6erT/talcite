@@ -253,9 +253,18 @@ public:
     DisableEvent() = default;
 };
 
+enum class Moved : std::uint8_t { by_program, by_hand };
+
 class ScrollEvent : public Event {
 public:
-    ScrollEvent() = default;
+    explicit ScrollEvent(Moved how = Moved::by_program) : how_(how) {}
+
+    [[nodiscard]] Moved how() const { return how_; }
+
+    [[nodiscard]] bool by_hand() const { return how_ == Moved::by_hand; }
+
+private:
+    Moved how_;
 };
 
 class PickEvent : public Event {

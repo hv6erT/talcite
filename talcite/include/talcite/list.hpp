@@ -32,7 +32,7 @@ public:
 
     [[nodiscard]] std::size_t first() const;
 
-    void first(std::size_t given);
+    void first(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] bool scrollbar() const { return shape_.scrollbar; }
 
@@ -72,17 +72,19 @@ protected:
     bool handle(MouseEvent& what) override;
 
 private:
+    friend class ListItem;
+
     [[nodiscard]] ListItem* item(int which) const;
 
     void aim(int given);
 
     [[nodiscard]] int nearest(int from, int step) const;
 
-    bool going(int to);
+    bool going(int to, Moved how);
 
-    bool walking(int step, int times);
+    bool walking(int step, int times, Moved how);
 
-    void slid(int to);
+    void slid(int to, Moved how);
 
     std::string scrollbar_role_ = "talcite.scroll";
     ScrollShape shape_;

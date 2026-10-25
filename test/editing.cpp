@@ -131,6 +131,44 @@ TRIAL("Editor: typing a character moves the cursor and makes the document dirty"
     ought(one->dirty());
 }
 
+// The editor's own keys, typing among them, move the cursor by hand; a call from the program does
+// not, typing included.
+TRIAL("Editor: a move says whether it came by hand") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, "abc\ndef");
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {40, 10}});
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = sheet.on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    ui::KeyEvent right{ui::Code::right};
+    ui::KeyEvent letter{ui::Key{U'x'}};
+    ui::KeyEvent back{ui::Code::backspace};
+
+    ought(sheet.dispatch(right));
+    ought(sheet.dispatch(letter));
+    ought(sheet.dispatch(back));
+
+    same(heard, (std::vector<bool>{true, true, true}));
+
+    heard.clear();
+
+    one->cursor(5);
+    one->insert("y");
+    one->back_erase(1);
+
+    same(heard, (std::vector<bool>{false, false, false}));
+}
+
 // Enter splits a line, so the number of lines grows, and that is the adjustment the spool gets from
 // `changed` instead of counting the document again.
 TRIAL("Editor: enter adds a line") {

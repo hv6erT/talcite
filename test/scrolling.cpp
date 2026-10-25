@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <vector>
 #include <string>
 
 #include "talcite/box.hpp"
@@ -351,6 +352,34 @@ TRIAL("Scroll: the wheel scrolls vertically, and with Shift horizontally") {
 
     same(scroll->shift().x, 3);
     same(scroll->shift().y, 3);
+}
+
+// The wheel moves the scroller by hand, a call from the program does not.
+TRIAL("Scroll: a move says whether it came by hand") {
+    ui::Root top;
+
+    const auto scroll = std::make_shared<ui::Scroll>(ui::Axis::both);
+
+    scroll->children().add(std::make_shared<Sheet>(ui::Size{20, 20}, U'a'));
+    top.children().add(scroll);
+
+    (void)top.render({{0, 0}, {5, 5}});
+
+    std::vector<bool> heard;
+
+    const ui::Hook heard_scroll = scroll->on<ui::ScrollEvent>([&heard](ui::ScrollEvent& what) {
+        heard.push_back(what.by_hand());
+
+        return false;
+    });
+
+    ui::WheelEvent down{{1, 1}, -1};
+
+    ought(top.dispatch(down));
+
+    scroll->shift({1, 1});
+
+    same(heard, (std::vector<bool>{true, false}));
 }
 
 TRIAL("Scroll: scrolling does not go beyond the content") {

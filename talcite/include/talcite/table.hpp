@@ -61,19 +61,19 @@ public:
 
     [[nodiscard]] std::optional<std::size_t> which() const;
 
-    void which(std::size_t given);
+    void which(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] std::size_t first() const;
 
-    void first(std::size_t given);
+    void first(std::size_t given, Moved how = Moved::by_program);
 
     [[nodiscard]] std::size_t shown() const;
 
-    void step(int rows);
+    void step(int rows, Moved how = Moved::by_program);
 
-    void page(int pages);
+    void page(int pages, Moved how = Moved::by_program);
 
-    void end();
+    void end(Moved how = Moved::by_program);
 
     [[nodiscard]] bool heading() const;
 

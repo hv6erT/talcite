@@ -33,6 +33,8 @@ protected:
     bool handle(DoubleClickEvent& what) override;
 
 private:
+    void chosen();
+
     std::string text_;
 };
 
