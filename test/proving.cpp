@@ -487,6 +487,11 @@ int main(int count, char** given) {
         } catch (const std::exception& why) {
             std::cout << "  FAIL  " << one.named << "\n        threw: " << why.what() << "\n";
         }
+
+        // Each verdict goes out at once: written to a file, the output would otherwise wait in a
+        // buffer, and a run that hangs or is stopped would end several trials before the one that
+        // hung.
+        std::cout.flush();
     }
 
     std::cout << "\nPassed " << passed << " of " << ran << ".\n";

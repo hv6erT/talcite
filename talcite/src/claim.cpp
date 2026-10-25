@@ -152,6 +152,13 @@ const fs::path& nowhere() {
 // it. We do not delete the file on release: deleted between the open and the lock of two
 // contenders, it would give two locks on two different files with one name.
 //
+// The holder may remove the file while it holds it, which is how a lock that is no longer needed
+// goes away (the locks of the history entries in twa), and the same on both systems: on Windows the
+// handle shares deletion alone, so nobody else can open the file meanwhile, while the holder's own
+// removal goes through; on POSIX a contender who opened the file just before it was removed would
+// lock a file without a name, so after locking we check that the name still leads to the file we
+// hold, and otherwise try again with the file now under that name.
+//
 // Taken by someone else is an empty result, not a refusal: "already running" is an answer, and a
 // refusal is only what could not be checked (no folder, no permissions). On POSIX we do not follow
 // links: someone else's link in our place must not point at a file we would lock.
@@ -163,7 +170,7 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
 
 #ifdef _WIN32
 
-        held->handle = CreateFileW(where.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
+        held->handle = CreateFileW(where.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
                                    FILE_ATTRIBUTE_NORMAL, nullptr);
 
         if (held->handle == INVALID_HANDLE_VALUE) {
@@ -178,16 +185,27 @@ Promise<std::optional<Claim>> Claim::taken(fs::path where) {
 
 #else
 
-        held->descriptor = ::open(where.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+        for (;;) {
+            held->descriptor = ::open(where.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 
-        if (held->descriptor < 0) fs::core::amiss("Cannot open the claim file.", where);
+            if (held->descriptor < 0) fs::core::amiss("Cannot open the claim file.", where);
 
-        if (::flock(held->descriptor, LOCK_EX | LOCK_NB) != 0) {
-            if (errno == EWOULDBLOCK) {
-                return std::optional<Claim>{};
+            if (::flock(held->descriptor, LOCK_EX | LOCK_NB) != 0) {
+                if (errno == EWOULDBLOCK) {
+                    return std::optional<Claim>{};
+                }
+
+                fs::core::amiss("Cannot lock the claim file.", where);
             }
 
-            fs::core::amiss("Cannot lock the claim file.", where);
+            struct stat mine{};
+            struct stat named{};
+
+            if (::fstat(held->descriptor, &mine) != 0) fs::core::amiss("Cannot lock the claim file.", where);
+
+            if (::lstat(where.c_str(), &named) == 0 && named.st_dev == mine.st_dev && named.st_ino == mine.st_ino) break;
+
+            held->release();
         }
 
 #endif

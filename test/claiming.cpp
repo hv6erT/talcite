@@ -203,6 +203,31 @@ TRIAL("Lock: the last copy of the handle holds it") {
     ought(Claim::taken(where).get().has_value());
 }
 
+// The holder removes the file while it holds the lock: a lock no longer needed goes away without
+// a moment in which someone else could take it under the old name. After the release nothing is
+// left, and the next claim is an ordinary one.
+TRIAL("Lock: the holder removes the file while holding it") {
+    const stood::path where = spot("usuniecie");
+
+    std::optional<Claim> first = Claim::taken(where).get();
+
+    ought(first.has_value());
+
+    if (!first) return;
+
+    fs::erase(where).get();
+
+    first->release();
+
+    std::error_code why;
+
+    ought(!stood::exists(where, why));
+
+    const std::optional<Claim> next = Claim::taken(where).get();
+
+    ought(next.has_value() && next->held());
+}
+
 // A place where the file cannot be created is a refusal, not nothing, because nobody runs there.
 TRIAL("Lock: a missing directory is a refusal, not already running") {
     threw(Claim::taken(fs::temp() / "talcite-nie-ma-takiego-katalogu" / "blokada").get());
