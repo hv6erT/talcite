@@ -349,6 +349,82 @@ TRIAL("Table: going below the screen scrolls the view") {
     same(said(sheet.render({{0, 0}, {30, 4}}), 1), std::string{"plik1                       10"});
 }
 
+// A cursor put before the table knew its height: the first frame moves the view only as far as
+// the cursor needs. Before, the move assumed one row of room, so a fresh window with the cursor on
+// the second row showed the list without its first row.
+TRIAL("Table: a cursor put before the first frame scrolls only as far as the frame needs") {
+    {
+        Sheet sheet;
+
+        const auto one = shown(sheet, 3);
+
+        one->which(1);
+
+        const View made = sheet.render({{0, 0}, {30, 6}});
+
+        same(one->first(), std::size_t{0});
+        same(said(made, 1), std::string{"plik0                        0"});
+    }
+
+    {
+        Sheet sheet;
+
+        const auto one = shown(sheet, 20);
+
+        one->which(8);
+
+        const View made = sheet.render({{0, 0}, {30, 4}});
+
+        same(one->first(), std::size_t{6});
+        same(said(made, 3), std::string{"plik8                       80"});
+    }
+
+    // Rows that open above the cursor before the first frame: the view waits too.
+    {
+        Sheet sheet;
+
+        const auto one = shown(sheet, 3);
+
+        one->which(2);
+        one->changed(0, 0, 4);
+
+        (void)sheet.render({{0, 0}, {30, 4}});
+
+        same(*one->which(), std::size_t{6});
+        same(one->first(), std::size_t{4});
+    }
+
+    // A view asked for by name, then rows replaced before the first frame: the cursor stands above
+    // the view, and the frame brings the view back to it.
+    {
+        Sheet sheet;
+
+        const auto one = shown(sheet, 20);
+
+        one->first(5);
+        one->changed(10, 0, 2);
+
+        (void)sheet.render({{0, 0}, {30, 4}});
+
+        same(*one->which(), std::size_t{0});
+        same(one->first(), std::size_t{0});
+    }
+
+    // A view asked for by name wins over one still waiting for the cursor.
+    {
+        Sheet sheet;
+
+        const auto one = shown(sheet, 20);
+
+        one->which(8);
+        one->first(2);
+
+        (void)sheet.render({{0, 0}, {30, 4}});
+
+        same(one->first(), std::size_t{2});
+    }
+}
+
 TRIAL("Table: end stands on the last row") {
     Sheet sheet;
 

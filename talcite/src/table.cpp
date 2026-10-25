@@ -24,6 +24,16 @@ constexpr int stepping = 3;
 // apart.
 constexpr int spacing = 1;
 
+// How many rows the table shows in `seen` under its heading; nothing before the first frame or when
+// there is no room for a row, since then no one knows yet where the view should stand.
+std::optional<std::size_t> rows_in(Area seen, const TableShape& shape) {
+    const int high = seen.size.high - (shape.heading ? 1 : 0);
+
+    if (high <= 0) return std::nullopt;
+
+    return static_cast<std::size_t>(high);
+}
+
 }
 
 // The table's state, kept behind a pointer so the public header stays small.
@@ -35,6 +45,27 @@ struct Table::Kept {
 
     std::size_t top = 0;
     std::optional<std::size_t> which;
+
+    // The cursor moved before the table knew its height: the view goes to it on the first frame
+    // that has room for rows (`spread`). Before, the move assumed one row of room, and a cursor put
+    // on the second row of a fresh window scrolled the first one out of a list that had room for
+    // all of them.
+    bool pending = false;
+
+    // Moves the view the least that puts the current row among the `high` visible rows; says
+    // whether it moved.
+    bool pulled(std::size_t high) {
+        if (!which || high == 0) return false;
+
+        const std::size_t was = top;
+
+        if (*which < top)
+            top = *which;
+        else if (*which >= top + high)
+            top = *which - high + 1;
+
+        return top != was;
+    }
 
     // What is visible. Recomputed when, and only when, the allotted size or the position changes;
     // otherwise every frame would ask the source again, and with animated neighbors that happens
@@ -80,6 +111,7 @@ void Table::source(TableSource given, std::size_t rows) {
 
     kept.top = 0;
     kept.which = rows > 0 ? std::optional<std::size_t>{0} : std::optional<std::size_t>{};
+    kept.pending = false;
 
     chosen().clear();
 
@@ -130,15 +162,12 @@ void Table::changed(std::size_t at, std::size_t gone, std::size_t came) {
     kept.top = rows > 0 ? std::min(moved(kept.top).value_or(at), rows - 1) : 0;
     kept.rows = rows;
 
-    // The current row stays in view: the change may have pushed it below the window.
-    if (kept.which) {
-        const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
-
-        if (*kept.which < kept.top)
-            kept.top = *kept.which;
-        else if (*kept.which >= kept.top + static_cast<std::size_t>(high))
-            kept.top = *kept.which - static_cast<std::size_t>(high) + 1;
-    }
+    // The current row stays in view: the change may have pushed it below the window. Before the
+    // first frame that waits for the height.
+    if (const std::optional<std::size_t> high = rows_in(area(), kept.shape))
+        (void)kept.pulled(*high);
+    else
+        kept.pending = true;
 
     chosen().moved(at, gone, came);
     chosen().keep(rows);
@@ -220,7 +249,8 @@ Size Table::wants(Size room) const { return room; }
 
 // Makes `given` (clamped to the last row) the current row and sends a `ScrollEvent`. Setting the
 // current row pulls the view to it if it has fallen off the screen. The height comes from the
-// rectangle of the previous frame: only that knows how much the table really got.
+// rectangle of the previous frame: only that knows how much the table really got. Before the first
+// frame the view waits for it.
 //
 // The event says how the move came (`ScrollEvent::by_hand`): the table's own keys, wheel and mouse
 // pass `Moved::by_hand`, a call from the program leaves the default. Only the table knows it, and a
@@ -240,18 +270,15 @@ void Table::which(std::size_t given, Moved how) {
 
     kept.which = want;
 
-    const int high = std::max(area().size.high - (kept.shape.heading ? 1 : 0), 1);
-    const std::size_t was = kept.top;
-
-    if (want < kept.top)
-        kept.top = want;
-    else if (want >= kept.top + static_cast<std::size_t>(high))
-        kept.top = want - static_cast<std::size_t>(high) + 1;
-
     // The rows are fetched again only when the view moved: a cursor that walks inside the visible
     // rows changes only which row is painted as current, and fetching every row at each arrow press
-    // costs the source a row's worth of work per row.
-    if (kept.top != was) kept.fresh = true;
+    // costs the source a row's worth of work per row. A view that waits for the height is moved
+    // by the first frame with room for rows, which fetches them anyway.
+    if (const std::optional<std::size_t> high = rows_in(area(), kept.shape)) {
+        if (kept.pulled(*high)) kept.fresh = true;
+    } else {
+        kept.pending = true;
+    }
 
     (void)trigger(ScrollEvent{how});
 }
@@ -262,6 +289,9 @@ void Table::first(std::size_t given, Moved how) {
     Kept& kept = *kept_;
 
     const std::size_t want = kept.rows == 0 ? 0 : std::min(given, kept.rows - 1);
+
+    // A view asked for by name wins over one still waiting to follow the cursor.
+    kept.pending = false;
 
     if (kept.top == want) return;
 
@@ -443,6 +473,12 @@ void Table::spread(Size given) {
     if (!kept.source || given.wide <= 0 || high <= 0) return;
 
     const std::size_t want = static_cast<std::size_t>(high);
+
+    // The cursor moved before this first frame with room for rows: now the view knows where to go.
+    if (kept.pending) {
+        kept.pending = false;
+        (void)kept.pulled(want);
+    }
 
     while (kept.shown.size() < want) {
         const std::vector<TableRow> got = kept.source(kept.top + kept.shown.size(), batch);
