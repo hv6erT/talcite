@@ -124,8 +124,6 @@ public:
 
     [[nodiscard]] virtual Size wants(Size room) const;
 
-    [[nodiscard]] virtual Area placement(Size room) const;
-
     [[nodiscard]] virtual std::optional<Spot> caret() const;
 
     [[nodiscard]] virtual CaretShape caret_shape() const;

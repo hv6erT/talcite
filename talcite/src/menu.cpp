@@ -170,53 +170,6 @@ Size Menu::wants(Size room) const {
     return {std::min(wide, room.wide), std::min(inner.high + 2 + apart, room.high)};
 }
 
-// Under its title: that is all the positioning of a menu. The title's place comes from
-// `screen_area()`, that is, from the rectangles up the tree, computed every frame; it is shifted
-// into the bar's coordinates, because the stack asks for a place in its own coordinates. When the
-// box does not fit at the right edge, it moves left; the title stays where it was, because it is a
-// separate node in its own row.
-//
-// The list of a submenu stands beside its item instead, with its first item in the item's row: on
-// the right, its left border over the right border of the menu it comes from, and when there is no
-// room there, on the left, its right border over the left border. A list too tall for the rows
-// below moves up.
-Area Menu::placement(Size room) const {
-    const Size wanted = wants(room);
-
-    if (owner_ != nullptr && bar_ != nullptr) {
-        const std::optional<Area> item = owner_->screen_area();
-        const std::optional<Area> bar = bar_->screen_area();
-
-        if (item.has_value() && bar.has_value()) {
-            const int left = item->at.x - bar->at.x;
-            const int aside = shape_.shade ? 2 : 0;
-
-            int x = left + item->size.wide;
-
-            if (x + wanted.wide > room.wide) x = left - (wanted.wide - aside);
-
-            x = std::clamp(x, 0, std::max(room.wide - wanted.wide, 0));
-
-            const int y = std::clamp(item->at.y - bar->at.y - 1, 0, std::max(room.high - wanted.high, 0));
-
-            return {{x, y}, wanted};
-        }
-    }
-
-    int x = 0;
-
-    if (head_ != nullptr && bar_ != nullptr) {
-        const std::optional<Area> title = head_->screen_area();
-        const std::optional<Area> bar = bar_->screen_area();
-
-        if (title.has_value() && bar.has_value()) x = title->at.x - bar->at.x;
-    }
-
-    x = std::clamp(x, 0, std::max(room.wide - wanted.wide, 0));
-
-    return {{x, 1}, wanted};
-}
-
 // The highlighted item has two faces, as in a list: `which()` is its number, `current()` the item
 // itself, which is pressed, read or compared. Empty means none. Inside, the number is kept as an
 // `int`, because `nearest` computes wrapping steps on it and closing clears it with -1.

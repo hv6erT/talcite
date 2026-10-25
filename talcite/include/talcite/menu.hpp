@@ -51,8 +51,6 @@ public:
 
     [[nodiscard]] Size wants(Size room) const override;
 
-    [[nodiscard]] Area placement(Size room) const override;
-
     [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] bool accepts(const Node& one) const override;

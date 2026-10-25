@@ -55,6 +55,8 @@ protected:
 
     bool handle(UnfocusEvent& what) override;
 
+    [[nodiscard]] Area placement(const Node& one, Size room) const override;
+
 private:
     friend class Menu;
 

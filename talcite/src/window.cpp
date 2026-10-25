@@ -31,13 +31,6 @@ int Window::capacity() const { return 1; }
 // the menu), not a wish of the content at every frame.
 Size Window::wants(Size room) const { return full_ ? room : seat_.size; }
 
-// Where the window stands in the room: all of it when full, otherwise its own seat.
-Area Window::placement(Size room) const {
-    if (full_) return {{0, 0}, room};
-
-    return seat_;
-}
-
 // Switches the window between full and placed; the seat is kept for when it is placed again.
 void Window::full(bool given) { full_ = given; }
 

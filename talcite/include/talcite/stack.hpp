@@ -12,6 +12,8 @@ public:
 
 protected:
     View paint(Size given, Area seen) override;
+
+    [[nodiscard]] virtual Area placement(const Node& one, Size room) const;
 };
 
 }

@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "talcite/menu.hpp"
 #include "talcite/root.hpp"
+#include "talcite/submenu.hpp"
 
 #include "menutitle.hpp"
 #include "slot.hpp"
@@ -13,15 +15,15 @@
 namespace talcite::ui {
 
 // The menu bar is a stack with two floors. At the bottom a column: the row of titles above the
-// content row. On top, only while a menu is open, the menu itself, which tells the stack where to
-// stand: under its title. Painting and mouse hits are done by `Stack`, laying out the titles by
+// content row. On top, only while a menu is open, the menu itself, which the bar stands under its
+// title (`placement`). Painting and mouse hits are done by `Stack`, laying out the titles by
 // `Row`; the bar computes no widths or positions and paints nothing of its own.
 //
 //     Menubar (Stack)
 //     ├── Column
 //     │   ├── Row  ← MenuTitle × N
 //     │   └── Row  ← slot for the application's content
-//     ├── [Menu]  ← attached only while open; placed under its title
+//     ├── [Menu]  ← attached only while open; the bar places it under its title
 //     └── [Menu]  ← the list of a submenu, while open; placed beside its item
 //
 // An open menu is a child of the bar, so a key from an item bubbles item → menu → bar, and the
@@ -47,6 +49,58 @@ void Menubar::content(std::shared_ptr<Node> given) { hold(*body_, std::move(give
 // The column, at most one open menu, and the lists of submenus opened from it, one inside the
 // other.
 int Menubar::capacity() const { return plenty; }
+
+// Where the bar lays a child: the column over the whole room, a menu under its title (every menu
+// among the children is the bar's own, since `accepts` lets in no other). The title's place comes
+// from `screen_area()`, that is, from the rectangles up the tree, computed every frame; it is
+// shifted into the bar's coordinates, because the stack asks for a place in its own. When the box
+// does not fit at the right edge, it moves left; the title stays where it was, because it is a
+// separate node in its own row. The bar places its menus because it is the bar that opens them and
+// holds their titles; a menu standing itself would have to know the bar it stands in.
+//
+// The list of a submenu stands beside its item instead, with its first item in the item's row: on
+// the right, its left border over the right border of the menu it comes from, and when there is no
+// room there, on the left, its right border over the left border. A list too tall for the rows
+// below moves up.
+Area Menubar::placement(const Node& one, Size room) const {
+    const auto* menu = dynamic_cast<const Menu*>(&one);
+
+    if (menu == nullptr) return {{0, 0}, room};
+
+    const Size wanted = menu->wants(room);
+    const std::optional<Area> bar = screen_area();
+
+    if (menu->owner_ != nullptr) {
+        const std::optional<Area> item = menu->owner_->screen_area();
+
+        if (item.has_value() && bar.has_value()) {
+            const int left = item->at.x - bar->at.x;
+            const int aside = menu->shape_.shade ? 2 : 0;
+
+            int x = left + item->size.wide;
+
+            if (x + wanted.wide > room.wide) x = left - (wanted.wide - aside);
+
+            x = std::clamp(x, 0, std::max(room.wide - wanted.wide, 0));
+
+            const int y = std::clamp(item->at.y - bar->at.y - 1, 0, std::max(room.high - wanted.high, 0));
+
+            return {{x, y}, wanted};
+        }
+    }
+
+    int x = 0;
+
+    if (menu->head_ != nullptr) {
+        const std::optional<Area> title = menu->head_->screen_area();
+
+        if (title.has_value() && bar.has_value()) x = title->at.x - bar->at.x;
+    }
+
+    x = std::clamp(x, 0, std::max(room.wide - wanted.wide, 0));
+
+    return {{x, 1}, wanted};
+}
 
 // Only our own children are accepted: the column, our own menus and the lists of their submenus,
 // which know this bar once they have been opened from it. A foreign child cannot come in, because

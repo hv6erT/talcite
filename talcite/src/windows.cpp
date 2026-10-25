@@ -54,6 +54,17 @@ namespace {
 
 }
 
+// Where a window stands in the room: all of it when full, otherwise its own seat. The seat is the
+// window's state, which the user changes (Move and Resize), and the container reads it; the window
+// does not place itself.
+Area Windows::placement(const Node& one, Size room) const {
+    const auto* window = dynamic_cast<const Window*>(&one);
+
+    if (window == nullptr || window->full()) return {{0, 0}, room};
+
+    return window->seat();
+}
+
 // Adds a window and brings it to the top with the focus.
 void Windows::open(std::shared_ptr<Window> given) {
     Window* one = given.get();

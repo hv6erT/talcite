@@ -13,7 +13,7 @@
 // sparingly, where a group of commands would otherwise make a menu too tall for the screen.
 //
 // The list is an ordinary `Menu`, built with items and separators like any other. When it opens,
-// the bar attaches it on top of the open menu, beside the item (`Menu::placement`), so a key from
+// the bar attaches it on top of the open menu, beside the item (`Menubar::placement`), so a key from
 // one of its items bubbles item → list → bar, the same way as in a menu of the bar. The right
 // arrow, Enter, the item's letter or a click open the list; the left arrow or Esc close it and
 // give the focus back to the item; the right arrow inside the list goes on to the next menu of

@@ -22,6 +22,8 @@ public:
 
 protected:
     void restore(std::weak_ptr<Node> was) override;
+
+    [[nodiscard]] Area placement(const Node& one, Size room) const override;
 };
 
 }

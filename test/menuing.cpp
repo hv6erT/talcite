@@ -1856,6 +1856,30 @@ TRIAL("Submenu: the right arrow opens the list beside the item, with its first i
     same(read(seen, 4), std::string{"└─────────────────────└────────────┘"});
 }
 
+// A list too tall for the rows under its item moves up, as far as it must, and stays whole on the
+// screen; the bar places it, as it places every menu it opens.
+TRIAL("Submenu: a list too tall for the rows below moves up") {
+    ui::Root top;
+
+    const auto body = std::make_shared<Box>(ui::Size{40, 6}, U' ');
+    Cascade made{top, body};
+
+    made.deeper->menu().children().add(std::make_shared<ui::MenuItem>("Kosz"));
+    made.deeper->menu().children().add(std::make_shared<ui::MenuItem>("Źródła"));
+
+    body->focus();
+    made.menu->open();
+
+    (void)top.render({{0, 0}, {40, 6}});
+
+    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+
+    (void)top.render({{0, 0}, {40, 6}});
+
+    same(made.deeper->menu().area().at.y, 0);
+    same(made.deeper->menu().area().size.high, 6);
+}
+
 TRIAL("Submenu: Esc and the left arrow close the list alone and give the focus back to the item") {
     ui::Root top;
 

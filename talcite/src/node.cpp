@@ -282,16 +282,6 @@ Size Node::wants(Size room) const {
     return inside_.front()->wants(room);
 }
 
-// Where this node stands in a parent that lays its children on top of each other. Only `Stack`
-// asks this; `Row`, `Column` and `Frame` lay out their own way and do not read the answer. The
-// whole room by default: a curtain takes that much, because it has to catch the mouse everywhere,
-// and so does the application's content. Less is taken by what lies on the content in one place:
-// an open list under its title.
-//
-// The result is in the parent's coordinates and must not leave the room; `Stack` enforces that,
-// not each node separately.
-Area Node::placement(Size room) const { return {{0, 0}, room}; }
-
 // The node's place on the screen, assembled by walking up over the rectangles, the same walk by
 // which the root assembles the cursor position in a nested field and by which the mouse goes down.
 //

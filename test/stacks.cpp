@@ -42,16 +42,24 @@ private:
     char32_t what_;
 };
 
-// A child that says where it stands by itself: in one place, smaller than the room. That is the
-// whole difference between an overlay in a corner and a veil over everything.
-class Pinned : public Box {
+// A stack that lays one child in a fixed place, smaller than the room, the way `Windows` lays a
+// window in its seat: the container says where a child lies, through `placement`.
+class Board : public ui::Stack {
 public:
-    Pinned(ui::Area where, char32_t what) : Box(where.size, what), where_(where) {}
+    // Lays `one` at `where` from now on; every other child takes the whole room.
+    void pin(const ui::Node& one, ui::Area where) {
+        pinned_ = &one;
+        where_ = where;
+    }
 
-    // The fixed place the child was built with.
-    [[nodiscard]] ui::Area placement(ui::Size) const override { return where_; }
+protected:
+    // The pinned child in its place, the rest as the stack lays them.
+    [[nodiscard]] ui::Area placement(const ui::Node& one, ui::Size room) const override {
+        return &one == pinned_ ? where_ : ui::Stack::placement(one, room);
+    }
 
 private:
+    const ui::Node* pinned_ = nullptr;
     ui::Area where_;
 };
 
@@ -66,10 +74,9 @@ public:
 
 // --- Default place -------------------------------------------------------------------------------
 
-// A plain node in a stack takes the whole room. A veil takes that much to catch the mouse
-// everywhere, and so does the application's content, so this is the default answer rather than a
-// separate setting.
-TRIAL("Stack: a child without a place of its own takes the whole room") {
+// A node in a stack takes the whole room. A veil takes that much to catch the mouse everywhere, and
+// so does the application's content; what stands in one spot stands in a float.
+TRIAL("Stack: a child takes the whole room") {
     ui::Stack stack;
 
     const auto one = std::make_shared<Box>(ui::Size{2, 1}, U'a');
@@ -83,14 +90,15 @@ TRIAL("Stack: a child without a place of its own takes the whole room") {
 
 // --- A place of its own --------------------------------------------------------------------------
 
-// This is what `placement` is for. The child stands where it said, and the rest of the room stays
-// transparent: what lies below shows from under the overlay.
-TRIAL("Stack: a child with a place of its own stands where it said") {
-    ui::Stack stack;
+// This is what `placement` is for. The child stands where its container lays it, and the rest of
+// the room stays transparent: what lies below shows from under the overlay.
+TRIAL("Stack: a child the container lays in one spot stands there") {
+    Board stack;
 
     const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
-    const auto over = std::make_shared<Pinned>(ui::Area{{2, 1}, {3, 1}}, U'b');
+    const auto over = std::make_shared<Box>(ui::Size{3, 1}, U'b');
 
+    stack.pin(*over, {{2, 1}, {3, 1}});
     stack.children().add(under);
     stack.children().add(over);
 
@@ -112,9 +120,11 @@ TRIAL("Stack: outside its children it lets through what lies below") {
     ui::Stack outer;
 
     const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
-    const auto inner = std::make_shared<ui::Stack>();
+    const auto inner = std::make_shared<Board>();
+    const auto over = std::make_shared<Box>(ui::Size{2, 1}, U'b');
 
-    inner->children().add(std::make_shared<Pinned>(ui::Area{{2, 1}, {2, 1}}, U'b'));
+    inner->pin(*over, {{2, 1}, {2, 1}});
+    inner->children().add(over);
 
     outer.children().add(under);
     outer.children().add(inner);
@@ -130,10 +140,11 @@ TRIAL("Stack: outside its children it lets through what lies below") {
 // that, because here it is one place, while in the children it would be as many as there are
 // classes.
 TRIAL("Stack: a place sticking out of the room is clipped") {
-    ui::Stack stack;
+    Board stack;
 
-    const auto one = std::make_shared<Pinned>(ui::Area{{4, 2}, {10, 10}}, U'b');
+    const auto one = std::make_shared<Box>(ui::Size{10, 10}, U'b');
 
+    stack.pin(*one, {{4, 2}, {10, 10}});
     stack.children().add(one);
 
     const View made = stack.render({{0, 0}, {6, 3}});
@@ -143,10 +154,11 @@ TRIAL("Stack: a place sticking out of the room is clipped") {
 }
 
 TRIAL("Stack: a place outside the room gives an empty rectangle, not a negative one") {
-    ui::Stack stack;
+    Board stack;
 
-    const auto one = std::make_shared<Pinned>(ui::Area{{-3, 8}, {4, 4}}, U'b');
+    const auto one = std::make_shared<Box>(ui::Size{4, 4}, U'b');
 
+    stack.pin(*one, {{-3, 8}, {4, 4}});
     stack.children().add(one);
 
     (void)stack.render({{0, 0}, {6, 3}});
@@ -164,10 +176,11 @@ TRIAL("Stack: a place outside the room gives an empty rectangle, not a negative 
 TRIAL("Stack: a click hits the overlay only where it is") {
     Sheet top;
 
-    const auto stack = std::make_shared<ui::Stack>();
+    const auto stack = std::make_shared<Board>();
     const auto under = std::make_shared<Box>(ui::Size{6, 3}, U'a');
-    const auto over = std::make_shared<Pinned>(ui::Area{{2, 1}, {3, 1}}, U'b');
+    const auto over = std::make_shared<Box>(ui::Size{3, 1}, U'b');
 
+    stack->pin(*over, {{2, 1}, {3, 1}});
     stack->children().add(under);
     stack->children().add(over);
     top.children().add(stack);
