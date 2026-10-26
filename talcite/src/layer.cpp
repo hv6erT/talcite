@@ -76,7 +76,8 @@ void Layers::close() {
     if (Layer* one = top()) close(*one);
 }
 
-// Closes the given layer: announcement, removal, focus, in that order. We hold our own reference
+// Closes the given layer: announcement, the focus out of it, removal, focus back, in that order. We
+// hold our own reference
 // throughout, because removal from the tree and from the list may drop the last one, and the
 // caller's handler may still touch the layer. The close handler may also open a new layer (an
 // error message after OK) or close another one; the list may have shifted, so the position is
@@ -112,6 +113,14 @@ void Layers::close(Layer& one) {
 
         if (!mine || mine->root() == nullptr || inside(mine.get())) (*above)->was_ = was;
     }
+
+    // A focus inside the layer leaves it with an `UnfocusEvent` before the layer leaves the tree,
+    // as a focus leaves a closing menu (`Menu::close`): detaching alone clears it without a word
+    // (`Root::losing`), and whoever follows the focus by its events (a key bar that speaks of the
+    // node with the focus) would go on believing it stands in a node that is gone. The focus is
+    // nowhere for that moment; where it goes is the container's call after the removal (`restore`),
+    // which then sends the `FocusEvent`.
+    if (Root* top = root(); top != nullptr && inside(top->focused_node())) top->move_focus(nullptr);
 
     opened_.erase(again);
 

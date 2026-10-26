@@ -1,6 +1,8 @@
 #include "proving.hpp"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "talcite/button.hpp"
 #include "talcite/column.hpp"
@@ -516,6 +518,43 @@ TRIAL("Modal: a deferred request sends no focus events") {
 
     same(came, 1);
     same(went, 0);
+}
+
+// The node with the focus inside a closing veil hears that it lost it, before the veil leaves the
+// tree and with the focus already gone from it; then the focus returns with its own event. Without
+// the first, a key bar that follows the focus would go on speaking of a node that is gone.
+TRIAL("Modal: closing tells the focus inside that it left, then gives it back") {
+    Stage stage;
+
+    const auto other = std::make_shared<Box>(ui::Size{5, 2}, U'y');
+
+    stage.under->children().add(other);
+    other->focus();
+
+    const auto one = std::make_shared<ui::Modal>();
+    const auto inside = std::make_shared<Box>(ui::Size{4, 2}, U'x');
+
+    one->children().add(inside);
+    stage.window->open(one);
+
+    std::vector<std::string> heard;
+
+    const ui::Hook left = inside->on<ui::UnfocusEvent>([&heard, &inside, &one](ui::UnfocusEvent&) {
+        heard.push_back(std::string{"left"} + (inside->focused() ? " focused" : "") + (one->parent() != nullptr ? " attached" : ""));
+
+        return false;
+    });
+
+    const ui::Hook back = other->on<ui::FocusEvent>([&heard, &one](ui::FocusEvent&) {
+        heard.push_back(std::string{"back"} + (one->parent() != nullptr ? " attached" : ""));
+
+        return false;
+    });
+
+    one->close();
+
+    same(heard, (std::vector<std::string>{"left attached", "back"}));
+    same(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 // A request from a lower veil goes to the top one: that one leaves first and gives back the focus.
