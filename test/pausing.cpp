@@ -251,6 +251,68 @@ TRIAL("pause: the work rests while any pause is held, a view's pause holds the s
     same(steps->made.load(), 40);
 }
 
+// One reader's pause does not stop the shared work for another reader: the work rests only while
+// every view of it is paused, or the shared promise itself is.
+TRIAL("pause: a shared work rests only when all its views are paused") {
+    const auto steps = std::make_shared<Steps>();
+
+    SharedPromise<void> work = stepping(steps, 80).share();
+
+    ought(came([&steps] { return steps->made.load() >= 2; }));
+
+    Promise<void> first = work.view();
+    Promise<void> second = work.view();
+
+    Pause one = first.pause();
+
+    const int before = steps->made.load();
+
+    std::this_thread::sleep_for(150ms);
+
+    ought(steps->made.load() > before + 5);
+
+    Pause two = second.pause();
+
+    ought(standing(*steps));
+
+    one = Pause{};
+
+    ought(came([&steps, &before] { return steps->made.load() > before + 20; }) || steps->over.load());
+
+    two = Pause{};
+
+    std::move(first).get();
+    std::move(second).get();
+
+    same(steps->made.load(), 80);
+}
+
+// Work started in the continuation of a paused chain is paused from its birth, even when the
+// continuation hands it on only a while later: it takes no step meanwhile.
+TRIAL("pause: work started in a paused continuation is born paused") {
+    const auto later = std::make_shared<Steps>();
+
+    Promise<void> chain = run(io(), [] { std::this_thread::sleep_for(30ms); }).then([later] {
+        Promise<void> made = stepping(later);
+
+        std::this_thread::sleep_for(100ms);
+
+        return made;
+    });
+
+    Pause pause = chain.pause();
+
+    std::this_thread::sleep_for(250ms);
+
+    same(later->made.load(), 0);
+
+    pause = Pause{};
+
+    std::move(chain).get();
+
+    same(later->made.load(), 40);
+}
+
 TRIAL("pause: a stop ends the rest at once, and the body sees it as a stop") {
     const auto steps = std::make_shared<Steps>();
 

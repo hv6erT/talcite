@@ -92,6 +92,23 @@ void lose(std::exception_ptr why);
 
 class Core;
 
+[[nodiscard]] const Core*& lineage();
+
+class Lineage {
+public:
+    explicit Lineage(const Core* now) : was_(lineage()) { lineage() = now; }
+
+    ~Lineage() { lineage() = was_; }
+
+    Lineage(const Lineage&) = delete;
+    Lineage& operator=(const Lineage&) = delete;
+    Lineage(Lineage&&) = delete;
+    Lineage& operator=(Lineage&&) = delete;
+
+private:
+    const Core* was_;
+};
+
 class Hold {
 public:
     void lifted();
@@ -102,10 +119,13 @@ public:
 
     void stirred();
 
+    void heeded_by(std::weak_ptr<Core> one);
+
 private:
     std::mutex guard_;
     std::condition_variable stirred_;
     std::atomic<bool> on_{true};
+    std::vector<std::weak_ptr<Core>> heeding_;
 };
 
 class Reaction {
@@ -241,7 +261,13 @@ public:
 
     [[nodiscard]] Ending waited(Core* also);
 
-    void paused_by(std::vector<std::shared_ptr<Hold>> these);
+    void paused_by(std::vector<std::shared_ptr<Hold>> these, const Core* from = nullptr);
+
+    void consumed_by(const std::shared_ptr<Core>& who);
+
+    void unconsumed(const Core* who);
+
+    void reconsidered();
 
     [[nodiscard]] std::vector<std::shared_ptr<Hold>> holds() const;
 
@@ -312,6 +338,15 @@ private:
     std::shared_ptr<Gate> home_;
     std::vector<std::shared_ptr<Hold>> holds_;
     std::weak_ptr<Core> awaited_;
+
+    struct Consumer {
+        std::weak_ptr<Core> who;
+        const Core* at = nullptr;
+        std::vector<std::shared_ptr<Hold>> holds;
+    };
+
+    std::vector<Consumer> consumers_;
+    std::shared_ptr<Hold> together_;
 };
 
 template <typename T>

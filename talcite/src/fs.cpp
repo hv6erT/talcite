@@ -344,9 +344,6 @@ Space space_at(const path& where) {
     return Space{told.capacity, told.available};
 }
 
-// The chunk size depends on the medium, because cancellation works between chunks, not inside them.
-// On a network share a shorter chunk means a shorter hang when the share stops responding; on a
-// fixed disk there is nothing to save, and throughput is what counts.
 [[maybe_unused]] bool afar_at(const path& where);
 
 // A path starting with two slashes is a network path by definition. Asking the system about the
@@ -650,8 +647,8 @@ std::optional<std::uintmax_t> room_at(const path& where) {
     return told.available;
 }
 
-// The read chunk for the medium under the path: smaller on network shares and smaller still on
-// removable and optical media than on a fixed disk.
+// The read chunk for the medium under the path: the same on a fixed disk and on a network share,
+// smaller on removable and optical media. Cancellation works between chunks, not inside them.
 std::size_t chunk_at(const path& where) {
     switch (mount_at(where)) {
         case Mount::remote: return afar;
@@ -767,10 +764,18 @@ Entry entry_at(const path& where) {
 
 #endif
 
-// Sorts the entries by path.
+// Sorts the entries by path, name by name, as a tree needs it (`walk_at`).
 void sorted(std::vector<Entry>& among) {
     std::sort(among.begin(), among.end(),
               [](const Entry& one, const Entry& two) { return one.where < two.where; });
+}
+
+// Sorts the entries of one directory. They all start with the same parent, spelled the same, so
+// comparing the whole native text gives the order of the names, the order the paths would give,
+// without walking the parent element by element at every comparison.
+void sorted_in(std::vector<Entry>& among) {
+    std::sort(among.begin(), among.end(),
+              [](const Entry& one, const Entry& two) { return one.where.native() < two.where.native(); });
 }
 
 #ifdef _WIN32
@@ -999,7 +1004,7 @@ std::vector<Entry> list_at(const path& where) {
 
 #endif
 
-    sorted(made);
+    sorted_in(made);
 
     return made;
 }
@@ -1036,7 +1041,7 @@ std::vector<Entry> list_whole_at(const path& where) {
 
 #endif
 
-    sorted(made);
+    sorted_in(made);
 
     return made;
 }
@@ -1613,9 +1618,9 @@ path restored(std::string_view said) {
 
 namespace core {
 
-// A network share is recognized by the same test that picks the chunk size: a shorter chunk and the
-// lack of reliable notifications have the same cause.
-[[maybe_unused]] bool afar_at(const path& where) { return chunk_at(where) == afar; }
+// Whether the path lies on a network share, by the same recognition of the medium that picks the
+// chunk size (`mount_at`); a share has no reliable notifications.
+[[maybe_unused]] bool afar_at(const path& where) { return mount_at(where) == Mount::remote; }
 
 #ifdef _WIN32
 
@@ -2050,15 +2055,6 @@ Volume volume_at(const path& where) {
 
 #endif
 
-// The list of volumes is the roots and the volume of each of them; the same way on every system.
-std::vector<Volume> volumes_at() {
-    std::vector<Volume> made;
-
-    for (const path& one : roots_at()) made.push_back(volume_at(one));
-
-    return made;
-}
-
 // The volume a path lies on: its root, not the path itself. `volume_at` speaks about a mount point
 // or a drive letter, while a file manager asks about a file. Windows knows this by itself
 // (GetVolumePathNameW, also for a share and for a directory mounted in NTFS); elsewhere it is the
@@ -2220,11 +2216,6 @@ Promise<Space> space(const path& where) {
 // The kind of medium the path lies on.
 Promise<Mount> mount(const path& where) {
     return run(io(), [where]() -> Mount { return mount_at(where); });
-}
-
-// The list of volumes with their details.
-Promise<std::vector<Volume>> volumes() {
-    return run(io(), []() -> std::vector<Volume> { return volumes_at(); });
 }
 
 // The roots of the volumes only, without asking the media, so the list is fast.

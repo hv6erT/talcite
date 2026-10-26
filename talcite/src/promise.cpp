@@ -207,6 +207,14 @@ const Stop*& current_stop() {
     return now;
 }
 
+// The node on whose behalf a continuation runs on this thread now (`then`, `recover`), or null:
+// work started from it is born with its pauses (`launched`).
+const Core*& lineage() {
+    thread_local const Core* now = nullptr;
+
+    return now;
+}
+
 // Whether this thread is the one of the executor behind `home`: it is when the loop standing on it
 // is that executor. Work for a loop runs only on the loop's thread, so code that finishes there may
 // go on at once; on any other thread it must go to the executor. Other executors (the pool's lanes,
@@ -329,7 +337,7 @@ void Core::keep(Claim claim) {
         return;
     }
 
-    whose->paused_by(std::move(mine));
+    whose->paused_by(std::move(mine), this);
 }
 
 // Reports the progress of `whose` as this node's own until it ends.
@@ -754,6 +762,8 @@ Ending Core::waited(Core* also) {
 
     if (also != nullptr) also->off_stop(ear);
 
+    if (also != nullptr && also != this) unconsumed(also);
+
     return made;
 }
 
@@ -762,15 +772,30 @@ Ending Core::waited(Core* also) {
 // what its work awaits now. Each of them rests while one of `these` is held; a hold that one
 // already has stops the walk there, so a shared predecessor is visited once. A node that has ended
 // has nothing to rest. Iterative, since chains are long.
-void Core::paused_by(std::vector<std::shared_ptr<Hold>> these) {
-    std::vector<std::pair<std::shared_ptr<Core>, std::vector<std::shared_ptr<Hold>>>> left;
+//
+// A shared node reached from one of its consumers (a view, a body waiting in `get`; `from`) does
+// not take that consumer's pauses as its own: it notes them for the consumer and rests only when
+// every consumer is paused (`reconsidered`), so one reader's pause does not stop the work for the
+// others. A pause of the shared promise itself (`from` null, or no consumer of that name) holds it
+// for all.
+void Core::paused_by(std::vector<std::shared_ptr<Hold>> these, const Core* from) {
+    struct Left {
+        std::shared_ptr<Core> core;
+        std::vector<std::shared_ptr<Hold>> given;
+        const Core* from = nullptr;
+    };
 
-    left.emplace_back(shared_from_this(), std::move(these));
+    std::vector<Left> left;
+    std::vector<std::pair<std::shared_ptr<Core>, std::vector<std::shared_ptr<Hold>>>> noted;
+
+    left.push_back(Left{shared_from_this(), std::move(these), from});
 
     while (!left.empty()) {
-        auto [core, given] = std::move(left.back());
+        Left now = std::move(left.back());
 
         left.pop_back();
+
+        const std::shared_ptr<Core>& core = now.core;
 
         std::vector<std::shared_ptr<Hold>> fresh;
         std::vector<std::shared_ptr<Core>> above;
@@ -780,15 +805,28 @@ void Core::paused_by(std::vector<std::shared_ptr<Hold>> these) {
 
             if (core->ending_ != Ending::running) continue;
 
-            std::erase_if(core->holds_, [](const std::shared_ptr<Hold>& one) { return !one->held(); });
+            const auto asking = core->shared_ && now.from != nullptr
+                                    ? std::find_if(core->consumers_.begin(), core->consumers_.end(),
+                                                   [&now](const Consumer& one) { return one.at == now.from; })
+                                    : core->consumers_.end();
 
-            for (std::shared_ptr<Hold>& one : given)
-                if (one->held() && std::find(core->holds_.begin(), core->holds_.end(), one) == core->holds_.end()) {
-                    core->holds_.push_back(one);
+            std::vector<std::shared_ptr<Hold>>& into = asking != core->consumers_.end() ? asking->holds : core->holds_;
+
+            std::erase_if(into, [](const std::shared_ptr<Hold>& one) { return !one->held(); });
+
+            for (std::shared_ptr<Hold>& one : now.given)
+                if (one->held() && std::find(into.begin(), into.end(), one) == into.end()) {
+                    into.push_back(one);
                     fresh.push_back(std::move(one));
                 }
 
             if (fresh.empty()) continue;
+
+            if (asking != core->consumers_.end()) {
+                noted.emplace_back(core, std::move(fresh));
+
+                continue;
+            }
 
             for (const Claim& claim : core->upstream_)
                 if (claim) above.push_back(claim.core());
@@ -796,8 +834,87 @@ void Core::paused_by(std::vector<std::shared_ptr<Hold>> these) {
             if (std::shared_ptr<Core> one = core->awaited_.lock()) above.push_back(std::move(one));
         }
 
-        for (std::shared_ptr<Core>& one : above) left.emplace_back(std::move(one), fresh);
+        for (std::shared_ptr<Core>& one : above) left.push_back(Left{std::move(one), fresh, core.get()});
     }
+
+    // A pause noted for a consumer tells the shared node when it ends, so the node looks again;
+    // the look comes after the notice is in place, so a pause that ended meanwhile is seen too.
+    for (auto& [core, fresh] : noted) {
+        for (const std::shared_ptr<Hold>& one : fresh) one->heeded_by(core);
+
+        core->reconsidered();
+    }
+}
+
+// A consumer of this shared node: a view, or a body that waits for it in `get`. Its pauses count
+// towards the pause of all (`paused_by`); a new consumer that is not paused lets the work go on.
+void Core::consumed_by(const std::shared_ptr<Core>& who) {
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        if (!shared_ || ending_ != Ending::running || who == nullptr) return;
+
+        if (std::any_of(consumers_.begin(), consumers_.end(), [&who](const Consumer& one) { return one.at == who.get(); })) return;
+
+        consumers_.push_back(Consumer{who, who.get(), {}});
+    }
+
+    reconsidered();
+}
+
+// A consumer no longer waits for this node (a body's `get` returned).
+void Core::unconsumed(const Core* who) {
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        const auto before = consumers_.size();
+
+        std::erase_if(consumers_, [who](const Consumer& one) { return one.at == who; });
+
+        if (consumers_.size() == before) return;
+    }
+
+    reconsidered();
+}
+
+// Whether every consumer of this shared node is paused, looked at anew: a consumer gone or stopped
+// no longer counts, nor does a pause that ended. When all of them are paused, the node rests on a
+// pause of its own (`together_`), handed on to what it waits for as any pause is; when one of them
+// goes on, that pause ends.
+void Core::reconsidered() {
+    std::shared_ptr<Hold> lifting;
+    std::shared_ptr<Hold> starting;
+
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        if (!shared_) return;
+
+        std::erase_if(consumers_, [](const Consumer& one) {
+            const std::shared_ptr<Core> alive = one.who.lock();
+
+            return alive == nullptr || alive->stopped();
+        });
+
+        bool all = !consumers_.empty() && ending_ == Ending::running;
+
+        for (Consumer& one : consumers_) {
+            std::erase_if(one.holds, [](const std::shared_ptr<Hold>& each) { return !each->held(); });
+
+            if (one.holds.empty()) all = false;
+        }
+
+        if (all && (together_ == nullptr || !together_->held())) {
+            together_ = std::make_shared<Hold>();
+            starting = together_;
+        } else if (!all && together_ != nullptr) {
+            lifting = std::exchange(together_, nullptr);
+        }
+    }
+
+    if (lifting != nullptr) lifting->lifted();
+
+    if (starting != nullptr) paused_by({starting});
 }
 
 // The pauses in force on this node.
@@ -868,19 +985,38 @@ void Core::awaiting(std::shared_ptr<Core> whose) {
         }
     }
 
-    if (whose != nullptr && !mine.empty()) whose->paused_by(std::move(mine));
+    if (whose == nullptr) return;
+
+    whose->consumed_by(shared_from_this());
+
+    if (!mine.empty()) whose->paused_by(std::move(mine), this);
 }
 
 // The pause ends: the work resting on it goes on, unless another pause holds it. The flag changes
 // under the lock, so a waiter that has just found it set is already waiting when the notice comes.
 void Hold::lifted() {
+    std::vector<std::weak_ptr<Core>> told;
+
     {
         const std::lock_guard<std::mutex> held{guard_};
 
         on_.store(false);
+
+        told.swap(heeding_);
     }
 
     stirred_.notify_all();
+
+    for (const std::weak_ptr<Core>& one : told)
+        if (const std::shared_ptr<Core> core = one.lock()) core->reconsidered();
+}
+
+// A shared node that counts this pause of one of its consumers, to be told when it ends
+// (`Core::reconsidered`). A pause already ended tells nobody; the node sees that itself.
+void Hold::heeded_by(std::weak_ptr<Core> one) {
+    const std::lock_guard<std::mutex> held{guard_};
+
+    if (on_.load()) heeding_.push_back(std::move(one));
 }
 
 // Whether the pause is still in force; without the lock, since every link of a paused chain asks.
@@ -975,6 +1111,9 @@ Core::Concluded Core::concluded_locked(Ending how, std::exception_ptr why) {
     on_stop_.clear();
     holds_.clear();
     awaited_.reset();
+    consumers_.clear();
+
+    if (together_ != nullptr) std::exchange(together_, nullptr)->lifted();
 
     for (auto at = hooks_.begin(); at != hooks_.end();) {
         if (at->second.state == 0) at = hooks_.erase(at);
@@ -1028,16 +1167,21 @@ std::vector<std::function<void()>> Core::finishing_locked() {
 
 // An owner leaves. The last one, while the node runs and nobody let it go on alone, ends it with a
 // cancellation and stops its work: the flag, the bell, the internal listeners at once, the user's
-// hooks on the io lane, the predecessors released. No user code runs here.
+// hooks on the io lane, the predecessors released. No user code runs here. An owner of a shared
+// node may be a consumer that has gone (a view given up), so a node with consumers looks again at
+// whether all of them are paused.
 void Core::released(std::uint64_t reaction) {
     std::shared_ptr<Reaction> gone;
     std::vector<std::function<void()>> stops;
     std::vector<std::uint64_t> fired;
     Concluded made;
     bool ended = false;
+    bool consumed = false;
 
     {
         const std::lock_guard<std::mutex> held{guard_};
+
+        consumed = !consumers_.empty();
 
         if (reaction != 0) {
             const auto at = reactions_.find(reaction);
@@ -1071,7 +1215,11 @@ void Core::released(std::uint64_t reaction) {
         }
     }
 
-    if (!ended) return;
+    if (!ended) {
+        if (consumed) reconsidered();
+
+        return;
+    }
 
     for (std::function<void()>& one : stops) stepped(std::move(one));
 
@@ -1219,7 +1367,19 @@ std::uint64_t timed(const std::shared_ptr<Core>& to, Clock& clock, std::chrono::
 // (a loop that ends with it in its queue), ends the node cancelled. A pool lane can also take a job
 // back: when the owners leave before the body starts, the job leaves the queue at once instead of
 // waiting for a worker to find it abandoned.
+//
+// Work started on behalf of a paused node (in its continuation, its body, its coroutine) is born
+// with that node's pauses, before its body can take a step: otherwise it would run until the link
+// to it hands them on, which comes only after the call that started it returns.
 void launched(Executor& where, const std::shared_ptr<Core>& node, std::function<void()> job) {
+    const Core* parent = lineage();
+
+    if (parent == nullptr)
+        if (const Stop* now = current_stop()) parent = Access::core(*now);
+
+    if (parent != nullptr && parent != node.get())
+        if (std::vector<std::shared_ptr<Hold>> inherited = parent->holds(); !inherited.empty()) node->paused_by(std::move(inherited));
+
     auto* lane = dynamic_cast<Withdrawing*>(&where);
 
     if (lane == nullptr) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
@@ -68,6 +69,8 @@ struct Watch::Held {
     std::deque<Change> pending;
     std::deque<Wanting> waiting;
     std::uint64_t asked = 0;
+    std::chrono::steady_clock::time_point since{};
+    std::optional<Promise<void>> ripening;
 
     ~Held();
 
@@ -82,6 +85,8 @@ struct Watch::Held {
 namespace {
 
 constexpr std::size_t brim = 4096;
+
+constexpr std::chrono::milliseconds settling{200};
 
 class Watching;
 
@@ -120,8 +125,11 @@ void forgotten(const std::weak_ptr<Watch::Held>& whose, std::uint64_t id) {
 }
 
 // Repeated "modified" for the same path are merged: the file system produces bursts, and the
-// panel redraws once anyway. On overflow a single entry remains: count lost.
+// panel redraws once anyway. On overflow a single entry remains: count lost. The first change to
+// wait marks the moment the waiting began (`since`, for `ripe`).
 void noting(Watch::Held& held, Change made) {
+    if (held.pending.empty()) held.since = std::chrono::steady_clock::now();
+
     if (made.kind == Change::Kind::modified) {
         std::size_t looked = 0;
 
@@ -142,11 +150,71 @@ void noting(Watch::Held& held, Change made) {
     held.pending.push_back(Change{held.where, path{}, Change::Kind::overflow});
 }
 
-// Adds the changes to the watch's pending ones and, if someone is waiting, hands all pending
-// changes to the first waiting request. A request may have been given up a moment ago and not
-// have left the queue yet; it refuses the batch, and the next one gets it. The batch is handed
-// over as a copy, so that a refusal loses nothing: whatever nobody took stays pending. Settling
-// runs no code of the waiting side here, so it may happen under the lock.
+// Whether the pending changes may go now. A change of what stands (created, removed, renamed, an
+// overflow) goes at once; changes of content alone wait until the oldest of them is `settling`
+// old, so a file written in small pieces (a copy into the watched folder, one piece every few
+// milliseconds) wakes the watcher a few times a second, not hundreds of times.
+bool ripe(const Watch::Held& held) {
+    if (held.pending.empty()) return false;
+
+    const bool content = std::all_of(held.pending.begin(), held.pending.end(),
+                                     [](const Change& one) { return one.kind == Change::Kind::modified; });
+
+    return !content || std::chrono::steady_clock::now() - held.since >= settling;
+}
+
+void ripened(const std::weak_ptr<Watch::Held>& whose);
+
+// Hands all ripe pending changes to the first waiting request, under the lock. A request may have
+// been given up a moment ago and not have left the queue yet; it refuses the batch, and the next
+// one gets it. The batch is handed over as a copy, so that a refusal loses nothing: whatever nobody
+// took stays pending. Settling runs no code of the waiting side here, so it may happen under the
+// lock; the requests served go out into `gone`, to be destroyed outside it. Changes that are not
+// ripe yet, with someone waiting for them, set the moment to look again (`ripened`).
+void delivered_locked(const std::shared_ptr<Watch::Held>& held, std::deque<Watch::Held::Wanting>& gone) {
+    while (!held->waiting.empty() && ripe(*held)) {
+        Watch::Held::Wanting first = std::move(held->waiting.front());
+
+        held->waiting.pop_front();
+
+        const bool taken = first.settle.value(std::vector<Change>(held->pending.begin(), held->pending.end()));
+
+        gone.push_back(std::move(first));
+
+        if (taken) held->pending.clear();
+    }
+
+    if (held->waiting.empty() || held->pending.empty() || held->ripening) return;
+
+    const auto waited = std::chrono::steady_clock::now() - held->since;
+    const auto left = std::chrono::ceil<std::chrono::milliseconds>(settling - waited);
+
+    held->ripening = later(std::max(left, std::chrono::milliseconds{1})).then([whose = std::weak_ptr<Watch::Held>{held}] { ripened(whose); });
+}
+
+// The moment to look again has come: whatever has ripened meanwhile goes to the waiting request,
+// and what has not sets the next moment. The finished promise of the moment is let go outside the
+// lock.
+void ripened(const std::weak_ptr<Watch::Held>& whose) {
+    const std::shared_ptr<Watch::Held> held = whose.lock();
+
+    if (!held) return;
+
+    std::deque<Watch::Held::Wanting> gone;
+    std::optional<Promise<void>> spent;
+
+    {
+        const std::lock_guard<std::mutex> kept{held->guard};
+
+        spent = std::move(held->ripening);
+        held->ripening.reset();
+
+        delivered_locked(held, gone);
+    }
+}
+
+// Adds the changes to the watch's pending ones and hands what is ripe to whoever waits
+// (`delivered_locked`).
 void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among) {
     std::deque<Watch::Held::Wanting> gone;
 
@@ -155,18 +223,7 @@ void handed(const std::shared_ptr<Watch::Held>& held, std::vector<Change> among)
 
         for (Change& one : among) noting(*held, std::move(one));
 
-        while (!held->waiting.empty() && !held->pending.empty()) {
-            Watch::Held::Wanting first = std::move(held->waiting.front());
-
-            held->waiting.pop_front();
-
-            const bool taken =
-                first.settle.value(std::vector<Change>(held->pending.begin(), held->pending.end()));
-
-            gone.push_back(std::move(first));
-
-            if (taken) held->pending.clear();
-        }
+        delivered_locked(held, gone);
     }
 }
 
@@ -1102,9 +1159,11 @@ private:
     };
 
     // The loop of the polling thread. It never uses more than a tenth of a core: the pause is ten
-    // times longer than the looking itself, no shorter than half a second and no longer than ten.
-    // A small directory is thus polled twice a second, and a huge tree rarely, because walking it
-    // costs. A fixed rate would be either too slow or too expensive.
+    // times longer than the looking itself, and no shorter than half a second. A small directory is
+    // thus polled twice a second, and a huge tree rarely, because walking it costs; a pause with a
+    // ceiling would break the tenth for a tree that takes more than a second to walk (a share with
+    // a hundred thousand entries), and it would weigh on the share for the whole of a copy. A fixed
+    // rate would be either too slow or too expensive.
     void serve() {
         while (true) {
             std::vector<std::pair<std::uint64_t, std::shared_ptr<Post>>> among;
@@ -1141,8 +1200,7 @@ private:
             const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - began);
 
-            const auto rest = std::clamp(spent * 10, std::chrono::milliseconds{500},
-                                         std::chrono::milliseconds{10000});
+            const auto rest = std::max(spent * 10, std::chrono::milliseconds{500});
 
             std::unique_lock<std::mutex> kept{guard_};
             stirred_.wait_for(kept, rest);
@@ -1426,19 +1484,20 @@ Promise<Watch> watch(const path& where, bool deep) {
     });
 }
 
-// The next batch of changes: everything pending at once, or the first batch that arrives. Giving
-// up the promise takes the request out of the queue.
+// The next batch of changes: everything pending at once when it is ripe (`ripe`), or the first
+// batch that ripens. Giving up the promise takes the request out of the queue.
 Promise<std::vector<Change>> Watch::next() {
     const std::shared_ptr<Held> held = held_;
 
     if (!held) return failed<std::vector<Change>>(std::make_exception_ptr(Trouble{"The watch is closed.", path{}}));
 
     std::vector<Change> giving;
+    std::deque<Held::Wanting> gone;
 
     {
         const std::lock_guard<std::mutex> kept{held->guard};
 
-        if (held->pending.empty()) {
+        if (!ripe(*held)) {
             auto [made, settle] = promised<std::vector<Change>>();
 
             const std::uint64_t id = ++held->asked;
@@ -1446,6 +1505,8 @@ Promise<std::vector<Change>> Watch::next() {
             (void)detail::stopping(settle.stop(), [weak = std::weak_ptr<Held>{held}, id] { forgotten(weak, id); });
 
             held->waiting.push_back(Held::Wanting{id, std::move(settle)});
+
+            delivered_locked(held, gone);
 
             return std::move(made);
         }

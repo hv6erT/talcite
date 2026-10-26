@@ -107,8 +107,6 @@ private:
 
 [[nodiscard]] Promise<Mount> mount(const path& where);
 
-[[nodiscard]] Promise<std::vector<Volume>> volumes();
-
 [[nodiscard]] Promise<std::vector<path>> roots();
 
 [[nodiscard]] Promise<Volume> volume(const path& where);

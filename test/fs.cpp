@@ -47,6 +47,16 @@ using namespace std::chrono_literals;
 
 namespace {
 
+// The volumes as a file manager gathers them: the roots, then the details of each one asked
+// separately.
+std::vector<fs::Volume> volumes() {
+    std::vector<fs::Volume> made;
+
+    for (const fs::path& one : fs::roots().get()) made.push_back(fs::volume(one).get());
+
+    return made;
+}
+
 // The kind of change seen by `Watch`: a short name, because the watching trials ask about it on
 // every line.
 using Changed = fs::Change::Kind;
@@ -1071,7 +1081,7 @@ TRIAL("fs: Mode::exclusive creates only a new file") {
 TRIAL("fs: the list of volumes knows the file system") {
     bool told = false;
 
-    for (const fs::Volume& one : fs::volumes().get())
+    for (const fs::Volume& one : volumes())
         if (!one.format.empty()) told = true;
 
     ought(told);
@@ -1081,7 +1091,7 @@ TRIAL("fs: the list of volumes knows the file system") {
 // The list of volumes is never empty: at least the root, and on Windows the drive letter of the
 // system.
 TRIAL("fs: the list of volumes is not empty") {
-    const std::vector<fs::Volume> found = fs::volumes().get();
+    const std::vector<fs::Volume> found = volumes();
 
     ought(!found.empty());
 
@@ -2854,6 +2864,48 @@ TRIAL("Watch: a write of the same length in the same second is reported") {
     ought(among(awaited(watch), one, Changed::modified));
 }
 
+// A file written in a hundred small pieces, as a copy into the watched folder writes it, wakes the
+// watcher a few times, not a hundred: changes of content alone wait a moment for the next ones. A
+// creation that follows still comes, and with it whatever waited.
+TRIAL("Watch: a file written in many pieces comes in few batches") {
+    const Nook nook;
+
+    const fs::path one = nook.made("rosnący.bin", "");
+
+    fs::Watch watch = fs::watch(nook.where()).get();
+
+    std::atomic<bool> done{false};
+
+    std::thread writer{[&one, &done] {
+        fs::File file = fs::open(one, fs::Mode::write).get();
+
+        for (std::uint64_t at = 0; at < 100; ++at) {
+            (void)file.write(at, bytes("x")).get();
+
+            std::this_thread::sleep_for(3ms);
+        }
+
+        file.close();
+
+        done.store(true);
+    }};
+
+    int batches = 0;
+
+    while (!done.load())
+        if (!awaited(watch, 100ms).empty()) ++batches;
+
+    writer.join();
+
+    while (!awaited(watch, 600ms).empty()) ++batches;
+
+    ought(batches <= 10);
+
+    const fs::path other = nook.made("drugi.bin", "y");
+
+    ought(among(awaited(watch), other, Changed::created));
+}
+
 TRIAL("Watch: a rename carries the previous name") {
     const Nook nook;
 
@@ -3657,14 +3709,13 @@ TRIAL("fs: the chunk comes from the recognized volume") {
     const fs::Mount told = fs::mount(nook.where()).get();
     const std::size_t rata = fs::chunk(nook.where()).get();
 
-    if (told == fs::Mount::remote) same(rata, std::size_t{64 * 1024});
-    else if (told == fs::Mount::removable || told == fs::Mount::optical)
+    if (told == fs::Mount::removable || told == fs::Mount::optical)
         same(rata, std::size_t{256 * 1024});
     else same(rata, std::size_t{1024 * 1024});
 }
 
 TRIAL("fs: the list of drives is not empty and carries the space") {
-    const std::vector<fs::Volume> among = fs::volumes().get();
+    const std::vector<fs::Volume> among = volumes();
 
     ought(!among.empty());
 
@@ -3683,7 +3734,7 @@ TRIAL("fs: the list of drives is not empty and carries the space") {
 }
 
 TRIAL("fs: every drive from the list can be looked at") {
-    const std::vector<fs::Volume> among = fs::volumes().get();
+    const std::vector<fs::Volume> among = volumes();
 
     for (const fs::Volume& one : among) {
         const fs::Kind told = fs::kind(one.where).get();
@@ -3696,7 +3747,7 @@ TRIAL("fs: every drive from the list can be looked at") {
 // order.
 TRIAL("fs: the roots are the places from the list of volumes") {
     const std::vector<fs::path> roots = fs::roots().get();
-    const std::vector<fs::Volume> among = fs::volumes().get();
+    const std::vector<fs::Volume> among = volumes();
 
     ought(!roots.empty());
     same(roots.size(), among.size());
@@ -3773,7 +3824,7 @@ TRIAL("fs: the volume of a mount point speaks from the mount table") {
 
 // The volume under a root says the same as its row in the list.
 TRIAL("fs: the volume of a root is as in the list") {
-    for (const fs::Volume& one : fs::volumes().get()) {
+    for (const fs::Volume& one : volumes()) {
         const fs::Volume alone = fs::volume(one.where).get();
 
         same(alone.where, one.where);
@@ -3815,7 +3866,7 @@ TRIAL("fs: the volume of a drive letter without a slash") {
 #endif
 
 TRIAL("fs: a network share carries what stands behind it") {
-    const std::vector<fs::Volume> among = fs::volumes().get();
+    const std::vector<fs::Volume> among = volumes();
 
     for (const fs::Volume& one : among)
         if (one.mount != fs::Mount::remote) ought(one.source.empty());

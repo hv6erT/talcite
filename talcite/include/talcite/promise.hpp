@@ -431,13 +431,16 @@ public:
         }
 
         switch (from_->ending()) {
-        case Ending::value:
+        case Ending::value: {
+            const Lineage line{to_.get()};
+
             if constexpr (std::is_void_v<T>) {
                 produced<U>(to_, f_);
             } else {
                 produced<U>(to_, f_, from_->taken());
             }
             break;
+        }
         case Ending::error:
             (void)to_->failed(from_->why(), Delivery::here);
             break;
@@ -478,6 +481,8 @@ public:
             try {
                 std::rethrow_exception(from_->why());
             } catch (const std::exception& why) {
+                const Lineage line{to_.get()};
+
                 produced<T>(to_, f_, why);
             } catch (...) {
                 (void)to_->failed(caught(), Delivery::here);
@@ -935,6 +940,7 @@ public:
         Promise<T> made = detail::Access::made<T>(detail::Core::claimed(to));
 
         detail::linked<T>(to, detail::Core::claimed(from), std::make_shared<detail::Passing<T>>(from, to));
+        from->consumed_by(to);
 
         return made;
     }
