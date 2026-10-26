@@ -187,7 +187,9 @@ struct Post {
 
 // The directories under the root are collected by our own walk, not by walk_at: only directories
 // are needed here, while walk_at gathers every entry and answers to the stop of the work running on
-// its thread, and the watcher thread runs none.
+// its thread, and the watcher thread runs none. A directory that fails halfway (a drive pulled out)
+// gives what was read of it: the walk runs on the watcher's thread, where a throw would end the
+// program.
 std::vector<path> under(const path& where) {
     std::vector<path> made;
     std::vector<path> waiting{where};
@@ -200,9 +202,8 @@ std::vector<path> under(const path& where) {
         stood::directory_iterator at{here, stood::directory_options::skip_permission_denied,
                                      trouble};
 
-        if (trouble) continue;
-
-        for (const stood::directory_entry& one : at) {
+        for (; !trouble && at != stood::directory_iterator{}; at.increment(trouble)) {
+            const stood::directory_entry& one = *at;
             std::error_code ignored;
 
             if (!one.is_directory(ignored) || one.is_symlink(ignored)) continue;
@@ -371,8 +372,11 @@ private:
 
     // Turns a batch of `much` bytes of inotify events into changes for each watch, pairs moves
     // into renames, follows directories that appear and leave, and hands watches that went deaf
-    // over to polling.
+    // over to polling. After an overflow of the kernel's queue every watch hears it (`spilled`),
+    // and a deep watch adds again every directory of its tree: one that came while events were
+    // lost would otherwise stay unwatched for good.
     void take(const char* room, std::size_t much) {
+        bool spill = false;
         std::unordered_map<std::uint64_t, std::vector<Change>> among;
         std::map<std::pair<std::uint64_t, std::uint32_t>, path> moving;
         std::vector<std::pair<std::uint64_t, path>> fresh;
@@ -384,8 +388,8 @@ private:
             at += sizeof(inotify_event) + told->len;
 
             if ((told->mask & IN_Q_OVERFLOW) != 0) {
-                spilled();
-                return;
+                spill = true;
+                continue;
             }
 
             std::vector<Spot> spots;
@@ -497,8 +501,15 @@ private:
         for (const auto& [which, where] : fresh)
             if (!sprout(which, where)) blind.push_back(which);
 
-        for (auto& [which, mine] : among)
-            if (!mine.empty()) reached(which, std::move(mine));
+        if (spill) {
+            for (const auto& [which, root] : trees())
+                if (std::find(blind.begin(), blind.end(), which) == blind.end() && !sprout(which, root)) blind.push_back(which);
+
+            spilled();
+        } else {
+            for (auto& [which, mine] : among)
+                if (!mine.empty()) reached(which, std::move(mine));
+        }
 
         for (const std::uint64_t which : blind) {
             drop(which);
@@ -601,6 +612,18 @@ private:
         }
 
         for (const int one : spare) inotify_rm_watch(fd_, one);
+    }
+
+    // The deep watches with their roots.
+    std::vector<std::pair<std::uint64_t, path>> trees() {
+        std::vector<std::pair<std::uint64_t, path>> made;
+
+        const std::lock_guard<std::mutex> kept{guard_};
+
+        for (const auto& [which, post] : posts_)
+            if (post->deep) made.emplace_back(which, post->where);
+
+        return made;
     }
 
     // The kernel's event queue overflowed: every watch gets an overflow change, since anything

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "talcite/fs.hpp"
+#include "talcite/loop.hpp"
 #include "talcite/pool.hpp"
 #include "talcite/promise.hpp"
 
@@ -84,6 +85,32 @@ Promise<void> walked(std::shared_ptr<Steps> steps) {
     co_await stepping(std::move(steps));
 }
 
+// A coroutine that goes on on the loop's thread and asks there whether it may go on.
+Promise<void> looped(std::shared_ptr<std::atomic<int>> asked) {
+    co_await run(io(), [] { std::this_thread::sleep_for(20ms); }).here();
+
+    const Stop* stop = Stop::current();
+
+    asked->store(stop != nullptr && stop->rested() ? 1 : 2);
+}
+
+}
+
+TRIAL("pause: work on a loop's own thread does not rest, since the loop may be what lifts the pause") {
+    Loop loop;
+
+    const auto asked = std::make_shared<std::atomic<int>>(0);
+
+    Promise<void> work = looped(asked);
+    const Pause pause = work.pause();
+
+    for (int again = 0; again < 500 && asked->load() == 0; ++again) {
+        (void)loop.turn();
+
+        std::this_thread::sleep_for(10ms);
+    }
+
+    same(asked->load(), 1);
 }
 
 TRIAL("pause: the body rests while the pause is held, and goes on when it goes") {

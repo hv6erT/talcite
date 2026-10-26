@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 #include <string_view>
@@ -1373,6 +1374,30 @@ TRIAL("fs: copy with beside creates a name alongside") {
     fs::copy(from, to, fs::Conflict::rename).get();
 
     same(said_of(fs::read(nook.where() / "cel (3).bin").get()), std::string{"nowe"});
+}
+
+// A name near the longest a folder takes: the file beside it for an overwrite gives up the end of
+// the name, at a whole letter, so the overwrite does not fail as too long. A rename beside such a
+// name still refuses ("fs: rename with an unacceptable name alongside says it did not move").
+TRIAL("fs: an overwrite of a name near the longest still succeeds") {
+    const Nook nook;
+
+    // 250 bytes in UTF-8 and 248 units in UTF-16: the end falls inside the last "ł" in bytes, after
+    // the first one in units.
+    const std::string stem = std::string(246, 'a') + "łł";
+
+    const fs::path from = nook.made("źródło.bin", "nowe");
+    const fs::path to = nook.made(stem + ".bin", "stare");
+
+    fs::copy(from, to, fs::Conflict::overwrite).get();
+
+    same(said_of(fs::read(to).get()), std::string{"nowe"});
+
+    std::size_t many = 0;
+
+    for ([[maybe_unused]] const std::filesystem::directory_entry& one : std::filesystem::directory_iterator{nook.where()}) ++many;
+
+    same(many, std::size_t{2});
 }
 
 TRIAL("fs: the policy applies to every entry of the tree separately") {

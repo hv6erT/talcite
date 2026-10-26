@@ -35,9 +35,12 @@ public:
     // The monotonic clock.
     [[nodiscard]] Moment now() const override { return std::chrono::steady_clock::now(); }
 
-    // Runs `then` on the timer thread at `when`; returns the number to withdraw it with.
+    // Runs `then` on the timer thread at `when`; returns the number to withdraw it with. Only a
+    // deadline that becomes the nearest wakes the thread: a later one is found when it wakes
+    // anyway.
     [[nodiscard]] std::uint64_t scheduled(Moment when, std::function<void()> then) override {
         std::uint64_t which = 0;
+        bool nearest = false;
 
         {
             const std::lock_guard<std::mutex> held{guard_};
@@ -53,15 +56,18 @@ public:
 
                 throw;
             }
+
+            nearest = placed == order_.begin();
         }
 
-        stirred_.notify_all();
+        if (nearest) stirred_.notify_all();
 
         return which;
     }
 
     // Withdraws the entry `which`, if it is still waiting; whether it was. The entry is destroyed only
-    // after the lock is released.
+    // after the lock is released. The thread is not woken: if it sleeps until this entry, it wakes,
+    // finds nothing due and sleeps until the next one.
     [[nodiscard]] bool unscheduled(std::uint64_t which) override {
         Entry taken;
 
@@ -77,8 +83,6 @@ public:
             order_.erase({taken.when, which});
             waiting_.erase(at);
         }
-
-        stirred_.notify_all();
 
         return true;
     }

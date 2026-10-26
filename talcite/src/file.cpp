@@ -249,10 +249,7 @@ void sync_at(const File::Held& held) {
 // the access time is left alone.
 void stamp_on(const File::Held& held, Instant when) {
 #ifdef _WIN32
-    const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
-        when.time_since_epoch());
-
-    const auto much = static_cast<std::uint64_t>(ticks.count() + 11644473600LL * 10000000LL);
+    const std::uint64_t much = ticks_of(when);
 
     FILETIME told{};
 
@@ -339,7 +336,7 @@ Facet facet_from(const BY_HANDLE_FILE_INFORMATION& told) {
 
     Facet made;
     made.size = (static_cast<std::uintmax_t>(told.nFileSizeHigh) << 32) | told.nFileSizeLow;
-    made.changed = Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(ticks) - 11644473600LL * 10000000LL) * 100}};
+    made.changed = ticked(ticks);
     made.device = told.dwVolumeSerialNumber;
     made.node = (static_cast<std::uint64_t>(told.nFileIndexHigh) << 32) | told.nFileIndexLow;
 

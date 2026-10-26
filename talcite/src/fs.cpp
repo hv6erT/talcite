@@ -8,6 +8,7 @@
 #include <cwctype>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -274,19 +275,23 @@ void linking_at(const path& where, const path& onto, bool hard) {
 // the exact value is known, not just the distance between two "now"s.
 constexpr std::int64_t epochs_apart = 11644473600LL * 10000000LL;
 
-// A Windows file time as a nanosecond instant since the Unix epoch.
-Instant instant_of(FILETIME told) {
-    const std::uint64_t much = (static_cast<std::uint64_t>(told.dwHighDateTime) << 32) | told.dwLowDateTime;
+// A Windows file time in its 100 ns ticks as a nanosecond instant since the Unix epoch; also for
+// the times an open handle tells (`file.cpp`).
+Instant ticked(std::uint64_t much) { return Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(much) - epochs_apart) * 100}}; }
 
-    return Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(much) - epochs_apart) * 100}};
+// An instant as the ticks of a Windows file time, rounded down to the 100 ns tick.
+std::uint64_t ticks_of(Instant when) {
+    const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(when.time_since_epoch());
+
+    return static_cast<std::uint64_t>(ticks.count() + epochs_apart);
 }
+
+// A Windows file time as a nanosecond instant since the Unix epoch.
+Instant instant_of(FILETIME told) { return ticked((static_cast<std::uint64_t>(told.dwHighDateTime) << 32) | told.dwLowDateTime); }
 
 // An instant as a Windows file time, rounded down to the 100 ns tick.
 FILETIME filetime_of(Instant when) {
-    const auto ticks = std::chrono::floor<std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>>(
-        when.time_since_epoch());
-
-    const auto much = static_cast<std::uint64_t>(ticks.count() + epochs_apart);
+    const std::uint64_t much = ticks_of(when);
 
     FILETIME made{};
 

@@ -87,6 +87,7 @@ struct Channel::Held {
 
     std::mutex minding;
     Bytes spare;
+    std::size_t start = 0;
     std::uint64_t sent = 0;
     std::uint64_t taken = 0;
 
@@ -121,15 +122,21 @@ Promise<void> posting(const std::shared_ptr<Channel::Held>& held, Bytes what, Pa
 }
 
 // A whole frame from the spare buffer, if it is already there, or nothing. Throws and closes the
-// stream when the announced length is above `biggest`.
+// stream when the announced length is above `biggest`. The buffer is read from `start`, and what
+// was taken is cut off only once it is half of the buffer: a read that brought hundreds of small
+// frames would otherwise move the rest of the buffer once for each of them.
 std::optional<Bytes> whole(Channel::Held& held) {
     const std::lock_guard<std::mutex> kept{held.minding};
 
-    if (held.spare.size() < 4) return std::nullopt;
+    const std::size_t left = held.spare.size() - held.start;
+
+    if (left < 4) return std::nullopt;
+
+    const auto from = held.spare.begin() + static_cast<std::ptrdiff_t>(held.start);
 
     std::uint32_t much = 0;
 
-    for (int at = 0; at < 4; ++at) much = (much << 8) | static_cast<std::uint32_t>(held.spare[static_cast<std::size_t>(at)]);
+    for (int at = 0; at < 4; ++at) much = (much << 8) | static_cast<std::uint32_t>(from[at]);
 
     if (much > biggest) {
         held.one.close();
@@ -137,20 +144,33 @@ std::optional<Bytes> whole(Channel::Held& held) {
         throw Trouble{"The other side announced a frame that is too long."};
     }
 
-    if (held.spare.size() < 4 + static_cast<std::size_t>(much)) return std::nullopt;
+    if (left < 4 + static_cast<std::size_t>(much)) return std::nullopt;
 
-    Bytes made(held.spare.begin() + 4, held.spare.begin() + 4 + static_cast<std::ptrdiff_t>(much));
+    Bytes made(from + 4, from + 4 + static_cast<std::ptrdiff_t>(much));
 
-    held.spare.erase(held.spare.begin(), held.spare.begin() + 4 + static_cast<std::ptrdiff_t>(much));
+    held.start += 4 + static_cast<std::size_t>(much);
+
+    if (held.start * 2 >= held.spare.size()) {
+        held.spare.erase(held.spare.begin(), held.spare.begin() + static_cast<std::ptrdiff_t>(held.start));
+        held.start = 0;
+    }
 
     return made;
 }
 
 // The next frame: from the spare buffer or after reading more. The end of the stream in the middle
-// of a frame breaks the channel.
+// of a frame breaks the channel. A frame announced too long already in the buffer rejects the
+// promise, as one read later does: a throw from here would reach a caller who expects a promise.
 Promise<Bytes> framed(const std::shared_ptr<Channel::Held>& held, Clock::time_point until) {
-    if (std::optional<Bytes> ready = whole(*held))
-        return run(io(), [made = std::move(*ready)]() mutable -> Bytes { return std::move(made); });
+    std::optional<Bytes> ready;
+
+    try {
+        ready = whole(*held);
+    } catch (...) {
+        return failed<Bytes>(std::current_exception());
+    }
+
+    if (ready) return run(io(), [made = std::move(*ready)]() mutable -> Bytes { return std::move(made); });
 
     return borrowed(held).read(65536, left(until)).then([held, until](const Bytes& came) {
         if (came.empty()) throw Trouble{"The other side closed the channel."};

@@ -119,14 +119,7 @@ void Terminal::run() {
                        self.exit_.reset();
                        self.drained_ = false;
 
-                       self.reading_ = self.listened()
-                                           .here()
-                                           .then([weak] {
-                                               if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).drained();
-                                           })
-                                           .recover([weak](const std::exception&) {
-                                               if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).drained();
-                                           });
+                       self.reading_ = self.listened();
 
                        self.waiting_ = self.pty_.wait().here().then([weak](const Exit& exit) {
                            if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).exited(exit);
@@ -145,22 +138,35 @@ void Terminal::run() {
                    });
 }
 
-// Reads what the program writes, chunk after chunk, until the terminal is over. Each chunk comes to
-// the loop and goes to the screen there (`heard`).
+// Reads what the program writes, one chunk; the chunk comes to the loop and goes to the screen
+// there (`heard`), and the next read takes this one's place in `reading_`. A read that returned the
+// next one would make a chain of every chunk ever read, held until the output ends. The end of the
+// output, or a read that fails, drains the terminal (`drained`).
 Promise<void> Terminal::listened() {
     const std::weak_ptr<Node> weak = weak_from_this();
 
-    return pty_.read(chunk).here().then([weak](const Bytes& got) -> Promise<void> {
-        const std::shared_ptr<Node> kept = weak.lock();
+    return pty_.read(chunk)
+        .here()
+        .then([weak](const Bytes& got) {
+            const std::shared_ptr<Node> kept = weak.lock();
 
-        if (!kept || got.empty()) return ready();
+            if (!kept) return;
 
-        auto& self = static_cast<Terminal&>(*kept);
+            auto& self = static_cast<Terminal&>(*kept);
 
-        self.heard(got);
+            if (got.empty()) {
+                self.drained();
 
-        return self.listened();
-    });
+                return;
+            }
+
+            self.heard(got);
+
+            self.reading_ = self.listened();
+        })
+        .recover([weak](const std::exception&) {
+            if (const std::shared_ptr<Node> alive = weak.lock()) static_cast<Terminal&>(*alive).drained();
+        });
 }
 
 // A chunk of what the program wrote: onto the screen, the terminal's answers back to the program,

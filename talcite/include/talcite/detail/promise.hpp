@@ -103,9 +103,9 @@ public:
     void stirred();
 
 private:
-    mutable std::mutex guard_;
+    std::mutex guard_;
     std::condition_variable stirred_;
-    bool on_ = true;
+    std::atomic<bool> on_{true};
 };
 
 class Reaction {

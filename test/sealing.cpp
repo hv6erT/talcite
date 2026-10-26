@@ -659,6 +659,50 @@ TRIAL("Channel: announcing a too long frame is a refusal") {
     ought(drained(raw.raw).empty());
 }
 
+TRIAL("Channel: a too long frame already read with the previous one rejects the promise, not the call") {
+    const net::Listener gate = standing();
+    Raw raw = half(gate);
+
+    Bytes both = sealed_frame(answering_key, 0, bytes("raz"));
+    const Bytes over = header((4u << 20) + 17);
+
+    both.insert(both.end(), over.begin(), over.end());
+
+    raw.raw.write(both, soon).get();
+
+    ought(raw.calling.receive(soon).get() == bytes("raz"));
+
+    Promise<Bytes> next;
+
+    bool called = false;
+
+    try {
+        next = raw.calling.receive(soon);
+        called = true;
+    } catch (...) {
+    }
+
+    ought(called);
+    threw(std::move(next).get());
+}
+
+TRIAL("Channel: many frames read at once come out whole and in order") {
+    const net::Listener gate = standing();
+    Raw raw = half(gate);
+
+    Bytes many;
+
+    for (std::uint64_t at = 0; at < 300; ++at) {
+        const Bytes one = sealed_frame(answering_key, at, bytes("ramka " + std::to_string(at)));
+
+        many.insert(many.end(), one.begin(), one.end());
+    }
+
+    raw.raw.write(many, soon).get();
+
+    for (std::uint64_t at = 0; at < 300; ++at) ought(raw.calling.receive(soon).get() == bytes("ramka " + std::to_string(at)));
+}
+
 TRIAL("Channel: the longest message passes, a longer one is refused") {
     const net::Listener gate = standing();
     const Ends ends = greeted(gate);

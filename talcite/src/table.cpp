@@ -546,6 +546,16 @@ View Table::paint(Size given, Area seen) {
         }
     }
 
+    // The looks of a row's states and the elision mark are asked of the skin once a frame, not for
+    // every row and cell; a missing cell is an empty one, shown by reference, not copied.
+    const Style plain = how.style(role());
+    const Style focused = how.style(role() + ".focus");
+    const Style marked_look = how.style(role() + ".mark");
+    const Style both = how.style(role() + ".mark.focus");
+    const char32_t mark = how.glyph("talcite.elide");
+
+    static const TableCell blank{};
+
     for (std::size_t row = 0; row < kept.shown.size(); ++row) {
         const std::size_t number = kept.top + row;
         const int y = head + static_cast<int>(row) - seen.at.y;
@@ -553,17 +563,14 @@ View Table::paint(Size given, Area seen) {
         const bool here = kept.which.has_value() && *kept.which == number;
         const bool taken = chosen().contains(number);
 
-        const Style look = how.style(here && taken ? role() + ".mark.focus"
-                                          : here       ? role() + ".focus"
-                                          : taken      ? role() + ".mark"
-                                                       : role());
+        const Style look = here && taken ? both : here ? focused : taken ? marked_look : plain;
 
         made.fill({{-seen.at.x, y}, {wide, 1}}, look);
 
         int at = -seen.at.x;
 
         for (std::size_t one = 0; one < kept.spread.size(); ++one) {
-            const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : TableCell{};
+            const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : blank;
 
             // A spanning cell takes the rest of the row: from where its column starts to the edge
             // of the content, whatever room the columns after it were given, its own included.
@@ -587,7 +594,7 @@ View Table::paint(Size given, Area seen) {
 
             // A cell that asks for it is elided with the skin's mark, at the end it names (a path
             // keeps its file name with `Elide::left`); otherwise it is cut at the right edge.
-            const std::string shown = elided(cell.text, room, cell.elide, how.glyph("talcite.elide"));
+            const std::string shown = elided(cell.text, room, cell.elide, mark);
 
             made.put({at, y}, ranged(shown, room, justify), look_one);
 

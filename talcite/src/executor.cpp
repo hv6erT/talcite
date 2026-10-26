@@ -2,12 +2,35 @@
 
 #include <atomic>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "talcite/detail/promise.hpp"
 
+#include "batched.hpp"
+
 namespace talcite {
+
+// Runs every piece of a batch taken from a queue, also after one that throws: the batch has left
+// the queue, so whatever stood after the thrower would be lost for good, and with it the
+// continuation somebody waits for. The first exception comes back, for the caller to pass on once
+// the queue is in order; nothing when every piece ran through. Shared by `Loop::turn` and
+// `ManualExecutor::turn`.
+std::exception_ptr detail::ran(const std::vector<std::function<void()>>& batch) {
+    std::exception_ptr first;
+
+    for (const std::function<void()>& one : batch) {
+        try {
+            one();
+        } catch (...) {
+            if (!first) first = std::current_exception();
+        }
+    }
+
+    return first;
+}
 
 namespace {
 
@@ -112,17 +135,7 @@ std::size_t ManualExecutor::turn() {
         taken.swap(queued_);
     }
 
-    std::exception_ptr first;
-
-    for (const std::function<void()>& one : taken) {
-        try {
-            one();
-        } catch (...) {
-            if (!first) first = std::current_exception();
-        }
-    }
-
-    if (first) std::rethrow_exception(first);
+    if (const std::exception_ptr first = detail::ran(taken)) std::rethrow_exception(first);
 
     return taken.size();
 }

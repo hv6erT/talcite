@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include "batched.hpp"
+
 namespace talcite {
 
 namespace {
@@ -50,15 +52,21 @@ Loop* Loop::current() { return standing; }
 
 // Queues work for the loop's thread at its next turn and rings its bell. Safe to call from any
 // thread. The work goes in under the lock and the bell rings after it, so a turn that clears the
-// bell first never loses what came in between (see `turn`).
+// bell first never loses what came in between (see `turn`). Only the work that finds the queue
+// empty rings: whatever stood there before rang already, and that ring is cleared only by a turn
+// that then takes the whole queue, this work with it. A burst of posts is one system call.
 bool Loop::post(std::function<void()> what) {
+    bool first = false;
+
     {
         const std::lock_guard<std::mutex> held{guard_};
+
+        first = queued_.empty();
 
         queued_.push_back(std::move(what));
     }
 
-    bell_.ring();
+    if (first) bell_.ring();
 
     return true;
 }
@@ -80,10 +88,8 @@ std::size_t Loop::waiting() const {
 // stop in poll with no deadline until the next key. In this order the worst that can happen is
 // one idle turn.
 //
-// A piece of work that throws does not take the rest of the batch with it: the batch has already
-// left the queue, so whatever stood after the thrower would be lost for good, and with it the
-// continuation somebody waits for. Every piece runs, and the first exception is passed on after
-// the last one.
+// A piece of work that throws does not take the rest of the batch with it (`detail::ran`): every
+// piece runs, and the first exception is passed on after the last one.
 std::size_t Loop::turn() {
     bell_.clear();
 
@@ -95,19 +101,23 @@ std::size_t Loop::turn() {
         taken.swap(queued_);
     }
 
-    std::exception_ptr first;
+    const std::exception_ptr first = detail::ran(taken);
 
-    for (const std::function<void()>& one : taken) {
-        try {
-            one();
-        } catch (...) {
-            if (!first) first = std::current_exception();
-        }
+    const std::size_t ran = taken.size();
+
+    // The emptied vector goes back with its room, when nothing came meanwhile, so a busy loop does
+    // not grow its queue anew every turn.
+    taken.clear();
+
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        if (queued_.empty()) queued_.swap(taken);
     }
 
     if (first) std::rethrow_exception(first);
 
-    return taken.size();
+    return ran;
 }
 
 }

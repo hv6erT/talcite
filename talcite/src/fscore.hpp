@@ -188,6 +188,10 @@ void stamp_at(const path& where, Instant when);
 
 [[nodiscard]] std::wstring longly(const path& where);
 
+[[nodiscard]] Instant ticked(std::uint64_t much);
+
+[[nodiscard]] std::uint64_t ticks_of(Instant when);
+
 #endif
 
 }

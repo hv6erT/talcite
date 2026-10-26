@@ -307,9 +307,19 @@ void Core::keep(Claim claim) {
         const std::lock_guard<std::mutex> held{guard_};
 
         if (ending_ == Ending::running) {
-            mine = holds_;
-            whose = claim.core();
+            // Nothing to hand on in the usual case, where no pause was ever taken.
+            if (!holds_.empty()) {
+                std::erase_if(holds_, [](const std::shared_ptr<Hold>& one) { return !one->held(); });
+
+                if (!holds_.empty()) {
+                    mine = holds_;
+                    whose = claim.core();
+                }
+            }
+
             upstream_.push_back(std::move(claim));
+
+            if (whose == nullptr) return;
         }
     }
 
@@ -319,7 +329,7 @@ void Core::keep(Claim claim) {
         return;
     }
 
-    if (!mine.empty()) whose->paused_by(std::move(mine));
+    whose->paused_by(std::move(mine));
 }
 
 // Reports the progress of `whose` as this node's own until it ends.
@@ -803,11 +813,20 @@ std::vector<std::shared_ptr<Hold>> Core::holds() const {
 }
 
 // Whether a pause is in force on this node.
-bool Core::paused() const { return !holds().empty(); }
+bool Core::paused() const {
+    const std::lock_guard<std::mutex> held{guard_};
+
+    return std::any_of(holds_.begin(), holds_.end(), [](const std::shared_ptr<Hold>& one) { return one->held(); });
+}
 
 // A place where the work may rest: it waits while a pause is in force on its node; false when the
-// work is stopped, before or while it rests, so the caller ends as at any stop.
+// work is stopped, before or while it rests, so the caller ends as at any stop. A node that has
+// ended has no pauses any more. Before it rests, the steps waiting on this thread go first and the
+// computing slot is given back, as in a wait (`waited`). On a loop's own thread the work never
+// rests: what lifts the pause may be waiting for that very loop.
 bool Core::rested() {
+    if (Loop::current() != nullptr) return !stopped();
+
     for (;;) {
         if (stopped()) return false;
 
@@ -815,10 +834,16 @@ bool Core::rested() {
 
         if (now.empty()) return true;
 
+        drained();
+
         const std::shared_ptr<Hold>& one = now.front();
         const std::uint64_t ear = on_stop([one] { one->stirred(); });
 
-        one->waited(*this);
+        {
+            const Waiting aside;
+
+            one->waited(*this);
+        }
 
         off_stop(ear);
     }
@@ -832,36 +857,40 @@ void Core::awaiting(std::shared_ptr<Core> whose) {
     {
         const std::lock_guard<std::mutex> held{guard_};
 
+        if (ending_ != Ending::running) return;
+
         awaited_ = whose;
-        mine = holds_;
+
+        if (!holds_.empty()) {
+            std::erase_if(holds_, [](const std::shared_ptr<Hold>& one) { return !one->held(); });
+
+            mine = holds_;
+        }
     }
 
     if (whose != nullptr && !mine.empty()) whose->paused_by(std::move(mine));
 }
 
-// The pause ends: the work resting on it goes on, unless another pause holds it.
+// The pause ends: the work resting on it goes on, unless another pause holds it. The flag changes
+// under the lock, so a waiter that has just found it set is already waiting when the notice comes.
 void Hold::lifted() {
     {
         const std::lock_guard<std::mutex> held{guard_};
 
-        on_ = false;
+        on_.store(false);
     }
 
     stirred_.notify_all();
 }
 
-// Whether the pause is still in force.
-bool Hold::held() const {
-    const std::lock_guard<std::mutex> held{guard_};
-
-    return on_;
-}
+// Whether the pause is still in force; without the lock, since every link of a paused chain asks.
+bool Hold::held() const { return on_.load(); }
 
 // Waits until the pause ends or the work of `over` is stopped.
 void Hold::waited(const Core& over) {
     std::unique_lock<std::mutex> held{guard_};
 
-    stirred_.wait(held, [this, &over] { return !on_ || over.stopped(); });
+    stirred_.wait(held, [this, &over] { return !on_.load() || over.stopped(); });
 }
 
 // Wakes whoever waits on the pause, to look again (a stop came).
@@ -944,6 +973,8 @@ Core::Concluded Core::concluded_locked(Ending how, std::exception_ptr why) {
     following_.reset();
     summing_.clear();
     on_stop_.clear();
+    holds_.clear();
+    awaited_.reset();
 
     for (auto at = hooks_.begin(); at != hooks_.end();) {
         if (at->second.state == 0) at = hooks_.erase(at);

@@ -42,9 +42,43 @@ namespace talcite::fs {
 
 using namespace core;
 
+namespace {
+
+// The longest name a folder takes: 255 bytes of UTF-8 on Linux and macOS, 255 UTF-16 units on
+// Windows.
+constexpr std::size_t name_most = 255;
+
+// A name in its native form cut to at most `room` units, never inside a character: a UTF-8
+// sequence or a UTF-16 surrogate pair is dropped whole when it does not fit.
+path::string_type shortened(path::string_type name, std::size_t room) {
+    if (name.size() <= room) return name;
+
+    name.resize(room);
+
+#ifdef _WIN32
+    if (!name.empty() && name.back() >= 0xD800 && name.back() <= 0xDBFF) name.pop_back();
+#else
+    std::size_t lead = name.size();
+
+    while (lead > 0 && (static_cast<unsigned char>(name[lead - 1]) & 0xC0U) == 0x80U) --lead;
+
+    if (lead > 0) {
+        const auto first = static_cast<unsigned char>(name[lead - 1]);
+        const std::size_t wanted = first >= 0xF0U ? 4 : first >= 0xE0U ? 3 : first >= 0xC0U ? 2 : 1;
+
+        if (name.size() - (lead - 1) < wanted) name.resize(lead - 1);
+    }
+#endif
+
+    return name;
+}
+
+}
+
 // A file beside the target for the time of a replacement: a dot, the target's name, six random
 // characters and `.part`. Media servers do not take `.part` for a film, and the random tail does
-// not hit someone else's file.
+// not hit someone else's file. A target named near the longest name a folder takes lends the end
+// of its name to the rest, so the file can still be made.
 path core::aside_of(const path& to) {
     static constexpr std::string_view digits = "0123456789abcdef";
 
@@ -59,7 +93,9 @@ path core::aside_of(const path& to) {
 
     path made = to;
 
-    made.replace_filename(path{"."}.native() + to.filename().native() + path{"." + tail + ".part"}.native());
+    const path::string_type after = path{"." + tail + ".part"}.native();
+
+    made.replace_filename(path{"."}.native() + shortened(to.filename().native(), name_most - 1 - after.size()) + after);
 
     return made;
 }
@@ -886,6 +922,10 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
     make_folder_at(to);
     held.added(1);
 
+    // The installment of the two media, asked once for the tree, as a folder copy does: per file it
+    // would be two `statfs` and, on FUSE and GVfs, two readings of the mount table.
+    const std::size_t rata = rated(from, to);
+
     std::vector<std::pair<path, Instant>> folders;
 
     // Which target folders the move created, as in a folder copy (`tree_at`): the entries come
@@ -908,7 +948,7 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
             make_folder_at(where);
             fresh[where] = !there;
             folders.emplace_back(one.where, instant_or(one.where, one.modified));
-        } else if (!carried(one.where, where, how, Tally{held, base, false}, inside)) {
+        } else if (!carried(one.where, where, how, Tally{held, base, false, rata}, inside)) {
             return false;
         }
 
