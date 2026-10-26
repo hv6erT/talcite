@@ -281,16 +281,16 @@ constexpr std::size_t spliced_piece = 16 * 1024 * 1024;
 #ifdef _WIN32
 
 // `CopyFileExW` copies on its own: server-side on an SMB share, with ODX offload on a storage
-// array, with attributes and streams. Progress and cancellation go through the callback, on the
-// same thread, so the worker's bell is heard as in our own loop. When cancelled, the system
-// removes the target itself.
+// array, with attributes and streams. Progress, cancellation and a pause go through the callback,
+// on the same thread, so the worker's bell is heard as in our own loop: a paused copy rests in the
+// callback, between the system's pieces. When cancelled, the system removes the target itself.
 DWORD CALLBACK copied(LARGE_INTEGER, LARGE_INTEGER done, LARGE_INTEGER, LARGE_INTEGER, DWORD, DWORD, HANDLE, HANDLE,
                       LPVOID given) {
     const Tally& tally = *static_cast<const Tally*>(given);
 
     tally.held.reached(tally.base + static_cast<std::uintmax_t>(done.QuadPart));
 
-    return stopped() ? PROGRESS_CANCEL : PROGRESS_CONTINUE;
+    return rested() ? PROGRESS_CONTINUE : PROGRESS_CANCEL;
 }
 
 #endif
@@ -418,7 +418,7 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool
         Bytes buffer;
 
         while (at < whole) {
-            if (stopped()) return nullptr;
+            if (!rested()) return nullptr;
 
             if (ranged) {
                 const std::optional<std::size_t> went =
@@ -640,7 +640,7 @@ bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen
     };
 
     for (const Laid& one : laid) {
-        if (stopped()) return false;
+        if (!rested()) return false;
 
         const std::uintmax_t base = held.done.load();
         const bool inside = anew(one.to);
@@ -893,7 +893,7 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
     std::map<path, bool> fresh{{to, !standing}};
 
     for (const Entry& one : among) {
-        if (stopped()) return false;
+        if (!rested()) return false;
 
         const path where = to / one.where.lexically_relative(from);
 
@@ -1064,7 +1064,7 @@ Promise<void> erase(const path& where) {
 
         // From the deepest, because a folder can be removed only when empty.
         for (auto at = among.rbegin(); at != among.rend(); ++at) {
-            if (stopped()) throw Cancelled{};
+            if (!rested()) throw Cancelled{};
 
             std::error_code ignored;
             stood::remove(long_form(at->where), ignored);

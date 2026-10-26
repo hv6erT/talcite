@@ -1,5 +1,6 @@
 #include "talcite/promise.hpp"
 
+#include <algorithm>
 #include <deque>
 #include <exception>
 #include <functional>
@@ -296,19 +297,29 @@ void Core::react(Claim& claim, std::shared_ptr<Reaction> reaction) {
 }
 
 // Keeps a claim on a predecessor, to be released when this node ends or is cancelled. A node that
-// has already ended releases it at once.
+// has already ended releases it at once. A predecessor of a paused node rests with it, also one
+// linked after the pause began (a promise a callback returned, the next member of a join).
 void Core::keep(Claim claim) {
+    std::vector<std::shared_ptr<Hold>> mine;
+    std::shared_ptr<Core> whose;
+
     {
         const std::lock_guard<std::mutex> held{guard_};
 
         if (ending_ == Ending::running) {
+            mine = holds_;
+            whose = claim.core();
             upstream_.push_back(std::move(claim));
-
-            return;
         }
     }
 
-    claim.release();
+    if (whose == nullptr) {
+        claim.release();
+
+        return;
+    }
+
+    if (!mine.empty()) whose->paused_by(std::move(mine));
 }
 
 // Reports the progress of `whose` as this node's own until it ends.
@@ -707,6 +718,9 @@ Ending Core::waited(Core* also) {
 
     const std::shared_ptr<Core> self = shared_from_this();
 
+    // The work that waits here waits for this node now: a pause of it, now or later, reaches this.
+    if (also != nullptr && also != this) also->awaiting(self);
+
     std::uint64_t ear = 0;
 
     if (also != nullptr && also != this)
@@ -731,6 +745,132 @@ Ending Core::waited(Core* also) {
     if (also != nullptr) also->off_stop(ear);
 
     return made;
+}
+
+// Pauses this node and everything it waits for: its predecessors (every link keeps a claim on its
+// predecessor, so these are also the promise a callback returned and the members of a join) and
+// what its work awaits now. Each of them rests while one of `these` is held; a hold that one
+// already has stops the walk there, so a shared predecessor is visited once. A node that has ended
+// has nothing to rest. Iterative, since chains are long.
+void Core::paused_by(std::vector<std::shared_ptr<Hold>> these) {
+    std::vector<std::pair<std::shared_ptr<Core>, std::vector<std::shared_ptr<Hold>>>> left;
+
+    left.emplace_back(shared_from_this(), std::move(these));
+
+    while (!left.empty()) {
+        auto [core, given] = std::move(left.back());
+
+        left.pop_back();
+
+        std::vector<std::shared_ptr<Hold>> fresh;
+        std::vector<std::shared_ptr<Core>> above;
+
+        {
+            const std::lock_guard<std::mutex> held{core->guard_};
+
+            if (core->ending_ != Ending::running) continue;
+
+            std::erase_if(core->holds_, [](const std::shared_ptr<Hold>& one) { return !one->held(); });
+
+            for (std::shared_ptr<Hold>& one : given)
+                if (one->held() && std::find(core->holds_.begin(), core->holds_.end(), one) == core->holds_.end()) {
+                    core->holds_.push_back(one);
+                    fresh.push_back(std::move(one));
+                }
+
+            if (fresh.empty()) continue;
+
+            for (const Claim& claim : core->upstream_)
+                if (claim) above.push_back(claim.core());
+
+            if (std::shared_ptr<Core> one = core->awaited_.lock()) above.push_back(std::move(one));
+        }
+
+        for (std::shared_ptr<Core>& one : above) left.emplace_back(std::move(one), fresh);
+    }
+}
+
+// The pauses in force on this node.
+std::vector<std::shared_ptr<Hold>> Core::holds() const {
+    const std::lock_guard<std::mutex> held{guard_};
+
+    std::vector<std::shared_ptr<Hold>> made;
+
+    for (const std::shared_ptr<Hold>& one : holds_)
+        if (one->held()) made.push_back(one);
+
+    return made;
+}
+
+// Whether a pause is in force on this node.
+bool Core::paused() const { return !holds().empty(); }
+
+// A place where the work may rest: it waits while a pause is in force on its node; false when the
+// work is stopped, before or while it rests, so the caller ends as at any stop.
+bool Core::rested() {
+    for (;;) {
+        if (stopped()) return false;
+
+        const std::vector<std::shared_ptr<Hold>> now = holds();
+
+        if (now.empty()) return true;
+
+        const std::shared_ptr<Hold>& one = now.front();
+        const std::uint64_t ear = on_stop([one] { one->stirred(); });
+
+        one->waited(*this);
+
+        off_stop(ear);
+    }
+}
+
+// The work of this node waits for `whose` now (a coroutine's `co_await`, a body's `get`): a pause
+// of this node reaches it, also one that comes while it waits.
+void Core::awaiting(std::shared_ptr<Core> whose) {
+    std::vector<std::shared_ptr<Hold>> mine;
+
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        awaited_ = whose;
+        mine = holds_;
+    }
+
+    if (whose != nullptr && !mine.empty()) whose->paused_by(std::move(mine));
+}
+
+// The pause ends: the work resting on it goes on, unless another pause holds it.
+void Hold::lifted() {
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+
+        on_ = false;
+    }
+
+    stirred_.notify_all();
+}
+
+// Whether the pause is still in force.
+bool Hold::held() const {
+    const std::lock_guard<std::mutex> held{guard_};
+
+    return on_;
+}
+
+// Waits until the pause ends or the work of `over` is stopped.
+void Hold::waited(const Core& over) {
+    std::unique_lock<std::mutex> held{guard_};
+
+    stirred_.wait(held, [this, &over] { return !on_ || over.stopped(); });
+}
+
+// Wakes whoever waits on the pause, to look again (a stop came).
+void Hold::stirred() {
+    {
+        const std::lock_guard<std::mutex> held{guard_};
+    }
+
+    stirred_.notify_all();
 }
 
 // Sets the progress the producer reports.
@@ -1113,6 +1253,30 @@ Hook::~Hook() {
 
 // Whether the work has been stopped.
 bool Stop::stopped() const { return core_->stopped(); }
+
+// Whether the work is paused: someone holds a `Pause` of its promise or of a promise that waits
+// for it.
+bool Stop::paused() const { return core_->paused(); }
+
+// A place where the work rests while it is paused; false when it is stopped, before or meanwhile.
+// The work decides where it may rest: between installments of a copy, between entries of a tree.
+bool Stop::rested() const { return core_->rested(); }
+
+// Moves the pause in: the one held before ends.
+Pause& Pause::operator=(Pause&& other) noexcept {
+    if (this != &other) {
+        if (hold_ != nullptr) hold_->lifted();
+
+        hold_ = std::move(other.hold_);
+    }
+
+    return *this;
+}
+
+// The pause ends with its holder.
+Pause::~Pause() {
+    if (hold_ != nullptr) hold_->lifted();
+}
 
 // Waits at most `patience` (without limit when negative) for the stop; whether it came.
 bool Stop::wait(std::chrono::milliseconds patience) const { return core_->wait_stop(patience); }

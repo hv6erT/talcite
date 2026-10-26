@@ -190,11 +190,38 @@ private:
     std::uint64_t which_ = 0;
 };
 
+class Pause {
+public:
+    Pause() = default;
+
+    Pause(Pause&& other) noexcept : hold_(std::move(other.hold_)) {}
+
+    Pause& operator=(Pause&& other) noexcept;
+
+    ~Pause();
+
+    Pause(const Pause&) = delete;
+    Pause& operator=(const Pause&) = delete;
+
+    [[nodiscard]] bool held() const { return hold_ != nullptr; }
+
+private:
+    friend struct detail::Access;
+
+    explicit Pause(std::shared_ptr<detail::Hold> hold) : hold_(std::move(hold)) {}
+
+    std::shared_ptr<detail::Hold> hold_;
+};
+
 class Stop {
 public:
     using Handle = detail::Heard;
 
     [[nodiscard]] bool stopped() const;
+
+    [[nodiscard]] bool paused() const;
+
+    [[nodiscard]] bool rested() const;
 
     [[nodiscard]] bool wait(std::chrono::milliseconds patience) const;
 
@@ -266,6 +293,14 @@ struct Access {
     [[nodiscard]] static Work work(std::shared_ptr<Core> core) { return Work{std::move(core)}; }
 
     [[nodiscard]] static Core* core(const Stop& stop) { return stop.core_.get(); }
+
+    [[nodiscard]] static Pause pause(const std::shared_ptr<Core>& core) {
+        auto made = std::make_shared<Hold>();
+
+        core->paused_by({made});
+
+        return Pause{std::move(made)};
+    }
 
     template <typename T>
     [[nodiscard]] static Settle<T> settle(std::shared_ptr<Node<T>> node) {
@@ -823,6 +858,8 @@ public:
 
     void cancel() { claim_.release(); }
 
+    [[nodiscard]] Pause pause() const { return claim_ ? detail::Access::pause(claim_.core()) : Pause{}; }
+
     T get() && {
         auto from = taken();
         detail::Claim kept = std::move(claim_);
@@ -930,6 +967,8 @@ public:
     [[nodiscard]] Progress progress() const { return claim_ ? claim_.get()->progress() : Progress{}; }
 
     void cancel() { claim_.release(); }
+
+    [[nodiscard]] Pause pause() const { return claim_ ? detail::Access::pause(claim_.core()) : Pause{}; }
 
 private:
     friend struct detail::Access;
@@ -1483,6 +1522,8 @@ public:
 
     void left() { current_stop() = previous_; }
 
+    [[nodiscard]] const Stop* stop() const { return stop_; }
+
     [[nodiscard]] bool waiting(std::shared_ptr<Waited> now) {
         const std::lock_guard<std::mutex> held{guard_};
 
@@ -1625,6 +1666,8 @@ public:
                 return false;
             }
         }
+
+        if (suspension_ != nullptr && suspension_->stop() != nullptr) Access::core(*suspension_->stop())->awaiting(node_);
 
         const std::lock_guard<std::mutex> held{waited_->guard};
 

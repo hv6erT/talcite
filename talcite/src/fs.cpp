@@ -665,6 +665,15 @@ bool stopped() {
     return stop != nullptr && stop->stopped();
 }
 
+// A place where long work on files may rest: while the promise of the work running on this thread
+// is paused, it waits here; false when the work is stopped, before or meanwhile. Copies rest
+// between installments and between the entries of a tree, removal between entries.
+bool rested() {
+    const Stop* stop = Stop::current();
+
+    return stop == nullptr || stop->rested();
+}
+
 #ifndef _WIN32
 
 // The kind of entry straight from the mode, as in stat(2): a symlink is recognized before anything

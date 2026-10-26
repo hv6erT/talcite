@@ -170,6 +170,8 @@ void stamp_at(const path& where, Instant when);
 
 [[nodiscard]] bool stopped();
 
+[[nodiscard]] bool rested();
+
 [[nodiscard]] std::vector<Entry> walk_at(const path& where);
 
 [[nodiscard]] std::size_t write_at(const File::Held& held, std::uintmax_t at, const Bytes& what);

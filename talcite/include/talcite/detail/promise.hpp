@@ -92,6 +92,22 @@ void lose(std::exception_ptr why);
 
 class Core;
 
+class Hold {
+public:
+    void lifted();
+
+    [[nodiscard]] bool held() const;
+
+    void waited(const Core& over);
+
+    void stirred();
+
+private:
+    mutable std::mutex guard_;
+    std::condition_variable stirred_;
+    bool on_ = true;
+};
+
 class Reaction {
 public:
     Reaction() = default;
@@ -225,6 +241,16 @@ public:
 
     [[nodiscard]] Ending waited(Core* also);
 
+    void paused_by(std::vector<std::shared_ptr<Hold>> these);
+
+    [[nodiscard]] std::vector<std::shared_ptr<Hold>> holds() const;
+
+    [[nodiscard]] bool paused() const;
+
+    [[nodiscard]] bool rested();
+
+    void awaiting(std::shared_ptr<Core> whose);
+
     void report(Progress now);
 
     [[nodiscard]] Progress progress() const;
@@ -284,6 +310,8 @@ private:
     std::shared_ptr<Core> following_;
     std::vector<std::shared_ptr<Core>> summing_;
     std::shared_ptr<Gate> home_;
+    std::vector<std::shared_ptr<Hold>> holds_;
+    std::weak_ptr<Core> awaited_;
 };
 
 template <typename T>
