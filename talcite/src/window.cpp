@@ -105,19 +105,6 @@ void Window::raise() {
     if (auto* window = dynamic_cast<Windows*>(parent())) window->raise(*this);
 }
 
-// Draws the content over a transparent background; the window itself draws nothing.
-View Window::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
-
-    made.draw(children().front()->render({{0, 0}, given}, seen), {0, 0});
-
-    return made;
-}
-
 // A click on the window raises it but does not consume it: a modeless window must not eat the
 // mouse, and someone who clicked on the text below wants both to raise the window and to put the
 // cursor there. Only what the content did not take arrives here; a click on the content itself
