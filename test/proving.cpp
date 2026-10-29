@@ -239,16 +239,6 @@ std::string started(const std::string& said) {
 //
 // Called before anything else in `main`, so that pretending does not pull in the trials.
 int pretending(const std::vector<std::string>& given) {
-#ifdef _WIN32
-
-    // Without this, Windows would turn every `\n` into `\r\n`, and comparing bytes would mean
-    // nothing.
-    _setmode(_fileno(stdout), _O_BINARY);
-    _setmode(_fileno(stderr), _O_BINARY);
-    _setmode(_fileno(stdin), _O_BINARY);
-
-#endif
-
     const std::string what = given.empty() ? std::string{} : given[0];
     const std::string rest = given.size() > 1 ? given[1] : std::string{};
 
@@ -508,6 +498,13 @@ int pretending(const std::vector<std::string>& given) {
 int main(int count, char** given) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
+
+    // Every run writes the same bytes as on other systems: without this Windows would turn every
+    // `\n` into `\r\n`, and the trials that read a run's output (the pretended programs, the
+    // watch) would compare nothing.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+    _setmode(_fileno(stdin), _O_BINARY);
 #endif
 
     const std::vector<std::string> words = worded(count, given);
@@ -546,7 +543,10 @@ int main(int count, char** given) {
     std::size_t passed = 0;
     std::size_t ran = 0;
 
-    Watch watch{longest()};
+    // Static and made before the first trial, so it outlives what the trials leave behind: the
+    // pools and loops they start are made later and destroyed first, at the end of the program,
+    // with the watch still running. A hang there (a worker that never ends) is named too.
+    static Watch watch{longest()};
 
     for (const Trial& one : held) {
         if (!only.empty() && one.named != only) continue;
@@ -572,7 +572,9 @@ int main(int count, char** given) {
         std::cout.flush();
     }
 
-    std::cout << "\nPassed " << passed << " of " << ran << ".\n";
+    std::cout << "\nPassed " << passed << " of " << ran << ".\n" << std::flush;
+
+    watch.begun("the end of the run");
 
     return passed == ran ? 0 : 1;
 }

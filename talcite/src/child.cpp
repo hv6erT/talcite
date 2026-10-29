@@ -1349,6 +1349,15 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
             unconsoled();
             amiss("Cannot pass the pseudoconsole.", what.program);
         }
+
+        // The program's standard handles are said to be none, so that it takes the pseudoconsole's.
+        // Without this a program started from a process whose own output goes to a file or a pipe
+        // (a log, a script that runs the tests) gets that file instead: it writes past the
+        // pseudoconsole and never sees a terminal. Windows Terminal does the same.
+        setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        setting.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+        setting.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+        setting.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
     } else if (!ahead) {
         setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         setting.StartupInfo.hStdInput = in_read;

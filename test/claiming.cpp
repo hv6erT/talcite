@@ -287,9 +287,17 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     ought(!login::enrolled(name).get());
 
+    // A program every Windows has, where this system keeps it: the entry names a program that must
+    // exist, and a guessed path (C:\Windows\notepad.exe) did not on the machine of the first run.
+    std::wstring system(MAX_PATH, L'\0');
+
+    system.resize(GetSystemDirectoryW(system.data(), static_cast<UINT>(system.size())));
+
+    const std::wstring program = system + L"\\cmd.exe";
+
     Command what;
 
-    what.program = L"C:\\windows\\notepad.exe";
+    what.program = program;
     what.arguments = {"a b", "c"};
 
     login::enrol(name, what).get();
@@ -305,13 +313,13 @@ TRIAL("Login: an entry is added, replaced and removed, and a malformed name is a
 
     told.resize(much / sizeof(wchar_t) - 1);
 
-    ought(told == L"C:\\windows\\notepad.exe \"a b\" c");
+    ought(told == program + L" \"a b\" c");
 
     // Windows offers neither a working directory nor an environment here: a refusal, not a silent
     // omission.
     Command elsewhere = what;
 
-    elsewhere.where = L"C:\\windows";
+    elsewhere.where = system;
 
     threw(login::enrol(name, elsewhere).get());
 

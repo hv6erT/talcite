@@ -819,6 +819,16 @@ protected:
     }
 };
 
+// A fake terminal that takes escape sequences: links go only to such a one, and on Windows the
+// console says so itself (`Console::vt`), while the fake says no by default.
+std::shared_ptr<faking::Terminal> sequenced() {
+    auto made = faking::terminal();
+
+    made->sequences = true;
+
+    return made;
+}
+
 // What `Term` writes for one frame of the root, after the probe.
 std::string linked(const std::shared_ptr<faking::Terminal>& line, Linking& root, Setup given = {}) {
     Term term{std::move(given), Seam<Console>{line}};
@@ -839,7 +849,7 @@ std::string linked(const std::shared_ptr<faking::Terminal>& line, Linking& root,
 TRIAL("Term: a hyperlink goes out as OSC 8 around its cells, its address escaped") {
     Linking root{"https://example.org/a b/\xc3\xbc"};
 
-    const std::string said = linked(faking::terminal(), root);
+    const std::string said = linked(sequenced(), root);
 
     const std::string opening = "\x1b]8;id=" + std::to_string(root.target.mark) + ";https://example.org/a%20b/%C3%BC\x1b\\";
     const std::string closing = "\x1b]8;;\x1b\\";
@@ -865,12 +875,12 @@ TRIAL("Term: without hyperlinks the cells go out as plain text") {
 
     Linking root{"https://example.org/"};
 
-    const std::string forbidden = linked(faking::terminal(), root, forbidding);
+    const std::string forbidden = linked(sequenced(), root, forbidding);
 
     ought(!holds(forbidden, "\x1b]8"));
     ought(holds(forbidden, "go"));
 
-    auto kernel = faking::terminal();
+    auto kernel = sequenced();
 
     kernel->environment["TERM"] = "linux";
 
@@ -880,7 +890,7 @@ TRIAL("Term: without hyperlinks the cells go out as plain text") {
 
     Linking far{"https://example.org/" + std::string(3000, 'a')};
 
-    const std::string long_one = linked(faking::terminal(), far);
+    const std::string long_one = linked(sequenced(), far);
 
     ought(!holds(long_one, "\x1b]8"));
     ought(holds(long_one, "go"));
@@ -889,7 +899,7 @@ TRIAL("Term: without hyperlinks the cells go out as plain text") {
 // A link is part of the cell for comparing frames: the same frame again sends nothing, and a new
 // address, which comes with a new mark, rewrites the link's cells under it.
 TRIAL("Term: the same link sends nothing again, a new address rewrites its cells") {
-    auto line = faking::terminal();
+    auto line = sequenced();
 
     Linking root{"https://example.org/one"};
 
