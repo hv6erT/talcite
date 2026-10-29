@@ -8,6 +8,7 @@
 #include "talcite/dialog.hpp"
 #include "talcite/modals.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/field.hpp"
 #include "talcite/frame.hpp"
 #include "talcite/keybaritem.hpp"
 #include "talcite/keybar.hpp"
@@ -574,6 +575,84 @@ TRIAL("Dialog: a shortcut key does not reach inside a focusable widget") {
 
     ought(top.dispatch(what));
     same(hidden, 0);
+}
+
+// A text field keeps a plain letter for itself, so Alt with the letter presses the hot key from
+// it, as in Midnight Commander. A node that answers to Alt with the letter itself is asked first
+// and keeps it; Ctrl with the letter is no hot key.
+TRIAL("Dialog: Alt with a letter presses the hot key from a text field") {
+    proving::Hooks heard;
+
+    ui::Root top;
+
+    const auto window = std::make_shared<ui::Modals>();
+    const auto one = std::make_shared<ui::Dialog>();
+    const auto column = std::make_shared<ui::Column>();
+    const auto field = std::make_shared<ui::Field>(20);
+    const auto span = std::make_shared<ui::Span>("z");
+
+    int browsed = 0;
+    int zed = 0;
+    int own = 0;
+
+    const auto browse = proving::doing(heard, std::make_shared<ui::Button>("Browse"), [&browsed] { ++browsed; });
+    const auto other = proving::doing(heard, std::make_shared<ui::Button>("Zed"), [&zed] { ++zed; });
+
+    browse->keys().add(U'B');
+    other->keys().add(U'Z');
+
+    column->children().add(field);
+    column->children().add(span);
+    column->children().add(browse);
+    column->children().add(other);
+
+    one->children().add(column);
+
+    top.children().add(window);
+    window->open(one);
+
+    field->focus();
+
+    const ui::Hook heard_alt = span->on<ui::ShortcutEvent>([&own](ui::ShortcutEvent& what) {
+        if (what.key() != ui::Key{U'z', ui::Mods{.alt = true}}) return false;
+
+        ++own;
+
+        return true;
+    });
+
+    ui::KeyEvent typed{U'b'};
+
+    ought(top.dispatch(typed));
+    same(field->text(), std::string{"b"});
+    same(browsed, 0);
+
+    ui::KeyEvent alted{ui::Key{U'b', ui::Mods{.alt = true}}};
+
+    ought(top.dispatch(alted));
+    same(field->text(), std::string{"b"});
+    same(browsed, 1);
+
+    ui::KeyEvent shifted{ui::Key{U'B', ui::Mods{.alt = true, .shift = true}}};
+
+    ought(top.dispatch(shifted));
+    same(browsed, 2);
+
+    ui::KeyEvent taken{ui::Key{U'z', ui::Mods{.alt = true}}};
+
+    ought(top.dispatch(taken));
+    same(own, 1);
+    same(zed, 0);
+
+    ui::KeyEvent controlled{ui::Key{U'b', ui::Mods{.ctrl = true}}};
+
+    (void)top.dispatch(controlled);
+    same(browsed, 2);
+
+    ui::KeyEvent both{ui::Key{U'b', ui::Mods{.ctrl = true, .alt = true}}};
+
+    (void)top.dispatch(both);
+    same(browsed, 2);
 }
 
 TRIAL("Dialog: an empty one draws nothing and covers nothing") {

@@ -26,7 +26,20 @@ bool Dialog::handle(KeyEvent& what) {
     const bool walking = code == Code::up || code == Code::down;
 
     if (code != Code::escape && code != Code::tab && !walking) {
-        (void)broadcast(what);
+        if (broadcast(what)) return true;
+
+        // Alt with a letter that nobody took is the letter as a hot key, as in Midnight Commander:
+        // a text field keeps a plain letter for itself, so Alt is how a button is reached from it.
+        // A node that answers to Alt with that letter itself was asked first, with the key as it
+        // came.
+        const Mods mods = what.mods();
+        const char32_t letter = what.key().letter();
+
+        if (mods.alt && !mods.ctrl && letter != 0) {
+            KeyEvent plain{Key{letter}};
+
+            (void)broadcast(plain);
+        }
 
         return true;
     }
