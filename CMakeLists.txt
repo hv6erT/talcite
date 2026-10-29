@@ -3,11 +3,15 @@
 # newer CMake.
 cmake_minimum_required(VERSION 3.21)
 
+# A Debug build puts its debug information into the object files (/Z7) instead of a program
+# database written through the mspdbsrv server (/ZI): the server outlives a build in Visual Studio,
+# and its heap grows from build to build until the compiler runs out of heap space (C1060), however
+# much memory is free. The price is Edit and Continue; the linker still writes the .pdb.
 if(POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
 
   set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
-      "$<$<CONFIG:Debug>:EditAndContinue>$<$<CONFIG:RelWithDebInfo>:ProgramDatabase>")
+      "$<$<CONFIG:Debug>:Embedded>$<$<CONFIG:RelWithDebInfo>:ProgramDatabase>")
 endif()
 
 project(talcite CXX)
