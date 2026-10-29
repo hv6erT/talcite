@@ -26,6 +26,30 @@ if(PROJECT_IS_TOP_LEVEL AND NOT multi AND NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# A compiler working on a large source takes gigabytes of memory, and Ninja starts as many compilers
+# as there are cores: with many cores and not as much memory they run out of it together (MSVC stops
+# with C1060, out of heap space, however much memory the system shows free). So compiling goes
+# through a pool sized by the memory: one compiler per TALCITE_COMPILE_MEMORY_MIB of physical memory,
+# at least one. Only the project built on its own sets the pool, for its subdirectories too; only
+# Ninja has pools, and other generators ignore them.
+if(PROJECT_IS_TOP_LEVEL)
+  set(TALCITE_COMPILE_MEMORY_MIB 2048 CACHE STRING "Memory one compiler may take, in MiB; sizes the pool of compiling jobs")
+
+  if(NOT TALCITE_COMPILE_MEMORY_MIB MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "TALCITE_COMPILE_MEMORY_MIB must be a whole number of MiB greater than zero, not \"${TALCITE_COMPILE_MEMORY_MIB}\".")
+  endif()
+
+  cmake_host_system_information(RESULT memory QUERY TOTAL_PHYSICAL_MEMORY)
+  math(EXPR compilers "${memory} / ${TALCITE_COMPILE_MEMORY_MIB}")
+
+  if(compilers LESS 1)
+    set(compilers 1)
+  endif()
+
+  set_property(GLOBAL APPEND PROPERTY JOB_POOLS compiling=${compilers})
+  set(CMAKE_JOB_POOL_COMPILE compiling)
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
