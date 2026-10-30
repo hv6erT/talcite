@@ -164,6 +164,39 @@ std::string narrowly(const std::wstring& what) {
     return made;
 }
 
+// A line typed into the console, in UTF-8, without its line end; false at the end of the input.
+// The C library reads the console in the console's code page (852 or 1250 on a Polish Windows),
+// which has no place for many letters and turns them into others, so a console is read as UTF-16
+// (ReadConsoleW) whatever its code page; input that is no console is read as it comes.
+bool typed_line(std::string& line) {
+    const HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+
+    DWORD mode = 0;
+
+    if (GetConsoleMode(in, &mode) == 0) return static_cast<bool>(std::getline(std::cin, line));
+
+    std::wstring wide;
+
+    while (true) {
+        wchar_t one = 0;
+        DWORD got = 0;
+
+        if (ReadConsoleW(in, &one, 1, &got, nullptr) == 0 || got == 0) {
+            if (wide.empty()) return false;
+
+            break;
+        }
+
+        if (one == L'\n') break;
+
+        wide += one;
+    }
+
+    line = narrowly(wide);
+
+    return true;
+}
+
 // UTF-8 as UTF-16 for Windows.
 std::wstring widely(const std::string& what) {
     if (what.empty()) return {};
@@ -395,11 +428,20 @@ int pretending(const std::vector<std::string>& given) {
         const bool typed = ::isatty(STDIN_FILENO) != 0 && ::isatty(STDOUT_FILENO) != 0;
 #endif
 
+#ifdef _WIN32
+        // What it writes is UTF-8, so the console reads it as such.
+        SetConsoleOutputCP(CP_UTF8);
+#endif
+
         said(stdout, std::string{"tty "} + (typed ? "1 " : "0 ") + measured() + "\n");
 
         std::string line;
 
+#ifdef _WIN32
+        while (typed_line(line)) {
+#else
         while (std::getline(std::cin, line)) {
+#endif
             if (!line.empty() && line.back() == '\r') line.pop_back();
 
             if (line == "quit") return 0;
