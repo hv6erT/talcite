@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "talcite/child.hpp"
+#include "talcite/encoding.hpp"
 #include "talcite/fs.hpp"
 #include "talcite/listener.hpp"
 #include "talcite/udp.hpp"
@@ -278,15 +279,49 @@ TRIAL("Child: an environment variable reaches the program") {
 }
 
 // Without inheritance the program has nothing but what it was given, and that is the only way to
-// run something under known conditions.
+// run something under known conditions: a variable of ours does not reach it, one given does. On
+// Windows it is given PATH too, since a build with AddressSanitizer loads its runtime
+// (clang_rt.asan_dynamic) from there and without it would not start at all.
 TRIAL("Child: without inheritance only what was given remains") {
-    Command what = pretending({"around", "PATH"});
-    what.inherit = false;
-    what.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
+    const auto given = [] {
+        Command made = pretending({"around", "TALCITE_ODZIEDZICZONA"});
 
-    const Output made = Child::run(std::move(what)).get();
+        made.inherit = false;
+        made.environment.push_back(Variable{"TALCITE_PROBA", "wartość"});
 
-    same(text(made.out), std::string{"<none>"});
+#ifdef _WIN32
+        std::wstring path(32767, L'\0');
+
+        path.resize(GetEnvironmentVariableW(L"PATH", path.data(), static_cast<DWORD>(path.size())));
+
+        made.environment.push_back(Variable{"PATH", to_string(path)});
+#endif
+
+        return made;
+    };
+
+#ifdef _WIN32
+    SetEnvironmentVariableW(L"TALCITE_ODZIEDZICZONA", L"nasza");
+#else
+    ::setenv("TALCITE_ODZIEDZICZONA", "nasza", 1);
+#endif
+
+    const Output ours = Child::run(given()).get();
+
+    Command probed = given();
+
+    probed.arguments.back() = "TALCITE_PROBA";
+
+    const Output theirs = Child::run(std::move(probed)).get();
+
+#ifdef _WIN32
+    SetEnvironmentVariableW(L"TALCITE_ODZIEDZICZONA", nullptr);
+#else
+    ::unsetenv("TALCITE_ODZIEDZICZONA");
+#endif
+
+    same(text(ours.out), std::string{"<none>"});
+    same(text(theirs.out), std::string{"wartość"});
 }
 
 // --- Ending --------------------------------------------------------------------------------------
@@ -385,11 +420,29 @@ TRIAL("Child: stop also asks what the program started to end") {
 
     const std::int64_t grandchild = std::stoll(line);
 
+    const auto began = std::chrono::steady_clock::now();
+
     one.stop();
 
-    (void)one.wait().get();
+    const Exit ended = one.wait().get();
 
-    ought(!alive(grandchild, std::chrono::milliseconds{3000}));
+    const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began);
+
+    // On Windows the grandchild has outlived the Ctrl-Break more than once: how the parent ended
+    // and how soon tell whether the event reached the group at all (a parent asleep for its full
+    // thirty seconds did not get it either) or the parent alone.
+    if (alive(grandchild, std::chrono::milliseconds{3000})) {
+        same("parent: code " + std::to_string(static_cast<unsigned>(ended.code)) + ", signal " + std::to_string(ended.signal) + ", after " +
+                 std::to_string(took.count()) + " ms",
+             std::string{"the grandchild ends with it"});
+
+#ifdef _WIN32
+        if (const HANDLE left = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(grandchild)); left != nullptr) {
+            (void)TerminateProcess(left, 1);
+            CloseHandle(left);
+        }
+#endif
+    }
 }
 
 // Killing after reaping must be quiet and safe: the process id may then be given to someone else,

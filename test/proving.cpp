@@ -541,6 +541,11 @@ int main(int count, char** given) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 
+    // A program the trials start that cannot load a library (an AddressSanitizer build without its
+    // runtime on PATH) ends with a status instead of a system window nobody sees, which would hold
+    // the trial until the watch; the programs we start inherit this.
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+
     // Every run writes the same bytes as on other systems: without this Windows would turn every
     // `\n` into `\r\n`, and the trials that read a run's output (the pretended programs, the
     // watch) would compare nothing.
