@@ -44,8 +44,17 @@ target_link_libraries(talcite PUBLIC Threads::Threads)
 # program (`launcher`: ShellExecuteW, with COM around it).
 # normaliz: NormalizeString, which composes a letter with its marks for the old console, whose cell
 # holds one UTF-16 unit; present since Vista.
+# shlwapi and uuid: the desktop (`desktop`) asks for the default program of a type
+# (AssocQueryStringW) and binds a file to a data object for a program's handler; uuid holds the
+# interface and handler identifiers (IID_IShellItem, BHID_DataObject). Both in every Windows.
 if(WIN32)
-    target_link_libraries(talcite PUBLIC mpr netapi32 ws2_32 iphlpapi bcrypt advapi32 shell32 ole32 crypt32 normaliz)
+    target_link_libraries(talcite PUBLIC mpr netapi32 ws2_32 iphlpapi bcrypt advapi32 shell32 ole32 crypt32 normaliz shlwapi uuid)
+endif()
+
+# CoreServices: Launch Services, which the desktop (`desktop`) asks for the programs of a file on
+# macOS.
+if(APPLE)
+    target_link_libraries(talcite PUBLIC "-framework CoreServices")
 endif()
 
 # MinGW: the GCC runtime libraries (libstdc++, libgcc and winpthread) go into the executable.
