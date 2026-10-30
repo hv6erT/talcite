@@ -494,14 +494,22 @@ TRIAL("Image: seeking sets the frame together with the time") {
 
     bool held = true;
 
+    // What is left of the frame is its length less the time since the seek, which the trial
+    // measures rather than assumes small: under a sanitizer a frame's drawing alone takes tens of
+    // milliseconds.
     for (std::size_t at = 0; at < 4; ++at) {
+        const auto began = std::chrono::steady_clock::now();
+
         one->still(at);
 
         (void)sheet.render({{0, 0}, {40, 20}});
 
+        const std::optional<std::chrono::milliseconds> left = waiting(sheet);
+        const auto spent = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+
         held = held && one->still() == at;
-        held = held && waiting(sheet).has_value() && waiting(sheet)->count() <= these[at];
-        held = held && waiting(sheet).has_value() && waiting(sheet)->count() > these[at] - 10;
+        held = held && left.has_value() && left->count() <= these[at];
+        held = held && left.has_value() && left->count() >= these[at] - spent - 1;
     }
 
     ought(held);

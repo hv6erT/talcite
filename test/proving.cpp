@@ -335,9 +335,21 @@ int pretending(const std::vector<std::string>& given) {
     // fork/exec or CreateProcessW, with no group of its own and no job, prints the grandchild's
     // number and sleeps as long. That is what a shell or a batch file that started the real program
     // looks like: killing the parent alone would leave the grandchild alive.
+    //
+    // On Windows the grandchild is `noted`, and the parent prints its number only once it has
+    // written it: a process still loading its libraries does not take a console event yet, and a
+    // Ctrl-Break sent a few milliseconds after its start reached the parent alone (verify.py 30.10:
+    // the parent ended with 0xC000013A after 2 to 10 ms, the grandchild slept on).
     if (what == "parent") {
 #ifdef _WIN32
-        std::wstring line = L"\"" + widely(proving::mine()) + L"\" --pretending sleeping " + widely(rest);
+        const std::filesystem::path note =
+            std::filesystem::temp_directory_path() / ("talcite-parent-" + std::to_string(GetCurrentProcessId()));
+
+        std::error_code gone;
+
+        std::filesystem::remove(note, gone);
+
+        std::wstring line = L"\"" + widely(proving::mine()) + L"\" --pretending noted \"" + note.wstring() + L"\" " + widely(rest);
 
         STARTUPINFOW setting{};
         setting.cb = sizeof setting;
@@ -349,6 +361,11 @@ int pretending(const std::vector<std::string>& given) {
 
         CloseHandle(told.hThread);
         CloseHandle(told.hProcess);
+
+        for (int tries = 0; tries < 1000 && !std::filesystem::exists(note, gone); ++tries)
+            std::this_thread::sleep_for(std::chrono::milliseconds{10});
+
+        std::filesystem::remove(note, gone);
 
         said(stdout, std::to_string(told.dwProcessId) + "\n");
 #else
