@@ -424,6 +424,27 @@ TRIAL("Desktop: the programs of a type, default first, from the lists, caches an
     same(ids_of(log), ids_of(text));
 }
 
+// The programs of an extension are those of a file of that extension, found by the globs alone,
+// in any case of letters; an extension no glob knows, a bare dot and a word without its dot have
+// none, and no file is read for them.
+TRIAL("Desktop: the programs of an extension, without a file") {
+    Loop loop;
+    const Tree tree;
+
+    const Seam<Desktop> system = desktop(Seam<Console>{tree.console()});
+
+    same(ids_of(answered(loop, system.provider().applications_for(".txt"))),
+         ids_of(answered(loop, system.provider().applications(tree.at("files/notatki.txt")))));
+    same(ids_of(answered(loop, system.provider().applications_for(".nfo"))),
+         ids_of(answered(loop, system.provider().applications(tree.at("files/film.nfo")))));
+    same(ids_of(answered(loop, system.provider().applications_for(".NFO"))),
+         (std::vector<std::string>{"kde4-kate.desktop", "edytor.desktop", "wlasny.desktop", "vim.desktop"}));
+
+    tree.put("files/.xyz", "zwykły tekst\n");
+
+    for (const std::string none : {".xyz", ".", "txt", ""}) same(answered(loop, system.provider().applications_for(none)).size(), std::size_t{0});
+}
+
 TRIAL("Desktop: opening without a session, a terminal program, a type nobody opens") {
     Loop loop;
     const Tree tree;
@@ -503,6 +524,11 @@ TRIAL("Desktop: cmd.exe is a console program, notepad.exe one with windows, a do
 
     ought(answered(loop, system.provider().runnable(windows / "cmd.exe")) == Runnable::console);
     ought(answered(loop, system.provider().runnable(windows / "notepad.exe")) == Runnable::window);
+
+    // The programs of an extension are those of a file of it, which need not be there.
+    ought(answered(loop, system.provider().applications_for(".txt")) ==
+          answered(loop, system.provider().applications(stood::temp_directory_path() / "talcite-nie-ma.txt")));
+    same(answered(loop, system.provider().applications_for("txt")).size(), std::size_t{0});
 
     const stood::path file = stood::temp_directory_path() / "talcite-strefa.bat";
 

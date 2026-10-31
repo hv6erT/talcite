@@ -37,6 +37,8 @@ public:
 
     [[nodiscard]] virtual Promise<std::vector<Application>> applications(fs::path file) = 0;
 
+    [[nodiscard]] virtual Promise<std::vector<Application>> applications_for(std::string extension) = 0;
+
     [[nodiscard]] virtual Promise<Started> open_with(fs::path file, Application with) = 0;
 
     [[nodiscard]] virtual Promise<Started> open_by(fs::path file, fs::path program) = 0;

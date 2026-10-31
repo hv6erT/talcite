@@ -277,13 +277,12 @@ void handled(const std::wstring& extension, ASSOC_FILTER filter, Each each) {
     }
 }
 
-// The programs that open the file, by the shell's recommendation, with the default one first.
-std::vector<Application> recommended(const fs::path& file) {
+// The programs that open files of the extension (with its dot), by the shell's recommendation, with
+// the default one first. The shell asks by the extension alone, so a file need not be there.
+std::vector<Application> recommended(const std::wstring& extension) {
     const Apartment apartment;
 
-    const std::wstring extension = file.extension().wstring();
-
-    if (extension.empty()) return {};
+    if (extension.size() < 2 || extension.front() != L'.') return {};
 
     const std::string usual = default_of(extension);
 
@@ -444,6 +443,64 @@ Application application_at(const std::string& path, bool preferred) {
     return made;
 }
 
+// The application of a bundle id: the first bundle Launch Services knows by it; nothing when none.
+std::optional<std::string> bundled_at(CFStringRef id) {
+    const Owned<CFArrayRef> found{LSCopyApplicationURLsForBundleIdentifier(id, nullptr)};
+
+    if (found.get() == nullptr || CFArrayGetCount(found.get()) == 0) return std::nullopt;
+
+    std::string where = path_of(static_cast<CFURLRef>(CFArrayGetValueAtIndex(found.get(), 0)));
+
+    if (where.empty()) return std::nullopt;
+
+    return where;
+}
+
+// The applications Launch Services knows for files of the extension (with its dot), the default
+// one first: the extension's uniform type, then its default handler and all its handlers, by their
+// bundle ids, each found as a bundle on the disk. The calls are deprecated in favour of the
+// UniformTypeIdentifiers framework of Objective-C and Swift, as are those of `launched_by`.
+std::vector<Application> handling(const std::string& extension) {
+    if (extension.size() < 2 || extension.front() != '.') return {};
+
+    const Owned<CFStringRef> tag{CFStringCreateWithBytes(nullptr, reinterpret_cast<const UInt8*>(extension.data() + 1),
+                                                         static_cast<CFIndex>(extension.size() - 1), kCFStringEncodingUTF8, false)};
+
+    if (tag.get() == nullptr) return {};
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    const Owned<CFStringRef> type{UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, tag.get(), nullptr)};
+
+    if (type.get() == nullptr) return {};
+
+    const Owned<CFStringRef> usual{LSCopyDefaultRoleHandlerForContentType(type.get(), kLSRolesAll)};
+    const Owned<CFArrayRef> all{LSCopyAllRoleHandlersForContentType(type.get(), kLSRolesAll)};
+#pragma clang diagnostic pop
+
+    std::vector<Application> made;
+    std::string first;
+
+    if (usual.get() != nullptr)
+        if (const std::optional<std::string> where = bundled_at(usual.get())) {
+            first = *where;
+            made.push_back(application_at(first, true));
+        }
+
+    if (all.get() == nullptr) return made;
+
+    for (CFIndex at = 0; at < CFArrayGetCount(all.get()); ++at) {
+        const std::optional<std::string> where = bundled_at(static_cast<CFStringRef>(CFArrayGetValueAtIndex(all.get(), at)));
+
+        if (!where || *where == first) continue;
+
+        if (std::none_of(made.begin(), made.end(), [&where](const Application& one) { return one.id == *where; }))
+            made.push_back(application_at(*where, false));
+    }
+
+    return made;
+}
+
 // The applications Launch Services knows for the file, the default one first. The list comes from
 // LSCopyApplicationURLsForURL, which Apple marks deprecated in favour of NSWorkspace; it stays the
 // only way to ask from C++ without Objective-C, and it works.
@@ -594,6 +651,15 @@ public:
 
         if (stood::is_directory(file, failed)) return "inode/directory";
 
+        if (auto found = named(fs::to_string(file.filename()))) return *found;
+
+        const std::vector<unsigned char> head = head_of(file);
+
+        return desktops::textual(head) ? "text/plain" : "application/octet-stream";
+    }
+
+    // The type of a name by the globs alone; nothing when no glob knows it.
+    std::optional<std::string> named(const std::string& name) {
         if (!globs_.has_value()) {
             globs_.emplace();
 
@@ -605,11 +671,7 @@ public:
                 }
         }
 
-        if (auto found = desktops::type_of(fs::to_string(file.filename()), *globs_)) return *found;
-
-        const std::vector<unsigned char> head = head_of(file);
-
-        return desktops::textual(head) ? "text/plain" : "application/octet-stream";
+        return desktops::type_of(name, *globs_);
     }
 
     // The type with the types it descends from, nearest first: the subclasses of every MIME
@@ -812,6 +874,33 @@ private:
     std::map<std::string, std::optional<Installed>, std::less<>> known_;
 };
 
+// The programs of a type and the types it descends from (`line`, nearest first): the default one
+// first and marked `preferred`; then, type by type, the defaults and the associated programs, each
+// once, without those hidden from lists (NoDisplay).
+std::vector<Application> offered(Reading& reading, const std::vector<std::string>& line) {
+    std::vector<Application> made;
+    std::set<std::string, std::less<>> taken;
+
+    const auto put = [&made, &taken](const std::string& id, const Installed& one, bool preferred) {
+        if (!taken.insert(id).second) return;
+
+        made.push_back(Application{one.entry.name.empty() ? id : one.entry.name, id, preferred, one.entry.terminal});
+    };
+
+    if (const auto first = reading.chosen_for(line)) put(first->first, first->second, true);
+
+    for (const std::string& type : line) {
+        std::vector<std::string> ids = reading.defaults_of(type);
+
+        for (std::string& id : reading.associated(type)) ids.push_back(std::move(id));
+
+        for (const std::string& id : ids)
+            if (const auto one = reading.installed(id); one.has_value() && one->entry.shown) put(id, *one, false);
+    }
+
+    return made;
+}
+
 // The command line of an installed program for the file, started in the file's folder.
 std::optional<Command> commanded(const Installed& one, const fs::path& file) {
     const std::string named = file.empty() ? std::string{} : fs::to_string(file);
@@ -898,13 +987,12 @@ public:
 #endif
     }
 
-    // The programs that open the file, the default one first and marked `preferred`; then, type by
-    // type along the lineage, the defaults and the associated programs, each once, without those
-    // hidden from lists (NoDisplay).
+    // The programs that open the file, the default one first and marked `preferred`, then the
+    // others (`offered` on Linux).
     [[nodiscard]] Promise<std::vector<Application>> applications(fs::path file) override {
 #ifdef _WIN32
 
-        return run(io(), [file] { return recommended(file); }).here();
+        return run(io(), [file] { return recommended(file.extension().wstring()); }).here();
 
 #elif defined(__APPLE__)
 
@@ -915,29 +1003,37 @@ public:
         return run(io(), [file, seen = seen_from(console_.provider())] {
                    Reading reading{seen};
 
-                   const std::vector<std::string> line = reading.lineage(reading.type_of(file));
+                   return offered(reading, reading.lineage(reading.type_of(file)));
+               })
+            .here();
 
-                   std::vector<Application> made;
-                   std::set<std::string, std::less<>> taken;
+#endif
+    }
 
-                   const auto put = [&made, &taken](const std::string& id, const Installed& one, bool preferred) {
-                       if (!taken.insert(id).second) return;
+    // The programs that open files of the extension (with its dot), as for such a file, without a
+    // file to look at: Linux knows the type by the globs alone, matched against the extension as a
+    // whole name (which *.ext fits), and an extension no glob knows has no programs.
+    [[nodiscard]] Promise<std::vector<Application>> applications_for(std::string extension) override {
+#ifdef _WIN32
 
-                       made.push_back(Application{one.entry.name.empty() ? id : one.entry.name, id, preferred, one.entry.terminal});
-                   };
+        return run(io(), [extension] { return recommended(fs::from_string(extension).wstring()); }).here();
 
-                   if (const auto first = reading.chosen_for(line)) put(first->first, first->second, true);
+#elif defined(__APPLE__)
 
-                   for (const std::string& type : line) {
-                       std::vector<std::string> ids = reading.defaults_of(type);
+        return run(io(), [extension] { return handling(extension); }).here();
 
-                       for (std::string& id : reading.associated(type)) ids.push_back(std::move(id));
+#else
 
-                       for (const std::string& id : ids)
-                           if (const auto one = reading.installed(id); one.has_value() && one->entry.shown) put(id, *one, false);
-                   }
+        return run(io(), [extension, seen = seen_from(console_.provider())] {
+                   if (extension.size() < 2 || extension.front() != '.') return std::vector<Application>{};
 
-                   return made;
+                   Reading reading{seen};
+
+                   const std::optional<std::string> type = reading.named(extension);
+
+                   if (!type) return std::vector<Application>{};
+
+                   return offered(reading, reading.lineage(*type));
                })
             .here();
 
