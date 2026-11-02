@@ -48,6 +48,10 @@ public:
 
     void right(bool given) { shape_.right = given; }
 
+    [[nodiscard]] bool overlaid() const { return shape_.overlaid; }
+
+    void overlaid(bool given) { shape_.overlaid = given; }
+
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
@@ -62,6 +66,8 @@ private:
     };
 
     [[nodiscard]] Edges edges() const;
+
+    [[nodiscard]] int covered(const Edges& edge) const;
 
     std::string title_;
     std::string footer_;

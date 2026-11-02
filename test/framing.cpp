@@ -1,7 +1,10 @@
 #include "proving.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "talcite/encoding.hpp"
 #include "talcite/column.hpp"
@@ -771,6 +774,104 @@ TRIAL("Frame: an empty node takes no room, and the background is still there") {
 }
 
 
+// --- A content over the right side ---------------------------------------------------------------
+//
+// A frame whose content lies over its right side (`overlaid`) gives the content the side's column
+// as its last one. The side is drawn first and the content over it, so the side shows wherever the
+// content leaves that column clear: a table keeps its scrollbar column there, and the bar, when it
+// is drawn, stands on the side.
+
+namespace {
+
+// A node that paints its area with one letter but its last column, which is clear except on the
+// rows `marked`, where it has another letter.
+class Edged : public ui::Node {
+public:
+    Edged(char32_t what, char32_t mark, std::vector<int> marked) : what_(what), mark_(mark), marked_(std::move(marked)) {}
+
+    // As much as it gets.
+    [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
+
+protected:
+    // The letter in every cell but the last column, the mark in the last column on the marked rows,
+    // the rest clear.
+    View paint(ui::Size given, ui::Area seen) override {
+        View made{seen.size};
+
+        made.clear({{0, 0}, seen.size});
+
+        for (int y = 0; y < given.high; ++y) {
+            for (int x = 0; x + 1 < given.wide; ++x) made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
+
+            if (std::find(marked_.begin(), marked_.end(), y) != marked_.end())
+                made.put({given.wide - 1 - seen.at.x, y - seen.at.y}, mark_, Style{});
+        }
+
+        return made;
+    }
+
+private:
+    char32_t what_ = U'?';
+    char32_t mark_ = U'?';
+    std::vector<int> marked_;
+};
+
+}
+
+TRIAL("Frame: an overlaid content takes the right side, which shows where the content is clear") {
+    ui::Frame one;
+
+    one.overlaid(true);
+
+    const auto inner = std::make_shared<Edged>(U'x', U'#', std::vector<int>{1});
+
+    one.children().add(inner);
+
+    const View made = one.render({{0, 0}, {7, 5}});
+
+    same(inner->area().at.x, 1);
+    same(inner->area().size.wide, 6);
+    same(read(made, 0), std::string{"┌─────┐"});
+    same(read(made, 1), std::string{"│xxxxx│"});
+    same(read(made, 2), std::string{"│xxxxx#"});
+    same(read(made, 3), std::string{"│xxxxx│"});
+    same(read(made, 4), std::string{"└─────┘"});
+
+    one.overlaid(false);
+
+    (void)one.render({{0, 0}, {7, 5}});
+
+    same(inner->area().size.wide, 5);
+}
+
+TRIAL("Frame: an overlaid content wants the side as its own cell") {
+    ui::Frame one;
+
+    one.overlaid(true);
+    one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'x'));
+
+    same(one.wants({80, 25}).wide, 5);
+    same(one.wants({80, 25}).high, 4);
+}
+
+TRIAL("Frame: a separator over the side still gets its joints") {
+    ui::Frame frame;
+
+    frame.overlaid(true);
+
+    const auto column = std::make_shared<ui::Column>();
+
+    column->children().add(std::make_shared<Box>(ui::Size{6, 1}, U'x'));
+    column->children().add(std::make_shared<ui::Line>());
+    column->children().add(std::make_shared<Box>(ui::Size{6, 1}, U'y'));
+
+    frame.children().add(column);
+
+    const View made = frame.render({{0, 0}, {8, 5}});
+
+    same(read(made, 2), std::string{"├──────┤"});
+}
+
 // --- Double-width characters ---------------------------------------------------------------------
 //
 // A skin may draw the frame with CJK characters, and those take two cells. A side is then two
@@ -861,4 +962,22 @@ TRIAL("Frame: double-width characters, a joint stands at the width of the side")
     const View odd = top.render({{0, 0}, {9, 5}});
 
     same(read(odd, 2), std::string{"卜一一 卜"});
+}
+
+TRIAL("Frame: double-width characters, an overlaid content stays inside the side it cannot split") {
+    ui::Root top;
+
+    top.skin(widened());
+
+    const auto frame = std::make_shared<ui::Frame>();
+    const auto inner = std::make_shared<Box>(ui::Size{20, 20}, U'x');
+
+    frame->overlaid(true);
+    frame->children().add(inner);
+    top.children().add(frame);
+
+    (void)top.render({{0, 0}, {12, 5}});
+
+    same(inner->area().size.wide, 8);
+    same(frame->wants({80, 25}).wide, 24);
 }

@@ -31,6 +31,7 @@ struct FrameShape {
     bool bottom = true;
     bool left = true;
     bool right = true;
+    bool overlaid = false;
 };
 
 struct MenuShape {

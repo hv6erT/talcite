@@ -29,9 +29,15 @@ Frame::Edges Frame::edges() const {
             shape_.right ? side.right : 0};
 }
 
+// How much of the right side the content lies over (`overlaid`): the whole side when it is one cell
+// wide, so the content's last column stands on it and the side shows wherever that column is
+// clear, the way a table's scrollbar column turns into the side with the bar on it. A side of a
+// double-width character is not split, so there the content stays inside, as without `overlaid`.
+int Frame::covered(const Edges& edge) const { return shape_.overlaid && edge.right == 1 ? 1 : 0; }
+
 // The frame takes a cell from every side it draws, just like the bar in a scroller and for the same
 // reason: it is part of the frame, not something painted over the content. A switched-off edge
-// takes nothing.
+// takes nothing, and a side the content lies over (`covered`) is the content's too.
 //
 // The title takes room too: the frame draws it, so the frame measures it. Without that, a frame
 // computes its width from its content and draws the title in whatever is left, so a narrow window
@@ -42,7 +48,7 @@ Frame::Edges Frame::edges() const {
 Size Frame::wants(Size room) const {
     const Edges edge = edges();
 
-    const int aside = edge.left + edge.right;
+    const int aside = edge.left + edge.right - covered(edge);
     const int apart = edge.top + edge.bottom;
 
     const Size inside{std::max(room.wide - aside, 0), std::max(room.high - apart, 0)};
@@ -56,7 +62,9 @@ Size Frame::wants(Size room) const {
 }
 
 // Paints the background, the edges with the title and the footer, the child inside, and the joints
-// where a divider in the content reaches the sides.
+// where a divider in the content reaches the sides. A content that lies over the right side
+// (`covered`) is drawn after the side, so the side shows where the content leaves its cells clear;
+// the corners and the joints are the frame's still.
 View Frame::paint(Size given, Area seen) {
     View made{seen.size};
 
@@ -140,7 +148,7 @@ View Frame::paint(Size given, Area seen) {
     if (children().empty()) return made;
 
     const Area where{{edge.left, edge.top},
-                     {std::max(given.wide - edge.left - edge.right, 0),
+                     {std::max(given.wide - edge.left - edge.right + covered(edge), 0),
                       std::max(given.high - edge.top - edge.bottom, 0)}};
 
     const Area part = Area::crossed(seen, where);
