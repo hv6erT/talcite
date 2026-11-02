@@ -1173,7 +1173,41 @@ TRIAL("Table: the scrollbar only with rows that are not visible") {
 
     titled->scrollbar(true);
 
-    ought(headed.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
+    ought(headed.render({{0, 0}, {30, 3}}).at({29, 1}).letter != U' ');
+}
+
+// The heading does not scroll, so the bar runs beside the rows only: it starts under the heading,
+// whose cell in the bar's column stays clear, and a click there is no click on the bar.
+TRIAL("Table: the scrollbar starts under the heading") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 40);
+
+    one->scrollbar(true);
+
+    const View made = sheet.render({{0, 0}, {30, 5}});
+
+    ought(made.at({29, 0}).letter == U' ' || made.at({29, 0}).letter == 0);
+
+    for (int y = 1; y < 5; ++y) ought(made.at({29, y}).letter != U' ' && made.at({29, y}).letter != 0);
+
+    // The thumb at the top of the bar, under the heading, the track below it: the first rows are
+    // shown.
+    ought(made.at({29, 1}).letter != made.at({29, 2}).letter);
+    same(made.at({29, 2}).letter, made.at({29, 4}).letter);
+
+    // A press on the heading's cell does not move the view; one on the track below the thumb does.
+    ui::MouseEvent heading{{29, 0}, ui::Press::down, ui::Mouse::left};
+
+    (void)sheet.dispatch(heading);
+
+    same(one->first(), std::size_t{0});
+
+    ui::MouseEvent track{{29, 4}, ui::Press::down, ui::Mouse::left};
+
+    (void)sheet.dispatch(track);
+
+    ought(one->first() > 0);
 }
 
 // --- What goes up --------------------------------------------------------------------------------

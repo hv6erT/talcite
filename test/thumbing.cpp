@@ -80,7 +80,7 @@ ui::TableSource numbered(std::size_t much) {
 }
 
 // A table of a hundred rows in a 20x11 window: a heading and ten rows, the scrollbar in column 19
-// from row 0 to 10, its thumb one cell long.
+// beside the rows, from row 1 to 10, under the heading; its thumb one cell long.
 std::shared_ptr<ui::Table> table(Sheet& top) {
     const auto one = std::make_shared<ui::Table>(ui::TableShape{.heading = true, .scrollbar = true});
 
@@ -151,8 +151,8 @@ TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end, and le
 
     same(one->first(), std::size_t{75});
 
-    // In a taller window (twenty rows, a track of twenty-one cells, a thumb of four) the thumb at
-    // 75 stands in cells 16–19 of the track, so there is track below it: a page down from 75 is 80,
+    // In a taller window (twenty rows, a track of twenty cells under the heading, a thumb of four)
+    // the thumb at 75 stands in rows 16–19, so there is track below it: a page down from 75 is 80,
     // not 95.
     one->first(75);
 
@@ -167,19 +167,19 @@ TRIAL("Scrollbar: a table's thumb can be dragged, also outside the scrollbar") {
 
     const auto one = table(top);
 
-    const int y = thumb_row(top, 19, 0, 11);
+    const int y = thumb_row(top, 19, 1, 11);
 
-    ought(y == 0);
+    ought(y == 1);
 
     pressed(top, {19, y}, ui::Press::down);
     pressed(top, {19, 10}, ui::Press::move);
 
     same(one->first(), std::size_t{90});
 
-    // One cell of the track is nine rows: the fourth cell gives 36.
+    // One cell of the track is ten rows: the fourth cell, in row 4, gives 30.
     pressed(top, {19, 4}, ui::Press::move);
 
-    same(one->first(), std::size_t{36});
+    same(one->first(), std::size_t{30});
 
     // A move sideways, off the scrollbar: holding the button still leads it to the table.
     pressed(top, {3, 5}, ui::Press::move);

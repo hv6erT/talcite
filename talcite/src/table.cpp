@@ -607,10 +607,13 @@ View Table::paint(Size given, Area seen) {
     }
 
     // The bar only when there are more rows than can be seen; its column stays reserved, so the
-    // table's columns do not jump when the list changes.
-    if (aside != 0 && given.high > 0 && kept.rows > static_cast<std::size_t>(std::max(given.high - head, 0))) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
-                            .much = given.high,
+    // table's columns do not jump when the list changes. It runs beside the rows only: the heading
+    // does not scroll, so the bar starts under it.
+    if (aside != 0 && given.high > head && kept.rows > static_cast<std::size_t>(std::max(given.high - head, 0))) {
+        const Spot top = Scrollbar::edge(given, seen, true);
+
+        const Scrollbar bar{.at = {top.x, top.y + head},
+                            .much = given.high - head,
                             .shift = kept.top,
                             .whole = kept.rows,
                             .window = static_cast<std::size_t>(std::max(given.high - head, 1)),
@@ -623,6 +626,7 @@ View Table::paint(Size given, Area seen) {
         Track mine = bar.track();
 
         mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
+        mine.at.y += head;
 
         kept.grip.laid(mine);
     } else {
@@ -709,13 +713,15 @@ std::optional<std::size_t> Table::row_under(Spot where) const {
 }
 
 // The column under a heading cell, by the widths from the last frame, with the gap between columns
-// counted to the left column. Outside the heading, on the bar and past the last column: nothing.
+// counted to the left column. Outside the heading, in the bar's column (which the bar leaves clear
+// beside the heading) and past the last column: nothing.
 std::optional<std::size_t> Table::column_under(Spot where) const {
     const Kept& kept = *kept_;
 
     const Spot here = local(where);
+    const int aside = kept.shape.scrollbar ? 1 : 0;
 
-    if (!kept.shape.heading || here.y != 0 || here.x < 0 || kept.grip.over(here)) return std::nullopt;
+    if (!kept.shape.heading || here.y != 0 || here.x < 0 || here.x >= area().size.wide - aside) return std::nullopt;
 
     int at = 0;
 
