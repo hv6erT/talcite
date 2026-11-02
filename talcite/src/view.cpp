@@ -183,10 +183,27 @@ void View::put(ui::Spot at, std::string_view what, const Style& how) {
     }
 }
 
-// Fills `where` with spaces in the style `how`.
+// Fills `where` with spaces in the style `how`, as `put` of a space into every cell would: a wide
+// character cut by the edge of `where` loses its other half, and the inside is written row by row
+// at once: every frame fills and clears whole panels several times over, and cell by cell that
+// took a third of the frame.
 void View::fill(const ui::Area& where, const Style& how) {
-    for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
-        for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) put({x, y}, U' ', how);
+    const int from_x = std::max(where.at.x, 0);
+    const int upto_x = std::min(where.at.x + where.size.wide, size_.wide);
+
+    if (upto_x <= from_x) return;
+
+    const int from_y = std::max(where.at.y, 0);
+    const int upto_y = std::min(where.at.y + where.size.high, size_.high);
+
+    for (int y = from_y; y < upto_y; ++y) {
+        broken({from_x, y});
+        broken({upto_x - 1, y});
+
+        Cell* const row = &cell({from_x, y});
+
+        std::fill(row, row + (upto_x - from_x), Cell{U' ', how});
+    }
 }
 
 // A shadow has no character of its own. The cell remembers the style and the fact that it brings
@@ -228,15 +245,20 @@ void View::foreground(ui::Spot at, char32_t what, const Style& how) {
 void View::clear(const ui::Area& where) {
     if (where.size.wide <= 0) return;
 
-    for (int y = where.at.y; y < where.at.y + where.size.high; ++y) {
+    const int from_x = std::max(where.at.x, 0);
+    const int upto_x = std::min(where.at.x + where.size.wide, size_.wide);
+    const int from_y = std::max(where.at.y, 0);
+    const int upto_y = std::min(where.at.y + where.size.high, size_.high);
+
+    for (int y = from_y; y < upto_y; ++y) {
         broken({where.at.x, y});
         broken({where.at.x + where.size.wide - 1, y});
 
-        for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
-            if (!holds({x, y})) continue;
+        if (upto_x <= from_x) continue;
 
-            cell({x, y}) = Cell{U' ', Style{}, Shown::none};
-        }
+        Cell* const row = &cell({from_x, y});
+
+        std::fill(row, row + (upto_x - from_x), Cell{U' ', Style{}, Shown::none});
     }
 }
 

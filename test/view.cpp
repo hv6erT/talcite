@@ -185,6 +185,41 @@ TRIAL("View: fill paints a rectangle and does not go outside it") {
     ought(!one.at({1, 0}).style.bold);
 }
 
+TRIAL("View: fill cuts a double-width character at both of its edges") {
+    View one{{6, 1}};
+    one.put({0, 0}, U'漢', Style{});
+    one.put({2, 0}, U'漢', Style{});
+    one.put({4, 0}, U'漢', Style{});
+
+    one.fill({{1, 0}, {4, 1}}, marked());
+
+    same(one.at({0, 0}).letter, U' ');
+    ought(!one.at({0, 0}).style.bold);
+
+    for (int x = 1; x < 5; ++x) {
+        same(one.at({x, 0}).letter, U' ');
+        ought(one.at({x, 0}).style.bold);
+    }
+
+    same(one.at({5, 0}).letter, U' ');
+    ought(!one.at({5, 0}).style.bold);
+}
+
+TRIAL("View: fill and clear reaching past the page stop at its edge") {
+    View one{{3, 2}};
+
+    one.fill({{-2, -1}, {9, 9}}, marked());
+
+    for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 3; ++x) ought(one.at({x, y}).style.bold);
+
+    one.clear({{2, -5}, {7, 6}});
+
+    same(static_cast<int>(one.at({2, 0}).shown), static_cast<int>(Shown::none));
+    ought(one.at({1, 0}).style.bold);
+    same(static_cast<int>(one.at({2, 1}).shown), static_cast<int>(Shown::own));
+}
+
 TRIAL("View: a shade changes the style but keeps the letter from below") {
     View one = painted({4, 1}, U'x');
 
