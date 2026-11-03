@@ -22,6 +22,7 @@ public:
         const bool same = text_ == given && std::as_const(*this).marks().empty();
 
         text_ = std::move(given);
+        natural_ = natural();
 
         if (!same) marks().clear();
     }
@@ -68,8 +69,11 @@ protected:
 private:
     [[nodiscard]] std::vector<std::string> lines(int wide) const;
 
+    [[nodiscard]] Size natural() const;
+
     std::string text_;
     SpanShape shape_;
+    Size natural_;
 };
 
 }

@@ -11,7 +11,9 @@
 
 #include "faking.hpp"
 #include "talcite/clock.hpp"
+#include "talcite/column.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/span.hpp"
 #include "talcite/term.hpp"
 
 using namespace talcite;
@@ -1274,4 +1276,44 @@ TRIAL("Term: after a word the terminal counts otherwise, the columns stay in pla
         same(shown.cells[5], std::string{"\xe0\xa4\x87"});
         same(shown.from(10), std::string{"abc           "});
     }
+}
+
+// A frame the root made without the terminal (a trial reading the sheet, say) painted rows the
+// terminal's next frame does not name: the terminal then compares the whole screen, and the change
+// still reaches it. Otherwise only the rows the root painted are compared and written.
+TRIAL("Term: a frame nobody drew does not lose its rows") {
+    auto line = faking::terminal();
+
+    ui::Root root;
+
+    const auto column = std::make_shared<ui::Column>();
+    const auto top = std::make_shared<ui::Span>("aaa");
+    const auto low = std::make_shared<ui::Span>("bbb");
+
+    column->children().add({top, low});
+    root.children().add(column);
+
+    Term term{Setup{}, Seam<Console>{line}};
+
+    term.show(root);
+    term.draw();
+
+    low->text("ccc");
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "ccc"));
+    ought(!holds(line->written, "aaa"));
+
+    low->text("ddd");
+
+    (void)root.render({{0, 0}, {80, 25}});
+
+    line->written.clear();
+
+    term.draw();
+
+    ought(holds(line->written, "ddd"));
 }

@@ -27,6 +27,39 @@ namespace {
 // How long one turn waits for the loop's bell while the terminal is handed over.
 constexpr std::chrono::milliseconds glancing{100};
 
+// What the terminal shows after the last frame, cell by cell. A frame compares with it only the
+// rows the root painted (`Root::painted`) and takes those rows in; the others stand as they were,
+// as they do on the root's sheet.
+class Standing {
+public:
+    Standing() = default;
+
+    // A blank screen of `size`, as after clearing it.
+    explicit Standing(ui::Size size)
+        : size_(size), cells_(static_cast<std::size_t>(std::max(size.wide, 0)) * static_cast<std::size_t>(std::max(size.high, 0))) {}
+
+    // The size.
+    [[nodiscard]] ui::Size size() const { return size_; }
+
+    // The cell at `where`; an empty one outside, as `View::at` gives.
+    [[nodiscard]] Cell at(ui::Spot where) const {
+        if (where.x < 0 || where.y < 0 || where.x >= size_.wide || where.y >= size_.high) return Cell{};
+
+        return cells_[static_cast<std::size_t>(where.y) * static_cast<std::size_t>(size_.wide) + static_cast<std::size_t>(where.x)];
+    }
+
+    // The rows [from, upto) of a frame of the same size, as they now stand on the screen.
+    void took(const View& made, int from, int upto) {
+        for (int y = std::max(from, 0); y < upto && y < size_.high; ++y)
+            for (int x = 0; x < size_.wide; ++x)
+                cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(size_.wide) + static_cast<std::size_t>(x)] = made.at({x, y});
+    }
+
+private:
+    ui::Size size_;
+    std::vector<Cell> cells_;
+};
+
 }
 
 // The terminal's state, behind a pointer so the public header stays free of it.
@@ -66,7 +99,12 @@ struct Term::Held {
 
     std::chrono::milliseconds twice{0};
 
-    View standing;
+    Standing standing;
+
+    // The root's count of frames at the last one drawn (`Root::framed`). A frame in between, which
+    // nobody drew, painted rows this one does not name, so the next frame compares the whole
+    // screen.
+    std::uint64_t framed = 0;
 
     // Kitty images: what stands on screen after the last frame, and which images the terminal holds.
     // The terminal keeps an image as long as someone on our side holds its pixels.
@@ -406,7 +444,7 @@ bool unsure(const View& made, int y, int from, int upto) {
 }
 
 // Whether a cell in [from, upto) of row `y` differs from what the terminal has.
-bool altered(const View& made, const View& standing, int y, int from, int upto) {
+bool altered(const View& made, const Standing& standing, int y, int from, int upto) {
     for (int x = from; x < upto; ++x)
         if (!(made.at({x, y}) == standing.at({x, y}))) return true;
 
@@ -823,19 +861,39 @@ void Term::draw() {
     // else's picture, and our memory of the frame is out of date anyway.
     if (held.away > 0) return;
 
-    // A copy: finding the pictures shown whole (`bared`) takes the marks off the others, and the
-    // root's own sheet must stay as it painted it.
-    View made = held.onto->frame({held.wide, held.high});
+    const std::uint64_t before = held.framed;
+    const View& sheet = held.onto->frame({held.wide, held.high});
+
+    held.framed = held.onto->framed();
+
+    const ui::Size grid = cell();
+    const Graphics kind = graphics();
+
+    // The root's own sheet, read as it is. Only with pictures to find whole (`bared`) a copy, since
+    // that takes the marks off the others, and the root's sheet must stay as it painted it.
+    const bool imaged = !sheet.pictures().empty() && ((kind == Graphics::sixel && grid.wide > 0 && grid.high > 0) || kind == Graphics::kitty);
+
+    std::optional<View> bare;
+
+    if (imaged) bare.emplace(sheet);
+
+    const View& made = bare.has_value() ? *bare : sheet;
 
     std::string into;
+
+    // The rows compared with the screen: those the root painted in this frame. The rest of its
+    // sheet is what the screen already shows.
+    std::vector<std::pair<int, int>> rows = held.onto->painted();
 
     // A size change invalidates the previous frame: after clearing the screen we compare with a
     // blank sheet, so everything comes out anew.
     //
     // A fresh configuration does exactly the same, and that is what forcing a full repaint is. The
     // root's sheet always holds the whole picture, however little of it was painted this frame; the
-    // only memory of what the screen shows is `standing`, and these four lines take it away.
-    if (held.shifted || !(held.standing.size() == made.size())) {
+    // only memory of what the screen shows is `standing`, and these lines take it away.
+    const bool reset = held.shifted || !(held.standing.size() == made.size());
+
+    if (reset) {
         // Kitty images do not belong to the text, so clearing the screen does not remove them; we
         // do it ourselves. The data stays: the repaint places them without sending them again.
         if (!held.placed.empty()) into += "\x1b_Ga=d,d=a,q=2\x1b\\";
@@ -844,7 +902,7 @@ void Term::draw() {
 
         into += "\x1b[0m\x1b[2J";
 
-        held.standing = View{made.size()};
+        held.standing = Standing{made.size()};
         held.now = Style{};
         held.at = ui::Spot{-1, -1};
 
@@ -861,11 +919,8 @@ void Term::draw() {
     std::vector<Placement> pictured;
     std::vector<Placement> standing;
 
-    const ui::Size grid = cell();
-    const Graphics kind = graphics();
-
-    if (kind == Graphics::sixel && grid.wide > 0 && grid.high > 0)
-        pictured = made.bared({{0, 0}, {made.size().wide, made.size().high - 1}});
+    if (imaged && kind == Graphics::sixel)
+        pictured = bare->bared({{0, 0}, {made.size().wide, made.size().high - 1}});
 
     // Kitty works differently: text does not erase an image, so what decides is not a change of
     // cells but a comparison with what stands. Whatever vanished or moved is removed before the
@@ -873,8 +928,8 @@ void Term::draw() {
     // placed after the cells, first sending those the terminal does not have yet. Forgetting comes
     // last, when the memory of the previous frame (`standing`, `placed`) no longer holds the
     // pixels; otherwise the image would leave the terminal one frame later.
-    if (kind == Graphics::kitty) {
-        standing = made.bared({{0, 0}, made.size()});
+    if (imaged && kind == Graphics::kitty) {
+        standing = bare->bared({{0, 0}, made.size()});
 
         std::erase_if(standing, [](const Placement& one) {
             return !one.picture.pixels || one.picture.still >= one.picture.pixels->stills().size();
@@ -948,48 +1003,55 @@ void Term::draw() {
     // nowhere.
     std::vector<int> covered(static_cast<std::size_t>(made.size().high), made.size().wide);
 
-    for (int y = 0; y < made.size().high; ++y) {
-        bool covering = false;
+    // After a reset, after a frame nobody drew (its rows are not among these), and with pictures,
+    // the whole screen: whether a picture is seen whole depends on all its rows, and so do the
+    // cells `bared` empties, whichever rows were painted.
+    if (reset || held.framed != before + 1 || imaged) rows.assign(1, {0, made.size().high});
 
-        for (int x = 0; x < made.size().wide;) {
-            const int end = worded(made, y, x);
+    for (const auto& [from, upto] : rows) {
+        for (int y = from; y < upto; ++y) {
+            bool covering = false;
 
-            if (unsure(made, y, x, end)) {
-                if (covering || altered(made, held.standing, y, x, end)) {
-                    reached(x, y);
+            for (int x = 0; x < made.size().wide;) {
+                const int end = worded(made, y, x);
 
-                    // ECH erases in the background of the current style, so the word's own goes
-                    // first.
-                    dressed(made.at({x, y}).style);
+                if (unsure(made, y, x, end)) {
+                    if (covering || altered(made, held.standing, y, x, end)) {
+                        reached(x, y);
 
-                    into += "\x1b[" + std::to_string(end - x) + "X";
+                        // ECH erases in the background of the current style, so the word's own goes
+                        // first.
+                        dressed(made.at({x, y}).style);
 
-                    for (int at = x; at < end; ++at)
-                        if (made.at({at, y}).letter != 0) lettered(at, y);
+                        into += "\x1b[" + std::to_string(end - x) + "X";
 
-                    if (!covering) covered[static_cast<std::size_t>(y)] = x;
+                        for (int at = x; at < end; ++at)
+                            if (made.at({at, y}).letter != 0) lettered(at, y);
 
-                    covering = true;
+                        if (!covering) covered[static_cast<std::size_t>(y)] = x;
+
+                        covering = true;
+                    }
+
+                    // Where the terminal's cursor stands after the word is not known, and the word
+                    // must not be rewritten as a mere gap either.
+                    held.at = ui::Spot{-1, -1};
+                    x = end;
+
+                    continue;
                 }
 
-                // Where the terminal's cursor stands after the word is not known, and the word
-                // must not be rewritten as a mere gap either.
-                held.at = ui::Spot{-1, -1};
-                x = end;
+                for (; x < end; ++x) {
+                    const Cell one = made.at({x, y});
 
-                continue;
-            }
+                    // The continuation of a wide character went out together with its first half.
+                    if (one.letter == 0) continue;
 
-            for (; x < end; ++x) {
-                const Cell one = made.at({x, y});
+                    if (!covering && one == held.standing.at({x, y})) continue;
 
-                // The continuation of a wide character went out together with its first half.
-                if (one.letter == 0) continue;
-
-                if (!covering && one == held.standing.at({x, y})) continue;
-
-                reached(x, y);
-                lettered(x, y);
+                    reached(x, y);
+                    lettered(x, y);
+                }
             }
         }
     }
@@ -1069,7 +1131,7 @@ void Term::draw() {
         held.showing = false;
     }
 
-    held.standing = std::move(made);
+    for (const auto& [from, upto] : rows) held.standing.took(made, from, upto);
 
     std::erase_if(held.sent, [&into](const auto& one) {
         if (!one.second.expired()) return false;

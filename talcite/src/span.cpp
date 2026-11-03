@@ -27,7 +27,7 @@
 namespace talcite::ui {
 
 // A label with the given text and shape, in the "talcite.normal" role until told otherwise.
-Span::Span(std::string text, SpanShape shape) : text_(std::move(text)), shape_(shape) {
+Span::Span(std::string text, SpanShape shape) : text_(std::move(text)), shape_(shape), natural_(natural()) {
     role("talcite.normal");
 }
 
@@ -244,9 +244,12 @@ std::vector<std::string> Span::lines(int wide) const {
 }
 
 // The widest row and the number of rows. The height comes from the rows, not from wrapping,
-// because there can be more rows than one even without it.
+// because there can be more rows than one even without it. Unwrapped, they do not depend on the
+// room, so they are measured once, with the text (`natural`).
 Size Span::wants(Size room) const {
     if (text_.empty()) return {};
+
+    if (!shape_.wrapped) return natural_;
 
     const std::vector<std::string> made = lines(room.wide);
 
@@ -255,6 +258,21 @@ Size Span::wants(Size room) const {
     for (const std::string& one : made) want.wide = std::max(want.wide, measured(one).wide);
 
     return want;
+}
+
+// The widest row and the number of rows of the text unwrapped, as `wants` gives them without
+// wrapping.
+Size Span::natural() const {
+    if (text_.empty()) return {};
+
+    Size made{0, 0};
+
+    for (const Traced& one : rows_of(text_, false, 0)) {
+        made.wide = std::max(made.wide, measured(one.text).wide);
+        ++made.high;
+    }
+
+    return made;
 }
 
 // Draws the rows, elided and justified, and the marks over them. Eliding and justifying happen only

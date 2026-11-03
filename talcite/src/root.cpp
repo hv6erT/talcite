@@ -135,7 +135,9 @@ void Root::graphics(Graphics given) {
 // outside them paints nothing, and a frame in which nothing changed paints nothing at all. Rows
 // rather than rectangles, because a rectangle could cut a double-width character in half, and a
 // frame cut at the edges of the screen alone is the same as a whole one. A new size, or something
-// every node reads (`repaint`), paints everything.
+// every node reads (`repaint`), paints everything. The rows painted and the count of frames stay
+// for whoever shows the sheet (`painted`, `framed`): `Term` compares only those rows with the
+// screen.
 const View& Root::frame(Size size) {
     if (sheet_.size() != size) {
         sheet_ = View{size};
@@ -148,10 +150,16 @@ const View& Root::frame(Size size) {
 
     whole_ = false;
 
-    if (!damaged_.empty()) {
+    painted_ = merged(std::move(damaged_), size.high);
+
+    ++framed_;
+
+    damaged_.clear();
+
+    if (!painted_.empty()) {
         Canvas whole{sheet_};
 
-        for (const auto& [from, upto] : merged(std::move(damaged_), size.high)) {
+        for (const auto& [from, upto] : painted_) {
             const Area rows{{0, from}, {size.wide, upto - from}};
 
             sheet_.clear(rows);
@@ -160,8 +168,6 @@ const View& Root::frame(Size size) {
 
             paint(cut);
         }
-
-        damaged_.clear();
 
         sheet_.forget();
     }

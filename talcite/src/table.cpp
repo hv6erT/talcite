@@ -13,6 +13,13 @@ namespace talcite::ui {
 
 namespace {
 
+// Whether two rows show the same: their cells' text, role, span, elision and marks.
+bool same(const TableRow& one, const TableRow& two) {
+    return std::equal(one.begin(), one.end(), two.begin(), two.end(), [](const TableCell& a, const TableCell& b) {
+        return a.text == b.text && a.role == b.role && a.spans == b.spans && a.elide == b.elide && a.marks == b.marks;
+    });
+}
+
 // How many rows are taken from the source at once. The same number and the same reason as in the
 // scroll: asking for exactly as many as the window is high would cost a call per frame.
 constexpr std::size_t batch = 64;
@@ -73,6 +80,10 @@ struct Table::Kept {
     std::vector<TableRow> shown;
     bool fresh = true;
     Size sized;
+
+    // The first row of `shown` when it was taken: a window taken again at the same place and size
+    // repaints only the rows that came out different (`spread`).
+    std::size_t taken_top = 0;
 
     // The computed column widths for the current window width.
     std::vector<int> spread;
@@ -187,15 +198,11 @@ void Table::changed(std::size_t at, std::size_t gone, std::size_t came) {
 // Whether a source has been set.
 bool Table::sourced() const { return static_cast<bool>(kept_->source); }
 
-// Drops the visible rows so the next frame asks the source again. The selection is not cleared:
-// after re-sorting, row numbers mean something else than before, but only the caller knows whether
-// that happened, so it calls `chosen().clear()` when it sees fit.
-void Table::refresh() {
-    kept_->shown.clear();
-    kept_->fresh = true;
-
-    Node::changed();
-}
+// The next frame asks the source again for the visible rows, and repaints those that came out
+// different (`spread`): a spinner in a few rows does not repaint the whole table. The selection is
+// not cleared: after re-sorting, row numbers mean something else than before, but only the caller
+// knows whether that happened, so it calls `chosen().clear()` when it sees fit.
+void Table::refresh() { kept_->fresh = true; }
 
 // Sets the columns.
 void Table::columns(std::vector<TableColumn> given) {
@@ -496,16 +503,26 @@ void Table::spread(Size given) {
 
     if (!kept.fresh && kept.sized == given) return;
 
+    // The window as it was: taken again at the same place and size, only the rows that differ are
+    // a change; otherwise the whole table is.
+    const bool again = kept.sized == given && kept.taken_top == kept.top;
+    const std::vector<TableRow> before = std::move(kept.shown);
+
     kept.sized = given;
     kept.fresh = false;
     kept.shown.clear();
+    kept.taken_top = kept.top;
 
     const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
     const int high = given.high - (kept.shape.heading ? 1 : 0);
 
     kept.spread = parted(kept.columns, given.wide - aside);
 
-    if (!kept.source || given.wide <= 0 || high <= 0) return;
+    if (!kept.source || given.wide <= 0 || high <= 0) {
+        if (!before.empty()) Node::changed();
+
+        return;
+    }
 
     const std::size_t want = static_cast<std::size_t>(high);
 
@@ -526,6 +543,17 @@ void Table::spread(Size given) {
             kept.shown.push_back(one);
         }
     }
+
+    if (!again || before.size() != kept.shown.size()) {
+        Node::changed();
+
+        return;
+    }
+
+    const int head = kept.shape.heading ? 1 : 0;
+
+    for (std::size_t row = 0; row < kept.shown.size(); ++row)
+        if (!same(before[row], kept.shown[row])) Node::changed({{0, head + static_cast<int>(row)}, {given.wide, 1}});
 }
 
 // Settles what the table shows before it is painted: the selection and the cursor within the rows,
@@ -585,9 +613,14 @@ void Table::paint(Canvas& onto) const {
     const int wide = given.wide - aside;
     const int head = kept.shape.heading ? 1 : 0;
 
+    // The rows that may be painted: a frame that repaints two rows of the table cuts the canvas to
+    // them, and the rest is not composed at all.
+    const Area seen = onto.seen();
+    const auto visible = [&seen](int y) { return y >= seen.at.y && y < seen.at.y + seen.size.high; };
+
     // The heading. Column titles stand in the same widths as the content, so a column and its
     // title never drift apart.
-    if (head != 0 && wide > 0) {
+    if (head != 0 && wide > 0 && visible(0)) {
         const Style look = how.style(role() + ".head");
 
         onto.fill({{0, 0}, {wide, 1}}, look);
@@ -619,6 +652,8 @@ void Table::paint(Canvas& onto) const {
     for (std::size_t row = 0; row < kept.shown.size(); ++row) {
         const std::size_t number = kept.top + row;
         const int y = head + static_cast<int>(row);
+
+        if (!visible(y)) continue;
 
         const bool here = kept.which.has_value() && *kept.which == number;
         const bool taken = chosen().contains(number);

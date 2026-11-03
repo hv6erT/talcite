@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -49,6 +50,10 @@ public:
     View render(const Area& where) override;
 
     const View& frame(Size size);
+
+    [[nodiscard]] const std::vector<std::pair<int, int>>& painted() const { return painted_; }
+
+    [[nodiscard]] std::uint64_t framed() const { return framed_; }
 
     void repaint();
 
@@ -151,6 +156,8 @@ private:
     Mouse clicked_ = Mouse::none;
     View sheet_;
     std::vector<std::pair<int, int>> damaged_;
+    std::vector<std::pair<int, int>> painted_;
+    std::uint64_t framed_ = 0;
     bool whole_ = true;
     bool arranging_ = false;
     const Node* unsettled_ = nullptr;

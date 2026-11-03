@@ -1,8 +1,10 @@
 #include "proving.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "talcite/encoding.hpp"
@@ -1260,4 +1262,44 @@ TRIAL("Table: the selection counts, removes one at a time and knows it is empty"
 
     ought(!one->chosen().contains(4));
     same(one->chosen().all(), (std::vector<std::size_t>{1, 9}));
+}
+
+// A refresh asks the source again, and of the visible rows only those that came out different are
+// painted again: a spinner in a few rows does not repaint the whole table.
+TRIAL("Table: a refresh repaints only the rows that came out different") {
+    Sheet sheet;
+
+    const auto texts = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"a", "b", "c"});
+    const auto one = std::make_shared<ui::Table>(ui::TableShape{.heading = false, .scrollbar = false});
+
+    one->columns({ui::TableColumn{"Nazwa", 0, ui::Justify::left}});
+    one->source(
+        [texts](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            for (std::size_t at = which; at < texts->size() && made.size() < most; ++at) made.push_back(ui::TableRow{ui::TableCell{(*texts)[at], {}}});
+
+            return made;
+        },
+        3);
+
+    sheet.children().add(one);
+
+    (void)sheet.render({{0, 0}, {10, 3}});
+
+    (*texts)[1] = "B";
+
+    one->refresh();
+
+    const View made = sheet.render({{0, 0}, {10, 3}});
+
+    same(said(made, 0), std::string{"a"});
+    same(said(made, 1), std::string{"B"});
+    same(sheet.painted(), (std::vector<std::pair<int, int>>{{1, 2}}));
+
+    one->refresh();
+
+    (void)sheet.render({{0, 0}, {10, 3}});
+
+    ought(sheet.painted().empty());
 }

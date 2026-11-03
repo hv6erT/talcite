@@ -376,6 +376,8 @@ void View::draw(const View& one, ui::Spot at) {
 // (`Root::frame`) paints over what it holds, and the lists would otherwise keep every picture and
 // address ever shown.
 void View::forget() {
+    if (pictures_.empty() && links_.empty()) return;
+
     std::vector<std::uint32_t> pictured;
     std::vector<std::uint32_t> linked;
 

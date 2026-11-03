@@ -91,8 +91,13 @@ void Canvas::put(ui::Spot at, char32_t what, const Style& how) {
 }
 
 // UTF-8 text from `at`, cluster by cluster, advancing by each glyph's width and stopping at the
-// right edge of the clip; a cluster that shows nothing takes no cell, as in `View::put`.
+// right edge of the clip; a cluster that shows nothing takes no cell, as in `View::put`. A row
+// outside the clip is not read at all.
 void Canvas::put(ui::Spot at, std::string_view what, const Style& how) {
+    const int row = at.y + origin_.y;
+
+    if (row < clip_.at.y || row >= clip_.at.y + clip_.size.high) return;
+
     const int right = clip_.at.x + clip_.size.wide - origin_.x;
 
     std::size_t which = 0;
