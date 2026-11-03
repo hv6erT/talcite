@@ -1294,9 +1294,142 @@ std::vector<Unit> exacted(std::string_view text, bool numeric) {
     return made;
 }
 
-// The units of a text under a tailoring (null for none), numbers as numbers when `numeric`.
+// The units of the character at `at` under a tailoring (null for none), and `at` past it; a
+// combining mark joins the unit before it, and a pair of the tailoring (Czech ch) takes the next
+// letter too.
+void unit_at(std::vector<Unit>& made, std::string_view text, std::size_t& at, const Tailoring* tailoring) {
+    const char32_t one = utf8::decode(text, at);
+
+    // A combining mark written apart belongs to the letter before it.
+    if (one >= 0x0300 && one <= 0x036F) {
+        if (!made.empty()) made.back().marks += marked(one);
+
+        return;
+    }
+
+    const Letter* found = entry(one);
+    const bool upper = (one >= U'A' && one <= U'Z') || (found != nullptr && found->upper);
+    const char32_t low = lowered(one);
+    const char cased = upper ? 0x03 : 0x02;
+
+    bool done = false;
+
+    if (tailoring != nullptr) {
+        for (const Joined& pair : tailoring->joined) {
+            if (pair.first != low || at >= text.size()) continue;
+
+            std::size_t next = at;
+
+            if (lowered(utf8::decode(text, next)) != pair.second) continue;
+
+            made.push_back(Unit{weighed(pair.after) + pair.slot, {}, cased});
+            at = next;
+            done = true;
+
+            break;
+        }
+
+        for (const Placed& letter : tailoring->placed) {
+            if (done || letter.letter != low) continue;
+
+            made.push_back(Unit{weighed(letter.after) + letter.slot, {}, cased});
+            done = true;
+        }
+    }
+
+    if (done) return;
+
+    if (cyrillic.find(low) != std::u32string_view::npos) {
+        made.push_back(Unit{weighed(low), {}, cased});
+
+        return;
+    }
+
+    for (const Spread& spread : spreads) {
+        if (done || spread.letter != low) continue;
+
+        // The two letters weigh as ss would, and the tertiary level tells ß from ss.
+        made.push_back(Unit{weighed(spread.first), {}, static_cast<char>(cased + 2)});
+        made.push_back(Unit{weighed(spread.second), {}, static_cast<char>(cased + 2)});
+        done = true;
+    }
+
+    for (const Struck& struck : strokes) {
+        if (done || struck.letter != low) continue;
+
+        made.push_back(Unit{weighed(struck.base), std::string(1, marked(stroke)), cased});
+        done = true;
+    }
+
+    if (done) return;
+
+    if (found != nullptr && found->marks[0] != 0) {
+        Unit unit{weighed(found->base), {}, cased};
+
+        for (const char16_t mark : found->marks)
+            if (mark != 0) unit.marks += marked(mark);
+
+        made.push_back(std::move(unit));
+
+        return;
+    }
+
+    made.push_back(Unit{weighed(low), {}, cased});
+}
+
+// An ASCII character that is one unit without marks, as `unit_at` gives it.
+struct Plain {
+    bool plain = false;
+    std::uint32_t primary = 0;
+    char tertiary = 0;
+};
+
+using Plains = std::array<Plain, 0x80>;
+
+// The ASCII characters of every tailoring, the last for none, read once from `unit_at`. A letter
+// that can start a pair of the tailoring is not plain, because its unit depends on the next one.
+const std::array<Plains, tailorings.size() + 1>& plains() {
+    static const std::array<Plains, tailorings.size() + 1> made = [] {
+        std::array<Plains, tailorings.size() + 1> all{};
+
+        for (std::size_t which = 0; which < all.size(); ++which) {
+            const Tailoring* tailoring = which < tailorings.size() ? &tailorings[which] : nullptr;
+
+            for (std::size_t code = 0; code < 0x80; ++code) {
+                const char32_t low = lowered(static_cast<char32_t>(code));
+
+                const auto starts = [low](const Joined& pair) { return pair.first == low; };
+
+                if (tailoring != nullptr && std::ranges::any_of(tailoring->joined, starts)) continue;
+
+                const char one = static_cast<char>(code);
+
+                std::vector<Unit> got;
+                std::size_t at = 0;
+
+                unit_at(got, std::string_view{&one, 1}, at, tailoring);
+
+                if (got.size() == 1 && got.front().marks.empty())
+                    all[which][code] = Plain{true, got.front().primary, got.front().tertiary};
+            }
+        }
+
+        return all;
+    }();
+
+    return made;
+}
+
+// The units of a text under a tailoring (null for none, otherwise one of `tailorings`), numbers as
+// numbers when `numeric`. Plain ASCII goes by the table of `plains`, the rest by `unit_at`.
 std::vector<Unit> units(std::string_view text, const Tailoring* tailoring, bool numeric) {
+    const std::size_t which =
+        tailoring == nullptr ? tailorings.size() : static_cast<std::size_t>(tailoring - tailorings.data());
+    const Plains& plain = plains()[which];
+
     std::vector<Unit> made;
+
+    made.reserve(text.size() + 2);
 
     std::size_t at = 0;
 
@@ -1310,83 +1443,16 @@ std::vector<Unit> units(std::string_view text, const Tailoring* tailoring, bool 
             continue;
         }
 
-        const char32_t one = utf8::decode(text, at);
+        const auto byte = static_cast<unsigned char>(text[at]);
 
-        // A combining mark written apart belongs to the letter before it.
-        if (one >= 0x0300 && one <= 0x036F) {
-            if (!made.empty()) made.back().marks += marked(one);
-
-            continue;
-        }
-
-        const Letter* found = entry(one);
-        const bool upper = (one >= U'A' && one <= U'Z') || (found != nullptr && found->upper);
-        const char32_t low = lowered(one);
-        const char cased = upper ? 0x03 : 0x02;
-
-        bool done = false;
-
-        if (tailoring != nullptr) {
-            for (const Joined& pair : tailoring->joined) {
-                if (pair.first != low || at >= text.size()) continue;
-
-                std::size_t next = at;
-
-                if (lowered(utf8::decode(text, next)) != pair.second) continue;
-
-                made.push_back(Unit{weighed(pair.after) + pair.slot, {}, cased});
-                at = next;
-                done = true;
-
-                break;
-            }
-
-            for (const Placed& letter : tailoring->placed) {
-                if (done || letter.letter != low) continue;
-
-                made.push_back(Unit{weighed(letter.after) + letter.slot, {}, cased});
-                done = true;
-            }
-        }
-
-        if (done) continue;
-
-        if (cyrillic.find(low) != std::u32string_view::npos) {
-            made.push_back(Unit{weighed(low), {}, cased});
+        if (byte < 0x80 && plain[byte].plain) {
+            made.push_back(Unit{plain[byte].primary, {}, plain[byte].tertiary});
+            ++at;
 
             continue;
         }
 
-        for (const Spread& spread : spreads) {
-            if (done || spread.letter != low) continue;
-
-            // The two letters weigh as ss would, and the tertiary level tells ß from ss.
-            made.push_back(Unit{weighed(spread.first), {}, static_cast<char>(cased + 2)});
-            made.push_back(Unit{weighed(spread.second), {}, static_cast<char>(cased + 2)});
-            done = true;
-        }
-
-        for (const Struck& struck : strokes) {
-            if (done || struck.letter != low) continue;
-
-            made.push_back(Unit{weighed(struck.base), std::string(1, marked(stroke)), cased});
-            done = true;
-        }
-
-        if (done) continue;
-
-        if (found != nullptr && found->marks[0] != 0) {
-            Unit unit{weighed(found->base), {}, cased};
-
-            for (const char16_t mark : found->marks)
-                if (mark != 0) unit.marks += marked(mark);
-
-            made.push_back(std::move(unit));
-
-            continue;
-        }
-
-        made.push_back(Unit{weighed(low), {}, cased});
+        unit_at(made, text, at, tailoring);
     }
 
     return made;
