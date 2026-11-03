@@ -392,15 +392,15 @@ ui::Size grain(ui::Blocks kind, bool unicode) {
     return kind >= ui::Blocks::sextants ? ui::Size{2, 3} : ui::Size{8, 8};
 }
 
-// Draws one still of a picture into the view as a mosaic of characters, starting at the given
+// Draws one still of a picture onto the canvas as a mosaic of characters, starting at the given
 // spot. The picture must already be scaled to the grid of subcells: the number of cells is derived
 // from its size, so one cannot be given while the other is meant.
 //
-// Transparency fits straight into the library's model: a cell without a single covered subcell
-// comes out as `bare()`, so the parent's background shows through it. A partly covered cell gets
+// Transparency fits straight into the library's model: a cell without a single covered subcell is
+// left as it is, so the parent's background shows through it. A partly covered cell gets
 // the paper from the caller when one is given (the background of the image role in the skin);
-// without it, it goes as foreground only (`View::foreground`) and takes its background, when
-// pasted, from what lies underneath. Left transparent all the way to the terminal, it would get
+// without it, it goes as foreground only (`Canvas::foreground`) and takes its background from what
+// lies underneath. Left transparent all the way to the terminal, it would get
 // the terminal's own background: black cells around a logo in a window.
 //
 // As well as possible: in full color and in a palette a cell carries two colors, and only the
@@ -408,7 +408,7 @@ ui::Size grain(ui::Blocks kind, bool unicode) {
 // two-color cell would lose its background and make a hole; only the ink silhouette (`Ink`) is
 // drawn. Without Unicode there are no block characters: a cell is a character from the ASCII ramp
 // by coverage, and in color a full cell is a background in the image's color.
-void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Blocks kind,
+void drawn(Canvas& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Blocks kind,
            const Style& under, Colors colors, bool unicode) {
     if (!one.held() || still >= one.stills().size()) return;
 
@@ -462,11 +462,7 @@ void drawn(View& into, ui::Spot at, const Pixels& one, std::size_t still, ui::Bl
 
             const ui::Spot spot{at.x + column, at.y + row};
 
-            if (filled == 0) {
-                into.clear({spot, {1, 1}});
-
-                continue;
-            }
+            if (filled == 0) continue;
 
             if (!unicode) {
                 const bool full = static_cast<std::size_t>(filled) == much;

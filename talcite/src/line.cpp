@@ -33,12 +33,8 @@ Size Line::wants(Size room) const {
 }
 
 // Paints the line across the whole width, with the title placed in it.
-View Line::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
+void Line::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -47,15 +43,13 @@ View Line::paint(Size given, Area seen) {
     if (border_ != Border::none) {
         const Lines glyphs = how.lines(border_);
 
-        across(made, {-seen.at.x, -seen.at.y}, given.wide, glyphs.across, look);
+        across(onto, {0, 0}, given.wide, glyphs.across, look);
     }
 
     // The text is drawn by the same function that puts a frame's title into its edge, because it
     // is the same thing.
-    along(made, {-seen.at.x, -seen.at.y}, given.wide, text_, justify_,
+    along(onto, {0, 0}, given.wide, text_, justify_,
           how.style(role() + ".title"), how.glyph("talcite.elide"));
-
-    return made;
 }
 
 }

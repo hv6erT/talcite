@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include "talcite/host.hpp"
+#include "talcite/root.hpp"
 
 #include <chrono>
 #include <condition_variable>
@@ -570,6 +571,10 @@ int main(int count, char** given) {
     _setmode(_fileno(stderr), _O_BINARY);
     _setmode(_fileno(stdin), _O_BINARY);
 #endif
+
+    // Every frame of a root is painted whole as well and compared with painting only the changes
+    // (`Root::frame`), so a change nobody announced fails the trial that made it.
+    talcite::ui::frames_checked(true);
 
     const std::vector<std::string> words = worded(count, given);
 

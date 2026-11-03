@@ -29,14 +29,14 @@ public:
 
 protected:
     // Fills the whole given size with the letter, shifted to the visible part.
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
+
+        onto.fill({{0, 0}, given}, Style{});
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
-
-        return made;
+                onto.put({x, y}, what_, Style{});
     }
 
 private:
@@ -795,19 +795,15 @@ public:
 protected:
     // The letter in every cell but the last column, the mark in the last column on the marked rows,
     // the rest clear.
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
-
-        made.clear({{0, 0}, seen.size});
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
         for (int y = 0; y < given.high; ++y) {
-            for (int x = 0; x + 1 < given.wide; ++x) made.put({x - seen.at.x, y - seen.at.y}, what_, Style{});
+            for (int x = 0; x + 1 < given.wide; ++x) onto.put({x, y}, what_, Style{});
 
             if (std::find(marked_.begin(), marked_.end(), y) != marked_.end())
-                made.put({given.wide - 1 - seen.at.x, y - seen.at.y}, mark_, Style{});
+                onto.put({given.wide - 1, y}, mark_, Style{});
         }
-
-        return made;
     }
 
 private:

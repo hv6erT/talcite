@@ -20,7 +20,11 @@ public:
 
     ~HistoryField() override;
 
-    [[nodiscard]] Options& options() { return options_; }
+    [[nodiscard]] Options& options() {
+        changed();
+
+        return options_;
+    }
 
     [[nodiscard]] const Options& options() const { return options_; }
 
@@ -41,7 +45,7 @@ public:
     void close();
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
 
     void activate() override;
 

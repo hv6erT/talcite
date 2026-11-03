@@ -6,6 +6,7 @@
 #include <string>
 
 #include "talcite/area.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/event.hpp"
 #include "talcite/view.hpp"
 
@@ -63,7 +64,7 @@ struct Scrollbar {
     const Skin& skin;
     const std::string& role;
 
-    void draw(View& into) const;
+    void draw(Canvas& onto) const;
 
     [[nodiscard]] Track track() const { return Track{at, upright, much, shift, whole, window}; }
 

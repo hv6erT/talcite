@@ -1,6 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "talcite/node.hpp"
 
@@ -23,7 +26,9 @@ public:
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 
@@ -33,6 +38,7 @@ protected:
 
 private:
     std::size_t which_ = 0;
+    std::vector<std::pair<std::string, int>> labels_;
 };
 
 }

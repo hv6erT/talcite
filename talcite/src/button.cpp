@@ -36,13 +36,8 @@ Size Button::wants(Size room) const {
 }
 
 // One row: the brackets, the label cut to fit between them, and the hot letter underlined.
-View Button::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where it draws nothing, the rule described at `Node::paint`. The button paints
-    // one row, and a layout row gives it its own height, so without this the rest of the rectangle
-    // would go to the parent as opaque spaces and cover its background.
-    made.clear({{0, 0}, seen.size});
+void Button::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -62,7 +57,7 @@ View Button::paint(Size given, Area seen) {
     // One row, not as many as given. The button reports a height of one in `wants()`, but a row
     // gives its children its own height; without this the reverse video would spill over the whole
     // row.
-    made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
+    onto.fill({{0, 0}, {given.wide, 1}}, look);
 
     const std::string first = primary_ ? "[< " : "[ ";
     const std::string after = primary_ ? " >]" : " ]";
@@ -79,9 +74,9 @@ View Button::paint(Size given, Area seen) {
 
     const int inner = measured(shown).wide;
 
-    made.put({-seen.at.x, -seen.at.y}, first, look);
-    made.put({aside - seen.at.x, -seen.at.y}, shown, look);
-    made.put({aside + inner - seen.at.x, -seen.at.y}, after, look);
+    onto.put({0, 0}, first, look);
+    onto.put({aside, 0}, shown, look);
+    onto.put({aside + inner, 0}, after, look);
 
     // The marking is computed on the clipped label: a letter that is not visible after clipping has
     // nothing to underline, and computed on the whole label it would land on the ellipsis or the
@@ -90,10 +85,8 @@ View Button::paint(Size given, Area seen) {
     // disabled button marks no letter: the key does nothing, and a lit letter would make the dimmed
     // button look half alive.
     if (enabled())
-        talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+        talcite::ui::marking(onto, {aside, 0}, shown, shortcut_column(shown),
                           look, how.style(role() + ".key"));
-
-    return made;
 }
 
 // Presses the button, unless it is disabled. A press goes through `trigger`, not straight to a

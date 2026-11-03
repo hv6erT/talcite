@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "talcite/area.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/handler.hpp"
 #include "talcite/shape.hpp"
 #include "talcite/view.hpp"
@@ -118,9 +119,13 @@ public:
 
     virtual void focus();
 
-    View render(const Area& where);
+    void arrange(const Area& where);
 
-    View render(const Area& where, const Area& seen);
+    void arrange(const Area& where, const Area& room);
+
+    void render(Canvas& onto) const;
+
+    virtual View render(const Area& where);
 
     [[nodiscard]] virtual Size wants(Size room) const;
 
@@ -151,9 +156,17 @@ protected:
 
     [[nodiscard]] const Skin& skin() const;
 
-    virtual View paint(Size given, Area seen);
+    void changed();
+
+    void changed(const Area& part);
+
+    virtual void layout(Size given);
+
+    virtual void paint(Canvas& onto) const;
 
 private:
+    void recorded(const Area& where, const Area& seen);
+
     friend class Children;
     friend class Root;
 
@@ -162,6 +175,8 @@ private:
     Children inside_;
     Area area_;
     Area seen_;
+    Spot origin_;
+    Area shown_;
     CaretShape caret_shape_;
 };
 

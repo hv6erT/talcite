@@ -31,7 +31,9 @@ public:
     [[nodiscard]] int capacity() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 

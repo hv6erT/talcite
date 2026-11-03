@@ -81,9 +81,13 @@ public:
 
     [[nodiscard]] std::vector<Placement> bared(const ui::Area& room);
 
+    void forget();
+
     [[nodiscard]] Cell at(ui::Spot where) const;
 
 private:
+    friend class Canvas;
+
     [[nodiscard]] bool holds(ui::Spot where) const;
 
     Cell& cell(ui::Spot where);

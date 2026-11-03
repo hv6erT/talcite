@@ -25,18 +25,30 @@ public:
 
     [[nodiscard]] int wide() const { return wide_; }
 
-    void wide(int given) { wide_ = given; }
+    void wide(int given) {
+        if (wide_ == given) return;
+
+        wide_ = given;
+
+        changed();
+    }
 
     [[nodiscard]] bool percent() const { return shape_.percent; }
 
-    void percent(bool given) { shape_.percent = given; }
+    void percent(bool given) {
+        if (shape_.percent == given) return;
+
+        shape_.percent = given;
+
+        changed();
+    }
 
     [[nodiscard]] Size wants(Size room) const override;
 
     [[nodiscard]] int capacity() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void paint(Canvas& onto) const override;
 
 private:
     void beating();

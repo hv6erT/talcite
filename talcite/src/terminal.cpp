@@ -180,6 +180,8 @@ void Terminal::heard(const Bytes& got) {
 
     scrolled_ = 0;
 
+    changed();
+
     if (!running_) return;
 
     if (!fed.replies.empty()) write(std::move(fed.replies));
@@ -272,6 +274,8 @@ void Terminal::submit(std::string_view line) {
 
     submitted_ = true;
     scrolled_ = 0;
+
+    changed();
 
     send(made);
 }
@@ -435,6 +439,8 @@ bool Terminal::handle(KeyEvent& what) {
 
         scrolled_ = std::clamp(scrolled_ + (key.code() == Code::pageup ? step : -step), 0, deepest());
 
+        changed();
+
         return true;
     }
 
@@ -443,6 +449,8 @@ bool Terminal::handle(KeyEvent& what) {
     if (made.empty() || !running_) return false;
 
     scrolled_ = 0;
+
+    changed();
 
     // Enter at the prompt gives the shell its command line, as `submit` does.
     if (key.code() == Code::enter && emulator_.waiting()) submitted_ = true;
@@ -479,6 +487,8 @@ bool Terminal::handle(PasteEvent& what) {
     }
 
     scrolled_ = 0;
+
+    changed();
 
     write(std::move(made));
 
@@ -567,6 +577,8 @@ bool Terminal::handle(WheelEvent& what) {
 
     scrolled_ = std::clamp(scrolled_ + (up ? 3 : -3) * many, 0, deepest());
 
+    changed();
+
     return true;
 }
 
@@ -631,22 +643,25 @@ std::optional<Spot> Terminal::caret() const {
     return Spot{at.x, at.y + shift};
 }
 
-// Draws the screen. The node's size is the terminal's: a node drawn larger or smaller gives the
-// screen and the program the new size first, since the program has to fit its picture to what is
-// seen. The rows drawn end at `bottom` and come from the history above it as far as needed, and as
-// far as the view has been walked back. The default colors are those of the node's role.
-View Terminal::paint(Size given, Area seen) {
+// The node's size is the terminal's: a node laid out larger or smaller gives the screen and the
+// program the new size first, since the program has to fit its picture to what is seen.
+void Terminal::layout(Size given) {
     if (given.wide > 0 && given.high > 0 && given != emulator_.size()) {
         emulator_.resize(given);
 
         if (pty_.held()) pty_.resize(given);
     }
+}
 
-    View made{seen.size};
+// Draws the screen. The rows drawn end at `bottom` and come from the history above it as far as
+// needed, and as far as the view has been walked back. The default colors are those of the node's
+// role.
+void Terminal::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Style base = skin().style(role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, given}, base);
+    onto.fill({{0, 0}, given}, base);
 
     const int high = emulator_.size().high;
     const int first = bottom() - high - scrolled_;
@@ -659,11 +674,9 @@ View Terminal::paint(Size given, Area seen) {
 
             if (one.letter == 0) continue;
 
-            made.put({x - seen.at.x, y - seen.at.y}, one.letter, Style::merge(base, one.style));
+            onto.put({x, y}, one.letter, Style::merge(base, one.style));
         }
     }
-
-    return made;
 }
 
 }

@@ -22,7 +22,11 @@ namespace talcite::ui {
 Footed::Footed(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between the parts, in rows; a negative gap counts as zero.
-void Footed::gap(int given) { gap_ = std::max(given, 0); }
+void Footed::gap(int given) {
+    gap_ = std::max(given, 0);
+
+    changed();
+}
 
 // The content and any number of parts under it.
 int Footed::capacity() const { return plenty; }
@@ -80,14 +84,10 @@ Size Footed::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Draws the content at the top over all the room the parts leave, and the parts under it in order,
-// each with the full width.
-View Footed::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
+// Lays the content out at the top over all the room the parts leave, and the parts under it in
+// order, each with the full width.
+void Footed::layout(Size given) {
+    if (children().empty()) return;
 
     const Laid parts = laid(given);
 
@@ -99,14 +99,15 @@ View Footed::paint(Size given, Area seen) {
         y += parts.aparts[at];
 
         const Area where{{0, y}, {given.wide, high}};
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(children()[at]->render(where, part - where.at), part.at - seen.at);
+        children()[at]->arrange(where);
 
         y += high;
     }
+}
 
-    return made;
+// Paints the content and the parts.
+void Footed::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

@@ -45,8 +45,8 @@ Size MenuItem::wants(Size room) const {
 //
 // The role is built from a stem and a suffix, as in a button: whoever assembles the menu sets the
 // stem, and the item adds the suffix, because only it knows what states it has.
-View MenuItem::paint(Size given, Area seen) {
-    View made{seen.size};
+void MenuItem::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -54,23 +54,21 @@ View MenuItem::paint(Size given, Area seen) {
                                       : focused() ? role() + ".focus"
                                                   : role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, given}, look);
-    made.put({1 - seen.at.x, -seen.at.y}, text_, look);
+    onto.fill({{0, 0}, given}, look);
+    onto.put({1, 0}, text_, look);
 
     if (!hint_.empty()) {
         const int wide = measured(hint_).wide;
 
-        made.put({given.wide - 1 - wide - seen.at.x, -seen.at.y}, hint_, look);
+        onto.put({given.wide - 1 - wide, 0}, hint_, look);
     }
 
     // The hotkey letter has its own role, laid over the item's look, as in a button and a check
     // box. The text stands one cell from the left, so the letter is shifted by that cell too. A
     // disabled item marks no letter, since its key does nothing.
     if (enabled())
-        talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text_, shortcut_column(text_),
+        talcite::ui::marking(onto, {1, 0}, text_, shortcut_column(text_),
                           look, how.style(role() + ".key"));
-
-    return made;
 }
 
 // The hotkey arrives from the base class. The item does the same as on a click: it first becomes

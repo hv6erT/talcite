@@ -32,14 +32,8 @@ Size Stack::wants(Size room) const { return room; }
 // in a place of their own says where, in the stack's coordinates.
 Area Stack::placement(const Node&, Size room) const { return {{0, 0}, room}; }
 
-// Paints the children in order, each in its placement, so later children cover earlier ones.
-View Stack::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn, the rule described at `Node::paint`. A child that
-    // takes less than the whole room does not paint over the rest, so lower layers show around it.
-    made.clear({{0, 0}, seen.size});
-
+// Lays each child out in its placement, within the stack.
+void Stack::layout(Size given) {
     for (const std::shared_ptr<Node>& one : children()) {
         Area where = placement(*one, given);
 
@@ -51,12 +45,13 @@ View Stack::paint(Size given, Area seen) {
         where.size.wide = std::clamp(where.size.wide, 0, given.wide - where.at.x);
         where.size.high = std::clamp(where.size.high, 0, given.high - where.at.y);
 
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(one->render(where, part - where.at), part.at - seen.at);
+        one->arrange(where);
     }
+}
 
-    return made;
+// Paints the children in order, so later children cover earlier ones.
+void Stack::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

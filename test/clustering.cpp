@@ -314,12 +314,12 @@ namespace {
 class Lettered : public ui::Root {
 protected:
     // Puts the text at the top left of an otherwise empty page.
-    View paint(ui::Size given, ui::Area) override {
-        View made{given};
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        made.put({0, 0}, "e" + acute + "x", Style{});
+        onto.fill({{0, 0}, given}, Style{});
 
-        return made;
+        onto.put({0, 0}, "e" + acute + "x", Style{});
     }
 };
 

@@ -23,19 +23,13 @@ Size Tab::wants(Size room) const {
 }
 
 // The page over all the room.
-View Tab::paint(Size given, Area seen) {
-    View made{seen.size};
+void Tab::layout(Size given) {
+    if (!children().empty()) children().front()->arrange({{0, 0}, given});
+}
 
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
-
-    Node& page = *children().front();
-    const Area part = Area::crossed(seen, {{0, 0}, given});
-
-    made.draw(page.render({{0, 0}, given}, part), part.at - seen.at);
-
-    return made;
+// The page, when it is in the tree.
+void Tab::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 // The tab's key shows its page, as a click on its name does.

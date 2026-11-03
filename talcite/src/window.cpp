@@ -32,13 +32,19 @@ int Window::capacity() const { return 1; }
 Size Window::wants(Size room) const { return full_ ? room : seat_.size; }
 
 // Switches the window between full and placed; the seat is kept for when it is placed again.
-void Window::full(bool given) { full_ = given; }
+void Window::full(bool given) {
+    full_ = given;
+
+    changed();
+}
 
 // Places the window at `where` with `size` (negative dimensions become zero), which makes it not
 // full.
 void Window::seat(Spot where, Size size) {
     seat_ = {where, {std::max(size.wide, 0), std::max(size.high, 0)}};
     full_ = false;
+
+    changed();
 }
 
 namespace {
@@ -83,6 +89,8 @@ void Window::move(int across, int down) {
 
     seat_.at.x = stepped(seat_.at.x, across, 1 - seat_.size.wide, room->wide - 1);
     seat_.at.y = stepped(seat_.at.y, down, 0, room->high - 1);
+
+    changed();
 }
 
 // Resizes the window, like WindowResize: no smaller than `least`, and it grows only up to the
@@ -94,6 +102,8 @@ void Window::resize(int across, int down) {
 
     seat_.size.wide = stepped(seat_.size.wide, across, least_.wide, room->wide - seat_.at.x);
     seat_.size.high = stepped(seat_.size.high, down, least_.high, room->high - seat_.at.y);
+
+    changed();
 }
 
 // Sets the smallest size. It has at least one cell; a smaller window would leave nothing to grab.

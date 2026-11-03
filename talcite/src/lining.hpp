@@ -4,10 +4,10 @@
 #include <initializer_list>
 #include <string_view>
 
+#include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/line.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
 
 namespace talcite::ui {
 
@@ -62,7 +62,7 @@ struct Sides {
 // A horizontal line from `from` over `much` cells. It steps by the glyph's width, because a
 // double-width glyph put in every column would overwrite its own neighbor. A remainder into which
 // a whole glyph no longer fits stays what it was: background, not half a glyph.
-inline void across(View& into, Spot from, int much, char32_t glyph, const Style& look) {
+inline void across(Canvas& into, Spot from, int much, char32_t glyph, const Style& look) {
     const int step = width(glyph);
 
     for (int x = 0; x + step <= much; x += step) into.put({from.x + x, from.y}, glyph, look);
@@ -72,7 +72,7 @@ inline void across(View& into, Spot from, int much, char32_t glyph, const Style&
 // about that cell alone. For a double-width one the line may have ended one cell earlier, because
 // the last glyph did not fit in an odd width, and that also counts as reaching, because the line
 // could not get any further.
-[[nodiscard]] inline bool reaching(const View& seen, Spot last, char32_t glyph) {
+[[nodiscard]] inline bool reaching(const Canvas& seen, Spot last, char32_t glyph) {
     const int step = width(glyph);
 
     for (int x = step == 1 ? last.x : last.x - step; x <= last.x; ++x)

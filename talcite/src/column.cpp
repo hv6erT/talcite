@@ -10,7 +10,11 @@ namespace talcite::ui {
 Column::Column(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between children, in rows; a negative value becomes zero.
-void Column::gap(int given) { gap_ = std::max(given, 0); }
+void Column::gap(int given) {
+    gap_ = std::max(given, 0);
+
+    changed();
+}
 
 // A column lays out any number of children, one under another.
 int Column::capacity() const { return plenty; }
@@ -56,24 +60,18 @@ Size Column::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Draws the children one under another, each over the full width. No child drops out of the loop,
-// even when the room has run out: a node that cannot be seen gets a rectangle of zero height, so
-// its area() tells the truth about this frame instead of remembering the previous one.
+// Lays the children out one under another, each over the full width. No child drops out of the
+// loop, even when the room has run out: a node that cannot be seen gets a rectangle of zero height,
+// so its area() tells the truth about this frame instead of remembering the previous one.
 //
 // The height the children do not need goes to the vertical floats among them (`Top`, `Bottom`,
-// `Middle`) by the rule of automatic margins described at `Row::paint`, with the axes swapped: a
+// `Middle`) by the rule of automatic margins described at `Row::layout`, with the axes swapped: a
 // top float has its free margin under it, a bottom one above it, a middle one on both sides, and
 // the spare rows are split equally between those margins, the odd ones to the last. So a column
 // of content followed by a bottom float puts the float at the bottom edge. A horizontal float is an
 // ordinary child here, placing its own child in the full width. Without vertical floats the spare
 // rows stay under the last child.
-View Column::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn; the rule is described with `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
+void Column::layout(Size given) {
     const std::vector<Area> places = placed(given);
     const std::size_t many = places.size();
 
@@ -116,12 +114,13 @@ View Column::paint(Size given, Area seen) {
             shift += before + after;
         }
 
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(children()[which]->render(where, part - where.at), part.at - seen.at);
+        children()[which]->arrange(where);
     }
+}
 
-    return made;
+// Paints the children one under another, where the layout put them.
+void Column::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

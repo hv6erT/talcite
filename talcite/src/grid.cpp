@@ -51,7 +51,11 @@ int ending(const std::vector<int>& columns, int gap) {
 Grid::Grid(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between columns; a negative gap counts as zero.
-void Grid::gap(int given) { gap_ = std::max(given, 0); }
+void Grid::gap(int given) {
+    gap_ = std::max(given, 0);
+
+    changed();
+}
 
 // A grid takes any number of rows.
 int Grid::capacity() const { return plenty; }
@@ -205,37 +209,29 @@ Size Grid::wants(Size room) const {
     return {std::min(wide, room.wide), std::min(high, room.high)};
 }
 
-// Draws the rows one under another and, in every row of cells, the cells in their columns; the
-// grid is transparent where nothing is drawn, the rule described at `Node::paint`.
-View Grid::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
+// Lays the rows out one under another and, in every row of cells, the cells in their columns: the
+// grid places the cells of its rows itself, because only the grid knows the columns.
+void Grid::layout(Size given) {
     const std::vector<int> laid = columns(given);
     const std::vector<Area> places = rows(given, laid);
 
     for (std::size_t which = 0; which < places.size(); ++which) {
         Node& one = *children()[which];
         const Area& where = places[which];
-        const Area part = Area::crossed(seen, where);
 
-        made.draw(one.render(where, part - where.at), part.at - seen.at);
+        one.arrange(where);
 
         if (ranked(one) == nullptr) continue;
 
         const std::vector<Area> inside = cells(one, where.size.high, laid);
 
-        for (std::size_t at = 0; at < inside.size(); ++at) {
-            const Area& cell = inside[at];
-            const Area placed{{where.at.x + cell.at.x, where.at.y + cell.at.y}, cell.size};
-            const Area shown = Area::crossed(seen, placed);
-
-            made.draw(one.children()[at]->render(cell, shown - placed.at), shown.at - seen.at);
-        }
+        for (std::size_t at = 0; at < inside.size(); ++at) one.children()[at]->arrange(inside[at]);
     }
+}
 
-    return made;
+// Paints the rows in order; a row of cells paints its cells (`GridRow::paint`).
+void Grid::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 // A row of a grid takes any number of cells.
@@ -244,14 +240,12 @@ int GridRow::capacity() const { return plenty; }
 // A row of cells is measured by its grid, which knows the columns; on its own it wants nothing.
 Size GridRow::wants(Size) const { return {}; }
 
-// A row of cells draws nothing and lays out nothing: its grid lays its cells out in the grid's
-// columns and draws them. Transparent, the rule described at `Node::paint`.
-View GridRow::paint(Size, Area seen) {
-    View made{seen.size};
+// A row of cells lays out nothing: its grid lays its cells out in the grid's columns.
+void GridRow::layout(Size) {}
 
-    made.clear({{0, 0}, seen.size});
-
-    return made;
+// The cells where the grid laid them; between them the row stays transparent.
+void GridRow::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 // An empty place of the given size: an empty cell of a grid, or an empty row between parts.

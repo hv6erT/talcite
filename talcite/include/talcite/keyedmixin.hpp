@@ -59,7 +59,11 @@ private:
 template <std::derived_from<Node> Base>
 class KeyedMixin : public Base {
 public:
-    [[nodiscard]] Keys& keys() { return keys_; }
+    [[nodiscard]] Keys& keys() {
+        this->Node::changed();
+
+        return keys_;
+    }
 
     [[nodiscard]] const Keys& keys() const { return keys_; }
 

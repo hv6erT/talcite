@@ -52,7 +52,11 @@ public:
 
     ~DiffViewer() override;
 
-    [[nodiscard]] Chosen& chosen() { return chosen_; }
+    [[nodiscard]] Chosen& chosen() {
+        Node::changed();
+
+        return chosen_;
+    }
 
     [[nodiscard]] const Chosen& chosen() const { return chosen_; }
 
@@ -91,7 +95,9 @@ public:
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 

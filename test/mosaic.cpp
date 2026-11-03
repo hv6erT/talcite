@@ -27,11 +27,15 @@ Pixels held(ui::Size size, const std::vector<std::uint8_t>& bytes) {
     return Pixels{size, {Still{lump(bytes), std::chrono::milliseconds{0}}}};
 }
 
-// One cell, drawn and handed back for inspection.
+// One cell, drawn on a sheet where nothing was drawn yet and handed back for inspection.
 Cell one(const Pixels& what, ui::Blocks kind, const Style& under = {}) {
     View made{{1, 1}};
 
-    drawn(made, {0, 0}, what, 0, kind, under);
+    made.clear({{0, 0}, {1, 1}});
+
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, what, 0, kind, under);
 
     return made.at({0, 0});
 }
@@ -87,8 +91,8 @@ TRIAL("Mosaic: a uniform color gives a full block") {
     same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
 }
 
-// Transparency maps straight onto the library's model. A cell without a single visible sub-cell
-// comes out as not drawn, so the parent's background shows through it, just as through a
+// Transparency maps straight onto the library's model. A cell without a single visible sub-cell is
+// left as it lies, here not drawn, so the parent's background shows through it, just as through a
 // container.
 TRIAL("Mosaic: a cell without content is not drawn") {
     const Cell got = one(held({2, 3}, flat({2, 3}, 255, 0, 0, 0)), ui::Blocks::sextants);
@@ -244,7 +248,9 @@ TRIAL("Mosaic: each cell takes its own piece of the image") {
 
     View made{{2, 1}};
 
-    drawn(made, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants);
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants);
 
     same(made.at({0, 0}).letter, U'█');
     same(made.at({0, 0}).style.foreground, (Color{false, 0, 0, 0}));
@@ -255,7 +261,9 @@ TRIAL("Mosaic: each cell takes its own piece of the image") {
 TRIAL("Mosaic: draws from the given place") {
     View made{{3, 3}};
 
-    drawn(made, {1, 2}, held({2, 3}, flat({2, 3}, 10, 20, 30)), 0, ui::Blocks::sextants);
+    Canvas onto{made};
+
+    drawn(onto, {1, 2}, held({2, 3}, flat({2, 3}, 10, 20, 30)), 0, ui::Blocks::sextants);
 
     same(made.at({1, 2}).letter, U'█');
     same(made.at({0, 0}).letter, U' ');
@@ -267,7 +275,9 @@ TRIAL("Mosaic: draws from the given place") {
 TRIAL("Mosaic: an empty image draws nothing") {
     View made{{2, 2}};
 
-    drawn(made, {0, 0}, Pixels{}, 0, ui::Blocks::sextants);
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, Pixels{}, 0, ui::Blocks::sextants);
 
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
     same(made.at({0, 0}).letter, U' ');
@@ -276,7 +286,9 @@ TRIAL("Mosaic: an empty image draws nothing") {
 TRIAL("Mosaic: a frame out of range draws nothing") {
     View made{{1, 1}};
 
-    drawn(made, {0, 0}, held({2, 3}, flat({2, 3}, 255, 0, 0)), 7, ui::Blocks::sextants);
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, held({2, 3}, flat({2, 3}, 255, 0, 0)), 7, ui::Blocks::sextants);
 
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
@@ -284,7 +296,9 @@ TRIAL("Mosaic: a frame out of range draws nothing") {
 TRIAL("Mosaic: an image smaller than a cell draws nothing") {
     View made{{1, 1}};
 
-    drawn(made, {0, 0}, held({1, 1}, flat({1, 1}, 255, 0, 0)), 0, ui::Blocks::sextants);
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, held({1, 1}, flat({1, 1}, 255, 0, 0)), 0, ui::Blocks::sextants);
 
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
@@ -293,11 +307,16 @@ TRIAL("Mosaic: an image smaller than a cell draws nothing") {
 
 namespace {
 
-// One cell drawn with the given color depth and character set.
+// One cell drawn with the given color depth and character set, on a sheet where nothing was drawn
+// yet.
 Cell dressed_as(const Pixels& what, ui::Blocks kind, Colors colors, bool unicode, const Style& under = {}) {
     View made{{1, 1}};
 
-    drawn(made, {0, 0}, what, 0, kind, under, colors, unicode);
+    made.clear({{0, 0}, {1, 1}});
+
+    Canvas onto{made};
+
+    drawn(onto, {0, 0}, what, 0, kind, under, colors, unicode);
 
     return made.at({0, 0});
 }
@@ -383,8 +402,14 @@ TRIAL("Mosaic: monochrome with transparency is the silhouette of what is visible
     View colored{{2, 1}};
     View mono{{2, 1}};
 
-    drawn(colored, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::rgb, true);
-    drawn(mono, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::mono, true);
+    colored.clear({{0, 0}, {2, 1}});
+    mono.clear({{0, 0}, {2, 1}});
+
+    Canvas on_colored{colored};
+    Canvas on_mono{mono};
+
+    drawn(on_colored, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::rgb, true);
+    drawn(on_mono, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::mono, true);
 
     ought(colored.at({1, 0}).letter != U'█');
     same(mono.at({1, 0}).letter, U'█');

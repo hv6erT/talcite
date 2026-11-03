@@ -43,16 +43,16 @@ Size Choice::wants(Size room) const {
             std::min(static_cast<int>(options().many()), room.high)};
 }
 
-// One row per option: the bracket with the mark on the chosen one, then the label cut to the width.
-View Choice::paint(Size given, Area seen) {
-    // We give up the focus lazily, while drawing, not when the set is emptied: `Options` has no
-    // pointer to its owner, so it has no way to notify it. A group without options is no longer
-    // focusable, and focus must not stay on a node that does not accept it.
+// We give up the focus lazily, at the layout, not when the set is emptied: `Options` has no pointer
+// to its owner, so it has no way to notify it. A group without options is no longer focusable, and
+// focus must not stay on a node that does not accept it.
+void Choice::layout(Size) {
     if (focused() && !focusable()) unfocus();
+}
 
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
+// One row per option: the bracket with the mark on the chosen one, then the label cut to the width.
+void Choice::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -66,7 +66,7 @@ View Choice::paint(Size given, Area seen) {
     const int room = std::max(given.wide - around, 0);
 
     for (std::size_t at = 0; at < options().many(); ++at) {
-        const int y = static_cast<int>(at) - seen.at.y;
+        const int y = static_cast<int>(at);
 
         if (static_cast<int>(at) >= given.high) break;
 
@@ -76,7 +76,7 @@ View Choice::paint(Size given, Area seen) {
 
         const Style look = here ? focus : plain;
 
-        made.fill({{-seen.at.x, y}, {given.wide, 1}}, look);
+        onto.fill({{0, y}, {given.wide, 1}}, look);
 
         std::string first = "(";
 
@@ -87,16 +87,14 @@ View Choice::paint(Size given, Area seen) {
 
         first += ") ";
 
-        made.put({-seen.at.x, y}, first, look);
+        onto.put({0, y}, first, look);
 
         if (room > 0)
-            made.put({around - seen.at.x, y},
+            onto.put({around, y},
                         elided(options()[at], room, Elide::right,
                                how.glyph("talcite.elide")),
                         look);
     }
-
-    return made;
 }
 
 // Moving is choosing: an arrow changes the choice at once, as in Midnight Commander, instead of

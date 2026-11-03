@@ -158,7 +158,7 @@ public:
     [[nodiscard]] std::optional<Spot> caret() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
 
     using Page::handle;
 

@@ -15,7 +15,9 @@ public:
 protected:
     Float(Axis axis, Align align);
 
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
 private:
     Axis axis_;

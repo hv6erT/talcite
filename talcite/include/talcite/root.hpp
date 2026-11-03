@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "talcite/blocks.hpp"
@@ -42,6 +43,14 @@ public:
     [[nodiscard]] Graphics graphics() const { return graphics_; }
 
     void graphics(Graphics given);
+
+    using Node::render;
+
+    View render(const Area& where) override;
+
+    const View& frame(Size size);
+
+    void repaint();
 
     [[nodiscard]] std::optional<Spot> caret() const override;
 
@@ -93,6 +102,14 @@ private:
 
     Node* under(Spot where);
 
+    void damage(const Area& screen);
+
+    void announced(const Node& who, const Area& screen);
+
+    void steadied(Size size);
+
+    void checked(Size size);
+
     void minded(const MouseEvent& what);
 
     template <std::derived_from<Event> One>
@@ -132,6 +149,13 @@ private:
     std::optional<std::chrono::steady_clock::time_point> first_click_;
     Spot waiting_;
     Mouse clicked_ = Mouse::none;
+    View sheet_;
+    std::vector<std::pair<int, int>> damaged_;
+    bool whole_ = true;
+    bool arranging_ = false;
+    const Node* unsettled_ = nullptr;
 };
+
+void frames_checked(bool on);
 
 }

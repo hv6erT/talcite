@@ -11,7 +11,9 @@ public:
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     [[nodiscard]] virtual Area placement(const Node& one, Size room) const;
 };

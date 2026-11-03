@@ -88,36 +88,26 @@ int KeyBar::along(int which, int wide) const {
     return made;
 }
 
-// Paints the content above and the items in the last row.
-View KeyBar::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
-    // An empty bar does not take a row. A key bar without items is a key bar that is not there,
-    // not an empty strip at the bottom of the screen.
+// Lays the content out above and the items in the last row. An empty bar does not take a row: a
+// key bar without items is a key bar that is not there, not an empty strip at the bottom of the
+// screen.
+void KeyBar::layout(Size given) {
     const int high = items_.empty() ? given.high : std::max(given.high - 1, 0);
 
-    const Area above{{0, 0}, {given.wide, high}};
-    const Area part = Area::crossed(seen, above);
-
-    made.draw(body_->render(above, part - above.at), part.at - seen.at);
-
-    if (items_.empty() || given.high <= 0) return made;
+    body_->arrange({{0, 0}, {given.wide, high}});
 
     const int y = given.high - 1;
 
-    for (int at = 0; at < static_cast<int>(items_.size()); ++at) {
-        const Area where{{along(at, given.wide), y}, {width(at, given.wide), 1}};
-        const Area cut = Area::crossed(seen, where);
+    for (int at = 0; at < static_cast<int>(items_.size()); ++at)
+        items_[static_cast<std::size_t>(at)]->arrange(
+            given.high <= 0 ? Area{} : Area{{along(at, given.wide), y}, {width(at, given.wide), 1}});
+}
 
-        made.draw(items_[static_cast<std::size_t>(at)]->render(where, cut - where.at),
-                    cut.at - seen.at);
-    }
+// Paints the content above and the items in the last row.
+void KeyBar::paint(Canvas& onto) const {
+    body_->render(onto);
 
-    return made;
+    for (const std::shared_ptr<KeyBarItem>& one : items_) one->render(onto);
 }
 
 // Offers a key to the items. The key arrives here by bubbling up from the focus, because the

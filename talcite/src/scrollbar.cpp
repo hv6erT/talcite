@@ -148,10 +148,10 @@ bool Scrollbar::focused_in(const Node& owner) {
     return false;
 }
 
-// Draws the track and the thumb into `into`, with the glyphs of `role` and its .track.upright or
+// Draws the track and the thumb on the canvas, with the glyphs of `role` and its .track.upright or
 // .track.across and .thumb variants, and the styles of `role` and `role`.thumb, or of
 // `role`.focus and `role`.thumb.focus when the bar's widget has the focus.
-void Scrollbar::draw(View& into) const {
+void Scrollbar::draw(Canvas& onto) const {
     if (much <= 0) return;
 
     // The bar asks the skin itself, because it is not a node and has no ancestor through which
@@ -172,7 +172,7 @@ void Scrollbar::draw(View& into) const {
         const Spot spot = upright ? Spot{at.x, at.y + which} : Spot{at.x + which, at.y};
 
         // The bar lies on its widget's ground: a style without a background takes the one below.
-        into.foreground(spot, kept ? block : empty, kept ? full : look);
+        onto.foreground(spot, kept ? block : empty, kept ? full : look);
     }
 }
 

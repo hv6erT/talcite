@@ -4,9 +4,9 @@
 #include <string_view>
 
 #include "talcite/area.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
 
 namespace talcite::ui {
 
@@ -34,7 +34,7 @@ namespace talcite::ui {
 // background like a hole in the highlight, since in each of the 29 skins the .key background
 // equals the background of a normal item. So the background is whatever the letter stands on;
 // the foreground and bold or underline come from .key.
-inline void marking(View& into, Spot at, const std::string& shown, int which, Style look,
+inline void marking(Canvas& into, Spot at, const std::string& shown, int which, Style look,
                     Style key) {
     if (which < 0) return;
 

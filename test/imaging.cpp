@@ -695,7 +695,7 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     alone->hold(halved());
 
-    same(alone->render({{0, 0}, {1, 1}}, {{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    same(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 
     Bytes pair(8 * 8 * 4, std::byte{0});
 
@@ -708,6 +708,6 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     alone->hold(Pixels{{8, 8}, {Still{std::move(pair), std::chrono::milliseconds{0}}}});
 
-    same(alone->render({{0, 0}, {1, 1}}, {{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    same(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 }
 

@@ -52,7 +52,11 @@ private:
 template <std::derived_from<Node> Base>
 class MarkedMixin : public Base {
 public:
-    [[nodiscard]] Marks& marks() { return marks_; }
+    [[nodiscard]] Marks& marks() {
+        this->Node::changed();
+
+        return marks_;
+    }
 
     [[nodiscard]] const Marks& marks() const { return marks_; }
 
@@ -97,6 +101,8 @@ protected:
         settle();
 
         which_ = given;
+
+        this->Node::changed();
     }
 
     void settle() const {

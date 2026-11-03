@@ -22,21 +22,17 @@ Size Inset::wants(Size room) const {
     return {std::min(inner.wide + 2 * sides_, room.wide), std::min(inner.high + top_, room.high)};
 }
 
-// Draws the child inside the room around it; the room itself stays transparent, the rule described
-// at `Node::paint`.
-View Inset::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
+// Lays the child out inside the room around it.
+void Inset::layout(Size given) {
+    if (children().empty()) return;
 
     const Area where{{sides_, top_}, {std::max(given.wide - 2 * sides_, 0), std::max(given.high - top_, 0)}};
-    const Area part = Area::crossed(seen, where);
+    children().front()->arrange(where);
+}
 
-    made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
-
-    return made;
+// Paints the child; the room around it stays as it is, transparent.
+void Inset::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

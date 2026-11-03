@@ -85,7 +85,9 @@ struct Table::Kept {
 
     std::string scrollbar_role = "talcite.scroll";
 
+    // The scrollbar as the layout settled it, for the mouse and for painting.
     Grip grip;
+    std::optional<Track> bar;
 };
 
 // An empty table with the "talcite.table" role and the default shape.
@@ -117,6 +119,8 @@ void Table::source(TableSource given, std::size_t rows) {
 
     kept.shown.clear();
     kept.fresh = true;
+
+    Node::changed();
 }
 
 // Follows rows replaced in the middle of the source: the rows [at, at + gone) give way to `came` new
@@ -175,6 +179,8 @@ void Table::changed(std::size_t at, std::size_t gone, std::size_t came) {
     kept.shown.clear();
     kept.fresh = true;
 
+    Node::changed();
+
     if (other) (void)trigger(ScrollEvent{});
 }
 
@@ -187,12 +193,16 @@ bool Table::sourced() const { return static_cast<bool>(kept_->source); }
 void Table::refresh() {
     kept_->shown.clear();
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // Sets the columns.
 void Table::columns(std::vector<TableColumn> given) {
     kept_->columns = std::move(given);
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // The columns as set.
@@ -219,6 +229,8 @@ void Table::heading(bool given) {
 
     kept_->shape.heading = given;
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // Whether the table keeps a column for the scrollbar.
@@ -230,13 +242,19 @@ void Table::scrollbar(bool given) {
 
     kept_->shape.scrollbar = given;
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // The skin role of the scrollbar.
 const std::string& Table::scrollbar_role() const { return kept_->scrollbar_role; }
 
 // Sets the skin role of the scrollbar.
-void Table::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
+void Table::scrollbar_role(std::string given) {
+    kept_->scrollbar_role = std::move(given);
+
+    Node::changed();
+}
 
 // A table always takes the focus.
 bool Table::focusable() const { return true; }
@@ -268,16 +286,31 @@ void Table::which(std::size_t given, Moved how) {
 
     if (kept.which.has_value() && *kept.which == want) return;
 
+    const std::optional<std::size_t> before = kept.which;
+
     kept.which = want;
 
     // The rows are fetched again only when the view moved: a cursor that walks inside the visible
     // rows changes only which row is painted as current, and fetching every row at each arrow press
-    // costs the source a row's worth of work per row. A view that waits for the height is moved
-    // by the first frame with room for rows, which fetches them anyway.
+    // costs the source a row's worth of work per row; then only those two rows are painted again. A
+    // view that waits for the height is moved by the first frame with room for rows, which fetches
+    // them anyway.
     if (const std::optional<std::size_t> high = rows_in(area(), kept.shape)) {
-        if (kept.pulled(*high)) kept.fresh = true;
+        if (kept.pulled(*high)) {
+            kept.fresh = true;
+
+            Node::changed();
+        } else {
+            const int head = kept.shape.heading ? 1 : 0;
+
+            for (const std::optional<std::size_t> one : {before, kept.which})
+                if (one.has_value() && *one >= kept.top)
+                    Node::changed({{0, head + static_cast<int>(*one - kept.top)}, {area().size.wide, 1}});
+        }
     } else {
         kept.pending = true;
+
+        Node::changed();
     }
 
     (void)trigger(ScrollEvent{how});
@@ -297,6 +330,8 @@ void Table::first(std::size_t given, Moved how) {
 
     kept.top = want;
     kept.fresh = true;
+
+    Node::changed();
 
     (void)trigger(ScrollEvent{how});
 }
@@ -403,7 +438,7 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
 // way it was drawn, elided and then cut and justified as `ranged` does, so a mark follows its
 // bytes wherever eliding moved them, and a mark over the ellipsis covers nothing. A mark with an
 // address lays its hyperlink too. A cell holds one line, so only marks of line 0 count.
-void marked(View& made, const TableCell& cell, Spot at, int room, Justify justify, const Style& look, const Skin& how) {
+void marked(Canvas& made, const TableCell& cell, Spot at, int room, Justify justify, const Style& look, const Skin& how) {
     const Traced whole = elided(traced(cell.text, 0), room, cell.elide, how.glyph("talcite.elide"));
     const std::string got = cut(whole.text, room);
 
@@ -493,13 +528,10 @@ void Table::spread(Size given) {
     }
 }
 
-// Draws the heading, the visible rows in their roles (current, marked, both) and the scrollbar.
-View Table::paint(Size given, Area seen) {
+// Settles what the table shows before it is painted: the selection and the cursor within the rows,
+// the top row, the visible rows themselves (`spread`) and the scrollbar.
+void Table::layout(Size given) {
     Kept& kept = *kept_;
-
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
 
     // The selection is trimmed to the number of rows here, because the set has no pointer to the
     // table and no way to learn of the change: the same way the history trims its list and the
@@ -519,6 +551,34 @@ View Table::paint(Size given, Area seen) {
 
     spread(given);
 
+    // The bar only when there are more rows than can be seen; its column stays reserved, so the
+    // table's columns do not jump when the list changes. It runs beside the rows only: the heading
+    // does not scroll, so the bar starts under it.
+    const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
+    const int head = kept.shape.heading ? 1 : 0;
+
+    if (aside != 0 && given.high > head && kept.rows > static_cast<std::size_t>(std::max(given.high - head, 0))) {
+        const Spot top = Scrollbar::edge(given, {{0, 0}, given}, true);
+
+        kept.bar = Track{{top.x, top.y + head},
+                         true,
+                         given.high - head,
+                         kept.top,
+                         kept.rows,
+                         static_cast<std::size_t>(std::max(given.high - head, 1))};
+    } else {
+        kept.bar.reset();
+    }
+
+    kept.grip.laid(kept.bar);
+}
+
+// Draws the heading, the visible rows in their roles (current, marked, both) and the scrollbar.
+void Table::paint(Canvas& onto) const {
+    const Kept& kept = *kept_;
+
+    const Size given = onto.size();
+
     const Skin& how = skin();
 
     const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
@@ -530,15 +590,15 @@ View Table::paint(Size given, Area seen) {
     if (head != 0 && wide > 0) {
         const Style look = how.style(role() + ".head");
 
-        made.fill({{-seen.at.x, -seen.at.y}, {wide, 1}}, look);
+        onto.fill({{0, 0}, {wide, 1}}, look);
 
-        int at = -seen.at.x;
+        int at = 0;
 
         for (std::size_t one = 0; one < kept.columns.size() && one < kept.spread.size(); ++one) {
             const int room = kept.spread[one];
 
             if (room > 0)
-                made.put({at, -seen.at.y}, ranged(kept.columns[one].title, room,
+                onto.put({at, 0}, ranged(kept.columns[one].title, room,
                                                      kept.columns[one].justify),
                             look);
 
@@ -558,23 +618,23 @@ View Table::paint(Size given, Area seen) {
 
     for (std::size_t row = 0; row < kept.shown.size(); ++row) {
         const std::size_t number = kept.top + row;
-        const int y = head + static_cast<int>(row) - seen.at.y;
+        const int y = head + static_cast<int>(row);
 
         const bool here = kept.which.has_value() && *kept.which == number;
         const bool taken = chosen().contains(number);
 
         const Style look = here && taken ? both : here ? focused : taken ? marked_look : plain;
 
-        made.fill({{-seen.at.x, y}, {wide, 1}}, look);
+        onto.fill({{0, y}, {wide, 1}}, look);
 
-        int at = -seen.at.x;
+        int at = 0;
 
         for (std::size_t one = 0; one < kept.spread.size(); ++one) {
             const TableCell& cell = one < kept.shown[row].size() ? kept.shown[row][one] : blank;
 
             // A spanning cell takes the rest of the row: from where its column starts to the edge
             // of the content, whatever room the columns after it were given, its own included.
-            const int room = cell.spans ? wide - seen.at.x - at : kept.spread[one];
+            const int room = cell.spans ? wide - at : kept.spread[one];
 
             if (room <= 0) {
                 if (cell.spans) break;
@@ -596,9 +656,9 @@ View Table::paint(Size given, Area seen) {
             // keeps its file name with `Elide::left`); otherwise it is cut at the right edge.
             const std::string shown = elided(cell.text, room, cell.elide, mark);
 
-            made.put({at, y}, ranged(shown, room, justify), look_one);
+            onto.put({at, y}, ranged(shown, room, justify), look_one);
 
-            if (!cell.marks.empty()) marked(made, cell, {at, y}, room, justify, look_one, how);
+            if (!cell.marks.empty()) marked(onto, cell, {at, y}, room, justify, look_one, how);
 
             if (cell.spans) break;
 
@@ -606,34 +666,20 @@ View Table::paint(Size given, Area seen) {
         }
     }
 
-    // The bar only when there are more rows than can be seen; its column stays reserved, so the
-    // table's columns do not jump when the list changes. It runs beside the rows only: the heading
-    // does not scroll, so the bar starts under it.
-    if (aside != 0 && given.high > head && kept.rows > static_cast<std::size_t>(std::max(given.high - head, 0))) {
-        const Spot top = Scrollbar::edge(given, seen, true);
+    if (!kept.bar.has_value()) return;
 
-        const Scrollbar bar{.at = {top.x, top.y + head},
-                            .much = given.high - head,
-                            .shift = kept.top,
-                            .whole = kept.rows,
-                            .window = static_cast<std::size_t>(std::max(given.high - head, 1)),
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = how,
-                            .role = kept.scrollbar_role};
+    const Track& track = *kept.bar;
 
-        bar.draw(made);
+    const Scrollbar bar{.at = track.at,
+                        .much = track.much,
+                        .shift = track.shift,
+                        .whole = track.whole,
+                        .window = track.window,
+                        .focused = Scrollbar::focused_in(*this),
+                        .skin = how,
+                        .role = kept.scrollbar_role};
 
-        Track mine = bar.track();
-
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
-        mine.at.y += head;
-
-        kept.grip.laid(mine);
-    } else {
-        kept.grip.laid(std::nullopt);
-    }
-
-    return made;
+    bar.draw(onto);
 }
 
 // Arrows, page keys, Home and End. Enter and letters go up the tree: "a row was chosen" is the

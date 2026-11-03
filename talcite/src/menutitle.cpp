@@ -36,8 +36,8 @@ Size MenuTitle::wants(Size room) const {
 bool MenuTitle::focusable() const { return true; }
 
 // Paints the title, highlighted when lit, with its hotkey letter marked.
-View MenuTitle::paint(Size given, Area seen) {
-    View made{seen.size};
+void MenuTitle::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -45,16 +45,14 @@ View MenuTitle::paint(Size given, Area seen) {
     // are one menu, and `talcite.menubar` is the title's role.
     const Style look = how.style(lit(*this) ? menu_.role() + ".focus" : menu_.role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
-    made.put({1 - seen.at.x, -seen.at.y}, menu_.title(), look);
+    onto.fill({{0, 0}, {given.wide, 1}}, look);
+    onto.put({1, 0}, menu_.title(), look);
 
     // The hotkey letter uses the same machinery as a menu item and a button. The title stands one
     // cell from the left edge of its strip, so the letter is shifted by that cell too.
-    talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, menu_.title(),
+    talcite::ui::marking(onto, {1, 0}, menu_.title(),
                          talcite::ui::shortcut_column(menu_.keys(), menu_.title()),
                          look, how.style(menu_.role() + ".key"));
-
-    return made;
 }
 
 // A folded title with the focus opens with the down arrow and Enter, as in Midnight Commander; the

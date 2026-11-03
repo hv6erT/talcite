@@ -4,10 +4,66 @@
 #include "talcite/modal.hpp"
 #include "talcite/modals.hpp"
 
+#include <algorithm>
+#include <atomic>
 #include <stdexcept>
+#include <string>
+#include <typeinfo>
 #include <utility>
+#include <vector>
+
+#include "talcite/canvas.hpp"
+#include "talcite/encoding.hpp"
 
 namespace talcite::ui {
+
+namespace {
+
+// Whether every frame is painted whole as well and compared with what painting only the changes
+// gave (`frames_checked`).
+std::atomic<bool> checking{false};
+
+// The most passes of the layout in one frame (`Root::steadied`): a change announced in a pass is
+// taken in by the next, and a chain of more than a few is a node that never settles.
+constexpr int settling_passes = 8;
+
+// The rows [from, upto) cut to [0, high), sorted, with overlapping and adjoining ones merged.
+std::vector<std::pair<int, int>> merged(std::vector<std::pair<int, int>> given, int high) {
+    for (auto& [from, upto] : given) {
+        from = std::clamp(from, 0, high);
+        upto = std::clamp(upto, 0, high);
+    }
+
+    std::erase_if(given, [](const std::pair<int, int>& one) { return one.second <= one.first; });
+    std::sort(given.begin(), given.end());
+
+    std::vector<std::pair<int, int>> made;
+
+    for (const auto& one : given) {
+        if (!made.empty() && one.first <= made.back().second) made.back().second = std::max(made.back().second, one.second);
+        else made.push_back(one);
+    }
+
+    return made;
+}
+
+// A cell as a trial reads it in a report: its letter and how it is shown.
+std::string told(const Cell& one) {
+    std::string made = "'" + (one.letter == 0 ? std::string{"(half)"} : spelled(one.letter)) + "'";
+
+    made += one.shown == Shown::none ? " not drawn" : one.shown == Shown::shade ? " shade" : one.shown == Shown::foreground ? " foreground" : "";
+
+    return made;
+}
+
+}
+
+// Turns the check of every frame on or off: each frame is painted whole as well, on a sheet of its
+// own, and a cell that differs from what painting only the changes left on the kept sheet throws
+// `std::logic_error`, the place and the node under it named. So a change nobody announced
+// (`Node::changed`) fails a trial instead of leaving a stale screen. The trials of talcite and twa
+// turn it on; a program does not, since it costs a second frame.
+void frames_checked(bool on) { checking = on; }
 
 // The root reads the time for its schedule (`schedule`) from `time`: the real clock in a program,
 // a manual one in a trial.
@@ -17,8 +73,8 @@ Root::~Root() = default;
 
 // Replaces the skin. Replacing the whole palette is the whole of changing the look on the fly. A
 // skin cannot be changed after it is built, so there is no state in which half the roles come from
-// the new one and half from the old; the next frame simply reads something else. There is no
-// notification and no walk over the tree. A skin comes with variants for all levels and at once
+// the new one and half from the old; the next frame paints the whole screen anew. There is no walk
+// over the tree. A skin comes with variants for all levels and at once
 // adopts the root's facts: the level the root already knows passes to the new skin, not the other
 // way around. Thanks to that, replacing the skin (also as a trial, in a settings window) does not
 // require repeating the facts about the terminal.
@@ -27,29 +83,182 @@ void Root::skin(Skin given) {
     given.unicode(skin_.unicode());
 
     skin_ = std::move(given);
+
+    repaint();
 }
 
 // Sets the terminal's color level. Colors and unicode are facts about the terminal, like `blocks`
 // and `cell` below, set by whoever drives the tree. The root does not keep them separately: they
 // live in the skin, because the skin uses them at every lookup, and a second place would sooner or
 // later drift apart.
-void Root::colors(Colors given) { skin_.colors(given); }
+void Root::colors(Colors given) {
+    skin_.colors(given);
+
+    repaint();
+}
 
 // Sets whether the terminal shows unicode; like the colors, the fact lives in the skin.
-void Root::unicode(bool given) { skin_.unicode(given); }
+void Root::unicode(bool given) {
+    skin_.unicode(given);
+
+    repaint();
+}
 
 // Sets which block characters the terminal can draw. The facts about the cell are set here by
 // whoever drives the tree, usually `Term`, in `show()` and at every `reconfigure`. The tree does
 // not know where they came from, so a test or a second rendering layer can set them just as well.
-// Again there is no notification: a widget reads them while painting, so the next frame simply
-// comes out different.
-void Root::blocks(Blocks given) { blocks_ = given; }
+// Every widget may read them while painting, so the next frame paints the whole screen.
+void Root::blocks(Blocks given) {
+    blocks_ = given;
+
+    repaint();
+}
 
 // Sets the size of one cell in pixels; zero means the terminal did not say.
-void Root::cell(Size given) { cell_ = given; }
+void Root::cell(Size given) {
+    cell_ = given;
+
+    repaint();
+}
 
 // Sets which graphics protocol the terminal supports.
-void Root::graphics(Graphics given) { graphics_ = given; }
+void Root::graphics(Graphics given) {
+    graphics_ = given;
+
+    repaint();
+}
+
+// The frame of the given size on the sheet the root keeps between frames. The whole tree is laid
+// out every time: there a node finds what changed in what it reads (another node, the program's
+// data, the pool's progress, the time) and says so, and a node that moved adds the places it left
+// and took. Then only the rows that changed are cleared and painted, the tree cut to them: a node
+// outside them paints nothing, and a frame in which nothing changed paints nothing at all. Rows
+// rather than rectangles, because a rectangle could cut a double-width character in half, and a
+// frame cut at the edges of the screen alone is the same as a whole one. A new size, or something
+// every node reads (`repaint`), paints everything.
+const View& Root::frame(Size size) {
+    if (sheet_.size() != size) {
+        sheet_ = View{size};
+        whole_ = true;
+    }
+
+    steadied(size);
+
+    if (whole_) damaged_.assign(1, {0, size.high});
+
+    whole_ = false;
+
+    if (!damaged_.empty()) {
+        Canvas whole{sheet_};
+
+        for (const auto& [from, upto] : merged(std::move(damaged_), size.high)) {
+            const Area rows{{0, from}, {size.wide, upto - from}};
+
+            sheet_.clear(rows);
+
+            Canvas cut = whole.clipped(rows);
+
+            paint(cut);
+        }
+
+        damaged_.clear();
+
+        sheet_.forget();
+    }
+
+    if (checking) checked(size);
+
+    return sheet_;
+}
+
+// The frame as a copy, for the trials, which compare frames as sheets: the root draws as `Term`
+// draws it, painting only the changes, so the check of every frame (`frames_checked`) covers them.
+View Root::render(const Area& where) { return frame(where.size); }
+
+// Everything changed: something every node reads (the skin, the terminal's colors, Unicode, blocks,
+// cell size or graphics), so the next frame paints the whole screen.
+void Root::repaint() { whole_ = true; }
+
+// Rows of the screen to paint at the next frame: those `screen` covers.
+void Root::damage(const Area& screen) {
+    if (screen.size.wide <= 0 || screen.size.high <= 0) return;
+
+    damaged_.emplace_back(screen.at.y, screen.at.y + screen.size.high);
+
+    if (damaged_.size() > 256) damaged_ = merged(std::move(damaged_), sheet_.size().high);
+}
+
+// A change a node announces (`Node::changed`). One announced in the middle of the layout may change
+// what another node has already laid out from it: a status line composed from the position of the
+// content laid out after it, a figure built from data that arrived meanwhile. So the layout goes on
+// (`steadied`).
+void Root::announced(const Node& who, const Area& screen) {
+    damage(screen);
+
+    if (arranging_) unsettled_ = &who;
+}
+
+// The tree laid out until a pass announces nothing (`announced`): every node then stands where
+// what the others hold puts it, and paints what it laid out. A node announces a change in its
+// layout only when something it shows is different from the last pass, so the second pass usually
+// is the last. A tree that never settles is a node announcing a change every time, which the check
+// of frames (`frames_checked`) reports; the program shows the last pass.
+void Root::steadied(Size size) {
+    for (int pass = 0;; ++pass) {
+        unsettled_ = nullptr;
+        arranging_ = true;
+
+        try {
+            arrange({{0, 0}, size});
+        } catch (...) {
+            arranging_ = false;
+
+            throw;
+        }
+
+        arranging_ = false;
+
+        if (unsettled_ == nullptr) return;
+
+        if (pass + 1 < settling_passes) continue;
+
+        if (checking) throw std::logic_error(std::string{"talcite::ui::Root: the layout does not settle, "} + typeid(*unsettled_).name() + " announces a change (Node::changed) in every pass");
+
+        return;
+    }
+}
+
+// The check of a frame (`frames_checked`): the tree as this frame laid it out, painted whole on a
+// fresh sheet, must give what the kept sheet holds, cell by cell. The check does not lay the tree
+// out again: what a layout reads may move meanwhile by itself (the pool's progress, the time), and
+// the frame's layout has taken in whatever changed there. What painting alone reads must have been
+// announced, and that is what the check finds.
+void Root::checked(Size size) {
+    View whole{size};
+
+    whole.clear({{0, 0}, size});
+
+    Canvas onto{whole};
+
+    paint(onto);
+
+    for (int y = 0; y < size.high; ++y)
+        for (int x = 0; x < size.wide; ++x) {
+            const Cell kept = sheet_.at({x, y});
+            const Cell fresh = whole.at({x, y});
+
+            if (kept == fresh) continue;
+
+            std::string under_it;
+
+            for (const Node* at = under({x, y}); at != nullptr && at != this; at = at->parent())
+                under_it += (under_it.empty() ? "" : " in ") + std::string{typeid(*at).name()};
+
+            throw std::logic_error("talcite::ui::Root: the cell (" + std::to_string(x) + ", " + std::to_string(y) +
+                                   ") is " + told(kept) + " but " + told(fresh) + " when painted whole, under " +
+                                   under_it + ": a change nobody announced (Node::changed)");
+        }
+}
 
 // Moves the focus to `one` (null clears it) and sends `UnfocusEvent` and `FocusEvent`; throws
 // `std::logic_error` for a node from another tree. The field is changed before both events are
@@ -79,6 +288,28 @@ void Root::move_focus(Node* one) {
     Node* was = focus_;
 
     focus_ = one;
+
+    // What shows the focus looks different now: the node that lost it and the one that got it, and
+    // every node between them and the closest ancestor both share, since a frame or a scroll bar
+    // shows whether the focus is anywhere inside it. Below the shared ancestor that is the topmost
+    // node of each side, whose place holds the rest; the shared ones above it saw the focus inside
+    // before and still do.
+    std::vector<Node*> before;
+    std::vector<Node*> after;
+
+    for (Node* at = was; at != nullptr; at = at->parent()) before.push_back(at);
+    for (Node* at = one; at != nullptr; at = at->parent()) after.push_back(at);
+
+    auto old_side = before.rbegin();
+    auto new_side = after.rbegin();
+
+    while (old_side != before.rend() && new_side != after.rend() && *old_side == *new_side) {
+        ++old_side;
+        ++new_side;
+    }
+
+    if (old_side != before.rend()) (*old_side)->changed();
+    if (new_side != after.rend()) (*new_side)->changed();
 
     if (was != nullptr) {
         UnfocusEvent what{one};

@@ -17,7 +17,7 @@ public:
     [[nodiscard]] bool focusable() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 

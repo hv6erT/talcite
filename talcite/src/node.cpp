@@ -22,7 +22,13 @@ Node::~Node() = default;
 // Containers carry an empty string and get nothing from it; the cost is 32 bytes per node. The
 // setter is virtual, because a node made of others, such as a message window, has to pass the
 // stem on to its parts.
-void Node::role(std::string given) { role_ = std::move(given); }
+void Node::role(std::string given) {
+    if (role_ == given) return;
+
+    role_ = std::move(given);
+
+    changed();
+}
 
 // Cuts the children's links to the dying parent. This belongs to the children, because they hold
 // the links. A `Node` dies together with this member, so it runs exactly once and exactly when it
@@ -101,6 +107,8 @@ void Children::add(std::shared_ptr<Node> given) {
     inside_.push_back(std::move(given));
 
     ++changes_;
+
+    whose_->changed();
 }
 
 // Attaches several children: all or none. On an error halfway, what has already gone in is
@@ -137,6 +145,8 @@ std::shared_ptr<Node> Children::remove(Node* one) {
 
     made->up_ = nullptr;
 
+    whose_->changed();
+
     // The root drops the focus and the hover, and then keeps the node alive until the end of the
     // delivery, because removal is sometimes called from inside an event passing through this
     // very node.
@@ -152,6 +162,8 @@ std::shared_ptr<Node> Children::remove(Node* one) {
 // gets the nodes in the reverse order of attaching, as when the tree is destroyed.
 void Children::clear() {
     Root* top = whose_->root();
+
+    if (!inside_.empty()) whose_->changed();
 
     while (!inside_.empty()) {
         std::shared_ptr<Node> made = std::move(inside_.back());
@@ -235,25 +247,104 @@ void Node::focus() {
     top->move_focus(this);
 }
 
-// Renders the node fully visible in the given rectangle. Non-virtual for the same reason trigger
-// is non-virtual: recording the assigned rectangle must always happen, because mouse hits depend
-// on it, and a widget does not show that its author forgot it. Widgets override paint.
-//
-// Visibility is given in the node's own coordinates, so "all visible" is {{0, 0}, where.size}, not
-// where, which is expressed in the parent's coordinates.
-View Node::render(const Area& where) { return render(where, {{0, 0}, where.size}); }
+// Lays the node out in the given rectangle (in the parent's coordinates), as much of it visible as
+// of the parent. The rectangle is recorded, because mouse hits depend on it, and so is the visible
+// part (`Root::under`: a row scrolled under a bar has a rectangle there but shows nothing); then
+// the node places its children (`layout`). Non-virtual for the same reason trigger is: recording
+// must always happen, and a widget does not show that its author forgot it. A node that cannot be
+// seen gets an empty rectangle, so its area() tells the truth about this frame instead of
+// remembering the previous one.
+void Node::arrange(const Area& where) {
+    recorded(where, up_ == nullptr ? Area{{0, 0}, where.size} : Area::crossed(up_->seen_, where) - where.at);
+}
 
-// Renders the visible part of the node in the given rectangle. A node of which nothing is visible
-// draws nothing, and that is all the saving in scrolling. The rectangle is recorded anyway,
-// because mouse hits depend on it, and a node invisible in this frame must not remember where it
-// stood in the previous one.
-View Node::render(const Area& where, const Area& seen) {
+// The same, with only `room` of the parent (in its coordinates) letting the node be seen: the
+// window of a scroller without its bars.
+void Node::arrange(const Area& where, const Area& room) {
+    const Area open = up_ == nullptr ? room : Area::crossed(up_->seen_, room);
+
+    recorded(where, Area::crossed(open, where) - where.at);
+}
+
+// Records the rectangle and its visible part (in the node's own coordinates), and where they stand
+// on the screen, and lays the children out. A visible part that stands elsewhere on the screen than
+// in the last layout, or is another size, is a change of both places, which the root repaints: so
+// a node that moved needs no `changed` of its own.
+void Node::recorded(const Area& where, const Area& seen) {
     area_ = where;
     seen_ = seen;
+    origin_ = (up_ == nullptr ? Spot{} : up_->origin_) + where.at;
 
-    if (seen.size.wide <= 0 || seen.size.high <= 0) return View{{0, 0}};
+    const Area now = seen.size.wide > 0 && seen.size.high > 0 ? seen + origin_ : Area{};
 
-    return paint(where.size, seen);
+    if (now != shown_) {
+        if (Root* top = root(); top != nullptr) {
+            top->damage(shown_);
+            top->damage(now);
+        }
+
+        shown_ = now;
+    }
+
+    layout(where.size);
+}
+
+// The node looks different now: the root repaints where it stood in the last layout, at the next
+// frame. Whoever changes what `paint` reads says so; a node that moves or changes size is found by
+// the layout itself (`recorded`). A node outside the tree has no screen to repaint; once attached,
+// the layout finds its new place anyway.
+void Node::changed() {
+    if (Root* top = root(); top != nullptr) top->announced(*this, shown_);
+}
+
+// Only `part` of the node (in its own coordinates) looks different: a table's two rows of the
+// cursor rather than the whole table.
+void Node::changed(const Area& part) {
+    if (Root* top = root(); top != nullptr) top->announced(*this, Area::crossed(part + origin_, shown_));
+}
+
+// Paints the node, laid out before (`arrange`), onto its parent's canvas: its own canvas is the
+// parent's narrowed to the node's rectangle, and a node of which nothing can be seen paints
+// nothing, which is all the saving in scrolling.
+void Node::render(Canvas& onto) const {
+    Canvas mine = onto.within(area_);
+
+    const Area seen = mine.seen();
+
+    if (seen.size.wide <= 0 || seen.size.high <= 0) return;
+
+    paint(mine);
+}
+
+// Lays out and paints the node, fully visible in the given rectangle, on a sheet of its own, in
+// which whatever the node does not paint stays undrawn. The frame of a terminal and the trials
+// start here.
+View Node::render(const Area& where) {
+    recorded(where, {{0, 0}, where.size});
+
+    View made{where.size};
+
+    made.clear({{0, 0}, where.size});
+
+    if (where.size.wide <= 0 || where.size.high <= 0) return made;
+
+    Canvas whole{made};
+
+    paint(whole);
+
+    return made;
+}
+
+// A plain node gives its only child its whole rectangle. Laying out several children is the
+// business of `Row`, `Column` and `Stack`.
+void Node::layout(Size given) {
+    if (!inside_.empty()) inside_.front()->arrange({{0, 0}, given});
+}
+
+// Paints the only child; the rest stays transparent. The rule for every node: paint what you are,
+// not the rectangle you were given, so that the parent's background shows wherever nothing is.
+void Node::paint(Canvas& onto) const {
+    if (!inside_.empty()) inside_.front()->render(onto);
 }
 
 // Where this node wants the cursor, in its own coordinates, or nothing. The cursor is not a
@@ -351,27 +442,6 @@ Spot Node::local(Spot where) const {
     for (const Node* at = this; at != nullptr; at = at->up_) where = where - at->area_.at;
 
     return where;
-}
-
-// Paints the only child over the whole rectangle; the rest stays transparent.
-View Node::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn. A fresh sheet consists of its own spaces, so a node
-    // that left it as is would paint over its whole assigned rectangle, including the gap beside
-    // a shorter text and the row under the last child, and the parent's background would vanish
-    // under the default style. The rule is: paint what you are, not the rectangle you were given.
-
-    made.clear({{0, 0}, seen.size});
-
-    if (inside_.empty()) return made;
-
-    const Area where{{0, 0}, given};
-    const Area part = Area::crossed(seen, where);
-
-    made.draw(inside_.front()->render(where, part - where.at), part.at - seen.at);
-
-    return made;
 }
 
 }

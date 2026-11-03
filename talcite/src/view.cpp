@@ -372,6 +372,25 @@ void View::draw(const View& one, ui::Spot at) {
         }
 }
 
+// Drops the pictures and the hyperlinks no cell carries any more. A sheet kept from frame to frame
+// (`Root::frame`) paints over what it holds, and the lists would otherwise keep every picture and
+// address ever shown.
+void View::forget() {
+    std::vector<std::uint32_t> pictured;
+    std::vector<std::uint32_t> linked;
+
+    for (const Cell& one : cells_) {
+        if (one.picture != 0) pictured.push_back(one.picture);
+        if (one.link != 0) linked.push_back(one.link);
+    }
+
+    std::sort(pictured.begin(), pictured.end());
+    std::sort(linked.begin(), linked.end());
+
+    std::erase_if(pictures_, [&pictured](const Picture& one) { return !std::binary_search(pictured.begin(), pictured.end(), one.mark); });
+    std::erase_if(links_, [&linked](const Hyperlink& one) { return !std::binary_search(linked.begin(), linked.end(), one.mark); });
+}
+
 // A pixel picture. The picture's cells carry its mark and stay what they were (characters of the
 // picture, drawn as before), while the list keeps the bytes. Composing carries the mark together
 // with the cell, so whatever covers the picture (a window, a menu, a shadow, a scroll edge) simply

@@ -445,8 +445,9 @@ struct DiffViewer::Kept {
 
     std::string scrollbar_role = "talcite.scroll";
 
-    // The bar from the last frame, for the mouse.
+    // The bar as the layout settled it, for the mouse and for painting.
     Grip grip;
+    std::optional<Track> bar;
 
     // The hunk with the given number, or nothing past the end or when the source says to wait.
     // Whoever keeps the pointer keeps the hunk, also when a new window replaces the old one.
@@ -611,6 +612,8 @@ void DiffViewer::source(DiffSource given, std::size_t hunks) {
 
     kept.shown.clear();
     kept.fresh = true;
+
+    Node::changed();
 }
 
 // Drops the cached hunks, so that the next paint asks the source again.
@@ -618,6 +621,8 @@ void DiffViewer::refresh() {
     kept_->cached.clear();
     kept_->shown.clear();
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // Sets the titles of the two sides, shown in the head row.
@@ -625,6 +630,8 @@ void DiffViewer::titles(std::string left, std::string right) {
     kept_->left_title = std::move(left);
     kept_->right_title = std::move(right);
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // The number of hunks given with the source.
@@ -649,6 +656,8 @@ void DiffViewer::which(std::size_t given, Moved how) {
 
     kept.reveal(want);
 
+    Node::changed();
+
     (void)trigger(ScrollEvent{how});
 }
 
@@ -667,6 +676,8 @@ void DiffViewer::opened(std::size_t hunk, bool given) {
 
     kept.settle();
     kept.fresh = true;
+
+    Node::changed();
 }
 
 // The forced layout: one column, two columns, or nothing when the width decides.
@@ -676,6 +687,8 @@ std::optional<bool> DiffViewer::unified() const { return kept_->unify; }
 void DiffViewer::unified(std::optional<bool> given) {
     kept_->unify = given;
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // Whether the shape asks for a scroll bar.
@@ -685,13 +698,19 @@ bool DiffViewer::scrollbar() const { return kept_->shape.scrollbar; }
 void DiffViewer::scrollbar(bool given) {
     kept_->shape.scrollbar = given;
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // The skin role of the scroll bar.
 const std::string& DiffViewer::scrollbar_role() const { return kept_->scrollbar_role; }
 
 // Sets the skin role of the scroll bar.
-void DiffViewer::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
+void DiffViewer::scrollbar_role(std::string given) {
+    kept_->scrollbar_role = std::move(given);
+
+    Node::changed();
+}
 
 // The viewer takes the focus.
 bool DiffViewer::focusable() const { return true; }
@@ -757,14 +776,11 @@ void DiffViewer::spread(Size given) {
     if (one < kept.hunks) kept.more = true;
 }
 
-// Draws the head row with the titles, the visible rows (checkboxes, line numbers, both sides or
-// one column with "-" and "+") and the scroll bar when there is something to scroll.
-View DiffViewer::paint(Size given, Area seen) {
+// Settles what the viewer shows: the selection within the hunks, the first steady hunk as the
+// current one, the visible rows (`spread`) and the scroll bar when there is something to scroll;
+// its column stays, so that the content does not jump.
+void DiffViewer::layout(Size given) {
     Kept& kept = *kept_;
-
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
 
     chosen_.keep(kept.hunks);
 
@@ -777,6 +793,34 @@ View DiffViewer::paint(Size given, Area seen) {
             }
 
     spread(given);
+
+    const int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
+
+    kept.bar.reset();
+
+    if (aside != 0 && given.high > 0 && kept.more) {
+        std::size_t shown = 0;
+        std::optional<std::size_t> last;
+
+        for (const Kept::Shown& one : kept.shown)
+            if (last != one.hunk) {
+                ++shown;
+                last = one.hunk;
+            }
+
+        kept.bar = Track{Scrollbar::edge(given, {{0, 0}, given}, true), true, given.high, kept.top, kept.hunks,
+                         std::max<std::size_t>(shown, 1)};
+    }
+
+    kept.grip.laid(kept.bar);
+}
+
+// Draws the head row with the titles, the visible rows (checkboxes, line numbers, both sides or
+// one column with "-" and "+") and the scroll bar when there is something to scroll.
+void DiffViewer::paint(Canvas& onto) const {
+    const Kept& kept = *kept_;
+
+    const Size given = onto.size();
 
     const Skin& how = skin();
     const std::string base = role();
@@ -805,41 +849,41 @@ View DiffViewer::paint(Size given, Area seen) {
     const int side = unify ? wide - ticks - 2 * gutter - 2 : (wide - ticks - parting) / 2 - gutter;
     const int right_at = unify ? 0 : ticks + gutter + side + parting;
 
-    const auto written = [&made](int x, int y, const std::vector<Glyph>& glyphs, const Style& look,
+    const auto written = [&onto](int x, int y, const std::vector<Glyph>& glyphs, const Style& look,
                                  const Style& marked) {
         for (const Glyph& one : glyphs) {
-            made.put({x, y}, one.text, one.marked ? marked : look);
+            onto.put({x, y}, one.text, one.marked ? marked : look);
 
             x += one.wide;
         }
     };
 
-    const auto numbered = [&made, number](int x, int y, const std::optional<DiffSide>& one, const Style& look) {
+    const auto numbered = [&onto, number](int x, int y, const std::optional<DiffSide>& one, const Style& look) {
         if (number == 0 || !one.has_value() || !one->number.has_value()) return;
 
         std::string said = std::to_string(*one->number);
 
         said.insert(0, static_cast<std::size_t>(number) - said.size(), ' ');
 
-        made.put({x, y}, said, look);
+        onto.put({x, y}, said, look);
     };
 
-    int y = -seen.at.y;
+    int y = 0;
 
     if (!kept.left_title.empty() || !kept.right_title.empty()) {
         const Style look = how.style(base + ".head");
 
-        made.fill({{-seen.at.x, y}, {wide, 1}}, look);
+        onto.fill({{0, y}, {wide, 1}}, look);
 
         if (unify) {
             const std::string both = kept.left_title + " → " + kept.right_title;
 
-            made.put({-seen.at.x + ticks, y}, elided(both, wide - ticks, Elide::right, how.glyph("talcite.elide")),
+            onto.put({ticks, y}, elided(both, wide - ticks, Elide::right, how.glyph("talcite.elide")),
                      look);
         } else {
-            made.put({-seen.at.x + ticks + gutter, y},
+            onto.put({ticks + gutter, y},
                      elided(kept.left_title, side, Elide::right, how.glyph("talcite.elide")), look);
-            made.put({-seen.at.x + right_at, y},
+            onto.put({right_at, y},
                      elided(kept.right_title, side, Elide::right, how.glyph("talcite.elide")), look);
         }
 
@@ -855,17 +899,17 @@ View DiffViewer::paint(Size given, Area seen) {
 
         if (!one.data->role.empty()) look = Style::merge(look, how.style(one.data->role));
 
-        const int x = -seen.at.x;
+        const int x = 0;
 
-        made.fill({{x, y}, {wide, 1}}, look);
+        onto.fill({{x, y}, {wide, 1}}, look);
 
         if (one.first && one.data->tickable)
-            made.put({x, y}, chosen_.contains(one.hunk) ? "[x] " : "[ ] ", look);
+            onto.put({x, y}, chosen_.contains(one.hunk) ? "[x] " : "[ ] ", look);
 
         if (one.line.face == Face::title) {
             const Style title = Style::merge(look, how.style(base + ".title"));
 
-            made.put({x + ticks, y}, elided(one.data->title, wide - ticks, Elide::right, how.glyph("talcite.elide")),
+            onto.put({x + ticks, y}, elided(one.data->title, wide - ticks, Elide::right, how.glyph("talcite.elide")),
                      title);
 
             ++y;
@@ -905,12 +949,12 @@ View DiffViewer::paint(Size given, Area seen) {
 
             const char* sign = even ? "  " : left ? "- " : "+ ";
 
-            made.put({text_at, y}, sign, even ? look : left ? gone : came);
+            onto.put({text_at, y}, sign, even ? look : left ? gone : came);
 
             written(text_at + 2, y, fitted(glyphed(shown_side), side - tag, kept.shape.elide, dots),
                     even ? look : left ? gone : came, left ? gone_mark : came_mark);
 
-            if (tag > 0 && one.line.face != Face::right) made.put({text_at + 2 + side - tag, y}, folded, faint);
+            if (tag > 0 && one.line.face != Face::right) onto.put({text_at + 2 + side - tag, y}, folded, faint);
         } else {
             numbered(x + ticks, y, row.left, faint);
 
@@ -918,9 +962,9 @@ View DiffViewer::paint(Size given, Area seen) {
                 written(x + ticks + gutter, y, fitted(glyphed(*row.left), side - tag, kept.shape.elide, dots), gone,
                         gone_mark);
 
-            if (tag > 0) made.put({x + ticks + gutter + side - tag, y}, folded, faint);
+            if (tag > 0) onto.put({x + ticks + gutter + side - tag, y}, folded, faint);
 
-            made.put({x + ticks + gutter + side + 1, y}, upright, look);
+            onto.put({x + ticks + gutter + side + 1, y}, upright, look);
 
             numbered(x + right_at, y, row.right, faint);
 
@@ -932,39 +976,20 @@ View DiffViewer::paint(Size given, Area seen) {
         ++y;
     }
 
-    // The bar only when there is something to scroll; its column stays, so that the content does
-    // not jump.
-    if (aside != 0 && given.high > 0 && kept.more) {
-        std::size_t shown = 0;
-        std::optional<std::size_t> last;
+    if (!kept.bar.has_value()) return;
 
-        for (const Kept::Shown& one : kept.shown)
-            if (last != one.hunk) {
-                ++shown;
-                last = one.hunk;
-            }
+    const Track& track = *kept.bar;
 
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
-                            .much = given.high,
-                            .shift = kept.top,
-                            .whole = kept.hunks,
-                            .window = std::max<std::size_t>(shown, 1),
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = how,
-                            .role = kept.scrollbar_role};
+    const Scrollbar bar{.at = track.at,
+                        .much = track.much,
+                        .shift = track.shift,
+                        .whole = track.whole,
+                        .window = track.window,
+                        .focused = Scrollbar::focused_in(*this),
+                        .skin = how,
+                        .role = kept.scrollbar_role};
 
-        bar.draw(made);
-
-        Track mine = bar.track();
-
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
-
-        kept.grip.laid(mine);
-    } else {
-        kept.grip.laid(std::nullopt);
-    }
-
-    return made;
+    bar.draw(onto);
 }
 
 // Keys move the cursor over hunks, and Space, `+` and `-` change the checkboxes. Tab, Enter and
@@ -1094,6 +1119,8 @@ bool DiffViewer::handle(KeyEvent& what) {
 
         kept.fresh = true;
 
+        Node::changed();
+
         (void)trigger(PickEvent{});
 
         return true;
@@ -1122,6 +1149,8 @@ bool DiffViewer::handle(KeyEvent& what) {
 
         if (changed) {
             kept.fresh = true;
+
+            Node::changed();
 
             (void)trigger(PickEvent{});
         }
@@ -1165,6 +1194,8 @@ bool DiffViewer::handle(MouseEvent& what) {
                     kept.settle();
 
                     kept.fresh = true;
+
+                    Node::changed();
 
                     (void)trigger(ScrollEvent{Moved::by_hand});
                 }
@@ -1220,6 +1251,8 @@ bool DiffViewer::slid(int lines, Moved how) {
 
     kept.fresh = true;
 
+    Node::changed();
+
     (void)trigger(ScrollEvent{how});
 
     return true;
@@ -1255,6 +1288,8 @@ bool DiffViewer::handle(ClickEvent& what) {
             chosen_.add(hunk);
 
         kept.fresh = true;
+
+        Node::changed();
 
         (void)trigger(PickEvent{});
     }

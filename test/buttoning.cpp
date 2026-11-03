@@ -31,14 +31,14 @@ public:
 
 protected:
     // Fills the given size with x.
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
+
+        onto.fill({{0, 0}, given}, Style{});
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.put({x - seen.at.x, y - seen.at.y}, U'x', Style{});
-
-        return made;
+                onto.put({x, y}, U'x', Style{});
     }
 
 private:

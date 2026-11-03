@@ -61,12 +61,24 @@ Size Frame::wants(Size room) const {
     return {std::min(wants.wide + aside, room.wide), std::min(wants.high + apart, room.high)};
 }
 
+// Lays the child out inside the edges. A content that lies over the right side (`covered`) is
+// that much wider.
+void Frame::layout(Size given) {
+    if (children().empty()) return;
+
+    const Edges edge = edges();
+
+    children().front()->arrange({{edge.left, edge.top},
+                                 {std::max(given.wide - edge.left - edge.right + covered(edge), 0),
+                                  std::max(given.high - edge.top - edge.bottom, 0)}});
+}
+
 // Paints the background, the edges with the title and the footer, the child inside, and the joints
 // where a divider in the content reaches the sides. A content that lies over the right side
 // (`covered`) is drawn after the side, so the side shows where the content leaves its cells clear;
 // the corners and the joints are the frame's still.
-View Frame::paint(Size given, Area seen) {
-    View made{seen.size};
+void Frame::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -90,10 +102,9 @@ View Frame::paint(Size given, Area seen) {
     // to a shorter text and the row under the last child must be in the window's color, not in the
     // color of whatever lay underneath; no window in Midnight Commander is transparent there.
     //
-    // Under the built-in skin `talcite.frame` is an empty style, and a fresh sheet is spaces in the
-    // empty style anyway, so the fill writes exactly what was already there and the frame does not
-    // change by a single cell.
-    made.fill({{-seen.at.x, -seen.at.y}, given}, look);
+    // The fill covers the whole rectangle, also under the built-in skin, where `talcite.frame` is
+    // an empty style: the frame is not transparent anywhere.
+    onto.fill({{0, 0}, given}, look);
 
     const Edges edge = edges();
 
@@ -111,49 +122,43 @@ View Frame::paint(Size given, Area seen) {
         // The line runs across the whole width when there is no side; a corner exists only where
         // two drawn edges meet.
         if (edge.top != 0)
-            across(made, {edge.left - seen.at.x, -seen.at.y}, room, lines.across, look);
+            across(onto, {edge.left, 0}, room, lines.across, look);
 
         if (edge.bottom != 0)
-            across(made, {edge.left - seen.at.x, last_y - seen.at.y}, room, lines.across, look);
+            across(onto, {edge.left, last_y}, room, lines.across, look);
 
         if (edge.left != 0)
             for (int y = edge.top; y <= last_y - edge.bottom; ++y)
-                made.put({-seen.at.x, y - seen.at.y}, lines.upright, look);
+                onto.put({0, y}, lines.upright, look);
 
         if (edge.right != 0)
             for (int y = edge.top; y <= last_y - edge.bottom; ++y)
-                made.put({right_x - seen.at.x, y - seen.at.y}, lines.upright, look);
+                onto.put({right_x, y}, lines.upright, look);
 
         if (edge.top != 0 && edge.left != 0)
-            made.put({-seen.at.x, -seen.at.y}, lines.upper_left, look);
+            onto.put({0, 0}, lines.upper_left, look);
 
         if (edge.top != 0 && edge.right != 0)
-            made.put({right_x - seen.at.x, -seen.at.y}, lines.upper_right, look);
+            onto.put({right_x, 0}, lines.upper_right, look);
 
         if (edge.bottom != 0 && edge.left != 0)
-            made.put({-seen.at.x, last_y - seen.at.y}, lines.lower_left, look);
+            onto.put({0, last_y}, lines.lower_left, look);
 
         if (edge.bottom != 0 && edge.right != 0)
-            made.put({right_x - seen.at.x, last_y - seen.at.y}, lines.lower_right, look);
+            onto.put({right_x, last_y}, lines.lower_right, look);
 
         if (edge.top != 0)
-            along(made, {edge.left - seen.at.x, -seen.at.y}, room, title_, shape_.justify, told,
+            along(onto, {edge.left, 0}, room, title_, shape_.justify, told,
                   mark);
 
         if (edge.bottom != 0 && last_y > 0)
-            along(made, {edge.left - seen.at.x, last_y - seen.at.y}, room, footer_,
+            along(onto, {edge.left, last_y}, room, footer_,
                   shape_.footing, look, mark);
     }
 
-    if (children().empty()) return made;
+    if (children().empty()) return;
 
-    const Area where{{edge.left, edge.top},
-                     {std::max(given.wide - edge.left - edge.right + covered(edge), 0),
-                      std::max(given.high - edge.top - edge.bottom, 0)}};
-
-    const Area part = Area::crossed(seen, where);
-
-    made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
+    children().front()->render(onto);
 
     // A divider reaches the frame. A child never paints outside its rectangle, so the joint is
     // placed by the frame, which recognizes it from the composed image, not from the kind of node
@@ -171,18 +176,17 @@ View Frame::paint(Size given, Area seen) {
         const int last = right_x - 1;
 
         for (int y = edge.top; y <= given.high - 1 - edge.bottom && first <= last; ++y) {
-            if (made.at({first - seen.at.x, y - seen.at.y}).letter != lines.across) continue;
+            if (onto.at({first, y}).letter != lines.across) continue;
 
-            if (!reaching(made, {last - seen.at.x, y - seen.at.y}, lines.across)) continue;
+            if (!reaching(onto, {last, y}, lines.across)) continue;
 
-            if (edge.left != 0) made.put({-seen.at.x, y - seen.at.y}, lines.left_joint, look);
+            if (edge.left != 0) onto.put({0, y}, lines.left_joint, look);
 
             if (edge.right != 0)
-                made.put({right_x - seen.at.x, y - seen.at.y}, lines.right_joint, look);
+                onto.put({right_x, y}, lines.right_joint, look);
         }
     }
 
-    return made;
 }
 
 }

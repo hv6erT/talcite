@@ -73,8 +73,8 @@ Size Submenu::wants(Size room) const {
 // (`talcite.menu.more`) and the hint before it. While the list is open, the item stays highlighted,
 // though the focus has gone down into the list: the person should see which item the list comes
 // from.
-View Submenu::paint(Size given, Area seen) {
-    View made{seen.size};
+void Submenu::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -82,18 +82,16 @@ View Submenu::paint(Size given, Area seen) {
 
     const Style look = how.style(!enabled() ? role() + ".disabled" : lit ? role() + ".focus" : role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, given}, look);
-    made.put({1 - seen.at.x, -seen.at.y}, text(), look);
-    made.put({given.wide - 2 - seen.at.x, -seen.at.y}, how.glyph("talcite.menu.more"), look);
+    onto.fill({{0, 0}, given}, look);
+    onto.put({1, 0}, text(), look);
+    onto.put({given.wide - 2, 0}, how.glyph("talcite.menu.more"), look);
 
     if (!hint().empty())
-        made.put({given.wide - 3 - measured(hint()).wide - seen.at.x, -seen.at.y}, hint(), look);
+        onto.put({given.wide - 3 - measured(hint()).wide, 0}, hint(), look);
 
     if (enabled())
-        talcite::ui::marking(made, {1 - seen.at.x, -seen.at.y}, text(), shortcut_column(text()), look,
+        talcite::ui::marking(onto, {1, 0}, text(), shortcut_column(text()), look,
                              how.style(role() + ".key"));
-
-    return made;
 }
 
 // The right arrow opens the list, as the cascading menus of Turbo Vision and of desktops do. On an

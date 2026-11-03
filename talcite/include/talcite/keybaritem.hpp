@@ -17,7 +17,13 @@ public:
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
-    void text(std::string given) { text_ = std::move(given); }
+    void text(std::string given) {
+        if (text_ == given) return;
+
+        text_ = std::move(given);
+
+        changed();
+    }
 
     [[nodiscard]] std::string tag() const;
 
@@ -30,7 +36,7 @@ public:
 protected:
     [[nodiscard]] bool takes_focus() const override;
 
-    View paint(Size given, Area seen) override;
+    void paint(Canvas& onto) const override;
 
     void activate() override;
 

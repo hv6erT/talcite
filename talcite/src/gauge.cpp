@@ -42,11 +42,21 @@ Size Gauge::wants(Size room) const {
 void Gauge::part(double given) {
     if (!(given >= 0.0)) given = 0.0;
 
-    part_ = std::min(given, 1.0);
+    given = std::min(given, 1.0);
+
+    if (part_ == given) return;
+
+    part_ = given;
+
+    changed();
 }
 
 // Moves the indeterminate block one position on.
-void Gauge::step() { ++at_; }
+void Gauge::step() {
+    ++at_;
+
+    changed();
+}
 
 // Switches to indeterminate mode and back. The turn number grows with every change, so a tick sent
 // before it does not revive a bar that has already stopped, and two switches on in a row do not
@@ -61,6 +71,8 @@ void Gauge::busy(bool given) {
 
     if (busy_) beating();
     else beat_.reset();
+
+    changed();
 }
 
 // The bar spins by itself, on the library's clock. `later` measures the interval, `here()`
@@ -104,14 +116,10 @@ void Gauge::beating() {
 
 // Draws the brackets, the bar (filled part or the bouncing block) and, when there is room, the
 // percentage.
-View Gauge::paint(Size given, Area seen) {
-    View made{seen.size};
+void Gauge::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
-    // Transparent where nothing is drawn; the rule is described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
-    if (given.wide <= 0 || given.high <= 0) return made;
+    if (given.wide <= 0 || given.high <= 0) return;
 
     const Skin& how = skin();
 
@@ -131,12 +139,12 @@ View Gauge::paint(Size given, Area seen) {
     const int from = boxed ? 1 : 0;
 
     if (boxed) {
-        made.put({-seen.at.x, -seen.at.y}, how.glyph(role() + ".left"), look);
-        made.put({room - 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".right"),
+        onto.put({0, 0}, how.glyph(role() + ".left"), look);
+        onto.put({room - 1, 0}, how.glyph(role() + ".right"),
                     look);
     }
 
-    if (bar <= 0) return made;
+    if (bar <= 0) return;
 
     // Indeterminate: a block travels back and forth. Bouncing instead of wrapping, because a jump
     // from the right edge to the left reads as a blink, not as motion.
@@ -148,11 +156,11 @@ View Gauge::paint(Size given, Area seen) {
         const int at = which <= travel ? which : span - which;
 
         for (int x = 0; x < bar; ++x)
-            made.put({from + x - seen.at.x, -seen.at.y},
+            onto.put({from + x, 0},
                         x >= at && x < at + much ? block : empty,
                         x >= at && x < at + much ? full : look);
 
-        return made;
+        return;
     }
 
     // Full only when finished. We round, but neither 100 nor a full bar is shown until the fraction
@@ -163,10 +171,10 @@ View Gauge::paint(Size given, Area seen) {
     if (done >= bar && part_ < 1.0) done = bar - 1;
 
     for (int x = 0; x < bar; ++x)
-        made.put({from + x - seen.at.x, -seen.at.y}, x < done ? block : empty,
+        onto.put({from + x, 0}, x < done ? block : empty,
                     x < done ? full : look);
 
-    if (!told) return made;
+    if (!told) return;
 
     int shown = static_cast<int>(std::lround(part_ * 100.0));
 
@@ -182,9 +190,7 @@ View Gauge::paint(Size given, Area seen) {
     const int start = given.wide - static_cast<int>(said.size());
 
     for (std::size_t at = 0; at < said.size(); ++at)
-        made.foreground({start + static_cast<int>(at) - seen.at.x, -seen.at.y}, static_cast<char32_t>(said[at]), text);
-
-    return made;
+        onto.foreground({start + static_cast<int>(at), 0}, static_cast<char32_t>(said[at]), text);
 }
 
 }

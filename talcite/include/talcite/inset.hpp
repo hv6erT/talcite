@@ -13,7 +13,9 @@ public:
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
 private:
     int sides_ = 0;

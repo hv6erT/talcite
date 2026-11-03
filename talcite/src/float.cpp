@@ -16,7 +16,7 @@ namespace talcite::ui {
 // content, icons in the top right corner of a window (`Top{Right{icons}}` in a stack). A container
 // that lays its children out along that axis gives each only what it wants, so there a float would
 // have nothing to place in; that is why `Row` widens a horizontal float and `Column` lengthens a
-// vertical one by its share of the room they do not need (the rule is described at `Row::paint`).
+// vertical one by its share of the room they do not need (the rule is described at `Row::layout`).
 // The float itself knows nothing of rows and columns: it places its child in whatever rectangle it
 // gets.
 //
@@ -24,15 +24,10 @@ namespace talcite::ui {
 // shows (`<Right>` in `docs/ui`), and what the reader of a tree should see is the side.
 Float::Float(Axis axis, Align align) : axis_(axis), align_(align) {}
 
-// Draws the child at its wanted extent along the float's axis (at most the given one), at the
-// float's side, over the full extent across it; transparent around it, the rule described at
-// `Node::paint`.
-View Float::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
+// Lays the child out at its wanted extent along the float's axis (at most the given one), at the
+// float's side, over the full extent across it.
+void Float::layout(Size given) {
+    if (children().empty()) return;
 
     const bool across = axis_ == Axis::horizontal;
     const Size wants = children().front()->wants(given);
@@ -42,11 +37,12 @@ View Float::paint(Size given, Area seen) {
     const int from = align_ == Align::start ? 0 : align_ == Align::end ? spare : spare / 2;
 
     const Area where = across ? Area{{from, 0}, {length, given.high}} : Area{{0, from}, {given.wide, length}};
-    const Area part = Area::crossed(seen, where);
+    children().front()->arrange(where);
+}
 
-    made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
-
-    return made;
+// Paints the child; around it the float stays transparent.
+void Float::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 // A float that stands its child at the left edge, with the room it is given to its right.

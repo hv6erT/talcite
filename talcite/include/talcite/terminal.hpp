@@ -91,7 +91,13 @@ public:
 
     [[nodiscard]] bool prompt_shown() const { return prompt_shown_; }
 
-    void prompt_shown(bool given) { prompt_shown_ = given; }
+    void prompt_shown(bool given) {
+        if (prompt_shown_ == given) return;
+
+        prompt_shown_ = given;
+
+        changed();
+    }
 
     [[nodiscard]] int scrolled() const { return scrolled_; }
 
@@ -108,7 +114,9 @@ public:
     [[nodiscard]] static Bytes keyed(Key key, const Modes& modes);
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     using Node::handle;
 

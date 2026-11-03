@@ -34,7 +34,11 @@ Link::Link(std::string text, std::string address, Seam<Launcher> with)
 
 // A new address takes its own hyperlink: under the old mark the cells would not change, and the
 // terminal would keep the old address (`hyperlink`).
-void Link::address(std::string given) { target_ = hyperlink(std::move(given)); }
+void Link::address(std::string given) {
+    target_ = hyperlink(std::move(given));
+
+    changed();
+}
 
 // A link has no children.
 int Link::capacity() const { return 0; }
@@ -51,10 +55,8 @@ Size Link::wants(Size room) const {
 // exactly the cells of the text the hyperlink. The rest of the rectangle stays transparent, so that
 // a link in a row of text does not paint the row. A disabled link carries no hyperlink, otherwise
 // the terminal would open what the program says cannot be used.
-View Link::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
+void Link::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -62,13 +64,11 @@ View Link::paint(Size given, Area seen) {
 
     const std::string text = elided(shown(), given.wide, Elide::right, how.glyph("talcite.elide"));
 
-    const Spot at{-seen.at.x, -seen.at.y};
+    const Spot at{0, 0};
 
-    made.put(at, text, look);
+    onto.put(at, text, look);
 
-    if (enabled()) made.link({at, {measured(text).wide, 1}}, target_);
-
-    return made;
+    if (enabled()) onto.link({at, {measured(text).wide, 1}}, target_);
 }
 
 // Follows the link, unless it is disabled (`FollowingMixin::followed`; a link without an address

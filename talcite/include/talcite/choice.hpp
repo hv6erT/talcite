@@ -21,7 +21,9 @@ public:
 protected:
     [[nodiscard]] bool takes_focus() const override;
 
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 

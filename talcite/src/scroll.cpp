@@ -1,6 +1,8 @@
 #include "talcite/scroll.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <string>
 #include <utility>
 
 #include "talcite/skin.hpp"
@@ -46,6 +48,21 @@ std::pair<int, int> bars(const ScrollShape& shape, bool across, bool down, const
     return {aside, below};
 }
 
+
+// The bar along the right edge (`upright`) or the bottom one of a scroller of size `given`, in its
+// coordinates: the window without bars, the whole content and the offset say where the thumb is.
+Scrollbar barred(Size given, bool upright, Size window, Size whole, Spot shift, bool focused, const Skin& skin,
+                 const std::string& role) {
+    return Scrollbar{.at = Scrollbar::edge(given, {{0, 0}, given}, upright),
+                     .upright = upright,
+                     .much = upright ? window.high : window.wide,
+                     .shift = static_cast<std::size_t>(upright ? shift.y : shift.x),
+                     .whole = static_cast<std::size_t>(upright ? whole.high : whole.wide),
+                     .window = static_cast<std::size_t>(upright ? window.high : window.wide),
+                     .focused = focused,
+                     .skin = skin,
+                     .role = role};
+}
 }
 
 // One scroller for three axis choices. The axes differ only in which dimension the child gets
@@ -69,6 +86,8 @@ void Scroll::shift(Spot given, Moved how) {
 
     shift_ = want;
 
+    changed();
+
     (void)trigger(ScrollEvent{how});
 }
 
@@ -91,24 +110,24 @@ Size Scroll::wants(Size room) const {
 
 
 
-// Draws the visible part of the child and the bars. The child sits in a rectangle shifted by the
-// scroll offset and as large as it wanted on the open axes. Only its intersection with the window
-// without bars is visible, and the child draws only that part, because it receives it as its
-// visible area.
-View Scroll::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
-    if (children().empty()) return made;
+// Lays the child out in a rectangle shifted by the scroll offset and as large as it wanted on the
+// open axes. Only its intersection with the window without bars can be seen, which is what it is
+// told, so that it lays out and paints only that part.
+//
+// Following the focus happens here, after the child is laid out, because only then is the
+// rectangle of the node that took the focus known. When it lies outside the window, we move the
+// offset and lay the content out again: once per focus change, not per frame, and with nothing
+// painted yet. The wheel moves the view and leaves the focus alone, so the two do not fight over
+// `shift_`. No notification, as with clamping: a frame in progress is no time to replace the tree.
+// On a closed axis `followed` clamps to zero.
+void Scroll::layout(Size given) {
+    if (children().empty()) return;
 
     Node& one = *children().front();
 
     // The vertical bar takes the rightmost column, the horizontal one the bottom row. The corner
     // between them stays empty, because it belongs to neither.
-    const auto [aside, below] = bars(shape_, across(), down(), *children().front(), given);
+    const auto [aside, below] = bars(shape_, across(), down(), one, given);
 
     window_ = {given.wide - aside, given.high - below};
 
@@ -121,19 +140,10 @@ View Scroll::paint(Size given, Area seen) {
     shift_ = {std::clamp(shift_.x, 0, std::max(whole_.wide - window_.wide, 0)),
               std::clamp(shift_.y, 0, std::max(whole_.high - window_.high, 0))};
 
-    // The content is larger than the window, and the window is smaller by the bars, so we
-    // intersect twice: first with the visible area, then with the window without bars.
-    const Area where{{-shift_.x, -shift_.y}, whole_};
-    const Area part = Area::crossed(Area::crossed(seen, {{0, 0}, window_}), where);
+    const Area room{{0, 0}, window_};
 
-    made.draw(one.render(where, part - where.at), part.at - seen.at);
+    one.arrange({{-shift_.x, -shift_.y}, whole_}, room);
 
-    // Following the focus happens in `paint`, as in a list, because only after the children are
-    // laid out is the rectangle of the node that took the focus known. When it lies outside the
-    // window, we move the offset and draw the content a second time: once per focus change, not
-    // per frame. The wheel moves the view and leaves the focus alone, so the two do not fight over
-    // `shift_`. No notification, as with clamping: a frame in progress is no time to replace the
-    // tree. On a closed axis `followed` clamps to zero.
     if (follow_) {
         follow_ = false;
 
@@ -150,57 +160,39 @@ View Scroll::paint(Size given, Area seen) {
 
                 shift_ = want;
 
-                const Area again{{-shift_.x, -shift_.y}, whole_};
-                const Area piece = Area::crossed(Area::crossed(seen, {{0, 0}, window_}), again);
-
-                made.clear({{0, 0}, seen.size});
-                made.draw(one.render(again, piece - again.at), piece.at - seen.at);
+                one.arrange({{-shift_.x, -shift_.y}, whole_}, room);
             }
     }
 
     upright_->laid(std::nullopt);
     sideways_->laid(std::nullopt);
 
-    if (aside != 0) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
-                            .much = window_.high,
-                            .shift = static_cast<std::size_t>(shift_.y),
-                            .whole = static_cast<std::size_t>(whole_.high),
-                            .window = static_cast<std::size_t>(window_.high),
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = skin(),
-                            .role = scrollbar_role_};
+    const bool focused = Scrollbar::focused_in(*this);
 
-        bar.draw(made);
+    if (aside != 0)
+        upright_->laid(barred(given, true, window_, whole_, shift_, focused, skin(), scrollbar_role_).track());
 
-        Track mine = bar.track();
+    if (below != 0)
+        sideways_->laid(barred(given, false, window_, whole_, shift_, focused, skin(), scrollbar_role_).track());
+}
 
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
+// Paints the visible part of the child in the window without bars, and the bars.
+void Scroll::paint(Canvas& onto) const {
+    if (children().empty()) return;
 
-        upright_->laid(mine);
-    }
+    Canvas window = onto.clipped({{0, 0}, window_});
 
-    if (below != 0) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, false),
-                            .upright = false,
-                            .much = window_.wide,
-                            .shift = static_cast<std::size_t>(shift_.x),
-                            .whole = static_cast<std::size_t>(whole_.wide),
-                            .window = static_cast<std::size_t>(window_.wide),
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = skin(),
-                            .role = scrollbar_role_};
+    children().front()->render(window);
 
-        bar.draw(made);
+    const Size given = onto.size();
 
-        Track mine = bar.track();
+    const bool focused = Scrollbar::focused_in(*this);
 
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, false);
+    if (given.wide > window_.wide)
+        barred(given, true, window_, whole_, shift_, focused, skin(), scrollbar_role_).draw(onto);
 
-        sideways_->laid(mine);
-    }
-
-    return made;
+    if (given.high > window_.high)
+        barred(given, false, window_, whole_, shift_, focused, skin(), scrollbar_role_).draw(onto);
 }
 
 // One of the descendants took the focus (the event bubbles up), so the next frame has to follow it.
@@ -235,6 +227,8 @@ bool Scroll::handle(WheelEvent& what) {
                               std::max(whole_.high - window_.high, 0));
 
     if (shift_ == was) return false;
+
+    changed();
 
     (void)trigger(ScrollEvent{Moved::by_hand});
 

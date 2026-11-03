@@ -111,6 +111,8 @@ void Menu::close() {
 
     which_ = -1;
 
+    changed();
+
     if (Root* top = root(); top != nullptr && head_ != nullptr)
         for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
             if (at == this) {
@@ -188,6 +190,8 @@ MenuItem* Menu::current() const { return item(which_); }
 void Menu::aim(int given) {
     which_ = given;
 
+    changed();
+
     if (!opened()) return;
 
     if (MenuItem* one = item(which_); one != nullptr && one->enabled()) one->focus();
@@ -255,13 +259,20 @@ void Menu::pick() {
 // title.
 void Menu::activate() { open(); }
 
+// Lays the items out one under another inside the border. The rectangle starts with the border, so
+// the items start at row one.
+void Menu::layout(Size) {
+    const Size inner = fold();
+    const Sides side = boxed(skin(), shape_.border);
+
+    int y = 1;
+
+    for (const std::shared_ptr<Node>& one : children()) one->arrange({{side.left, y++}, {inner.wide, 1}});
+}
+
 // Paints the box alone: the border, the items, the shadow. The title is not here; `MenuTitle`
-// paints it in its own row. The rectangle starts with the border, so the items start at row one.
-View Menu::paint(Size, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
+// paints it in its own row.
+void Menu::paint(Canvas& onto) const {
     const Skin& how = skin();
 
     const Style edge = how.style("talcite.menu.frame");
@@ -276,27 +287,24 @@ View Menu::paint(Size, Area seen) {
     if (shape_.border != Border::none) {
         const Lines lines = how.lines(shape_.border);
 
-        across(made, {side.left - seen.at.x, -seen.at.y}, inner.wide, lines.across, edge);
-        across(made, {side.left - seen.at.x, last_y - seen.at.y}, inner.wide, lines.across, edge);
+        across(onto, {side.left, 0}, inner.wide, lines.across, edge);
+        across(onto, {side.left, last_y}, inner.wide, lines.across, edge);
 
         for (int y = 1; y < last_y; ++y) {
-            made.put({-seen.at.x, y - seen.at.y}, lines.upright, edge);
-            made.put({right_x - seen.at.x, y - seen.at.y}, lines.upright, edge);
+            onto.put({0, y}, lines.upright, edge);
+            onto.put({right_x, y}, lines.upright, edge);
         }
 
-        made.put({-seen.at.x, -seen.at.y}, lines.upper_left, edge);
-        made.put({right_x - seen.at.x, -seen.at.y}, lines.upper_right, edge);
-        made.put({-seen.at.x, last_y - seen.at.y}, lines.lower_left, edge);
-        made.put({right_x - seen.at.x, last_y - seen.at.y}, lines.lower_right, edge);
+        onto.put({0, 0}, lines.upper_left, edge);
+        onto.put({right_x, 0}, lines.upper_right, edge);
+        onto.put({0, last_y}, lines.lower_left, edge);
+        onto.put({right_x, last_y}, lines.lower_right, edge);
     }
 
     int y = 1;
 
     for (const std::shared_ptr<Node>& one : children()) {
-        const Area where{{side.left, y}, {inner.wide, 1}};
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(one->render(where, part - where.at), part.at - seen.at);
+        one->render(onto);
 
         // A separator reaches the border, as in Midnight Commander. The separator itself does
         // not know the joints, because its rectangle ends at the inside, so the menu draws them.
@@ -304,8 +312,8 @@ View Menu::paint(Size, Area seen) {
             dynamic_cast<const MenuSeparator*>(one.get()) != nullptr) {
             const Lines lines = how.lines(shape_.border);
 
-            made.put({-seen.at.x, y - seen.at.y}, lines.left_joint, edge);
-            made.put({right_x - seen.at.x, y - seen.at.y}, lines.right_joint, edge);
+            onto.put({0, y}, lines.left_joint, edge);
+            onto.put({right_x, y}, lines.right_joint, edge);
         }
 
         ++y;
@@ -316,11 +324,9 @@ View Menu::paint(Size, Area seen) {
     if (shape_.shade) {
         const Style dark = how.style("talcite.shade");
 
-        made.shade({{last_x + 1 - seen.at.x, 1 - seen.at.y}, {2, last_y}}, dark);
-        made.shade({{2 - seen.at.x, last_y + 1 - seen.at.y}, {last_x + 1, 1}}, dark);
+        onto.shade({{last_x + 1, 1}, {2, last_y}}, dark);
+        onto.shade({{2, last_y + 1}, {last_x + 1, 1}}, dark);
     }
-
-    return made;
 }
 
 // Three keys belong to the menu; the rest belong to the items or to someone higher up. Only an
@@ -376,12 +382,16 @@ bool Menu::handle(FocusEvent& what) {
     if (one == this) {
         which_ = -1;
 
+        changed();
+
         return false;
     }
 
     for (int at = 0; at < static_cast<int>(children().many()); ++at)
         if (children()[static_cast<std::size_t>(at)].get() == one) {
             which_ = at;
+
+            changed();
 
             break;
         }
@@ -402,6 +412,8 @@ bool Menu::handle(UnfocusEvent& what) {
         if (at == this) return false;
 
     which_ = -1;
+
+    changed();
 
     return false;
 }

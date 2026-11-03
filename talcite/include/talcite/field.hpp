@@ -22,7 +22,13 @@ public:
 
     [[nodiscard]] int wide() const { return wide_; }
 
-    void wide(int given) { wide_ = given; }
+    void wide(int given) {
+        if (wide_ == given) return;
+
+        wide_ = given;
+
+        changed();
+    }
 
     [[nodiscard]] std::size_t cursor() const;
 
@@ -40,7 +46,13 @@ public:
 
     [[nodiscard]] Justify justify() const { return justify_; }
 
-    void justify(Justify given) { justify_ = given; }
+    void justify(Justify given) {
+        if (justify_ == given) return;
+
+        justify_ = given;
+
+        changed();
+    }
 
     [[nodiscard]] Size wants(Size room) const override;
 
@@ -49,7 +61,9 @@ public:
     [[nodiscard]] int capacity() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(KeyEvent& what) override;
 
@@ -63,6 +77,10 @@ private:
     void insert(const std::string& what);
 
     [[nodiscard]] int spanned(std::size_t from, std::size_t upto) const;
+
+    [[nodiscard]] std::size_t fitting(int room, int& wide) const;
+
+    [[nodiscard]] bool cut(std::size_t upto) const;
 
     std::string text_;
     std::string ahead_;

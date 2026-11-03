@@ -10,7 +10,11 @@ namespace talcite::ui {
 Row::Row(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between children, in columns; a negative gap counts as zero.
-void Row::gap(int given) { gap_ = std::max(given, 0); }
+void Row::gap(int given) {
+    gap_ = std::max(given, 0);
+
+    changed();
+}
 
 // A row takes any number of children.
 int Row::capacity() const { return plenty; }
@@ -64,7 +68,7 @@ Size Row::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Lays the children out left to right, each over the full height, and draws them.
+// Lays the children out left to right, each over the full height.
 //
 // The width the children do not need goes to the horizontal floats among them (`Left`, `Right`,
 // `Center`; a vertical float is an ordinary child here, placing its own child in the full height),
@@ -81,13 +85,7 @@ Size Row::wants(Size room) const {
 // occupies nothing gets no margin, for the reason a gap is not due before it.
 //
 // Only the children themselves count: a float deeper in the tree is placed by its own parent.
-View Row::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where it draws nothing, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
+void Row::layout(Size given) {
     const std::vector<Area> places = placed(given);
     const std::size_t many = places.size();
 
@@ -130,12 +128,13 @@ View Row::paint(Size given, Area seen) {
             shift += before + after;
         }
 
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(children()[which]->render(where, part - where.at), part.at - seen.at);
+        children()[which]->arrange(where);
     }
+}
 
-    return made;
+// Paints the children side by side, where the layout put them.
+void Row::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

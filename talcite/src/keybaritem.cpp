@@ -73,8 +73,8 @@ void KeyBarItem::activate() { pick(); }
 // key that occurs in the name replaces the tag with an underline, as in a menu item: the same
 // thing twice in an item six cells wide would be waste and noise. A letter that does not occur in
 // the name goes back to the tag; otherwise it would be a shortcut nobody learns about.
-View KeyBarItem::paint(Size given, Area seen) {
-    View made{seen.size};
+void KeyBarItem::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     // The number, the hotkey letter and the name have separate roles, so the skin decides each
     // one on its own. The built-in skin gives the number the plain style, the letter an underline
@@ -86,7 +86,7 @@ View KeyBarItem::paint(Size given, Area seen) {
     const Style plain = Style::merge(how.style(role() + ".tag"), gone);
     const Style label = Style::merge(how.style(role() + ".text"), gone);
 
-    made.fill({{-seen.at.x, -seen.at.y}, given}, plain);
+    onto.fill({{0, 0}, given}, plain);
 
     const char32_t dots = how.glyph("talcite.elide");
 
@@ -105,28 +105,26 @@ View KeyBarItem::paint(Size given, Area seen) {
 
     const int aside = measured(what).wide;
 
-    if (aside > 0) made.put({-seen.at.x, -seen.at.y}, cut(what, given.wide), plain);
+    if (aside > 0) onto.put({0, 0}, cut(what, given.wide), plain);
 
     const int room = given.wide - aside;
 
-    if (room <= 0) return made;
+    if (room <= 0) return;
 
-    made.fill({{aside - seen.at.x, -seen.at.y}, {room, 1}}, label);
+    onto.fill({{aside, 0}, {room, 1}}, label);
 
-    if (text_.empty()) return made;
+    if (text_.empty()) return;
 
     const std::string shown = aside == 0 ? whole : elided(text_, room, Elide::right, dots);
 
-    made.put({aside - seen.at.x, -seen.at.y}, shown, label);
+    onto.put({aside, 0}, shown, label);
 
     // The column is computed on this text, not on the earlier one: with the tag the name is
     // narrower, so a letter visible in the wider one may already be inside the ellipsis here. A
     // disabled item marks no letter, since its key does nothing.
     if (enabled())
-        talcite::ui::marking(made, {aside - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+        talcite::ui::marking(onto, {aside, 0}, shown, shortcut_column(shown),
                           label, how.style(role() + ".key"));
-
-    return made;
 }
 
 // A click does the same as the key and does not take the focus. The key bar in Midnight Commander

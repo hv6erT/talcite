@@ -433,9 +433,12 @@ struct Page::Kept {
     std::string scrollbar_role = "talcite.scroll";
     std::string chosen = "talcite.viewer.mark.focus";
 
-    // The scrollbar from the last frame and its unit: lines or bytes (see `gauged`).
+    // The scrollbar from the last frame and its unit: lines or bytes (see `gauged`). The column it
+    // takes and the bar itself as the layout settled them, for painting.
     Grip grip;
     bool bytes = false;
+    int aside = 0;
+    std::optional<Track> bar;
 
     // The memories of long lines, by line number; the rows for the width `rowed`.
     std::unordered_map<std::size_t, Rows> rows;
@@ -884,6 +887,8 @@ void Page::hold(std::shared_ptr<Spool> given) {
     kept.columns.clear();
     kept.fresh = true;
 
+    Node::changed();
+
     (void)kept.placed();
 
     kept.spool->awoken([this] {
@@ -994,6 +999,8 @@ void Page::at(std::size_t given, Moved how) {
     kept.row_at = start;
     kept.fresh = true;
 
+    Node::changed();
+
     (void)move_by(0);
 
     (void)trigger(ScrollEvent{how});
@@ -1015,6 +1022,8 @@ void Page::first(std::size_t given, Moved how) {
     kept.top_at.reset();
     kept.row_at = 0;
     kept.fresh = true;
+
+    Node::changed();
 
     (void)kept.placed();
 
@@ -1073,6 +1082,8 @@ void Page::end(Moved how) {
     kept.row_at = start;
     kept.fresh = true;
 
+    Node::changed();
+
     (void)move_by(-std::max(kept.sized.high - 1, 0));
 
     (void)trigger(ScrollEvent{how});
@@ -1112,6 +1123,8 @@ bool Page::move_by(int rows) {
 
     kept.fresh = true;
 
+    Node::changed();
+
     return true;
 }
 
@@ -1142,6 +1155,8 @@ void Page::left(std::size_t columns, Moved how) {
     kept.left = columns;
     kept.fresh = true;
 
+    Node::changed();
+
     (void)trigger(ScrollEvent{how});
 }
 
@@ -1163,6 +1178,8 @@ void Page::wrapped(bool given) {
 
     kept.fresh = true;
 
+    Node::changed();
+
     (void)trigger(ScrollEvent{});
 }
 
@@ -1175,6 +1192,8 @@ void Page::scrollbar(bool given) {
 
     kept_->shape.scrollbar = given;
     kept_->fresh = true;
+
+    Node::changed();
 }
 
 // How many document lines the last frame showed.
@@ -1337,6 +1356,8 @@ bool Page::reveal(Place where) {
         kept.wish = where;
         kept.fresh = true;
 
+        Node::changed();
+
         return true;
     }
 
@@ -1365,7 +1386,11 @@ bool Page::reveal(Place where) {
     if (kept.fresh) spread(kept.sized);
 
     if (std::any_of(kept.shown.begin(), kept.shown.end(), [where](const Cut& one) { return holds(one, where); })) {
-        if (moved) kept.fresh = true;
+        if (moved) {
+            kept.fresh = true;
+
+            Node::changed();
+        }
 
         return moved;
     }
@@ -1373,7 +1398,11 @@ bool Page::reveal(Place where) {
     const std::optional<std::size_t> from = kept.spool->at(where.line);
 
     if (!from.has_value()) {
-        if (moved) kept.fresh = true;
+        if (moved) {
+            kept.fresh = true;
+
+            Node::changed();
+        }
 
         return moved;
     }
@@ -1393,13 +1422,19 @@ bool Page::reveal(Place where) {
     kept.row_at = start;
     kept.fresh = true;
 
+    Node::changed();
+
     if (!above) (void)move_by(-std::max(kept.sized.high - 1, 0));
 
     return true;
 }
 
 // Forces the next frame to lay the document out again.
-void Page::invalidate() { kept_->fresh = true; }
+void Page::invalidate() {
+    kept_->fresh = true;
+
+    Node::changed();
+}
 
 // The text changed from line `line` on: the memories of rows and columns from that line on are no
 // longer true, and when the change reaches the top line, its start is looked up again.
@@ -1415,6 +1450,8 @@ void Page::changed(std::size_t line) {
     }
 
     kept.fresh = true;
+
+    Node::changed();
 }
 
 // The document line at the top of the view.
@@ -1470,13 +1507,21 @@ std::optional<Place> Page::place_of(Spot where) const {
 const std::string& Page::chosen() const { return kept_->chosen; }
 
 // Replaces the role in which the current mark is painted.
-void Page::chosen(std::string given) { kept_->chosen = std::move(given); }
+void Page::chosen(std::string given) {
+    kept_->chosen = std::move(given);
+
+    Node::changed();
+}
 
 // The role in which the scrollbar is painted.
 const std::string& Page::scrollbar_role() const { return kept_->scrollbar_role; }
 
 // Replaces the role in which the scrollbar is painted.
-void Page::scrollbar_role(std::string given) { kept_->scrollbar_role = std::move(given); }
+void Page::scrollbar_role(std::string given) {
+    kept_->scrollbar_role = std::move(given);
+
+    Node::changed();
+}
 
 // A page always takes the focus, so that the keys can scroll it.
 bool Page::focusable() const { return true; }
@@ -1644,7 +1689,7 @@ namespace {
 //
 // A cell with a zero letter is the continuation of a double-width character; it is skipped,
 // because the first half has already repainted both.
-void painted(View& into, const Cut& piece, Spot at, const Style& look, const std::vector<Mark>& marks,
+void painted(Canvas& into, const Cut& piece, Spot at, const Style& look, const std::vector<Mark>& marks,
              std::optional<std::size_t> which, const std::string& chosen, const Skin& how) {
     const auto first = std::lower_bound(marks.begin(), marks.end(), Mark{piece.line, 0, 0, {}}, ahead);
 
@@ -1678,76 +1723,82 @@ void painted(View& into, const Cut& piece, Spot at, const Style& look, const std
 
 }
 
-// Draws the visible pieces, the marks over them and, when it is on, the scrollbar.
-View Page::paint(Size given, Area seen) {
+// Lays the document out in the room: the visible pieces, and the scrollbar when it is on.
+void Page::layout(Size given) {
     settle();
 
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
+    Kept& kept = *kept_;
 
     // The scrollbar takes one column on the right, so the content gets that much less room, just
     // as in the scrollers.
-    int aside = kept_->shape.scrollbar && given.wide > 0 ? 1 : 0;
+    int aside = kept.shape.scrollbar && given.wide > 0 ? 1 : 0;
 
     spread({given.wide - aside, given.high});
 
     // The "when needed" scrollbar (`needed`): a page that fits entirely from the first line gives
     // its column back to the content and lays itself out once more. Text wrapped wider then takes
     // the same number of rows or fewer, so it still fits.
-    if (aside != 0 && kept_->shape.needed && kept_->top == 0 && kept_->top_at.has_value() &&
-        kept_->row_at == *kept_->top_at && !kept_->more) {
+    if (aside != 0 && kept.shape.needed && kept.top == 0 && kept.top_at.has_value() && kept.row_at == *kept.top_at &&
+        !kept.more) {
         aside = 0;
 
         spread({given.wide, given.high});
     }
 
-    if (kept_->shown.empty() && aside == 0) return made;
-
-    const Style look = skin().style(role());
-
-    made.fill({{0, 0}, seen.size}, look);
-
-    for (std::size_t one = 0; one < kept_->shown.size(); ++one) {
-        const Cut& piece = kept_->shown[one];
-        const int y = static_cast<int>(one) - seen.at.y;
-
-        made.put({-seen.at.x, y}, piece.text, look);
-
-        if (!marks().empty())
-            painted(made, piece, {-seen.at.x, y}, look, marks().all(), which(), kept_->chosen, skin());
-    }
+    kept.aside = aside;
 
     std::size_t shift = 0;
     std::size_t whole = 0;
     std::size_t window = 0;
 
     if (aside != 0 && gauged(shift, whole, window)) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
-                            .much = given.high,
-                            .shift = shift,
-                            .whole = whole,
-                            .window = window,
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = skin(),
-                            .role = kept_->scrollbar_role};
+        kept.bar = Track{Scrollbar::edge(given, {{0, 0}, given}, true), true, given.high, shift, whole, window};
 
-        bar.draw(made);
-
-        Track mine = bar.track();
-
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
-
-        kept_->grip.laid(mine);
+        kept.grip.laid(kept.bar);
 
         const std::optional<std::size_t> many = lines();
 
-        kept_->bytes = !(many.has_value() && *many > 0 && *many * short_line >= kept_->spool->whole());
+        kept.bytes = !(many.has_value() && *many > 0 && *many * short_line >= kept.spool->whole());
     } else {
-        kept_->grip.laid(std::nullopt);
+        kept.bar.reset();
+
+        kept.grip.laid(std::nullopt);
+    }
+}
+
+// Draws the visible pieces, the marks over them and, when it is on, the scrollbar.
+void Page::paint(Canvas& onto) const {
+    const Kept& kept = *kept_;
+
+    if (kept.shown.empty() && kept.aside == 0) return;
+
+    const Style look = skin().style(role());
+
+    onto.fill(onto.seen(), look);
+
+    for (std::size_t one = 0; one < kept.shown.size(); ++one) {
+        const Cut& piece = kept.shown[one];
+        const Spot at{0, static_cast<int>(one)};
+
+        onto.put(at, piece.text, look);
+
+        if (!marks().empty()) painted(onto, piece, at, look, marks().all(), which(), kept.chosen, skin());
     }
 
-    return made;
+    if (!kept.bar.has_value()) return;
+
+    const Track& track = *kept.bar;
+
+    const Scrollbar bar{.at = track.at,
+                        .much = track.much,
+                        .shift = track.shift,
+                        .whole = track.whole,
+                        .window = track.window,
+                        .focused = Scrollbar::focused_in(*this),
+                        .skin = skin(),
+                        .role = kept.scrollbar_role};
+
+    bar.draw(onto);
 }
 
 // Scrolls with the arrows, PageUp, PageDown, Home and End; without wrapping, the arrows to the

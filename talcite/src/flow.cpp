@@ -13,7 +13,11 @@ namespace talcite::ui {
 Flow::Flow(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between children in a line, in columns; a negative gap counts as zero.
-void Flow::gap(int given) { gap_ = std::max(given, 0); }
+void Flow::gap(int given) {
+    gap_ = std::max(given, 0);
+
+    changed();
+}
 
 // A flow takes any number of children.
 int Flow::capacity() const { return plenty; }
@@ -54,14 +58,8 @@ Size Flow::wants(Size room) const {
     return {std::min(made.wide, room.wide), std::min(made.high, room.high)};
 }
 
-// Draws the lines one under another, each in the middle of the given width.
-View Flow::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where it draws nothing, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
+// Lays the lines out one under another, each in the middle of the given width.
+void Flow::layout(Size given) {
     const std::vector<Line> lines = laid(given);
 
     // A child that occupies nothing still gets a zero rectangle, so that its area() tells the truth
@@ -71,7 +69,7 @@ View Flow::paint(Size given, Area seen) {
             return std::any_of(line.placed.begin(), line.placed.end(), [&one](const auto& each) { return each.first == one.get(); });
         });
 
-        if (!placed) static_cast<void>(one->render({{0, 0}, {0, 0}}, {{0, 0}, {0, 0}}));
+        if (!placed) one->arrange({{0, 0}, {0, 0}});
     }
 
     int y = 0;
@@ -81,17 +79,18 @@ View Flow::paint(Size given, Area seen) {
 
         for (const auto& [one, size] : line.placed) {
             const Area where{{x, y}, {size.wide, line.high}};
-            const Area part = Area::crossed(seen, where);
-
-            made.draw(one->render(where, part - where.at), part.at - seen.at);
+            one->arrange(where);
 
             x += size.wide + gap_;
         }
 
         y += line.high;
     }
+}
 
-    return made;
+// Paints the children where the lines put them.
+void Flow::paint(Canvas& onto) const {
+    for (const std::shared_ptr<Node>& one : children()) one->render(onto);
 }
 
 }

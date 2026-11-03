@@ -65,8 +65,8 @@ void ListItem::pick() {
 //
 // A text longer than the row is cut with an ellipsis on the right, as in a button. A text field
 // scrolls because one types in it; a list row has nothing to scroll, so cutting is more honest.
-View ListItem::paint(Size given, Area seen) {
-    View made{seen.size};
+void ListItem::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -75,12 +75,8 @@ View ListItem::paint(Size given, Area seen) {
                                       : current(*this) ? role() + ".mark"
                                                        : role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, given}, look);
-    made.put({-seen.at.x, -seen.at.y},
-                elided(text_, given.wide, Elide::right, how.glyph("talcite.elide")),
-                look);
-
-    return made;
+    onto.fill({{0, 0}, given}, look);
+    onto.put({0, 0}, elided(text_, given.wide, Elide::right, how.glyph("talcite.elide")), look);
 }
 
 // Enter is the key of the item itself, because the item has the focus, unlike in a menu, where

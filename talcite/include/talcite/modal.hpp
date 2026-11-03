@@ -11,7 +11,13 @@ public:
 
     [[nodiscard]] bool shade() const { return shape_.shade; }
 
-    void shade(bool given) { shape_.shade = given; }
+    void shade(bool given) {
+        if (shape_.shade == given) return;
+
+        shape_.shade = given;
+
+        changed();
+    }
 
     [[nodiscard]] Size wants(Size room) const override;
 
@@ -20,7 +26,9 @@ public:
     [[nodiscard]] bool focusable() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     [[nodiscard]] virtual Area seat(Size given) const;
 

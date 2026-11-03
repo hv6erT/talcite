@@ -39,23 +39,23 @@ public:
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
-    // Draws only the first child. The rest are here so that focus can be given to them, and they get
-    // a rectangle of zero size so that they paint over nothing.
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
-
+    // Lays out only the first child. The rest are here so that focus can be given to them, and they
+    // get a rectangle of zero size so that they paint over nothing.
+    void layout(ui::Size given) override {
         bool first = true;
 
         for (const std::shared_ptr<ui::Node>& one : children()) {
-            const ui::Area where{{0, 0}, first ? given : ui::Size{}};
-            const ui::Area part = ui::Area::crossed(seen, where);
-
-            made.draw(one->render(where, part - where.at), part.at - seen.at);
+            one->arrange({{0, 0}, first ? given : ui::Size{}});
 
             first = false;
         }
+    }
 
-        return made;
+    // Paints the children over a background of spaces.
+    void paint(Canvas& onto) const override {
+        onto.fill({{0, 0}, onto.size()}, Style{});
+
+        for (const std::shared_ptr<ui::Node>& one : children()) one->render(onto);
     }
 };
 

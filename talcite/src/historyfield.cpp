@@ -48,11 +48,11 @@ void HistoryField::settle() {
     typed_.clear();
 }
 
-// Settles the history first, then paints like a plain field.
-View HistoryField::paint(Size given, Area seen) {
+// Settles the history first, then lays out like a plain field.
+void HistoryField::layout(Size given) {
     settle();
 
-    return Field::paint(given, seen);
+    Field::layout(given);
 }
 
 // Closes the list and forgets every entry, together with the walk and the saved typed text.

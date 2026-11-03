@@ -101,25 +101,23 @@ public:
 protected:
     // Fills the background, puts the extra letters, fills the image's cells and marks them with the
     // picture, and covers one of them when `covered` is set.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
-        made.fill({{0, 0}, given}, paper(0, 0, 90));
-        made.put(other, elsewhere, paper(0, 0, 90));
+        onto.fill({{0, 0}, given}, paper(0, 0, 90));
+        onto.put(other, elsewhere, paper(0, 0, 90));
 
-        if (yonder != U' ') made.put(afar, yonder, paper(0, 0, 90));
+        if (yonder != U' ') onto.put(afar, yonder, paper(0, 0, 90));
 
         for (int y = 0; y < size.high; ++y)
-            for (int x = 0; x < size.wide; ++x) made.put({at.x + x, at.y + y}, U'▒', paper(200, 100, 0));
+            for (int x = 0; x < size.wide; ++x) onto.put({at.x + x, at.y + y}, U'▒', paper(200, 100, 0));
 
-        made.picture({at, size}, Picture{mark, size, bare ? nullptr : encoded("\x1bP0;1;0q\"1;1;30;40#0;2;100;0;0\x1b\\"),
+        onto.picture({at, size}, Picture{mark, size, bare ? nullptr : encoded("\x1bP0;1;0q\"1;1;30;40#0;2;100;0;0\x1b\\"),
                                          bare ? nullptr : pixels, still});
 
-        if (covered) made.put({at.x + 1, at.y}, U'x', paper(0, 0, 90));
-
-        return made;
+        if (covered) onto.put({at.x + 1, at.y}, U'x', paper(0, 0, 90));
     }
 };
 
@@ -355,6 +353,7 @@ TRIAL("Term: an unchanged image does not go a second time, and a change beside i
     same(rig.drawn(), std::string{});
 
     rig.root.elsewhere = U'k';
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -369,29 +368,35 @@ TRIAL("Term: an image in a row going out again after a word the terminal counts 
 
     rig.root.other = {0, 1};
     rig.root.elsewhere = U'\u093E';
+    rig.root.repaint();
 
     (void)rig.drawn();
 
     rig.root.elsewhere = U'\u0940';
+    rig.root.repaint();
 
     same(counted(rig.drawn(), sixel_head), std::size_t{1});
 
     // The row goes out again from the first such word, not from the last.
     rig.root.yonder = U'\u093E';
     rig.root.afar = {7, 1};
+    rig.root.repaint();
 
     (void)rig.drawn();
 
     rig.root.elsewhere = U'\u093E';
     rig.root.yonder = U'\u0940';
+    rig.root.repaint();
 
     same(counted(rig.drawn(), sixel_head), std::size_t{1});
 
     rig.root.other = {0, 4};
+    rig.root.repaint();
 
     (void)rig.drawn();
 
     rig.root.elsewhere = U'\u093E';
+    rig.root.repaint();
 
     ought(!holds(rig.drawn(), sixel_head));
 }
@@ -402,6 +407,7 @@ TRIAL("Term: a covered image goes back to characters, an uncovered one gets its 
     (void)rig.drawn();
 
     rig.root.covered = true;
+    rig.root.repaint();
 
     const std::string hidden = rig.drawn();
 
@@ -412,6 +418,7 @@ TRIAL("Term: a covered image goes back to characters, an uncovered one gets its 
     same(counted(hidden, std::string{"▒"}), std::size_t{5});
 
     rig.root.covered = false;
+    rig.root.repaint();
 
     const std::string back = rig.drawn();
 
@@ -425,6 +432,7 @@ TRIAL("Term: another mark in the same place, another animation frame, goes anew"
     (void)rig.drawn();
 
     rig.root.mark = 6;
+    rig.root.repaint();
 
     same(counted(rig.drawn(), sixel_head), std::size_t{1});
 }
@@ -435,6 +443,7 @@ TRIAL("Term: a moved image goes to the new place, the old cells go back to the b
     (void)rig.drawn();
 
     rig.root.at = {5, 2};
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -450,6 +459,7 @@ TRIAL("Term: after an image the next character goes with its own jump") {
     (void)rig.drawn();
 
     rig.root.mark = 9;
+    rig.root.repaint();
 
     const std::string again = rig.drawn();
 
@@ -457,6 +467,7 @@ TRIAL("Term: after an image the next character goes with its own jump") {
 
     rig.root.elsewhere = U'k';
     rig.root.other = {5, 2};
+    rig.root.repaint();
 
     ought(holds(rig.drawn(), "\x1b[3;6H"));
 }
@@ -465,6 +476,7 @@ TRIAL("Term: an image without bytes has empty cells and sends nothing") {
     Rig rig;
 
     rig.root.bare = true;
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -477,16 +489,14 @@ TRIAL("Term: an image without bytes does not stop the image after it") {
     class Two : public ui::Root {
     protected:
         // A background with an image without bytes, followed by an image with a sixel.
-        View paint(ui::Size given, ui::Area seen) override {
-            (void)seen;
+        void paint(Canvas& onto) const override {
+            const ui::Size given = onto.size();
 
-            View made{given};
+            onto.fill({{0, 0}, given}, Style{});
 
-            made.fill({{0, 0}, given}, paper(0, 0, 90));
-            made.picture({{0, 0}, {2, 1}}, Picture{1, {2, 1}, nullptr});
-            made.picture({{4, 1}, {2, 1}}, Picture{2, {2, 1}, encoded("\x1bP0;1;0qSECOND\x1b\\")});
-
-            return made;
+            onto.fill({{0, 0}, given}, paper(0, 0, 90));
+            onto.picture({{0, 0}, {2, 1}}, Picture{1, {2, 1}, nullptr});
+            onto.picture({{4, 1}, {2, 1}}, Picture{2, {2, 1}, encoded("\x1bP0;1;0qSECOND\x1b\\")});
         }
     };
 
@@ -603,16 +613,14 @@ public:
     }
 
 protected:
-    // Paints a black background and the image in a 20×5 field at the top.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    // The image in a 20×5 field at the top.
+    void layout(ui::Size) override { image->arrange({{0, 0}, {20, 5}}); }
 
-        View made{given};
+    // Paints a black background and the image over it.
+    void paint(Canvas& onto) const override {
+        onto.fill({{0, 0}, onto.size()}, paper(0, 0, 0));
 
-        made.fill({{0, 0}, given}, paper(0, 0, 0));
-        made.draw(image->render({{0, 0}, {20, 5}}), {0, 0});
-
-        return made;
+        image->render(onto);
     }
 };
 
@@ -887,6 +895,7 @@ TRIAL("Term: a covered kitty image is removed before the characters, an uncovere
     (void)rig.drawn();
 
     rig.root.covered = true;
+    rig.root.repaint();
 
     const std::string hidden = rig.drawn();
 
@@ -897,6 +906,7 @@ TRIAL("Term: a covered kitty image is removed before the characters, an uncovere
     ought(!holds(hidden, "a=p"));
 
     rig.root.covered = false;
+    rig.root.repaint();
 
     const std::string back = rig.drawn();
 
@@ -911,6 +921,7 @@ TRIAL("Term: a moved kitty image is removed and placed in the new place, without
     (void)rig.drawn();
 
     rig.root.at = {5, 2};
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -926,6 +937,7 @@ TRIAL("Term: kitty animation frames are sent once, then only switched") {
 
     rig.root.mark = 6;
     rig.root.still = 1;
+    rig.root.repaint();
 
     const std::string second = rig.drawn();
 
@@ -936,6 +948,7 @@ TRIAL("Term: kitty animation frames are sent once, then only switched") {
 
     rig.root.mark = 5;
     rig.root.still = 0;
+    rig.root.repaint();
 
     const std::string again = rig.drawn();
 
@@ -951,6 +964,7 @@ TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the termina
 
     rig.root.pixels = dotted({3, 2});
     rig.root.mark = 8;
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -960,6 +974,7 @@ TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the termina
 
     // A covered one is not forgotten: someone still holds its pixels.
     rig.root.covered = true;
+    rig.root.repaint();
 
     ought(!holds(rig.drawn(), taken(8, 'I')));
 }
@@ -968,6 +983,7 @@ TRIAL("Term: a large kitty image goes in chunks of 4096 characters, m=0 only at 
     Rig rig{kittied()};
 
     rig.root.pixels = dotted({40, 40});
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
     const std::string coded = base64(rig.root.pixels->stills()[0].bytes);
@@ -986,6 +1002,7 @@ TRIAL("Term: base64 that splits evenly into chunks gets no empty chunk at the en
     Rig rig{kittied()};
 
     rig.root.pixels = dotted({48, 32});
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
     const std::string coded = base64(rig.root.pixels->stills()[0].bytes);
@@ -999,6 +1016,7 @@ TRIAL("Term: a frame beyond the image's pixels does not go to kitty") {
     Rig rig{kittied()};
 
     rig.root.still = 5;
+    rig.root.repaint();
 
     const std::string said = rig.drawn();
 
@@ -1047,6 +1065,7 @@ TRIAL("Term: switching from kitty to characters removes the image, and the termi
     ought(!holds(said, "a=p"));
 
     rig.root.pixels = dotted({3, 2});
+    rig.root.repaint();
 
     ought(holds(rig.drawn(), taken(5, 'I')));
 }

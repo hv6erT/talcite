@@ -83,10 +83,10 @@ public:
 class Painted : public ui::Root {
 protected:
     // Draws the three samples in the top left corner.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
         Style red;
         red.foreground = Color{false, 255, 0, 0};
@@ -94,11 +94,9 @@ protected:
         Style turned;
         turned.reverse = true;
 
-        made.put({0, 0}, U'x', red);
-        made.put({2, 0}, U'你', Style{});
-        made.put({0, 1}, std::string{"ok"}, turned);
-
-        return made;
+        onto.put({0, 0}, U'x', red);
+        onto.put({2, 0}, U'你', Style{});
+        onto.put({0, 1}, std::string{"ok"}, turned);
     }
 };
 

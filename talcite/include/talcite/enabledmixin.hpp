@@ -17,6 +17,8 @@ public:
 
         enabled_ = given;
 
+        this->Node::changed();
+
         if (enabled_) {
             (void)this->trigger(EnableEvent{});
 

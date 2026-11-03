@@ -49,22 +49,18 @@ public:
     [[nodiscard]] ui::Size wants(ui::Size room) const override { return room; }
 
 protected:
-    // Paints each child on its own row, one below the other, clipped to the visible part.
-    View paint(ui::Size given, ui::Area seen) override {
-        View made{seen.size};
-
+    // Lays each child out on its own row, one below the other.
+    void layout(ui::Size given) override {
         int y = 0;
 
-        for (const std::shared_ptr<ui::Node>& one : children()) {
-            const ui::Area where{{0, y}, {given.wide, 1}};
-            const ui::Area part = ui::Area::crossed(seen, where);
+        for (const std::shared_ptr<ui::Node>& one : children()) one->arrange({{0, y++}, {given.wide, 1}});
+    }
 
-            made.draw(one->render(where, part - where.at), part.at - seen.at);
+    // Paints the rows over a background of spaces, clipped to the visible part.
+    void paint(Canvas& onto) const override {
+        onto.fill({{0, 0}, onto.size()}, Style{});
 
-            ++y;
-        }
-
-        return made;
+        for (const std::shared_ptr<ui::Node>& one : children()) one->render(onto);
     }
 };
 

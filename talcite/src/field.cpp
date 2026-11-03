@@ -107,7 +107,8 @@ void Field::guess(std::function<std::string(const std::string& what)> given) {
     guessing();
 }
 
-// The suggestion is computed when the content changes, not when painting. The caller may look it up
+// Every change of the content or of the cursor comes here, so here the field says it changed. The
+// suggestion is computed when the content changes, not when painting. The caller may look it up
 // in a directory or in a history, which can be costly, while painting happens on every frame and is
 // no place for such work.
 //
@@ -118,6 +119,8 @@ void Field::guess(std::function<std::string(const std::string& what)> given) {
 // A concealed field does not suggest at all: a suggestion shows text openly, and its source (a
 // history, a directory) could reveal an old secret or its beginning.
 void Field::guessing() {
+    changed();
+
     ahead_.clear();
 
     if (!guess_ || concealed_ || at_ != text_.size()) return;
@@ -181,39 +184,12 @@ void Field::insert(const std::string& what) {
     guessing();
 }
 
-// Draws the visible part of the content (or dots, when concealed) and the dimmed suggestion after
-// it. A field justified to the right (numbers) or to the center moves the visible part that way,
-// keeping one cell free at the right edge, so the cursor after the last character stays inside the
-// field and the content does not jump when the focus comes or goes. A content that fills the field
-// stands at its left edge, as in any field.
-View Field::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn; the same rule and the same reason as in the button.
-    made.clear({{0, 0}, seen.size});
-
-    const int room = std::max(given.wide, 0);
-
-    // The scroll offset is computed here, because only here is the width the field really got
-    // known; the parent may give less than was asked for. This is the only place where painting
-    // changes state, and it does so on purpose: otherwise the cursor could move out of the visible
-    // part.
-    if (at_ < from_) from_ = at_;
-
-    while (room > 0 && spanned(from_, at_) >= room) from_ = after(text_, from_);
-
-    const Skin& how = skin();
-
-    // The underline comes from the built-in skin, in the `talcite.input` role. In Midnight
-    // Commander a field is marked by its background color alone, so once colors arrive it is enough
-    // to replace the skin entry; not a single line of code is added or removed.
-    const Style look = how.style(enabled() ? role() : role() + ".disabled");
-
-    made.fill({{-seen.at.x, -seen.at.y}, {room, 1}}, look);
-
-    // The visible part of the content, clipped to the width.
+// Where the visible part of the content ends, from `from_`, in `room` cells; `wide` gets the cells
+// it takes.
+std::size_t Field::fitting(int room, int& wide) const {
     std::size_t upto = from_;
-    int wide = 0;
+
+    wide = 0;
 
     while (upto < text_.size()) {
         const std::size_t next = after(text_, upto);
@@ -225,12 +201,53 @@ View Field::paint(Size given, Area seen) {
         upto = next;
     }
 
-    const bool cut = !concealed_ && !focused() && (from_ > 0 || upto < text_.size());
+    return upto;
+}
+
+// Whether the field at rest shows its beginning cut with the ellipsis: it cannot hold its whole
+// text and is neither concealed nor in the focus.
+bool Field::cut(std::size_t upto) const { return !concealed_ && !focused() && (from_ > 0 || upto < text_.size()); }
+
+// The scroll offset and the shift of the visible part, computed here, because only here is the
+// width the field really got known; the parent may give less than was asked for. Otherwise the
+// cursor could move out of the visible part. A field justified to the right (numbers) or to the
+// center moves the visible part that way, keeping one cell free at the right edge, so the cursor
+// after the last character stays inside the field and the content does not jump when the focus
+// comes or goes. A content that fills the field stands at its left edge, as in any field.
+void Field::layout(Size given) {
+    const int room = std::max(given.wide, 0);
+
+    if (at_ < from_) from_ = at_;
+
+    while (room > 0 && spanned(from_, at_) >= room) from_ = after(text_, from_);
+
+    int wide = 0;
+
+    const std::size_t upto = fitting(room, wide);
     const int free = room - wide - 1;
 
     shift_ = 0;
 
-    if (!cut && free > 0) shift_ = justify_ == Justify::right ? free : justify_ == Justify::center ? free / 2 : 0;
+    if (!cut(upto) && free > 0) shift_ = justify_ == Justify::right ? free : justify_ == Justify::center ? free / 2 : 0;
+}
+
+// Draws the visible part of the content (or dots, when concealed) and the dimmed suggestion after
+// it, where the layout put them.
+void Field::paint(Canvas& onto) const {
+    const int room = std::max(onto.size().wide, 0);
+
+    const Skin& how = skin();
+
+    // The underline comes from the built-in skin, in the `talcite.input` role. In Midnight
+    // Commander a field is marked by its background color alone, so once colors arrive it is enough
+    // to replace the skin entry; not a single line of code is added or removed.
+    const Style look = how.style(enabled() ? role() : role() + ".disabled");
+
+    onto.fill({{0, 0}, {room, 1}}, look);
+
+    int wide = 0;
+
+    const std::size_t upto = fitting(room, wide);
 
     if (concealed_) {
         const std::string dot = utf8::encode(how.glyph("talcite.input.conceal"));
@@ -239,18 +256,18 @@ View Field::paint(Size given, Area seen) {
 
         for (int which = 0; which < wide; ++which) dots += dot;
 
-        made.put({shift_ - seen.at.x, -seen.at.y}, dots, look);
-    } else if (cut) {
+        onto.put({shift_, 0}, dots, look);
+    } else if (cut(upto)) {
         // A field at rest that cannot hold its whole text shows the beginning and ends with the
         // ellipsis, so a list cut in mid-word does not look like a typing error. Only the drawing
         // changes: the scroll offset stays for when the focus comes back.
         const std::string shown = elided(text_, room, Elide::right, how.glyph("talcite.elide"));
 
-        made.put({-seen.at.x, -seen.at.y}, shown, look);
+        onto.put({0, 0}, shown, look);
 
         wide = measured(shown).wide;
     } else {
-        made.put({shift_ - seen.at.x, -seen.at.y}, text_.substr(from_, upto - from_), look);
+        onto.put({shift_, 0}, text_.substr(from_, upto - from_), look);
     }
 
     // The suggestion is dimmed, after the content, as far as room allows. It is not part of the
@@ -258,10 +275,8 @@ View Field::paint(Size given, Area seen) {
     if (!ahead_.empty() && shift_ + wide < room) {
         const Style dim = Style::merge(look, how.style(role() + ".guess"));
 
-        made.put({shift_ + wide - seen.at.x, -seen.at.y}, ahead_, dim);
+        onto.put({shift_ + wide, 0}, ahead_, dim);
     }
-
-    return made;
 }
 
 // Enter is announced by the field as a `SubmitEvent` ("entry confirmed") and the field does nothing

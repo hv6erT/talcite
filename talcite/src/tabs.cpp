@@ -111,6 +111,8 @@ void Tabs::which(std::size_t at) {
 
     which_ = at;
 
+    changed();
+
     if (carried)
         if (const std::vector<Node*> these = stops(*all[at]); !these.empty()) these.front()->focus();
 
@@ -152,20 +154,42 @@ Size Tabs::wants(Size room) const {
     return {std::min(std::max(labels_wide(all, spacing), page.wide), room.wide), std::min(strip_high + page.high, room.high)};
 }
 
-// The strip, then the page shown under it; the hidden tabs are drawn with no room. Before the first
-// `which` the first tab is shown, and the pages of the others go aside here.
-View Tabs::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    made.clear({{0, 0}, seen.size});
-
+// The page shown under the strip; the hidden tabs get no room. Before the first `which` the first
+// tab is shown, and the pages of the others go aside here. The names in the strip are the tabs'
+// own, and a tab that is renamed says so over its page, not over the strip: so the strip compares
+// the names and their letters with the last layout's.
+void Tabs::layout(Size given) {
     const std::vector<Tab*> all = listed(children());
 
-    if (all.empty()) return made;
+    if (all.empty()) return;
 
     if (which_ >= all.size()) which_ = 0;
 
     for (std::size_t one = 0; one < all.size(); ++one) all[one]->shown(one == which_);
+
+    for (std::size_t at = 0; at < all.size(); ++at)
+        if (at != which_) all[at]->arrange({{0, 0}, {0, 0}});
+
+    all[which_]->arrange({{0, strip_high}, {given.wide, std::max(0, given.high - strip_high)}});
+
+    std::vector<std::pair<std::string, int>> labels;
+
+    for (const Tab* one : all) labels.emplace_back(one->text(), shortcut_column(one->keys(), one->text()));
+
+    if (labels == labels_) return;
+
+    labels_ = std::move(labels);
+
+    changed({{0, 0}, {given.wide, strip_high}});
+}
+
+// The strip with the names, then the page shown under it.
+void Tabs::paint(Canvas& onto) const {
+    const std::vector<Tab*> all = listed(children());
+
+    if (which_ >= all.size()) return;
+
+    const Size given = onto.size();
 
     const Skin& how = skin();
     const Style other = how.style(role());
@@ -182,14 +206,14 @@ View Tabs::paint(Size given, Area seen) {
         for (int x = 0; x < given.wide; ++x) {
             const bool under = x >= from && x < upto;
 
-            made.put({x - seen.at.x, 1 - seen.at.y}, under ? thick : thin, under ? current : frame);
+            onto.put({x, 1}, under ? thick : thin, under ? current : frame);
         }
     };
 
     // A name with its cells at `from`, and its letter.
     const auto named = [&](const Tab& one, int from, Style look) {
-        made.put({from - seen.at.x, -seen.at.y}, " " + one.text() + " ", look);
-        marking(made, {from + 1 - seen.at.x, -seen.at.y}, one.text(), shortcut_column(one.keys(), one.text()), look, key);
+        onto.put({from, 0}, " " + one.text() + " ", look);
+        marking(onto, {from + 1, 0}, one.text(), shortcut_column(one.keys(), one.text()), look, key);
     };
 
     if (fitting(all, given.wide)) {
@@ -209,22 +233,14 @@ View Tabs::paint(Size given, Area seen) {
     } else {
         const auto [from, upto] = lone(*all[which_], given.wide);
 
-        made.put({from - 2 - seen.at.x, -seen.at.y}, how.glyph(role() + ".left"), other);
+        onto.put({from - 2, 0}, how.glyph(role() + ".left"), other);
         named(*all[which_], from, current);
-        made.put({upto + 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".right"), other);
+        onto.put({upto + 1, 0}, how.glyph(role() + ".right"), other);
 
         stroked(from, upto);
     }
 
-    for (std::size_t at = 0; at < all.size(); ++at)
-        if (at != which_) (void)all[at]->render({{0, 0}, {0, 0}});
-
-    const Area page{{0, strip_high}, {given.wide, std::max(0, given.high - strip_high)}};
-    const Area part = Area::crossed(seen, page);
-
-    made.draw(all[which_]->render(page, part - page.at), part.at - seen.at);
-
-    return made;
+    all[which_]->render(onto);
 }
 
 // Ctrl+PgUp shows the page before, Ctrl+PgDn the page after, while the focus is on a page.

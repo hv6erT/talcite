@@ -692,7 +692,7 @@ std::vector<Mark> spanned(Spool& spool, std::size_t from, std::size_t upto, std:
 // The selection tags are assembled before every assembly of the picture, not when the selection
 // changes: the range of visible lines also changes with scrolling and with resizing the window,
 // and those do not go through `select`.
-View Editor::paint(Size given, Area seen) {
+void Editor::layout(Size given) {
     Kept& kept = *kept_;
 
     std::vector<Mark> made;
@@ -717,10 +717,14 @@ View Editor::paint(Size given, Area seen) {
         }
     }
 
-    if (!made.empty()) marks().all(std::move(made));
-    else if (!marks().empty()) marks().clear();
+    // Only marks that differ from those shown are a change; the same ones laid out again are not,
+    // in whatever order they come (the marks keep themselves sorted).
+    const std::vector<Mark>& shown = std::as_const(*this).marks().all();
 
-    return Page::paint(given, seen);
+    if (made.size() != shown.size() || !std::is_permutation(made.begin(), made.end(), shown.begin()))
+        marks().all(std::move(made));
+
+    Page::layout(given);
 }
 
 // The cursor's place on the screen, or nothing without a document.

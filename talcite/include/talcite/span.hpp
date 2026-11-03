@@ -19,28 +19,49 @@ public:
     [[nodiscard]] const std::string& text() const { return text_; }
 
     void text(std::string given) {
+        const bool same = text_ == given && std::as_const(*this).marks().empty();
+
         text_ = std::move(given);
-        marks().clear();
+
+        if (!same) marks().clear();
     }
 
     [[nodiscard]] bool wrapped() const { return shape_.wrapped; }
 
-    void wrapped(bool given) { shape_.wrapped = given; }
+    void wrapped(bool given) {
+        if (shape_.wrapped == given) return;
+
+        shape_.wrapped = given;
+
+        changed();
+    }
 
     [[nodiscard]] Justify justify() const { return shape_.justify; }
 
-    void justify(Justify given) { shape_.justify = given; }
+    void justify(Justify given) {
+        if (shape_.justify == given) return;
+
+        shape_.justify = given;
+
+        changed();
+    }
 
     [[nodiscard]] Elide elide() const { return shape_.elide; }
 
-    void elide(Elide given) { shape_.elide = given; }
+    void elide(Elide given) {
+        if (shape_.elide == given) return;
+
+        shape_.elide = given;
+
+        changed();
+    }
 
     [[nodiscard]] int capacity() const override;
 
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void paint(Canvas& onto) const override;
 
     bool handle(ClickEvent& what) override;
 

@@ -11,6 +11,8 @@ struct Mark {
     std::size_t upto = 0;
     std::string role;
     std::string address{};
+
+    friend bool operator==(const Mark&, const Mark&) = default;
 };
 
 }

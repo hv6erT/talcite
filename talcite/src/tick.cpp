@@ -25,13 +25,21 @@ Tick::Tick(std::string text, bool on) : text_(std::move(text)), on_(on) { role("
 
 // Setting the state from the program does not notify. Otherwise filling a window with its initial
 // values would fire everything connected to those values, and that is filling in, not pressing.
-void Tick::ticked(bool given) { on_ = given; }
+void Tick::ticked(bool given) {
+    if (on_ == given) return;
+
+    on_ = given;
+
+    changed();
+}
 
 // Flips the state and notifies. Space, a click and the shortcut key all go through here.
 void Tick::pick() {
     if (!enabled()) return;
 
     on_ = !on_;
+
+    changed();
 
     (void)trigger(PickEvent{});
 }
@@ -47,11 +55,8 @@ Size Tick::wants(Size room) const {
 
 // Draws the bracket with the mark, then the label elided to the room left, with the shortcut
 // letter underlined.
-View Tick::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn: the same rule and the same reason as in the button.
-    made.clear({{0, 0}, seen.size});
+void Tick::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -60,7 +65,7 @@ View Tick::paint(Size given, Area seen) {
     // and has nothing to guess.
     const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
+    onto.fill({{0, 0}, {given.wide, 1}}, look);
 
     const std::string first = on_ ? "[x] " : "[ ] ";
 
@@ -68,24 +73,22 @@ View Tick::paint(Size given, Area seen) {
     // check box; cut off, it would leave behind something that looks like plain text.
     const int room = std::max(given.wide - around, 0);
 
-    made.put({-seen.at.x, -seen.at.y}, first, look);
+    onto.put({0, 0}, first, look);
 
-    if (room <= 0) return made;
+    if (room <= 0) return;
 
     const std::string shown =
         elided(text_, room, Elide::right, how.glyph("talcite.elide"));
 
-    made.put({around - seen.at.x, -seen.at.y}, shown, look);
+    onto.put({around, 0}, shown, look);
 
     // The marking is computed on the elided label: a letter that is cut off has nothing to
     // underline. A shortcut key without an underline would be a key nobody learns about, and in
     // Midnight Commander a check box does show its letter. A disabled box marks none, since its
     // key does nothing.
     if (enabled())
-        talcite::ui::marking(made, {around - seen.at.x, -seen.at.y}, shown, shortcut_column(shown),
+        talcite::ui::marking(onto, {around, 0}, shown, shortcut_column(shown),
                           look, how.style(role() + ".key"));
-
-    return made;
 }
 
 // Space flips the box, Enter goes up. In a dialog Enter belongs to the default button, so a check

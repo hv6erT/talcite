@@ -21,15 +21,33 @@ public:
 
     [[nodiscard]] const std::string& title() const { return title_; }
 
-    void title(std::string given) { title_ = std::move(given); }
+    void title(std::string given) {
+        if (title_ == given) return;
+
+        title_ = std::move(given);
+
+        changed();
+    }
 
     [[nodiscard]] Border border() const { return shape_.border; }
 
-    void border(Border given) { shape_.border = given; }
+    void border(Border given) {
+        if (shape_.border == given) return;
+
+        shape_.border = given;
+
+        changed();
+    }
 
     [[nodiscard]] bool shade() const { return shape_.shade; }
 
-    void shade(bool given) { shape_.shade = given; }
+    void shade(bool given) {
+        if (shape_.shade == given) return;
+
+        shape_.shade = given;
+
+        changed();
+    }
 
     [[nodiscard]] bool opened() const;
 
@@ -58,7 +76,9 @@ public:
     [[nodiscard]] bool focusable() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     void activate() override;
 

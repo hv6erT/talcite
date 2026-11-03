@@ -266,12 +266,9 @@ Size Span::wants(Size room) const {
 // merged over the label's (`Style::merge`), so a role that sets only an underline keeps the colors.
 // A mark with an address also lays its hyperlink there. A mark over an ellipsis covers nothing:
 // what the ellipsis stands for is not shown.
-View Span::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
+void Span::paint(Canvas& onto) const {
+    const Size given = onto.size();
+    const Area seen = onto.seen();
 
     const Skin& how = skin();
 
@@ -286,9 +283,7 @@ View Span::paint(Size given, Area seen) {
     for (const Placed& one : placed(text_, shape_, given, mark, seen.at.y + seen.size.high)) {
         if (one.y < seen.at.y) continue;
 
-        const Spot at{-seen.at.x, one.y - seen.at.y};
-
-        made.put({one.x + at.x, at.y}, one.row.text, look);
+        onto.put({one.x, one.y}, one.row.text, look);
 
         for (const Mark& marked : marks()) {
             if (marked.line != one.row.line) continue;
@@ -299,16 +294,14 @@ View Span::paint(Size given, Area seen) {
             walked(one.row, one.x, [&](int x, int much, char32_t letter, std::size_t byte) {
                 if (!covers(marked, one.row.line, byte)) return;
 
-                const Spot spot{x + at.x, at.y};
+                const Spot spot{x, one.y};
 
-                made.put(spot, letter, over);
+                onto.put(spot, letter, over);
 
-                if (target.mark != 0) made.link({spot, {much, 1}}, target);
+                if (target.mark != 0) onto.link({spot, {much, 1}}, target);
             });
         }
     }
-
-    return made;
 }
 
 // A click with the left button on a mark with an address follows it (`FollowingMixin::followed`); a

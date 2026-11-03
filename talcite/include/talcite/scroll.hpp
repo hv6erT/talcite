@@ -23,16 +23,30 @@ public:
 
     [[nodiscard]] bool scrollbar() const { return shape_.scrollbar; }
 
-    void scrollbar(bool given) { shape_.scrollbar = given; }
+    void scrollbar(bool given) {
+        if (shape_.scrollbar == given) return;
+
+        shape_.scrollbar = given;
+
+        changed();
+    }
 
     [[nodiscard]] const std::string& scrollbar_role() const { return scrollbar_role_; }
 
-    void scrollbar_role(std::string given) { scrollbar_role_ = std::move(given); }
+    void scrollbar_role(std::string given) {
+        if (scrollbar_role_ == given) return;
+
+        scrollbar_role_ = std::move(given);
+
+        changed();
+    }
 
     [[nodiscard]] Size wants(Size room) const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void layout(Size given) override;
+
+    void paint(Canvas& onto) const override;
 
     bool handle(WheelEvent& what) override;
 

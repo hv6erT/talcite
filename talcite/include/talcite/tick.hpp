@@ -15,7 +15,13 @@ public:
 
     [[nodiscard]] const std::string& text() const { return text_; }
 
-    void text(std::string given) { text_ = std::move(given); }
+    void text(std::string given) {
+        if (text_ == given) return;
+
+        text_ = std::move(given);
+
+        changed();
+    }
 
     [[nodiscard]] bool ticked() const { return on_; }
 
@@ -28,7 +34,7 @@ public:
     [[nodiscard]] int capacity() const override;
 
 protected:
-    View paint(Size given, Area seen) override;
+    void paint(Canvas& onto) const override;
 
     void activate() override;
 

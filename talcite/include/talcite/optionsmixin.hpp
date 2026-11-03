@@ -69,7 +69,11 @@ private:
 template <std::derived_from<Node> Base>
 class OptionsMixin : public Base {
 public:
-    [[nodiscard]] Options& options() { return options_; }
+    [[nodiscard]] Options& options() {
+        this->Node::changed();
+
+        return options_;
+    }
 
     [[nodiscard]] const Options& options() const { return options_; }
 
@@ -83,6 +87,8 @@ public:
         if (options_.empty()) return;
 
         at_ = std::min(given, options_.many() - 1);
+
+        this->Node::changed();
     }
 
     [[nodiscard]] std::optional<std::string> value() const {
@@ -93,6 +99,8 @@ public:
 
     void value(const std::string& one) {
         if (const std::optional<std::size_t> found = options_.find(one)) at_ = *found;
+
+        this->Node::changed();
     }
 
     [[nodiscard]] int capacity() const override { return 0; }

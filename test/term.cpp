@@ -29,17 +29,15 @@ public:
 
 protected:
     // Draws the red `x` at (0, 0) on an otherwise empty page.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
         Style how;
         how.foreground = Color{false, 255, 0, 0};
 
-        made.put({0, 0}, U'x', how);
-
-        return made;
+        onto.put({0, 0}, U'x', how);
     }
 };
 
@@ -88,14 +86,12 @@ bool holds(const std::string& where, const std::string& what) {
 class Hostile : public ui::Root {
 protected:
     // Puts the text with the escape sequences at (0, 0).
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
-        made.put({0, 0}, std::string{"\x1b]52;c;cHduZWQ=\x07\x1bZ\xc2\x9b""31m"}, Style{});
-
-        return made;
+        onto.put({0, 0}, std::string{"\x1b]52;c;cHduZWQ=\x07\x1bZ\xc2\x9b""31m"}, Style{});
     }
 };
 
@@ -807,15 +803,13 @@ public:
 
 protected:
     // Puts "go" with its link and the plain "x" on an otherwise empty page.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
-        made.put({1, 0}, "go x", Style{});
-        made.link({{1, 0}, {2, 1}}, target);
-
-        return made;
+        onto.put({1, 0}, "go x", Style{});
+        onto.link({{1, 0}, {2, 1}}, target);
     }
 };
 
@@ -915,6 +909,7 @@ TRIAL("Term: the same link sends nothing again, a new address rewrites its cells
     same(line->written, std::string{});
 
     root.target = hyperlink("https://example.org/two");
+    root.repaint();
 
     term.draw();
 
@@ -937,14 +932,12 @@ public:
 
 protected:
     // Puts the text at the start of an otherwise empty page.
-    View paint(ui::Size given, ui::Area seen) override {
-        (void)seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
 
-        View made{given};
+        onto.fill({{0, 0}, given}, Style{});
 
-        made.put({0, 0}, text, style);
-
-        return made;
+        onto.put({0, 0}, text, style);
     }
 };
 
@@ -1095,6 +1088,7 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
     Worded root;
 
     root.text = "\xe0\xa4\x87\xe0\xa4\x95\xe0\xa5\x8d\xe0\xa4\x95\xe0\xa4\xbe (2026)";
+    root.repaint();
 
     const std::string word = root.text.substr(0, root.text.find(' '));
 
@@ -1110,6 +1104,7 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
 
     // An unchanged word stays; a change after it goes by itself.
     root.text = word + " (2027)";
+    root.repaint();
 
     line->written.clear();
 
@@ -1121,6 +1116,7 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
 
     // A changed word takes the rest of the row with it.
     root.text = word.substr(0, word.size() - 3) + "\xe0\xa5\x80 (2027)";
+    root.repaint();
 
     line->written.clear();
 
@@ -1146,6 +1142,7 @@ TRIAL("Term: a cluster, a spacing mark and a prepended character make their word
         Worded root;
 
         root.text = "ab " + word + " cd";
+        root.repaint();
 
         Term term{Setup{}, Seam<Console>{line}};
 
@@ -1161,6 +1158,7 @@ TRIAL("Term: a cluster, a spacing mark and a prepended character make their word
         // Changes on both sides of an unchanged word close to it: the word is not rewritten as a
         // gap between them.
         root.text = "ax " + word + " yd";
+        root.repaint();
 
         line->written.clear();
 
@@ -1180,6 +1178,7 @@ TRIAL("Term: the erasing before a word goes in the word's own style") {
     Worded root;
 
     root.text = "\xe0\xa4\x95\xe0\xa4\xbe";
+    root.repaint();
     root.style.background = Color{false, 0, 0, 200};
 
     Term term{Setup{}, Seam<Console>{line}};
@@ -1201,6 +1200,7 @@ TRIAL("Term: plain words go out in one piece, without erasing and without extra 
     Worded root;
 
     root.text = "Heat (1995) abc";
+    root.repaint();
 
     Term term{Setup{}, Seam<Console>{line}};
 
@@ -1228,6 +1228,7 @@ TRIAL("Term: after a word the terminal counts otherwise, the columns stay in pla
         Worded root;
 
         root.text = "Heat (1995) abc";
+        root.repaint();
 
         Term term{Setup{}, Seam<Console>{line}};
 
@@ -1238,6 +1239,7 @@ TRIAL("Term: after a word the terminal counts otherwise, the columns stay in pla
         // Draws the text and lets the model read what went out.
         const auto drawing = [&](const std::string& text) {
             root.text = text;
+            root.repaint();
 
             line->written.clear();
 

@@ -65,41 +65,44 @@ Area Modal::seat(Size given) const {
             wants};
 }
 
-// Paints the box at its seat with its shadow; the rest of the curtain is transparent.
-View Modal::paint(Size given, Area seen) {
-    View made{seen.size};
+// Lays the box out at its seat; the rest of the curtain holds nothing. The shadow falls outside
+// the box, so a box that moved or changed size changes the curtain, not only the box.
+void Modal::layout(Size given) {
+    if (children().empty()) return;
 
-    // Start from emptiness. A fresh sheet is filled with spaces that belong to whoever draws, so a
-    // screen-sized curtain would paint over everything beneath it, while it should be a rectangle
-    // with a box through which the rest shows. The same trick as in the menu, for the same reason.
-    made.clear({{0, 0}, seen.size});
+    Node& box = *children().front();
 
-    if (children().empty()) return made;
+    const Area was = box.area();
 
-    const Area where = seat(given);
+    box.arrange(seat(given));
 
-    if (where.size.wide <= 0 || where.size.high <= 0) return made;
+    if (shape_.shade && box.area() != was) changed();
+}
 
-    const Area part = Area::crossed(seen, where);
+// Paints the box at its seat with its shadow; the rest of the curtain is transparent, so a
+// screen-sized curtain does not paint over what lies beneath it.
+//
+// The shadow falls to the right and down, offset by one row and two columns, the same rule as
+// under a menu, because in Midnight Commander it is the same shadow. The letters underneath stay
+// and are only dimmed.
+void Modal::paint(Canvas& onto) const {
+    if (children().empty()) return;
 
-    made.draw(children().front()->render(where, part - where.at), part.at - seen.at);
+    Node& box = *children().front();
 
-    // The shadow falls to the right and down, offset by one row and two columns, the same rule as
-    // under a menu, because in Midnight Commander it is the same shadow. The letters underneath
-    // stay and are only dimmed.
-    if (!shape_.shade) return made;
+    box.render(onto);
+
+    const Area& where = box.area();
+
+    if (!shape_.shade || where.size.wide <= 0 || where.size.high <= 0) return;
 
     const int last_x = where.at.x + where.size.wide - 1;
     const int last_y = where.at.y + where.size.high - 1;
 
     const Style dark = skin().style("talcite.shade");
 
-    made.shade({{last_x + 1 - seen.at.x, where.at.y + 1 - seen.at.y}, {2, where.size.high - 1}},
-               dark);
-
-    made.shade({{where.at.x + 2 - seen.at.x, last_y + 1 - seen.at.y}, {where.size.wide, 1}}, dark);
-
-    return made;
+    onto.shade({{last_x + 1, where.at.y + 1}, {2, where.size.high - 1}}, dark);
+    onto.shade({{where.at.x + 2, last_y + 1}, {where.size.wide, 1}}, dark);
 }
 
 // Moves the focus by the given number of stops, wrapping around. The traversal boundary follows

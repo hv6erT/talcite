@@ -810,9 +810,9 @@ void Term::title(std::string_view said) {
     held_->console.provider().write(made);
 }
 
-// Draws a frame. The frame is made whole in memory, and only the difference goes to the terminal,
-// in a single write: a visible half frame is worse than a frame late by a microsecond. Throws
-// std::logic_error when no root is shown.
+// Draws a frame. The root paints what changed on the sheet it keeps (`Root::frame`), and only the
+// difference from the screen goes to the terminal, in a single write: a visible half frame is worse
+// than a frame late by a microsecond. Throws std::logic_error when no root is shown.
 void Term::draw() {
     Held& held = *held_;
 
@@ -823,7 +823,9 @@ void Term::draw() {
     // else's picture, and our memory of the frame is out of date anyway.
     if (held.away > 0) return;
 
-    View made = held.onto->render({{0, 0}, {held.wide, held.high}});
+    // A copy: finding the pictures shown whole (`bared`) takes the marks off the others, and the
+    // root's own sheet must stay as it painted it.
+    View made = held.onto->frame({held.wide, held.high});
 
     std::string into;
 
@@ -831,8 +833,8 @@ void Term::draw() {
     // blank sheet, so everything comes out anew.
     //
     // A fresh configuration does exactly the same, and that is what forcing a full repaint is. The
-    // tree is composed whole at every frame anyway; the only thing that remembered the previous
-    // picture is `standing`, and these four lines take that memory away.
+    // root's sheet always holds the whole picture, however little of it was painted this frame; the
+    // only memory of what the screen shows is `standing`, and these four lines take it away.
     if (held.shifted || !(held.standing.size() == made.size())) {
         // Kitty images do not belong to the text, so clearing the screen does not remove them; we
         // do it ourselves. The data stays: the repaint places them without sending them again.

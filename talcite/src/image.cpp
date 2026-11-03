@@ -117,6 +117,8 @@ void Image::hold(Figure given) {
     total_ = std::chrono::milliseconds{0};
     still_ = 0;
     began_ = std::chrono::steady_clock::now();
+
+    changed();
 }
 
 // The other way: a picture made in code, for which there is no file. Setting one source clears the
@@ -138,6 +140,8 @@ void Image::hold(Pixels given) {
     total_ = std::chrono::milliseconds{0};
     still_ = 0;
     began_ = std::chrono::steady_clock::now();
+
+    changed();
 }
 
 // Releases everything: no source, no frames, no format. A page being closed must hold neither a
@@ -169,6 +173,8 @@ void Image::play(bool given) {
     play_ = given;
 
     if (given) still(still_);
+
+    changed();
 }
 
 // Setting the frame is also seeking: the start of the count is moved as if the animation had just
@@ -176,6 +182,8 @@ void Image::play(bool given) {
 // can check the time arithmetic without waiting.
 void Image::still(std::size_t given) {
     still_ = given;
+
+    changed();
 
     if (upto_.empty()) return;
 
@@ -311,6 +319,7 @@ void Image::spread(Size given) {
 
                                  if (!made.held()) {
                                      emptied(*self);
+                                     self->changed();
 
                                      return;
                                  }
@@ -322,6 +331,7 @@ void Image::spread(Size given) {
                                  self->total_ = summed(self->fit_, self->upto_);
                                  self->still_ = std::min(self->still_, self->upto_.size() - 1);
                                  self->sharpened();
+                                 self->changed();
                              })
                              .recover([weak, want, emptied](const std::exception&) {
                                  const auto self = weak.lock();
@@ -330,6 +340,7 @@ void Image::spread(Size given) {
 
                                  self->ordered_.reset();
                                  emptied(*self);
+                                 self->changed();
                              }));
 
         return;
@@ -413,41 +424,40 @@ void Image::sharpened() {
 
                              for (std::shared_ptr<const std::string>& one : made)
                                  self->pictures_.push_back(Picture{marked(), room, std::move(one), nullptr, 0});
+
+                             self->changed();
                          }));
+}
+
+// The picture fitted to the room (`spread`), and the appointment for the next frame of an animation
+// with the root's schedule, made anew at every layout; it marks the picture changed, and the frame
+// is chosen by the time when it is drawn. A still picture and a paused animation make none, and
+// neither does a picture off the tree, which is not drawn.
+void Image::layout(Size given) {
+    spread(given);
+
+    if (fit_.stills().empty()) return;
+
+    if (Root* const top = root(); top != nullptr) {
+        if (const std::optional<std::chrono::milliseconds> left = until_next()) frame_ = top->schedule().after(*left, [this] { changed(); });
+        else frame_.stop();
+    }
 }
 
 // Placement in the area: centered, like the preview in Midnight Commander. The rest of the area is
 // left undrawn, so the parent's background shows through it, as with every container.
-View Image::paint(Size given, Area seen) {
-    View made{seen.size};
+void Image::paint(Canvas& onto) const {
+    if (fit_.stills().empty()) return;
 
-    made.clear({{0, 0}, seen.size});
-
-    spread(given);
-
-    if (fit_.stills().empty()) return made;
-
+    const Size given = onto.size();
     const Style look = skin().style(role());
 
     const Spot at{(given.wide - placed_.wide) / 2, (given.high - placed_.high) / 2};
-
-    const Spot from{at.x - seen.at.x, at.y - seen.at.y};
     const std::size_t which = chosen();
 
-    drawn(made, from, fine_ != Graphics::none ? coarse_ : fit_, which, made_, look, colored(*this), unicode_);
+    drawn(onto, at, fine_ != Graphics::none ? coarse_ : fit_, which, made_, look, colored(*this), unicode_);
 
-    if (fine_ != Graphics::none && which < pictures_.size()) made.picture({from, placed_}, pictures_[which]);
-
-    // The next frame of an animation is an appointment with the root's schedule, made anew at every
-    // frame; it only wakes the loop, since the frame is chosen by the time when it is drawn. A still
-    // picture and a paused animation make none, and neither does a picture off the tree, which is
-    // not drawn.
-    if (Root* const top = root(); top != nullptr) {
-        if (const std::optional<std::chrono::milliseconds> left = until_next()) frame_ = top->schedule().after(*left, {});
-        else frame_.stop();
-    }
-
-    return made;
+    if (fine_ != Graphics::none && which < pictures_.size()) onto.picture({at, placed_}, pictures_[which]);
 }
 
 }

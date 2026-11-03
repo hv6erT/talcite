@@ -24,27 +24,21 @@ Size MenuSeparator::wants(Size room) const { return {0, std::min(1, room.high)};
 
 // Paints the line. The border kind comes from the menu we lie in, so the line is not thin in a
 // thick border.
-View MenuSeparator::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
+void MenuSeparator::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     Border how = Border::thin;
 
     if (const Menu* one = dynamic_cast<const Menu*>(parent())) how = one->border();
 
-    if (how == Border::none) return made;
+    if (how == Border::none) return;
 
     const Skin& told = skin();
 
     const Lines lines = told.lines(how);
     const Style edge = told.style(role() + ".frame");
 
-    across(made, {-seen.at.x, -seen.at.y}, given.wide, lines.across, edge);
-
-    return made;
+    across(onto, {0, 0}, given.wide, lines.across, edge);
 }
 
 }

@@ -5,8 +5,8 @@
 
 #include "eliding.hpp"
 #include "talcite/area.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
 
 namespace talcite::ui {
 
@@ -20,7 +20,7 @@ namespace talcite::ui {
 //
 // The style comes from outside, not from a role. This label is drawn inside another widget, so it
 // is the host that queried the skin and knows how its title should look.
-inline void along(View& into, Spot at, int much, const std::string& said, Justify justify,
+inline void along(Canvas& into, Spot at, int much, const std::string& said, Justify justify,
                   const Style& look, char32_t mark) {
     if (said.empty() || much <= 2) return;
 

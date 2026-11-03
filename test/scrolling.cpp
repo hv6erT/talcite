@@ -23,14 +23,20 @@ using namespace talcite;
 
 namespace {
 
+// How many times and with what visibility a node was drawn, kept apart from the node, since drawing
+// does not change the node.
+struct Tally {
+    int drawn = 0;
+    ui::Area last;
+};
+
 // A node that records how many times and with what visibility it was drawn. It shows whether the
 // saving really works: an invisible child should not get paint at all.
 class Sheet : public ui::Node {
 public:
     explicit Sheet(ui::Size wants, char32_t what) : wants_(wants), what_(what) {}
 
-    int drawn = 0;
-    ui::Area last;
+    const std::shared_ptr<Tally> tally = std::make_shared<Tally>();
 
     // The size given in the constructor, whatever room is offered.
     [[nodiscard]] ui::Size wants(ui::Size) const override { return wants_; }
@@ -38,18 +44,19 @@ public:
 protected:
     // Counts the call, remembers the visible part, and fills the size with letters that change by
     // row, starting from the letter given in the constructor.
-    View paint(ui::Size given, ui::Area seen) override {
-        ++drawn;
-        last = seen;
+    void paint(Canvas& onto) const override {
+        const ui::Size given = onto.size();
+        const ui::Area seen = onto.seen();
 
-        View made{seen.size};
+        ++tally->drawn;
+        tally->last = seen;
+
+        onto.fill({{0, 0}, given}, Style{});
 
         for (int y = 0; y < given.high; ++y)
             for (int x = 0; x < given.wide; ++x)
-                made.put({x - seen.at.x, y - seen.at.y},
+                onto.put({x, y},
                             static_cast<char32_t>(what_ + static_cast<char32_t>(y)), Style{});
-
-        return made;
     }
 
 private:
@@ -89,10 +96,10 @@ TRIAL("Visibility: the whole rectangle when nobody says otherwise") {
 
     (void)one->render({{0, 0}, {4, 4}});
 
-    same(one->last.at.x, 0);
-    same(one->last.at.y, 0);
-    same(one->last.size.wide, 4);
-    same(one->last.size.high, 4);
+    same(one->tally->last.at.x, 0);
+    same(one->tally->last.at.y, 0);
+    same(one->tally->last.size.wide, 4);
+    same(one->tally->last.size.high, 4);
 }
 
 TRIAL("Visibility: what cannot be seen is not drawn") {
@@ -106,8 +113,8 @@ TRIAL("Visibility: what cannot be seen is not drawn") {
 
     (void)top.render({{0, 0}, {4, 2}});
 
-    same(first->drawn, 1);
-    same(second->drawn, 0);
+    same(first->tally->drawn, 1);
+    same(second->tally->drawn, 0);
 }
 
 TRIAL("Visibility: the intersection is computed in both directions") {
@@ -207,9 +214,9 @@ TRIAL("Vertical scroll: draws only the rows that are visible") {
 
     (void)one.render({{0, 0}, {6, 2}});
 
-    same(first->drawn, 0);
-    same(second->drawn, 1);
-    same(third->drawn, 0);
+    same(first->tally->drawn, 0);
+    same(second->tally->drawn, 1);
+    same(third->tally->drawn, 0);
 }
 
 TRIAL("Vertical scroll: the child gets its visibility in its own coordinates") {
@@ -223,8 +230,8 @@ TRIAL("Vertical scroll: the child gets its visibility in its own coordinates") {
 
     (void)one.render({{0, 0}, {6, 3}});
 
-    same(inner->last.at.y, 4);
-    same(inner->last.size.high, 3);
+    same(inner->tally->last.at.y, 4);
+    same(inner->tally->last.size.high, 3);
 }
 
 TRIAL("Vertical scroll: the wheel scrolls, and at the end passes the event up") {
@@ -320,10 +327,10 @@ TRIAL("Scroll: scrolls in both directions at once") {
 
     same(one.shift().x, 3);
     same(one.shift().y, 4);
-    same(inner->last.at.x, 3);
-    same(inner->last.at.y, 4);
-    same(inner->last.size.wide, 5);
-    same(inner->last.size.high, 5);
+    same(inner->tally->last.at.x, 3);
+    same(inner->tally->last.at.y, 4);
+    same(inner->tally->last.size.wide, 5);
+    same(inner->tally->last.size.high, 5);
 }
 
 TRIAL("Scroll: the wheel scrolls vertically, and with Shift horizontally") {
@@ -451,6 +458,8 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
 
     View made{{1, 12}};
 
+    Canvas onto{made};
+
     ui::Scrollbar{.at = {0, 0},
                   .much = 12,
                   .shift = 1'500'000'000,
@@ -458,7 +467,7 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
                   .window = 1000,
                   .skin = how,
                   .role = role}
-        .draw(made);
+        .draw(onto);
 
     same(made.at({0, 0}).letter, U'│');
     same(made.at({0, 11}).letter, U'│');
@@ -476,6 +485,8 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
 
     View made{{1, 12}};
 
+    Canvas onto{made};
+
     ui::Scrollbar{.at = {0, 0},
                   .much = 12,
                   .shift = 0,
@@ -483,7 +494,7 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
                   .window = 1'500'000'000,
                   .skin = how,
                   .role = role}
-        .draw(made);
+        .draw(onto);
 
     for (int y = 0; y <= 5; ++y) same(made.at({0, y}).letter, U'█');
     for (int y = 6; y <= 11; ++y) same(made.at({0, y}).letter, U'│');
@@ -635,8 +646,8 @@ TRIAL("Scroll: the bars take a column and a row from the content") {
 
     (void)one.render({{0, 0}, {6, 6}});
 
-    same(inner->last.size.wide, 5);
-    same(inner->last.size.high, 5);
+    same(inner->tally->last.size.wide, 5);
+    same(inner->tally->last.size.high, 5);
 }
 
 TRIAL("Scrollers take one child") {
@@ -1004,7 +1015,7 @@ ui::Size window(ui::Axis axis) {
 
     (void)one.render({{0, 0}, {10, 5}});
 
-    return sheet->last.size;
+    return sheet->tally->last.size;
 }
 
 }

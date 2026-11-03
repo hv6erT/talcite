@@ -78,11 +78,8 @@ void Select::chose(const std::string& given) {
 }
 
 // Draws the row: the value elided on the right and the drop-down mark at the right edge.
-View Select::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent wherever nothing is drawn: the same rule and the same reason as in the button.
-    made.clear({{0, 0}, seen.size});
+void Select::paint(Canvas& onto) const {
+    const Size given = onto.size();
 
     const Skin& how = skin();
 
@@ -91,24 +88,22 @@ View Select::paint(Size given, Area seen) {
     // and has nothing to guess.
     const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
-    made.fill({{-seen.at.x, -seen.at.y}, {given.wide, 1}}, look);
+    onto.fill({{0, 0}, {given.wide, 1}}, look);
 
-    if (given.wide <= 0) return made;
+    if (given.wide <= 0) return;
 
     // The drop-down mark stands at the right edge, however wide we are made, as in the settings
     // window, where a selection stretches across the whole column.
-    made.put({given.wide - 1 - seen.at.x, -seen.at.y}, how.glyph(role() + ".mark"), look);
+    onto.put({given.wide - 1, 0}, how.glyph(role() + ".mark"), look);
 
     const int room = std::max(given.wide - aside, 0);
 
-    if (room <= 0) return made;
+    if (room <= 0) return;
 
-    made.put({-seen.at.x, -seen.at.y},
+    onto.put({0, 0},
                 elided(value().value_or(std::string{}), room, Elide::right,
                        how.glyph("talcite.elide")),
                 look);
-
-    return made;
 }
 
 // Enter opens the list. The side arrows (and Home, End) change the value without opening and

@@ -130,10 +130,14 @@ void List::aim(int given) {
     if (much == 0) {
         which_ = -1;
 
+        changed();
+
         return;
     }
 
     which_ = std::clamp(given, 0, much - 1);
+
+    changed();
     follow_ = true;
 
     const Root* top = root();
@@ -178,6 +182,8 @@ void List::first(std::size_t given, Moved how) {
 
     shift_ = static_cast<int>(std::min<std::size_t>(given, static_cast<std::size_t>(INT_MAX)));
 
+    changed();
+
     if (shift_ != was) (void)trigger(ScrollEvent{how});
 }
 
@@ -197,6 +203,8 @@ bool List::going(int to, Moved how) {
 
     if (which_ != to) {
         which_ = to;
+
+        changed();
 
         (void)trigger(ScrollEvent{how});
     }
@@ -266,6 +274,8 @@ bool List::handle(WheelEvent& what) {
 
     shift_ = std::clamp(shift_ - what.steps() * stepping, 0, std::max(much - window, 0));
 
+    changed();
+
     if (shift_ == was) return false;
 
     (void)trigger(ScrollEvent{Moved::by_hand});
@@ -281,6 +291,8 @@ void List::slid(int to, Moved how) {
     const int was = shift_;
 
     shift_ = std::clamp(to, 0, std::max(much - window, 0));
+
+    changed();
 
     if (shift_ != was) (void)trigger(ScrollEvent{how});
 }
@@ -319,6 +331,8 @@ bool List::handle(FocusEvent& what) {
         if (which_ != at) {
             which_ = at;
 
+            changed();
+
             (void)trigger(ScrollEvent{});
         }
     }
@@ -326,15 +340,9 @@ bool List::handle(FocusEvent& what) {
     return false;
 }
 
-// Paints the visible rows and, when there is one, the scrollbar; the scroll position is settled
-// here, because only here is the real height known.
-View List::paint(Size given, Area seen) {
-    View made{seen.size};
-
-    // Transparent where nothing is drawn, the rule described at `Node::paint`.
-
-    made.clear({{0, 0}, seen.size});
-
+// Lays the visible rows out and settles the scroll position, because only here is the real height
+// known; the scrollbar's track goes to the grip.
+void List::layout(Size given) {
     const int much = static_cast<int>(children().many());
 
     // Items may have disappeared behind the list's back: `Children::remove` is not virtual, so the row
@@ -344,6 +352,8 @@ View List::paint(Size given, Area seen) {
     // A scrollbar shown "when needed" (`needed`) appears only for a list longer than the window.
     const int aside = shape_.scrollbar && given.wide > 0 && (!shape_.needed || much > given.high) ? 1 : 0;
     const int wide = given.wide - aside;
+
+    const int was = shift_;
 
     // The scroll position is computed here, because only here is the height the list really got
     // known. The view catches up with the current row only when the row moved; without this
@@ -358,7 +368,10 @@ View List::paint(Size given, Area seen) {
 
     shift_ = std::clamp(shift_, 0, std::max(much - given.high, 0));
 
-    // The rows in view are drawn, and their list is kept for the next frame.
+    // The bar shows the offset: one the layout moved is a change of the list, not only of its rows.
+    if (shift_ != was) changed();
+
+    // The rows in view are laid out, and their list is kept for painting and for the next frame.
     const int from = shift_;
     const int upto = std::clamp(shift_ + std::max(given.high, 0), from, much);
 
@@ -371,10 +384,7 @@ View List::paint(Size given, Area seen) {
     for (int at = from; at < upto; ++at) {
         const std::shared_ptr<Node>& row = children()[static_cast<std::size_t>(at)];
 
-        const Area where{{0, at - shift_}, {wide, 1}};
-        const Area part = Area::crossed(seen, where);
-
-        made.draw(row->render(where, part - where.at), part.at - seen.at);
+        row->arrange({{0, at - shift_}, {wide, 1}});
 
         laid.push_back(row);
         now.push_back(row.get());
@@ -393,9 +403,7 @@ View List::paint(Size given, Area seen) {
     const auto hidden = [&](Node& row) {
         if (row.area().size.high == 0 && row.area().at == Spot{0, 0}) return;
 
-        const Area where{{0, 0}, {wide, 0}};
-
-        (void)row.render(where, Area::crossed(seen, where) - where.at);
+        row.arrange({{0, 0}, {wide, 0}});
     };
 
     if (children().changes() != swept_) {
@@ -418,7 +426,7 @@ View List::paint(Size given, Area seen) {
     laid_ = std::move(laid);
 
     if (aside != 0) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, seen, true),
+        const Scrollbar bar{.at = Scrollbar::edge(given, {{0, 0}, given}, true),
                             .much = given.high,
                             .shift = static_cast<std::size_t>(shift_),
                             .whole = static_cast<std::size_t>(much),
@@ -427,18 +435,32 @@ View List::paint(Size given, Area seen) {
                             .skin = skin(),
                             .role = scrollbar_role_};
 
-        bar.draw(made);
-
-        Track mine = bar.track();
-
-        mine.at = Scrollbar::edge(given, {{0, 0}, given}, true);
-
-        grip_->laid(mine);
+        grip_->laid(bar.track());
     } else {
         grip_->laid(std::nullopt);
     }
+}
 
-    return made;
+// Paints the rows laid out in view and, when there is one, the scrollbar.
+void List::paint(Canvas& onto) const {
+    for (const std::weak_ptr<Node>& one : laid_)
+        if (const std::shared_ptr<Node> row = one.lock(); row && row->parent() == this) row->render(onto);
+
+    const Size given = onto.size();
+    const int much = static_cast<int>(children().many());
+
+    if (!shape_.scrollbar || given.wide <= 0 || (shape_.needed && much <= given.high)) return;
+
+    const Scrollbar bar{.at = Scrollbar::edge(given, {{0, 0}, given}, true),
+                        .much = given.high,
+                        .shift = static_cast<std::size_t>(shift_),
+                        .whole = static_cast<std::size_t>(much),
+                        .window = static_cast<std::size_t>(given.high),
+                        .focused = Scrollbar::focused_in(*this),
+                        .skin = skin(),
+                        .role = scrollbar_role_};
+
+    bar.draw(onto);
 }
 
 }

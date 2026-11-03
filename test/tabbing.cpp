@@ -390,3 +390,23 @@ TRIAL("Tabs: only tabs go in, and a tab holds one page") {
 
     same(tabs->which(), std::size_t{0});
 }
+
+// A tab's name stands in the strip, which the tabs paint, not over the tab's own page: so a renamed
+// tab, shown or not, shows its new name at the next frame, and the names beside it move with it.
+TRIAL("Tabs: a renamed tab shows its new name in the strip at the next frame") {
+    ui::Root top;
+    Three three;
+
+    top.children().add(three.tabs);
+
+    (void)top.render({{0, 0}, {40, 6}});
+
+    three.beta.tab->text("Bravo");
+
+    const std::string row = read(top.render({{0, 0}, {40, 6}}), 0);
+
+    ought(row.find("Beta") == std::string::npos);
+    ought(row.find("Alpha") < row.find("Bravo"));
+    ought(row.find("Bravo") < row.find("Gamma"));
+    ought(row.find("Gamma") != std::string::npos);
+}
