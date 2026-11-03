@@ -449,14 +449,14 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
 // address lays its hyperlink too. A cell holds one line, so only marks of line 0 count.
 void marked(Canvas& made, const TableCell& cell, Spot at, int room, Justify justify, const Style& look, const Skin& how) {
     const Traced whole = elided(traced(cell.text, 0), room, cell.elide, how.glyph("talcite.elide"));
-    const std::string got = cut(whole.text, room);
+    const auto [bytes, much] = fitting(whole.text, room);
 
     Traced kept;
 
-    kept.text = got;
-    kept.bytes.assign(whole.bytes.begin(), whole.bytes.begin() + static_cast<std::ptrdiff_t>(got.size()));
+    kept.text = whole.text.substr(0, bytes);
+    kept.bytes.assign(whole.bytes.begin(), whole.bytes.begin() + static_cast<std::ptrdiff_t>(bytes));
 
-    const int rest = std::max(room - columns(got, got.size()), 0);
+    const int rest = std::max(room - much, 0);
     const int x = at.x + (justify == Justify::right ? rest : justify == Justify::center ? rest / 2 : 0);
 
     for (const Mark& one : cell.marks) {
@@ -474,16 +474,18 @@ void marked(Canvas& made, const TableCell& cell, Spot at, int room, Justify just
 }
 
 // The text in a column `wide` cells wide at `at`, justified: the head that fits (`fitting`, by
-// columns and character widths, not by bytes) and spaces in the same look on the side the
-// justification leaves free. Painted straight onto the canvas, without composing a string of the
-// padded text for every cell of every row.
+// character widths, not by bytes) and spaces in the same look on the side the justification leaves
+// free. Painted straight onto the canvas, without composing a string of the padded text for every
+// cell of every row. A tab is not expanded here as in a viewer's line (`Page`): in a cell it is a
+// stray character of a name, shown as its picture in one cell (`shown`), and the justification
+// counts it as the painting does.
 void placed(Canvas& onto, Spot at, std::string_view what, int wide, Justify justify, const Style& look) {
     if (wide <= 0) return;
 
     const auto [bytes, much] = fitting(what, wide);
     const std::string_view got = what.substr(0, bytes);
 
-    const int rest = std::max(wide - columns(got, got.size()), 0);
+    const int rest = std::max(wide - much, 0);
     const int left = justify == Justify::right ? rest : justify == Justify::center ? rest / 2 : 0;
 
     if (left > 0) onto.fill({at, {left, 1}}, look);

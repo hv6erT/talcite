@@ -27,39 +27,6 @@ constexpr int tabbing = 8;
     return static_cast<unsigned char>(what[at]) < 0x80 && (at + 1 == what.size() || static_cast<unsigned char>(what[at + 1]) < 0x80);
 }
 
-// How many cells the start of a line takes up to the given byte. A tab advances to the next
-// multiple of eight, and every other cluster takes the cells it takes (`width`): a double-width
-// character two, a letter with its combining marks one. The same rule by which `Page` cuts a line
-// into pieces. It lives here so that it exists in one place: if the cutting and the status bar
-// counted separately, sooner or later they would show two different columns for the same cursor.
-//
-// No window width is involved, so a tab is not clipped at the edge. `Page` does that because it
-// has to fit a piece; counting a column asks about the line, not the screen.
-[[nodiscard]] inline int columns(std::string_view what, std::size_t upto) {
-    int much = 0;
-    std::size_t at = 0;
-
-    while (at < what.size() && at < upto) {
-        if (what[at] != '\t' && single(what, at)) {
-            ++much;
-            ++at;
-
-            continue;
-        }
-
-        const std::size_t next = cluster_after(what, at);
-
-        if (what[at] == '\t')
-            much = ((much / tabbing) + 1) * tabbing;
-        else
-            much += width(what.substr(at, next - at));
-
-        at = next;
-    }
-
-    return much;
-}
-
 // The head of a string that fits in the given number of cells: how many bytes it has, and how many
 // cells they take. We count by clusters, not bytes or characters, and by their widths; otherwise
 // the first CJK character would break the wrapping, and a cut between a letter and its accent would

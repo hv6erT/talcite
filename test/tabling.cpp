@@ -1337,3 +1337,40 @@ TRIAL("Table: the room a cell's text leaves takes the cell's role too") {
     same(made.at({11, 0}).letter, U'c');
     ought(made.at({13, 0}).style.bold);
 }
+
+// A tab in a cell is a stray character of a name, shown as its picture in one cell, and the
+// justification counts it as one cell too: a cell justified to the right ends at the column's
+// edge, and a mark over the letter after the tab stands on that letter.
+TRIAL("Table: a tab in a cell takes one cell, also for the justification and the marks") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 6, ui::Justify::right}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            if (which == 0 && most > 0) {
+                ui::TableCell cell{"a\tb", {}};
+
+                cell.marks.push_back(ui::Mark{0, 2, 3, "talcite.table.mark"});
+
+                made.push_back(ui::TableRow{cell});
+            }
+
+            return made;
+        },
+        1);
+
+    sheet.children().add(one);
+
+    const View made = sheet.render({{0, 0}, {6, 1}});
+
+    same(made.at({3, 0}).letter, U'a');
+    same(made.at({4, 0}).letter, U'␉');
+    same(made.at({5, 0}).letter, U'b');
+    ought(made.at({5, 0}).style.bold);
+    ought(!made.at({3, 0}).style.bold);
+}
