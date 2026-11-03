@@ -764,18 +764,39 @@ Entry entry_at(const path& where) {
 
 #endif
 
+// Puts the entries in the order of `before`, which compares two of them. The sort moves numbers of
+// places, and every entry moves once at the end: an entry is two paths and more, and moving it at
+// every step of the sort cost more than the comparisons.
+template <typename Before>
+void arranged(std::vector<Entry>& among, Before before) {
+    if (std::is_sorted(among.begin(), among.end(), before)) return;
+
+    std::vector<std::size_t> order(among.size());
+
+    for (std::size_t at = 0; at < order.size(); ++at) order[at] = at;
+
+    std::sort(order.begin(), order.end(),
+              [&among, &before](std::size_t one, std::size_t two) { return before(among[one], among[two]); });
+
+    std::vector<Entry> made;
+
+    made.reserve(among.size());
+
+    for (const std::size_t at : order) made.push_back(std::move(among[at]));
+
+    among = std::move(made);
+}
+
 // Sorts the entries by path, name by name, as a tree needs it (`walk_at`).
 void sorted(std::vector<Entry>& among) {
-    std::sort(among.begin(), among.end(),
-              [](const Entry& one, const Entry& two) { return one.where < two.where; });
+    arranged(among, [](const Entry& one, const Entry& two) { return one.where < two.where; });
 }
 
 // Sorts the entries of one directory. They all start with the same parent, spelled the same, so
 // comparing the whole native text gives the order of the names, the order the paths would give,
 // without walking the parent element by element at every comparison.
 void sorted_in(std::vector<Entry>& among) {
-    std::sort(among.begin(), among.end(),
-              [](const Entry& one, const Entry& two) { return one.where.native() < two.where.native(); });
+    arranged(among, [](const Entry& one, const Entry& two) { return one.where.native() < two.where.native(); });
 }
 
 #ifdef _WIN32
