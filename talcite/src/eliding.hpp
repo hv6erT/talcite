@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "talcite/encoding.hpp"
@@ -20,6 +21,12 @@ namespace talcite::ui {
 // if a tab expansion entered the line's content, byte positions would no longer match the file.
 constexpr int tabbing = 8;
 
+// Whether the byte at `at` is a cluster of its own, one cell wide: an ASCII character not followed
+// by a byte that could join it. A control character counts too, shown as its picture (`shown`).
+[[nodiscard]] inline bool single(std::string_view what, std::size_t at) {
+    return static_cast<unsigned char>(what[at]) < 0x80 && (at + 1 == what.size() || static_cast<unsigned char>(what[at + 1]) < 0x80);
+}
+
 // How many cells the start of a line takes up to the given byte. A tab advances to the next
 // multiple of eight, and every other cluster takes the cells it takes (`width`): a double-width
 // character two, a letter with its combining marks one. The same rule by which `Page` cuts a line
@@ -33,6 +40,13 @@ constexpr int tabbing = 8;
     std::size_t at = 0;
 
     while (at < what.size() && at < upto) {
+        if (what[at] != '\t' && single(what, at)) {
+            ++much;
+            ++at;
+
+            continue;
+        }
+
         const std::size_t next = cluster_after(what, at);
 
         if (what[at] == '\t')
@@ -46,16 +60,18 @@ constexpr int tabbing = 8;
     return much;
 }
 
-// The head of a string that fits in the given number of cells. We count by clusters, not bytes
-// or characters, and by their widths; otherwise the first CJK character would break the wrapping,
-// and a cut between a letter and its accent would leave the accent for the next row.
-inline std::string cut(std::string_view what, int wide) {
+// The head of a string that fits in the given number of cells: how many bytes it has, and how many
+// cells they take. We count by clusters, not bytes or characters, and by their widths; otherwise
+// the first CJK character would break the wrapping, and a cut between a letter and its accent would
+// leave the accent for the next row.
+inline std::pair<std::size_t, int> fitting(std::string_view what, int wide) {
     std::size_t at = 0;
     int much = 0;
 
     while (at < what.size()) {
-        const std::size_t next = cluster_after(what, at);
-        const int one = width(what.substr(at, next - at));
+        const bool lone = single(what, at);
+        const std::size_t next = lone ? at + 1 : cluster_after(what, at);
+        const int one = lone ? 1 : width(what.substr(at, next - at));
 
         if (much + one > wide) break;
 
@@ -63,8 +79,11 @@ inline std::string cut(std::string_view what, int wide) {
         at = next;
     }
 
-    return std::string{what.substr(0, at)};
+    return {at, much};
 }
+
+// The head itself (`fitting`).
+inline std::string cut(std::string_view what, int wide) { return std::string{what.substr(0, fitting(what, wide).first)}; }
 
 // The same from the end: the tail of the given width, whole clusters only.
 inline std::string tail(std::string_view what, int wide) {

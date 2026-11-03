@@ -92,7 +92,9 @@ void Canvas::put(ui::Spot at, char32_t what, const Style& how) {
 
 // UTF-8 text from `at`, cluster by cluster, advancing by each glyph's width and stopping at the
 // right edge of the clip; a cluster that shows nothing takes no cell, as in `View::put`. A row
-// outside the clip is not read at all.
+// outside the clip is not read at all. A printable ASCII character not followed by a byte that
+// could join it is a cluster of its own, one cell wide and shown as itself: it goes into its cell
+// at once, as `View::put` would put it, without the way through clusters and glyphs.
 void Canvas::put(ui::Spot at, std::string_view what, const Style& how) {
     const int row = at.y + origin_.y;
 
@@ -103,6 +105,23 @@ void Canvas::put(ui::Spot at, std::string_view what, const Style& how) {
     std::size_t which = 0;
 
     while (which < what.size() && at.x < right) {
+        const auto byte = static_cast<unsigned char>(what[which]);
+
+        if (byte >= 0x20 && byte < 0x7F && (which + 1 == what.size() || static_cast<unsigned char>(what[which + 1]) < 0x80)) {
+            if (const ui::Spot here = at + origin_; holds(here)) {
+                Cell& one = sheet_->cell(here);
+
+                // Only half of a wide character or a wide one leaves something to mend around it.
+                if (one.letter == 0 || one.letter >= 0x80) sheet_->broken(here);
+
+                one = Cell{byte, how};
+            }
+
+            ++which;
+            ++at.x;
+
+            continue;
+        }
         const std::size_t next = cluster_after(what, which);
         const char32_t one = glyph(what.substr(which, next - which));
 

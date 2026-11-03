@@ -107,7 +107,8 @@ void View::broken(ui::Spot where) {
 
     if (one.letter == 0 && where.x > 0) cell({where.x - 1, where.y}).letter = U' ';
 
-    if (width(one.letter) == 2 && holds({where.x + 1, where.y})) {
+    // Below U+0080 nothing is wide, and the cell's width need not be looked up.
+    if (one.letter >= 0x80 && width(one.letter) == 2 && holds({where.x + 1, where.y})) {
         Cell& after = cell({where.x + 1, where.y});
 
         if (after.letter == 0) after.letter = U' ';

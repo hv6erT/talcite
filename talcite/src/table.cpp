@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <utility>
 
 #include "talcite/skin.hpp"
@@ -442,7 +444,7 @@ std::vector<int> parted(const std::vector<TableColumn>& columns, int wide) {
 // The marks of a cell laid over it as it was drawn at `at` in `room` columns: the letters stay, and
 // each mark's role is merged over the cell's look, as a label does with its marks (`Span`), so a
 // meter of colored segments or one emphasized word stands in a single cell. The cell is traced the
-// way it was drawn, elided and then cut and justified as `ranged` does, so a mark follows its
+// way it was drawn, elided and then cut and justified as `placed` does, so a mark follows its
 // bytes wherever eliding moved them, and a mark over the ellipsis covers nothing. A mark with an
 // address lays its hyperlink too. A cell holds one line, so only marks of line 0 count.
 void marked(Canvas& made, const TableCell& cell, Spot at, int room, Justify justify, const Style& look, const Skin& how) {
@@ -471,27 +473,24 @@ void marked(Canvas& made, const TableCell& cell, Spot at, int room, Justify just
     }
 }
 
-// The text padded to the column width according to the justification. It is cut with `cut` from
-// `eliding.hpp`, that is by columns and character widths, not by bytes.
-std::string ranged(const std::string& what, int wide, Justify justify) {
-    if (wide <= 0) return {};
+// The text in a column `wide` cells wide at `at`, justified: the head that fits (`fitting`, by
+// columns and character widths, not by bytes) and spaces in the same look on the side the
+// justification leaves free. Painted straight onto the canvas, without composing a string of the
+// padded text for every cell of every row.
+void placed(Canvas& onto, Spot at, std::string_view what, int wide, Justify justify, const Style& look) {
+    if (wide <= 0) return;
 
-    const std::string got = cut(what, wide);
-    const int much = columns(got, got.size());
-    const int rest = std::max(wide - much, 0);
+    const auto [bytes, much] = fitting(what, wide);
+    const std::string_view got = what.substr(0, bytes);
 
-    if (rest == 0) return got;
+    const int rest = std::max(wide - columns(got, got.size()), 0);
+    const int left = justify == Justify::right ? rest : justify == Justify::center ? rest / 2 : 0;
 
-    if (justify == Justify::right) return std::string(static_cast<std::size_t>(rest), ' ') + got;
+    if (left > 0) onto.fill({at, {left, 1}}, look);
 
-    if (justify == Justify::center) {
-        const int left = rest / 2;
+    onto.put({at.x + left, at.y}, got, look);
 
-        return std::string(static_cast<std::size_t>(left), ' ') + got +
-               std::string(static_cast<std::size_t>(rest - left), ' ');
-    }
-
-    return got + std::string(static_cast<std::size_t>(rest), ' ');
+    if (rest > left) onto.fill({{at.x + left + much, at.y}, {rest - left, 1}}, look);
 }
 
 }
@@ -533,14 +532,14 @@ void Table::spread(Size given) {
     }
 
     while (kept.shown.size() < want) {
-        const std::vector<TableRow> got = kept.source(kept.top + kept.shown.size(), batch);
+        std::vector<TableRow> got = kept.source(kept.top + kept.shown.size(), batch);
 
         if (got.empty()) break;
 
-        for (const TableRow& one : got) {
+        for (TableRow& one : got) {
             if (kept.shown.size() >= want) break;
 
-            kept.shown.push_back(one);
+            kept.shown.push_back(std::move(one));
         }
     }
 
@@ -631,9 +630,7 @@ void Table::paint(Canvas& onto) const {
             const int room = kept.spread[one];
 
             if (room > 0)
-                onto.put({at, 0}, ranged(kept.columns[one].title, room,
-                                                     kept.columns[one].justify),
-                            look);
+                placed(onto, {at, 0}, kept.columns[one].title, room, kept.columns[one].justify, look);
 
             at += room + spacing;
         }
@@ -689,9 +686,10 @@ void Table::paint(Canvas& onto) const {
 
             // A cell that asks for it is elided with the skin's mark, at the end it names (a path
             // keeps its file name with `Elide::left`); otherwise it is cut at the right edge.
-            const std::string shown = elided(cell.text, room, cell.elide, mark);
+            const std::string cutting = cell.elide == Elide::none ? std::string{} : elided(cell.text, room, cell.elide, mark);
+            const std::string_view shown = cell.elide == Elide::none ? std::string_view{cell.text} : std::string_view{cutting};
 
-            onto.put({at, y}, ranged(shown, room, justify), look_one);
+            placed(onto, {at, y}, shown, room, justify, look_one);
 
             if (!cell.marks.empty()) marked(onto, cell, {at, y}, room, justify, look_one, how);
 

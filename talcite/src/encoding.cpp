@@ -1,6 +1,7 @@
 #include "talcite/encoding.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <deque>
@@ -192,7 +193,7 @@ Remembering& remembering() {
 // The width of a code point on its own, as it is shown: a control that `shown` replaces by a
 // visible picture takes its cell, a format character that shows nothing takes none, a character
 // that joins the one before it takes none, and the rest take one or two cells.
-int alone(char32_t one) {
+int looked_up(char32_t one) {
     if (shown(one) != one) return 1;
 
     if (one < 0x300) return 1;
@@ -202,6 +203,27 @@ int alone(char32_t one) {
         return 0;
 
     return unicode::wide(one) ? 2 : 1;
+}
+
+// The width of a code point on its own (`looked_up`), remembered for the Basic Multilingual Plane:
+// the tables of Unicode are searched once for each character, and the box drawing of every frame
+// and the letters of every row are only read after that. The entries are atomic, since the pool
+// measures text too; two threads meeting on a new character both look it up and store the same.
+// An entry holds the width plus one, so zero, as the array starts, means not yet known.
+int alone(char32_t one) {
+    if (one >= 0x10000) return looked_up(one);
+
+    static std::array<std::atomic<std::uint8_t>, 0x10000> known{};
+
+    std::atomic<std::uint8_t>& entry = known[one];
+
+    if (const std::uint8_t held = entry.load(std::memory_order_relaxed); held != 0) return held - 1;
+
+    const int made = looked_up(one);
+
+    entry.store(static_cast<std::uint8_t>(made + 1), std::memory_order_relaxed);
+
+    return made;
 }
 
 // Whether the character joins the one before it on this terminal. `pictorial` says whether the
@@ -358,8 +380,13 @@ int width(char32_t one) {
     return alone(one);
 }
 
-// How many cells the text takes, cluster by cluster.
+// How many cells the text takes, cluster by cluster. Text of ASCII alone, the common case, takes a
+// cell for every byte: nothing in it joins, and a control character is shown as its picture
+// (`shown`), one cell wide too.
 int width(std::string_view text) {
+    if (std::all_of(text.begin(), text.end(), [](char one) { return static_cast<unsigned char>(one) < 0x80; }))
+        return static_cast<int>(text.size());
+
     const Rendering how = rendering();
 
     int made = 0;

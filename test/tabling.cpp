@@ -1303,3 +1303,37 @@ TRIAL("Table: a refresh repaints only the rows that came out different") {
 
     ought(sheet.painted().empty());
 }
+
+// The room a cell's text leaves in its column is the cell's too: it takes the cell's role over the
+// row's, on either side the justification leaves free, as the letters do.
+TRIAL("Table: the room a cell's text leaves takes the cell's role too") {
+    Sheet sheet;
+
+    const auto one = std::make_shared<ui::Table>();
+
+    one->heading(false);
+    one->columns({ui::TableColumn{"", 4, ui::Justify::left}, ui::TableColumn{"", 4, ui::Justify::right}, ui::TableColumn{"", 4, ui::Justify::center}});
+    one->source(
+        [](std::size_t which, std::size_t most) {
+            std::vector<ui::TableRow> made;
+
+            if (which == 0 && most > 0)
+                made.push_back(ui::TableRow{ui::TableCell{"aa", "talcite.table.mark"}, ui::TableCell{"bb", "talcite.table.mark"}, ui::TableCell{"c", "talcite.table.mark"}});
+
+            return made;
+        },
+        1);
+
+    sheet.children().add(one);
+
+    const View made = sheet.render({{0, 0}, {14, 1}});
+
+    ought(made.at({2, 0}).style.bold);
+    ought(made.at({3, 0}).style.bold);
+    ought(made.at({5, 0}).style.bold);
+    ought(made.at({6, 0}).style.bold);
+    same(made.at({7, 0}).letter, U'b');
+    ought(made.at({10, 0}).style.bold);
+    same(made.at({11, 0}).letter, U'c');
+    ought(made.at({13, 0}).style.bold);
+}

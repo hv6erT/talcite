@@ -427,3 +427,31 @@ TRIAL("Root: a layout that never settles ends the frame, and the check reports i
 
     (void)top.render({{0, 0}, {2, 2}});
 }
+
+// Text of plain ASCII goes into its cells by the short way, and that way mends what it overwrites
+// as the long one does: a letter over either half of a double-width character turns the other half
+// into a space, so no half of a character stays behind.
+TRIAL("Canvas: ASCII over a double-width character leaves no half of it") {
+    View sheet = cleared({4, 1});
+
+    Canvas whole{sheet};
+
+    whole.put({0, 0}, U'界', Style{});
+    whole.put({0, 0}, std::string_view{"a"}, Style{});
+
+    same(sheet.at({0, 0}).letter, U'a');
+    same(sheet.at({1, 0}).letter, U' ');
+
+    whole.put({2, 0}, U'界', Style{});
+    whole.put({3, 0}, std::string_view{"b"}, Style{});
+
+    same(sheet.at({2, 0}).letter, U' ');
+    same(sheet.at({3, 0}).letter, U'b');
+
+    // A wide character below the CJK block: a Hangul jamo.
+    whole.put({0, 0}, U'\u1100', Style{});
+    whole.put({0, 0}, std::string_view{"c"}, Style{});
+
+    same(sheet.at({0, 0}).letter, U'c');
+    same(sheet.at({1, 0}).letter, U' ');
+}
