@@ -762,6 +762,33 @@ Entry entry_at(const path& where) {
     return noted(stood::directory_entry{where, ignored});
 }
 
+// The entries of one directory, without "." and "..", as the Windows `found_in` gives them: a
+// directory that cannot be opened (no right to it, among others) is an error, or with `quiet` an
+// empty list, for walking a tree; a listing broken off in the middle is always an error, because a
+// truncated listing must not pass for a complete one. A cancelled reading gives what it got.
+std::vector<Entry> found_in(const path& where, bool quiet) {
+    std::vector<Entry> made;
+
+    std::error_code trouble;
+    stood::directory_iterator at{where, trouble};
+
+    if (trouble) {
+        if (quiet) return made;
+
+        amiss("Cannot open the directory.", where);
+    }
+
+    for (const stood::directory_iterator end; !trouble && at != end; at.increment(trouble)) {
+        if (stopped()) return made;
+
+        made.push_back(noted(*at));
+    }
+
+    if (trouble) amiss("Cannot read the directory.", where);
+
+    return made;
+}
+
 #endif
 
 // Puts the entries in the order of `before`, which compares two of them. The sort moves numbers of
@@ -999,68 +1026,25 @@ bool folder_at(const path& where) {
 }
 
 // The entries of the directory (or of the directory a symlink leads to), sorted by path; throws
-// "Not a directory." for anything else. Stops early when the work is cancelled.
+// "Not a directory." for anything else. A directory that cannot be opened or read to the end is a
+// refusal with the place, on every system (`found_in`). Stops early when the work is cancelled.
 std::vector<Entry> list_at(const path& where) {
     if (!folder_at(where)) amiss("Not a directory.", where);
 
-#ifdef _WIN32
-
     std::vector<Entry> made = found_in(where, false);
-
-#else
-
-    std::error_code trouble;
-    stood::directory_iterator at{where, stood::directory_options::skip_permission_denied,
-                                 trouble};
-
-    if (trouble) amiss("Cannot open the directory.", where);
-
-    std::vector<Entry> made;
-
-    for (const stood::directory_entry& one : at) {
-        if (stopped()) return made;
-
-        made.push_back(noted(one));
-    }
-
-#endif
 
     sorted_in(made);
 
     return made;
 }
 
-// The entries of the directory, sorted by path, read in full or not at all: a directory that cannot
-// be opened, or a listing broken off in the middle, is a refusal with the place, where `list_at`
-// would give what it got. For operations that must not do less than they say (copying and moving a
-// tree). A cancelled reading gives what it got; the caller asks `stopped`.
+// The same reading as `list_at`, but only of a real directory: a link to one is "Not a directory."
+// even at the root, because copying and moving a tree must not follow a link out of it. A
+// cancelled reading gives what it got; the caller asks `stopped`.
 std::vector<Entry> list_whole_at(const path& where) {
     if (kind_at(where) != Kind::folder) amiss("Not a directory.", where);
 
-#ifdef _WIN32
-
     std::vector<Entry> made = found_in(where, false);
-
-#else
-
-    std::error_code trouble;
-    stood::directory_iterator at{where, trouble};
-
-    if (trouble) amiss("Cannot read the directory.", where);
-
-    std::vector<Entry> made;
-
-    for (const stood::directory_iterator end; at != end; at.increment(trouble)) {
-        if (trouble) amiss("Cannot read the directory.", where);
-
-        if (stopped()) return made;
-
-        made.push_back(noted(*at));
-    }
-
-    if (trouble) amiss("Cannot read the directory.", where);
-
-#endif
 
     sorted_in(made);
 
@@ -1081,8 +1065,6 @@ std::vector<Entry> walk_at(const path& where) {
         const path here = std::move(waiting.back());
         waiting.pop_back();
 
-#ifdef _WIN32
-
         for (Entry& one : found_in(here, true)) {
             if (one.kind == Kind::folder) waiting.push_back(one.where);
 
@@ -1090,25 +1072,6 @@ std::vector<Entry> walk_at(const path& where) {
         }
 
         if (stopped()) return made;
-
-#else
-
-        std::error_code trouble;
-        stood::directory_iterator at{here, stood::directory_options::skip_permission_denied,
-                                     trouble};
-
-        if (trouble) continue;
-
-        for (const stood::directory_entry& one : at) {
-            if (stopped()) return made;
-
-            Entry note = noted(one);
-            if (note.kind == Kind::folder) waiting.push_back(note.where);
-
-            made.push_back(std::move(note));
-        }
-
-#endif
     }
 
     sorted(made);

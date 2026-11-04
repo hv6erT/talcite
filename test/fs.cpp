@@ -343,6 +343,43 @@ TRIAL("fs: list of an empty directory gives nothing") {
     ought(fs::list(nook.where()).get().empty());
 }
 
+// A directory we have no right to read is a refusal when listed, as on Windows, not an empty list
+// that would pass for an empty directory; a walk of a tree skips it and gives the rest. Root reads
+// everything, so the trial checks this only for an ordinary user.
+TRIAL("fs: list of a directory without the right to read it refuses, walk skips it") {
+#ifndef _WIN32
+    const Nook nook;
+
+    (void)nook.made("widoczny.txt", "x");
+
+    fs::make_folder(nook.where() / "zamknięty").get();
+
+    (void)nook.made("zamknięty/plik.txt", "x");
+
+    if (::geteuid() != 0 && ::chmod((nook.where() / "zamknięty").c_str(), 0) == 0) {
+        bool refused = false;
+
+        try {
+            (void)fs::list(nook.where() / "zamknięty").get();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+
+        std::vector<fs::Entry> walked;
+
+        try {
+            walked = fs::walk(nook.where()).get();
+        } catch (const std::exception&) {
+        }
+
+        (void)::chmod((nook.where() / "zamknięty").c_str(), 0700);
+
+        ought(refused);
+        same(walked.size(), std::size_t{2});
+    }
+#endif
+}
+
 TRIAL("fs: walk goes down into the depth") {
     const Nook nook;
 
