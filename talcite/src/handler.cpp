@@ -113,14 +113,16 @@ Root* Handler::root() const { return nullptr; }
 // so a listener may close the window the event is still climbing through, and the climb goes on
 // over the nodes as they were. Before, only the root's own deliveries counted, and a press started
 // by the program climbed over a window freed under it. The count is a counter, so an event inside
-// another one changes nothing; outside a tree with a root there is nothing to count.
-void Handler::delivering(Root* top) {
-    if (top != nullptr) ++top->busy_;
+// another one changes nothing; outside a tree with a root there is nothing to count. The delivery
+// is a guard: it ends when it goes out of scope, by a return or an exception alike, so no path
+// forgets to end it.
+Handler::Delivery::Delivery(Root* top) : top_(top) {
+    if (top_ != nullptr) ++top_->busy_;
 }
 
-// Ends the delivery begun by `delivering`; the last one releases the nodes removed during it.
-void Handler::delivered(Root* top) {
-    if (top != nullptr) top->released();
+// Ends the delivery; the last one releases the nodes removed during it.
+Handler::Delivery::~Delivery() {
+    if (top_ != nullptr) top_->released();
 }
 
 // The widget channel knows only the library's events, with one `handle` per type. A program's own

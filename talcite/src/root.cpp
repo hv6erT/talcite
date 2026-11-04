@@ -317,6 +317,11 @@ void Root::move_focus(Node* one) {
     if (old_side != before.rend()) (*old_side)->changed();
     if (new_side != after.rend()) (*new_side)->changed();
 
+    // Both events go in one delivery: a listener of the first may take either node off the tree,
+    // and the node is then kept alive until the second is over, instead of being freed between
+    // them and reached afterwards.
+    const Delivery delivery{this};
+
     if (was != nullptr) {
         UnfocusEvent what{one};
 
@@ -340,21 +345,9 @@ void Root::move_focus(Node* one) {
 // ordinary way, from the focus up. `foresee` is called under the same guard as `sent`, because it
 // may close a node or move the focus.
 bool Root::dispatch(KeyEvent& what) {
-    ++busy_;
+    const Delivery delivery{this};
 
-    bool foreseen = false;
-
-    try {
-        foreseen = foresee(what);
-    } catch (...) {
-        released();
-
-        throw;
-    }
-
-    released();
-
-    if (foreseen) return true;
+    if (foresee(what)) return true;
 
     return sent(focus_ != nullptr ? *focus_ : *this, what);
 }
@@ -542,9 +535,10 @@ Node* Root::under(Spot where) {
 // Ends one delivery and, when it was the last, releases the nodes removed in the meantime.
 // Deliveries are counted, because no node may be released during one: a removed node waits in
 // `dying_` until the last delivery ends. A counter, not a flag, because a handler may deliver
-// another event in the middle of the first. The `sent` template in the header raises it for the
-// root's own deliveries, `Handler::delivering` for every event started in the tree (a button
-// pressed by the program), and this function lowers it, also when a handler throws.
+// another event in the middle of the first. A `Handler::Delivery` raises it, for the root's own
+// deliveries (`sent`, `dispatch`, `elapse`, `move_focus`) and for every event started in the tree
+// (a button pressed by the program), and lowers it through this function when it goes out of
+// scope, also when a handler throws.
 void Root::released() {
     if (--busy_ > 0) return;
 
@@ -565,21 +559,9 @@ void Root::linger(std::shared_ptr<Node> one) {
 // called; the loop then draws a frame, since a call changes what is on the screen, or asks for a
 // frame for a node that computes its picture from the time.
 bool Root::elapse() {
-    ++busy_;
+    const Delivery delivery{this};
 
-    bool made = false;
-
-    try {
-        made = schedule_.elapse();
-    } catch (...) {
-        released();
-
-        throw;
-    }
-
-    released();
-
-    return made;
+    return schedule_.elapse();
 }
 
 // The cursor of the focused node on the screen, or nothing. The cursor is assembled by walking up

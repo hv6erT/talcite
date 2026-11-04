@@ -81,23 +81,9 @@ protected:
     bool trigger(One& what) {
         if (what.target_ == nullptr) what.target_ = this;
 
-        Root* const top = root();
+        const Delivery delivery{root()};
 
-        delivering(top);
-
-        bool made = false;
-
-        try {
-            made = carried(what);
-        } catch (...) {
-            delivered(top);
-
-            throw;
-        }
-
-        delivered(top);
-
-        return made;
+        return carried(what);
     }
 
     template <std::derived_from<Event> One>
@@ -124,9 +110,20 @@ protected:
 private:
     friend class Root;
 
-    static void delivering(Root* top);
+    class Delivery {
+    public:
+        explicit Delivery(Root* top);
 
-    static void delivered(Root* top);
+        ~Delivery();
+
+        Delivery(const Delivery&) = delete;
+        Delivery& operator=(const Delivery&) = delete;
+        Delivery(Delivery&&) = delete;
+        Delivery& operator=(Delivery&&) = delete;
+
+    private:
+        Root* top_;
+    };
 
     template <class One>
     [[nodiscard]] static consteval bool known() {

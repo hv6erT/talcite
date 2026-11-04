@@ -94,16 +94,28 @@ private:
 };
 
 // A root that sees keys first: it takes `z` itself, and on `x` removes the focused node from the
-// tree (like a prefix that closes a view) and lets the key go on.
+// tree (like a prefix that closes a view) and lets the key go on. On `y` it removes its first child
+// and notes in `seen` how many of the counted nodes still live right after the removal.
 class Seer : public Crown {
 public:
     explicit Seer(std::vector<std::string>* told) : Crown(told), told_(told) {}
 
     std::shared_ptr<ui::Node> doomed;
+    int* alive = nullptr;
+    int seen = -1;
 
 protected:
-    // Removes `doomed` on `x` and lets the key go on; takes `z` and records that it foresaw it.
+    // Removes `doomed` on `x` and lets the key go on; takes `z` and records that it foresaw it; on
+    // `y` removes the first child and counts who still lives.
     bool foresee(ui::KeyEvent& what) override {
+        if (what.key().letter() == U'y' && !children().empty()) {
+            (void)children().remove(children().front().get());
+
+            if (alive != nullptr) seen = *alive;
+
+            return true;
+        }
+
         if (what.key().letter() == U'x' && doomed) {
             (void)children().remove(doomed.get());
             doomed.reset();
@@ -289,6 +301,25 @@ TRIAL("Root: foresee may remove the focus, the key then goes to the root") {
     same(told.size(), std::size_t{1});
     same(told[0], std::string{"korzeń"});
     ought(top.focused_node() == nullptr);
+}
+
+// `foresee` runs inside the key's delivery, as the focus would: a node it takes off the tree lives
+// until the key is over, so the foreseer may still reach it.
+TRIAL("Root: a node foresee removes lives until the key is over") {
+    std::vector<std::string> told;
+    int alive = 0;
+
+    Seer top{&told};
+
+    top.alive = &alive;
+
+    top.children().add(leaf("spód", nullptr, &alive));
+
+    ui::KeyEvent what{U'y'};
+
+    ought(top.dispatch(what));
+    same(top.seen, 1);
+    same(alive, 0);
 }
 
 TRIAL("Root: a key without focus goes to the root") {
@@ -483,6 +514,49 @@ TRIAL("Root: a deferred release really releases") {
     ought(!top.dispatch(what));
 
     same(alive, 0);
+}
+
+// Moving the focus sends two events in one delivery: a listener of the first that takes the new
+// focus off the tree leaves it alive for the second, which reaches a living node; it goes only when
+// the move is over. Before, it was freed between the two, and the second reached freed memory.
+TRIAL("Root: moving the focus is one delivery, so the new focus lives through both events") {
+    int alive = 0;
+
+    Crown top;
+
+    const std::shared_ptr<Leaf> first = leaf("pierwszy");
+
+    top.children().add(first);
+
+    {
+        const std::shared_ptr<Leaf> second = leaf("drugi", nullptr, &alive);
+
+        top.children().add(second);
+    }
+
+    Leaf* next = static_cast<Leaf*>(top.children()[1].get());
+
+    first->focus();
+
+    const ui::Hook heard_leaving = first->on<ui::UnfocusEvent>([&top, next](ui::UnfocusEvent&) {
+        (void)top.children().remove(next);
+
+        return false;
+    });
+
+    int seen = -1;
+
+    const ui::Hook heard_coming = next->on<ui::FocusEvent>([&seen, &alive](ui::FocusEvent&) {
+        seen = alive;
+
+        return false;
+    });
+
+    next->focus();
+
+    same(seen, 1);
+    same(alive, 0);
+    ought(top.focused_node() == nullptr);
 }
 
 // An event a node starts itself (a button pressed by the program, not by a key) is a delivery of

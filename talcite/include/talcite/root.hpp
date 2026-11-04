@@ -119,21 +119,9 @@ private:
 
     template <std::derived_from<Event> One>
     bool sent(Node& one, One& what) {
-        ++busy_;
+        const Delivery delivery{this};
 
-        bool made = false;
-
-        try {
-            made = one.trigger(what);
-        } catch (...) {
-            released();
-
-            throw;
-        }
-
-        released();
-
-        return made;
+        return one.trigger(what);
     }
 
     void released();
