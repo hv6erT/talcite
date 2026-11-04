@@ -158,62 +158,47 @@ std::optional<int> Emulator::prompt() const {
 }
 
 // Feeds what the program wrote. Text in UTF-8 may break off in the middle of a character at the end
-// of one chunk and go on in the next, so the unfinished bytes wait for it; an invalid byte becomes
-// the replacement character.
+// of one chunk and go on in the next, so the unfinished bytes wait for it (`utf8::span`, the one
+// rule). What the rule does not let through becomes one replacement character for its maximal
+// subpart, and the byte that broke it off is read anew.
 Fed Emulator::feed(std::span<const std::byte> bytes) {
     Fed fed;
 
     for (const std::byte each : bytes) {
         const auto one = static_cast<unsigned char>(each);
 
-        if (partial_.empty()) {
-            if (one < 0x80) {
+        // A byte that breaks off an unfinished character is read once more, on its own.
+        for (bool anew = true; anew;) {
+            anew = false;
+
+            if (partial_.empty() && one < 0x80) {
                 step(one, fed);
 
-                continue;
-            }
-
-            const std::size_t many = utf8::trailing(one);
-
-            if (many == 0 || one < 0xC2) {
-                step(U'\uFFFD', fed);
-
-                continue;
+                break;
             }
 
             partial_.push_back(static_cast<char>(one));
 
-            continue;
-        }
+            const utf8::Span got = utf8::span(partial_);
 
-        if ((one & 0xC0U) != 0x80U) {
-            // The character broke off: what came of it is one replacement, and this byte starts
-            // anew.
+            if (got.kind == utf8::Span::Kind::partial) break;
+
+            if (got.kind == utf8::Span::Kind::whole) {
+                std::size_t at = 0;
+
+                step(utf8::decode(partial_, at), fed);
+
+                partial_.clear();
+
+                break;
+            }
+
+            anew = got.size < partial_.size();
+
             partial_.clear();
 
             step(U'\uFFFD', fed);
-
-            if (one < 0x80) {
-                step(one, fed);
-            } else if (utf8::trailing(one) > 0 && one >= 0xC2) {
-                partial_.push_back(static_cast<char>(one));
-            } else {
-                step(U'\uFFFD', fed);
-            }
-
-            continue;
         }
-
-        partial_.push_back(static_cast<char>(one));
-
-        if (partial_.size() < utf8::trailing(static_cast<unsigned char>(partial_.front())) + 1) continue;
-
-        std::size_t at = 0;
-        const char32_t made = utf8::decode(partial_, at);
-
-        partial_.clear();
-
-        step(made, fed);
     }
 
     return fed;

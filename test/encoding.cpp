@@ -38,7 +38,8 @@ TRIAL("Encoding: an invalid byte gives a replacement character and one step") {
     same(at, std::size_t{2});
 }
 
-TRIAL("Encoding: a sequence cut off halfway also gives a replacement character") {
+// A tail cut off halfway is one replacement character for the whole of it, its maximal subpart.
+TRIAL("Encoding: a sequence cut off halfway also gives one replacement character") {
     std::string said;
     said += static_cast<char>(0xE2);
     said += static_cast<char>(0x9D);
@@ -46,7 +47,60 @@ TRIAL("Encoding: a sequence cut off halfway also gives a replacement character")
     std::size_t at = 0;
 
     same(utf8::decode(said, at), U'�');
-    same(at, std::size_t{1});
+    same(at, std::size_t{2});
+}
+
+// The one rule of talcite for UTF-8 (Unicode, table 3-7): the second byte bounds the rest, so an
+// overlong form, a surrogate or a value past U+10FFFF is bad as soon as its second byte comes, and
+// a bad sequence takes its maximal subpart, the bytes that still could have started a character.
+TRIAL("Encoding: span tells a whole, a partial and a bad sequence") {
+    using Kind = utf8::Span::Kind;
+
+    const auto is = [](std::string_view text, Kind kind, std::size_t size) {
+        const utf8::Span got = utf8::span(text);
+
+        return got.kind == kind && got.size == size;
+    };
+
+    ought(is("a", Kind::whole, 1));
+    ought(is("\xc5\xbc!", Kind::whole, 2));
+    ought(is("\xe2\x9d\xa4", Kind::whole, 3));
+    ought(is("\xf0\x9f\x99\x82", Kind::whole, 4));
+
+    ought(is("", Kind::partial, 0));
+    ought(is("\xe2", Kind::partial, 1));
+    ought(is("\xe2\x9d", Kind::partial, 2));
+    ought(is("\xf4\x8f\xbf", Kind::partial, 3));
+
+    ought(is("\x80", Kind::bad, 1));
+    ought(is("\xc1\xbf", Kind::bad, 1));
+    ought(is("\xf5\x80", Kind::bad, 1));
+    ought(is("\xe0\x9f", Kind::bad, 1));
+    ought(is("\xed\xa0", Kind::bad, 1));
+    ought(is("\xf0\x8f", Kind::bad, 1));
+    ought(is("\xf4\x90", Kind::bad, 1));
+    ought(is("\xe2\x9d" "A", Kind::bad, 2));
+    ought(is("\xf0\x9f\x99" "A", Kind::bad, 3));
+}
+
+TRIAL("Encoding: strict says whether the whole text is well-formed") {
+    ought(utf8::strict(""));
+    ought(utf8::strict("za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87"));
+    ought(!utf8::strict("a\xc0\xaf"));
+    ought(!utf8::strict("a\xed\xa0\x80"));
+    ought(!utf8::strict("a\xe2\x9d"));
+}
+
+// A broken sequence is one replacement character for its maximal subpart, and the byte that broke
+// it is read on its own.
+TRIAL("Encoding: a sequence broken off by another byte is one replacement character") {
+    const std::string said = "\xe2\x9d" "A";
+
+    std::size_t at = 0;
+
+    same(utf8::decode(said, at), U'\ufffd');
+    same(at, std::size_t{2});
+    same(utf8::decode(said, at), U'A');
 }
 
 TRIAL("Encoding: a lead byte without its continuation is garbage too") {

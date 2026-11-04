@@ -138,8 +138,7 @@ private:
     char marker_ = 0;
     char intermediate_ = 0;
     std::size_t length_ = 0;
-    char32_t code_ = 0;
-    std::size_t left_ = 0;
+    std::string held_;
 
     std::string answers_;
     std::optional<std::string> title_;

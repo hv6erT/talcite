@@ -1,8 +1,11 @@
 #include "storing.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+
+#include "talcite/encoding.hpp"
 
 namespace talcite::fs {
 
@@ -47,51 +50,17 @@ struct Sign {
 };
 
 // The valid UTF-8 character at `at` and its length, or nothing when the byte does not start a valid
-// character: a truncated or overlong sequence, a stray continuation byte, a surrogate half, or a
-// value past U+10FFFF.
+// character by the one rule of talcite (`utf8::span`): a truncated or overlong sequence, a stray
+// continuation byte, a surrogate half, or a value past U+10FFFF. What is not valid is stored byte
+// by byte, since the stored form must give back exactly the bytes it came from.
 std::optional<Sign> sound(std::string_view text, std::size_t at) {
-    const auto byte = [&text](std::size_t which) { return static_cast<unsigned char>(text[which]); };
+    const utf8::Span one = utf8::span(text.substr(at));
 
-    const unsigned char lead = byte(at);
+    if (one.kind != utf8::Span::Kind::whole) return std::nullopt;
 
-    if (lead < 0x80) return Sign{lead, 1};
+    std::size_t from = at;
 
-    std::size_t much = 0;
-    char32_t value = 0;
-    char32_t least = 0;
-
-    // The first byte says only how many bytes the character has; overlong forms (C0, C1, E0 80...)
-    // and values past U+10FFFF (F5...) are rejected by the check of the value itself below: one
-    // place for one rule.
-    if ((lead & 0xE0) == 0xC0) {
-        much = 2;
-        value = lead & 0x1F;
-        least = 0x80;
-    } else if ((lead & 0xF0) == 0xE0) {
-        much = 3;
-        value = lead & 0x0F;
-        least = 0x800;
-    } else if ((lead & 0xF8) == 0xF0) {
-        much = 4;
-        value = lead & 0x07;
-        least = 0x10000;
-    } else {
-        return std::nullopt;
-    }
-
-    if (at + much > text.size()) return std::nullopt;
-
-    for (std::size_t which = 1; which < much; ++which) {
-        const unsigned char next = byte(at + which);
-
-        if ((next & 0xC0) != 0x80) return std::nullopt;
-
-        value = (value << 6) | (next & 0x3F);
-    }
-
-    if (value < least || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) return std::nullopt;
-
-    return Sign{value, much};
+    return Sign{utf8::decode(text, from), one.size};
 }
 
 // Appends the character in UTF-8.
@@ -319,9 +288,11 @@ std::u16string restored_units(std::string_view said) {
             continue;
         }
 
+        // What the rule does not let through is one replacement character for its maximal subpart,
+        // as everywhere in talcite (`utf8::decode`).
         put(substitute, made);
 
-        ++at;
+        at += std::max<std::size_t>(utf8::span(said.substr(at)).size, 1);
     }
 
     return made;

@@ -281,6 +281,10 @@ TRIAL("desktops: the zone of a download, and text told from bytes") {
     ought(!desktops::textual(bytes_of(std::string{"a\0b", 3})));
     ought(!desktops::textual(bytes_of("\xC0\xAF")));
     ought(!desktops::textual(bytes_of("\xC5" "a")));
+
+    // By the one rule of UTF-8 (`utf8::span`): a surrogate half and an overlong form are no text.
+    ought(!desktops::textual(bytes_of("\xED\xA0\x80")));
+    ought(!desktops::textual(bytes_of("\xE0\x80\xAF")));
 }
 
 TRIAL("Desktop: the system desktop refuses its window where it has none") {

@@ -1,10 +1,22 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
 namespace talcite::utf8 {
+
+struct Span {
+    enum class Kind : std::uint8_t { whole, partial, bad };
+
+    Kind kind = Kind::bad;
+    std::size_t size = 0;
+};
+
+[[nodiscard]] Span span(std::string_view from);
+
+[[nodiscard]] bool strict(std::string_view text);
 
 [[nodiscard]] std::size_t trailing(unsigned char lead);
 

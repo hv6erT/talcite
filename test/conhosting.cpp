@@ -143,6 +143,16 @@ TRIAL("Console without VT: UTF-8 cut off halfway comes out as a question mark") 
     same(row(one, 0), std::u32string{U"ą!?x"});
 }
 
+// The console reads UTF-8 by the one rule (`utf8::span`): a "/" written longer than it needs is two
+// broken bytes, never a hidden slash, and a surrogate half is three.
+TRIAL("Console without VT: an overlong form and a surrogate are broken bytes") {
+    conhost::Screen one = screen();
+
+    one.fed("\xc0\xaf|\xed\xa0\x80|");
+
+    same(row(one, 0), std::u32string{U"??|???|"});
+}
+
 TRIAL("Console without VT: a Chinese character takes two cells, the second empty and marked") {
     conhost::Screen one = screen();
 

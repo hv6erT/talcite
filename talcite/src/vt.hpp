@@ -119,7 +119,6 @@ private:
     bool raw_ = false;
     State state_ = State::ground;
     std::string pending_;
-    std::size_t needed_ = 0;
     bool alt_ = false;
     std::string glued_;
     std::string tail_;

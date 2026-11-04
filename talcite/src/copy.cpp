@@ -13,12 +13,14 @@
 #include <mutex>
 #include <span>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 
 #include "talcite/bell.hpp"
+#include "talcite/encoding.hpp"
 #include "talcite/pool.hpp"
 #include "talcite/random.hpp"
 
@@ -58,16 +60,13 @@ path::string_type shortened(path::string_type name, std::size_t room) {
 #ifdef _WIN32
     if (!name.empty() && name.back() >= 0xD800 && name.back() <= 0xDBFF) name.pop_back();
 #else
+    // A character the cut left unfinished, by the one rule (`utf8::span`), goes whole; the bytes of
+    // a name that is no UTF-8 at all stay as they are.
     std::size_t lead = name.size();
 
-    while (lead > 0 && (static_cast<unsigned char>(name[lead - 1]) & 0xC0U) == 0x80U) --lead;
+    while (lead > 0 && name.size() - lead < 3 && (static_cast<unsigned char>(name[lead - 1]) & 0xC0U) == 0x80U) --lead;
 
-    if (lead > 0) {
-        const auto first = static_cast<unsigned char>(name[lead - 1]);
-        const std::size_t wanted = first >= 0xF0U ? 4 : first >= 0xE0U ? 3 : first >= 0xC0U ? 2 : 1;
-
-        if (name.size() - (lead - 1) < wanted) name.resize(lead - 1);
-    }
+    if (lead > 0 && utf8::span(std::string_view{name}.substr(lead - 1)).kind == utf8::Span::Kind::partial) name.resize(lead - 1);
 #endif
 
     return name;

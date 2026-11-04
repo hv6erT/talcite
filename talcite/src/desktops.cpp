@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/encoding.hpp"
+
 // What the desktop of the system says about files, read from the text and the bytes alone, without
 // touching the system: the pieces `desktop()` puts together, kept apart so that the trials check
 // them on written fixtures instead of on whatever the machine running them has installed.
@@ -705,31 +707,21 @@ Origin zone_of(std::string_view text) {
     return Origin::here;
 }
 
-// Whether the first bytes of a file are text: no NUL and well-formed UTF-8, a sequence cut off by
-// the end of the bytes read aside. An empty file is text.
+// Whether the first bytes of a file are text: no NUL and well-formed UTF-8 by the one rule
+// (`utf8::span`), a sequence cut off by the end of the bytes read aside. An empty file is text.
 bool textual(std::span<const unsigned char> head) {
-    std::size_t at = 0;
+    const std::string_view text{reinterpret_cast<const char*>(head.data()), head.size()};
 
-    while (at < head.size()) {
-        const unsigned char lead = head[at];
+    for (std::size_t at = 0; at < text.size();) {
+        if (text[at] == '\0') return false;
 
-        if (lead == 0) return false;
+        const utf8::Span one = utf8::span(text.substr(at));
 
-        std::size_t follow = 0;
+        if (one.kind == utf8::Span::Kind::bad) return false;
 
-        if (lead < 0x80) follow = 0;
-        else if (lead >= 0xC2 && lead <= 0xDF) follow = 1;
-        else if (lead >= 0xE0 && lead <= 0xEF) follow = 2;
-        else if (lead >= 0xF0 && lead <= 0xF4) follow = 3;
-        else return false;
+        if (one.kind == utf8::Span::Kind::partial) return true;
 
-        for (std::size_t one = 1; one <= follow; ++one) {
-            if (at + one >= head.size()) return true;
-
-            if ((head[at + one] & 0xC0) != 0x80) return false;
-        }
-
-        at += follow + 1;
+        at += one.size;
     }
 
     return true;

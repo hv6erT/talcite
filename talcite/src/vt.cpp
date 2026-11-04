@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
+#include <string_view>
 #include <utility>
+
+#include "talcite/encoding.hpp"
 
 // Reading the bytes a terminal sends: the syntax of ECMA-48 and of the few forms terminals add to
 // it, without meaning. A token is a letter, a control character, a lone Esc, a control sequence
@@ -78,31 +82,9 @@ bool stringed(unsigned char byte) { return byte == ']' || byte == 'P' || byte ==
 // Whether the byte ends a control sequence.
 bool final_byte(unsigned char byte) { return byte >= 0x40 && byte <= 0x7E; }
 
-// How many continuation bytes a UTF-8 lead announces; zero for a byte that cannot lead a
-// character (a continuation, C0 and C1 overlong leads, and leads past U+10FFFF).
-std::size_t announced(unsigned char byte) {
-    if (byte >= 0xC2 && byte <= 0xDF) return 1;
-    if (byte >= 0xE0 && byte <= 0xEF) return 2;
-    if (byte >= 0xF0 && byte <= 0xF4) return 3;
-
-    return 0;
-}
-
-// The character of a complete UTF-8 sequence, or nothing for an overlong form, a surrogate or a
-// value past U+10FFFF.
-std::optional<char32_t> character(std::string_view bytes) {
-    const auto lead = static_cast<unsigned char>(bytes.front());
-    const std::size_t more = bytes.size() - 1;
-
-    char32_t made = lead & (0x3F >> more);
-
-    for (std::size_t at = 1; at < bytes.size(); ++at) made = (made << 6) | (static_cast<unsigned char>(bytes[at]) & 0x3F);
-
-    if (more == 2 && (made < 0x800 || (made >= 0xD800 && made <= 0xDFFF))) return std::nullopt;
-    if (more == 3 && (made < 0x10000 || made > 0x10FFFF)) return std::nullopt;
-
-    return made;
-}
+// Whether the byte may start a UTF-8 character, by the one rule (`utf8::span`): a lead that the
+// rest of the character has yet to follow.
+bool leading(unsigned char byte) { return utf8::span(std::string(1, static_cast<char>(byte))).kind == utf8::Span::Kind::partial; }
 
 // A control sequence from the bytes between `CSI` and the final byte.
 Csi parsed(std::string_view body, char last) {
@@ -210,7 +192,6 @@ void Reader::lapsed(Clock::Moment now, std::vector<Token>& into) {
     const auto reset = [this]() {
         state_ = State::ground;
         pending_.clear();
-        needed_ = 0;
         alt_ = false;
         glued_.clear();
         tail_.clear();
@@ -261,7 +242,6 @@ std::string Reader::drained() {
 
     state_ = State::ground;
     pending_.clear();
-    needed_ = 0;
     alt_ = false;
     glued_.clear();
     tail_.clear();
@@ -278,8 +258,8 @@ void Reader::sent(Token made, std::vector<Token>& into) {
 }
 
 // A byte outside any sequence: Esc starts one, a control character and ASCII are tokens at once,
-// a UTF-8 lead starts a character, and anything else is dropped. `alt` marks a character that came
-// right after Esc.
+// a UTF-8 lead starts a character (`leading`), and anything else is dropped. `alt` marks a
+// character that came right after Esc.
 void Reader::grounded(unsigned char byte, bool alt, std::vector<Token>& into) {
     std::string raw = alt ? std::string{static_cast<char>(esc)} : std::string{};
 
@@ -310,9 +290,7 @@ void Reader::grounded(unsigned char byte, bool alt, std::vector<Token>& into) {
         return;
     }
 
-    const std::size_t more = announced(byte);
-
-    if (more == 0) {
+    if (!leading(byte)) {
         state_ = State::ground;
         pending_.clear();
 
@@ -321,7 +299,6 @@ void Reader::grounded(unsigned char byte, bool alt, std::vector<Token>& into) {
 
     state_ = State::lettered;
     pending_ = std::move(raw);
-    needed_ = more;
     alt_ = alt;
 }
 
@@ -391,24 +368,22 @@ void Reader::stepped(unsigned char byte, Clock::Moment now, std::vector<Token>& 
     switch (state_) {
         case State::ground: grounded(byte, false, into); return;
 
+        // The bytes of a character, by the one rule (`utf8::span`): what the rule does not let
+        // through is dropped, since no key types it, and the byte that broke it off is read anew.
         case State::lettered: {
-            if ((byte & 0xC0) != 0x80) {
-                state_ = State::ground;
-                pending_.clear();
-                alt_ = false;
-
-                stepped(byte, now, into);
-
-                return;
-            }
-
             pending_ += static_cast<char>(byte);
 
-            if (--needed_ > 0) return;
-
             const std::size_t from = alt_ ? 1 : 0;
-            const std::optional<char32_t> made = character(std::string_view{pending_}.substr(from));
+            const std::string_view letter = std::string_view{pending_}.substr(from);
+            const utf8::Span got = utf8::span(letter);
+
+            if (got.kind == utf8::Span::Kind::partial) return;
+
             const bool alt = alt_;
+            const bool broken = got.kind == utf8::Span::Kind::bad && got.size < letter.size();
+
+            std::size_t at = 0;
+            const char32_t made = got.kind == utf8::Span::Kind::whole ? utf8::decode(letter, at) : 0;
 
             std::string raw = std::move(pending_);
 
@@ -416,7 +391,8 @@ void Reader::stepped(unsigned char byte, Clock::Moment now, std::vector<Token>& 
             pending_.clear();
             alt_ = false;
 
-            if (made.has_value()) sent(Token{Plain{*made, alt}, std::move(raw)}, into);
+            if (got.kind == utf8::Span::Kind::whole) sent(Token{Plain{made, alt}, std::move(raw)}, into);
+            else if (broken) stepped(byte, now, into);
 
             return;
         }
@@ -449,7 +425,7 @@ void Reader::stepped(unsigned char byte, Clock::Moment now, std::vector<Token>& 
                 return;
             }
 
-            if (byte < 0x80 || announced(byte) > 0) {
+            if (byte < 0x80 || leading(byte)) {
                 grounded(byte, true, into);
 
                 return;

@@ -242,19 +242,35 @@ void Screen::taken(unsigned char byte) {
             return;
     }
 
-    // A cut-off UTF-8 character comes out as the replacement character, and the byte that cut it
-    // off is read anew.
-    if (left_ > 0) {
-        if ((byte & 0xC0) == 0x80) {
-            code_ = (code_ << 6) | (byte & 0x3F);
+    // Text in UTF-8 by the one rule (`utf8::span`): an unfinished character waits for its bytes;
+    // what the rule does not let through comes out as one replacement character for its maximal
+    // subpart, and the byte that broke it off is read anew, on the ground.
+    if (!held_.empty() || byte >= 0x80) {
+        held_ += static_cast<char>(byte);
 
-            if (--left_ == 0) put(code_);
+        const utf8::Span got = utf8::span(held_);
+
+        if (got.kind == utf8::Span::Kind::partial) return;
+
+        if (got.kind == utf8::Span::Kind::whole) {
+            std::size_t at = 0;
+
+            put(utf8::decode(held_, at));
+
+            held_.clear();
 
             return;
         }
 
-        left_ = 0;
+        const bool broken = got.size < held_.size();
+
+        held_.clear();
+
         put(0xFFFD);
+
+        if (broken) taken(byte);
+
+        return;
     }
 
     if (byte == 0x1B) {
@@ -269,22 +285,7 @@ void Screen::taken(unsigned char byte) {
         return;
     }
 
-    if (byte < 0x80) {
-        put(byte);
-
-        return;
-    }
-
-    const std::size_t more = utf8::trailing(byte);
-
-    if (more == 0) {
-        put(0xFFFD);
-
-        return;
-    }
-
-    code_ = byte & (0x3F >> more);
-    left_ = more;
+    put(byte);
 }
 
 // The byte after Esc: it opens CSI, OSC or another control string that is swallowed; anything

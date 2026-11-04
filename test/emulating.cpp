@@ -97,6 +97,22 @@ TRIAL("Emulator: UTF-8 may break between chunks") {
     same(row(one, 1), std::string{"\xEF\xBF\xBD!"});
 }
 
+// The screen of a program reads UTF-8 by the one rule (`utf8::span`): a surrogate half written as
+// three bytes is three broken bytes, not one character, and a character broken off by another byte
+// is one replacement before that byte.
+TRIAL("Emulator: broken UTF-8 is one replacement for each maximal subpart") {
+    Emulator one{{10, 2}};
+
+    (void)fed(one, "\xed\xa0\x80!");
+
+    same(row(one, 0), std::string{"\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD!"});
+
+    (void)fed(one, "\r\n\xe2\x9d");
+    (void)fed(one, "A");
+
+    same(row(one, 1), std::string{"\xEF\xBF\xBD" "A"});
+}
+
 // A wide character takes two cells, and a combining mark joins the character before it.
 TRIAL("Emulator: wide characters and combining marks") {
     Emulator one{{10, 2}};

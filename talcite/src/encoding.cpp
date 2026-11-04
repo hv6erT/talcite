@@ -27,57 +27,88 @@ std::size_t trailing(unsigned char lead) {
     return 0;
 }
 
-// The next character of the string. A byte that breaks the rules and a tail cut off halfway come
-// back as the replacement character, and decoding moves on by one byte: a string with a broken
-// middle has to be displayed, not vanish. Where a cut-off tail has to wait for the rest instead
-// of vanishing, that is in the input decoder, this function is not used. Breaking the rules
-// includes the forms UTF-8 forbids although their bits fit: a character written longer than it
-// needs ("/" as C0 AF), half of a UTF-16 surrogate pair, and anything past U+10FFFF. Let through,
-// they would pass for another character (a hidden "/"), or for a number the screen uses for
-// something else (past U+10FFFF lie the handles of grapheme clusters).
+// The first sequence of `from`, by the one rule of talcite for UTF-8 (Unicode, table 3-7): whole
+// when it is a well-formed character, of `size` bytes; partial when its bytes so far start one and
+// `from` ends before it does, so a stream waits for the rest; bad otherwise, `size` being its
+// maximal subpart, which stands for one replacement character. The rule forbids also what fits in
+// the bits: a character written longer than it needs ("/" as C0 AF), half of a UTF-16 surrogate
+// pair and anything past U+10FFFF. Let through, they would pass for another character (a hidden
+// "/"), or for a number the screen uses for something else (past U+10FFFF lie the handles of
+// grapheme clusters). The second byte bounds the rest, so a bad sequence is known as soon as
+// possible. Nothing at all is a partial sequence of no bytes.
+Span span(std::string_view from) {
+    if (from.empty()) return Span{Span::Kind::partial, 0};
+
+    const auto lead = static_cast<unsigned char>(from.front());
+
+    if (lead < 0x80) return Span{Span::Kind::whole, 1};
+
+    std::size_t much = 0;
+    unsigned char low = 0x80;
+    unsigned char high = 0xBF;
+
+    if (lead >= 0xC2 && lead <= 0xDF) much = 1;
+    else if (lead >= 0xE0 && lead <= 0xEF) much = 2;
+    else if (lead >= 0xF0 && lead <= 0xF4) much = 3;
+    else return Span{Span::Kind::bad, 1};
+
+    if (lead == 0xE0) low = 0xA0;
+    if (lead == 0xED) high = 0x9F;
+    if (lead == 0xF0) low = 0x90;
+    if (lead == 0xF4) high = 0x8F;
+
+    for (std::size_t at = 1; at <= much; ++at) {
+        if (at >= from.size()) return Span{Span::Kind::partial, at};
+
+        const auto next = static_cast<unsigned char>(from[at]);
+
+        if (next < (at == 1 ? low : 0x80) || next > (at == 1 ? high : 0xBF)) return Span{Span::Kind::bad, at};
+    }
+
+    return Span{Span::Kind::whole, much + 1};
+}
+
+// Whether the whole text is well-formed UTF-8, by the rule of `span`.
+bool strict(std::string_view text) {
+    for (std::size_t at = 0; at < text.size();) {
+        const Span one = span(text.substr(at));
+
+        if (one.kind != Span::Kind::whole) return false;
+
+        at += one.size;
+    }
+
+    return true;
+}
+
+// The next character of the string, by the rule of `span`. What the rule does not let through
+// comes back as one replacement character for its maximal subpart, and so does a tail cut off
+// halfway: a string with a broken middle has to be displayed, not vanish. Where a cut-off tail has
+// to wait for the rest instead, in a stream, the stream asks `span` itself.
 char32_t decode(std::string_view from, std::size_t& at) {
     if (at >= from.size()) return 0;
 
-    const unsigned char one = static_cast<unsigned char>(from[at]);
+    const Span one = span(from.substr(at));
 
-    if (one < 0x80) {
-        ++at;
-
-        return one;
-    }
-
-    const std::size_t much = utf8::trailing(one);
-
-    if (much == 0 || at + much >= from.size()) {
-        ++at;
+    if (one.kind != Span::Kind::whole) {
+        at += one.size;
 
         return 0xFFFD;
     }
 
-    char32_t made = one & (0x3F >> much);
+    const auto lead = static_cast<unsigned char>(from[at]);
 
-    for (std::size_t which = 1; which <= much; ++which) {
-        const unsigned char next = static_cast<unsigned char>(from[at + which]);
-
-        if ((next & 0xC0) != 0x80) {
-            ++at;
-
-            return 0xFFFD;
-        }
-
-        made = (made << 6) | (next & 0x3F);
-    }
-
-    // The least value each length may carry: anything less has a shorter form.
-    constexpr char32_t least[] = {0, 0x80, 0x800, 0x10000};
-
-    if (made < least[much] || made > 0x10FFFF || (made >= 0xD800 && made <= 0xDFFF)) {
+    if (one.size == 1) {
         ++at;
 
-        return 0xFFFD;
+        return lead;
     }
 
-    at += much + 1;
+    char32_t made = lead & (0x3F >> (one.size - 1));
+
+    for (std::size_t which = 1; which < one.size; ++which) made = (made << 6) | (static_cast<unsigned char>(from[at + which]) & 0x3F);
+
+    at += one.size;
 
     return made;
 }
