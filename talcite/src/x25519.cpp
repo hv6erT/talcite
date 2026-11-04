@@ -6,6 +6,7 @@
 #include "talcite/trouble.hpp"
 
 #include "curving.hpp"
+#include "secrets.hpp"
 
 // X25519 from RFC 7748, for when the system does not provide it (CNG has curve 25519 only from
 // Windows 10 on): the Montgomery ladder on the u coordinate alone, in projective form (X : Z), over
@@ -92,11 +93,11 @@ std::optional<Bytes> x25519(const Bytes& scalar, const Bytes& u) {
 
     Bytes made = packed(result);
 
-    wiped(x2);
-    wiped(z2);
-    wiped(x3);
-    wiped(z3);
-    wiped(result);
+    secret::wiped(x2);
+    secret::wiped(z2);
+    secret::wiped(x3);
+    secret::wiped(z3);
+    secret::wiped(result);
 
     std::byte any{0};
 

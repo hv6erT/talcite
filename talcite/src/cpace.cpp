@@ -13,6 +13,7 @@
 #include "talcite/trouble.hpp"
 
 #include "curving.hpp"
+#include "secrets.hpp"
 
 // CPace (draft-irtf-cfrg-cpace-21, the X25519 + SHA-512 suite) is a key agreement on a short shared
 // password: a code to be read out. The password cannot be checked offline: whoever overheard the
@@ -38,35 +39,8 @@ constexpr std::size_t wide = 32;
 
 constexpr std::size_t block = 128;
 
-// The bytes of a string, one by one.
-Bytes bytes_of(std::string_view said) {
-    Bytes made;
-
-    for (const char one : said) made.push_back(static_cast<std::byte>(one));
-
-    return made;
-}
-
 // Appends `what` to the end of `into`.
 void appended(Bytes& into, const Bytes& what) { into.insert(into.end(), what.begin(), what.end()); }
-
-// Zeroing that the compiler does not remove, for secrets and what is derived from them.
-void wiped(Bytes& one) {
-    volatile std::byte* at = one.data();
-
-    for (std::size_t i = 0; i < one.size(); ++i) at[i] = std::byte{0};
-}
-
-// Equality in constant time: the time does not depend on where the bytes differ.
-bool alike(const Bytes& one, const Bytes& two) {
-    if (one.size() != two.size()) return false;
-
-    std::byte differ{0};
-
-    for (std::size_t at = 0; at < two.size(); ++at) differ |= one[at] ^ two[at];
-
-    return differ == std::byte{0};
-}
 
 // Appends `what` preceded by its length as four big-endian bytes.
 void framed(Bytes& into, const Bytes& what) {
@@ -86,9 +60,9 @@ public:
           scalar_(scalar ? std::move(*scalar) : random(wide)) {
         if (scalar_.size() != wide) throw Trouble{"A CPace scalar has 32 bytes."};
 
-        const Bytes g = generator(prs, bytes_of(context_), {});
+        const Bytes g = generator(prs, bytes(context_), {});
 
-        wiped(prs);
+        secret::wiped(prs);
 
         const std::optional<Bytes> share = multiplied(cipher_, scalar_, g);
 
@@ -99,8 +73,8 @@ public:
 
     // Wipes the scalar and the confirmation key.
     ~Cpace() override {
-        wiped(scalar_);
-        wiped(mac_key_);
+        secret::wiped(scalar_);
+        secret::wiped(mac_key_);
     }
 
     Cpace(const Cpace&) = delete;
@@ -159,7 +133,7 @@ public:
 
             derived(transcript(mine_, {}, theirs_, {}));
 
-            if (!alike(Bytes(one.begin() + wide, one.end()), tag(theirs_))) refused();
+            if (!secret::alike(Bytes(one.begin() + wide, one.end()), tag(theirs_))) refused();
 
             step_ = 2;
 
@@ -167,7 +141,7 @@ public:
         }
 
         if (side_ == Side::answering && step_ == 2) {
-            if (!alike(one, tag(theirs_))) refused();
+            if (!secret::alike(one, tag(theirs_))) refused();
 
             step_ = 3;
             ready_ = true;
@@ -200,23 +174,23 @@ private:
 
         Bytes isk = intermediate({}, *k, told);
 
-        wiped(*k);
+        secret::wiped(*k);
 
-        Bytes mac_input = bytes_of("CPaceMac");
+        Bytes mac_input = bytes("CPaceMac");
 
         appended(mac_input, isk);
 
         mac_key_ = summed(Sum::sha512, mac_input);
 
-        wiped(mac_input);
+        secret::wiped(mac_input);
 
-        Bytes info = bytes_of("talcite cpace 1");
+        Bytes info = bytes("talcite cpace 1");
 
-        framed(info, bytes_of(context_));
+        framed(info, bytes(context_));
 
         const Bytes made = talcite::derived(Sum::sha512, {}, isk, info, 2 * wide);
 
-        wiped(isk);
+        secret::wiped(isk);
 
         const Bytes calling(made.begin(), made.begin() + wide);
         const Bytes answering(made.begin() + wide, made.end());
@@ -310,17 +284,17 @@ Bytes elligator2(const Bytes& u) {
 // The generator from the password, CI and sid: the SHA-512 hash of the generator string, with the
 // first 32 bytes taken as u (§8.2).
 Bytes generator(const Bytes& prs, const Bytes& ci, const Bytes& sid) {
-    Bytes text = generator_string(bytes_of("CPace255"), prs, ci, sid, block);
+    Bytes text = generator_string(bytes("CPace255"), prs, ci, sid, block);
 
     Bytes hash = summed(Sum::sha512, text);
 
-    wiped(text);
+    secret::wiped(text);
 
     hash.resize(wide);
 
     const Bytes made = elligator2(hash);
 
-    wiped(hash);
+    secret::wiped(hash);
 
     return made;
 }
@@ -346,7 +320,7 @@ Bytes transcript(const Bytes& ya, const Bytes& ada, const Bytes& yb, const Bytes
 
 // ISK = H(lv_cat(DSI ‖ "_ISK", sid, K) ‖ transcript) (§7.2).
 Bytes intermediate(const Bytes& sid, const Bytes& k, const Bytes& told) {
-    Bytes input = prepended(bytes_of("CPace255_ISK"));
+    Bytes input = prepended(bytes("CPace255_ISK"));
 
     appended(input, prepended(sid));
     appended(input, prepended(k));
@@ -354,7 +328,7 @@ Bytes intermediate(const Bytes& sid, const Bytes& k, const Bytes& told) {
 
     const Bytes made = summed(Sum::sha512, input);
 
-    wiped(input);
+    secret::wiped(input);
 
     return made;
 }

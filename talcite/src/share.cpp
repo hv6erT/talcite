@@ -12,6 +12,7 @@
 #include "talcite/encoding.hpp"
 
 #include "hexing.hpp"
+#include "secrets.hpp"
 #include "sharing.hpp"
 
 #ifdef _WIN32
@@ -310,9 +311,7 @@ std::vector<std::string> listed(std::string_view said) {
 
 // Zeroes and empties the string in a way the compiler cannot remove as a dead store.
 void wiped(std::string& secret) {
-    volatile char* at = secret.data();
-
-    for (std::size_t many = secret.size(); many > 0; --many) *at++ = '\0';
+    talcite::secret::wiped(secret);
 
     secret.clear();
 }

@@ -10,6 +10,8 @@
 #include "talcite/digest.hpp"
 #include "talcite/trouble.hpp"
 
+#include "secrets.hpp"
+
 namespace talcite::net {
 
 // Key agreement as a seam: an exchange of messages that ends with two keys, one for sending and one
@@ -42,15 +44,6 @@ namespace {
 // The size of an X25519 public value, of each session key and of each confirmation, in bytes.
 constexpr std::size_t wide = 32;
 
-// The bytes of a text, one per char, for labels and the context.
-Bytes bytes_of(std::string_view said) {
-    Bytes made;
-
-    for (const char one : said) made.push_back(static_cast<std::byte>(one));
-
-    return made;
-}
-
 // Appends `what` to the end of `into`.
 void appended(Bytes& into, const Bytes& what) { into.insert(into.end(), what.begin(), what.end()); }
 
@@ -71,19 +64,6 @@ Bytes slice(const Bytes& from, std::size_t at, std::size_t much) {
     return Bytes(from.begin() + static_cast<std::ptrdiff_t>(at), from.begin() + static_cast<std::ptrdiff_t>(at + much));
 }
 
-// Constant-time comparison: a confirmation is a secret whose bytes must not be guessable from
-// timing. The length of the first message is checked by `Agreement::shared`, where a wrong size is
-// a refusal.
-bool alike(const Bytes& one, const Bytes& two) {
-    if (one.size() != two.size()) return false;
-
-    std::byte differ{0};
-
-    for (std::size_t at = 0; at < two.size(); ++at) differ |= one[at] ^ two[at];
-
-    return differ == std::byte{0};
-}
-
 // The long-key handshake described at the top of this file.
 class Keyed : public Handshake {
 public:
@@ -97,7 +77,7 @@ public:
     }
 
     // Overwrites the long key before the memory is released.
-    ~Keyed() override { wiped(key_); }
+    ~Keyed() override { secret::wiped(key_); }
 
     Keyed(const Keyed&) = delete;
     Keyed& operator=(const Keyed&) = delete;
@@ -158,7 +138,9 @@ public:
 
             derived_from(answering_);
 
-            if (!alike(slice(one, wide, wide), confirm_answering_)) refused();
+            // A confirmation is a secret whose bytes must not be guessable from timing; the length
+            // of the message was checked above, where a wrong size is a refusal.
+            if (!secret::alike(slice(one, wide, wide), confirm_answering_)) refused();
 
             step_ = 2;
 
@@ -166,7 +148,7 @@ public:
         }
 
         if (side_ == Side::answering && step_ == 2) {
-            if (!alike(one, confirm_calling_)) refused();
+            if (!secret::alike(one, confirm_calling_)) refused();
 
             step_ = 3;
             ready_ = true;
@@ -199,9 +181,9 @@ private:
 
         if (!shared) refused();
 
-        Bytes info = bytes_of("talcite keyed 1");
+        Bytes info = bytes("talcite keyed 1");
 
-        framed(info, bytes_of(context_));
+        framed(info, bytes(context_));
         framed(info, calling_);
         framed(info, answering_);
 
@@ -212,15 +194,8 @@ private:
 
         keys_ = side_ == Side::calling ? Keying{calling, answering} : Keying{answering, calling};
 
-        confirm_answering_ = stamped(Sum::sha256, slice(made, 2 * wide, wide), bytes_of("answering"));
-        confirm_calling_ = stamped(Sum::sha256, slice(made, 3 * wide, wide), bytes_of("calling"));
-    }
-
-    // Zeroes the bytes through a volatile pointer, so that the compiler cannot drop the writes.
-    static void wiped(Bytes& one) {
-        volatile std::byte* at = one.data();
-
-        for (std::size_t i = 0; i < one.size(); ++i) at[i] = std::byte{0};
+        confirm_answering_ = stamped(Sum::sha256, slice(made, 2 * wide, wide), bytes("answering"));
+        confirm_calling_ = stamped(Sum::sha256, slice(made, 3 * wide, wide), bytes("calling"));
     }
 
     Side side_;

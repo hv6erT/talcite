@@ -174,11 +174,4 @@ Limbs unpacked(const Bytes& one) {
     return made;
 }
 
-// Zeroing that the compiler does not remove, because the ladder state is derived from a secret.
-void wiped(Limbs& one) {
-    volatile std::int64_t* at = one.data();
-
-    for (std::size_t i = 0; i < one.size(); ++i) at[i] = 0;
-}
-
 }

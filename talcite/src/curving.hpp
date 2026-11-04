@@ -33,6 +33,4 @@ inline constexpr std::array<std::uint8_t, 32> halving{0xf6, 0xff, 0xff, 0xff, 0x
 
 [[nodiscard]] Limbs unpacked(const Bytes& one);
 
-void wiped(Limbs& one);
-
 }

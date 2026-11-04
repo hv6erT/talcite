@@ -14,6 +14,7 @@ talcite/src/marking.hpp
 talcite/src/netting.hpp
 talcite/src/piping.hpp
 talcite/src/sealed.hpp
+talcite/src/secrets.hpp
 talcite/src/sharing.hpp
 talcite/src/slot.hpp
 talcite/src/stops.hpp
