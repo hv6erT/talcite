@@ -146,6 +146,33 @@ TRIAL("Encoding: a byte outside UTF-8 becomes a replacement character, not silen
     ought(made.find("\xef\xbf\xbd") != std::string::npos);
 }
 
+// Forms UTF-8 forbids although their bits fit come back as the replacement character, one byte at
+// a time, as any other broken byte: past U+10FFFF (it would pass for the handle of a grapheme
+// cluster on the screen), half of a surrogate pair, and a character written longer than it needs
+// (a hidden "/" and a hidden NUL). The largest character, the last before the surrogates and the
+// shortest forms of each length still decode.
+TRIAL("Encoding: overlong forms, surrogates and values past U+10FFFF are broken bytes") {
+    const auto decoded = [](std::string_view text) {
+        std::u32string made;
+
+        for (std::size_t at = 0; at < text.size();) made += utf8::decode(text, at);
+
+        return made;
+    };
+
+    same(decoded("\xf4\x90\x80\x80"), std::u32string(4, U'\ufffd'));
+    same(decoded("\xed\xa0\x80"), std::u32string(3, U'\ufffd'));
+    same(decoded("\xe0\x80\xaf"), std::u32string(3, U'\ufffd'));
+    same(decoded("\xc0\xaf"), std::u32string(2, U'\ufffd'));
+    same(decoded("\xc0\x80"), std::u32string(2, U'\ufffd'));
+    same(decoded("\xf0\x80\x80\xaf"), std::u32string(4, U'\ufffd'));
+
+    same(decoded("\xf4\x8f\xbf\xbf"), std::u32string{U'\U0010ffff'});
+    same(decoded("\xed\x9f\xbf"), std::u32string{U'\ud7ff'});
+    same(decoded("\xc2\x80\xe0\xa0\x80\xf0\x90\x80\x80"), (std::u32string{U'\u0080', U'\u0800', U'\U00010000'}));
+    same(decoded("a\xc5\xbc"), (std::u32string{U'a', U'\u017c'}));
+}
+
 // A zero in the middle of a string. `std::string_view` knows its length, so a zero in it is a
 // character, not the end, and it must come out the same on the other side. The trial guards that
 // the conversion does not stop at the first zero and silently lose the rest.

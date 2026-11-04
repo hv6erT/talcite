@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "farewell.hpp"
 #include "faking.hpp"
 #include "talcite/clock.hpp"
 #include "talcite/column.hpp"
@@ -329,6 +330,72 @@ TRIAL("Term: the cursor's shape goes once, comes again after stepping aside, and
     }
 
     ought(holds(line->written, "\x1b[0 q"));
+}
+
+// After a signal there is no time to undress the terminal the way `Term` does; the console writes
+// one fixed farewell instead. It must do everything `Term` does when it undresses (the alternate
+// screens, the mouse in either encoding, paste, the wrap, the cursor and its shape), and also end
+// a synchronized frame the signal may have cut in half.
+TRIAL("Term: the farewell after a signal undoes everything Term turns on") {
+    const std::string farewell{detail::farewell};
+
+    // Each private mode `\x1b[?N` with its letter, and each cursor shape `\x1b[N q`, in the text.
+    const auto sequences = [](const std::string& text) {
+        std::vector<std::string> made;
+
+        for (std::size_t at = text.find("\x1b["); at != std::string::npos; at = text.find("\x1b[", at + 1)) {
+            std::size_t end = at + 2;
+            const bool asked = end < text.size() && text[end] == '?';
+
+            if (asked) ++end;
+
+            while (end < text.size() && text[end] >= '0' && text[end] <= '9') ++end;
+
+            if (asked && end < text.size() && (text[end] == 'h' || text[end] == 'l'))
+                made.push_back(text.substr(at, end + 1 - at));
+            else if (!asked && end + 1 < text.size() && text[end] == ' ' && text[end + 1] == 'q')
+                made.push_back(text.substr(at, end + 2 - at));
+        }
+
+        return made;
+    };
+
+    Setup older;
+    older.screen = Screen::older;
+    older.mouse = Mouse::basic;
+    older.bracketed_paste = true;
+    older.synchronized = true;
+
+    Setup apart = dressy();
+    apart.synchronized = true;
+
+    for (const Setup& given : {older, apart}) {
+        auto line = faking::terminal();
+
+        std::string on;
+
+        {
+            Shaped root;
+
+            Term term{given, Seam<Console>{line}};
+
+            term.show(root);
+            term.draw();
+
+            on = line->written;
+
+            line->written.clear();
+        }
+
+        const std::vector<std::string> off = sequences(line->written);
+
+        ought(off.size() >= 8);
+
+        for (const std::string& one : off) ought(farewell.find(one) != std::string::npos);
+
+        ought(holds(on, "\x1b[?2026h"));
+        ought(farewell.find("\x1b[?2026l") != std::string::npos);
+    }
 }
 
 TRIAL("Term: draws nothing while stepped aside") {

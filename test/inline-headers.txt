@@ -1,6 +1,7 @@
 demo/doing.hpp
 talcite/src/cpacing.hpp
 talcite/src/eliding.hpp
+talcite/src/farewell.hpp
 talcite/src/folding.hpp
 talcite/src/followed.hpp
 talcite/src/fscore.hpp

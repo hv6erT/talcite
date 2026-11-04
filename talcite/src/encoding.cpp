@@ -30,7 +30,11 @@ std::size_t trailing(unsigned char lead) {
 // The next character of the string. A byte that breaks the rules and a tail cut off halfway come
 // back as the replacement character, and decoding moves on by one byte: a string with a broken
 // middle has to be displayed, not vanish. Where a cut-off tail has to wait for the rest instead
-// of vanishing, that is in the input decoder, this function is not used.
+// of vanishing, that is in the input decoder, this function is not used. Breaking the rules
+// includes the forms UTF-8 forbids although their bits fit: a character written longer than it
+// needs ("/" as C0 AF), half of a UTF-16 surrogate pair, and anything past U+10FFFF. Let through,
+// they would pass for another character (a hidden "/"), or for a number the screen uses for
+// something else (past U+10FFFF lie the handles of grapheme clusters).
 char32_t decode(std::string_view from, std::size_t& at) {
     if (at >= from.size()) return 0;
 
@@ -62,6 +66,15 @@ char32_t decode(std::string_view from, std::size_t& at) {
         }
 
         made = (made << 6) | (next & 0x3F);
+    }
+
+    // The least value each length may carry: anything less has a shorter form.
+    constexpr char32_t least[] = {0, 0x80, 0x800, 0x10000};
+
+    if (made < least[much] || made > 0x10FFFF || (made >= 0xD800 && made <= 0xDFFF)) {
+        ++at;
+
+        return 0xFFFD;
     }
 
     at += much + 1;

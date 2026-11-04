@@ -3,6 +3,7 @@
 #include "talcite/encoding.hpp"
 
 #include "conhost.hpp"
+#include "farewell.hpp"
 #include "sealed.hpp"
 
 #include <algorithm>
@@ -562,20 +563,17 @@ void widened(int) {
 //
 // A signal handler may only do what is safe in a signal handler: `tcsetattr`, `write`,
 // `sigaction`, `raise`. Hence the state in variables prepared in advance (the mode from before and
-// the raw mode) and a farewell with a fixed string that turns off everything `Term` can turn on;
-// turning off something that was not turned on does nothing.
+// the raw mode) and a fixed farewell string (`detail::farewell`).
 termios cooked_kept{};
 termios raw_kept{};
 volatile std::sig_atomic_t rawly = 0;
 volatile std::sig_atomic_t returned = 0;
 
-constexpr char farewell[] = "\x1b[?2004l\x1b[?1003l\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?7h\x1b[0 q\x1b[?25h\x1b[?1049l";
-
 // Gives the terminal back: the mode from before and the farewell string. Safe in a signal handler.
 void restored() {
     (void)::tcsetattr(STDIN_FILENO, TCSANOW, &cooked_kept);
 
-    const ssize_t wrote = ::write(STDOUT_FILENO, farewell, sizeof farewell - 1);
+    const ssize_t wrote = ::write(STDOUT_FILENO, detail::farewell.data(), detail::farewell.size());
     (void)wrote;
 }
 
