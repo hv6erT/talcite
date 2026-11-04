@@ -1879,8 +1879,11 @@ bool Page::handle(WheelEvent& what) {
 // Takes the focus on a click, and a click with the left button on a mark with an address follows it
 // (`FollowingMixin::followed`); a click with Ctrl is left to the terminal, which opens a hyperlink
 // itself, as on a link (`Link`). The guard on the root is there because a widget is sometimes
-// rendered in a test without a root.
+// rendered in a test without a root. A click on the scrollbar is the bar's (`on_bar`): it does not
+// follow a mark that runs under it.
 bool Page::handle(ClickEvent& what) {
+    if (on_bar(local(what.where()))) return true;
+
     if (root() != nullptr) focus();
 
     if (what.mods().ctrl || what.button() != Mouse::left) return true;
@@ -1897,6 +1900,12 @@ bool Page::handle(ClickEvent& what) {
 
     return true;
 }
+
+// Whether the cell (in the page's coordinates) lies on the scrollbar. The press on the bar is the
+// bar's (`handle(MouseEvent)`), so the click that follows it, and a double click there, must not
+// also act on the text beside it: a subclass that handles the mouse itself (`Editor`) asks this
+// first, as the table and the comparison do.
+bool Page::on_bar(Spot where) const { return kept_->grip.over(where); }
 
 // The mouse on the scrollbar: the track scrolls a page, and the thumb jumps to where it was put, to
 // a line when the scrollbar counts lines and to a byte when it counts bytes.

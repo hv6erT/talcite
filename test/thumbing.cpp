@@ -7,9 +7,13 @@
 
 #include "talcite/bytes.hpp"
 #include "talcite/column.hpp"
+#include "talcite/editor.hpp"
 #include "talcite/encoding.hpp"
+#include "talcite/following.hpp"
 #include "talcite/list.hpp"
 #include "talcite/listitem.hpp"
+#include "talcite/loop.hpp"
+#include "talcite/mark.hpp"
 #include "talcite/root.hpp"
 #include "talcite/scroll.hpp"
 #include "talcite/table.hpp"
@@ -369,6 +373,93 @@ TRIAL("Scrollbar: a text page, with track and thumb") {
     pressed(top, {19, 30}, ui::Press::up);
 
     same(one->first().value_or(0), std::size_t{90});
+}
+
+// The editor's scrollbar is the page's: the track scrolls a page and the thumb drags, and neither
+// the press nor the click and double click that follow it move the cursor or select. A click beside
+// the bar still puts the cursor.
+TRIAL("Scrollbar: in an editor the track and thumb move the view, not the cursor") {
+    Sheet top;
+
+    const auto one = std::make_shared<ui::Editor>(ui::ScrollShape{.scrollbar = true});
+
+    one->hold(bytes(lines(100)));
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {20, 10}});
+
+    clicked(top, {19, 8});
+
+    same(one->first().value_or(99), std::size_t{10});
+    same(one->cursor(), std::size_t{0});
+
+    (void)top.render({{0, 0}, {20, 10}});
+    clicked(top, {19, 0});
+    clicked(top, {19, 0});
+
+    same(one->first().value_or(99), std::size_t{0});
+    same(one->cursor(), std::size_t{0});
+    ought(one->selection().empty());
+
+    const View shown = top.render({{0, 0}, {20, 10}});
+    const char32_t track = shown.at({19, 9}).letter;
+
+    int y = -1;
+
+    for (int row = 0; row < 9 && y < 0; ++row)
+        if (shown.at({19, row}).letter != track) y = row;
+
+    ought(y >= 0);
+
+    pressed(top, {19, y}, ui::Press::down);
+    pressed(top, {19, 30}, ui::Press::move);
+    pressed(top, {19, 30}, ui::Press::up);
+
+    same(one->first().value_or(0), std::size_t{90});
+    same(one->cursor(), std::size_t{0});
+
+    (void)top.render({{0, 0}, {20, 10}});
+    clicked(top, {2, 1});
+
+    ought(one->cursor() > 0);
+}
+
+// A click on a page's scrollbar is the bar's even where a mark with an address runs under it: the
+// page follows no link there. A click on the text of the mark still follows it.
+TRIAL("Scrollbar: a click on a page's scrollbar follows no link beside it") {
+    Loop loop;
+    Sheet top;
+
+    const auto one = std::make_shared<ui::Viewer>(ui::ScrollShape{.scrollbar = true});
+
+    one->hold(bytes(lines(100)));
+    one->marks().add(ui::Mark{0, 0, 9, "talcite.link", "https://example.org/"});
+
+    top.children().add(one);
+
+    int followed = 0;
+
+    const ui::Hook heard = top.on<ui::FollowEvent>([&followed](ui::FollowEvent&) {
+        ++followed;
+
+        return true;
+    });
+
+    (void)top.render({{0, 0}, {20, 10}});
+
+    clicked(top, {19, 0});
+
+    for (int at = 0; at < 5; ++at) (void)loop.turn();
+
+    same(followed, 0);
+
+    (void)top.render({{0, 0}, {20, 10}});
+    clicked(top, {2, 0});
+
+    for (int at = 0; at < 5; ++at) (void)loop.turn();
+
+    same(followed, 1);
 }
 
 TRIAL("Scrollbar: in a list the track and thumb move the view, not the choice") {

@@ -99,6 +99,8 @@ protected:
 
     [[nodiscard]] std::optional<Place> place_of(Spot where) const;
 
+    [[nodiscard]] bool on_bar(Spot where) const;
+
     [[nodiscard]] std::size_t topmost() const override;
 
     void layout(Size given) override;

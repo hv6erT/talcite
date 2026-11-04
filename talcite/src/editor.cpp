@@ -1450,7 +1450,10 @@ bool Editor::handle(KeyEvent& what) {
 // viewer. The page converts the row and column into a line and a byte: a screen row is not a line
 // number, because with wrapping one line takes several rows, and a column is not a byte, because a
 // tab takes eight cells. Computing it here by hand would put the cursor somewhere else entirely.
+// A click on the scrollbar is the bar's (`on_bar`) and leaves the cursor where it is.
 bool Editor::handle(ClickEvent& what) {
+    if (on_bar(local(what.where()))) return true;
+
     if (root() != nullptr) focus();
 
     if (!spool()) return true;
@@ -1490,6 +1493,10 @@ bool Editor::handle(ClickEvent& what) {
 // on its own.
 bool Editor::handle(MouseEvent& what) {
     Kept& kept = *kept_;
+
+    // The scrollbar is the page's: a press on it scrolls, and the thumb drags, as in the viewer,
+    // unless a selection is being dragged, which may pass over the bar's column.
+    if (!kept.dragging && Page::handle(what)) return true;
 
     if (!spool()) return true;
 
@@ -1556,6 +1563,8 @@ bool Editor::handle(MouseEvent& what) {
 // A click on a place that is not a word takes a run of the same kind: spaces only or punctuation
 // only. It always selects something, so a double click never looks ignored.
 bool Editor::handle(DoubleClickEvent& what) {
+    if (on_bar(local(what.where()))) return true;
+
     if (root() != nullptr) focus();
 
     if (!spool()) return true;
