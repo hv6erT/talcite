@@ -227,6 +227,59 @@ TRIAL("Scrollbar: a thumb grabbed in the middle follows the cursor by the same c
     pressed(top, {19, 4}, ui::Press::up);
 }
 
+// A view between two cells of the track (after the wheel or a key) stays where it is when the
+// thumb is grabbed and moved within the cell it stands in; a move by a cell moves the view by a
+// cell of the track from there, and the ends of the track are the ends of the whole.
+TRIAL("Scrollbar: grabbing the thumb does not move the view, moving it moves the view from where it was") {
+    Sheet top;
+
+    const auto one = table(top);
+
+    // A track of ten cells and a thumb of one: a cell of the track is ten rows. At 5 the thumb
+    // stands in the second cell, row 2.
+    one->first(5);
+
+    const int y = thumb_row(top, 19, 1, 11);
+
+    ought(y == 2);
+
+    pressed(top, {19, y}, ui::Press::down);
+    pressed(top, {19, y}, ui::Press::move);
+
+    same(one->first(), std::size_t{5});
+
+    pressed(top, {19, y + 1}, ui::Press::move);
+
+    same(one->first(), std::size_t{15});
+
+    pressed(top, {19, y}, ui::Press::move);
+
+    same(one->first(), std::size_t{5});
+
+    pressed(top, {19, 1}, ui::Press::move);
+
+    same(one->first(), std::size_t{0});
+
+    pressed(top, {19, 10}, ui::Press::move);
+
+    same(one->first(), std::size_t{90});
+
+    pressed(top, {19, 10}, ui::Press::up);
+
+    // At 3 the thumb stands in the first cell of the track, which is also the start of the whole:
+    // a grab there keeps 3 all the same.
+    one->first(3);
+
+    ought(thumb_row(top, 19, 1, 11) == 1);
+
+    pressed(top, {19, 1}, ui::Press::down);
+    pressed(top, {19, 1}, ui::Press::move);
+
+    same(one->first(), std::size_t{3});
+
+    pressed(top, {19, 1}, ui::Press::up);
+}
+
 TRIAL("Scrollbar: a click on a table's scrollbar does not set a row and is not a double click on a row") {
     Sheet top;
 

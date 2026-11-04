@@ -44,10 +44,11 @@ namespace talcite::ui {
 //
 // `Grip` is the mouse handling on a bar, shared by every scrolling widget: the table, the page, the
 // list and the scroller each draw the bar their own way, but hitting, grabbing and dragging work
-// the same everywhere, so they are computed once, here. After each paint the widget says where the
+// the same everywhere, so they are computed once, here. After each layout the widget says where the
 // bar ended up (in its own coordinates) and asks on each event what to do; it does the scrolling
 // itself, in its own units. `Grip::over` (inline) tells whether a cell lies on the bar, and
-// `Grip::held` whether the thumb is being dragged.
+// `Grip::held` whether the thumb is being dragged. `Hold` is what a grab of the thumb remembers:
+// the thumb's cell under the pointer, the thumb's first cell on the track and the view's offset.
 namespace {
 
 // The bar computes a proportion, not counts. So it may divide all three numbers by a common
@@ -203,22 +204,26 @@ Part Grip::part(Spot here) const {
 }
 
 // A left press on the bar says what it hit; on the thumb it remembers which of the thumb's cells
-// was grabbed and asks the root to capture the mouse, so that motion keeps arriving even when the
-// pointer leaves the bar, as when dragging a window. Motion while grabbed yields the offset at
-// which the same cell of the thumb stays under the pointer; the track is computed in the same
-// proportions as for drawing, and the result returns to the bar's units (rows, bytes) through the
-// scaling divisor. Releasing the button ends the grip.
+// was grabbed, where the thumb stood and the offset of the view (`Hold`), and asks the root to
+// capture the mouse, so that motion keeps arriving even when the pointer leaves the bar, as when
+// dragging a window. Motion while grabbed puts the thumb where the same cell of it stays under the
+// pointer. The view moves from the offset it had at the grab, by as many cells of the track as the
+// thumb moved, in the same proportions as for drawing; back in the cell it was grabbed in, it has
+// that offset again. So a grab does not move the view by itself, even when the view stood between
+// two cells of the track (after the wheel or a key). A thumb moved to either end of the track puts
+// the view at the start or at the end. The result returns to the bar's units (rows, bytes) through
+// the scaling divisor. Releasing the button ends the grip.
 Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
     if (what.press() == Press::up) {
-        const bool was = grip_.has_value();
+        const bool was = hold_.has_value();
 
-        grip_.reset();
+        hold_.reset();
 
         return Asked{was ? Part::thumb : Part::none, std::nullopt};
     }
 
     if (what.press() == Press::move) {
-        if (!grip_.has_value() || !track_.has_value()) return {};
+        if (!hold_.has_value() || !track_.has_value()) return {};
 
         const Track& one = *track_;
         const Laid laid = laid_out(one);
@@ -227,17 +232,25 @@ Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
         if (room <= 0 || laid.most == 0) return Asked{Part::thumb, std::nullopt};
 
         const int along = one.upright ? here.y - one.at.y : here.x - one.at.x;
-        const int cell = std::clamp(along - *grip_, 0, room);
+        const int cell = along - hold_->grip;
+        const std::size_t by = divisor(one.whole);
 
-        const auto scaled_to = static_cast<std::size_t>(
-            (static_cast<std::int64_t>(cell) * laid.most + room / 2) / room);
+        if (cell == hold_->from) return Asked{Part::thumb, hold_->shift};
 
-        // The cell does not leave the track, so the result does not go past the last offset, also
-        // after multiplying by the scaling divisor it was divided by before.
-        return Asked{Part::thumb, scaled_to * divisor(one.whole)};
+        if (cell <= 0) return Asked{Part::thumb, 0};
+
+        // The last cell of the track is the last offset, also after multiplying by the scaling
+        // divisor it was divided by before.
+        if (cell >= room) return Asked{Part::thumb, static_cast<std::size_t>(laid.most) * by};
+
+        const std::int64_t start = static_cast<std::int64_t>(std::min<std::size_t>(hold_->shift / by, laid.most));
+        const std::int64_t moved = start * room + static_cast<std::int64_t>(cell - hold_->from) * laid.most;
+        const std::int64_t scaled_to = std::clamp<std::int64_t>((moved + room / 2) / room, 0, laid.most);
+
+        return Asked{Part::thumb, static_cast<std::size_t>(scaled_to) * by};
     }
 
-    grip_.reset();
+    hold_.reset();
 
     if (what.button() != Mouse::left) return {};
 
@@ -245,8 +258,9 @@ Asked Grip::mouse(const MouseEvent& what, Spot here, Node& owner) {
 
     if (hit == Part::thumb && track_.has_value()) {
         const int along = track_->upright ? here.y - track_->at.y : here.x - track_->at.x;
+        const int from = laid_out(*track_).from;
 
-        grip_ = along - laid_out(*track_).from;
+        hold_ = Hold{along - from, from, track_->shift};
 
         if (Root* top = owner.root(); top != nullptr) top->capture(owner);
     }

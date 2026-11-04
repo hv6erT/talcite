@@ -31,6 +31,12 @@ struct Asked {
     std::optional<std::size_t> to;
 };
 
+struct Hold {
+    int grip = 0;
+    int from = 0;
+    std::size_t shift = 0;
+};
+
 class Grip {
 public:
     void laid(std::optional<Track> given);
@@ -39,13 +45,13 @@ public:
 
     [[nodiscard]] bool over(Spot here) const { return part(here) != Part::none; }
 
-    [[nodiscard]] bool held() const { return grip_.has_value(); }
+    [[nodiscard]] bool held() const { return hold_.has_value(); }
 
     [[nodiscard]] Asked mouse(const MouseEvent& what, Spot here, Node& owner);
 
 private:
     std::optional<Track> track_;
-    std::optional<int> grip_;
+    std::optional<Hold> hold_;
 };
 
 struct Scrollbar {
