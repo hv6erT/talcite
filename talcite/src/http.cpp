@@ -18,6 +18,7 @@
 #include "talcite/stream.hpp"
 
 #include "fscore.hpp"
+#include "hexing.hpp"
 #include "raced.hpp"
 
 // An HTTP/1.1 client, as much as is needed to talk to services such as TMDB and to download images:
@@ -640,33 +641,6 @@ std::string to_string(const Url& one) { return std::string{one.secure ? "https:/
 
 namespace {
 
-// The value of one hexadecimal digit, or -1.
-int nibble(char one) {
-    if (one >= '0' && one <= '9') return one - '0';
-    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
-    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
-
-    return -1;
-}
-
-// %40 and similar in the user and the password: in an environment variable, @ and : in a password
-// must be encoded, and the proxy receives them in the clear.
-std::string unescaped(std::string_view text) {
-    std::string made;
-
-    for (std::size_t at = 0; at < text.size(); ++at) {
-        if (text[at] == '%' && at + 2 < text.size() && nibble(text[at + 1]) >= 0 && nibble(text[at + 2]) >= 0) {
-            made += static_cast<char>(nibble(text[at + 1]) * 16 + nibble(text[at + 2]));
-            at += 2;
-            continue;
-        }
-
-        made += text[at];
-    }
-
-    return made;
-}
-
 // A proxy from a notation such as http://user:password@proxy:3128/; without a scheme it is HTTP, as
 // in curl and wget. A scheme other than HTTP(S), such as SOCKS, and a malformed notation give
 // nothing.
@@ -684,7 +658,9 @@ std::optional<Gateway> gated(std::string_view text) {
     Gateway made;
 
     if (at != std::string::npos && at >= from) {
-        made.login = unescaped(std::string_view{whole}.substr(from, at - from));
+        // %40 and similar: in an environment variable, @ and : in a password must be encoded, and
+        // the proxy receives them in the clear.
+        made.login = hex::unescaped(std::string_view{whole}.substr(from, at - from));
         whole.erase(from, at + 1 - from);
     }
 

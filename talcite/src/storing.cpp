@@ -7,6 +7,8 @@
 
 #include "talcite/encoding.hpp"
 
+#include "hexing.hpp"
+
 namespace talcite::fs {
 
 // A path for storage: always valid UTF-8, and always the same path back.
@@ -98,13 +100,11 @@ void put(char32_t one, std::u16string& into) {
 
 // Appends an escape: %XX for two digits, %uXXXX for four.
 void escaped(std::uint32_t value, int digits, std::string& into) {
-    static constexpr char hex[] = "0123456789ABCDEF";
-
     into += '%';
 
     if (digits == 4) into += 'u';
 
-    for (int shift = (digits - 1) * 4; shift >= 0; shift -= 4) into += hex[(value >> shift) & 0xF];
+    for (int shift = (digits - 1) * 4; shift >= 0; shift -= 4) into += hex::upper[(value >> shift) & 0xF];
 }
 
 // A text character in the escaped form: the percent sign escaped, everything else as it is.
@@ -128,14 +128,11 @@ std::optional<std::uint32_t> hexed(std::string_view text, std::size_t at, std::s
     std::uint32_t made = 0;
 
     for (std::size_t which = 0; which < digits; ++which) {
-        const char one = text[at + which];
+        const int one = hex::digit(text[at + which]);
 
-        made <<= 4;
+        if (one < 0) return std::nullopt;
 
-        if (one >= '0' && one <= '9') made |= static_cast<std::uint32_t>(one - '0');
-        else if (one >= 'A' && one <= 'F') made |= static_cast<std::uint32_t>(one - 'A' + 10);
-        else if (one >= 'a' && one <= 'f') made |= static_cast<std::uint32_t>(one - 'a' + 10);
-        else return std::nullopt;
+        made = (made << 4) | static_cast<std::uint32_t>(one);
     }
 
     return made;

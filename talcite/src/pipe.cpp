@@ -13,6 +13,7 @@
 #include "talcite/trouble.hpp"
 
 #include "handing.hpp"
+#include "hexing.hpp"
 #include "starting.hpp"
 
 #ifdef _WIN32
@@ -128,11 +129,9 @@ std::wstring pipe_name(const std::string& path) {
         sum *= 1099511628211ull;
     }
 
-    static constexpr char digits[] = "0123456789abcdef";
-
     std::string made = "\\\\.\\pipe\\talcite-";
 
-    for (int shift = 60; shift >= 0; shift -= 4) made += digits[(sum >> shift) & 0xf];
+    for (int shift = 60; shift >= 0; shift -= 4) made += hex::lower[(sum >> shift) & 0xf];
 
     const std::size_t cut = path.find_last_of("\\/");
     std::string tail = cut == std::string::npos ? path : path.substr(cut + 1);

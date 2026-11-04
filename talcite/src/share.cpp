@@ -11,6 +11,7 @@
 #include "talcite/child.hpp"
 #include "talcite/encoding.hpp"
 
+#include "hexing.hpp"
 #include "sharing.hpp"
 
 #ifdef _WIN32
@@ -48,39 +49,6 @@ namespace {
 
 using ascii::lowered;
 using ascii::trimmed;
-
-// The value of a hexadecimal digit, or -1 for anything else.
-int hexed(char one) {
-    if (one >= '0' && one <= '9') return one - '0';
-    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
-    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
-
-    return -1;
-}
-
-// Decodes the percent escapes of an address (%20 becomes a space). A malformed escape stays as it
-// is.
-std::string unescaped(std::string_view said) {
-    std::string made;
-
-    for (std::size_t at = 0; at < said.size(); ++at) {
-        if (said[at] == '%' && at + 2 < said.size()) {
-            const int high = hexed(said[at + 1]);
-            const int low = hexed(said[at + 2]);
-
-            if (high >= 0 && low >= 0) {
-                made += static_cast<char>(high * 16 + low);
-                at += 2;
-
-                continue;
-            }
-        }
-
-        made += said[at];
-    }
-
-    return made;
-}
 
 // The parts of a path split at both kinds of slash, without empty ones.
 std::vector<std::string> pieces(std::string_view said) {
@@ -131,7 +99,7 @@ std::optional<Share> addressed(std::string_view said) {
         if (at != std::string_view::npos) {
             const std::string_view who = inside.substr(0, at);
 
-            made.user = unescaped(who.substr(0, who.find(':')));
+            made.user = hex::unescaped(who.substr(0, who.find(':')));
             inside = inside.substr(at + 1);
         }
     }
@@ -141,7 +109,7 @@ std::optional<Share> addressed(std::string_view said) {
     if (parts.empty()) return std::nullopt;
 
     if (url)
-        for (std::string& one : parts) one = unescaped(one);
+        for (std::string& one : parts) one = hex::unescaped(one);
 
     made.server = parts[0];
 
@@ -261,7 +229,7 @@ std::optional<Share> gvfs_named(std::string_view name) {
 
         if (equal != std::string_view::npos) {
             const std::string_view key = pair.substr(0, equal);
-            std::string value = unescaped(pair.substr(equal + 1));
+            std::string value = hex::unescaped(pair.substr(equal + 1));
 
             if (key == "server") made.server = std::move(value);
             else if (key == "share") made.name = std::move(value);

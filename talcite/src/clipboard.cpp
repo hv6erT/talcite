@@ -34,6 +34,7 @@
 
 #include "talcite/child.hpp"
 #include "talcite/time.hpp"
+#include "hexing.hpp"
 #include "netting.hpp"
 
 #endif
@@ -310,8 +311,6 @@ bool plain(unsigned char one) {
 
 // An absolute path as a file URI with an empty host.
 std::string located(const fs::path& where) {
-    constexpr const char* digits = "0123456789ABCDEF";
-
     std::string made = "file://";
 
     for (const char each : where.native()) {
@@ -323,21 +322,10 @@ std::string located(const fs::path& where) {
             continue;
         }
 
-        made.push_back('%');
-        made.push_back(digits[one >> 4]);
-        made.push_back(digits[one & 0x0F]);
+        hex::escaped(one, made);
     }
 
     return made;
-}
-
-// The value of a hexadecimal digit, or -1 for any other character.
-int digit(char one) {
-    if (one >= '0' && one <= '9') return one - '0';
-    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
-    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
-
-    return -1;
 }
 
 // The path of a file URI on this machine: file:///path or file://localhost/path, with the %XX
@@ -366,8 +354,8 @@ std::optional<fs::path> unlocated(std::string_view uri) {
 
         if (at + 2 >= uri.size()) return std::nullopt;
 
-        const int high = digit(uri[at + 1]);
-        const int low = digit(uri[at + 2]);
+        const int high = hex::digit(uri[at + 1]);
+        const int low = hex::digit(uri[at + 2]);
 
         if (high < 0 || low < 0 || (high == 0 && low == 0)) return std::nullopt;
 

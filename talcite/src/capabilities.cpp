@@ -9,6 +9,7 @@
 #include <variant>
 #include <vector>
 
+#include "hexing.hpp"
 #include "vt.hpp"
 
 namespace talcite {
@@ -311,12 +312,9 @@ double parted(std::string_view said) {
     int digits = 0;
 
     for (const char sign : said) {
-        int value = -1;
+        const int value = hex::digit(sign);
 
-        if (sign >= '0' && sign <= '9') value = sign - '0';
-        else if (sign >= 'a' && sign <= 'f') value = sign - 'a' + 10;
-        else if (sign >= 'A' && sign <= 'F') value = sign - 'A' + 10;
-        else break;
+        if (value < 0) break;
 
         made = made * 16 + static_cast<std::uint32_t>(value);
         ++digits;

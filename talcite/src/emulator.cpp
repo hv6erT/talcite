@@ -12,6 +12,8 @@
 
 #include "talcite/encoding.hpp"
 
+#include "hexing.hpp"
+
 // The screen of a terminal, as a program in it sees the screen: the bytes it writes (text, control
 // characters and escape sequences of xterm, ECMA-48 and the DEC terminals) turn into a grid of
 // cells, a cursor and the terminal's modes. This is pure logic, without input or output: whoever
@@ -42,38 +44,6 @@ char32_t drawn(char32_t one, bool special) {
     if (!special || one < U'_' || one > U'~') return one;
 
     return graphics[static_cast<std::size_t>(one - U'_')];
-}
-
-// The value of a hexadecimal digit, or -1.
-int hexed(char one) {
-    if (one >= '0' && one <= '9') return one - '0';
-    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
-    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
-
-    return -1;
-}
-
-// A percent-encoded piece of an address with its escapes undone: `%20` is a space.
-std::string unescaped(std::string_view said) {
-    std::string made;
-
-    for (std::size_t at = 0; at < said.size(); ++at) {
-        if (said[at] == '%' && at + 2 < said.size()) {
-            const int high = hexed(said[at + 1]);
-            const int low = hexed(said[at + 2]);
-
-            if (high >= 0 && low >= 0) {
-                made += static_cast<char>(high * 16 + low);
-                at += 2;
-
-                continue;
-            }
-        }
-
-        made += said[at];
-    }
-
-    return made;
 }
 
 // Appends a decimal number to bytes for an answer.
@@ -1140,7 +1110,7 @@ void Emulator::foldered(const std::string& said) {
 
     if (slash == std::string::npos) return;
 
-    std::string path = unescaped(std::string_view{said}.substr(slash));
+    std::string path = hex::unescaped(std::string_view{said}.substr(slash));
 
     if (path.size() >= 3 && path[0] == '/' && path[2] == ':') path.erase(0, 1);
 

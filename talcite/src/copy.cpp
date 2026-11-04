@@ -25,6 +25,7 @@
 #include "talcite/random.hpp"
 
 #include "fscore.hpp"
+#include "hexing.hpp"
 
 #ifdef _WIN32
 
@@ -79,15 +80,13 @@ path::string_type shortened(path::string_type name, std::size_t room) {
 // not hit someone else's file. A target named near the longest name a folder takes lends the end
 // of its name to the rest, so the file can still be made.
 path core::aside_of(const path& to) {
-    static constexpr std::string_view digits = "0123456789abcdef";
-
     std::string tail;
 
     for (const std::byte one : random(3)) {
         const auto value = static_cast<unsigned>(one);
 
-        tail += digits[value >> 4U];
-        tail += digits[value & 0x0fU];
+        tail += hex::lower[value >> 4U];
+        tail += hex::lower[value & 0x0fU];
     }
 
     path made = to;

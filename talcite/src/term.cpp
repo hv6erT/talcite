@@ -18,6 +18,7 @@
 #include "talcite/encoding.hpp"
 #include "talcite/decoder.hpp"
 #include "talcite/pixels.hpp"
+#include "hexing.hpp"
 #include "unicode.hpp"
 
 namespace talcite {
@@ -332,8 +333,6 @@ constexpr std::size_t farthest = 2083;
 // a multibyte character) goes as %XX, the way an address is written anyway; an escape or a BEL can
 // thus never end the control string early.
 std::optional<std::string> addressed(std::string_view address) {
-    static constexpr char digits[] = "0123456789ABCDEF";
-
     if (address.empty()) return std::nullopt;
 
     std::string made;
@@ -344,9 +343,7 @@ std::optional<std::string> addressed(std::string_view address) {
         if (one > 0x20 && one < 0x7F) {
             made += letter;
         } else {
-            made += '%';
-            made += digits[one >> 4];
-            made += digits[one & 0x0F];
+            hex::escaped(one, made);
         }
     }
 
