@@ -719,7 +719,7 @@ void Table::paint(Canvas& onto) const {
 
 // Arrows, page keys, Home and End. Enter and letters go up the tree: "a row was chosen" is the
 // application's business, because in a panel Enter enters a directory, and in a dialog it presses
-// the default button.
+// the default button. At its ends the table keeps its keys, for the reason given at `List::handle`.
 bool Table::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 

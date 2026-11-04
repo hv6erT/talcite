@@ -83,13 +83,13 @@ bool MenuTitle::handle(KeyEvent& what) {
     return false;
 }
 
-// The action of a title is opening its menu. The letter does exactly what a click on the title
-// does and nothing more. The keys live in the menu, not here, so that adding keys to the menu is
-// all a caller has to do.
+// The letter of a title does what a click on it does: a menu without items is picked, any other is
+// opened. Only the toggle is the mouse's: a letter pressed again does not close the menu. The keys
+// live in the menu, not here, so that adding keys to the menu is all a caller has to do.
 bool MenuTitle::handle(ShortcutEvent& what) {
     if (!menu_.keys().contains(what.key())) return false;
 
-    menu_.open();
+    menu_.activate();
 
     return true;
 }

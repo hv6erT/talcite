@@ -186,9 +186,12 @@ MenuItem* Menu::current() const { return item(which_); }
 
 // Sets the highlighted item. The menu keeps the number, but the highlight itself is the focus, so
 // changing the number in an open menu moves the focus, and the previous item goes dark by itself.
-// In a closed menu the number is only remembered.
+// In a closed menu the number is only remembered. A number past the end is cut to the last item,
+// as in a list, and a negative one, or any number in a menu without items, means none.
 void Menu::aim(int given) {
-    which_ = given;
+    const int much = static_cast<int>(children().many());
+
+    which_ = given < 0 || much == 0 ? -1 : std::min(given, much - 1);
 
     changed();
 
@@ -255,9 +258,17 @@ void Menu::pick() {
     one->pick();
 }
 
-// The action of a menu is opening it, for a key that arrives here directly rather than through the
-// title.
-void Menu::activate() { open(); }
+// The action of a menu, for a key that arrives here directly rather than through the title, is what
+// a click on its title does: a menu without items is picked, any other is opened.
+void Menu::activate() {
+    if (children().empty()) {
+        pick();
+
+        return;
+    }
+
+    open();
+}
 
 // Lays the items out one under another inside the border. The rectangle starts with the border, so
 // the items start at row one.

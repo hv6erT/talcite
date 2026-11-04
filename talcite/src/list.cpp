@@ -235,6 +235,11 @@ bool List::walking(int step, int times, Moved how) {
 // field, which has to swallow letters because one types in it. Here a letter has to reach a button
 // in the dialog, or in the file manager the quick search that the panel adds itself.
 //
+// At its ends the list keeps the arrows, page keys, Home and End, even when they move nothing: in a
+// dialog an arrow pressed once too often must not carry the focus off to a button, where the Enter
+// or Space that follows would press it instead of acting on the row. A group of options, a few
+// rows at most, and a history field pass them on instead (`Modal`).
+//
 // The page height comes from the rectangle of the previous frame: only it knows the width and
 // height the list really got. Before the first paint a page is one row.
 bool List::handle(KeyEvent& what) {

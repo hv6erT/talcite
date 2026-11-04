@@ -123,9 +123,20 @@ bool Choice::handle(KeyEvent& what) {
 
             break;
 
-        case Code::home: which(0); break;
+        // Home and End at the end they lead to move nothing, and the key goes up, as the arrows do.
+        case Code::home:
+            if (was == 0) return false;
 
-        case Code::end: which(options().many() - 1); break;
+            which(0);
+
+            break;
+
+        case Code::end:
+            if (was + 1 >= options().many()) return false;
+
+            which(options().many() - 1);
+
+            break;
 
         default:
             if (what.key().letter() != U' ') return false;

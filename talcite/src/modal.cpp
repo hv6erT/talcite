@@ -154,9 +154,10 @@ void Modal::step(int by) {
 //
 // The rest is swallowed, because swallowing does nothing: it is the curtain's whole job and the
 // only way modality can be expressed at all. Tab and Shift+Tab move between the stops, and so do
-// the down and up arrows, as in the dialogs of Midnight Commander: a widget that uses them (a list,
-// a group of options, a history) takes them first and lets them through only at its ends, so an
-// arrow reaches the curtain exactly when nothing lower down wants it.
+// the down and up arrows, as in the dialogs of Midnight Commander: a widget that uses them takes
+// them first. A group of options and a history field let them through at their ends, so the arrows
+// walk on through the dialog; a list, a table and a difference viewer keep them there, so an arrow
+// pressed once too often does not carry the focus off to a button.
 bool Modal::handle(KeyEvent& what) {
     const Code code = what.key().code();
 

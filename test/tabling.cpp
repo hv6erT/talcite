@@ -463,6 +463,34 @@ TRIAL("Table: a page moves by one screen") {
     same(*one->which(), std::size_t{5});
 }
 
+// A table keeps its keys at its ends, as a list does: in a dialog, an arrow pressed once too often
+// must not carry the focus off to a button.
+TRIAL("Table: at the ends the keys stay with the table") {
+    Sheet sheet;
+
+    const auto one = shown(sheet, 3);
+
+    one->focus();
+
+    (void)sheet.render({{0, 0}, {30, 6}});
+
+    for (const ui::Code code : {ui::Code::up, ui::Code::pageup, ui::Code::home}) {
+        ui::KeyEvent what{code};
+
+        ought(sheet.dispatch(what));
+        same(*one->which(), std::size_t{0});
+    }
+
+    one->end();
+
+    for (const ui::Code code : {ui::Code::down, ui::Code::pagedown, ui::Code::end}) {
+        ui::KeyEvent what{code};
+
+        ought(sheet.dispatch(what));
+        same(*one->which(), std::size_t{2});
+    }
+}
+
 // The wheel moves only the view and leaves the current row alone, just as in a list.
 TRIAL("Table: the wheel scrolls the view and leaves the row alone") {
     Sheet sheet;

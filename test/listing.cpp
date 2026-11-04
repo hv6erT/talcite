@@ -362,9 +362,9 @@ TRIAL("ListItem: a double click takes the focus and calls the task") {
     same(done, 1);
 }
 
-// An unavailable item lets the click through: since it does not answer its key, there is no reason
-// for it to answer the mouse, and the list underneath may do with that click what it wants.
-TRIAL("ListItem: a disabled one lets the click through and does not take the focus") {
+// An unavailable item swallows the click, as every disabled control does: the click was aimed at
+// it, so nothing underneath acts on it, and the item itself neither takes the focus nor picks.
+TRIAL("ListItem: a disabled one swallows the click and does not take the focus") {
     proving::Hooks heard;
 
     Sheet top;
@@ -384,13 +384,13 @@ TRIAL("ListItem: a disabled one lets the click through and does not take the foc
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(!top.dispatch(what));
+    ought(top.dispatch(what));
 
     same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     ui::DoubleClickEvent twice{{2, 0}, ui::Mouse::left};
 
-    ought(!top.dispatch(twice));
+    ought(top.dispatch(twice));
 
     same(done, 0);
 }
@@ -475,7 +475,10 @@ TRIAL("List: an empty one takes the focus itself") {
     ought(one->current() == nullptr);
 }
 
-TRIAL("List: the arrows walk the rows and do not wrap") {
+// A list keeps its keys at its ends: in a dialog, an arrow pressed once too often must not carry
+// the focus off to a button, where the Enter or Space that follows would press it instead of the
+// row.
+TRIAL("List: the arrows walk the rows, do not wrap, and keep the key at the end") {
     Sheet top;
 
     const auto one = listed(3);
@@ -494,16 +497,43 @@ TRIAL("List: the arrows walk the rows and do not wrap") {
     ought(top.dispatch(again));
     same(one->which(), std::optional<std::size_t>{2});
 
-    // On the last row down does nothing, and does not go back to the first.
+    same(top.keys, 0);
+
+    // On the last row down moves nothing and does not go back to the first, and the key stays.
     ui::KeyEvent past{ui::Code::down};
 
     ought(top.dispatch(past));
     same(one->which(), std::optional<std::size_t>{2});
+    same(top.keys, 0);
+
+    ui::KeyEvent beyond{ui::Code::pagedown};
+
+    ought(top.dispatch(beyond));
+    same(one->which(), std::optional<std::size_t>{2});
+    same(top.keys, 0);
 
     ui::KeyEvent up{ui::Code::up};
 
     ought(top.dispatch(up));
     same(one->which(), std::optional<std::size_t>{1});
+
+    ui::KeyEvent above{ui::Code::up};
+
+    ought(top.dispatch(above));
+    same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
+
+    ui::KeyEvent before{ui::Code::up};
+
+    ought(top.dispatch(before));
+    same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
+
+    ui::KeyEvent sooner{ui::Code::pageup};
+
+    ought(top.dispatch(sooner));
+    same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
 }
 
 TRIAL("List: Home and End go to the first and the last") {
@@ -524,6 +554,36 @@ TRIAL("List: Home and End go to the first and the last") {
 
     ought(top.dispatch(first));
     same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
+}
+
+// Home on the first row and End on the last move nothing, and the list keeps them, as it does the
+// arrows at its ends.
+TRIAL("List: Home on the first row and End on the last keep the key") {
+    Sheet top;
+
+    const auto one = listed(3);
+
+    top.children().add(one);
+
+    one->focus();
+
+    ui::KeyEvent first{ui::Code::home};
+
+    ought(top.dispatch(first));
+    same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
+
+    ui::KeyEvent last{ui::Code::end};
+
+    ought(top.dispatch(last));
+    same(one->which(), std::optional<std::size_t>{2});
+
+    ui::KeyEvent again{ui::Code::end};
+
+    ought(top.dispatch(again));
+    same(one->which(), std::optional<std::size_t>{2});
+    same(top.keys, 0);
 }
 
 // A page is computed from the real height that the list got in the previous frame.
@@ -663,6 +723,37 @@ TRIAL("List: the wheel scrolls the view and does not move the row") {
     same(one->first(), std::size_t{3});
     same(one->which(), std::optional<std::size_t>{0});
     same(moves, 2);
+}
+
+// On the first row with the view turned away by the wheel, Up brings the row back into view.
+TRIAL("List: a key on the current row out of view brings the view back") {
+    Sheet top;
+
+    const auto one = listed(10);
+
+    top.children().add(one);
+
+    one->focus();
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    ui::WheelEvent what{{2, 1}, -1};
+
+    ought(top.dispatch(what));
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    same(one->first(), std::size_t{3});
+
+    ui::KeyEvent up{ui::Code::up};
+
+    ought(top.dispatch(up));
+
+    (void)top.render({{0, 0}, {12, 3}});
+
+    same(one->first(), std::size_t{0});
+    same(one->which(), std::optional<std::size_t>{0});
+    same(top.keys, 0);
 }
 
 // The list's own keys, the wheel and a click on an item move it by hand; a call from the program

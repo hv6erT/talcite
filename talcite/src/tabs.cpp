@@ -94,13 +94,16 @@ bool within(const Node* one, const Node& under) {
 // Tabs without tabs yet, in the role talcite.tab.
 Tabs::Tabs() { role("talcite.tab"); }
 
-// Shows the page of tab `at` (counted from zero); nothing for a tab that is not there. The focus on
-// the page that goes moves to the first stop of the page that comes, and the tab that comes up
-// sends a `PickEvent`; the tab shown already only puts the pages where they belong.
+// Shows the page of tab `at` (counted from zero); a number past the end is cut to the last tab, as
+// in a list, and without tabs nothing happens. The focus on the page that goes moves to the first
+// stop of the page that comes, and the tab that comes up sends a `PickEvent`; the tab shown
+// already only puts the pages where they belong.
 void Tabs::which(std::size_t at) {
     const std::vector<Tab*> all = listed(children());
 
-    if (at >= all.size()) return;
+    if (all.empty()) return;
+
+    at = std::min(at, all.size() - 1);
 
     const bool moved = at != which_;
     const Root* top = root();

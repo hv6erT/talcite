@@ -504,6 +504,27 @@ TRIAL("Menu: which is the number, current the item, and a foreign item sets noth
     one->which(0);
 
     same(one->current(), first.get());
+
+    // A number past the last item is cut to the last, as in a list.
+    one->which(99);
+
+    same(one->which(), std::optional<std::size_t>{1});
+    same(one->current(), second.get());
+}
+
+// A menu without items has nothing to highlight, whatever number it is given.
+TRIAL("Menu: which in a menu without items stays empty") {
+    ui::Root top;
+
+    const auto window = std::make_shared<ui::Menubar>();
+    const auto one = window->add("Pomoc");
+
+    top.children().add(window);
+
+    one->which(2);
+
+    ought(!one->which().has_value());
+    ought(one->current() == nullptr);
 }
 
 // The highlighted item is the one with the focus; there is no separate marker that could drift
@@ -1597,6 +1618,51 @@ TRIAL("Menu: a title's letter switches menus while the bar is active") {
 
     ought(top.dispatch(file));
     same(unfolded(*window), first.get());
+}
+
+// A title without items is a button in the bar, and its letter does what a click on it does: it
+// calls the title's event and leaves the bar, instead of unrolling an empty list.
+TRIAL("Menu: a title's letter on a menu without items picks it, as a click does") {
+    ui::Root top;
+
+    const auto window = std::make_shared<ui::Menubar>();
+
+    window->keys().add(ui::Key{ui::Code::f9});
+    const auto body = std::make_shared<Box>(ui::Size{10, 4}, U'x');
+    const auto first = window->add("Plik");
+    const auto help = window->add("Pomoc");
+
+    first->keys().add(ui::Key{U'p'});
+    help->keys().add(ui::Key{U'o'});
+
+    first->children().add(std::make_shared<ui::MenuItem>("Otwórz"));
+
+    window->content(body);
+    top.children().add(window);
+
+    body->focus();
+
+    int picked = 0;
+
+    const ui::Hook heard_pick = help->on<ui::PickEvent>([&picked](ui::PickEvent&) {
+        ++picked;
+
+        return true;
+    });
+
+    (void)top.render({{0, 0}, {20, 6}});
+
+    ui::KeyEvent nine{ui::Code::f9};
+
+    ought(top.dispatch(nine));
+    same(window->current(), first.get());
+
+    ui::KeyEvent letter{U'o'};
+
+    ought(top.dispatch(letter));
+    same(picked, 1);
+    same(unfolded(*window), static_cast<ui::Menu*>(nullptr));
+    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 // Without an active bar a letter must not unroll anything; otherwise typing over a panel would open

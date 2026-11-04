@@ -103,10 +103,9 @@ bool ListItem::handle(KeyEvent& what) {
 // the view along and notifying the application are the list's. An item outside a list only takes
 // the focus.
 bool ListItem::handle(ClickEvent&) {
-    // A disabled item lets the click pass up instead of swallowing it: since it does not answer
-    // to its key, there is no reason for it to answer to the mouse, and the list underneath may do
-    // with the click whatever it sees fit.
-    if (!enabled()) return false;
+    // A disabled item swallows the click and does nothing, as every disabled control does: the
+    // click was aimed at it, and the list underneath must not act on a row it did not aim at.
+    if (!enabled()) return true;
 
     chosen();
 
@@ -126,9 +125,10 @@ void ListItem::chosen() {
 }
 
 // A double click on a row does what Enter does, and also puts the focus on it on the way, because
-// the double click may land on a row that is not current yet.
+// the double click may land on a row that is not current yet. A disabled row swallows it, as it
+// does a click.
 bool ListItem::handle(DoubleClickEvent&) {
-    if (!enabled()) return false;
+    if (!enabled()) return true;
 
     chosen();
 

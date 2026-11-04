@@ -994,7 +994,8 @@ void DiffViewer::paint(Canvas& onto) const {
 
 // Keys move the cursor over hunks, and Space, `+` and `-` change the checkboxes. Tab, Enter and
 // letters go up: Tab belongs to the window that cycles through its controls, and Enter presses a
-// button. Jumping between sections therefore takes Ctrl with an arrow, not Tab.
+// button. Jumping between sections therefore takes Ctrl with an arrow, not Tab. At its ends the
+// viewer keeps its keys, for the reason given at `List::handle`.
 bool DiffViewer::handle(KeyEvent& what) {
     Kept& kept = *kept_;
 

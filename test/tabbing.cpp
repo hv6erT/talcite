@@ -410,3 +410,30 @@ TRIAL("Tabs: a renamed tab shows its new name in the strip at the next frame") {
     ought(row.find("Bravo") < row.find("Gamma"));
     ought(row.find("Gamma") != std::string::npos);
 }
+
+// A number past the last tab is cut to the last one, as in a list and a menu, so the program never
+// leaves the strip pointing at a page that is not there.
+TRIAL("Tabs: which past the last shows the last") {
+    ui::Root top;
+    Three three;
+
+    top.children().add(three.tabs);
+
+    three.tabs->which(99);
+
+    same(three.tabs->which(), std::size_t{2});
+    same(read(top.render({{0, 0}, {40, 6}}), 2), std::string{"page of Gamma"});
+}
+
+// Without tabs there is nothing to show, and nothing breaks.
+TRIAL("Tabs: which without tabs does nothing") {
+    ui::Root top;
+
+    const auto tabs = std::make_shared<ui::Tabs>();
+
+    top.children().add(tabs);
+
+    tabs->which(3);
+
+    same(tabs->which(), std::size_t{0});
+}

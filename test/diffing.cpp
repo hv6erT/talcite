@@ -532,6 +532,20 @@ TRIAL("DiffViewer: keys move through hunks and sections") {
     ought(pressed(sheet, ui::Code::home));
     same(one->which(), std::optional<std::size_t>{1});
 
+    // At either end the keys stay with the viewer, as with a list: in the plan window, an arrow
+    // pressed once too often must not carry the focus off to a button.
+    ought(pressed(sheet, ui::Code::up));
+    ought(pressed(sheet, ui::Code::home));
+    same(one->which(), std::optional<std::size_t>{1});
+
+    one->which(5);
+
+    ought(pressed(sheet, ui::Code::down));
+    ought(pressed(sheet, ui::Code::end));
+    same(one->which(), std::optional<std::size_t>{5});
+
+    one->which(1);
+
     ought(pressed(sheet, ui::Code::right));
     ought(one->opened(1));
 

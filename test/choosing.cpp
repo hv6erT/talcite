@@ -244,6 +244,34 @@ TRIAL("Choice: Home and End jump to the edges") {
     same(*one->value(), std::string{"Nazwa"});
 }
 
+// Home on the first option and End on the last change nothing, so the key goes up, as an arrow at
+// the edge does.
+TRIAL("Choice: Home and End at the edge they lead to pass the key up") {
+    ui::Root top;
+
+    const auto one = std::make_shared<ui::Choice>(three());
+
+    int done = 0;
+
+    const ui::Hook heard = counted(one, done);
+
+    top.children().add(one);
+    one->focus();
+
+    ui::KeyEvent home{ui::Code::home};
+
+    ought(!top.dispatch(home));
+    same(*one->value(), std::string{"Nazwa"});
+
+    one->value("Rozmiar");
+
+    ui::KeyEvent end{ui::Code::end};
+
+    ought(!top.dispatch(end));
+    same(*one->value(), std::string{"Rozmiar"});
+    same(done, 0);
+}
+
 // Setting from the program does not notify, just as in a check box.
 TRIAL("Choice: setting the choice is silent") {
     ui::Root top;
