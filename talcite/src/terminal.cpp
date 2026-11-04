@@ -14,6 +14,8 @@
 #include "talcite/encoding.hpp"
 #include "talcite/skin.hpp"
 
+#include "xterming.hpp"
+
 // A terminal in a node: a program in a pseudoterminal (`Pty`), its screen (`Emulator`), and the
 // node that draws that screen, gives the program its keys, its pastes and its mouse, and tells the
 // tree what the program told the terminal (`FolderEvent`, `MarkEvent`, `SwitchEvent`,
@@ -37,41 +39,6 @@ constexpr std::chrono::milliseconds lingering{500};
 // Appends text to bytes.
 void added(Bytes& into, std::string_view said) {
     for (const char each : said) into.push_back(static_cast<std::byte>(each));
-}
-
-// The modifier parameter of xterm's keys: 1, plus 1 for Shift, 2 for Alt, 4 for Ctrl.
-int modded(Mods mods) { return 1 + (mods.shift ? 1 : 0) + (mods.alt ? 2 : 0) + (mods.ctrl ? 4 : 0); }
-
-// A key xterm writes as `CSI 1 ; m X` with modifiers and as `CSI X` (or `SS3 X` in application
-// mode, when `ss3` allows it) without them: the arrows, Home, End and F1–F4.
-Bytes lettered(char final, Mods mods, bool ss3) {
-    Bytes made;
-
-    if (mods == Mods{}) {
-        added(made, ss3 ? "\x1bO" : "\x1b[");
-        made.push_back(static_cast<std::byte>(final));
-
-        return made;
-    }
-
-    added(made, "\x1b[1;" + std::to_string(modded(mods)));
-    made.push_back(static_cast<std::byte>(final));
-
-    return made;
-}
-
-// A key xterm writes as `CSI n ~`, with `; m` for modifiers: Insert, Delete, Page Up and Down,
-// F5–F12.
-Bytes tilded(int number, Mods mods) {
-    Bytes made;
-
-    added(made, "\x1b[" + std::to_string(number));
-
-    if (mods != Mods{}) added(made, ";" + std::to_string(modded(mods)));
-
-    added(made, "~");
-
-    return made;
 }
 
 }
@@ -373,42 +340,11 @@ Bytes Terminal::keyed(Key key, const Modes& modes) {
         return made;
     }
 
-    const auto prefixed = [&made, mods](Bytes rest) {
-        if (mods.alt && rest.size() == 1) added(made, "\x1b");
-
-        made.insert(made.end(), rest.begin(), rest.end());
+    if (const std::string named = xterm::named(key.code(), xterm::modifier(mods.shift, mods.alt, mods.ctrl), modes.cursor_keys);
+        !named.empty()) {
+        added(made, named);
 
         return made;
-    };
-
-    switch (key.code()) {
-        case Code::enter: return prefixed(Bytes{std::byte{'\r'}});
-        case Code::tab: return mods.shift ? prefixed(Bytes{std::byte{0x1B}, std::byte{'['}, std::byte{'Z'}}) : prefixed(Bytes{std::byte{'\t'}});
-        case Code::backspace: return prefixed(Bytes{mods.ctrl ? std::byte{0x08} : std::byte{0x7F}});
-        case Code::escape: return prefixed(Bytes{std::byte{0x1B}});
-        case Code::up: return lettered('A', mods, modes.cursor_keys);
-        case Code::down: return lettered('B', mods, modes.cursor_keys);
-        case Code::right: return lettered('C', mods, modes.cursor_keys);
-        case Code::left: return lettered('D', mods, modes.cursor_keys);
-        case Code::home: return lettered('H', mods, modes.cursor_keys);
-        case Code::end: return lettered('F', mods, modes.cursor_keys);
-        case Code::insert: return tilded(2, mods);
-        case Code::remove: return tilded(3, mods);
-        case Code::pageup: return tilded(5, mods);
-        case Code::pagedown: return tilded(6, mods);
-        case Code::f1: return lettered('P', mods, true);
-        case Code::f2: return lettered('Q', mods, true);
-        case Code::f3: return lettered('R', mods, true);
-        case Code::f4: return lettered('S', mods, true);
-        case Code::f5: return tilded(15, mods);
-        case Code::f6: return tilded(17, mods);
-        case Code::f7: return tilded(18, mods);
-        case Code::f8: return tilded(19, mods);
-        case Code::f9: return tilded(20, mods);
-        case Code::f10: return tilded(21, mods);
-        case Code::f11: return tilded(23, mods);
-        case Code::f12: return tilded(24, mods);
-        default: break;
     }
 
     // F13–F20 are F1–F8 with Shift, as xterm counts them.
@@ -503,13 +439,13 @@ bool Terminal::handle(MouseEvent& what) {
 
     if (!running_ || modes.mouse == Mousing::none || !modes.sgr_mouse) return false;
 
-    int button = 0;
+    int button = xterm::mouse_none;
 
     switch (what.button()) {
-        case Mouse::left: button = 0; break;
-        case Mouse::middle: button = 1; break;
-        case Mouse::right: button = 2; break;
-        default: button = 3; break;
+        case Mouse::left: button = xterm::mouse_left; break;
+        case Mouse::middle: button = xterm::mouse_middle; break;
+        case Mouse::right: button = xterm::mouse_right; break;
+        default: break;
     }
 
     if (what.press() == Press::move) {
@@ -517,19 +453,14 @@ bool Terminal::handle(MouseEvent& what) {
 
         if (modes.mouse == Mousing::clicks || (modes.mouse == Mousing::drags && !dragging)) return true;
 
-        button += 32;
+        button += xterm::mouse_motion;
     }
 
-    if (what.mods().shift) button += 4;
-    if (what.mods().alt) button += 8;
-    if (what.mods().ctrl) button += 16;
-
-    const Spot at = local(what.where());
+    button += xterm::mouse_mods(what.mods().shift, what.mods().alt, what.mods().ctrl);
 
     Bytes made;
 
-    added(made, "\x1b[<" + std::to_string(button) + ";" + std::to_string(at.x + 1) + ";" + std::to_string(at.y + 1));
-    added(made, what.press() == Press::up ? "m" : "M");
+    added(made, xterm::sgr(button, local(what.where()), what.press() == Press::up));
 
     write(std::move(made));
 
@@ -551,8 +482,7 @@ bool Terminal::handle(WheelEvent& what) {
 
         Bytes made;
 
-        for (int turn = 0; turn < many; ++turn)
-            added(made, "\x1b[<" + std::to_string(up ? 64 : 65) + ";" + std::to_string(at.x + 1) + ";" + std::to_string(at.y + 1) + "M");
+        for (int turn = 0; turn < many; ++turn) added(made, xterm::sgr(up ? xterm::wheel_up : xterm::wheel_down, at, false));
 
         write(std::move(made));
 

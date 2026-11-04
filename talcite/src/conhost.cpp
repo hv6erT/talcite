@@ -2,6 +2,8 @@
 
 #include "talcite/encoding.hpp"
 
+#include "xterming.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <utility>
@@ -86,6 +88,32 @@ constexpr std::uint32_t shift = 0x10;
 constexpr std::uint32_t moved = 0x01;
 constexpr std::uint32_t wheeled = 0x04;
 constexpr std::uint32_t hwheeled = 0x08;
+
+// The named key of a virtual key, the ones xterm writes as a sequence or a control character (F1
+// to F12 among them), or nothing for a key that is typed as its character.
+std::optional<ui::Code> coded(std::uint16_t key) {
+    switch (key) {
+        case up: return ui::Code::up;
+        case down: return ui::Code::down;
+        case right: return ui::Code::right;
+        case left: return ui::Code::left;
+        case home: return ui::Code::home;
+        case end: return ui::Code::end;
+        case insert: return ui::Code::insert;
+        case remove: return ui::Code::remove;
+        case prior: return ui::Code::pageup;
+        case next: return ui::Code::pagedown;
+        case enter: return ui::Code::enter;
+        case tab: return ui::Code::tab;
+        case back: return ui::Code::backspace;
+        case escape: return ui::Code::escape;
+        default: break;
+    }
+
+    if (key >= f1 && key < f1 + 12) return static_cast<ui::Code>(static_cast<int>(ui::Code::f1) + (key - f1));
+
+    return std::nullopt;
+}
 
 }
 
@@ -802,84 +830,38 @@ std::string typed(const Pressed& one, char16_t& pending) {
     const bool alt = (one.state & (left_alt | right_alt)) != 0;
     const bool shifted = (one.state & shift) != 0;
 
-    const int mods = 1 + (shifted ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0);
-    const std::string prefix = alt ? "\x1b" : "";
+    // A record that is not a named key types its character, with the escape for Alt. Ctrl with
+    // Space or, with Alt, with a letter has no character, and gives the control code instead.
+    const auto character = [&]() -> std::string {
+        char32_t code = static_cast<char32_t>(one.unit);
 
-    const auto lettered = [&](char last) {
-        return mods > 1 ? "\x1b[1;" + std::to_string(mods) + last : std::string{"\x1b["} + last;
+        if (code == 0) {
+            if (ctrl && one.key == space) code = 0;
+            else if (ctrl && alt && one.key >= 'A' && one.key <= 'Z') code = one.key - 'A' + 1;
+            else return {};
+
+            return (alt ? "\x1b" : "") + std::string(1, static_cast<char>(code));
+        }
+
+        if (code >= 0xD800 && code <= 0xDBFF) {
+            pending = one.unit;
+
+            return {};
+        }
+
+        if (code >= 0xDC00 && code <= 0xDFFF) {
+            if (pending == 0) return {};
+
+            code = 0x10000 + ((static_cast<char32_t>(pending) - 0xD800) << 10) + (code - 0xDC00);
+        }
+
+        pending = 0;
+
+        return (alt && !(ctrl && code >= 0x20) ? "\x1b" : "") + utf8::encode(code);
     };
 
-    const auto tilded = [&](int code) {
-        return "\x1b[" + std::to_string(code) + (mods > 1 ? ";" + std::to_string(mods) : std::string{}) + "~";
-    };
-
-    std::string made;
-
-    switch (one.key) {
-        case up: made = lettered('A'); break;
-        case down: made = lettered('B'); break;
-        case right: made = lettered('C'); break;
-        case left: made = lettered('D'); break;
-        case home: made = lettered('H'); break;
-        case end: made = lettered('F'); break;
-        case insert: made = tilded(2); break;
-        case remove: made = tilded(3); break;
-        case prior: made = tilded(5); break;
-        case next: made = tilded(6); break;
-        case f1:
-        case f1 + 1:
-        case f1 + 2:
-        case f1 + 3: {
-            const char last = static_cast<char>('P' + (one.key - f1));
-
-            made = mods > 1 ? lettered(last) : std::string{"\x1bO"} + last;
-
-            break;
-        }
-        case f1 + 4: made = tilded(15); break;
-        case f1 + 5: made = tilded(17); break;
-        case f1 + 6: made = tilded(18); break;
-        case f1 + 7: made = tilded(19); break;
-        case f1 + 8: made = tilded(20); break;
-        case f1 + 9: made = tilded(21); break;
-        case f1 + 10: made = tilded(23); break;
-        case f1 + 11: made = tilded(24); break;
-        case enter: made = prefix + "\r"; break;
-        case tab: made = shifted ? std::string{"\x1b[Z"} : prefix + "\t"; break;
-        case back: made = prefix + (ctrl ? "\x08" : "\x7f"); break;
-        case escape: made = prefix + "\x1b"; break;
-        default: {
-            char32_t code = static_cast<char32_t>(one.unit);
-
-            if (code == 0) {
-                if (ctrl && one.key == space) code = 0;
-                else if (ctrl && alt && one.key >= 'A' && one.key <= 'Z') code = one.key - 'A' + 1;
-                else return {};
-
-                made = prefix + std::string(1, static_cast<char>(code));
-
-                break;
-            }
-
-            if (code >= 0xD800 && code <= 0xDBFF) {
-                pending = one.unit;
-
-                return {};
-            }
-
-            if (code >= 0xDC00 && code <= 0xDFFF) {
-                if (pending == 0) return {};
-
-                code = 0x10000 + ((static_cast<char32_t>(pending) - 0xD800) << 10) + (code - 0xDC00);
-            }
-
-            pending = 0;
-
-            made = (alt && !(ctrl && code >= 0x20) ? "\x1b" : "") + utf8::encode(code);
-
-            break;
-        }
-    }
+    const std::optional<ui::Code> named = coded(one.key);
+    const std::string made = named ? xterm::named(*named, xterm::modifier(shifted, alt, ctrl), false) : character();
 
     std::string repeated;
 
@@ -896,33 +878,27 @@ std::string typed(const Pressed& one, char16_t& pending) {
 std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
     const bool reporting = (wanted.clicks || wanted.drags || wanted.moves) && wanted.sgr;
 
-    int mods = 0;
+    const int mods = xterm::mouse_mods((one.state & shift) != 0, (one.state & (left_alt | right_alt)) != 0,
+                                       (one.state & (left_ctrl | right_ctrl)) != 0);
 
-    if ((one.state & shift) != 0) mods |= 4;
-    if ((one.state & (left_alt | right_alt)) != 0) mods |= 8;
-    if ((one.state & (left_ctrl | right_ctrl)) != 0) mods |= 16;
-
-    const auto said = [&](int button, bool released) {
-        return "\x1b[<" + std::to_string(button | mods) + ";" + std::to_string(one.at.x + 1) + ";" +
-               std::to_string(one.at.y + 1) + (released ? "m" : "M");
-    };
+    const auto said = [&](int button, bool released) { return xterm::sgr(button | mods, one.at, released); };
 
     if ((one.flags & wheeled) != 0) {
         if (!reporting) return {};
 
         const auto delta = static_cast<std::int16_t>(one.buttons >> 16);
 
-        return said(delta > 0 ? 64 : 65, false);
+        return said(delta > 0 ? xterm::wheel_up : xterm::wheel_down, false);
     }
 
-    // The tilted wheel: a positive delta is to the right, xterm's button 7 (67); to the left is
-    // button 6 (66).
+    // The tilted wheel: a positive delta is to the right, xterm's button 7; to the left is button
+    // 6.
     if ((one.flags & hwheeled) != 0) {
         if (!reporting) return {};
 
         const auto delta = static_cast<std::int16_t>(one.buttons >> 16);
 
-        return said(delta > 0 ? 67 : 66, false);
+        return said(delta > 0 ? xterm::wheel_right : xterm::wheel_left, false);
     }
 
     const std::uint32_t now = one.buttons & 0x7;
@@ -932,8 +908,9 @@ std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
 
     if (!reporting) return {};
 
-    // Console bits: left, right, middle; xterm numbers: left 0, middle 1, right 2.
-    static constexpr std::pair<std::uint32_t, int> buttons[3] = {{0x1, 0}, {0x4, 1}, {0x2, 2}};
+    // Console bits: left, right, middle, each with its xterm button.
+    static constexpr std::pair<std::uint32_t, int> buttons[3] = {
+        {0x1, xterm::mouse_left}, {0x4, xterm::mouse_middle}, {0x2, xterm::mouse_right}};
 
     std::string made;
 
@@ -946,10 +923,10 @@ std::string Pointing::pointed(const Pointed& one, const Tracking& wanted) {
 
     if (now != 0 && (wanted.drags || wanted.moves)) {
         for (const auto& [bit, code] : buttons)
-            if ((now & bit) != 0) return said(32 + code, false);
+            if ((now & bit) != 0) return said(xterm::mouse_motion + code, false);
     }
 
-    if (now == 0 && wanted.moves) return said(32 + 3, false);
+    if (now == 0 && wanted.moves) return said(xterm::mouse_motion + xterm::mouse_none, false);
 
     return made;
 }

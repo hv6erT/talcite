@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "vt.hpp"
+#include "xterming.hpp"
 
 // What the bytes from the terminal mean: keys, the mouse, the wheel, pastes and the terminal's
 // focus. The syntax is read by `vt::Reader`; here each token gets its meaning, or none when it is
@@ -45,21 +46,6 @@ namespace talcite {
 
 namespace {
 
-// The modifiers of a mask plus one, as sequences carry them. Zero and one mean none.
-ui::Mods marked(int given) {
-    ui::Mods made;
-
-    if (given <= 1) return made;
-
-    const int bits = given - 1;
-
-    made.shift = (bits & 1) != 0;
-    made.alt = (bits & 2) != 0;
-    made.ctrl = (bits & 4) != 0;
-
-    return made;
-}
-
 // A control character as a key. Tab, Enter and Backspace keep their codes; 0x08 is Backspace with
 // Ctrl; the rest are letters with Ctrl: 0x01 is Ctrl+A, 0x00 Ctrl+Space, 0x1C–0x1F Ctrl+\ ] ^ _.
 ui::Key steering(unsigned char byte, bool alt) {
@@ -83,30 +69,19 @@ ui::Key steering(unsigned char byte, bool alt) {
     return ui::Key{static_cast<char32_t>(byte + 0x40), mods};
 }
 
-// The key of `CSI n ~` by its number; nothing for a number that means no key. 25–34 are F13–F20
-// as the Linux console and VT220 number them.
+// The key of `CSI n ~` by its number; nothing for a number that means no key. Besides the numbers
+// xterm writes (`xterm::tilded`) come those of other terminals: 1 and 7 for Home, 4 and 8 for End,
+// 11–14 for F1–F4 (rxvt), and 25–34 for F13–F20 as the Linux console and VT220 number them.
 std::optional<ui::Code> tilde(int given) {
     switch (given) {
         case 1:
         case 7: return ui::Code::home;
-        case 2: return ui::Code::insert;
-        case 3: return ui::Code::remove;
         case 4:
         case 8: return ui::Code::end;
-        case 5: return ui::Code::pageup;
-        case 6: return ui::Code::pagedown;
         case 11: return ui::Code::f1;
         case 12: return ui::Code::f2;
         case 13: return ui::Code::f3;
         case 14: return ui::Code::f4;
-        case 15: return ui::Code::f5;
-        case 17: return ui::Code::f6;
-        case 18: return ui::Code::f7;
-        case 19: return ui::Code::f8;
-        case 20: return ui::Code::f9;
-        case 21: return ui::Code::f10;
-        case 23: return ui::Code::f11;
-        case 24: return ui::Code::f12;
         case 25: return ui::Code::f13;
         case 26: return ui::Code::f14;
         case 28: return ui::Code::f15;
@@ -115,24 +90,7 @@ std::optional<ui::Code> tilde(int given) {
         case 32: return ui::Code::f18;
         case 33: return ui::Code::f19;
         case 34: return ui::Code::f20;
-        default: return std::nullopt;
-    }
-}
-
-// The key of a sequence ending in a letter (arrows, Home, End, F1–F4), the same after CSI and SS3.
-std::optional<ui::Code> lettered(char last) {
-    switch (last) {
-        case 'A': return ui::Code::up;
-        case 'B': return ui::Code::down;
-        case 'C': return ui::Code::right;
-        case 'D': return ui::Code::left;
-        case 'H': return ui::Code::home;
-        case 'F': return ui::Code::end;
-        case 'P': return ui::Code::f1;
-        case 'Q': return ui::Code::f2;
-        case 'R': return ui::Code::f3;
-        case 'S': return ui::Code::f4;
-        default: return std::nullopt;
+        default: return xterm::tilded(given);
     }
 }
 
@@ -264,14 +222,14 @@ std::optional<Heard> Decoder::Held::pointed(int mask, int x, int y, std::optiona
     const ui::Spot where{x - 1, y - 1};
 
     ui::Mods mods;
-    mods.shift = (mask & 4) != 0;
-    mods.alt = (mask & 8) != 0;
-    mods.ctrl = (mask & 16) != 0;
+    mods.shift = (mask & xterm::mouse_shift) != 0;
+    mods.alt = (mask & xterm::mouse_alt) != 0;
+    mods.ctrl = (mask & xterm::mouse_ctrl) != 0;
 
-    const int low = mask & 3;
-    const bool moving = (mask & 32) != 0;
-    const bool wheeled = (mask & 64) != 0;
-    const bool extra = (mask & 128) != 0;
+    const int low = mask & xterm::mouse_buttons;
+    const bool moving = (mask & xterm::mouse_motion) != 0;
+    const bool wheeled = (mask & xterm::mouse_wheel) != 0;
+    const bool extra = (mask & xterm::mouse_extra) != 0;
 
     if (wheeled && extra) return std::nullopt;
 
@@ -338,7 +296,7 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
     // byte.
     if (one.lead != 0 || !one.between.empty()) return std::nullopt;
 
-    const ui::Mods mods = one.params.size() > 1 ? marked(one.at(1)) : ui::Mods{};
+    const ui::Mods mods = one.params.size() > 1 ? xterm::modifiers(one.at(1)) : ui::Mods{};
 
     switch (one.last) {
         case 'M':
@@ -369,7 +327,7 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
             // keys.
             if (one.params.empty() || one.part(1, 1, 1) == 3) return std::nullopt;
 
-            const std::optional<ui::Key> key = numbered(one.at(0), marked(one.at(1)));
+            const std::optional<ui::Key> key = numbered(one.at(0), xterm::modifiers(one.at(1)));
 
             if (!key.has_value()) return std::nullopt;
 
@@ -382,7 +340,7 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
             if (one.at(0) == 27) {
                 if (one.params.size() < 3) return std::nullopt;
 
-                const std::optional<ui::Key> key = numbered(one.at(2), marked(one.at(1)));
+                const std::optional<ui::Key> key = numbered(one.at(2), xterm::modifiers(one.at(1)));
 
                 if (!key.has_value()) return std::nullopt;
 
@@ -422,7 +380,7 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
         default: break;
     }
 
-    if (const std::optional<ui::Code> code = lettered(one.last)) return Struck{ui::Key{*code, mods}};
+    if (const std::optional<ui::Code> code = xterm::lettered(one.last)) return Struck{ui::Key{*code, mods}};
 
     if (const std::optional<ui::Code> code = slanted(one.last)) {
         ui::Mods shifted = mods;
@@ -437,9 +395,9 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
 // The meaning of a single shift: the keys with a letter, rxvt's Ctrl with an arrow and the keypad
 // in application mode. A number before the letter is a modifier, as old xterms send it.
 std::optional<Heard> Decoder::Held::heard(const vt::Ss3& one) const {
-    const ui::Mods mods = marked(one.number);
+    const ui::Mods mods = xterm::modifiers(one.number);
 
-    if (const std::optional<ui::Code> code = lettered(one.last)) return Struck{ui::Key{*code, mods}};
+    if (const std::optional<ui::Code> code = xterm::lettered(one.last)) return Struck{ui::Key{*code, mods}};
 
     if (const std::optional<ui::Code> code = slanted(one.last)) {
         ui::Mods held = mods;

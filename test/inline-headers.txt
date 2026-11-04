@@ -19,5 +19,6 @@ talcite/src/sharing.hpp
 talcite/src/slot.hpp
 talcite/src/stops.hpp
 talcite/src/titling.hpp
+talcite/src/xterming.hpp
 test/doing.hpp
 test/faking.hpp
