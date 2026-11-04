@@ -55,15 +55,7 @@ private:
 };
 
 struct Scrollbar {
-    Spot at;
-
-    bool upright = true;
-
-    int much = 0;
-
-    std::size_t shift = 0;
-    std::size_t whole = 0;
-    std::size_t window = 0;
+    Track track;
 
     bool focused = false;
 
@@ -72,11 +64,11 @@ struct Scrollbar {
 
     void draw(Canvas& onto) const;
 
-    [[nodiscard]] Track track() const { return Track{at, upright, much, shift, whole, window}; }
-
     [[nodiscard]] static Spot edge(Size given, Area seen, bool upright);
 
     [[nodiscard]] static bool focused_in(const Node& owner);
 };
+
+[[nodiscard]] int wheeled(int steps);
 
 }

@@ -26,9 +26,6 @@ bool same(const TableRow& one, const TableRow& two) {
 // scroll: asking for exactly as many as the window is high would cost a call per frame.
 constexpr std::size_t batch = 64;
 
-// How many rows one wheel notch moves. The same constant as in the list and the scroller.
-constexpr int stepping = 3;
-
 // The gap between columns. Without it a name would touch the size and the two could not be told
 // apart.
 constexpr int spacing = 1;
@@ -703,13 +700,7 @@ void Table::paint(Canvas& onto) const {
 
     if (!kept.bar.has_value()) return;
 
-    const Track& track = *kept.bar;
-
-    const Scrollbar bar{.at = track.at,
-                        .much = track.much,
-                        .shift = track.shift,
-                        .whole = track.whole,
-                        .window = track.window,
+    const Scrollbar bar{.track = *kept.bar,
                         .focused = Scrollbar::focused_in(*this),
                         .skin = how,
                         .role = kept.scrollbar_role};
@@ -766,7 +757,7 @@ bool Table::handle(WheelEvent& what) {
     const auto was = static_cast<std::ptrdiff_t>(kept.top);
 
     const std::ptrdiff_t want = std::clamp<std::ptrdiff_t>(
-        was - what.steps() * stepping, 0,
+        was - wheeled(what.steps()), 0,
         std::max<std::ptrdiff_t>(much - static_cast<std::ptrdiff_t>(high), 0));
 
     if (want == was) return false;

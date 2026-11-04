@@ -30,9 +30,6 @@ namespace talcite::ui {
 
 namespace {
 
-// How many lines one wheel step scrolls. The same number as in the scrollers.
-constexpr int stepping = 3;
-
 // How many bytes are read from the spool at once while a row is put together.
 constexpr std::size_t reading = 4096;
 
@@ -1787,13 +1784,7 @@ void Page::paint(Canvas& onto) const {
 
     if (!kept.bar.has_value()) return;
 
-    const Track& track = *kept.bar;
-
-    const Scrollbar bar{.at = track.at,
-                        .much = track.much,
-                        .shift = track.shift,
-                        .whole = track.whole,
-                        .window = track.window,
+    const Scrollbar bar{.track = *kept.bar,
                         .focused = Scrollbar::focused_in(*this),
                         .skin = skin(),
                         .role = kept.scrollbar_role};
@@ -1852,14 +1843,14 @@ bool Page::handle(KeyEvent& what) {
     }
 }
 
-// Scrolls `stepping` rows per wheel step; returns whether the view moved. Without wrapping the
+// Scrolls `wheeled` rows per wheel step; returns whether the view moved. Without wrapping the
 // tilted wheel scrolls sideways; with wrapping it goes on up.
 bool Page::handle(WheelEvent& what) {
     if (what.axis() == Axis::horizontal) {
         if (kept_->wrapped) return false;
 
         const std::size_t was = kept_->left;
-        const std::ptrdiff_t to = static_cast<std::ptrdiff_t>(was) - static_cast<std::ptrdiff_t>(what.steps() * stepping);
+        const std::ptrdiff_t to = static_cast<std::ptrdiff_t>(was) - static_cast<std::ptrdiff_t>(wheeled(what.steps()));
 
         left(static_cast<std::size_t>(std::max<std::ptrdiff_t>(to, 0)), Moved::by_hand);
 
@@ -1871,7 +1862,7 @@ bool Page::handle(WheelEvent& what) {
     const std::size_t was = kept_->top;
     const std::size_t was_at = kept_->row_at;
 
-    slide(-what.steps() * stepping, Moved::by_hand);
+    slide(-wheeled(what.steps()), Moved::by_hand);
 
     return kept_->top != was || kept_->row_at != was_at;
 }

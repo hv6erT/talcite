@@ -1077,6 +1077,35 @@ TRIAL("List: the scrollbar takes a column on the right") {
     same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
 }
 
+// The bar shows where the view is: scrolled to the last rows, the thumb stands at the bottom of
+// the track and the top of the track is empty.
+TRIAL("List: the scrollbar thumb follows the view to the end") {
+    Sheet top;
+
+    const auto one = listed(10);
+
+    one->scrollbar(true);
+
+    top.children().add(one);
+
+    (void)top.render({{0, 0}, {12, 5}});
+
+    View made = top.render({{0, 0}, {12, 5}});
+
+    same(made.at({11, 0}).letter, U'█');
+    same(made.at({11, 4}).letter, U'│');
+
+    one->which(9);
+
+    (void)top.render({{0, 0}, {12, 5}});
+
+    made = top.render({{0, 0}, {12, 5}});
+
+    same(one->first(), std::size_t{5});
+    same(made.at({11, 0}).letter, U'│');
+    same(made.at({11, 4}).letter, U'█');
+}
+
 // The scrollbar "when needed": a list shorter than the window gives its column back to the rows.
 TRIAL("List: the scrollbar when needed only with a list longer than the window") {
     Sheet top;

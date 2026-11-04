@@ -20,22 +20,20 @@ namespace talcite::ui {
 // This is an internal header: the library's API does not draw bars, the widgets do. The name of the
 // bar's role stays public in the widgets (`scrollbar_role`), because that is what reaches the skin.
 //
-// `Scrollbar` is one bar as a single object. The caller fills the fields by name and calls `draw`:
-//
-//     Scrollbar{.at = Scrollbar::edge(given, seen, true), .much = given.high, .shift = shift_,
-//               .whole = rows, .window = given.high, .focused = focused(), .skin = skin(),
-//               .role = role}.draw(made);
-//
-// `at` is the bar's first cell in the coordinates of the view being painted (the top one for a
-// vertical bar, the left one for a horizontal bar); `much` is the bar's length in cells; `shift`,
-// `whole` and `window` are the scroll offset, the length of the whole and the length of the
-// window, in any units as long as they are the same: rows, columns or bytes. Both references
-// (`skin`, `role`) live shorter than the expression that creates the bar: the object is not for
-// keeping, only for one drawing. `Scrollbar::track` (inline in the header) copies the position and
-// numbers into a `Track`.
-//
 // `Track` holds the position and numbers of one bar, all that is needed to draw it and to hit it
-// with the mouse. It has no skin and no role, so it can be kept until the next frame.
+// with the mouse. It has no skin and no role, so it can be kept until the next frame. `at` is the
+// bar's first cell in the coordinates of the view being painted (the top one for a vertical bar,
+// the left one for a horizontal bar); `much` is the bar's length in cells; `shift`, `whole` and
+// `window` are the scroll offset, the length of the whole and the length of the window, in any
+// units as long as they are the same: rows, columns or bytes.
+//
+// `Scrollbar` is one bar ready to draw: its `Track` and how it looks. The caller fills the fields
+// by name and calls `draw`:
+//
+//     Scrollbar{.track = track, .focused = focused(), .skin = skin(), .role = role}.draw(made);
+//
+// Both references (`skin`, `role`) live shorter than the expression that creates the bar: the
+// object is not for keeping, only for one drawing; the `Track` is what a widget keeps.
 //
 // `Part` is the part of the bar under a cell: the track before and after the thumb (one page) or
 // the thumb (dragging); a row at a time is the wheel's. `Asked` says what to do after a mouse event
@@ -148,11 +146,16 @@ bool Scrollbar::focused_in(const Node& owner) {
     return had != nullptr && had->within(owner);
 }
 
+// How many cells `steps` notches of the wheel move: three rows per notch, what most terminals do
+// and what the eye can follow. Every scrolling widget, the scroller, the list, the table, the page
+// and the comparison, moves by the same amount.
+int wheeled(int steps) { return steps * 3; }
+
 // Draws the track and the thumb on the canvas, with the glyphs of `role` and its .track.upright or
 // .track.across and .thumb variants, and the styles of `role` and `role`.thumb, or of
 // `role`.focus and `role`.thumb.focus when the bar's widget has the focus.
 void Scrollbar::draw(Canvas& onto) const {
-    if (much <= 0) return;
+    if (track.much <= 0) return;
 
     // The bar asks the skin itself, because it is not a node and has no ancestor through which
     // to reach it. The caller passes it from `Node::skin()`: one reference instead of two styles in
@@ -162,14 +165,14 @@ void Scrollbar::draw(Canvas& onto) const {
     const Style look = skin.style(role + state);
     const Style full = skin.style(role + ".thumb" + state);
 
-    const char32_t empty = skin.glyph(role + (upright ? ".track.upright" : ".track.across"));
+    const char32_t empty = skin.glyph(role + (track.upright ? ".track.upright" : ".track.across"));
     const char32_t block = skin.glyph(role + ".thumb");
 
-    const Laid laid = laid_out(track());
+    const Laid laid = laid_out(track);
 
     for (int which = 0; which < laid.track; ++which) {
         const bool kept = which >= laid.from && which < laid.from + laid.thumb;
-        const Spot spot = upright ? Spot{at.x, at.y + which} : Spot{at.x + which, at.y};
+        const Spot spot = track.upright ? Spot{track.at.x, track.at.y + which} : Spot{track.at.x + which, track.at.y};
 
         // The bar lies on its widget's ground: a style without a background takes the one below.
         onto.foreground(spot, kept ? block : empty, kept ? full : look);

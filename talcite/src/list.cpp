@@ -13,9 +13,6 @@ namespace talcite::ui {
 
 namespace {
 
-// Three rows per wheel notch, the same constant and the same reason as in the scroller.
-constexpr int stepping = 3;
-
 // The position of `one` among `all`, or -1, looked for from `near` outward, both ways at once. The
 // row a focus or a program goes to is almost always the current one or its neighbor, so an arrow
 // in a list of a hundred thousand rows looks at a couple of them, not at all the rows above.
@@ -33,6 +30,13 @@ int index_near(const Children& all, const Node* one, int near) {
     }
 
     return -1;
+}
+
+// The bar along the right edge of a list of size `given` showing `much` rows from `shift` on, the
+// same for the layout, which hands it to the grip, and for the painting.
+Track tracked(Size given, int shift, int much) {
+    return Track{Scrollbar::edge(given, {{0, 0}, given}, true), true, given.high, static_cast<std::size_t>(shift),
+                 static_cast<std::size_t>(much), static_cast<std::size_t>(given.high)};
 }
 
 }
@@ -273,7 +277,7 @@ bool List::handle(WheelEvent& what) {
     const int window = std::max(area().size.high, 0);
     const int was = shift_;
 
-    shift_ = std::clamp(shift_ - what.steps() * stepping, 0, std::max(much - window, 0));
+    shift_ = std::clamp(shift_ - wheeled(what.steps()), 0, std::max(much - window, 0));
 
     changed();
 
@@ -427,16 +431,7 @@ void List::layout(Size given) {
     laid_ = std::move(laid);
 
     if (aside != 0) {
-        const Scrollbar bar{.at = Scrollbar::edge(given, {{0, 0}, given}, true),
-                            .much = given.high,
-                            .shift = static_cast<std::size_t>(shift_),
-                            .whole = static_cast<std::size_t>(much),
-                            .window = static_cast<std::size_t>(given.high),
-                            .focused = Scrollbar::focused_in(*this),
-                            .skin = skin(),
-                            .role = scrollbar_role_};
-
-        grip_->laid(bar.track());
+        grip_->laid(tracked(given, shift_, much));
     } else {
         grip_->laid(std::nullopt);
     }
@@ -452,11 +447,7 @@ void List::paint(Canvas& onto) const {
 
     if (!shape_.scrollbar || given.wide <= 0 || (shape_.needed && much <= given.high)) return;
 
-    const Scrollbar bar{.at = Scrollbar::edge(given, {{0, 0}, given}, true),
-                        .much = given.high,
-                        .shift = static_cast<std::size_t>(shift_),
-                        .whole = static_cast<std::size_t>(much),
-                        .window = static_cast<std::size_t>(given.high),
+    const Scrollbar bar{.track = tracked(given, shift_, much),
                         .focused = Scrollbar::focused_in(*this),
                         .skin = skin(),
                         .role = scrollbar_role_};

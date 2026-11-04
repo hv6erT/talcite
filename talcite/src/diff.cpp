@@ -210,9 +210,6 @@ namespace {
 // How many hunks are taken from the source at once and kept at hand.
 constexpr std::size_t batch = 128;
 
-// How many rows the wheel skips. The same constant as in the list, the table and the scroller.
-constexpr int stepping = 3;
-
 // The checkbox: `[x] `. Four cells, as in `Tick`.
 constexpr int ticking = 4;
 
@@ -978,13 +975,7 @@ void DiffViewer::paint(Canvas& onto) const {
 
     if (!kept.bar.has_value()) return;
 
-    const Track& track = *kept.bar;
-
-    const Scrollbar bar{.at = track.at,
-                        .much = track.much,
-                        .shift = track.shift,
-                        .whole = track.whole,
-                        .window = track.window,
+    const Scrollbar bar{.track = *kept.bar,
                         .focused = Scrollbar::focused_in(*this),
                         .skin = how,
                         .role = kept.scrollbar_role};
@@ -1167,7 +1158,7 @@ bool DiffViewer::handle(KeyEvent& what) {
 bool DiffViewer::handle(WheelEvent& what) {
     if (what.axis() != Axis::vertical) return false;
 
-    return slid(-what.steps() * stepping, Moved::by_hand);
+    return slid(-wheeled(what.steps()), Moved::by_hand);
 }
 
 // The mouse on the bar: the track scrolls a page, the thumb jumps to a hunk. The

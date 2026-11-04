@@ -14,9 +14,6 @@ namespace talcite::ui {
 
 namespace {
 
-// Three rows per wheel notch: what most terminals do and what the eye can follow.
-constexpr int stepping = 3;
-
 // Which scrollbars to show, as {column on the right, row at the bottom}: always, or only when
 // needed (`needed`). A bar "when needed" appears on an axis where the content does not fit in the
 // window. The content is first asked without bars; once one bar appears, the other axis is checked
@@ -51,17 +48,13 @@ std::pair<int, int> bars(const ScrollShape& shape, bool across, bool down, const
 
 // The bar along the right edge (`upright`) or the bottom one of a scroller of size `given`, in its
 // coordinates: the window without bars, the whole content and the offset say where the thumb is.
-Scrollbar barred(Size given, bool upright, Size window, Size whole, Spot shift, bool focused, const Skin& skin,
-                 const std::string& role) {
-    return Scrollbar{.at = Scrollbar::edge(given, {{0, 0}, given}, upright),
-                     .upright = upright,
-                     .much = upright ? window.high : window.wide,
-                     .shift = static_cast<std::size_t>(upright ? shift.y : shift.x),
-                     .whole = static_cast<std::size_t>(upright ? whole.high : whole.wide),
-                     .window = static_cast<std::size_t>(upright ? window.high : window.wide),
-                     .focused = focused,
-                     .skin = skin,
-                     .role = role};
+Track tracked(Size given, bool upright, Size window, Size whole, Spot shift) {
+    return Track{Scrollbar::edge(given, {{0, 0}, given}, upright),
+                 upright,
+                 upright ? window.high : window.wide,
+                 static_cast<std::size_t>(upright ? shift.y : shift.x),
+                 static_cast<std::size_t>(upright ? whole.high : whole.wide),
+                 static_cast<std::size_t>(upright ? window.high : window.wide)};
 }
 }
 
@@ -167,13 +160,9 @@ void Scroll::layout(Size given) {
     upright_->laid(std::nullopt);
     sideways_->laid(std::nullopt);
 
-    const bool focused = Scrollbar::focused_in(*this);
+    if (aside != 0) upright_->laid(tracked(given, true, window_, whole_, shift_));
 
-    if (aside != 0)
-        upright_->laid(barred(given, true, window_, whole_, shift_, focused, skin(), scrollbar_role_).track());
-
-    if (below != 0)
-        sideways_->laid(barred(given, false, window_, whole_, shift_, focused, skin(), scrollbar_role_).track());
+    if (below != 0) sideways_->laid(tracked(given, false, window_, whole_, shift_));
 }
 
 // Paints the visible part of the child in the window without bars, and the bars.
@@ -189,10 +178,14 @@ void Scroll::paint(Canvas& onto) const {
     const bool focused = Scrollbar::focused_in(*this);
 
     if (given.wide > window_.wide)
-        barred(given, true, window_, whole_, shift_, focused, skin(), scrollbar_role_).draw(onto);
+        Scrollbar{.track = tracked(given, true, window_, whole_, shift_), .focused = focused, .skin = skin(),
+                  .role = scrollbar_role_}
+            .draw(onto);
 
     if (given.high > window_.high)
-        barred(given, false, window_, whole_, shift_, focused, skin(), scrollbar_role_).draw(onto);
+        Scrollbar{.track = tracked(given, false, window_, whole_, shift_), .focused = focused, .skin = skin(),
+                  .role = scrollbar_role_}
+            .draw(onto);
 }
 
 // One of the descendants took the focus (the event bubbles up), so the next frame has to follow it.
@@ -220,10 +213,10 @@ bool Scroll::handle(WheelEvent& what) {
     const bool sideways = tilted || axis_ == Axis::horizontal || (axis_ == Axis::both && what.mods().shift);
 
     if (sideways)
-        shift_.x = std::clamp(shift_.x - what.steps() * stepping, 0,
+        shift_.x = std::clamp(shift_.x - wheeled(what.steps()), 0,
                               std::max(whole_.wide - window_.wide, 0));
     else
-        shift_.y = std::clamp(shift_.y - what.steps() * stepping, 0,
+        shift_.y = std::clamp(shift_.y - wheeled(what.steps()), 0,
                               std::max(whole_.high - window_.high, 0));
 
     if (shift_ == was) return false;

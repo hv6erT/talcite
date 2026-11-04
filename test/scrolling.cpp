@@ -460,11 +460,7 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
 
     Canvas onto{made};
 
-    ui::Scrollbar{.at = {0, 0},
-                  .much = 12,
-                  .shift = 1'500'000'000,
-                  .whole = 3'000'000'000,
-                  .window = 1000,
+    ui::Scrollbar{.track = ui::Track{.at = {0, 0}, .much = 12, .shift = 1'500'000'000, .whole = 3'000'000'000, .window = 1000},
                   .skin = how,
                   .role = role}
         .draw(onto);
@@ -487,11 +483,7 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
 
     Canvas onto{made};
 
-    ui::Scrollbar{.at = {0, 0},
-                  .much = 12,
-                  .shift = 0,
-                  .whole = 3'000'000'000,
-                  .window = 1'500'000'000,
+    ui::Scrollbar{.track = ui::Track{.at = {0, 0}, .much = 12, .shift = 0, .whole = 3'000'000'000, .window = 1'500'000'000},
                   .skin = how,
                   .role = role}
         .draw(onto);
