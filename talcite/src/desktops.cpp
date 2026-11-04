@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/ascii.hpp"
 #include "talcite/encoding.hpp"
 
 // What the desktop of the system says about files, read from the text and the bytes alone, without
@@ -27,26 +28,10 @@ namespace talcite::desktops {
 
 namespace {
 
-// The ASCII letter in lower case; other bytes stay, so a UTF-8 name is compared byte for byte
-// outside ASCII, as shared-mime-info itself does.
-char lowered(char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; }
-
-// The text in lower case, ASCII only (`lowered`).
-std::string lowered(std::string_view text) {
-    std::string made{text};
-
-    std::transform(made.begin(), made.end(), made.begin(), [](char one) { return lowered(one); });
-
-    return made;
-}
-
-// The text without spaces and tabs at its ends.
-std::string_view trimmed(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) text.remove_suffix(1);
-
-    return text;
-}
+// Lower case is ASCII only, so a UTF-8 name is compared byte for byte outside ASCII, as
+// shared-mime-info itself does.
+using ascii::lowered;
+using ascii::trimmed;
 
 // The lines of the text, without their line ends.
 std::vector<std::string_view> lines_of(std::string_view text) {

@@ -13,6 +13,7 @@
 #include <tuple>
 #include <utility>
 
+#include "talcite/ascii.hpp"
 #include "talcite/fs.hpp"
 #include "talcite/stream.hpp"
 
@@ -48,30 +49,13 @@ constexpr std::size_t piece = 64 * 1024;
 // conversation.
 constexpr std::size_t line_most = 4096;
 
-// An ASCII letter in lowercase; other bytes stay as they are.
-char lowered(char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; }
-
-// The text with its ASCII letters in lowercase.
-std::string lowered(std::string_view text) {
-    std::string made{text};
-
-    for (char& one : made) one = lowered(one);
-
-    return made;
-}
+using ascii::lowered;
+using ascii::trimmed;
 
 // Whether two texts are equal ignoring ASCII case, as header names are compared.
 bool alike(std::string_view one, std::string_view two) {
     return one.size() == two.size() &&
            std::equal(one.begin(), one.end(), two.begin(), [](char a, char b) { return lowered(a) == lowered(b); });
-}
-
-// The text without leading and trailing spaces and tabs.
-std::string_view trimmed(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
-
-    return text;
 }
 
 // A character that may appear in a header name (token in RFC 9110).

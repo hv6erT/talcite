@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/ascii.hpp"
 #include "talcite/http.hpp"
 #include "talcite/random.hpp"
 #include "talcite/trouble.hpp"
@@ -544,19 +545,8 @@ constexpr std::array<std::string_view, 3> searched{"urn:schemas-upnp-org:device:
                                                    "urn:schemas-upnp-org:device:InternetGatewayDevice:2",
                                                    "urn:schemas-upnp-org:service:WANIPConnection:1"};
 
-// An ASCII letter in lower case; anything else unchanged.
-char lowered(char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; }
-
-// The text without leading and trailing spaces, tabs and line ends.
-std::string trimmed(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\r' || text.front() == '\n'))
-        text.remove_prefix(1);
-
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r' || text.back() == '\n'))
-        text.remove_suffix(1);
-
-    return std::string{text};
-}
+using ascii::lowered;
+using ascii::trimmed;
 
 // The description address from an SSDP answer: the LOCATION header, in any letter case.
 std::optional<std::string> located(const Bytes& came) {
@@ -575,11 +565,11 @@ std::optional<std::string> located(const Bytes& came) {
 
         if (colon == std::string::npos) continue;
 
-        std::string name = trimmed(std::string_view{line}.substr(0, colon));
+        std::string name{trimmed(std::string_view{line}.substr(0, colon))};
 
         std::transform(name.begin(), name.end(), name.begin(), [](char one) { return lowered(one); });
 
-        if (name == "location") return trimmed(std::string_view{line}.substr(colon + 1));
+        if (name == "location") return std::string{trimmed(std::string_view{line}.substr(colon + 1))};
     }
 
     return std::nullopt;
@@ -685,7 +675,7 @@ const xml::Node* inner(const xml::Node& one, std::string_view name) {
 std::string said_in(const xml::Document& document, std::string_view name) {
     const std::vector<const xml::Node*> all = found(document, name);
 
-    return all.empty() ? std::string{} : trimmed(xml::text(*all.front()));
+    return all.empty() ? std::string{} : std::string{trimmed(xml::text(*all.front()))};
 }
 
 // The service from a device description: the best of the supported ones, with its control address

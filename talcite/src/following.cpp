@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/ascii.hpp"
+
 // Following an address is one thing in the whole library, whoever does it: a link (`Link`), a mark
 // with an address in a label (`Span`) or in a page (`Page`). `FollowingMixin` holds it for them:
 // `FollowEvent` goes up the tree first, so that the application may do something else with the
@@ -33,11 +35,7 @@ bool schemed(std::string_view text, std::size_t at, std::string_view scheme) {
     if (text.size() - at < scheme.size()) return false;
 
     for (std::size_t one = 0; one < scheme.size(); ++one) {
-        char letter = text[at + one];
-
-        if (letter >= 'A' && letter <= 'Z') letter = static_cast<char>(letter - 'A' + 'a');
-
-        if (letter != scheme[one]) return false;
+        if (ascii::lowered(text[at + one]) != scheme[one]) return false;
     }
 
     return true;

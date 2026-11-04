@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "talcite/ascii.hpp"
 #include "talcite/encoding.hpp"
 
 namespace talcite {
@@ -1478,7 +1479,7 @@ Collation::Collation(std::string_view language, CollationShape shape) : language
     for (const char one : language) {
         if (one == '-' || one == '_') break;
 
-        spoken += one >= 'A' && one <= 'Z' ? static_cast<char>(one + 32) : one;
+        spoken += ascii::lowered(one);
     }
 
     for (std::size_t at = 0; at < tailorings.size(); ++at)

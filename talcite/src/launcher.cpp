@@ -24,6 +24,7 @@
 
 #endif
 
+#include "talcite/ascii.hpp"
 #include "remoting.hpp"
 
 // Opening an address in the program the user's system gives it: the browser for a web page, the
@@ -61,11 +62,7 @@ bool schemed(std::string_view address, std::string_view scheme) {
     if (address.size() < scheme.size()) return false;
 
     for (std::size_t at = 0; at < scheme.size(); ++at) {
-        char one = address[at];
-
-        if (one >= 'A' && one <= 'Z') one = static_cast<char>(one - 'A' + 'a');
-
-        if (one != scheme[at]) return false;
+        if (ascii::lowered(address[at]) != scheme[at]) return false;
     }
 
     return true;

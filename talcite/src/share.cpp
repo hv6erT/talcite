@@ -6,6 +6,7 @@
 #include <system_error>
 #include <utility>
 
+#include "talcite/ascii.hpp"
 #include "talcite/bytes.hpp"
 #include "talcite/child.hpp"
 #include "talcite/encoding.hpp"
@@ -45,15 +46,8 @@ namespace talcite::fs {
 
 namespace {
 
-// The text with ASCII letters made lowercase.
-std::string lowered(std::string_view said) {
-    std::string made{said};
-
-    for (char& one : made)
-        if (one >= 'A' && one <= 'Z') one = static_cast<char>(one - 'A' + 'a');
-
-    return made;
-}
+using ascii::lowered;
+using ascii::trimmed;
 
 // The value of a hexadecimal digit, or -1 for anything else.
 int hexed(char one) {
@@ -88,17 +82,6 @@ std::string unescaped(std::string_view said) {
     return made;
 }
 
-// The text without leading and trailing whitespace.
-std::string trimmed(std::string_view said) {
-    const auto first = said.find_first_not_of(" \t\r\n");
-
-    if (first == std::string_view::npos) return {};
-
-    const auto last = said.find_last_not_of(" \t\r\n");
-
-    return std::string{said.substr(first, last - first + 1)};
-}
-
 // The parts of a path split at both kinds of slash, without empty ones.
 std::vector<std::string> pieces(std::string_view said) {
     std::vector<std::string> made;
@@ -124,7 +107,7 @@ std::vector<std::string> pieces(std::string_view said) {
 // Splits an address in UNC, //server or smb:// form into a `Share`; `std::nullopt` for anything
 // else or for an address without a server.
 std::optional<Share> addressed(std::string_view said) {
-    const std::string whole = trimmed(said);
+    const std::string whole{trimmed(said)};
 
     Share made;
     std::string_view inside;
@@ -343,7 +326,7 @@ std::vector<std::string> listed(std::string_view said) {
 
     while (!said.empty()) {
         const auto end = said.find('\n');
-        std::string one = trimmed(said.substr(0, end));
+        std::string one{trimmed(said.substr(0, end))};
 
         if (!one.empty() && one.back() == '/') one.pop_back();
 
@@ -592,7 +575,7 @@ Reached settled(const Share& one, const Said& said) {
 
     const bool mounted = said.code == 0 || lowered(said.text).find("already mounted") != std::string::npos;
 
-    if (!mounted) return Reached{refused_by_gio(said.text), {}, trimmed(said.text)};
+    if (!mounted) return Reached{refused_by_gio(said.text), {}, std::string{trimmed(said.text)}};
 
     if (one.name.empty()) return Reached{};
 
@@ -644,7 +627,7 @@ Offered offered_at(const Share& one) {
     if (said.code != 0) {
         const Said& worse = mounted.code != 0 && lowered(mounted.text).find("already mounted") == std::string::npos ? mounted : said;
 
-        return Offered{refused_by_gio(worse.text), {}, trimmed(worse.text)};
+        return Offered{refused_by_gio(worse.text), {}, std::string{trimmed(worse.text)}};
     }
 
     Offered made;

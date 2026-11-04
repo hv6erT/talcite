@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "talcite/ascii.hpp"
 #include "talcite/executor.hpp"
 #include "talcite/trouble.hpp"
 
@@ -119,9 +120,7 @@ std::string extension_of(const fs::path& file) {
 std::string lowered_extension(const fs::path& file) {
     std::string made = extension_of(file);
 
-    std::transform(made.begin(), made.end(), made.begin(), [](char one) { return one >= 'A' && one <= 'Z' ? static_cast<char>(one - 'A' + 'a') : one; });
-
-    return made;
+    return ascii::lowered(made);
 }
 
 // Whether there is a graphical session for a window: not over ssh, always on Windows and macOS,

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "talcite/ascii.hpp"
 #include "talcite/promise.hpp"
 #include "talcite/trouble.hpp"
 
@@ -121,7 +122,7 @@ std::wstring pipe_name(const std::string& path) {
     for (char one : path) {
         if (one == '/') one = '\\';
 
-        if (one >= 'A' && one <= 'Z') one = static_cast<char>(one - 'A' + 'a');
+        one = ascii::lowered(one);
 
         sum ^= static_cast<unsigned char>(one);
         sum *= 1099511628211ull;

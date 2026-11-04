@@ -4,18 +4,14 @@
 #include <regex>
 #include <utility>
 
+#include "talcite/ascii.hpp"
 #include "talcite/encoding.hpp"
 
 namespace talcite {
 
 namespace {
 
-// Lowers an ASCII letter; every other byte comes back unchanged.
-char lowered(char one) {
-    const unsigned char sign = static_cast<unsigned char>(one);
-
-    return static_cast<char>(std::tolower(sign));
-}
+using ascii::lowered;
 
 // A word boundary counted in bytes, with the rule from `encoding.hpp`, the same one that
 // double-click word selection uses. A widened byte of a UTF-8 sequence gives the same answer
