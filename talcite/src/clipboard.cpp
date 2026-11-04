@@ -1,5 +1,6 @@
 #include "talcite/clipboard.hpp"
 
+#include "talcite/base64.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/fs.hpp"
 
@@ -10,6 +11,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -48,50 +50,6 @@ namespace {
 // than a stub posing as the whole. Inside the program the copy stays complete.
 constexpr std::size_t brim = 64 * 1024;
 
-constexpr const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-// Base64 with padding, because that is what terminals expect. Twenty lines instead of a dependency:
-// this is not cryptography, only rewriting three bytes as four characters.
-std::string sixed(std::string_view what) {
-    std::string made;
-
-    made.reserve((what.size() + 2) / 3 * 4);
-
-    std::size_t at = 0;
-
-    while (at + 2 < what.size()) {
-        const auto one = static_cast<unsigned char>(what[at]);
-        const auto two = static_cast<unsigned char>(what[at + 1]);
-        const auto three = static_cast<unsigned char>(what[at + 2]);
-
-        made.push_back(letters[one >> 2]);
-        made.push_back(letters[((one & 0x03) << 4) | (two >> 4)]);
-        made.push_back(letters[((two & 0x0F) << 2) | (three >> 6)]);
-        made.push_back(letters[three & 0x3F]);
-
-        at += 3;
-    }
-
-    if (at + 1 == what.size()) {
-        const auto one = static_cast<unsigned char>(what[at]);
-
-        made.push_back(letters[one >> 2]);
-        made.push_back(letters[(one & 0x03) << 4]);
-        made.push_back('=');
-        made.push_back('=');
-    } else if (at + 2 == what.size()) {
-        const auto one = static_cast<unsigned char>(what[at]);
-        const auto two = static_cast<unsigned char>(what[at + 1]);
-
-        made.push_back(letters[one >> 2]);
-        made.push_back(letters[((one & 0x03) << 4) | (two >> 4)]);
-        made.push_back(letters[(two & 0x0F) << 2]);
-        made.push_back('=');
-    }
-
-    return made;
-}
-
 // Asks the terminal to put the text into the clipboard of its own machine; false when the text is
 // above `brim`. `c` is the system clipboard; we leave the primary selection (`p`, the middle mouse
 // button) alone: one clipboard, one content.
@@ -102,7 +60,7 @@ std::string sixed(std::string_view what) {
 bool sent(Console& out, std::string_view what) {
     if (what.size() > brim) return false;
 
-    out.write("\x1b]52;c;" + sixed(what) + "\x07");
+    out.write("\x1b]52;c;" + base64(std::as_bytes(std::span{what})) + "\x07");
 
     return true;
 }

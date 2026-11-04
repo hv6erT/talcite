@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "talcite/ascii.hpp"
+#include "talcite/base64.hpp"
 #include "talcite/fs.hpp"
 #include "talcite/stream.hpp"
 
@@ -456,30 +457,10 @@ struct Spilling {
 
 using Spill = std::shared_ptr<Spilling>;
 
-// The proxy credential: Basic with the "user:password" pair in base64 (RFC 7617).
-std::string based(std::string_view text) {
-    static constexpr std::string_view letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    std::string made;
-
-    for (std::size_t at = 0; at < text.size(); at += 3) {
-        const std::size_t much = std::min<std::size_t>(3, text.size() - at);
-
-        std::uint32_t three = 0;
-
-        for (std::size_t one = 0; one < 3; ++one)
-            three = (three << 8) | (one < much ? static_cast<unsigned char>(text[at + one]) : 0u);
-
-        for (std::size_t one = 0; one < 4; ++one)
-            made += one <= much ? letters[(three >> (18 - 6 * one)) & 0x3F] : '=';
-    }
-
-    return made;
-}
-
-// The Proxy-Authorization header line for the login, or nothing without one.
+// The Proxy-Authorization header line for the login, or nothing without one: Basic, with the
+// "user:password" pair in base64 (RFC 7617).
 std::string authorized(const std::string& login) {
-    return login.empty() ? std::string{} : "Proxy-Authorization: Basic " + based(login) + "\r\n";
+    return login.empty() ? std::string{} : "Proxy-Authorization: Basic " + base64(std::as_bytes(std::span{login})) + "\r\n";
 }
 
 // The request for the server or, through a proxy over plain HTTP, with the full address in the
