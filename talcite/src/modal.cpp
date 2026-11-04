@@ -6,6 +6,7 @@
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
+#include "lining.hpp"
 #include "stops.hpp"
 
 namespace talcite::ui {
@@ -79,12 +80,8 @@ void Modal::layout(Size given) {
     if (shape_.shade && box.area() != was) changed();
 }
 
-// Paints the box at its seat with its shadow; the rest of the curtain is transparent, so a
-// screen-sized curtain does not paint over what lies beneath it.
-//
-// The shadow falls to the right and down, offset by one row and two columns, the same rule as
-// under a menu, because in Midnight Commander it is the same shadow. The letters underneath stay
-// and are only dimmed.
+// Paints the box at its seat with its shadow (`shadowed`, the same as under a menu); the rest of
+// the curtain is transparent, so a screen-sized curtain does not paint over what lies beneath it.
 void Modal::paint(Canvas& onto) const {
     if (children().empty()) return;
 
@@ -92,17 +89,7 @@ void Modal::paint(Canvas& onto) const {
 
     box.render(onto);
 
-    const Area& where = box.area();
-
-    if (!shape_.shade || where.size.wide <= 0 || where.size.high <= 0) return;
-
-    const int last_x = where.at.x + where.size.wide - 1;
-    const int last_y = where.at.y + where.size.high - 1;
-
-    const Style dark = skin().style("talcite.shade");
-
-    onto.shade({{last_x + 1, where.at.y + 1}, {2, where.size.high - 1}}, dark);
-    onto.shade({{where.at.x + 2, last_y + 1}, {where.size.wide, 1}}, dark);
+    if (shape_.shade) shadowed(onto, box.area(), skin().style("talcite.shade"));
 }
 
 // Moves the focus by the given number of stops, wrapping around. The traversal boundary follows

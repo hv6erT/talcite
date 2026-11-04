@@ -109,43 +109,12 @@ void Frame::paint(Canvas& onto) const {
     const Edges edge = edges();
 
     if (given.wide > 0 && given.high > 0) {
-        const Lines lines = how.lines(shape_.border);
+        bordered(onto, given, Rim{edge.top, edge.bottom, edge.left, edge.right}, how.lines(shape_.border), look);
 
-        // The right side starts where the interior ends, not on the last column, because a side
-        // made of a double-width character starts one cell earlier.
-        const int right_x = given.wide - edge.right;
         const int last_y = given.high - 1;
 
         // There is no text without an edge to stand in.
         const int room = given.wide - edge.left - edge.right;
-
-        // The line runs across the whole width when there is no side; a corner exists only where
-        // two drawn edges meet.
-        if (edge.top != 0)
-            across(onto, {edge.left, 0}, room, lines.across, look);
-
-        if (edge.bottom != 0)
-            across(onto, {edge.left, last_y}, room, lines.across, look);
-
-        if (edge.left != 0)
-            for (int y = edge.top; y <= last_y - edge.bottom; ++y)
-                onto.put({0, y}, lines.upright, look);
-
-        if (edge.right != 0)
-            for (int y = edge.top; y <= last_y - edge.bottom; ++y)
-                onto.put({right_x, y}, lines.upright, look);
-
-        if (edge.top != 0 && edge.left != 0)
-            onto.put({0, 0}, lines.upper_left, look);
-
-        if (edge.top != 0 && edge.right != 0)
-            onto.put({right_x, 0}, lines.upper_right, look);
-
-        if (edge.bottom != 0 && edge.left != 0)
-            onto.put({0, last_y}, lines.lower_left, look);
-
-        if (edge.bottom != 0 && edge.right != 0)
-            onto.put({right_x, last_y}, lines.lower_right, look);
 
         if (edge.top != 0)
             along(onto, {edge.left, 0}, room, title_, shape_.justify, told,

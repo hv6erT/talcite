@@ -290,22 +290,10 @@ void Menu::paint(Canvas& onto) const {
     const int last_x = right_x + side.right - 1;
     const int last_y = inner.high + 1;
 
-    if (shape_.border != Border::none) {
-        const Lines lines = how.lines(shape_.border);
+    const Size box{last_x + 1, last_y + 1};
 
-        across(onto, {side.left, 0}, inner.wide, lines.across, edge);
-        across(onto, {side.left, last_y}, inner.wide, lines.across, edge);
-
-        for (int y = 1; y < last_y; ++y) {
-            onto.put({0, y}, lines.upright, edge);
-            onto.put({right_x, y}, lines.upright, edge);
-        }
-
-        onto.put({0, 0}, lines.upper_left, edge);
-        onto.put({right_x, 0}, lines.upper_right, edge);
-        onto.put({0, last_y}, lines.lower_left, edge);
-        onto.put({right_x, last_y}, lines.lower_right, edge);
-    }
+    if (shape_.border != Border::none)
+        bordered(onto, box, Rim{1, 1, side.left, side.right}, how.lines(shape_.border), edge);
 
     int y = 1;
 
@@ -325,14 +313,7 @@ void Menu::paint(Canvas& onto) const {
         ++y;
     }
 
-    // The shadow falls to the right and down, offset by one row and two columns; otherwise it
-    // would look like a second border. The letters underneath stay and are only dimmed.
-    if (shape_.shade) {
-        const Style dark = how.style("talcite.shade");
-
-        onto.shade({{last_x + 1, 1}, {2, last_y}}, dark);
-        onto.shade({{2, last_y + 1}, {last_x + 1, 1}}, dark);
-    }
+    if (shape_.shade) shadowed(onto, {{0, 0}, box}, how.style("talcite.shade"));
 }
 
 // Three keys belong to the menu; the rest belong to the items or to someone higher up. Only an

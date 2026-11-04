@@ -68,6 +68,59 @@ inline void across(Canvas& into, Spot from, int much, char32_t glyph, const Styl
     for (int x = 0; x + step <= much; x += step) into.put({from.x + x, from.y}, glyph, look);
 }
 
+// Which sides of a box are drawn and how much each takes: the top and the bottom one row or none,
+// the left and the right as many cells as `sided` measured, or none.
+struct Rim {
+    int top = 0;
+    int bottom = 0;
+    int left = 0;
+    int right = 0;
+};
+
+// The border of a box of size `box` standing at the origin: the sides that are drawn, and a corner
+// only where two drawn sides meet. The top and bottom lines run between the sides, and across the
+// whole width where there is no side. The right side starts where the interior ends, not on the
+// last column, because a side made of a double-width character starts one cell earlier. A frame
+// draws the sides it was asked for, a menu all four, by this one rule.
+inline void bordered(Canvas& into, Size box, const Rim& rim, const Lines& lines, const Style& look) {
+    if (box.wide <= 0 || box.high <= 0) return;
+
+    const int right_x = box.wide - rim.right;
+    const int last_y = box.high - 1;
+    const int room = box.wide - rim.left - rim.right;
+
+    if (rim.top != 0) across(into, {rim.left, 0}, room, lines.across, look);
+
+    if (rim.bottom != 0) across(into, {rim.left, last_y}, room, lines.across, look);
+
+    if (rim.left != 0)
+        for (int y = rim.top; y <= last_y - rim.bottom; ++y) into.put({0, y}, lines.upright, look);
+
+    if (rim.right != 0)
+        for (int y = rim.top; y <= last_y - rim.bottom; ++y) into.put({right_x, y}, lines.upright, look);
+
+    if (rim.top != 0 && rim.left != 0) into.put({0, 0}, lines.upper_left, look);
+
+    if (rim.top != 0 && rim.right != 0) into.put({right_x, 0}, lines.upper_right, look);
+
+    if (rim.bottom != 0 && rim.left != 0) into.put({0, last_y}, lines.lower_left, look);
+
+    if (rim.bottom != 0 && rim.right != 0) into.put({right_x, last_y}, lines.lower_right, look);
+}
+
+// The shadow of the box at `box`: to the right and down, offset by one row and two columns, so that
+// it does not look like a second border. Menus and dialogs cast the same shadow, because in
+// Midnight Commander it is the same shadow. The letters underneath stay and are only dimmed.
+inline void shadowed(Canvas& into, const Area& box, const Style& dark) {
+    if (box.size.wide <= 0 || box.size.high <= 0) return;
+
+    const int last_x = box.at.x + box.size.wide - 1;
+    const int last_y = box.at.y + box.size.high - 1;
+
+    into.shade({{last_x + 1, box.at.y + 1}, {2, box.size.high - 1}}, dark);
+    into.shade({{box.at.x + 2, last_y + 1}, {box.size.wide, 1}}, dark);
+}
+
 // Whether a horizontal line reaches the right cell `last`. For a single-width glyph this asks
 // about that cell alone. For a double-width one the line may have ended one cell earlier, because
 // the last glyph did not fit in an odd width, and that also counts as reaching, because the line
