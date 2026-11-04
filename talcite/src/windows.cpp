@@ -28,14 +28,6 @@ namespace talcite::ui {
 
 namespace {
 
-// Whether `one` is `under` or lies somewhere below it.
-[[nodiscard]] bool inside(const Node* one, const Node& under) {
-    for (; one != nullptr; one = one->parent())
-        if (one == &under) return true;
-
-    return false;
-}
-
 // The neighbor of the current window in opening order, wrapping around. With one window or none
 // there is no neighbor.
 [[nodiscard]] Window* beside(const std::vector<std::shared_ptr<Layer>>& all, const Window* now, int by) {
@@ -95,7 +87,7 @@ void Windows::raise(Window& one) {
     if (Root* top = root(); top != nullptr)
         if (Node* was = top->focused_node(); was != nullptr)
             for (const std::shared_ptr<Layer>& mine : opened())
-                if (inside(was, *mine)) remember(*mine, was);
+                if (was->within(*mine)) remember(*mine, was);
 
     const std::shared_ptr<Layer> kept = *at;
 

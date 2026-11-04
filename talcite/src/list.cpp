@@ -144,12 +144,8 @@ void List::aim(int given) {
 
     if (top == nullptr) return;
 
-    for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
-        if (at == this) {
-            if (ListItem* one = item(which_); one != nullptr && one->enabled()) one->focus();
-
-            return;
-        }
+    if (const Node* had = top->focused_node(); had != nullptr && had->within(*this))
+        if (ListItem* one = item(which_); one != nullptr && one->enabled()) one->focus();
 }
 
 // Sets the current row by number, for building a list when the caller has the number of an

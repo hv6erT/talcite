@@ -81,14 +81,6 @@ std::pair<int, int> lone(const Tab& shown, int wide) {
     return {from, from + label};
 }
 
-// Whether `one` is `under` or lies under it.
-bool within(const Node* one, const Node& under) {
-    for (const Handler* at = one; at != nullptr; at = at->parent())
-        if (at == &under) return true;
-
-    return false;
-}
-
 }
 
 // Tabs without tabs yet, in the role talcite.tab.
@@ -108,7 +100,7 @@ void Tabs::which(std::size_t at) {
     const bool moved = at != which_;
     const Root* top = root();
     const Node* had = top != nullptr ? top->focused_node() : nullptr;
-    const bool carried = moved && had != nullptr && which_ < all.size() && within(had, *all[which_]);
+    const bool carried = moved && had != nullptr && which_ < all.size() && had->within(*all[which_]);
 
     for (std::size_t one = 0; one < all.size(); ++one) all[one]->shown(one == at);
 

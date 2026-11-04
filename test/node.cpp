@@ -87,6 +87,32 @@ TRIAL("Node: an attached child knows its parent") {
     ought(up.first() == down.get());
 }
 
+// A node lies within itself and within each of its ancestors, never within a sibling or a node
+// below it, and a detached node lies within nothing of its old tree.
+TRIAL("Node: within is the node itself and its ancestors") {
+    Twig top{"góra"};
+
+    const std::shared_ptr<Twig> middle = twig("środek");
+    const std::shared_ptr<Twig> low = twig("dół");
+    const std::shared_ptr<Twig> beside = twig("obok");
+
+    middle->children().add(low);
+    top.children().add(middle);
+    top.children().add(beside);
+
+    ought(low->within(*low));
+    ought(low->within(*middle));
+    ought(low->within(top));
+    ought(!middle->within(*low));
+    ought(!low->within(*beside));
+    ought(!top.within(*middle));
+
+    (void)top.children().remove(middle.get());
+
+    ought(!low->within(top));
+    ought(low->within(*middle));
+}
+
 // `find` gives the number of a child among the children, and nothing for a node that is not a
 // child, also after it is detached.
 TRIAL("Node: find knows a child's number and not a stranger's") {

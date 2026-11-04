@@ -117,6 +117,8 @@ public:
 
     [[nodiscard]] bool focused() const;
 
+    [[nodiscard]] bool within(const Node& under) const;
+
     virtual void focus();
 
     void arrange(const Area& where);

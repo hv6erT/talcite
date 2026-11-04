@@ -101,12 +101,7 @@ void Layers::close(Layer& one) {
     // A layer opened from the close handler remembered a focus that is about to leave the tree
     // together with us, so it inherits our memory, and the focus has somewhere to return to after
     // it closes.
-    const auto inside = [&kept](const Node* node) {
-        for (; node != nullptr; node = node->parent())
-            if (node == kept.get()) return true;
-
-        return false;
-    };
+    const auto inside = [&kept](const Node* node) { return node != nullptr && node->within(*kept); };
 
     for (auto above = std::next(again); above != opened_.end(); ++above) {
         const std::shared_ptr<Node> mine = (*above)->was_.lock();

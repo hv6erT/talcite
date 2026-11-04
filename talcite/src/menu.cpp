@@ -114,12 +114,7 @@ void Menu::close() {
     changed();
 
     if (Root* top = root(); top != nullptr && head_ != nullptr)
-        for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
-            if (at == this) {
-                head_->focus();
-
-                break;
-            }
+        if (const Node* had = top->focused_node(); had != nullptr && had->within(*this)) head_->focus();
 
     (void)up->children().remove(this);
 }
@@ -419,8 +414,7 @@ bool Menu::handle(FocusEvent& what) {
 // closing: the focus still sits in the menu, so the number is not cleared; otherwise every arrow
 // would erase what it had just set.
 bool Menu::handle(UnfocusEvent& what) {
-    for (const Node* at = what.other(); at != nullptr; at = at->parent())
-        if (at == this) return false;
+    if (const Node* other = what.other(); other != nullptr && other->within(*this)) return false;
 
     which_ = -1;
 

@@ -143,10 +143,9 @@ bool Scrollbar::focused_in(const Node& owner) {
 
     if (top == nullptr) return false;
 
-    for (const Node* at = top->focused_node(); at != nullptr; at = at->parent())
-        if (at == &owner) return true;
+    const Node* had = top->focused_node();
 
-    return false;
+    return had != nullptr && had->within(owner);
 }
 
 // Draws the track and the thumb on the canvas, with the glyphs of `role` and its .track.upright or

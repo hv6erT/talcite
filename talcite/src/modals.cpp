@@ -80,8 +80,7 @@ bool Modals::withheld(Node& one) {
 
     if (top == nullptr) return false;
 
-    for (const Node* each = &one; each != nullptr; each = each->parent())
-        if (each == top) return false;
+    if (one.within(*top)) return false;
 
     remember(*top, &one);
 

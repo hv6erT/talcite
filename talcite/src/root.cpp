@@ -620,12 +620,7 @@ CaretShape Root::caret_shape() const { return focus_ == nullptr ? CaretShape{} :
 // Clears the focus when it is on the node being removed or anywhere under it. Otherwise it would
 // point at a dead node, and that would come out only at the next key.
 void Root::losing(const Node* one) {
-    for (const Node* at = focus_; at != nullptr; at = at->parent())
-        if (at == one) {
-            focus_ = nullptr;
-
-            return;
-        }
+    if (focus_ != nullptr && one != nullptr && focus_->within(*one)) focus_ = nullptr;
 }
 
 }

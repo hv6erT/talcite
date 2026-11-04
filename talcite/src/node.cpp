@@ -233,6 +233,15 @@ bool Node::focused() const {
     return top != nullptr && top->focused_node() == this;
 }
 
+// Whether this node is `under` or lies somewhere below it, by its chain of parents: the one place
+// that asks it, for a focus inside a window, a menu, a list or a layer that closes.
+bool Node::within(const Node& under) const {
+    for (const Node* at = this; at != nullptr; at = at->parent())
+        if (at == &under) return true;
+
+    return false;
+}
+
 // Moves the focus to this node; a node outside a tree throws std::logic_error. It is virtual,
 // because some widgets do not take the focus themselves but hand it to their inside: a list puts
 // it on its current item, not on itself. Tab traversal holds plain `Node*` pointers and calls
