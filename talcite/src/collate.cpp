@@ -1458,11 +1458,13 @@ std::vector<Unit> units(std::string_view text, const Tailoring* tailoring, bool 
     return made;
 }
 
-// A primary weight as three bytes above the reserved ones.
-void written(std::string& into, std::uint32_t weight) {
-    into += static_cast<char>(weight / (radix * radix) + lowest);
-    into += static_cast<char>(weight / radix % radix + lowest);
-    into += static_cast<char>(weight % radix + lowest);
+// A primary weight as three bytes above the reserved ones, at `into`; gives the place after them.
+char* written(char* into, std::uint32_t weight) {
+    into[0] = static_cast<char>(weight / (radix * radix) + lowest);
+    into[1] = static_cast<char>(weight / radix % radix + lowest);
+    into[2] = static_cast<char>(weight % radix + lowest);
+
+    return into + 3;
 }
 
 }
@@ -1492,12 +1494,15 @@ std::string Collation::key(std::string_view text) const {
     if (shape_.exact) {
         const std::vector<Unit> made = exacted(text, shape_.numeric);
 
-        key.reserve(made.size() * 3 + text.size() + 1);
+        key.resize(made.size() * 3 + 1 + text.size());
 
-        for (const Unit& one : made) written(key, one.primary);
+        char* at = key.data();
 
-        key += level;
-        key += text;
+        for (const Unit& one : made) at = written(at, one.primary);
+
+        *at++ = level;
+
+        std::ranges::copy(text, at);
 
         return key;
     }
@@ -1505,23 +1510,32 @@ std::string Collation::key(std::string_view text) const {
     const Tailoring* tailoring = tailored_ < 0 ? nullptr : &tailorings[static_cast<std::size_t>(tailored_)];
     const std::vector<Unit> made = units(text, tailoring, shape_.numeric);
 
-    key.reserve(made.size() * 6 + text.size() + 3);
+    // Three bytes of the primary weight, the marks and their end, and the case byte for every unit;
+    // three level bytes; the text.
+    std::size_t size = made.size() * 5 + 3 + text.size();
 
-    for (const Unit& one : made) written(key, one.primary);
+    for (const Unit& one : made) size += one.marks.size();
 
-    key += level;
+    key.resize(size);
+
+    char* at = key.data();
+
+    for (const Unit& one : made) at = written(at, one.primary);
+
+    *at++ = level;
 
     for (const Unit& one : made) {
-        key += one.marks;
-        key += ended;
+        at = std::ranges::copy(one.marks, at).out;
+        *at++ = ended;
     }
 
-    key += level;
+    *at++ = level;
 
-    for (const Unit& one : made) key += one.tertiary;
+    for (const Unit& one : made) *at++ = one.tertiary;
 
-    key += level;
-    key += text;
+    *at++ = level;
+
+    std::ranges::copy(text, at);
 
     return key;
 }

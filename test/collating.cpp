@@ -121,6 +121,22 @@ TRIAL("Collation: a separate combining mark weighs as the composed letter") {
     same(ordered(common, {"하나", "가방", "나무"}), (std::vector<std::string>{"가방", "나무", "하나"}));
 }
 
+// A key is the levels and then the text itself, which is what tells apart two texts that weigh
+// alike; so it ends with the text, in both shapes, also with marks composed and written apart.
+TRIAL("Collation: a key ends with its text") {
+    for (const CollationShape shape : {CollationShape{}, CollationShape{true, true}}) {
+        const Collation polish{"pl", shape};
+
+        for (const std::string text :
+             {"", "abc", "Caf\xc3\xa9 2", "cafe\xcc\x81", "\xc5\x82\xc3\xb3" "d\xc5\xba\xcc\x88"}) {
+            const std::string key = polish.key(text);
+
+            ought(key.size() > text.size());
+            ought(key.ends_with(text));
+        }
+    }
+}
+
 // The language is the part of the code before the region, in any case; an unknown one is common.
 TRIAL("Collation: the language code picks the tailoring, region and case aside") {
     same(Collation{"PL_pl"}.compare("łza", "mama"), Collation{"pl"}.compare("łza", "mama"));
