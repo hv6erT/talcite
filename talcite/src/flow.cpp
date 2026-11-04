@@ -23,8 +23,8 @@ void Flow::gap(int given) {
 int Flow::capacity() const { return plenty; }
 
 // Splits the children into lines for a room of size `room`. A gap is due only between children that
-// occupy something, the rule described at `Row::placed`. A child wider than the whole room gets a
-// line to itself, trimmed.
+// occupy something, the rule described at `lineup::placed`. A child wider than the whole room gets
+// a line to itself, trimmed.
 std::vector<Flow::Line> Flow::laid(Size room) const {
     std::vector<Line> made(1);
 

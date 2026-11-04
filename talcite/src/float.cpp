@@ -16,7 +16,7 @@ namespace talcite::ui {
 // content, icons in the top right corner of a window (`Top{Right{icons}}` in a stack). A container
 // that lays its children out along that axis gives each only what it wants, so there a float would
 // have nothing to place in; that is why `Row` widens a horizontal float and `Column` lengthens a
-// vertical one by its share of the room they do not need (the rule is described at `Row::layout`).
+// vertical one by its share of the room they do not need (the rule is described at `lineup::laid`).
 // The float itself knows nothing of rows and columns: it places its child in whatever rectangle it
 // gets.
 //
