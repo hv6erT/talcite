@@ -11,6 +11,7 @@
 #include "talcite/trouble.hpp"
 
 #include "outbox.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -37,27 +38,6 @@ namespace {
 constexpr std::uint32_t biggest = (4u << 20) + 16;
 
 using Clock = std::chrono::steady_clock;
-
-// The time left until the deadline, but at least one millisecond, so that a late call still gets a
-// nonzero patience.
-Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
-
-    return rest.count() > 0 ? rest : Patience{1};
-}
-
-// A promise already rejected with `Trouble` and the given text.
-template <typename T>
-Promise<T> refused(const char* said) {
-    return failed<T>(std::make_exception_ptr(Trouble{said}));
-}
-
-// The empty address a closed channel reports as its peer.
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 // The four-byte length header of a frame, most significant byte first.
 Bytes headed(std::size_t much) {

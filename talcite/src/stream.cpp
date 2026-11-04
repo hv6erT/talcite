@@ -11,6 +11,7 @@
 #include "inside.hpp"
 #include "piping.hpp"
 #include "starting.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -270,15 +271,6 @@ Promise<Stream> Stream::connect(Address where, Patience patience) {
 }
 
 namespace {
-
-// The empty address returned when the state is gone. All the other methods answer politely after
-// closing, so these must too: reaching for a state that does not exist would be a memory
-// violation, and the class is meant to stay usable after close().
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 }
 

@@ -34,6 +34,7 @@
 
 #include "talcite/child.hpp"
 #include "talcite/time.hpp"
+#include "netting.hpp"
 
 #endif
 
@@ -257,21 +258,13 @@ std::optional<std::string> fetched(const Command& what) {
 
         const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds{1500};
 
-        // How long is left until the deadline, at least a millisecond, so that the last wait still
-        // gives the program its chance.
-        const auto left = [until] {
-            const auto rest = std::chrono::duration_cast<std::chrono::milliseconds>(until - std::chrono::steady_clock::now());
-
-            return std::max(rest, std::chrono::milliseconds{1});
-        };
-
         std::string made;
 
         for (;;) {
             Bytes piece;
 
             try {
-                piece = one.read(64 * 1024).timeout(left()).get();
+                piece = one.read(64 * 1024).timeout(net::left(until)).get();
             } catch (...) {
                 one.kill();
 
@@ -292,7 +285,7 @@ std::optional<std::string> fetched(const Command& what) {
         Exit ended;
 
         try {
-            ended = one.wait().timeout(left()).get();
+            ended = one.wait().timeout(net::left(until)).get();
         } catch (...) {
             one.kill();
 

@@ -16,6 +16,7 @@
 
 #include "hearing.hpp"
 #include "stunning.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -167,13 +168,6 @@ void posting(const std::shared_ptr<Lasting>& held, const Address& to, Bytes what
         held->post.send(to, std::move(what), patience).get();
     } catch (const std::exception&) {
     }
-}
-
-// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
-Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
-
-    return rest.count() > 0 ? rest : Patience{1};
 }
 
 void renewed(const std::shared_ptr<Lasting>& held);

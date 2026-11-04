@@ -13,6 +13,7 @@
 #include "inside.hpp"
 #include "piping.hpp"
 #include "starting.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -217,15 +218,6 @@ Listener::Listener(Address where, int waiting) : held_(std::make_shared<Held>())
 }
 
 namespace {
-
-// The empty address returned once the handle is gone. All the other methods answer politely after
-// close(), so this one must too; reaching for a missing handle would be a memory violation, and
-// the class is meant to stay usable after close().
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 }
 

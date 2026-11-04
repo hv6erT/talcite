@@ -11,6 +11,7 @@
 
 #include "talcite/random.hpp"
 #include "talcite/udp.hpp"
+#include "netting.hpp"
 
 // A beacon in the local network. The offering side listens on a well-known UDP port and answers
 // questions about a tag it knows; the asking side broadcasts the question in its network and
@@ -209,13 +210,6 @@ struct Beacon::Held : std::enable_shared_from_this<Beacon::Held> {
 };
 
 namespace {
-
-// The empty address a closed beacon reports.
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 }
 

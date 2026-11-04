@@ -10,6 +10,7 @@
 #include "talcite/executor.hpp"
 
 #include "stunning.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -47,20 +48,6 @@ Asking::~Asking() { held->asking.store(false); }
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-// The time left until `until`, at least one unit, so that a deadline just reached still gives a
-// valid wait.
-Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
-
-    return rest.count() > 0 ? rest : Patience{1};
-}
-
-// A promise rejected with `Trouble` and the given text.
-template <typename T>
-Promise<T> refused(const char* said) {
-    return failed<T>(std::make_exception_ptr(Trouble{said}));
-}
 
 // One question to one server, retransmissions included; the reflexive address, or an empty one when
 // the deadline passes, and `Trouble` when the server refuses. It runs on a pool thread and blocks

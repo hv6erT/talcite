@@ -24,6 +24,7 @@
 #include "inside.hpp"
 #include "routing.hpp"
 #include "starting.hpp"
+#include "netting.hpp"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -214,15 +215,6 @@ constexpr std::uint16_t pcp_port = 5351;
 
 // The longest UPnP lease, in seconds; IGD version 1 does not accept more.
 constexpr std::uint32_t upnp_longest = 604800;
-
-// The time left until `until`, rounded up to a whole millisecond and at least one, so that it can be
-// passed as a patience. Rounding down would let a wait end before `until`, and the caller, seeing
-// time left, would start another round in the last fraction of a millisecond.
-Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::ceil<Patience>(until - Clock::now());
-
-    return rest.count() > 0 ? rest : Patience{1};
-}
 
 // Appends the low 16 bits of `value` in network byte order.
 void put16(Bytes& into, std::uint32_t value) {
@@ -1006,12 +998,6 @@ void closing(const Kept& held, const Opening& one) {
             return;
         }
     }
-}
-
-// A promise already rejected with `Trouble` carrying `said`.
-template <typename T>
-Promise<T> refused(const char* said) {
-    return failed<T>(std::make_exception_ptr(Trouble{said}));
 }
 
 }

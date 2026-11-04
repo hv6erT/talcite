@@ -14,6 +14,7 @@
 
 #include "hearing.hpp"
 #include "stunning.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -108,13 +109,6 @@ constexpr Patience listening{1000};
 // than the caller reads would drive the process out of memory. On overflow the oldest one is
 // dropped: with datagrams older content is worth less than fresh.
 constexpr std::size_t plenty = 256;
-
-// The time left until `until`, at least one millisecond, so that it can be passed as a patience.
-Patience left(Clock::time_point until) {
-    const auto rest = std::chrono::duration_cast<Patience>(until - Clock::now());
-
-    return rest.count() > 0 ? rest : Patience{1};
-}
 
 // How long we wait for one permission from our own relay.
 constexpr Patience granting{1000};

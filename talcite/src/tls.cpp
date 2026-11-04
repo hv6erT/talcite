@@ -12,6 +12,7 @@
 #include "talcite/time.hpp"
 
 #include "outbox.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -44,12 +45,6 @@ struct TlsStream::Held {
 };
 
 namespace {
-
-// A promise rejected with `Trouble` and the given text.
-template <typename T>
-Promise<T> refused(const char* said) {
-    return failed<T>(std::make_exception_ptr(Trouble{said}));
-}
 
 // The session hands out ciphertext in portions, so we take everything it has.
 Bytes drained(TlsSession& how) {
@@ -295,15 +290,6 @@ Promise<TlsStream> TlsStream::server(Stream one, Seam<TlsProvider> tls, Patience
 }
 
 namespace {
-
-// An empty handle gives an empty address, not a memory violation: the same rule and the same
-// reason as in the stream. `close()` clears the handle, and the class is meant to stay usable
-// after closing.
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 }
 

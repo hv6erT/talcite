@@ -10,6 +10,7 @@ talcite/src/hearing.hpp
 talcite/src/lighting.hpp
 talcite/src/lining.hpp
 talcite/src/marking.hpp
+talcite/src/netting.hpp
 talcite/src/piping.hpp
 talcite/src/sealed.hpp
 talcite/src/sharing.hpp

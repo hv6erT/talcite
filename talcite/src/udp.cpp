@@ -10,6 +10,7 @@
 #include "handing.hpp"
 #include "inside.hpp"
 #include "starting.hpp"
+#include "netting.hpp"
 
 namespace talcite::net {
 
@@ -195,15 +196,6 @@ Udp::Udp(Address where) : held_(std::make_shared<Held>()) {
 }
 
 namespace {
-
-// The empty address returned when there is no handle any more. All the other methods answer
-// politely after closing, so these must too: reaching for a missing handle would be a memory
-// violation, and the class is meant to stay usable after close().
-const Address& nowhere() {
-    static const Address one;
-
-    return one;
-}
 
 }
 
