@@ -1,6 +1,8 @@
 #include "proving.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -454,4 +456,83 @@ TRIAL("Canvas: ASCII over a double-width character leaves no half of it") {
 
     same(sheet.at({0, 0}).letter, U'c');
     same(sheet.at({1, 0}).letter, U' ');
+}
+
+// A shadow keeps a double-width character whole, since only its style changes, while a letter over
+// one half of a neighbour turns the other half into a space.
+TRIAL("Canvas: a shadow keeps a double-width character whole and a letter cuts it") {
+    View sheet = cleared({6, 1});
+
+    Canvas whole{sheet};
+
+    whole.put({0, 0}, U'映', Style{});
+    whole.put({2, 0}, U'画', Style{});
+    whole.put({4, 0}, U'名', Style{});
+
+    const Style dark{.faint = true};
+
+    whole.put({1, 0}, U'a', Style{});
+    whole.shade({{2, 0}, {2, 1}}, dark);
+    whole.put({4, 0}, U'b', Style{});
+
+    same(sheet.at({0, 0}).letter, U' ');
+    same(sheet.at({1, 0}).letter, U'a');
+    same(sheet.at({2, 0}).letter, U'画');
+    same(sheet.at({3, 0}).letter, char32_t{0});
+    ought(sheet.at({2, 0}).style.faint);
+    ought(sheet.at({3, 0}).style.faint);
+    same(sheet.at({4, 0}).letter, U'b');
+    same(sheet.at({5, 0}).letter, U' ');
+}
+
+// A foreground character with a background of its own is an ordinary cell, and so is a plain one
+// in the same colors: it covers the ground with its transparent background, just like text. A zero
+// character lays down nothing.
+TRIAL("Canvas: a foreground with its own background and a plain cell cover the ground") {
+    View sheet = cleared({3, 1});
+
+    Canvas whole{sheet};
+
+    const Style ground{.background = *Color::indexed(4)};
+    const Style red{.foreground = *Color::indexed(1)};
+    const Style papered{.foreground = *Color::indexed(1), .background = *Color::indexed(2)};
+
+    whole.fill({{0, 0}, {3, 1}}, ground);
+    whole.foreground({0, 0}, U'▐', papered);
+    whole.put({1, 0}, U'▌', red);
+    whole.foreground({2, 0}, 0, red);
+
+    ought(sheet.at({0, 0}).style.background == papered.background);
+    ought(sheet.at({0, 0}).shown == Shown::own);
+    ought(sheet.at({1, 0}).style.background.transparent);
+    ought(sheet.at({2, 0}).style.background == ground.background);
+    same(sheet.at({2, 0}).letter, U' ');
+}
+
+// A link painted through a child's canvas marks the child's cells on the sheet; whatever is put
+// over a cell later takes the mark away, and a shadow keeps it, since the text below it stays.
+TRIAL("Canvas: a hyperlink marks what is painted, a cover takes it away and a shadow keeps it") {
+    View sheet = cleared({8, 1});
+
+    Canvas whole{sheet};
+    Canvas child = whole.within({{2, 0}, {3, 1}});
+
+    child.put({0, 0}, std::string_view{"abc"}, Style{});
+
+    const Hyperlink made = hyperlink("https://example.org/");
+
+    child.link({{0, 0}, {3, 1}}, made);
+
+    same(sheet.at({2, 0}).link, made.mark);
+    same(sheet.at({4, 0}).link, made.mark);
+    same(sheet.at({5, 0}).link, std::uint32_t{0});
+    same(sheet.links().size(), std::size_t{1});
+
+    whole.put({2, 0}, U'x', Style{});
+
+    same(sheet.at({2, 0}).link, std::uint32_t{0});
+
+    whole.shade({{3, 0}, {1, 1}}, Style{});
+
+    same(sheet.at({3, 0}).link, made.mark);
 }

@@ -63,8 +63,6 @@ public:
 
     [[nodiscard]] Promise<Bytes> read(std::size_t most) const;
 
-    [[nodiscard]] Promise<Bytes> read_errors(std::size_t most) const;
-
     [[nodiscard]] Promise<Exit> wait() const;
 
     void stop() const;

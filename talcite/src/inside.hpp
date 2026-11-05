@@ -73,8 +73,6 @@ void ending(Handle one);
 
 [[nodiscard]] Address named(Handle one, bool peer);
 
-void nagling(Handle one, bool given);
-
 void sharing(Handle one);
 
 void broadcasting(Handle one, bool given);

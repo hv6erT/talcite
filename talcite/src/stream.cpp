@@ -363,14 +363,6 @@ Promise<void> Stream::write(Bytes what, Patience patience) const {
     return made;
 }
 
-// Turns Nagle's algorithm on or off. It is a property of TCP, and a local socket has nothing to do
-// with TCP; there the call would fail silently, and a silent failure is worse than doing nothing.
-void Stream::nagle(bool given) const {
-    if (!held_ || held_->peer.family() == Family::local) return;
-
-    nagling(held_->which.load(), given);
-}
-
 // Whether the other side runs as the same user on this computer. Only a local socket can say so;
 // about a network connection the system knows nothing of the kind, so the answer is nothing.
 std::optional<bool> Stream::kindred() const {

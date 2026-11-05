@@ -46,16 +46,6 @@ private:
     bool alternate_ = false;
 };
 
-class TitleEvent : public Event {
-public:
-    explicit TitleEvent(std::string title) : title_(std::move(title)) {}
-
-    [[nodiscard]] const std::string& title() const { return title_; }
-
-private:
-    std::string title_;
-};
-
 class EndEvent : public Event {
 public:
     explicit EndEvent(Exit exit) : exit_(exit) {}

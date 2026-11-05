@@ -11,6 +11,7 @@
 
 #include "faking.hpp"
 #include "talcite/base64.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/image.hpp"
 #include "talcite/loop.hpp"
 #include "talcite/root.hpp"
@@ -18,8 +19,8 @@
 
 using namespace talcite;
 
-// Images in pixels: the cells of an image carry its mark, composition carries the mark upward, and
-// `Term` gets pixels only for an image that is visible as a whole. The fake terminal shows every
+// Images in pixels: the cells of an image carry its mark, what is painted over them later takes it
+// away, and `Term` gets pixels only for an image that is visible as a whole. The fake terminal shows every
 // byte, so one can see when a sixel goes out and when it does not.
 
 namespace {
@@ -36,22 +37,24 @@ Style paper(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
     return made;
 }
 
-// A 6×4 sheet on a blue background, with a 2×2 image at (1, 1) in it: two cells with a letter, one
-// transparent (foreground only) and one empty.
-View sheet(std::uint32_t mark = 7) {
-    View made{{6, 4}};
+// Paints a 2×2 image with its top left corner at `at` of `onto`: two cells with a letter, one
+// transparent (foreground only) and one left as it was.
+void imaged(Canvas onto, ui::Spot at, std::uint32_t mark = 7) {
+    Canvas image = onto.within({at, {2, 2}});
 
-    made.fill({{0, 0}, {6, 4}}, paper(0, 0, 200));
-
-    View image{{2, 2}};
-
-    image.clear({{0, 0}, {2, 2}});
     image.put({0, 0}, U'▀', paper(250, 0, 0));
     image.put({1, 0}, U'▄', paper(0, 250, 0));
     image.foreground({0, 1}, U'▖', Style{});
     image.picture({{0, 0}, {2, 2}}, Picture{mark, {2, 2}, encoded("SIX")});
+}
 
-    made.draw(image, {1, 1});
+// A 6×4 sheet on a blue background, with the 2×2 image (`imaged`) at (1, 1) in it.
+View sheet(std::uint32_t mark = 7) {
+    View made{{6, 4}};
+    Canvas onto{made};
+
+    onto.fill({{0, 0}, {6, 4}}, paper(0, 0, 200));
+    imaged(onto, {1, 1}, mark);
 
     return made;
 }
@@ -188,7 +191,7 @@ TRIAL("View: the same mark a second time replaces the entry instead of adding an
     same(*made.pictures().front().sixel, std::string{"b"});
 }
 
-TRIAL("View: an image travels up with its cells and stands where it was pasted") {
+TRIAL("View: an image painted through a canvas stands where the canvas puts it") {
     View made = sheet();
 
     same(made.pictures().size(), std::size_t{1});
@@ -196,7 +199,7 @@ TRIAL("View: an image travels up with its cells and stands where it was pasted")
     same(made.at({2, 2}).picture, std::uint32_t{7});
     same(made.at({0, 0}).picture, std::uint32_t{0});
 
-    // The transparent cell took the background from below when pasted.
+    // The transparent cell took the background from below when painted.
     ought(made.at({1, 2}).style.background == paper(0, 0, 200).background);
 
     const std::vector<Placement> found = made.bared({{0, 0}, {6, 4}});
@@ -222,10 +225,8 @@ TRIAL("View: an image visible as a whole has empty cells with their background a
 
 TRIAL("View: an image covered in even one cell stays in characters and loses its mark") {
     View made = sheet();
-    View dialog{{1, 1}};
 
-    dialog.put({0, 0}, U'x', paper(9, 9, 9));
-    made.draw(dialog, {2, 2});
+    Canvas{made}.put({2, 2}, U'x', paper(9, 9, 9));
 
     same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
     same(made.at({1, 1}).letter, char32_t{U'▀'});
@@ -235,20 +236,18 @@ TRIAL("View: an image covered in even one cell stays in characters and loses its
 
 TRIAL("View: a shadow over an image covers it, since pixels cannot be dimmed") {
     View made = sheet();
-    View shadow{{1, 1}};
 
-    shadow.shade({{0, 0}, {1, 1}}, paper(10, 10, 10));
-    made.draw(shadow, {1, 1});
+    Canvas{made}.shade({{1, 1}, {1, 1}}, paper(10, 10, 10));
 
     same(made.at({1, 1}).picture, std::uint32_t{0});
     same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
 }
 
-TRIAL("View: an image clipped by the paste edge or sticking out of the field gets no pixels") {
+TRIAL("View: an image clipped by the canvas edge or sticking out of the field gets no pixels") {
     // Clipped: only the left column of the image made it into the sheet.
     View narrow{{2, 4}};
 
-    narrow.draw(sheet(), {0, 0});
+    imaged(Canvas{narrow}, {1, 1});
 
     same(narrow.pictures().size(), std::size_t{1});
     same(narrow.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
@@ -289,11 +288,11 @@ TRIAL("View: an image without a visible cell and an image without a mark give no
     same(plain.bared({{0, 0}, {2, 2}}).size(), std::size_t{0});
 }
 
-TRIAL("View: the same image pasted twice is listed once") {
+TRIAL("View: the same image painted twice is listed once") {
     View made{{8, 4}};
 
-    made.draw(sheet(), {0, 0});
-    made.draw(sheet(), {0, 0});
+    imaged(Canvas{made}, {1, 1});
+    imaged(Canvas{made}, {1, 1});
 
     same(made.pictures().size(), std::size_t{1});
     same(made.bared({{0, 0}, {8, 4}}).size(), std::size_t{1});
@@ -309,15 +308,15 @@ TRIAL("View: cells in a shape other than the image's are not an image as a whole
 
 TRIAL("View: two images side by side, both whole, each in its place") {
     View made{{8, 3}};
+    Canvas onto{made};
 
-    made.draw(sheet(1), {0, 0});
+    imaged(onto, {1, 1}, 1);
 
-    View second{{2, 1}};
+    Canvas second = onto.within({{5, 0}, {2, 1}});
 
     second.put({0, 0}, U'a', paper(1, 1, 1));
     second.put({1, 0}, U'b', paper(1, 1, 1));
     second.picture({{0, 0}, {2, 1}}, Picture{2, {2, 1}, encoded("two")});
-    made.draw(second, {5, 0});
 
     const std::vector<Placement> found = made.bared({{0, 0}, {8, 3}});
 

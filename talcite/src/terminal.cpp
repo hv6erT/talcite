@@ -19,7 +19,7 @@
 // A terminal in a node: a program in a pseudoterminal (`Pty`), its screen (`Emulator`), and the
 // node that draws that screen, gives the program its keys, its pastes and its mouse, and tells the
 // tree what the program told the terminal (`FolderEvent`, `MarkEvent`, `SwitchEvent`,
-// `TitleEvent`, `EndEvent`). What the program writes is read on the pool and fed to the screen on
+// `EndEvent`). What the program writes is read on the pool and fed to the screen on
 // the loop, which then draws a new frame; what goes to the program goes in the order it was given,
 // one write after another. The end comes after what the program wrote, never before it, and after
 // the end the terminal tells nothing more.
@@ -155,12 +155,6 @@ void Terminal::heard(const Bytes& got) {
 
     if (fed.switched) {
         SwitchEvent told{emulator_.modes().alternate};
-
-        (void)trigger(told);
-    }
-
-    if (fed.titled) {
-        TitleEvent told{emulator_.title()};
 
         (void)trigger(told);
     }

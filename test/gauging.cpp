@@ -6,6 +6,7 @@
 #include <string>
 #include <thread>
 
+#include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/gauge.hpp"
 #include "talcite/loop.hpp"
@@ -16,6 +17,24 @@
 using namespace talcite;
 
 namespace {
+
+// A node that fills itself with `ground` and paints its only child over it, as a window or a hint
+// line lies under what stands on it.
+class Grounded : public ui::Node {
+public:
+    explicit Grounded(Style ground) : ground_(ground) {}
+
+protected:
+    // The ground first, then the child.
+    void paint(Canvas& onto) const override {
+        onto.fill({{0, 0}, onto.size()}, ground_);
+
+        Node::paint(onto);
+    }
+
+private:
+    Style ground_;
+};
 
 // Reads the first row of a view as text, with trailing spaces removed.
 std::string read(const View& one) {
@@ -246,22 +265,22 @@ TRIAL("Gauge: the role root can be replaced") {
 // skin it takes the one below, as a hint line gives it, instead of the terminal's own; a
 // background the skin gives the percentage wins.
 TRIAL("Gauge: the percentage takes the background it stands on") {
-    ui::Gauge one{20};
-
-    one.part(0.5);
-
     Style paper{};
 
     paper.background = Color{false, 9, 9, 9};
 
-    View under{{20, 1}};
+    Grounded under{paper};
 
-    under.fill({{0, 0}, {20, 1}}, paper);
-    under.draw(one.render({{0, 0}, {20, 1}}), {0, 0});
+    const auto one = std::make_shared<ui::Gauge>(20);
 
-    same(read(under), std::string{"[███████░░░░░░]  50%"});
+    one->part(0.5);
+    under.children().add(one);
 
-    for (int x = 17; x < 20; ++x) same(under.at({x, 0}).style.background, (Color{false, 9, 9, 9}));
+    const View made = under.render({{0, 0}, {20, 1}});
+
+    same(read(made), std::string{"[███████░░░░░░]  50%"});
+
+    for (int x = 17; x < 20; ++x) same(made.at({x, 0}).style.background, (Color{false, 9, 9, 9}));
 
     ui::Root top;
 
@@ -269,7 +288,10 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
 
     own->part(0.5);
 
-    top.children().add(own);
+    const auto ground = std::make_shared<Grounded>(paper);
+
+    ground->children().add(own);
+    top.children().add(ground);
 
     ui::Styles these;
 
@@ -281,10 +303,7 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
 
     top.skin(ui::Skin{these});
 
-    View again{{20, 1}};
-
-    again.fill({{0, 0}, {20, 1}}, paper);
-    again.draw(top.render({{0, 0}, {20, 1}}), {0, 0});
+    const View again = top.render({{0, 0}, {20, 1}});
 
     same(again.at({19, 0}).style.background, (Color{false, 4, 4, 4}));
 }

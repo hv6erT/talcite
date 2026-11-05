@@ -22,7 +22,6 @@
 #else
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -415,16 +414,6 @@ Address named(Handle one, bool peer) {
     if (made != 0) return {};
 
     return seen(told);
-}
-
-// Turns Nagle's algorithm on or off (TCP_NODELAY); a no-op for named pipes.
-void nagling(Handle one, bool given) {
-    if (pipes::piped(one)) return;
-
-    const int off = given ? 0 : 1;
-
-    ::setsockopt(static_cast<int>(one), IPPROTO_TCP, TCP_NODELAY,
-                 reinterpret_cast<const char*>(&off), sizeof off);
 }
 
 // Without this a server cannot start again for a minute after closing, because the port sits in

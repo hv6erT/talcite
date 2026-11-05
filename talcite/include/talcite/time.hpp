@@ -22,8 +22,6 @@ class Time {
 public:
     Time() = delete;
 
-    [[nodiscard]] static std::chrono::steady_clock::time_point now();
-
     [[nodiscard]] static std::chrono::sys_seconds stamp();
 };
 

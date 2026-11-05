@@ -5,6 +5,7 @@
 #include <string>
 
 #include "talcite/box.hpp"
+#include "talcite/canvas.hpp"
 #include "talcite/column.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/event.hpp"
@@ -12,16 +13,32 @@
 #include "talcite/scroll.hpp"
 #include "talcite/root.hpp"
 #include "talcite/row.hpp"
-#include "talcite/scroll.hpp"
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
-#include "talcite/scroll.hpp"
 
 #include "scrollbar.hpp"
 
 using namespace talcite;
 
 namespace {
+
+// A node that fills itself with `ground` and paints its only child over it, as a window or a hint
+// line lies under what stands on it.
+class Grounded : public ui::Node {
+public:
+    explicit Grounded(Style ground) : ground_(ground) {}
+
+protected:
+    // The ground first, then the child.
+    void paint(Canvas& onto) const override {
+        onto.fill({{0, 0}, onto.size()}, ground_);
+
+        Node::paint(onto);
+    }
+
+private:
+    Style ground_;
+};
 
 // How many times and with what visibility a node was drawn, kept apart from the node, since drawing
 // does not change the node.
@@ -690,11 +707,15 @@ TRIAL("Scrollbar: a style without a background takes the ground below") {
     const auto one = std::make_shared<ui::Scroll>(ui::Axis::vertical, ui::ScrollShape{true});
 
     one->children().add(rows(20));
-    top.children().add(one);
 
     Style ground{};
 
     ground.background = Color{false, 0, 0, 9};
+
+    const auto under = std::make_shared<Grounded>(ground);
+
+    under->children().add(one);
+    top.children().add(under);
 
     Style lit{};
 
@@ -702,15 +723,12 @@ TRIAL("Scrollbar: a style without a background takes the ground below") {
 
     top.skin(ui::Skin{ui::Styles{{"talcite.normal", ground}, {"talcite.scroll", lit}, {"talcite.scroll.thumb", lit}}});
 
-    View under{{10, 5}};
+    const View made = top.render({{0, 0}, {10, 5}});
 
-    under.fill({{0, 0}, {10, 5}}, ground);
-    under.draw(top.render({{0, 0}, {10, 5}}), {0, 0});
-
-    same(under.at({9, 0}).letter, U'█');
-    same(under.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
-    same(under.at({9, 3}).style.background, (Color{false, 0, 0, 9}));
-    same(under.at({9, 3}).style.foreground, (Color{false, 7, 7, 7}));
+    same(made.at({9, 0}).letter, U'█');
+    same(made.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
+    same(made.at({9, 3}).style.background, (Color{false, 0, 0, 9}));
+    same(made.at({9, 3}).style.foreground, (Color{false, 7, 7, 7}));
 
     Style own = lit;
 

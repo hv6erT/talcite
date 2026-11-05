@@ -32,8 +32,6 @@ public:
 
     [[nodiscard]] Promise<void> write(Bytes what, Patience patience) const;
 
-    void nagle(bool given) const;
-
     [[nodiscard]] std::optional<bool> kindred() const;
 
     void close();

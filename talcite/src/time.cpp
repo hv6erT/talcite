@@ -225,9 +225,6 @@ std::chrono::milliseconds Stopwatch::spent() const {
 // Starts counting again from now.
 void Stopwatch::reset() { began_ = std::chrono::steady_clock::now(); }
 
-// The current moment of the monotonic clock.
-std::chrono::steady_clock::time_point Time::now() { return std::chrono::steady_clock::now(); }
-
 // The current wall-clock time, truncated to whole seconds.
 std::chrono::sys_seconds Time::stamp() {
     return std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());

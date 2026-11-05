@@ -2126,20 +2126,6 @@ Promise<Bytes> Child::read(std::size_t most) const {
     });
 }
 
-// Reads at most `most` bytes of the child's error output on the pool; empty at the end of it or for
-// an empty handle.
-Promise<Bytes> Child::read_errors(std::size_t most) const {
-    std::shared_ptr<Held> held = held_;
-
-    return talcite::run(io(), [held, most]() -> Bytes {
-        if (held == nullptr) {
-            return Bytes{};
-        }
-
-        return sipped(*held, true, most);
-    });
-}
-
 // The child's exit. Every caller gets its own view of the one shared wait: a caller who gives up (a
 // timeout, a cancelled chain) gives up only that view. Handing out the shared
 // promise itself would let the first impatient caller cancel the burial for everyone; later callers

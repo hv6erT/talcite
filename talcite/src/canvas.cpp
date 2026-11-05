@@ -14,10 +14,8 @@
 //
 // Painting goes from the back to the front: a parent before its children, an older sibling before a
 // younger one, the lower layer before the upper. So whatever a node writes lands on what lies under
-// it already, and what used to be resolved when a sheet of its own was laid onto its parent's
-// (`View::draw`) is resolved at once: a cell the node does not touch stays as it is, a shade dims
-// what is there, a foreground cell takes the background from below. The rules are the same as in
-// `View::draw`; only the moment differs.
+// it already and is resolved at once: a cell the node does not touch stays as it is, a shade dims
+// what is there, a foreground cell takes the background from below.
 namespace talcite {
 
 // The whole sheet, with (0, 0) in its corner and nothing cut away.
@@ -63,7 +61,7 @@ ui::Area Canvas::cut(const ui::Area& where) const { return ui::Area::crossed(whe
 // edge as the edge of a sheet was: a double-width character whose other half would fall outside
 // becomes a space, and a character that joins the glyph to its left (a combining mark) joins only a
 // glyph inside. Half of someone else's double-width character just outside the edge is mended by
-// the sheet, outside the clip too: that is what `View::draw` did at the ends of a run of cells.
+// the sheet, outside the clip too.
 void Canvas::put(ui::Spot at, char32_t what, const Style& how) {
     const ui::Spot here = at + origin_;
 

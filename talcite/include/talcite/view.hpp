@@ -69,8 +69,6 @@ public:
 
     void clear(const ui::Area& where);
 
-    void draw(const View& one, ui::Spot at);
-
     void picture(const ui::Area& where, Picture what);
 
     [[nodiscard]] const std::vector<Picture>& pictures() const { return pictures_; }
