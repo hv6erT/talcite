@@ -2,8 +2,6 @@
 
 #include <cstddef>
 #include <functional>
-#include <mutex>
-#include <vector>
 
 #include "talcite/bell.hpp"
 #include "talcite/executor.hpp"
@@ -32,8 +30,7 @@ public:
     [[nodiscard]] static Loop* current();
 
 private:
-    mutable std::mutex guard_;
-    std::vector<std::function<void()>> queued_;
+    detail::Queue queued_;
     Bell bell_;
 };
 

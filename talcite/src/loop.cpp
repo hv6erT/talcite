@@ -1,10 +1,7 @@
 #include "talcite/loop.hpp"
 
-#include <exception>
 #include <stdexcept>
 #include <utility>
-
-#include "batched.hpp"
 
 namespace talcite {
 
@@ -34,15 +31,7 @@ Loop::Loop() {
 Loop::~Loop() {
     close();
 
-    std::vector<std::function<void()>> left;
-
-    {
-        const std::lock_guard<std::mutex> held{guard_};
-
-        left.swap(queued_);
-    }
-
-    left.clear();
+    queued_.dropped();
 
     if (standing == this) standing = nullptr;
 }
@@ -56,68 +45,27 @@ Loop* Loop::current() { return standing; }
 // empty rings: whatever stood there before rang already, and that ring is cleared only by a turn
 // that then takes the whole queue, this work with it. A burst of posts is one system call.
 bool Loop::post(std::function<void()> what) {
-    bool first = false;
-
-    {
-        const std::lock_guard<std::mutex> held{guard_};
-
-        first = queued_.empty();
-
-        queued_.push_back(std::move(what));
-    }
-
-    if (first) bell_.ring();
+    if (queued_.queued(std::move(what))) bell_.ring();
 
     return true;
 }
 
 // The number of pieces of work waiting for the next turn.
-std::size_t Loop::waiting() const {
-    const std::lock_guard<std::mutex> held{guard_};
+std::size_t Loop::waiting() const { return queued_.size(); }
 
-    return queued_.size();
-}
-
-// Runs the queued work and returns how much ran. The queue is taken whole and the lock released
-// before running anything; otherwise a call that queues something itself would deadlock on its
-// own loop, and that is the most ordinary case there is.
+// Runs the queued work and returns how much ran (`detail::Queue::turned`: the queue is taken whole
+// and the lock released before running anything, and a piece that throws does not take the rest of
+// the batch with it).
 //
 // The bell is cleared before the queue is taken, not after. The reverse order would lose a
 // wake-up: `post` appends under the lock and only then rings, so a call squeezed in between taking
 // and clearing would leave its work in the queue while its ring went to waste, and the loop would
 // stop in poll with no deadline until the next key. In this order the worst that can happen is
 // one idle turn.
-//
-// A piece of work that throws does not take the rest of the batch with it (`detail::ran`): every
-// piece runs, and the first exception is passed on after the last one.
 std::size_t Loop::turn() {
     bell_.clear();
 
-    std::vector<std::function<void()>> taken;
-
-    {
-        const std::lock_guard<std::mutex> held{guard_};
-
-        taken.swap(queued_);
-    }
-
-    const std::exception_ptr first = detail::ran(taken);
-
-    const std::size_t ran = taken.size();
-
-    // The emptied vector goes back with its room, when nothing came meanwhile, so a busy loop does
-    // not grow its queue anew every turn.
-    taken.clear();
-
-    {
-        const std::lock_guard<std::mutex> held{guard_};
-
-        if (queued_.empty()) queued_.swap(taken);
-    }
-
-    if (first) std::rethrow_exception(first);
-
-    return ran;
+    return queued_.turned();
 }
 
 }

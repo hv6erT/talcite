@@ -13,6 +13,21 @@ namespace detail {
 
 struct Gate;
 
+class Queue {
+public:
+    bool queued(std::function<void()> what);
+
+    std::size_t turned();
+
+    void dropped();
+
+    [[nodiscard]] std::size_t size() const;
+
+private:
+    mutable std::mutex guard_;
+    std::vector<std::function<void()>> queued_;
+};
+
 }
 
 class Executor {
@@ -55,8 +70,7 @@ public:
     [[nodiscard]] std::size_t waiting() const;
 
 private:
-    mutable std::mutex guard_;
-    std::vector<std::function<void()>> queued_;
+    detail::Queue queued_;
 };
 
 [[nodiscard]] Executor& io();
