@@ -627,6 +627,175 @@ bool measured(const Console& from, int& wide, int& high) {
     return true;
 }
 
+// The writing of one frame's cells (`made`) into `into`, keeping the terminal's style, cursor and
+// open link (`now`, `at`, `linked`) as they go; links the terminal is not given (`known`) stay
+// plain text.
+struct Pen {
+    const View& made;
+    const Addresses& known;
+    const Colors& palette;
+    std::string& into;
+    Style& now;
+    ui::Spot& at;
+    std::uint32_t& linked;
+
+    // Brings the cursor to (x, y): rewriting a short stretch of cells when that is cheaper than a
+    // jump, otherwise a jump.
+    void reached(int x, int y) {
+        if (at == ui::Spot{x, y}) return;
+
+        if (at.y != y || at.x < 0 || at.x > x || !bridged(made, y, at.x, x, now, linked, known, into)) placed({x, y}, into);
+
+        at = ui::Spot{x, y};
+    }
+
+    // Switches the terminal to the style, unless it has it already.
+    void dressed(const Style& style) {
+        if (style == now) return;
+
+        painted(style, palette, into);
+
+        now = style;
+    }
+
+    // Writes the cell at (x, y), where the cursor stands, after switching the style and the link
+    // where they differ from the terminal's.
+    void lettered(int x, int y) {
+        const Cell one = made.at({x, y});
+
+        dressed(one.style);
+
+        if (const std::uint32_t link = link_of(one, known); link != linked) {
+            linking(link, known, into);
+
+            linked = link;
+        }
+
+        written(one.letter, into);
+
+        const bool broad = x + 1 < made.size().wide && made.at({x + 1, y}).letter == 0;
+
+        at.x += broad ? 2 : 1;
+
+        // Autowrap is off, so at the last column the cursor stands in an undefined place; the
+        // next character gets its own jump.
+        if (at.x >= made.size().wide) at = ui::Spot{-1, -1};
+    }
+
+    // Row `y` goes out by stretches: spaces and words. A word with a letter the terminal may count
+    // otherwise (`uncertain`) goes out whole whenever any of its cells changed, because the
+    // terminal joins its characters by its own rules: its cells are erased first (ECH), so that
+    // nothing of the previous picture stays where the terminal draws it narrower, and after it the
+    // cursor jumps to the next cell instead of trusting the terminal's count. A terminal that drew
+    // it wider covered the cells after it, so once such a word went out, the rest of the row goes
+    // out again too (`covered`, the column from which it did; the row's width means nowhere).
+    // Elsewhere only the cells that differ from what stands go.
+    void rowed(int y, const Standing& standing, int& covered) {
+        bool covering = false;
+
+        for (int x = 0; x < made.size().wide;) {
+            const int end = worded(made, y, x);
+
+            if (unsure(made, y, x, end)) {
+                if (covering || altered(made, standing, y, x, end)) {
+                    reached(x, y);
+
+                    // ECH erases in the background of the current style, so the word's own goes
+                    // first.
+                    dressed(made.at({x, y}).style);
+
+                    into += "\x1b[" + std::to_string(end - x) + "X";
+
+                    for (int on = x; on < end; ++on)
+                        if (made.at({on, y}).letter != 0) lettered(on, y);
+
+                    if (!covering) covered = x;
+
+                    covering = true;
+                }
+
+                // Where the terminal's cursor stands after the word is not known, and the word
+                // must not be rewritten as a mere gap either.
+                at = ui::Spot{-1, -1};
+                x = end;
+
+                continue;
+            }
+
+            for (; x < end; ++x) {
+                const Cell one = made.at({x, y});
+
+                // The continuation of a wide character went out together with its first half.
+                if (one.letter == 0) continue;
+
+                if (!covering && one == standing.at({x, y})) continue;
+
+                reached(x, y);
+                lettered(x, y);
+            }
+        }
+    }
+};
+
+// The images after the cells: the sixels to send (`sixels`), and the kitty images standing now
+// (`kitties`) that did not stand so after the last frame (`before`), each sent first when the
+// terminal does not hold its pixels yet (`sent`). After an image the cursor stands wherever the
+// terminal put it; the next character gets its own jump. Kitty's C=1 leaves it in place, but a
+// terminal that does not know the key would move it, so the same holds there.
+void pictured_out(const std::vector<Placement>& sixels, const std::vector<Placement>& kitties, const std::vector<Placement>& before,
+                  std::vector<std::pair<std::uint32_t, std::weak_ptr<const Pixels>>>& sent, ui::Spot& at, std::string& into) {
+    for (const Placement& one : sixels) {
+        if (!one.picture.sixel) continue;
+
+        placed(one.at, into);
+
+        into += *one.picture.sixel;
+
+        at = ui::Spot{-1, -1};
+    }
+
+    for (const Placement& one : kitties) {
+        if (std::any_of(before.begin(), before.end(), [&one](const Placement& was) { return same_place(was, one); })) continue;
+
+        if (std::none_of(sent.begin(), sent.end(), [&one](const auto& was) { return was.first == one.picture.mark; })) {
+            kitty(one.picture, into);
+
+            sent.emplace_back(one.picture.mark, one.picture.pixels);
+        }
+
+        stood(one, into);
+
+        at = ui::Spot{-1, -1};
+    }
+}
+
+// The cursor after a frame: where the root wants it (`Root::caret`), in its shape, shown; hidden
+// when the root wants none. The shape goes before the cursor shows, so it never shows in the shape
+// of the focus before. We ask after composing, because only then are the rectangles fresh.
+void careted(const ui::Root& root, std::optional<ui::CaretShape>& shaped, bool& showing, ui::Spot& at, std::string& into) {
+    if (const std::optional<ui::Spot> spot = root.caret(); spot.has_value()) {
+        placed(*spot, into);
+
+        at = *spot;
+
+        if (const ui::CaretShape shape = root.caret_shape(); shaped != shape) {
+            into += shaping(shape);
+
+            shaped = shape;
+        }
+
+        if (!showing) {
+            into += "\x1b[?25h";
+
+            showing = true;
+        }
+    } else if (showing) {
+        into += "\x1b[?25l";
+
+        showing = false;
+    }
+}
+
 }
 
 // Takes over the terminal: raw mode, the probe of its capabilities, then the dressing (alternate
@@ -943,60 +1112,9 @@ void Term::draw() {
     // plain text, and so is every cell when the terminal takes no links.
     const Addresses known = addresses_of(made, links(held.compat, held.wish));
 
-    // Brings the cursor to (x, y): rewriting a short stretch of cells when that is cheaper than a
-    // jump, otherwise a jump.
-    const auto reached = [&](int x, int y) {
-        if (held.at == ui::Spot{x, y}) return;
+    Pen pen{made, known, palette, into, held.now, held.at, held.linked};
 
-        if (held.at.y != y || held.at.x < 0 || held.at.x > x ||
-            !bridged(made, y, held.at.x, x, held.now, held.linked, known, into))
-            placed({x, y}, into);
-
-        held.at = ui::Spot{x, y};
-    };
-
-    // Switches the terminal to the style, unless it has it already.
-    const auto dressed = [&](const Style& style) {
-        if (style == held.now) return;
-
-        painted(style, palette, into);
-
-        held.now = style;
-    };
-
-    // Writes the cell at (x, y), where the cursor stands, after switching the style and the link
-    // where they differ from the terminal's.
-    const auto lettered = [&](int x, int y) {
-        const Cell one = made.at({x, y});
-
-        dressed(one.style);
-
-        if (const std::uint32_t link = link_of(one, known); link != held.linked) {
-            linking(link, known, into);
-
-            held.linked = link;
-        }
-
-        written(one.letter, into);
-
-        const bool broad = x + 1 < made.size().wide && made.at({x + 1, y}).letter == 0;
-
-        held.at.x += broad ? 2 : 1;
-
-        // Autowrap is off, so at the last column the cursor stands in an undefined place; the
-        // next character gets its own jump.
-        if (held.at.x >= made.size().wide) held.at = ui::Spot{-1, -1};
-    };
-
-    // A row goes out by stretches: spaces and words. A word with a letter the terminal may count
-    // otherwise (`uncertain`) goes out whole whenever any of its cells changed, because the
-    // terminal joins its characters by its own rules: its cells are erased first (ECH), so that
-    // nothing of the previous picture stays where the terminal draws it narrower, and after it
-    // the cursor jumps to the next cell instead of trusting the terminal's count. A terminal that
-    // drew it wider covered the cells after it, so once such a word went out, the rest of the row
-    // goes out again too. Elsewhere only the changed cells go.
-    //
-    // `covered` keeps for each row the column from which it went out again; the row's width means
+    // The column of each row from which it went out again (`Pen::rowed`); the row's width means
     // nowhere.
     std::vector<int> covered(static_cast<std::size_t>(made.size().high), made.size().wide);
 
@@ -1005,53 +1123,8 @@ void Term::draw() {
     // cells `bared` empties, whichever rows were painted.
     if (reset || held.framed != before + 1 || imaged) rows.assign(1, {0, made.size().high});
 
-    for (const auto& [from, upto] : rows) {
-        for (int y = from; y < upto; ++y) {
-            bool covering = false;
-
-            for (int x = 0; x < made.size().wide;) {
-                const int end = worded(made, y, x);
-
-                if (unsure(made, y, x, end)) {
-                    if (covering || altered(made, held.standing, y, x, end)) {
-                        reached(x, y);
-
-                        // ECH erases in the background of the current style, so the word's own goes
-                        // first.
-                        dressed(made.at({x, y}).style);
-
-                        into += "\x1b[" + std::to_string(end - x) + "X";
-
-                        for (int at = x; at < end; ++at)
-                            if (made.at({at, y}).letter != 0) lettered(at, y);
-
-                        if (!covering) covered[static_cast<std::size_t>(y)] = x;
-
-                        covering = true;
-                    }
-
-                    // Where the terminal's cursor stands after the word is not known, and the word
-                    // must not be rewritten as a mere gap either.
-                    held.at = ui::Spot{-1, -1};
-                    x = end;
-
-                    continue;
-                }
-
-                for (; x < end; ++x) {
-                    const Cell one = made.at({x, y});
-
-                    // The continuation of a wide character went out together with its first half.
-                    if (one.letter == 0) continue;
-
-                    if (!covering && one == held.standing.at({x, y})) continue;
-
-                    reached(x, y);
-                    lettered(x, y);
-                }
-            }
-        }
-    }
+    for (const auto& [from, upto] : rows)
+        for (int y = from; y < upto; ++y) pen.rowed(y, held.standing, covered[static_cast<std::size_t>(y)]);
 
     std::erase_if(pictured, [&held, &made, &covered](const Placement& one) {
         for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
@@ -1071,62 +1144,13 @@ void Term::draw() {
         held.linked = 0;
     }
 
-    // After an image the cursor stands wherever the terminal put it; the next character gets its
-    // own jump.
-    for (const Placement& one : pictured) {
-        if (!one.picture.sixel) continue;
-
-        placed(one.at, into);
-
-        into += *one.picture.sixel;
-
-        held.at = ui::Spot{-1, -1};
-    }
-
-    for (const Placement& one : standing) {
-        if (std::any_of(held.placed.begin(), held.placed.end(), [&one](const Placement& was) { return same_place(was, one); }))
-            continue;
-
-        if (std::none_of(held.sent.begin(), held.sent.end(), [&one](const auto& was) { return was.first == one.picture.mark; })) {
-            kitty(one.picture, into);
-
-            held.sent.emplace_back(one.picture.mark, one.picture.pixels);
-        }
-
-        stood(one, into);
-
-        // C=1 leaves the cursor in place, but a terminal that does not know the key would move
-        // it, so the next character gets its own jump, as after a sixel.
-        held.at = ui::Spot{-1, -1};
-    }
+    pictured_out(pictured, standing, held.placed, held.sent, held.at, into);
 
     held.placed = std::move(standing);
 
     // The cursor comes from the root, not from the sheet. The frame says what to draw, not where
-    // the caret stands; that belongs to the focus. We ask after composing, because only then are
-    // the rectangles fresh.
-    if (const std::optional<ui::Spot> spot = held.onto->caret(); spot.has_value()) {
-        placed(*spot, into);
-
-        held.at = *spot;
-
-        // The shape before the cursor shows, so it never shows in the shape of the focus before.
-        if (const ui::CaretShape shape = held.onto->caret_shape(); held.shaped != shape) {
-            into += shaping(shape);
-
-            held.shaped = shape;
-        }
-
-        if (!held.showing) {
-            into += "\x1b[?25h";
-
-            held.showing = true;
-        }
-    } else if (held.showing) {
-        into += "\x1b[?25l";
-
-        held.showing = false;
-    }
+    // the caret stands; that belongs to the focus.
+    careted(*held.onto, held.shaped, held.showing, held.at, into);
 
     for (const auto& [from, upto] : rows) held.standing.took(made, from, upto);
 
