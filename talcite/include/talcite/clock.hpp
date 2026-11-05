@@ -3,10 +3,9 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <mutex>
-#include <set>
-#include <utility>
+
+#include "talcite/detail/deadlines.hpp"
 
 namespace talcite {
 
@@ -49,9 +48,7 @@ public:
 private:
     mutable std::mutex guard_;
     Moment now_{};
-    std::uint64_t next_ = 0;
-    std::map<std::uint64_t, std::pair<Moment, std::function<void()>>> waiting_;
-    std::set<std::pair<Moment, std::uint64_t>> order_;
+    detail::Deadlines<std::function<void()>> waiting_;
 };
 
 }

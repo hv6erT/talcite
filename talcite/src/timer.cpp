@@ -1,29 +1,26 @@
 #include "talcite/timer.hpp"
 
 #include <algorithm>
-#include <map>
 #include <mutex>
-#include <set>
+#include <optional>
 #include <utility>
 #include <vector>
 
 namespace talcite::ui {
 
-// The appointments of a root's schedule: each under its number, with the moment it is due, its period
-// (zero for a single one) and what it calls; the order of moments and numbers says which comes
-// first, and for one moment the earlier made. The lock guards both, because a timer may be dropped
-// on another thread than the one the root runs on, together with whatever held it.
+// The appointments of a root's schedule, in a table of numbered deadlines
+// (`talcite::detail::Deadlines`, described in time.cpp): each with its period (zero for a single
+// one) and what it calls; for one moment the earlier made comes first. The lock guards the table,
+// because a timer may be dropped on another thread than the one the root runs on, together with
+// whatever held it.
 struct detail::Timers {
     struct Appointment {
-        talcite::Clock::Moment when;
         std::chrono::milliseconds period{0};
         std::shared_ptr<std::function<void()>> then;
     };
 
     mutable std::mutex guard;
-    std::map<std::uint64_t, Appointment> all;
-    std::set<std::pair<talcite::Clock::Moment, std::uint64_t>> order;
-    std::uint64_t next = 0;
+    talcite::detail::Deadlines<Appointment> all;
 };
 
 namespace {
@@ -31,18 +28,12 @@ namespace {
 // Takes appointment `number` out of the schedule, if it is still there; what it would have called goes
 // after the lock, since its captures may hold timers of their own.
 void dropped(detail::Timers& timers, std::uint64_t number) {
-    std::shared_ptr<std::function<void()>> gone;
+    std::optional<talcite::detail::Deadlines<detail::Timers::Appointment>::Entry> gone;
 
     {
         const std::lock_guard<std::mutex> held{timers.guard};
 
-        const auto at = timers.all.find(number);
-
-        if (at == timers.all.end()) return;
-
-        timers.order.erase({at->second.when, number});
-        gone = std::move(at->second.then);
-        timers.all.erase(at);
+        gone = timers.all.taken(number);
     }
 }
 
@@ -125,19 +116,15 @@ talcite::Clock::Moment Schedule::now() const { return time_->now(); }
 std::optional<talcite::Clock::Moment> Schedule::next() const {
     const std::lock_guard<std::mutex> held{timers_->guard};
 
-    if (timers_->order.empty()) return std::nullopt;
-
-    return timers_->order.begin()->first;
+    return timers_->all.nearest();
 }
 
 // Makes an appointment and gives back the timer that keeps it.
 Timer Schedule::kept(talcite::Clock::Moment when, std::chrono::milliseconds period, std::function<void()> then) {
     const std::lock_guard<std::mutex> held{timers_->guard};
 
-    const std::uint64_t number = ++timers_->next;
-
-    timers_->all.emplace(number, detail::Timers::Appointment{when, period, std::make_shared<std::function<void()>>(std::move(then))});
-    timers_->order.emplace(when, number);
+    const std::uint64_t number =
+        timers_->all.added(when, detail::Timers::Appointment{period, std::make_shared<std::function<void()>>(std::move(then))});
 
     return Timer{timers_, number};
 }
@@ -159,11 +146,7 @@ bool Schedule::elapse() {
     {
         const std::lock_guard<std::mutex> held{timers->guard};
 
-        for (const auto& [when, number] : timers->order) {
-            if (when > at) break;
-
-            due.push_back(number);
-        }
+        due = timers->all.due_numbers(at);
     }
 
     bool called = false;
@@ -174,23 +157,18 @@ bool Schedule::elapse() {
         {
             const std::lock_guard<std::mutex> held{timers->guard};
 
-            const auto found = timers->all.find(number);
+            auto* const one = timers->all.found(number);
 
-            if (found == timers->all.end()) continue;
+            if (one == nullptr) continue;
 
-            detail::Timers::Appointment& one = found->second;
+            then = one->what.then;
 
-            then = one.then;
+            if (const std::chrono::milliseconds period = one->what.period; period > std::chrono::milliseconds{0}) {
+                const auto behind = std::chrono::duration_cast<std::chrono::milliseconds>(at - one->when);
 
-            timers->order.erase({one.when, number});
-
-            if (one.period > std::chrono::milliseconds{0}) {
-                const auto behind = std::chrono::duration_cast<std::chrono::milliseconds>(at - one.when);
-
-                one.when += one.period * (behind / one.period + 1);
-                timers->order.emplace(one.when, number);
+                timers->all.moved(number, one->when + period * (behind / period + 1));
             } else {
-                timers->all.erase(found);
+                (void)timers->all.taken(number);
             }
         }
 

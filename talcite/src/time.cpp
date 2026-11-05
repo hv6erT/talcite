@@ -3,10 +3,9 @@
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <memory>
 #include <mutex>
-#include <set>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -21,10 +20,14 @@ namespace {
 // deadline nearer than the current one wakes it through the condition variable. A hundred waits are
 // still one thread, not a hundred.
 //
-// The entries stand in two indexes: by number, for `unscheduled`, and by deadline, for the thread,
-// so each operation costs a logarithm instead of a walk through every wait. A screen full of
-// countdowns, or ten thousand timeouts withdrawn as their work ends first, would otherwise pay for
-// each one with the whole list, under the lock that every other wait needs.
+// The entries stand in a `detail::Deadlines`, the table of numbered deadlines this clock, the
+// manual one and the schedule of a root (timer.cpp) all keep. Every entry stands in two indexes: by
+// number, for withdrawing it, and by deadline and then number, so that for one deadline the earlier
+// added comes first, for finding what is due. So each operation costs a logarithm instead of a walk
+// through every wait. A screen full of countdowns, or ten thousand timeouts withdrawn as their work
+// ends first, would otherwise pay for each one with the whole list, under the lock that every other
+// wait needs. The table has no lock of its own, its owner holds one, and adding changes nothing
+// when it throws.
 class Real final : public Clock {
 public:
     Real() = default;
@@ -45,19 +48,8 @@ public:
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            which = ++next_;
-
-            const auto placed = order_.emplace(when, which).first;
-
-            try {
-                waiting_.emplace(which, Entry{when, std::move(then)});
-            } catch (...) {
-                order_.erase(placed);
-
-                throw;
-            }
-
-            nearest = placed == order_.begin();
+            which = waiting_.added(when, std::move(then));
+            nearest = waiting_.earliest(which);
         }
 
         if (nearest) stirred_.notify_all();
@@ -69,66 +61,50 @@ public:
     // after the lock is released. The thread is not woken: if it sleeps until this entry, it wakes,
     // finds nothing due and sleeps until the next one.
     [[nodiscard]] bool unscheduled(std::uint64_t which) override {
-        Entry taken;
+        std::optional<Waiting::Entry> taken;
 
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            const auto at = waiting_.find(which);
-
-            if (at == waiting_.end()) return false;
-
-            taken = std::move(at->second);
-
-            order_.erase({taken.when, which});
-            waiting_.erase(at);
+            taken = waiting_.taken(which);
         }
 
-        return true;
+        return taken.has_value();
     }
 
 private:
-    struct Entry {
-        Moment when;
-        std::function<void()> then;
-    };
+    using Waiting = detail::Deadlines<std::function<void()>>;
 
     // The loop of the timer thread: sleeps until the nearest deadline, then runs every entry that is
     // due, outside the lock. The callbacks are the library's own and only hand the ending over to
     // the io lane; anything they throw is swallowed so that the rest still run.
     void serve() {
         while (true) {
-            std::vector<Entry> due;
+            std::vector<Waiting::Entry> due;
 
             {
                 std::unique_lock<std::mutex> held{guard_};
 
-                if (order_.empty()) {
+                const std::optional<Moment> nearest = waiting_.nearest();
+
+                if (!nearest) {
                     stirred_.wait(held);
                     continue;
                 }
 
                 const Moment now = std::chrono::steady_clock::now();
-                const Moment nearest = order_.begin()->first;
 
-                if (now < nearest) {
-                    stirred_.wait_until(held, nearest);
+                if (now < *nearest) {
+                    stirred_.wait_until(held, *nearest);
                     continue;
                 }
 
-                while (!order_.empty() && order_.begin()->first <= now) {
-                    const auto at = waiting_.find(order_.begin()->second);
-
-                    due.push_back(std::move(at->second));
-
-                    waiting_.erase(at);
-                    order_.erase(order_.begin());
-                }
+                while (std::optional<Waiting::Entry> one = waiting_.due(now)) due.push_back(std::move(*one));
             }
 
-            for (Entry& one : due) {
+            for (Waiting::Entry& one : due) {
                 try {
-                    one.then();
+                    one.what();
                 } catch (...) {
                 }
             }
@@ -137,9 +113,7 @@ private:
 
     std::mutex guard_;
     std::condition_variable stirred_;
-    std::map<std::uint64_t, Entry> waiting_;
-    std::set<std::pair<Moment, std::uint64_t>> order_;
-    std::uint64_t next_ = 0;
+    Waiting waiting_;
     std::thread keeper_;
 };
 
@@ -171,33 +145,20 @@ Clock::Moment ManualClock::now() const {
 std::uint64_t ManualClock::scheduled(Moment when, std::function<void()> then) {
     const std::lock_guard<std::mutex> held{guard_};
 
-    const std::uint64_t which = ++next_;
-
-    waiting_.emplace(which, std::make_pair(when, std::move(then)));
-    order_.emplace(when, which);
-
-    return which;
+    return waiting_.added(when, std::move(then));
 }
 
-// Withdraws the entry `which`; whether it was still waiting.
+// Withdraws the entry `which`; whether it was still waiting. The entry goes after the lock.
 bool ManualClock::unscheduled(std::uint64_t which) {
-    std::function<void()> taken;
+    std::optional<detail::Deadlines<std::function<void()>>::Entry> taken;
 
     {
         const std::lock_guard<std::mutex> held{guard_};
 
-        const auto at = waiting_.find(which);
-
-        if (at == waiting_.end()) return false;
-
-        order_.erase({at->second.first, which});
-
-        taken = std::move(at->second.second);
-
-        waiting_.erase(at);
+        taken = waiting_.taken(which);
     }
 
-    return true;
+    return taken.has_value();
 }
 
 // Moves the time by `by` and runs, on this thread and in the order of their deadlines, everything
@@ -218,14 +179,11 @@ void ManualClock::advance(std::chrono::milliseconds by) {
         {
             const std::lock_guard<std::mutex> held{guard_};
 
-            if (order_.empty() || order_.begin()->first > until) return;
+            std::optional<detail::Deadlines<std::function<void()>>::Entry> one = waiting_.due(until);
 
-            const auto at = waiting_.find(order_.begin()->second);
+            if (!one) return;
 
-            then = std::move(at->second.second);
-
-            waiting_.erase(at);
-            order_.erase(order_.begin());
+            then = std::move(one->what);
         }
 
         then();
