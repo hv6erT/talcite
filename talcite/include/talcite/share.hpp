@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "talcite/bytes.hpp"
 #include "talcite/fs.hpp"
 #include "talcite/promise.hpp"
 
@@ -47,5 +48,7 @@ struct Offered {
 [[nodiscard]] Promise<Offered> shares(Share server);
 
 void wiped(std::string& secret);
+
+void wiped(Bytes& secret);
 
 }

@@ -9,15 +9,15 @@
 
 #include "talcite/detail/promise.hpp"
 
-#include "batched.hpp"
-
 namespace talcite {
+
+namespace {
 
 // Runs every piece of a batch taken from a queue, also after one that throws: the batch has left
 // the queue, so whatever stood after the thrower would be lost for good, and with it the
 // continuation somebody waits for. The first exception comes back, for the caller to pass on once
 // the queue is in order; nothing when every piece ran through. Used by `detail::Queue::turned`.
-std::exception_ptr detail::ran(const std::vector<std::function<void()>>& batch) {
+std::exception_ptr ran(const std::vector<std::function<void()>>& batch) {
     std::exception_ptr first;
 
     for (const std::function<void()>& one : batch) {
@@ -30,8 +30,6 @@ std::exception_ptr detail::ran(const std::vector<std::function<void()>>& batch) 
 
     return first;
 }
-
-namespace {
 
 // A piece of work a promise hands to an executor, with what to do when the executor throws it away
 // unrun: a loop or a manual executor that ends with work in its queue. Only work the executor took

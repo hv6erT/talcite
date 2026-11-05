@@ -19,7 +19,7 @@ TRIAL("ASCII: lowered lowers the letters A to Z and nothing else") {
     same(ascii::lowered('['), '[');
     same(ascii::lowered(static_cast<char>(0xC5)), static_cast<char>(0xC5));
 
-    same(ascii::lowered(std::string_view{"Heat.MKV \xC5\x81\xC3\xB3d\xC5\xBA"}), std::string{"heat.mkv \xC5\x81\xC3\xB3d\xC5\xBA"});
+    same(ascii::lowered(std::string_view{"Heat.MKV \xC5\x81\xC3\xB3" "d\xC5\xBA"}), std::string{"heat.mkv \xC5\x81\xC3\xB3" "d\xC5\xBA"});
 }
 
 TRIAL("ASCII: trimmed takes spaces, tabs and line ends off the ends only") {

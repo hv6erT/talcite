@@ -315,6 +315,18 @@ TRIAL("Share: the password is zeroed in place") {
     same(at[4], '\0');
 }
 
+TRIAL("Share: secret bytes are zeroed in place") {
+    Bytes secret = bytes("wspólny sekret");
+
+    const std::byte* at = secret.data();
+
+    fs::wiped(secret);
+
+    ought(secret.empty());
+    ought(at[0] == std::byte{0});
+    ought(at[5] == std::byte{0});
+}
+
 #ifndef _WIN32
 
 TRIAL("Share: one mounted in GVfs is entered without gio, with the rest of the path") {

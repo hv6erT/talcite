@@ -316,6 +316,13 @@ void wiped(std::string& secret) {
     secret.clear();
 }
 
+// Zeroes and empties the bytes of a secret (a key, a shared secret) in the same way.
+void wiped(Bytes& secret) {
+    talcite::secret::wiped(secret);
+
+    secret.clear();
+}
+
 
 namespace {
 
