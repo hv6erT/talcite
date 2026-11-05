@@ -16,7 +16,7 @@
 // A label: text in rows, wrapped or not, elided and justified when drawn. Its marks (`marks`) lay a
 // role over a stretch of the text, counted as a page counts them: the line is the paragraph (the
 // text between hard line breaks) and the bytes count from its start. A mark with an address is a
-// link: its cells carry the hyperlink (`View::link`, OSC 8 in a terminal that takes it), and a
+// link: its cells carry the hyperlink (`Canvas::link`, OSC 8 in a terminal that takes it), and a
 // click on it follows the address the way every widget follows one (`FollowingMixin`). A label takes
 // no focus, so a key does not reach its links; a click does, and a terminal with hyperlinks opens
 // them itself on Ctrl+click, which is why a click with Ctrl is left to it, as on a link (`Link`).
@@ -73,10 +73,10 @@ std::vector<Paragraph> parted(std::string_view what) {
 
 // Wraps one paragraph (the `line`-th) to `wide` columns, appending the rows to `into`. It breaks at
 // spaces, and a word longer than a row is broken in place, because the only alternative would be
-// running off the view, which `View` would not let out anyway. Each paragraph wraps separately, so
-// a hard line break never merges with the neighboring sentence. Words in a row stand one space
-// apart, whatever stood between them; that space comes from the first space after the word before
-// it, so that a mark over a whole phrase covers the gaps too.
+// running off the canvas, which `Canvas` would not let out anyway. Each paragraph wraps
+// separately, so a hard line break never merges with the neighboring sentence. Words in a row
+// stand one space apart, whatever stood between them; that space comes from the first space after
+// the word before it, so that a mark over a whole phrase covers the gaps too.
 void wrap_into(std::string_view what, std::size_t line, int wide, std::vector<Traced>& into) {
     struct Word {
         std::size_t at = 0;

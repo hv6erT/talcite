@@ -15,7 +15,7 @@ using namespace talcite;
 namespace {
 
 // Reads row `y` of a drawn view as UTF-8 text, dropping trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) utf8::encode(one.at({x, y}).letter, made);

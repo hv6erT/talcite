@@ -85,7 +85,7 @@ std::shared_ptr<ui::List> listed(int much, int wide = ui::plenty, int high = ui:
 }
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -122,7 +122,7 @@ TRIAL("ListItem: the text starts at the first cell, without a gap") {
     nest->children().add(one);
     top.children().add(nest);
 
-    const View made = top.render({{0, 0}, {8, 1}});
+    const Snapshot made = top.render({{0, 0}, {8, 1}});
 
     same(read(made, 0), std::string{"plik"});
 }
@@ -136,7 +136,7 @@ TRIAL("ListItem: a text longer than the row is clipped with an ellipsis on the r
     nest->children().add(one);
     top.children().add(nest);
 
-    const View made = top.render({{0, 0}, {5, 1}});
+    const Snapshot made = top.render({{0, 0}, {5, 1}});
 
     same(read(made, 0), std::string{"doku…"});
 }
@@ -152,7 +152,7 @@ TRIAL("ListItem: under focus the whole row is reversed") {
     nest->children().add(one);
     top.children().add(nest);
 
-    View made = top.render({{0, 0}, {8, 1}});
+    Snapshot made = top.render({{0, 0}, {8, 1}});
 
     ought(!made.at({0, 0}).style.reverse);
     ought(!made.at({7, 0}).style.reverse);
@@ -185,7 +185,7 @@ TRIAL("ListItem: a disabled one dims and does not take the focus") {
 
     same(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
-    const View made = top.render({{0, 0}, {8, 1}});
+    const Snapshot made = top.render({{0, 0}, {8, 1}});
 
     ought(made.at({0, 0}).style.faint);
 }
@@ -425,7 +425,7 @@ TRIAL("ListItem: the text and the task can be replaced along the way") {
 
     same(one->text(), std::string{"nowy"});
 
-    const View made = top.render({{0, 0}, {8, 1}});
+    const Snapshot made = top.render({{0, 0}, {8, 1}});
 
     same(read(made, 0), std::string{"nowy"});
 
@@ -1090,7 +1090,7 @@ TRIAL("List: the scrollbar thumb follows the view to the end") {
 
     (void)top.render({{0, 0}, {12, 5}});
 
-    View made = top.render({{0, 0}, {12, 5}});
+    Snapshot made = top.render({{0, 0}, {12, 5}});
 
     same(made.at({11, 0}).letter, U'█');
     same(made.at({11, 4}).letter, U'│');

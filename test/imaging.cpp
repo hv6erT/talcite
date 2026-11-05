@@ -386,7 +386,7 @@ TRIAL("Image: the picture stands in the middle of the area") {
 
     ought(settled(loop, sheet, *one, {40, 20}));
 
-    const View made = sheet.render({{0, 0}, {40, 20}});
+    const Snapshot made = sheet.render({{0, 0}, {40, 20}});
 
     // Fifteen rows in an area of twenty: two empty at the top, three at the bottom.
     same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::none));
@@ -430,7 +430,7 @@ TRIAL("Image: the picture's edge takes the background of the window it stands in
     box->children().add(one);
     sheet.children().add(box);
 
-    const View made = sheet.render({{0, 0}, {6, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {6, 4}});
 
     int seen = 0;
 
@@ -653,14 +653,14 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     sheet.children().add(one);
 
-    const View drawn_blocks = sheet.render({{0, 0}, {1, 1}});
+    const Snapshot drawn_blocks = sheet.render({{0, 0}, {1, 1}});
 
     same(drawn_blocks.at({0, 0}).letter, U'▀');
     same(drawn_blocks.at({0, 0}).style.foreground, (Color{false, 220, 0, 0}));
 
     sheet.unicode(false);
 
-    const View drawn_ascii = sheet.render({{0, 0}, {1, 1}});
+    const Snapshot drawn_ascii = sheet.render({{0, 0}, {1, 1}});
 
     same(drawn_ascii.at({0, 0}).letter, U'=');
 

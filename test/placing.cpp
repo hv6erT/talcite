@@ -17,6 +17,8 @@
 #include "talcite/root.hpp"
 #include "talcite/term.hpp"
 
+#include "sheet.hpp"
+
 using namespace talcite;
 
 // Images in pixels: the cells of an image carry its mark, what is painted over them later takes it
@@ -49,8 +51,8 @@ void imaged(Canvas onto, ui::Spot at, std::uint32_t mark = 7) {
 }
 
 // A 6×4 sheet on a blue background, with the 2×2 image (`imaged`) at (1, 1) in it.
-View sheet(std::uint32_t mark = 7) {
-    View made{{6, 4}};
+detail::Sheet sheet(std::uint32_t mark = 7) {
+    detail::Sheet made{{6, 4}};
     Canvas onto{made};
 
     onto.fill({{0, 0}, {6, 4}}, paper(0, 0, 200));
@@ -164,8 +166,8 @@ const std::string sixel_head = "\x1bP0;1;0q";
 
 // --- Sheet ---------------------------------------------------------------------------------------
 
-TRIAL("View: an image's cells carry its mark, a transparent one becomes an empty foreground") {
-    View made{{3, 1}};
+TRIAL("Sheet: an image's cells carry its mark, a transparent one becomes an empty foreground") {
+    detail::Sheet made{{3, 1}};
 
     made.clear({{0, 0}, {3, 1}});
     made.put({0, 0}, U'a', paper(1, 2, 3));
@@ -181,8 +183,8 @@ TRIAL("View: an image's cells carry its mark, a transparent one becomes an empty
     same(made.pictures().size(), std::size_t{1});
 }
 
-TRIAL("View: the same mark a second time replaces the entry instead of adding another") {
-    View made{{2, 1}};
+TRIAL("Sheet: the same mark a second time replaces the entry instead of adding another") {
+    detail::Sheet made{{2, 1}};
 
     made.picture({{0, 0}, {2, 1}}, Picture{3, {2, 1}, encoded("a")});
     made.picture({{0, 0}, {2, 1}}, Picture{3, {2, 1}, encoded("b")});
@@ -191,8 +193,8 @@ TRIAL("View: the same mark a second time replaces the entry instead of adding an
     same(*made.pictures().front().sixel, std::string{"b"});
 }
 
-TRIAL("View: an image painted through a canvas stands where the canvas puts it") {
-    View made = sheet();
+TRIAL("Sheet: an image painted through a canvas stands where the canvas puts it") {
+    detail::Sheet made = sheet();
 
     same(made.pictures().size(), std::size_t{1});
     same(made.at({1, 1}).picture, std::uint32_t{7});
@@ -202,15 +204,15 @@ TRIAL("View: an image painted through a canvas stands where the canvas puts it")
     // The transparent cell took the background from below when painted.
     ought(made.at({1, 2}).style.background == paper(0, 0, 200).background);
 
-    const std::vector<Placement> found = made.bared({{0, 0}, {6, 4}});
+    const std::vector<detail::Placement> found = made.bared({{0, 0}, {6, 4}});
 
     same(found.size(), std::size_t{1});
     ought(found.front().at == (ui::Spot{1, 1}));
     same(*found.front().picture.sixel, std::string{"SIX"});
 }
 
-TRIAL("View: an image visible as a whole has empty cells with their background and its mark") {
-    View made = sheet();
+TRIAL("Sheet: an image visible as a whole has empty cells with their background and its mark") {
+    detail::Sheet made = sheet();
 
     (void)made.bared({{0, 0}, {6, 4}});
 
@@ -223,8 +225,8 @@ TRIAL("View: an image visible as a whole has empty cells with their background a
     ought(!(made.at({2, 2}) == made.at({0, 0})));
 }
 
-TRIAL("View: an image covered in even one cell stays in characters and loses its mark") {
-    View made = sheet();
+TRIAL("Sheet: an image covered in even one cell stays in characters and loses its mark") {
+    detail::Sheet made = sheet();
 
     Canvas{made}.put({2, 2}, U'x', paper(9, 9, 9));
 
@@ -234,8 +236,8 @@ TRIAL("View: an image covered in even one cell stays in characters and loses its
     same(made.at({2, 1}).picture, std::uint32_t{0});
 }
 
-TRIAL("View: a shadow over an image covers it, since pixels cannot be dimmed") {
-    View made = sheet();
+TRIAL("Sheet: a shadow over an image covers it, since pixels cannot be dimmed") {
+    detail::Sheet made = sheet();
 
     Canvas{made}.shade({{1, 1}, {1, 1}}, paper(10, 10, 10));
 
@@ -243,9 +245,9 @@ TRIAL("View: a shadow over an image covers it, since pixels cannot be dimmed") {
     same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
 }
 
-TRIAL("View: an image clipped by the canvas edge or sticking out of the field gets no pixels") {
+TRIAL("Sheet: an image clipped by the canvas edge or sticking out of the field gets no pixels") {
     // Clipped: only the left column of the image made it into the sheet.
-    View narrow{{2, 4}};
+    detail::Sheet narrow{{2, 4}};
 
     imaged(Canvas{narrow}, {1, 1});
 
@@ -254,26 +256,26 @@ TRIAL("View: an image clipped by the canvas edge or sticking out of the field ge
     same(narrow.at({1, 1}).picture, std::uint32_t{0});
 
     // Whole, but the field ends one row earlier.
-    View whole = sheet();
+    detail::Sheet whole = sheet();
 
     same(whole.bared({{0, 0}, {6, 2}}).size(), std::size_t{0});
 
-    View fits = sheet();
+    detail::Sheet fits = sheet();
 
     same(fits.bared({{0, 0}, {6, 3}}).size(), std::size_t{1});
 
     // The field ends one column earlier, and the field starts one column later.
-    View right = sheet();
+    detail::Sheet right = sheet();
 
     same(right.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
 
-    View left = sheet();
+    detail::Sheet left = sheet();
 
     same(left.bared({{2, 0}, {4, 4}}).size(), std::size_t{0});
 }
 
-TRIAL("View: an image without a visible cell and an image without a mark give nothing") {
-    View away{{4, 4}};
+TRIAL("Sheet: an image without a visible cell and an image without a mark give nothing") {
+    detail::Sheet away{{4, 4}};
 
     away.picture({{10, 10}, {2, 2}}, Picture{4, {2, 2}, encoded("a")});
 
@@ -281,15 +283,15 @@ TRIAL("View: an image without a visible cell and an image without a mark give no
 
     // Zero means "no image"; every ordinary cell carries it, so a sheet that happens to be the size
     // of the image would look like an image as a whole.
-    View plain{{2, 2}};
+    detail::Sheet plain{{2, 2}};
 
     plain.picture({{0, 0}, {2, 2}}, Picture{0, {2, 2}, encoded("b")});
 
     same(plain.bared({{0, 0}, {2, 2}}).size(), std::size_t{0});
 }
 
-TRIAL("View: the same image painted twice is listed once") {
-    View made{{8, 4}};
+TRIAL("Sheet: the same image painted twice is listed once") {
+    detail::Sheet made{{8, 4}};
 
     imaged(Canvas{made}, {1, 1});
     imaged(Canvas{made}, {1, 1});
@@ -298,16 +300,16 @@ TRIAL("View: the same image painted twice is listed once") {
     same(made.bared({{0, 0}, {8, 4}}).size(), std::size_t{1});
 }
 
-TRIAL("View: cells in a shape other than the image's are not an image as a whole") {
-    View made{{3, 3}};
+TRIAL("Sheet: cells in a shape other than the image's are not an image as a whole") {
+    detail::Sheet made{{3, 3}};
 
     made.picture({{0, 0}, {3, 1}}, Picture{8, {1, 3}, encoded("a")});
 
     same(made.bared({{0, 0}, {3, 3}}).size(), std::size_t{0});
 }
 
-TRIAL("View: two images side by side, both whole, each in its place") {
-    View made{{8, 3}};
+TRIAL("Sheet: two images side by side, both whole, each in its place") {
+    detail::Sheet made{{8, 3}};
     Canvas onto{made};
 
     imaged(onto, {1, 1}, 1);
@@ -318,7 +320,7 @@ TRIAL("View: two images side by side, both whole, each in its place") {
     second.put({1, 0}, U'b', paper(1, 1, 1));
     second.picture({{0, 0}, {2, 1}}, Picture{2, {2, 1}, encoded("two")});
 
-    const std::vector<Placement> found = made.bared({{0, 0}, {8, 3}});
+    const std::vector<detail::Placement> found = made.bared({{0, 0}, {8, 3}});
 
     same(found.size(), std::size_t{2});
     same(found[0].picture.mark, std::uint32_t{1});
@@ -657,7 +659,7 @@ TRIAL("Image: with sixel it orders the field's pixels and marks the cells with i
 
     ought(settled(loop, top, *top.image));
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(made.pictures().size(), std::size_t{1});
 
@@ -683,7 +685,7 @@ TRIAL("Image: without sixel the image is in characters and leaves no image mark"
 
     ought(settled(loop, top, *top.image));
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(made.pictures().size(), std::size_t{0});
     same(made.at({5, 0}).picture, std::uint32_t{0});
@@ -700,7 +702,7 @@ TRIAL("Image: an unknown cell size means characters, with sixel and with kitty")
 
         ought(settled(loop, top, *top.image));
 
-        const View made = top.render({{0, 0}, {20, 6}});
+        const Snapshot made = top.render({{0, 0}, {20, 6}});
 
         same(made.pictures().size(), std::size_t{0});
 
@@ -730,7 +732,7 @@ TRIAL("Image: the fallback characters are the whole image, reduced") {
 
     ought(settled(loop, top, *top.image));
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
     const Cell left = made.at({5, 2});
     const Cell right = made.at({14, 2});
 
@@ -751,7 +753,7 @@ TRIAL("Image: a late sixel of the previous image is dropped") {
 
     ought(settled(loop, top, *top.image));
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(made.pictures().size(), std::size_t{1});
     ought(holds(*made.pictures().front().sixel, "#0;2;20;0;0"));
@@ -790,7 +792,7 @@ TRIAL("Image: a new image gets a new mark") {
 
     ought(settled(loop, top, *top.image));
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(made.pictures().size(), std::size_t{1});
     ought(made.pictures().front().mark != first);
@@ -1126,7 +1128,7 @@ TRIAL("Image: with kitty the images are ready at once, with the field's pixels, 
 
     top.image->hold(Pixels{{40, 40}, {Still{red, std::chrono::milliseconds{100}}, Still{red, std::chrono::milliseconds{100}}}});
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     ought(!top.image->busy());
     same(made.pictures().size(), std::size_t{1});
@@ -1143,7 +1145,7 @@ TRIAL("Image: with kitty the images are ready at once, with the field's pixels, 
     top.image->play(false);
     top.image->still(1);
 
-    const View later = top.render({{0, 0}, {20, 6}});
+    const Snapshot later = top.render({{0, 0}, {20, 6}});
     const Picture& two = later.pictures().front();
 
     ought(two.mark != one.mark);
@@ -1164,7 +1166,7 @@ TRIAL("Image: switching sixel ↔ kitty while running recomputes the image") {
 
     top.graphics(Graphics::kitty);
 
-    const View kitty = top.render({{0, 0}, {20, 6}});
+    const Snapshot kitty = top.render({{0, 0}, {20, 6}});
 
     same(kitty.pictures().size(), std::size_t{1});
     ought(kitty.pictures().front().pixels != nullptr);

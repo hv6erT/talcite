@@ -19,9 +19,12 @@
 #include "talcite/decoder.hpp"
 #include "talcite/pixels.hpp"
 #include "hexing.hpp"
+#include "sheet.hpp"
 #include "unicode.hpp"
 
 namespace talcite {
+
+using detail::Placement;
 
 namespace {
 
@@ -42,7 +45,7 @@ public:
     // The size.
     [[nodiscard]] ui::Size size() const { return size_; }
 
-    // The cell at `where`; an empty one outside, as `View::at` gives.
+    // The cell at `where`; an empty one outside, as `Snapshot::at` gives.
     [[nodiscard]] Cell at(ui::Spot where) const {
         if (where.x < 0 || where.y < 0 || where.x >= size_.wide || where.y >= size_.high) return Cell{};
 
@@ -50,7 +53,7 @@ public:
     }
 
     // The rows [from, upto) of a frame of the same size, as they now stand on the screen.
-    void took(const View& made, int from, int upto) {
+    void took(const Snapshot& made, int from, int upto) {
         for (int y = std::max(from, 0); y < upto && y < size_.high; ++y)
             for (int x = 0; x < size_.wide; ++x)
                 cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(size_.wide) + static_cast<std::size_t>(x)] = made.at({x, y});
@@ -357,7 +360,7 @@ std::optional<std::string> addressed(std::string_view address) {
 using Addresses = std::map<std::uint32_t, std::string>;
 
 // The addresses of the frame's hyperlinks (`addressed`), when links go to the terminal at all.
-Addresses addresses_of(const View& made, bool linking) {
+Addresses addresses_of(const Snapshot& made, bool linking) {
     Addresses found;
 
     if (!linking) return found;
@@ -393,7 +396,7 @@ constexpr int nearby = 4;
 // changed cells is cheaper to rewrite than to jump over, provided the rewritten cells come out
 // exactly as they already are: the same style and the same hyperlink as the current ones, no
 // double-width character and nothing that is only its continuation.
-bool bridged(const View& made, int y, int from, int upto, const Style& now, std::uint32_t linked, const Addresses& known,
+bool bridged(const Snapshot& made, int y, int from, int upto, const Style& now, std::uint32_t linked, const Addresses& known,
              std::string& into) {
     if (upto - from > nearby) return false;
 
@@ -422,7 +425,7 @@ bool uncertain(char32_t letter) {
 
 // The end of the stretch of row `y` that starts at `x`: a space alone, or a word, the cells up to
 // the next space. The terminal joins and shapes characters only within a word.
-int worded(const View& made, int y, int x) {
+int worded(const Snapshot& made, int y, int x) {
     if (made.at({x, y}).letter == U' ') return x + 1;
 
     int end = x + 1;
@@ -433,7 +436,7 @@ int worded(const View& made, int y, int x) {
 }
 
 // Whether a cell in [from, upto) of row `y` has a letter the terminal may count otherwise.
-bool unsure(const View& made, int y, int from, int upto) {
+bool unsure(const Snapshot& made, int y, int from, int upto) {
     for (int x = from; x < upto; ++x)
         if (uncertain(made.at({x, y}).letter)) return true;
 
@@ -441,7 +444,7 @@ bool unsure(const View& made, int y, int from, int upto) {
 }
 
 // Whether a cell in [from, upto) of row `y` differs from what the terminal has.
-bool altered(const View& made, const Standing& standing, int y, int from, int upto) {
+bool altered(const Snapshot& made, const Standing& standing, int y, int from, int upto) {
     for (int x = from; x < upto; ++x)
         if (!(made.at({x, y}) == standing.at({x, y}))) return true;
 
@@ -475,8 +478,8 @@ Sending sending(const Capabilities& compat, const Setup& wish) {
 
 // The effective block-glyph density. The only field where the wish does not win outright:
 // `Capabilities::blocks()` returns a ceiling, the density the terminal does not yet break up. A glyph
-// wider than a cell breaks `View`, mouse hits and writing the difference, so the smaller of the two
-// is taken.
+// wider than a cell breaks `Sheet`, mouse hits and writing the difference, so the smaller of the
+// two is taken.
 ui::Blocks blocked(const Capabilities& compat, const Setup& wish) {
     const ui::Blocks want = wish.blocks.value_or(ui::Blocks::basic);
     const ui::Blocks most = compat.blocks();
@@ -631,7 +634,7 @@ bool measured(const Console& from, int& wide, int& high) {
 // open link (`now`, `at`, `linked`) as they go; links the terminal is not given (`known`) stay
 // plain text.
 struct Pen {
-    const View& made;
+    const Snapshot& made;
     const Addresses& known;
     const Colors& palette;
     std::string& into;
@@ -1028,7 +1031,7 @@ void Term::draw() {
     if (held.away > 0) return;
 
     const std::uint64_t before = held.framed;
-    const View& sheet = held.onto->frame({held.wide, held.high});
+    const detail::Sheet& sheet = held.onto->frame({held.wide, held.high});
 
     held.framed = held.onto->framed();
 
@@ -1039,11 +1042,11 @@ void Term::draw() {
     // that takes the marks off the others, and the root's sheet must stay as it painted it.
     const bool imaged = !sheet.pictures().empty() && ((kind == Graphics::sixel && grid.wide > 0 && grid.high > 0) || kind == Graphics::kitty);
 
-    std::optional<View> bare;
+    std::optional<detail::Sheet> bare;
 
     if (imaged) bare.emplace(sheet);
 
-    const View& made = bare.has_value() ? *bare : sheet;
+    const detail::Sheet& made = bare.has_value() ? *bare : sheet;
 
     std::string into;
 

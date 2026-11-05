@@ -7,7 +7,7 @@
 #include "talcite/root.hpp"
 #include "talcite/stack.hpp"
 #include "talcite/row.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 using namespace talcite;
 
@@ -123,7 +123,7 @@ TRIAL("Layout: a child's content lands at its own height") {
     one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'a'));
     one.children().add(std::make_shared<Box>(ui::Size{4, 1}, U'b'));
 
-    const View made = one.render({{0, 0}, {4, 4}});
+    const Snapshot made = one.render({{0, 0}, {4, 4}});
 
     same(made.at({0, 0}).letter, U'a');
     same(made.at({3, 1}).letter, U'a');
@@ -293,7 +293,7 @@ TRIAL("Stacking: the child attached last is painted over its siblings") {
     stack.children().add(under);
     stack.children().add(over);
 
-    const View made = stack.render({{0, 0}, {4, 1}});
+    const Snapshot made = stack.render({{0, 0}, {4, 1}});
 
     same(made.at({0, 0}).letter, U'b');
 }
@@ -307,7 +307,7 @@ TRIAL("Stacking: an overlay does not extend beyond its parent") {
     stack->children().add(over);
     top.children().add(stack);
 
-    const View made = top.render({{0, 0}, {3, 2}});
+    const Snapshot made = top.render({{0, 0}, {3, 2}});
 
     same(made.size().wide, 3);
     same(made.size().high, 2);

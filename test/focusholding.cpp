@@ -251,7 +251,7 @@ TRIAL("FocusHolder: an empty one leaves no trace on the sheet") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     bool held = true;
 
@@ -270,7 +270,7 @@ TRIAL("FocusHolder: the child gets the whole assigned rectangle") {
     one->children().add(said);
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     same(made.at({0, 0}).letter, U'a');
     same(made.at({2, 0}).letter, U'c');

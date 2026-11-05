@@ -1681,7 +1681,7 @@ namespace {
 // cell: the letter already there stays, and the style is merged through `Style::merge`. Thanks to
 // that, a role that sets only the background keeps the color of the letters, and a role that sets
 // only the letters keeps the background. A mark with an address also lays its hyperlink over its
-// cells (`View::link`). Only the marks of the piece's line are looked at; they are found by
+// cells (`Canvas::link`). Only the marks of the piece's line are looked at; they are found by
 // bisection, since the marks are sorted.
 //
 // A cell with a zero letter is the continuation of a double-width character; it is skipped,

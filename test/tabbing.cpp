@@ -19,7 +19,7 @@ using namespace talcite;
 namespace {
 
 // The text of row `y` of the view, without trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -88,7 +88,7 @@ TRIAL("Tabs: the names in the middle, a stroke under the one shown, its page bel
 
     top.children().add(three.tabs);
 
-    const View made = top.render({{0, 0}, {40, 6}});
+    const Snapshot made = top.render({{0, 0}, {40, 6}});
 
     same(read(made, 0), std::string{"        Alpha     Beta     Gamma"});
     same(read(made, 1), line(7, 7, 26));
@@ -190,7 +190,7 @@ TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below
     same(three.tabs->which(), std::size_t{2});
     same(picked, 1);
 
-    const View made = top.render({{0, 0}, {40, 6}});
+    const Snapshot made = top.render({{0, 0}, {40, 6}});
 
     same(read(made, 2), std::string{"page of Gamma"});
 
@@ -348,7 +348,7 @@ TRIAL("Tabs: too narrow for all the names, the one shown stands alone between ar
 
     three.tabs->which(1);
 
-    const View made = top.render({{0, 0}, {14, 5}});
+    const Snapshot made = top.render({{0, 0}, {14, 5}});
 
     same(read(made, 0), std::string{"  <  Beta  >"});
     same(read(made, 1), line(4, 6, 4));

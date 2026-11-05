@@ -68,7 +68,7 @@ public:
 
 // Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
 // dropping trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -114,8 +114,9 @@ TRIAL("Skin: an unknown role gives an empty style, an unknown glyph a question m
     same(one.glyph("czego.tu.nie.ma"), U'?');
 }
 
-// Zero is forbidden: in a `View` it marks the continuation of a two-column character, and composing
-// a frame skips such cells, so a zero would leave a hole in the picture instead of a visible error.
+// Zero is forbidden: in a `Sheet` it marks the continuation of a two-column character, and
+// composing a frame skips such cells, so a zero would leave a hole in the picture instead of a
+// visible error.
 TRIAL("Skin: an unknown glyph is never zero") {
     const ui::Skin one;
 
@@ -408,7 +409,7 @@ TRIAL("Skin: the current row without focus takes the list.mark role") {
     // Once focus leaves, only the marker remains, and the role applies.
     perch->focus();
 
-    const View made = top.render({{0, 0}, {20, 3}});
+    const Snapshot made = top.render({{0, 0}, {20, 3}});
 
     same(list->which(), std::optional<std::size_t>{0});
     ought(!made.at({0, 0}).style.reverse);
@@ -454,7 +455,7 @@ TRIAL("Skin: an ASCII skin draws a frame without box-drawing characters") {
                           {"talcite.line.thin.lower.right", U'+'},
                       }});
 
-    const View made = top.render({{0, 0}, {11, 3}});
+    const Snapshot made = top.render({{0, 0}, {11, 3}});
 
     same(read(made, 0), std::string{"+-- kot --+"});
     same(read(made, 1), std::string{"|         |"});
@@ -487,7 +488,7 @@ TRIAL("Skin: the scroller's track and thumb take their glyphs from the skin") {
 
     top.children().add(list);
 
-    View made = top.render({{0, 0}, {8, 4}});
+    Snapshot made = top.render({{0, 0}, {8, 4}});
 
     same(made.at({7, 0}).letter, U'█');
     same(made.at({7, 3}).letter, U'│');
@@ -557,7 +558,7 @@ TRIAL("Role: a frame asks for the stem it was given") {
 
     one->role("moja.ramka");
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     // The line and the background come from the same role.
     same(made.at({0, 0}).style.background, (Color{false, 7, 7, 7}));
@@ -615,7 +616,7 @@ TRIAL("Role: the hotkey letter also follows the stem") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {9, 1}});
+    const Snapshot made = top.render({{0, 0}, {9, 1}});
 
     // `[ Tak ]`: the letter T stands in the third cell.
     same(made.at({2, 0}).letter, U'T');
@@ -658,7 +659,7 @@ TRIAL("Role: the hotkey letter takes the background beneath it and the foregroun
 
     // Without focus: foreground from `.key`, the button's background, here by chance the same as in
     // `.key`.
-    View made = top.render({{0, 0}, {9, 1}});
+    Snapshot made = top.render({{0, 0}, {9, 1}});
 
     same(made.at({2, 0}).letter, U'T');
     same(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));

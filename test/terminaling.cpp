@@ -32,7 +32,7 @@ Command pretending(const char* what) {
 }
 
 // The rows of a frame as text, without the spaces at their ends.
-std::vector<std::string> rows(const View& one) {
+std::vector<std::string> rows(const Snapshot& one) {
     std::vector<std::string> made;
 
     for (int y = 0; y < one.size().high; ++y) {
@@ -50,7 +50,7 @@ std::vector<std::string> rows(const View& one) {
 }
 
 // Whether a row of the frame holds the text.
-bool showing(const View& one, const std::string& wanted) {
+bool showing(const Snapshot& one, const std::string& wanted) {
     for (const std::string& row : rows(one))
         if (row.find(wanted) != std::string::npos) return true;
 
@@ -150,13 +150,13 @@ TRIAL("Terminal: a program runs in the node") {
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {40, 5}, [](const View& seen) { return showing(seen, "tty 1 40x5"); }));
+    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
 
     one->send("dzień dobry\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const View& seen) { return showing(seen, "got:dzień dobry"); }));
+    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "got:dzień dobry"); }));
 
-    ought(awaited(loop, top, {30, 4}, [](const View&) { return true; }));
+    ought(awaited(loop, top, {30, 4}, [](const Snapshot&) { return true; }));
 
     KeyEvent typed{Key{U's'}};
 
@@ -164,11 +164,11 @@ TRIAL("Terminal: a program runs in the node") {
 
     one->send("ize\r");
 
-    ought(awaited(loop, top, {30, 4}, [](const View& seen) { return showing(seen, "size 30x4"); }));
+    ought(awaited(loop, top, {30, 4}, [](const Snapshot& seen) { return showing(seen, "size 30x4"); }));
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {30, 4}, [&end](const View&) { return end.has_value(); }));
+    ought(awaited(loop, top, {30, 4}, [&end](const Snapshot&) { return end.has_value(); }));
     ought(end.has_value() && end->ended == Ended::normal && end->code == 0);
     ought(!one->running());
 }
@@ -201,7 +201,7 @@ TRIAL("Terminal: the folder and the prompt of a shell") {
 
     one->run();
 
-    ought(awaited(loop, top, {30, 3}, [](const View& seen) { return showing(seen, "$"); }));
+    ought(awaited(loop, top, {30, 3}, [](const Snapshot& seen) { return showing(seen, "$"); }));
     same(folder, std::string{"/tmp/prompted"});
     ought(marks == (std::vector<Marked>{Marked::prompt, Marked::input}));
     ought(one->screen().waiting());
@@ -223,7 +223,7 @@ TRIAL("Terminal: the folder and the prompt of a shell") {
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {30, 3}, [&one](const View&) { return !one->running(); }));
+    ought(awaited(loop, top, {30, 3}, [&one](const Snapshot&) { return !one->running(); }));
 }
 
 // What the program writes and its exit come on their own threads, so the exit may be known first.
@@ -255,7 +255,7 @@ TRIAL("Terminal: the end comes after all that the program wrote") {
 
     one->run();
 
-    ought(awaited(loop, top, {60, 4}, [&end](const View&) { return end.has_value(); }));
+    ought(awaited(loop, top, {60, 4}, [&end](const Snapshot&) { return end.has_value(); }));
     ought(end.has_value() && end->ended == Ended::normal && end->code == 0);
     ought(marks == (std::vector<Marked>{Marked::done}));
     same(before, std::size_t{1});
@@ -286,7 +286,7 @@ TRIAL("Terminal: a program that leaves another holding the terminal still ends")
 
     one->run();
 
-    ought(awaited(loop, top, {30, 3}, [&end](const View&) { return end.has_value(); }));
+    ought(awaited(loop, top, {30, 3}, [&end](const Snapshot&) { return end.has_value(); }));
     ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{2});
     ought(showing(top.render({{0, 0}, {30, 3}}), "left"));
     ought(!one->running());
@@ -304,11 +304,11 @@ TRIAL("Terminal: Shift with the page keys walks the history") {
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {20, 2}, [](const View& seen) { return showing(seen, "tty 1"); }));
+    ought(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "tty 1"); }));
 
     one->send("a\rb\rc\r");
 
-    ought(awaited(loop, top, {20, 2}, [](const View& seen) { return showing(seen, "got:c"); }));
+    ought(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "got:c"); }));
 
     KeyEvent back{Key{Code::pageup, Mods{.shift = true}}};
 
@@ -325,7 +325,7 @@ TRIAL("Terminal: Shift with the page keys walks the history") {
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {20, 2}, [&one](const View&) { return !one->running(); }));
+    ought(awaited(loop, top, {20, 2}, [&one](const Snapshot&) { return !one->running(); }));
 }
 
 // The cursor's shape: the one the node was given while the program asks for none, the program's
@@ -344,20 +344,20 @@ TRIAL("Terminal: the cursor's shape is the program's when it asks, otherwise the
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {40, 5}, [](const View& seen) { return showing(seen, "tty 1 40x5"); }));
+    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
     ought(top.caret_shape() == (CaretShape{Caret::underline, false}));
 
     one->send("bar\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const View& seen) { return showing(seen, "barred"); }));
+    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "barred"); }));
     ought(top.caret_shape() == (CaretShape{Caret::bar, true}));
 
     one->send("usual\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const View& seen) { return showing(seen, "as usual"); }));
+    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "as usual"); }));
     ought(top.caret_shape() == (CaretShape{Caret::underline, false}));
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {40, 5}, [&one](const View&) { return !one->running(); }));
+    ought(awaited(loop, top, {40, 5}, [&one](const Snapshot&) { return !one->running(); }));
 }

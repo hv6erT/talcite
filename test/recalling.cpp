@@ -58,7 +58,7 @@ struct Stage {
     }
 
     // Renders the whole stage at the given size.
-    View drawn(ui::Size size = {40, 12}) { return top.render({{0, 0}, size}); }
+    Snapshot drawn(ui::Size size = {40, 12}) { return top.render({{0, 0}, size}); }
 };
 
 }
@@ -421,7 +421,7 @@ TRIAL("HistoryField: the unrolled list stands below the field") {
 
     stage.one->open();
 
-    const View made = stage.drawn();
+    const Snapshot made = stage.drawn();
 
     same(made.at({0, 1}).letter, U'┌');
     same(made.at({1, 2}).letter, U'g');

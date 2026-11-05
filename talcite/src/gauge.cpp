@@ -185,7 +185,7 @@ void Gauge::paint(Canvas& onto) const {
 
     // The percentage stands on whatever the gauge stands on (a hint line, a window, a panel), and
     // only what lies below knows its background: without one of its own in the skin it takes that
-    // one (`View::foreground`), as the scroll bar's track does; a background the skin gives wins.
+    // one (`Canvas::foreground`), as the scroll bar's track does; a background the skin gives wins.
     // Drawn as plain text, it would show the terminal's own background there instead.
     const int start = given.wide - static_cast<int>(said.size());
 

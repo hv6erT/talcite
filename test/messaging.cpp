@@ -17,7 +17,7 @@ using namespace talcite;
 namespace {
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -33,7 +33,7 @@ std::string read(const View& one, int y) {
 
 // Whether the text shows anywhere in the frame. In trials where the box appears and disappears, the
 // row stops being fixed, so they check presence, not place.
-bool shown(const View& one, const std::string& what) {
+bool shown(const Snapshot& one, const std::string& what) {
     for (int y = 0; y < one.size().high; ++y)
         if (read(one, y).find(what) != std::string::npos) return true;
 
@@ -113,7 +113,7 @@ struct Opened {
     }
 
     // Renders the whole window at the given size.
-    View drawn(ui::Size size) { return top.render({{0, 0}, size}); }
+    Snapshot drawn(ui::Size size) { return top.render({{0, 0}, size}); }
 };
 
 }
@@ -123,7 +123,7 @@ struct Opened {
 TRIAL("Message: title above the content box, buttons in a second box") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
 
     same(read(seen, 0), std::string{"      ╔═════════════╗"});
     same(read(seen, 1), std::string{"      ║    Error    ║"});
@@ -148,7 +148,7 @@ TRIAL("Message: a single answer is not primary") {
 TRIAL("Message: without a title there is no title row") {
     Opened made{std::string{}, "Sama treść.", {{"OK", U'O'}}};
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
 
     same(read(seen, 2), std::string{"      ║┌───────────┐║"});
     same(read(seen, 3), std::string{"      ║│Sama treść.│║"});
@@ -157,7 +157,7 @@ TRIAL("Message: without a title there is no title row") {
 TRIAL("Message: without answers there is no second box") {
     Opened made{"Czekaj", "Przeglądam…"};
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
 
     same(read(seen, 1), std::string{"      ╔═════════════╗"});
     same(read(seen, 2), std::string{"      ║   Czekaj    ║"});
@@ -172,7 +172,7 @@ TRIAL("Message: without answers there is no second box") {
 TRIAL("Message: boxes off give the title on the frame and content with breathing room") {
     Opened made{"Bez", "Goła treść.", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
 
     same(read(seen, 2), std::string{"      ╔════ Bez ════╗"});
     same(read(seen, 3), std::string{"      ║ Goła treść. ║"});
@@ -191,7 +191,7 @@ TRIAL("Message: without boxes long content wraps with breathing room, the window
     // At every width the first and the last word show: wrapping is computed in the same room the
     // text then stands in.
     for (const int wide : {20, 21, 22, 23, 24, 25, 26}) {
-        const View seen = made.drawn({wide, 14});
+        const Snapshot seen = made.drawn({wide, 14});
 
         bool first = false;
         bool last = false;
@@ -216,7 +216,7 @@ TRIAL("Message: without boxes a new title stands on the frame and widens the win
 
     same(made.one->title(), std::string{"Bardzo długi tytuł"});
 
-    const View seen = made.drawn({40, 10});
+    const Snapshot seen = made.drawn({40, 10});
 
     ought(read(seen, 2).find("═ Bardzo długi tytuł ═") != std::string::npos);
 }
@@ -225,7 +225,7 @@ TRIAL("Message: without boxes a new title stands on the frame and widens the win
 TRIAL("Message: without boxes empty content and no buttons leave no holes") {
     Opened bare{"Tytuł", "", {{"OK", U'O'}}, ui::MessageShape{ui::Border::twin, false}};
 
-    const View one = bare.drawn({30, 10});
+    const Snapshot one = bare.drawn({30, 10});
 
     int rows = 0;
 
@@ -236,7 +236,7 @@ TRIAL("Message: without boxes empty content and no buttons leave no holes") {
 
     Opened mute{"Tytuł", "Czekam.", {}, ui::MessageShape{ui::Border::twin, false}};
 
-    const View two = mute.drawn({30, 10});
+    const Snapshot two = mute.drawn({30, 10});
 
     rows = 0;
 
@@ -249,7 +249,7 @@ TRIAL("Message: without boxes empty content and no buttons leave no holes") {
 TRIAL("Message: buttons stand in the middle and have a gap") {
     Opened made{"Pytanie", "Plik już istnieje.", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
-    const View seen = made.drawn({40, 12});
+    const Snapshot seen = made.drawn({40, 12});
 
     same(read(seen, 7), std::string{"        ║│ [ Tak ] [ Nie ]  │║"});
 }
@@ -262,7 +262,7 @@ TRIAL("Message: long content wraps instead of stretching the window across the s
                "szerokość ekranu, bo tak się okien nie robi.",
                {{"OK", U'O'}}};
 
-    const View seen = made.drawn({60, 16});
+    const Snapshot seen = made.drawn({60, 16});
 
     // Four cells of breathing room on the sides and room for the shadow: the window does not touch
     // the edge.
@@ -278,7 +278,7 @@ TRIAL("Message: long content wraps instead of stretching the window across the s
 TRIAL("Message: short content does not inflate the window") {
     Opened made{"A", "b", {{"OK", U'O'}}};
 
-    const View seen = made.drawn({60, 12});
+    const Snapshot seen = made.drawn({60, 12});
 
     // The width is dictated by the widest child, here the row of buttons, not the content.
     same(read(seen, 3), std::string{"                        ║│  b   │║"});
@@ -450,7 +450,7 @@ TRIAL("Message: the role's stem is handed out to all the parts") {
     // to see the resting role, so the focus goes back to the window itself.
     made.one->focus();
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
 
     // The window's edge, the title, the box's line, the content and the button, each from its own
     // role.
@@ -507,7 +507,7 @@ TRIAL("Message: content and title can be changed after construction") {
     same(made.one->title(), std::string{"Nowy"});
     same(made.one->text(), std::string{"Nowa treść."});
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
 
     ought(read(seen, 1).find("Nowy") != std::string::npos);
     ought(read(seen, 3).find("Nowa treść.") != std::string::npos);
@@ -532,11 +532,11 @@ TRIAL("Message: content set after construction shows") {
 TRIAL("Message: content taken away after construction hides the box") {
     Opened made{"Uwaga", "Była treść.", {{"OK", U'O'}}};
 
-    const View was = made.drawn({30, 12});
+    const Snapshot was = made.drawn({30, 12});
 
     made.one->text(std::string{});
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
 
     ought(!shown(seen, "Była treść."));
     ought(shown(seen, "[ OK ]"));
@@ -587,7 +587,7 @@ TRIAL("Message: clear() takes the answers away together with the box") {
 
     same(made.one->buttons().many(), std::size_t{0});
 
-    const View seen = made.drawn({44, 14});
+    const Snapshot seen = made.drawn({44, 14});
 
     ought(!shown(seen, "[ Tak ]"));
     ought(shown(seen, "Co robić?"));

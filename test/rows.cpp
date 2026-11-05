@@ -42,7 +42,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -147,7 +147,7 @@ TRIAL("Column: children stand one below the other") {
     one.children().add(first);
     one.children().add(second);
 
-    const View made = one.render({{0, 0}, {6, 4}});
+    const Snapshot made = one.render({{0, 0}, {6, 4}});
 
     same(first->area().at.y, 0);
     same(second->area().at.y, 1);
@@ -166,7 +166,7 @@ TRIAL("Row: children stand side by side") {
     one.children().add(first);
     one.children().add(second);
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(first->area().at.x, 0);
     same(second->area().at.x, 2);
@@ -194,7 +194,7 @@ TRIAL("Flow: carries over what does not fit and centers the lines") {
     same(one.wants({12, 10}), (ui::Size{12, 3}));
     same(one.wants({12, 2}), (ui::Size{12, 2}));
 
-    const View made = one.render({{0, 0}, {12, 3}});
+    const Snapshot made = one.render({{0, 0}, {12, 3}});
 
     same(read(made, 0), std::string{"aaaaa bbbbb"});
     same(read(made, 1), std::string{"   ccccc"});
@@ -310,7 +310,7 @@ TRIAL("Row in a column is laid out as expected") {
     outer.children().add(row);
     outer.children().add(std::make_shared<ui::Span>("pies"));
 
-    const View made = outer.render({{0, 0}, {8, 2}});
+    const Snapshot made = outer.render({{0, 0}, {8, 2}});
 
     same(read(made, 0), std::string{"alakot"});
     same(read(made, 1), std::string{"pies"});

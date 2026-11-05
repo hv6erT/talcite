@@ -22,7 +22,7 @@ using namespace talcite;
 namespace {
 
 // Reads one row of a view as text, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -169,7 +169,7 @@ TRIAL("Field: scrolls so that the cursor is visible") {
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {5, 1}});
+    const Snapshot made = top.render({{0, 0}, {5, 1}});
 
     same(read(made, 0), std::string{"efgh"});
 
@@ -179,7 +179,7 @@ TRIAL("Field: scrolls so that the cursor is visible") {
     // Going back to the start scrolls back.
     pressed(top, ui::Code::home);
 
-    const View other = top.render({{0, 0}, {5, 1}});
+    const Snapshot other = top.render({{0, 0}, {5, 1}});
 
     same(read(other, 0), std::string{"abcde"});
     same(*top.caret(), (ui::Spot{0, 0}));
@@ -205,7 +205,7 @@ TRIAL("Field: without the focus a text that does not fit ends with the ellipsis"
 
     other->focus();
 
-    const View rest = top.render({{0, 0}, {5, 2}});
+    const Snapshot rest = top.render({{0, 0}, {5, 2}});
 
     same(read(rest, 0), std::string{"abcd…"});
     same(read(rest, 1), std::string{"ab"});
@@ -225,7 +225,7 @@ TRIAL("Field: a double-width character takes two cells") {
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {6, 1}});
+    const Snapshot made = top.render({{0, 0}, {6, 1}});
 
     // Six cells of content leave no room for the cursor after it, so the first character leaves the
     // view.
@@ -313,7 +313,7 @@ TRIAL("Field: justified to the right, the content and the cursor stand at the ri
     top.children().add(one);
     one->focus();
 
-    const View shown = top.render({{0, 0}, {8, 1}});
+    const Snapshot shown = top.render({{0, 0}, {8, 1}});
 
     same(read(shown, 0), std::string{"    750"});
     same(one->caret(), (std::optional{ui::Spot{7, 0}}));
@@ -383,7 +383,7 @@ TRIAL("Suggestion: drawn grayed out and not part of the content") {
     same(one->text(), std::string{"ka"});
     same(one->guessed(), std::string{"talog"});
 
-    const View made = top.render({{0, 0}, {12, 1}});
+    const Snapshot made = top.render({{0, 0}, {12, 1}});
 
     same(read(made, 0), std::string{"katalog"});
 
@@ -882,7 +882,7 @@ TRIAL("Field: the role root can be replaced") {
     top.skin(ui::Skin{these});
     one->role("moje.pole");
 
-    const View made = top.render({{0, 0}, {6, 1}});
+    const Snapshot made = top.render({{0, 0}, {6, 1}});
 
     same(made.at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }

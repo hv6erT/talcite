@@ -7,6 +7,8 @@
 
 #include "talcite/mosaic.hpp"
 
+#include "sheet.hpp"
+
 using namespace talcite;
 
 namespace {
@@ -29,7 +31,7 @@ Pixels held(ui::Size size, const std::vector<std::uint8_t>& bytes) {
 
 // One cell, drawn on a sheet where nothing was drawn yet and handed back for inspection.
 Cell one(const Pixels& what, ui::Blocks kind, const Style& under = {}) {
-    View made{{1, 1}};
+    detail::Sheet made{{1, 1}};
 
     made.clear({{0, 0}, {1, 1}});
 
@@ -246,7 +248,7 @@ TRIAL("Mosaic: each cell takes its own piece of the image") {
             at[0] = 255;
         }
 
-    View made{{2, 1}};
+    detail::Sheet made{{2, 1}};
 
     Canvas onto{made};
 
@@ -259,7 +261,7 @@ TRIAL("Mosaic: each cell takes its own piece of the image") {
 }
 
 TRIAL("Mosaic: draws from the given place") {
-    View made{{3, 3}};
+    detail::Sheet made{{3, 3}};
 
     Canvas onto{made};
 
@@ -273,7 +275,7 @@ TRIAL("Mosaic: draws from the given place") {
 // --- Refusals -----------------------------------------------------------------------------------
 
 TRIAL("Mosaic: an empty image draws nothing") {
-    View made{{2, 2}};
+    detail::Sheet made{{2, 2}};
 
     Canvas onto{made};
 
@@ -284,7 +286,7 @@ TRIAL("Mosaic: an empty image draws nothing") {
 }
 
 TRIAL("Mosaic: a frame out of range draws nothing") {
-    View made{{1, 1}};
+    detail::Sheet made{{1, 1}};
 
     Canvas onto{made};
 
@@ -294,7 +296,7 @@ TRIAL("Mosaic: a frame out of range draws nothing") {
 }
 
 TRIAL("Mosaic: an image smaller than a cell draws nothing") {
-    View made{{1, 1}};
+    detail::Sheet made{{1, 1}};
 
     Canvas onto{made};
 
@@ -310,7 +312,7 @@ namespace {
 // One cell drawn with the given color depth and character set, on a sheet where nothing was drawn
 // yet.
 Cell dressed_as(const Pixels& what, ui::Blocks kind, Colors colors, bool unicode, const Style& under = {}) {
-    View made{{1, 1}};
+    detail::Sheet made{{1, 1}};
 
     made.clear({{0, 0}, {1, 1}});
 
@@ -399,8 +401,8 @@ TRIAL("Mosaic: monochrome with transparency is the silhouette of what is visible
             at[3] = 255;
         }
 
-    View colored{{2, 1}};
-    View mono{{2, 1}};
+    detail::Sheet colored{{2, 1}};
+    detail::Sheet mono{{2, 1}};
 
     colored.clear({{0, 0}, {2, 1}});
     mono.clear({{0, 0}, {2, 1}});

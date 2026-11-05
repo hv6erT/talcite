@@ -41,7 +41,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -91,7 +91,7 @@ TRIAL("Float: a right float stands at the right edge of a row") {
     same(one.wants({20, 1}).wide, 9);
     same(right->wants({20, 1}).wide, 5);
 
-    const View made = one.render({{0, 0}, {14, 1}});
+    const Snapshot made = one.render({{0, 0}, {14, 1}});
 
     same(read(made, 0), std::string{"nnn      yy zz"});
     same(note->area().at.x, 0);
@@ -157,7 +157,7 @@ TRIAL("Float: in a column the child stands at the float's side") {
 
     same(one.wants({10, 5}), (ui::Size{4, 3}));
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"llll"});
     same(read(made, 1), std::string{"   mmmm"});
@@ -198,7 +198,7 @@ TRIAL("Float: a bottom float stands at the bottom edge of a column") {
 
     same(one.wants({10, 5}), (ui::Size{4, 2}));
 
-    const View made = one.render({{0, 0}, {6, 5}});
+    const Snapshot made = one.render({{0, 0}, {6, 5}});
 
     same(read(made, 0), std::string{"cccccc"});
     same(read(made, 3), std::string{""});
@@ -217,7 +217,7 @@ TRIAL("Float: the spare height is split equally between the free sides") {
     one.children().add(holding<ui::Bottom>(low));
     one.children().add(holding<ui::Middle>(middle));
 
-    const View made = one.render({{0, 0}, {2, 8}});
+    const Snapshot made = one.render({{0, 0}, {2, 8}});
 
     same(read(made, 2), std::string{"bb"});
     same(read(made, 5), std::string{"mm"});
@@ -245,7 +245,7 @@ TRIAL("Float: the odd rows of the split go to the last margins") {
     one.children().add(holding<ui::Middle>(middle));
     one.children().add(holding<ui::Bottom>(low));
 
-    const View made = one.render({{0, 0}, {2, 7}});
+    const Snapshot made = one.render({{0, 0}, {2, 7}});
 
     same(read(made, 1), std::string{"mm"});
     same(read(made, 6), std::string{"bb"});
@@ -262,7 +262,7 @@ TRIAL("Float: a column gives a horizontal float no rows beyond what it holds") {
     one.children().add(holding<ui::Right>(right));
     one.children().add(next);
 
-    const View made = one.render({{0, 0}, {4, 4}});
+    const Snapshot made = one.render({{0, 0}, {4, 4}});
 
     same(read(made, 0), std::string{"  rr"});
     same(read(made, 1), std::string{"nnnn"});
@@ -281,7 +281,7 @@ TRIAL("Float: in a row a vertical float places its child in the full height") {
     one.children().add(holding<ui::Bottom>(low));
     one.children().add(next);
 
-    const View made = one.render({{0, 0}, {6, 3}});
+    const Snapshot made = one.render({{0, 0}, {6, 3}});
 
     same(read(made, 0), std::string{"  n"});
     same(read(made, 2), std::string{"bbn"});

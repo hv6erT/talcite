@@ -21,7 +21,7 @@ using namespace talcite;
 namespace {
 
 // Reads one row of a view as text, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -36,7 +36,7 @@ std::string read(const View& one, int y) {
 }
 
 // Tells whether the text appears in any row of the view.
-bool shown(const View& one, const std::string& what) {
+bool shown(const Snapshot& one, const std::string& what) {
     for (int y = 0; y < one.size().high; ++y)
         if (read(one, y).find(what) != std::string::npos) return true;
 
@@ -46,7 +46,7 @@ bool shown(const View& one, const std::string& what) {
 // The veil puts the box in the middle of the screen, so the trials count rows from the top edge of
 // the frame and compare without the left margin: shape, not position. This returns the row of the
 // frame's top edge, or -1 when there is no frame.
-int framed(const View& one) {
+int framed(const Snapshot& one) {
     for (int y = 0; y < one.size().high; ++y) {
         const std::string row = read(one, y);
 
@@ -57,7 +57,7 @@ int framed(const View& one) {
 }
 
 // Reads one row of a view as text, without the leading and trailing spaces.
-std::string lined(const View& one, int y) {
+std::string lined(const Snapshot& one, int y) {
     std::string made = read(one, y);
 
     made.erase(0, made.find_first_not_of(' '));
@@ -91,7 +91,7 @@ struct Opened {
     void open() { window->open(one); }
 
     // Renders the whole root in an area of the given size.
-    View drawn(ui::Size size) { return top.render({{0, 0}, size}); }
+    Snapshot drawn(ui::Size size) { return top.render({{0, 0}, size}); }
 };
 
 }
@@ -110,7 +110,7 @@ TRIAL("Form: title in the frame, content, a gap and the buttons in the middle") 
     (void)made.one->buttons().add("Cancel");
     made.open();
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
     ought(at >= 0);
@@ -129,7 +129,7 @@ TRIAL("Form: the buttons stand in the middle when the content is wider") {
     (void)made.one->buttons().add("OK");
     made.open();
 
-    const View seen = made.drawn({40, 10});
+    const Snapshot seen = made.drawn({40, 10});
     const int at = framed(seen);
 
     same(lined(seen, at + 1), std::string{"║A long line of text here║"});
@@ -146,7 +146,7 @@ TRIAL("Form: buttons that do not fit move down to the next line") {
 
     made.open();
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
     const int at = framed(seen);
 
     same(lined(seen, at + 3), std::string{"║[ First ] [ Second ]║"});
@@ -182,7 +182,7 @@ TRIAL("Form: content filling the height stands right above the buttons, with no 
     (void)made.one->buttons().add("OK");
     made.open();
 
-    const View seen = made.drawn({30, 12});
+    const Snapshot seen = made.drawn({30, 12});
     const int at = framed(seen);
 
     // The room has twelve rows and the shadow takes one: the frame, six rows of content, the
@@ -210,7 +210,7 @@ TRIAL("Form: the footer stands under the content and keeps its place when the ro
     made.one->footer()->children().add(std::make_shared<ui::Span>("Matches 2 of 4"));
     made.open();
 
-    const View seen = made.drawn({30, 8});
+    const Snapshot seen = made.drawn({30, 8});
     const int at = framed(seen);
 
     // Eight rows, one for the shadow: the frame, three rows of content, the gap, the footer, the
@@ -231,7 +231,7 @@ TRIAL("Form: without buttons there is no gap and no button row") {
     made.one->body()->children().add(std::make_shared<ui::Span>("Just this"));
     made.open();
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
     same(lined(seen, at), std::string{"╔═ Note ══╗"});
@@ -246,7 +246,7 @@ TRIAL("Form: without content there is no gap, only the buttons") {
     (void)made.one->buttons().add("No");
     made.open();
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
     same(lined(seen, at + 1), std::string{"║[ Yes ] [ No ]║"});
@@ -265,7 +265,7 @@ TRIAL("Form: the title, frame style and shadow come from the caller") {
 
     same(made.one->title(), std::string{"Other"});
 
-    const View seen = made.drawn({30, 10});
+    const Snapshot seen = made.drawn({30, 10});
 
     ought(shown(seen, "┌"));
     ought(shown(seen, "Other"));
@@ -281,7 +281,7 @@ TRIAL("Form: the window is not narrower than its title") {
     (void)made.one->buttons().add("OK");
     made.open();
 
-    const View seen = made.drawn({40, 10});
+    const Snapshot seen = made.drawn({40, 10});
     const int at = framed(seen);
 
     same(lined(seen, at), std::string{"╔═ Make directory ═╗"});

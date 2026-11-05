@@ -20,7 +20,7 @@ class Sheet : public ui::Root {};
 
 // Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
 // dropping trailing spaces.
-std::string said(const View& one, int y) {
+std::string said(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -113,7 +113,7 @@ TRIAL("Table: a column with zero takes the rest of the width") {
 
     const auto one = shown(sheet, 3);
 
-    const View made = sheet.render({{0, 0}, {30, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {30, 4}});
 
     same(said(made, 0), std::string{"Nazwa                  Rozmiar"});
     same(said(made, 1), std::string{"plik0                        0"});
@@ -197,7 +197,7 @@ TRIAL("Table: the flexible column does not vanish in an extremely narrow window"
 
     const auto one = shown(sheet, 3);
 
-    const View made = sheet.render({{0, 0}, {8, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {8, 3}});
 
     same(made.at({0, 1}).letter, U'p');
 }
@@ -229,7 +229,7 @@ TRIAL("Table: a spanning cell takes the rest of the row") {
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {40, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {40, 2}});
 
     same(said(made, 0), std::string{"    Uporządkowane i zatwierdzone: 12"});
     same(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
@@ -262,7 +262,7 @@ TRIAL("Table: a cell elides at the end it asks for, and only then") {
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {19, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {19, 3}});
 
     same(said(made, 0), std::string{"…uRay.en.srt a.srt"});
     same(said(made, 1), std::string{"Alien…en.srt"});
@@ -362,7 +362,7 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         one->which(1);
 
-        const View made = sheet.render({{0, 0}, {30, 6}});
+        const Snapshot made = sheet.render({{0, 0}, {30, 6}});
 
         same(one->first(), std::size_t{0});
         same(said(made, 1), std::string{"plik0                        0"});
@@ -375,7 +375,7 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         one->which(8);
 
-        const View made = sheet.render({{0, 0}, {30, 4}});
+        const Snapshot made = sheet.render({{0, 0}, {30, 4}});
 
         same(one->first(), std::size_t{6});
         same(said(made, 3), std::string{"plik8                       80"});
@@ -837,7 +837,7 @@ TRIAL("Table: the current, selected and plain rows have different roles") {
 
     one->chosen().add(1);
 
-    const View made = sheet.render({{0, 0}, {30, 5}});
+    const Snapshot made = sheet.render({{0, 0}, {30, 5}});
 
     // The heading and the current row in reverse video, the selected row bold, the rest plain.
     ought(made.at({0, 0}).style.reverse);
@@ -867,7 +867,7 @@ TRIAL("Table: a cell's role is laid over the row's role") {
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {9, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {9, 1}});
 
     // The row is current, so it is in reverse video; the first cell adds bold to that.
     ought(made.at({0, 0}).style.reverse);
@@ -915,7 +915,7 @@ TRIAL("Table: a cell's marks lay roles over stretches of its text") {
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {19, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {19, 1}});
 
     same(said(made, 0), std::string{"\u25AC\u25AC\u25AC\u25AC\u25AC \u2026fghij     ok"});
 
@@ -966,7 +966,7 @@ TRIAL("Table: refresh asks the source again and keeps the selection") {
 
     one->refresh();
 
-    const View made = sheet.render({{0, 0}, {10, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {10, 1}});
 
     ought(one->chosen().contains(0));
 
@@ -1063,7 +1063,7 @@ TRIAL("Table: rows replaced around the cursor keep its row and the view") {
     same(one->first(), std::size_t{4});
     same(one->rows(), std::size_t{23});
 
-    View made = sheet.render({{0, 0}, {10, 5}});
+    Snapshot made = sheet.render({{0, 0}, {10, 5}});
 
     same(said(made, 2), std::string{"r6"});
     same(said(made, 3), std::string{"a"});
@@ -1165,7 +1165,7 @@ TRIAL("Table: the scrollbar takes a column from the content") {
 
     one->scrollbar(true);
 
-    const View made = sheet.render({{0, 0}, {30, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {30, 3}});
 
     // With the scrollbar the content narrows by one cell, and the scrollbar stands in its place.
     same(made.at({28, 0}).letter, U'0');
@@ -1182,7 +1182,7 @@ TRIAL("Table: the scrollbar only with rows that are not visible") {
     one->heading(false);
     one->scrollbar(true);
 
-    const View fits = sheet.render({{0, 0}, {30, 3}});
+    const Snapshot fits = sheet.render({{0, 0}, {30, 3}});
 
     same(fits.at({29, 0}).letter, U' ');
     same(fits.at({28, 0}).letter, U'0');
@@ -1215,7 +1215,7 @@ TRIAL("Table: the scrollbar starts under the heading") {
 
     one->scrollbar(true);
 
-    const View made = sheet.render({{0, 0}, {30, 5}});
+    const Snapshot made = sheet.render({{0, 0}, {30, 5}});
 
     ought(made.at({29, 0}).letter == U' ' || made.at({29, 0}).letter == 0);
 
@@ -1319,7 +1319,7 @@ TRIAL("Table: a refresh repaints only the rows that came out different") {
 
     one->refresh();
 
-    const View made = sheet.render({{0, 0}, {10, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
     same(said(made, 0), std::string{"a"});
     same(said(made, 1), std::string{"B"});
@@ -1354,7 +1354,7 @@ TRIAL("Table: the room a cell's text leaves takes the cell's role too") {
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {14, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {14, 1}});
 
     ought(made.at({2, 0}).style.bold);
     ought(made.at({3, 0}).style.bold);
@@ -1394,7 +1394,7 @@ TRIAL("Table: a tab in a cell takes one cell, also for the justification and the
 
     sheet.children().add(one);
 
-    const View made = sheet.render({{0, 0}, {6, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {6, 1}});
 
     same(made.at({3, 0}).letter, U'a');
     same(made.at({4, 0}).letter, U'␉');

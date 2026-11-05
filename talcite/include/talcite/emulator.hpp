@@ -11,8 +11,8 @@
 #include "talcite/area.hpp"
 #include "talcite/bytes.hpp"
 #include "talcite/shape.hpp"
+#include "talcite/snapshot.hpp"
 #include "talcite/style.hpp"
-#include "talcite/view.hpp"
 
 namespace talcite::ui {
 

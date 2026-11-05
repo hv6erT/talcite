@@ -37,7 +37,7 @@ private:
 };
 
 // Reads the first row of a view as text, with trailing spaces removed.
-std::string read(const View& one) {
+std::string read(const Snapshot& one) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -256,7 +256,7 @@ TRIAL("Gauge: the role root can be replaced") {
     top.skin(ui::Skin{these});
     one->role("moj.wskaznik");
 
-    const View made = top.render({{0, 0}, {8, 1}});
+    const Snapshot made = top.render({{0, 0}, {8, 1}});
 
     same(made.at({1, 0}).style.foreground, (Color{false, 4, 4, 4}));
 }
@@ -276,7 +276,7 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
     one->part(0.5);
     under.children().add(one);
 
-    const View made = under.render({{0, 0}, {20, 1}});
+    const Snapshot made = under.render({{0, 0}, {20, 1}});
 
     same(read(made), std::string{"[███████░░░░░░]  50%"});
 
@@ -303,7 +303,7 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
 
     top.skin(ui::Skin{these});
 
-    const View again = top.render({{0, 0}, {20, 1}});
+    const Snapshot again = top.render({{0, 0}, {20, 1}});
 
     same(again.at({19, 0}).style.background, (Color{false, 4, 4, 4}));
 }

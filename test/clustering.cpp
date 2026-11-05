@@ -13,10 +13,11 @@
 #include "talcite/encoding.hpp"
 #include "talcite/field.hpp"
 #include "talcite/root.hpp"
+#include "talcite/snapshot.hpp"
 #include "talcite/term.hpp"
-#include "talcite/view.hpp"
 
 #include "conhost.hpp"
+#include "sheet.hpp"
 
 using namespace talcite;
 
@@ -83,7 +84,7 @@ std::vector<std::size_t> forward(std::string_view text) {
 }
 
 // One row of a view as text, trailing spaces removed.
-std::string row(const View& one, int y) {
+std::string row(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x)
@@ -277,10 +278,11 @@ TRIAL("Clusters: a glyph remembers the rendering it was measured in") {
 
 // --- Drawing ---------------------------------------------------------------------------------------
 
-TRIAL("Clusters: a view puts a letter with its accent in one cell") {
-    View one{{10, 1}};
+TRIAL("Clusters: a canvas puts a letter with its accent in one cell") {
+    detail::Sheet one{{10, 1}};
+    Canvas onto{one};
 
-    one.put({0, 0}, "Zoe" + acute + "!", Style{});
+    onto.put({0, 0}, "Zoe" + acute + "!", Style{});
 
     same(row(one, 0), std::string{"Zoe" + acute + "!"});
     same(spelled(one.at({2, 0}).letter), std::string{"e" + acute});
@@ -291,7 +293,7 @@ TRIAL("Clusters: a view puts a letter with its accent in one cell") {
 // Code that puts text character by character and moves by `width` still gets one letter: the mark
 // joins the glyph on its left, past the second half of a wide one.
 TRIAL("Clusters: a mark put alone joins the glyph on its left") {
-    View one{{10, 1}};
+    detail::Sheet one{{10, 1}};
 
     one.put({0, 0}, U'e', Style{});
     one.put({1, 0}, U'\x301', Style{});
@@ -301,7 +303,7 @@ TRIAL("Clusters: a mark put alone joins the glyph on its left") {
     same(spelled(one.at({0, 0}).letter), std::string{"e" + acute});
     same(spelled(one.at({1, 0}).letter), std::string{"\xe4\xbd\xa0" + acute});
 
-    View empty{{3, 1}};
+    detail::Sheet empty{{3, 1}};
 
     empty.put({0, 0}, U'\x301', Style{});
 

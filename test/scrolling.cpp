@@ -17,6 +17,7 @@
 #include "talcite/span.hpp"
 
 #include "scrollbar.hpp"
+#include "sheet.hpp"
 
 using namespace talcite;
 
@@ -82,7 +83,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -160,7 +161,7 @@ TRIAL("Vertical scroll: without scrolling the start of the content is visible") 
 
     one.children().add(rows(10));
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"wiersz 0"});
     same(read(made, 2), std::string{"wiersz 2"});
@@ -174,7 +175,7 @@ TRIAL("Vertical scroll: scrolling moves the content up") {
 
     one.shift({0, 4});
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"wiersz 4"});
     same(read(made, 1), std::string{"wiersz 5"});
@@ -187,7 +188,7 @@ TRIAL("Vertical scroll: cannot scroll past the end of the content") {
 
     one.shift({0, 100});
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     same(one.shift().y, 2);
     same(read(made, 0), std::string{"wiersz 2"});
@@ -305,7 +306,7 @@ TRIAL("Horizontal scroll: scrolling moves the content left") {
 
     one.shift({3, 0});
 
-    const View made = one.render({{0, 0}, {4, 1}});
+    const Snapshot made = one.render({{0, 0}, {4, 1}});
 
     same(read(made, 0), std::string{"defg"});
 }
@@ -432,7 +433,7 @@ TRIAL("Scrollbar: without turning it on there is none") {
 
     one.children().add(rows(10));
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     ought(!one.scrollbar());
     same(read(made, 0), std::string{"wiersz 0"});
@@ -444,7 +445,7 @@ TRIAL("Scrollbar: a line from edge to edge, the slider on it") {
 
     one.children().add(rows(20));
 
-    const View made = one.render({{0, 0}, {10, 5}});
+    const Snapshot made = one.render({{0, 0}, {10, 5}});
 
     ought(one.scrollbar());
     same(made.at({9, 0}).letter, U'█');
@@ -459,7 +460,7 @@ TRIAL("Scrollbar: the slider moves down together with scrolling") {
 
     one.shift({0, 100});
 
-    const View made = one.render({{0, 0}, {10, 5}});
+    const Snapshot made = one.render({{0, 0}, {10, 5}});
 
     same(made.at({9, 4}).letter, U'█');
     same(made.at({9, 0}).letter, U'│');
@@ -473,7 +474,7 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
     const ui::Skin how;
     const std::string role = "talcite.scroll";
 
-    View made{{1, 12}};
+    detail::Sheet made{{1, 12}};
 
     Canvas onto{made};
 
@@ -496,7 +497,7 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
     const ui::Skin how;
     const std::string role = "talcite.scroll";
 
-    View made{{1, 12}};
+    detail::Sheet made{{1, 12}};
 
     Canvas onto{made};
 
@@ -514,7 +515,7 @@ TRIAL("Scrollbar: content that fits in the window gives a slider over the whole 
 
     one.children().add(rows(2));
 
-    const View made = one.render({{0, 0}, {10, 5}});
+    const Snapshot made = one.render({{0, 0}, {10, 5}});
 
     for (int y = 0; y < 5; ++y) same(made.at({9, y}).letter, U'█');
 }
@@ -529,13 +530,13 @@ TRIAL("Scrollbar when needed: content that fits has no bar, longer content has o
 
     one.children().add(inner);
 
-    const View fits = one.render({{0, 0}, {10, 5}});
+    const Snapshot fits = one.render({{0, 0}, {10, 5}});
 
     same(inner->area().size.wide, 10);
     same(fits.at({9, 0}).letter, U'a');
     same(one.wants({80, 5}).wide, 10);
 
-    const View tight = one.render({{0, 0}, {10, 3}});
+    const Snapshot tight = one.render({{0, 0}, {10, 3}});
 
     same(inner->area().size.wide, 9);
     same(tight.at({9, 0}).letter, U'█');
@@ -544,7 +545,7 @@ TRIAL("Scrollbar when needed: content that fits has no bar, longer content has o
     same(one.wants({80, 3}).wide, 11);
 
     // Content equal to the window fits too; the last column belongs to the content (row 3 is "d").
-    const View exact = one.render({{0, 0}, {10, 4}});
+    const Snapshot exact = one.render({{0, 0}, {10, 4}});
 
     same(exact.at({9, 3}).letter, U'd');
 }
@@ -557,7 +558,7 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     one.children().add(std::make_shared<Sheet>(ui::Size{6, 20}, U'a'));
 
-    const View made = one.render({{0, 0}, {6, 6}});
+    const Snapshot made = one.render({{0, 0}, {6, 6}});
 
     same(made.at({5, 0}).letter, U'█');
     same(made.at({5, 4}).letter, U'│');
@@ -568,7 +569,7 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     wide.children().add(std::make_shared<Sheet>(ui::Size{5, 5}, U'a'));
 
-    const View none = wide.render({{0, 0}, {6, 6}});
+    const Snapshot none = wide.render({{0, 0}, {6, 6}});
 
     same(none.at({5, 0}).letter, U' ');
     same(none.at({0, 5}).letter, U' ');
@@ -586,7 +587,7 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     across.children().add(std::make_shared<Sheet>(ui::Size{20, 5}, U'a'));
 
-    const View flat = across.render({{0, 0}, {6, 3}});
+    const Snapshot flat = across.render({{0, 0}, {6, 3}});
 
     same(flat.at({5, 0}).letter, U'a');
     same(flat.at({0, 2}).letter, U'█');
@@ -624,7 +625,7 @@ TRIAL("Horizontal scrollbar: a line in the bottom row, the slider on it") {
 
     one.children().add(std::make_shared<ui::Span>("abcdefghijklmnoprst"));
 
-    const View made = one.render({{0, 0}, {6, 2}});
+    const Snapshot made = one.render({{0, 0}, {6, 2}});
 
     same(made.at({0, 1}).letter, U'█');
     same(made.at({1, 1}).letter, U'─');
@@ -637,7 +638,7 @@ TRIAL("Scroll: two bars and an empty corner") {
 
     one.children().add(std::make_shared<Sheet>(ui::Size{20, 20}, U'a'));
 
-    const View made = one.render({{0, 0}, {6, 6}});
+    const Snapshot made = one.render({{0, 0}, {6, 6}});
 
     same(made.at({5, 0}).letter, U'█');
     same(made.at({5, 4}).letter, U'│');
@@ -694,7 +695,7 @@ TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
     top.skin(ui::Skin{these});
     one->scrollbar_role("moj.suwak");
 
-    const View made = top.render({{0, 0}, {6, 5}});
+    const Snapshot made = top.render({{0, 0}, {6, 5}});
 
     same(made.at({5, 4}).style.foreground, (Color{false, 6, 6, 6}));
 }
@@ -723,7 +724,7 @@ TRIAL("Scrollbar: a style without a background takes the ground below") {
 
     top.skin(ui::Skin{ui::Styles{{"talcite.normal", ground}, {"talcite.scroll", lit}, {"talcite.scroll.thumb", lit}}});
 
-    const View made = top.render({{0, 0}, {10, 5}});
+    const Snapshot made = top.render({{0, 0}, {10, 5}});
 
     same(made.at({9, 0}).letter, U'█');
     same(made.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
@@ -773,7 +774,7 @@ TRIAL("Scrollbar: with the focus inside, the bar takes the .focus styles") {
 
     outside->focus();
 
-    View made = top.render({{0, 0}, {8, 6}});
+    Snapshot made = top.render({{0, 0}, {8, 6}});
 
     same(made.at({7, 0}).style.foreground, (Color{false, 2, 2, 2}));
     same(made.at({7, 4}).style.foreground, (Color{false, 1, 1, 1}));
@@ -820,7 +821,7 @@ TRIAL("Vertical scroll: focus outside the window adjusts the scrolling, inside i
 
     column->children()[19]->focus();
 
-    View shown = top.render({{0, 0}, {10, 5}});
+    Snapshot shown = top.render({{0, 0}, {10, 5}});
 
     same(scroll->shift().y, 15);
     same(read(shown, 4), std::string{"19"});

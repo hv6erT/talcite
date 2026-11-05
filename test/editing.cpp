@@ -27,7 +27,7 @@ class Sheet : public ui::Root {};
 
 
 // Reads one row of a view as text, with trailing spaces removed.
-std::string said(const View& one, int y) {
+std::string said(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -381,7 +381,7 @@ TRIAL("Editor: the selection is visible on the screen") {
 
     one->selection().set(2, 5);
 
-    const View made = sheet.render({{0, 0}, {20, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
     ought(!made.at({1, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
@@ -396,7 +396,7 @@ TRIAL("Editor: a selection across two lines gives a mark on each") {
 
     one->selection().set(1, 6);
 
-    const View made = sheet.render({{0, 0}, {20, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 3}});
 
     ought(!made.at({0, 0}).style.reverse);
     ought(made.at({1, 0}).style.reverse);
@@ -425,7 +425,7 @@ TRIAL("Editor: line(n) jumps to the start of a line, past the end to the last, a
     same(one->column(), std::size_t{0});
     ought(one->selection().empty());
 
-    const View made = sheet.render({{0, 0}, {20, 5}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 5}});
 
     bool seen = false;
 
@@ -826,7 +826,7 @@ TRIAL("Editor: the block is visible on the screen, also while extending; readonl
     block.mark();
     one->cursor(0);
 
-    View made = sheet.render({{0, 0}, {20, 2}});
+    Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
     ought(!made.at({1, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
@@ -2903,7 +2903,7 @@ TRIAL("Editor: the screen shows the content after a change") {
     one->cursor(0);
     one->insert("nowy ");
 
-    const View made = sheet.render({{0, 0}, {20, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 3}});
 
     same(said(made, 0), std::string{"nowy pierwszy"});
     same(said(made, 1), std::string{"drugi"});
@@ -3200,7 +3200,7 @@ TRIAL("Editor: without wrapping the view follows the cursor sideways") {
 
     one->cursor(100);
 
-    const View made = sheet.render({{0, 0}, {10, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
     same(one->left(), std::size_t{91});
     same(said(made, 0), std::string{"aaaaaaaaab"});

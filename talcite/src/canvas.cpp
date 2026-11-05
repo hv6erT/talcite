@@ -6,6 +6,8 @@
 
 #include "talcite/encoding.hpp"
 
+#include "sheet.hpp"
+
 // A window onto the one sheet of a frame. A node paints in its own coordinates, (0, 0) being its
 // upper left corner, and the canvas shifts what it paints to where the node stands on the sheet and
 // cuts it to what may be painted (the clip, in sheet coordinates). The sheet belongs to whoever
@@ -19,7 +21,7 @@
 namespace talcite {
 
 // The whole sheet, with (0, 0) in its corner and nothing cut away.
-Canvas::Canvas(View& sheet) : sheet_(&sheet), size_(sheet.size()), clip_{{0, 0}, sheet.size()} {}
+Canvas::Canvas(detail::Sheet& sheet) : sheet_(&sheet), size_(sheet.size()), clip_{{0, 0}, sheet.size()} {}
 
 // What of the node's rectangle may be painted, in the node's own coordinates. Empty when nothing
 // of the node can be seen.
@@ -57,7 +59,7 @@ bool Canvas::holds(ui::Spot where) const {
 // A rectangle in the node's coordinates as the part of the sheet it may paint.
 ui::Area Canvas::cut(const ui::Area& where) const { return ui::Area::crossed(where + origin_, clip_); }
 
-// One cell's content at `at`, as `View::put` puts it, cut to the clip. The edge of the clip is an
+// One cell's content at `at`, as `Sheet::put` puts it, cut to the clip. The edge of the clip is an
 // edge as the edge of a sheet was: a double-width character whose other half would fall outside
 // becomes a space, and a character that joins the glyph to its left (a combining mark) joins only a
 // glyph inside. Half of someone else's double-width character just outside the edge is mended by
@@ -89,10 +91,10 @@ void Canvas::put(ui::Spot at, char32_t what, const Style& how) {
 }
 
 // UTF-8 text from `at`, cluster by cluster, advancing by each glyph's width and stopping at the
-// right edge of the clip; a cluster that shows nothing takes no cell, as in `View::put`. A row
-// outside the clip is not read at all. A printable ASCII character not followed by a byte that
-// could join it is a cluster of its own, one cell wide and shown as itself: it goes into its cell
-// at once, as `View::put` would put it, without the way through clusters and glyphs.
+// right edge of the clip; a cluster that shows nothing takes no cell. A row outside the clip is not
+// read at all. A printable ASCII character not followed by a byte that could join it is a cluster
+// of its own, one cell wide and shown as itself: it goes into its cell at once, as `Sheet::put`
+// would put it, without the way through clusters and glyphs.
 void Canvas::put(ui::Spot at, std::string_view what, const Style& how) {
     const int row = at.y + origin_.y;
 
@@ -161,8 +163,8 @@ void Canvas::shade(const ui::Area& where, const Style& how) {
 }
 
 // A character with its own color and, when `how` gives none, the background of what lies below.
-// Over nothing at all it stays a foreground cell and takes its background from whatever comes under
-// it later, as `View::foreground` keeps it.
+// Over nothing at all it stays a foreground cell, its background transparent, which the terminal
+// shows as its own.
 void Canvas::foreground(ui::Spot at, char32_t what, const Style& how) {
     const ui::Spot here = at + origin_;
 
@@ -184,14 +186,14 @@ void Canvas::foreground(ui::Spot at, char32_t what, const Style& how) {
     }
 }
 
-// A pixel picture over `where`, cut to the clip (`View::picture`).
+// A pixel picture over `where`, cut to the clip (`Sheet::picture`).
 void Canvas::picture(const ui::Area& where, Picture what) { sheet_->picture(cut(where), std::move(what)); }
 
-// A hyperlink over `where`, cut to the clip (`View::link`).
+// A hyperlink over `where`, cut to the clip (`Sheet::link`).
 void Canvas::link(const ui::Area& where, Hyperlink what) { sheet_->link(cut(where), std::move(what)); }
 
 // The cell at `where` in the node's coordinates as it is on the sheet now: the node's own or what
-// lies under it. Outside the clip an empty cell, as `View::at` gives outside a sheet.
+// lies under it. Outside the clip an empty cell, as `Snapshot::at` gives outside a sheet.
 Cell Canvas::at(ui::Spot where) const {
     const ui::Spot here = where + origin_;
 

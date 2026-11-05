@@ -30,7 +30,7 @@ class Sheet : public ui::Root {};
 
 // A row of the page as a string, with spaces trimmed on the right; otherwise every comparison would
 // have to add padding up to the width of the window.
-std::string said(const View& one, int y) {
+std::string said(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -149,7 +149,7 @@ TRIAL("Viewer: rows land one below another") {
 
     const auto one = shown(sheet, "pierwszy\ndrugi\ntrzeci");
 
-    const View made = sheet.render({{0, 0}, {20, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 4}});
 
     same(said(made, 0), std::string{"pierwszy"});
     same(said(made, 1), std::string{"drugi"});
@@ -162,7 +162,7 @@ TRIAL("Viewer: a tab expands to eight columns") {
 
     const auto one = shown(sheet, "ab\tc");
 
-    const View made = sheet.render({{0, 0}, {20, 1}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 1}});
 
     same(said(made, 0), std::string{"ab      c"});
 }
@@ -175,7 +175,7 @@ TRIAL("Viewer: wrapping splits a long row by columns") {
 
     ought(one->wrapped());
 
-    const View made = sheet.render({{0, 0}, {4, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
     same(said(made, 0), std::string{"aaaa"});
     same(said(made, 1), std::string{"bbbb"});
@@ -189,7 +189,7 @@ TRIAL("Viewer: without wrapping a row is cut off") {
 
     one->wrapped(false);
 
-    const View made = sheet.render({{0, 0}, {4, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
     same(said(made, 0), std::string{"aaaa"});
     same(said(made, 1), std::string{"drug"});
@@ -202,7 +202,7 @@ TRIAL("Viewer: cutting counts columns, not characters") {
 
     const auto one = shown(sheet, "\xe4\xbd\xa0\xe4\xbd\xa0\xe4\xbd\xa0");
 
-    const View made = sheet.render({{0, 0}, {5, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {5, 3}});
 
     same(said(made, 0), std::string{"\xe4\xbd\xa0\xe4\xbd\xa0"});
     same(said(made, 1), std::string{"\xe4\xbd\xa0"});
@@ -408,7 +408,7 @@ TRIAL("Viewer: end shows the last page") {
 
     same(*one->first(), std::size_t{90});
 
-    const View made = sheet.render({{0, 0}, {40, 10}});
+    const Snapshot made = sheet.render({{0, 0}, {40, 10}});
 
     same(said(made, 9), std::string{"wiersz 99"});
 }
@@ -448,7 +448,7 @@ TRIAL("Viewer: switching wrapping does not move the row") {
 
     same(*one->first(), std::size_t{1});
 
-    const View made = sheet.render({{0, 0}, {4, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
     same(said(made, 0), std::string{"drug"});
 }
@@ -489,7 +489,7 @@ TRIAL("Viewer: stepping by pieces agrees with what is drawn") {
 
         whole->scrollbar(false);
 
-        const View all = tall.render({{0, 0}, {wide, 1000}});
+        const Snapshot all = tall.render({{0, 0}, {wide, 1000}});
 
         int total = 0;
 
@@ -506,7 +506,7 @@ TRIAL("Viewer: stepping by pieces agrees with what is drawn") {
         one->scrollbar(false);
 
         const auto agreed = [&](int from) {
-            const View made = sheet.render({{0, 0}, {wide, high}});
+            const Snapshot made = sheet.render({{0, 0}, {wide, high}});
 
             for (int y = 0; y < high; ++y) same(said(made, y), said(all, from + y));
         };
@@ -655,7 +655,7 @@ TRIAL("Viewer: a tab after the cut takes its own screen row") {
 
     const auto one = shown(sheet, "aaaaaaaaaa\t\nZ");
 
-    const View made = sheet.render({{0, 0}, {10, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
     same(said(made, 0), std::string{"aaaaaaaaaa"});
     same(said(made, 1), std::string{});
@@ -678,7 +678,7 @@ TRIAL("Viewer: end with a wrapped last row shows its tail") {
 
     one->end();
 
-    const View made = sheet.render({{0, 0}, {4, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
     same(said(made, 0), std::string{"efgh"});
     same(said(made, 1), std::string{"ijkl"});
@@ -709,7 +709,7 @@ TRIAL("Viewer: the scrollbar takes a column from the content") {
 
     ought(one->scrollbar());
 
-    const View made = sheet.render({{0, 0}, {5, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
     // The last column belongs to the scrollbar, so we compare only the start of the row.
     same(said(made, 0).substr(0, 4), std::string{"aaaa"});
@@ -724,7 +724,7 @@ TRIAL("Viewer: without the scrollbar the content gets the whole width") {
 
     ought(!one->scrollbar());
 
-    const View made = sheet.render({{0, 0}, {5, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
     same(said(made, 0), std::string{"aaaab"});
     same(said(made, 1), std::string{"bbb"});
@@ -741,7 +741,7 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
         one->hold(bytes(text));
         sheet.children().add(one);
 
-        const View made = sheet.render({{0, 0}, size});
+        const Snapshot made = sheet.render({{0, 0}, size});
 
         const char32_t edge = made.at({size.wide - 1, 0}).letter;
 
@@ -775,7 +775,7 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
 
         ought(sheet.dispatch(end));
 
-        const View made = sheet.render({{0, 0}, {5, 4}});
+        const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
         same(made.at({4, 0}).letter, U'│');
         same(made.at({4, 3}).letter, U'█');
@@ -815,7 +815,7 @@ TRIAL("Viewer: the scrollbar stands at the right edge") {
 
     one->scrollbar(true);
 
-    const View made = sheet.render({{0, 0}, {20, 5}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 5}});
 
     ought(made.at({19, 0}).letter != U' ');
     ought(made.at({19, 4}).letter != U' ');
@@ -843,7 +843,7 @@ TRIAL("Viewer: a byte scrollbar measures its window by what is visible") {
     ought(turned(loop, sheet, {20, 10}, [&] { return said(sheet.render({{0, 0}, {20, 10}}), 9).starts_with("j"); }));
     ought(!one->lines().has_value());
 
-    const View made = sheet.render({{0, 0}, {20, 10}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 10}});
     const char32_t block = sheet.skin().glyph("talcite.scroll.thumb");
 
     int thumb = 0;
@@ -902,7 +902,7 @@ TRIAL("Viewer: a mark repaints exactly its range") {
 
     one->marks().add(ui::Mark{0, 2, 5, "talcite.viewer.mark"});
 
-    const View made = sheet.render({{0, 0}, {20, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
     ought(!made.at({1, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
@@ -922,7 +922,7 @@ TRIAL("Viewer: a mark on a double-width character takes both columns") {
 
     one->marks().add(ui::Mark{0, 1, 4, "talcite.viewer.mark"});
 
-    const View made = sheet.render({{0, 0}, {20, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
     ought(!made.at({0, 0}).style.reverse);
     ought(made.at({1, 0}).style.reverse);
@@ -938,7 +938,7 @@ TRIAL("Viewer: a mark on a tab takes the whole expansion") {
 
     one->marks().add(ui::Mark{0, 2, 3, "talcite.viewer.mark"});
 
-    const View made = sheet.render({{0, 0}, {20, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
     ought(!made.at({1, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
@@ -1287,14 +1287,14 @@ TRIAL("Viewer: an asynchronous source paints emptiness, and rows after a turn of
     one->hold(fed(raw), raw.size());
     sheet.children().add(one);
 
-    const View first = sheet.render({{0, 0}, {40, 10}});
+    const Snapshot first = sheet.render({{0, 0}, {40, 10}});
 
     same(said(first, 0), std::string{});
     ought(!one->lines().has_value());
 
     ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
 
-    const View made = sheet.render({{0, 0}, {40, 10}});
+    const Snapshot made = sheet.render({{0, 0}, {40, 10}});
 
     same(said(made, 9), std::string{"wiersz 9"});
     same(*one->at(), std::size_t{0});
@@ -1326,7 +1326,7 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
     one->hold(feed, raw.size(), head);
     sheet.children().add(one);
 
-    const View first = sheet.render({{0, 0}, {40, 2}});
+    const Snapshot first = sheet.render({{0, 0}, {40, 2}});
 
     same(said(first, 0), std::string{"wiersz 0"});
     same(said(first, 1), std::string{"wiersz 1"});
@@ -1455,7 +1455,7 @@ TRIAL("Viewer: without wrapping the view scrolls sideways") {
 
     one->left(3);
 
-    View made = sheet.render({{0, 0}, {4, 2}});
+    Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
     same(said(made, 0), std::string{"defg"});
     same(said(made, 1), std::string{});
@@ -1486,7 +1486,7 @@ TRIAL("Viewer: a character cut by the left edge shows its visible part") {
 
     one->left(6);
 
-    const View made = sheet.render({{0, 0}, {4, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
     same(said(made, 0), std::string{"  X"});
 
@@ -1517,7 +1517,7 @@ TRIAL("Viewer: a jump into a long wrapped line lands on its row") {
 
     one->end();
 
-    const View made = sheet.render({{0, 0}, {10, 3}});
+    const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
     same(said(made, 2), text.substr(9990, 10));
     same(*one->at(), std::size_t{9970});

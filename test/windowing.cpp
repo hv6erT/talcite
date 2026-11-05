@@ -73,7 +73,7 @@ struct Stage {
 };
 
 // Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x)
@@ -124,7 +124,7 @@ TRIAL("Window: a full one takes the whole room, a seated one its rectangle") {
     ought(!over->full());
     same(over->seat().at.x, 2);
 
-    const View made = stage.top.render({{0, 0}, {10, 3}});
+    const Snapshot made = stage.top.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"aaaaaaaaaa"});
     same(read(made, 1), std::string{"aabbbbaaaa"});

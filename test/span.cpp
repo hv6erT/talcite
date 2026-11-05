@@ -18,7 +18,7 @@ namespace {
 
 // Reads a row of the drawn page, so that the cases speak about what is visible and not about what
 // the layout computed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -81,7 +81,7 @@ TRIAL("Span: with wrapping it breaks at spaces") {
     same(wants.high, 2);
     same(wants.wide, 6);
 
-    const View made = one.render({{0, 0}, {7, 2}});
+    const Snapshot made = one.render({{0, 0}, {7, 2}});
 
     same(read(made, 0), std::string{"ala ma"});
     same(read(made, 1), std::string{"kota"});
@@ -101,7 +101,7 @@ TRIAL("Span: wrapping switches on the fly") {
 TRIAL("Span: a word longer than the row breaks where it stands") {
     ui::Span one{"nieprzewidywalnie", ui::SpanShape{true}};
 
-    const View made = one.render({{0, 0}, {5, 4}});
+    const Snapshot made = one.render({{0, 0}, {5, 4}});
 
     same(read(made, 0), std::string{"niepr"});
     same(read(made, 1), std::string{"zewid"});
@@ -112,7 +112,7 @@ TRIAL("Span: a word longer than the row breaks where it stands") {
 TRIAL("Span: a long word does not swallow a row that already stands") {
     ui::Span one{"do nieprzewidywalnie", ui::SpanShape{true}};
 
-    const View made = one.render({{0, 0}, {5, 5}});
+    const Snapshot made = one.render({{0, 0}, {5, 5}});
 
     same(read(made, 0), std::string{"do"});
     same(read(made, 1), std::string{"niepr"});
@@ -147,7 +147,7 @@ TRIAL("Span: zero width does not hang the breaking") {
 TRIAL("Span: draws only as many rows as it was given") {
     ui::Span one{"ala ma kota i psa", ui::SpanShape{true}};
 
-    const View made = one.render({{0, 0}, {6, 2}});
+    const Snapshot made = one.render({{0, 0}, {6, 2}});
 
     same(read(made, 0), std::string{"ala ma"});
     same(read(made, 1), std::string{"kota i"});
@@ -156,7 +156,7 @@ TRIAL("Span: draws only as many rows as it was given") {
 TRIAL("Span: without wrapping the page cuts off what sticks out") {
     ui::Span one{"bardzo długi napis"};
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(read(made, 0), std::string{"bardzo"});
 }
@@ -172,7 +172,7 @@ TRIAL("Span: the text can be replaced and the measurement follows it") {
     same(one.text(), std::string{"kotek"});
     same(one.wants({80, 25}).wide, 5);
 
-    const View made = one.render({{0, 0}, {8, 1}});
+    const Snapshot made = one.render({{0, 0}, {8, 1}});
 
     same(read(made, 0), std::string{"kotek"});
 }
@@ -199,7 +199,7 @@ TRIAL("Span: the role's color travels with the characters") {
 
     top.skin(ui::Skin{{{"talcite.normal", told}}});
 
-    const View made = top.render({{0, 0}, {6, 1}});
+    const Snapshot made = top.render({{0, 0}, {6, 1}});
 
     ought(!made.at({0, 0}).style.foreground.transparent);
     same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(200));
@@ -211,7 +211,7 @@ TRIAL("Span: the role's color travels with the characters") {
 TRIAL("Span: the built-in skin leaves the terminal's color") {
     ui::Span one{"kot"};
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     ought(made.at({0, 0}).style.foreground.transparent);
 }
@@ -221,7 +221,7 @@ TRIAL("Span: right alignment moves the text away from the left edge") {
 
     one.justify(ui::Justify::right);
 
-    const View made = one.render({{0, 0}, {7, 1}});
+    const Snapshot made = one.render({{0, 0}, {7, 1}});
 
     same(made.at({4, 0}).letter, U'k');
     same(made.at({0, 0}).letter, U' ');
@@ -233,7 +233,7 @@ TRIAL("Span: centering splits the excess in half") {
 
     one.justify(ui::Justify::center);
 
-    const View made = one.render({{0, 0}, {7, 1}});
+    const Snapshot made = one.render({{0, 0}, {7, 1}});
 
     same(made.at({2, 0}).letter, U'k');
 }
@@ -243,7 +243,7 @@ TRIAL("Span: alignment counts cells, not bytes") {
 
     one.justify(ui::Justify::right);
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(made.at({2, 0}).letter, U'ż');
 }
@@ -253,7 +253,7 @@ TRIAL("Span: each wrapped row is aligned on its own") {
 
     one.justify(ui::Justify::right);
 
-    const View made = one.render({{0, 0}, {7, 2}});
+    const Snapshot made = one.render({{0, 0}, {7, 2}});
 
     same(read(made, 0), std::string{" ala ma"});
     same(read(made, 1), std::string{"   kota"});
@@ -262,7 +262,7 @@ TRIAL("Span: each wrapped row is aligned on its own") {
 TRIAL("Span: without eliding the text is simply cut off") {
     ui::Span one{"nieprzewidywalnie"};
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(read(made, 0), std::string{"nieprz"});
 }
@@ -272,7 +272,7 @@ TRIAL("Span: eliding on the right keeps the start and an ellipsis") {
 
     one.elide(ui::Elide::right);
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(read(made, 0), std::string{"niepr…"});
     same(one.elide(), ui::Elide::right);
@@ -283,7 +283,7 @@ TRIAL("Span: eliding on the left keeps the end") {
 
     one.elide(ui::Elide::left);
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(read(made, 0), std::string{"…alnie"});
 }
@@ -293,7 +293,7 @@ TRIAL("Span: eliding in the middle keeps both ends") {
 
     one.elide(ui::Elide::middle);
 
-    const View made = one.render({{0, 0}, {7, 1}});
+    const Snapshot made = one.render({{0, 0}, {7, 1}});
 
     same(read(made, 0), std::string{"nie…nie"});
 }
@@ -303,7 +303,7 @@ TRIAL("Span: a text that fits is not elided") {
 
     one.elide(ui::Elide::right);
 
-    const View made = one.render({{0, 0}, {6, 1}});
+    const Snapshot made = one.render({{0, 0}, {6, 1}});
 
     same(read(made, 0), std::string{"kot"});
 }
@@ -313,7 +313,7 @@ TRIAL("Span: a single cell is just the ellipsis") {
 
     one.elide(ui::Elide::right);
 
-    const View made = one.render({{0, 0}, {1, 1}});
+    const Snapshot made = one.render({{0, 0}, {1, 1}});
 
     same(read(made, 0), std::string{"…"});
 }
@@ -331,7 +331,7 @@ TRIAL("Span: eliding counts the cells of double-width characters") {
 
     one.elide(ui::Elide::right);
 
-    const View made = one.render({{0, 0}, {5, 1}});
+    const Snapshot made = one.render({{0, 0}, {5, 1}});
 
     same(read(made, 0), std::string{"漢字…"});
 }
@@ -345,7 +345,7 @@ TRIAL("Span: in a tree it stands where its parent puts it") {
     top.children().add(first);
     top.children().add(second);
 
-    const View made = top.render({{0, 0}, {10, 3}});
+    const Snapshot made = top.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"pierwszy"});
     same(read(made, 1), std::string{"drugi"});
@@ -368,7 +368,7 @@ TRIAL("Span: a hard line end splits, also without wrapping") {
 
     ui::Span other{"pierwszy\ndrugi"};
 
-    const View made = other.render({{0, 0}, {10, 3}});
+    const Snapshot made = other.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"pierwszy"});
     same(read(made, 1), std::string{"drugi"});
@@ -377,7 +377,7 @@ TRIAL("Span: a hard line end splits, also without wrapping") {
 TRIAL("Span: an empty paragraph stays an empty row") {
     ui::Span one{"nad\n\npod"};
 
-    const View made = one.render({{0, 0}, {10, 4}});
+    const Snapshot made = one.render({{0, 0}, {10, 4}});
 
     same(read(made, 0), std::string{"nad"});
     same(read(made, 1), std::string{});
@@ -394,7 +394,7 @@ TRIAL("Span: a line end at the end gives an empty row after it") {
 TRIAL("Span: a carriage return does not stay in the content") {
     ui::Span one{"pierwszy\r\ndrugi"};
 
-    const View made = one.render({{0, 0}, {12, 2}});
+    const Snapshot made = one.render({{0, 0}, {12, 2}});
 
     same(read(made, 0), std::string{"pierwszy"});
     same(read(made, 1), std::string{"drugi"});
@@ -404,7 +404,7 @@ TRIAL("Span: a carriage return does not stay in the content") {
 TRIAL("Span: each paragraph wraps on its own") {
     ui::Span one{"ala ma kota\nas", ui::SpanShape{true}};
 
-    const View made = one.render({{0, 0}, {7, 4}});
+    const Snapshot made = one.render({{0, 0}, {7, 4}});
 
     same(read(made, 0), std::string{"ala ma"});
     same(read(made, 1), std::string{"kota"});
@@ -415,7 +415,7 @@ TRIAL("Span: each paragraph wraps on its own") {
 TRIAL("Span: alignment is computed for each hard line separately") {
     ui::Span one{"dluuugi\nkot", ui::SpanShape{false, ui::Justify::center}};
 
-    const View made = one.render({{0, 0}, {9, 2}});
+    const Snapshot made = one.render({{0, 0}, {9, 2}});
 
     same(read(made, 0), std::string{" dluuugi"});
     same(read(made, 1), std::string{"   kot"});

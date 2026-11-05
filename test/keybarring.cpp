@@ -59,7 +59,7 @@ private:
 };
 
 // Reads one row of a view as text, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -84,7 +84,7 @@ TRIAL("KeyBar: the items share the row and touch side by side") {
     (void)window->add(ui::Code::f2, "Wyjdź");
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {16, 4}});
+    const Snapshot made = top.render({{0, 0}, {16, 4}});
 
     same(read(made, 3), std::string{"1Kopiuj 2Wyjdź"});
 
@@ -266,7 +266,7 @@ TRIAL("KeyBar: the content gets all rows but the last") {
     (void)window->add(ui::Code::f1, "Raz");
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     same(read(made, 0), std::string{"xxxxxx"});
     same(read(made, 1), std::string{"xxxxxx"});
@@ -283,7 +283,7 @@ TRIAL("KeyBar: without items it takes no row") {
     window->content(body);
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     same(read(made, 2), std::string{"xxxxxx"});
 }
@@ -297,13 +297,13 @@ TRIAL("KeyBar: an item that is too narrow cuts the name, then the tag") {
     (void)window->add(ui::Code::f2, "Wyjdź");
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {8, 2}});
+    const Snapshot made = top.render({{0, 0}, {8, 2}});
 
     // Four cells per item: the tag and three for the name, with an ellipsis.
     same(read(made, 1), std::string{"1Ko…2Wy…"});
 
     // With one cell per item only the tag remains, and nothing goes outside its own area.
-    const View tight = top.render({{0, 0}, {2, 2}});
+    const Snapshot tight = top.render({{0, 0}, {2, 2}});
 
     same(read(tight, 1), std::string{"12"});
 }
@@ -361,7 +361,7 @@ TRIAL("KeyBar: clearing lets the bar be put together again") {
 
     (void)window->add(ui::Code::f3, "Trzy");
 
-    const View made = top.render({{0, 0}, {8, 2}});
+    const Snapshot made = top.render({{0, 0}, {8, 2}});
 
     same(read(made, 1), std::string{"3Trzy"});
 }
@@ -388,7 +388,7 @@ TRIAL("KeyBar: an open menu does not paint over the key bar") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {12, 7}});
+    const Snapshot made = top.render({{0, 0}, {12, 7}});
 
     ought(one->opened());
 
@@ -499,7 +499,7 @@ TRIAL("KeyBar: the role root of an item can be replaced") {
     top.skin(ui::Skin{these});
     one->role("moj.pas");
 
-    const View made = top.render({{0, 0}, {16, 4}});
+    const Snapshot made = top.render({{0, 0}, {16, 4}});
 
     same(made.at({0, 3}).style.foreground, (Color{false, 1, 1, 1}));
     same(made.at({1, 3}).style.foreground, (Color{false, 2, 2, 2}));
@@ -611,7 +611,7 @@ TRIAL("KeyBar: a letter key is underlined in the name instead of a tag") {
 
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {6, 2}});
+    const Snapshot made = top.render({{0, 0}, {6, 2}});
 
     same(read(made, 1), std::string{"Kopiuj"});
     ought(made.at({0, 1}).style.under);
@@ -630,7 +630,7 @@ TRIAL("KeyBar: a letter key not in the name stays a tag") {
 
     same(one->tag(), std::string{"q"});
 
-    const View made = top.render({{0, 0}, {6, 2}});
+    const Snapshot made = top.render({{0, 0}, {6, 2}});
 
     same(read(made, 1), std::string{"qWyjdź"});
 }
@@ -645,7 +645,7 @@ TRIAL("KeyBar: a function key keeps its digit") {
 
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {7, 2}});
+    const Snapshot made = top.render({{0, 0}, {7, 2}});
 
     same(read(made, 1), std::string{"5Kopiuj"});
 }
@@ -664,7 +664,7 @@ TRIAL("KeyBar: the digit stays, though the item also has a letter") {
 
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {7, 2}});
+    const Snapshot made = top.render({{0, 0}, {7, 2}});
 
     same(read(made, 1), std::string{"5Kopiuj"});
     ought(made.at({1, 1}).style.under);

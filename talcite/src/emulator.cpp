@@ -393,7 +393,7 @@ void Emulator::print(char32_t one) {
 }
 
 // A character that takes no cell (a combining mark, a joiner, a selector) joins the glyph before
-// the cursor, as `View::put` joins it; one that would change the glyph's width is left out.
+// the cursor, as `Sheet::put` joins it; one that would change the glyph's width is left out.
 void Emulator::joined(char32_t one) {
     int at = pending_ ? x_ : x_ - 1;
 

@@ -7,6 +7,8 @@
 #include "talcite/root.hpp"
 #include "talcite/skin.hpp"
 
+#include "sheet.hpp"
+
 namespace talcite::ui {
 
 Node::Node() : inside_(*this) {}
@@ -325,12 +327,12 @@ void Node::render(Canvas& onto) const {
 }
 
 // Lays out and paints the node, fully visible in the given rectangle, on a sheet of its own, in
-// which whatever the node does not paint stays undrawn. The frame of a terminal and the trials
-// start here.
-View Node::render(const Area& where) {
+// which whatever the node does not paint stays undrawn, and gives what came out to be read. The
+// trials start here.
+Snapshot Node::render(const Area& where) {
     recorded(where, {{0, 0}, where.size});
 
-    View made{where.size};
+    talcite::detail::Sheet made{where.size};
 
     made.clear({{0, 0}, where.size});
 
@@ -357,7 +359,7 @@ void Node::paint(Canvas& onto) const {
 
 // Where this node wants the cursor, in its own coordinates, or nothing. The cursor is not a
 // property of a sheet. There is one per frame and it belongs to the root, like the skin; keeping
-// it in `View` would mean carrying it through every sheet, a field in each of them, and coordinate
+// it in `Sheet` would mean carrying it through every sheet, a field in each of them, and coordinate
 // arithmetic in a place that knows nothing about coordinates.
 //
 // So a widget places the cursor nowhere; it says where it wants it. The root asks the question,

@@ -42,7 +42,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -77,7 +77,7 @@ TRIAL("Footed: the content gets all the room the parts under it leave") {
 
     same(one.wants({10, 8}), (ui::Size{4, 4}));
 
-    const View made = one.render({{0, 0}, {5, 6}});
+    const Snapshot made = one.render({{0, 0}, {5, 6}});
 
     same(table->area(), (ui::Area{{0, 0}, {5, 4}}));
     same(read(made, 3), std::string{"ttttt"});
@@ -100,14 +100,14 @@ TRIAL("Footed: the parts at the bottom keep their place when the room is short")
 
     same(one.wants({10, 3}), (ui::Size{4, 3}));
 
-    const View made = one.render({{0, 0}, {4, 3}});
+    const Snapshot made = one.render({{0, 0}, {4, 3}});
 
     same(read(made, 0), std::string{"tttt"});
     same(read(made, 1), std::string{"----"});
     same(read(made, 2), std::string{"ssss"});
 
     // With a single row the status line keeps it.
-    const View low = one.render({{0, 0}, {4, 1}});
+    const Snapshot low = one.render({{0, 0}, {4, 1}});
 
     same(read(low, 0), std::string{"ssss"});
     same(table->area().size.high, 0);
@@ -128,7 +128,7 @@ TRIAL("Footed: a gap only between children that both take some height") {
 
     same(one.wants({10, 10}), (ui::Size{4, 4}));
 
-    const View made = one.render({{0, 0}, {4, 4}});
+    const Snapshot made = one.render({{0, 0}, {4, 4}});
 
     same(read(made, 0), std::string{"bbbb"});
     same(read(made, 1), std::string{"bbbb"});
@@ -158,7 +158,7 @@ TRIAL("Inset: the child with room around it") {
 
     same(one.wants({20, 10}), (ui::Size{7, 2}));
 
-    const View made = one.render({{0, 0}, {7, 2}});
+    const Snapshot made = one.render({{0, 0}, {7, 2}});
 
     same(read(made, 0), std::string{""});
     same(read(made, 1), std::string{"  iii"});

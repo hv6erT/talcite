@@ -7,7 +7,7 @@
 #include "talcite/event.hpp"
 #include "talcite/following.hpp"
 #include "talcite/launcher.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite::ui {
 

@@ -46,7 +46,7 @@ private:
 };
 
 // The text of row `y` of the view, without trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -74,7 +74,7 @@ TRIAL("Button: the label is drawn in full, with no conventions about characters"
     same(one->text(), std::string{"Tak & nie"});
     same(one->wants({40, 4}), (ui::Size{13, 1}));
 
-    const View made = top.render({{0, 0}, {13, 1}});
+    const Snapshot made = top.render({{0, 0}, {13, 1}});
 
     same(read(made, 0), std::string{"[ Tak & nie ]"});
 }
@@ -242,7 +242,7 @@ TRIAL("Button: the key's letter is underlined in the label") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {12, 1}});
+    const Snapshot made = top.render({{0, 0}, {12, 1}});
 
     same(read(made, 0), std::string{"[ Przerwij ]"});
 
@@ -264,7 +264,7 @@ TRIAL("Button: the first occurrence is underlined, regardless of case") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {12, 1}});
+    const Snapshot made = top.render({{0, 0}, {12, 1}});
 
     ought(made.at({3, 0}).style.under);
     same(made.at({3, 0}).letter, U'r');
@@ -287,7 +287,7 @@ TRIAL("Button: case folds in Cyrillic and in Latin with diacritics") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {9, 1}});
+    const Snapshot made = top.render({{0, 0}, {9, 1}});
 
     same(made.at({3, 0}).letter, U'а');
     ought(made.at({3, 0}).style.under);
@@ -300,7 +300,7 @@ TRIAL("Button: case folds in Cyrillic and in Latin with diacritics") {
     top.children().clear();
     top.children().add(two);
 
-    const View other = top.render({{0, 0}, {10, 1}});
+    const Snapshot other = top.render({{0, 0}, {10, 1}});
 
     same(other.at({3, 0}).letter, U'ż');
     ought(other.at({3, 0}).style.under);
@@ -317,7 +317,7 @@ TRIAL("Button: a key not in the label marks nothing") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {7, 1}});
+    const Snapshot made = top.render({{0, 0}, {7, 1}});
 
     for (int x = 0; x < 7; ++x) ought(!made.at({x, 0}).style.under);
 
@@ -336,7 +336,7 @@ TRIAL("Button: the first key that occurs in the label decides") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {12, 1}});
+    const Snapshot made = top.render({{0, 0}, {12, 1}});
 
     same(made.at({8, 0}).letter, U'i');
     ought(made.at({8, 0}).style.under);
@@ -371,7 +371,7 @@ TRIAL("Button: with the focus it is all in reverse video") {
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {7, 1}});
+    const Snapshot made = top.render({{0, 0}, {7, 1}});
 
     ought(made.at({0, 0}).style.reverse);
     ought(made.at({2, 0}).style.reverse);
@@ -395,7 +395,7 @@ TRIAL("Button: paints one row, not as many as it is given") {
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {11, 3}});
+    const Snapshot made = top.render({{0, 0}, {11, 3}});
 
     ought(made.at({0, 0}).style.reverse);
 

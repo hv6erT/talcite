@@ -11,7 +11,9 @@
 #include "talcite/column.hpp"
 #include "talcite/encoding.hpp"
 #include "talcite/root.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
+
+#include "sheet.hpp"
 
 using namespace talcite;
 
@@ -19,7 +21,7 @@ namespace {
 
 // The text of row `y` of the view, without trailing spaces; a cleared cell nothing was painted on
 // reads as a dot, so a row left alone can be told from a row of spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -35,8 +37,8 @@ std::string read(const View& one, int y) {
 }
 
 // A sheet of `size` with nothing on it, as the root clears the rows it paints.
-View cleared(ui::Size size) {
-    View made{size};
+detail::Sheet cleared(ui::Size size) {
+    detail::Sheet made{size};
 
     made.clear({{0, 0}, size});
 
@@ -202,7 +204,7 @@ protected:
 // A canvas paints in the node's own coordinates and cuts what it paints to the node's rectangle and
 // to the rectangles of all above it.
 TRIAL("Canvas: a child paints from its own corner, cut to its rectangle and to its parent's") {
-    View sheet = cleared({10, 3});
+    detail::Sheet sheet = cleared({10, 3});
 
     Canvas whole{sheet};
     Canvas parent = whole.within({{1, 1}, {6, 1}});
@@ -218,7 +220,7 @@ TRIAL("Canvas: a child paints from its own corner, cut to its rectangle and to i
 
 // A clip cuts the painting without moving the corner: the window of a scroller without its bars.
 TRIAL("Canvas: clipped keeps the corner and paints only inside the clip") {
-    View sheet = cleared({6, 2});
+    detail::Sheet sheet = cleared({6, 2});
 
     Canvas whole{sheet};
     Canvas cut = whole.within({{1, 0}, {5, 2}}).clipped({{0, 1}, {3, 1}});
@@ -234,7 +236,7 @@ TRIAL("Canvas: clipped keeps the corner and paints only inside the clip") {
 // The edge of a clip is an edge as that of a sheet: half a double-width character does not stand
 // beside it, and a mark that joins the glyph to its left joins nothing outside.
 TRIAL("Canvas: a double-width character cut by the edge becomes a space") {
-    View sheet = cleared({4, 1});
+    detail::Sheet sheet = cleared({4, 1});
 
     Canvas whole{sheet};
     Canvas left = whole.within({{0, 0}, {3, 1}});
@@ -254,7 +256,7 @@ TRIAL("Canvas: a double-width character cut by the edge becomes a space") {
 // A shade dims what lies under it and keeps its character; over nothing it stays a shade, which the
 // terminal shows as an empty cell in the shade's style.
 TRIAL("Canvas: a shade keeps the character under it, and over nothing it is a shade") {
-    View sheet = cleared({3, 1});
+    detail::Sheet sheet = cleared({3, 1});
 
     Canvas whole{sheet};
 
@@ -272,7 +274,7 @@ TRIAL("Canvas: a shade keeps the character under it, and over nothing it is a sh
 // A foreground character without a background of its own takes that of what lies under it, and
 // over nothing it stays a foreground cell, which takes its background from what comes later.
 TRIAL("Canvas: a foreground character takes the background from below") {
-    View sheet = cleared({2, 1});
+    detail::Sheet sheet = cleared({2, 1});
 
     Canvas whole{sheet};
 
@@ -290,7 +292,7 @@ TRIAL("Canvas: a foreground character takes the background from below") {
 
 // What lies under a node can be read in its own coordinates; outside the clip there is nothing.
 TRIAL("Canvas: at reads the sheet under the node, and nothing outside the clip") {
-    View sheet = cleared({4, 1});
+    detail::Sheet sheet = cleared({4, 1});
 
     Canvas whole{sheet};
 
@@ -300,6 +302,17 @@ TRIAL("Canvas: at reads the sheet under the node, and nothing outside the clip")
 
     same(inner.at({0, 0}).letter, U'b');
     ought(inner.at({2, 0}) == Cell{});
+}
+
+// A node's own render starts from nothing: what the node does not paint stays undrawn, as the root
+// leaves undrawn what nobody paints, and a trial sees where the node is see-through.
+TRIAL("Node: what a node does not paint stays undrawn in its own render") {
+    const auto plain = std::make_shared<ui::Node>();
+    const Snapshot seen = plain->render({{0, 0}, {3, 1}});
+
+    same(seen.size().wide, 3);
+    ought(seen.at({0, 0}).shown == Shown::none);
+    ought(seen.at({2, 0}).shown == Shown::none);
 }
 
 // Only the rows of an announced change are painted again; the rest of the screen stays as the last
@@ -313,7 +326,7 @@ TRIAL("Root: a frame paints only the rows of an announced change") {
 
     top.children().add(three.column);
 
-    View made = top.render({{0, 0}, {3, 3}});
+    Snapshot made = top.render({{0, 0}, {3, 3}});
 
     same(read(made, 0), std::string{"aaa"});
 
@@ -379,7 +392,7 @@ TRIAL("Root: a node pushed down by its neighbour is painted again in both places
 
     three.a->high(2);
 
-    const View made = top.render({{0, 0}, {3, 4}});
+    const Snapshot made = top.render({{0, 0}, {3, 4}});
 
     same(read(made, 0), std::string{"aaa"});
     same(read(made, 1), std::string{"aaa"});
@@ -388,7 +401,7 @@ TRIAL("Root: a node pushed down by its neighbour is painted again in both places
 
     three.a->high(1);
 
-    const View back = top.render({{0, 0}, {3, 4}});
+    const Snapshot back = top.render({{0, 0}, {3, 4}});
 
     same(read(back, 2), std::string{"ccc"});
     same(read(back, 3), std::string{"..."});
@@ -410,7 +423,7 @@ TRIAL("Root: a change announced in the layout is laid out again in the same fram
 
     source->asked(U'2');
 
-    const View made = top.render({{0, 0}, {1, 2}});
+    const Snapshot made = top.render({{0, 0}, {1, 2}});
 
     same(read(made, 0), std::string{"2"});
     same(read(made, 1), std::string{"2"});
@@ -434,7 +447,7 @@ TRIAL("Root: a layout that never settles ends the frame, and the check reports i
 // as the long one does: a letter over either half of a double-width character turns the other half
 // into a space, so no half of a character stays behind.
 TRIAL("Canvas: ASCII over a double-width character leaves no half of it") {
-    View sheet = cleared({4, 1});
+    detail::Sheet sheet = cleared({4, 1});
 
     Canvas whole{sheet};
 
@@ -461,7 +474,7 @@ TRIAL("Canvas: ASCII over a double-width character leaves no half of it") {
 // A shadow keeps a double-width character whole, since only its style changes, while a letter over
 // one half of a neighbour turns the other half into a space.
 TRIAL("Canvas: a shadow keeps a double-width character whole and a letter cuts it") {
-    View sheet = cleared({6, 1});
+    detail::Sheet sheet = cleared({6, 1});
 
     Canvas whole{sheet};
 
@@ -489,7 +502,7 @@ TRIAL("Canvas: a shadow keeps a double-width character whole and a letter cuts i
 // in the same colors: it covers the ground with its transparent background, just like text. A zero
 // character lays down nothing.
 TRIAL("Canvas: a foreground with its own background and a plain cell cover the ground") {
-    View sheet = cleared({3, 1});
+    detail::Sheet sheet = cleared({3, 1});
 
     Canvas whole{sheet};
 
@@ -512,7 +525,7 @@ TRIAL("Canvas: a foreground with its own background and a plain cell cover the g
 // A link painted through a child's canvas marks the child's cells on the sheet; whatever is put
 // over a cell later takes the mark away, and a shadow keeps it, since the text below it stays.
 TRIAL("Canvas: a hyperlink marks what is painted, a cover takes it away and a shadow keeps it") {
-    View sheet = cleared({8, 1});
+    detail::Sheet sheet = cleared({8, 1});
 
     Canvas whole{sheet};
     Canvas child = whole.within({{2, 0}, {3, 1}});

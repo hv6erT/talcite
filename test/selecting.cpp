@@ -22,7 +22,7 @@ std::vector<std::string> three() { return {"UTF-8", "ISO-8859-2", "CP1250"}; }
 
 // Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells and
 // dropping trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -74,7 +74,7 @@ struct Stage {
     }
 
 // Draws the whole stage at the given size.
-    View drawn(ui::Size size = {30, 12}) { return top.render({{0, 0}, size}); }
+    Snapshot drawn(ui::Size size = {30, 12}) { return top.render({{0, 0}, size}); }
 };
 
 }
@@ -127,7 +127,7 @@ TRIAL("Select: giving new options clamps the choice") {
 TRIAL("Select: draws the current value and the roll-out mark at the right edge") {
     Stage stage;
 
-    const View made = stage.drawn();
+    const Snapshot made = stage.drawn();
 
     same(read(made, 0), std::string{"UTF-8"} + std::string(6, ' ') + "\xe2\x96\xbc");
 }
@@ -137,7 +137,7 @@ TRIAL("Select: when too narrow it cuts the text, not the roll-out mark") {
 
     stage.one->value("ISO-8859-2");
 
-    const View made = stage.drawn({8, 12});
+    const Snapshot made = stage.drawn({8, 12});
 
     // The roll-out mark keeps its place, and the text makes way for it with an ellipsis.
     same(made.at({7, 0}).letter, U'▼');
@@ -298,7 +298,7 @@ TRIAL("Select: the rolled-out list stands below the select") {
 
     stage.one->open();
 
-    const View made = stage.drawn();
+    const Snapshot made = stage.drawn();
 
     // Row zero is the select itself; the list's frame starts in row one, at the left edge.
     same(made.at({0, 1}).letter, U'┌');
@@ -328,7 +328,7 @@ TRIAL("Select: with no room below, the list opens upward") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {30, 7}});
+    const Snapshot made = top.render({{0, 0}, {30, 7}});
 
     // The select is in the last row, so row 6 still shows the select itself with its mark.
     same(made.at({11, 6}).letter, U'▼');

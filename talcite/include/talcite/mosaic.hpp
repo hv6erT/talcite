@@ -7,7 +7,7 @@
 #include "talcite/canvas.hpp"
 #include "talcite/capabilities.hpp"
 #include "talcite/pixels.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite {
 

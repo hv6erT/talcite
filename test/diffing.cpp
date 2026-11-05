@@ -19,7 +19,7 @@ namespace {
 class Sheet : public ui::Root {};
 
 // The text of row `y` of the view, without trailing spaces.
-std::string said(const View& one, int y) {
+std::string said(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -37,7 +37,7 @@ std::string said(const View& one, int y) {
 
 // A row of the view without the open fold sign at its end, for rows of an unfolded hunk whose text
 // is the point of the trial.
-std::string bare(const View& one, int y) {
+std::string bare(const Snapshot& one, int y) {
     std::string made = said(one, y);
 
     if (const std::string sign = "▾"; made.ends_with(sign)) made.erase(made.size() - sign.size());
@@ -280,7 +280,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
         one->source(sourced(std::move(all)), much);
         sheet.children().add(one);
 
-        const View made = sheet.render({{0, 0}, {70, high}});
+        const Snapshot made = sheet.render({{0, 0}, {70, high}});
 
         for (int y = 0; y < high; ++y)
             if (made.at({69, y}).letter != U' ') return true;
@@ -316,7 +316,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 
         ought(pressed(sheet, ui::Code::end));
 
-        const View made = sheet.render({{0, 0}, {70, 10}});
+        const Snapshot made = sheet.render({{0, 0}, {70, 10}});
 
         bool bar = false;
 
@@ -340,7 +340,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
             5);
         sheet.children().add(one);
 
-        const View made = sheet.render({{0, 0}, {70, 10}});
+        const Snapshot made = sheet.render({{0, 0}, {70, 10}});
 
         bool bar = false;
 
@@ -361,7 +361,7 @@ TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
 
     one->titles("Było", "Będzie");
 
-    const View made = sheet.render({{0, 0}, {70, 8}});
+    const Snapshot made = sheet.render({{0, 0}, {70, 8}});
 
     same(one->which(), std::optional<std::size_t>{1});
 
@@ -379,7 +379,7 @@ TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
 
     one->opened(1, true);
 
-    const View open = sheet.render({{0, 0}, {70, 8}});
+    const Snapshot open = sheet.render({{0, 0}, {70, 8}});
 
     ought(said(open, 2).find("+1") == std::string::npos);
     ought(said(open, 2).find("▾") != std::string::npos);
@@ -398,7 +398,7 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     one->opened(0, true);
 
-    const View narrow = sheet.render({{0, 0}, {40, 5}});
+    const Snapshot narrow = sheet.render({{0, 0}, {40, 5}});
 
     same(bare(narrow, 0), std::string{"- a.mkv"});
     same(said(narrow, 1), std::string{"+ A/a.mkv"});
@@ -406,7 +406,7 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     one->unified(false);
 
-    const View split = sheet.render({{0, 0}, {40, 5}});
+    const Snapshot split = sheet.render({{0, 0}, {40, 5}});
 
     ought(said(split, 0).rfind("a.mkv", 0) == 0);
     ought(said(split, 0).find("A/a.mkv") != std::string::npos);
@@ -415,7 +415,7 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     same(one->unified(), std::optional<bool>{true});
 
-    const View wide = sheet.render({{0, 0}, {120, 5}});
+    const Snapshot wide = sheet.render({{0, 0}, {120, 5}});
 
     same(bare(wide, 0), std::string{"- a.mkv"});
 
@@ -615,14 +615,14 @@ TRIAL("DiffViewer: the view follows the cursor and does not go past the end") {
 
     same(one->which(), std::optional<std::size_t>{7});
 
-    const View seen = sheet.render({{0, 0}, {40, 5}});
+    const Snapshot seen = sheet.render({{0, 0}, {40, 5}});
 
     ought(said(seen, 4).rfind("[ ] f7", 0) == 0);
     ought(said(seen, 0).rfind("[ ] f3", 0) == 0);
 
     ought(pressed(sheet, ui::Code::end));
 
-    const View last = sheet.render({{0, 0}, {40, 5}});
+    const Snapshot last = sheet.render({{0, 0}, {40, 5}});
 
     ought(said(last, 4).rfind("[ ] f29", 0) == 0);
     ought(said(last, 0).rfind("[ ] f25", 0) == 0);
@@ -658,7 +658,7 @@ TRIAL("DiffViewer: line numbers and empty sides") {
     one->opened(0, true);
     one->unified(false);
 
-    const View made = sheet.render({{0, 0}, {60, 4}});
+    const Snapshot made = sheet.render({{0, 0}, {60, 4}});
 
     ought(said(made, 0).rfind(" 9 dziewięć", 0) == 0);
     ought(said(made, 1).rfind("10 dziesięć", 0) == 0);
@@ -667,7 +667,7 @@ TRIAL("DiffViewer: line numbers and empty sides") {
 
     one->unified(true);
 
-    const View flat = sheet.render({{0, 0}, {60, 4}});
+    const Snapshot flat = sheet.render({{0, 0}, {60, 4}});
 
     same(bare(flat, 0), std::string{" 9  9   dziewięć"});
     same(said(flat, 1), std::string{"10    - dziesięć"});
@@ -685,7 +685,7 @@ TRIAL("DiffViewer: eliding in the middle keeps the marks with their letters") {
 
     one->unified(true);
 
-    const View made = sheet.render({{0, 0}, {24, 2}});
+    const Snapshot made = sheet.render({{0, 0}, {24, 2}});
 
     const std::string line = said(made, 1);
 
@@ -825,7 +825,7 @@ TRIAL("DiffViewer: a title above rows, an empty hunk, a tab and a mark in the mi
     one->opened(0, true);
     one->unified(true);
 
-    const View made = sheet.render({{0, 0}, {40, 8}});
+    const Snapshot made = sheet.render({{0, 0}, {40, 8}});
 
     same(said(made, 0), std::string{"@@ -1,2 +1,2 @@"});
     same(bare(made, 1), std::string{"- x a"});

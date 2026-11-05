@@ -8,7 +8,7 @@
 #include "talcite/area.hpp"
 #include "talcite/canvas.hpp"
 #include "talcite/event.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite::ui {
 

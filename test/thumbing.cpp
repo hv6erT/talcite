@@ -43,7 +43,7 @@ protected:
 };
 
 // Reads row `y` of a drawn view as UTF-8 text, skipping the empty halves of wide cells.
-std::string said_at(const View& one, int y) {
+std::string said_at(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -101,7 +101,7 @@ std::shared_ptr<ui::Table> table(Sheet& top) {
 // The scrollbar row where the thumb stands, found by the glyph the default skin draws it with; -1
 // if there is none between `from` and `to`.
 int thumb_row(Sheet& top, int x, int from, int to) {
-    const View shown = top.render({{0, 0}, {20, 11}});
+    const Snapshot shown = top.render({{0, 0}, {20, 11}});
     const char32_t track = shown.at({x, to - 1}).letter;
 
     for (int y = from; y < to; ++y)
@@ -358,7 +358,7 @@ TRIAL("Scrollbar: a text page, with track and thumb") {
     same(one->first().value_or(99), std::size_t{0});
 
     // The thumb dragged to the very bottom of the track: the end of the text.
-    const View shown = top.render({{0, 0}, {20, 10}});
+    const Snapshot shown = top.render({{0, 0}, {20, 10}});
     const char32_t track = shown.at({19, 9}).letter;
 
     int y = -1;
@@ -402,7 +402,7 @@ TRIAL("Scrollbar: in an editor the track and thumb move the view, not the cursor
     same(one->cursor(), std::size_t{0});
     ought(one->selection().empty());
 
-    const View shown = top.render({{0, 0}, {20, 10}});
+    const Snapshot shown = top.render({{0, 0}, {20, 10}});
     const char32_t track = shown.at({19, 9}).letter;
 
     int y = -1;
@@ -471,7 +471,7 @@ TRIAL("Scrollbar: in a list the track and thumb move the view, not the choice") 
 
     top.children().add(one);
 
-    const View first = top.render({{0, 0}, {20, 10}});
+    const Snapshot first = top.render({{0, 0}, {20, 10}});
 
     ought(said_at(first, 0).starts_with("pozycja 0"));
 

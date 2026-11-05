@@ -5,7 +5,6 @@
 #include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 #include "talcite/area.hpp"
@@ -42,55 +41,22 @@ struct Picture {
     std::size_t still = 0;
 };
 
-struct Placement {
-    ui::Spot at;
-    Picture picture;
-};
-
 [[nodiscard]] ui::Size measured(std::string_view what);
 
-class View {
+class Snapshot {
 public:
-    View() = default;
-
-    explicit View(ui::Size given);
+    Snapshot() = default;
 
     [[nodiscard]] ui::Size size() const { return size_; }
 
-    void put(ui::Spot at, char32_t what, const Style& how);
-
-    void put(ui::Spot at, std::string_view what, const Style& how);
-
-    void fill(const ui::Area& where, const Style& how);
-
-    void shade(const ui::Area& where, const Style& how);
-
-    void foreground(ui::Spot at, char32_t what, const Style& how);
-
-    void clear(const ui::Area& where);
-
-    void picture(const ui::Area& where, Picture what);
+    [[nodiscard]] Cell at(ui::Spot where) const;
 
     [[nodiscard]] const std::vector<Picture>& pictures() const { return pictures_; }
 
-    void link(const ui::Area& where, Hyperlink what);
-
     [[nodiscard]] const std::vector<Hyperlink>& links() const { return links_; }
 
-    [[nodiscard]] std::vector<Placement> bared(const ui::Area& room);
-
-    void forget();
-
-    [[nodiscard]] Cell at(ui::Spot where) const;
-
-private:
-    friend class Canvas;
-
+protected:
     [[nodiscard]] bool holds(ui::Spot where) const;
-
-    Cell& cell(ui::Spot where);
-
-    void broken(ui::Spot where);
 
     ui::Size size_;
     std::vector<Cell> cells_;

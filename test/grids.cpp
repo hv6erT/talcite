@@ -41,7 +41,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -88,7 +88,7 @@ TRIAL("Grid: a column is as wide as its widest cell") {
 
     same(one.wants({40, 10}), (ui::Size{18, 2}));
 
-    const View made = one.render({{0, 0}, {20, 2}});
+    const Snapshot made = one.render({{0, 0}, {20, 2}});
 
     same(read(made, 0), std::string{"Pattern:     *.mkv"});
     same(read(made, 1), std::string{"Age rating:  any"});
@@ -118,7 +118,7 @@ TRIAL("Grid: a row is as tall as its tallest cell, a cell as wide as it wants") 
 
     same(one.wants({40, 10}), (ui::Size{7, 3}));
 
-    const View made = one.render({{0, 0}, {10, 3}});
+    const Snapshot made = one.render({{0, 0}, {10, 3}});
 
     same(read(made, 0), std::string{"aa    b"});
     same(read(made, 1), std::string{"aa    b"});
@@ -147,7 +147,7 @@ TRIAL("Grid: a cell across takes the rest of its row, and a wider one widens the
 
     same(one.wants({40, 10}).wide, 13);
 
-    const View made = one.render({{0, 0}, {20, 3}});
+    const Snapshot made = one.render({{0, 0}, {20, 3}});
 
     same(read(made, 0), std::string{"ll aaa bbb"});
     same(read(made, 2), std::string{"   hhhhhhhhhh"});
@@ -164,7 +164,7 @@ TRIAL("Grid: any other child takes a row of its own over the whole width") {
 
     same(one.wants({40, 10}), (ui::Size{9, 4}));
 
-    const View made = one.render({{0, 0}, {10, 4}});
+    const Snapshot made = one.render({{0, 0}, {10, 4}});
 
     same(read(made, 0), std::string{"ll vvv"});
     same(read(made, 1), std::string{""});

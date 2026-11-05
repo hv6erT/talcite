@@ -7,8 +7,8 @@
 #include "talcite/float.hpp"
 #include "talcite/root.hpp"
 #include "talcite/row.hpp"
+#include "talcite/snapshot.hpp"
 #include "talcite/stack.hpp"
-#include "talcite/view.hpp"
 
 using namespace talcite;
 
@@ -102,7 +102,7 @@ TRIAL("Stack: a child the container lays in one spot stands there") {
     stack.children().add(under);
     stack.children().add(over);
 
-    const View made = stack.render({{0, 0}, {6, 3}});
+    const Snapshot made = stack.render({{0, 0}, {6, 3}});
 
     same(over->area(), (ui::Area{{2, 1}, {3, 1}}));
 
@@ -129,7 +129,7 @@ TRIAL("Stack: outside its children it lets through what lies below") {
     outer.children().add(under);
     outer.children().add(inner);
 
-    const View made = outer.render({{0, 0}, {6, 3}});
+    const Snapshot made = outer.render({{0, 0}, {6, 3}});
 
     same(made.at({2, 1}).letter, U'b');
     same(made.at({0, 0}).letter, U'a');
@@ -147,7 +147,7 @@ TRIAL("Stack: a place sticking out of the room is clipped") {
     stack.pin(*one, {{4, 2}, {10, 10}});
     stack.children().add(one);
 
-    const View made = stack.render({{0, 0}, {6, 3}});
+    const Snapshot made = stack.render({{0, 0}, {6, 3}});
 
     same(one->area(), (ui::Area{{4, 2}, {2, 1}}));
     same(made.size(), (ui::Size{6, 3}));
@@ -281,7 +281,7 @@ TRIAL("Stack: through nested floats a click hits only what the innermost holds")
     stack->children().add(upper);
     top.children().add(stack);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     same(icons->screen_area()->at, (ui::Spot{4, 0}));
     same(made.at({4, 0}).letter, U'i');

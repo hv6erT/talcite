@@ -115,7 +115,7 @@ TRIAL("Modal: the box stands in the middle") {
 
     stage.window->open(one);
 
-    const View made = stage.top.render({{0, 0}, {40, 10}});
+    const Snapshot made = stage.top.render({{0, 0}, {40, 10}});
 
     // (40−10)/2 = 15, (10−4)/2 = 3.
     same(made.at({15, 3}).letter, U'o');
@@ -332,7 +332,7 @@ TRIAL("Modal: a derived veil places the box where seat says") {
 
     stage.window->open(one);
 
-    const View made = stage.top.render({{0, 0}, {40, 10}});
+    const Snapshot made = stage.top.render({{0, 0}, {40, 10}});
 
     same(made.at({3, 6}).letter, U'o');
     same(made.at({10, 7}).letter, U'o');

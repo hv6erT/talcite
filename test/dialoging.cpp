@@ -87,7 +87,7 @@ public:
 };
 
 // The text of row `y` of the view, without trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -138,7 +138,7 @@ TRIAL("Dialog: outside the box what lies below shows through") {
     top.children().add(window);
     window->open(one);
 
-    const View made = top.render({{0, 0}, {10, 3}});
+    const Snapshot made = top.render({{0, 0}, {10, 3}});
 
     // The screen is ten by three, the shadow takes two columns and a row, so the four by one box
     // lands in row zero, at column two. Everywhere else the content below shows.
@@ -162,7 +162,7 @@ TRIAL("Dialog: the shadow dims, it does not paint over") {
     top.children().add(window);
     window->open(one);
 
-    const View made = top.render({{0, 0}, {20, 10}});
+    const Snapshot made = top.render({{0, 0}, {20, 10}});
 
     // The box stands at {6,3} and is 6 by 3, so the shadow on the right takes columns 12–13, rows
     // 4–5.
@@ -422,7 +422,7 @@ TRIAL("Dialog: the box is an ordinary frame with a title") {
     top.children().add(window);
     window->open(one);
 
-    const View made = top.render({{0, 0}, {21, 6}});
+    const Snapshot made = top.render({{0, 0}, {21, 6}});
 
     // The frame adds a cell on each side and fits its title, which is longer than the content
     // (five letters and four cells around them): eleven by three.
@@ -587,7 +587,7 @@ TRIAL("Dialog: an empty one draws nothing and covers nothing") {
     top.children().add(window);
     window->open(one);
 
-    const View made = top.render({{0, 0}, {8, 2}});
+    const Snapshot made = top.render({{0, 0}, {8, 2}});
 
     same(read(made, 0), std::string{"xxxxxxxx"});
     same(read(made, 1), std::string{"xxxxxxxx"});

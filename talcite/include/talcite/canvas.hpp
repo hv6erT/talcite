@@ -3,14 +3,20 @@
 #include <string_view>
 
 #include "talcite/area.hpp"
+#include "talcite/snapshot.hpp"
 #include "talcite/style.hpp"
-#include "talcite/view.hpp"
 
 namespace talcite {
 
+namespace detail {
+
+class Sheet;
+
+}
+
 class Canvas {
 public:
-    explicit Canvas(View& sheet);
+    explicit Canvas(detail::Sheet& sheet);
 
     [[nodiscard]] ui::Size size() const { return size_; }
 
@@ -41,7 +47,7 @@ private:
 
     [[nodiscard]] ui::Area cut(const ui::Area& where) const;
 
-    View* sheet_;
+    detail::Sheet* sheet_;
     ui::Spot origin_;
     ui::Size size_;
     ui::Area clip_;

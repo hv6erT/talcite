@@ -16,7 +16,7 @@ using namespace talcite;
 namespace {
 
 // The text of row `y` of the view, without trailing spaces.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -143,7 +143,7 @@ TRIAL("Choice: the dot stands at the chosen option") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {16, 3}});
+    const Snapshot made = top.render({{0, 0}, {16, 3}});
 
     same(read(made, 0), std::string{"( ) Nazwa"});
     same(read(made, 1), std::string{"(•) Rozszerzenie"});
@@ -163,7 +163,7 @@ TRIAL("Choice: the highlight shows only with the focus") {
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {16, 3}});
+    const Snapshot made = top.render({{0, 0}, {16, 3}});
 
     ought(made.at({0, 1}).style.reverse);
     ought(!made.at({0, 0}).style.reverse);

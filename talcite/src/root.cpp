@@ -15,6 +15,8 @@
 #include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
 
+#include "sheet.hpp"
+
 namespace talcite::ui {
 
 namespace {
@@ -67,7 +69,7 @@ void frames_checked(bool on) { checking = on; }
 
 // The root reads the time for its schedule (`schedule`) from `time`: the real clock in a program,
 // a manual one in a trial.
-Root::Root(talcite::Clock& time) : schedule_(time) {}
+Root::Root(talcite::Clock& time) : schedule_(time), sheet_(std::make_unique<talcite::detail::Sheet>()) {}
 
 Root::~Root() = default;
 
@@ -138,9 +140,9 @@ void Root::graphics(Graphics given) {
 // every node reads (`repaint`), paints everything. The rows painted and the count of frames stay
 // for whoever shows the sheet (`painted`, `framed`): `Term` compares only those rows with the
 // screen.
-const View& Root::frame(Size size) {
-    if (sheet_.size() != size) {
-        sheet_ = View{size};
+const talcite::detail::Sheet& Root::frame(Size size) {
+    if (sheet_->size() != size) {
+        *sheet_ = talcite::detail::Sheet{size};
         whole_ = true;
     }
 
@@ -157,29 +159,29 @@ const View& Root::frame(Size size) {
     damaged_.clear();
 
     if (!painted_.empty()) {
-        Canvas whole{sheet_};
+        Canvas whole{*sheet_};
 
         for (const auto& [from, upto] : painted_) {
             const Area rows{{0, from}, {size.wide, upto - from}};
 
-            sheet_.clear(rows);
+            sheet_->clear(rows);
 
             Canvas cut = whole.clipped(rows);
 
             paint(cut);
         }
 
-        sheet_.forget();
+        sheet_->forget();
     }
 
     if (checking) checked(size);
 
-    return sheet_;
+    return *sheet_;
 }
 
 // The frame as a copy, for the trials, which compare frames as sheets: the root draws as `Term`
 // draws it, painting only the changes, so the check of every frame (`frames_checked`) covers them.
-View Root::render(const Area& where) { return frame(where.size); }
+Snapshot Root::render(const Area& where) { return frame(where.size); }
 
 // Everything changed: something every node reads (the skin, the terminal's colors, Unicode, blocks,
 // cell size or graphics), so the next frame paints the whole screen.
@@ -191,7 +193,7 @@ void Root::damage(const Area& screen) {
 
     damaged_.emplace_back(screen.at.y, screen.at.y + screen.size.high);
 
-    if (damaged_.size() > 256) damaged_ = merged(std::move(damaged_), sheet_.size().high);
+    if (damaged_.size() > 256) damaged_ = merged(std::move(damaged_), sheet_->size().high);
 }
 
 // A change a node announces (`Node::changed`). One announced in the middle of the layout may change
@@ -240,7 +242,7 @@ void Root::steadied(Size size) {
 // the frame's layout has taken in whatever changed there. What painting alone reads must have been
 // announced, and that is what the check finds.
 void Root::checked(Size size) {
-    View whole{size};
+    talcite::detail::Sheet whole{size};
 
     whole.clear({{0, 0}, size});
 
@@ -250,7 +252,7 @@ void Root::checked(Size size) {
 
     for (int y = 0; y < size.high; ++y)
         for (int x = 0; x < size.wide; ++x) {
-            const Cell kept = sheet_.at({x, y});
+            const Cell kept = sheet_->at({x, y});
             const Cell fresh = whole.at({x, y});
 
             if (kept == fresh) continue;

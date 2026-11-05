@@ -13,6 +13,18 @@
 #include "talcite/skin.hpp"
 #include "talcite/timer.hpp"
 
+namespace talcite {
+
+class Term;
+
+}
+
+namespace talcite::detail {
+
+class Sheet;
+
+}
+
 namespace talcite::ui {
 
 class Root : public Node {
@@ -47,9 +59,7 @@ public:
 
     using Node::render;
 
-    View render(const Area& where) override;
-
-    const View& frame(Size size);
+    Snapshot render(const Area& where) override;
 
     [[nodiscard]] const std::vector<std::pair<int, int>>& painted() const { return painted_; }
 
@@ -98,6 +108,9 @@ private:
     friend class Children;
     friend class Handler;
     friend class Node;
+    friend class talcite::Term;
+
+    const talcite::detail::Sheet& frame(Size size);
 
     Schedule schedule_;
     Skin skin_;
@@ -142,7 +155,7 @@ private:
     std::optional<std::chrono::steady_clock::time_point> first_click_;
     Spot waiting_;
     Mouse clicked_ = Mouse::none;
-    View sheet_;
+    std::unique_ptr<talcite::detail::Sheet> sheet_;
     std::vector<std::pair<int, int>> damaged_;
     std::vector<std::pair<int, int>> painted_;
     std::uint64_t framed_ = 0;

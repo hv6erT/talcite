@@ -11,7 +11,7 @@
 #include "talcite/canvas.hpp"
 #include "talcite/handler.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite::ui {
 
@@ -127,7 +127,7 @@ public:
 
     void render(Canvas& onto) const;
 
-    virtual View render(const Area& where);
+    virtual Snapshot render(const Area& where);
 
     [[nodiscard]] virtual Size wants(Size room) const;
 

@@ -9,9 +9,9 @@
 #include "eliding.hpp"
 
 // A link: a line of text that stands for an address. It is drawn in the role `talcite.link`, with
-// `.focus` and `.disabled` beside it, and its cells carry a hyperlink (`View::link`), which goes to
-// a terminal that takes them as OSC 8 (`Capabilities::links`): such a terminal shows the address
-// under the pointer and opens it itself on Ctrl+click (Cmd+click on macOS).
+// `.focus` and `.disabled` beside it, and its cells carry a hyperlink (`Canvas::link`), which goes
+// to a terminal that takes them as OSC 8 (`Capabilities::links`): such a terminal shows the
+// address under the pointer and opens it itself on Ctrl+click (Cmd+click on macOS).
 //
 // Enter, or a click, follows the link the way every widget of the library follows an address
 // (`FollowingMixin`): `FollowEvent` first, which the application may take, then the launcher, and

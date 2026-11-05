@@ -5,8 +5,11 @@
 #include <string>
 #include <string_view>
 
+#include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
+
+#include "sheet.hpp"
 
 using namespace talcite;
 
@@ -22,8 +25,8 @@ Style marked() {
 }
 
 // A page filled with one letter, the shortest way to get a child to paste.
-View painted(ui::Size how, char32_t what) {
-    View made{how};
+detail::Sheet painted(ui::Size how, char32_t what) {
+    detail::Sheet made{how};
 
     for (int y = 0; y < how.high; ++y)
         for (int x = 0; x < how.wide; ++x) made.put({x, y}, what, Style{});
@@ -33,16 +36,17 @@ View painted(ui::Size how, char32_t what) {
 
 }
 
-// `put` has two overloads: a character and a string. Every spelling one writes by reflex (a
+// `Canvas::put` has two overloads: a character and a string. Every spelling one writes by reflex (a
 // character literal, a string literal, `std::string`) has to land where it means, without a cast.
-TRIAL("View: put tells a character from a string") {
-    View one{{6, 1}};
+TRIAL("Canvas: put tells a character from a string") {
+    detail::Sheet one{{6, 1}};
+    Canvas onto{one};
 
-    one.put({0, 0}, U'ż', marked());
-    one.put({1, 0}, 'a', Style{});
-    one.put({2, 0}, "bc", Style{});
-    one.put({4, 0}, std::string{"d"}, Style{});
-    one.put({5, 0}, std::string_view{"e"}, Style{});
+    onto.put({0, 0}, U'ż', marked());
+    onto.put({1, 0}, 'a', Style{});
+    onto.put({2, 0}, "bc", Style{});
+    onto.put({4, 0}, std::string{"d"}, Style{});
+    onto.put({5, 0}, std::string_view{"e"}, Style{});
 
     same(one.at({0, 0}).letter, U'ż');
     ought(one.at({0, 0}).style == marked());
@@ -53,8 +57,8 @@ TRIAL("View: put tells a character from a string") {
     same(one.at({5, 0}).letter, U'e');
 }
 
-TRIAL("View: a fresh page has its size and nothing but spaces") {
-    const View one{{4, 2}};
+TRIAL("Sheet: a fresh page has its size and nothing but spaces") {
+    const detail::Sheet one{{4, 2}};
 
     same(one.size().wide, 4);
     same(one.size().high, 2);
@@ -62,16 +66,16 @@ TRIAL("View: a fresh page has its size and nothing but spaces") {
     same(one.at({3, 1}).letter, U' ');
 }
 
-TRIAL("View: a negative dimension goes down to zero, not to an exception") {
-    const View one{{-5, 3}};
+TRIAL("Sheet: a negative dimension goes down to zero, not to an exception") {
+    const detail::Sheet one{{-5, 3}};
 
     same(one.size().wide, 0);
     same(one.size().high, 3);
     same(one.at({0, 0}).letter, U' ');
 }
 
-TRIAL("View: a letter stands where it was told") {
-    View one{{4, 2}};
+TRIAL("Sheet: a letter stands where it was told") {
+    detail::Sheet one{{4, 2}};
 
     one.put({2, 1}, U'A', marked());
 
@@ -80,8 +84,8 @@ TRIAL("View: a letter stands where it was told") {
     same(one.at({1, 1}).letter, U' ');
 }
 
-TRIAL("View: writing outside the page does nothing") {
-    View one{{2, 2}};
+TRIAL("Sheet: writing outside the page does nothing") {
+    detail::Sheet one{{2, 2}};
 
     one.put({5, 0}, U'A', Style{});
     one.put({-1, 0}, U'B', Style{});
@@ -91,10 +95,11 @@ TRIAL("View: writing outside the page does nothing") {
     same(one.at({1, 1}).letter, U' ');
 }
 
-TRIAL("View: a string goes to the right") {
-    View one{{6, 1}};
+TRIAL("Canvas: a string goes to the right") {
+    detail::Sheet one{{6, 1}};
+    Canvas onto{one};
 
-    one.put({1, 0}, "abc", Style{});
+    onto.put({1, 0}, "abc", Style{});
 
     same(one.at({0, 0}).letter, U' ');
     same(one.at({1, 0}).letter, U'a');
@@ -102,10 +107,11 @@ TRIAL("View: a string goes to the right") {
     same(one.at({3, 0}).letter, U'c');
 }
 
-TRIAL("View: a string with diacritics counts characters, not bytes") {
-    View one{{4, 1}};
+TRIAL("Canvas: a string with diacritics counts characters, not bytes") {
+    detail::Sheet one{{4, 1}};
+    Canvas onto{one};
 
-    one.put({0, 0}, "żółw", Style{});
+    onto.put({0, 0}, "żółw", Style{});
 
     same(one.at({0, 0}).letter, U'ż');
     same(one.at({1, 0}).letter, U'ó');
@@ -113,32 +119,34 @@ TRIAL("View: a string with diacritics counts characters, not bytes") {
     same(one.at({3, 0}).letter, U'w');
 }
 
-TRIAL("View: a string is cut off at the edge") {
-    View one{{3, 1}};
+TRIAL("Canvas: a string is cut off at the edge") {
+    detail::Sheet one{{3, 1}};
+    Canvas onto{one};
 
-    one.put({1, 0}, "abcdef", Style{});
+    onto.put({1, 0}, "abcdef", Style{});
 
     same(one.at({1, 0}).letter, U'a');
     same(one.at({2, 0}).letter, U'b');
     same(one.size().wide, 3);
 }
 
-TRIAL("View: broken UTF-8 gives a replacement character instead of vanishing") {
-    View one{{4, 1}};
+TRIAL("Canvas: broken UTF-8 gives a replacement character instead of vanishing") {
+    detail::Sheet one{{4, 1}};
+    Canvas onto{one};
 
     std::string said = "a";
     said += static_cast<char>(0xFF);
     said += "b";
 
-    one.put({0, 0}, said, Style{});
+    onto.put({0, 0}, said, Style{});
 
     same(one.at({0, 0}).letter, U'a');
     same(one.at({1, 0}).letter, U'�');
     same(one.at({2, 0}).letter, U'b');
 }
 
-TRIAL("View: a double-width character takes two cells") {
-    View one{{4, 1}};
+TRIAL("Sheet: a double-width character takes two cells") {
+    detail::Sheet one{{4, 1}};
 
     one.put({1, 0}, U'漢', Style{});
 
@@ -146,16 +154,16 @@ TRIAL("View: a double-width character takes two cells") {
     same(one.at({2, 0}).letter, static_cast<char32_t>(0));
 }
 
-TRIAL("View: a double-width character in the last column stays a space") {
-    View one{{3, 1}};
+TRIAL("Sheet: a double-width character in the last column stays a space") {
+    detail::Sheet one{{3, 1}};
 
     one.put({2, 0}, U'漢', Style{});
 
     same(one.at({2, 0}).letter, U' ');
 }
 
-TRIAL("View: overwriting half of a double-width character cleans up the other half") {
-    View one{{4, 1}};
+TRIAL("Sheet: overwriting half of a double-width character cleans up the other half") {
+    detail::Sheet one{{4, 1}};
 
     one.put({0, 0}, U'漢', Style{});
     one.put({1, 0}, U'x', Style{});
@@ -164,8 +172,8 @@ TRIAL("View: overwriting half of a double-width character cleans up the other ha
     same(one.at({1, 0}).letter, U'x');
 }
 
-TRIAL("View: overwriting the first half cleans up the continuation") {
-    View one{{4, 1}};
+TRIAL("Sheet: overwriting the first half cleans up the continuation") {
+    detail::Sheet one{{4, 1}};
 
     one.put({1, 0}, U'漢', Style{});
     one.put({1, 0}, U'x', Style{});
@@ -174,8 +182,8 @@ TRIAL("View: overwriting the first half cleans up the continuation") {
     same(one.at({2, 0}).letter, U' ');
 }
 
-TRIAL("View: fill paints a rectangle and does not go outside it") {
-    View one{{4, 3}};
+TRIAL("Sheet: fill paints a rectangle and does not go outside it") {
+    detail::Sheet one{{4, 3}};
 
     one.fill({{1, 1}, {2, 1}}, marked());
 
@@ -185,8 +193,8 @@ TRIAL("View: fill paints a rectangle and does not go outside it") {
     ought(!one.at({1, 0}).style.bold);
 }
 
-TRIAL("View: fill cuts a double-width character at both of its edges") {
-    View one{{6, 1}};
+TRIAL("Sheet: fill cuts a double-width character at both of its edges") {
+    detail::Sheet one{{6, 1}};
     one.put({0, 0}, U'漢', Style{});
     one.put({2, 0}, U'漢', Style{});
     one.put({4, 0}, U'漢', Style{});
@@ -205,8 +213,8 @@ TRIAL("View: fill cuts a double-width character at both of its edges") {
     ought(!one.at({5, 0}).style.bold);
 }
 
-TRIAL("View: fill and clear reaching past the page stop at its edge") {
-    View one{{3, 2}};
+TRIAL("Sheet: fill and clear reaching past the page stop at its edge") {
+    detail::Sheet one{{3, 2}};
 
     one.fill({{-2, -1}, {9, 9}}, marked());
 
@@ -220,8 +228,8 @@ TRIAL("View: fill and clear reaching past the page stop at its edge") {
     same(static_cast<int>(one.at({2, 1}).shown), static_cast<int>(Shown::own));
 }
 
-TRIAL("View: clearing half of a double-width character leaves no half behind") {
-    View one{{4, 1}};
+TRIAL("Sheet: clearing half of a double-width character leaves no half behind") {
+    detail::Sheet one{{4, 1}};
     one.put({0, 0}, U'漢', Style{});
     one.put({2, 0}, U'漢', Style{});
 
@@ -236,8 +244,8 @@ TRIAL("View: clearing half of a double-width character leaves no half behind") {
     same(one.at({1, 0}).letter, U'y');
 }
 
-TRIAL("View: asking for a cell outside the page gives an empty one") {
-    const View one{{2, 2}};
+TRIAL("Sheet: asking for a cell outside the page gives an empty one") {
+    const detail::Sheet one{{2, 2}};
 
     same(one.at({9, 9}).letter, U' ');
     same(one.at({-1, 0}).letter, U' ');
@@ -247,10 +255,11 @@ TRIAL("View: asking for a cell outside the page gives an empty one") {
 // screen, not to the terminal as a command. C0 and DEL show as their pictures, C1 and bidirectional
 // control characters as a replacement character, and the width stays one cell, so the columns do
 // not drift apart.
-TRIAL("View: control characters become visible instead of being executed") {
-    View one{{9, 1}};
+TRIAL("Canvas: control characters become visible instead of being executed") {
+    detail::Sheet one{{9, 1}};
+    Canvas onto{one};
 
-    one.put({0, 0}, std::string{"a\x1b]2;\x07"} + "\xc2\x9b" + "\xe2\x80\xae" + "\x7f" + "z", Style{});
+    onto.put({0, 0}, std::string{"a\x1b]2;\x07"} + "\xc2\x9b" + "\xe2\x80\xae" + "\x7f" + "z", Style{});
 
     // As numbers, not literals: the compiler rightly warns about direction characters in source.
     constexpr char32_t substitute = 0xFFFD;
@@ -277,11 +286,11 @@ TRIAL("View: control characters become visible instead of being executed") {
 
 // A link marks the cells that show something and keeps its address in the list; a cell the node did
 // not draw stays without it, so a link never reaches over what lies below.
-TRIAL("View: a hyperlink marks the cells that show something, and the list keeps its address") {
-    View one{{6, 1}};
+TRIAL("Sheet: a hyperlink marks the cells that show something, and the list keeps its address") {
+    detail::Sheet one{{6, 1}};
 
     one.clear({{0, 0}, {6, 1}});
-    one.put({0, 0}, "abc", Style{});
+    Canvas{one}.put({0, 0}, "abc", Style{});
 
     const Hyperlink made = hyperlink("https://example.org/");
 
@@ -301,7 +310,7 @@ TRIAL("View: a hyperlink marks the cells that show something, and the list keeps
 
 // One address keeps one mark, frame after frame and whoever draws it, so that frames compare equal;
 // two addresses never share one, so that a new address rewrites the cells. None is zero.
-TRIAL("View: one address keeps its hyperlink mark, two addresses get two") {
+TRIAL("Sheet: one address keeps its hyperlink mark, two addresses get two") {
     const Hyperlink one = hyperlink("https://a.example/");
     const Hyperlink again = hyperlink("https://a.example/");
     const Hyperlink two = hyperlink("https://b.example/");

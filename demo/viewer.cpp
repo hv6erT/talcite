@@ -19,7 +19,7 @@
 #include "talcite/skin.hpp"
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 #include "talcite/viewer.hpp"
 
 #include "doing.hpp"

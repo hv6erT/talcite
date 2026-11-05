@@ -350,7 +350,7 @@ const Skin& Skin::plain() {
 // approximating colors. A skin with only `rgb` on an `ansi` terminal therefore shows what the
 // built-in skin shows.
 //
-// An unknown glyph gives '?', never zero: in `View` zero means the continuation of a double-width
+// An unknown glyph gives '?', never zero: in `Sheet` zero means the continuation of a double-width
 // character, and composing a frame skips such cells, so zero would leave a hole in the picture
 // instead of a visible error.
 Style Skin::style(std::string_view key) const {

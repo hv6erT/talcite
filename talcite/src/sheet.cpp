@@ -1,4 +1,4 @@
-#include "talcite/view.hpp"
+#include "sheet.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -75,8 +75,8 @@ Hyperlink hyperlink(std::string address) {
 // one, an East Asian wide character as two, a cluster as the cells it takes (`width`).
 ui::Size measured(std::string_view what) { return ui::Size{width(what), what.empty() ? 0 : 1}; }
 
-// A blank view of the given size, with every cell empty.
-View::View(ui::Size given) {
+// A blank sheet of the given size, with every cell empty.
+detail::Sheet::Sheet(ui::Size given) {
     // A negative dimension comes from a cramped window, not from a mistake of the caller:
     // "minus two left" must give an empty sheet, not crash the program.
     size_.wide = std::max(given.wide, 0);
@@ -86,13 +86,13 @@ View::View(ui::Size given) {
                   Cell{});
 }
 
-// Whether `where` lies inside the view.
-bool View::holds(ui::Spot where) const {
+// Whether `where` lies inside the snapshot.
+bool Snapshot::holds(ui::Spot where) const {
     return where.x >= 0 && where.y >= 0 && where.x < size_.wide && where.y < size_.high;
 }
 
 // The cell at `where`, without a bounds check; callers check with `holds` first.
-Cell& View::cell(ui::Spot where) {
+Cell& detail::Sheet::cell(ui::Spot where) {
     return cells_[static_cast<std::size_t>(where.y) * static_cast<std::size_t>(size_.wide) +
                   static_cast<std::size_t>(where.x)];
 }
@@ -100,7 +100,7 @@ Cell& View::cell(ui::Spot where) {
 // A double-width character occupies two cells, and writing into one of them orphans the other.
 // We turn that other one into a space before overwriting anything; otherwise half a character
 // stays on the screen and starts flickering when frames are compared.
-void View::broken(ui::Spot where) {
+void detail::Sheet::broken(ui::Spot where) {
     if (!holds(where)) return;
 
     const Cell one = cell(where);
@@ -119,9 +119,9 @@ void View::broken(ui::Spot where) {
 // goes through `shown`, so a cell never carries a control character to the terminal. A character
 // that takes no cell of its own (a combining mark, ZWJ, a selector) joins the glyph to the left of
 // `at`, past the second half of a wide one: code that puts text character by character and moves
-// by `width` thus still draws "e" with U+0301 as one letter. With nothing to its left in the view
+// by `width` thus still draws "e" with U+0301 as one letter. With nothing to its left in the sheet
 // it is not drawn.
-void View::put(ui::Spot at, char32_t what, const Style& how) {
+void detail::Sheet::put(ui::Spot at, char32_t what, const Style& how) {
     if (what == 0 || !holds(at)) return;
 
     what = shown(what);
@@ -164,31 +164,11 @@ void View::put(ui::Spot at, char32_t what, const Style& how) {
     if (much == 2) cell({at.x + 1, at.y}) = Cell{0, how};
 }
 
-// Puts UTF-8 text starting at `at`, cluster by cluster, advancing by each glyph's width and
-// stopping at the right edge. A cluster that shows nothing (a lone format character) takes no
-// cell.
-void View::put(ui::Spot at, std::string_view what, const Style& how) {
-    std::size_t which = 0;
-
-    while (which < what.size() && at.x < size_.wide) {
-        const std::size_t next = cluster_after(what, which);
-        const char32_t one = glyph(what.substr(which, next - which));
-
-        which = next;
-
-        if (one == 0) continue;
-
-        put(at, one, how);
-
-        at.x += width(one);
-    }
-}
-
 // Fills `where` with spaces in the style `how`, as `put` of a space into every cell would: a wide
 // character cut by the edge of `where` loses its other half, and the inside is written row by row
 // at once: every frame fills and clears whole panels several times over, and cell by cell that
 // took a third of the frame.
-void View::fill(const ui::Area& where, const Style& how) {
+void detail::Sheet::fill(const ui::Area& where, const Style& how) {
     const int from_x = std::max(where.at.x, 0);
     const int upto_x = std::min(where.at.x + where.size.wide, size_.wide);
 
@@ -207,43 +187,12 @@ void View::fill(const ui::Area& where, const Style& how) {
     }
 }
 
-// A shadow has no character of its own. The cell remembers the style and the fact that it brings
-// no character; that is resolved only when the view is drawn onto another, when it is clear what
-// lies below. Characters cannot be blended, so the transparency of a character is something other
-// than the transparency of a color: a character is either there or not. That is why a shadow
-// needs no alpha.
-void View::shade(const ui::Area& where, const Style& how) {
-    for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
-        for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
-            if (!holds({x, y})) continue;
-
-            Cell& one = cell({x, y});
-
-            one.style = how;
-            one.shown = Shown::shade;
-        }
-}
-
-// Foreground only. The cell carries a character and its color, and its background, when none is
-// given, is taken from what lies below when the view is drawn: a cell on the edge of a picture
-// stands in a window, in a viewer, on a panel, and only what is below knows its background. Plain
-// text does not work like this and must not; its role gives its own background (see the frame
-// trial in `framing.cpp`). A foreground cell is a separate, explicit request. A given background
-// wins: a cell with a background is an ordinary cell.
-void View::foreground(ui::Spot at, char32_t what, const Style& how) {
-    put(at, what, how);
-
-    if (!holds(at) || what == 0 || !how.background.transparent) return;
-
-    cell(at).shown = Shown::foreground;
-}
-
 // Marks cells that the node does not draw although they lie in its rectangle. This happens
 // whenever the shape is not a rectangle: a menu takes the title strip and the box below it, and
 // the corners between them belong to the neighbors. Without this the node would paint them over
 // with spaces. A double-width character cut by the edge of `where` loses its other half, so that
 // half becomes a space, as it would under `put`.
-void View::clear(const ui::Area& where) {
+void detail::Sheet::clear(const ui::Area& where) {
     if (where.size.wide <= 0) return;
 
     const int from_x = std::max(where.at.x, 0);
@@ -266,7 +215,7 @@ void View::clear(const ui::Area& where) {
 // Drops the pictures and the hyperlinks no cell carries any more. A sheet kept from frame to frame
 // (`Root::frame`) paints over what it holds, and the lists would otherwise keep every picture and
 // address ever shown.
-void View::forget() {
+void detail::Sheet::forget() {
     if (pictures_.empty() && links_.empty()) return;
 
     std::vector<std::uint32_t> pictured;
@@ -290,7 +239,7 @@ void View::forget() {
 // has no mark. Transparent cells become an empty foreground: they take their background from below
 // as before, and they must carry the mark, otherwise a picture with a transparent edge would never
 // be visible in full.
-void View::picture(const ui::Area& where, Picture what) {
+void detail::Sheet::picture(const ui::Area& where, Picture what) {
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
         for (int x = where.at.x; x < where.at.x + where.size.wide; ++x) {
             if (!holds({x, y})) continue;
@@ -312,7 +261,7 @@ void View::picture(const ui::Area& where, Picture what) {
 // reaches over what lies below. Whatever is put over a cell afterwards (`put`, `fill`, `clear`, a
 // window drawn over it) takes the mark away with the old content, and a shadow keeps it, since the
 // text below it stays what it was, only dimmed.
-void View::link(const ui::Area& where, Hyperlink what) {
+void detail::Sheet::link(const ui::Area& where, Hyperlink what) {
     if (what.mark == 0) return;
 
     for (int y = where.at.y; y < where.at.y + where.size.high; ++y)
@@ -335,7 +284,7 @@ void View::link(const ui::Area& where, Hyperlink what) {
 // every transition between the picture and characters and rewrites the cells the picture covered.
 // A picture covered in even one cell stays entirely in characters, and its cells lose the mark,
 // for the same reason.
-std::vector<Placement> View::bared(const ui::Area& room) {
+std::vector<detail::Placement> detail::Sheet::bared(const ui::Area& room) {
     std::vector<Placement> made;
 
     for (const Picture& one : pictures_) {
@@ -392,8 +341,8 @@ std::vector<Placement> View::bared(const ui::Area& room) {
     return made;
 }
 
-// A copy of the cell at `where`, or an empty cell outside the view.
-Cell View::at(ui::Spot where) const {
+// A copy of the cell at `where`, or an empty cell outside the snapshot.
+Cell Snapshot::at(ui::Spot where) const {
     if (!holds(where)) return Cell{};
 
     return cells_[static_cast<std::size_t>(where.y) * static_cast<std::size_t>(size_.wide) +

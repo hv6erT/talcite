@@ -27,7 +27,7 @@
 #include "talcite/span.hpp"
 #include "talcite/term.hpp"
 #include "talcite/tick.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 #include "doing.hpp"
 

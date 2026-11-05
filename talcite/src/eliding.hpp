@@ -9,7 +9,7 @@
 #include "talcite/encoding.hpp"
 #include "talcite/mark.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite::ui {
 
@@ -187,7 +187,7 @@ struct Traced {
 
 // Calls `each` for every cluster of a drawn row that came from the text, with its column (the row
 // starting at `x`), its width, its glyph and the paragraph byte it came from, advancing as
-// `View::put` does.
+// `Sheet::put` does.
 template <typename Each>
 void walked(const Traced& one, int x, Each each) {
     for (std::size_t at = 0; at < one.text.size();) {

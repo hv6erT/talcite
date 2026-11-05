@@ -94,7 +94,7 @@ TRIAL("Link: shows its text underlined, with the hyperlink over the text") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {10, 1}});
+    const Snapshot made = top.render({{0, 0}, {10, 1}});
 
     ought(made.at({0, 0}).style.under);
     same(made.at({0, 0}).letter, char32_t{U's'});
@@ -116,7 +116,7 @@ TRIAL("Link: without text it shows the address, cut to the room it has") {
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {6, 1}});
+    const Snapshot made = top.render({{0, 0}, {6, 1}});
 
     same(made.at({0, 0}).letter, char32_t{U'h'});
     same(made.at({5, 0}).letter, char32_t{U'…'});
@@ -134,14 +134,14 @@ TRIAL("Link: disabled it is faint without a hyperlink, in focus reversed and und
 
     one->focus();
 
-    const View focused = top.render({{0, 0}, {10, 1}});
+    const Snapshot focused = top.render({{0, 0}, {10, 1}});
 
     ought(focused.at({0, 0}).style.reverse);
     ought(focused.at({0, 0}).style.under);
 
     one->enabled(false);
 
-    const View off = top.render({{0, 0}, {10, 1}});
+    const Snapshot off = top.render({{0, 0}, {10, 1}});
 
     ought(off.at({0, 0}).style.faint);
     same(off.at({0, 0}).link, std::uint32_t{0});
@@ -160,7 +160,7 @@ TRIAL("Link: a new address takes a new hyperlink") {
 
     one->address("https://example.org/two");
 
-    const View after = top.render({{0, 0}, {10, 1}});
+    const Snapshot after = top.render({{0, 0}, {10, 1}});
 
     ought(after.at({0, 0}).link != before);
     same(one->address(), std::string{"https://example.org/two"});
@@ -366,7 +366,7 @@ std::vector<std::string> found(std::string_view text) {
 }
 
 // The text of a view's row, with the spaces on the right trimmed.
-std::string row_of(const View& one, int y) {
+std::string row_of(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x)
@@ -415,7 +415,7 @@ TRIAL("Span: a mark with an address lays its role and hyperlink over its text, w
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {8, 3}});
+    const Snapshot made = top.render({{0, 0}, {8, 3}});
 
     same(row_of(made, 0), std::string{"go to"});
     same(row_of(made, 1), std::string{"example"});
@@ -443,7 +443,7 @@ TRIAL("Span: a mark without an address is only a role, and what is elided carrie
 
     top.children().add(one);
 
-    const View made = top.render({{0, 0}, {10, 1}});
+    const Snapshot made = top.render({{0, 0}, {10, 1}});
 
     ought(made.at({0, 0}).style.under);
     same(made.at({0, 0}).link, std::uint32_t{0});
@@ -511,7 +511,7 @@ TRIAL("Viewer: a mark with an address is a hyperlink, Enter and a click follow i
 
     one->focus();
 
-    const View made = top.render({{0, 0}, {40, 3}});
+    const Snapshot made = top.render({{0, 0}, {40, 3}});
 
     same(made.at({0, 0}).link, std::uint32_t{0});
     ought(made.at({5, 0}).link != 0);

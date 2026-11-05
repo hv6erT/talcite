@@ -1,8 +1,8 @@
 #include <deque>
 #include <string>
 
+#include "talcite/canvas.hpp"
 #include "talcite/encoding.hpp"
-
 #include "talcite/term.hpp"
 
 namespace {
@@ -156,31 +156,30 @@ protected:
     }
 
     // A bold heading, then the logged lines below it, as many as fit.
-    talcite::View paint(talcite::ui::Size given, talcite::ui::Area seen) override {
-        talcite::View made{seen.size};
-
+    void paint(talcite::Canvas& onto) const override {
         talcite::Style head;
         head.bold = true;
 
-        made.put({2 - seen.at.x, 0 - seen.at.y}, "Press keys. F10 quits.", head);
+        onto.put({2, 0}, "Press keys. F10 quits.", head);
 
         int y = 2;
 
         for (const std::string& one : said_) {
-            if (y >= given.high) break;
+            if (y >= onto.size().high) break;
 
-            made.put({2 - seen.at.x, y - seen.at.y}, one, talcite::Style{});
+            onto.put({2, y}, one, talcite::Style{});
 
             ++y;
         }
-
-        return made;
     }
 
 private:
-    // Appends one line to the log and drops the oldest lines that no longer fit on the screen.
+    // Appends one line to the log and drops the oldest lines that no longer fit on the screen; the
+    // next frame paints the log anew.
     void shown(const std::string& what, const std::string& said) {
         said_.push_back(what + ": " + said);
+
+        changed();
 
         const std::size_t room =
             static_cast<std::size_t>(term_.size().high > 3 ? term_.size().high - 3 : 1);

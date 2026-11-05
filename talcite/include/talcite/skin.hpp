@@ -10,7 +10,7 @@
 #include "talcite/capabilities.hpp"
 #include "talcite/line.hpp"
 #include "talcite/shape.hpp"
-#include "talcite/view.hpp"
+#include "talcite/snapshot.hpp"
 
 namespace talcite::ui {
 

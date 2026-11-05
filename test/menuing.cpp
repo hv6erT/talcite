@@ -69,7 +69,7 @@ private:
 };
 
 // The text of row `y` of the view, with trailing spaces removed.
-std::string read(const View& one, int y) {
+std::string read(const Snapshot& one, int y) {
     std::string made;
 
     for (int x = 0; x < one.size().wide; ++x) {
@@ -96,7 +96,7 @@ TRIAL("Menu: a closed one is just the title in row zero") {
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(read(made, 0), std::string{" Plik"});
     same(read(made, 1), std::string{""});
@@ -129,7 +129,7 @@ TRIAL("Menu: emptying the bar allows putting it together anew") {
 
     (void)window->add("Pomoc");
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(read(made, 0), std::string{" Pomoc"});
 }
@@ -145,7 +145,7 @@ TRIAL("Menu: the titles stand side by side") {
     (void)window->add("Widok");
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     same(read(made, 0), std::string{" Plik  Widok"});
 }
@@ -427,7 +427,7 @@ TRIAL("Menu: an open one draws a box with the items") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {30, 8}});
+    const Snapshot made = top.render({{0, 0}, {30, 8}});
 
     same(read(made, 0), std::string{" Plik"});
     same(read(made, 1), std::string{"┌──────────────┐"});
@@ -545,7 +545,7 @@ TRIAL("Menu: the highlight is the item's focus") {
 
     one->open();
 
-    View made = top.render({{0, 0}, {20, 6}});
+    Snapshot made = top.render({{0, 0}, {20, 6}});
 
     ought(made.at({1, 2}).style.reverse);
     ought(!made.at({1, 3}).style.reverse);
@@ -770,7 +770,7 @@ TRIAL("Menu: a hotkey is underlined in the item's text") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     // " Kopiuj": the text stands one cell from the left, so "p" is in the fourth column of the
     // frame.
@@ -952,7 +952,7 @@ TRIAL("Menu: without items it does not unroll, Enter and a click call the title'
     ought(!left->opened());
 
     // Below the title the content shows, not a box.
-    const View shut = top.render({{0, 0}, {30, 8}});
+    const Snapshot shut = top.render({{0, 0}, {30, 8}});
 
     same(read(shut, 1), std::string{"xxxxxxxxxx"});
 
@@ -1087,7 +1087,7 @@ TRIAL("Menu: the content stands below the row of titles") {
     (void)window->add("Plik");
     top.children().add(window);
 
-    const View made = top.render({{0, 0}, {6, 3}});
+    const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     same(read(made, 0), std::string{" Plik"});
     same(read(made, 1), std::string{"xxxxxx"});
@@ -1173,7 +1173,7 @@ TRIAL("Menu: the line reaches the frame") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {30, 9}});
+    const Snapshot made = top.render({{0, 0}, {30, 9}});
 
     same(read(made, 3), std::string{"├─────────┤"});
 }
@@ -1231,7 +1231,7 @@ TRIAL("Menu: the second menu's box stands below the second title") {
 
     second->open();
 
-    const View made = top.render({{0, 0}, {30, 6}});
+    const Snapshot made = top.render({{0, 0}, {30, 6}});
 
     // " Plik " takes six columns, so "Widok" starts in the sixth, and the left corner stands there.
     same(read(made, 0), std::string{" Plik  Widok"});
@@ -1254,7 +1254,7 @@ TRIAL("Menu: at the right edge it slides out to the left") {
 
     second->open();
 
-    const View made = top.render({{0, 0}, {26, 6}});
+    const Snapshot made = top.render({{0, 0}, {26, 6}});
 
     same(second->area().at.x, 2);
     same(read(made, 0), std::string{" Plik  Widok"});
@@ -1276,7 +1276,7 @@ TRIAL("Menu: the shadow does not eat what lies below") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {30, 8}});
+    const Snapshot made = top.render({{0, 0}, {30, 8}});
 
     same(read(made, 1), std::string{"┌────────┐xxxxxxxxxxxxxxxxxxxx"});
     same(made.at({10, 2}).letter, U'x');
@@ -1317,7 +1317,7 @@ TRIAL("Menu: the content stands below the bar") {
     same(static_cast<const ui::Node*>(one->parent()->parent()->parent()),
          static_cast<const ui::Node*>(&window));
 
-    const View made = window.render({{0, 0}, {8, 3}});
+    const Snapshot made = window.render({{0, 0}, {8, 3}});
 
     same(read(made, 1), std::string{"aaaaaaaa"});
 }
@@ -1565,7 +1565,7 @@ TRIAL("MenuSeparator: the line follows the stem of the item's role") {
 
     menu->open();
 
-    const View made = top.render({{0, 0}, {20, 6}});
+    const Snapshot made = top.render({{0, 0}, {20, 6}});
 
     bool found = false;
 
@@ -1761,7 +1761,7 @@ TRIAL("Menu: a title's letter is underlined in the bar") {
 
     (void)top.render({{0, 0}, {20, 3}});
 
-    const View made = top.render({{0, 0}, {20, 3}});
+    const Snapshot made = top.render({{0, 0}, {20, 3}});
 
     ought(made.at({2, 0}).style.under);
     ought(!made.at({1, 0}).style.under);
@@ -1849,7 +1849,7 @@ TRIAL("Menu: double-width characters widen the box by the width of the sides") {
 
     one->open();
 
-    const View made = top.render({{0, 0}, {30, 8}});
+    const Snapshot made = top.render({{0, 0}, {30, 8}});
 
     // The inside has fourteen cells, as in the trial with an ordinary frame; the sides add two
     // each.
@@ -1914,7 +1914,7 @@ TRIAL("Submenu: the right arrow opens the list beside the item, with its first i
     ought(made.menu->opened());
     ought(made.settings->focused());
 
-    const View seen = top.render({{0, 0}, {40, 8}});
+    const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
     same(read(seen, 1), std::string{"┌─────────────────────┌────────────┐"});
     same(read(seen, 2), std::string{"│ Biblioteka  Filmy ▸ │ Ustawienia │"});
@@ -2121,7 +2121,7 @@ TRIAL("Submenu: while its list is open, the item stays highlighted") {
     made.menu->open();
     made.deeper->pick();
 
-    const View seen = top.render({{0, 0}, {40, 8}});
+    const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
     ought(!made.deeper->focused());
     ought(seen.at({3, 2}).style == top.skin().style("talcite.menu.focus"));
@@ -2209,7 +2209,7 @@ TRIAL("Submenu: the mark has a plain form, and the hint stands before it") {
     top.unicode(false);
     made.menu->open();
 
-    const View seen = top.render({{0, 0}, {40, 8}});
+    const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
     same(read(seen, 2), std::string{"│ Biblioteka  Filmy > │"});
 }
