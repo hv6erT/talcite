@@ -363,325 +363,300 @@ void Reader::glued(unsigned char byte, std::vector<Token>& into) {
     sent(Token{std::move(made), std::move(raw)}, into);
 }
 
+// Back on the ground, with nothing pending.
+void Reader::ground() {
+    state_ = State::ground;
+    pending_.clear();
+}
+
+// The bytes of the sequence that `last` ends, with the reader back on the ground.
+std::string Reader::taken(unsigned char last) {
+    std::string raw = std::move(pending_) + static_cast<char>(last);
+
+    ground();
+
+    return raw;
+}
+
 // One byte, in the state the reader is in.
 void Reader::stepped(unsigned char byte, Clock::Moment now, std::vector<Token>& into) {
     switch (state_) {
         case State::ground: grounded(byte, false, into); return;
-
-        // The bytes of a character, by the one rule (`utf8::span`): what the rule does not let
-        // through is dropped, since no key types it, and the byte that broke it off is read anew.
-        case State::lettered: {
-            pending_ += static_cast<char>(byte);
-
-            const std::size_t from = alt_ ? 1 : 0;
-            const std::string_view letter = std::string_view{pending_}.substr(from);
-            const utf8::Span got = utf8::span(letter);
-
-            if (got.kind == utf8::Span::Kind::partial) return;
-
-            const bool alt = alt_;
-            const bool broken = got.kind == utf8::Span::Kind::bad && got.size < letter.size();
-
-            std::size_t at = 0;
-            const char32_t made = got.kind == utf8::Span::Kind::whole ? utf8::decode(letter, at) : 0;
-
-            std::string raw = std::move(pending_);
-
-            state_ = State::ground;
-            pending_.clear();
-            alt_ = false;
-
-            if (got.kind == utf8::Span::Kind::whole) sent(Token{Plain{made, alt}, std::move(raw)}, into);
-            else if (broken) stepped(byte, now, into);
-
-            return;
-        }
-
-        case State::escaped: {
-            if (byte == esc) {
-                sent(Token{Lone{}, std::string{static_cast<char>(esc)}}, into);
-
-                return;
-            }
-
-            if (byte == '[') {
-                state_ = State::csi;
-                pending_ += static_cast<char>(byte);
-
-                return;
-            }
-
-            if (byte == 'O') {
-                state_ = State::ss3;
-                pending_ += static_cast<char>(byte);
-
-                return;
-            }
-
-            if (stringed(byte)) {
-                state_ = State::told;
-                pending_ += static_cast<char>(byte);
-
-                return;
-            }
-
-            if (byte < 0x80 || leading(byte)) {
-                grounded(byte, true, into);
-
-                return;
-            }
-
-            state_ = State::ground;
-            pending_.clear();
-
-            sent(Token{Lone{}, std::string{static_cast<char>(esc)}}, into);
-
-            return;
-        }
-
-        case State::csi: {
-            if (pending_.size() == 2 && byte == '[') {
-                state_ = State::linux_keyed;
-                pending_ += static_cast<char>(byte);
-
-                return;
-            }
-
-            if (final_byte(byte)) {
-                finished(byte, into);
-
-                return;
-            }
-
-            if (byte >= 0x20 && byte <= 0x3F) {
-                pending_ += static_cast<char>(byte);
-
-                if (pending_.size() > longest_sequence) {
-                    state_ = State::csi_ignored;
-                    pending_.clear();
-                }
-
-                return;
-            }
-
-            if (byte == esc) {
-                state_ = State::escaped;
-                pending_ = std::string{static_cast<char>(esc)};
-
-                return;
-            }
-
-            if (byte == can || byte == sub) {
-                state_ = State::ground;
-                pending_.clear();
-
-                return;
-            }
-
-            if (byte == del) return;
-
-            if (byte < 0x20) {
-                sent(Token{Steered{byte, false}, std::string{static_cast<char>(byte)}}, into);
-
-                return;
-            }
-
-            state_ = State::ground;
-            pending_.clear();
-
-            grounded(byte, false, into);
-
-            return;
-        }
-
-        case State::csi_ignored: {
-            if (final_byte(byte) || byte == can || byte == sub) {
-                state_ = State::ground;
-
-                return;
-            }
-
-            if (byte == esc) {
-                state_ = State::escaped;
-                pending_ = std::string{static_cast<char>(esc)};
-            }
-
-            return;
-        }
-
-        case State::linux_keyed: {
-            if (final_byte(byte)) {
-                Csi made;
-                made.lead = '[';
-                made.last = static_cast<char>(byte);
-
-                std::string raw = std::move(pending_) + static_cast<char>(byte);
-
-                state_ = State::ground;
-                pending_.clear();
-
-                sent(Token{std::move(made), std::move(raw)}, into);
-
-                return;
-            }
-
-            state_ = State::ground;
-            pending_.clear();
-
-            stepped(byte, now, into);
-
-            return;
-        }
-
-        case State::ss3: {
-            if ((byte >= '0' && byte <= '9') || byte == ';') {
-                pending_ += static_cast<char>(byte);
-
-                if (pending_.size() > longest_shift) {
-                    state_ = State::ground;
-                    pending_.clear();
-                }
-
-                return;
-            }
-
-            if (final_byte(byte)) {
-                Ss3 made;
-                made.last = static_cast<char>(byte);
-
-                for (std::size_t at = 2; at < pending_.size(); ++at) {
-                    if (pending_[at] == ';') made.number = 0;
-                    else made.number = std::min(made.number * 10 + (pending_[at] - '0'), most_value);
-                }
-
-                std::string raw = std::move(pending_) + static_cast<char>(byte);
-
-                state_ = State::ground;
-                pending_.clear();
-
-                sent(Token{made, std::move(raw)}, into);
-
-                return;
-            }
-
-            // Not a single shift after all: Alt+O typed, and whatever came after it goes on as input.
-            const std::string held = std::move(pending_);
-
-            state_ = State::ground;
-            pending_.clear();
-
-            sent(Token{Plain{U'O', true}, held.substr(0, 2)}, into);
-
-            for (std::size_t at = 2; at < held.size(); ++at) stepped(static_cast<unsigned char>(held[at]), now, into);
-
-            stepped(byte, now, into);
-
-            return;
-        }
-
-        case State::told: {
-            if (byte == bel) {
-                Told made{pending_[1], pending_.substr(2)};
-
-                std::string raw = std::move(pending_) + static_cast<char>(byte);
-
-                state_ = State::ground;
-                pending_.clear();
-
-                sent(Token{std::move(made), std::move(raw)}, into);
-
-                return;
-            }
-
-            if (byte == can || byte == sub) {
-                state_ = State::ground;
-                pending_.clear();
-
-                return;
-            }
-
-            pending_ += static_cast<char>(byte);
-
-            if (byte == esc) {
-                state_ = State::told_escaped;
-
-                return;
-            }
-
-            if (pending_.size() > longest_string) {
-                state_ = State::told_ignored;
-                pending_.clear();
-            }
-
-            return;
-        }
-
-        case State::told_escaped: {
-            if (byte == '\\') {
-                if (pending_.size() >= 3) {
-                    Told made{pending_[1], pending_.substr(2, pending_.size() - 3)};
-
-                    std::string raw = std::move(pending_) + static_cast<char>(byte);
-
-                    state_ = State::ground;
-                    pending_.clear();
-
-                    sent(Token{std::move(made), std::move(raw)}, into);
-
-                    return;
-                }
-
-                state_ = State::ground;
-                pending_.clear();
-
-                return;
-            }
-
-            // Esc in a string without the backslash ends the string unfinished and starts a new
-            // escape, as in a terminal's own parser.
-            state_ = State::escaped;
-            pending_ = std::string{static_cast<char>(esc)};
-
-            stepped(byte, now, into);
-
-            return;
-        }
-
-        case State::told_ignored: {
-            if (byte == bel || byte == can || byte == sub) {
-                state_ = State::ground;
-
-                return;
-            }
-
-            if (byte == esc) {
-                state_ = State::told_escaped;
-                pending_.clear();
-            }
-
-            return;
-        }
-
-        case State::tracked: {
-            pending_ += static_cast<char>(byte);
-
-            if (pending_.size() < 6) return;
-
-            Tracked made{static_cast<unsigned char>(pending_[3]) - 32, static_cast<unsigned char>(pending_[4]) - 32,
-                         static_cast<unsigned char>(pending_[5]) - 32};
-
-            std::string raw = std::move(pending_);
-
-            state_ = State::ground;
-            pending_.clear();
-
-            sent(Token{made, std::move(raw)}, into);
-
-            return;
-        }
-
+        case State::lettered: in_letter(byte, now, into); return;
+        case State::escaped: in_escape(byte, into); return;
+        case State::csi: in_csi(byte, into); return;
+        case State::csi_ignored: in_ignored_csi(byte); return;
+        case State::linux_keyed: in_linux_key(byte, now, into); return;
+        case State::ss3: in_ss3(byte, now, into); return;
+        case State::told: in_string(byte, into); return;
+        case State::told_escaped: in_string_escape(byte, now, into); return;
+        case State::told_ignored: in_ignored_string(byte); return;
+        case State::tracked: in_mouse(byte, into); return;
         case State::glued: glued(byte, into); return;
     }
+}
+
+// The bytes of a character, by the one rule (`utf8::span`): what the rule does not let through is
+// dropped, since no key types it, and the byte that broke it off is read anew.
+void Reader::in_letter(unsigned char byte, Clock::Moment now, std::vector<Token>& into) {
+    pending_ += static_cast<char>(byte);
+
+    const std::size_t from = alt_ ? 1 : 0;
+    const std::string_view letter = std::string_view{pending_}.substr(from);
+    const utf8::Span got = utf8::span(letter);
+
+    if (got.kind == utf8::Span::Kind::partial) return;
+
+    const bool alt = alt_;
+    const bool broken = got.kind == utf8::Span::Kind::bad && got.size < letter.size();
+
+    std::size_t at = 0;
+    const char32_t made = got.kind == utf8::Span::Kind::whole ? utf8::decode(letter, at) : 0;
+
+    std::string raw = std::move(pending_);
+
+    ground();
+    alt_ = false;
+
+    if (got.kind == utf8::Span::Kind::whole) sent(Token{Plain{made, alt}, std::move(raw)}, into);
+    else if (broken) stepped(byte, now, into);
+}
+
+// After Esc: a second Esc is a lone Esc, `[` opens a CSI, `O` a single shift, a string introducer a
+// string; a character or the start of one is that character with Alt; anything else ends the escape
+// as a lone Esc.
+void Reader::in_escape(unsigned char byte, std::vector<Token>& into) {
+    if (byte == esc) {
+        sent(Token{Lone{}, std::string{static_cast<char>(esc)}}, into);
+
+        return;
+    }
+
+    if (byte == '[' || byte == 'O' || stringed(byte)) {
+        state_ = byte == '[' ? State::csi : byte == 'O' ? State::ss3 : State::told;
+        pending_ += static_cast<char>(byte);
+
+        return;
+    }
+
+    if (byte < 0x80 || leading(byte)) {
+        grounded(byte, true, into);
+
+        return;
+    }
+
+    ground();
+
+    sent(Token{Lone{}, std::string{static_cast<char>(esc)}}, into);
+}
+
+// Inside a CSI: `[` right after it is a key of the Linux console, a final byte ends it, parameters
+// and intermediates gather (a sequence too long is read on but ignored), Esc starts anew, CAN and
+// SUB cancel it, DEL is dropped, and a control character inside it is a control character of its
+// own, as in a terminal's parser. Anything else ends it and is read on the ground.
+void Reader::in_csi(unsigned char byte, std::vector<Token>& into) {
+    if (pending_.size() == 2 && byte == '[') {
+        state_ = State::linux_keyed;
+        pending_ += static_cast<char>(byte);
+
+        return;
+    }
+
+    if (final_byte(byte)) {
+        finished(byte, into);
+
+        return;
+    }
+
+    if (byte >= 0x20 && byte <= 0x3F) {
+        pending_ += static_cast<char>(byte);
+
+        if (pending_.size() > longest_sequence) {
+            state_ = State::csi_ignored;
+            pending_.clear();
+        }
+
+        return;
+    }
+
+    if (byte == esc) {
+        state_ = State::escaped;
+        pending_ = std::string{static_cast<char>(esc)};
+
+        return;
+    }
+
+    if (byte == can || byte == sub) {
+        ground();
+
+        return;
+    }
+
+    if (byte == del) return;
+
+    if (byte < 0x20) {
+        sent(Token{Steered{byte, false}, std::string{static_cast<char>(byte)}}, into);
+
+        return;
+    }
+
+    ground();
+
+    grounded(byte, false, into);
+}
+
+// A CSI too long to keep, read to its end: a final byte, CAN or SUB end it, Esc starts anew.
+void Reader::in_ignored_csi(unsigned char byte) {
+    if (final_byte(byte) || byte == can || byte == sub) {
+        state_ = State::ground;
+
+        return;
+    }
+
+    if (byte == esc) {
+        state_ = State::escaped;
+        pending_ = std::string{static_cast<char>(esc)};
+    }
+}
+
+// A key of the Linux console (CSI [ A): a final byte ends it; anything else ends it unread and
+// is read on the ground.
+void Reader::in_linux_key(unsigned char byte, Clock::Moment now, std::vector<Token>& into) {
+    if (final_byte(byte)) {
+        Csi made;
+        made.lead = '[';
+        made.last = static_cast<char>(byte);
+
+        sent(Token{std::move(made), taken(byte)}, into);
+
+        return;
+    }
+
+    ground();
+
+    stepped(byte, now, into);
+}
+
+// A single shift (SS3): digits and semicolons gather (too many give up), a final byte ends it
+// with the last number; anything else means Alt+O was typed, and whatever came after it goes on
+// as input.
+void Reader::in_ss3(unsigned char byte, Clock::Moment now, std::vector<Token>& into) {
+    if ((byte >= '0' && byte <= '9') || byte == ';') {
+        pending_ += static_cast<char>(byte);
+
+        if (pending_.size() > longest_shift) ground();
+
+        return;
+    }
+
+    if (final_byte(byte)) {
+        Ss3 made;
+        made.last = static_cast<char>(byte);
+
+        for (std::size_t at = 2; at < pending_.size(); ++at) {
+            if (pending_[at] == ';') made.number = 0;
+            else made.number = std::min(made.number * 10 + (pending_[at] - '0'), most_value);
+        }
+
+        sent(Token{made, taken(byte)}, into);
+
+        return;
+    }
+
+    const std::string held = std::move(pending_);
+
+    ground();
+
+    sent(Token{Plain{U'O', true}, held.substr(0, 2)}, into);
+
+    for (std::size_t at = 2; at < held.size(); ++at) stepped(static_cast<unsigned char>(held[at]), now, into);
+
+    stepped(byte, now, into);
+}
+
+// Inside a string (OSC and its kin): BEL ends it, CAN and SUB cancel it, Esc may start its
+// terminator, and a string too long is read on but ignored.
+void Reader::in_string(unsigned char byte, std::vector<Token>& into) {
+    if (byte == bel) {
+        Told made{pending_[1], pending_.substr(2)};
+
+        sent(Token{std::move(made), taken(byte)}, into);
+
+        return;
+    }
+
+    if (byte == can || byte == sub) {
+        ground();
+
+        return;
+    }
+
+    pending_ += static_cast<char>(byte);
+
+    if (byte == esc) {
+        state_ = State::told_escaped;
+
+        return;
+    }
+
+    if (pending_.size() > longest_string) {
+        state_ = State::told_ignored;
+        pending_.clear();
+    }
+}
+
+// Esc inside a string: a backslash makes the terminator (ST) and ends the string; anything else
+// ends the string unfinished and starts a new escape, as in a terminal's own parser.
+void Reader::in_string_escape(unsigned char byte, Clock::Moment now, std::vector<Token>& into) {
+    if (byte == '\\') {
+        if (pending_.size() < 3) {
+            ground();
+
+            return;
+        }
+
+        Told made{pending_[1], pending_.substr(2, pending_.size() - 3)};
+
+        sent(Token{std::move(made), taken(byte)}, into);
+
+        return;
+    }
+
+    state_ = State::escaped;
+    pending_ = std::string{static_cast<char>(esc)};
+
+    stepped(byte, now, into);
+}
+
+// A string too long to keep, read to its end: BEL, CAN and SUB end it, Esc may start ST.
+void Reader::in_ignored_string(unsigned char byte) {
+    if (byte == bel || byte == can || byte == sub) {
+        state_ = State::ground;
+
+        return;
+    }
+
+    if (byte == esc) {
+        state_ = State::told_escaped;
+        pending_.clear();
+    }
+}
+
+// A mouse report in the old encoding (CSI M and three bytes): the button and the cell, each
+// offset by 32.
+void Reader::in_mouse(unsigned char byte, std::vector<Token>& into) {
+    pending_ += static_cast<char>(byte);
+
+    if (pending_.size() < 6) return;
+
+    Tracked made{static_cast<unsigned char>(pending_[3]) - 32, static_cast<unsigned char>(pending_[4]) - 32,
+                 static_cast<unsigned char>(pending_[5]) - 32};
+
+    std::string raw = std::move(pending_);
+
+    ground();
+
+    sent(Token{made, std::move(raw)}, into);
 }
 
 }

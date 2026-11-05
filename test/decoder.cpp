@@ -342,6 +342,14 @@ TRIAL("Decoder: Alt+O before a space is not a single shift") {
     same(ear.heard("\x1bO x"), std::string{"Alt+'O' | ' ' | 'x'"});
 }
 
+// A single shift with more digits than any key has is given up: no key comes of it, and what follows
+// the given-up part is typed text.
+TRIAL("Decoder: a single shift that runs too long is no key") {
+    Ear ear;
+
+    same(ear.heard("\x1bO123456789P"), std::string{"'8' | '9' | 'P'"});
+}
+
 // Esc with a letter that opens a control string waits for the timer: a finished string vanishes,
 // an unfinished one is Alt with that letter and plain characters after it.
 TRIAL("Decoder: the timer decides Alt with a letter that opens a string") {

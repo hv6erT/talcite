@@ -106,7 +106,31 @@ private:
         glued
     };
 
+    void ground();
+
+    [[nodiscard]] std::string taken(unsigned char last);
+
     void stepped(unsigned char byte, Clock::Moment now, std::vector<Token>& into);
+
+    void in_letter(unsigned char byte, Clock::Moment now, std::vector<Token>& into);
+
+    void in_escape(unsigned char byte, std::vector<Token>& into);
+
+    void in_csi(unsigned char byte, std::vector<Token>& into);
+
+    void in_ignored_csi(unsigned char byte);
+
+    void in_linux_key(unsigned char byte, Clock::Moment now, std::vector<Token>& into);
+
+    void in_ss3(unsigned char byte, Clock::Moment now, std::vector<Token>& into);
+
+    void in_string(unsigned char byte, std::vector<Token>& into);
+
+    void in_string_escape(unsigned char byte, Clock::Moment now, std::vector<Token>& into);
+
+    void in_ignored_string(unsigned char byte);
+
+    void in_mouse(unsigned char byte, std::vector<Token>& into);
 
     void grounded(unsigned char byte, bool alt, std::vector<Token>& into);
 
