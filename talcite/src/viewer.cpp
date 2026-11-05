@@ -16,6 +16,7 @@ namespace talcite::ui {
 // and the spool wakes the page after every window, so the intent completes by itself.
 Viewer::Viewer() = default;
 
+// The same with the scrollbar its shape (`ScrollShape`) asks for.
 Viewer::Viewer(ScrollShape shape) : Page(shape) {}
 
 Viewer::~Viewer() = default;

@@ -113,10 +113,10 @@ Pool::~Pool() {
 
     stirred_.notify_all();
 
-    // The list is taken under the lock and joined outside it. `handed` may add a worker from
-    // another thread (a closure released after a task can post one last piece of work), and then
-    // the vector reallocates and a range loop would read freed memory. Joining under the lock is
-    // not allowed, because a finishing worker reaches for that lock itself.
+    // The list is taken under the lock and joined outside it. `post` may still change it from
+    // another thread (a closure released after a task can post one last piece of work, and `reaped`
+    // takes retired workers out of it), and a range loop would then read a changed vector. Joining
+    // under the lock is not allowed, because a finishing worker reaches for that lock itself.
     std::vector<std::thread> these;
 
     {

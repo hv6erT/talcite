@@ -19,6 +19,7 @@ constexpr int around = 4;
 
 }
 
+// An empty group of radio options, styled as `talcite.choice`.
 Choice::Choice() : OptionsMixin("talcite.choice") {}
 
 // A group of radio options with the given one chosen.

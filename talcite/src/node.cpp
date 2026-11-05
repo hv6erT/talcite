@@ -147,9 +147,8 @@ std::shared_ptr<Node> Children::remove(Node* one) {
 
     whose_->changed();
 
-    // The root drops the focus and the hover, and then keeps the node alive until the end of the
-    // delivery, because removal is sometimes called from inside an event passing through this
-    // very node.
+    // The root drops the focus, and then keeps the node alive until the end of the delivery,
+    // because removal is sometimes called from inside an event passing through this very node.
     if (Root* top = whose_->root()) {
         top->losing(made.get());
         top->linger(made);

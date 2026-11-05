@@ -41,6 +41,7 @@ Track tracked(Size given, int shift, int much) {
 
 }
 
+// A list that asks for `wide` by `high` cells, with the scrollbar its `ScrollShape` asks for.
 List::List(int wide, int high, ScrollShape shape)
     : shape_(shape), grip_(std::make_shared<Grip>()), wide_(wide), high_(high) {}
 
@@ -172,7 +173,7 @@ void List::pick() {
 }
 
 // Scrolls the view without moving the current row. The upper bound is not checked here, because
-// it depends on a height not known at this moment; painting cuts it.
+// it depends on a height not known at this moment; `layout` cuts it.
 //
 // The change is announced with an event, not with a callback of its own: one thing has one path,
 // and events go through `on` and the hook it gives. The event carries no row number, because

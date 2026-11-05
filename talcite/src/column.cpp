@@ -6,6 +6,7 @@
 
 namespace talcite::ui {
 
+// A column with `gap` empty rows between its children; a negative gap is none.
 Column::Column(int gap) : gap_(std::max(gap, 0)) {}
 
 // Sets the gap between children, in rows; a negative value becomes zero.

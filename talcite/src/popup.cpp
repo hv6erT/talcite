@@ -112,16 +112,16 @@ Modals* housing(Node* from) {
 
 // Rolls the list up, if it is still open, and forgets it.
 //
-// `Popup` is a rolled-out list as part of a widget. A choice and a history hold one `Popup` and
+// `Popup` is a rolled-out list as part of a widget. A selection and a history hold one `Popup` and
 // differ only in where they take their strings from and what they do with the chosen row. The
 // object is not a node and lives in the widget under which it rolls the list out; the widget holds
 // it through `unique_ptr`, because the public header cannot show this class. It shows at most
 // `rows()` rows at once (eight by default, never fewer than one); a longer list gets a scrollbar.
 //
-// The rolled-out list belongs to the window, not to us. The window holds it, closes it on Escape
-// and returns the focus. Holding it strongly, we would be left with a dead handle after every
-// closing by someone else's hand; a weak pointer says exactly as much as is true, "this one is
-// mine as long as it exists", and `opened()` is true exactly while it does.
+// The rolled-out list belongs to the window, not to us. The window holds it and returns the focus,
+// and the veil closes itself on Escape. Holding it strongly, we would be left with a dead handle
+// after every closing by someone else's hand; a weak pointer says exactly as much as is true, "this
+// one is mine as long as it exists", and `opened()` is true exactly while it does.
 void Popup::close() {
     if (const std::shared_ptr<Modal> one = rolled_.lock()) one->close();
 

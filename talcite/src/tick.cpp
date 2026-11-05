@@ -61,8 +61,8 @@ void Tick::paint(Canvas& onto) const {
     const Skin& how = skin();
 
     // The role for the state is built from a stem and a suffix, the same contract as in the
-    // button, so that a skin author describes the family `<stem>`, `<stem>.focus`, `<stem>.off`
-    // and has nothing to guess.
+    // button, so that a skin author describes the family `<stem>`, `<stem>.focus`, `<stem>.key`,
+    // `<stem>.disabled` and has nothing to guess.
     const Style look = how.style(!enabled() ? role() + ".disabled" : focused() ? role() + ".focus" : role());
 
     onto.fill({{0, 0}, {given.wide, 1}}, look);

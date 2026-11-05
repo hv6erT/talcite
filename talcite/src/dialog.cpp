@@ -2,11 +2,12 @@
 
 namespace talcite::ui {
 
+// A form dialog; its shape (`ModalShape::shade`, the shadow) is that of its modal.
 Dialog::Dialog(ModalShape shape) : Modal(shape) {}
 
 // The form dialog is a modal plus two rules, and both are rules of the window, not of a widget.
-// Everything else (full screen, modality, Esc, moving with Tab, the shadow and closing) belongs to
-// `Modal` and is not repeated here.
+// Everything else (full screen, modality, swallowing Esc, moving with Tab, the shadow and closing)
+// belongs to `Modal` and is not repeated here.
 //
 // The dialog does not know what a button is. Enter presses only the button that has the focus,
 // and the button does that itself, because Enter reaches it before it reaches the dialog. The
@@ -21,8 +22,8 @@ bool Dialog::handle(KeyEvent& what) {
     // mechanism.
     //
     // This happens before the key is handed to the modal, because the modal swallows everything it
-    // did not recognize. Escape and Tab are not broadcast: the modal settles those two earlier, and
-    // so it does the up and down arrows, which move the focus like Tab; no hotkey is an arrow.
+    // did not recognize. Escape and Tab are not broadcast: the modal swallows Escape and moves the
+    // focus on Tab, and on the up and down arrows as on Tab; no hotkey is an arrow.
     const bool walking = code == Code::up || code == Code::down;
 
     if (code != Code::escape && code != Code::tab && !walking) {

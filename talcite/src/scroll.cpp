@@ -63,15 +63,16 @@ Track tracked(Size given, bool upright, Size window, Size whole, Spot shift) {
 // for `plenty`, a closed one for what is there; on a closed axis the content is exactly as large as
 // the window, so the scroll offset along it always comes out zero and needs no special handling.
 
+// A scroller open along `axis`, with the bars its shape (`ScrollShape`) asks for.
 Scroll::Scroll(Axis axis, ScrollShape shape)
     : axis_(axis), shape_(shape), upright_(std::make_shared<Grip>()), sideways_(std::make_shared<Grip>()) {}
 
 // Sets the scroll offset (negative parts become zero) and sends a `ScrollEvent` only on a change,
-// and only from here. Clamping to the current window happens in `paint`, so notifying on every
-// change of `shift_` would mean replacing the tree while a frame is being composed. The known and
-// accepted consequence: narrowing the window, which moves the content by itself, notifies nobody.
-// The component of a closed axis is ignored. The event says how the move came: the wheel and the
-// bars pass `Moved::by_hand`, a call from the program leaves the default.
+// and only from here and from the wheel. Clamping to the current window happens in `layout`, so
+// notifying on every change of `shift_` would mean replacing the tree while a frame is being
+// composed. The known and accepted consequence: narrowing the window, which moves the content by
+// itself, notifies nobody. The component of a closed axis is ignored. The event says how the move
+// came: the wheel and the bars pass `Moved::by_hand`, a call from the program leaves the default.
 void Scroll::shift(Spot given, Moved how) {
     const Spot want{across() ? std::max(given.x, 0) : 0, down() ? std::max(given.y, 0) : 0};
 

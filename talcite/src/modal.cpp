@@ -26,6 +26,7 @@ Node* landed(const std::vector<Node*>& these, Node* one) {
 
 }
 
+// A curtain of the given shape: with `ModalShape::shade`, its box casts a shadow.
 Modal::Modal(ModalShape shape) : shape_(shape) {}
 
 // The curtain is the whole screen, although it draws only the box on it. All the modality comes
@@ -132,7 +133,8 @@ void Modal::step(int by) {
 // the same.
 //
 // Closing removes the curtain from the tree in the middle of delivery, but the node survives it
-// thanks to `linger` in the root, so returning true after `close()` is allowed here.
+// thanks to `linger` in the root, so a key handler that calls `close()` (`Rolled::handle`, or one
+// attached with `on`) may still return true.
 //
 // The curtain does not act on Escape. Closing the window on Esc would be an action the caller
 // could not revoke, for the same reason the dialog does not press its default button by itself.

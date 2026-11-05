@@ -41,8 +41,8 @@ void MenuTitle::paint(Canvas& onto) const {
 
     const Skin& how = skin();
 
-    // The roles come from the menu, not from the title itself: for the skin the title and the list
-    // are one menu, and `talcite.menubar` is the title's role.
+    // The roles come from the menu, not from the title itself. The menu's role (`talcite.menubar`
+    // by default) styles only the title; the list's items and frame have roles of their own.
     const Style look = how.style(lit(*this) ? menu_.role() + ".focus" : menu_.role());
 
     onto.fill({{0, 0}, {given.wide, 1}}, look);

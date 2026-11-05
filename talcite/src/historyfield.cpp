@@ -26,8 +26,8 @@ void HistoryField::activate() { open(); }
 //
 // It cleans up after itself, on its own side, instead of asking to be notified: it trims to
 // `keeps()` and, when it sees that the set has grown or shrunk since the last look, ends the walk
-// through the past. It is called from painting and from key handling, so there is no gap between a
-// change and its first use.
+// through the past. It is called from layout, from `open` and from key handling, so there is no
+// gap between a change and its first use.
 //
 // A change after which the set has as many entries as before goes unnoticed, and the cursor stays
 // where it was. That is the only case in which this cleanup does not work, and it is harmless: the
