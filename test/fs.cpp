@@ -926,6 +926,31 @@ TRIAL("fs: a cancelled copy leaves the target complete or absent") {
     if (fs::exists(to).get()) same(fs::size(to).get(), fs::size(from).get());
 }
 
+// A folder copy that does not finish takes back everything it created, its subfolders too, so the
+// target is gone rather than left as an empty skeleton. The copy is caught inside a large file in a
+// subfolder it has just created and cancelled there; a copy that finished first leaves the whole.
+TRIAL("fs: a cancelled folder copy takes back the folders it created") {
+    const Nook nook;
+
+    const fs::path from = nook.where() / "serial";
+    const fs::path to = nook.where() / "kopia";
+    constexpr std::size_t whole = 128 * 1024 * 1024;
+
+    stood::create_directories(from / "sezon 1");
+
+    (void)nook.made("serial/sezon 1/odcinek.mkv", std::string(whole, 'x'));
+
+    Promise<void> going = fs::copy(from, to);
+
+    ought(grew(to / "sezon 1" / "odcinek.mkv", 0));
+
+    going.cancel();
+
+    later(300ms).get();
+
+    if (fs::exists(to).get()) same(fs::size(to / "sezon 1" / "odcinek.mkv").get(), std::uintmax_t{whole});
+}
+
 TRIAL("fs: a copy abandoned before starting creates no target") {
     const Nook nook;
 

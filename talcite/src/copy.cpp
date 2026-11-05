@@ -251,22 +251,30 @@ private:
 // else.
 struct Taken {};
 
+// How a file is put in place. `durable` waits until the data is on the medium before it says
+// "done", as a move does before the source goes. `fresh` says that the target lies in a folder the
+// operation has just created itself, where nothing can stand under the name, so the target is not
+// asked about.
+struct Placing {
+    bool durable = false;
+    bool fresh = false;
+};
+
 // Three kinds of writing to a file: a new one is created exclusively (`Mode::exclusive`) and written
 // directly, so a file that someone else put under the name in the meantime is refused, not
 // overwritten; a replacement writes beside it and renames, so an interrupted or failed one does not
-// touch the old target, and a second hard link to the old file keeps the old content; and `durable`
-// additionally waits until the data is on the medium before it says "done". A replacement is
-// always made durable: without that, a power loss right after the rename could leave an empty
-// file in place of the target. In a folder the copy has just created (`fresh`) nothing can stand
-// under the name, so the target is not asked about.
+// touch the old target, and a second hard link to the old file keeps the old content; and a durable
+// one (`Placing`) additionally waits until the data is on the medium. A replacement is always made
+// durable: without that, a power loss right after the rename could leave an empty file in place of
+// the target. A fresh target is not asked about.
 //
 // `fill` gets the path where the content is to appear and a flag to raise once it has created the
 // file there, and returns an open handle to it, or nothing when the task was cancelled halfway;
 // then the promise is not settled at all. The modification time, when there is one, is written
 // through the same handle before syncing.
 template <typename Fill>
-bool poured_at(const path& to, bool durable, std::optional<Instant> when, bool fresh, Fill fill) {
-    const bool there = !fresh && kind_at(to) != Kind::none;
+bool poured_at(const path& to, Placing placing, std::optional<Instant> when, Fill fill) {
+    const bool there = !placing.fresh && kind_at(to) != Kind::none;
     const path into = there ? aside_of(to) : to;
 
     bool made = false;
@@ -280,7 +288,7 @@ bool poured_at(const path& to, bool durable, std::optional<Instant> when, bool f
 
         if (when) stamp_on(*yours, *when);
 
-        if (there || durable) sync_at(*yours);
+        if (there || placing.durable) sync_at(*yours);
     }
 
     if (there && !replaced_at(into, to)) amiss("Cannot replace the file.", to);
@@ -304,7 +312,7 @@ bool poured_at(const path& to, bool durable, Pour pour) {
         return yours;
     };
 
-    return poured_at(to, durable, std::nullopt, false, fill);
+    return poured_at(to, Placing{.durable = durable}, std::nullopt, fill);
 }
 
 // The piece for an in-kernel copy: larger than a read installment, because with a server-side
@@ -362,9 +370,9 @@ bool unsupported(DWORD why) {
 // Before the target is handed over, the copy checks itself: exactly as many bytes as the source had
 // when it was opened, the open source still of that length and write time, and the same file still
 // under the source's name. Anything else means someone changed the source meanwhile (a file still
-// being written, one cut shorter, one replaced), and the attempt throws `Shifting`. In a folder the
-// copy has just created (`fresh`) the target is not asked about. False when cancelled halfway.
-bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool fresh) {
+// being written, one cut shorter, one replaced), and the attempt throws `Shifting`. A target placed
+// fresh (`Placing`) is not asked about. False when cancelled halfway.
+bool copied_at(const path& from, const path& to, Tally tally, Placing placing) {
     const std::shared_ptr<File::Held> mine = open_at(from, Mode::read);
 
     const Facet before = facet_of(*mine);
@@ -386,7 +394,7 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool
 
     const std::size_t rata = tally.rata > 0 ? tally.rata : rated(from, to);
 
-    return poured_at(to, durable, before.changed, fresh, [&](const path& into, bool& made) -> std::shared_ptr<File::Held> {
+    return poured_at(to, placing, before.changed, [&](const path& into, bool& made) -> std::shared_ptr<File::Held> {
 #ifdef _WIN32
         BOOL cancel = FALSE;
 
@@ -420,7 +428,7 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool
 
         if (why == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
 
-        if (foreign && fresh) throw Taken{};
+        if (foreign && placing.fresh) throw Taken{};
 
         if (!unsupported(why)) amiss("Cannot copy the file: " + std::system_category().message(static_cast<int>(why)), from);
 
@@ -433,7 +441,7 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool
 
         made = false;
 #endif
-        std::shared_ptr<File::Held> yours = created_at(into, fresh);
+        std::shared_ptr<File::Held> yours = created_at(into, placing.fresh);
 
         made = true;
 
@@ -491,10 +499,10 @@ bool copied_at(const path& from, const path& to, Tally tally, bool durable, bool
 // Copies one file to `to` (see `copied_at`). A source that changed while it went is copied once
 // more from the start; a second change in a row is a refusal, and the source stays as it is. False
 // when cancelled halfway.
-bool file_at(const path& from, const path& to, Tally tally, bool durable = false, bool fresh = false) {
+bool file_at(const path& from, const path& to, Tally tally, Placing placing = {}) {
     for (int attempt = 0; attempt < 2; ++attempt) {
         try {
-            return copied_at(from, to, tally, durable, fresh);
+            return copied_at(from, to, tally, placing);
         } catch (const Shifting&) {
         }
     }
@@ -502,14 +510,14 @@ bool file_at(const path& from, const path& to, Tally tally, bool durable = false
     amiss("The file changed while it was being copied.", from);
 }
 
-// Copies one file into a folder entry, settling a conflict by `how`. In a folder the copy made
-// itself (`fresh`) the target is not asked about first, since nothing should stand there; only when
+// Copies one file into a folder entry, settling a conflict by `how`. A fresh target (`Placing`) is
+// not asked about first, since nothing should stand there; only when
 // the exclusive creation finds the name taken all the same (`Taken`) is the conflict settled, as
 // anywhere else. Returns where the file went, empty when it was skipped, and nothing when cancelled.
-std::optional<path> placed_at(const path& from, const path& to, Tally tally, Conflict how, bool durable, bool fresh) {
-    if (fresh) {
+std::optional<path> placed_at(const path& from, const path& to, Tally tally, Conflict how, Placing placing) {
+    if (placing.fresh) {
         try {
-            if (!file_at(from, to, tally, durable, true)) return std::nullopt;
+            if (!file_at(from, to, tally, placing)) return std::nullopt;
 
             return to;
         } catch (const Taken&) {
@@ -520,7 +528,7 @@ std::optional<path> placed_at(const path& from, const path& to, Tally tally, Con
 
     if (where.empty()) return path{};
 
-    if (!file_at(from, where, tally, durable, false)) return std::nullopt;
+    if (!file_at(from, where, tally, Placing{.durable = placing.durable})) return std::nullopt;
 
     return where;
 }
@@ -623,14 +631,44 @@ bool charted(const path& from, const path& to, std::vector<Laid>& into, Seen& se
     return true;
 }
 
+// Which target folders a copy or a move created itself, by path. Such a folder is empty but for
+// what the operation puts there, so what goes into it asks no question about a conflict; a folder
+// that stood before (a merge) asks, and so does every folder under it that stood too. A child's
+// path is its parent's joined with a name, so the parent is found by `parent_path`.
+class Created {
+public:
+    // Starts with the target folder, which the operation created (`made`) or found standing.
+    Created(const path& to, bool made) : fresh_{{to, made}} {}
+
+    // Whether `where` goes into a folder the operation created.
+    [[nodiscard]] bool inside(const path& where) const {
+        const auto found = fresh_.find(where.parent_path());
+
+        return found != fresh_.end() && found->second;
+    }
+
+    // Makes the folder `where`, which goes into a created folder when `inside`, and notes whether
+    // the operation created it; returns that.
+    bool folder(const path& where, bool inside) {
+        const bool there = !inside && kind_at(where) != Kind::none;
+
+        make_folder_at(where);
+        fresh_[where] = !there;
+
+        return !there;
+    }
+
+private:
+    std::map<path, bool> fresh_;
+};
+
 // A folder goes entry by entry, from one reading of the whole tree (`charted`) that also gives the
 // total; with `fitting` it is checked against the target's room first. Progress counts the bytes of
 // its files plus one for every entry, so a big file moves the bar while it is copied and a folder
 // of empty entries still moves it. Parents come before their children, so folders are created in
 // order. The content of followed links has its own counter and is not added to this one, because
-// it is not in the total. A folder the copy creates itself is empty, so what goes into it asks no
-// question about a conflict (`fresh`); only a folder that stood before (a merge) asks, and so does
-// every folder under it that stood too. False when cancelled.
+// it is not in the total. What goes into a folder the copy created itself asks no question about a
+// conflict (`Created`). False when cancelled.
 bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen& seen, int deep, bool fitting) {
     std::vector<Laid> laid;
 
@@ -663,35 +701,25 @@ bool tree_at(const path& from, const path& to, Counted& held, Conflict how, Seen
 
     std::vector<std::pair<path, Instant>> folders;
 
-    // Which target folders the copy created, by path; a child's path is its parent's joined with a
-    // name, so the parent is found by `parent_path`.
-    std::map<path, bool> fresh{{to, !standing}};
-
-    const auto anew = [&fresh](const path& where) {
-        const auto found = fresh.find(where.parent_path());
-
-        return found != fresh.end() && found->second;
-    };
+    Created created{to, !standing};
 
     for (const Laid& one : laid) {
         if (!rested()) return false;
 
         const std::uintmax_t base = held.done.load();
-        const bool inside = anew(one.to);
+        const bool inside = created.inside(one.to);
 
         if (one.kind == Kind::folder) {
-            const bool there = !inside && kind_at(one.to) != Kind::none;
+            const bool anew = created.folder(one.to, inside);
 
-            make_folder_at(one.to);
-            fresh[one.to] = !there;
             folders.emplace_back(one.to, instant_or(one.from, one.modified));
 
-            if (!there) undoing.made(one.to);
+            if (anew) undoing.made(one.to);
         } else {
             Counted apart;
 
             const Tally tally = one.counted ? Tally{held, base, false, rata} : Tally{apart, 0, true, rata};
-            const std::optional<path> went = placed_at(one.from, one.to, tally, how, false, inside);
+            const std::optional<path> went = placed_at(one.from, one.to, tally, how, Placing{.fresh = inside});
 
             if (!went) return false;
 
@@ -847,7 +875,7 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally, bool f
 
             if (!tree_at(onto, where, apart, how, seen, 1, false)) return false;
         } else {
-            const std::optional<path> went = placed_at(onto, to, Tally{apart}, how, true, fresh);
+            const std::optional<path> went = placed_at(onto, to, Tally{apart}, how, Placing{.durable = true, .fresh = fresh});
 
             if (!went) return false;
             if (went->empty()) return true;
@@ -855,7 +883,7 @@ bool carried(const path& from, const path& to, Conflict how, Tally tally, bool f
             where = *went;
         }
     } else {
-        const std::optional<path> went = placed_at(from, to, tally, how, true, fresh);
+        const std::optional<path> went = placed_at(from, to, tally, how, Placing{.durable = true, .fresh = fresh});
 
         if (!went) return false;
         if (went->empty()) return true;
@@ -926,9 +954,9 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
 
     std::vector<std::pair<path, Instant>> folders;
 
-    // Which target folders the move created, as in a folder copy (`tree_at`): the entries come
-    // sorted by path, so a folder comes before what lies in it.
-    std::map<path, bool> fresh{{to, !standing}};
+    // Which target folders the move created, as in a folder copy: the entries come sorted by path,
+    // so a folder comes before what lies in it.
+    Created created{to, !standing};
 
     for (const Entry& one : among) {
         if (!rested()) return false;
@@ -937,14 +965,11 @@ bool relocated(const path& from, const path& to, Counted& held, Conflict how) {
 
         const std::uintmax_t base = held.done.load();
 
-        const auto parent = fresh.find(where.parent_path());
-        const bool inside = parent != fresh.end() && parent->second;
+        const bool inside = created.inside(where);
 
         if (one.kind == Kind::folder) {
-            const bool there = !inside && kind_at(where) != Kind::none;
+            created.folder(where, inside);
 
-            make_folder_at(where);
-            fresh[where] = !there;
             folders.emplace_back(one.where, instant_or(one.where, one.modified));
         } else if (!carried(one.where, where, how, Tally{held, base, false, rata}, inside)) {
             return false;
