@@ -1,21 +1,15 @@
 #include "talcite/fs.hpp"
 
 #include <algorithm>
-#include <atomic>
-#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
-#include <deque>
 #include <fstream>
 #include <iterator>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <sstream>
 #include <system_error>
-#include <thread>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -343,8 +337,6 @@ Space space_at(const path& where) {
 
     return Space{told.capacity, told.available};
 }
-
-[[maybe_unused]] bool afar_at(const path& where);
 
 // A path starting with two slashes is a network path by definition. Asking the system about the
 // kind of a UNC root is unreliable, and two things depend on this answer at once: the chunk size
@@ -1604,7 +1596,7 @@ namespace core {
 
 // Whether the path lies on a network share, by the same recognition of the medium that picks the
 // chunk size (`mount_at`); a share has no reliable notifications.
-[[maybe_unused]] bool afar_at(const path& where) { return mount_at(where) == Mount::remote; }
+bool afar_at(const path& where) { return mount_at(where) == Mount::remote; }
 
 #ifdef _WIN32
 
