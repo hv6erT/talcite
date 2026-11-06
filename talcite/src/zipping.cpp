@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "fscore.hpp"
 
@@ -195,12 +196,37 @@ Member member_of(const Told& told) {
     return made;
 }
 
+// Refuses an archive whose members share or overlap their data: each member's local header (at
+// least its fixed part) and packed data must end before the next member's header begins, and the
+// last before the central directory at `directory`. One packed kernel read as thousands of
+// members is the trick of a zip bomb (petabytes out of megabytes), never the work of a packer.
+void apart_in(const Archive::Held& held, std::uintmax_t directory) {
+    constexpr std::uintmax_t header = 30;
+
+    std::vector<std::pair<std::uintmax_t, std::uintmax_t>> laid;
+
+    laid.reserve(held.spots.size());
+
+    for (const Spot& one : held.spots) laid.emplace_back(one.at, one.packed);
+
+    std::sort(laid.begin(), laid.end());
+
+    for (std::size_t at = 0; at < laid.size(); ++at) {
+        const std::uintmax_t next = at + 1 < laid.size() ? laid[at + 1].first : directory;
+        const std::uintmax_t ends = laid[at].first + header + laid[at].second;
+
+        if (ends < laid[at].first || ends > next) damaged("ZIP members overlap, as in a zip bomb.", held.where);
+    }
+}
+
 }
 
 // Reads the central directory of the ZIP archive in `file` into `held`: one member and one spot
 // (local header, packed size, CRC-32, method) per entry, in the archive's order. Bytes before the
 // archive proper (a self-extracting program) shift every offset by as much, which the end record
-// shows: the directory ends where that record begins.
+// shows: the directory ends where that record begins. More than a million members, and members
+// whose data overlap (`apart_in`), are refused: both are ways to make a small file cost the memory
+// or the disk of the whole computer.
 void zip_read(Archive::Held& held, const fs::File::Held& file, std::uintmax_t size) {
     if (size < end_size) damaged("Not a ZIP archive.", held.where);
 
@@ -241,6 +267,8 @@ void zip_read(Archive::Held& held, const fs::File::Held& file, std::uintmax_t si
 
     if (offset + shift + length > size) damaged("The central directory lies outside the file.", held.where);
 
+    if (count > members_most) damaged("The archive holds too many members.", held.where);
+
     const Bytes table = exact(file, held.where, offset + shift, static_cast<std::size_t>(length));
 
     std::size_t at = 0;
@@ -277,6 +305,8 @@ void zip_read(Archive::Held& held, const fs::File::Held& file, std::uintmax_t si
 
         at += central_size + name + extra + comment;
     }
+
+    apart_in(held, offset + shift);
 }
 
 }

@@ -523,6 +523,18 @@ Promise<std::vector<Member>> Archive::extracted(std::vector<Pick> picks, fs::Con
 
         Plan plan = planned(*held, picks);
 
+        // Before the first byte, whether it all fits (`fits_at`), the largest file on FAT too: an
+        // archive that unpacks to more than the target holds, a zip bomb among them, is refused
+        // whole instead of filling the disk. No member comes out larger than it says (`Unzipping`,
+        // `Untarring`), so the sizes it declares are what it can cost.
+        if (!plan.files.empty()) {
+            std::uintmax_t largest = 0;
+
+            for (const Job& one : plan.files) largest = std::max(largest, held->members[one.member].size);
+
+            fits_at(plan.files.front().to, plan.bytes, largest);
+        }
+
         counted.total(plan.bytes);
 
         Undoing undoing{std::all_of(picks.begin(), picks.end(), [](const Pick& one) { return kind_at(one.to) == fs::Kind::none; })};

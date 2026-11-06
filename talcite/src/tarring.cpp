@@ -11,6 +11,8 @@
 #include <string_view>
 #include <utility>
 
+#include "talcite/promise.hpp"
+
 #include "fscore.hpp"
 
 // Reading a tar archive, plain or through gzip, from the first header to the end: tar has no table
@@ -249,7 +251,7 @@ void Source::taken(std::span<std::byte> into) {
 }
 
 // Passes over `much` bytes: in a plain tar by moving on in the file, through gzip by inflating
-// them.
+// them, piece by piece, stopping between pieces when asked to.
 void Source::skipped(std::uintmax_t much) {
     if (!gzip_) {
         if (much > size_ - raw_) damaged("The tar archive is cut short.", where_);
@@ -263,6 +265,8 @@ void Source::skipped(std::uintmax_t much) {
     Bytes scratch(piece);
 
     while (much > 0) {
+        if (!rested()) throw Cancelled{};
+
         const auto now = static_cast<std::size_t>(std::min<std::uintmax_t>(much, scratch.size()));
 
         taken(std::span{scratch}.first(now));
@@ -273,7 +277,9 @@ void Source::skipped(std::uintmax_t much) {
 
 // Walks the headers of the tar archive in `source` into `held`: one member and one spot (where its
 // data starts in the unpacked stream, and its size) per file, folder or link, in the archive's
-// order. The end is two blocks of zeros, or the end of the stream after a whole member.
+// order. The end is two blocks of zeros, or the end of the stream after a whole member. Through
+// gzip the walk inflates the whole stream, so it stops between blocks when asked to; more than a
+// million members are refused, since a small stream of tiny headers would otherwise fill memory.
 void tar_read(Archive::Held& held, Source& source) {
     Header header{};
     Extended extended;
@@ -282,6 +288,8 @@ void tar_read(Archive::Held& held, Source& source) {
     bool first = true;
 
     for (;;) {
+        if (!rested()) throw Cancelled{};
+
         std::size_t got = 0;
 
         while (got < block) {
@@ -372,6 +380,8 @@ void tar_read(Archive::Held& held, Source& source) {
 
             held.members.push_back(std::move(made));
             held.spots.push_back(Spot{data_at, file ? size : 0, 0, 0});
+
+            if (held.members.size() > members_most) damaged("The archive holds too many members.", held.where);
         }
 
         // Links and folders carry no data, whatever their size field says (a hard link's is the

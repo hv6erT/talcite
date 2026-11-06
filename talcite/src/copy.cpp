@@ -364,22 +364,6 @@ Instant instant_or(const path& where, std::chrono::sys_seconds otherwise) {
     }
 }
 
-// A check before copying. Without it a 40 GB copy would fail at 4 GiB on FAT32, or at 95% on a
-// full disk, after a quarter of an hour of work and with half a file to clean up. So the question
-// is asked earlier: about the largest file when the target is FAT (exFAT has no such limit), and
-// about the total when the target medium says how much room it has. A medium that does not answer
-// does not block the copy: the check is there to save time, not to guess.
-constexpr std::uintmax_t fat_limit = 0xFFFFFFFFull;
-
-// Throws `Trouble` when the largest file does not fit on a FAT target or the total does not fit in
-// the free space.
-void fits_at(const path& to, std::uintmax_t whole, std::uintmax_t largest) {
-    if (largest > fat_limit && fat_at(to)) amiss("The file is too large for this disk.", to);
-
-    if (const std::optional<std::uintmax_t> room = room_at(to); room && *room < whole)
-        amiss("Not enough free space.", to);
-}
-
 // One entry of a tree to copy, worked out before the first byte: where it comes from (for a followed
 // link, what it points to), where it goes, what it is, and whether its bytes count in the total
 // (what lies behind a followed link does not).

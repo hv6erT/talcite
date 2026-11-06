@@ -18,6 +18,23 @@
 // an interrupted operation made, and the pouring of a file under its name or beside it.
 namespace talcite::fs::core {
 
+// A check before copying or extracting. Without it a 40 GB copy would fail at 4 GiB on FAT32, or
+// at 95% on a full disk, after a quarter of an hour of work and with half a file to clean up; and
+// an archive that packs terabytes of zeros into a few megabytes (a zip bomb) would fill the disk.
+// So the question is asked earlier: about the largest file when the target is FAT (exFAT has no
+// such limit), and about the total when the target medium says how much room it has. A medium that
+// does not answer does not block the work: the check is there to save time, not to guess.
+inline constexpr std::uintmax_t fat_limit = 0xFFFFFFFFull;
+
+// Throws `Trouble` when the largest file does not fit on a FAT target or the total does not fit in
+// the free space.
+inline void fits_at(const path& to, std::uintmax_t whole, std::uintmax_t largest) {
+    if (largest > fat_limit && fat_at(to)) amiss("The file is too large for this disk.", to);
+
+    if (const std::optional<std::uintmax_t> room = room_at(to); room && *room < whole)
+        amiss("Not enough free space.", to);
+}
+
 // The counter of an operation done in installments: how many bytes or entries out of how many are
 // done. Every change goes to the promise of the operation (`Work::progress`), so the progress bar
 // asks the promise and nobody has to pass anything upward. A counter without work (a part counted

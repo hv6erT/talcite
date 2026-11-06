@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -93,7 +94,9 @@ void text(Bytes& into, std::string_view what) {
 
 // One entry of a ZIP built here, stored: its name as bytes, its content, and what may differ from
 // an ordinary file of a Unix packer. With `unpacked` the content is packed (method 8, through the
-// stand-in that doubles every byte) and `unpacked` is what comes out.
+// stand-in that doubles every byte) and `unpacked` is what comes out. `declared` is a size the
+// central directory claims instead of the true one, and `at` an offset it gives instead of the
+// entry's own, as a zip bomb's do.
 struct Entry {
     std::string name;
     std::string data;
@@ -105,6 +108,8 @@ struct Entry {
     std::optional<std::uint32_t> crc;
     bool wide = false;
     std::optional<std::string> unpacked;
+    std::optional<std::uint64_t> declared;
+    std::optional<std::uint64_t> at;
 };
 
 // A ZIP of the entries, after `prefix` (a program before it, say). Every entry is stored; one
@@ -118,8 +123,9 @@ Bytes zipped(const std::vector<Entry>& entries, std::string_view prefix = {}) {
     bool zip64 = false;
 
     for (const Entry& one : entries) {
-        const std::uint64_t offset = made.size() - prefix.size();
+        const std::uint64_t offset = one.at.value_or(made.size() - prefix.size());
         const std::string& whole = one.unpacked ? *one.unpacked : one.data;
+        const std::uint64_t told = one.declared.value_or(whole.size());
         const std::uint32_t crc = one.crc.value_or(crc_of(whole));
 
         Bytes extra;
@@ -138,7 +144,7 @@ Bytes zipped(const std::vector<Entry>& entries, std::string_view prefix = {}) {
 
             le(wide, 0x0001, 2);
             le(wide, 24, 2);
-            le(wide, whole.size(), 8);
+            le(wide, told, 8);
             le(wide, one.data.size(), 8);
             le(wide, offset, 8);
         }
@@ -165,7 +171,7 @@ Bytes zipped(const std::vector<Entry>& entries, std::string_view prefix = {}) {
         le(central, 0x5821, 2);
         le(central, crc, 4);
         le(central, one.wide ? 0xFFFFFFFFU : one.data.size(), 4);
-        le(central, one.wide ? 0xFFFFFFFFU : whole.size(), 4);
+        le(central, one.wide ? 0xFFFFFFFFU : told, 4);
         le(central, one.name.size(), 2);
         le(central, extra.size() + wide.size(), 2);
         le(central, 0, 2);
@@ -217,7 +223,8 @@ Bytes zipped(const std::vector<Entry>& entries, std::string_view prefix = {}) {
     return made;
 }
 
-// One member of a tar built here: its kind as the type byte, name, content, time and mode.
+// One member of a tar built here: its kind as the type byte, name, content, time and mode, and a
+// size the header claims instead of the content's (`told`).
 struct Tarred {
     char type = '0';
     std::string name;
@@ -225,6 +232,7 @@ struct Tarred {
     std::uint64_t mtime = 1'700'000'000;
     unsigned mode = 0644;
     std::string link;
+    std::optional<std::uint64_t> told;
 };
 
 // The octal field of `much` bytes holding `value`, NUL at the end.
@@ -250,7 +258,7 @@ void tarred(Bytes& into, const Tarred& one) {
     octal(header, 100, 8, one.mode);
     octal(header, 108, 8, 1000);
     octal(header, 116, 8, 1000);
-    octal(header, 124, 12, one.data.size());
+    octal(header, 124, 12, one.told.value_or(one.data.size()));
     octal(header, 136, 12, one.mtime);
 
     header[156] = static_cast<std::byte>(one.type);
@@ -383,6 +391,49 @@ public:
 
     // Always whole.
     [[nodiscard]] bool ended() const override { return true; }
+};
+
+// A "gzip" that swells: the first piece passes as it is (the tar header), every later one gives a
+// block of zeros a millisecond later, however small it was, and the pieces are counted. A tar
+// member claiming gigabytes of such zeros keeps the reading busy for as long as it is let run.
+class Swelling : public Unpacking {
+public:
+    explicit Swelling(std::shared_ptr<std::atomic<std::size_t>> fed) : fed_(std::move(fed)) {}
+
+    // The first piece as it came, then 64 KiB of zeros per piece.
+    [[nodiscard]] Bytes fed(std::span<const std::byte> given) override {
+        if (fed_->fetch_add(1) == 0) return Bytes(given.begin(), given.end());
+
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+        return Bytes(64 * 1024, std::byte{0});
+    }
+
+    // Never whole.
+    [[nodiscard]] bool ended() const override { return false; }
+
+private:
+    std::shared_ptr<std::atomic<std::size_t>> fed_;
+};
+
+// The unpacker of `Swelling`, for gzip only.
+class Sweller : public UnpackProvider {
+public:
+    // Counts into `fed`.
+    explicit Sweller(std::shared_ptr<std::atomic<std::size_t>> fed) : fed_(std::move(fed)) {}
+
+    // The provider's name.
+    [[nodiscard]] std::string_view name() const override { return "swelling"; }
+
+    // A swelling unpacker.
+    [[nodiscard]] std::unique_ptr<Unpacking> started(Packing which) override {
+        ought(which == Packing::gzip);
+
+        return std::make_unique<Swelling>(fed_);
+    }
+
+private:
+    std::shared_ptr<std::atomic<std::size_t>> fed_;
 };
 
 // The unpacker of `Doubling`, for deflate only.
@@ -794,4 +845,123 @@ TRIAL("Archive: a ZIP64 member's size and packed size come in the order of the f
 
     static_cast<void>(got.extracted({archive::Pick{"podwojny.txt", nook.where() / "podwojny.txt"}}).get());
     same(read(nook.where() / "podwojny.txt"), std::string{"aabbcc"});
+}
+
+// The trick of a zip bomb that needs no nesting: many entries of the central directory read one
+// packed kernel. Members whose data overlap are refused at the opening, whole.
+TRIAL("Archive: members that share their data are refused, as a zip bomb's do") {
+    const Nook nook;
+    const stood::path where = nook.where() / "bomba.zip";
+
+    Entry second{"b.txt", "bbbb"};
+
+    second.at = 0;
+
+    put(where, zipped({Entry{"a.txt", "aaaa"}, second}));
+
+    ought(trouble(archive::opened(where, {})).find("overlap") != std::string::npos);
+
+    put(where, zipped({Entry{"a.txt", "aaaa"}, Entry{"b.txt", "bbbb"}}));
+
+    same(names(archive::opened(where, {}).get()), (std::vector<std::string>{"a.txt", "b.txt"}));
+}
+
+// A central directory may claim any count of entries; past a million the archive is refused before
+// a single entry is read into memory.
+TRIAL("Archive: more than a million members are refused") {
+    const Nook nook;
+    const stood::path where = nook.where() / "tlum.zip";
+
+    Bytes made;
+
+    le(made, 0x06064b50, 4);
+    le(made, 44, 8);
+    le(made, 45, 2);
+    le(made, 45, 2);
+    le(made, 0, 4);
+    le(made, 0, 4);
+    le(made, 2'000'000, 8);
+    le(made, 2'000'000, 8);
+    le(made, 0, 8);
+    le(made, 0, 8);
+
+    le(made, 0x07064b50, 4);
+    le(made, 0, 4);
+    le(made, 0, 8);
+    le(made, 1, 4);
+
+    le(made, 0x06054b50, 4);
+    le(made, 0, 2);
+    le(made, 0, 2);
+    le(made, 0xFFFF, 2);
+    le(made, 0xFFFF, 2);
+    le(made, 0xFFFFFFFFU, 4);
+    le(made, 0xFFFFFFFFU, 4);
+    le(made, 0, 2);
+
+    put(where, made);
+
+    ought(trouble(archive::opened(where, {})).find("too many members") != std::string::npos);
+}
+
+// No member comes out larger than it declares, so what the members declare is what an extraction
+// can cost; one that declares more than the target's free space is refused before the first byte.
+TRIAL("Archive: an extraction larger than the free space is refused before it writes") {
+    const Nook nook;
+    const stood::path where = nook.where() / "wielka.zip";
+
+    Entry huge{"zera.bin", "0000"};
+
+    huge.wide = true;
+    huge.declared = std::uint64_t{1} << 60;
+
+    put(where, zipped({huge}));
+
+    const archive::Archive got = archive::opened(where, {}).get();
+
+    same(member(got, "zera.bin").size, std::uintmax_t{std::uint64_t{1} << 60});
+
+    ought(trouble(got.extracted({archive::Pick{{}, nook.where() / "cel"}})).find("free space") != std::string::npos);
+    ought(!stood::exists(nook.where() / "cel"));
+    ought(!stood::exists(nook.where() / "zera.bin"));
+    ought(!trouble(got.extracted({archive::Pick{"zera.bin", nook.where() / "zera.bin"}})).empty());
+    ought(!stood::exists(nook.where() / "zera.bin"));
+}
+
+// A tar.gz has no table of contents, so its opening inflates the whole stream; a stream that swells
+// without end stops as soon as nobody waits for the opening any more.
+TRIAL("Archive: opening a tar.gz stops when it is no longer wanted") {
+    const Nook nook;
+    const stood::path where = nook.where() / "bomba.tar.gz";
+
+    Tarred zeros{'0', "zera.bin", ""};
+
+    zeros.told = 077777777777ULL;
+
+    Bytes made;
+
+    tarred(made, zeros);
+
+    made.resize(4 * 1024 * 1024, std::byte{'x'});
+
+    put(where, made);
+
+    const auto fed = std::make_shared<std::atomic<std::size_t>>(0);
+
+    {
+        std::optional<Promise<archive::Archive>> opening{archive::opened(where, Seam<UnpackProvider>{std::make_shared<Sweller>(fed)})};
+
+        for (int tries = 0; tries < 2000 && fed->load() < 3; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+
+        opening.reset();
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+
+    const std::size_t then = fed->load();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{150});
+
+    ought(fed->load() <= then + 1);
+    ought(fed->load() < 200);
 }

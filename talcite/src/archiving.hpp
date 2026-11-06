@@ -17,6 +17,8 @@
 
 namespace talcite::archive {
 
+inline constexpr std::size_t members_most = 1000000;
+
 struct Spot {
     std::uintmax_t at = 0;
     std::uintmax_t packed = 0;
