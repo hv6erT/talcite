@@ -117,33 +117,33 @@ constexpr std::size_t roomy = 65535;
 
 constexpr Patience listening{1000};
 
-// How much life we ask for the allocation (seconds) and how long before its end we renew it. The
-// server may give less than we ask, and then its word counts, which is why the end time is taken
-// from the answer, not from the request.
-constexpr int living_for = 600;
+// How much life we ask for the allocation and how long before its end we renew it. The server may
+// give less than we ask, and then its word counts, which is why the end time is taken from the
+// answer, not from the request.
+constexpr std::chrono::seconds living_for{600};
 
-constexpr int early = 60;
+constexpr std::chrono::seconds early{60};
 
-// How many seconds we wait before repeating a failed refresh. Without this gap every round of the
+// How long we wait before repeating a failed refresh. Without this gap every round of the
 // loop, that is, every second, would start another attempt, because the condition "time to renew"
 // stays true forever from the moment of a failed attempt, and tasks would pile up on the
 // conversation lock until the end of the allocation.
-constexpr int again = 10;
+constexpr std::chrono::seconds again{10};
 
 // The server keeps a permission for five minutes. We renew it with a minute to spare.
-constexpr int allowing = 240;
+constexpr std::chrono::seconds allowing{240};
 
-// How often (seconds) we knock on the server, so that the path to it does not close up.
-constexpr int beating = 15;
+// How often we knock on the server, so that the path to it does not close up.
+constexpr std::chrono::seconds beating{15};
 
 // The server keeps a channel for ten minutes. We renew it with a minute to spare.
-constexpr int holding = 600;
+constexpr std::chrono::seconds holding{600};
 
-constexpr int sooner = 60;
+constexpr std::chrono::seconds sooner{60};
 
 // How many channels at once. A peer has one path, so one channel is enough; the margin is for the
 // case of one socket serving several peers.
-constexpr std::size_t roomiest = 16;
+constexpr std::size_t channels_most = 16;
 
 constexpr std::size_t plenty = 256;
 
@@ -151,7 +151,10 @@ constexpr std::size_t plenty = 256;
 // is granted once and expires after five minutes. Without a limit the list itself would be a place
 // into which the caller could pour as much as it liked, and every entry adds to every renewing
 // request.
-constexpr std::size_t roomier = 64;
+constexpr std::size_t permissions_most = 64;
+
+// How long one request waits for the server's answer, repeats included.
+constexpr Patience answering{5000};
 
 // Sends a datagram to `to`, swallowing any failure. Requests and keepalives may be lost: the same
 // rule and the same reason as in `Peer`. Otherwise a single rejection from the post (even "the post
@@ -400,7 +403,7 @@ void renewed(const std::shared_ptr<Lasting>& held) {
         // time, because the end time has to tell the truth about the allocation.
         if (held->renewing) return;
 
-        if (Clock::now() < held->until - std::chrono::seconds{early}) return;
+        if (Clock::now() < held->until - early) return;
 
         // An allocation that could not be renewed before its own end is lost. Sending through it
         // any further would be sending into the void, so we say so plainly instead of staying
@@ -411,7 +414,7 @@ void renewed(const std::shared_ptr<Lasting>& held) {
 
             gone = true;
         } else if (held->tried != Clock::time_point{} &&
-                   Clock::now() - held->tried < std::chrono::seconds{again}) {
+                   Clock::now() - held->tried < again) {
             return;
         } else {
             held->tried = Clock::now();
@@ -426,21 +429,21 @@ void renewed(const std::shared_ptr<Lasting>& held) {
     }
 
     run(io(), [held]() {
-        int lasting = 0;
+        std::chrono::seconds lasting{0};
 
         try {
             const Number number = numbered();
 
             Bytes what = begun(Task::refresh, Sort::asking, number);
 
-            wording(what, 0x000D, static_cast<std::uint32_t>(living_for));
+            wording(what, 0x000D, static_cast<std::uint32_t>(living_for.count()));
 
             naming(held, what);
 
-            const Message told = asking(held, what, number, Patience{5000});
+            const Message told = asking(held, what, number, answering);
 
             if (told.sort == Sort::told)
-                lasting = told.lifetime > 0 ? told.lifetime : living_for;
+                lasting = told.lifetime > 0 ? std::chrono::seconds{told.lifetime} : living_for;
         } catch (const std::exception&) {
         }
 
@@ -449,8 +452,8 @@ void renewed(const std::shared_ptr<Lasting>& held) {
 
             // The end time is taken from the answer, not from the request. After a failed attempt
             // the old one stays, because it tells the truth about when the server will drop us.
-            if (lasting > 0) {
-                held->until = Clock::now() + std::chrono::seconds{lasting};
+            if (lasting.count() > 0) {
+                held->until = Clock::now() + lasting;
                 held->tried = Clock::time_point{};
             }
 
@@ -471,7 +474,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
 
         if (held->lost || held->permitting || held->allowed.empty()) return;
 
-        if (Clock::now() - held->granted < std::chrono::seconds{allowing}) return;
+        if (Clock::now() - held->granted < allowing) return;
 
         held->granted = Clock::now();
         held->permitting = true;
@@ -491,7 +494,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
 
             naming(held, what);
 
-            done = asking(held, what, number, Patience{5000}).sort == Sort::told;
+            done = asking(held, what, number, answering).sort == Sort::told;
         } catch (const std::exception&) {
         }
 
@@ -501,7 +504,7 @@ void granting(const std::shared_ptr<Lasting>& held) {
             // A failed renewal is repeated shortly, not after the whole period; otherwise one lost
             // request would cost the rest of the permission.
             if (!done)
-                held->granted = Clock::now() - std::chrono::seconds{allowing - again};
+                held->granted = Clock::now() - (allowing - again);
 
             held->permitting = false;
         }
@@ -530,12 +533,12 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
 
                 if (one.binding) return;
 
-                if (one.ready && Clock::now() < one.until - std::chrono::seconds{sooner}) return;
+                if (one.ready && Clock::now() < one.until - sooner) return;
 
                 // A failed binding is repeated every few seconds, not at every send; otherwise a
                 // conversation with a server that gives no channels would send a request per
                 // datagram.
-                if (Clock::now() - one.tried < std::chrono::seconds{again}) return;
+                if (Clock::now() - one.tried < again) return;
 
                 one.binding = true;
                 one.tried = Clock::now();
@@ -545,7 +548,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
             }
 
         if (!known) {
-            if (held->bound.size() >= roomiest) return;
+            if (held->bound.size() >= channels_most) return;
 
             number = held->next++;
 
@@ -569,7 +572,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
 
             naming(held, what);
 
-            done = asking(held, what, one, Patience{5000}).sort == Sort::told;
+            done = asking(held, what, one, answering).sort == Sort::told;
         } catch (const std::exception&) {
         }
 
@@ -582,7 +585,7 @@ void binding(const std::shared_ptr<Lasting>& held, const Address& to) {
 
                     if (done) {
                         one.ready = true;
-                        one.until = Clock::now() + std::chrono::seconds{holding};
+                        one.until = Clock::now() + holding;
                     }
                 }
         }
@@ -601,7 +604,7 @@ void channeling(const std::shared_ptr<Lasting>& held) {
         if (held->lost) return;
 
         for (const Bound& one : held->bound)
-            if (one.ready && Clock::now() >= one.until - std::chrono::seconds{sooner})
+            if (one.ready && Clock::now() >= one.until - sooner)
                 whom.push_back(one.peer);
     }
 
@@ -620,7 +623,7 @@ void keeping(const std::shared_ptr<Lasting>& held) {
 
         if (held->until == Clock::time_point{}) return;
 
-        if (Clock::now() - held->beat < std::chrono::seconds{beating}) return;
+        if (Clock::now() - held->beat < beating) return;
 
         held->beat = Clock::now();
     }
@@ -735,8 +738,7 @@ Promise<Address> Relay::open(Patience patience) {
             // less, and a refresh counted from what we asked for would be late by the
             // difference.
             held->until =
-                Clock::now() +
-                std::chrono::seconds{told.lifetime > 0 ? told.lifetime : living_for};
+                Clock::now() + (told.lifetime > 0 ? std::chrono::seconds{told.lifetime} : living_for);
 
             held->beat = Clock::now();
         }
@@ -793,7 +795,7 @@ Promise<void> Relay::allow(Address peer, Patience patience) {
 
             // A permission covers an address, not a port, as the RFC prescribes. That is why it
             // is remembered by address: a second port of the same host is already let through.
-            if (!known && held->allowed.size() < roomier) {
+            if (!known && held->allowed.size() < permissions_most) {
                 // The renewal clock starts only from the first entry. Resetting it at every
                 // following one would postpone the renewal of those that have waited long.
                 if (held->allowed.empty()) held->granted = Clock::now();

@@ -141,7 +141,7 @@ void posting(const std::shared_ptr<Living>& held, const Address& to, Bytes what,
 // How many foreign addresses may be added from probes alone. A NAT usually gives the other side
 // one different port, sometimes a few; sixteen leaves room to spare, and without a bound the list
 // itself would be a place into which any sender could pour as much as it liked.
-constexpr std::size_t roomier = 16;
+constexpr std::size_t probed_most = 16;
 
 // Whether `where` is already among the other side's paths. The caller holds `guard`.
 bool knowing(const Living& held, const Address& where) {
@@ -161,7 +161,7 @@ void noted(const std::shared_ptr<Living>& held, const Address& where) {
 
     if (knowing(*held, where)) return;
 
-    if (held->theirs.size() >= roomier) return;
+    if (held->theirs.size() >= probed_most) return;
 
     for (const Candidate& one : held->theirs)
         if (one.where.family() == where.family() && one.where.bytes() == where.bytes()) {
