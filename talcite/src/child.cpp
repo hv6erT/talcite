@@ -1196,6 +1196,441 @@ bool paired(bool inbound, SECURITY_ATTRIBUTES& how, HANDLE& ours, HANDLE& theirs
 
 #endif
 
+#ifdef _WIN32
+
+// The handles a start puts together: the three pipes, each with our end and the program's, and the
+// pseudoconsole between two of them (`console`).
+struct Plumbing {
+    HANDLE in_read = nullptr;
+    HANDLE in_write = nullptr;
+    HANDLE out_read = nullptr;
+    HANDLE out_write = nullptr;
+    HANDLE err_read = nullptr;
+    HANDLE err_write = nullptr;
+    void* console = nullptr;
+
+    // Closes every pipe end still open, after a failed start.
+    void undone() {
+        closed(in_read);
+        closed(in_write);
+        closed(out_read);
+        closed(out_write);
+        closed(err_read);
+        closed(err_write);
+    }
+
+    // Closes the pseudoconsole, when there is one, after a failed start.
+    void unconsoled() {
+        if (console != nullptr) consoles().close(console);
+
+        console = nullptr;
+    }
+};
+
+// The pipes of a start, and for a program in a pseudoconsole (`terminal`) the pseudoconsole between
+// them. A program that gets our terminal (`ahead`) needs neither. The child's wake-up event for
+// `close_input()` comes along (`Child::Held::rouse`). A failure closes what was made and refuses.
+void plumbed(Plumbing& ends, const Command& what, bool ahead, const std::optional<ui::Size>& terminal, Child::Held& held) {
+    SECURITY_ATTRIBUTES how{};
+    how.nLength = sizeof(how);
+    how.bInheritHandle = TRUE;
+
+    if (terminal) {
+        // Two pipes, overlapped on our side as below, and the pseudoconsole between them and the
+        // program: it reads what we write, writes what the program shows, and the program sees a
+        // console. Nothing is inherited: the program reaches the pseudoconsole through the
+        // attribute below, not through handles.
+        if (consoles().open == nullptr) amiss("This system has no pseudoconsole (Windows 10 1809 or later).", what.program);
+
+        how.bInheritHandle = FALSE;
+
+        if (!paired(false, how, ends.in_write, ends.in_read)) {
+            ends.undone();
+            amiss("Cannot create the input pipe.", what.program);
+        }
+
+        if (!paired(true, how, ends.out_read, ends.out_write)) {
+            ends.undone();
+            amiss("Cannot create the output pipe.", what.program);
+        }
+
+        if (FAILED(consoles().open(measured(*terminal), ends.in_read, ends.out_write, 0, &ends.console))) {
+            ends.undone();
+            amiss("Cannot create the pseudoconsole.", what.program);
+        }
+
+        // The pseudoconsole holds its own copies of its two ends.
+        closed(ends.in_read);
+        closed(ends.out_write);
+
+        held.rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    } else if (!ahead) {
+        // All three pipes have an overlapped end on our side (`paired`): the writer waits for the
+        // completion and for the wake-up event of `close_input()`, the readers for the completion
+        // and for the worker's bell, so both a sealed input and a cancelled read or write wake at
+        // once instead of waiting for the child.
+        if (!paired(false, how, ends.in_write, ends.in_read)) {
+            ends.undone();
+            amiss("Cannot create the input pipe.", what.program);
+        }
+
+        if (!paired(true, how, ends.out_read, ends.out_write)) {
+            ends.undone();
+            amiss("Cannot create the output pipe.", what.program);
+        }
+
+        if (!what.merge && !paired(true, how, ends.err_read, ends.err_write)) {
+            ends.undone();
+            amiss("Cannot create the error pipe.", what.program);
+        }
+
+        // Our ends must not be inherited: a child holding the write end of its own output would
+        // never see the end of the pipe.
+        SetHandleInformation(ends.in_write, HANDLE_FLAG_INHERIT, 0);
+        SetHandleInformation(ends.out_read, HANDLE_FLAG_INHERIT, 0);
+
+        // The wake-up event for `close_input()`. If it cannot be created, only the deferred close
+        // remains: the writer learns about the sealing on the next chunk instead of at once. That
+        // is a degradation, not a failure, so we do not reject the child for it.
+        held.rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+        if (ends.err_read != nullptr) SetHandleInformation(ends.err_read, HANDLE_FLAG_INHERIT, 0);
+    }
+}
+
+// The start information for `CreateProcessW`: for a program in a pseudoconsole (`terminal`) one
+// attribute, the pseudoconsole; for one on pipes the standard handles and the list of the handles
+// it inherits (`passed`, which must outlive the start, since the list points at it). The attribute
+// list lives in `room`. A program that gets our terminal (`ahead`) gets the plain form. A failure
+// closes what the start holds and refuses.
+void attributed(STARTUPINFOEXW& setting, std::vector<char>& room, HANDLE (&passed)[3], Plumbing& ends,
+                const Command& what, bool ahead, bool terminal) {
+    // The size has to match what we really pass: the extended form only when we add the handle
+    // list. Given without that flag, it would be a lie about the size of the structure.
+    setting.StartupInfo.cb =
+        ahead ? static_cast<DWORD>(sizeof(STARTUPINFOW)) : static_cast<DWORD>(sizeof(setting));
+
+    if (terminal) {
+        // One attribute: the pseudoconsole, given as the handle itself, not as a pointer to it.
+        SIZE_T much = 0;
+
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &much);
+
+        room.resize(much);
+
+        setting.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(room.data());
+
+        if (InitializeProcThreadAttributeList(setting.lpAttributeList, 1, 0, &much) == 0) {
+            ends.undone();
+            ends.unconsoled();
+            amiss("Cannot prepare the pseudoconsole.", what.program);
+        }
+
+        if (UpdateProcThreadAttribute(setting.lpAttributeList, 0, given_console, ends.console, sizeof(ends.console),
+                                      nullptr, nullptr) == 0) {
+            DeleteProcThreadAttributeList(setting.lpAttributeList);
+            ends.undone();
+            ends.unconsoled();
+            amiss("Cannot pass the pseudoconsole.", what.program);
+        }
+
+        // The program's standard handles are said to be none, so that it takes the pseudoconsole's.
+        // Without this a program started from a process whose own output goes to a file or a pipe
+        // (a log, a script that runs the tests) gets that file instead: it writes past the
+        // pseudoconsole and never sees a terminal. Windows Terminal does the same.
+        setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        setting.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+        setting.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+        setting.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
+    } else if (!ahead) {
+        setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        setting.StartupInfo.hStdInput = ends.in_read;
+        setting.StartupInfo.hStdOutput = ends.out_write;
+        setting.StartupInfo.hStdError = what.merge ? ends.out_write : ends.err_write;
+
+        // Handle inheritance on Windows is all or nothing, unless a list is given. Without it the
+        // child would also get our sockets and keep a port busy long after we close it.
+        passed[0] = ends.in_read;
+        passed[1] = ends.out_write;
+        passed[2] = what.merge ? ends.out_write : ends.err_write;
+
+        SIZE_T much = 0;
+
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &much);
+
+        room.resize(much);
+
+        setting.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(room.data());
+
+        if (InitializeProcThreadAttributeList(setting.lpAttributeList, 1, 0, &much) == 0) {
+            ends.undone();
+            amiss("Cannot prepare the handle list.", what.program);
+        }
+
+        if (UpdateProcThreadAttribute(setting.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                      passed, sizeof(HANDLE) * (what.merge ? 2 : 3), nullptr,
+                                      nullptr) == 0) {
+            DeleteProcThreadAttributeList(setting.lpAttributeList);
+            ends.undone();
+            amiss("Cannot pass the handle list.", what.program);
+        }
+    }
+}
+
+// The job of a started process, so that `kill()` ends the whole tree it starts. A job that cannot
+// be made (the process is already in someone else's job without the right to leave, an old system)
+// is no reason to refuse: null, and `kill()` then kills only the program itself.
+HANDLE jobbed(HANDLE process) {
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+
+    if (job != nullptr && AssignProcessToJobObject(job, process) == 0) {
+        CloseHandle(job);
+        job = nullptr;
+    }
+
+    return job;
+}
+
+#else
+
+// The descriptors a start puts together: the three pipes, the start pipe (`starting`) and the two
+// sides of a pseudoterminal.
+struct Plumbing {
+    int in_pipe[2] = {-1, -1};
+    int out_pipe[2] = {-1, -1};
+    int err_pipe[2] = {-1, -1};
+    int starting[2] = {-1, -1};
+    int master = -1;
+    int slave = -1;
+
+    // Closes every descriptor still open, after a failed start.
+    void undone() {
+        for (int* one : {&in_pipe[0], &in_pipe[1], &out_pipe[0], &out_pipe[1], &err_pipe[0],
+                         &err_pipe[1], &starting[0], &starting[1], &master, &slave})
+            closed(*one);
+    }
+};
+
+// The descriptors of a start: a pseudoterminal for a program that gets one (`terminal`), the three
+// pipes for a program that gets neither it nor our terminal (`ahead`), and the start pipe for every
+// program. A failure closes what was made and refuses.
+void plumbed(Plumbing& ends, const Command& what, bool ahead, const std::optional<ui::Size>& terminal) {
+    // A pseudoterminal instead of pipes: both sides closed on exec, the slave opened here, before
+    // the fork, so that the child needs no `ptsname`, which is not safe between `fork` and `exec`.
+    // The size is set before the program starts, so its first look at the terminal is right.
+    if (terminal) {
+        ends.master = mastered();
+
+        if (ends.master < 0) amiss("Cannot open a pseudoterminal.", what.program);
+
+        ends.slave = slaved(ends.master);
+
+        if (ends.slave < 0) {
+            ends.undone();
+            amiss("Cannot open a pseudoterminal.", what.program);
+        }
+
+        const winsize size = measured(*terminal);
+
+        (void)::ioctl(ends.master, TIOCSWINSZ, &size);
+    }
+
+    // All three pipes are closed on exec from birth (`sealed::piped`): another program starting at
+    // the same moment from another thread will not get the ends of this one. The child moves its
+    // ends to 0, 1 and 2, and `dup2` does not carry the flag over.
+    if (!ahead && !terminal) {
+        if (!sealed::piped(ends.in_pipe, false)) amiss("Cannot create the input pipe.", what.program);
+
+        if (!sealed::piped(ends.out_pipe, false)) {
+            ends.undone();
+            amiss("Cannot create the output pipe.", what.program);
+        }
+
+        if (!what.merge && !sealed::piped(ends.err_pipe, false)) {
+            ends.undone();
+            amiss("Cannot create the error pipe.", what.program);
+        }
+    }
+
+    // The start pipe, also closed on exec. A successful `execve` closes the child's end and we
+    // read the end of the pipe; a failed `chdir` or `execve` writes its errno there first. Without
+    // it a program that cannot be started would start anyway and end with 127, as from a shell,
+    // while on Windows the same command is a refusal; this way both systems refuse alike, and with
+    // the reason.
+    if (!sealed::piped(ends.starting, false)) {
+        ends.undone();
+        amiss("Cannot create the start pipe.", what.program);
+    }
+}
+
+// Everything the child will need, put together before the fork: after it the child may call only
+// what is async-signal-safe, so there is no memory allocation or string building there anymore. The
+// arguments and the environment (`argv`, `envp`) point into the strings (`words`, `among`), so a
+// start is never copied.
+struct Startup {
+    std::string program;
+    std::string where;
+    std::vector<std::string> among;
+    std::vector<std::string> words;
+    std::vector<char*> argv;
+    std::vector<char*> envp;
+
+    // The program found on the PATH, the folder, the environment and the words of the command.
+    explicit Startup(const Command& what)
+        : program(found(what.program)), where(what.where.empty() ? std::string{} : what.where.string()),
+          among(surrounded(what)) {
+        words.push_back(what.program.string());
+
+        for (const std::string& one : what.arguments) words.push_back(one);
+
+        for (std::string& one : words) argv.push_back(one.data());
+
+        argv.push_back(nullptr);
+
+        for (std::string& one : among) envp.push_back(one.data());
+
+        envp.push_back(nullptr);
+    }
+
+    Startup(const Startup&) = delete;
+    Startup& operator=(const Startup&) = delete;
+};
+
+// The child's side of the fork, up to `execve`, for a program in a pseudoterminal (`terminal`), one
+// that gets our terminal (`ahead`) or one on pipes. It runs between `fork` and `exec`, so it calls
+// only what is async-signal-safe. A failed `chdir` or `execve` tells the parent its errno through
+// the start pipe and ends with 127.
+[[noreturn]] void begun(const Plumbing& ends, const Startup& start, bool merge, bool ahead, bool terminal) {
+    // The reason of a failed start, for the parent. No memory allocation.
+    const auto say = [&ends](int why) { (void)!::write(ends.starting[1], &why, sizeof why); };
+
+    if (terminal) {
+        // A session of its own, led by the program, with the slave as its controlling terminal:
+        // the line discipline then sends Ctrl-C and SIGWINCH to whatever the program puts in
+        // the foreground, as in any terminal window. Linux takes the controlling terminal on
+        // the first open after `setsid`, but the slave is open already, so it is asked for.
+        (void)::setsid();
+        (void)::ioctl(ends.slave, TIOCSCTTY, 0);
+
+        (void)::dup2(ends.slave, STDIN_FILENO);
+        (void)::dup2(ends.slave, STDOUT_FILENO);
+        (void)::dup2(ends.slave, STDERR_FILENO);
+
+        if (ends.slave > STDERR_FILENO) ::close(ends.slave);
+        if (ends.master > STDERR_FILENO) ::close(ends.master);
+
+        for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
+
+        // A terminal's program starts with the signals as a terminal window gives them: none
+        // blocked and none ignored. Both survive `exec`, so a program started under nohup
+        // would otherwise give its shell an ignored SIGHUP, and hanging up would not end it.
+        sigset_t none;
+
+        sigemptyset(&none);
+        (void)::sigprocmask(SIG_SETMASK, &none, nullptr);
+
+        for (const int one : {SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU, SIGCHLD, SIGWINCH})
+            std::signal(one, SIG_DFL);
+    } else if (ahead) {
+        // Its own process group and the foreground: without this Ctrl-C would go to us, and an
+        // attempt to read from the terminal would stop the child with SIGTTIN. `tcsetpgrp`
+        // itself also sends a signal, SIGTTOU, so we silence it first.
+        ::setpgid(0, 0);
+
+        std::signal(SIGTTOU, SIG_IGN);
+
+        (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());
+    } else {
+        // Its own group too, but without the foreground: `stop()` and `kill()` then reach the
+        // whole group, so the programs a shell started die with it.
+        ::setpgid(0, 0);
+
+        (void)::dup2(ends.in_pipe[0], STDIN_FILENO);
+        (void)::dup2(ends.out_pipe[1], STDOUT_FILENO);
+        (void)::dup2(merge ? ends.out_pipe[1] : ends.err_pipe[1], STDERR_FILENO);
+
+        for (const int one : {ends.in_pipe[0], ends.in_pipe[1], ends.out_pipe[0], ends.out_pipe[1], ends.err_pipe[0],
+                              ends.err_pipe[1]})
+            if (one > STDERR_FILENO) ::close(one);
+
+        // A pipe end that already was one of 0, 1, 2 (a parent without standard input gets
+        // exactly zero from `pipe2`) is left by `dup2` as it was, with the flag, and the flag
+        // would close it on `exec`.
+        for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
+    }
+
+    // Signals we set to ignored stay ignored after `exec`, and a program that inherited an
+    // ignored SIGPIPE behaves differently from one started from a shell.
+    std::signal(SIGPIPE, SIG_DFL);
+
+    if (!start.where.empty() && ::chdir(start.where.c_str()) != 0) {
+        say(errno);
+
+        ::_exit(127);
+    }
+
+    ::execve(start.program.c_str(), start.argv.data(), start.envp.data());
+
+    say(errno);
+
+    ::_exit(127);
+}
+
+// Gives the terminal's foreground to the process group. `tcsetpgrp` from outside the foreground
+// sends us SIGTTOU, so the signal is ignored for that moment.
+void foregrounded(pid_t group) {
+    void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
+
+    (void)::tcsetpgrp(STDIN_FILENO, group);
+
+    std::signal(SIGTTOU, was == nullptr ? SIG_DFL : was);
+}
+
+// What the child said through the start pipe (`from`): the errno of a failed start, or nothing when
+// the pipe ended first, as a successful `execve` ends it.
+std::optional<int> heard_from(int from) {
+    int why = 0;
+    std::size_t heard = 0;
+
+    while (heard < sizeof why) {
+        const ssize_t much = ::read(from, reinterpret_cast<char*>(&why) + heard, sizeof why - heard);
+
+        if (much > 0) {
+            heard += static_cast<std::size_t>(much);
+
+            continue;
+        }
+
+        if (much < 0 && errno == EINTR) continue;
+
+        break;
+    }
+
+    if (heard == sizeof why) return why;
+
+    return std::nullopt;
+}
+
+// Our pipe ends are non-blocking. The read and write loops are written for this (they ask `poll`,
+// handle `EAGAIN` and keep the bell next to them), but without this setting `EAGAIN` never comes,
+// because a blocking write to a pipe returns only after handing over everything it was asked to.
+// The pool worker then stands inside a system call, where neither the bell nor `close_input()` can
+// reach it: `close_input()` on a child that does not read would end the write only when the child
+// dies. The setting applies only to our ends. A pipe has two separate open file descriptions (we
+// hold the input for writing and the two outputs for reading, the child holds the other ends), so
+// the child gets its ends blocking, as every program expects.
+void unblocked(std::initializer_list<int> ours) {
+    for (const int one : ours) {
+        if (one < 0) continue;
+
+        const int flags = ::fcntl(one, F_GETFL, 0);
+
+        if (flags >= 0) (void)::fcntl(one, F_SETFL, flags | O_NONBLOCK);
+    }
+}
+
+#endif
+
 // Starting. `ahead` means "this program gets our terminal": then we create no pipes at all, because
 // its input is the keyboard and its output the screen, and we also put it in the foreground, so
 // that Ctrl-C goes to it and not to us. `terminal` means "this program gets a pseudoterminal of its
@@ -1213,103 +1648,17 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
 
 #ifdef _WIN32
 
-    HANDLE in_read = nullptr;
-    HANDLE in_write = nullptr;
-    HANDLE out_read = nullptr;
-    HANDLE out_write = nullptr;
-    HANDLE err_read = nullptr;
-    HANDLE err_write = nullptr;
+    Plumbing ends;
 
-    SECURITY_ATTRIBUTES how{};
-    how.nLength = sizeof(how);
-    how.bInheritHandle = TRUE;
-
-    const auto undone = [&] {
-        closed(in_read);
-        closed(in_write);
-        closed(out_read);
-        closed(out_write);
-        closed(err_read);
-        closed(err_write);
-    };
-
-    void* console = nullptr;
-
-    if (terminal) {
-        // Two pipes, overlapped on our side as below, and the pseudoconsole between them and the
-        // program: it reads what we write, writes what the program shows, and the program sees a
-        // console. Nothing is inherited: the program reaches the pseudoconsole through the
-        // attribute below, not through handles.
-        if (consoles().open == nullptr) amiss("This system has no pseudoconsole (Windows 10 1809 or later).", what.program);
-
-        how.bInheritHandle = FALSE;
-
-        if (!paired(false, how, in_write, in_read)) {
-            undone();
-            amiss("Cannot create the input pipe.", what.program);
-        }
-
-        if (!paired(true, how, out_read, out_write)) {
-            undone();
-            amiss("Cannot create the output pipe.", what.program);
-        }
-
-        if (FAILED(consoles().open(measured(*terminal), in_read, out_write, 0, &console))) {
-            undone();
-            amiss("Cannot create the pseudoconsole.", what.program);
-        }
-
-        // The pseudoconsole holds its own copies of its two ends.
-        closed(in_read);
-        closed(out_write);
-
-        held->rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    } else if (!ahead) {
-        // All three pipes have an overlapped end on our side (`paired`): the writer waits for the
-        // completion and for the wake-up event of `close_input()`, the readers for the completion
-        // and for the worker's bell, so both a sealed input and a cancelled read or write wake at
-        // once instead of waiting for the child.
-        if (!paired(false, how, in_write, in_read)) {
-            undone();
-            amiss("Cannot create the input pipe.", what.program);
-        }
-
-        if (!paired(true, how, out_read, out_write)) {
-            undone();
-            amiss("Cannot create the output pipe.", what.program);
-        }
-
-        if (!what.merge && !paired(true, how, err_read, err_write)) {
-            undone();
-            amiss("Cannot create the error pipe.", what.program);
-        }
-
-        // Our ends must not be inherited: a child holding the write end of its own output would
-        // never see the end of the pipe.
-        SetHandleInformation(in_write, HANDLE_FLAG_INHERIT, 0);
-        SetHandleInformation(out_read, HANDLE_FLAG_INHERIT, 0);
-
-        // The wake-up event for `close_input()`. If it cannot be created, only the deferred close
-        // remains: the writer learns about the sealing on the next chunk instead of at once. That
-        // is a degradation, not a failure, so we do not reject the child for it.
-        held->rouse = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-
-        if (err_read != nullptr) SetHandleInformation(err_read, HANDLE_FLAG_INHERIT, 0);
-    }
-
-    const auto unconsoled = [&console] {
-        if (console != nullptr) consoles().close(console);
-
-        console = nullptr;
-    };
+    plumbed(ends, what, ahead, terminal, *held);
 
     Launch launch;
 
     try {
         launch = commanded(what);
     } catch (...) {
-        undone();
-        unconsoled();
+        ends.undone();
+        ends.unconsoled();
         throw;
     }
 
@@ -1317,80 +1666,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
     const std::wstring where = what.where.empty() ? std::wstring{} : what.where.wstring();
 
     STARTUPINFOEXW setting{};
-
-    // The size has to match what we really pass: the extended form only when we add the handle
-    // list. Given without that flag, it would be a lie about the size of the structure.
-    setting.StartupInfo.cb =
-        ahead ? static_cast<DWORD>(sizeof(STARTUPINFOW)) : static_cast<DWORD>(sizeof(setting));
-
     std::vector<char> room;
     HANDLE passed[3] = {nullptr, nullptr, nullptr};
 
-    if (terminal) {
-        // One attribute: the pseudoconsole, given as the handle itself, not as a pointer to it.
-        SIZE_T much = 0;
-
-        InitializeProcThreadAttributeList(nullptr, 1, 0, &much);
-
-        room.resize(much);
-
-        setting.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(room.data());
-
-        if (InitializeProcThreadAttributeList(setting.lpAttributeList, 1, 0, &much) == 0) {
-            undone();
-            unconsoled();
-            amiss("Cannot prepare the pseudoconsole.", what.program);
-        }
-
-        if (UpdateProcThreadAttribute(setting.lpAttributeList, 0, given_console, console, sizeof(console), nullptr, nullptr) ==
-            0) {
-            DeleteProcThreadAttributeList(setting.lpAttributeList);
-            undone();
-            unconsoled();
-            amiss("Cannot pass the pseudoconsole.", what.program);
-        }
-
-        // The program's standard handles are said to be none, so that it takes the pseudoconsole's.
-        // Without this a program started from a process whose own output goes to a file or a pipe
-        // (a log, a script that runs the tests) gets that file instead: it writes past the
-        // pseudoconsole and never sees a terminal. Windows Terminal does the same.
-        setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        setting.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
-        setting.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
-        setting.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
-    } else if (!ahead) {
-        setting.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        setting.StartupInfo.hStdInput = in_read;
-        setting.StartupInfo.hStdOutput = out_write;
-        setting.StartupInfo.hStdError = what.merge ? out_write : err_write;
-
-        // Handle inheritance on Windows is all or nothing, unless a list is given. Without it the
-        // child would also get our sockets and keep a port busy long after we close it.
-        passed[0] = in_read;
-        passed[1] = out_write;
-        passed[2] = what.merge ? out_write : err_write;
-
-        SIZE_T much = 0;
-
-        InitializeProcThreadAttributeList(nullptr, 1, 0, &much);
-
-        room.resize(much);
-
-        setting.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(room.data());
-
-        if (InitializeProcThreadAttributeList(setting.lpAttributeList, 1, 0, &much) == 0) {
-            undone();
-            amiss("Cannot prepare the handle list.", what.program);
-        }
-
-        if (UpdateProcThreadAttribute(setting.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                                      passed, sizeof(HANDLE) * (what.merge ? 2 : 3), nullptr,
-                                      nullptr) == 0) {
-            DeleteProcThreadAttributeList(setting.lpAttributeList);
-            undone();
-            amiss("Cannot pass the handle list.", what.program);
-        }
-    }
+    attributed(setting, room, passed, ends, what, ahead, terminal.has_value());
 
     PROCESS_INFORMATION told{};
 
@@ -1413,205 +1692,47 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
     if (!ahead) DeleteProcThreadAttributeList(setting.lpAttributeList);
 
     if (done == 0) {
-        undone();
-        unconsoled();
+        ends.undone();
+        ends.unconsoled();
         amiss("Cannot start the program.", what.program);
     }
 
-    // A job that cannot be made (the process is already in someone else's job without the right to
-    // leave, an old system) is no reason to refuse: `kill()` then kills only the program itself.
-    HANDLE job = CreateJobObjectW(nullptr, nullptr);
-
-    if (job != nullptr && AssignProcessToJobObject(job, told.hProcess) == 0) {
-        CloseHandle(job);
-        job = nullptr;
-    }
+    const HANDLE job = jobbed(told.hProcess);
 
     ResumeThread(told.hThread);
     CloseHandle(told.hThread);
 
-    closed(in_read);
-    closed(out_write);
-    closed(err_write);
+    closed(ends.in_read);
+    closed(ends.out_write);
+    closed(ends.err_write);
 
-    held->into = in_write;
-    held->from = out_read;
-    held->wrong = err_read;
+    held->into = ends.in_write;
+    held->from = ends.out_read;
+    held->wrong = ends.err_read;
 
     held->grave->which = static_cast<std::int64_t>(told.dwProcessId);
     held->grave->process = told.hProcess;
     held->grave->job = job;
     held->grave->grouped = !ahead && !terminal;
-    held->grave->console = console;
+    held->grave->console = ends.console;
 
 #else
 
-    int in_pipe[2] = {-1, -1};
-    int out_pipe[2] = {-1, -1};
-    int err_pipe[2] = {-1, -1};
-    int starting[2] = {-1, -1};
-    int master = -1;
-    int slave = -1;
+    // Put together before any descriptor, so that a failure here leaves none open.
+    const Startup start{what};
 
-    const auto undone = [&] {
-        for (int* one : {&in_pipe[0], &in_pipe[1], &out_pipe[0], &out_pipe[1], &err_pipe[0],
-                         &err_pipe[1], &starting[0], &starting[1], &master, &slave})
-            closed(*one);
-    };
+    Plumbing ends;
 
-    // A pseudoterminal instead of pipes: both sides closed on exec, the slave opened here, before
-    // the fork, so that the child needs no `ptsname`, which is not safe between `fork` and `exec`.
-    // The size is set before the program starts, so its first look at the terminal is right.
-    if (terminal) {
-        master = mastered();
-
-        if (master < 0) amiss("Cannot open a pseudoterminal.", what.program);
-
-        slave = slaved(master);
-
-        if (slave < 0) {
-            undone();
-            amiss("Cannot open a pseudoterminal.", what.program);
-        }
-
-        const winsize size = measured(*terminal);
-
-        (void)::ioctl(master, TIOCSWINSZ, &size);
-    }
-
-    // All three pipes are closed on exec from birth (`sealed::piped`): another program starting at
-    // the same moment from another thread will not get the ends of this one. The child moves its
-    // ends to 0, 1 and 2, and `dup2` does not carry the flag over.
-    if (!ahead && !terminal) {
-        if (!sealed::piped(in_pipe, false)) amiss("Cannot create the input pipe.", what.program);
-
-        if (!sealed::piped(out_pipe, false)) {
-            undone();
-            amiss("Cannot create the output pipe.", what.program);
-        }
-
-        if (!what.merge && !sealed::piped(err_pipe, false)) {
-            undone();
-            amiss("Cannot create the error pipe.", what.program);
-        }
-    }
-
-    // The start pipe, also closed on exec. A successful `execve` closes the child's end and we
-    // read the end of the pipe; a failed `chdir` or `execve` writes its errno there first. Without
-    // it a program that cannot be started would start anyway and end with 127, as from a shell,
-    // while on Windows the same command is a refusal; this way both systems refuse alike, and with
-    // the reason.
-    if (!sealed::piped(starting, false)) {
-        undone();
-        amiss("Cannot create the start pipe.", what.program);
-    }
-
-    // Everything the child will need is put together here. After the fork it may call only what is
-    // async-signal-safe, so there is no memory allocation or string building there anymore.
-    const std::string program = found(what.program);
-    const std::string where = what.where.empty() ? std::string{} : what.where.string();
-
-    std::vector<std::string> among = surrounded(what);
-    std::vector<std::string> words;
-
-    words.push_back(what.program.string());
-
-    for (const std::string& one : what.arguments) words.push_back(one);
-
-    std::vector<char*> argv;
-    std::vector<char*> envp;
-
-    for (std::string& one : words) argv.push_back(one.data());
-
-    argv.push_back(nullptr);
-
-    for (std::string& one : among) envp.push_back(one.data());
-
-    envp.push_back(nullptr);
-
-    // The reason of a failed start, for the parent. No memory allocation: this runs between `fork`
-    // and `exec`.
-    const auto say = [&starting](int why) { (void)!::write(starting[1], &why, sizeof why); };
+    plumbed(ends, what, ahead, terminal);
 
     const pid_t which = ::fork();
 
     if (which < 0) {
-        undone();
+        ends.undone();
         amiss("Cannot start the program.", what.program);
     }
 
-    if (which == 0) {
-        if (terminal) {
-            // A session of its own, led by the program, with the slave as its controlling terminal:
-            // the line discipline then sends Ctrl-C and SIGWINCH to whatever the program puts in
-            // the foreground, as in any terminal window. Linux takes the controlling terminal on
-            // the first open after `setsid`, but the slave is open already, so it is asked for.
-            (void)::setsid();
-            (void)::ioctl(slave, TIOCSCTTY, 0);
-
-            (void)::dup2(slave, STDIN_FILENO);
-            (void)::dup2(slave, STDOUT_FILENO);
-            (void)::dup2(slave, STDERR_FILENO);
-
-            if (slave > STDERR_FILENO) ::close(slave);
-            if (master > STDERR_FILENO) ::close(master);
-
-            for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
-
-            // A terminal's program starts with the signals as a terminal window gives them: none
-            // blocked and none ignored. Both survive `exec`, so a program started under nohup
-            // would otherwise give its shell an ignored SIGHUP, and hanging up would not end it.
-            sigset_t none;
-
-            sigemptyset(&none);
-            (void)::sigprocmask(SIG_SETMASK, &none, nullptr);
-
-            for (const int one : {SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU, SIGCHLD, SIGWINCH})
-                std::signal(one, SIG_DFL);
-        } else if (ahead) {
-            // Its own process group and the foreground: without this Ctrl-C would go to us, and an
-            // attempt to read from the terminal would stop the child with SIGTTIN. `tcsetpgrp`
-            // itself also sends a signal, SIGTTOU, so we silence it first.
-            ::setpgid(0, 0);
-
-            std::signal(SIGTTOU, SIG_IGN);
-
-            (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());
-        } else {
-            // Its own group too, but without the foreground: `stop()` and `kill()` then reach the
-            // whole group, so the programs a shell started die with it.
-            ::setpgid(0, 0);
-
-            (void)::dup2(in_pipe[0], STDIN_FILENO);
-            (void)::dup2(out_pipe[1], STDOUT_FILENO);
-            (void)::dup2(what.merge ? out_pipe[1] : err_pipe[1], STDERR_FILENO);
-
-            for (const int one : {in_pipe[0], in_pipe[1], out_pipe[0], out_pipe[1], err_pipe[0],
-                                  err_pipe[1]})
-                if (one > STDERR_FILENO) ::close(one);
-
-            // A pipe end that already was one of 0, 1, 2 (a parent without standard input gets
-            // exactly zero from `pipe2`) is left by `dup2` as it was, with the flag, and the flag
-            // would close it on `exec`.
-            for (const int one : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) ::fcntl(one, F_SETFD, 0);
-        }
-
-        // Signals we set to ignored stay ignored after `exec`, and a program that inherited an
-        // ignored SIGPIPE behaves differently from one started from a shell.
-        std::signal(SIGPIPE, SIG_DFL);
-
-        if (!where.empty() && ::chdir(where.c_str()) != 0) {
-            say(errno);
-
-            ::_exit(127);
-        }
-
-        ::execve(program.c_str(), argv.data(), envp.data());
-
-        say(errno);
-
-        ::_exit(127);
-    }
+    if (which == 0) begun(ends, start, what.merge, ahead, terminal.has_value());
 
     // The child does the same, and both do it on purpose. Whoever is first sets it; the second call
     // changes nothing. Otherwise a gap remains in which the child already reads and the foreground
@@ -1620,37 +1741,16 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
     // a group, so a parent who came first would leave it without a terminal.
     if (!terminal) ::setpgid(which, which);
 
-    if (ahead) {
-        void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
-
-        (void)::tcsetpgrp(STDIN_FILENO, which);
-
-        std::signal(SIGTTOU, was == nullptr ? SIG_DFL : was);
-    }
+    if (ahead) foregrounded(which);
 
     // Waits for the child to either execute the program or say why it could not.
-    closed(starting[1]);
+    closed(ends.starting[1]);
 
-    int why = 0;
-    std::size_t heard = 0;
+    const std::optional<int> why = heard_from(ends.starting[0]);
 
-    while (heard < sizeof why) {
-        const ssize_t much = ::read(starting[0], reinterpret_cast<char*>(&why) + heard, sizeof why - heard);
+    closed(ends.starting[0]);
 
-        if (much > 0) {
-            heard += static_cast<std::size_t>(much);
-
-            continue;
-        }
-
-        if (much < 0 && errno == EINTR) continue;
-
-        break;
-    }
-
-    closed(starting[0]);
-
-    if (heard == sizeof why) {
+    if (why) {
         // The child ends at once; it is buried here, since no wait for it exists yet. The terminal
         // it took comes back to us, because nobody will run `Term::execute` to its end.
         int status = 0;
@@ -1658,54 +1758,32 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
         while (::waitpid(which, &status, 0) < 0 && errno == EINTR) {
         }
 
-        if (ahead) {
-            void (*was)(int) = std::signal(SIGTTOU, SIG_IGN);
+        if (ahead) foregrounded(::getpgrp());
 
-            (void)::tcsetpgrp(STDIN_FILENO, ::getpgrp());
+        ends.undone();
 
-            std::signal(SIGTTOU, was == nullptr ? SIG_DFL : was);
-        }
-
-        undone();
-
-        throw fs::Trouble{"Cannot start the program: " + std::string{std::strerror(why)} + ".", what.program};
+        throw fs::Trouble{"Cannot start the program: " + std::string{std::strerror(*why)} + ".", what.program};
     }
 
-    closed(in_pipe[0]);
-    closed(out_pipe[1]);
-    closed(err_pipe[1]);
-    closed(slave);
+    closed(ends.in_pipe[0]);
+    closed(ends.out_pipe[1]);
+    closed(ends.err_pipe[1]);
+    closed(ends.slave);
 
-    held->into = in_pipe[1];
-    held->from = out_pipe[0];
-    held->wrong = err_pipe[0];
+    held->into = ends.in_pipe[1];
+    held->from = ends.out_pipe[0];
+    held->wrong = ends.err_pipe[0];
 
     // The master side is both the input and the output. The output gets a copy of its own, so that
     // closing one side never closes the other's number under it.
     if (terminal) {
-        held->into = master;
-        held->from = ::fcntl(master, F_DUPFD_CLOEXEC, 0);
+        held->into = ends.master;
+        held->from = ::fcntl(ends.master, F_DUPFD_CLOEXEC, 0);
 
-        master = -1;
+        ends.master = -1;
     }
 
-    // Our pipe ends are non-blocking. The read and write loops are written for this (they ask
-    // `poll`, handle `EAGAIN` and keep the bell next to them), but without this setting `EAGAIN`
-    // never comes, because a blocking write to a pipe returns only after handing over everything it
-    // was asked to. The pool worker then stands inside a system call, where neither the bell nor
-    // `close_input()` can reach it: `close_input()` on a child that does not read would end the
-    // write only when the child dies.
-    //
-    // The setting applies only to our ends. A pipe has two separate open file descriptions (we hold
-    // the input for writing and the two outputs for reading, the child holds the other ends), so
-    // the child gets its ends blocking, as every program expects.
-    for (const int one : {held->into, held->from, held->wrong}) {
-        if (one < 0) continue;
-
-        const int flags = ::fcntl(one, F_GETFL, 0);
-
-        if (flags >= 0) (void)::fcntl(one, F_SETFL, flags | O_NONBLOCK);
-    }
+    unblocked({held->into, held->from, held->wrong});
 
     // The wake-up pipe for `close_input()`. If it cannot be created, only the deferred close
     // remains: the writer learns about the sealing on the next turn of the loop instead of at once.

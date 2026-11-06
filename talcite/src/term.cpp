@@ -132,6 +132,11 @@ struct Term::Held {
     // returns. Undoing the state twice would send a second set of sequences and, for the mouse,
     // lose the intermediate state.
     int away = 0;
+
+    void cleared(ui::Size size, std::string& into);
+    void unplaced(const std::vector<Placement>& stands, std::string& into) const;
+    void released(std::string& into);
+    void delivered(const std::string& into);
 };
 
 namespace {
@@ -1017,6 +1022,111 @@ void Term::title(std::string_view said) {
     held_->console.provider().write(made);
 }
 
+namespace {
+
+// The images of a frame, taken whole from its copy (`bare`): sixel images to send (`pictured`) and
+// kitty images that stand (`standing`).
+struct Laid {
+    std::vector<Placement> pictured;
+    std::vector<Placement> standing;
+};
+
+// Images in pixels (sixel). The frame already knows which images are visible whole (`bared`): their
+// cells are empty and carry the image mark. The last screen row stays for characters, because after
+// an image the terminal moves the cursor below it, and below the last row there is only scrolling.
+//
+// Kitty works differently: text does not erase an image, so what decides is not a change of cells
+// but a comparison with what stands. An image whose pixels nobody holds any more, or whose frame of
+// animation is gone, does not stand.
+Laid laid(detail::Sheet& bare, Graphics kind) {
+    const ui::Size size = bare.size();
+
+    Laid made;
+
+    if (kind == Graphics::sixel) made.pictured = bare.bared({{0, 0}, {size.wide, size.high - 1}});
+
+    if (kind == Graphics::kitty) {
+        made.standing = bare.bared({{0, 0}, size});
+
+        std::erase_if(made.standing, [](const Placement& one) {
+            return !one.picture.pixels || one.picture.still >= one.picture.pixels->stills().size();
+        });
+    }
+
+    return made;
+}
+
+// Keeps the sixel images that go to the terminal: those with any cell changed in this frame (new,
+// moved, another animation frame, uncovered, the screen cleared) or gone out again with the rest of
+// its row (`covered`, the column from which each row went out). The rest stand on the screen as
+// they are.
+void unchanged_out(std::vector<Placement>& pictured, const detail::Sheet& made, const Standing& standing,
+                   const std::vector<int>& covered) {
+    std::erase_if(pictured, [&standing, &made, &covered](const Placement& one) {
+        for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
+            for (int x = one.at.x; x < one.at.x + one.picture.size.wide; ++x)
+                if (!(made.at({x, y}) == standing.at({x, y})) || x >= covered[static_cast<std::size_t>(y)])
+                    return false;
+
+        return true;
+    });
+}
+
+}
+
+// A size change invalidates the previous frame: after clearing the screen we compare with a blank
+// sheet of the size, so everything comes out anew. Kitty images do not belong to the text, so
+// clearing the screen does not remove them; we do it ourselves. The data stays: the repaint places
+// them without sending them again.
+void Term::Held::cleared(ui::Size size, std::string& into) {
+    if (!placed.empty()) into += "\x1b_Ga=d,d=a,q=2\x1b\\";
+
+    placed.clear();
+
+    into += "\x1b[0m\x1b[2J";
+
+    standing = Standing{size};
+    now = Style{};
+    at = ui::Spot{-1, -1};
+
+    shifted = false;
+}
+
+// Removes the kitty images that vanished or moved (`placed` without a match in `stands`, the ones
+// that stand in this frame), before the cells are written.
+void Term::Held::unplaced(const std::vector<Placement>& stands, std::string& into) const {
+    for (const Placement& one : placed)
+        if (std::none_of(stands.begin(), stands.end(), [&one](const Placement& kept) { return same_place(one, kept); }))
+            unstood(one.picture.mark, false, into);
+}
+
+// The terminal forgets an image whose pixels nobody holds any more. This comes last, when the
+// memory of the previous frame (`standing`, `placed`) no longer holds the pixels; otherwise the
+// image would leave the terminal one frame later.
+void Term::Held::released(std::string& into) {
+    std::erase_if(sent, [&into](const auto& one) {
+        if (!one.second.expired()) return false;
+
+        unstood(one.first, true, into);
+
+        return true;
+    });
+}
+
+// Sends the frame in a single write. Drawing is held for the duration of the frame if the terminal
+// can do that; then even a large change appears whole at once.
+void Term::Held::delivered(const std::string& into) {
+    if (into.empty()) return;
+
+    Console& out = console.provider();
+
+    if (synchronized(compat, wish)) out.write("\x1b[?2026h");
+
+    out.write(into);
+
+    if (synchronized(compat, wish)) out.write("\x1b[?2026l");
+}
+
 // Draws a frame. The root paints what changed on the sheet it keeps (`Root::frame`), and only the
 // difference from the screen goes to the terminal, in a single write: a visible half frame is worse
 // than a frame late by a microsecond. Throws std::logic_error when no root is shown.
@@ -1054,60 +1164,20 @@ void Term::draw() {
     // sheet is what the screen already shows.
     std::vector<std::pair<int, int>> rows = held.onto->painted();
 
-    // A size change invalidates the previous frame: after clearing the screen we compare with a
-    // blank sheet, so everything comes out anew.
-    //
-    // A fresh configuration does exactly the same, and that is what forcing a full repaint is. The
-    // root's sheet always holds the whole picture, however little of it was painted this frame; the
-    // only memory of what the screen shows is `standing`, and these lines take it away.
+    // A size change invalidates the previous frame. A fresh configuration does exactly the same,
+    // and that is what forcing a full repaint is. The root's sheet always holds the whole picture,
+    // however little of it was painted this frame; the only memory of what the screen shows is
+    // `standing`, and clearing takes it away.
     const bool reset = held.shifted || !(held.standing.size() == made.size());
 
-    if (reset) {
-        // Kitty images do not belong to the text, so clearing the screen does not remove them; we
-        // do it ourselves. The data stays: the repaint places them without sending them again.
-        if (!held.placed.empty()) into += "\x1b_Ga=d,d=a,q=2\x1b\\";
+    if (reset) held.cleared(made.size(), into);
 
-        held.placed.clear();
+    // The cells of a sixel image go first: rewriting them erases the pixels underneath, and the
+    // image is laid on a clean area. New kitty images are placed after the cells, first sending
+    // those the terminal does not have yet.
+    Laid images = imaged ? laid(*bare, kind) : Laid{};
 
-        into += "\x1b[0m\x1b[2J";
-
-        held.standing = Standing{made.size()};
-        held.now = Style{};
-        held.at = ui::Spot{-1, -1};
-
-        held.shifted = false;
-    }
-
-    // Images in pixels (sixel). The frame already knows which images are visible whole (`bared`):
-    // their cells are empty and carry the image mark. The last screen row stays for characters,
-    // because after an image the terminal moves the cursor below it, and below the last row there
-    // is only scrolling. An image goes to the terminal when any of its cells changed in this frame
-    // (new, moved, another animation frame, uncovered, the screen cleared) or went out again with
-    // the rest of a row. The cells go first: rewriting them erases the pixels underneath, and the
-    // image is laid on a clean area.
-    std::vector<Placement> pictured;
-    std::vector<Placement> standing;
-
-    if (imaged && kind == Graphics::sixel)
-        pictured = bare->bared({{0, 0}, {made.size().wide, made.size().high - 1}});
-
-    // Kitty works differently: text does not erase an image, so what decides is not a change of
-    // cells but a comparison with what stands. Whatever vanished or moved is removed before the
-    // cells; an image whose pixels nobody holds any more is forgotten by the terminal. New ones are
-    // placed after the cells, first sending those the terminal does not have yet. Forgetting comes
-    // last, when the memory of the previous frame (`standing`, `placed`) no longer holds the
-    // pixels; otherwise the image would leave the terminal one frame later.
-    if (imaged && kind == Graphics::kitty) {
-        standing = bare->bared({{0, 0}, made.size()});
-
-        std::erase_if(standing, [](const Placement& one) {
-            return !one.picture.pixels || one.picture.still >= one.picture.pixels->stills().size();
-        });
-    }
-
-    for (const Placement& one : held.placed)
-        if (std::none_of(standing.begin(), standing.end(), [&one](const Placement& now) { return same_place(one, now); }))
-            unstood(one.picture.mark, false, into);
+    held.unplaced(images.standing, into);
 
     const Colors palette = colors();
 
@@ -1129,14 +1199,7 @@ void Term::draw() {
     for (const auto& [from, upto] : rows)
         for (int y = from; y < upto; ++y) pen.rowed(y, held.standing, covered[static_cast<std::size_t>(y)]);
 
-    std::erase_if(pictured, [&held, &made, &covered](const Placement& one) {
-        for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
-            for (int x = one.at.x; x < one.at.x + one.picture.size.wide; ++x)
-                if (!(made.at({x, y}) == held.standing.at({x, y})) || x >= covered[static_cast<std::size_t>(y)])
-                    return false;
-
-        return true;
-    });
+    unchanged_out(images.pictured, made, held.standing, covered);
 
     // No link stays open past the frame: whatever reaches the terminal outside a frame (a title,
     // a copy through OSC 52, another program after stepping aside, the shell after the end) must
@@ -1147,9 +1210,9 @@ void Term::draw() {
         held.linked = 0;
     }
 
-    pictured_out(pictured, standing, held.placed, held.sent, held.at, into);
+    pictured_out(images.pictured, images.standing, held.placed, held.sent, held.at, into);
 
-    held.placed = std::move(standing);
+    held.placed = std::move(images.standing);
 
     // The cursor comes from the root, not from the sheet. The frame says what to draw, not where
     // the caret stands; that belongs to the focus.
@@ -1157,25 +1220,8 @@ void Term::draw() {
 
     for (const auto& [from, upto] : rows) held.standing.took(made, from, upto);
 
-    std::erase_if(held.sent, [&into](const auto& one) {
-        if (!one.second.expired()) return false;
-
-        unstood(one.first, true, into);
-
-        return true;
-    });
-
-    if (!into.empty()) {
-        // Drawing is held for the duration of the frame if the terminal can do that; then even a
-        // large change appears whole at once.
-        Console& out = held.console.provider();
-
-        if (synchronized(held.compat, held.wish)) out.write("\x1b[?2026h");
-
-        out.write(into);
-
-        if (synchronized(held.compat, held.wish)) out.write("\x1b[?2026l");
-    }
+    held.released(into);
+    held.delivered(into);
 }
 
 namespace {
