@@ -64,6 +64,23 @@ detail::Sheet sheet(std::uint32_t mark = 7) {
 // Whether `what` occurs in `where`.
 bool holds(const std::string& where, const std::string& what) { return where.find(what) != std::string::npos; }
 
+// `what` when `where` holds it, otherwise `where` itself with its control bytes spelled out, so
+// that a trial that misses a sequence shows the whole output it got, on whatever system it ran.
+std::string found(const std::string& where, const std::string& what) {
+    if (holds(where, what)) return what;
+
+    std::string made;
+
+    for (const char one : where) {
+        const auto byte = static_cast<unsigned char>(one);
+
+        if (byte >= 0x20 && byte < 0x7F) made += one;
+        else made += "\\x" + std::string{"0123456789abcdef"[byte >> 4]} + "0123456789abcdef"[byte & 0xF];
+    }
+
+    return made;
+}
+
 // How many times `what` occurs in `where`, overlaps included.
 std::size_t counted(const std::string& where, const std::string& what) {
     std::size_t made = 0;
@@ -963,6 +980,8 @@ TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the termina
 
     (void)rig.drawn();
 
+    const std::weak_ptr<const Pixels> old = rig.root.pixels;
+
     rig.root.pixels = dotted({3, 2});
     rig.root.mark = 8;
     rig.root.repaint();
@@ -970,7 +989,8 @@ TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the termina
     const std::string said = rig.drawn();
 
     ought(holds(said, taken(5)));
-    ought(holds(said, taken(5, 'I')));
+    ought(old.expired());
+    same(found(said, taken(5, 'I')), taken(5, 'I'));
     ought(holds(said, sent_whole(8, *rig.root.pixels, 0)));
 
     // A covered one is not forgotten: someone still holds its pixels.
@@ -1065,10 +1085,15 @@ TRIAL("Term: switching from kitty to characters removes the image, and the termi
     ought(holds(said, std::string{"▒"}));
     ought(!holds(said, "a=p"));
 
+    const std::weak_ptr<const Pixels> old = rig.root.pixels;
+
     rig.root.pixels = dotted({3, 2});
     rig.root.repaint();
 
-    ought(holds(rig.drawn(), taken(5, 'I')));
+    const std::string again = rig.drawn();
+
+    ought(old.expired());
+    same(found(again, taken(5, 'I')), taken(5, 'I'));
 }
 
 TRIAL("Term: leaving and handing over the terminal free all kitty images") {

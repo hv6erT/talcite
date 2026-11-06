@@ -1,6 +1,7 @@
 #include "proving.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -303,28 +304,34 @@ TRIAL("Share: the gio list listing without hidden shares") {
     same(fs::listed(""), std::vector<std::string>{});
 }
 
-TRIAL("Share: the password is zeroed in place") {
-    std::string secret = "tajne hasło";
+// A wiped secret is empty and keeps its storage, so it was not copied elsewhere on the way. That
+// the storage holds zeros is `secret::wiped`'s, which wiping.cpp checks: past the end of an
+// emptied string or vector nothing can be read without undefined behavior, and the address
+// sanitizer of MSVC reports such a read of a vector as a container overflow.
+TRIAL("Share: the password is emptied in place") {
+    std::string secret = "tajne hasło, dłuższe niż bufor w samym napisie";
 
     const char* at = secret.data();
+    const std::size_t room = secret.capacity();
 
     fs::wiped(secret);
 
     ought(secret.empty());
-    same(at[0], '\0');
-    same(at[4], '\0');
+    ought(secret.data() == at);
+    same(secret.capacity(), room);
 }
 
-TRIAL("Share: secret bytes are zeroed in place") {
+TRIAL("Share: secret bytes are emptied in place") {
     Bytes secret = bytes("wspólny sekret");
 
     const std::byte* at = secret.data();
+    const std::size_t room = secret.capacity();
 
     fs::wiped(secret);
 
     ought(secret.empty());
-    ought(at[0] == std::byte{0});
-    ought(at[5] == std::byte{0});
+    ought(secret.data() == at);
+    same(secret.capacity(), room);
 }
 
 #ifndef _WIN32
