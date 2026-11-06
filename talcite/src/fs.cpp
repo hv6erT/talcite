@@ -2331,7 +2331,11 @@ namespace {
 // because the group and other bits have no one-to-one counterpart on Windows:
 //
 //  - no group or other rights: a protected list (no inheritance from the directory) with one entry,
-//    full access for the user who started the program. This is how a file with keys lies;
+//    full access for the user who started the program. This is how a file with keys lies. On a
+//    folder the entry is inherited by everything inside, what is there and what comes later, as a
+//    folder closed to others on POSIX closes its whole tree. A folder's entry that its contents did
+//    not inherit would leave them only the entries they inherited before, which the protected list
+//    takes away, so nothing inside could be opened, not even by its owner;
 //  - any group or other right: the list goes back to the one inherited from the directory, that
 //    is to what Windows gives every new file.
 void guarded(const path& where, stood::perms what) {
@@ -2394,7 +2398,12 @@ void guarded(const path& where, stood::perms what) {
 
     const auto list = reinterpret_cast<PACL>(listed.data());
 
-    if (!InitializeAcl(list, room, ACL_REVISION) || !AddAccessAllowedAce(list, ACL_REVISION, FILE_ALL_ACCESS, me))
+    const DWORD attributes = GetFileAttributesW(named.c_str());
+    const DWORD passed = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
+                             ? OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+                             : 0;
+
+    if (!InitializeAcl(list, room, ACL_REVISION) || !AddAccessAllowedAceEx(list, ACL_REVISION, passed, FILE_ALL_ACCESS, me))
         amiss("Cannot change the rights.", where);
 
     if (SetNamedSecurityInfoW(const_cast<LPWSTR>(named.c_str()), SE_FILE_OBJECT,

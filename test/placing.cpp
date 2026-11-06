@@ -1067,6 +1067,34 @@ TRIAL("Term: refreshing the screen removes kitty images and places them without 
     ought(!holds(said, kitty_send));
 }
 
+// The pixels of an image replaced by another are held by nobody once the frame is drawn. When
+// someone still holds them, the trial says how many and whether it is `Term`: without it, they go.
+TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the frame") {
+    Rig rig{kittied()};
+
+    (void)rig.drawn();
+
+    const std::weak_ptr<const Pixels> old = rig.root.pixels;
+
+    rig.root.pixels = dotted({3, 2});
+    rig.root.mark = 8;
+    rig.root.repaint();
+
+    (void)rig.drawn();
+
+    std::string holder = "nobody";
+
+    if (!old.expired()) {
+        holder = std::to_string(old.use_count()) + " holding, ";
+
+        rig.term.reset();
+
+        holder += old.expired() ? "all in Term" : "not only in Term";
+    }
+
+    same(holder, std::string{"nobody"});
+}
+
 TRIAL("Term: switching from kitty to characters removes the image, and the terminal forgets it when the pixels go") {
     Rig rig{kittied()};
 

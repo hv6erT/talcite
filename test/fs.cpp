@@ -4018,6 +4018,27 @@ TRIAL("fs: entry returns one entry with the permissions, the number of names and
     same(static_cast<int>(fs::entry(nook.where() / "nie ma").get().kind), static_cast<int>(fs::Kind::none));
 }
 
+// A folder closed to everyone but its owner stays open to the owner all the way down: what it held
+// before and what comes into it later.
+TRIAL("fs: owner-only rights on a folder keep its contents open to the owner") {
+    const Nook nook;
+
+    const fs::path folder = nook.where() / "schowek";
+
+    fs::make_folder(folder / "stare").get();
+    fs::write(folder / "stare" / "a.txt", bytes("aaa")).get();
+
+    fs::rights(folder, stood::perms::owner_all).get();
+
+    same(said_of(fs::read(folder / "stare" / "a.txt").get()), std::string{"aaa"});
+
+    fs::make_folder(folder / "nowe").get();
+    fs::write(folder / "nowe" / "b.txt", bytes("bbb")).get();
+
+    same(said_of(fs::read(folder / "nowe" / "b.txt").get()), std::string{"bbb"});
+    same(fs::list(folder).get().size(), std::size_t{2});
+}
+
 TRIAL("fs: rights changes the permissions and follows a link") {
     const Nook nook;
 
