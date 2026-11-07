@@ -1068,7 +1068,9 @@ TRIAL("Term: refreshing the screen removes kitty images and places them without 
 }
 
 // The pixels of an image replaced by another are held by nobody once the frame is drawn. When
-// someone still holds them, the trial says how many and whether it is `Term`: without it, they go.
+// someone still holds them, the trial says how many, whether it is `Term` (without it, they go),
+// the marks of the pictures the root's own sheet keeps, and whether a whole frame of the root
+// lets them go.
 TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the frame") {
     Rig rig{kittied()};
 
@@ -1090,6 +1092,19 @@ TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the f
         rig.term.reset();
 
         holder += old.expired() ? "all in Term" : "not only in Term";
+
+        if (!old.expired()) {
+            std::string marks;
+
+            for (const Picture& one : rig.root.render({{0, 0}, {12, 6}}).pictures()) marks += " " + std::to_string(one.mark);
+
+            holder += ", the root's sheet keeps" + (marks.empty() ? std::string{" nothing"} : marks);
+
+            rig.root.repaint();
+            (void)rig.root.render({{0, 0}, {12, 6}});
+
+            holder += old.expired() ? ", a whole frame frees them" : ", a whole frame keeps them";
+        }
     }
 
     same(holder, std::string{"nobody"});
