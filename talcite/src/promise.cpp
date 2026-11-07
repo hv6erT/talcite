@@ -967,8 +967,15 @@ bool Core::rested() {
 }
 
 // The work of this node waits for `whose` now (a coroutine's `co_await`, a body's `get`): a pause
-// of this node reaches it, also one that comes while it waits.
+// of this node reaches it, also one that comes while it waits. What it waits for is part of its
+// work, as a predecessor is part of a chain's: a stop resumes the work at once, but this node is
+// finished only after `whose` is, so `finally` does not run while that work still goes on.
 void Core::awaiting(std::shared_ptr<Core> whose) {
+    if (whose != nullptr) {
+        hold();
+        whose->when_finished([self = shared_from_this()] { self->let_go(); });
+    }
+
     std::vector<std::shared_ptr<Hold>> mine;
 
     {

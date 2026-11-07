@@ -423,6 +423,43 @@ TRIAL("finally: after a cancellation it waits for the end of the work, off the c
     ought(other.load());
 }
 
+// Waits for `what` in a coroutine, telling when a stop resumed it with `Cancelled`.
+Promise<void> waiting_for(Promise<int> what, std::shared_ptr<std::atomic<bool>> resumed) {
+    try {
+        (void)co_await std::move(what);
+    } catch (const Cancelled&) {
+        resumed->store(true);
+
+        throw;
+    }
+}
+
+// What a coroutine waits for is part of its work: given up, the coroutine resumes at once with
+// `Cancelled`, but its `finally` runs only when what it waited for has really stopped, here when
+// the producer lets go of its settle.
+TRIAL("finally: a coroutine given up while it waits runs finally only after what it waited for") {
+    auto [source, settle] = promised<int>();
+
+    const auto resumed = std::make_shared<std::atomic<bool>>(false);
+
+    std::atomic<bool> cleaned{false};
+
+    Promise<void> one = waiting_for(std::move(source), resumed).finally([&cleaned] { cleaned.store(true); });
+
+    one.cancel();
+
+    ought(risen(*resumed));
+    ought(settle.stop().stopped());
+
+    std::this_thread::sleep_for(50ms);
+
+    ought(!cleaned.load());
+
+    (void)settle.value(1);
+
+    ought(risen(cleaned));
+}
+
 // A value from `Settle` sends the callbacks and the finish of the settled node to the pool apart,
 // so a cancellation of the chain can meet a callback just as it starts, on another thread. The
 // callback that starts then is already counted: `finally` comes only after it, never before, and
