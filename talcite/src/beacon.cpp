@@ -5,9 +5,11 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include "talcite/random.hpp"
 #include "talcite/udp.hpp"
@@ -43,6 +45,9 @@ constexpr std::size_t widest_datagram = 4 + 2 + nonce + 1 + Beacon::widest_tag +
 // The most answers per second the beacon gives, so that a flood of questions does not turn it into
 // an amplifier.
 constexpr int answers_per_second = 32;
+
+// How many times a seeker asks within its patience (`repeated`).
+constexpr int askings = 3;
 
 struct Read {
     std::byte kind{};
@@ -299,11 +304,26 @@ Promise<void> asked(std::shared_ptr<Seeking> seeking, std::vector<Address> to, B
     }
 }
 
+// The question again, each third of the patience (`askings` in all): a datagram may be lost, and
+// a beacon may begin to offer the tag a moment after the first question came, while the asking
+// side still waits. The nonce stays, so the answers to every asking are answers to one question,
+// each sender and content counted once (`gathered`).
+Promise<void> repeated(std::shared_ptr<Seeking> seeking, std::vector<Address> to, Bytes question, Patience patience) {
+    const Patience step = patience / askings;
+
+    for (int again = 1; again < askings; ++again) {
+        co_await later(step);
+
+        co_await asked(seeking, to, question);
+    }
+}
+
 }
 
 // Seeking: a question to the broadcast address (or to the given addresses: the same computer,
-// tests), then answers collected until the patience runs out. The same answer from the same sender
-// counts once. No answer is an empty list, not a refusal: "nobody is here" is a result.
+// tests), asked again while the answers are collected (`repeated`), until the patience runs out.
+// The same answer from the same sender counts once. No answer is an empty list, not a refusal:
+// "nobody is here" is a result.
 Promise<std::vector<Sighting>> Beacon::sought(std::uint16_t port, Bytes tag, Patience patience,
                                              std::vector<Address> to) {
     // Refuse with a promise, not with an exception from the call, also when the socket cannot be
@@ -330,9 +350,16 @@ Promise<std::vector<Sighting>> Beacon::sought(std::uint16_t port, Bytes tag, Pat
 
     Bytes question = written(asking, seeking->once, seeking->tag, nullptr);
 
-    return asked(seeking, std::move(to), std::move(question))
-        .then([seeking] { return gathered(seeking).outcome(); })
-        .then([seeking](const Outcome<void>&) {
+    return asked(seeking, to, question)
+        .then([seeking, to, question, patience] {
+            std::vector<Promise<void>> both;
+
+            both.push_back(gathered(seeking));
+            both.push_back(repeated(seeking, to, question, patience));
+
+            return settled(std::move(both));
+        })
+        .then([seeking](const std::vector<Outcome<void>>&) {
             seeking->post.close();
 
             return std::move(seeking->found);

@@ -4,11 +4,13 @@
 #include <cstddef>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "talcite/address.hpp"
 #include "talcite/beacon.hpp"
 #include "talcite/bytes.hpp"
+#include "talcite/promise.hpp"
 #include "talcite/time.hpp"
 #include "talcite/udp.hpp"
 
@@ -57,6 +59,23 @@ TRIAL("Beacon: answers a tag it knows with the payload it was given") {
                                                  .get();
 
     same(twice.size(), std::size_t{1});
+}
+
+// The question goes out again while the asking side waits: a beacon that begins to offer the tag
+// after the first question came still answers within the patience, once.
+TRIAL("Beacon: a tag offered a moment after the question is still found") {
+    const net::Beacon one{0};
+
+    Promise<std::vector<net::Sighting>> seeking = net::Beacon::sought(one.mine().port(), tagged("później"), briefly, here(one));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds{briefly.count() / 3 / 2});
+
+    one.offer(tagged("później"), bytes("jest"));
+
+    const std::vector<net::Sighting> found = std::move(seeking).get();
+
+    same(found.size(), std::size_t{1});
+    ought(!found.empty() && text(found.front().payload) == "jest");
 }
 
 // An unknown tag and a withdrawn tag give an empty list. "Nobody here" is a result, not a refusal.

@@ -1402,11 +1402,15 @@ Promise<int> added(int one, int two) {
     co_return first + second;
 }
 
-// Fails after one step.
+// Throws instead of giving its value.
+int thrown() { throw std::runtime_error{"w korutynie"}; }
+
+// Fails after one step. The coroutine ends with `co_return`, whose value throws: a coroutine of a
+// value that only throws gets the warning of a function that returns nothing from MSVC (C4033).
 Promise<int> failing() {
     co_await ready();
 
-    throw std::runtime_error{"w korutynie"};
+    co_return thrown();
 }
 
 // Counts up `many` times through promises that are already settled.
@@ -2100,6 +2104,9 @@ private:
 // A worker's bell is a pair of descriptors. Without a free one, a pool that has no worker refuses
 // the work to whoever posts it, and a pool that has a worker keeps the work until that worker is
 // free; neither ends the program from a worker thread. A promise on a refusing pool ends cancelled.
+// Under UBSan the check of dynamic types reports "invalid vptr" here, with "memory cannot be
+// printed": its test of whether memory can be read goes through a pipe, and the trial has taken
+// every descriptor. The objects are whole; without the starving the same calls report nothing.
 TRIAL("Pool: without descriptors work is refused or waits, and the program goes on") {
     Pool fresh;
     Pool working{1};
