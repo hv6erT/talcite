@@ -60,18 +60,16 @@ void Submenu::pick() {
     menu_->open();
 }
 
-// The width of an item and two cells more for the mark and the space before it: " Text  Hint ▸ ",
-// with the column of the check marks in a menu that has them (`lead`).
+// The width of an item and two cells more for the mark and the space before it: " Text  Hint ▸ ".
 Size Submenu::wants(Size room) const {
-    int wide = lead() + 3 + measured(text()).wide;
+    int wide = 4 + measured(text()).wide;
 
     if (!hint().empty()) wide += 2 + measured(hint()).wide;
 
     return {std::min(wide, room.wide), std::min(1, room.high)};
 }
 
-// Paints the item as `MenuItem` does, the text where the menu's texts start (`lead`), with the mark
-// of a submenu on the right edge
+// Paints the item as `MenuItem` does, with the mark of a submenu on the right edge
 // (`talcite.menu.more`) and the hint before it. While the list is open, the item stays highlighted,
 // though the focus has gone down into the list: the person should see which item the list comes
 // from.
@@ -84,17 +82,15 @@ void Submenu::paint(Canvas& onto) const {
 
     const Style look = how.style(!enabled() ? role() + ".disabled" : lit ? role() + ".focus" : role());
 
-    const int from = lead();
-
     onto.fill({{0, 0}, given}, look);
-    onto.put({from, 0}, text(), look);
+    onto.put({1, 0}, text(), look);
     onto.put({given.wide - 2, 0}, how.glyph("talcite.menu.more"), look);
 
     if (!hint().empty())
         onto.put({given.wide - 3 - measured(hint()).wide, 0}, hint(), look);
 
     if (enabled())
-        talcite::ui::marking(onto, {from, 0}, text(), shortcut_column(text()), look,
+        talcite::ui::marking(onto, {1, 0}, text(), shortcut_column(text()), look,
                              how.style(role() + ".key"));
 }
 

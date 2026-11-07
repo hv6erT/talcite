@@ -259,14 +259,6 @@ Glyphs glyphing() {
 
     made.emplace("talcite.menu.more", more);
 
-    // The check mark of a menu item, with a plain "x" for a terminal without Unicode.
-    Signs check;
-
-    check.ascii = U'x';
-    check.unicode = U'√';
-
-    made.emplace("talcite.menu.check", check);
-
     // The arrows of a strip of tabs too narrow for all the names, with plain forms of their own.
     Signs left;
     Signs right;

@@ -179,16 +179,6 @@ std::optional<std::size_t> Menu::which() const {
 // The highlighted item itself, or `nullptr` when there is none.
 MenuItem* Menu::current() const { return item(which_); }
 
-// Whether some item of the menu can be checked (`MenuItem::checked`): then every item leaves the
-// column of the marks.
-bool Menu::checks() const {
-    return std::any_of(children().begin(), children().end(), [](const std::shared_ptr<Node>& one) {
-        const auto* item = dynamic_cast<const MenuItem*>(one.get());
-
-        return item != nullptr && item->checked().has_value();
-    });
-}
-
 // Sets the highlighted item. The menu keeps the number, but the highlight itself is the focus, so
 // changing the number in an open menu moves the focus, and the previous item goes dark by itself.
 // In a closed menu the number is only remembered. A number past the end is cut to the last item,

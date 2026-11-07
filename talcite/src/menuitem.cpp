@@ -25,21 +25,10 @@ MenuItem::MenuItem(std::string text, std::string hint)
 // An item has nothing to hold inside, just like a label.
 int MenuItem::capacity() const { return 0; }
 
-// The column where the text starts: one cell from the left, or three in a menu that holds items
-// with a check mark (`checked`), whose marks stand in the first column. Every item of such a menu
-// leaves the column of the marks, so that the texts stand one under the other, as in the menus of
-// desktops; an item that can be checked leaves it also outside a menu.
-int MenuItem::lead() const {
-    const auto* menu = dynamic_cast<const Menu*>(parent());
-
-    return checked_.has_value() || (menu != nullptr && menu->checks()) ? 3 : 1;
-}
-
 // One space on each side and two between the text and the shortcut hint, so that "Copy" does not
-// stick to "F5", and the column of the marks in a menu that has them (`lead`). The height is
-// always one row: a menu item that wraps is not an item.
+// stick to "F5". The height is always one row: a menu item that wraps is not an item.
 Size MenuItem::wants(Size room) const {
-    int wide = lead() + 1 + measured(text_).wide;
+    int wide = 2 + measured(text_).wide;
 
     if (!hint_.empty()) wide += 2 + measured(hint_).wide;
 
@@ -55,8 +44,7 @@ Size MenuItem::wants(Size room) const {
 // inventing colors nobody asked for. A disabled item is dimmed.
 //
 // The role is built from a stem and a suffix, as in a button: whoever assembles the menu sets the
-// stem, and the item adds the suffix, because only it knows what states it has. A checked item
-// shows its mark (`talcite.menu.check`) in the column of the marks.
+// stem, and the item adds the suffix, because only it knows what states it has.
 void MenuItem::paint(Canvas& onto) const {
     const Size given = onto.size();
 
@@ -66,13 +54,8 @@ void MenuItem::paint(Canvas& onto) const {
                                       : focused() ? role() + ".focus"
                                                   : role());
 
-    const int from = lead();
-
     onto.fill({{0, 0}, given}, look);
-
-    if (checked_.value_or(false)) onto.put({1, 0}, how.glyph("talcite.menu.check"), look);
-
-    onto.put({from, 0}, text_, look);
+    onto.put({1, 0}, text_, look);
 
     if (!hint_.empty()) {
         const int wide = measured(hint_).wide;
@@ -81,10 +64,10 @@ void MenuItem::paint(Canvas& onto) const {
     }
 
     // The hotkey letter has its own role, laid over the item's look, as in a button and a check
-    // box. The letter is shifted as the text is (`lead`). A disabled item marks no letter, since
-    // its key does nothing.
+    // box. The text stands one cell from the left, so the letter is shifted by that cell too. A
+    // disabled item marks no letter, since its key does nothing.
     if (enabled())
-        talcite::ui::marking(onto, {from, 0}, text_, shortcut_column(text_),
+        talcite::ui::marking(onto, {1, 0}, text_, shortcut_column(text_),
                           look, how.style(role() + ".key"));
 }
 

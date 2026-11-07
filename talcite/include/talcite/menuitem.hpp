@@ -1,7 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <optional>
 #include <string>
 #include <utility>
 
@@ -37,16 +36,6 @@ public:
         changed();
     }
 
-    [[nodiscard]] const std::optional<bool>& checked() const { return checked_; }
-
-    void checked(std::optional<bool> given) {
-        if (checked_ == given) return;
-
-        checked_ = given;
-
-        changed();
-    }
-
     virtual void pick();
 
     [[nodiscard]] Size wants(Size room) const override;
@@ -54,8 +43,6 @@ public:
     [[nodiscard]] int capacity() const override;
 
 protected:
-    [[nodiscard]] int lead() const;
-
     void paint(Canvas& onto) const override;
 
     void activate() override;
@@ -69,7 +56,6 @@ protected:
 private:
     std::string text_;
     std::string hint_;
-    std::optional<bool> checked_;
 };
 
 }

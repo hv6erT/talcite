@@ -57,8 +57,6 @@ public:
 
     [[nodiscard]] MenuItem* current() const;
 
-    [[nodiscard]] bool checks() const;
-
     void current(MenuItem& one);
 
     void pick();
