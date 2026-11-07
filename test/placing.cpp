@@ -1096,7 +1096,11 @@ TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the f
         if (!old.expired()) {
             std::string marks;
 
-            for (const Picture& one : rig.root.render({{0, 0}, {12, 6}}).pictures()) marks += " " + std::to_string(one.mark);
+            {
+                const Snapshot kept = rig.root.render({{0, 0}, {12, 6}});
+
+                for (const Picture& one : kept.pictures()) marks += " " + std::to_string(one.mark);
+            }
 
             holder += ", the root's sheet keeps" + (marks.empty() ? std::string{" nothing"} : marks);
 
@@ -1104,6 +1108,15 @@ TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the f
             (void)rig.root.render({{0, 0}, {12, 6}});
 
             holder += old.expired() ? ", a whole frame frees them" : ", a whole frame keeps them";
+
+            // What waits on the thread's loop, which outlives the terminal that adopted it.
+            if (!old.expired()) {
+                if (Loop* const loop = Loop::current())
+                    for (int turns = 0; turns < 100 && loop->turn() > 0; ++turns) {
+                    }
+
+                holder += old.expired() ? ", the loop's posts held them" : ", the loop's posts keep them";
+            }
         }
     }
 
