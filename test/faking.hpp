@@ -242,12 +242,17 @@ public:
 // byte, so that one can see the content really passes through the seam, and it exchanges a
 // greeting, so that the pump has a handshake to carry out. The whole point is to test `TlsStream`
 // (and what stands on it, such as the HTTP client) without any library. `refused` makes the client
-// reject the handshake with the given reason, as an adapter that recognized it would.
+// reject the handshake with the given reason, as an adapter that recognized it would. As in TLS,
+// the server (`answering`) speaks only after the client's greeting: a server greeting sent at once
+// could reach a client still reading the proxy's answer to CONNECT, which rightly takes any byte
+// there for a protocol violation.
 class Turning : public talcite::net::TlsSession {
 public:
-    // `poison` replaces everything written with a poisoned record; `refused` fails the handshake.
-    explicit Turning(bool poison = false, std::optional<talcite::net::TlsTrouble::Why> refused = std::nullopt)
-        : poison_(poison), refused_(refused) {}
+    // `poison` replaces everything written with a poisoned record; `refused` fails the handshake;
+    // `answering` makes the session a server's.
+    explicit Turning(bool poison = false, std::optional<talcite::net::TlsTrouble::Why> refused = std::nullopt,
+                     bool answering = false)
+        : poison_(poison), answering_(answering), refused_(refused) {}
 
     // The handshake is done once the greeting has been both sent and heard.
     [[nodiscard]] bool ready() const override { return said_ && heard_; }
@@ -300,7 +305,8 @@ public:
         }
     }
 
-    // The first request for ciphertext drives the handshake; without it nobody would start it.
+    // The first request for ciphertext drives the handshake; without it nobody would start it. A
+    // server's greeting waits for the client's.
     [[nodiscard]] talcite::Bytes pull() override {
         if (refused_.has_value()) {
             amiss_ = "Handshake rejected.";
@@ -308,7 +314,7 @@ public:
             return {};
         }
 
-        if (!said_) {
+        if (!said_ && (!answering_ || heard_)) {
             said_ = true;
 
             framed(talcite::bytes("CZESC"));
@@ -370,6 +376,7 @@ private:
     bool said_ = false;
     bool heard_ = false;
     bool poison_ = false;
+    bool answering_ = false;
     bool closed_ = false;
     std::optional<talcite::net::TlsTrouble::Why> refused_;
 };
@@ -387,9 +394,9 @@ public:
         return std::make_unique<Turning>(poison_, refused_);
     }
 
-    // A plain fake server session.
+    // A plain fake server session, which greets only after the client.
     [[nodiscard]] std::unique_ptr<talcite::net::TlsSession> server() override {
-        return std::make_unique<Turning>();
+        return std::make_unique<Turning>(false, std::nullopt, true);
     }
 
 private:
