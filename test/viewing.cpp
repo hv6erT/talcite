@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -100,11 +100,11 @@ std::string many(int much) {
 TRIAL("Viewer: an empty one carries nothing") {
     const ui::Viewer one;
 
-    ought(!one.held());
-    ought(!one.first().has_value());
-    ought(!one.lines().has_value());
-    ought(!one.at().has_value());
-    ought(!one.whole().has_value());
+    OUGHT(!one.held());
+    OUGHT(!one.first().has_value());
+    OUGHT(!one.lines().has_value());
+    OUGHT(!one.at().has_value());
+    OUGHT(!one.whole().has_value());
 }
 
 TRIAL("Viewer: a document in memory gives the full set of values at once") {
@@ -112,11 +112,11 @@ TRIAL("Viewer: a document in memory gives the full set of values at once") {
 
     const auto one = shown(sheet, "a\nbb\nccc");
 
-    ought(one->held());
-    same(*one->first(), std::size_t{0});
-    same(*one->lines(), std::size_t{3});
-    same(*one->at(), std::size_t{0});
-    same(*one->whole(), std::size_t{8});
+    OUGHT(one->held());
+    SAME(*one->first(), std::size_t{0});
+    SAME(*one->lines(), std::size_t{3});
+    SAME(*one->at(), std::size_t{0});
+    SAME(*one->whole(), std::size_t{8});
 }
 
 // The page holds the document, and a new one replaces the previous one entirely, including its row
@@ -128,15 +128,15 @@ TRIAL("Viewer: a new document replaces the previous one entirely") {
 
     one->at(std::size_t{5});
 
-    same(*one->first(), std::size_t{2});
-    same(*one->at(), std::size_t{5});
+    SAME(*one->first(), std::size_t{2});
+    SAME(*one->at(), std::size_t{5});
 
     one->hold(bytes("x\ny"));
 
-    same(*one->lines(), std::size_t{2});
-    same(*one->first(), std::size_t{0});
-    same(*one->at(), std::size_t{0});
-    same(*one->whole(), std::size_t{3});
+    SAME(*one->lines(), std::size_t{2});
+    SAME(*one->first(), std::size_t{0});
+    SAME(*one->at(), std::size_t{0});
+    SAME(*one->whole(), std::size_t{3});
 }
 
 // What can no longer be written: a bare page, and a document given to the page from outside.
@@ -151,10 +151,10 @@ TRIAL("Viewer: rows land one below another") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 4}});
 
-    same(said(made, 0), std::string{"pierwszy"});
-    same(said(made, 1), std::string{"drugi"});
-    same(said(made, 2), std::string{"trzeci"});
-    same(said(made, 3), std::string{});
+    SAME(said(made, 0), std::string{"pierwszy"});
+    SAME(said(made, 1), std::string{"drugi"});
+    SAME(said(made, 2), std::string{"trzeci"});
+    SAME(said(made, 3), std::string{});
 }
 
 TRIAL("Viewer: a tab expands to eight columns") {
@@ -164,7 +164,7 @@ TRIAL("Viewer: a tab expands to eight columns") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 1}});
 
-    same(said(made, 0), std::string{"ab      c"});
+    SAME(said(made, 0), std::string{"ab      c"});
 }
 
 // Wrapping is the default, so a long row takes several rows of the screen.
@@ -173,13 +173,13 @@ TRIAL("Viewer: wrapping splits a long row by columns") {
 
     const auto one = shown(sheet, "aaaabbbbcccc");
 
-    ought(one->wrapped());
+    OUGHT(one->wrapped());
 
     const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
-    same(said(made, 0), std::string{"aaaa"});
-    same(said(made, 1), std::string{"bbbb"});
-    same(said(made, 2), std::string{"cccc"});
+    SAME(said(made, 0), std::string{"aaaa"});
+    SAME(said(made, 1), std::string{"bbbb"});
+    SAME(said(made, 2), std::string{"cccc"});
 }
 
 TRIAL("Viewer: without wrapping a row is cut off") {
@@ -191,8 +191,8 @@ TRIAL("Viewer: without wrapping a row is cut off") {
 
     const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
-    same(said(made, 0), std::string{"aaaa"});
-    same(said(made, 1), std::string{"drug"});
+    SAME(said(made, 0), std::string{"aaaa"});
+    SAME(said(made, 1), std::string{"drug"});
 }
 
 // A Chinese character takes two cells, so cutting by bytes or by characters would let it out of the
@@ -204,8 +204,8 @@ TRIAL("Viewer: cutting counts columns, not characters") {
 
     const Snapshot made = sheet.render({{0, 0}, {5, 3}});
 
-    same(said(made, 0), std::string{"\xe4\xbd\xa0\xe4\xbd\xa0"});
-    same(said(made, 1), std::string{"\xe4\xbd\xa0"});
+    SAME(said(made, 0), std::string{"\xe4\xbd\xa0\xe4\xbd\xa0"});
+    SAME(said(made, 1), std::string{"\xe4\xbd\xa0"});
 }
 
 // --- Scrolling -----------------------------------------------------------------------------------
@@ -218,10 +218,10 @@ TRIAL("Viewer: a step down and up returns to the same place") {
     (void)sheet.render({{0, 0}, {40, 10}});
 
     one->slide(5);
-    same(*one->first(), std::size_t{5});
+    SAME(*one->first(), std::size_t{5});
 
     one->slide(-5);
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 }
 
 // The wheel under the mouse moves the view three rows a notch, down and back, as in the list and
@@ -235,14 +235,14 @@ TRIAL("Viewer: the wheel moves the view three rows a notch") {
 
     ui::WheelEvent down{{1, 1}, -1};
 
-    ought(sheet.dispatch(down));
-    same(*one->first(), std::size_t{3});
-    same(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"wiersz 3"});
+    OUGHT(sheet.dispatch(down));
+    SAME(*one->first(), std::size_t{3});
+    SAME(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"wiersz 3"});
 
     ui::WheelEvent up{{1, 1}, 1};
 
-    ought(sheet.dispatch(up));
-    same(*one->first(), std::size_t{0});
+    OUGHT(sheet.dispatch(up));
+    SAME(*one->first(), std::size_t{0});
 }
 
 TRIAL("Viewer: at the start one cannot go back") {
@@ -254,7 +254,7 @@ TRIAL("Viewer: at the start one cannot go back") {
 
     one->slide(-5);
 
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 }
 
 // A step down stops when the last row stands at the bottom of the screen, not at the top with
@@ -269,11 +269,11 @@ TRIAL("Viewer: we do not go past the last page") {
 
     one->slide(1000);
 
-    same(*one->first(), std::size_t{6});
+    SAME(*one->first(), std::size_t{6});
 
     one->first(1000);
 
-    same(*one->first(), std::size_t{6});
+    SAME(*one->first(), std::size_t{6});
 
     Sheet other;
 
@@ -283,7 +283,7 @@ TRIAL("Viewer: we do not go past the last page") {
 
     brief->slide(1000);
 
-    same(*brief->first(), std::size_t{0});
+    SAME(*brief->first(), std::size_t{0});
 }
 
 // With wrapping one row of the document is several steps of the screen, so a step does not move
@@ -296,17 +296,17 @@ TRIAL("Viewer: with wrapping a step goes by pieces") {
     (void)sheet.render({{0, 0}, {4, 2}});
 
     one->slide(1);
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 
     one->slide(1);
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 
     one->slide(1);
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 
     // Five pieces on two screen rows: there is nowhere further to go.
     one->slide(1);
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 }
 
 TRIAL("Viewer: a page moves by the window's height") {
@@ -320,9 +320,9 @@ TRIAL("Viewer: a page moves by the window's height") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(down));
 
-    same(*one->first(), std::size_t{10});
+    SAME(*one->first(), std::size_t{10});
 }
 
 // `slide` says whether the picture moved, and notifies only then. At the end of the document and
@@ -342,24 +342,24 @@ TRIAL("Viewer: slide returns whether it moved, and notifies only then") {
         return false;
     });
 
-    ought(one->slide(3));
-    same(heard, 1);
+    OUGHT(one->slide(3));
+    SAME(heard, 1);
 
-    ought(!one->slide(0));
-    same(heard, 1);
+    OUGHT(!one->slide(0));
+    SAME(heard, 1);
 
-    ought(one->slide(-10));
-    same(*one->first(), std::size_t{0});
-    same(heard, 2);
+    OUGHT(one->slide(-10));
+    SAME(*one->first(), std::size_t{0});
+    SAME(heard, 2);
 
-    ought(!one->slide(-1));
-    same(heard, 2);
+    OUGHT(!one->slide(-1));
+    SAME(heard, 2);
 
     one->end();
     heard = 0;
 
-    ought(!one->slide(1));
-    same(heard, 0);
+    OUGHT(!one->slide(1));
+    SAME(heard, 0);
 }
 
 // The page's own keys and wheel move it by hand, a call from the program does not.
@@ -383,18 +383,18 @@ TRIAL("Viewer: a move says whether it came by hand") {
     ui::KeyEvent down{ui::Code::down};
     ui::WheelEvent wheel{{1, 1}, -1};
 
-    ought(sheet.dispatch(down));
-    ought(sheet.dispatch(wheel));
+    OUGHT(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(wheel));
 
-    same(heard, (std::vector<bool>{true, true}));
+    SAME(heard, (std::vector<bool>{true, true}));
 
     heard.clear();
 
-    ought(one->slide(2));
+    OUGHT(one->slide(2));
     one->first(0);
     one->end();
 
-    same(heard, (std::vector<bool>{false, false, false}));
+    SAME(heard, (std::vector<bool>{false, false, false}));
 }
 
 TRIAL("Viewer: end shows the last page") {
@@ -406,11 +406,11 @@ TRIAL("Viewer: end shows the last page") {
 
     one->end();
 
-    same(*one->first(), std::size_t{90});
+    SAME(*one->first(), std::size_t{90});
 
     const Snapshot made = sheet.render({{0, 0}, {40, 10}});
 
-    same(said(made, 9), std::string{"wiersz 99"});
+    SAME(said(made, 9), std::string{"wiersz 99"});
 }
 
 TRIAL("Viewer: a jump to a row is clipped to the document") {
@@ -420,7 +420,7 @@ TRIAL("Viewer: a jump to a row is clipped to the document") {
 
     one->first(1000);
 
-    same(*one->first(), std::size_t{9});
+    SAME(*one->first(), std::size_t{9});
 }
 
 TRIAL("Viewer: a jump by byte lands in the right row") {
@@ -430,8 +430,8 @@ TRIAL("Viewer: a jump by byte lands in the right row") {
 
     one->at(5);
 
-    same(*one->first(), std::size_t{2});
-    same(*one->at(), std::size_t{5});
+    SAME(*one->first(), std::size_t{2});
+    SAME(*one->at(), std::size_t{5});
 }
 
 // The same byte means something different in the two modes, so switching has to stay in the same
@@ -446,11 +446,11 @@ TRIAL("Viewer: switching wrapping does not move the row") {
     one->first(1);
     one->wrapped(false);
 
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 
     const Snapshot made = sheet.render({{0, 0}, {4, 4}});
 
-    same(said(made, 0), std::string{"drug"});
+    SAME(said(made, 0), std::string{"drug"});
 }
 
 // Scrolling counts the pieces and drawing builds them, with one walker. Random documents with tabs,
@@ -508,7 +508,7 @@ TRIAL("Viewer: stepping by pieces agrees with what is drawn") {
         const auto agreed = [&](int from) {
             const Snapshot made = sheet.render({{0, 0}, {wide, high}});
 
-            for (int y = 0; y < high; ++y) same(said(made, y), said(all, from + y));
+            for (int y = 0; y < high; ++y) SAME(said(made, y), said(all, from + y));
         };
 
         agreed(0);
@@ -563,7 +563,7 @@ TRIAL("Viewer: movement within a window does not go back to the source") {
 
     one->scrollbar(false);
 
-    ought(turned(loop, sheet, {10, 6}, [&one] { return one->shown() > 0; }));
+    OUGHT(turned(loop, sheet, {10, 6}, [&one] { return one->shown() > 0; }));
 
     const int was = calls;
 
@@ -576,7 +576,7 @@ TRIAL("Viewer: movement within a window does not go back to the source") {
 
     (void)sheet.render({{0, 0}, {10, 6}});
 
-    same(calls, was);
+    SAME(calls, was);
 }
 
 // A frame reads only what it shows. A line of four megabytes, wrapped, shows its first rows, and the
@@ -603,14 +603,14 @@ TRIAL("Viewer: a frame of a very long line reads only what it shows") {
 
     one->scrollbar(false);
 
-    ought(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
-    same(calls, 1);
+    OUGHT(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    SAME(calls, 1);
 
     for (int step = 0; step < 100; ++step) one->slide(10);
 
-    ought(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
-    same(*one->at(), std::size_t{100 * 10 * 40});
-    ought(calls <= 2);
+    OUGHT(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    SAME(*one->at(), std::size_t{100 * 10 * 40});
+    OUGHT(calls <= 2);
 }
 
 // A source that has not answered yet stops clipping to the end: a walk of the screen that runs into
@@ -641,11 +641,11 @@ TRIAL("Viewer: clipping to the end stops on a window that waits") {
 
     one->first(6);
 
-    same(*one->first(), std::size_t{6});
+    SAME(*one->first(), std::size_t{6});
 
     one->slide(1);
 
-    same(*one->first(), std::size_t{7});
+    SAME(*one->first(), std::size_t{7});
 }
 
 // A tab after the cut, alone at the end of a row, is a screen row of spaces, not emptiness that can
@@ -657,14 +657,14 @@ TRIAL("Viewer: a tab after the cut takes its own screen row") {
 
     const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
-    same(said(made, 0), std::string{"aaaaaaaaaa"});
-    same(said(made, 1), std::string{});
-    same(said(made, 2), std::string{"Z"});
+    SAME(said(made, 0), std::string{"aaaaaaaaaa"});
+    SAME(said(made, 1), std::string{});
+    SAME(said(made, 2), std::string{"Z"});
 
     one->end();
 
-    same(said(sheet.render({{0, 0}, {10, 3}}), 2), std::string{"Z"});
-    same(*one->first(), std::size_t{0});
+    SAME(said(sheet.render({{0, 0}, {10, 3}}), 2), std::string{"Z"});
+    SAME(*one->first(), std::size_t{0});
 }
 
 // `End` stands on the last piece of the last row: the wrapped tail of the document stands at the
@@ -680,8 +680,8 @@ TRIAL("Viewer: end with a wrapped last row shows its tail") {
 
     const Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
-    same(said(made, 0), std::string{"efgh"});
-    same(said(made, 1), std::string{"ijkl"});
+    SAME(said(made, 0), std::string{"efgh"});
+    SAME(said(made, 1), std::string{"ijkl"});
 }
 
 // Before the page gets its allotment there is no width and nothing to cut: a step goes by rows of
@@ -693,7 +693,7 @@ TRIAL("Viewer: before layout a step goes by rows of the document") {
 
     one->slide(1);
 
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 }
 
 // --- Scrollbar -----------------------------------------------------------------------------------
@@ -707,13 +707,13 @@ TRIAL("Viewer: the scrollbar takes a column from the content") {
 
     one->scrollbar(true);
 
-    ought(one->scrollbar());
+    OUGHT(one->scrollbar());
 
     const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
     // The last column belongs to the scrollbar, so we compare only the start of the row.
-    same(said(made, 0).substr(0, 4), std::string{"aaaa"});
-    same(said(made, 1).substr(0, 4), std::string{"bbbb"});
+    SAME(said(made, 0).substr(0, 4), std::string{"aaaa"});
+    SAME(said(made, 1).substr(0, 4), std::string{"bbbb"});
 }
 
 // Without the scrollbar the same content fits in five columns.
@@ -722,12 +722,12 @@ TRIAL("Viewer: without the scrollbar the content gets the whole width") {
 
     const auto one = shown(sheet, "aaaabbbb");
 
-    ought(!one->scrollbar());
+    OUGHT(!one->scrollbar());
 
     const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
-    same(said(made, 0), std::string{"aaaab"});
-    same(said(made, 1), std::string{"bbb"});
+    SAME(said(made, 0), std::string{"aaaab"});
+    SAME(said(made, 1), std::string{"bbb"});
 }
 
 // A scrollbar "when needed": a page that fits whole has no scrollbar and wraps to the whole width;
@@ -750,12 +750,12 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
 
     const auto [fits, first] = barred("aaaabbbb", {5, 4});
 
-    ought(!fits);
-    same(first, std::string{"aaaab"});
+    OUGHT(!fits);
+    SAME(first, std::string{"aaaab"});
 
-    ought(!barred("a\nb\nc\nd", {5, 4}).first);
-    ought(barred("a\nb\nc\nd\ne", {5, 4}).first);
-    ought(barred("aaaabbbbccccdddde", {5, 4}).first);
+    OUGHT(!barred("a\nb\nc\nd", {5, 4}).first);
+    OUGHT(barred("a\nb\nc\nd\ne", {5, 4}).first);
+    OUGHT(barred("aaaabbbbccccdddde", {5, 4}).first);
 
     // A page scrolled to the end still has the scrollbar: the rest fits, but the start is above the
     // window.
@@ -773,12 +773,12 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
 
         ui::KeyEvent end{ui::Code::end};
 
-        ought(sheet.dispatch(end));
+        OUGHT(sheet.dispatch(end));
 
         const Snapshot made = sheet.render({{0, 0}, {5, 4}});
 
-        same(made.at({4, 0}).letter, U'│');
-        same(made.at({4, 3}).letter, U'█');
+        SAME(made.at({4, 0}).letter, U'│');
+        SAME(made.at({4, 3}).letter, U'█');
     }
 
     // A source that does not yet have the later rows also gives a scrollbar: the page does not know
@@ -803,7 +803,7 @@ TRIAL("Viewer: a when-needed scrollbar appears only with a page longer than the 
                   head.size() + 100, bytes(head));
         sheet.children().add(one);
 
-        same(sheet.render({{0, 0}, {5, 4}}).at({4, 0}).letter, U'█');
+        SAME(sheet.render({{0, 0}, {5, 4}}).at({4, 0}).letter, U'█');
     }
 }
 
@@ -817,8 +817,8 @@ TRIAL("Viewer: the scrollbar stands at the right edge") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 5}});
 
-    ought(made.at({19, 0}).letter != U' ');
-    ought(made.at({19, 4}).letter != U' ');
+    OUGHT(made.at({19, 0}).letter != U' ');
+    OUGHT(made.at({19, 4}).letter != U' ');
 }
 
 // While the row count is unknown, the scrollbar goes by bytes, and its window is the span of what
@@ -840,8 +840,8 @@ TRIAL("Viewer: a byte scrollbar measures its window by what is visible") {
     one->scrollbar(true);
     sheet.children().add(one);
 
-    ought(turned(loop, sheet, {20, 10}, [&] { return said(sheet.render({{0, 0}, {20, 10}}), 9).starts_with("j"); }));
-    ought(!one->lines().has_value());
+    OUGHT(turned(loop, sheet, {20, 10}, [&] { return said(sheet.render({{0, 0}, {20, 10}}), 9).starts_with("j"); }));
+    OUGHT(!one->lines().has_value());
 
     const Snapshot made = sheet.render({{0, 0}, {20, 10}});
     const char32_t block = sheet.skin().glyph("talcite.scroll.thumb");
@@ -851,7 +851,7 @@ TRIAL("Viewer: a byte scrollbar measures its window by what is visible") {
     for (int y = 0; y < 10; ++y)
         if (made.at({19, y}).letter == block) ++thumb;
 
-    ought(thumb >= 3);
+    OUGHT(thumb >= 3);
 }
 
 // Intentions waiting for a window belong to the document, not to the page: a new document does
@@ -874,13 +874,13 @@ TRIAL("Viewer: a new document does not inherit the old one's intentions") {
     one->end();
     one->at(text.find("wiersz 20000\n"));
 
-    ought(!one->lines().has_value());
+    OUGHT(!one->lines().has_value());
 
     const Bytes other = bytes(many(30));
 
     one->hold(fed(other), other.size());
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
 
     for (int turns = 0; turns < 50; ++turns) {
         (void)loop.bell().wait(std::chrono::milliseconds{2});
@@ -888,7 +888,7 @@ TRIAL("Viewer: a new document does not inherit the old one's intentions") {
         (void)sheet.render({{0, 0}, {40, 10}});
     }
 
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 }
 
 // --- Marks ---------------------------------------------------------------------------------------
@@ -904,13 +904,13 @@ TRIAL("Viewer: a mark repaints exactly its range") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(made.at({4, 0}).style.reverse);
-    ought(!made.at({5, 0}).style.reverse);
+    OUGHT(!made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({4, 0}).style.reverse);
+    OUGHT(!made.at({5, 0}).style.reverse);
 
     // The letters stay in place; only the style changes.
-    same(said(made, 0), std::string{"abcdefgh"});
+    SAME(said(made, 0), std::string{"abcdefgh"});
 }
 
 // A two-column character takes two cells, and in the row it is one three-byte character. A range
@@ -924,10 +924,10 @@ TRIAL("Viewer: a mark on a double-width character takes both columns") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({0, 0}).style.reverse);
-    ought(made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(!made.at({3, 0}).style.reverse);
+    OUGHT(!made.at({0, 0}).style.reverse);
+    OUGHT(made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(!made.at({3, 0}).style.reverse);
 }
 
 // A tab is a single byte but takes several columns, and they all share its fate.
@@ -940,10 +940,10 @@ TRIAL("Viewer: a mark on a tab takes the whole expansion") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(made.at({7, 0}).style.reverse);
-    ought(!made.at({8, 0}).style.reverse);
+    OUGHT(!made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({7, 0}).style.reverse);
+    OUGHT(!made.at({8, 0}).style.reverse);
 }
 
 // The set has to be ordered, or else `next` does not know which one is next.
@@ -956,10 +956,10 @@ TRIAL("Viewer: marks are ordered by row and by start") {
     one->marks().add(ui::Mark{1, 4, 5, "b"});
     one->marks().add(ui::Mark{1, 0, 1, "c"});
 
-    same(one->marks().many(), std::size_t{3});
-    same(one->marks()[0].role, std::string{"c"});
-    same(one->marks()[1].role, std::string{"b"});
-    same(one->marks()[2].role, std::string{"a"});
+    SAME(one->marks().many(), std::size_t{3});
+    SAME(one->marks()[0].role, std::string{"c"});
+    SAME(one->marks()[1].role, std::string{"b"});
+    SAME(one->marks()[2].role, std::string{"a"});
 }
 
 TRIAL("Viewer: replacing the whole set sorts and clears the current one") {
@@ -969,13 +969,13 @@ TRIAL("Viewer: replacing the whole set sorts and clears the current one") {
 
     one->marks().all({ui::Mark{7, 0, 1, "a"}, ui::Mark{2, 0, 1, "b"}});
 
-    same(one->marks().many(), std::size_t{2});
-    same(one->marks()[0].line, std::size_t{2});
-    ought(!one->which().has_value());
+    SAME(one->marks().many(), std::size_t{2});
+    SAME(one->marks()[0].line, std::size_t{2});
+    OUGHT(!one->which().has_value());
 
     one->marks().clear();
 
-    same(one->marks().many(), std::size_t{0});
+    SAME(one->marks().many(), std::size_t{0});
 }
 
 // --- Stepping through marks ----------------------------------------------------------------------
@@ -985,9 +985,9 @@ TRIAL("Viewer: without marks there is nowhere to jump") {
 
     const auto one = shown(sheet, many(10));
 
-    ought(!one->step(1));
-    ought(!one->step(-1));
-    ought(!one->which().has_value());
+    OUGHT(!one->step(1));
+    OUGHT(!one->step(-1));
+    OUGHT(!one->which().has_value());
 }
 
 TRIAL("Viewer: a jump takes the first mark not before the screen") {
@@ -999,11 +999,11 @@ TRIAL("Viewer: a jump takes the first mark not before the screen") {
 
     one->marks().all({ui::Mark{3, 0, 1, "a"}, ui::Mark{50, 0, 1, "b"}});
 
-    ought(one->step(1));
-    same(*one->which(), std::size_t{0});
+    OUGHT(one->step(1));
+    SAME(*one->which(), std::size_t{0});
 
     // Row 3 was visible, so the picture did not move.
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 }
 
 TRIAL("Viewer: a jump to a mark off the screen scrolls down") {
@@ -1015,9 +1015,9 @@ TRIAL("Viewer: a jump to a mark off the screen scrolls down") {
 
     one->marks().all({ui::Mark{50, 0, 1, "a"}});
 
-    ought(one->step(1));
-    same(*one->which(), std::size_t{0});
-    same(*one->first(), std::size_t{41});
+    OUGHT(one->step(1));
+    SAME(*one->which(), std::size_t{0});
+    SAME(*one->first(), std::size_t{41});
 }
 
 TRIAL("Viewer: after the last mark there is no next one") {
@@ -1029,11 +1029,11 @@ TRIAL("Viewer: after the last mark there is no next one") {
 
     one->marks().all({ui::Mark{2, 0, 1, "a"}, ui::Mark{4, 0, 1, "b"}});
 
-    ought(one->step(1));
-    ought(one->step(1));
-    ought(!one->step(1));
+    OUGHT(one->step(1));
+    OUGHT(one->step(1));
+    OUGHT(!one->step(1));
 
-    same(*one->which(), std::size_t{1});
+    SAME(*one->which(), std::size_t{1});
 }
 
 TRIAL("Viewer: backward returns through the same marks") {
@@ -1045,13 +1045,13 @@ TRIAL("Viewer: backward returns through the same marks") {
 
     one->marks().all({ui::Mark{2, 0, 1, "a"}, ui::Mark{4, 0, 1, "b"}});
 
-    ought(one->step(1));
-    ought(one->step(1));
-    ought(one->step(-1));
+    OUGHT(one->step(1));
+    OUGHT(one->step(1));
+    OUGHT(one->step(-1));
 
-    same(*one->which(), std::size_t{0});
+    SAME(*one->which(), std::size_t{0});
 
-    ought(!one->step(-1));
+    OUGHT(!one->step(-1));
 }
 
 // A scrolling jump has to notify once, even if the movement consists of two parts.
@@ -1072,9 +1072,9 @@ TRIAL("Viewer: a jump notifies with a single event") {
         return false;
     });
 
-    ought(one->step(1));
+    OUGHT(one->step(1));
 
-    same(heard, 1);
+    SAME(heard, 1);
 }
 
 // --- Visible range -------------------------------------------------------------------------------
@@ -1088,7 +1088,7 @@ TRIAL("Viewer: the visible range counts rows of the document, not of the screen"
 
     (void)sheet.render({{0, 0}, {40, 10}});
 
-    same(one->shown(), std::size_t{10});
+    SAME(one->shown(), std::size_t{10});
 
     Sheet inna;
 
@@ -1096,7 +1096,7 @@ TRIAL("Viewer: the visible range counts rows of the document, not of the screen"
 
     (void)inna.render({{0, 0}, {4, 4}});
 
-    same(two->shown(), std::size_t{2});
+    SAME(two->shown(), std::size_t{2});
 }
 
 // --- Keys and events -----------------------------------------------------------------------------
@@ -1108,18 +1108,18 @@ TRIAL("Viewer: takes focus and arrows, and lets function keys through") {
 
     (void)sheet.render({{0, 0}, {40, 10}});
 
-    ought(one->focusable());
+    OUGHT(one->focusable());
 
     one->focus();
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(sheet.dispatch(down));
-    same(*one->first(), std::size_t{1});
+    OUGHT(sheet.dispatch(down));
+    SAME(*one->first(), std::size_t{1});
 
     ui::KeyEvent f2{ui::Code::f2};
 
-    ought(!sheet.dispatch(f2));
+    OUGHT(!sheet.dispatch(f2));
 }
 
 // The event goes up, so a listener on an ancestor catches the viewer's movement. That is exactly
@@ -1141,11 +1141,11 @@ TRIAL("Viewer: a shift notifies the ancestor") {
 
     one->slide(1);
 
-    same(heard, 1);
+    SAME(heard, 1);
 
     one->slide(1000);
 
-    same(heard, 2);
+    SAME(heard, 2);
 }
 
 // Standing still is not movement: at the end of the document the wheel has nothing to report.
@@ -1166,7 +1166,7 @@ TRIAL("Viewer: no movement notifies nobody") {
 
     one->slide(-1);
 
-    same(heard, 0);
+    SAME(heard, 0);
 }
 
 // The walk cursor is dropped lazily. The set of marks has no pointer to the page, so it has no way
@@ -1183,12 +1183,12 @@ TRIAL("Viewer: adding a mark drops the walk cursor") {
 
     (void)sheet.render({{0, 0}, {30, 6}});
 
-    ought(one->step(1));
-    ought(one->which().has_value());
+    OUGHT(one->step(1));
+    OUGHT(one->which().has_value());
 
     one->marks().add(ui::Mark{20, 0, 3, "moja"});
 
-    ought(!one->which().has_value());
+    OUGHT(!one->which().has_value());
 }
 
 // The set keeps marks ordered by their place in the document, whatever order they arrived in;
@@ -1202,11 +1202,11 @@ TRIAL("Viewer: marks are ordered by place, not by the order of adding") {
     one->marks().add(ui::Mark{2, 0, 3, "moja"});
     one->marks().add(ui::Mark{2, 5, 7, "moja"});
 
-    same(one->marks().many(), std::size_t{3});
-    same(one->marks()[0].line, std::size_t{2});
-    same(one->marks()[0].from, std::size_t{0});
-    same(one->marks()[1].from, std::size_t{5});
-    same(one->marks()[2].line, std::size_t{9});
+    SAME(one->marks().many(), std::size_t{3});
+    SAME(one->marks()[0].line, std::size_t{2});
+    SAME(one->marks()[0].from, std::size_t{0});
+    SAME(one->marks()[1].from, std::size_t{5});
+    SAME(one->marks()[2].line, std::size_t{9});
 
     std::size_t counted = 0;
 
@@ -1216,7 +1216,7 @@ TRIAL("Viewer: marks are ordered by place, not by the order of adding") {
         ++counted;
     }
 
-    same(counted, std::size_t{3});
+    SAME(counted, std::size_t{3});
 }
 
 // `MarkedMixin` is a base, not just a field of the page. A foreign document widget gets both the set
@@ -1234,42 +1234,42 @@ TRIAL("MarkedMixin: a foreign widget gets marks and a cursor without writing any
 
     Mine one;
 
-    ought(!one.which().has_value());
+    OUGHT(!one.which().has_value());
 
     one.marks().add(ui::Mark{9, 0, 3, "moja"});
     one.marks().add(ui::Mark{2, 0, 3, "moja"});
 
-    same(one.marks().many(), std::size_t{2});
-    same(one.marks()[0].line, std::size_t{2});
+    SAME(one.marks().many(), std::size_t{2});
+    SAME(one.marks()[0].line, std::size_t{2});
 
     one.stand(1);
 
-    same(*one.which(), std::size_t{1});
+    SAME(*one.which(), std::size_t{1});
 
     // Changing the set drops the cursor, lazily, at the next question.
     one.marks().add(ui::Mark{20, 0, 3, "moja"});
 
-    ought(!one.which().has_value());
+    OUGHT(!one.which().has_value());
 
     // The walk is in the base too. Without a cursor, `step` forward takes the first mark that does
     // not lie before the screen, and a widget that scrolls nothing has its screen from row zero, so
     // it takes the very first one.
-    ought(one.step(1));
-    same(*one.which(), std::size_t{0});
+    OUGHT(one.step(1));
+    SAME(*one.which(), std::size_t{0});
 
-    ought(one.step(1));
-    same(*one.which(), std::size_t{1});
+    OUGHT(one.step(1));
+    SAME(*one.which(), std::size_t{1});
 
-    ought(one.step(-1));
-    same(*one.which(), std::size_t{0});
+    OUGHT(one.step(-1));
+    SAME(*one.which(), std::size_t{0});
 
     // It does not go outside the set, and nothing moves when it tries.
-    ought(!one.step(-1));
-    same(*one.which(), std::size_t{0});
+    OUGHT(!one.step(-1));
+    SAME(*one.which(), std::size_t{0});
 
     // A step larger than one skips over marks, not rows.
-    ought(one.step(2));
-    same(*one.which(), std::size_t{2});
+    OUGHT(one.step(2));
+    SAME(*one.which(), std::size_t{2});
 }
 
 // --- Asynchronous source -------------------------------------------------------------------------
@@ -1289,16 +1289,16 @@ TRIAL("Viewer: an asynchronous source paints emptiness, and rows after a turn of
 
     const Snapshot first = sheet.render({{0, 0}, {40, 10}});
 
-    same(said(first, 0), std::string{});
-    ought(!one->lines().has_value());
+    SAME(said(first, 0), std::string{});
+    OUGHT(!one->lines().has_value());
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
 
     const Snapshot made = sheet.render({{0, 0}, {40, 10}});
 
-    same(said(made, 9), std::string{"wiersz 9"});
-    same(*one->at(), std::size_t{0});
-    same(*one->whole(), raw.size());
+    SAME(said(made, 9), std::string{"wiersz 9"});
+    SAME(*one->at(), std::size_t{0});
+    SAME(*one->whole(), raw.size());
 }
 
 // A warmed-up spool. Whoever read the header already has the first window: given with the source,
@@ -1328,21 +1328,21 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
 
     const Snapshot first = sheet.render({{0, 0}, {40, 2}});
 
-    same(said(first, 0), std::string{"wiersz 0"});
-    same(said(first, 1), std::string{"wiersz 1"});
-    ought(!one->lines().has_value());
-    same(*one->whole(), raw.size());
+    SAME(said(first, 0), std::string{"wiersz 0"});
+    SAME(said(first, 1), std::string{"wiersz 1"});
+    OUGHT(!one->lines().has_value());
+    SAME(*one->whole(), raw.size());
 
     // Past the head: scrolling row by row stops at the end of the head until the window arrives from
     // the loop, and every question to the source starts past the head.
-    ought(turned(loop, sheet, {40, 2}, [&] {
+    OUGHT(turned(loop, sheet, {40, 2}, [&] {
         one->slide(1);
 
         return said(sheet.render({{0, 0}, {40, 2}}), 0) == "wiersz 8";
     }));
-    ought(!asked->empty());
+    OUGHT(!asked->empty());
 
-    for (const std::size_t at : *asked) ought(at >= 40);
+    for (const std::size_t at : *asked) OUGHT(at >= 40);
 
     // A head longer than the document does not lie about the length: it is cut to the document.
     Sheet second;
@@ -1359,8 +1359,8 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
     (void)second.render({{0, 0}, {40, 4}});
     other->end();
 
-    ought(turned(loop, second, {40, 4}, [&] { return other->lines().has_value(); }));
-    same(*other->lines(), std::size_t{2});
+    OUGHT(turned(loop, second, {40, 4}, [&] { return other->lines().has_value(); }));
+    SAME(*other->lines(), std::size_t{2});
 }
 
 // `End` on a source nobody has walked through yet is an intention: the row count arrives window by
@@ -1380,11 +1380,11 @@ TRIAL("Viewer: End on an asynchronous source finishes once the row count arrives
 
     one->end();
 
-    ought(!one->lines().has_value());
-    same(*one->first(), std::size_t{0});
+    OUGHT(!one->lines().has_value());
+    SAME(*one->first(), std::size_t{0});
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return one->lines().has_value() && *one->first() == 29990; }));
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == "wiersz 29999"; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return one->lines().has_value() && *one->first() == 29990; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == "wiersz 29999"; }));
 }
 
 // A jump by byte far beyond the window is also an intention: the spool reaches the byte once it has
@@ -1406,9 +1406,9 @@ TRIAL("Viewer: a jump by byte on an asynchronous source finishes from the handle
 
     one->at(byte);
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return *one->first() == 20000; }));
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 20000"; }));
-    same(*one->at(), byte);
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return *one->first() == 20000; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 20000"; }));
+    SAME(*one->at(), byte);
 }
 
 // The scrollbar of a page counted in bytes: a document from a source whose rows nobody has counted
@@ -1424,8 +1424,8 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     one->hold(fed(raw), raw.size());
     sheet.children().add(one);
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 0", 0) == 0; }));
-    ought(!one->lines().has_value());
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 0", 0) == 0; }));
+    OUGHT(!one->lines().has_value());
 
     ui::MouseEvent grab{{39, 0}, ui::Press::down, ui::Mouse::left};
     ui::MouseEvent pull{{39, 20}, ui::Press::move, ui::Mouse::left};
@@ -1435,7 +1435,7 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     (void)sheet.dispatch(pull);
     (void)sheet.dispatch(drop);
 
-    ought(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 9", 0) == 0; }));
+    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 9", 0) == 0; }));
 }
 
 // --- Long lines ----------------------------------------------------------------------------------
@@ -1457,20 +1457,20 @@ TRIAL("Viewer: without wrapping the view scrolls sideways") {
 
     Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
-    same(said(made, 0), std::string{"defg"});
-    same(said(made, 1), std::string{});
+    SAME(said(made, 0), std::string{"defg"});
+    SAME(said(made, 1), std::string{});
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(sheet.dispatch(right));
-    same(one->left(), std::size_t{4});
-    same(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"efgh"});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->left(), std::size_t{4});
+    SAME(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"efgh"});
 
     ui::KeyEvent home{ui::Code::home};
 
-    ought(sheet.dispatch(home));
-    same(one->left(), std::size_t{0});
-    same(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"abcd"});
+    OUGHT(sheet.dispatch(home));
+    SAME(one->left(), std::size_t{0});
+    SAME(said(sheet.render({{0, 0}, {4, 2}}), 0), std::string{"abcd"});
 }
 
 // A tab or a double-width character cut by the left edge shows its visible part as spaces, and the
@@ -1488,11 +1488,11 @@ TRIAL("Viewer: a character cut by the left edge shows its visible part") {
 
     const Snapshot made = sheet.render({{0, 0}, {4, 2}});
 
-    same(said(made, 0), std::string{"  X"});
+    SAME(said(made, 0), std::string{"  X"});
 
     one->left(2);
 
-    same(said(sheet.render({{0, 0}, {4, 2}}), 1), std::string{" Y"});
+    SAME(said(sheet.render({{0, 0}, {4, 2}}), 1), std::string{" Y"});
 }
 
 // A jump to a byte deep in a long wrapped line lands on the row holding it, not on the start of the
@@ -1512,15 +1512,15 @@ TRIAL("Viewer: a jump into a long wrapped line lands on its row") {
 
     one->at(std::size_t{5005});
 
-    same(*one->at(), std::size_t{5000});
-    same(said(sheet.render({{0, 0}, {10, 3}}), 0), text.substr(5000, 10));
+    SAME(*one->at(), std::size_t{5000});
+    SAME(said(sheet.render({{0, 0}, {10, 3}}), 0), text.substr(5000, 10));
 
     one->end();
 
     const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
-    same(said(made, 2), text.substr(9990, 10));
-    same(*one->at(), std::size_t{9970});
+    SAME(said(made, 2), text.substr(9990, 10));
+    SAME(*one->at(), std::size_t{9970});
 }
 
 // The scrollbar counts lines while lines are short, and bytes in a document of long lines, where
@@ -1548,6 +1548,6 @@ TRIAL("Viewer: the scrollbar counts bytes in a document of long lines") {
     (void)sheet.dispatch(pull);
     (void)sheet.dispatch(drop);
 
-    same(*one->first(), std::size_t{1});
-    ought(*one->at() > 5001);
+    SAME(*one->first(), std::size_t{1});
+    OUGHT(*one->at() > 5001);
 }

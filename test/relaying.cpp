@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -252,7 +252,7 @@ Ready readied(net::Relay& relay, net::Udp& server, const net::Address& them) {
         if (told.task != net::Task::channel || told.sort != net::Sort::asking) continue;
 
         // A channel binds to the address together with the port, unlike a permission.
-        same(told.peer, them);
+        SAME(told.peer, them);
 
         made.channel = channelled(came.bytes);
 
@@ -277,9 +277,9 @@ TRIAL("Relay: the allocation gives back the lent address") {
     // The request must be an allocation and must ask for UDP.
     net::Message told;
 
-    ought(net::understood(came.bytes, told));
-    same(static_cast<int>(told.task), static_cast<int>(net::Task::allocate));
-    same(static_cast<int>(told.sort), static_cast<int>(net::Sort::asking));
+    OUGHT(net::understood(came.bytes, told));
+    SAME(static_cast<int>(told.task), static_cast<int>(net::Task::allocate));
+    SAME(static_cast<int>(told.sort), static_cast<int>(net::Sort::asking));
 
     Bytes back = headed(0x0103, came.bytes);
 
@@ -291,10 +291,10 @@ TRIAL("Relay: the allocation gives back the lent address") {
 
     const net::Address lent = std::move(asking).get();
 
-    same(lent.text(), std::string{"203.0.113.5"});
-    same(lent.port(), static_cast<std::uint16_t>(49152));
-    same(relay.lent(), lent);
-    same(relay.seen().text(), std::string{"198.51.100.9"});
+    SAME(lent.text(), std::string{"203.0.113.5"});
+    SAME(lent.port(), static_cast<std::uint16_t>(49152));
+    SAME(relay.lent(), lent);
+    SAME(relay.seen().text(), std::string{"198.51.100.9"});
 }
 
 TRIAL("Relay: a refused allocation comes out as trouble") {
@@ -336,10 +336,10 @@ TRIAL("Relay: a refused allocation comes out as trouble") {
     } catch (const net::Trouble& why) {
         amiss = true;
 
-        same(why.code(), 486);
+        SAME(why.code(), 486);
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // A server that demands credentials first answers with a refusal carrying a realm and a nonce.
@@ -394,10 +394,10 @@ TRIAL("Relay: a demand for credentials without credentials ends plainly") {
     } catch (const net::Trouble& why) {
         amiss = true;
 
-        same(why.code(), 401);
+        SAME(why.code(), 401);
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Relay: the server's silence ends with the deadline") {
@@ -414,7 +414,7 @@ TRIAL("Relay: the server's silence ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Relay: a permission goes with the peer's address") {
@@ -442,10 +442,10 @@ TRIAL("Relay: a permission goes with the peer's address") {
 
     net::Message told;
 
-    ought(net::understood(came.bytes, told));
-    same(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
-    same(told.peer.text(), std::string{"198.51.100.77"});
-    same(told.peer.port(), static_cast<std::uint16_t>(5555));
+    OUGHT(net::understood(came.bytes, told));
+    SAME(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
+    SAME(told.peer.text(), std::string{"198.51.100.77"});
+    SAME(told.peer.port(), static_cast<std::uint16_t>(5555));
 
     server.send(came.from, headed(0x0108, came.bytes), soon).get();
 
@@ -486,14 +486,14 @@ TRIAL("Relay: sending goes as an indication with content") {
 
         if (told.task != net::Task::sending) continue;
 
-        same(static_cast<int>(told.sort), static_cast<int>(net::Sort::telling));
-        same(told.peer.text(), std::string{"198.51.100.77"});
-        same(text(told.data), std::string{"przez przekaźnik"});
+        SAME(static_cast<int>(told.sort), static_cast<int>(net::Sort::telling));
+        SAME(told.peer.text(), std::string{"198.51.100.77"});
+        SAME(text(told.data), std::string{"przez przekaźnik"});
 
         sent = true;
     }
 
-    ought(sent);
+    OUGHT(sent);
 }
 
 TRIAL("Relay: content from the peer comes with its address") {
@@ -526,9 +526,9 @@ TRIAL("Relay: content from the peer comes with its address") {
 
     const net::Datagram given = std::move(waiting).get();
 
-    same(given.from.text(), std::string{"198.51.100.77"});
-    same(given.from.port(), static_cast<std::uint16_t>(5555));
-    same(text(given.bytes), std::string{"od obcego"});
+    SAME(given.from.text(), std::string{"198.51.100.77"});
+    SAME(given.from.port(), static_cast<std::uint16_t>(5555));
+    SAME(text(given.bytes), std::string{"od obcego"});
 }
 
 // A response comes only from the server. Someone else's datagram on this socket must neither pose
@@ -560,8 +560,8 @@ TRIAL("Relay: a stranger's datagram does not pose as the relay") {
         late = true;
     }
 
-    ought(late);
-    ought(!relay.lent().held());
+    OUGHT(late);
+    OUGHT(!relay.lent().held());
 }
 
 TRIAL("Relay: an empty one does nothing silently") {
@@ -575,7 +575,7 @@ TRIAL("Relay: an empty one does nothing silently") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Relay: an oversized message is not lost on refusal") {
@@ -616,9 +616,9 @@ TRIAL("Relay: an oversized message is not lost on refusal") {
         }
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
-    same(text(relay.receive(1024, soon).get().bytes),
+    SAME(text(relay.receive(1024, soon).get().bytes),
          std::string{"dłuższe niż cztery bajty"});
 }
 
@@ -643,26 +643,26 @@ TRIAL("Peer: the relay adds the lent path to its own candidates") {
         if (one.sort == net::Candidate::Sort::lent) {
             lent = true;
 
-            same(one.where.text(), std::string{"203.0.113.5"});
-            same(one.where.port(), static_cast<std::uint16_t>(49152));
+            SAME(one.where.text(), std::string{"203.0.113.5"});
+            SAME(one.where.port(), static_cast<std::uint16_t>(49152));
         }
 
-    ought(lent);
+    OUGHT(lent);
 
     // The lent path stands last: the own interface before the reflection, the reflection before the
     // relay.
-    same(ours.back().sort, net::Candidate::Sort::lent);
+    SAME(ours.back().sort, net::Candidate::Sort::lent);
 
-    same(left.candidates().size(), ours.size());
+    SAME(left.candidates().size(), ours.size());
 }
 
 TRIAL("Peer: without a relay there is no lent path and no talking through a relay") {
     net::Peer left{standing()};
 
     for (const net::Candidate& one : left.gather(net::StunClient{}, soon).get())
-        ought(one.sort != net::Candidate::Sort::lent);
+        OUGHT(one.sort != net::Candidate::Sort::lent);
 
-    ought(!left.relayed());
+    OUGHT(!left.relayed());
 }
 
 TRIAL("Peer: a permission goes by address, without the port") {
@@ -684,13 +684,13 @@ TRIAL("Peer: a permission goes by address, without the port") {
 
     net::Message told;
 
-    ought(net::understood(came.bytes, told));
-    same(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
-    same(told.peer.text(), std::string{"198.51.100.77"});
+    OUGHT(net::understood(came.bytes, told));
+    SAME(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
+    SAME(told.peer.text(), std::string{"198.51.100.77"});
 
     // A permission covers the address, not the port: the port that the NAT gives the other side
     // will be different from the one in signaling anyway.
-    same(told.peer.port(), static_cast<std::uint16_t>(0));
+    SAME(told.peer.port(), static_cast<std::uint16_t>(0));
 
     server.send(came.from, headed(0x0108, came.bytes), soon).get();
 
@@ -722,8 +722,8 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
     net::Message told;
 
-    ought(net::understood(came.bytes, told));
-    same(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
+    OUGHT(net::understood(came.bytes, told));
+    SAME(static_cast<int>(told.task), static_cast<int>(net::Task::permission));
 
     server.send(whence, headed(0x0108, came.bytes), soon).get();
 
@@ -748,7 +748,7 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
         if (told.task != net::Task::sending) continue;
 
-        same(told.peer, them);
+        SAME(told.peer, them);
 
         net::Message inside;
 
@@ -757,7 +757,7 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
         if (inside.sort == net::Sort::told) {
             answered = true;
 
-            same(inside.number, theirs);
+            SAME(inside.number, theirs);
         }
 
         if (inside.sort == net::Sort::asking) {
@@ -767,16 +767,16 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
         }
     }
 
-    ought(answered);
-    ought(asked);
+    OUGHT(answered);
+    OUGHT(asked);
 
     // Their response to our check, also through the relay, completes the hole punch.
     server.send(whence, carrying(them, answering(number)), soon).get();
 
-    same(std::move(reaching).get(), them);
+    SAME(std::move(reaching).get(), them);
 
-    same(left.met(), them);
-    ought(left.relayed());
+    SAME(left.met(), them);
+    OUGHT(left.relayed());
 
     // From now on we talk through the relay, not directly.
     auto waiting = left.receive(1024, soon);
@@ -795,24 +795,24 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
         if (text(told.data) == "przez cudze pasmo") sent = true;
     }
 
-    ought(sent);
+    OUGHT(sent);
 
     server.send(whence, carrying(them, bytes("z drugiej strony")), soon).get();
 
-    same(text(std::move(waiting).get()), std::string{"z drugiej strony"});
+    SAME(text(std::move(waiting).get()), std::string{"z drugiej strony"});
 }
 
 TRIAL("Peer: an empty one does not fall over when asked") {
     net::Peer left;
 
-    ought(left.candidates().empty());
-    ought(left.theirs().empty());
-    ought(!left.met().held());
-    ought(!left.relayed());
+    OUGHT(left.candidates().empty());
+    OUGHT(left.theirs().empty());
+    OUGHT(!left.met().held());
+    OUGHT(!left.relayed());
 
     left.add(net::Candidate{net::Address{"203.0.113.9", 5000}, net::Candidate::Sort::here});
 
-    ought(left.theirs().empty());
+    OUGHT(left.theirs().empty());
 }
 
 TRIAL("Channel: the header is recognized by two bits, not by guessing") {
@@ -821,28 +821,28 @@ TRIAL("Channel: the header is recognized by two bits, not by guessing") {
     Bytes data;
 
     // A STUN message has these bits zero and is not a channel.
-    ought(!net::unwrapped(net::asked(net::numbered()), channel, data));
+    OUGHT(!net::unwrapped(net::asked(net::numbered()), channel, data));
 
     // Too short for the header alone.
-    ought(!net::unwrapped(Bytes{std::byte{0x40}, std::byte{0x01}}, channel, data));
+    OUGHT(!net::unwrapped(Bytes{std::byte{0x40}, std::byte{0x01}}, channel, data));
 
     // Truncated content: the length promises more than arrived.
     Bytes cut = net::wrapped(0x4001, bytes("cztery"));
 
     cut.pop_back();
 
-    ought(!net::unwrapped(cut, channel, data));
+    OUGHT(!net::unwrapped(cut, channel, data));
 
     const Bytes whole = net::wrapped(0x4001, bytes("cztery"));
 
     // Four bytes of header and not a single byte of padding: over UDP the datagram marks its own
     // end.
-    same(whole.size(), static_cast<std::size_t>(10));
+    SAME(whole.size(), static_cast<std::size_t>(10));
 
-    ought(net::unwrapped(whole, channel, data));
+    OUGHT(net::unwrapped(whole, channel, data));
 
-    same(channel, static_cast<std::uint16_t>(0x4001));
-    same(text(data), std::string{"cztery"});
+    SAME(channel, static_cast<std::uint16_t>(0x4001));
+    SAME(text(data), std::string{"cztery"});
 }
 
 TRIAL("Relay: the channel is requested by itself, and then the header has four bytes") {
@@ -855,8 +855,8 @@ TRIAL("Relay: the channel is requested by itself, and then the header has four b
 
     const Ready ready = readied(relay, server, them);
 
-    ought(ready.channel >= 0x4000);
-    ought(ready.channel <= 0x7FFF);
+    OUGHT(ready.channel >= 0x4000);
+    OUGHT(ready.channel <= 0x7FFF);
 
     bool tight = false;
 
@@ -872,18 +872,18 @@ TRIAL("Relay: the channel is requested by itself, and then the header has four b
 
             if (!net::unwrapped(came.bytes, channel, data)) continue;
 
-            same(channel, ready.channel);
-            same(text(data), std::string{"dwa"});
+            SAME(channel, ready.channel);
+            SAME(text(data), std::string{"dwa"});
 
             // Three bytes of content and four of header, not thirty-nine.
-            same(came.bytes.size(), static_cast<std::size_t>(7));
+            SAME(came.bytes.size(), static_cast<std::size_t>(7));
 
             tight = true;
         } catch (const Overdue&) {
         }
     }
 
-    ought(tight);
+    OUGHT(tight);
 }
 
 TRIAL("Relay: content from a channel comes with the peer's address") {
@@ -902,8 +902,8 @@ TRIAL("Relay: content from a channel comes with the peer's address") {
 
     const net::Datagram given = std::move(waiting).get();
 
-    same(given.from, them);
-    same(text(given.bytes), std::string{"z kanału"});
+    SAME(given.from, them);
+    SAME(text(given.bytes), std::string{"z kanału"});
 }
 
 // The channel number is assigned by us, so a foreign number must not mean anything; it is not even
@@ -930,5 +930,5 @@ TRIAL("Relay: a foreign channel number does not enter the conversation") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }

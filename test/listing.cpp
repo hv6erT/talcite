@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -104,13 +104,13 @@ std::string read(const Snapshot& one, int y) {
 TRIAL("ListItem: wants as much as its text, and always one row") {
     const auto one = std::make_shared<ui::ListItem>("katalog");
 
-    same(one->wants({20, 3}), (ui::Size{7, 1}));
+    SAME(one->wants({20, 3}), (ui::Size{7, 1}));
 
     // Tight: it clips to what it got.
-    same(one->wants({4, 3}), (ui::Size{4, 1}));
+    SAME(one->wants({4, 3}), (ui::Size{4, 1}));
 
     // A list row that wraps is not a list row.
-    same(one->wants({20, 0}), (ui::Size{7, 0}));
+    SAME(one->wants({20, 0}), (ui::Size{7, 0}));
 }
 
 TRIAL("ListItem: the text starts at the first cell, without a gap") {
@@ -124,7 +124,7 @@ TRIAL("ListItem: the text starts at the first cell, without a gap") {
 
     const Snapshot made = top.render({{0, 0}, {8, 1}});
 
-    same(read(made, 0), std::string{"plik"});
+    SAME(read(made, 0), std::string{"plik"});
 }
 
 TRIAL("ListItem: a text longer than the row is clipped with an ellipsis on the right") {
@@ -138,7 +138,7 @@ TRIAL("ListItem: a text longer than the row is clipped with an ellipsis on the r
 
     const Snapshot made = top.render({{0, 0}, {5, 1}});
 
-    same(read(made, 0), std::string{"doku…"});
+    SAME(read(made, 0), std::string{"doku…"});
 }
 
 // The highlight goes across the whole width of the row, not only under the text; otherwise the
@@ -154,15 +154,15 @@ TRIAL("ListItem: under focus the whole row is reversed") {
 
     Snapshot made = top.render({{0, 0}, {8, 1}});
 
-    ought(!made.at({0, 0}).style.reverse);
-    ought(!made.at({7, 0}).style.reverse);
+    OUGHT(!made.at({0, 0}).style.reverse);
+    OUGHT(!made.at({7, 0}).style.reverse);
 
     one->focus();
 
     made = top.render({{0, 0}, {8, 1}});
 
-    ought(made.at({0, 0}).style.reverse);
-    ought(made.at({7, 0}).style.reverse);
+    OUGHT(made.at({0, 0}).style.reverse);
+    OUGHT(made.at({7, 0}).style.reverse);
 }
 
 TRIAL("ListItem: a disabled one dims and does not take the focus") {
@@ -174,20 +174,20 @@ TRIAL("ListItem: a disabled one dims and does not take the focus") {
     nest->children().add(one);
     top.children().add(nest);
 
-    ought(one->focusable());
+    OUGHT(one->focusable());
 
     one->enabled(false);
 
-    ought(!one->focusable());
+    OUGHT(!one->focusable());
 
     // Calling it on a node that does not take the focus does nothing, silently, as in the root.
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     const Snapshot made = top.render({{0, 0}, {8, 1}});
 
-    ought(made.at({0, 0}).style.faint);
+    OUGHT(made.at({0, 0}).style.faint);
 }
 
 // The same rule as in the button and in the field: the focus goes to the nearest willing ancestor,
@@ -203,11 +203,11 @@ TRIAL("ListItem: disabling with the focus hands it to the ancestor") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     one->enabled(false);
 
-    same(top.focused_node(), static_cast<ui::Node*>(nest.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nest.get()));
 }
 
 TRIAL("ListItem: Enter calls the task") {
@@ -228,10 +228,10 @@ TRIAL("ListItem: Enter calls the task") {
 
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 1);
-    same(top.keys, 0);
+    SAME(done, 1);
+    SAME(top.keys, 0);
 }
 
 // Enter with Control does not belong to the item, just as in the field and in the key bar.
@@ -253,10 +253,10 @@ TRIAL("ListItem: Enter with Control goes up") {
 
     ui::KeyEvent what{ui::Key{ui::Code::enter, ui::Mods{true, false, false}}};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 0);
-    same(top.keys, 1);
+    SAME(done, 0);
+    SAME(top.keys, 1);
 }
 
 // The arrows belong to the list, not to the item, so the item does not stop them.
@@ -273,9 +273,9 @@ TRIAL("ListItem: an arrow goes up") {
 
     ui::KeyEvent what{ui::Code::down};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(top.keys, 1);
+    SAME(top.keys, 1);
 }
 
 // This is the whole reason the item takes the focus. A key starts at it, so an attached handler
@@ -307,11 +307,11 @@ TRIAL("ListItem: an attached handler sees the key before the ancestor") {
 
     ui::KeyEvent what{ui::Code::down};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(seen, 1);
-    same(meanwhile, 0);
-    same(top.keys, 1);
+    SAME(seen, 1);
+    SAME(meanwhile, 0);
+    SAME(top.keys, 1);
 }
 
 TRIAL("ListItem: a click takes the focus") {
@@ -329,9 +329,9 @@ TRIAL("ListItem: a click takes the focus") {
 
     ui::ClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 TRIAL("ListItem: a double click takes the focus and calls the task") {
@@ -356,10 +356,10 @@ TRIAL("ListItem: a double click takes the focus and calls the task") {
 
     ui::DoubleClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
-    same(done, 1);
+    SAME(top.focused_node(), static_cast<ui::Node*>(other.get()));
+    SAME(done, 1);
 }
 
 // An unavailable item swallows the click, as every disabled control does: the click was aimed at
@@ -384,15 +384,15 @@ TRIAL("ListItem: a disabled one swallows the click and does not take the focus")
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     ui::DoubleClickEvent twice{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(twice));
+    OUGHT(top.dispatch(twice));
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 TRIAL("ListItem: pick on a disabled one does nothing") {
@@ -404,12 +404,12 @@ TRIAL("ListItem: pick on a disabled one does nothing") {
 
     one->pick();
 
-    same(done, 1);
+    SAME(done, 1);
 
     one->enabled(false);
     one->pick();
 
-    same(done, 1);
+    SAME(done, 1);
 }
 
 TRIAL("ListItem: the text and the task can be replaced along the way") {
@@ -423,11 +423,11 @@ TRIAL("ListItem: the text and the task can be replaced along the way") {
 
     one->text("nowy");
 
-    same(one->text(), std::string{"nowy"});
+    SAME(one->text(), std::string{"nowy"});
 
     const Snapshot made = top.render({{0, 0}, {8, 1}});
 
-    same(read(made, 0), std::string{"nowy"});
+    SAME(read(made, 0), std::string{"nowy"});
 
     int done = 0;
 
@@ -438,15 +438,15 @@ TRIAL("ListItem: the text and the task can be replaced along the way") {
     });
     one->pick();
 
-    same(done, 1);
+    SAME(done, 1);
 }
 
 TRIAL("ListItem: does not accept children") {
     const auto one = std::make_shared<ui::ListItem>("plik");
 
-    same(one->capacity(), 0);
+    SAME(one->capacity(), 0);
 
-    threw(one->children().add(std::make_shared<ui::ListItem>("inne")));
+    THREW(one->children().add(std::make_shared<ui::ListItem>("inne")));
 }
 
 TRIAL("List: the focus goes to the item, not to the list") {
@@ -458,8 +458,8 @@ TRIAL("List: the focus goes to the item, not to the list") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one->children().front().get()));
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children().front().get()));
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: an empty one takes the focus itself") {
@@ -471,8 +471,8 @@ TRIAL("List: an empty one takes the focus itself") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
-    ought(one->current() == nullptr);
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    OUGHT(one->current() == nullptr);
 }
 
 // A list keeps its keys at its ends: in a dialog, an arrow pressed once too often must not carry
@@ -489,51 +489,51 @@ TRIAL("List: the arrows walk the rows, do not wrap, and keep the key at the end"
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
     ui::KeyEvent again{ui::Code::down};
 
-    ought(top.dispatch(again));
-    same(one->which(), std::optional<std::size_t>{2});
+    OUGHT(top.dispatch(again));
+    SAME(one->which(), std::optional<std::size_t>{2});
 
-    same(top.keys, 0);
+    SAME(top.keys, 0);
 
     // On the last row down moves nothing and does not go back to the first, and the key stays.
     ui::KeyEvent past{ui::Code::down};
 
-    ought(top.dispatch(past));
-    same(one->which(), std::optional<std::size_t>{2});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(past));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(top.keys, 0);
 
     ui::KeyEvent beyond{ui::Code::pagedown};
 
-    ought(top.dispatch(beyond));
-    same(one->which(), std::optional<std::size_t>{2});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(beyond));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(top.keys, 0);
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.dispatch(up));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(top.dispatch(up));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
     ui::KeyEvent above{ui::Code::up};
 
-    ought(top.dispatch(above));
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(above));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 
     ui::KeyEvent before{ui::Code::up};
 
-    ought(top.dispatch(before));
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(before));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 
     ui::KeyEvent sooner{ui::Code::pageup};
 
-    ought(top.dispatch(sooner));
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(sooner));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 }
 
 TRIAL("List: Home and End go to the first and the last") {
@@ -547,14 +547,14 @@ TRIAL("List: Home and End go to the first and the last") {
 
     ui::KeyEvent last{ui::Code::end};
 
-    ought(top.dispatch(last));
-    same(one->which(), std::optional<std::size_t>{4});
+    OUGHT(top.dispatch(last));
+    SAME(one->which(), std::optional<std::size_t>{4});
 
     ui::KeyEvent first{ui::Code::home};
 
-    ought(top.dispatch(first));
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(first));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 }
 
 // Home on the first row and End on the last move nothing, and the list keeps them, as it does the
@@ -570,20 +570,20 @@ TRIAL("List: Home on the first row and End on the last keep the key") {
 
     ui::KeyEvent first{ui::Code::home};
 
-    ought(top.dispatch(first));
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(first));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 
     ui::KeyEvent last{ui::Code::end};
 
-    ought(top.dispatch(last));
-    same(one->which(), std::optional<std::size_t>{2});
+    OUGHT(top.dispatch(last));
+    SAME(one->which(), std::optional<std::size_t>{2});
 
     ui::KeyEvent again{ui::Code::end};
 
-    ought(top.dispatch(again));
-    same(one->which(), std::optional<std::size_t>{2});
-    same(top.keys, 0);
+    OUGHT(top.dispatch(again));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(top.keys, 0);
 }
 
 // A page is computed from the real height that the list got in the previous frame.
@@ -600,13 +600,13 @@ TRIAL("List: a page is as many rows as are visible") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{5});
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{5});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(top.dispatch(up));
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(top.dispatch(up));
+    SAME(one->which(), std::optional<std::size_t>{0});
 
     // A page near the end stops at the last row instead of going past it.
     ui::KeyEvent last{ui::Code::end};
@@ -615,8 +615,8 @@ TRIAL("List: a page is as many rows as are visible") {
 
     ui::KeyEvent over{ui::Code::pagedown};
 
-    ought(top.dispatch(over));
-    same(one->which(), std::optional<std::size_t>{19});
+    OUGHT(top.dispatch(over));
+    SAME(one->which(), std::optional<std::size_t>{19});
 }
 
 TRIAL("List: the walk skips unavailable items") {
@@ -631,17 +631,17 @@ TRIAL("List: the walk skips unavailable items") {
 
     one->focus();
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{3});
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{3});
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.dispatch(up));
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(top.dispatch(up));
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: only unavailable items, the focus stays on the list") {
@@ -656,7 +656,7 @@ TRIAL("List: only unavailable items, the focus stays on the list") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // Scrolling is computed in painting, because only there is the height known; the same rule as in
@@ -672,7 +672,7 @@ TRIAL("List: the view catches up with the current row") {
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     ui::KeyEvent last{ui::Code::end};
 
@@ -680,15 +680,15 @@ TRIAL("List: the view catches up with the current row") {
     (void)top.render({{0, 0}, {12, 3}});
 
     // Ten rows, three visible, we stand on the ninth, so the view starts at the seventh.
-    same(one->which(), std::optional<std::size_t>{9});
-    same(one->first(), std::size_t{7});
+    SAME(one->which(), std::optional<std::size_t>{9});
+    SAME(one->first(), std::size_t{7});
 
     ui::KeyEvent first{ui::Code::home};
 
     (void)top.dispatch(first);
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 }
 
 // The wheel moves only the view: the current row stays, and `moved` stays silent.
@@ -709,20 +709,20 @@ TRIAL("List: the wheel scrolls the view and does not move the row") {
 
     one->focus();
 
-    same(moves, 1);
+    SAME(moves, 1);
 
     (void)top.render({{0, 0}, {12, 3}});
 
     ui::WheelEvent what{{2, 1}, -1};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
     (void)top.render({{0, 0}, {12, 3}});
 
     // The view moved, so the event goes out, but the current row stayed where it was.
-    same(one->first(), std::size_t{3});
-    same(one->which(), std::optional<std::size_t>{0});
-    same(moves, 2);
+    SAME(one->first(), std::size_t{3});
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(moves, 2);
 }
 
 // On the first row with the view turned away by the wheel, Up brings the row back into view.
@@ -739,21 +739,21 @@ TRIAL("List: a key on the current row out of view brings the view back") {
 
     ui::WheelEvent what{{2, 1}, -1};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), std::size_t{3});
+    SAME(one->first(), std::size_t{3});
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.dispatch(up));
+    OUGHT(top.dispatch(up));
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->first(), std::size_t{0});
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.keys, 0);
+    SAME(one->first(), std::size_t{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.keys, 0);
 }
 
 // The list's own keys, the wheel and a click on an item move it by hand; a call from the program
@@ -782,28 +782,28 @@ TRIAL("List: a move says whether it came by hand") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
     ui::WheelEvent wheel{{2, 1}, -1};
 
-    ought(top.dispatch(wheel));
+    OUGHT(top.dispatch(wheel));
 
     (void)top.render({{0, 0}, {12, 3}});
 
     ui::ClickEvent click{{2, 1}, ui::Mouse::left, {}};
 
-    ought(top.dispatch(click));
+    OUGHT(top.dispatch(click));
 
-    same(heard, (std::vector<bool>{true, true, true}));
+    SAME(heard, (std::vector<bool>{true, true, true}));
 
     heard.clear();
 
     one->first(0);
     one->children()[6]->focus();
 
-    same(heard, (std::vector<bool>{false, false}));
-    same(one->which(), std::optional<std::size_t>{6});
+    SAME(heard, (std::vector<bool>{false, false}));
+    SAME(one->which(), std::optional<std::size_t>{6});
 }
 
 TRIAL("List: the wheel at the end of scrolling passes the event up") {
@@ -819,11 +819,11 @@ TRIAL("List: the wheel at the end of scrolling passes the event up") {
     // gets it.
     ui::WheelEvent up{{2, 1}, 1};
 
-    ought(!top.dispatch(up));
+    OUGHT(!top.dispatch(up));
 
     ui::WheelEvent down{{2, 1}, -1};
 
-    ought(top.dispatch(down));
+    OUGHT(top.dispatch(down));
 }
 
 // The list does not scroll sideways, so the tilted wheel passes on instead of scrolling down.
@@ -838,8 +838,8 @@ TRIAL("List: the tilted wheel passes the event up") {
 
     ui::WheelEvent tilted{{2, 1}, -1, {}, ui::Axis::horizontal};
 
-    ought(!top.dispatch(tilted));
-    same(one->first(), std::size_t{0});
+    OUGHT(!top.dispatch(tilted));
+    SAME(one->first(), std::size_t{0});
 }
 
 TRIAL("List: the event speaks once per change of row") {
@@ -866,28 +866,28 @@ TRIAL("List: the event speaks once per change of row") {
 
     one->focus();
 
-    same(moves, 1);
-    same(last, std::optional<std::size_t>{0});
+    SAME(moves, 1);
+    SAME(last, std::optional<std::size_t>{0});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
+    OUGHT(top.dispatch(down));
 
-    same(moves, 2);
-    same(last, std::optional<std::size_t>{1});
+    SAME(moves, 2);
+    SAME(last, std::optional<std::size_t>{1});
 
     // A move down from the last row is not a change.
     ui::KeyEvent end{ui::Code::end};
 
     (void)top.dispatch(end);
 
-    same(moves, 3);
+    SAME(moves, 3);
 
     ui::KeyEvent past{ui::Code::down};
 
-    ought(top.dispatch(past));
+    OUGHT(top.dispatch(past));
 
-    same(moves, 3);
+    SAME(moves, 3);
 }
 
 TRIAL("List: leaving the list and coming back return to the same row") {
@@ -908,17 +908,17 @@ TRIAL("List: leaving the list and coming back return to the same row") {
     (void)top.dispatch(down);
     (void)top.dispatch(down);
 
-    same(one->which(), std::optional<std::size_t>{2});
+    SAME(one->which(), std::optional<std::size_t>{2});
 
     perch->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(perch.get()));
-    same(one->which(), std::optional<std::size_t>{2});
+    SAME(top.focused_node(), static_cast<ui::Node*>(perch.get()));
+    SAME(one->which(), std::optional<std::size_t>{2});
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one->children()[2].get()));
-    same(one->which(), std::optional<std::size_t>{2});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children()[2].get()));
+    SAME(one->which(), std::optional<std::size_t>{2});
 }
 
 TRIAL("List: a letter, Tab and Esc go up") {
@@ -932,25 +932,25 @@ TRIAL("List: a letter, Tab and Esc go up") {
 
     ui::KeyEvent letter{U'a'};
 
-    ought(top.dispatch(letter));
-    same(top.keys, 1);
+    OUGHT(top.dispatch(letter));
+    SAME(top.keys, 1);
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
-    same(top.keys, 2);
+    OUGHT(top.dispatch(tab));
+    SAME(top.keys, 2);
 
     ui::KeyEvent away{ui::Code::escape};
 
-    ought(top.dispatch(away));
-    same(top.keys, 3);
+    OUGHT(top.dispatch(away));
+    SAME(top.keys, 3);
 
     // An arrow with Control does not belong to the list either.
     ui::KeyEvent held{ui::Key{ui::Code::down, ui::Mods{true, false, false}}};
 
-    ought(top.dispatch(held));
-    same(top.keys, 4);
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(top.dispatch(held));
+    SAME(top.keys, 4);
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 TRIAL("List: Enter calls the task of the current row") {
@@ -976,10 +976,10 @@ TRIAL("List: Enter calls the task of the current row") {
 
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 1);
-    same(top.keys, 0);
+    SAME(done, 1);
+    SAME(top.keys, 0);
 }
 
 TRIAL("List: which sets the row from the program and moves the focus") {
@@ -992,23 +992,23 @@ TRIAL("List: which sets the row from the program and moves the focus") {
     // Without the focus the number is only remembered.
     one->which(4);
 
-    same(one->which(), std::optional<std::size_t>{4});
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(one->which(), std::optional<std::size_t>{4});
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one->children()[4].get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children()[4].get()));
 
     // With the focus it moves it at once, and a number out of range is clipped.
     one->which(99);
 
-    same(one->which(), std::optional<std::size_t>{5});
-    same(top.focused_node(), static_cast<ui::Node*>(one->children()[5].get()));
+    SAME(one->which(), std::optional<std::size_t>{5});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children()[5].get()));
 
     one->current(*dynamic_cast<ui::ListItem*>(one->children()[1].get()));
 
-    same(one->which(), std::optional<std::size_t>{1});
-    same(top.focused_node(), static_cast<ui::Node*>(one->children()[1].get()));
+    SAME(one->which(), std::optional<std::size_t>{1});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children()[1].get()));
 }
 
 // `which()` is the number, `current()` is the node: the same row under two names. Whoever asks for
@@ -1022,41 +1022,41 @@ TRIAL("List: which is the number, current the node, and a foreign row sets nothi
 
     top.children().add(one);
 
-    ought(one->current() == nullptr);
+    OUGHT(one->current() == nullptr);
 
-    ought(!one->which().has_value());
+    OUGHT(!one->which().has_value());
 
     one->which(2);
 
-    same(one->which(), std::optional<std::size_t>{2});
-    same(static_cast<ui::Node*>(one->current()), one->children()[2].get());
-    same(one->current()->text(), std::string{"wiersz 2"});
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(static_cast<ui::Node*>(one->current()), one->children()[2].get());
+    SAME(one->current()->text(), std::string{"wiersz 2"});
 
     one->current(*dynamic_cast<ui::ListItem*>(other->children()[0].get()));
 
-    same(one->which(), std::optional<std::size_t>{2});
-    same(static_cast<ui::Node*>(one->current()), one->children()[2].get());
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(static_cast<ui::Node*>(one->current()), one->children()[2].get());
 
     one->current(*dynamic_cast<ui::ListItem*>(one->children()[0].get()));
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 
     const auto empty = std::make_shared<ui::List>();
 
-    ought(empty->current() == nullptr);
-    ought(!empty->which().has_value());
+    OUGHT(empty->current() == nullptr);
+    OUGHT(!empty->which().has_value());
 
     empty->which(0);
 
-    ought(empty->current() == nullptr);
-    ought(!empty->which().has_value());
+    OUGHT(empty->current() == nullptr);
+    OUGHT(!empty->which().has_value());
 
     // A row removed from under the number: the number points at nothing, so there is none, in
     // agreement with the node.
     one->which(2);
     (void)one->children().remove(one->children()[2].get());
 
-    same(one->which().has_value(), one->current() != nullptr);
+    SAME(one->which().has_value(), one->current() != nullptr);
 }
 
 TRIAL("List: the scrollbar takes a column on the right") {
@@ -1068,13 +1068,13 @@ TRIAL("List: the scrollbar takes a column on the right") {
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
+    SAME(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
 
     one->scrollbar(true);
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
+    SAME(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
 }
 
 // The bar shows where the view is: scrolled to the last rows, the thumb stands at the bottom of
@@ -1092,8 +1092,8 @@ TRIAL("List: the scrollbar thumb follows the view to the end") {
 
     Snapshot made = top.render({{0, 0}, {12, 5}});
 
-    same(made.at({11, 0}).letter, U'█');
-    same(made.at({11, 4}).letter, U'│');
+    SAME(made.at({11, 0}).letter, U'█');
+    SAME(made.at({11, 4}).letter, U'│');
 
     one->which(9);
 
@@ -1101,9 +1101,9 @@ TRIAL("List: the scrollbar thumb follows the view to the end") {
 
     made = top.render({{0, 0}, {12, 5}});
 
-    same(one->first(), std::size_t{5});
-    same(made.at({11, 0}).letter, U'│');
-    same(made.at({11, 4}).letter, U'█');
+    SAME(one->first(), std::size_t{5});
+    SAME(made.at({11, 0}).letter, U'│');
+    SAME(made.at({11, 4}).letter, U'█');
 }
 
 // The scrollbar "when needed": a list shorter than the window gives its column back to the rows.
@@ -1118,13 +1118,13 @@ TRIAL("List: the scrollbar when needed only with a list longer than the window")
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
+    SAME(one->children().front()->area(), (ui::Area{{0, 0}, {12, 1}}));
 
     one->children().add(std::make_shared<ui::ListItem>("pozycja 3"));
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
+    SAME(one->children().front()->area(), (ui::Area{{0, 0}, {11, 1}}));
 }
 
 // A row that has moved out of view must not catch the mouse where it stood before.
@@ -1137,20 +1137,20 @@ TRIAL("List: a row out of view does not catch the mouse") {
 
     (void)top.render({{0, 0}, {12, 2}});
 
-    same(one->children()[0]->area(), (ui::Area{{0, 0}, {12, 1}}));
+    SAME(one->children()[0]->area(), (ui::Area{{0, 0}, {12, 1}}));
 
     one->first(3);
 
     (void)top.render({{0, 0}, {12, 2}});
 
-    same(one->children()[0]->area().size.high, 0);
+    SAME(one->children()[0]->area().size.high, 0);
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(top.focused_node(), static_cast<ui::Node*>(one->children()[3].get()));
-    same(one->which(), std::optional<std::size_t>{3});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one->children()[3].get()));
+    SAME(one->which(), std::optional<std::size_t>{3});
 }
 
 // A row brought from another parent carries the rectangle it had there, and this list never laid
@@ -1163,7 +1163,7 @@ TRIAL("List: a row brought from another list does not catch the mouse with its o
 
     const std::shared_ptr<ui::Node> moved = other->children().remove(other->children()[1].get());
 
-    same(moved->area(), (ui::Area{{0, 1}, {12, 1}}));
+    SAME(moved->area(), (ui::Area{{0, 1}, {12, 1}}));
 
     Sheet top;
 
@@ -1177,13 +1177,13 @@ TRIAL("List: a row brought from another list does not catch the mouse with its o
 
     (void)top.render({{0, 0}, {12, 3}});
 
-    same(moved->area().size.high, 0);
+    SAME(moved->area().size.high, 0);
 
     ui::ClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(one->which(), std::optional<std::size_t>{1});
+    SAME(one->which(), std::optional<std::size_t>{1});
 }
 
 // After every frame, whatever happened in between (scrolling, rows added at the front, removed,
@@ -1246,9 +1246,9 @@ TRIAL("List: after every frame exactly the rows in view have a rectangle") {
             const ui::Area& box = one->children()[static_cast<std::size_t>(at)]->area();
 
             if (at >= shift && at < shift + high) {
-                same(box, (ui::Area{{0, at - shift}, {12, 1}}));
+                SAME(box, (ui::Area{{0, at - shift}, {12, 1}}));
             } else {
-                same(box.size.high, 0);
+                SAME(box.size.high, 0);
             }
         }
     }
@@ -1270,7 +1270,7 @@ TRIAL("List: a frame of a long list costs its window") {
         (void)one->render({{0, 0}, {40, 20}});
     }
 
-    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
+    OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
 }
 
 TRIAL("List: a click on a row makes it current") {
@@ -1292,21 +1292,21 @@ TRIAL("List: a click on a row makes it current") {
 
     ui::ClickEvent what{{3, 2}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(one->which(), std::optional<std::size_t>{2});
-    same(moves, 1);
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(moves, 1);
 }
 
 TRIAL("List: wants as much as it was told") {
     const auto one = listed(3, 20, 6);
 
-    same(one->wants({40, 10}), (ui::Size{20, 6}));
-    same(one->wants({10, 4}), (ui::Size{10, 4}));
+    SAME(one->wants({40, 10}), (ui::Size{20, 6}));
+    SAME(one->wants({10, 4}), (ui::Size{10, 4}));
 
     const auto other = listed(3);
 
-    same(other->wants({40, 10}), (ui::Size{40, 10}));
+    SAME(other->wants({40, 10}), (ui::Size{40, 10}));
 }
 
 // --- What the list accepts -----------------------------------------------------------------------
@@ -1318,7 +1318,7 @@ TRIAL("List: accepts rows, not a foreign child") {
 
     one->children().add(std::make_shared<ui::ListItem>("plik"));
 
-    same(one->children().many(), std::size_t{1});
+    SAME(one->children().many(), std::size_t{1});
 
     bool threw = false;
 
@@ -1328,8 +1328,8 @@ TRIAL("List: accepts rows, not a foreign child") {
         threw = true;
     }
 
-    ought(threw);
-    same(one->children().many(), std::size_t{1});
+    OUGHT(threw);
+    SAME(one->children().many(), std::size_t{1});
 }
 
 // The number of the current row is found from the row the list stood on, not from the first one:
@@ -1353,9 +1353,9 @@ TRIAL("List: an arrow deep in a long list finds its row at once") {
     for (int step = 0; step < 10000; ++step) {
         ui::KeyEvent down{ui::Code::down};
 
-        ought(top.dispatch(down));
+        OUGHT(top.dispatch(down));
     }
 
-    ought(std::chrono::steady_clock::now() - began < std::chrono::milliseconds{500});
-    same(one->which(), std::optional<std::size_t>{160000});
+    OUGHT(std::chrono::steady_clock::now() - began < std::chrono::milliseconds{500});
+    SAME(one->which(), std::optional<std::size_t>{160000});
 }

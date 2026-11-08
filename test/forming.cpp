@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -113,13 +113,13 @@ TRIAL("Form: title in the frame, content, a gap and the buttons in the middle") 
     const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
-    ought(at >= 0);
-    same(lined(seen, at), std::string{"╔═════ Sort ══════╗"});
-    same(lined(seen, at + 1), std::string{"║Name             ║"});
-    same(lined(seen, at + 2), std::string{"║Size             ║"});
-    same(lined(seen, at + 3), std::string{"║                 ║"});
-    same(lined(seen, at + 4), std::string{"║[ OK ] [ Cancel ]║"});
-    same(lined(seen, at + 5), std::string{"╚═════════════════╝"});
+    OUGHT(at >= 0);
+    SAME(lined(seen, at), std::string{"╔═════ Sort ══════╗"});
+    SAME(lined(seen, at + 1), std::string{"║Name             ║"});
+    SAME(lined(seen, at + 2), std::string{"║Size             ║"});
+    SAME(lined(seen, at + 3), std::string{"║                 ║"});
+    SAME(lined(seen, at + 4), std::string{"║[ OK ] [ Cancel ]║"});
+    SAME(lined(seen, at + 5), std::string{"╚═════════════════╝"});
 }
 
 TRIAL("Form: the buttons stand in the middle when the content is wider") {
@@ -132,8 +132,8 @@ TRIAL("Form: the buttons stand in the middle when the content is wider") {
     const Snapshot seen = made.drawn({40, 10});
     const int at = framed(seen);
 
-    same(lined(seen, at + 1), std::string{"║A long line of text here║"});
-    same(lined(seen, at + 3), std::string{"║         [ OK ]         ║"});
+    SAME(lined(seen, at + 1), std::string{"║A long line of text here║"});
+    SAME(lined(seen, at + 3), std::string{"║         [ OK ]         ║"});
 }
 
 // More buttons than the width can hold: the row breaks into two lines and none disappears.
@@ -149,10 +149,10 @@ TRIAL("Form: buttons that do not fit move down to the next line") {
     const Snapshot seen = made.drawn({30, 12});
     const int at = framed(seen);
 
-    same(lined(seen, at + 3), std::string{"║[ First ] [ Second ]║"});
-    same(lined(seen, at + 4), std::string{"║[ Third ] [ Fourth ]║"});
-    same(lined(seen, at + 5), std::string{"║     [ Fifth ]      ║"});
-    same(lined(seen, at + 6), std::string{"╚════════════════════╝"});
+    SAME(lined(seen, at + 3), std::string{"║[ First ] [ Second ]║"});
+    SAME(lined(seen, at + 4), std::string{"║[ Third ] [ Fourth ]║"});
+    SAME(lined(seen, at + 5), std::string{"║     [ Fifth ]      ║"});
+    SAME(lined(seen, at + 6), std::string{"╚════════════════════╝"});
 }
 
 // Content that fills the height gets the same room when asked for its size and when painted: the
@@ -187,13 +187,13 @@ TRIAL("Form: content filling the height stands right above the buttons, with no 
 
     // The room has twelve rows and the shadow takes one: the frame, six rows of content, the
     // status, the gap, the buttons, the frame.
-    same(at, 0);
-    ought(lined(seen, at + 1).starts_with("║line 0"));
-    ought(lined(seen, at + 6).starts_with("║line 5"));
-    ought(lined(seen, at + 7).starts_with("║status"));
-    ought(lined(seen, at + 8).find_first_not_of("║ ") == std::string::npos);
-    ought(lined(seen, at + 9).find("[ OK ]") != std::string::npos);
-    ought(lined(seen, at + 10).starts_with("╚"));
+    SAME(at, 0);
+    OUGHT(lined(seen, at + 1).starts_with("║line 0"));
+    OUGHT(lined(seen, at + 6).starts_with("║line 5"));
+    OUGHT(lined(seen, at + 7).starts_with("║status"));
+    OUGHT(lined(seen, at + 8).find_first_not_of("║ ") == std::string::npos);
+    OUGHT(lined(seen, at + 9).find("[ OK ]") != std::string::npos);
+    OUGHT(lined(seen, at + 10).starts_with("╚"));
 }
 
 // The footer is the caller's too: what stands in it (here what a filter window says beside its own
@@ -215,12 +215,12 @@ TRIAL("Form: the footer stands under the content and keeps its place when the ro
 
     // Eight rows, one for the shadow: the frame, three rows of content, the gap, the footer, the
     // frame.
-    same(at, 0);
-    ought(lined(seen, at + 1).starts_with("║line 0"));
-    ought(lined(seen, at + 3).starts_with("║line 2"));
-    ought(lined(seen, at + 4).find_first_not_of("║ ") == std::string::npos);
-    ought(lined(seen, at + 5).starts_with("║Matches 2 of 4"));
-    ought(lined(seen, at + 6).starts_with("╚"));
+    SAME(at, 0);
+    OUGHT(lined(seen, at + 1).starts_with("║line 0"));
+    OUGHT(lined(seen, at + 3).starts_with("║line 2"));
+    OUGHT(lined(seen, at + 4).find_first_not_of("║ ") == std::string::npos);
+    OUGHT(lined(seen, at + 5).starts_with("║Matches 2 of 4"));
+    OUGHT(lined(seen, at + 6).starts_with("╚"));
 }
 
 // Without buttons there is neither their row nor the gap before them: the gap stands only between
@@ -234,9 +234,9 @@ TRIAL("Form: without buttons there is no gap and no button row") {
     const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
-    same(lined(seen, at), std::string{"╔═ Note ══╗"});
-    same(lined(seen, at + 1), std::string{"║Just this║"});
-    same(lined(seen, at + 2), std::string{"╚═════════╝"});
+    SAME(lined(seen, at), std::string{"╔═ Note ══╗"});
+    SAME(lined(seen, at + 1), std::string{"║Just this║"});
+    SAME(lined(seen, at + 2), std::string{"╚═════════╝"});
 }
 
 TRIAL("Form: without content there is no gap, only the buttons") {
@@ -249,8 +249,8 @@ TRIAL("Form: without content there is no gap, only the buttons") {
     const Snapshot seen = made.drawn({30, 10});
     const int at = framed(seen);
 
-    same(lined(seen, at + 1), std::string{"║[ Yes ] [ No ]║"});
-    same(lined(seen, at + 2), std::string{"╚══════════════╝"});
+    SAME(lined(seen, at + 1), std::string{"║[ Yes ] [ No ]║"});
+    SAME(lined(seen, at + 2), std::string{"╚══════════════╝"});
 }
 
 TRIAL("Form: the title, frame style and shadow come from the caller") {
@@ -259,17 +259,17 @@ TRIAL("Form: the title, frame style and shadow come from the caller") {
     (void)made.one->buttons().add("OK");
     made.open();
 
-    same(made.one->title(), std::string{"Thin"});
+    SAME(made.one->title(), std::string{"Thin"});
 
     made.one->title("Other");
 
-    same(made.one->title(), std::string{"Other"});
+    SAME(made.one->title(), std::string{"Other"});
 
     const Snapshot seen = made.drawn({30, 10});
 
-    ought(shown(seen, "┌"));
-    ought(shown(seen, "Other"));
-    ought(!shown(seen, "Thin"));
+    OUGHT(shown(seen, "┌"));
+    OUGHT(shown(seen, "Other"));
+    OUGHT(!shown(seen, "Thin"));
 }
 
 // The frame computes its width from the content and draws the title in what is left, so a window
@@ -284,8 +284,8 @@ TRIAL("Form: the window is not narrower than its title") {
     const Snapshot seen = made.drawn({40, 10});
     const int at = framed(seen);
 
-    same(lined(seen, at), std::string{"╔═ Make directory ═╗"});
-    same(lined(seen, at + 1), std::string{"║      [ OK ]      ║"});
+    SAME(lined(seen, at), std::string{"╔═ Make directory ═╗"});
+    SAME(lined(seen, at + 1), std::string{"║      [ OK ]      ║"});
 }
 
 // --- Buttons -------------------------------------------------------------------------------------
@@ -312,15 +312,15 @@ TRIAL("Form: a button does what the caller attached, and the window does not clo
 
     (void)made.drawn({30, 10});
 
-    same(made.one->buttons().many(), std::size_t{1});
+    SAME(made.one->buttons().many(), std::size_t{1});
 
     ui::KeyEvent letter{ui::Key{U'O'}};
 
-    ought(made.top.dispatch(letter));
-    same(said, 1);
-    ought(!made.window->empty());
+    OUGHT(made.top.dispatch(letter));
+    SAME(said, 1);
+    OUGHT(!made.window->empty());
 
-    ought(shown(made.drawn({30, 10}), "[< OK >]"));
+    OUGHT(shown(made.drawn({30, 10}), "[< OK >]"));
 }
 
 // The form has no roles of its own, so its button stays an ordinary button; roles are handed out
@@ -328,7 +328,7 @@ TRIAL("Form: a button does what the caller attached, and the window does not clo
 TRIAL("Form: a button keeps the role of an ordinary button") {
     Opened made{"Ask"};
 
-    same(made.one->buttons().add("OK")->role(), std::string{"talcite.button"});
+    SAME(made.one->buttons().add("OK")->role(), std::string{"talcite.button"});
 }
 
 // Buttons are reached by number, like the children of a node; a number outside the row is the
@@ -339,8 +339,8 @@ TRIAL("Form: a button is reached by number, and one outside the row throws") {
     const std::shared_ptr<ui::Button> yes = made.one->buttons().add("Yes");
     const std::shared_ptr<ui::Button> no = made.one->buttons().add("No");
 
-    same(made.one->buttons()[0], yes);
-    same(made.one->buttons()[1], no);
+    SAME(made.one->buttons()[0], yes);
+    SAME(made.one->buttons()[1], no);
 
     bool threw = false;
 
@@ -350,7 +350,7 @@ TRIAL("Form: a button is reached by number, and one outside the row throws") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Form: clear removes the buttons together with their row") {
@@ -360,12 +360,12 @@ TRIAL("Form: clear removes the buttons together with their row") {
     (void)made.one->buttons().add("No");
     made.open();
 
-    ought(shown(made.drawn({30, 10}), "[ Yes ]"));
+    OUGHT(shown(made.drawn({30, 10}), "[ Yes ]"));
 
     made.one->buttons().clear();
 
-    ought(made.one->buttons().empty());
-    ought(!shown(made.drawn({30, 10}), "[ Yes ]"));
+    OUGHT(made.one->buttons().empty());
+    OUGHT(!shown(made.drawn({30, 10}), "[ Yes ]"));
 }
 
 // --- Focus ---------------------------------------------------------------------------------------
@@ -388,19 +388,19 @@ TRIAL("Form: Tab goes around the content and the buttons in one circle") {
 
     (void)made.drawn({30, 10});
 
-    ought(field->focused());
+    OUGHT(field->focused());
 
     pressed(made.top, ui::Code::tab);
-    ought(tick->focused());
+    OUGHT(tick->focused());
 
     pressed(made.top, ui::Code::tab);
-    ought(ok->focused());
+    OUGHT(ok->focused());
 
     pressed(made.top, ui::Code::tab);
-    ought(cancel->focused());
+    OUGHT(cancel->focused());
 
     pressed(made.top, ui::Code::tab);
-    ought(field->focused());
+    OUGHT(field->focused());
 }
 
 // Escape does not close on its own, as in a message and in every veil.
@@ -414,7 +414,7 @@ TRIAL("Form: Esc closes only with a handler") {
 
     pressed(made.top, ui::Code::escape);
 
-    ought(!made.window->empty());
+    OUGHT(!made.window->empty());
 
     const std::weak_ptr<ui::Form> weak = made.one;
 
@@ -428,5 +428,5 @@ TRIAL("Form: Esc closes only with a handler") {
 
     pressed(made.top, ui::Code::escape);
 
-    ought(made.window->empty());
+    OUGHT(made.window->empty());
 }

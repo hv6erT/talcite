@@ -15,7 +15,7 @@
 #include <vector>
 
 #include "faking.hpp"
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 using namespace talcite;
 
@@ -69,7 +69,7 @@ public:
 TRIAL("Seam: an empty codec seam refuses with Unbound on input and output") {
     const Seam<Codec<xml::Document>> none;
 
-    ought(!none.bound());
+    OUGHT(!none.bound());
 
     bool amiss = false;
 
@@ -79,7 +79,7 @@ TRIAL("Seam: an empty codec seam refuses with Unbound on input and output") {
         amiss = std::string{why.what()} == "No provider for XML.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -89,21 +89,21 @@ TRIAL("Seam: an empty codec seam refuses with Unbound on input and output") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Seam: the codec goes both ways through the provider") {
     const Seam<Codec<xml::Document>> codec{std::make_shared<Fake>()};
 
-    ought(codec.bound());
-    same(std::string{codec.provider().name()}, std::string{"fake 0.1"});
+    OUGHT(codec.bound());
+    SAME(std::string{codec.provider().name()}, std::string{"fake 0.1"});
 
     const xml::Document made = codec.decoded(bytes("<a/>"));
 
-    ought(xml::root(made) != nullptr);
-    same(xml::root(made)->name, std::string{"a"});
-    same(text(codec.encoded(made)), std::string{"<a/>"});
-    ought(codec.decoded(bytes("")).nodes.empty());
+    OUGHT(xml::root(made) != nullptr);
+    SAME(xml::root(made)->name, std::string{"a"});
+    SAME(text(codec.encoded(made)), std::string{"<a/>"});
+    OUGHT(codec.decoded(bytes("")).nodes.empty());
 }
 
 // A provider's refusal comes back through the seam as a reason and leaves talcite as an exception,
@@ -119,7 +119,7 @@ TRIAL("Seam: a provider's refusal comes out as Refused with the reason") {
         amiss = std::string{why.what()} == "XML provider refused: the fake refuses";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -129,7 +129,7 @@ TRIAL("Seam: a provider's refusal comes out as Refused with the reason") {
         amiss = std::string{why.what()} == "XML provider refused: no root";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -139,7 +139,7 @@ TRIAL("Seam: a provider's refusal comes out as Refused with the reason") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // --- XML tree ---------------------------------------------------------------------------------
@@ -162,7 +162,7 @@ xml::Node element(std::string name, std::string text = {}) {
 TRIAL("XML: the root is the first element among the document's nodes") {
     xml::Document one;
 
-    ought(xml::root(one) == nullptr);
+    OUGHT(xml::root(one) == nullptr);
 
     xml::Node declaration;
 
@@ -177,13 +177,13 @@ TRIAL("XML: the root is the first element among the document's nodes") {
     one.nodes.push_back(declaration);
     one.nodes.push_back(comment);
 
-    ought(xml::root(one) == nullptr);
+    OUGHT(xml::root(one) == nullptr);
 
     one.nodes.push_back(element("movie"));
     one.nodes.push_back(element("other"));
 
-    same(xml::root(one)->name, std::string{"movie"});
-    same(xml::root(std::as_const(one))->name, std::string{"movie"});
+    SAME(xml::root(one)->name, std::string{"movie"});
+    SAME(xml::root(std::as_const(one))->name, std::string{"movie"});
 }
 
 TRIAL("XML: child and children take only elements with the name, in order") {
@@ -200,17 +200,17 @@ TRIAL("XML: child and children take only elements with the name, in order") {
     top.children.push_back(element("plot", "P"));
     top.children.push_back(element("genre", "Drama"));
 
-    ought(xml::child(top, "plot") != nullptr);
-    same(xml::text(*xml::child(top, "plot")), std::string{"P"});
-    same(xml::text(*xml::child(top, "genre")), std::string{"Crime"});
-    ought(xml::child(top, "actor") == nullptr);
-    ought(xml::child(std::as_const(top), "plot") != nullptr);
+    OUGHT(xml::child(top, "plot") != nullptr);
+    SAME(xml::text(*xml::child(top, "plot")), std::string{"P"});
+    SAME(xml::text(*xml::child(top, "genre")), std::string{"Crime"});
+    OUGHT(xml::child(top, "actor") == nullptr);
+    OUGHT(xml::child(std::as_const(top), "plot") != nullptr);
 
     const std::vector<xml::Node*> genres = xml::children(top, "genre");
 
-    same(genres.size(), std::size_t{2});
-    same(xml::text(*genres[1]), std::string{"Drama"});
-    ought(xml::children(top, "none").empty());
+    SAME(genres.size(), std::size_t{2});
+    SAME(xml::text(*genres[1]), std::string{"Drama"});
+    OUGHT(xml::children(top, "none").empty());
 }
 
 // The text is the text and CDATA children joined in order; setting it removes them and puts one
@@ -232,37 +232,37 @@ TRIAL("XML: text joins text with CDATA, and setting it keeps the elements") {
     top.children.push_back(element("inner", "x"));
     top.children.push_back(b);
 
-    same(xml::text(top), std::string{"ab"});
+    SAME(xml::text(top), std::string{"ab"});
 
     xml::text(top, "new");
 
-    same(xml::text(top), std::string{"new"});
-    same(top.children.size(), std::size_t{2});
-    same(top.children.front().kind, xml::Kind::text);
-    same(top.children.back().name, std::string{"inner"});
+    SAME(xml::text(top), std::string{"new"});
+    SAME(top.children.size(), std::size_t{2});
+    SAME(top.children.front().kind, xml::Kind::text);
+    SAME(top.children.back().name, std::string{"inner"});
 
     xml::text(top, "");
 
-    same(top.children.size(), std::size_t{1});
-    same(xml::text(top), std::string{});
+    SAME(top.children.size(), std::size_t{1});
+    SAME(xml::text(top), std::string{});
 }
 
 TRIAL("XML: attribute by name, setting replaces or adds") {
     xml::Node top = element("uniqueid");
 
-    ought(xml::attribute(top, "type") == nullptr);
+    OUGHT(xml::attribute(top, "type") == nullptr);
 
     xml::attribute(top, "type", "tmdb");
     xml::attribute(top, "default", "true");
 
-    same(*xml::attribute(top, "type"), std::string{"tmdb"});
-    same(top.attributes.size(), std::size_t{2});
+    SAME(*xml::attribute(top, "type"), std::string{"tmdb"});
+    SAME(top.attributes.size(), std::size_t{2});
 
     xml::attribute(top, "type", "imdb");
 
-    same(*xml::attribute(top, "type"), std::string{"imdb"});
-    same(top.attributes.size(), std::size_t{2});
-    same(top.attributes.front().name, std::string{"type"});
+    SAME(*xml::attribute(top, "type"), std::string{"imdb"});
+    SAME(top.attributes.size(), std::size_t{2});
+    SAME(top.attributes.front().name, std::string{"type"});
 }
 
 TRIAL("XML: documents and nodes compare by content") {
@@ -272,11 +272,11 @@ TRIAL("XML: documents and nodes compare by content") {
     left.nodes.push_back(element("a", "x"));
     right.nodes.push_back(element("a", "x"));
 
-    ought(left == right);
+    OUGHT(left == right);
 
     xml::attribute(right.nodes.front(), "k", "v");
 
-    ought(!(left == right));
+    OUGHT(!(left == right));
 }
 
 // --- JSON value -------------------------------------------------------------------------------
@@ -330,14 +330,14 @@ TRIAL("JSON: an empty seam refuses with Unbound naming the kind, a bound one goe
         amiss = std::string{why.what()} == "No provider for JSON.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     const Seam<Codec<json::Value>> codec{std::make_shared<FakeJson>()};
 
-    same(codec.decoded(bytes("{}")).type(), json::Type::object);
-    same(codec.decoded(bytes("1")), json::Value{1});
-    same(codec.decoded(bytes("")).type(), json::Type::null);
-    same(text(codec.encoded(json::Value{7})), std::string{"integer"});
+    SAME(codec.decoded(bytes("{}")).type(), json::Type::object);
+    SAME(codec.decoded(bytes("1")), json::Value{1});
+    SAME(codec.decoded(bytes("")).type(), json::Type::null);
+    SAME(text(codec.encoded(json::Value{7})), std::string{"integer"});
 
     amiss = false;
 
@@ -347,7 +347,7 @@ TRIAL("JSON: an empty seam refuses with Unbound naming the kind, a bound one goe
         amiss = std::string{why.what()} == "JSON provider refused: unsupported";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -357,31 +357,31 @@ TRIAL("JSON: an empty seam refuses with Unbound naming the kind, a bound one goe
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // Each constructor lands in its own type: also `"x"`, which without a separate constructor from
 // `const char*` would go to bool, and every width of integer, which without a concept would be
 // ambiguous between int64, double and bool.
 TRIAL("JSON: constructors pick the type unambiguously") {
-    same(json::Value{}.type(), json::Type::null);
-    same(json::Value{nullptr}.type(), json::Type::null);
-    same(json::Value{true}.type(), json::Type::boolean);
-    same(json::Value{2}.type(), json::Type::integer);
-    same(json::Value{2L}.type(), json::Type::integer);
-    same(json::Value{2LL}.type(), json::Type::integer);
-    same(json::Value{std::uint8_t{2}}.type(), json::Type::integer);
-    same(json::Value{2.5}.type(), json::Type::real);
-    same(json::Value{2.5F}.type(), json::Type::real);
-    same(json::Value{"x"}.type(), json::Type::string);
-    same(json::Value{std::string{"x"}}.type(), json::Type::string);
-    same(json::Value{json::Array{}}.type(), json::Type::array);
-    same(json::Value{json::Object{}}.type(), json::Type::object);
+    SAME(json::Value{}.type(), json::Type::null);
+    SAME(json::Value{nullptr}.type(), json::Type::null);
+    SAME(json::Value{true}.type(), json::Type::boolean);
+    SAME(json::Value{2}.type(), json::Type::integer);
+    SAME(json::Value{2L}.type(), json::Type::integer);
+    SAME(json::Value{2LL}.type(), json::Type::integer);
+    SAME(json::Value{std::uint8_t{2}}.type(), json::Type::integer);
+    SAME(json::Value{2.5}.type(), json::Type::real);
+    SAME(json::Value{2.5F}.type(), json::Type::real);
+    SAME(json::Value{"x"}.type(), json::Type::string);
+    SAME(json::Value{std::string{"x"}}.type(), json::Type::string);
+    SAME(json::Value{json::Array{}}.type(), json::Type::array);
+    SAME(json::Value{json::Object{}}.type(), json::Type::object);
 
-    same(*json::Value{"x"}.string(), std::string{"x"});
-    same(*json::Value{false}.boolean(), false);
-    same(*json::Value{-3}.integer(), std::int64_t{-3});
-    same(*json::Value{0.5}.real(), 0.5);
+    SAME(*json::Value{"x"}.string(), std::string{"x"});
+    SAME(*json::Value{false}.boolean(), false);
+    SAME(*json::Value{-3}.integer(), std::int64_t{-3});
+    SAME(*json::Value{0.5}.real(), 0.5);
 }
 
 // Typed access: a pointer to its own type, `nullptr` for any other; `number()` combines both kinds
@@ -389,28 +389,28 @@ TRIAL("JSON: constructors pick the type unambiguously") {
 TRIAL("JSON: access gives nullptr for another type, and number combines the numbers") {
     const json::Value one{2};
 
-    ought(one.integer() != nullptr);
-    ought(one.real() == nullptr);
-    ought(one.boolean() == nullptr);
-    ought(one.string() == nullptr);
-    ought(one.array() == nullptr);
-    ought(one.object() == nullptr);
+    OUGHT(one.integer() != nullptr);
+    OUGHT(one.real() == nullptr);
+    OUGHT(one.boolean() == nullptr);
+    OUGHT(one.string() == nullptr);
+    OUGHT(one.array() == nullptr);
+    OUGHT(one.object() == nullptr);
 
-    same(one.number(), std::optional<double>{2.0});
-    same(json::Value{2.5}.number(), std::optional<double>{2.5});
-    same(json::Value{"2"}.number(), std::optional<double>{});
+    SAME(one.number(), std::optional<double>{2.0});
+    SAME(json::Value{2.5}.number(), std::optional<double>{2.5});
+    SAME(json::Value{"2"}.number(), std::optional<double>{});
 
     json::Value text{"a"};
 
     *text.string() += "b";
 
-    same(*text.string(), std::string{"ab"});
+    SAME(*text.string(), std::string{"ab"});
 
     json::Value list{json::Array{}};
 
     list.array()->push_back(1);
 
-    same(list.array()->size(), std::size_t{1});
+    SAME(list.array()->size(), std::size_t{1});
 }
 
 // An object keeps its keys in insertion order: `insert` appends at the end and returns an existing
@@ -423,20 +423,20 @@ TRIAL("JSON: an object in insertion order, insert returns the existing entry") {
     json::insert(one, "a") = "x";
     json::insert(one, "b") = 2;
 
-    same(one.object()->size(), std::size_t{2});
-    same(one.object()->front().name, std::string{"b"});
-    same(*json::member(one, "b"), json::Value{2});
-    same(*json::member(std::as_const(one), "a"), json::Value{"x"});
-    ought(json::member(one, "c") == nullptr);
+    SAME(one.object()->size(), std::size_t{2});
+    SAME(one.object()->front().name, std::string{"b"});
+    SAME(*json::member(one, "b"), json::Value{2});
+    SAME(*json::member(std::as_const(one), "a"), json::Value{"x"});
+    OUGHT(json::member(one, "c") == nullptr);
 
-    ought(json::erase(one, "b"));
-    ought(!json::erase(one, "b"));
-    same(one.object()->size(), std::size_t{1});
+    OUGHT(json::erase(one, "b"));
+    OUGHT(!json::erase(one, "b"));
+    SAME(one.object()->size(), std::size_t{1});
 
     json::Value number{1};
 
-    ought(json::member(number, "a") == nullptr);
-    ought(!json::erase(number, "a"));
+    OUGHT(json::member(number, "a") == nullptr);
+    OUGHT(!json::erase(number, "a"));
 
     bool amiss = false;
 
@@ -446,7 +446,7 @@ TRIAL("JSON: an object in insertion order, insert returns the existing entry") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // Equality by content, deep; the order of keys is content, because the value preserves it.
@@ -459,20 +459,20 @@ TRIAL("JSON: values compare by content, including the order of keys") {
     json::insert(right, "a") = json::Array{1, "x", nullptr};
     json::insert(right, "b") = 2.5;
 
-    ought(left == right);
+    OUGHT(left == right);
 
     json::insert(right, "b") = 2;
 
-    ought(!(left == right));
+    OUGHT(!(left == right));
 
     json::Value swapped{json::Object{}};
 
     json::insert(swapped, "b") = 2.5;
     json::insert(swapped, "a") = json::Array{1, "x", nullptr};
 
-    ought(!(left == swapped));
-    ought(json::Value{1} == json::Value{1L});
-    ought(!(json::Value{1} == json::Value{1.0}));
+    OUGHT(!(left == swapped));
+    OUGHT(json::Value{1} == json::Value{1L});
+    OUGHT(!(json::Value{1} == json::Value{1.0}));
 }
 
 // --- Third shape: a streaming decoder ------------------------------------------------------
@@ -492,12 +492,12 @@ TRIAL("Seam: the streaming decoder speaks the same language: Unbound, Refused, n
         amiss = std::string{why.what()} == "No provider for Image.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     const Seam<ImageProvider> images = faking::images();
 
-    ought(images.bound());
-    same(std::string{images.provider().name()}, std::string{"fake images"});
+    OUGHT(images.bound());
+    SAME(std::string{images.provider().name()}, std::string{"fake images"});
 
     amiss = false;
 
@@ -507,5 +507,5 @@ TRIAL("Seam: the streaming decoder speaks the same language: Unbound, Refused, n
         amiss = std::string{why.what()}.starts_with("Image provider refused: ");
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }

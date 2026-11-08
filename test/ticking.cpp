@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -41,25 +41,25 @@ ui::Hook counted(const std::shared_ptr<ui::Tick>& one, int& done) {
 TRIAL("Tick: a fresh one is empty and willing to take focus") {
     const ui::Tick one{"Zawijaj"};
 
-    ought(!one.ticked());
-    ought(one.enabled());
-    ought(one.focusable());
-    same(one.capacity(), 0);
-    same(one.text(), std::string{"Zawijaj"});
+    OUGHT(!one.ticked());
+    OUGHT(one.enabled());
+    OUGHT(one.focusable());
+    SAME(one.capacity(), 0);
+    SAME(one.text(), std::string{"Zawijaj"});
 }
 
 TRIAL("Tick: the state can be given at construction") {
     const ui::Tick one{"Zawijaj", true};
 
-    ought(one.ticked());
+    OUGHT(one.ticked());
 }
 
 // Four cells for the bracket and a space, the rest for the text: one row, not as many as given.
 TRIAL("Tick: wants the bracket plus the text and one row") {
     const ui::Tick one{"Zawijaj"};
 
-    same(one.wants({40, 5}), (ui::Size{11, 1}));
-    same(one.wants({6, 5}), (ui::Size{6, 1}));
+    SAME(one.wants({40, 5}), (ui::Size{11, 1}));
+    SAME(one.wants({6, 5}), (ui::Size{6, 1}));
 }
 
 // --- Drawing -------------------------------------------------------------------------------------
@@ -71,11 +71,11 @@ TRIAL("Tick: draws the bracket with the state and the text") {
 
     top.children().add(one);
 
-    same(read(top.render({{0, 0}, {11, 1}}), 0), std::string{"[ ] Zawijaj"});
+    SAME(read(top.render({{0, 0}, {11, 1}}), 0), std::string{"[ ] Zawijaj"});
 
     one->ticked(true);
 
-    same(read(top.render({{0, 0}, {11, 1}}), 0), std::string{"[x] Zawijaj"});
+    SAME(read(top.render({{0, 0}, {11, 1}}), 0), std::string{"[x] Zawijaj"});
 }
 
 // A box that is too narrow cuts the text, not the bracket: the bracket is what makes it a tick box.
@@ -88,8 +88,8 @@ TRIAL("Tick: when too narrow it cuts the text, not the bracket") {
 
     const std::string made = read(top.render({{0, 0}, {7, 1}}), 0);
 
-    same(made.substr(0, 4), std::string{"[ ] "});
-    same(made.size(), std::size_t{4 + 3 + 2});
+    SAME(made.substr(0, 4), std::string{"[ ] "});
+    SAME(made.size(), std::size_t{4 + 3 + 2});
 }
 
 TRIAL("Tick: has its own role when focused") {
@@ -99,11 +99,11 @@ TRIAL("Tick: has its own role when focused") {
 
     top.children().add(one);
 
-    ought(!top.render({{0, 0}, {11, 1}}).at({0, 0}).style.reverse);
+    OUGHT(!top.render({{0, 0}, {11, 1}}).at({0, 0}).style.reverse);
 
     one->focus();
 
-    ought(top.render({{0, 0}, {11, 1}}).at({0, 0}).style.reverse);
+    OUGHT(top.render({{0, 0}, {11, 1}}).at({0, 0}).style.reverse);
 }
 
 // --- Toggling ------------------------------------------------------------------------------------
@@ -123,12 +123,12 @@ TRIAL("Tick: setting the state is silent, toggling notifies") {
 
     one->ticked(true);
 
-    same(done, 0);
+    SAME(done, 0);
 
     one->pick();
 
-    ought(!one->ticked());
-    same(done, 1);
+    OUGHT(!one->ticked());
+    SAME(done, 1);
 }
 
 TRIAL("Tick: space toggles, and Enter goes up") {
@@ -146,15 +146,15 @@ TRIAL("Tick: space toggles, and Enter goes up") {
 
     ui::KeyEvent space{U' '};
 
-    ought(top.dispatch(space));
-    ought(one->ticked());
-    same(done, 1);
+    OUGHT(top.dispatch(space));
+    OUGHT(one->ticked());
+    SAME(done, 1);
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(!top.dispatch(enter));
-    ought(one->ticked());
-    same(done, 1);
+    OUGHT(!top.dispatch(enter));
+    OUGHT(one->ticked());
+    SAME(done, 1);
 }
 
 TRIAL("Tick: a click takes focus and toggles") {
@@ -172,10 +172,10 @@ TRIAL("Tick: a click takes focus and toggles") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    ought(one->ticked());
-    same(done, 1);
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    OUGHT(top.dispatch(what));
+    OUGHT(one->ticked());
+    SAME(done, 1);
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // --- Disabled ------------------------------------------------------------------------------------
@@ -189,7 +189,7 @@ TRIAL("Tick: when disabled it does not toggle and does not take focus") {
 
     one->enabled(false);
 
-    ought(!one->focusable());
+    OUGHT(!one->focusable());
 
     int done = 0;
 
@@ -197,8 +197,8 @@ TRIAL("Tick: when disabled it does not toggle and does not take focus") {
 
     one->pick();
 
-    ought(!one->ticked());
-    same(done, 0);
+    OUGHT(!one->ticked());
+    SAME(done, 0);
 }
 
 // A disabled box must not keep focus: focus would get stuck on something Tab no longer leaves,
@@ -212,11 +212,11 @@ TRIAL("Tick: disabling gives up focus") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     one->enabled(false);
 
-    ought(top.focused_node() != static_cast<ui::Node*>(one.get()));
+    OUGHT(top.focused_node() != static_cast<ui::Node*>(one.get()));
 }
 
 // --- Hotkey --------------------------------------------------------------------------------------
@@ -243,14 +243,14 @@ TRIAL("Tick: the hotkey works from anywhere in the window") {
     window->open(dialog);
 
     // Focus stands on the first box, and we press the letter of the second.
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     ui::KeyEvent what{U'w'};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    ought(!one->ticked());
-    ought(other->ticked());
+    OUGHT(!one->ticked());
+    OUGHT(other->ticked());
 }
 
 TRIAL("Tick: when disabled it does not answer its key") {
@@ -275,5 +275,5 @@ TRIAL("Tick: when disabled it does not answer its key") {
 
     (void)top.dispatch(what);
 
-    ought(!one->ticked());
+    OUGHT(!one->ticked());
 }

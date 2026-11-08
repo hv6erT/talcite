@@ -20,15 +20,23 @@ if(WIN32)
   target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32)
 endif()
 
-# tal::testing: what trials need beyond core; it grows its own runner in E2.
-add_library(tal-testing STATIC src/testing.cpp)
+# tal::testing: the runner of the trials with its watch, which writes the stacks of a hung run's
+# threads (dbghelp on Windows; on Linux the trial binaries export their symbols, so that the
+# stacks name the functions of the trials too).
+add_library(tal-testing STATIC src/testing.cpp src/watch.cpp)
 target_link_libraries(tal-testing PUBLIC tal-core)
 
+if(WIN32)
+  target_link_libraries(tal-testing PUBLIC dbghelp)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(tal-testing PUBLIC ${CMAKE_DL_LIBS})
+  target_link_options(tal-testing INTERFACE -rdynamic)
+endif()
+
 if(TALCITE_TESTS)
-  # The trials run on the runner of talcite's own trials until tal::testing brings its own (E2).
+  # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
-  add_executable(tal-test ${TAL_TEST_SOURCES} "${PROJECT_SOURCE_DIR}/test/proving.cpp")
-  target_include_directories(tal-test PRIVATE "${PROJECT_SOURCE_DIR}/test")
-  target_link_libraries(tal-test PRIVATE tal-testing talcite)
+  add_executable(tal-test ${TAL_TEST_SOURCES})
+  target_link_libraries(tal-test PRIVATE tal-testing)
   add_test(NAME tal COMMAND tal-test)
 endif()

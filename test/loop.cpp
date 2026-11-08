@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -21,10 +21,10 @@ TRIAL("Loop: turn runs the posted work and returns how much") {
     loop.post([&counted] { ++counted; });
     loop.post([&counted] { counted += 10; });
 
-    same(loop.waiting(), std::size_t{2});
-    same(loop.turn(), std::size_t{2});
-    same(counted, 11);
-    same(loop.turn(), std::size_t{0});
+    SAME(loop.waiting(), std::size_t{2});
+    SAME(loop.turn(), std::size_t{2});
+    SAME(counted, 11);
+    SAME(loop.turn(), std::size_t{0});
 }
 
 // The batch has already left the queue when a piece of it throws, so whatever stood behind the
@@ -48,36 +48,36 @@ TRIAL("Loop: a piece of work that throws does not take the rest of the batch") {
         said = why.what();
     }
 
-    same(said, std::string{"pierwszy"});
-    same(counted, 111);
-    same(loop.waiting(), std::size_t{0});
+    SAME(said, std::string{"pierwszy"});
+    SAME(counted, 111);
+    SAME(loop.waiting(), std::size_t{0});
 }
 
 TRIAL("Loop: current sees only its own thread") {
     Loop loop;
 
-    ought(Loop::current() == &loop);
+    OUGHT(Loop::current() == &loop);
 
     std::atomic<bool> seen{true};
 
     std::thread aside{[&seen] { seen.store(Loop::current() != nullptr); }};
     aside.join();
 
-    ought(!seen.load());
+    OUGHT(!seen.load());
 }
 
 TRIAL("Loop: the bell wakes the waiter") {
     Loop loop;
 
-    ought(!loop.bell().wait(std::chrono::milliseconds{0}));
+    OUGHT(!loop.bell().wait(std::chrono::milliseconds{0}));
 
     loop.post([] {});
 
-    ought(loop.bell().wait(std::chrono::milliseconds{0}));
+    OUGHT(loop.bell().wait(std::chrono::milliseconds{0}));
 
     (void)loop.turn();
 
-    ought(!loop.bell().wait(std::chrono::milliseconds{0}));
+    OUGHT(!loop.bell().wait(std::chrono::milliseconds{0}));
 }
 
 TRIAL("Promise: here moves the rest of the chain to the loop's thread") {
@@ -112,9 +112,9 @@ TRIAL("Promise: here moves the rest of the chain to the loop's thread") {
         std::this_thread::sleep_for(std::chrono::milliseconds{5});
     }
 
-    ought(off.load());
-    ought(home.load());
-    ought(done.load());
+    OUGHT(off.load());
+    OUGHT(home.load());
+    OUGHT(done.load());
 }
 
 // `on(loop)` names the loop directly, so a chain built on one thread can finish on another
@@ -141,7 +141,7 @@ TRIAL("Promise: on moves the rest of the chain to the given loop") {
 
     while (other.load() == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    ought(Loop::current() == nullptr);
+    OUGHT(Loop::current() == nullptr);
 
     std::thread::id ran;
 
@@ -151,8 +151,8 @@ TRIAL("Promise: on moves the rest of the chain to the given loop") {
         return given;
     });
 
-    same(std::move(chain).get(), 3);
-    ought(ran == theirs);
+    SAME(std::move(chain).get(), 3);
+    OUGHT(ran == theirs);
 
     stop.store(true);
     aside.join();
@@ -164,9 +164,9 @@ TRIAL("Promise: on moves the rest of the chain to the given loop") {
 TRIAL("Promise: without a loop here throws and leaves the promise as it was") {
     Promise<int> source = ready(2);
 
-    threw((void)std::move(source).here());
+    THREW((void)std::move(source).here());
 
-    same(std::move(source).get(), 2);
+    SAME(std::move(source).get(), 2);
 }
 
 TRIAL("then: on a settled promise with here, waits for the turn instead of running at once") {
@@ -182,14 +182,14 @@ TRIAL("then: on a settled promise with here, waits for the turn instead of runni
 
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
 
-    ought(!ran.load());
+    OUGHT(!ran.load());
 
     for (int at = 0; at < 100 && !ran.load(); ++at) {
         (void)loop.turn();
         std::this_thread::sleep_for(std::chrono::milliseconds{5});
     }
 
-    ought(ran.load());
+    OUGHT(ran.load());
 }
 
 // Pool work that finishes after the loop is gone does not reach it. In trials the loop dies with the
@@ -215,10 +215,10 @@ TRIAL("Loop: a continuation promised to a dead loop is dropped, not sent to the 
 
     go.store(true);
 
-    threw(std::move(held).get());
+    THREW(std::move(held).get());
 
     (void)slot->turn();
 
-    ought(!ran.load());
-    same(slot->waiting(), std::size_t{0});
+    OUGHT(!ran.load());
+    SAME(slot->waiting(), std::size_t{0});
 }

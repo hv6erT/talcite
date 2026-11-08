@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -75,14 +75,14 @@ TRIAL("Footed: the content gets all the room the parts under it leave") {
     one.children().add(rule);
     one.children().add(status);
 
-    same(one.wants({10, 8}), (ui::Size{4, 4}));
+    SAME(one.wants({10, 8}), (ui::Size{4, 4}));
 
     const Snapshot made = one.render({{0, 0}, {5, 6}});
 
-    same(table->area(), (ui::Area{{0, 0}, {5, 4}}));
-    same(read(made, 3), std::string{"ttttt"});
-    same(read(made, 4), std::string{"-----"});
-    same(read(made, 5), std::string{"sssss"});
+    SAME(table->area(), (ui::Area{{0, 0}, {5, 4}}));
+    SAME(read(made, 3), std::string{"ttttt"});
+    SAME(read(made, 4), std::string{"-----"});
+    SAME(read(made, 5), std::string{"sssss"});
 }
 
 // When the room is short the parts at the bottom keep their place, from the last one up, and the
@@ -98,19 +98,19 @@ TRIAL("Footed: the parts at the bottom keep their place when the room is short")
     one.children().add(rule);
     one.children().add(status);
 
-    same(one.wants({10, 3}), (ui::Size{4, 3}));
+    SAME(one.wants({10, 3}), (ui::Size{4, 3}));
 
     const Snapshot made = one.render({{0, 0}, {4, 3}});
 
-    same(read(made, 0), std::string{"tttt"});
-    same(read(made, 1), std::string{"----"});
-    same(read(made, 2), std::string{"ssss"});
+    SAME(read(made, 0), std::string{"tttt"});
+    SAME(read(made, 1), std::string{"----"});
+    SAME(read(made, 2), std::string{"ssss"});
 
     // With a single row the status line keeps it.
     const Snapshot low = one.render({{0, 0}, {4, 1}});
 
-    same(read(low, 0), std::string{"ssss"});
-    same(table->area().size.high, 0);
+    SAME(read(low, 0), std::string{"ssss"});
+    SAME(table->area().size.high, 0);
 }
 
 // The gap stands only between two children that both take some height: none above a part that is
@@ -126,25 +126,25 @@ TRIAL("Footed: a gap only between children that both take some height") {
     one.children().add(empty);
     one.children().add(foot);
 
-    same(one.wants({10, 10}), (ui::Size{4, 4}));
+    SAME(one.wants({10, 10}), (ui::Size{4, 4}));
 
     const Snapshot made = one.render({{0, 0}, {4, 4}});
 
-    same(read(made, 0), std::string{"bbbb"});
-    same(read(made, 1), std::string{"bbbb"});
-    same(read(made, 2), std::string{""});
-    same(read(made, 3), std::string{"ffff"});
+    SAME(read(made, 0), std::string{"bbbb"});
+    SAME(read(made, 1), std::string{"bbbb"});
+    SAME(read(made, 2), std::string{""});
+    SAME(read(made, 3), std::string{"ffff"});
 
     // A single row: the footer gets no room after the gap, so neither stands, and the content keeps
     // the row.
-    same(read(one.render({{0, 0}, {4, 1}}), 0), std::string{"bbbb"});
+    SAME(read(one.render({{0, 0}, {4, 1}}), 0), std::string{"bbbb"});
 
     ui::Footed bare{1};
 
     bare.children().add(box({4, 0}, U'b'));
     bare.children().add(box({4, 1}, U'f'));
 
-    same(bare.wants({10, 10}), (ui::Size{4, 1}));
+    SAME(bare.wants({10, 10}), (ui::Size{4, 1}));
 }
 
 // Room around one child: cells on both sides and rows above, transparent; an empty child takes no
@@ -156,18 +156,18 @@ TRIAL("Inset: the child with room around it") {
 
     one.children().add(inside);
 
-    same(one.wants({20, 10}), (ui::Size{7, 2}));
+    SAME(one.wants({20, 10}), (ui::Size{7, 2}));
 
     const Snapshot made = one.render({{0, 0}, {7, 2}});
 
-    same(read(made, 0), std::string{""});
-    same(read(made, 1), std::string{"  iii"});
-    same(inside->area(), (ui::Area{{2, 1}, {3, 1}}));
+    SAME(read(made, 0), std::string{""});
+    SAME(read(made, 1), std::string{"  iii"});
+    SAME(inside->area(), (ui::Area{{2, 1}, {3, 1}}));
 
     ui::Inset empty{1};
 
     empty.children().add(box({0, 0}, U'x'));
 
-    same(empty.wants({20, 10}), (ui::Size{2, 0}));
-    same(ui::Inset{3}.wants({4, 5}), (ui::Size{4, 0}));
+    SAME(empty.wants({20, 10}), (ui::Size{2, 0}));
+    SAME(ui::Inset{3}.wants({4, 5}), (ui::Size{4, 0}));
 }

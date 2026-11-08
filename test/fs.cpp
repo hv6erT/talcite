@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -144,8 +144,8 @@ TRIAL("fs: exists answers rather than throws") {
 
     const fs::path one = nook.made("jest.txt", "cokolwiek");
 
-    ought(fs::exists(one).get());
-    ought(!fs::exists(nook.where() / "nie ma.txt").get());
+    OUGHT(fs::exists(one).get());
+    OUGHT(!fs::exists(nook.where() / "nie ma.txt").get());
 }
 
 TRIAL("fs: kind tells a file, a directory and nothing apart") {
@@ -156,9 +156,9 @@ TRIAL("fs: kind tells a file, a directory and nothing apart") {
 
     fs::make_folder(two).get();
 
-    same(static_cast<int>(fs::kind(one).get()), static_cast<int>(fs::Kind::file));
-    same(static_cast<int>(fs::kind(two).get()), static_cast<int>(fs::Kind::folder));
-    same(static_cast<int>(fs::kind(nook.where() / "puste").get()),
+    SAME(static_cast<int>(fs::kind(one).get()), static_cast<int>(fs::Kind::file));
+    SAME(static_cast<int>(fs::kind(two).get()), static_cast<int>(fs::Kind::folder));
+    SAME(static_cast<int>(fs::kind(nook.where() / "puste").get()),
          static_cast<int>(fs::Kind::none));
 }
 
@@ -167,7 +167,7 @@ TRIAL("fs: size measures the content") {
 
     const fs::path one = nook.made("dane.bin", std::string(1234, 'a'));
 
-    same(fs::size(one).get(), std::uintmax_t{1234});
+    SAME(fs::size(one).get(), std::uintmax_t{1234});
 }
 
 TRIAL("fs: size on nothing rejects, and the reason carries the path") {
@@ -185,8 +185,8 @@ TRIAL("fs: size on nothing rejects, and the reason carries the path") {
         told = why.where();
     }
 
-    ought(caught);
-    same(told, missing);
+    OUGHT(caught);
+    SAME(told, missing);
 }
 
 TRIAL("fs: written points to a moment close to now") {
@@ -200,8 +200,8 @@ TRIAL("fs: written points to a moment close to now") {
 
     const auto apart = now - told;
 
-    ought(apart > -60s);
-    ought(apart < 600s);
+    OUGHT(apart > -60s);
+    OUGHT(apart < 600s);
 }
 
 TRIAL("fs: roomy gives the capacity and the free space") {
@@ -209,9 +209,9 @@ TRIAL("fs: roomy gives the capacity and the free space") {
 
     const fs::Space told = fs::space(nook.where()).get();
 
-    ought(told.total > 0);
-    ought(told.free > 0);
-    ought(told.free <= told.total);
+    OUGHT(told.total > 0);
+    OUGHT(told.free > 0);
+    OUGHT(told.free <= told.total);
 }
 
 TRIAL("fs: slice gives a sensible chunk") {
@@ -219,9 +219,9 @@ TRIAL("fs: slice gives a sensible chunk") {
 
     const std::size_t told = fs::chunk(nook.where()).get();
 
-    ought(told >= 4096);
-    ought(told <= 8 * 1024 * 1024);
-    same(told & (told - 1), std::size_t{0});
+    OUGHT(told >= 4096);
+    OUGHT(told <= 8 * 1024 * 1024);
+    SAME(told & (told - 1), std::size_t{0});
 }
 
 TRIAL("fs: make creates the whole path and does not mind that it exists") {
@@ -231,11 +231,11 @@ TRIAL("fs: make creates the whole path and does not mind that it exists") {
 
     fs::make_folder(deep).get();
 
-    ought(fs::exists(deep).get());
+    OUGHT(fs::exists(deep).get());
 
     fs::make_folder(deep).get();
 
-    ought(fs::exists(deep).get());
+    OUGHT(fs::exists(deep).get());
 }
 
 // The parents are found on the path as given: a link to a folder on the way is entered, a file on
@@ -248,12 +248,12 @@ TRIAL("fs: make goes through a link on the way and refuses a file on the way and
 
     fs::make_folder(nook.where() / "skrót" / "nowy" / "głębiej").get();
 
-    ought(fs::exists(nook.where() / "prawdziwy" / "nowy" / "głębiej").get());
+    OUGHT(fs::exists(nook.where() / "prawdziwy" / "nowy" / "głębiej").get());
 
     const fs::path file = nook.made("plik.txt", "x");
 
-    threw(fs::make_folder(file / "pod").get());
-    threw(fs::make_folder(fs::path{}).get());
+    THREW(fs::make_folder(file / "pod").get());
+    THREW(fs::make_folder(fs::path{}).get());
 }
 
 TRIAL("fs: rename moves") {
@@ -264,15 +264,15 @@ TRIAL("fs: rename moves") {
 
     fs::rename(one, two).get();
 
-    ought(!fs::exists(one).get());
-    ought(fs::exists(two).get());
-    same(fs::size(two).get(), std::uintmax_t{5});
+    OUGHT(!fs::exists(one).get());
+    OUGHT(fs::exists(two).get());
+    SAME(fs::size(two).get(), std::uintmax_t{5});
 }
 
 TRIAL("fs: rename on nothing rejects") {
     const Nook nook;
 
-    threw(fs::rename(nook.where() / "nie ma", nook.where() / "gdziekolwiek").get());
+    THREW(fs::rename(nook.where() / "nie ma", nook.where() / "gdziekolwiek").get());
 }
 
 TRIAL("fs: work starts at once, without waiting for the result to be asked for") {
@@ -284,7 +284,7 @@ TRIAL("fs: work starts at once, without waiting for the result to be asked for")
 
     for (int tries = 0; tries < 2000 && !fs::exists(deep).get(); ++tries) std::this_thread::sleep_for(1ms);
 
-    ought(fs::exists(deep).get());
+    OUGHT(fs::exists(deep).get());
 
     std::move(making).get();
 }
@@ -300,7 +300,7 @@ TRIAL("fs: queries compose like any other promises") {
 
     const auto [a, b] = all(std::move(first), std::move(second)).get();
 
-    same(a + b, std::uintmax_t{8});
+    SAME(a + b, std::uintmax_t{8});
 }
 
 TRIAL("fs: list gives entries with a description, not just paths") {
@@ -313,20 +313,20 @@ TRIAL("fs: list gives entries with a description, not just paths") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{3});
+    SAME(among.size(), std::size_t{3});
 
-    same(among[0].where.filename(), fs::path{"a.txt"});
-    same(static_cast<int>(among[0].kind), static_cast<int>(fs::Kind::file));
-    same(among[0].size, std::uintmax_t{3});
+    SAME(among[0].where.filename(), fs::path{"a.txt"});
+    SAME(static_cast<int>(among[0].kind), static_cast<int>(fs::Kind::file));
+    SAME(among[0].size, std::uintmax_t{3});
 
-    same(among[1].where.filename(), fs::path{"b.txt"});
-    same(among[1].size, std::uintmax_t{11});
+    SAME(among[1].where.filename(), fs::path{"b.txt"});
+    SAME(among[1].size, std::uintmax_t{11});
 
-    same(among[2].where.filename(), fs::path{"katalog"});
-    same(static_cast<int>(among[2].kind), static_cast<int>(fs::Kind::folder));
+    SAME(among[2].where.filename(), fs::path{"katalog"});
+    SAME(static_cast<int>(among[2].kind), static_cast<int>(fs::Kind::folder));
 
-    ought(among[0].modified.time_since_epoch().count() > 1700000000);
-    ought(among[0].accessed.time_since_epoch().count() > 1700000000);
+    OUGHT(among[0].modified.time_since_epoch().count() > 1700000000);
+    OUGHT(among[0].accessed.time_since_epoch().count() > 1700000000);
 }
 
 TRIAL("fs: list on a file rejects") {
@@ -334,13 +334,13 @@ TRIAL("fs: list on a file rejects") {
 
     const fs::path one = nook.made("plik.txt", "x");
 
-    threw((void)fs::list(one).get());
+    THREW((void)fs::list(one).get());
 }
 
 TRIAL("fs: list of an empty directory gives nothing") {
     const Nook nook;
 
-    ought(fs::list(nook.where()).get().empty());
+    OUGHT(fs::list(nook.where()).get().empty());
 }
 
 // A directory we have no right to read is a refusal when listed, as on Windows, not an empty list
@@ -374,8 +374,8 @@ TRIAL("fs: list of a directory without the right to read it refuses, walk skips 
 
         (void)::chmod((nook.where() / "zamknięty").c_str(), 0700);
 
-        ought(refused);
-        same(walked.size(), std::size_t{2});
+        OUGHT(refused);
+        SAME(walked.size(), std::size_t{2});
     }
 #endif
 }
@@ -398,7 +398,7 @@ TRIAL("fs: walk goes down into the depth") {
 
     const std::vector<fs::Entry> among = fs::walk(nook.where()).get();
 
-    same(among.size(), std::size_t{5});
+    SAME(among.size(), std::size_t{5});
 
     std::size_t files = 0;
     std::size_t folders = 0;
@@ -408,8 +408,8 @@ TRIAL("fs: walk goes down into the depth") {
         if (one.kind == fs::Kind::folder) ++folders;
     }
 
-    same(files, std::size_t{3});
-    same(folders, std::size_t{2});
+    SAME(files, std::size_t{3});
+    SAME(folders, std::size_t{2});
 }
 
 TRIAL("fs: walk gives an ordered result") {
@@ -420,7 +420,7 @@ TRIAL("fs: walk gives an ordered result") {
 
     const std::vector<fs::Entry> among = fs::walk(nook.where()).get();
 
-    for (std::size_t at = 1; at < among.size(); ++at) ought(among[at - 1].where < among[at].where);
+    for (std::size_t at = 1; at < among.size(); ++at) OUGHT(among[at - 1].where < among[at].where);
 }
 
 TRIAL("fs: one pass instead of a thousand queries") {
@@ -433,16 +433,16 @@ TRIAL("fs: one pass instead of a thousand queries") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{200});
+    SAME(among.size(), std::size_t{200});
 
     std::uintmax_t whole = 0;
     for (const fs::Entry& one : among) whole += one.size;
 
-    same(whole, std::uintmax_t{200 * 199 / 2});
+    SAME(whole, std::uintmax_t{200 * 199 / 2});
 
     // Two hundred sizes came together with the list, so there are no two hundred trips through the
     // pool here.
-    ought(held.spent() < 2000ms);
+    OUGHT(held.spent() < 2000ms);
 }
 
 TRIAL("fs: a cancelled walk stops midway") {
@@ -488,11 +488,11 @@ TRIAL("File: opens for reading and reads a range") {
 
     const fs::File held = fs::open(one).get();
 
-    ought(held.held());
-    same(held.size().get(), std::uintmax_t{10});
+    OUGHT(held.held());
+    SAME(held.size().get(), std::uintmax_t{10});
 
-    same(said_of(held.read(3, 4).get()), std::string{"3456"});
-    same(said_of(held.read(0, 10).get()), std::string{"0123456789"});
+    SAME(said_of(held.read(3, 4).get()), std::string{"3456"});
+    SAME(said_of(held.read(0, 10).get()), std::string{"0123456789"});
 }
 
 TRIAL("File: a read past the end returns as much as there is") {
@@ -502,8 +502,8 @@ TRIAL("File: a read past the end returns as much as there is") {
 
     const fs::File held = fs::open(one).get();
 
-    same(said_of(held.read(1, 100).get()), std::string{"bc"});
-    ought(held.read(50, 10).get().empty());
+    SAME(said_of(held.read(1, 100).get()), std::string{"bc"});
+    OUGHT(held.read(50, 10).get().empty());
 }
 
 TRIAL("File: writes at the given place, not from the start") {
@@ -513,9 +513,9 @@ TRIAL("File: writes at the given place, not from the start") {
 
     const fs::File held = fs::open(one, fs::Mode::write).get();
 
-    same(held.write(4, bytes("XY")).get(), std::size_t{2});
+    SAME(held.write(4, bytes("XY")).get(), std::size_t{2});
 
-    same(said_of(held.read(0, 10).get()), std::string{"aaaaXYaaaa"});
+    SAME(said_of(held.read(0, 10).get()), std::string{"aaaaXYaaaa"});
 }
 
 TRIAL("File: write creates the file and keeps its content, fresh truncates it") {
@@ -528,27 +528,27 @@ TRIAL("File: write creates the file and keeps its content, fresh truncates it") 
         (void)held.write(0, bytes("pierwsze")).get();
     }
 
-    same(fs::size(one).get(), std::uintmax_t{8});
+    SAME(fs::size(one).get(), std::uintmax_t{8});
 
     {
         const fs::File held = fs::open(one, fs::Mode::write).get();
         (void)held.write(0, bytes("XX")).get();
     }
 
-    same(fs::size(one).get(), std::uintmax_t{8});
+    SAME(fs::size(one).get(), std::uintmax_t{8});
 
     {
         const fs::File held = fs::open(one, fs::Mode::truncate).get();
         (void)held.write(0, bytes("XX")).get();
     }
 
-    same(fs::size(one).get(), std::uintmax_t{2});
+    SAME(fs::size(one).get(), std::uintmax_t{2});
 }
 
 TRIAL("File: opening a missing file for reading rejects") {
     const Nook nook;
 
-    threw((void)fs::open(nook.where() / "nie ma.bin").get());
+    THREW((void)fs::open(nook.where() / "nie ma.bin").get());
 }
 
 // Copies share one open file, so closing closes it for all of them: a copy stays in every promise
@@ -562,14 +562,14 @@ TRIAL("File: copies share the same open file, and closing closes it for all") {
     fs::File first = fs::open(one).get();
     const fs::File second = first;
 
-    same(said_of(second.read(0, 6).get()), std::string{"abcdef"});
-    same(said_of(first.read(0, 3).get()), std::string{"abc"});
+    SAME(said_of(second.read(0, 6).get()), std::string{"abcdef"});
+    SAME(said_of(first.read(0, 3).get()), std::string{"abc"});
 
     const fs::Cursor flow = second.cursor();
 
     first.close();
 
-    ought(!first.held());
+    OUGHT(!first.held());
 
     // The refusal says what happened, instead of a read error from a handle that no longer exists.
     const auto refused = [](auto doing) {
@@ -584,11 +584,11 @@ TRIAL("File: copies share the same open file, and closing closes it for all") {
 
     fs::Cursor moving = flow;
 
-    ought(refused([&] { (void)second.read(0, 6).get(); }));
-    ought(refused([&] { (void)second.write(0, bytes("x")).get(); }));
-    ought(refused([&] { (void)second.size().get(); }));
-    ought(refused([&] { second.sync().get(); }));
-    ought(refused([&] { (void)moving.read(3).get(); }));
+    OUGHT(refused([&] { (void)second.read(0, 6).get(); }));
+    OUGHT(refused([&] { (void)second.write(0, bytes("x")).get(); }));
+    OUGHT(refused([&] { (void)second.size().get(); }));
+    OUGHT(refused([&] { second.sync().get(); }));
+    OUGHT(refused([&] { (void)moving.read(3).get(); }));
 
 #ifndef _WIN32
     // The descriptor really went back to the system: no descriptor open in the process points to
@@ -596,7 +596,7 @@ TRIAL("File: copies share the same open file, and closing closes it for all") {
     std::error_code ignored;
 
     for (const stood::directory_entry& fd : stood::directory_iterator{"/proc/self/fd", ignored})
-        ought(stood::read_symlink(fd.path(), ignored) != stood::canonical(one, ignored));
+        OUGHT(stood::read_symlink(fd.path(), ignored) != stood::canonical(one, ignored));
 #endif
 }
 
@@ -608,8 +608,8 @@ TRIAL("File: a closed file rejects instead of crashing") {
     fs::File held = fs::open(one).get();
     held.close();
 
-    threw((void)held.read(0, 3).get());
-    threw((void)held.size().get());
+    THREW((void)held.read(0, 3).get());
+    THREW((void)held.size().get());
 }
 
 TRIAL("File: reading in chunks assembles the whole file") {
@@ -630,7 +630,7 @@ TRIAL("File: reading in chunks assembles the whole file") {
     for (std::uintmax_t at = 0; at < total; at += rata)
         made += said_of(held.read(at, rata).get());
 
-    same(made, whole);
+    SAME(made, whole);
 }
 
 namespace {
@@ -653,7 +653,7 @@ TRIAL("fs: read takes in the whole file") {
     const std::string whole = ladder(70000);
     const fs::path one = nook.made("duży.bin", whole);
 
-    same(said_of(fs::read(one).get()), whole);
+    SAME(said_of(fs::read(one).get()), whole);
 }
 
 TRIAL("fs: read of an empty file gives nothing") {
@@ -661,13 +661,13 @@ TRIAL("fs: read of an empty file gives nothing") {
 
     const fs::path one = nook.made("puste.bin", "");
 
-    ought(fs::read(one).get().empty());
+    OUGHT(fs::read(one).get().empty());
 }
 
 TRIAL("fs: read of a missing file rejects") {
     const Nook nook;
 
-    threw((void)fs::read(nook.where() / "nie ma.bin").get());
+    THREW((void)fs::read(nook.where() / "nie ma.bin").get());
 }
 
 TRIAL("fs: write and read round-trip") {
@@ -678,8 +678,8 @@ TRIAL("fs: write and read round-trip") {
 
     fs::write(one, bytes(whole)).get();
 
-    same(fs::size(one).get(), static_cast<std::uintmax_t>(whole.size()));
-    same(said_of(fs::read(one).get()), whole);
+    SAME(fs::size(one).get(), static_cast<std::uintmax_t>(whole.size()));
+    SAME(said_of(fs::read(one).get()), whole);
 }
 
 TRIAL("fs: write truncates what was there before") {
@@ -689,7 +689,7 @@ TRIAL("fs: write truncates what was there before") {
 
     fs::write(one, bytes("krótko")).get();
 
-    same(said_of(fs::read(one).get()), std::string{"krótko"});
+    SAME(said_of(fs::read(one).get()), std::string{"krótko"});
 }
 
 TRIAL("fs: read progress grows and ends at one") {
@@ -701,11 +701,11 @@ TRIAL("fs: read progress grows and ends at one") {
 
     const double first = going.progress().fraction();
 
-    ought(first >= 0.0 && first <= 1.0);
+    OUGHT(first >= 0.0 && first <= 1.0);
 
     for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    same(going.progress().fraction(), 1.0);
+    SAME(going.progress().fraction(), 1.0);
 
     (void)std::move(going).get();
 }
@@ -743,21 +743,21 @@ TRIAL("fs: folder copy and move progress never goes back and ends at one") {
 
         for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-        same(going.progress().fraction(), 1.0);
+        SAME(going.progress().fraction(), 1.0);
 
         std::move(going).get();
 
-        ought(steady);
+        OUGHT(steady);
     };
 
     watched(fs::copy(nook.where() / "src", nook.where() / "copy"));
 
-    same(stood::file_size(nook.where() / "copy" / "large.bin"), std::uintmax_t{6000000});
+    SAME(stood::file_size(nook.where() / "copy" / "large.bin"), std::uintmax_t{6000000});
 
     watched(fs::move(nook.where() / "copy", nook.where() / "moved"));
 
-    ought(!stood::exists(nook.where() / "copy"));
-    same(stood::file_size(nook.where() / "moved" / "inner" / "b.txt"), std::uintmax_t{2});
+    OUGHT(!stood::exists(nook.where() / "copy"));
+    SAME(stood::file_size(nook.where() / "moved" / "inner" / "b.txt"), std::uintmax_t{2});
 }
 
 TRIAL("fs: copy reproduces a file to the byte") {
@@ -769,9 +769,9 @@ TRIAL("fs: copy reproduces a file to the byte") {
 
     fs::copy(from, to).get();
 
-    same(fs::size(to).get(), static_cast<std::uintmax_t>(whole.size()));
-    same(said_of(fs::read(to).get()), whole);
-    ought(fs::exists(from).get());
+    SAME(fs::size(to).get(), static_cast<std::uintmax_t>(whole.size()));
+    SAME(said_of(fs::read(to).get()), whole);
+    OUGHT(fs::exists(from).get());
 }
 
 // A copy that would end in success without a part of the tree is not a copy. A pipe in the tree
@@ -792,8 +792,8 @@ TRIAL("fs: a copy of a tree with a pipe or an unreadable folder refuses before w
     }
 
     if (::mkfifo((from / "w głąb" / "potok").c_str(), 0600) == 0) {
-        threw(fs::copy(from, to).get());
-        ought(!stood::exists(to));
+        THREW(fs::copy(from, to).get());
+        OUGHT(!stood::exists(to));
 
         std::error_code ignored;
 
@@ -803,15 +803,15 @@ TRIAL("fs: a copy of a tree with a pipe or an unreadable folder refuses before w
     fs::make_folder(from / "zamknięty").get();
 
     if (::geteuid() != 0 && ::chmod((from / "zamknięty").c_str(), 0) == 0) {
-        threw(fs::copy(from, to).get());
-        ought(!stood::exists(to));
+        THREW(fs::copy(from, to).get());
+        OUGHT(!stood::exists(to));
 
         (void)::chmod((from / "zamknięty").c_str(), 0700);
     }
 
     fs::copy(from, to).get();
 
-    same(said_of(fs::read(to / "w głąb" / "plik.txt").get()), std::string{"treść"});
+    SAME(said_of(fs::read(to / "w głąb" / "plik.txt").get()), std::string{"treść"});
 #endif
 }
 
@@ -858,9 +858,9 @@ TRIAL("fs: a copy of a file that keeps changing refuses and leaves no target") {
     enough.store(true);
     writer.join();
 
-    same(said, std::string{"The file changed while it was being copied."});
-    ought(!stood::exists(to));
-    ought(stood::file_size(from) > (std::uintmax_t{16} << 20));
+    SAME(said, std::string{"The file changed while it was being copied."});
+    OUGHT(!stood::exists(to));
+    OUGHT(stood::file_size(from) > (std::uintmax_t{16} << 20));
 }
 
 TRIAL("fs: copy carries the whole tree") {
@@ -886,12 +886,12 @@ TRIAL("fs: copy carries the whole tree") {
 
     fs::copy(from, to).get();
 
-    same(said_of(fs::read(to / "pierwszy.txt").get()), std::string{"jeden"});
-    same(said_of(fs::read(to / "w głąb" / "drugi.txt").get()), std::string{"dwa"});
-    same(said_of(fs::read(to / "w głąb" / "głębiej" / "trzeci.txt").get()),
+    SAME(said_of(fs::read(to / "pierwszy.txt").get()), std::string{"jeden"});
+    SAME(said_of(fs::read(to / "w głąb" / "drugi.txt").get()), std::string{"dwa"});
+    SAME(said_of(fs::read(to / "w głąb" / "głębiej" / "trzeci.txt").get()),
          std::string{"trzy"});
 
-    same(fs::walk(to).get().size(), fs::walk(from).get().size());
+    SAME(fs::walk(to).get().size(), fs::walk(from).get().size());
 }
 
 // Waits until the copy has really started; otherwise the cancellation would hit the task before the
@@ -922,13 +922,13 @@ TRIAL("fs: a cancelled copy leaves the target complete or absent") {
 
     Promise<void> going = fs::copy(from, to);
 
-    ought(grew(to, 0));
+    OUGHT(grew(to, 0));
 
     going.cancel();
 
     later(300ms).get();
 
-    if (fs::exists(to).get()) same(fs::size(to).get(), fs::size(from).get());
+    if (fs::exists(to).get()) SAME(fs::size(to).get(), fs::size(from).get());
 }
 
 // A folder copy that does not finish takes back everything it created, its subfolders too, so the
@@ -947,13 +947,13 @@ TRIAL("fs: a cancelled folder copy takes back the folders it created") {
 
     Promise<void> going = fs::copy(from, to);
 
-    ought(grew(to / "sezon 1" / "odcinek.mkv", 0));
+    OUGHT(grew(to / "sezon 1" / "odcinek.mkv", 0));
 
     going.cancel();
 
     later(300ms).get();
 
-    if (fs::exists(to).get()) same(fs::size(to / "sezon 1" / "odcinek.mkv").get(), std::uintmax_t{whole});
+    if (fs::exists(to).get()) SAME(fs::size(to / "sezon 1" / "odcinek.mkv").get(), std::uintmax_t{whole});
 }
 
 TRIAL("fs: a copy abandoned before starting creates no target") {
@@ -968,7 +968,7 @@ TRIAL("fs: a copy abandoned before starting creates no target") {
 
     later(300ms).get();
 
-    if (fs::exists(to).get()) same(fs::size(to).get(), fs::size(from).get());
+    if (fs::exists(to).get()) SAME(fs::size(to).get(), fs::size(from).get());
 }
 
 // Replacing writes alongside (`.cel.bin.XXXXXX.part`) and only renames the whole onto the target,
@@ -997,10 +997,10 @@ TRIAL("fs: a cancelled copy leaves an existing target alone") {
 
     const std::string now = said_of(fs::read(to).get());
 
-    ought(now == "swoje" || now.size() == 8000000);
+    OUGHT(now == "swoje" || now.size() == 8000000);
 
     for (const fs::Entry& one : fs::list(nook.where()).get())
-        ought(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
+        OUGHT(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
 }
 
 // A file onto a directory with replacing: writing alongside succeeds, but renaming onto the
@@ -1013,12 +1013,12 @@ TRIAL("fs: copying a file onto a directory refuses and leaves no file alongside"
 
     fs::make_folder(to).get();
 
-    threw(fs::copy(from, to, fs::Conflict::overwrite).get());
+    THREW(fs::copy(from, to, fs::Conflict::overwrite).get());
 
-    ought(fs::kind(to).get() == fs::Kind::folder);
+    OUGHT(fs::kind(to).get() == fs::Kind::folder);
 
     for (const fs::Entry& one : fs::list(nook.where()).get())
-        ought(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
+        OUGHT(fs::to_string(one.where.filename()).find(".part") == std::string::npos);
 }
 
 // A second hard link to the replaced file keeps the old content: replacing gives the target a new
@@ -1038,8 +1038,8 @@ TRIAL("fs: replacing does not rewrite a second link") {
 
     fs::copy(from, to, fs::Conflict::overwrite).get();
 
-    same(said_of(fs::read(to).get()), std::string{"nowa treść"});
-    same(said_of(fs::read(twin).get()), std::string{"stara"});
+    SAME(said_of(fs::read(to).get()), std::string{"nowa treść"});
+    SAME(said_of(fs::read(twin).get()), std::string{"stara"});
 }
 
 // A directory moved into its own interior: the system refuses the rename, and `move` must not take
@@ -1062,12 +1062,12 @@ TRIAL("fs: moving a directory into its own interior refuses and touches nothing"
         said = why.what();
     }
 
-    ought(said.find("into itself") != std::string::npos);
-    same(said_of(fs::read(film).get()), std::string{"film"});
-    ought(!fs::exists(from / "wnętrze" / "nowe").get());
+    OUGHT(said.find("into itself") != std::string::npos);
+    SAME(said_of(fs::read(film).get()), std::string{"film"});
+    OUGHT(!fs::exists(from / "wnętrze" / "nowe").get());
 
-    threw(fs::rename(from, from / "nowe").get());
-    ought(fs::exists(film).get());
+    THREW(fs::rename(from, from / "nowe").get());
+    OUGHT(fs::exists(film).get());
 }
 
 // A directory overwritten with a directory merges with it entry by entry: the files of both stay, a
@@ -1088,10 +1088,10 @@ TRIAL("fs: moving a directory onto a directory with overwrite merges both") {
 
     fs::move(from, to, fs::Conflict::overwrite).get();
 
-    ought(!fs::exists(from).get());
-    same(said_of(fs::read(to / "wspólny.txt").get()), std::string{"nowa"});
-    same(said_of(fs::read(to / "tylko stary.txt").get()), std::string{"s"});
-    same(said_of(fs::read(to / "w głąb" / "tylko nowy.txt").get()), std::string{"n"});
+    OUGHT(!fs::exists(from).get());
+    SAME(said_of(fs::read(to / "wspólny.txt").get()), std::string{"nowa"});
+    SAME(said_of(fs::read(to / "tylko stary.txt").get()), std::string{"s"});
+    SAME(said_of(fs::read(to / "w głąb" / "tylko nowy.txt").get()), std::string{"n"});
 
     // Merging within a volume is renames: it does not ask about free space, so a file larger than
     // all the free space (sparse, taking almost nothing on disk) passes.
@@ -1112,8 +1112,8 @@ TRIAL("fs: moving a directory onto a directory with overwrite merges both") {
 
     fs::move(big, nook.where() / "pełny", fs::Conflict::overwrite).get();
 
-    ought(fs::exists(nook.where() / "pełny" / "film.mkv").get());
-    ought(!fs::exists(big).get());
+    OUGHT(fs::exists(nook.where() / "pełny" / "film.mkv").get());
+    OUGHT(!fs::exists(big).get());
 }
 
 // Exclusive creation: the same file a second time refuses and says why, and the first one stays.
@@ -1125,7 +1125,7 @@ TRIAL("fs: Mode::exclusive creates only a new file") {
     {
         const fs::File file = fs::open(one, fs::Mode::exclusive).get();
 
-        same(file.write(0, bytes("pierwszy")).get(), std::size_t{8});
+        SAME(file.write(0, bytes("pierwszy")).get(), std::size_t{8});
 
         file.sync().get();
     }
@@ -1138,8 +1138,8 @@ TRIAL("fs: Mode::exclusive creates only a new file") {
         said = why.what();
     }
 
-    ought(said.find("already exists") != std::string::npos);
-    same(said_of(fs::read(one).get()), std::string{"pierwszy"});
+    OUGHT(said.find("already exists") != std::string::npos);
+    SAME(said_of(fs::read(one).get()), std::string{"pierwszy"});
 }
 
 // A volume tells which file system it has: the check before a copy asks about the FAT32 limit. The
@@ -1151,7 +1151,7 @@ TRIAL("fs: the list of volumes knows the file system") {
     for (const fs::Volume& one : volumes())
         if (!one.format.empty()) told = true;
 
-    ought(told);
+    OUGHT(told);
 }
 #endif
 
@@ -1160,15 +1160,15 @@ TRIAL("fs: the list of volumes knows the file system") {
 TRIAL("fs: the list of volumes is not empty") {
     const std::vector<fs::Volume> found = volumes();
 
-    ought(!found.empty());
+    OUGHT(!found.empty());
 
-    for (const fs::Volume& one : found) ought(!one.where.empty());
+    for (const fs::Volume& one : found) OUGHT(!one.where.empty());
 }
 
 TRIAL("fs: copy of a missing file rejects") {
     const Nook nook;
 
-    threw(fs::copy(nook.where() / "nie ma.bin", nook.where() / "cel.bin").get());
+    THREW(fs::copy(nook.where() / "nie ma.bin", nook.where() / "cel.bin").get());
 }
 
 TRIAL("fs: move within a volume takes the source away") {
@@ -1180,8 +1180,8 @@ TRIAL("fs: move within a volume takes the source away") {
 
     fs::move(from, to).get();
 
-    ought(!fs::exists(from).get());
-    same(said_of(fs::read(to).get()), whole);
+    OUGHT(!fs::exists(from).get());
+    SAME(said_of(fs::read(to).get()), whole);
 }
 
 TRIAL("fs: move carries a directory too") {
@@ -1199,14 +1199,14 @@ TRIAL("fs: move carries a directory too") {
 
     fs::move(from, to).get();
 
-    ought(!fs::exists(from).get());
-    same(said_of(fs::read(to / "w głąb" / "plik.txt").get()), std::string{"treść"});
+    OUGHT(!fs::exists(from).get());
+    SAME(said_of(fs::read(to / "w głąb" / "plik.txt").get()), std::string{"treść"});
 }
 
 TRIAL("fs: move of a missing file rejects") {
     const Nook nook;
 
-    threw(fs::move(nook.where() / "nie ma.bin", nook.where() / "cel.bin").get());
+    THREW(fs::move(nook.where() / "nie ma.bin", nook.where() / "cel.bin").get());
 }
 
 TRIAL("fs: erase removes a single file") {
@@ -1216,7 +1216,7 @@ TRIAL("fs: erase removes a single file") {
 
     fs::erase(one).get();
 
-    ought(!fs::exists(one).get());
+    OUGHT(!fs::exists(one).get());
 }
 
 TRIAL("fs: erase removes a whole tree") {
@@ -1232,7 +1232,7 @@ TRIAL("fs: erase removes a whole tree") {
 
     fs::erase(where).get();
 
-    ought(!fs::exists(where).get());
+    OUGHT(!fs::exists(where).get());
 }
 
 TRIAL("fs: erasing nothing is not an error") {
@@ -1257,11 +1257,11 @@ TRIAL("fs: erase progress ends at one") {
 
     const double first = going.progress().fraction();
 
-    ought(first >= 0.0 && first <= 1.0);
+    OUGHT(first >= 0.0 && first <= 1.0);
 
     for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    same(going.progress().fraction(), 1.0);
+    SAME(going.progress().fraction(), 1.0);
 
     std::move(going).get();
 }
@@ -1291,7 +1291,7 @@ TRIAL("fs: unmade removes an empty folder, and a missing one counts as removed")
 
     fs::unmade(where).get();
 
-    ought(!stood::exists(where));
+    OUGHT(!stood::exists(where));
 
     fs::unmade(where).get();
     fs::unmade(nook.where() / "nie ma" / "wcale").get();
@@ -1313,13 +1313,13 @@ TRIAL("fs: unmade refuses a folder with anything inside and leaves it whole") {
         said = why.what();
     }
 
-    ought(said.find("not empty") != std::string::npos);
-    ought(stood::is_directory(where / "w środku"));
+    OUGHT(said.find("not empty") != std::string::npos);
+    OUGHT(stood::is_directory(where / "w środku"));
 
     const fs::path file = nook.made("pełny/w środku/plik.txt", "treść");
 
-    threw(fs::unmade(where / "w środku").get());
-    same(said_of(fs::read(file).get()), std::string{"treść"});
+    THREW(fs::unmade(where / "w środku").get());
+    SAME(said_of(fs::read(file).get()), std::string{"treść"});
 }
 
 // A file is not a folder, and neither is a link, even one to a folder: removing the link would
@@ -1329,8 +1329,8 @@ TRIAL("fs: unmade refuses a file and a link, also a link to a folder") {
 
     const fs::path file = nook.made("plik.txt", "x");
 
-    threw(fs::unmade(file).get());
-    ought(stood::exists(file));
+    THREW(fs::unmade(file).get());
+    OUGHT(stood::exists(file));
 
     const fs::path folder = nook.where() / "cel";
     fs::make_folder(folder).get();
@@ -1339,12 +1339,12 @@ TRIAL("fs: unmade refuses a file and a link, also a link to a folder") {
 
     if (!linked(link, folder, true)) return;
 
-    threw(fs::unmade(link).get());
+    THREW(fs::unmade(link).get());
 
     std::error_code ignored;
 
-    ought(stood::is_symlink(stood::symlink_status(link, ignored)));
-    ought(stood::is_directory(folder));
+    OUGHT(stood::is_symlink(stood::symlink_status(link, ignored)));
+    OUGHT(stood::is_directory(folder));
 }
 
 // A link to a directory is a directory to enter, as in MC: `list` and `walk` follow it when it
@@ -1365,43 +1365,43 @@ TRIAL("fs: list and walk enter through a link to a directory") {
 
     const std::vector<fs::Entry> listed = fs::list(nook.where() / "skrót").get();
 
-    same(listed.size(), std::size_t{2});
-    same(listed[1].where, nook.where() / "skrót" / "plik.txt");
+    SAME(listed.size(), std::size_t{2});
+    SAME(listed[1].where, nook.where() / "skrót" / "plik.txt");
 
     // `reach` says where an entry leads: an ordinary entry to where it stands, a link to its
     // target.
     const std::vector<fs::Entry> top = fs::list(nook.where()).get();
 
-    same(top.size(), std::size_t{2});
-    same(top[0].kind, fs::Kind::folder);
-    same(top[0].reach, fs::Kind::folder);
-    same(top[1].kind, fs::Kind::link);
-    same(top[1].reach, fs::Kind::folder);
+    SAME(top.size(), std::size_t{2});
+    SAME(top[0].kind, fs::Kind::folder);
+    SAME(top[0].reach, fs::Kind::folder);
+    SAME(top[1].kind, fs::Kind::link);
+    SAME(top[1].reach, fs::Kind::folder);
 
-    ought(linked(nook.where() / "katalog" / "głąb" / "w górę", nook.where() / "katalog", true));
+    OUGHT(linked(nook.where() / "katalog" / "głąb" / "w górę", nook.where() / "katalog", true));
 
     const std::vector<fs::Entry> walked = fs::walk(nook.where() / "skrót").get();
 
-    same(walked.size(), std::size_t{3});
+    SAME(walked.size(), std::size_t{3});
 
     std::size_t links = 0;
 
     for (const fs::Entry& one : walked)
         if (one.kind == fs::Kind::link) ++links;
 
-    same(links, std::size_t{1});
+    SAME(links, std::size_t{1});
 
-    ought(linked(nook.where() / "do pliku", nook.where() / "katalog" / "plik.txt"));
-    ought(linked(nook.where() / "wiszące", nook.where() / "nie ma"));
+    OUGHT(linked(nook.where() / "do pliku", nook.where() / "katalog" / "plik.txt"));
+    OUGHT(linked(nook.where() / "wiszące", nook.where() / "nie ma"));
 
     const std::vector<fs::Entry> all = fs::list(nook.where()).get();
 
-    same(all[0].reach, fs::Kind::file);
-    same(all[3].kind, fs::Kind::link);
-    same(all[3].reach, fs::Kind::none);
+    SAME(all[0].reach, fs::Kind::file);
+    SAME(all[3].kind, fs::Kind::link);
+    SAME(all[3].reach, fs::Kind::none);
 
-    threw((void)fs::list(nook.where() / "do pliku").get());
-    threw((void)fs::walk(nook.where() / "wiszące").get());
+    THREW((void)fs::list(nook.where() / "do pliku").get());
+    THREW((void)fs::walk(nook.where() / "wiszące").get());
 }
 
 TRIAL("fs: copy refuses when the target exists") {
@@ -1410,9 +1410,9 @@ TRIAL("fs: copy refuses when the target exists") {
     const fs::path from = nook.made("źródło.bin", "nowe");
     const fs::path to = nook.made("cel.bin", "stare");
 
-    threw(fs::copy(from, to).get());
+    THREW(fs::copy(from, to).get());
 
-    same(said_of(fs::read(to).get()), std::string{"stare"});
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
 }
 
 TRIAL("fs: copy with overwrite overwrites") {
@@ -1423,7 +1423,7 @@ TRIAL("fs: copy with overwrite overwrites") {
 
     fs::copy(from, to, fs::Conflict::overwrite).get();
 
-    same(said_of(fs::read(to).get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to).get()), std::string{"nowe"});
 }
 
 TRIAL("fs: copy with skip leaves the target alone") {
@@ -1434,7 +1434,7 @@ TRIAL("fs: copy with skip leaves the target alone") {
 
     fs::copy(from, to, fs::Conflict::skip).get();
 
-    same(said_of(fs::read(to).get()), std::string{"stare"});
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
 }
 
 TRIAL("fs: copy with beside creates a name alongside") {
@@ -1445,12 +1445,12 @@ TRIAL("fs: copy with beside creates a name alongside") {
 
     fs::copy(from, to, fs::Conflict::rename).get();
 
-    same(said_of(fs::read(to).get()), std::string{"stare"});
-    same(said_of(fs::read(nook.where() / "cel (2).bin").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
+    SAME(said_of(fs::read(nook.where() / "cel (2).bin").get()), std::string{"nowe"});
 
     fs::copy(from, to, fs::Conflict::rename).get();
 
-    same(said_of(fs::read(nook.where() / "cel (3).bin").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(nook.where() / "cel (3).bin").get()), std::string{"nowe"});
 }
 
 // A name near the longest a folder takes: the file beside it for an overwrite gives up the end of
@@ -1468,13 +1468,13 @@ TRIAL("fs: an overwrite of a name near the longest still succeeds") {
 
     fs::copy(from, to, fs::Conflict::overwrite).get();
 
-    same(said_of(fs::read(to).get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to).get()), std::string{"nowe"});
 
     std::size_t many = 0;
 
     for ([[maybe_unused]] const std::filesystem::directory_entry& one : std::filesystem::directory_iterator{nook.where()}) ++many;
 
-    same(many, std::size_t{2});
+    SAME(many, std::size_t{2});
 }
 
 TRIAL("fs: the policy applies to every entry of the tree separately") {
@@ -1502,8 +1502,8 @@ TRIAL("fs: the policy applies to every entry of the tree separately") {
 
     fs::copy(from, to, fs::Conflict::skip).get();
 
-    same(said_of(fs::read(to / "jeden.txt").get()), std::string{"stare"});
-    same(said_of(fs::read(to / "dwa.txt").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to / "jeden.txt").get()), std::string{"stare"});
+    SAME(said_of(fs::read(to / "dwa.txt").get()), std::string{"nowe"});
 }
 
 // A copy onto a folder that stands merges with it: a subfolder that stood too asks about every
@@ -1531,13 +1531,13 @@ TRIAL("fs: a merging copy asks in the folders that stood and not in the ones it 
 
     fs::copy(from, to, fs::Conflict::rename).get();
 
-    same(said_of(fs::read(to / "stary" / "a.txt").get()), std::string{"stare"});
-    same(said_of(fs::read(to / "stary" / "a (2).txt").get()), std::string{"nowe"});
-    same(said_of(fs::read(to / "stary" / "głębiej" / "b.txt").get()), std::string{"stare"});
-    same(said_of(fs::read(to / "stary" / "głębiej" / "b (2).txt").get()), std::string{"nowe"});
-    same(said_of(fs::read(to / "nowy" / "c.txt").get()), std::string{"nowe"});
-    same(said_of(fs::read(to / "nowy" / "głębiej" / "d.txt").get()), std::string{"nowe"});
-    ought(!fs::exists(to / "nowy" / "c (2).txt").get());
+    SAME(said_of(fs::read(to / "stary" / "a.txt").get()), std::string{"stare"});
+    SAME(said_of(fs::read(to / "stary" / "a (2).txt").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to / "stary" / "głębiej" / "b.txt").get()), std::string{"stare"});
+    SAME(said_of(fs::read(to / "stary" / "głębiej" / "b (2).txt").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to / "nowy" / "c.txt").get()), std::string{"nowe"});
+    SAME(said_of(fs::read(to / "nowy" / "głębiej" / "d.txt").get()), std::string{"nowe"});
+    OUGHT(!fs::exists(to / "nowy" / "c (2).txt").get());
 
     // Into a fresh folder: the whole tree arrives as it was.
     const fs::path anew = nook.where() / "świeży";
@@ -1546,7 +1546,7 @@ TRIAL("fs: a merging copy asks in the folders that stood and not in the ones it 
 
     for (const fs::path& one : {anew / "stary" / "a.txt", anew / "stary" / "głębiej" / "b.txt", anew / "nowy" / "c.txt",
                                 anew / "nowy" / "głębiej" / "d.txt"})
-        same(said_of(fs::read(one).get()), std::string{"nowe"});
+        SAME(said_of(fs::read(one).get()), std::string{"nowe"});
 }
 
 TRIAL("fs: move refuses when the target exists") {
@@ -1555,10 +1555,10 @@ TRIAL("fs: move refuses when the target exists") {
     const fs::path from = nook.made("źródło.bin", "nowe");
     const fs::path to = nook.made("cel.bin", "stare");
 
-    threw(fs::move(from, to).get());
+    THREW(fs::move(from, to).get());
 
-    ought(fs::exists(from).get());
-    same(said_of(fs::read(to).get()), std::string{"stare"});
+    OUGHT(fs::exists(from).get());
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
 }
 
 TRIAL("fs: rename refuses when the target exists") {
@@ -1567,9 +1567,9 @@ TRIAL("fs: rename refuses when the target exists") {
     const fs::path from = nook.made("źródło.bin", "nowe");
     const fs::path to = nook.made("cel.bin", "stare");
 
-    threw(fs::rename(from, to).get());
+    THREW(fs::rename(from, to).get());
 
-    same(said_of(fs::read(to).get()), std::string{"stare"});
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
 }
 
 // A collision on rename is settled the same way as on copy: `skip` leaves both files, `rename` puts
@@ -1588,26 +1588,26 @@ TRIAL("fs: rename and move settle a collision by the policy") {
 
         shifted(from, to, fs::Conflict::skip).get();
 
-        ought(fs::exists(from).get());
-        same(said_of(fs::read(to).get()), std::string{"stare"});
+        OUGHT(fs::exists(from).get());
+        SAME(said_of(fs::read(to).get()), std::string{"stare"});
 
         shifted(from, to, fs::Conflict::rename).get();
 
-        ought(!fs::exists(from).get());
-        same(said_of(fs::read(nook.where() / "Gorączka (2).bin").get()), std::string{"nowe"});
+        OUGHT(!fs::exists(from).get());
+        SAME(said_of(fs::read(nook.where() / "Gorączka (2).bin").get()), std::string{"nowe"});
 
         const fs::path again = nook.made("źródło.bin", "trzecie");
 
         shifted(again, to, fs::Conflict::rename).get();
 
-        same(said_of(fs::read(nook.where() / "Gorączka (3).bin").get()), std::string{"trzecie"});
+        SAME(said_of(fs::read(nook.where() / "Gorączka (3).bin").get()), std::string{"trzecie"});
 
         const fs::path last = nook.made("źródło.bin", "ostatnie");
 
         shifted(last, to, fs::Conflict::overwrite).get();
 
-        ought(!fs::exists(last).get());
-        same(said_of(fs::read(to).get()), std::string{"ostatnie"});
+        OUGHT(!fs::exists(last).get());
+        SAME(said_of(fs::read(to).get()), std::string{"ostatnie"});
 
         fs::erase(nook.where() / "Gorączka (2).bin").get();
         fs::erase(nook.where() / "Gorączka (3).bin").get();
@@ -1627,11 +1627,11 @@ TRIAL("fs: rename and move do not replace an empty directory") {
     fs::make_folder(to).get();
     const fs::path inside = nook.made("źródło/plik.txt", "treść");
 
-    threw(fs::rename(from, to).get());
-    threw(fs::move(from, to).get());
+    THREW(fs::rename(from, to).get());
+    THREW(fs::move(from, to).get());
 
-    ought(fs::exists(inside).get());
-    same(fs::list(to).get().size(), std::size_t{0});
+    OUGHT(fs::exists(inside).get());
+    SAME(fs::list(to).get().size(), std::size_t{0});
 }
 
 // A name alongside that the system does not accept (too long) ends the search at once and says what
@@ -1651,7 +1651,7 @@ TRIAL("fs: rename with an unacceptable name alongside says it did not move") {
 
     fs::write(to, bytes("stare")).get();
 
-    ought(fs::exists(to).get());
+    OUGHT(fs::exists(to).get());
 
     std::string said;
 
@@ -1661,8 +1661,8 @@ TRIAL("fs: rename with an unacceptable name alongside says it did not move") {
         said = why.what();
     }
 
-    ought(said.find("Cannot rename") != std::string::npos);
-    ought(fs::exists(from).get());
+    OUGHT(said.find("Cannot rename") != std::string::npos);
+    OUGHT(fs::exists(from).get());
 
     fs::rename(to, nook.where() / "stare.bin").get();
 }
@@ -1679,12 +1679,12 @@ TRIAL("fs: on Windows a file beyond 260 characters of path exists and is not a f
 
     fs::write(deep, bytes("stare")).get();
 
-    ought(fs::exists(deep).get());
-    same(static_cast<int>(fs::kind(deep).get()), static_cast<int>(fs::Kind::file));
+    OUGHT(fs::exists(deep).get());
+    SAME(static_cast<int>(fs::kind(deep).get()), static_cast<int>(fs::Kind::file));
 
-    threw(fs::write(deep, bytes("nowe"), fs::Conflict::fail).get());
+    THREW(fs::write(deep, bytes("nowe"), fs::Conflict::fail).get());
 
-    same(said_of(fs::read(deep).get()), std::string{"stare"});
+    SAME(said_of(fs::read(deep).get()), std::string{"stare"});
 
     fs::rename(deep, nook.where() / "krótka.bin").get();
 }
@@ -1719,15 +1719,15 @@ TRIAL("fs: move between volumes settles a collision before copying") {
 
     std::ofstream{to, std::ios::binary} << "stare";
 
-    threw(fs::move(from, to).get());
+    THREW(fs::move(from, to).get());
 
-    ought(fs::exists(from).get());
-    same(said_of(fs::read(to).get()), std::string{"stare"});
+    OUGHT(fs::exists(from).get());
+    SAME(said_of(fs::read(to).get()), std::string{"stare"});
 
     fs::move(from, to, fs::Conflict::rename).get();
 
-    ought(!fs::exists(from).get());
-    same(said_of(fs::read(away / "film (2).bin").get()), std::string{"nowe"});
+    OUGHT(!fs::exists(from).get());
+    SAME(said_of(fs::read(away / "film (2).bin").get()), std::string{"nowe"});
 
     stood::remove_all(away, trouble);
 }
@@ -1781,12 +1781,12 @@ TRIAL("fs: moving a directory between volumes carries the whole") {
 
     fs::move(from, away / "seriale").get();
 
-    ought(!fs::exists(from).get());
-    same(said_of(fs::read(away / "seriale" / "Sezon 01" / "S01E01.mkv").get()), ladder(5000));
-    same(said_of(fs::read(away / "seriale" / "tvshow.nfo").get()), std::string{"<tvshow/>"});
-    ought(fs::modified(away / "seriale" / "Sezon 01" / "S01E01.mkv").get() == when);
-    ought(fs::modified(away / "seriale" / "Sezon 01").get() == season);
-    ought(fs::modified(away / "seriale").get() == show);
+    OUGHT(!fs::exists(from).get());
+    SAME(said_of(fs::read(away / "seriale" / "Sezon 01" / "S01E01.mkv").get()), ladder(5000));
+    SAME(said_of(fs::read(away / "seriale" / "tvshow.nfo").get()), std::string{"<tvshow/>"});
+    OUGHT(fs::modified(away / "seriale" / "Sezon 01" / "S01E01.mkv").get() == when);
+    OUGHT(fs::modified(away / "seriale" / "Sezon 01").get() == season);
+    OUGHT(fs::modified(away / "seriale").get() == show);
 
     // A file onto a file from another volume, with replacing: the target gets the new content, the
     // source is gone.
@@ -1796,8 +1796,8 @@ TRIAL("fs: moving a directory between volumes carries the whole") {
 
     fs::move(single, away / "stary.nfo", fs::Conflict::overwrite).get();
 
-    ought(!fs::exists(single).get());
-    same(said_of(fs::read(away / "stary.nfo").get()), std::string{"nowy"});
+    OUGHT(!fs::exists(single).get());
+    SAME(said_of(fs::read(away / "stary.nfo").get()), std::string{"nowy"});
 
     std::error_code trouble;
 
@@ -1821,10 +1821,10 @@ TRIAL("fs: move between volumes with an entry that cannot be moved touches nothi
 
     if (::mkfifo((from / "potok").c_str(), 0600) != 0) return;
 
-    threw(fs::move(from, away / "cel").get());
+    THREW(fs::move(from, away / "cel").get());
 
-    same(said_of(fs::read(film).get()), std::string{"film"});
-    ought(!fs::exists(away / "cel").get());
+    SAME(said_of(fs::read(film).get()), std::string{"film"});
+    OUGHT(!fs::exists(away / "cel").get());
 
     std::error_code trouble;
 
@@ -1911,8 +1911,8 @@ TRIAL("fs: a copy larger than the free space refuses before writing") {
         said = why.what();
     }
 
-    ought(said.find("free space") != std::string::npos);
-    ought(!fs::exists(away / "ogromny.bin").get());
+    OUGHT(said.find("free space") != std::string::npos);
+    OUGHT(!fs::exists(away / "ogromny.bin").get());
 
     said.clear();
 
@@ -1922,8 +1922,8 @@ TRIAL("fs: a copy larger than the free space refuses before writing") {
         said = why.what();
     }
 
-    ought(said.find("free space") != std::string::npos);
-    ought(fs::exists(from).get());
+    OUGHT(said.find("free space") != std::string::npos);
+    OUGHT(fs::exists(from).get());
 
     // A directory counts as the sum of its files.
     const fs::path folder = nook.where() / "katalog";
@@ -1939,8 +1939,8 @@ TRIAL("fs: a copy larger than the free space refuses before writing") {
         said = why.what();
     }
 
-    ought(said.find("free space") != std::string::npos);
-    ought(!fs::exists(away / "katalog").get());
+    OUGHT(said.find("free space") != std::string::npos);
+    OUGHT(!fs::exists(away / "katalog").get());
 
     stood::remove_all(away, trouble);
 }
@@ -1999,11 +1999,11 @@ TRIAL("fs: a move refused by the system does not copy") {
     ::ioctl(held, FS_IOC_SETFLAGS, &flags);
     ::close(held);
 
-    ought(said.find("Cannot rename") != std::string::npos);
-    ought(again.find("Cannot rename") != std::string::npos);
-    ought(!fs::exists(to).get());
-    same(said_of(fs::read(from).get()), std::string{"film"});
-    same(said_of(fs::read(taken).get()), std::string{"inny"});
+    OUGHT(said.find("Cannot rename") != std::string::npos);
+    OUGHT(again.find("Cannot rename") != std::string::npos);
+    OUGHT(!fs::exists(to).get());
+    SAME(said_of(fs::read(from).get()), std::string{"film"});
+    SAME(said_of(fs::read(taken).get()), std::string{"inny"});
 }
 
 namespace {
@@ -2072,9 +2072,9 @@ TRIAL("fs: move between volumes says what stayed in the source") {
             said = why.what();
         }
 
-        ought(said.find("Cannot remove the source") != std::string::npos);
-        same(said_of(fs::read(away / "z plikiem" / "film.mkv").get()), std::string{"film"});
-        ought(fs::exists(stuck).get());
+        OUGHT(said.find("Cannot remove the source") != std::string::npos);
+        SAME(said_of(fs::read(away / "z plikiem" / "film.mkv").get()), std::string{"film"});
+        OUGHT(fs::exists(stuck).get());
     }
 
     {
@@ -2095,10 +2095,10 @@ TRIAL("fs: move between volumes says what stayed in the source") {
             said = why.what();
         }
 
-        ought(said.find("stayed behind") != std::string::npos);
-        same(said_of(fs::read(away / "z katalogiem" / "film.mkv").get()), std::string{"film"});
-        ought(!fs::exists(from / "film.mkv").get());
-        ought(fs::exists(from / "pusty").get());
+        OUGHT(said.find("stayed behind") != std::string::npos);
+        SAME(said_of(fs::read(away / "z katalogiem" / "film.mkv").get()), std::string{"film"});
+        OUGHT(!fs::exists(from / "film.mkv").get());
+        OUGHT(fs::exists(from / "pusty").get());
     }
 
     std::error_code trouble;
@@ -2119,7 +2119,7 @@ TRIAL("fs: rename onto itself succeeds, onto a hard link it refuses") {
     fs::rename(one, one).get();
     fs::move(one, one).get();
 
-    same(said_of(fs::read(one).get()), std::string{"treść"});
+    SAME(said_of(fs::read(one).get()), std::string{"treść"});
 
     const fs::path two = nook.where() / "dwa.txt";
 
@@ -2129,11 +2129,11 @@ TRIAL("fs: rename onto itself succeeds, onto a hard link it refuses") {
 
     if (trouble) return;
 
-    threw(fs::rename(one, two).get());
-    threw(fs::move(one, two).get());
+    THREW(fs::rename(one, two).get());
+    THREW(fs::move(one, two).get());
 
-    ought(fs::exists(one).get());
-    ought(fs::exists(two).get());
+    OUGHT(fs::exists(one).get());
+    OUGHT(fs::exists(two).get());
 
     // The same name in another directory is also a separate entry.
     const fs::path other = nook.where() / "inny" / "jeden.txt";
@@ -2143,10 +2143,10 @@ TRIAL("fs: rename onto itself succeeds, onto a hard link it refuses") {
 
     if (trouble) return;
 
-    threw(fs::rename(one, other).get());
+    THREW(fs::rename(one, other).get());
 
-    ought(fs::exists(one).get());
-    ought(fs::exists(other).get());
+    OUGHT(fs::exists(one).get());
+    OUGHT(fs::exists(other).get());
 }
 
 #ifdef _WIN32
@@ -2170,7 +2170,7 @@ TRIAL("fs: on Windows a change of letter case alone is a rename") {
 
     std::sort(named.begin(), named.end());
 
-    same(named, (std::vector<std::string>{"Alien", "Heat.txt"}));
+    SAME(named, (std::vector<std::string>{"Alien", "Heat.txt"}));
 }
 
 #endif
@@ -2180,9 +2180,9 @@ TRIAL("fs: write with refuse leaves an existing file alone") {
 
     const fs::path one = nook.made("dane.bin", "stare");
 
-    threw(fs::write(one, bytes("nowe"), fs::Conflict::fail).get());
+    THREW(fs::write(one, bytes("nowe"), fs::Conflict::fail).get());
 
-    same(said_of(fs::read(one).get()), std::string{"stare"});
+    SAME(said_of(fs::read(one).get()), std::string{"stare"});
 }
 
 TRIAL("fs: a copy keeps the modification time") {
@@ -2195,11 +2195,11 @@ TRIAL("fs: a copy keeps the modification time") {
 
     fs::modified(from, dawno).get();
 
-    same(fs::modified(from).get(), dawno);
+    SAME(fs::modified(from).get(), dawno);
 
     fs::copy(from, to).get();
 
-    same(fs::modified(to).get(), dawno);
+    SAME(fs::modified(to).get(), dawno);
 }
 
 TRIAL("fs: a copy of a tree keeps the entries' modification times") {
@@ -2220,7 +2220,7 @@ TRIAL("fs: a copy of a tree keeps the entries' modification times") {
 
     fs::copy(from, to).get();
 
-    same(fs::modified(to / "plik.txt").get(), dawno);
+    SAME(fs::modified(to / "plik.txt").get(), dawno);
 }
 
 // Copying a file onto itself would delete it: the target would be opened for writing and truncated
@@ -2231,23 +2231,23 @@ TRIAL("fs: copying a file onto itself refuses instead of deleting it") {
 
     const fs::path one = nook.made("plik.txt", "treść");
 
-    threw(fs::copy(one, one, fs::Conflict::overwrite).get());
+    THREW(fs::copy(one, one, fs::Conflict::overwrite).get());
 
-    same(fs::read(one).get().size(), std::string{"treść"}.size());
+    SAME(fs::read(one).get().size(), std::string{"treść"}.size());
 
     // The same path written differently is still the same file.
     const fs::path around = nook.where() / "." / "plik.txt";
 
-    threw(fs::copy(one, around, fs::Conflict::overwrite).get());
+    THREW(fs::copy(one, around, fs::Conflict::overwrite).get());
 
-    same(fs::read(one).get().size(), std::string{"treść"}.size());
+    SAME(fs::read(one).get().size(), std::string{"treść"}.size());
 
     // `beside` makes a copy alongside, and that is the only sensible way to copy a file onto
     // itself.
     fs::copy(one, one, fs::Conflict::rename).get();
 
-    ought(stood::exists(nook.where() / "plik (2).txt"));
-    same(fs::read(one).get().size(), std::string{"treść"}.size());
+    OUGHT(stood::exists(nook.where() / "plik (2).txt"));
+    SAME(fs::read(one).get().size(), std::string{"treść"}.size());
 }
 
 // Without a guard of its own, a directory copied onto itself would fail only at the first file
@@ -2269,8 +2269,8 @@ TRIAL("fs: copying a directory onto itself refuses and talks about the directory
         said = why.what();
     }
 
-    ought(said.find("directory onto itself") != std::string::npos);
-    ought(stood::exists(one / "w środku.txt"));
+    OUGHT(said.find("directory onto itself") != std::string::npos);
+    OUGHT(stood::exists(one / "w środku.txt"));
 }
 
 TRIAL("fs: copy follows a link to a file") {
@@ -2281,14 +2281,14 @@ TRIAL("fs: copy follows a link to a file") {
 
     if (!linked(link, one)) return;
 
-    same(static_cast<int>(fs::kind(link).get()), static_cast<int>(fs::Kind::link));
+    SAME(static_cast<int>(fs::kind(link).get()), static_cast<int>(fs::Kind::link));
 
     const fs::path to = nook.where() / "cel.txt";
 
     fs::copy(link, to).get();
 
-    same(static_cast<int>(fs::kind(to).get()), static_cast<int>(fs::Kind::file));
-    same(said_of(fs::read(to).get()), std::string{"treść"});
+    SAME(static_cast<int>(fs::kind(to).get()), static_cast<int>(fs::Kind::file));
+    SAME(said_of(fs::read(to).get()), std::string{"treść"});
 }
 
 TRIAL("fs: copy follows a link to a directory in a tree") {
@@ -2311,8 +2311,8 @@ TRIAL("fs: copy follows a link to a directory in a tree") {
 
     fs::copy(from, to).get();
 
-    same(static_cast<int>(fs::kind(to / "skrót").get()), static_cast<int>(fs::Kind::folder));
-    same(said_of(fs::read(to / "skrót" / "w środku.txt").get()), std::string{"treść"});
+    SAME(static_cast<int>(fs::kind(to / "skrót").get()), static_cast<int>(fs::Kind::folder));
+    SAME(said_of(fs::read(to / "skrót" / "w środku.txt").get()), std::string{"treść"});
 }
 
 TRIAL("fs: a link to an ancestor does not make copying loop") {
@@ -2332,7 +2332,7 @@ TRIAL("fs: a link to an ancestor does not make copying loop") {
 
     fs::copy(from, to).get();
 
-    same(said_of(fs::read(to / "plik.txt").get()), std::string{"treść"});
+    SAME(said_of(fs::read(to / "plik.txt").get()), std::string{"treść"});
 }
 
 TRIAL("fs: a broken link in a tree refuses the copy before anything is written") {
@@ -2350,8 +2350,8 @@ TRIAL("fs: a broken link in a tree refuses the copy before anything is written")
 
     const fs::path to = nook.where() / "odbitka";
 
-    threw(fs::copy(from, to).get());
-    ought(!stood::exists(to));
+    THREW(fs::copy(from, to).get());
+    OUGHT(!stood::exists(to));
 }
 
 TRIAL("fs: copying a broken link directly rejects") {
@@ -2361,7 +2361,7 @@ TRIAL("fs: copying a broken link directly rejects") {
 
     if (!linked(link, nook.where() / "nie ma tego")) return;
 
-    threw(fs::copy(link, nook.where() / "cel").get());
+    THREW(fs::copy(link, nook.where() / "cel").get());
 }
 
 TRIAL("fs: alike recognizes the same file under two paths") {
@@ -2371,8 +2371,8 @@ TRIAL("fs: alike recognizes the same file under two paths") {
     const fs::path two = nook.where() / "." / "plik.txt";
     const fs::path three = nook.made("inny.txt", "treść");
 
-    ought(fs::equivalent(one, two).get());
-    ought(!fs::equivalent(one, three).get());
+    OUGHT(fs::equivalent(one, two).get());
+    OUGHT(!fs::equivalent(one, three).get());
 }
 
 TRIAL("fs: alike on a missing file rejects") {
@@ -2380,7 +2380,7 @@ TRIAL("fs: alike on a missing file rejects") {
 
     const fs::path one = nook.made("plik.txt", "treść");
 
-    threw((void)fs::equivalent(one, nook.where() / "nie ma").get());
+    THREW((void)fs::equivalent(one, nook.where() / "nie ma").get());
 }
 
 TRIAL("fs: real straightens a path") {
@@ -2389,7 +2389,7 @@ TRIAL("fs: real straightens a path") {
     const fs::path one = nook.made("plik.txt", "treść");
     const fs::path krzywa = nook.where() / "." / "puste" / ".." / "plik.txt";
 
-    same(fs::canonical(krzywa).get(), fs::canonical(one).get());
+    SAME(fs::canonical(krzywa).get(), fs::canonical(one).get());
 }
 
 TRIAL("fs: target returns what a link points to") {
@@ -2400,8 +2400,8 @@ TRIAL("fs: target returns what a link points to") {
 
     if (!linked(skrót, one)) return;
 
-    same(fs::target(skrót).get(), one);
-    ought(fs::equivalent(skrót, one).get());
+    SAME(fs::target(skrót).get(), one);
+    OUGHT(fs::equivalent(skrót, one).get());
 }
 
 TRIAL("fs: target on an ordinary file rejects") {
@@ -2409,7 +2409,7 @@ TRIAL("fs: target on an ordinary file rejects") {
 
     const fs::path one = nook.made("plik.txt", "treść");
 
-    threw((void)fs::target(one).get());
+    THREW((void)fs::target(one).get());
 }
 
 TRIAL("fs: link creates a symbolic link") {
@@ -2422,8 +2422,8 @@ TRIAL("fs: link creates a symbolic link") {
 
     fs::link(skrót, one).get();
 
-    same(static_cast<int>(fs::kind(skrót).get()), static_cast<int>(fs::Kind::link));
-    same(said_of(fs::read(skrót).get()), std::string{"treść"});
+    SAME(static_cast<int>(fs::kind(skrót).get()), static_cast<int>(fs::Kind::link));
+    SAME(said_of(fs::read(skrót).get()), std::string{"treść"});
 }
 
 TRIAL("fs: link creates a hard link") {
@@ -2434,8 +2434,8 @@ TRIAL("fs: link creates a hard link") {
 
     fs::link(drugi, one, true).get();
 
-    same(static_cast<int>(fs::kind(drugi).get()), static_cast<int>(fs::Kind::file));
-    ought(fs::equivalent(drugi, one).get());
+    SAME(static_cast<int>(fs::kind(drugi).get()), static_cast<int>(fs::Kind::file));
+    OUGHT(fs::equivalent(drugi, one).get());
 }
 
 TRIAL("fs: marks come back as they were set") {
@@ -2443,19 +2443,19 @@ TRIAL("fs: marks come back as they were set") {
 
     const fs::path one = nook.made("plik.txt", "treść");
 
-    ought(!fs::attributes(one).get().readonly);
+    OUGHT(!fs::attributes(one).get().readonly);
 
     fs::Attributes what;
     what.readonly = true;
 
     fs::attributes(one, what).get();
 
-    ought(fs::attributes(one).get().readonly);
+    OUGHT(fs::attributes(one).get().readonly);
 
     what.readonly = false;
     fs::attributes(one, what).get();
 
-    ought(!fs::attributes(one).get().readonly);
+    OUGHT(!fs::attributes(one).get().readonly);
 }
 
 TRIAL("fs: a listing brings the attributes together with the entries") {
@@ -2470,30 +2470,30 @@ TRIAL("fs: a listing brings the attributes together with the entries") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{2});
+    SAME(among.size(), std::size_t{2});
 
     bool widziany = false;
 
     for (const fs::Entry& wpis : among) {
         if (wpis.where.filename() == "zwykły.txt") {
-            ought(wpis.attributes.readonly);
+            OUGHT(wpis.attributes.readonly);
             widziany = true;
         }
     }
 
-    ought(widziany);
+    OUGHT(widziany);
 
     what.readonly = false;
     fs::attributes(one, what).get();
 }
 
 TRIAL("fs: temp and home point to existing directories") {
-    same(static_cast<int>(fs::kind(fs::temp()).get()), static_cast<int>(fs::Kind::folder));
+    SAME(static_cast<int>(fs::kind(fs::temp()).get()), static_cast<int>(fs::Kind::folder));
 
     const fs::path dom = fs::home();
 
-    ought(!dom.empty());
-    same(static_cast<int>(fs::kind(dom).get()), static_cast<int>(fs::Kind::folder));
+    OUGHT(!dom.empty());
+    SAME(static_cast<int>(fs::kind(dom).get()), static_cast<int>(fs::Kind::folder));
 }
 
 TRIAL("fs: here reads and changes the current directory") {
@@ -2503,17 +2503,17 @@ TRIAL("fs: here reads and changes the current directory") {
 
     fs::current(nook.where()).get();
 
-    ought(fs::equivalent(fs::current(), nook.where()).get());
+    OUGHT(fs::equivalent(fs::current(), nook.where()).get());
 
     fs::current(skąd).get();
 
-    same(fs::current(), skąd);
+    SAME(fs::current(), skąd);
 }
 
 TRIAL("fs: here on a missing directory rejects") {
     const Nook nook;
 
-    threw(fs::current(nook.where() / "nie ma").get());
+    THREW(fs::current(nook.where() / "nie ma").get());
 }
 
 namespace {
@@ -2556,8 +2556,8 @@ TRIAL("Flow: reads in order without keeping count") {
         made += said_of(part);
     }
 
-    same(made, whole);
-    same(flow.at(), static_cast<std::uintmax_t>(whole.size()));
+    SAME(made, whole);
+    SAME(flow.at(), static_cast<std::uintmax_t>(whole.size()));
 }
 
 TRIAL("Flow: a short read at the end moves only by as much as arrived") {
@@ -2567,14 +2567,14 @@ TRIAL("Flow: a short read at the end moves only by as much as arrived") {
 
     fs::Cursor flow = fs::open(one).get().cursor();
 
-    same(said_of(flow.read(6).get()), std::string{"abcdef"});
-    same(flow.at(), std::uintmax_t{6});
+    SAME(said_of(flow.read(6).get()), std::string{"abcdef"});
+    SAME(flow.at(), std::uintmax_t{6});
 
-    same(said_of(flow.read(100).get()), std::string{"ghij"});
-    same(flow.at(), std::uintmax_t{10});
+    SAME(said_of(flow.read(100).get()), std::string{"ghij"});
+    SAME(flow.at(), std::uintmax_t{10});
 
-    ought(flow.read(100).get().empty());
-    same(flow.at(), std::uintmax_t{10});
+    OUGHT(flow.read(100).get().empty());
+    SAME(flow.at(), std::uintmax_t{10});
 }
 
 TRIAL("Flow: seek moves the reading position") {
@@ -2586,8 +2586,8 @@ TRIAL("Flow: seek moves the reading position") {
 
     flow.seek(4);
 
-    same(said_of(flow.read(3).get()), std::string{"456"});
-    same(flow.at(), std::uintmax_t{7});
+    SAME(said_of(flow.read(3).get()), std::string{"456"});
+    SAME(flow.at(), std::uintmax_t{7});
 }
 
 TRIAL("Flow: two streams from one file do not interfere") {
@@ -2600,12 +2600,12 @@ TRIAL("Flow: two streams from one file do not interfere") {
     fs::Cursor first = held.cursor();
     fs::Cursor second = held.cursor();
 
-    same(said_of(first.read(3).get()), std::string{"012"});
-    same(said_of(second.read(3).get()), std::string{"012"});
-    same(said_of(first.read(3).get()), std::string{"345"});
+    SAME(said_of(first.read(3).get()), std::string{"012"});
+    SAME(said_of(second.read(3).get()), std::string{"012"});
+    SAME(said_of(first.read(3).get()), std::string{"345"});
 
-    same(first.at(), std::uintmax_t{6});
-    same(second.at(), std::uintmax_t{3});
+    SAME(first.at(), std::uintmax_t{6});
+    SAME(second.at(), std::uintmax_t{3});
 }
 
 TRIAL("Flow: copies share the position") {
@@ -2616,10 +2616,10 @@ TRIAL("Flow: copies share the position") {
     fs::Cursor first = fs::open(one).get().cursor();
     fs::Cursor second = first;
 
-    same(said_of(first.read(3).get()), std::string{"012"});
-    same(second.at(), std::uintmax_t{3});
-    same(said_of(second.read(3).get()), std::string{"345"});
-    same(first.at(), std::uintmax_t{6});
+    SAME(said_of(first.read(3).get()), std::string{"012"});
+    SAME(second.at(), std::uintmax_t{3});
+    SAME(said_of(second.read(3).get()), std::string{"345"});
+    SAME(first.at(), std::uintmax_t{6});
 }
 
 // The first read starts at once and is long, so the second one nearly always finds the stream
@@ -2637,15 +2637,15 @@ TRIAL("Flow: a second request before the first one rejects") {
 
     Outcome<fs::Bytes> later = std::move(second).outcome().get();
 
-    same(said_of(std::move(first).get()).size(), long_read);
+    SAME(said_of(std::move(first).get()).size(), long_read);
 
     if (later.ok()) {
-        ought(later.value().empty());
+        OUGHT(later.value().empty());
     } else {
-        threw((void)later.value());
+        THREW((void)later.value());
     }
 
-    same(flow.at(), std::uintmax_t{long_read});
+    SAME(flow.at(), std::uintmax_t{long_read});
 }
 
 TRIAL("Flow: an abandoned promise releases the stream") {
@@ -2660,7 +2660,7 @@ TRIAL("Flow: an abandoned promise releases the stream") {
     const std::string got = said_of(read_when_free(flow, 3));
 
     // The abandoned read either never began or had already read its three bytes when it was let go.
-    ought((got == "012" && flow.at() == 3) || (got == "345" && flow.at() == 6));
+    OUGHT((got == "012" && flow.at() == 3) || (got == "345" && flow.at() == 6));
 }
 
 TRIAL("Flow: a failed operation also releases the stream") {
@@ -2670,10 +2670,10 @@ TRIAL("Flow: a failed operation also releases the stream") {
 
     fs::Cursor flow = fs::open(one, fs::Mode::read).get().cursor();
 
-    threw((void)flow.write(bytes("x")).get());
+    THREW((void)flow.write(bytes("x")).get());
 
-    same(flow.at(), std::uintmax_t{0});
-    same(said_of(flow.read(3).get()), std::string{"012"});
+    SAME(flow.at(), std::uintmax_t{0});
+    SAME(said_of(flow.read(3).get()), std::string{"012"});
 }
 
 TRIAL("Flow: seek during a read rejects") {
@@ -2698,10 +2698,10 @@ TRIAL("Flow: seek during a read rejects") {
     // A refused seek leaves the position after the read. A seek let through came after the read
     // had ended, so it moved the position back; one let through during the read would have been
     // overwritten by the read's end.
-    same(flow.at(), refused ? std::uintmax_t{long_read} : std::uintmax_t{0});
+    SAME(flow.at(), refused ? std::uintmax_t{long_read} : std::uintmax_t{0});
 
     flow.seek(0);
-    same(flow.at(), std::uintmax_t{0});
+    SAME(flow.at(), std::uintmax_t{0});
 }
 
 TRIAL("Flow: writing advances by itself") {
@@ -2711,11 +2711,11 @@ TRIAL("Flow: writing advances by itself") {
 
     fs::Cursor flow = fs::open(one, fs::Mode::truncate).get().cursor();
 
-    same(flow.write(bytes("pierwsza ")).get(), std::size_t{9});
-    same(flow.write(bytes("druga")).get(), std::size_t{5});
+    SAME(flow.write(bytes("pierwsza ")).get(), std::size_t{9});
+    SAME(flow.write(bytes("druga")).get(), std::size_t{5});
 
-    same(flow.at(), std::uintmax_t{14});
-    same(said_of(fs::read(one).get()), std::string{"pierwsza druga"});
+    SAME(flow.at(), std::uintmax_t{14});
+    SAME(said_of(fs::read(one).get()), std::string{"pierwsza druga"});
 }
 
 TRIAL("Flow: appending at the end after seeking") {
@@ -2729,7 +2729,7 @@ TRIAL("Flow: appending at the end after seeking") {
 
     (void)flow.write(bytes(" i nowe")).get();
 
-    same(said_of(fs::read(one).get()), std::string{"stare i nowe"});
+    SAME(said_of(fs::read(one).get()), std::string{"stare i nowe"});
 }
 
 TRIAL("Flow: a closed stream rejects instead of crashing") {
@@ -2740,11 +2740,11 @@ TRIAL("Flow: a closed stream rejects instead of crashing") {
     fs::Cursor flow = fs::open(one).get().cursor();
     flow.close();
 
-    ought(!flow.held());
-    threw((void)flow.read(3).get());
-    threw((void)flow.write(bytes("x")).get());
-    threw(flow.seek(0));
-    same(flow.at(), std::uintmax_t{0});
+    OUGHT(!flow.held());
+    THREW((void)flow.read(3).get());
+    THREW((void)flow.write(bytes("x")).get());
+    THREW(flow.seek(0));
+    SAME(flow.at(), std::uintmax_t{0});
 }
 
 TRIAL("Flow: a closed file gives no stream") {
@@ -2755,7 +2755,7 @@ TRIAL("Flow: a closed file gives no stream") {
     fs::File held = fs::open(one).get();
     held.close();
 
-    threw((void)held.cursor());
+    THREW((void)held.cursor());
 }
 
 TRIAL("Flow: a stream outlives the handle it came from") {
@@ -2770,7 +2770,7 @@ TRIAL("Flow: a stream outlives the handle it came from") {
         flow = held.cursor();
     }
 
-    same(said_of(flow.read(4).get()), std::string{"0123"});
+    SAME(said_of(flow.read(4).get()), std::string{"0123"});
 }
 
 namespace {
@@ -2823,17 +2823,17 @@ TRIAL("Watch: a polling look does not report as removed what it could not read")
     const std::map<fs::path, Sight> kept = fs::core::filled(now, was);
     const std::vector<fs::Change> changes = fs::core::apart(was, kept);
 
-    same(changes.size(), std::size_t{1});
-    ought(!changes.empty() && changes.front().where == fs::path{"/r/z.mkv"} && changes.front().kind == Changed::removed);
-    ought(kept.contains("/r/a/b/y.mkv"));
+    SAME(changes.size(), std::size_t{1});
+    OUGHT(!changes.empty() && changes.front().where == fs::path{"/r/z.mkv"} && changes.front().kind == Changed::removed);
+    OUGHT(kept.contains("/r/a/b/y.mkv"));
 
     const Nook nook;
 
     fs::make_folder(nook.where() / "zamknięty").get();
     (void)nook.made("zamknięty/plik.txt", "treść");
 
-    ought(!fs::core::looked(nook.where(), true).blind);
-    same(fs::core::looked(nook.where() / "nie ma", true).seen.size(), std::size_t{0});
+    OUGHT(!fs::core::looked(nook.where(), true).blind);
+    SAME(fs::core::looked(nook.where() / "nie ma", true).seen.size(), std::size_t{0});
 
 #ifndef _WIN32
     if (::geteuid() != 0 && ::chmod((nook.where() / "zamknięty").c_str(), 0) == 0) {
@@ -2841,8 +2841,8 @@ TRIAL("Watch: a polling look does not report as removed what it could not read")
 
         (void)::chmod((nook.where() / "zamknięty").c_str(), 0700);
 
-        ought(shut.unread == std::vector<fs::path>{nook.where() / "zamknięty"});
-        ought(!shut.seen.contains(nook.where() / "zamknięty" / "plik.txt"));
+        OUGHT(shut.unread == std::vector<fs::path>{nook.where() / "zamknięty"});
+        OUGHT(!shut.seen.contains(nook.where() / "zamknięty" / "plik.txt"));
     }
 #endif
 }
@@ -2859,7 +2859,7 @@ TRIAL("Watch: a new file is reported as created") {
         making << "treść";
     }
 
-    ought(among(awaited(watch), one, Changed::created));
+    OUGHT(among(awaited(watch), one, Changed::created));
 }
 
 TRIAL("Watch: a deleted file is reported as removed") {
@@ -2871,7 +2871,7 @@ TRIAL("Watch: a deleted file is reported as removed") {
 
     fs::erase(one).get();
 
-    ought(among(awaited(watch), one, Changed::removed));
+    OUGHT(among(awaited(watch), one, Changed::removed));
 }
 
 // Writing an existing file goes alongside and is renamed onto the target, so the watch sees a file
@@ -2888,7 +2888,7 @@ TRIAL("Watch: a change of content is reported as a modification") {
 
     const std::vector<fs::Change> given = awaited(watch);
 
-    ought(among(given, one, Changed::modified) || among(given, one, Changed::created) ||
+    OUGHT(among(given, one, Changed::modified) || among(given, one, Changed::created) ||
           among(given, one, Changed::renamed));
 
     fs::Watch again = fs::watch(nook.where()).get();
@@ -2901,7 +2901,7 @@ TRIAL("Watch: a change of content is reported as a modification") {
     // same-length write through an open file only at closing; inotify reports it at once.
     file.close();
 
-    ought(among(awaited(again), one, Changed::modified));
+    OUGHT(among(awaited(again), one, Changed::modified));
 }
 
 // Two writes of the same length within one second, with a look of the watch between them: when
@@ -2928,7 +2928,7 @@ TRIAL("Watch: a write of the same length in the same second is reported") {
         file << "inne";
     }
 
-    ought(among(awaited(watch), one, Changed::modified));
+    OUGHT(among(awaited(watch), one, Changed::modified));
 }
 
 // A file written in a hundred small pieces, as a copy into the watched folder writes it, wakes the
@@ -2966,11 +2966,11 @@ TRIAL("Watch: a file written in many pieces comes in few batches") {
 
     while (!awaited(watch, 600ms).empty()) ++batches;
 
-    ought(batches <= 10);
+    OUGHT(batches <= 10);
 
     const fs::path other = nook.made("drugi.bin", "y");
 
-    ought(among(awaited(watch), other, Changed::created));
+    OUGHT(among(awaited(watch), other, Changed::created));
 }
 
 TRIAL("Watch: a rename carries the previous name") {
@@ -2994,7 +2994,7 @@ TRIAL("Watch: a rename carries the previous name") {
     // appeared. That is an honest limit of this path, and the case allows it.
     const bool parami = among(given, from, Changed::removed) && among(given, to, Changed::created);
 
-    ought(jedno || parami);
+    OUGHT(jedno || parami);
 }
 
 TRIAL("Watch: events from before the request are not lost") {
@@ -3011,7 +3011,7 @@ TRIAL("Watch: events from before the request are not lost") {
 
     later(300ms).get();
 
-    ought(among(awaited(watch), one, Changed::created));
+    OUGHT(among(awaited(watch), one, Changed::created));
 }
 
 TRIAL("Watch: a shallow watch does not see into the depth, a deep one does") {
@@ -3030,8 +3030,8 @@ TRIAL("Watch: a shallow watch does not see into the depth, a deep one does") {
         making << "treść";
     }
 
-    ought(among(awaited(głęboka), one, Changed::created));
-    ought(!among(awaited(płytka, 300ms), one, Changed::created));
+    OUGHT(among(awaited(głęboka), one, Changed::created));
+    OUGHT(!among(awaited(płytka, 300ms), one, Changed::created));
 }
 
 TRIAL("Watch: a deep watch covers directories created later") {
@@ -3051,7 +3051,7 @@ TRIAL("Watch: a deep watch covers directories created later") {
         making << "treść";
     }
 
-    ought(among(awaited(watch), one, Changed::created));
+    OUGHT(among(awaited(watch), one, Changed::created));
 }
 
 TRIAL("Watch: two watches of the same directory both receive") {
@@ -3067,8 +3067,8 @@ TRIAL("Watch: two watches of the same directory both receive") {
         making << "treść";
     }
 
-    ought(among(awaited(first), one, Changed::created));
-    ought(among(awaited(second), one, Changed::created));
+    OUGHT(among(awaited(first), one, Changed::created));
+    OUGHT(among(awaited(second), one, Changed::created));
 }
 
 TRIAL("Watch: a closed watch rejects") {
@@ -3077,14 +3077,14 @@ TRIAL("Watch: a closed watch rejects") {
     fs::Watch watch = fs::watch(nook.where()).get();
     watch.close();
 
-    ought(!watch.held());
-    threw((void)watch.next().get());
+    OUGHT(!watch.held());
+    THREW((void)watch.next().get());
 }
 
 TRIAL("Watch: watching nothing rejects") {
     const Nook nook;
 
-    threw((void)fs::watch(nook.where() / "nie ma").get());
+    THREW((void)fs::watch(nook.where() / "nie ma").get());
 }
 
 TRIAL("Watch: a cancelled request does not take the batch from the next one") {
@@ -3104,7 +3104,7 @@ TRIAL("Watch: a cancelled request does not take the batch from the next one") {
         making << "treść";
     }
 
-    ought(among(awaited(watch), one, Changed::created));
+    OUGHT(among(awaited(watch), one, Changed::created));
 }
 
 TRIAL("Watch: a hundred watches are still one thread") {
@@ -3126,7 +3126,7 @@ TRIAL("Watch: a hundred watches are still one thread") {
         making << "treść";
     }
 
-    ought(::among(awaited(among[42]), one, Changed::created));
+    OUGHT(::among(awaited(among[42]), one, Changed::created));
 }
 
 TRIAL("Flow: a tight loop of reads never hears busy") {
@@ -3146,8 +3146,8 @@ TRIAL("Flow: a tight loop of reads never hears busy") {
         made += said_of(part);
     }
 
-    same(made.size(), std::size_t{20000});
-    same(made, whole);
+    SAME(made.size(), std::size_t{20000});
+    SAME(made, whole);
 }
 
 TRIAL("Flow: a tight loop of writes neither") {
@@ -3159,8 +3159,8 @@ TRIAL("Flow: a tight loop of writes neither") {
 
     for (int at = 0; at < 200; ++at) (void)flow.write(bytes("0123456789")).get();
 
-    same(fs::size(one).get(), std::uintmax_t{2000});
-    same(flow.at(), std::uintmax_t{2000});
+    SAME(fs::size(one).get(), std::uintmax_t{2000});
+    SAME(flow.at(), std::uintmax_t{2000});
 }
 
 TRIAL("Watch: watching a single file, not a directory") {
@@ -3174,7 +3174,7 @@ TRIAL("Watch: watching a single file, not a directory") {
 
     const std::vector<fs::Change> given = awaited(watch);
 
-    ought(among(given, one, Changed::modified) || among(given, one, Changed::created));
+    OUGHT(among(given, one, Changed::modified) || among(given, one, Changed::created));
 }
 
 TRIAL("Watch: the disappearance of a watched file is reported") {
@@ -3186,7 +3186,7 @@ TRIAL("Watch: the disappearance of a watched file is reported") {
 
     fs::erase(one).get();
 
-    ought(among(awaited(watch), one, Changed::removed));
+    OUGHT(among(awaited(watch), one, Changed::removed));
 }
 
 TRIAL("Watch: a watch survives many batches in a row") {
@@ -3207,7 +3207,7 @@ TRIAL("Watch: a watch survives many batches in a row") {
         for (int próba = 0; próba < 4 && !widziany; ++próba)
             widziany = among(awaited(watch), one, Changed::created);
 
-        ought(widziany);
+        OUGHT(widziany);
     }
 }
 
@@ -3237,8 +3237,8 @@ TRIAL("Watch: a file watch survives saving by replacement") {
         widziany = among(given, one, Changed::modified) || among(given, one, Changed::created);
     }
 
-    ought(widziany);
-    same(said_of(fs::read(one).get()), std::string{"zupełnie inna treść"});
+    OUGHT(widziany);
+    SAME(said_of(fs::read(one).get()), std::string{"zupełnie inna treść"});
 
     // The real trial is here: after the replacement the watch must see the next change. Tied to the
     // old inode, it would see only its death and fall silent.
@@ -3252,7 +3252,7 @@ TRIAL("Watch: a file watch survives saving by replacement") {
         dalej = among(given, one, Changed::modified) || among(given, one, Changed::created);
     }
 
-    ought(dalej);
+    OUGHT(dalej);
 }
 
 TRIAL("Watch: a file watch is silent about its neighbors") {
@@ -3265,7 +3265,7 @@ TRIAL("Watch: a file watch is silent about its neighbors") {
 
     fs::write(sąsiad, bytes("zupełnie inna treść"), fs::Conflict::overwrite).get();
 
-    ought(awaited(watch, 700ms).empty());
+    OUGHT(awaited(watch, 700ms).empty());
 
     fs::write(one, bytes("moja nowa treść"), fs::Conflict::overwrite).get();
 
@@ -3276,10 +3276,10 @@ TRIAL("Watch: a file watch is silent about its neighbors") {
 
         widziany = among(given, one, Changed::modified) || among(given, one, Changed::created);
 
-        for (const fs::Change& jeden : given) ought(jeden.where == one);
+        for (const fs::Change& jeden : given) OUGHT(jeden.where == one);
     }
 
-    ought(widziany);
+    OUGHT(widziany);
 }
 
 namespace {
@@ -3355,15 +3355,15 @@ TRIAL("fs: a copy carries the modification time with a fraction of a second") {
     fs::copy(from, nook.where() / "odbitka").get();
     fs::copy(two, nook.where() / "druga.mkv").get();
 
-    same(instant(nook.where() / "odbitka" / "Sezon 01" / "S01E01.mkv"), instant(one));
-    same(instant(nook.where() / "odbitka" / "Sezon 01"), instant(from / "Sezon 01"));
-    same(instant(nook.where() / "odbitka"), instant(from));
-    same(instant(nook.where() / "druga.mkv"), instant(two));
+    SAME(instant(nook.where() / "odbitka" / "Sezon 01" / "S01E01.mkv"), instant(one));
+    SAME(instant(nook.where() / "odbitka" / "Sezon 01"), instant(from / "Sezon 01"));
+    SAME(instant(nook.where() / "odbitka"), instant(from));
+    SAME(instant(nook.where() / "druga.mkv"), instant(two));
 
-    same(instant(two) % 1000000000LL, std::int64_t{123456700});
+    SAME(instant(two) % 1000000000LL, std::int64_t{123456700});
 
     // The public reading still returns whole seconds, rounded down.
-    same(fs::modified(two).get(), std::chrono::sys_seconds{std::chrono::seconds{1450000000}});
+    SAME(fs::modified(two).get(), std::chrono::sys_seconds{std::chrono::seconds{1450000000}});
 }
 
 // A file larger than one kernel copy chunk (16 MiB) and with a tail that does not fit in a chunk: a
@@ -3378,7 +3378,7 @@ TRIAL("fs: a large file is copied faithfully in chunks") {
 
     fs::copy(from, nook.where() / "obok.mkv").get();
 
-    same(said_of(fs::read(nook.where() / "obok.mkv").get()) == whole, true);
+    SAME(said_of(fs::read(nook.where() / "obok.mkv").get()) == whole, true);
 
 #ifndef _WIN32
     const fs::path away = elsewhere(nook, "talcite-duzy");
@@ -3387,7 +3387,7 @@ TRIAL("fs: a large file is copied faithfully in chunks") {
 
     fs::copy(from, away / "daleko.mkv").get();
 
-    same(said_of(fs::read(away / "daleko.mkv").get()) == whole, true);
+    SAME(said_of(fs::read(away / "daleko.mkv").get()) == whole, true);
 
     // A move between volumes goes through a copy: the time with its fraction travels with the
     // content.
@@ -3397,7 +3397,7 @@ TRIAL("fs: a large file is copied faithfully in chunks") {
 
     fs::move(from, away / "przeniesiony.mkv").get();
 
-    same(instant(away / "przeniesiony.mkv"), was);
+    SAME(instant(away / "przeniesiony.mkv"), was);
 
     std::error_code trouble;
 
@@ -3454,12 +3454,12 @@ TRIAL("Watch: a renamed subdirectory is heard under its new name, once") {
     std::size_t seen = 0;
 
     for (const fs::Change& one : given) {
-        ought(!under(one.where, stary));
+        OUGHT(!under(one.where, stary));
 
         if (one.where == nowy / "w środku" / "świeży.txt" && one.kind == Changed::created) ++seen;
     }
 
-    same(seen, std::size_t{1});
+    SAME(seen, std::size_t{1});
 }
 
 // A deleted subdirectory is one removal, not three entries: from the parent, from the directory
@@ -3482,10 +3482,10 @@ TRIAL("Watch: a deleted subdirectory is reported once") {
     for (const fs::Change& one : given)
         if (one.where == głąb) {
             ++about;
-            ought(one.kind == Changed::removed);
+            OUGHT(one.kind == Changed::removed);
         }
 
-    same(about, std::size_t{1});
+    SAME(about, std::size_t{1});
 }
 
 // A directory moved out of the watched tree no longer reports its changes under the old path.
@@ -3508,7 +3508,7 @@ TRIAL("Watch: a subdirectory moved out of the tree falls silent") {
 
     const fs::path stale = nook.where() / "drzewo" / "gałąź";
 
-    for (const fs::Change& one : awaited(watch, 1500ms)) ought(!under(one.where, stale));
+    for (const fs::Change& one : awaited(watch, 1500ms)) OUGHT(!under(one.where, stale));
 }
 
 #ifndef _WIN32
@@ -3531,7 +3531,7 @@ TRIAL("Watch: a deleted empty root is reported as removed") {
 
     for (int again = 0; again < 4 && !heard; ++again) heard = among(awaited(watch), root, Changed::removed);
 
-    ought(heard);
+    OUGHT(heard);
 }
 
 #endif
@@ -3645,7 +3645,7 @@ TRIAL("Watch: without inotify descriptors a watch polls") {
 
     fs::Watch none = fs::watch(first.where(), true).get();
 
-    ought(heard(none, first.where() / "świeży.txt"));
+    OUGHT(heard(none, first.where() / "świeży.txt"));
 
     // One place free: the root fits, a subdirectory no longer does.
     inotify_rm_watch(hog, last);
@@ -3656,12 +3656,12 @@ TRIAL("Watch: without inotify descriptors a watch polls") {
 
     fs::Watch half = fs::watch(second.where(), true).get();
 
-    ought(heard(half, second.where() / "głąb" / "świeży.txt"));
+    OUGHT(heard(half, second.where() / "głąb" / "świeży.txt"));
 
     // The watch is not full of holes: either the whole tree stands in inotify or none of it, so a
     // root that fitted does not stay when the whole goes by polling. Which of the two happens
     // depends on whether someone else of the same user has just released a descriptor.
-    ought(inotified(second.where() / "głąb") == inotified(second.where()));
+    OUGHT(inotified(second.where() / "głąb") == inotified(second.where()));
 
     ::close(hog);
 
@@ -3684,12 +3684,12 @@ TRIAL("Watch: without inotify descriptors a watch polls") {
     for (int again = 0; again < 4 && !switched; ++again)
         switched = among(awaited(later), third.where(), Changed::overflow);
 
-    ought(switched);
+    OUGHT(switched);
 
     // After switching, inotify holds nothing from this tree any more; otherwise a change in the
     // root would arrive twice, once from events and once from polling.
-    ought(!inotified(third.where()));
-    ought(heard(later, third.where() / "później" / "świeży.txt"));
+    OUGHT(!inotified(third.where()));
+    OUGHT(heard(later, third.where() / "później" / "świeży.txt"));
 
     ::close(again);
 
@@ -3705,8 +3705,8 @@ TRIAL("Watch: a closed watch gives back its inotify descriptors") {
 
     fs::Watch watch = fs::watch(nook.where(), true).get();
 
-    ought(inotified(nook.where()));
-    ought(inotified(nook.where() / "głąb"));
+    OUGHT(inotified(nook.where()));
+    OUGHT(inotified(nook.where() / "głąb"));
 
     watch.close();
 
@@ -3719,8 +3719,8 @@ TRIAL("Watch: a closed watch gives back its inotify descriptors") {
     while ((inotified(nook.where()) || inotified(nook.where() / "głąb")) && std::chrono::steady_clock::now() < until)
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
 
-    ought(!inotified(nook.where()));
-    ought(!inotified(nook.where() / "głąb"));
+    OUGHT(!inotified(nook.where()));
+    OUGHT(!inotified(nook.where() / "głąb"));
 }
 
 // A root deleted and created again: the watch does not go deaf forever, but switches to polling and
@@ -3739,8 +3739,8 @@ TRIAL("Watch: a root created again is still heard") {
     const std::vector<fs::Change> given = gathered(watch);
 
     // The disappearance of the root, and the admission that from now on the watch goes another way.
-    ought(among(given, root, Changed::removed));
-    ought(among(given, root, Changed::overflow));
+    OUGHT(among(given, root, Changed::removed));
+    OUGHT(among(given, root, Changed::overflow));
 
     fs::make_folder(root).get();
 
@@ -3755,7 +3755,7 @@ TRIAL("Watch: a root created again is still heard") {
 
     for (int again = 0; again < 4 && !heard; ++again) heard = among(awaited(watch), one, Changed::created);
 
-    ought(heard);
+    OUGHT(heard);
 }
 
 #endif
@@ -3765,7 +3765,7 @@ TRIAL("fs: mount recognizes the volume") {
 
     const int told = static_cast<int>(fs::mount(nook.where()).get());
 
-    ought(told == static_cast<int>(fs::Mount::disk) ||
+    OUGHT(told == static_cast<int>(fs::Mount::disk) ||
           told == static_cast<int>(fs::Mount::remote) ||
           told == static_cast<int>(fs::Mount::other));
 }
@@ -3777,27 +3777,27 @@ TRIAL("fs: the chunk comes from the recognized volume") {
     const std::size_t rata = fs::chunk(nook.where()).get();
 
     if (told == fs::Mount::removable || told == fs::Mount::optical)
-        same(rata, std::size_t{256 * 1024});
-    else same(rata, std::size_t{1024 * 1024});
+        SAME(rata, std::size_t{256 * 1024});
+    else SAME(rata, std::size_t{1024 * 1024});
 }
 
 TRIAL("fs: the list of drives is not empty and carries the space") {
     const std::vector<fs::Volume> among = volumes();
 
-    ought(!among.empty());
+    OUGHT(!among.empty());
 
     bool któryś = false;
 
     for (const fs::Volume& one : among) {
-        ought(!one.where.empty());
+        OUGHT(!one.where.empty());
 
         if (one.space.total > 0) {
-            ought(one.space.free <= one.space.total);
+            OUGHT(one.space.free <= one.space.total);
             któryś = true;
         }
     }
 
-    ought(któryś);
+    OUGHT(któryś);
 }
 
 TRIAL("fs: every drive from the list can be looked at") {
@@ -3806,7 +3806,7 @@ TRIAL("fs: every drive from the list can be looked at") {
     for (const fs::Volume& one : among) {
         const fs::Kind told = fs::kind(one.where).get();
 
-        ought(told == fs::Kind::folder || told == fs::Kind::none);
+        OUGHT(told == fs::Kind::folder || told == fs::Kind::none);
     }
 }
 
@@ -3816,10 +3816,10 @@ TRIAL("fs: the roots are the places from the list of volumes") {
     const std::vector<fs::path> roots = fs::roots().get();
     const std::vector<fs::Volume> among = volumes();
 
-    ought(!roots.empty());
-    same(roots.size(), among.size());
+    OUGHT(!roots.empty());
+    SAME(roots.size(), among.size());
 
-    for (std::size_t at = 0; at < roots.size() && at < among.size(); ++at) same(roots[at], among[at].where);
+    for (std::size_t at = 0; at < roots.size() && at < among.size(); ++at) SAME(roots[at], among[at].where);
 }
 
 // A file's volume is one of the roots, and the one the file lies under: the deepest of those that
@@ -3832,7 +3832,7 @@ TRIAL("fs: mounted gives the root of the volume the file lies on") {
     const fs::path root = fs::mounted(nook.where() / "a.txt").get();
     const std::vector<fs::path> roots = fs::roots().get();
 
-    ought(std::find(roots.begin(), roots.end(), root) != roots.end());
+    OUGHT(std::find(roots.begin(), roots.end(), root) != roots.end());
 
     const fs::path whole = fs::canonical(nook.where() / "a.txt").get();
 
@@ -3843,11 +3843,11 @@ TRIAL("fs: mounted gives the root of the volume the file lies on") {
     for (const fs::path& piece : root) {
         if (piece.empty()) continue;
 
-        ought(mine != whole.end());
+        OUGHT(mine != whole.end());
 
         if (mine == whole.end()) break;
 
-        ought(*mine == piece);
+        OUGHT(*mine == piece);
 
         ++mine;
     }
@@ -3859,10 +3859,10 @@ TRIAL("fs: mounted gives the root of the volume the file lies on") {
         const std::string text = fs::to_string(other);
         const std::string path = fs::to_string(whole);
 
-        ought(!(path.rfind(text, 0) == 0 && (path.size() == text.size() || path[text.size()] == '/')));
+        OUGHT(!(path.rfind(text, 0) == 0 && (path.size() == text.size() || path[text.size()] == '/')));
     }
 
-    ought(fs::volume(root).get().space.total > 0);
+    OUGHT(fs::volume(root).get().space.total > 0);
 }
 
 #if !defined(_WIN32)
@@ -3871,7 +3871,7 @@ TRIAL("fs: mounted gives the root of the volume the file lies on") {
 TRIAL("fs: the root of the file system is among the roots") {
     const std::vector<fs::path> roots = fs::roots().get();
 
-    ought(std::find(roots.begin(), roots.end(), fs::path{"/"}) != roots.end());
+    OUGHT(std::find(roots.begin(), roots.end(), fs::path{"/"}) != roots.end());
 }
 
 #endif
@@ -3883,8 +3883,8 @@ TRIAL("fs: the root of the file system is among the roots") {
 TRIAL("fs: the volume of a mount point speaks from the mount table") {
     const fs::Volume root = fs::volume(fs::path{"/"}).get();
 
-    ought(!root.format.empty());
-    ought(root.label != "/");
+    OUGHT(!root.format.empty());
+    OUGHT(root.label != "/");
 }
 
 #endif
@@ -3894,11 +3894,11 @@ TRIAL("fs: the volume of a root is as in the list") {
     for (const fs::Volume& one : volumes()) {
         const fs::Volume alone = fs::volume(one.where).get();
 
-        same(alone.where, one.where);
-        same(alone.format, one.format);
-        same(alone.label, one.label);
-        ought(alone.mount == one.mount);
-        same(alone.source, one.source);
+        SAME(alone.where, one.where);
+        SAME(alone.format, one.format);
+        SAME(alone.label, one.label);
+        OUGHT(alone.mount == one.mount);
+        SAME(alone.source, one.source);
     }
 }
 
@@ -3908,13 +3908,13 @@ TRIAL("fs: the volume of an ordinary directory") {
 
     const fs::Volume made = fs::volume(nook.where()).get();
 
-    ought(made.mount == fs::mount(nook.where()).get());
-    ought(made.space.total > 0);
-    ought(made.space.free <= made.space.total);
+    OUGHT(made.mount == fs::mount(nook.where()).get());
+    OUGHT(made.space.total > 0);
+    OUGHT(made.space.free <= made.space.total);
 
 #ifndef _WIN32
-    same(made.where, nook.where());
-    same(made.label, nook.where().filename().string());
+    SAME(made.where, nook.where());
+    SAME(made.label, nook.where().filename().string());
 #endif
 }
 
@@ -3927,7 +3927,7 @@ TRIAL("fs: the volume of a drive letter without a slash") {
 
     const std::wstring letter = system.wstring().substr(0, 2);
 
-    same(fs::volume(fs::path{letter}).get().where, system);
+    SAME(fs::volume(fs::path{letter}).get().where, system);
 }
 
 #endif
@@ -3936,7 +3936,7 @@ TRIAL("fs: a network share carries what stands behind it") {
     const std::vector<fs::Volume> among = volumes();
 
     for (const fs::Volume& one : among)
-        if (one.mount != fs::Mount::remote) ought(one.source.empty());
+        if (one.mount != fs::Mount::remote) OUGHT(one.source.empty());
 }
 
 #ifndef _WIN32
@@ -3959,21 +3959,21 @@ TRIAL("fs: list carries the permissions, the number of links, the owner and the 
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{2});
+    SAME(among.size(), std::size_t{2});
 
     // Ordered by path: plik.txt, then the link.
-    same(among[0].where.filename().string(), std::string{"plik.txt"});
-    same(among[0].rights, stood::perms::owner_read | stood::perms::owner_write |
+    SAME(among[0].where.filename().string(), std::string{"plik.txt"});
+    SAME(among[0].rights, stood::perms::owner_read | stood::perms::owner_write |
                               stood::perms::group_read);
-    same(among[0].links, std::uintmax_t{1});
-    ought(among[0].owner.has_value());
-    ought(among[0].group.has_value());
-    same(*among[0].owner, static_cast<std::uint32_t>(::getuid()));
-    same(*among[0].group, static_cast<std::uint32_t>(::getgid()));
+    SAME(among[0].links, std::uintmax_t{1});
+    OUGHT(among[0].owner.has_value());
+    OUGHT(among[0].group.has_value());
+    SAME(*among[0].owner, static_cast<std::uint32_t>(::getuid()));
+    SAME(*among[0].group, static_cast<std::uint32_t>(::getgid()));
 
     // A link has its own permissions, not those of its target.
-    same(among[1].where.filename().string(), std::string{"skrót"});
-    same(among[1].rights, stood::perms::all);
+    SAME(among[1].where.filename().string(), std::string{"skrót"});
+    SAME(among[1].rights, stood::perms::all);
 
     // A hard link shows in the number of names; only that makes it possible to show MC's HARDLINK
     // role.
@@ -3983,7 +3983,7 @@ TRIAL("fs: list carries the permissions, the number of links, the owner and the 
 
     for (const fs::Entry& each : potem)
         if (each.where.filename() == "plik.txt" || each.where.filename() == "druga nazwa")
-            same(each.links, std::uintmax_t{2});
+            SAME(each.links, std::uintmax_t{2});
 }
 
 // One entry without reading the directory: the same as the listing brings, including the number of
@@ -4001,26 +4001,26 @@ TRIAL("fs: entry returns one entry with the permissions, the number of names and
 
     fs::Entry got = fs::entry(one).get();
 
-    same(got.where, one);
-    same(static_cast<int>(got.kind), static_cast<int>(fs::Kind::file));
-    same(got.size, std::uintmax_t{7});
-    same(got.rights, stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read);
-    same(got.links, std::uintmax_t{1});
+    SAME(got.where, one);
+    SAME(static_cast<int>(got.kind), static_cast<int>(fs::Kind::file));
+    SAME(got.size, std::uintmax_t{7});
+    SAME(got.rights, stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read);
+    SAME(got.links, std::uintmax_t{1});
 
     fs::link(nook.where() / "druga nazwa", one, true).get();
 
-    same(fs::entry(one).get().links, std::uintmax_t{2});
+    SAME(fs::entry(one).get().links, std::uintmax_t{2});
 
     stood::create_symlink(one, nook.where() / "skrót", ignored);
 
     got = fs::entry(nook.where() / "skrót").get();
 
-    same(static_cast<int>(got.kind), static_cast<int>(fs::Kind::link));
-    ought(got.target.has_value());
-    same(*got.target, one);
+    SAME(static_cast<int>(got.kind), static_cast<int>(fs::Kind::link));
+    OUGHT(got.target.has_value());
+    SAME(*got.target, one);
 
     // A missing entry is not an error, just `none`.
-    same(static_cast<int>(fs::entry(nook.where() / "nie ma").get().kind), static_cast<int>(fs::Kind::none));
+    SAME(static_cast<int>(fs::entry(nook.where() / "nie ma").get().kind), static_cast<int>(fs::Kind::none));
 }
 
 // A folder closed to everyone but its owner stays open to the owner all the way down: what it held
@@ -4035,13 +4035,13 @@ TRIAL("fs: owner-only rights on a folder keep its contents open to the owner") {
 
     fs::rights(folder, stood::perms::owner_all).get();
 
-    same(said_of(fs::read(folder / "stare" / "a.txt").get()), std::string{"aaa"});
+    SAME(said_of(fs::read(folder / "stare" / "a.txt").get()), std::string{"aaa"});
 
     fs::make_folder(folder / "nowe").get();
     fs::write(folder / "nowe" / "b.txt", bytes("bbb")).get();
 
-    same(said_of(fs::read(folder / "nowe" / "b.txt").get()), std::string{"bbb"});
-    same(fs::list(folder).get().size(), std::size_t{2});
+    SAME(said_of(fs::read(folder / "nowe" / "b.txt").get()), std::string{"bbb"});
+    SAME(fs::list(folder).get().size(), std::size_t{2});
 }
 
 TRIAL("fs: rights changes the permissions and follows a link") {
@@ -4051,7 +4051,7 @@ TRIAL("fs: rights changes the permissions and follows a link") {
 
     fs::rights(one, stood::perms::owner_read | stood::perms::owner_write).get();
 
-    same(fs::entry(one).get().rights, stood::perms::owner_read | stood::perms::owner_write);
+    SAME(fs::entry(one).get().rights, stood::perms::owner_read | stood::perms::owner_write);
 
     std::error_code ignored;
 
@@ -4059,9 +4059,9 @@ TRIAL("fs: rights changes the permissions and follows a link") {
 
     fs::rights(nook.where() / "skrót", stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read).get();
 
-    same(fs::entry(one).get().rights, stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read);
+    SAME(fs::entry(one).get().rights, stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read);
 
-    threw(fs::rights(nook.where() / "nie ma", stood::perms::owner_read).get());
+    THREW(fs::rights(nook.where() / "nie ma", stood::perms::owner_read).get());
 }
 
 // The attribute tells about what the entry points to, and the permissions about the entry itself: a
@@ -4079,16 +4079,16 @@ TRIAL("fs: a link has its own permissions and its target's attributes") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{2});
-    same(among[0].where.filename().string(), std::string{"skrót"});
+    SAME(among.size(), std::size_t{2});
+    SAME(among[0].where.filename().string(), std::string{"skrót"});
 
-    same(among[0].rights, stood::perms::all);
-    ought(among[0].attributes.readonly);
-    ought(!among[0].attributes.stale);
+    SAME(among[0].rights, stood::perms::all);
+    OUGHT(among[0].attributes.readonly);
+    OUGHT(!among[0].attributes.stale);
 
     // The same file without a link: the permissions and the attribute say the same.
-    ought(among[1].attributes.readonly);
-    same(among[1].rights, stood::perms::owner_read);
+    OUGHT(among[1].attributes.readonly);
+    SAME(among[1].rights, stood::perms::owner_read);
 
     stood::permissions(one, stood::perms::owner_read | stood::perms::owner_write,
                        stood::perm_options::replace, ignored);
@@ -4107,24 +4107,24 @@ TRIAL("fs: list returns the modification time as it was set") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{1});
-    same(among[0].modified, when);
+    SAME(among.size(), std::size_t{1});
+    SAME(among[0].modified, when);
 }
 
 TRIAL("fs: the owner and group name by number, an unknown number without a name") {
     const std::string mine = fs::owner(static_cast<std::uint32_t>(::getuid())).get();
 
-    ought(!mine.empty());
+    OUGHT(!mine.empty());
 
     // A second question about the same number comes from memory, with the same answer.
-    same(fs::owner(static_cast<std::uint32_t>(::getuid())).get(), mine);
+    SAME(fs::owner(static_cast<std::uint32_t>(::getuid())).get(), mine);
 
-    ought(!fs::group(static_cast<std::uint32_t>(::getgid())).get().empty());
+    OUGHT(!fs::group(static_cast<std::uint32_t>(::getgid())).get().empty());
 
     // A number the system does not know returns nothing instead of throwing: whoever shows it then
     // prints the number.
-    same(fs::owner(4294967294U).get(), std::string{});
-    same(fs::group(4294967294U).get(), std::string{});
+    SAME(fs::owner(4294967294U).get(), std::string{});
+    SAME(fs::group(4294967294U).get(), std::string{});
 }
 
 TRIAL("fs: list sees the execute bit and a link without a target") {
@@ -4141,35 +4141,35 @@ TRIAL("fs: list sees the execute bit and a link without a target") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{4});
+    SAME(among.size(), std::size_t{4});
 
     // Ordered by path: dane.txt, uruchom.sh, wiszace, zywe.
-    ought(!among[0].attributes.executable);
-    ought(among[1].attributes.executable);
-    ought(!among[1].attributes.stale);
+    OUGHT(!among[0].attributes.executable);
+    OUGHT(among[1].attributes.executable);
+    OUGHT(!among[1].attributes.stale);
 
-    same(static_cast<int>(among[2].kind), static_cast<int>(fs::Kind::link));
-    ought(among[2].attributes.stale);
+    SAME(static_cast<int>(among[2].kind), static_cast<int>(fs::Kind::link));
+    OUGHT(among[2].attributes.stale);
 
-    same(static_cast<int>(among[3].kind), static_cast<int>(fs::Kind::link));
-    ought(!among[3].attributes.stale);
+    SAME(static_cast<int>(among[3].kind), static_cast<int>(fs::Kind::link));
+    OUGHT(!among[3].attributes.stale);
 
     // Only a link carries a target, a dangling one too, because the target is a string in the link,
     // not a file.
-    ought(!among[0].target.has_value());
-    ought(!among[1].target.has_value());
-    ought(among[2].target.has_value());
-    same(*among[2].target, nook.where() / "nie-ma");
-    ought(among[3].target.has_value());
-    same(*among[3].target, plain);
+    OUGHT(!among[0].target.has_value());
+    OUGHT(!among[1].target.has_value());
+    OUGHT(among[2].target.has_value());
+    SAME(*among[2].target, nook.where() / "nie-ma");
+    OUGHT(among[3].target.has_value());
+    SAME(*among[3].target, plain);
 
     // A link's time is the time of the link itself: a dangling one has it too, not the year 1970.
     const std::chrono::sys_seconds now =
         std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
 
-    ought(among[2].modified > now - std::chrono::hours{1});
-    ought(among[2].modified <= now + std::chrono::minutes{1});
-    ought(among[3].modified > now - std::chrono::hours{1});
+    OUGHT(among[2].modified > now - std::chrono::hours{1});
+    OUGHT(among[2].modified <= now + std::chrono::minutes{1});
+    OUGHT(among[3].modified > now - std::chrono::hours{1});
 }
 
 TRIAL("fs: a pipe is a special entry, not a file") {
@@ -4181,9 +4181,9 @@ TRIAL("fs: a pipe is a special entry, not a file") {
 
     const std::vector<fs::Entry> among = fs::list(nook.where()).get();
 
-    same(among.size(), std::size_t{1});
-    same(static_cast<int>(among[0].kind), static_cast<int>(fs::Kind::special));
-    same(static_cast<int>(fs::kind(pipe).get()), static_cast<int>(fs::Kind::special));
+    SAME(among.size(), std::size_t{1});
+    SAME(static_cast<int>(among[0].kind), static_cast<int>(fs::Kind::special));
+    SAME(static_cast<int>(fs::kind(pipe).get()), static_cast<int>(fs::Kind::special));
 }
 
 #endif
@@ -4197,16 +4197,16 @@ TRIAL("Files: a path becomes UTF-8 text and comes back as the same path") {
 
     const fs::path where = fs::from_string(said);
 
-    same(fs::to_string(where), said);
+    SAME(fs::to_string(where), said);
 
     // Byte for byte, not "more or less": the text must be the same UTF-8 we gave.
-    same(fs::to_string(where).size(), said.size());
+    SAME(fs::to_string(where).size(), said.size());
 
     // And in a composition, because that is how the program uses it: a directory plus a name typed
     // by a person.
     const fs::path whole = fs::from_string("/home/user") / fs::from_string(said);
 
-    same(fs::to_string(whole.filename()), said);
+    SAME(fs::to_string(whole.filename()), said);
 }
 
 #ifdef _WIN32
@@ -4270,19 +4270,19 @@ TRIAL("fs: on Windows owner-only permissions are a protected list with one entry
 
     const fs::path one = nook.made("klucze.json", "tajne");
 
-    ought(!guard(one).shielded);
+    OUGHT(!guard(one).shielded);
 
     fs::rights(one, stood::perms::owner_read | stood::perms::owner_write).get();
 
     const Guard narrowed = guard(one);
 
-    ought(narrowed.shielded);
-    same(narrowed.entries, DWORD{1});
-    ought(narrowed.mine);
+    OUGHT(narrowed.shielded);
+    SAME(narrowed.entries, DWORD{1});
+    OUGHT(narrowed.mine);
 
     fs::rights(one, stood::perms::owner_read | stood::perms::owner_write | stood::perms::group_read).get();
 
-    ought(!guard(one).shielded);
+    OUGHT(!guard(one).shielded);
 }
 
 TRIAL("fs: on Windows a permission for others alone also removes the protection") {
@@ -4292,11 +4292,11 @@ TRIAL("fs: on Windows a permission for others alone also removes the protection"
 
     fs::rights(one, stood::perms::owner_read | stood::perms::owner_write).get();
 
-    ought(guard(one).shielded);
+    OUGHT(guard(one).shielded);
 
     fs::rights(one, stood::perms::owner_read | stood::perms::owner_write | stood::perms::others_read).get();
 
-    ought(!guard(one).shielded);
+    OUGHT(!guard(one).shielded);
 }
 
 #endif

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -38,15 +38,15 @@ private:
 TRIAL("Box: without a size it asks for the whole room") {
     const auto one = std::make_shared<ui::Box>();
 
-    same(one->wants({20, 10}).wide, 20);
-    same(one->wants({20, 10}).high, 10);
+    SAME(one->wants({20, 10}).wide, 20);
+    SAME(one->wants({20, 10}).high, 10);
 }
 
 TRIAL("Box: the given size is what it asks for") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, 4});
 
-    same(one->wants({20, 10}).wide, 12);
-    same(one->wants({20, 10}).high, 4);
+    SAME(one->wants({20, 10}).wide, 12);
+    SAME(one->wants({20, 10}).high, 4);
 }
 
 // Clamped to the room, because a wish larger than the space is not a wish but a lie to the parent,
@@ -54,8 +54,8 @@ TRIAL("Box: the given size is what it asks for") {
 TRIAL("Box: a size larger than the room comes down to the room") {
     const auto one = std::make_shared<ui::Box>(ui::Size{200, 50});
 
-    same(one->wants({20, 10}).wide, 20);
-    same(one->wants({20, 10}).high, 10);
+    SAME(one->wants({20, 10}).wide, 20);
+    SAME(one->wants({20, 10}).high, 10);
 }
 
 // The axes are independent: `plenty` on one means "the whole room on this axis", and the other
@@ -63,8 +63,8 @@ TRIAL("Box: a size larger than the room comes down to the room") {
 TRIAL("Box: plenty on one axis does not touch the other") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, ui::plenty});
 
-    same(one->wants({20, 10}).wide, 12);
-    same(one->wants({20, 10}).high, 10);
+    SAME(one->wants({20, 10}).wide, 12);
+    SAME(one->wants({20, 10}).high, 10);
 }
 
 // A room can be negative: the parent subtracts edges and margins from what it has, and on a
@@ -73,8 +73,8 @@ TRIAL("Box: plenty on one axis does not touch the other") {
 TRIAL("Box: a negative room gives zero, not a negative number") {
     const auto one = std::make_shared<ui::Box>(ui::Size{12, 4});
 
-    same(one->wants({-3, -1}).wide, 0);
-    same(one->wants({-3, -1}).high, 0);
+    SAME(one->wants({-3, -1}).wide, 0);
+    SAME(one->wants({-3, -1}).high, 0);
 }
 
 // --- Child --------------------------------------------------------------------------------------
@@ -89,11 +89,11 @@ TRIAL("Box: the child's wish changes nothing") {
     small->children().add(std::make_shared<Wanting>(ui::Size{2, 1}));
     big->children().add(std::make_shared<Wanting>(ui::Size{40, 40}));
 
-    same(small->wants({20, 10}).wide, 12);
-    same(small->wants({20, 10}).high, 4);
+    SAME(small->wants({20, 10}).wide, 12);
+    SAME(small->wants({20, 10}).high, 4);
 
-    same(big->wants({20, 10}).wide, 12);
-    same(big->wants({20, 10}).high, 4);
+    SAME(big->wants({20, 10}).wide, 12);
+    SAME(big->wants({20, 10}).high, 4);
 }
 
 // There is no second mode, because the absence of a `Box` provides it: a plain `Node` follows the
@@ -104,8 +104,8 @@ TRIAL("Box: a plain Node still follows the child's wish") {
 
     one->children().add(std::make_shared<Wanting>(ui::Size{2, 1}));
 
-    same(one->wants({20, 10}).wide, 2);
-    same(one->wants({20, 10}).high, 1);
+    SAME(one->wants({20, 10}).wide, 2);
+    SAME(one->wants({20, 10}).high, 1);
 }
 
 // --- Wish as a function -------------------------------------------------------------------------
@@ -119,11 +119,11 @@ TRIAL("Box: a wish computed from the room") {
         ui::Box::Wish{[](ui::Size room) { return ui::Size{std::min(80, room.wide - 16), 20}; }});
 
     // A wide room: the upper limit holds.
-    same(one->wants({200, 40}).wide, 80);
+    SAME(one->wants({200, 40}).wide, 80);
 
     // A cramped one: the gap from the edge stays, which a constant number could not keep.
-    same(one->wants({60, 40}).wide, 44);
-    same(one->wants({30, 40}).wide, 14);
+    SAME(one->wants({60, 40}).wide, 44);
+    SAME(one->wants({30, 40}).wide, 14);
 }
 
 // A constant is a special case of a function, which is why both constructors fill one field and
@@ -134,8 +134,8 @@ TRIAL("Box: a constant and a function returning the same constant are indistingu
         ui::Box::Wish{[](ui::Size) { return ui::Size{12, 4}; }});
 
     for (const ui::Size room : {ui::Size{20, 10}, ui::Size{6, 2}, ui::Size{-3, -1}}) {
-        same(flat->wants(room).wide, deep->wants(room).wide);
-        same(flat->wants(room).high, deep->wants(room).high);
+        SAME(flat->wants(room).wide, deep->wants(room).wide);
+        SAME(flat->wants(room).high, deep->wants(room).high);
     }
 }
 
@@ -145,14 +145,14 @@ TRIAL("Box: a greedy function still does not go beyond the room") {
     const auto one = std::make_shared<ui::Box>(
         ui::Box::Wish{[](ui::Size) { return ui::Size{1000, 1000}; }});
 
-    same(one->wants({20, 10}).wide, 20);
-    same(one->wants({20, 10}).high, 10);
+    SAME(one->wants({20, 10}).wide, 20);
+    SAME(one->wants({20, 10}).high, 10);
 }
 
 // An empty function would throw bad_function_call at the first frame, from inside the layout and
 // at a place that tells nothing. It is rejected where it is made.
 TRIAL("Box: an empty wish is not accepted") {
-    threw((void)std::make_shared<ui::Box>(ui::Box::Wish{}));
+    THREW((void)std::make_shared<ui::Box>(ui::Box::Wish{}));
 }
 
 // --- In the tree --------------------------------------------------------------------------------
@@ -178,7 +178,7 @@ TRIAL("Box: in a modal it holds greedy content at the given size") {
 
     // The room for the shadow (two columns and a row) is subtracted before centering, so the box
     // is centered in 28 by 11: (28−10)/2 = 9 and (11−4)/2 = 3.
-    same(one->children().front()->area(), (ui::Area{{9, 3}, {10, 4}}));
+    SAME(one->children().front()->area(), (ui::Area{{9, 3}, {10, 4}}));
 }
 
 TRIAL("Box: without it the same content blows the window up to the whole screen") {
@@ -194,5 +194,5 @@ TRIAL("Box: without it the same content blows the window up to the whole screen"
 
     (void)top.render({{0, 0}, {30, 12}});
 
-    same(one->children().front()->area(), (ui::Area{{0, 0}, {28, 11}}));
+    SAME(one->children().front()->area(), (ui::Area{{0, 0}, {28, 11}}));
 }

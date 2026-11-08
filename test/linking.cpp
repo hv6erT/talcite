@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -96,15 +96,15 @@ TRIAL("Link: shows its text underlined, with the hyperlink over the text") {
 
     const Snapshot made = top.render({{0, 0}, {10, 1}});
 
-    ought(made.at({0, 0}).style.under);
-    same(made.at({0, 0}).letter, char32_t{U's'});
-    ought(made.at({5, 0}).link != 0);
-    same(made.at({6, 0}).link, std::uint32_t{0});
-    ought(!made.at({6, 0}).style.under);
-    same(made.links().size(), std::size_t{1});
-    same(made.links().front().address, std::string{"https://example.org/"});
-    same(one->wants({20, 3}).wide, 6);
-    same(one->wants({20, 3}).high, 1);
+    OUGHT(made.at({0, 0}).style.under);
+    SAME(made.at({0, 0}).letter, char32_t{U's'});
+    OUGHT(made.at({5, 0}).link != 0);
+    SAME(made.at({6, 0}).link, std::uint32_t{0});
+    OUGHT(!made.at({6, 0}).style.under);
+    SAME(made.links().size(), std::size_t{1});
+    SAME(made.links().front().address, std::string{"https://example.org/"});
+    SAME(one->wants({20, 3}).wide, 6);
+    SAME(one->wants({20, 3}).high, 1);
 }
 
 // Without text it shows the address; too narrow, it is cut with the ellipsis, and the link covers
@@ -118,9 +118,9 @@ TRIAL("Link: without text it shows the address, cut to the room it has") {
 
     const Snapshot made = top.render({{0, 0}, {6, 1}});
 
-    same(made.at({0, 0}).letter, char32_t{U'h'});
-    same(made.at({5, 0}).letter, char32_t{U'…'});
-    ought(made.at({5, 0}).link != 0);
+    SAME(made.at({0, 0}).letter, char32_t{U'h'});
+    SAME(made.at({5, 0}).letter, char32_t{U'…'});
+    OUGHT(made.at({5, 0}).link != 0);
 }
 
 // A disabled link is faint and carries no hyperlink, so the terminal does not open it either; in
@@ -136,15 +136,15 @@ TRIAL("Link: disabled it is faint without a hyperlink, in focus reversed and und
 
     const Snapshot focused = top.render({{0, 0}, {10, 1}});
 
-    ought(focused.at({0, 0}).style.reverse);
-    ought(focused.at({0, 0}).style.under);
+    OUGHT(focused.at({0, 0}).style.reverse);
+    OUGHT(focused.at({0, 0}).style.under);
 
     one->enabled(false);
 
     const Snapshot off = top.render({{0, 0}, {10, 1}});
 
-    ought(off.at({0, 0}).style.faint);
-    same(off.at({0, 0}).link, std::uint32_t{0});
+    OUGHT(off.at({0, 0}).style.faint);
+    SAME(off.at({0, 0}).link, std::uint32_t{0});
 }
 
 // A new address is a new hyperlink: under the old mark the frames would not differ and the terminal
@@ -162,9 +162,9 @@ TRIAL("Link: a new address takes a new hyperlink") {
 
     const Snapshot after = top.render({{0, 0}, {10, 1}});
 
-    ought(after.at({0, 0}).link != before);
-    same(one->address(), std::string{"https://example.org/two"});
-    same(after.links().front().address, std::string{"https://example.org/two"});
+    OUGHT(after.at({0, 0}).link != before);
+    SAME(one->address(), std::string{"https://example.org/two"});
+    SAME(after.links().front().address, std::string{"https://example.org/two"});
 }
 
 // --- Following -----------------------------------------------------------------------------------
@@ -190,18 +190,18 @@ TRIAL("Link: Enter follows it through the launcher, and the answer comes as Foll
     const ui::Hook heard = one->on<ui::FollowedEvent>([&told](ui::FollowedEvent& what) {
         told = what.how();
 
-        same(what.address(), std::string{"https://example.org/"});
+        SAME(what.address(), std::string{"https://example.org/"});
 
         return true;
     });
 
     ui::KeyEvent enter{ui::Key{ui::Code::enter}};
 
-    ought(top.dispatch(enter));
-    ought(awaited(loop, [&told] { return told.has_value(); }));
+    OUGHT(top.dispatch(enter));
+    OUGHT(awaited(loop, [&told] { return told.has_value(); }));
 
-    same(opening->asked, (std::vector<std::string>{"https://example.org/"}));
-    same(static_cast<int>(told.value_or(Launched::refused)), static_cast<int>(Launched::copied));
+    SAME(opening->asked, (std::vector<std::string>{"https://example.org/"}));
+    SAME(static_cast<int>(told.value_or(Launched::refused)), static_cast<int>(Launched::copied));
 }
 
 // `FollowEvent` goes first, and whoever takes it takes the link: the launcher is not asked.
@@ -226,8 +226,8 @@ TRIAL("Link: a FollowEvent taken keeps the launcher out") {
 
     settled(loop);
 
-    same(taken, std::string{"https://example.org/"});
-    ought(opening->asked.empty());
+    SAME(taken, std::string{"https://example.org/"});
+    OUGHT(opening->asked.empty());
 }
 
 // A plain click takes the focus and follows; a click with Ctrl belongs to the terminal, which opens
@@ -258,16 +258,16 @@ TRIAL("Link: a click follows it, a click with Ctrl or another button does not") 
 
     settled(loop);
 
-    ought(opening->asked.empty());
+    OUGHT(opening->asked.empty());
 
     ui::ClickEvent plain{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(plain));
+    OUGHT(top.dispatch(plain));
 
     settled(loop);
 
-    same(opening->asked.size(), std::size_t{1});
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(opening->asked.size(), std::size_t{1});
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // A disabled link, or one without an address, follows nowhere.
@@ -290,7 +290,7 @@ TRIAL("Link: disabled or without an address it follows nowhere") {
 
     settled(loop);
 
-    ought(opening->asked.empty());
+    OUGHT(opening->asked.empty());
 }
 
 // --- The system launcher -------------------------------------------------------------------------
@@ -304,8 +304,8 @@ TRIAL("Launcher: over ssh the address goes to the clipboard") {
     line->environment["SSH_CONNECTION"] = "10.0.0.2 50000 10.0.0.1 22";
     line->environment["DISPLAY"] = ":0";
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
-    same(board->kept, std::optional<std::string>{"https://example.org/"});
+    SAME(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
+    SAME(board->kept, std::optional<std::string>{"https://example.org/"});
 }
 
 // Only a web page and a mail address are opened; `file:` or a scheme of some program could start
@@ -316,10 +316,10 @@ TRIAL("Launcher: an address that is not a page or a mail address goes to the cli
 
     line->environment["DISPLAY"] = ":0";
 
-    same(static_cast<int>(answered(line, board, "file:///etc/passwd")), static_cast<int>(Launched::copied));
-    same(board->kept, std::optional<std::string>{"file:///etc/passwd"});
+    SAME(static_cast<int>(answered(line, board, "file:///etc/passwd")), static_cast<int>(Launched::copied));
+    SAME(board->kept, std::optional<std::string>{"file:///etc/passwd"});
 
-    same(static_cast<int>(answered(line, board, "ms-settings:privacy")), static_cast<int>(Launched::copied));
+    SAME(static_cast<int>(answered(line, board, "ms-settings:privacy")), static_cast<int>(Launched::copied));
 }
 
 #if !defined(_WIN32) && !defined(__APPLE__)
@@ -329,8 +329,8 @@ TRIAL("Launcher: without a graphical session the address goes to the clipboard")
     auto line = faking::terminal();
     const auto board = faking::clipboard();
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
-    same(board->kept, std::optional<std::string>{"https://example.org/"});
+    SAME(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::copied));
+    SAME(board->kept, std::optional<std::string>{"https://example.org/"});
 }
 
 #endif
@@ -343,13 +343,13 @@ TRIAL("Launcher: an address with a control character is refused, and so is a ref
 
     line->environment["SSH_TTY"] = "/dev/pts/3";
 
-    same(static_cast<int>(answered(line, board, "https://example.org/\n")), static_cast<int>(Launched::refused));
-    same(static_cast<int>(answered(line, board, "")), static_cast<int>(Launched::refused));
-    same(board->copies, 0);
+    SAME(static_cast<int>(answered(line, board, "https://example.org/\n")), static_cast<int>(Launched::refused));
+    SAME(static_cast<int>(answered(line, board, "")), static_cast<int>(Launched::refused));
+    SAME(board->copies, 0);
 
     board->refusing = true;
 
-    same(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::refused));
+    SAME(static_cast<int>(answered(line, board, "https://example.org/")), static_cast<int>(Launched::refused));
 }
 
 // --- Addresses in text ---------------------------------------------------------------------------
@@ -385,21 +385,21 @@ std::string row_of(const Snapshot& one, int y) {
 TRIAL("Addresses: found in text with their lines, without the sentence around them") {
     const std::vector<ui::Mark> marks = ui::addressed("see https://example.org/a.\nand (http://x.example/b) too", "twa.link");
 
-    same(marks.size(), std::size_t{2});
-    same(marks[0].line, std::size_t{0});
-    same(marks[0].from, std::size_t{4});
-    same(marks[0].upto, std::size_t{25});
-    same(marks[0].address, std::string{"https://example.org/a"});
-    same(marks[0].role, std::string{"twa.link"});
-    same(marks[1].line, std::size_t{1});
-    same(marks[1].from, std::size_t{5});
-    same(marks[1].address, std::string{"http://x.example/b"});
+    SAME(marks.size(), std::size_t{2});
+    SAME(marks[0].line, std::size_t{0});
+    SAME(marks[0].from, std::size_t{4});
+    SAME(marks[0].upto, std::size_t{25});
+    SAME(marks[0].address, std::string{"https://example.org/a"});
+    SAME(marks[0].role, std::string{"twa.link"});
+    SAME(marks[1].line, std::size_t{1});
+    SAME(marks[1].from, std::size_t{5});
+    SAME(marks[1].address, std::string{"http://x.example/b"});
 
-    same(found("https://en.wikipedia.org/wiki/Heat_(1995_film)"), (std::vector<std::string>{"https://en.wikipedia.org/wiki/Heat_(1995_film)"}));
-    same(found("„https://pl.wikipedia.org/wiki/Łódź”, i tyle"), (std::vector<std::string>{"https://pl.wikipedia.org/wiki/Łódź"}));
-    same(found("<https://example.org/x> \"https://example.org/y\""), (std::vector<std::string>{"https://example.org/x", "https://example.org/y"}));
-    ought(found("xhttps://example.org/ https:// ftp://example.org/").empty());
-    same(found("HTTPS://Example.org/"), (std::vector<std::string>{"HTTPS://Example.org/"}));
+    SAME(found("https://en.wikipedia.org/wiki/Heat_(1995_film)"), (std::vector<std::string>{"https://en.wikipedia.org/wiki/Heat_(1995_film)"}));
+    SAME(found("„https://pl.wikipedia.org/wiki/Łódź”, i tyle"), (std::vector<std::string>{"https://pl.wikipedia.org/wiki/Łódź"}));
+    SAME(found("<https://example.org/x> \"https://example.org/y\""), (std::vector<std::string>{"https://example.org/x", "https://example.org/y"}));
+    OUGHT(found("xhttps://example.org/ https:// ftp://example.org/").empty());
+    SAME(found("HTTPS://Example.org/"), (std::vector<std::string>{"HTTPS://Example.org/"}));
 }
 
 // --- Links in a label ----------------------------------------------------------------------------
@@ -417,19 +417,19 @@ TRIAL("Span: a mark with an address lays its role and hyperlink over its text, w
 
     const Snapshot made = top.render({{0, 0}, {8, 3}});
 
-    same(row_of(made, 0), std::string{"go to"});
-    same(row_of(made, 1), std::string{"example"});
-    same(row_of(made, 2), std::string{"now"});
+    SAME(row_of(made, 0), std::string{"go to"});
+    SAME(row_of(made, 1), std::string{"example"});
+    SAME(row_of(made, 2), std::string{"now"});
 
-    ought(!made.at({0, 0}).style.under);
-    same(made.at({0, 0}).link, std::uint32_t{0});
-    ought(made.at({3, 0}).style.under);
-    ought(made.at({3, 0}).link != 0);
-    ought(made.at({6, 1}).link != 0);
-    same(made.at({6, 1}).link, made.at({3, 0}).link);
-    same(made.at({0, 2}).link, std::uint32_t{0});
-    same(made.links().size(), std::size_t{1});
-    same(made.links().front().address, std::string{"https://example.org/"});
+    OUGHT(!made.at({0, 0}).style.under);
+    SAME(made.at({0, 0}).link, std::uint32_t{0});
+    OUGHT(made.at({3, 0}).style.under);
+    OUGHT(made.at({3, 0}).link != 0);
+    OUGHT(made.at({6, 1}).link != 0);
+    SAME(made.at({6, 1}).link, made.at({3, 0}).link);
+    SAME(made.at({0, 2}).link, std::uint32_t{0});
+    SAME(made.links().size(), std::size_t{1});
+    SAME(made.links().front().address, std::string{"https://example.org/"});
 }
 
 // A mark without an address only lays its role; a mark over what the ellipsis hides covers nothing.
@@ -445,11 +445,11 @@ TRIAL("Span: a mark without an address is only a role, and what is elided carrie
 
     const Snapshot made = top.render({{0, 0}, {10, 1}});
 
-    ought(made.at({0, 0}).style.under);
-    same(made.at({0, 0}).link, std::uint32_t{0});
-    ought(made.at({4, 0}).link != 0);
-    same(made.at({9, 0}).letter, char32_t{U'…'});
-    same(made.at({9, 0}).link, std::uint32_t{0});
+    OUGHT(made.at({0, 0}).style.under);
+    SAME(made.at({0, 0}).link, std::uint32_t{0});
+    OUGHT(made.at({4, 0}).link != 0);
+    SAME(made.at({9, 0}).letter, char32_t{U'…'});
+    SAME(made.at({9, 0}).link, std::uint32_t{0});
 }
 
 // A click on a link of a label follows it; elsewhere, with Ctrl or another button the click is not
@@ -482,14 +482,14 @@ TRIAL("Span: a click on a link follows it, a click elsewhere is not the label's"
 
     settled(loop);
 
-    ought(opening->asked.empty());
+    OUGHT(opening->asked.empty());
 
     ui::ClickEvent on{{7, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(on));
-    ought(awaited(loop, [&opening] { return !opening->asked.empty(); }));
+    OUGHT(top.dispatch(on));
+    OUGHT(awaited(loop, [&opening] { return !opening->asked.empty(); }));
 
-    same(opening->asked.front(), std::string{"https://example.org/"});
+    SAME(opening->asked.front(), std::string{"https://example.org/"});
 }
 
 // --- Links in a page -----------------------------------------------------------------------------
@@ -513,10 +513,10 @@ TRIAL("Viewer: a mark with an address is a hyperlink, Enter and a click follow i
 
     const Snapshot made = top.render({{0, 0}, {40, 3}});
 
-    same(made.at({0, 0}).link, std::uint32_t{0});
-    ought(made.at({5, 0}).link != 0);
-    ought(made.at({3, 1}).link != 0);
-    ought(made.at({3, 1}).link != made.at({5, 0}).link);
+    SAME(made.at({0, 0}).link, std::uint32_t{0});
+    OUGHT(made.at({5, 0}).link != 0);
+    OUGHT(made.at({3, 1}).link != 0);
+    OUGHT(made.at({3, 1}).link != made.at({5, 0}).link);
 
     ui::KeyEvent enter{ui::Key{ui::Code::enter}};
 
@@ -525,18 +525,18 @@ TRIAL("Viewer: a mark with an address is a hyperlink, Enter and a click follow i
 
     settled(loop);
 
-    ought(opening->asked.empty());
+    OUGHT(opening->asked.empty());
 
-    ought(one->step(1));
-    ought(top.dispatch(enter));
-    ought(awaited(loop, [&opening] { return opening->asked.size() == 1; }));
+    OUGHT(one->step(1));
+    OUGHT(top.dispatch(enter));
+    OUGHT(awaited(loop, [&opening] { return opening->asked.size() == 1; }));
 
-    same(opening->asked.front(), std::string{"https://example.org/a"});
+    SAME(opening->asked.front(), std::string{"https://example.org/a"});
 
     ui::ClickEvent click{{5, 1}, ui::Mouse::left};
 
-    ought(top.dispatch(click));
-    ought(awaited(loop, [&opening] { return opening->asked.size() == 2; }));
+    OUGHT(top.dispatch(click));
+    OUGHT(awaited(loop, [&opening] { return opening->asked.size() == 2; }));
 
-    same(opening->asked.back(), std::string{"https://example.org/b"});
+    SAME(opening->asked.back(), std::string{"https://example.org/b"});
 }

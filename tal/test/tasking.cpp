@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -94,7 +94,7 @@ tal::Task<int> late(std::chrono::milliseconds wait, int value) {
 TRIAL("Task: a value comes out of a chain of tasks awaited one after another") {
     tal::Loop loop;
 
-    same(tal::wait(loop, summed(2, 3)), 10);
+    SAME(tal::wait(loop, summed(2, 3)), 10);
 }
 
 TRIAL("Task: a failure passes through the awaiting task unchanged") {
@@ -102,10 +102,10 @@ TRIAL("Task: a failure passes through the awaiting task unchanged") {
 
     try {
         (void)tal::wait(loop, passing(tal::Kind::denied));
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::denied);
-        same(std::string{why.what()}, std::string{"zawiodło"});
+        OUGHT(why.kind() == tal::Kind::denied);
+        SAME(std::string{why.what()}, std::string{"zawiodło"});
     }
 }
 
@@ -124,8 +124,8 @@ TRIAL("Task: to() moves the task to the pool and back to the loop's thread") {
         co_return std::tuple{there, std::this_thread::get_id()};
     }(mine));
 
-    ought(away != mine);
-    ought(back == mine);
+    OUGHT(away != mine);
+    OUGHT(back == mine);
 }
 
 TRIAL("Pending: a result settled on another thread resumes the task on its own executor") {
@@ -153,10 +153,10 @@ TRIAL("Pending: a result settled on another thread resumes the task on its own e
 
     other.join();
 
-    same(got, 42);
-    ought(went_on);
-    ought(resumed == mine);
-    same(alive.load(), 0);
+    SAME(got, 42);
+    OUGHT(went_on);
+    OUGHT(resumed == mine);
+    SAME(alive.load(), 0);
 }
 
 TRIAL("Pending: a result settled before the task waits is taken without suspending, and a second one is ignored") {
@@ -166,8 +166,8 @@ TRIAL("Pending: a result settled before the task waits is taken without suspendi
     pending.settle(7);
     pending.settle(8);
 
-    ought(pending.settled());
-    same(tal::wait(loop, pending.task()), 7);
+    OUGHT(pending.settled());
+    SAME(tal::wait(loop, pending.task()), 7);
 }
 
 TRIAL("Pending: a failure given to it comes out where the task waits") {
@@ -178,9 +178,9 @@ TRIAL("Pending: a failure given to it comes out where the task waits") {
 
     try {
         tal::wait(loop, pending.task());
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::refused);
+        OUGHT(why.kind() == tal::Kind::refused);
     }
 }
 
@@ -194,21 +194,21 @@ TRIAL("after(): on a manual clock the task waits until the clock is moved past t
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(done.load(), 0);
-    ought(scope.busy());
+    SAME(done.load(), 0);
+    OUGHT(scope.busy());
 
     time->advance(499ms);
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(done.load(), 0);
+    SAME(done.load(), 0);
 
     time->advance(1ms);
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(done.load(), 5);
-    ought(!scope.busy());
+    SAME(done.load(), 5);
+    OUGHT(!scope.busy());
 }
 
 TRIAL("Scope: a scope destroyed while its task waits destroys the task's frames without resuming them") {
@@ -224,18 +224,18 @@ TRIAL("Scope: a scope destroyed while its task waits destroys the task's frames 
 
         for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-        same(alive.load(), 1);
+        SAME(alive.load(), 1);
     }
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(alive.load(), 0);
+    SAME(alive.load(), 0);
 
     pending.settle(3);
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    ought(!went_on);
+    OUGHT(!went_on);
 }
 
 TRIAL("Scope: cancelling a task that runs on the pool ends it at its next checkpoint") {
@@ -272,9 +272,9 @@ TRIAL("Scope: cancelling a task that runs on the pool ends it at its next checkp
         std::this_thread::sleep_for(1ms);
     }
 
-    same(alive.load(), 0);
-    ought(!finished);
-    ought(!scope.busy());
+    SAME(alive.load(), 0);
+    OUGHT(!finished);
+    OUGHT(!scope.busy());
 }
 
 TRIAL("Scope: an unhandled failure of its work goes to the log, a cancellation does not") {
@@ -297,10 +297,10 @@ TRIAL("Scope: an unhandled failure of its work goes to the log, a cancellation d
     for (const std::string& one : entries)
         if (one.find("Unhandled failure in a task: zawiodło") != std::string::npos) ++failures;
 
-    ought(failures >= 1);
-    ought(expected.failures() == 1);
+    OUGHT(failures >= 1);
+    OUGHT(expected.failures() == 1);
 
-    for (const std::string& one : entries) ought(one.find("cancelled") == std::string::npos);
+    for (const std::string& one : entries) OUGHT(one.find("cancelled") == std::string::npos);
 }
 
 TRIAL("first(): the first success wins and the other tasks are destroyed") {
@@ -328,14 +328,14 @@ TRIAL("first(): the first success wins and the other tasks are destroyed") {
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(alive.load(), 1);
+    SAME(alive.load(), 1);
 
     time->advance(100ms);
 
     for (int at = 0; at < 10; ++at) (void)loop.turn();
 
-    same(got.load(), 1);
-    same(alive.load(), 0);
+    SAME(got.load(), 1);
+    SAME(alive.load(), 0);
 }
 
 TRIAL("first(): when every task fails, the last failure comes out") {
@@ -347,9 +347,9 @@ TRIAL("first(): when every task fails, the last failure comes out") {
 
     try {
         (void)tal::wait(loop, tal::first(std::move(racing)));
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::denied || why.kind() == tal::Kind::missing);
+        OUGHT(why.kind() == tal::Kind::denied || why.kind() == tal::Kind::missing);
     }
 }
 
@@ -358,8 +358,8 @@ TRIAL("all(): the results come together in order, and a failure cancels the othe
 
     const auto [one, two] = tal::wait(loop, tal::all(doubled(4), doubled(5)));
 
-    same(one, 8);
-    same(two, 10);
+    SAME(one, 8);
+    SAME(two, 10);
 
     const auto time = std::make_shared<tal::ManualClock>();
     tal::Loop timed{tal::Port<tal::Clock>{time}};
@@ -387,8 +387,8 @@ TRIAL("all(): the results come together in order, and a failure cancels the othe
         (void)loop.turn();
     }
 
-    ought(failed);
-    same(alive.load(), 0);
+    OUGHT(failed);
+    SAME(alive.load(), 0);
 }
 
 TRIAL("within(): a task that does not finish in time gives Overdue, one that does gives its value") {
@@ -413,15 +413,15 @@ TRIAL("within(): a task that does not finish in time gives Overdue, one that doe
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(value.load(), 6);
-    ought(!overdue);
+    SAME(value.load(), 6);
+    OUGHT(!overdue);
 
     time->advance(800ms);
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    ought(overdue);
-    ought(!scope.busy());
+    OUGHT(overdue);
+    OUGHT(!scope.busy());
 }
 
 TRIAL("Shared: two waiters get the same result of one run") {
@@ -438,35 +438,35 @@ TRIAL("Shared: two waiters get the same result of one run") {
 
     const auto [one, two] = tal::wait(loop, tal::all(shared.get(), shared.get()));
 
-    same(one, 12);
-    same(two, 12);
-    same(runs.load(), 1);
-    same(tal::wait(loop, shared.get()), 12);
+    SAME(one, 12);
+    SAME(two, 12);
+    SAME(runs.load(), 1);
+    SAME(tal::wait(loop, shared.get()), 12);
 }
 
 TRIAL("Port: without an adapter a port refuses at construction; the program's default and the built-in clock are taken") {
     try {
         const tal::Port<Speaker> none;
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::missing);
+        OUGHT(why.kind() == tal::Kind::missing);
     }
 
     tal::defaults().set<Speaker>(std::make_shared<Speaker>());
 
     const tal::Port<Speaker> given;
 
-    same(std::string{given->name()}, std::string{"test"});
+    SAME(std::string{given->name()}, std::string{"test"});
 
     tal::defaults().clear<Speaker>();
 
     const tal::Port<tal::Clock> time;
 
-    same(std::string{time->name()}, std::string{"system"});
+    SAME(std::string{time->name()}, std::string{"system"});
 
     const tal::Optional<Speaker> empty;
 
-    ought(!empty);
+    OUGHT(!empty);
 }
 
 TRIAL("Task: a thousand tasks hopping between the pool, the io pool and the loop, woken from other threads, all finish") {
@@ -494,11 +494,11 @@ TRIAL("Task: a thousand tasks hopping between the pool, the io pool and the loop
 
     settling.join();
 
-    same(finished.load(), 1000);
+    SAME(finished.load(), 1000);
 
     for (int tries = 0; tries < 1000 && scope.busy(); ++tries) (void)loop.turn();
 
-    ought(!scope.busy());
+    OUGHT(!scope.busy());
 }
 
 TRIAL("Scope: scopes destroyed while their results arrive from other threads leave no frame alive") {
@@ -529,5 +529,5 @@ TRIAL("Scope: scopes destroyed while their results arrive from other threads lea
 
     for (int tries = 0; tries < 1000 && alive.load() != 0; ++tries) (void)loop.turn();
 
-    same(alive.load(), 0);
+    SAME(alive.load(), 0);
 }

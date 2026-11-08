@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -38,27 +38,27 @@ std::vector<net::Address> here(const net::Beacon& one) {
 TRIAL("Beacon: answers a tag it knows with the payload it was given") {
     const net::Beacon one{0};
 
-    ought(one.held());
-    ought(one.mine().port() != 0);
+    OUGHT(one.held());
+    OUGHT(one.mine().port() != 0);
 
     one.offer(tagged("etykieta"), bytes("port 4123"));
 
     const std::vector<net::Sighting> found =
         net::Beacon::sought(one.mine().port(), tagged("etykieta"), briefly, here(one)).get();
 
-    same(found.size(), std::size_t{1});
+    SAME(found.size(), std::size_t{1});
 
     if (found.empty()) return;
 
-    same(text(found.front().payload), std::string{"port 4123"});
-    same(found.front().from.port(), one.mine().port());
+    SAME(text(found.front().payload), std::string{"port 4123"});
+    SAME(found.front().from.port(), one.mine().port());
 
     // The same beacon asked twice (two addresses lead to it) counts once.
     const std::vector<net::Sighting> twice = net::Beacon::sought(one.mine().port(), tagged("etykieta"), briefly,
                                                                  {here(one).front(), here(one).front()})
                                                  .get();
 
-    same(twice.size(), std::size_t{1});
+    SAME(twice.size(), std::size_t{1});
 }
 
 // The question goes out again while the asking side waits: a beacon that begins to offer the tag
@@ -74,8 +74,8 @@ TRIAL("Beacon: a tag offered a moment after the question is still found") {
 
     const std::vector<net::Sighting> found = std::move(seeking).get();
 
-    same(found.size(), std::size_t{1});
-    ought(!found.empty() && text(found.front().payload) == "jest");
+    SAME(found.size(), std::size_t{1});
+    OUGHT(!found.empty() && text(found.front().payload) == "jest");
 }
 
 // An unknown tag and a withdrawn tag give an empty list. "Nobody here" is a result, not a refusal.
@@ -84,11 +84,11 @@ TRIAL("Beacon: an unknown or withdrawn tag gets no answer") {
 
     one.offer(tagged("jest"), bytes("x"));
 
-    ought(net::Beacon::sought(one.mine().port(), tagged("nie ma"), briefly, here(one)).get().empty());
+    OUGHT(net::Beacon::sought(one.mine().port(), tagged("nie ma"), briefly, here(one)).get().empty());
 
     one.withdraw(tagged("jest"));
 
-    ought(net::Beacon::sought(one.mine().port(), tagged("jest"), briefly, here(one)).get().empty());
+    OUGHT(net::Beacon::sought(one.mine().port(), tagged("jest"), briefly, here(one)).get().empty());
 }
 
 // A foreign datagram on the beacon's port (garbage, a truncated message, another version, an
@@ -111,7 +111,7 @@ TRIAL("Beacon: foreign datagrams break nothing") {
 
     const std::vector<net::Sighting> found = net::Beacon::sought(one.mine().port(), tagged("etykieta"), briefly, here(one)).get();
 
-    same(found.size(), std::size_t{1});
+    SAME(found.size(), std::size_t{1});
 
     // A question right in everything but one thing (the magic, the version, the kind, a surplus
     // byte or the tag length) gets no answer. The same question done right gets one.
@@ -125,14 +125,14 @@ TRIAL("Beacon: foreign datagrams break nothing") {
                                      std::string{"TLCB\x01\x02"} + luck + "\x08" "etykieta" + std::string{"\x00\x02ok", 4}}) {
         stranger.send(target, from_text(wrong), briefly).get();
 
-        threw(stranger.receive(256, net::Patience{250}).get());
+        THREW(stranger.receive(256, net::Patience{250}).get());
     }
 
     stranger.send(target, from_text(asked), briefly).get();
 
     const net::Datagram answer = stranger.receive(256, briefly).get();
 
-    ought(answer.bytes.size() > 5 && answer.bytes[5] == std::byte{2});
+    OUGHT(answer.bytes.size() > 5 && answer.bytes[5] == std::byte{2});
 }
 
 // An answer to someone else's question (other random bytes) or with another tag is not an answer
@@ -156,7 +156,7 @@ TRIAL("Beacon: an answer with someone else's nonce or tag does not count") {
 
     const net::Datagram asked = std::move(heard).get();
 
-    ought(asked.bytes.size() > 14);
+    OUGHT(asked.bytes.size() > 14);
 
     if (asked.bytes.size() > 14) {
         Bytes other_luck = asked.bytes;
@@ -192,27 +192,27 @@ TRIAL("Beacon: an answer with someone else's nonce or tag does not count") {
 
     const std::vector<net::Sighting> found = std::move(seeking).get();
 
-    same(found.size(), std::size_t{1});
-    ought(!found.empty() && text(found.front().payload) == "prawdziwy");
+    SAME(found.size(), std::size_t{1});
+    OUGHT(!found.empty() && text(found.front().payload) == "prawdziwy");
 }
 
 TRIAL("Beacon: limits of the tag and the payload") {
     const net::Beacon one{0};
 
-    threw(one.offer(Bytes{}, bytes("x")));
-    threw(one.offer(Bytes(65, std::byte{'t'}), bytes("x")));
-    threw(one.offer(tagged("t"), Bytes(1025, std::byte{'p'})));
+    THREW(one.offer(Bytes{}, bytes("x")));
+    THREW(one.offer(Bytes(65, std::byte{'t'}), bytes("x")));
+    THREW(one.offer(tagged("t"), Bytes(1025, std::byte{'p'})));
 
     one.offer(Bytes(64, std::byte{'t'}), Bytes(1024, std::byte{'p'}));
 
     const std::vector<net::Sighting> found =
         net::Beacon::sought(one.mine().port(), Bytes(64, std::byte{'t'}), briefly, here(one)).get();
 
-    same(found.size(), std::size_t{1});
-    ought(!found.empty() && found.front().payload.size() == 1024);
+    SAME(found.size(), std::size_t{1});
+    OUGHT(!found.empty() && found.front().payload.size() == 1024);
 
-    threw(net::Beacon::sought(one.mine().port(), Bytes{}, briefly).get());
-    threw(net::Beacon::sought(one.mine().port(), Bytes(65, std::byte{'t'}), briefly).get());
+    THREW(net::Beacon::sought(one.mine().port(), Bytes{}, briefly).get());
+    THREW(net::Beacon::sought(one.mine().port(), Bytes(65, std::byte{'t'}), briefly).get());
 }
 
 // A closed beacon is silent and accepts no offers.
@@ -224,9 +224,9 @@ TRIAL("Beacon: a closed one is silent") {
     one.offer(tagged("etykieta"), bytes("x"));
     one.close();
 
-    ought(!one.held());
-    threw(one.offer(tagged("etykieta"), bytes("x")));
-    ought(net::Beacon::sought(port, tagged("etykieta"), briefly, {net::Address::loopback(net::Family::four, port)})
+    OUGHT(!one.held());
+    THREW(one.offer(tagged("etykieta"), bytes("x")));
+    OUGHT(net::Beacon::sought(port, tagged("etykieta"), briefly, {net::Address::loopback(net::Family::four, port)})
               .get()
               .empty());
 }
@@ -247,7 +247,7 @@ TRIAL("Beacon: broadcast in the local network") {
         return;
     }
 
-    same(text(found.front().payload), std::string{"tu"});
+    SAME(text(found.front().payload), std::string{"tu"});
 }
 
 // A beacon abandoned without `close()` leaves no receive without a deadline in the hub;
@@ -265,13 +265,13 @@ TRIAL("Beacon: an abandoned one leaves no wait in the hub") {
 
         one.offer(tagged("etykieta"), bytes("x"));
 
-        ought(net::Exchange::running().waiting() > before);
+        OUGHT(net::Exchange::running().waiting() > before);
     }
 
     for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > before; ++tried)
         later(std::chrono::milliseconds{5}).get();
 
-    ought(net::Exchange::running().waiting() <= before);
+    OUGHT(net::Exchange::running().waiting() <= before);
 }
 
 // A flood of questions does not make the beacon an amplifier: at most 32 answers in one second.
@@ -297,6 +297,6 @@ TRIAL("Beacon: at most 32 answers per second") {
         ++answers;
     }
 
-    ought(answers >= 1);
-    ought(answers <= 32);
+    OUGHT(answers >= 1);
+    OUGHT(answers <= 32);
 }

@@ -18,7 +18,7 @@
 #include "tal/port.hpp"
 #include "tal/task.hpp"
 
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 // Files of tal::core, through the port: reading and writing, folders, conflicts, moving, copying
 // and removing, links, attributes, watches and the default adapter. The trials of the port run on
@@ -176,8 +176,10 @@ struct DiskDesk : Bench<DiskDesk> {
 #define FILES_TRIAL(named, trial)                                                                    \
     template <typename Desk>                                                                         \
     static void trial();                                                                             \
-    static const ::proving::Adding trial##_memory{"Memory: " named, __FILE__, __LINE__, &trial<MemoryDesk>}; \
-    static const ::proving::Adding trial##_disk{"Disk: " named, __FILE__, __LINE__, &trial<DiskDesk>};       \
+    static const ::tal::testing::Adding trial##_memory{"Memory: " named, __FILE__, __LINE__,         \
+                                                       &trial<MemoryDesk>};                          \
+    static const ::tal::testing::Adding trial##_disk{"Disk: " named, __FILE__, __LINE__,             \
+                                                     &trial<DiskDesk>};                              \
     template <typename Desk>                                                                         \
     static void trial()
 
@@ -186,17 +188,17 @@ FILES_TRIAL("a file written is read back whole and in parts; look() tells its si
 
     desk.put("/a.txt", "Poirot");
 
-    same(desk.got("/a.txt"), std::string{"Poirot"});
-    same(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {2, 3}))), std::string{"iro"});
-    same(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {4, {}}))), std::string{"ot"});
-    same(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {10, 3}))), std::string{});
+    SAME(desk.got("/a.txt"), std::string{"Poirot"});
+    SAME(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {2, 3}))), std::string{"iro"});
+    SAME(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {4, {}}))), std::string{"ot"});
+    SAME(tal::text::of(desk.run(desk.files.read(desk.at("/a.txt"), {10, 3}))), std::string{});
 
     const tal::fs::Entry entry = desk.run(desk.files.look(desk.at("/a.txt")));
 
-    ought(entry.type == Type::file);
-    same(entry.size, std::uint64_t{6});
-    ought(desk.near(entry.modified));
-    ought(entry.where == desk.at("/a.txt"));
+    OUGHT(entry.type == Type::file);
+    SAME(entry.size, std::uint64_t{6});
+    OUGHT(desk.near(entry.modified));
+    OUGHT(entry.where == desk.at("/a.txt"));
 }
 
 FILES_TRIAL("list() gives the entries in order of name; a missing folder, a file, a relative path refuse", files_trial_2) {
@@ -207,12 +209,12 @@ FILES_TRIAL("list() gives the entries in order of name; a missing folder, a file
     desk.put("/f/a.txt", "a");
     desk.put("/f/b/deep.txt", "d");
 
-    same(desk.names("/f"), (std::vector<std::string>{"a.txt", "b", "c.txt"}));
-    ought(desk.run(desk.files.list(desk.at("/f")))[1].type == Type::folder);
-    same(desk.names("/"), (std::vector<std::string>{"f"}));
-    ought(desk.refused(desk.files.list(desk.at("/none"))) == tal::Kind::missing);
-    ought(desk.refused(desk.files.list(desk.at("/f/a.txt"))) == tal::Kind::other);
-    ought(desk.refused(desk.files.list(Path{"f"})) == tal::Kind::malformed);
+    SAME(desk.names("/f"), (std::vector<std::string>{"a.txt", "b", "c.txt"}));
+    OUGHT(desk.run(desk.files.list(desk.at("/f")))[1].type == Type::folder);
+    SAME(desk.names("/"), (std::vector<std::string>{"f"}));
+    OUGHT(desk.refused(desk.files.list(desk.at("/none"))) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.list(desk.at("/f/a.txt"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.list(Path{"f"})) == tal::Kind::malformed);
 }
 
 FILES_TRIAL("walk() gives the whole tree, each folder before what it holds", files_trial_3) {
@@ -226,7 +228,7 @@ FILES_TRIAL("walk() gives the whole tree, each folder before what it holds", fil
 
     for (const tal::fs::Entry& one : desk.run(desk.files.walk(desk.at("/f")))) found.emplace_back(one.where.stored());
 
-    same(found, desk.stored({"/f/a", "/f/a/x", "/f/a/x/y.txt", "/f/a.txt"}));
+    SAME(found, desk.stored({"/f/a", "/f/a/x", "/f/a/x/y.txt", "/f/a.txt"}));
 }
 
 FILES_TRIAL("make() makes every missing folder; a file in the way or a missing folder refuses", files_trial_4) {
@@ -235,14 +237,14 @@ FILES_TRIAL("make() makes every missing folder; a file in the way or a missing f
     desk.run(desk.files.make(desk.at("/a/b/c")));
     desk.run(desk.files.make(desk.at("/a/b")));
 
-    ought(desk.run(desk.files.look(desk.at("/a/b/c"))).type == Type::folder);
+    OUGHT(desk.run(desk.files.look(desk.at("/a/b/c"))).type == Type::folder);
 
     desk.put("/a/file", "x");
 
-    ought(desk.refused(desk.files.make(desk.at("/a/file/d"))) == tal::Kind::exists);
-    ought(desk.refused(desk.files.write(desk.at("/none/x.txt"), tal::bytes("x"))) == tal::Kind::missing);
-    ought(desk.refused(desk.files.write(desk.at("/a/b"), tal::bytes("x"))) == tal::Kind::other);
-    ought(desk.refused(desk.files.write(desk.at("/"), tal::bytes("x"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.make(desk.at("/a/file/d"))) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.write(desk.at("/none/x.txt"), tal::bytes("x"))) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.write(desk.at("/a/b"), tal::bytes("x"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.write(desk.at("/"), tal::bytes("x"))) == tal::Kind::other);
 }
 
 FILES_TRIAL("a write over a file fails, skips, renames or replaces as asked; read-only refuses", files_trial_5) {
@@ -250,24 +252,24 @@ FILES_TRIAL("a write over a file fails, skips, renames or replaces as asked; rea
 
     desk.put("/a.txt", "first");
 
-    ought(desk.refused(desk.files.write(desk.at("/a.txt"), tal::bytes("x"), {Conflict::fail})) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.write(desk.at("/a.txt"), tal::bytes("x"), {Conflict::fail})) == tal::Kind::exists);
 
     desk.run(desk.files.write(desk.at("/a.txt"), tal::bytes("skipped"), {Conflict::skip}));
-    same(desk.got("/a.txt"), std::string{"first"});
+    SAME(desk.got("/a.txt"), std::string{"first"});
 
     desk.run(desk.files.write(desk.at("/a.txt"), tal::bytes("second"), {Conflict::rename}));
     desk.run(desk.files.write(desk.at("/a.txt"), tal::bytes("third"), {Conflict::rename}));
-    same(desk.got("/a (2).txt"), std::string{"second"});
-    same(desk.got("/a (3).txt"), std::string{"third"});
+    SAME(desk.got("/a (2).txt"), std::string{"second"});
+    SAME(desk.got("/a (3).txt"), std::string{"third"});
 
     if constexpr (Desk::manual) desk.time->advance(1h);
 
     desk.put("/a.txt", "replaced");
-    same(desk.got("/a.txt"), std::string{"replaced"});
-    ought(desk.near(desk.run(desk.files.look(desk.at("/a.txt"))).modified));
+    SAME(desk.got("/a.txt"), std::string{"replaced"});
+    OUGHT(desk.near(desk.run(desk.files.look(desk.at("/a.txt"))).modified));
 
     desk.run(desk.files.change(desk.at("/a.txt"), {tal::fs::Attributes{false, true, false, false}, {}, {}}));
-    ought(desk.refused(desk.files.write(desk.at("/a.txt"), tal::bytes("x"))) == tal::Kind::denied);
+    OUGHT(desk.refused(desk.files.write(desk.at("/a.txt"), tal::bytes("x"))) == tal::Kind::denied);
 }
 
 FILES_TRIAL("move() takes a folder with all it holds; into itself or onto what holds it refuses", files_trial_6) {
@@ -279,26 +281,26 @@ FILES_TRIAL("move() takes a folder with all it holds; into itself or onto what h
 
     desk.run(desk.files.move(desk.at("/a"), desk.at("/b/a")));
 
-    ought(!desk.there("/a"));
-    same(desk.got("/b/a/inner/x.txt"), std::string{"x"});
-    ought(desk.refused(desk.files.move(desk.at("/b"), desk.at("/b/a/b"))) == tal::Kind::other);
-    ought(desk.refused(desk.files.move(desk.at("/b/a/inner"), desk.at("/b/a"), Conflict::replace)) == tal::Kind::other);
-    ought(desk.refused(desk.files.move(desk.at("/none"), desk.at("/b/x"))) == tal::Kind::missing);
+    OUGHT(!desk.there("/a"));
+    SAME(desk.got("/b/a/inner/x.txt"), std::string{"x"});
+    OUGHT(desk.refused(desk.files.move(desk.at("/b"), desk.at("/b/a/b"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.move(desk.at("/b/a/inner"), desk.at("/b/a"), Conflict::replace)) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.move(desk.at("/none"), desk.at("/b/x"))) == tal::Kind::missing);
     // Only the memory's top is a root; the disk's trial folder is not one.
-    if constexpr (Desk::manual) ought(desk.refused(desk.files.move(desk.at("/"), desk.at("/b/x"))) == tal::Kind::denied);
+    if constexpr (Desk::manual) OUGHT(desk.refused(desk.files.move(desk.at("/"), desk.at("/b/x"))) == tal::Kind::denied);
 
     desk.put("/c.txt", "c");
     desk.put("/b/c.txt", "old");
 
-    ought(desk.refused(desk.files.move(desk.at("/c.txt"), desk.at("/b/c.txt"))) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.move(desk.at("/c.txt"), desk.at("/b/c.txt"))) == tal::Kind::exists);
 
     desk.run(desk.files.move(desk.at("/c.txt"), desk.at("/b/c.txt"), Conflict::rename));
-    same(desk.got("/b/c (2).txt"), std::string{"c"});
+    SAME(desk.got("/b/c (2).txt"), std::string{"c"});
 
     desk.put("/d.txt", "new");
     desk.run(desk.files.move(desk.at("/d.txt"), desk.at("/b/c.txt"), Conflict::replace));
-    same(desk.got("/b/c.txt"), std::string{"new"});
-    ought(!desk.there("/d.txt"));
+    SAME(desk.got("/b/c.txt"), std::string{"new"});
+    OUGHT(!desk.there("/d.txt"));
 }
 
 FILES_TRIAL("copy() copies a tree, keeps times and counts the bytes in the progress", files_trial_7) {
@@ -316,18 +318,18 @@ FILES_TRIAL("copy() copies a tree, keeps times and counts the bytes in the progr
 
     desk.run(desk.files.copy(desk.at("/a"), desk.at("/b"), {Conflict::fail, &progress}));
 
-    same(desk.got("/b/inner/two.txt"), std::string{"678"});
-    same(desk.got("/a/one.txt"), std::string{"12345"});
-    ought(desk.run(desk.files.look(desk.at("/b/one.txt"))).modified == written);
-    ought(progress.total() >= 8);
-    same(progress.done(), progress.total());
-    ought(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/a"))) == tal::Kind::exists);
-    ought(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/a/inner/a"))) == tal::Kind::other);
-    ought(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/b"))) == tal::Kind::exists);
-    ought(desk.refused(desk.files.copy(desk.at("/a/inner"), desk.at("/a"), {Conflict::replace, nullptr})) == tal::Kind::other);
+    SAME(desk.got("/b/inner/two.txt"), std::string{"678"});
+    SAME(desk.got("/a/one.txt"), std::string{"12345"});
+    OUGHT(desk.run(desk.files.look(desk.at("/b/one.txt"))).modified == written);
+    OUGHT(progress.total() >= 8);
+    SAME(progress.done(), progress.total());
+    OUGHT(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/a"))) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/a/inner/a"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.copy(desk.at("/a"), desk.at("/b"))) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.copy(desk.at("/a/inner"), desk.at("/a"), {Conflict::replace, nullptr})) == tal::Kind::other);
 
     desk.run(desk.files.copy(desk.at("/a"), desk.at("/b"), {Conflict::rename, nullptr}));
-    same(desk.got("/b (2)/one.txt"), std::string{"12345"});
+    SAME(desk.got("/b (2)/one.txt"), std::string{"12345"});
 }
 
 FILES_TRIAL("remove() takes a folder that holds anything only when deep; the trash keeps it", files_trial_8) {
@@ -337,22 +339,22 @@ FILES_TRIAL("remove() takes a folder that holds anything only when deep; the tra
     desk.put("/a/inner/x.txt", "x");
     desk.run(desk.files.make(desk.at("/empty")));
 
-    ought(desk.refused(desk.files.remove(desk.at("/a"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.remove(desk.at("/a"))) == tal::Kind::other);
 
     desk.run(desk.files.remove(desk.at("/empty")));
     desk.run(desk.files.remove(desk.at("/a"), {Desk::manual, true}));
 
-    ought(!desk.there("/a"));
-    ought(!desk.there("/a/inner/x.txt"));
-    ought(!desk.there("/empty"));
-    ought(desk.refused(desk.files.remove(desk.at("/a"))) == tal::Kind::missing);
+    OUGHT(!desk.there("/a"));
+    OUGHT(!desk.there("/a/inner/x.txt"));
+    OUGHT(!desk.there("/empty"));
+    OUGHT(desk.refused(desk.files.remove(desk.at("/a"))) == tal::Kind::missing);
 
     // The memory keeps a list of its trash, the disk's trash has a trial of its own; only the
     // memory's top is a root.
     if constexpr (Desk::manual) {
-        same(desk.memory.trashed().size(), std::size_t{1});
-        ought(desk.memory.trashed()[0] == desk.at("/a"));
-        ought(desk.refused(desk.files.remove(desk.at("/"))) == tal::Kind::denied);
+        SAME(desk.memory.trashed().size(), std::size_t{1});
+        OUGHT(desk.memory.trashed()[0] == desk.at("/a"));
+        OUGHT(desk.refused(desk.files.remove(desk.at("/"))) == tal::Kind::denied);
     }
 }
 
@@ -368,26 +370,26 @@ FILES_TRIAL("links are followed on the way and by read and list, looked at by lo
     desk.run(desk.files.link(desk.at("/films/względny"), Path{"Poirot/e01.mkv"}));
     desk.run(desk.files.link(desk.at("/zerwany"), desk.at("/nic")));
 
-    same(desk.names("/skrót"), (std::vector<std::string>{"e01.mkv"}));
-    ought(desk.run(desk.files.list(desk.at("/skrót")))[0].where == desk.at("/skrót/e01.mkv"));
-    same(desk.got("/skrót/e01.mkv"), std::string{"odcinek"});
-    same(desk.got("/films/względny"), std::string{"odcinek"});
+    SAME(desk.names("/skrót"), (std::vector<std::string>{"e01.mkv"}));
+    OUGHT(desk.run(desk.files.list(desk.at("/skrót")))[0].where == desk.at("/skrót/e01.mkv"));
+    SAME(desk.got("/skrót/e01.mkv"), std::string{"odcinek"});
+    SAME(desk.got("/films/względny"), std::string{"odcinek"});
 
     const tal::fs::Entry shortcut = desk.run(desk.files.look(desk.at("/skrót")));
 
-    ought(shortcut.type == Type::link);
-    ought(shortcut.reach == Type::folder);
-    ought(shortcut.target == desk.at("/films/Poirot"));
-    ought(desk.run(desk.files.look(desk.at("/films/względny"))).reach == Type::file);
-    ought(desk.run(desk.files.look(desk.at("/zerwany"))).reach == Type::other);
-    ought(desk.run(desk.files.canonical(desk.at("/skrót/e01.mkv"))) == desk.at("/films/Poirot/e01.mkv"));
-    ought(desk.refused(desk.files.canonical(desk.at("/zerwany"))) == tal::Kind::missing);
-    ought(desk.refused(desk.files.link(desk.at("/skrót"), desk.at("/x"))) == tal::Kind::exists);
+    OUGHT(shortcut.type == Type::link);
+    OUGHT(shortcut.reach == Type::folder);
+    OUGHT(shortcut.target == desk.at("/films/Poirot"));
+    OUGHT(desk.run(desk.files.look(desk.at("/films/względny"))).reach == Type::file);
+    OUGHT(desk.run(desk.files.look(desk.at("/zerwany"))).reach == Type::other);
+    OUGHT(desk.run(desk.files.canonical(desk.at("/skrót/e01.mkv"))) == desk.at("/films/Poirot/e01.mkv"));
+    OUGHT(desk.refused(desk.files.canonical(desk.at("/zerwany"))) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.link(desk.at("/skrót"), desk.at("/x"))) == tal::Kind::exists);
 
     desk.run(desk.files.remove(desk.at("/skrót")));
 
-    ought(!desk.there("/skrót"));
-    same(desk.got("/films/Poirot/e01.mkv"), std::string{"odcinek"});
+    OUGHT(!desk.there("/skrót"));
+    SAME(desk.got("/films/Poirot/e01.mkv"), std::string{"odcinek"});
 }
 
 FILES_TRIAL("links that lead in a circle refuse instead of resolving forever", files_trial_10) {
@@ -398,8 +400,8 @@ FILES_TRIAL("links that lead in a circle refuse instead of resolving forever", f
     desk.run(desk.files.link(desk.at("/a"), desk.at("/b")));
     desk.run(desk.files.link(desk.at("/b"), desk.at("/a")));
 
-    ought(desk.refused(desk.files.read(desk.at("/a"))) == tal::Kind::other);
-    ought(desk.run(desk.files.look(desk.at("/a"))).reach == Type::other);
+    OUGHT(desk.refused(desk.files.read(desk.at("/a"))) == tal::Kind::other);
+    OUGHT(desk.run(desk.files.look(desk.at("/a"))).reach == Type::other);
 }
 
 FILES_TRIAL("change() sets attributes and the time; a root refuses", files_trial_11) {
@@ -411,20 +413,20 @@ FILES_TRIAL("change() sets attributes and the time; a root refuses", files_trial
 
     const tal::fs::Entry entry = desk.run(desk.files.look(desk.at("/a.sh")));
 
-    ought(entry.modified == then);
+    OUGHT(entry.modified == then);
 
     // A disk keeps what its system has: POSIX tells a hidden entry by its name and has the right
     // to run, Windows has the hidden flag and tells a program by its extension.
 #ifdef _WIN32
-    ought(entry.attributes.hidden);
-    ought(entry.attributes.executable || !Desk::manual);
+    OUGHT(entry.attributes.hidden);
+    OUGHT(entry.attributes.executable || !Desk::manual);
 #else
-    ought(entry.attributes.hidden || !Desk::manual);
-    ought(entry.attributes.executable);
+    OUGHT(entry.attributes.hidden || !Desk::manual);
+    OUGHT(entry.attributes.executable);
 #endif
 
-    if constexpr (Desk::manual) ought(desk.refused(desk.files.change(desk.at("/"), {})) == tal::Kind::denied);
-    ought(desk.refused(desk.files.change(desk.at("/none"), {})) == tal::Kind::missing);
+    if constexpr (Desk::manual) OUGHT(desk.refused(desk.files.change(desk.at("/"), {})) == tal::Kind::denied);
+    OUGHT(desk.refused(desk.files.change(desk.at("/none"), {})) == tal::Kind::missing);
 }
 
 TRIAL("Memory: a watch sees the folder and what is in it, a deep one also what lies below") {
@@ -444,16 +446,16 @@ TRIAL("Memory: a watch sees the folder and what is in it, a deep one also what l
 
     const std::vector<Change> seen = desk.run(shallow.next());
 
-    same(seen.size(), std::size_t{4});
-    ought(seen[0] == (Change{Change::Kind::created, Path{"/f/a.txt"}, {}}));
-    ought(seen[1] == (Change{Change::Kind::modified, Path{"/f/a.txt"}, {}}));
-    ought(seen[2] == (Change{Change::Kind::renamed, Path{"/f/c.txt"}, Path{"/f/a.txt"}}));
-    ought(seen[3] == (Change{Change::Kind::removed, Path{"/f/c.txt"}, {}}));
+    SAME(seen.size(), std::size_t{4});
+    OUGHT(seen[0] == (Change{Change::Kind::created, Path{"/f/a.txt"}, {}}));
+    OUGHT(seen[1] == (Change{Change::Kind::modified, Path{"/f/a.txt"}, {}}));
+    OUGHT(seen[2] == (Change{Change::Kind::renamed, Path{"/f/c.txt"}, Path{"/f/a.txt"}}));
+    OUGHT(seen[3] == (Change{Change::Kind::removed, Path{"/f/c.txt"}, {}}));
 
     const std::vector<Change> below = desk.run(deep.next());
 
-    same(below.size(), std::size_t{5});
-    ought(below[2] == (Change{Change::Kind::created, Path{"/f/inner/b.txt"}, {}}));
+    SAME(below.size(), std::size_t{5});
+    OUGHT(below[2] == (Change{Change::Kind::created, Path{"/f/inner/b.txt"}, {}}));
 }
 
 TRIAL("Memory: a reader waiting on a watch wakes when a change comes from another thread") {
@@ -467,9 +469,9 @@ TRIAL("Memory: a reader waiting on a watch wakes when a change comes from anothe
         co_return 1;
     }(desk.memory)));
 
-    same(written, 1);
-    same(seen.size(), std::size_t{1});
-    ought(seen[0].where == Path{"/x.txt"});
+    SAME(written, 1);
+    SAME(seen.size(), std::size_t{1});
+    OUGHT(seen[0].where == Path{"/x.txt"});
 }
 
 namespace {
@@ -495,13 +497,13 @@ TRIAL("Memory: a watch ended while its reader waits cancels the reader; a second
 
     for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
 
-    ought(desk.refused(watch->next()) == tal::Kind::busy);
+    OUGHT(desk.refused(watch->next()) == tal::Kind::busy);
 
     *watch = desk.memory.watch(Path{"/"});
 
     for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
 
-    same(cancelled.load(), 1);
+    SAME(cancelled.load(), 1);
 
     scope.run(counted(watch->next(), cancelled));
 
@@ -511,9 +513,9 @@ TRIAL("Memory: a watch ended while its reader waits cancels the reader; a second
 
     for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
 
-    same(cancelled.load(), 2);
-    ought(!scope.busy());
-    ought(desk.refused(tal::fs::Watch{}.next()) == tal::Kind::missing);
+    SAME(cancelled.load(), 2);
+    OUGHT(!scope.busy());
+    OUGHT(desk.refused(tal::fs::Watch{}.next()) == tal::Kind::missing);
 }
 
 TRIAL("Memory: a watch that falls far behind gives one overflow instead of every change") {
@@ -524,12 +526,12 @@ TRIAL("Memory: a watch that falls far behind gives one overflow instead of every
 
     const std::vector<Change> seen = desk.run(watch.next());
 
-    same(seen.size(), std::size_t{1});
-    ought(seen[0].kind == Change::Kind::overflow);
+    SAME(seen.size(), std::size_t{1});
+    OUGHT(seen[0].kind == Change::Kind::overflow);
 
     desk.put("/after", "x");
 
-    same(desk.run(watch.next()).size(), std::size_t{1});
+    SAME(desk.run(watch.next()).size(), std::size_t{1});
 }
 
 TRIAL("Memory: an operation runs only when its task is awaited, even after the memory is gone") {
@@ -537,31 +539,31 @@ TRIAL("Memory: an operation runs only when its task is awaited, even after the m
     auto memory = std::make_unique<tal::fs::Memory>();
     tal::Task<void> writing = memory->write(Path{"/late.txt"}, tal::bytes("x"));
 
-    ought(tal::wait(loop, memory->list(Path{"/"})).empty());
+    OUGHT(tal::wait(loop, memory->list(Path{"/"})).empty());
 
     tal::Task<tal::Bytes> reading = memory->read(Path{"/late.txt"});
 
     memory.reset();
     tal::wait(loop, std::move(writing));
 
-    same(tal::text::of(tal::wait(loop, std::move(reading))), std::string{"x"});
+    SAME(tal::text::of(tal::wait(loop, std::move(reading))), std::string{"x"});
 }
 
 TRIAL("Memory: known folders are given when they are there; the volumes are its roots") {
     MemoryDesk desk;
 
-    ought(!desk.run(desk.memory.known(tal::fs::Known::music)).has_value());
+    OUGHT(!desk.run(desk.memory.known(tal::fs::Known::music)).has_value());
 
     desk.run(desk.memory.make(Path{"/home/Music"}));
 
-    ought(desk.run(desk.memory.known(tal::fs::Known::music)) == Path{"/home/Music"});
-    ought(desk.run(desk.memory.known(tal::fs::Known::home)) == Path{"/home"});
+    OUGHT(desk.run(desk.memory.known(tal::fs::Known::music)) == Path{"/home/Music"});
+    OUGHT(desk.run(desk.memory.known(tal::fs::Known::home)) == Path{"/home"});
 
     const std::vector<tal::fs::Volume> volumes = desk.run(desk.memory.volumes());
 
-    same(volumes.size(), std::size_t{1});
-    ought(volumes[0].where == Path{"/"});
-    ought(desk.run(desk.memory.volume(Path{"/home/Music"})).where == Path{"/"});
+    SAME(volumes.size(), std::size_t{1});
+    OUGHT(volumes[0].where == Path{"/"});
+    OUGHT(desk.run(desk.memory.volume(Path{"/home/Music"})).where == Path{"/"});
 }
 
 TRIAL("fs: the free functions use the program's default adapter, and the disk without one") {
@@ -570,20 +572,20 @@ TRIAL("fs: the free functions use the program's default adapter, and the disk wi
     tal::defaults().set<tal::fs::Files>(std::make_shared<tal::fs::Memory>());
 
     tal::wait(loop, tal::fs::write(Path{"/a.txt"}, tal::bytes("domyślny")));
-    same(tal::text::of(tal::wait(loop, tal::fs::read(Path{"/a.txt"}))), std::string{"domyślny"});
-    same(tal::wait(loop, tal::fs::list(Path{"/"})).size(), std::size_t{1});
+    SAME(tal::text::of(tal::wait(loop, tal::fs::read(Path{"/a.txt"}))), std::string{"domyślny"});
+    SAME(tal::wait(loop, tal::fs::list(Path{"/"})).size(), std::size_t{1});
 
     const tal::fs::Watch watch = tal::fs::watch(Path{"/"});
 
     tal::wait(loop, tal::fs::remove(Path{"/a.txt"}));
-    same(tal::wait(loop, watch.next()).size(), std::size_t{1});
+    SAME(tal::wait(loop, watch.next()).size(), std::size_t{1});
 
     tal::defaults().clear<tal::fs::Files>();
 
     const DiskDesk disk;
 
-    ought(tal::Port<tal::fs::Files>{}->name() == "disk");
-    ought(tal::wait(loop, tal::fs::list(disk.root)).empty());
+    OUGHT(tal::Port<tal::fs::Files>{}->name() == "disk");
+    OUGHT(tal::wait(loop, tal::fs::list(disk.root)).empty());
 }
 
 FILES_TRIAL("an open file reads and writes at a place, pads a gap with zeros and appends at the end", files_trial_12) {
@@ -593,15 +595,15 @@ FILES_TRIAL("an open file reads and writes at a place, pads a gap with zeros and
 
     const tal::fs::File file = desk.run(desk.files.open(desk.at("/a.bin"), tal::fs::Mode::write));
 
-    same(tal::text::of(desk.run(file.read(2, 3))), std::string{"cde"});
-    same(tal::text::of(desk.run(file.read(5, 10))), std::string{"f"});
-    same(tal::text::of(desk.run(file.read(9, 10))), std::string{});
+    SAME(tal::text::of(desk.run(file.read(2, 3))), std::string{"cde"});
+    SAME(tal::text::of(desk.run(file.read(5, 10))), std::string{"f"});
+    SAME(tal::text::of(desk.run(file.read(9, 10))), std::string{});
 
     desk.run(file.write(1, tal::bytes("XY")));
     desk.run(file.write(8, tal::bytes("Z")));
 
-    same(desk.got("/a.bin"), (std::string{"aXYdef\0\0Z", 9}));
-    same(desk.run(file.size()), std::uint64_t{9});
+    SAME(desk.got("/a.bin"), (std::string{"aXYdef\0\0Z", 9}));
+    SAME(desk.run(file.size()), std::uint64_t{9});
 
     desk.run(file.flush());
 
@@ -609,7 +611,7 @@ FILES_TRIAL("an open file reads and writes at a place, pads a gap with zeros and
 
     desk.run(log.write(0, tal::bytes("one ")));
     desk.run(log.write(0, tal::bytes("two")));
-    same(desk.got("/log.txt"), std::string{"one two"});
+    SAME(desk.got("/log.txt"), std::string{"one two"});
 }
 
 FILES_TRIAL("open() reads only what is there, truncates, makes only new files exclusively", files_trial_13) {
@@ -617,25 +619,25 @@ FILES_TRIAL("open() reads only what is there, truncates, makes only new files ex
 
     desk.put("/a.txt", "content");
 
-    ought(desk.refused(desk.files.open(desk.at("/none.txt"))) == tal::Kind::missing);
-    ought(desk.refused(desk.files.open(desk.at("/a.txt"), tal::fs::Mode::exclusive)) == tal::Kind::exists);
-    ought(desk.refused(desk.files.open(desk.at("/"))) == tal::Kind::other);
-    ought(desk.refused(desk.files.open(desk.at("/none/x"), tal::fs::Mode::write)) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.open(desk.at("/none.txt"))) == tal::Kind::missing);
+    OUGHT(desk.refused(desk.files.open(desk.at("/a.txt"), tal::fs::Mode::exclusive)) == tal::Kind::exists);
+    OUGHT(desk.refused(desk.files.open(desk.at("/"))) == tal::Kind::other);
+    OUGHT(desk.refused(desk.files.open(desk.at("/none/x"), tal::fs::Mode::write)) == tal::Kind::missing);
 
     const tal::fs::File reading = desk.run(desk.files.open(desk.at("/a.txt")));
 
-    ought(desk.refused(reading.write(0, tal::bytes("x"))) == tal::Kind::denied);
+    OUGHT(desk.refused(reading.write(0, tal::bytes("x"))) == tal::Kind::denied);
 
     (void)desk.run(desk.files.open(desk.at("/a.txt"), tal::fs::Mode::truncate));
-    same(desk.got("/a.txt"), std::string{});
+    SAME(desk.got("/a.txt"), std::string{});
 
     const tal::fs::File fresh = desk.run(desk.files.open(desk.at("/new.txt"), tal::fs::Mode::exclusive));
 
     desk.run(fresh.write(0, tal::bytes("1")));
-    same(desk.got("/new.txt"), std::string{"1"});
+    SAME(desk.got("/new.txt"), std::string{"1"});
 
     desk.run(desk.files.change(desk.at("/new.txt"), {tal::fs::Attributes{false, true, false, false}, {}, {}}));
-    ought(desk.refused(desk.files.open(desk.at("/new.txt"), tal::fs::Mode::append)) == tal::Kind::denied);
+    OUGHT(desk.refused(desk.files.open(desk.at("/new.txt"), tal::fs::Mode::append)) == tal::Kind::denied);
 }
 
 TRIAL("Memory: a closed file refuses; an open file outlives the memory; a removed one is missing") {
@@ -649,18 +651,18 @@ TRIAL("Memory: a closed file refuses; an open file outlives the memory; a remove
     tal::Task<tal::Bytes> later = other.read(0, 4);
 
     other.close();
-    same(tal::text::of(tal::wait(loop, std::move(later))), std::string{"kept"});
-    ought(!other.held());
+    SAME(tal::text::of(tal::wait(loop, std::move(later))), std::string{"kept"});
+    OUGHT(!other.held());
 
     try {
         (void)tal::wait(loop, other.read(0, 1));
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::missing);
+        OUGHT(why.kind() == tal::Kind::missing);
     }
 
     memory.reset();
-    same(tal::text::of(tal::wait(loop, file.read(0, 4))), std::string{"kept"});
+    SAME(tal::text::of(tal::wait(loop, file.read(0, 4))), std::string{"kept"});
 
     auto again = std::make_unique<tal::fs::Memory>();
 
@@ -672,9 +674,9 @@ TRIAL("Memory: a closed file refuses; an open file outlives the memory; a remove
 
     try {
         (void)tal::wait(loop, gone.size());
-        ought(false);
+        OUGHT(false);
     } catch (const tal::Trouble& why) {
-        ought(why.kind() == tal::Kind::missing);
+        OUGHT(why.kind() == tal::Kind::missing);
     }
 }
 
@@ -687,14 +689,14 @@ FILES_TRIAL("rights are 644 for files, 755 for folders and change() sets them", 
     // The rights of new entries on a disk follow the program's mask, so only the memory's are
     // known; Windows has none to give or to set.
     if constexpr (Desk::manual) {
-        ought(desk.run(desk.files.look(desk.at("/script.sh"))).rights == std::uint16_t{0644});
-        ought(desk.run(desk.files.look(desk.at("/bin"))).rights == std::uint16_t{0755});
+        OUGHT(desk.run(desk.files.look(desk.at("/script.sh"))).rights == std::uint16_t{0644});
+        OUGHT(desk.run(desk.files.look(desk.at("/bin"))).rights == std::uint16_t{0755});
     }
 
 #ifdef _WIN32
     if constexpr (!Desk::manual) {
-        ought(!desk.run(desk.files.look(desk.at("/script.sh"))).rights.has_value());
-        ought(desk.refused(desk.files.change(desk.at("/script.sh"), {{}, {}, std::uint16_t{0700}})) == tal::Kind::unsupported);
+        OUGHT(!desk.run(desk.files.look(desk.at("/script.sh"))).rights.has_value());
+        OUGHT(desk.refused(desk.files.change(desk.at("/script.sh"), {{}, {}, std::uint16_t{0700}})) == tal::Kind::unsupported);
 
         return;
     }
@@ -702,8 +704,8 @@ FILES_TRIAL("rights are 644 for files, 755 for folders and change() sets them", 
 
     desk.run(desk.files.change(desk.at("/script.sh"), {{}, {}, std::uint16_t{0700}}));
 
-    ought(desk.run(desk.files.look(desk.at("/script.sh"))).rights == std::uint16_t{0700});
-    ought(!desk.run(desk.files.look(desk.at("/script.sh"))).attributes.hidden);
+    OUGHT(desk.run(desk.files.look(desk.at("/script.sh"))).rights == std::uint16_t{0700});
+    OUGHT(!desk.run(desk.files.look(desk.at("/script.sh"))).attributes.hidden);
 }
 
 TRIAL("fs: open() goes through the default adapter too") {
@@ -714,7 +716,7 @@ TRIAL("fs: open() goes through the default adapter too") {
     const tal::fs::File file = tal::wait(loop, tal::fs::open(Path{"/a.txt"}, tal::fs::Mode::exclusive));
 
     tal::wait(loop, file.write(0, tal::bytes("x")));
-    same(tal::text::of(tal::wait(loop, tal::fs::read(Path{"/a.txt"}))), std::string{"x"});
+    SAME(tal::text::of(tal::wait(loop, tal::fs::read(Path{"/a.txt"}))), std::string{"x"});
 
     tal::defaults().clear<tal::fs::Files>();
 }
@@ -739,10 +741,10 @@ TRIAL("Disk: names that are not UTF-8 come back whole") {
 
     const std::vector<tal::fs::Entry> found = desk.run(desk.files.list(desk.root));
 
-    same(found.size(), std::size_t{1});
-    ought(found[0].where == file);
-    same(found[0].where.text(), desk.root.text() + "/" + shown);
-    same(tal::text::of(desk.run(desk.files.read(found[0].where))), std::string{"x"});
+    SAME(found.size(), std::size_t{1});
+    OUGHT(found[0].where == file);
+    SAME(found[0].where.text(), desk.root.text() + "/" + shown);
+    SAME(tal::text::of(desk.run(desk.files.read(found[0].where))), std::string{"x"});
 }
 
 namespace {
@@ -790,22 +792,22 @@ TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a de
     const tal::fs::Watch deep = desk.files.watch(desk.at("/f"), true);
 
     desk.put("/f/a.txt", "1");
-    ought(among(awaited(desk, shallow, Change::Kind::created, desk.at("/f/a.txt")), Change::Kind::created, desk.at("/f/a.txt")));
+    OUGHT(among(awaited(desk, shallow, Change::Kind::created, desk.at("/f/a.txt")), Change::Kind::created, desk.at("/f/a.txt")));
 
     desk.run(desk.files.move(desk.at("/f/a.txt"), desk.at("/f/c.txt")));
 
     const std::vector<Change> moved = awaited(desk, shallow, Change::Kind::renamed, desk.at("/f/c.txt"));
     const auto renamed = std::find_if(moved.begin(), moved.end(), [&](const Change& one) { return one.kind == Change::Kind::renamed; });
 
-    ought(renamed != moved.end() && renamed->where == desk.at("/f/c.txt") && renamed->was == desk.at("/f/a.txt"));
+    OUGHT(renamed != moved.end() && renamed->where == desk.at("/f/c.txt") && renamed->was == desk.at("/f/a.txt"));
 
     desk.run(desk.files.remove(desk.at("/f/c.txt")));
-    ought(among(awaited(desk, shallow, Change::Kind::removed, desk.at("/f/c.txt")), Change::Kind::removed, desk.at("/f/c.txt")));
+    OUGHT(among(awaited(desk, shallow, Change::Kind::removed, desk.at("/f/c.txt")), Change::Kind::removed, desk.at("/f/c.txt")));
 
     desk.put("/f/inner/b.txt", "2");
 
-    ought(among(awaited(desk, deep, Change::Kind::created, desk.at("/f/inner/b.txt")), Change::Kind::created, desk.at("/f/inner/b.txt")));
-    ought(!among(heard(desk, shallow), Change::Kind::created, desk.at("/f/inner/b.txt")));
+    OUGHT(among(awaited(desk, deep, Change::Kind::created, desk.at("/f/inner/b.txt")), Change::Kind::created, desk.at("/f/inner/b.txt")));
+    OUGHT(!among(heard(desk, shallow), Change::Kind::created, desk.at("/f/inner/b.txt")));
 }
 
 // A file written in many small pieces wakes the reader a few times, not once for every piece:
@@ -829,9 +831,9 @@ TRIAL("Disk: changes of content settle and merge before they reach the reader") 
 
     const std::vector<Change> first = heard(desk, watch);
 
-    same(first.size(), std::size_t{2});
-    ought(among(first, Change::Kind::modified, desk.at("/one.log")));
-    ought(among(first, Change::Kind::modified, desk.at("/two.log")));
+    SAME(first.size(), std::size_t{2});
+    OUGHT(among(first, Change::Kind::modified, desk.at("/one.log")));
+    OUGHT(among(first, Change::Kind::modified, desk.at("/two.log")));
 }
 
 // The trash of freedesktop.org, here under a home of the trial's own, so that the trial leaves
@@ -850,7 +852,7 @@ TRIAL("Disk: remove() into the trash keeps the entry there and tells where it wa
 
     desk.run(desk.files.remove(desk.at("/a"), {true, true}));
 
-    ought(!desk.there("/a"));
+    OUGHT(!desk.there("/a"));
 #else
     const std::filesystem::path home = desk.made / "home";
     const char* was = std::getenv("XDG_DATA_HOME");
@@ -868,13 +870,13 @@ TRIAL("Disk: remove() into the trash keeps the entry there and tells where it wa
         ::unsetenv("XDG_DATA_HOME");
     }
 
-    ought(!desk.there("/a"));
-    ought(std::filesystem::exists(home / "Trash/files/a/inner/x.txt"));
-    ought(std::filesystem::exists(home / "Trash/files/a.2"));
+    OUGHT(!desk.there("/a"));
+    OUGHT(std::filesystem::exists(home / "Trash/files/a/inner/x.txt"));
+    OUGHT(std::filesystem::exists(home / "Trash/files/a.2"));
 
     std::ifstream info{home / "Trash/info/a.trashinfo"};
     const std::string told{std::istreambuf_iterator<char>{info}, std::istreambuf_iterator<char>{}};
 
-    ought(told.starts_with("[Trash Info]\nPath=" + std::string{desk.at("/a").stored()} + "\nDeletionDate="));
+    OUGHT(told.starts_with("[Trash Info]\nPath=" + std::string{desk.at("/a").stored()} + "\nDeletionDate="));
 #endif
 }

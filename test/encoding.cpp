@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <string>
@@ -9,11 +9,11 @@
 using namespace talcite;
 
 TRIAL("Encoding: the lead byte tells how many continuation bytes follow") {
-    same(utf8::trailing(0x41), std::size_t{0});
-    same(utf8::trailing(0xC5), std::size_t{1});
-    same(utf8::trailing(0xE2), std::size_t{2});
-    same(utf8::trailing(0xF0), std::size_t{3});
-    same(utf8::trailing(0x80), std::size_t{0});
+    SAME(utf8::trailing(0x41), std::size_t{0});
+    SAME(utf8::trailing(0xC5), std::size_t{1});
+    SAME(utf8::trailing(0xE2), std::size_t{2});
+    SAME(utf8::trailing(0xF0), std::size_t{3});
+    SAME(utf8::trailing(0x80), std::size_t{0});
 }
 
 TRIAL("Encoding: character by character through the whole string") {
@@ -21,10 +21,10 @@ TRIAL("Encoding: character by character through the whole string") {
 
     std::size_t at = 0;
 
-    same(utf8::decode(said, at), U'a');
-    same(utf8::decode(said, at), U'ż');
-    same(utf8::decode(said, at), U'💡');
-    same(at, said.size());
+    SAME(utf8::decode(said, at), U'a');
+    SAME(utf8::decode(said, at), U'ż');
+    SAME(utf8::decode(said, at), U'💡');
+    SAME(at, said.size());
 }
 
 TRIAL("Encoding: an invalid byte gives a replacement character and one step") {
@@ -34,8 +34,8 @@ TRIAL("Encoding: an invalid byte gives a replacement character and one step") {
 
     std::size_t at = 1;
 
-    same(utf8::decode(said, at), U'�');
-    same(at, std::size_t{2});
+    SAME(utf8::decode(said, at), U'�');
+    SAME(at, std::size_t{2});
 }
 
 // A tail cut off halfway is one replacement character for the whole of it, its maximal subpart.
@@ -46,8 +46,8 @@ TRIAL("Encoding: a sequence cut off halfway also gives one replacement character
 
     std::size_t at = 0;
 
-    same(utf8::decode(said, at), U'�');
-    same(at, std::size_t{2});
+    SAME(utf8::decode(said, at), U'�');
+    SAME(at, std::size_t{2});
 }
 
 // The one rule of talcite for UTF-8 (Unicode, table 3-7): the second byte bounds the rest, so an
@@ -62,33 +62,33 @@ TRIAL("Encoding: span tells a whole, a partial and a bad sequence") {
         return got.kind == kind && got.size == size;
     };
 
-    ought(is("a", Kind::whole, 1));
-    ought(is("\xc5\xbc!", Kind::whole, 2));
-    ought(is("\xe2\x9d\xa4", Kind::whole, 3));
-    ought(is("\xf0\x9f\x99\x82", Kind::whole, 4));
+    OUGHT(is("a", Kind::whole, 1));
+    OUGHT(is("\xc5\xbc!", Kind::whole, 2));
+    OUGHT(is("\xe2\x9d\xa4", Kind::whole, 3));
+    OUGHT(is("\xf0\x9f\x99\x82", Kind::whole, 4));
 
-    ought(is("", Kind::partial, 0));
-    ought(is("\xe2", Kind::partial, 1));
-    ought(is("\xe2\x9d", Kind::partial, 2));
-    ought(is("\xf4\x8f\xbf", Kind::partial, 3));
+    OUGHT(is("", Kind::partial, 0));
+    OUGHT(is("\xe2", Kind::partial, 1));
+    OUGHT(is("\xe2\x9d", Kind::partial, 2));
+    OUGHT(is("\xf4\x8f\xbf", Kind::partial, 3));
 
-    ought(is("\x80", Kind::bad, 1));
-    ought(is("\xc1\xbf", Kind::bad, 1));
-    ought(is("\xf5\x80", Kind::bad, 1));
-    ought(is("\xe0\x9f", Kind::bad, 1));
-    ought(is("\xed\xa0", Kind::bad, 1));
-    ought(is("\xf0\x8f", Kind::bad, 1));
-    ought(is("\xf4\x90", Kind::bad, 1));
-    ought(is("\xe2\x9d" "A", Kind::bad, 2));
-    ought(is("\xf0\x9f\x99" "A", Kind::bad, 3));
+    OUGHT(is("\x80", Kind::bad, 1));
+    OUGHT(is("\xc1\xbf", Kind::bad, 1));
+    OUGHT(is("\xf5\x80", Kind::bad, 1));
+    OUGHT(is("\xe0\x9f", Kind::bad, 1));
+    OUGHT(is("\xed\xa0", Kind::bad, 1));
+    OUGHT(is("\xf0\x8f", Kind::bad, 1));
+    OUGHT(is("\xf4\x90", Kind::bad, 1));
+    OUGHT(is("\xe2\x9d" "A", Kind::bad, 2));
+    OUGHT(is("\xf0\x9f\x99" "A", Kind::bad, 3));
 }
 
 TRIAL("Encoding: strict says whether the whole text is well-formed") {
-    ought(utf8::strict(""));
-    ought(utf8::strict("za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87"));
-    ought(!utf8::strict("a\xc0\xaf"));
-    ought(!utf8::strict("a\xed\xa0\x80"));
-    ought(!utf8::strict("a\xe2\x9d"));
+    OUGHT(utf8::strict(""));
+    OUGHT(utf8::strict("za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87"));
+    OUGHT(!utf8::strict("a\xc0\xaf"));
+    OUGHT(!utf8::strict("a\xed\xa0\x80"));
+    OUGHT(!utf8::strict("a\xe2\x9d"));
 }
 
 // A broken sequence is one replacement character for its maximal subpart, and the byte that broke
@@ -98,9 +98,9 @@ TRIAL("Encoding: a sequence broken off by another byte is one replacement charac
 
     std::size_t at = 0;
 
-    same(utf8::decode(said, at), U'\ufffd');
-    same(at, std::size_t{2});
-    same(utf8::decode(said, at), U'A');
+    SAME(utf8::decode(said, at), U'\ufffd');
+    SAME(at, std::size_t{2});
+    SAME(utf8::decode(said, at), U'A');
 }
 
 TRIAL("Encoding: a lead byte without its continuation is garbage too") {
@@ -110,8 +110,8 @@ TRIAL("Encoding: a lead byte without its continuation is garbage too") {
 
     std::size_t at = 0;
 
-    same(utf8::decode(said, at), U'�');
-    same(at, std::size_t{1});
+    SAME(utf8::decode(said, at), U'�');
+    SAME(at, std::size_t{1});
 }
 
 TRIAL("Encoding: the end of the string returns zero and does not move the position") {
@@ -119,8 +119,8 @@ TRIAL("Encoding: the end of the string returns zero and does not move the positi
 
     std::size_t at = 1;
 
-    same(utf8::decode(said, at), static_cast<char32_t>(0));
-    same(at, std::size_t{1});
+    SAME(utf8::decode(said, at), static_cast<char32_t>(0));
+    SAME(at, std::size_t{1});
 }
 
 TRIAL("Encoding: encoding and decoding round-trips") {
@@ -129,8 +129,8 @@ TRIAL("Encoding: encoding and decoding round-trips") {
 
         std::size_t at = 0;
 
-        same(utf8::decode(said, at), one);
-        same(at, said.size());
+        SAME(utf8::decode(said, at), one);
+        SAME(at, said.size());
     }
 }
 
@@ -139,23 +139,23 @@ TRIAL("Encoding: encoding appends rather than replaces") {
 
     utf8::encode(U'ż', said);
 
-    same(said, std::string{"aż"});
+    SAME(said, std::string{"aż"});
 }
 
 TRIAL("Encoding: the encoded length follows the rule") {
-    same(utf8::encode(U'a').size(), std::size_t{1});
-    same(utf8::encode(U'ż').size(), std::size_t{2});
-    same(utf8::encode(U'漢').size(), std::size_t{3});
-    same(utf8::encode(U'💡').size(), std::size_t{4});
+    SAME(utf8::encode(U'a').size(), std::size_t{1});
+    SAME(utf8::encode(U'ż').size(), std::size_t{2});
+    SAME(utf8::encode(U'漢').size(), std::size_t{3});
+    SAME(utf8::encode(U'💡').size(), std::size_t{4});
 }
 
 TRIAL("Encoding: only characters that really take two cells are wide") {
-    same(width(U'a'), 1);
-    same(width(U'ż'), 1);
-    same(width(U'漢'), 2);
-    same(width(U'가'), 2);
-    same(width(U'😀'), 2);
-    same(width(U'→'), 1);
+    SAME(width(U'a'), 1);
+    SAME(width(U'ż'), 1);
+    SAME(width(U'漢'), 2);
+    SAME(width(U'가'), 2);
+    SAME(width(U'😀'), 2);
+    SAME(width(U'→'), 1);
 }
 
 // UTF-8 and the native wide string. This pair exists so that we can talk to Windows with one
@@ -163,13 +163,13 @@ TRIAL("Encoding: only characters that really take two cells are wide") {
 TRIAL("Encoding: a wide string and UTF-8 convert there and back") {
     const std::string said = "Zażółć gęślą jaźń";
 
-    same(talcite::to_string(talcite::to_wstring(said)), said);
+    SAME(talcite::to_string(talcite::to_wstring(said)), said);
 
     // Plain ASCII too, because it is the most common case and the easiest to break with a shortcut.
-    same(talcite::to_string(talcite::to_wstring(std::string{"plain"})), std::string{"plain"});
+    SAME(talcite::to_string(talcite::to_wstring(std::string{"plain"})), std::string{"plain"});
 
-    same(talcite::to_string(std::wstring_view{}), std::string{});
-    ought(talcite::to_wstring(std::string_view{}).empty());
+    SAME(talcite::to_string(std::wstring_view{}), std::string{});
+    OUGHT(talcite::to_wstring(std::string_view{}).empty());
 }
 
 // A character outside the Basic Multilingual Plane is the only place where the two paths differ: on
@@ -182,10 +182,10 @@ TRIAL("Encoding: a character outside the Basic Multilingual Plane converts there
 
     const std::wstring wide = talcite::to_wstring(said);
 
-    same(talcite::to_string(wide), said);
+    SAME(talcite::to_string(wide), said);
 
     // On Windows these are four units (a, the pair, b), elsewhere three characters.
-    same(wide.size(), sizeof(wchar_t) == 2 ? std::size_t{4} : std::size_t{3});
+    SAME(wide.size(), sizeof(wchar_t) == 2 ? std::size_t{4} : std::size_t{3});
 }
 
 // A byte that is not valid UTF-8 ends up as a replacement character, just as in `utf8::decode`.
@@ -196,8 +196,8 @@ TRIAL("Encoding: a byte outside UTF-8 becomes a replacement character, not silen
 
     const std::string made = talcite::to_string(talcite::to_wstring(broken));
 
-    ought(made != broken);
-    ought(made.find("\xef\xbf\xbd") != std::string::npos);
+    OUGHT(made != broken);
+    OUGHT(made.find("\xef\xbf\xbd") != std::string::npos);
 }
 
 // Forms UTF-8 forbids although their bits fit come back as the replacement character, one byte at
@@ -214,17 +214,17 @@ TRIAL("Encoding: overlong forms, surrogates and values past U+10FFFF are broken 
         return made;
     };
 
-    same(decoded("\xf4\x90\x80\x80"), std::u32string(4, U'\ufffd'));
-    same(decoded("\xed\xa0\x80"), std::u32string(3, U'\ufffd'));
-    same(decoded("\xe0\x80\xaf"), std::u32string(3, U'\ufffd'));
-    same(decoded("\xc0\xaf"), std::u32string(2, U'\ufffd'));
-    same(decoded("\xc0\x80"), std::u32string(2, U'\ufffd'));
-    same(decoded("\xf0\x80\x80\xaf"), std::u32string(4, U'\ufffd'));
+    SAME(decoded("\xf4\x90\x80\x80"), std::u32string(4, U'\ufffd'));
+    SAME(decoded("\xed\xa0\x80"), std::u32string(3, U'\ufffd'));
+    SAME(decoded("\xe0\x80\xaf"), std::u32string(3, U'\ufffd'));
+    SAME(decoded("\xc0\xaf"), std::u32string(2, U'\ufffd'));
+    SAME(decoded("\xc0\x80"), std::u32string(2, U'\ufffd'));
+    SAME(decoded("\xf0\x80\x80\xaf"), std::u32string(4, U'\ufffd'));
 
-    same(decoded("\xf4\x8f\xbf\xbf"), std::u32string{U'\U0010ffff'});
-    same(decoded("\xed\x9f\xbf"), std::u32string{U'\ud7ff'});
-    same(decoded("\xc2\x80\xe0\xa0\x80\xf0\x90\x80\x80"), (std::u32string{U'\u0080', U'\u0800', U'\U00010000'}));
-    same(decoded("a\xc5\xbc"), (std::u32string{U'a', U'\u017c'}));
+    SAME(decoded("\xf4\x8f\xbf\xbf"), std::u32string{U'\U0010ffff'});
+    SAME(decoded("\xed\x9f\xbf"), std::u32string{U'\ud7ff'});
+    SAME(decoded("\xc2\x80\xe0\xa0\x80\xf0\x90\x80\x80"), (std::u32string{U'\u0080', U'\u0800', U'\U00010000'}));
+    SAME(decoded("a\xc5\xbc"), (std::u32string{U'a', U'\u017c'}));
 }
 
 // A zero in the middle of a string. `std::string_view` knows its length, so a zero in it is a
@@ -235,10 +235,10 @@ TRIAL("Encoding: a zero in the middle of a string is a character, not the end") 
 
     const std::wstring wide = talcite::to_wstring(said);
 
-    same(wide.size(), std::size_t{3});
-    same(wide[1], wchar_t{0});
+    SAME(wide.size(), std::size_t{3});
+    SAME(wide[1], wchar_t{0});
 
-    same(talcite::to_string(wide), said);
+    SAME(talcite::to_string(wide), said);
 }
 
 // String to bytes and back, byte for byte: no encoding, with a zero byte and non-ASCII characters,
@@ -247,10 +247,10 @@ TRIAL("Bytes: bytes and text copy byte for byte, in both directions") {
     const std::string said{"za\0\xc5\xbc\xc3\xb3\xc5\x82\xff", 10};
     const Bytes made = bytes(said);
 
-    same(made.size(), std::size_t{10});
-    ought(made[2] == std::byte{0});
-    ought(made[9] == std::byte{0xff});
-    same(text(made), said);
-    ought(bytes("").empty());
-    same(text(Bytes{}), std::string{});
+    SAME(made.size(), std::size_t{10});
+    OUGHT(made[2] == std::byte{0});
+    OUGHT(made[9] == std::byte{0xff});
+    SAME(text(made), said);
+    OUGHT(bytes("").empty());
+    SAME(text(Bytes{}), std::string{});
 }

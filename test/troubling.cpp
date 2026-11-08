@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -16,19 +16,19 @@ using namespace talcite;
 // One root for everything that can fail at run time. Whoever wants to show an error window catches
 // `Trouble`, and does not catch foreign exceptions or misuse (`std::logic_error`) along with it.
 TRIAL("Trouble: the library's errors share one root") {
-    ought((std::is_base_of_v<Trouble, fs::Trouble>));
-    ought((std::is_base_of_v<Trouble, net::Trouble>));
-    ought((std::is_base_of_v<Trouble, Rejected>));
-    ought((std::is_base_of_v<Trouble, Overdue>));
-    ought((std::is_base_of_v<Trouble, Unbound>));
-    ought((std::is_base_of_v<Trouble, Refused>));
+    OUGHT((std::is_base_of_v<Trouble, fs::Trouble>));
+    OUGHT((std::is_base_of_v<Trouble, net::Trouble>));
+    OUGHT((std::is_base_of_v<Trouble, Rejected>));
+    OUGHT((std::is_base_of_v<Trouble, Overdue>));
+    OUGHT((std::is_base_of_v<Trouble, Unbound>));
+    OUGHT((std::is_base_of_v<Trouble, Refused>));
 }
 
 // An interruption is not a failure. Whoever interrupted knows it; an error window about a
 // cancellation would be a lie. That is why `Cancelled` stands beside the root, not under it.
 TRIAL("Trouble: cancellation stands outside the root") {
-    ought((!std::is_base_of_v<Trouble, Cancelled>));
-    ought((std::is_base_of_v<std::runtime_error, Cancelled>));
+    OUGHT((!std::is_base_of_v<Trouble, Cancelled>));
+    OUGHT((std::is_base_of_v<std::runtime_error, Cancelled>));
 }
 
 // The root carries the system code, so the branches do not repeat it: a network trouble gives back
@@ -38,9 +38,9 @@ TRIAL("Trouble: the system code sits in the root") {
 
     const Trouble& root = one;
 
-    same(root.code(), 5);
-    same(std::string{root.what()}, std::string{"Nie wyszło."});
-    same(Trouble{"Bez kodu."}.code(), 0);
+    SAME(root.code(), 5);
+    SAME(std::string{root.what()}, std::string{"Nie wyszło."});
+    SAME(Trouble{"Bez kodu."}.code(), 0);
 }
 
 // A rejection with a string, a promise past its deadline and a seam's refusal come back as
@@ -58,5 +58,5 @@ TRIAL("Trouble: a rejection with a string is caught as Trouble") {
         caught = std::string{why.what()} == "Nie ma.";
     }
 
-    ought(caught);
+    OUGHT(caught);
 }

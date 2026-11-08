@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -60,33 +60,33 @@ TRIAL("EnabledMixin: a change is announced once, the same value announces nothin
 
     stage.one->enabled(true);
 
-    same(on, 0);
+    SAME(on, 0);
 
     stage.one->enabled(false);
     stage.one->enabled(false);
 
-    same(off, 1);
-    ought(!stage.one->enabled());
+    SAME(off, 1);
+    OUGHT(!stage.one->enabled());
 
     stage.one->enabled(true);
     stage.one->enabled(true);
 
-    same(on, 1);
-    ought(stage.one->enabled());
+    SAME(on, 1);
+    OUGHT(stage.one->enabled());
 }
 
 TRIAL("EnabledMixin: a disabled node is not focusable, an enabled one is again") {
     Stage stage;
 
-    ought(stage.one->focusable());
+    OUGHT(stage.one->focusable());
 
     stage.one->enabled(false);
 
-    ought(!stage.one->focusable());
+    OUGHT(!stage.one->focusable());
 
     stage.one->enabled(true);
 
-    ought(stage.one->focusable());
+    OUGHT(stage.one->focusable());
 }
 
 TRIAL("EnabledMixin: disabling bubbles up and tells where it came from") {
@@ -102,7 +102,7 @@ TRIAL("EnabledMixin: disabling bubbles up and tells where it came from") {
 
     stage.other->enabled(false);
 
-    same(static_cast<const void*>(from), static_cast<const void*>(stage.other.get()));
+    SAME(static_cast<const void*>(from), static_cast<const void*>(stage.other.get()));
 }
 
 // The order is a contract that `Select` relies on: the event arrives while the focus is still on
@@ -122,8 +122,8 @@ TRIAL("EnabledMixin: the event arrives before the focus leaves") {
 
     stage.one->enabled(false);
 
-    ought(held);
-    ought(!stage.one->focused());
+    OUGHT(held);
+    OUGHT(!stage.one->focused());
 }
 
 // A handler that enables the node again in response wins: the focus stays, because the node is
@@ -148,9 +148,9 @@ TRIAL("EnabledMixin: re-enabled in a handler, it keeps the focus") {
 
     stage.one->enabled(false);
 
-    ought(stage.one->enabled());
-    ought(stage.one->focused());
-    same(on, 1);
+    OUGHT(stage.one->enabled());
+    OUGHT(stage.one->focused());
+    SAME(on, 1);
 }
 
 TRIAL("EnabledMixin: a disabled node does not take its hot key, an enabled one does") {
@@ -172,7 +172,7 @@ TRIAL("EnabledMixin: a disabled node does not take its hot key, an enabled one d
 
     (void)stage.top.dispatch(key);
 
-    same(picked, 0);
+    SAME(picked, 0);
 
     stage.one->enabled(true);
 
@@ -180,5 +180,5 @@ TRIAL("EnabledMixin: a disabled node does not take its hot key, an enabled one d
 
     (void)stage.top.dispatch(again);
 
-    same(picked, 1);
+    SAME(picked, 1);
 }

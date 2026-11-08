@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <string>
@@ -44,11 +44,11 @@ TRIAL("Peer: two sides knocking at once reach each other") {
     auto first = left.reach(soon);
     auto second = right.reach(soon);
 
-    same(std::move(first).get(), there);
-    same(std::move(second).get(), where);
+    SAME(std::move(first).get(), there);
+    SAME(std::move(second).get(), where);
 
-    same(left.met(), there);
-    same(right.met(), where);
+    SAME(left.met(), there);
+    SAME(right.met(), where);
 }
 
 TRIAL("Peer: the passive side answers and reaches its peer on its own") {
@@ -67,14 +67,14 @@ TRIAL("Peer: the passive side answers and reaches its peer on its own") {
 
     auto waiting = right.receive(1024, net::Patience{2000});
 
-    same(left.reach(soon).get(), two.mine());
+    SAME(left.reach(soon).get(), two.mine());
 
     try {
         (void)std::move(waiting).get();
     } catch (const std::exception&) {
     }
 
-    same(right.met(), one.mine());
+    SAME(right.met(), one.mine());
 }
 
 // A STUN request put together byte by byte, to play a stranger who speaks up unasked.
@@ -118,7 +118,7 @@ TRIAL("Peer: another port of a known host is added by itself") {
             if (which.where == three.mine()) knows = true;
     }
 
-    ought(knows);
+    OUGHT(knows);
 
     try {
         (void)std::move(waking).get();
@@ -146,11 +146,11 @@ TRIAL("Peer: a host nobody mentioned is not added") {
         later(std::chrono::milliseconds{60}).get();
     }
 
-    ought(!left.met().held());
+    OUGHT(!left.met().held());
 
-    same(static_cast<int>(left.theirs().size()), 1);
+    SAME(static_cast<int>(left.theirs().size()), 1);
 
-    for (const net::Candidate& which : left.theirs()) ought(!(which.where == evil.mine()));
+    for (const net::Candidate& which : left.theirs()) OUGHT(!(which.where == evil.mine()));
 
     try {
         (void)std::move(waking).get();
@@ -178,7 +178,7 @@ TRIAL("Peer: after punching through, the sides can talk") {
 
     left.send(bytes("witaj po drugiej stronie dziury"), soon).get();
 
-    same(text(std::move(waiting).get()), std::string{"witaj po drugiej stronie dziury"});
+    SAME(text(std::move(waiting).get()), std::string{"witaj po drugiej stronie dziury"});
 }
 
 TRIAL("Peer: connectivity checks do not mix with data") {
@@ -204,7 +204,7 @@ TRIAL("Peer: connectivity checks do not mix with data") {
 
         left.send(bytes("rata " + std::to_string(turn)), soon).get();
 
-        same(text(std::move(waiting).get()), "rata " + std::to_string(turn));
+        SAME(text(std::move(waiting).get()), "rata " + std::to_string(turn));
     }
 }
 
@@ -221,7 +221,7 @@ TRIAL("Peer: without a path there is nowhere to knock") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Peer: a path to nowhere ends with the deadline") {
@@ -245,7 +245,7 @@ TRIAL("Peer: a path to nowhere ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Peer: our own address is not taken as the other side's path") {
@@ -255,7 +255,7 @@ TRIAL("Peer: our own address is not taken as the other side's path") {
 
     left.add(net::Candidate{one.mine(), net::Candidate::Sort::here});
 
-    ought(left.theirs().empty());
+    OUGHT(left.theirs().empty());
 }
 
 TRIAL("Peer: paths are ordered by sort") {
@@ -269,10 +269,10 @@ TRIAL("Peer: paths are ordered by sort") {
 
     const std::vector<net::Candidate> made = left.theirs();
 
-    same(static_cast<int>(made.size()), 3);
-    same(made[0].sort, net::Candidate::Sort::here);
-    same(made[1].sort, net::Candidate::Sort::seen);
-    same(made[2].sort, net::Candidate::Sort::lent);
+    SAME(static_cast<int>(made.size()), 3);
+    SAME(made[0].sort, net::Candidate::Sort::here);
+    SAME(made[1].sort, net::Candidate::Sort::seen);
+    SAME(made[2].sort, net::Candidate::Sort::lent);
 }
 
 TRIAL("Peer: the same path does not go in twice") {
@@ -285,7 +285,7 @@ TRIAL("Peer: the same path does not go in twice") {
     left.add(where);
     left.add(where);
 
-    same(static_cast<int>(left.theirs().size()), 1);
+    SAME(static_cast<int>(left.theirs().size()), 1);
 }
 
 TRIAL("Peer: gathering candidates without a scout gives only host candidates") {
@@ -296,18 +296,18 @@ TRIAL("Peer: gathering candidates without a scout gives only host candidates") {
     const std::vector<net::Candidate> made = left.gather(net::StunClient{}, soon).get();
 
     for (const net::Candidate& which : made) {
-        same(which.sort, net::Candidate::Sort::here);
+        SAME(which.sort, net::Candidate::Sort::here);
 
         // The candidate carries the port of our socket, because that is what the other side looks
         // for.
-        same(which.where.port(), one.mine().port());
+        SAME(which.where.port(), one.mine().port());
 
         // Loopback must not go out: it would make the other side knock on itself, and a response
         // from its own socket would look like a successful punch.
-        ought(!(which.where == net::Address::loopback(net::Family::four, which.where.port())));
+        OUGHT(!(which.where == net::Address::loopback(net::Family::four, which.where.port())));
     }
 
-    same(left.candidates().size(), made.size());
+    SAME(left.candidates().size(), made.size());
 }
 
 TRIAL("Peer: there is nobody to talk to before punching through") {
@@ -323,7 +323,7 @@ TRIAL("Peer: there is nobody to talk to before punching through") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Peer: silence on receive ends with the deadline") {
@@ -339,7 +339,7 @@ TRIAL("Peer: silence on receive ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Peer: a closed one accepts nothing") {
@@ -357,7 +357,7 @@ TRIAL("Peer: a closed one accepts nothing") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Peer: two knocks at once are refused") {
@@ -378,7 +378,7 @@ TRIAL("Peer: two knocks at once are refused") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(first).get();
@@ -418,7 +418,7 @@ TRIAL("Peer: an oversized message is not lost on refusal") {
         }
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
-    same(text(right.receive(1024, soon).get()), std::string{"sto bajtów by tu nie weszło"});
+    SAME(text(right.receive(1024, soon).get()), std::string{"sto bajtów by tu nie weszło"});
 }

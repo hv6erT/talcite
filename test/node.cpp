@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <optional>
@@ -82,9 +82,9 @@ TRIAL("Node: an attached child knows its parent") {
 
     up.children().add(down);
 
-    ought(down->parent() == &up);
-    same(up.much(), std::size_t{1});
-    ought(up.first() == down.get());
+    OUGHT(down->parent() == &up);
+    SAME(up.much(), std::size_t{1});
+    OUGHT(up.first() == down.get());
 }
 
 // A node lies within itself and within each of its ancestors, never within a sibling or a node
@@ -100,17 +100,17 @@ TRIAL("Node: within is the node itself and its ancestors") {
     top.children().add(middle);
     top.children().add(beside);
 
-    ought(low->within(*low));
-    ought(low->within(*middle));
-    ought(low->within(top));
-    ought(!middle->within(*low));
-    ought(!low->within(*beside));
-    ought(!top.within(*middle));
+    OUGHT(low->within(*low));
+    OUGHT(low->within(*middle));
+    OUGHT(low->within(top));
+    OUGHT(!middle->within(*low));
+    OUGHT(!low->within(*beside));
+    OUGHT(!top.within(*middle));
 
     (void)top.children().remove(middle.get());
 
-    ought(!low->within(top));
-    ought(low->within(*middle));
+    OUGHT(!low->within(top));
+    OUGHT(low->within(*middle));
 }
 
 // `find` gives the number of a child among the children, and nothing for a node that is not a
@@ -125,28 +125,28 @@ TRIAL("Node: find knows a child's number and not a stranger's") {
     top.children().add(first);
     top.children().add(second);
 
-    same(top.children().find(*first), std::optional<std::size_t>{0});
-    same(top.children().find(*second), std::optional<std::size_t>{1});
-    ought(!top.children().find(*stranger).has_value());
-    ought(!top.children().find(top).has_value());
+    SAME(top.children().find(*first), std::optional<std::size_t>{0});
+    SAME(top.children().find(*second), std::optional<std::size_t>{1});
+    OUGHT(!top.children().find(*stranger).has_value());
+    OUGHT(!top.children().find(top).has_value());
 
     (void)top.children().remove(first.get());
 
-    ought(!top.children().find(*first).has_value());
-    same(top.children().find(*second), std::optional<std::size_t>{0});
+    OUGHT(!top.children().find(*first).has_value());
+    SAME(top.children().find(*second), std::optional<std::size_t>{0});
 }
 
 TRIAL("Node: a fresh node has no parent and no children") {
     const Twig one{"sam"};
 
-    ought(one.parent() == nullptr);
-    same(one.much(), std::size_t{0});
+    OUGHT(one.parent() == nullptr);
+    SAME(one.much(), std::size_t{0});
 }
 
 TRIAL("Node: attaching nothing is refused") {
     Twig up{"góra"};
 
-    threw(up.children().add(nullptr));
+    THREW(up.children().add(nullptr));
 }
 
 TRIAL("Node: a node with a parent cannot be attached a second time") {
@@ -157,15 +157,15 @@ TRIAL("Node: a node with a parent cannot be attached a second time") {
 
     first.children().add(down);
 
-    threw(second.children().add(down));
-    ought(down->parent() == &first);
-    same(second.much(), std::size_t{0});
+    THREW(second.children().add(down));
+    OUGHT(down->parent() == &first);
+    SAME(second.much(), std::size_t{0});
 }
 
 TRIAL("Node: a node cannot be its own child") {
     const std::shared_ptr<Twig> one = twig("sam");
 
-    threw(one->children().add(one));
+    THREW(one->children().add(one));
 }
 
 TRIAL("Node: a node cannot get its own ancestor") {
@@ -176,8 +176,8 @@ TRIAL("Node: a node cannot get its own ancestor") {
     top->children().add(mid);
     mid->children().add(low);
 
-    threw(low->children().add(top));
-    threw(low->children().add(mid));
+    THREW(low->children().add(top));
+    THREW(low->children().add(mid));
 }
 
 TRIAL("Node: remove gives back the child and breaks its pointer to the parent") {
@@ -189,9 +189,9 @@ TRIAL("Node: remove gives back the child and breaks its pointer to the parent") 
 
     const std::shared_ptr<ui::Node> taken = up.children().remove(down.get());
 
-    ought(taken == down);
-    ought(down->parent() == nullptr);
-    same(up.much(), std::size_t{0});
+    OUGHT(taken == down);
+    OUGHT(down->parent() == nullptr);
+    SAME(up.much(), std::size_t{0});
 }
 
 TRIAL("Node: remove of another's node gives nothing") {
@@ -202,9 +202,9 @@ TRIAL("Node: remove of another's node gives nothing") {
 
     apart.children().add(down);
 
-    ought(up.children().remove(down.get()) == nullptr);
-    ought(up.children().remove(nullptr) == nullptr);
-    ought(down->parent() == &apart);
+    OUGHT(up.children().remove(down.get()) == nullptr);
+    OUGHT(up.children().remove(nullptr) == nullptr);
+    OUGHT(down->parent() == &apart);
 }
 
 // --- Children in bulk -----------------------------------------------------------------------------
@@ -220,10 +220,10 @@ TRIAL("Node: a bulk attach lets all in and keeps the order") {
 
     up.children().add(std::vector<std::shared_ptr<ui::Node>>{one, two, three});
 
-    same(up.much(), std::size_t{3});
-    ought(up.children()[0].get() == one.get());
-    ought(up.children()[1].get() == two.get());
-    ought(up.children()[2].get() == three.get());
+    SAME(up.much(), std::size_t{3});
+    OUGHT(up.children()[0].get() == one.get());
+    OUGHT(up.children()[1].get() == two.get());
+    OUGHT(up.children()[2].get() == three.get());
 }
 
 // All or none. A plain node accepts one child, so the second of a pair is refused, and then the
@@ -234,11 +234,11 @@ TRIAL("Node: a bulk attach that fails leaves no half behind") {
     const std::shared_ptr<Twig> one = twig("raz");
     const std::shared_ptr<Twig> two = twig("dwa");
 
-    threw(up.children().add(std::vector<std::shared_ptr<ui::Node>>{one, two}));
+    THREW(up.children().add(std::vector<std::shared_ptr<ui::Node>>{one, two}));
 
-    same(up.children().many(), std::size_t{0});
-    ought(one->parent() == nullptr);
-    ought(two->parent() == nullptr);
+    SAME(up.children().many(), std::size_t{0});
+    OUGHT(one->parent() == nullptr);
+    OUGHT(two->parent() == nullptr);
 }
 
 TRIAL("Node: clear removes all children at once") {
@@ -252,9 +252,9 @@ TRIAL("Node: clear removes all children at once") {
 
     up.children().clear();
 
-    ought(up.children().empty());
-    ought(one->parent() == nullptr);
-    ought(two->parent() == nullptr);
+    OUGHT(up.children().empty());
+    OUGHT(one->parent() == nullptr);
+    OUGHT(two->parent() == nullptr);
 }
 
 // A removed child must die just as after a single `remove`, that is when nobody holds it anymore.
@@ -266,11 +266,11 @@ TRIAL("Node: clear lets the children go instead of holding on to them") {
     up.children().add(twig("raz", nullptr, &alive));
     up.children().add(twig("dwa", nullptr, &alive));
 
-    same(alive, 2);
+    SAME(alive, 2);
 
     up.children().clear();
 
-    same(alive, 0);
+    SAME(alive, 0);
 }
 
 TRIAL("Node: contains recognizes its own child and not another's") {
@@ -283,9 +283,9 @@ TRIAL("Node: contains recognizes its own child and not another's") {
     up.children().add(mine);
     apart.children().add(theirs);
 
-    ought(up.children().contains(mine.get()));
-    ought(!up.children().contains(theirs.get()));
-    ought(!up.children().contains(nullptr));
+    OUGHT(up.children().contains(mine.get()));
+    OUGHT(!up.children().contains(theirs.get()));
+    OUGHT(!up.children().contains(nullptr));
 }
 
 // --- Broadcasting down ---------------------------------------------------------------------------
@@ -315,11 +315,11 @@ TRIAL("Node: a broadcast goes down in order and ends at the first that takes it"
 
     ui::KeyEvent what{U'x'};
 
-    ought(up.broadcast(what));
+    OUGHT(up.broadcast(what));
 
-    same(static_cast<int>(said.size()), 2);
-    same(said[0], std::string{"raz"});
-    same(said[1], std::string{"dwa"});
+    SAME(static_cast<int>(said.size()), 2);
+    SAME(said[0], std::string{"raz"});
+    SAME(said[1], std::string{"dwa"});
 }
 
 // A handler may rebuild the tree during a broadcast. Walking the live vector would be a memory
@@ -350,10 +350,10 @@ TRIAL("Node: a broadcast survives the tree being rebuilt in a handler") {
 
     ui::KeyEvent what{U'x'};
 
-    ought(up.broadcast(what));
+    OUGHT(up.broadcast(what));
 
-    same(done, 1);
-    same(up.much(), std::size_t{66});
+    SAME(done, 1);
+    SAME(up.much(), std::size_t{66});
 }
 
 // The same from the other side: a handler that removes its siblings must not break the walk either.
@@ -384,10 +384,10 @@ TRIAL("Node: a broadcast survives the tree being emptied in a handler") {
 
     // The removed siblings get the event anyway, because the snapshot keeps them alive; the
     // handlers in `Handler` behave the same way.
-    ought(up.broadcast(what));
+    OUGHT(up.broadcast(what));
 
-    same(done, 1);
-    ought(up.children().empty());
+    SAME(done, 1);
+    OUGHT(up.children().empty());
 }
 
 TRIAL("Node: moving under another parent in one expression") {
@@ -399,9 +399,9 @@ TRIAL("Node: moving under another parent in one expression") {
     first.children().add(down);
     second.children().add(first.children().remove(down.get()));
 
-    ought(down->parent() == &second);
-    same(first.much(), std::size_t{0});
-    same(second.much(), std::size_t{1});
+    OUGHT(down->parent() == &second);
+    SAME(first.much(), std::size_t{0});
+    SAME(second.much(), std::size_t{1});
 }
 
 TRIAL("Node: a removed child dies when nobody holds it") {
@@ -412,11 +412,11 @@ TRIAL("Node: a removed child dies when nobody holds it") {
 
         up.children().add(twig("dół", nullptr, &alive));
 
-        same(alive, 1);
+        SAME(alive, 1);
 
         (void)up.children().remove(const_cast<ui::Node*>(up.first()));
 
-        same(alive, 0);
+        SAME(alive, 0);
     }
 }
 
@@ -429,10 +429,10 @@ TRIAL("Node: the parent takes its children with it") {
         up.children().add(twig("jeden", nullptr, &alive));
         up.children().add(twig("dwa", nullptr, &alive));
 
-        same(alive, 2);
+        SAME(alive, 2);
     }
 
-    same(alive, 0);
+    SAME(alive, 0);
 }
 
 TRIAL("Node: a child outliving its parent is not left with a dangling pointer") {
@@ -443,10 +443,10 @@ TRIAL("Node: a child outliving its parent is not left with a dangling pointer") 
 
         up.children().add(down);
 
-        ought(down->parent() == &up);
+        OUGHT(down->parent() == &up);
     }
 
-    ought(down->parent() == nullptr);
+    OUGHT(down->parent() == nullptr);
 }
 
 TRIAL("Node: the whole subtree dies together with the root of the branch") {
@@ -461,10 +461,10 @@ TRIAL("Node: the whole subtree dies together with the root of the branch") {
 
         up.children().add(mid);
 
-        same(alive, 2);
+        SAME(alive, 2);
     }
 
-    same(alive, 0);
+    SAME(alive, 0);
 }
 
 TRIAL("Node: an event travels up the tree") {
@@ -479,11 +479,11 @@ TRIAL("Node: an event travels up the tree") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!low->send(what));
-    same(told.size(), std::size_t{3});
-    same(told[0], std::string{"spód"});
-    same(told[2], std::string{"szczyt"});
-    ought(what.target() == low.get());
+    OUGHT(!low->send(what));
+    SAME(told.size(), std::size_t{3});
+    SAME(told[0], std::string{"spód"});
+    SAME(told[2], std::string{"szczyt"});
+    OUGHT(what.target() == low.get());
 }
 
 TRIAL("Node: a detached branch does not pass events to its former parent") {
@@ -498,9 +498,9 @@ TRIAL("Node: a detached branch does not pass events to its former parent") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!mid->send(what));
-    same(told.size(), std::size_t{1});
-    same(told[0], std::string{"środek"});
+    OUGHT(!mid->send(what));
+    SAME(told.size(), std::size_t{1});
+    SAME(told[0], std::string{"środek"});
 }
 
 TRIAL("Node: a handler attached to the parent catches an event from the child") {
@@ -521,17 +521,17 @@ TRIAL("Node: a handler attached to the parent catches an event from the child") 
 
     ui::KeyEvent what{U'a'};
 
-    ought(down->send(what));
-    ought(seen == down.get());
+    OUGHT(down->send(what));
+    OUGHT(seen == down.get());
 }
 
 TRIAL("Node: a fresh node has no rectangle") {
     const Twig one{"sam"};
 
-    same(one.area().at.x, 0);
-    same(one.area().at.y, 0);
-    same(one.area().size.wide, 0);
-    same(one.area().size.high, 0);
+    SAME(one.area().at.x, 0);
+    SAME(one.area().at.y, 0);
+    SAME(one.area().size.wide, 0);
+    SAME(one.area().size.high, 0);
 }
 
 // Reaching past the end is the caller's error, not a state to keep quiet about; the same rule as in
@@ -539,14 +539,14 @@ TRIAL("Node: a fresh node has no rectangle") {
 TRIAL("Children: reaching past the end throws") {
     const std::shared_ptr<Twig> up = twig("góra");
 
-    threw((void)up->children().front());
-    threw((void)up->children().back());
-    threw((void)up->children()[0]);
+    THREW((void)up->children().front());
+    THREW((void)up->children().back());
+    THREW((void)up->children()[0]);
 
     up->children().add(twig("dół"));
 
-    same(up->children()[0].get(), up->children().front().get());
-    same(up->children().front().get(), up->children().back().get());
+    SAME(up->children()[0].get(), up->children().front().get());
+    SAME(up->children().front().get(), up->children().back().get());
 
-    threw((void)up->children()[1]);
+    THREW((void)up->children()[1]);
 }

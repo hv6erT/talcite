@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -101,9 +101,9 @@ struct Stage {
 TRIAL("Modal: it takes everything it was given and lies above its siblings") {
     const ui::Modal one;
 
-    same(one.wants({40, 10}), (ui::Size{40, 10}));
-    same(one.capacity(), 1);
-    ought(one.focusable());
+    SAME(one.wants({40, 10}), (ui::Size{40, 10}));
+    SAME(one.capacity(), 1);
+    OUGHT(one.focusable());
 }
 
 TRIAL("Modal: the box stands in the middle") {
@@ -118,9 +118,9 @@ TRIAL("Modal: the box stands in the middle") {
     const Snapshot made = stage.top.render({{0, 0}, {40, 10}});
 
     // (40−10)/2 = 15, (10−4)/2 = 3.
-    same(made.at({15, 3}).letter, U'o');
-    same(made.at({24, 6}).letter, U'o');
-    same(made.at({14, 3}).letter, U'.');
+    SAME(made.at({15, 3}).letter, U'o');
+    SAME(made.at({24, 6}).letter, U'o');
+    SAME(made.at({14, 3}).letter, U'.');
 }
 
 // --- Modality ------------------------------------------------------------------------------------
@@ -138,8 +138,8 @@ TRIAL("Modal: a click beside the box does not reach what is underneath") {
 
     ui::ClickEvent what{{1, 1}, ui::Mouse::left};
 
-    ought(stage.top.dispatch(what));
-    same(stage.body->hit, 0);
+    OUGHT(stage.top.dispatch(what));
+    SAME(stage.body->hit, 0);
 }
 
 // A veil does not take Escape. Closing the window would perform an action the caller has no way to
@@ -155,14 +155,14 @@ TRIAL("Modal: Esc closes nothing, it is only swallowed") {
 
     stage.window->open(one);
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
     ui::KeyEvent what{ui::Code::escape};
 
-    ought(stage.top.dispatch(what));
+    OUGHT(stage.top.dispatch(what));
 
-    ought(!stage.window->empty());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
+    OUGHT(!stage.window->empty());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 }
 
 // Whoever wants "Esc closes" attaches a hook, and then it works, because a hook sees the key
@@ -189,10 +189,10 @@ TRIAL("Modal: closing with Escape can be added with a hook") {
 
     ui::KeyEvent what{ui::Code::escape};
 
-    ought(stage.top.dispatch(what));
+    OUGHT(stage.top.dispatch(what));
 
-    ought(stage.window->empty());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
+    OUGHT(stage.window->empty());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
 TRIAL("Modal: Tab moves the focus over the willing nodes and wraps around") {
@@ -209,15 +209,15 @@ TRIAL("Modal: Tab moves the focus over the willing nodes and wraps around") {
 
     stage.window->open(one);
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(stage.top.dispatch(tab));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(second.get()));
+    OUGHT(stage.top.dispatch(tab));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(second.get()));
 
-    ought(stage.top.dispatch(tab));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+    OUGHT(stage.top.dispatch(tab));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
 // The down and up arrows move the focus like Tab and Shift+Tab when nothing lower down took them,
@@ -238,18 +238,18 @@ TRIAL("Modal: the down and up arrows move the focus like Tab") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(second.get()));
+    OUGHT(stage.top.dispatch(down));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(second.get()));
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+    OUGHT(stage.top.dispatch(up));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     ui::KeyEvent shifted{ui::Key{ui::Code::down, ui::Mods{.shift = true}}};
 
-    ought(stage.top.dispatch(shifted));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
+    OUGHT(stage.top.dispatch(shifted));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
 // --- Division of roles ---------------------------------------------------------------------------
@@ -283,8 +283,8 @@ TRIAL("Modal: Enter does not press the primary button") {
 
     ui::KeyEvent what{ui::Code::enter};
 
-    ought(stage.top.dispatch(what));
-    same(done, 0);
+    OUGHT(stage.top.dispatch(what));
+    SAME(done, 0);
 }
 
 // And in a dialog, that is, in a form-like veil, it is the same. Marking a button primary draws the
@@ -315,8 +315,8 @@ TRIAL("Dialog: Enter does not press the primary button either") {
     ui::KeyEvent what{ui::Code::enter};
 
     // The veil swallows the key, because it is modal, but presses nothing with it.
-    ought(stage.top.dispatch(what));
-    same(done, 0);
+    OUGHT(stage.top.dispatch(what));
+    SAME(done, 0);
 }
 
 // --- A custom position of the box ----------------------------------------------------------------
@@ -334,12 +334,12 @@ TRIAL("Modal: a derived veil places the box where seat says") {
 
     const Snapshot made = stage.top.render({{0, 0}, {40, 10}});
 
-    same(made.at({3, 6}).letter, U'o');
-    same(made.at({10, 7}).letter, U'o');
+    SAME(made.at({3, 6}).letter, U'o');
+    SAME(made.at({10, 7}).letter, U'o');
 
     // Outside the box, what is underneath is still visible.
-    same(made.at({2, 6}).letter, U'.');
-    same(made.at({3, 5}).letter, U'.');
+    SAME(made.at({2, 6}).letter, U'.');
+    SAME(made.at({3, 5}).letter, U'.');
 }
 
 TRIAL("Modal: a derived veil still swallows clicks beside it and Escape") {
@@ -355,13 +355,13 @@ TRIAL("Modal: a derived veil still swallows clicks beside it and Escape") {
 
     ui::ClickEvent what{{30, 1}, ui::Mouse::left};
 
-    ought(stage.top.dispatch(what));
-    same(stage.body->hit, 0);
+    OUGHT(stage.top.dispatch(what));
+    SAME(stage.body->hit, 0);
 
     ui::KeyEvent esc{ui::Code::escape};
 
-    ought(stage.top.dispatch(esc));
-    ought(!stage.window->empty());
+    OUGHT(stage.top.dispatch(esc));
+    OUGHT(!stage.window->empty());
 }
 
 // A `CloseEvent` hook has the right to open the next veil: a screen does that when, after OK in the
@@ -381,7 +381,7 @@ TRIAL("Modal: a close hook may open the next veil, and the focus returns after b
 
         stage.window->open(first);
 
-        same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
+        SAME(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
         std::shared_ptr<ui::Modal> second;
 
@@ -396,17 +396,17 @@ TRIAL("Modal: a close hook may open the next veil, and the focus returns after b
 
         first->close();
 
-        ought(second != nullptr);
-        same(stage.window->many(), std::size_t{1});
-        same(stage.window->current(), second.get());
-        ought(first->parent() == nullptr);
-        ought(stage.top.focused_node() != nullptr);
-        ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.body.get()));
+        OUGHT(second != nullptr);
+        SAME(stage.window->many(), std::size_t{1});
+        SAME(stage.window->current(), second.get());
+        OUGHT(first->parent() == nullptr);
+        OUGHT(stage.top.focused_node() != nullptr);
+        OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.body.get()));
 
         second->close();
 
-        ought(stage.window->empty());
-        same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
+        OUGHT(stage.window->empty());
+        SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
     }
 }
 
@@ -425,16 +425,16 @@ TRIAL("Modal: removing a lower veil leaves the focus with the top one") {
     stage.window->open(lower);
     stage.window->open(upper);
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
     lower->close();
 
-    same(stage.window->many(), std::size_t{1});
-    same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
+    SAME(stage.window->many(), std::size_t{1});
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
     upper->close();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
 // --- A veil is modal for the focus too -----------------------------------------------------------
@@ -446,8 +446,8 @@ TRIAL("Modals: the same content a second time does not take the focus away") {
 
     stage.window->content(stage.under);
 
-    same(stage.window->content(), static_cast<ui::Node*>(stage.under.get()));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
+    SAME(stage.window->content(), static_cast<ui::Node*>(stage.under.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
 // A node under an open veil may ask for the focus at any moment: in twa the preview sheet does so
@@ -467,17 +467,17 @@ TRIAL("Modal: a focus request from under a veil takes effect only after it close
     one->children().add(inside);
     stage.window->open(one);
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
     // A request from the content: the focus stays in the veil.
     other->focus();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(inside.get()));
 
     // After closing, the focus goes where the last willing node asked, not where it was taken from.
     one->close();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 // The covered node gets no focus event at all meanwhile: a flash of `FocusEvent` and `UnfocusEvent`
@@ -511,13 +511,13 @@ TRIAL("Modal: a deferred request sends no focus events") {
 
     other->focus();
 
-    same(came, 0);
-    same(went, 0);
+    SAME(came, 0);
+    SAME(went, 0);
 
     one->close();
 
-    same(came, 1);
-    same(went, 0);
+    SAME(came, 1);
+    SAME(went, 0);
 }
 
 // The node with the focus inside a closing veil hears that it lost it, before the veil leaves the
@@ -553,8 +553,8 @@ TRIAL("Modal: closing tells the focus inside that it left, then gives it back") 
 
     one->close();
 
-    same(heard, (std::vector<std::string>{"left attached", "back"}));
-    same(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
+    SAME(heard, (std::vector<std::string>{"left attached", "back"}));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 // A request from a lower veil goes to the top one: that one leaves first and gives back the focus.
@@ -585,26 +585,26 @@ TRIAL("Modal: a request from a lower veil waits, one from the top veil works at 
     stage.window->open(lower);
     stage.window->open(upper);
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
     // From the lower veil: it waits.
     beside->focus();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(top.get()));
 
     // In the top one: at once.
     next->focus();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(next.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(next.get()));
 
     // After the top veil leaves, the focus goes where the lower one asked.
     upper->close();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(beside.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(beside.get()));
 
     lower->close();
 
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.body.get()));
 }
 
 // --- Layers: what veils and windows have in common -----------------------------------------------
@@ -615,9 +615,9 @@ TRIAL("Modal: a request from a lower veil waits, one from the top veil works at 
 TRIAL("Layers: the current one is on top, the content does not count") {
     Stage stage;
 
-    ought(stage.window->empty());
-    same(stage.window->many(), std::size_t{0});
-    ought(stage.window->current() == nullptr);
+    OUGHT(stage.window->empty());
+    SAME(stage.window->many(), std::size_t{0});
+    OUGHT(stage.window->current() == nullptr);
 
     const auto first = std::make_shared<ui::Modal>();
     const auto second = std::make_shared<ui::Modal>();
@@ -625,11 +625,11 @@ TRIAL("Layers: the current one is on top, the content does not count") {
     stage.window->open(first);
     stage.window->open(second);
 
-    ought(!stage.window->empty());
-    same(stage.window->many(), std::size_t{2});
-    same(stage.window->current(), static_cast<ui::Modal*>(second.get()));
-    ought(second->current());
-    ought(!first->current());
+    OUGHT(!stage.window->empty());
+    SAME(stage.window->many(), std::size_t{2});
+    SAME(stage.window->current(), static_cast<ui::Modal*>(second.get()));
+    OUGHT(second->current());
+    OUGHT(!first->current());
 }
 
 TRIAL("Layers: close without an argument closes the top one and leaves a foreign layer alone") {
@@ -644,18 +644,18 @@ TRIAL("Layers: close without an argument closes the top one and leaves a foreign
 
     stage.window->close(*stranger);
 
-    same(stage.window->many(), std::size_t{2});
+    SAME(stage.window->many(), std::size_t{2});
 
     stage.window->close();
 
-    same(stage.window->many(), std::size_t{1});
-    same(stage.window->current(), static_cast<ui::Modal*>(first.get()));
-    ought(second->parent() == nullptr);
+    SAME(stage.window->many(), std::size_t{1});
+    SAME(stage.window->current(), static_cast<ui::Modal*>(first.get()));
+    OUGHT(second->parent() == nullptr);
 
     stage.window->close();
     stage.window->close();
 
-    ought(stage.window->empty());
+    OUGHT(stage.window->empty());
 }
 
 // A layer outside a container has nothing to close and is not current. It does not throw, because
@@ -673,8 +673,8 @@ TRIAL("Layer: outside a container close does nothing and current is false") {
 
     alone->close();
 
-    same(closed, 0);
-    ought(!alone->current());
+    SAME(closed, 0);
+    OUGHT(!alone->current());
 }
 
 TRIAL("Layer: closing is announced once and the layer leaves the tree") {
@@ -687,7 +687,7 @@ TRIAL("Layer: closing is announced once and the layer leaves the tree") {
     const ui::Hook heard_close = one->on<ui::CloseEvent>([&closed, &one](ui::CloseEvent&) {
         ++closed;
 
-        ought(one->parent() != nullptr);
+        OUGHT(one->parent() != nullptr);
 
         return true;
     });
@@ -697,9 +697,9 @@ TRIAL("Layer: closing is announced once and the layer leaves the tree") {
     one->close();
     one->close();
 
-    same(closed, 1);
-    ought(one->parent() == nullptr);
-    ought(stage.window->empty());
+    SAME(closed, 1);
+    OUGHT(one->parent() == nullptr);
+    OUGHT(stage.window->empty());
 }
 
 // An opening that failed leaves no trace: a layer that already hangs elsewhere cannot be attached a
@@ -712,8 +712,8 @@ TRIAL("Layers: a failed opening does not stay on the list") {
 
     elsewhere->open(one);
 
-    threw(stage.window->open(one));
+    THREW(stage.window->open(one));
 
-    ought(stage.window->empty());
-    ought(stage.window->current() == nullptr);
+    OUGHT(stage.window->empty());
+    OUGHT(stage.window->current() == nullptr);
 }

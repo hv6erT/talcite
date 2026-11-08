@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <optional>
@@ -98,13 +98,13 @@ TRIAL("Menu: a closed one is just the title in row zero") {
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(read(made, 0), std::string{" Plik"});
-    same(read(made, 1), std::string{""});
+    SAME(read(made, 0), std::string{" Plik"});
+    SAME(read(made, 1), std::string{""});
 
     // A rolled-up menu is outside the tree: it has no parent and no rectangle. What shows in row
     // zero is its title, a separate node in the row of titles.
-    ought(!one->opened());
-    ought(one->parent() == nullptr);
+    OUGHT(!one->opened());
+    OUGHT(one->parent() == nullptr);
 }
 
 // Emptying the bar, just as in the key bar and for the same reason: switching context removes the
@@ -120,18 +120,18 @@ TRIAL("Menu: emptying the bar allows putting it together anew") {
     (void)window->add("Widok");
     top.children().add(window);
 
-    same(static_cast<int>(window->menus().size()), 2);
+    SAME(static_cast<int>(window->menus().size()), 2);
 
     window->clear();
 
-    ought(window->menus().empty());
-    same(window->children().many(), std::size_t{1});
+    OUGHT(window->menus().empty());
+    SAME(window->children().many(), std::size_t{1});
 
     (void)window->add("Pomoc");
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(read(made, 0), std::string{" Pomoc"});
+    SAME(read(made, 0), std::string{" Pomoc"});
 }
 
 TRIAL("Menu: the titles stand side by side") {
@@ -147,7 +147,7 @@ TRIAL("Menu: the titles stand side by side") {
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(read(made, 0), std::string{" Plik  Widok"});
+    SAME(read(made, 0), std::string{" Plik  Widok"});
 }
 
 // F9 takes the bar instead of unrolling a menu. Only the down arrow, Enter or a title's letter
@@ -173,19 +173,19 @@ TRIAL("Menu: F9 takes the bar, down unrolls, Esc closes") {
 
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
-    same(window->current(), one.get());
-    ought(!one->opened());
+    OUGHT(top.dispatch(open));
+    SAME(window->current(), one.get());
+    OUGHT(!one->opened());
 
     ui::KeyEvent drop{ui::Code::down};
 
-    ought(top.dispatch(drop));
-    ought(one->opened());
+    OUGHT(top.dispatch(drop));
+    OUGHT(one->opened());
 
     ui::KeyEvent close{ui::Code::escape};
 
-    ought(top.dispatch(close));
-    ought(!one->opened());
+    OUGHT(top.dispatch(close));
+    OUGHT(!one->opened());
 }
 
 // The menu rolls itself up, the pair of `open`: the focus goes back to its title, and the next
@@ -211,39 +211,39 @@ TRIAL("Menu: close rolls up, gives the focus to the title and forgets the item")
     one->open();
     one->which(2);
 
-    ought(second->focused());
+    OUGHT(second->focused());
 
     one->close();
 
-    ought(!one->opened());
-    same(window->current(), one.get());
-    ought(!one->which().has_value());
+    OUGHT(!one->opened());
+    SAME(window->current(), one.get());
+    OUGHT(!one->which().has_value());
 
     one->open();
 
-    ought(first->focused());
+    OUGHT(first->focused());
 
     // The line is not an item: the arrow skips it, and on a closed menu close breaks nothing.
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    ought(second->focused());
+    OUGHT(top.dispatch(down));
+    OUGHT(second->focused());
 
     window->leave();
     one->close();
 
-    ought(!one->opened());
-    ought(body->focused());
+    OUGHT(!one->opened());
+    OUGHT(body->focused());
 
     // A rolled-up menu keeps the remembered item: it starts from it when unrolled.
     one->which(2);
     one->close();
 
-    same(one->which(), std::optional<std::size_t>{2});
+    SAME(one->which(), std::optional<std::size_t>{2});
 
     one->open();
 
-    ought(second->focused());
+    OUGHT(second->focused());
 }
 
 // `dropdown()` unrolls from the start, like Midnight Commander with "Drop down menus" on: F9 shows
@@ -264,11 +264,11 @@ TRIAL("Menu: with dropdown() F9 unrolls the first menu, and a side arrow unrolls
     window->content(body);
     top.children().add(window);
 
-    ought(!window->dropdown());
+    OUGHT(!window->dropdown());
 
     window->dropdown(true);
 
-    ought(window->dropdown());
+    OUGHT(window->dropdown());
 
     body->focus();
 
@@ -276,39 +276,39 @@ TRIAL("Menu: with dropdown() F9 unrolls the first menu, and a side arrow unrolls
 
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
-    same(window->current(), first.get());
-    ought(first->opened());
-    ought(window->expanded());
+    OUGHT(top.dispatch(open));
+    SAME(window->current(), first.get());
+    OUGHT(first->opened());
+    OUGHT(window->expanded());
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(top.dispatch(right));
-    ought(!first->opened());
-    ought(second->opened());
+    OUGHT(top.dispatch(right));
+    OUGHT(!first->opened());
+    OUGHT(second->opened());
 
     ui::KeyEvent close{ui::Code::escape};
 
-    ought(top.dispatch(close));
-    ought(!second->opened());
-    ought(window->current() == nullptr);
-    ought(body->focused());
+    OUGHT(top.dispatch(close));
+    OUGHT(!second->opened());
+    OUGHT(window->current() == nullptr);
+    OUGHT(body->focused());
 
     // The second way in, through enter(), as from the key bar's field, unrolls too.
     window->enter();
 
-    ought(first->opened());
+    OUGHT(first->opened());
 
     window->leave();
 
     // Without the flag, as before: just the title.
     window->dropdown(false);
 
-    ought(top.dispatch(open));
-    same(window->current(), first.get());
-    ought(!first->opened());
+    OUGHT(top.dispatch(open));
+    SAME(window->current(), first.get());
+    OUGHT(!first->opened());
 
-    ought(top.dispatch(close));
+    OUGHT(top.dispatch(close));
 }
 
 // `open()` is the public way into the bar, the same that F9 does when the bar is idle, the pair of
@@ -336,36 +336,36 @@ TRIAL("Menu: open() takes a rolled-up bar and leaves an active one alone") {
 
     window->enter();
 
-    same(window->current(), first.get());
-    ought(unfolded(*window) == nullptr);
-    ought(!window->expanded());
-    ought(!body->focused());
+    SAME(window->current(), first.get());
+    OUGHT(unfolded(*window) == nullptr);
+    OUGHT(!window->expanded());
+    OUGHT(!body->focused());
 
     // An active bar: the focus on the second title stays where it was.
     ui::KeyEvent right{ui::Code::right};
 
-    ought(top.dispatch(right));
-    same(window->current(), second.get());
+    OUGHT(top.dispatch(right));
+    SAME(window->current(), second.get());
 
     window->enter();
 
-    same(window->current(), second.get());
-    ought(unfolded(*window) == nullptr);
+    SAME(window->current(), second.get());
+    OUGHT(unfolded(*window) == nullptr);
 
     // An unrolled menu stays unrolled too.
     second->open();
 
-    ought(second->opened());
+    OUGHT(second->opened());
 
     window->enter();
 
-    ought(second->opened());
-    ought(window->expanded());
+    OUGHT(second->opened());
+    OUGHT(window->expanded());
 
     // Closing gives the focus back to the content, as after F9.
     window->leave();
 
-    ought(body->focused());
+    OUGHT(body->focused());
 }
 
 // The unrolled bit lives in the bar, not in the focus, so it survives the bar being detached from
@@ -395,22 +395,22 @@ TRIAL("Menu: a bar attached again enters rolled up, though it was detached with 
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(top.dispatch(right));
-    same(window->current(), second.get());
-    ought(unfolded(*window) == nullptr);
-    ought(window->expanded());
+    OUGHT(top.dispatch(right));
+    SAME(window->current(), second.get());
+    OUGHT(unfolded(*window) == nullptr);
+    OUGHT(window->expanded());
 
-    ought(top.children().remove(window.get()));
-    ought(top.focused_node() == nullptr);
+    OUGHT(top.children().remove(window.get()));
+    OUGHT(top.focused_node() == nullptr);
 
     top.children().add(window);
     body->focus();
 
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
-    same(window->current(), first.get());
-    ought(!window->expanded());
+    OUGHT(top.dispatch(open));
+    SAME(window->current(), first.get());
+    OUGHT(!window->expanded());
 }
 
 TRIAL("Menu: an open one draws a box with the items") {
@@ -429,11 +429,11 @@ TRIAL("Menu: an open one draws a box with the items") {
 
     const Snapshot made = top.render({{0, 0}, {30, 8}});
 
-    same(read(made, 0), std::string{" Plik"});
-    same(read(made, 1), std::string{"┌──────────────┐"});
-    same(read(made, 2), std::string{"│ Kopiuj    F5 │"});
-    same(read(made, 3), std::string{"│ Wyjście  F10 │"});
-    same(read(made, 4), std::string{"└──────────────┘"});
+    SAME(read(made, 0), std::string{" Plik"});
+    SAME(read(made, 1), std::string{"┌──────────────┐"});
+    SAME(read(made, 2), std::string{"│ Kopiuj    F5 │"});
+    SAME(read(made, 3), std::string{"│ Wyjście  F10 │"});
+    SAME(read(made, 4), std::string{"└──────────────┘"});
 }
 
 TRIAL("Menu: the arrows walk the items and skip the line") {
@@ -455,23 +455,23 @@ TRIAL("Menu: the arrows walk the items and skip the line") {
 
     // Opening stands on the first item at once, as in Midnight Commander, because opening is
     // putting the focus there, and the focus sits on an item.
-    same(one->which(), std::optional<std::size_t>{0});
-    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{2});
-    same(top.focused_node(), static_cast<ui::Node*>(second.get()));
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(top.focused_node(), static_cast<ui::Node*>(second.get()));
 
     // The menu wraps around: it is short and visible whole, so there is nowhere to get lost.
-    ought(top.dispatch(down));
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(top.dispatch(down));
+    SAME(one->which(), std::optional<std::size_t>{0});
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.dispatch(up));
-    same(one->which(), std::optional<std::size_t>{2});
+    OUGHT(top.dispatch(up));
+    SAME(one->which(), std::optional<std::size_t>{2});
 }
 
 // The number and the node of the highlighted item are two names for one thing, as in the list. An
@@ -489,27 +489,27 @@ TRIAL("Menu: which is the number, current the item, and a foreign item sets noth
     one->children().add(second);
     top.children().add(window);
 
-    ought(!one->which().has_value());
-    ought(one->current() == nullptr);
+    OUGHT(!one->which().has_value());
+    OUGHT(one->current() == nullptr);
 
     one->current(*second);
 
-    same(one->which(), std::optional<std::size_t>{1});
-    same(one->current(), second.get());
+    SAME(one->which(), std::optional<std::size_t>{1});
+    SAME(one->current(), second.get());
 
     one->current(*stranger);
 
-    same(one->current(), second.get());
+    SAME(one->current(), second.get());
 
     one->which(0);
 
-    same(one->current(), first.get());
+    SAME(one->current(), first.get());
 
     // A number past the last item is cut to the last, as in a list.
     one->which(99);
 
-    same(one->which(), std::optional<std::size_t>{1});
-    same(one->current(), second.get());
+    SAME(one->which(), std::optional<std::size_t>{1});
+    SAME(one->current(), second.get());
 }
 
 // A menu without items has nothing to highlight, whatever number it is given.
@@ -523,8 +523,8 @@ TRIAL("Menu: which in a menu without items stays empty") {
 
     one->which(2);
 
-    ought(!one->which().has_value());
-    ought(one->current() == nullptr);
+    OUGHT(!one->which().has_value());
+    OUGHT(one->current() == nullptr);
 }
 
 // The highlighted item is the one with the focus; there is no separate marker that could drift
@@ -547,8 +547,8 @@ TRIAL("Menu: the highlight is the item's focus") {
 
     Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    ought(made.at({1, 2}).style.reverse);
-    ought(!made.at({1, 3}).style.reverse);
+    OUGHT(made.at({1, 2}).style.reverse);
+    OUGHT(!made.at({1, 3}).style.reverse);
 
     int seen = 0;
 
@@ -560,12 +560,12 @@ TRIAL("Menu: the highlight is the item's focus") {
 
     one->which(1);
 
-    same(top.focused_node(), static_cast<ui::Node*>(second.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(second.get()));
 
     made = top.render({{0, 0}, {20, 6}});
 
-    ought(!made.at({1, 2}).style.reverse);
-    ought(made.at({1, 3}).style.reverse);
+    OUGHT(!made.at({1, 2}).style.reverse);
+    OUGHT(made.at({1, 3}).style.reverse);
 
     // A handler attached to the item gets the key before the menu, but does not take it away from
     // the menu: true from the handler ends the path of handlers, and the menu's `handle` runs its
@@ -573,9 +573,9 @@ TRIAL("Menu: the highlight is the item's focus") {
     // each closes only its own channel.
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(seen, 1);
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(top.dispatch(down));
+    SAME(seen, 1);
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 // --- Hotkeys -------------------------------------------------------------------------------------
@@ -615,10 +615,10 @@ TRIAL("Menu: a hotkey picks an item in an open menu") {
 
     ui::KeyEvent what{U'w'};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(said, 1);
-    ought(!one->opened());
+    SAME(said, 1);
+    OUGHT(!one->opened());
 }
 
 // A closed menu hands out nothing: the letters then belong to the content below the bar.
@@ -646,8 +646,8 @@ TRIAL("Menu: a closed one does not take letters") {
 
     ui::KeyEvent what{U'k'};
 
-    ought(!top.dispatch(what));
-    same(said, 0);
+    OUGHT(!top.dispatch(what));
+    SAME(said, 0);
 }
 
 // A letter that no item took picks nothing; that the open menu swallows it anyway is a rule of the
@@ -680,8 +680,8 @@ TRIAL("Menu: a letter nobody took picks nothing") {
 
     (void)top.dispatch(what);
 
-    same(said, 0);
-    ought(one->opened());
+    SAME(said, 0);
+    OUGHT(one->opened());
 }
 
 TRIAL("Menu: a grayed-out item does not answer its letter") {
@@ -713,8 +713,8 @@ TRIAL("Menu: a grayed-out item does not answer its letter") {
 
     (void)top.dispatch(what);
 
-    same(said, 0);
-    ought(one->opened());
+    SAME(said, 0);
+    OUGHT(one->opened());
 }
 
 // With Control we do not catch it; the same rule as in the button and in the key bar.
@@ -749,7 +749,7 @@ TRIAL("Menu: a letter with a modifier does not pick an item") {
 
     (void)top.dispatch(what);
 
-    same(said, 0);
+    SAME(said, 0);
 }
 
 // The letter is underlined in the text, and the skin gives the role for it; the widget's code knows
@@ -774,9 +774,9 @@ TRIAL("Menu: a hotkey is underlined in the item's text") {
 
     // " Kopiuj": the text stands one cell from the left, so "p" is in the fourth column of the
     // frame.
-    same(made.at({4, 2}).letter, U'p');
-    ought(made.at({4, 2}).style.under);
-    ought(!made.at({3, 2}).style.under);
+    SAME(made.at({4, 2}).letter, U'p');
+    OUGHT(made.at({4, 2}).style.under);
+    OUGHT(!made.at({3, 2}).style.under);
 }
 
 // Graying out the highlighted item gives the focus to the menu: an open menu stays open, only
@@ -795,13 +795,13 @@ TRIAL("Menu: graying out the highlighted item does not close the menu") {
 
     one->open();
 
-    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(first.get()));
 
     first->enabled(false);
 
-    ought(one->opened());
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
-    ought(one->current() == nullptr);
+    OUGHT(one->opened());
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    OUGHT(one->current() == nullptr);
 }
 
 TRIAL("Menu: Enter calls the task and closes") {
@@ -827,9 +827,9 @@ TRIAL("Menu: Enter calls the task and closes") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
-    same(done, 1);
-    ought(!one->opened());
+    OUGHT(top.dispatch(enter));
+    SAME(done, 1);
+    OUGHT(!one->opened());
 }
 
 TRIAL("Menu: a click picks the item under the cursor, not the highlighted one") {
@@ -856,11 +856,11 @@ TRIAL("Menu: a click picks the item under the cursor, not the highlighted one") 
 
     ui::ClickEvent what{{3, 3}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(first, 0);
-    same(second, 1);
-    ought(!one->opened());
+    SAME(first, 0);
+    SAME(second, 1);
+    OUGHT(!one->opened());
 }
 
 // The focus leaves the bar, so the menu rolls up. Unrolling is attaching, so the bar removes it
@@ -880,14 +880,14 @@ TRIAL("Menu: the focus leaving the bar rolls up the unrolled menu") {
     (void)top.render({{0, 0}, {30, 8}});
 
     one->open();
-    ought(one->opened());
+    OUGHT(one->opened());
 
     body->focus();
 
-    ought(!one->opened());
-    ought(unfolded(*window) == nullptr);
-    ought(!window->expanded());
-    ought(body->focused());
+    OUGHT(!one->opened());
+    OUGHT(unfolded(*window) == nullptr);
+    OUGHT(!window->expanded());
+    OUGHT(body->focused());
 }
 
 TRIAL("Menu: a click on the title opens and closes") {
@@ -905,13 +905,13 @@ TRIAL("Menu: a click on the title opens and closes") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    ought(one->opened());
+    OUGHT(top.dispatch(what));
+    OUGHT(one->opened());
 
     (void)top.render({{0, 0}, {30, 8}});
 
-    ought(top.dispatch(what));
-    ought(!one->opened());
+    OUGHT(top.dispatch(what));
+    OUGHT(!one->opened());
 }
 
 // A title without items is a button in the bar, not an empty list: it does not unroll, it is
@@ -947,52 +947,52 @@ TRIAL("Menu: without items it does not unroll, Enter and a click call the title'
     // stands open, nothing lies over the content.
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
-    same(window->current(), left.get());
-    ought(!left->opened());
+    OUGHT(top.dispatch(open));
+    SAME(window->current(), left.get());
+    OUGHT(!left->opened());
 
     // Below the title the content shows, not a box.
     const Snapshot shut = top.render({{0, 0}, {30, 8}});
 
-    same(read(shut, 1), std::string{"xxxxxxxxxx"});
+    SAME(read(shut, 1), std::string{"xxxxxxxxxx"});
 
     // The right arrow goes to the full menu; it does not carry unrolling with it, because the bar
     // entered rolled up. Only the down arrow unrolls, the same rule as with F9.
     ui::KeyEvent right{ui::Code::right};
 
-    ought(top.dispatch(right));
-    same(window->current(), file.get());
-    ought(!file->opened());
+    OUGHT(top.dispatch(right));
+    SAME(window->current(), file.get());
+    OUGHT(!file->opened());
 
     ui::KeyEvent drop{ui::Code::down};
 
-    ought(top.dispatch(drop));
-    ought(file->opened());
+    OUGHT(top.dispatch(drop));
+    OUGHT(file->opened());
 
     ui::KeyEvent back{ui::Code::left};
 
-    ought(top.dispatch(back));
-    same(window->current(), left.get());
-    ought(!file->opened());
+    OUGHT(top.dispatch(back));
+    SAME(window->current(), left.get());
+    OUGHT(!file->opened());
 
     // Enter calls the title's event and closes the bar.
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
-    same(picked, 1);
-    ought(window->current() == nullptr);
-    ought(body->focused());
-    ought(unfolded(*window) == nullptr);
+    OUGHT(top.dispatch(enter));
+    SAME(picked, 1);
+    OUGHT(window->current() == nullptr);
+    OUGHT(body->focused());
+    OUGHT(unfolded(*window) == nullptr);
 
     // A click on the title does the same, without opening.
     (void)top.render({{0, 0}, {30, 8}});
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    same(picked, 2);
-    ought(!left->opened());
-    ought(window->current() == nullptr);
+    OUGHT(top.dispatch(what));
+    SAME(picked, 2);
+    OUGHT(!left->opened());
+    OUGHT(window->current() == nullptr);
 }
 
 TRIAL("Menu: left and right switch without closing") {
@@ -1012,12 +1012,12 @@ TRIAL("Menu: left and right switch without closing") {
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(top.dispatch(right));
-    ought(!first->opened());
-    ought(second->opened());
+    OUGHT(top.dispatch(right));
+    OUGHT(!first->opened());
+    OUGHT(second->opened());
 
-    ought(top.dispatch(right));
-    ought(first->opened());
+    OUGHT(top.dispatch(right));
+    OUGHT(first->opened());
 }
 
 TRIAL("Menu: Esc returns to whoever had the focus") {
@@ -1037,14 +1037,14 @@ TRIAL("Menu: Esc returns to whoever had the focus") {
 
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
+    OUGHT(top.dispatch(open));
 
     // Esc returns from an active bar just as from an unrolled menu: the bar remembers the focus
     // from before entering when it is first taken, not when unrolling.
     ui::KeyEvent close{ui::Code::escape};
 
-    ought(top.dispatch(close));
-    same(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
+    OUGHT(top.dispatch(close));
+    SAME(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
 }
 
 TRIAL("Menu: moving from menu to menu does not lose the application's focus") {
@@ -1072,7 +1072,7 @@ TRIAL("Menu: moving from menu to menu does not lose the application's focus") {
     (void)top.dispatch(right);
     (void)top.dispatch(close);
 
-    same(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
+    SAME(static_cast<const ui::Node*>(top.focused_node()), static_cast<const ui::Node*>(body.get()));
 }
 
 TRIAL("Menu: the content stands below the row of titles") {
@@ -1089,11 +1089,11 @@ TRIAL("Menu: the content stands below the row of titles") {
 
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
-    same(read(made, 0), std::string{" Plik"});
-    same(read(made, 1), std::string{"xxxxxx"});
-    same(window->content()->parent()->area().at.y, 1);
-    same(window->content()->parent()->area().size.high, 2);
-    same(body->area().at.y, 0);
+    SAME(read(made, 0), std::string{" Plik"});
+    SAME(read(made, 1), std::string{"xxxxxx"});
+    SAME(window->content()->parent()->area().at.y, 1);
+    SAME(window->content()->parent()->area().size.high, 2);
+    SAME(body->area().at.y, 0);
 }
 
 TRIAL("Menu: an open one covers the content for hit testing") {
@@ -1119,10 +1119,10 @@ TRIAL("Menu: an open one covers the content for hit testing") {
 
     ui::ClickEvent what{{3, 2}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 1);
-    same(body->hit, 0);
+    SAME(done, 1);
+    SAME(body->hit, 0);
 }
 
 TRIAL("Menu: a closed one does not catch clicks where it was open") {
@@ -1152,10 +1152,10 @@ TRIAL("Menu: a closed one does not catch clicks where it was open") {
 
     ui::ClickEvent what{{3, 2}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 0);
-    same(body->hit, 1);
+    SAME(done, 0);
+    SAME(body->hit, 1);
 }
 
 TRIAL("Menu: the line reaches the frame") {
@@ -1175,7 +1175,7 @@ TRIAL("Menu: the line reaches the frame") {
 
     const Snapshot made = top.render({{0, 0}, {30, 9}});
 
-    same(read(made, 3), std::string{"├─────────┤"});
+    SAME(read(made, 3), std::string{"├─────────┤"});
 }
 
 TRIAL("Menu: a grayed-out item cannot be picked") {
@@ -1205,13 +1205,13 @@ TRIAL("Menu: a grayed-out item cannot be picked") {
 
     (void)top.dispatch(down);
 
-    ought(one->current() == nullptr);
+    OUGHT(one->current() == nullptr);
 
     ui::KeyEvent enter{ui::Code::enter};
 
     (void)top.dispatch(enter);
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 // The box stands below its own title, not below the first one around. This is the only place where
@@ -1234,9 +1234,9 @@ TRIAL("Menu: the second menu's box stands below the second title") {
     const Snapshot made = top.render({{0, 0}, {30, 6}});
 
     // " Plik " takes six columns, so "Widok" starts in the sixth, and the left corner stands there.
-    same(read(made, 0), std::string{" Plik  Widok"});
-    same(made.at({6, 1}).letter, U'┌');
-    same(made.at({0, 1}).letter, U' ');
+    SAME(read(made, 0), std::string{" Plik  Widok"});
+    SAME(made.at({6, 1}).letter, U'┌');
+    SAME(made.at({0, 1}).letter, U' ');
 }
 
 TRIAL("Menu: at the right edge it slides out to the left") {
@@ -1256,9 +1256,9 @@ TRIAL("Menu: at the right edge it slides out to the left") {
 
     const Snapshot made = top.render({{0, 0}, {26, 6}});
 
-    same(second->area().at.x, 2);
-    same(read(made, 0), std::string{" Plik  Widok"});
-    same(read(made, 1), std::string{"  ┌──────────────────────┐"});
+    SAME(second->area().at.x, 2);
+    SAME(read(made, 0), std::string{" Plik  Widok"});
+    SAME(read(made, 1), std::string{"  ┌──────────────────────┐"});
 }
 
 TRIAL("Menu: the shadow does not eat what lies below") {
@@ -1278,12 +1278,12 @@ TRIAL("Menu: the shadow does not eat what lies below") {
 
     const Snapshot made = top.render({{0, 0}, {30, 8}});
 
-    same(read(made, 1), std::string{"┌────────┐xxxxxxxxxxxxxxxxxxxx"});
-    same(made.at({10, 2}).letter, U'x');
-    ought(made.at({10, 2}).style.faint);
-    ought(!made.at({10, 1}).style.faint);
-    same(made.at({2, 4}).letter, U'x');
-    ought(made.at({2, 4}).style.faint);
+    SAME(read(made, 1), std::string{"┌────────┐xxxxxxxxxxxxxxxxxxxx"});
+    SAME(made.at({10, 2}).letter, U'x');
+    OUGHT(made.at({10, 2}).style.faint);
+    OUGHT(!made.at({10, 1}).style.faint);
+    SAME(made.at({2, 4}).letter, U'x');
+    OUGHT(made.at({2, 4}).style.faint);
 }
 
 TRIAL("Menu: the bar accepts nothing from outside") {
@@ -1297,29 +1297,29 @@ TRIAL("Menu: the bar accepts nothing from outside") {
         threw = true;
     }
 
-    ought(threw);
-    same(static_cast<int>(window.children().many()), 1);
+    OUGHT(threw);
+    SAME(static_cast<int>(window.children().many()), 1);
 }
 
 TRIAL("Menu: the content stands below the bar") {
     ui::Menubar window;
 
-    ought(window.content() == nullptr);
+    OUGHT(window.content() == nullptr);
 
     const auto one = std::make_shared<Box>(ui::Size{8, 4}, U'a');
 
     window.content(one);
 
-    same(window.content(), static_cast<ui::Node*>(one.get()));
+    SAME(window.content(), static_cast<ui::Node*>(one.get()));
 
     // The content slot sits in a column below the row of titles, and the column is the first child
     // of the bar's stack.
-    same(static_cast<const ui::Node*>(one->parent()->parent()->parent()),
+    SAME(static_cast<const ui::Node*>(one->parent()->parent()->parent()),
          static_cast<const ui::Node*>(&window));
 
     const Snapshot made = window.render({{0, 0}, {8, 3}});
 
-    same(read(made, 1), std::string{"aaaaaaaa"});
+    SAME(read(made, 1), std::string{"aaaaaaaa"});
 }
 
 TRIAL("Menu: closing clears the highlight") {
@@ -1338,7 +1338,7 @@ TRIAL("Menu: closing clears the highlight") {
 
     window->leave();
 
-    ought(one->current() == nullptr);
+    OUGHT(one->current() == nullptr);
 }
 
 // --- Hovering with the mouse ---------------------------------------------------------------------
@@ -1363,13 +1363,13 @@ TRIAL("Menu: hovering moves the highlight") {
 
     (void)top.render({{0, 0}, {30, 8}});
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 
     ui::MouseEvent what{{3, 3}, ui::Press::move, ui::Mouse::none};
 
     (void)top.dispatch(what);
 
-    same(one->which(), std::optional<std::size_t>{1});
+    SAME(one->which(), std::optional<std::size_t>{1});
 }
 
 // Motion belongs to nobody exclusively: the item moves the highlight and lets the event go on, so
@@ -1392,7 +1392,7 @@ TRIAL("Menu: hovering does not swallow the event") {
 
     ui::MouseEvent what{{3, 3}, ui::Press::move, ui::Mouse::none};
 
-    ought(!top.dispatch(what));
+    OUGHT(!top.dispatch(what));
 }
 
 TRIAL("Menu: hovering over a disabled item does not move the highlight") {
@@ -1420,7 +1420,7 @@ TRIAL("Menu: hovering over a disabled item does not move the highlight") {
 
     (void)top.dispatch(what);
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 // A closed menu is just the title in the bar: there is no item under the cursor then, so there is
@@ -1442,7 +1442,7 @@ TRIAL("Menu: hovering over a closed one opens nothing") {
 
     (void)top.dispatch(what);
 
-    ought(!one->opened());
+    OUGHT(!one->opened());
 }
 
 // --- Group ------------------------------------------------------------------------------------
@@ -1458,27 +1458,27 @@ TRIAL("Menu: a removed menu disappears from the tree too") {
 
     top.children().add(window);
 
-    same(window->menus().size(), std::size_t{2});
+    SAME(window->menus().size(), std::size_t{2});
 
     // A rolled-up menu is not in the tree; an unrolled one is a child of the bar, and only then.
-    ought(!window->children().contains(second.get()));
+    OUGHT(!window->children().contains(second.get()));
 
     second->children().add(std::make_shared<ui::MenuItem>("Odśwież"));
     second->open();
 
-    ought(window->children().contains(second.get()));
+    OUGHT(window->children().contains(second.get()));
 
     window->clear();
 
-    ought(window->menus().empty());
-    ought(!window->children().contains(second.get()));
-    ought(!window->children().contains(first.get()));
+    OUGHT(window->menus().empty());
+    OUGHT(!window->children().contains(second.get()));
+    OUGHT(!window->children().contains(first.get()));
 
     // An emptied bar is put together anew, and the old menus have nothing to do with it anymore.
     const auto again = window->add("Plik");
 
-    same(window->menus().size(), std::size_t{1});
-    same(read(top.render({{0, 0}, {26, 6}}), 0), std::string{" Plik"});
+    SAME(window->menus().size(), std::size_t{1});
+    SAME(read(top.render({{0, 0}, {26, 6}}), 0), std::string{" Plik"});
 }
 
 TRIAL("Menu: the stem of the title's role can be replaced") {
@@ -1489,7 +1489,7 @@ TRIAL("Menu: the stem of the title's role can be replaced") {
     window->keys().add(ui::Key{ui::Code::f9});
     const auto one = window->add("Plik");
 
-    same(one->role(), std::string{"talcite.menubar"});
+    SAME(one->role(), std::string{"talcite.menubar"});
 
     top.children().add(window);
 
@@ -1504,7 +1504,7 @@ TRIAL("Menu: the stem of the title's role can be replaced") {
     top.skin(ui::Skin{these});
     one->role("moj.pasek");
 
-    same(top.render({{0, 0}, {26, 6}}).at({1, 0}).style.foreground, (Color{false, 3, 3, 3}));
+    SAME(top.render({{0, 0}, {26, 6}}).at({1, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 // --- What the menu accepts -----------------------------------------------------------------------
@@ -1519,7 +1519,7 @@ TRIAL("Menu: accepts items and separators, not a foreign child") {
     one->children().add(std::make_shared<ui::MenuItem>("Kopiuj"));
     one->children().add(std::make_shared<ui::MenuSeparator>());
 
-    same(one->children().many(), std::size_t{2});
+    SAME(one->children().many(), std::size_t{2});
 
     bool threw = false;
 
@@ -1529,8 +1529,8 @@ TRIAL("Menu: accepts items and separators, not a foreign child") {
         threw = true;
     }
 
-    ought(threw);
-    same(one->children().many(), std::size_t{2});
+    OUGHT(threw);
+    SAME(one->children().many(), std::size_t{2});
 }
 
 // The line follows the stem of the item's role, so replacing the stem covers the line as well.
@@ -1543,7 +1543,7 @@ TRIAL("MenuSeparator: the line follows the stem of the item's role") {
     const auto menu = window->add("Plik");
     const auto line = std::make_shared<ui::MenuSeparator>();
 
-    same(line->role(), std::string{"talcite.menu"});
+    SAME(line->role(), std::string{"talcite.menu"});
 
     // The line does not stretch the menu, so without an ordinary item next to it it would have
     // zero width and would not draw a single cell.
@@ -1573,7 +1573,7 @@ TRIAL("MenuSeparator: the line follows the stem of the item's role") {
         for (int x = 0; x < 20 && !found; ++x)
             if (made.at({x, y}).style.foreground == Color{false, 5, 5, 5}) found = true;
 
-    ought(found);
+    OUGHT(found);
 }
 
 // A title's letter switches menus while the bar is active. The title is a node with keys, so it
@@ -1605,19 +1605,19 @@ TRIAL("Menu: a title's letter switches menus while the bar is active") {
 
     // F9 takes the bar rolled up, and that is exactly why the title's letter has somewhere to work
     // now: if the first menu were unrolled, it would swallow the letter for its items.
-    ought(top.dispatch(nine));
-    same(window->current(), first.get());
-    same(unfolded(*window), static_cast<ui::Menu*>(nullptr));
+    OUGHT(top.dispatch(nine));
+    SAME(window->current(), first.get());
+    SAME(unfolded(*window), static_cast<ui::Menu*>(nullptr));
 
     ui::KeyEvent look{U'w'};
 
-    ought(top.dispatch(look));
-    same(unfolded(*window), second.get());
+    OUGHT(top.dispatch(look));
+    SAME(unfolded(*window), second.get());
 
     ui::KeyEvent file{U'P'};
 
-    ought(top.dispatch(file));
-    same(unfolded(*window), first.get());
+    OUGHT(top.dispatch(file));
+    SAME(unfolded(*window), first.get());
 }
 
 // A title without items is a button in the bar, and its letter does what a click on it does: it
@@ -1654,15 +1654,15 @@ TRIAL("Menu: a title's letter on a menu without items picks it, as a click does"
 
     ui::KeyEvent nine{ui::Code::f9};
 
-    ought(top.dispatch(nine));
-    same(window->current(), first.get());
+    OUGHT(top.dispatch(nine));
+    SAME(window->current(), first.get());
 
     ui::KeyEvent letter{U'o'};
 
-    ought(top.dispatch(letter));
-    same(picked, 1);
-    same(unfolded(*window), static_cast<ui::Menu*>(nullptr));
-    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
+    OUGHT(top.dispatch(letter));
+    SAME(picked, 1);
+    SAME(unfolded(*window), static_cast<ui::Menu*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 // Without an active bar a letter must not unroll anything; otherwise typing over a panel would open
@@ -1688,8 +1688,8 @@ TRIAL("Menu: a title's letter with the bar closed does nothing") {
 
     ui::KeyEvent file{U'p'};
 
-    ought(!top.dispatch(file));
-    ought(unfolded(*window) == nullptr);
+    OUGHT(!top.dispatch(file));
+    OUGHT(unfolded(*window) == nullptr);
 }
 
 // An item of an open menu takes the letter before the titles: it lies closer to the focus.
@@ -1730,19 +1730,19 @@ TRIAL("Menu: an item's letter wins over a title's letter") {
 
     ui::KeyEvent nine{ui::Code::f9};
 
-    ought(top.dispatch(nine));
+    OUGHT(top.dispatch(nine));
 
     // Unrolling is the condition of the question here: the item's priority over the title is
     // decided only with the menu unrolled. With it rolled up the same letter belongs to the title;
     // Midnight Commander divides it the same way, with one variable, is_dropped.
     ui::KeyEvent drop{ui::Code::down};
 
-    ought(top.dispatch(drop));
+    OUGHT(top.dispatch(drop));
 
     ui::KeyEvent cut{U'w'};
 
-    ought(top.dispatch(cut));
-    same(said, 1);
+    OUGHT(top.dispatch(cut));
+    SAME(said, 1);
 }
 
 // The title underlines its letter, just like a menu item and a button.
@@ -1763,8 +1763,8 @@ TRIAL("Menu: a title's letter is underlined in the bar") {
 
     const Snapshot made = top.render({{0, 0}, {20, 3}});
 
-    ought(made.at({2, 0}).style.under);
-    ought(!made.at({1, 0}).style.under);
+    OUGHT(made.at({2, 0}).style.under);
+    OUGHT(!made.at({1, 0}).style.under);
 }
 
 // Without a given key the bar does not open from the keyboard. The library takes no key
@@ -1787,8 +1787,8 @@ TRIAL("Menu: without a given key the bar does not open from the keyboard") {
 
     ui::KeyEvent nine{ui::Code::f9};
 
-    ought(!top.dispatch(nine));
-    ought(!one->opened());
+    OUGHT(!top.dispatch(nine));
+    OUGHT(!one->opened());
 }
 
 // The key given by the caller toggles the bar: it opens a closed one and closes an open one. And it
@@ -1812,16 +1812,16 @@ TRIAL("Menu: the given key toggles the bar") {
 
     ui::KeyEvent two{ui::Code::f2};
 
-    ought(top.dispatch(two));
-    same(window->current(), one.get());
+    OUGHT(top.dispatch(two));
+    SAME(window->current(), one.get());
 
-    ought(top.dispatch(two));
-    ought(window->current() == nullptr);
+    OUGHT(top.dispatch(two));
+    OUGHT(window->current() == nullptr);
 
     ui::KeyEvent nine{ui::Code::f9};
 
-    ought(!top.dispatch(nine));
-    ought(!one->opened());
+    OUGHT(!top.dispatch(nine));
+    OUGHT(!one->opened());
 }
 
 TRIAL("Menu: double-width characters widen the box by the width of the sides") {
@@ -1853,12 +1853,12 @@ TRIAL("Menu: double-width characters widen the box by the width of the sides") {
 
     // The inside has fourteen cells, as in the trial with an ordinary frame; the sides add two
     // each.
-    same(one->wants({80, 25}).wide, 18);
-    same(read(made, 1), std::string{"口一一一一一一一口"});
-    same(read(made, 2), std::string{"丨 Kopiuj    F5 丨"});
-    same(read(made, 3), std::string{"卜一一一一一一一卜"});
-    same(read(made, 4), std::string{"丨 Wyjście  F10 丨"});
-    same(read(made, 5), std::string{"口一一一一一一一口"});
+    SAME(one->wants({80, 25}).wide, 18);
+    SAME(read(made, 1), std::string{"口一一一一一一一口"});
+    SAME(read(made, 2), std::string{"丨 Kopiuj    F5 丨"});
+    SAME(read(made, 3), std::string{"卜一一一一一一一卜"});
+    SAME(read(made, 4), std::string{"丨 Wyjście  F10 丨"});
+    SAME(read(made, 5), std::string{"口一一一一一一一口"});
 }
 
 namespace {
@@ -1907,19 +1907,19 @@ TRIAL("Submenu: the right arrow opens the list beside the item, with its first i
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(made.deeper->focused());
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(made.deeper->focused());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
 
-    ought(made.deeper->menu().opened());
-    ought(made.menu->opened());
-    ought(made.settings->focused());
+    OUGHT(made.deeper->menu().opened());
+    OUGHT(made.menu->opened());
+    OUGHT(made.settings->focused());
 
     const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
-    same(read(seen, 1), std::string{"┌─────────────────────┌────────────┐"});
-    same(read(seen, 2), std::string{"│ Biblioteka  Filmy ▸ │ Ustawienia │"});
-    same(read(seen, 3), std::string{"│ Wyjście             │ Historia   │"});
-    same(read(seen, 4), std::string{"└─────────────────────└────────────┘"});
+    SAME(read(seen, 1), std::string{"┌─────────────────────┌────────────┐"});
+    SAME(read(seen, 2), std::string{"│ Biblioteka  Filmy ▸ │ Ustawienia │"});
+    SAME(read(seen, 3), std::string{"│ Wyjście             │ Historia   │"});
+    SAME(read(seen, 4), std::string{"└─────────────────────└────────────┘"});
 }
 
 // A list too tall for the rows under its item moves up, as far as it must, and stays whole on the
@@ -1938,12 +1938,12 @@ TRIAL("Submenu: a list too tall for the rows below moves up") {
 
     (void)top.render({{0, 0}, {40, 6}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
 
     (void)top.render({{0, 0}, {40, 6}});
 
-    same(made.deeper->menu().area().at.y, 0);
-    same(made.deeper->menu().area().size.high, 6);
+    SAME(made.deeper->menu().area().at.y, 0);
+    SAME(made.deeper->menu().area().size.high, 6);
 }
 
 TRIAL("Submenu: Esc and the left arrow close the list alone and give the focus back to the item") {
@@ -1958,22 +1958,22 @@ TRIAL("Submenu: Esc and the left arrow close the list alone and give the focus b
     (void)top.render({{0, 0}, {40, 8}});
 
     for (const ui::Code key : {ui::Code::escape, ui::Code::left}) {
-        ought(pressed(top, ui::KeyEvent{ui::Code::right}));
-        ought(made.deeper->menu().opened());
+        OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
+        OUGHT(made.deeper->menu().opened());
 
-        ought(pressed(top, ui::KeyEvent{key}));
+        OUGHT(pressed(top, ui::KeyEvent{key}));
 
-        ought(!made.deeper->menu().opened());
-        ought(made.menu->opened());
-        ought(made.deeper->focused());
-        same(made.menu->which(), std::optional<std::size_t>{0});
+        OUGHT(!made.deeper->menu().opened());
+        OUGHT(made.menu->opened());
+        OUGHT(made.deeper->focused());
+        SAME(made.menu->which(), std::optional<std::size_t>{0});
     }
 
     // The second Esc is the bar's again: it leaves, and the focus goes back to the content.
-    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::escape}));
 
-    ought(!made.menu->opened());
-    ought(body->focused());
+    OUGHT(!made.menu->opened());
+    OUGHT(body->focused());
 }
 
 TRIAL("Submenu: Enter on an item of the list picks it and leaves the bar") {
@@ -1993,19 +1993,19 @@ TRIAL("Submenu: Enter on an item of the list picks it and leaves the bar") {
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::enter}));
-    ought(made.deeper->menu().opened());
-    same(done, 0);
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::enter}));
+    OUGHT(made.deeper->menu().opened());
+    SAME(done, 0);
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::down}));
-    ought(made.history->focused());
-    ought(pressed(top, ui::KeyEvent{ui::Code::enter}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::down}));
+    OUGHT(made.history->focused());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::enter}));
 
-    same(done, 1);
-    ought(!made.deeper->menu().opened());
-    ought(!made.menu->opened());
-    ought(body->focused());
-    same(made.window->children().many(), std::size_t{1});
+    SAME(done, 1);
+    OUGHT(!made.deeper->menu().opened());
+    OUGHT(!made.menu->opened());
+    OUGHT(body->focused());
+    SAME(made.window->children().many(), std::size_t{1});
 }
 
 TRIAL("Submenu: picking it fires no PickEvent of its own") {
@@ -2023,8 +2023,8 @@ TRIAL("Submenu: picking it fires no PickEvent of its own") {
     made.menu->open();
     made.deeper->pick();
 
-    same(done, 0);
-    ought(made.deeper->menu().opened());
+    SAME(done, 0);
+    OUGHT(made.deeper->menu().opened());
 }
 
 TRIAL("Submenu: the right arrow in the list goes on to the next menu of the bar") {
@@ -2042,19 +2042,19 @@ TRIAL("Submenu: the right arrow in the list goes on to the next menu of the bar"
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
-    ought(made.deeper->menu().opened());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(made.deeper->menu().opened());
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
 
-    ought(!made.deeper->menu().opened());
-    ought(!made.menu->opened());
-    ought(second->opened());
-    same(made.window->children().many(), std::size_t{2});
+    OUGHT(!made.deeper->menu().opened());
+    OUGHT(!made.menu->opened());
+    OUGHT(second->opened());
+    SAME(made.window->children().many(), std::size_t{2});
 
     // Esc then leaves the bar for the content, which had the focus before the bar was entered.
-    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
-    ought(body->focused());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    OUGHT(body->focused());
 }
 
 TRIAL("Submenu: a letter and a click open the list") {
@@ -2071,12 +2071,12 @@ TRIAL("Submenu: a letter and a click open the list") {
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(pressed(top, ui::KeyEvent{U'b'}));
-    ought(made.deeper->menu().opened());
-    ought(made.menu->opened());
+    OUGHT(pressed(top, ui::KeyEvent{U'b'}));
+    OUGHT(made.deeper->menu().opened());
+    OUGHT(made.menu->opened());
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
-    ought(!made.deeper->menu().opened());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    OUGHT(!made.deeper->menu().opened());
 
     made.menu->which(1);
 
@@ -2084,9 +2084,9 @@ TRIAL("Submenu: a letter and a click open the list") {
 
     ui::ClickEvent what{{3, 2}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    ought(made.deeper->menu().opened());
-    ought(made.settings->focused());
+    OUGHT(top.dispatch(what));
+    OUGHT(made.deeper->menu().opened());
+    OUGHT(made.settings->focused());
 }
 
 TRIAL("Submenu: another item of the menu closes the list") {
@@ -2101,15 +2101,15 @@ TRIAL("Submenu: another item of the menu closes the list") {
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(made.deeper->menu().opened());
+    OUGHT(made.deeper->menu().opened());
 
     ui::MouseEvent over{{3, 3}, ui::Press::move, ui::Mouse::none};
 
     (void)top.dispatch(over);
 
-    ought(made.quit->focused());
-    ought(!made.deeper->menu().opened());
-    ought(made.menu->opened());
+    OUGHT(made.quit->focused());
+    OUGHT(!made.deeper->menu().opened());
+    OUGHT(made.menu->opened());
 }
 
 TRIAL("Submenu: while its list is open, the item stays highlighted") {
@@ -2123,9 +2123,9 @@ TRIAL("Submenu: while its list is open, the item stays highlighted") {
 
     const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
-    ought(!made.deeper->focused());
-    ought(seen.at({3, 2}).style == top.skin().style("talcite.menu.focus"));
-    ought(seen.at({3, 3}).style == top.skin().style("talcite.menu"));
+    OUGHT(!made.deeper->focused());
+    OUGHT(seen.at({3, 2}).style == top.skin().style("talcite.menu.focus"));
+    OUGHT(seen.at({3, 3}).style == top.skin().style("talcite.menu"));
 }
 
 TRIAL("Submenu: closing the menu or leaving the bar closes the list") {
@@ -2139,17 +2139,17 @@ TRIAL("Submenu: closing the menu or leaving the bar closes the list") {
 
     made.menu->close();
 
-    ought(!made.deeper->menu().opened());
-    same(made.window->children().many(), std::size_t{1});
+    OUGHT(!made.deeper->menu().opened());
+    SAME(made.window->children().many(), std::size_t{1});
 
     made.menu->open();
     made.deeper->pick();
 
     body->focus();
 
-    ought(!made.deeper->menu().opened());
-    ought(!made.menu->opened());
-    same(made.window->children().many(), std::size_t{1});
+    OUGHT(!made.deeper->menu().opened());
+    OUGHT(!made.menu->opened());
+    SAME(made.window->children().many(), std::size_t{1});
 }
 
 TRIAL("Submenu: at the right edge the list opens on the left, its right border over the menu's left") {
@@ -2178,9 +2178,9 @@ TRIAL("Submenu: at the right edge the list opens on the left, its right border o
     const ui::Area menu = second->area();
     const ui::Area list = deeper->menu().area();
 
-    ought(menu.at.x + menu.size.wide + list.size.wide > 40);
-    same(list.at.x + list.size.wide - 1, menu.at.x);
-    same(list.at.y, menu.at.y);
+    OUGHT(menu.at.x + menu.size.wide + list.size.wide > 40);
+    SAME(list.at.x + list.size.wide - 1, menu.at.x);
+    SAME(list.at.y, menu.at.y);
 }
 
 TRIAL("Submenu: a disabled one does not open, and the arrows pass over it") {
@@ -2193,11 +2193,11 @@ TRIAL("Submenu: a disabled one does not open, and the arrows pass over it") {
 
     made.menu->open();
 
-    ought(made.quit->focused());
+    OUGHT(made.quit->focused());
 
     made.deeper->pick();
 
-    ought(!made.deeper->menu().opened());
+    OUGHT(!made.deeper->menu().opened());
 }
 
 TRIAL("Submenu: the mark has a plain form, and the hint stands before it") {
@@ -2211,7 +2211,7 @@ TRIAL("Submenu: the mark has a plain form, and the hint stands before it") {
 
     const Snapshot seen = top.render({{0, 0}, {40, 8}});
 
-    same(read(seen, 2), std::string{"│ Biblioteka  Filmy > │"});
+    SAME(read(seen, 2), std::string{"│ Biblioteka  Filmy > │"});
 }
 
 TRIAL("Submenu: a list whose item went away is closed by the bar") {
@@ -2225,20 +2225,20 @@ TRIAL("Submenu: a list whose item went away is closed by the bar") {
 
     (void)top.render({{0, 0}, {40, 8}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
 
     std::weak_ptr<ui::Submenu> gone = made.deeper;
 
     (void)made.menu->children().remove(made.deeper.get());
     made.deeper.reset();
 
-    ought(gone.expired());
-    same(made.window->children().many(), std::size_t{3});
+    OUGHT(gone.expired());
+    SAME(made.window->children().many(), std::size_t{3});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::escape}));
 
-    same(made.window->children().many(), std::size_t{1});
-    ought(body->focused());
+    SAME(made.window->children().many(), std::size_t{1});
+    OUGHT(body->focused());
 }
 
 TRIAL("Submenu: a list inside a list closes from the deepest, and the menu takes all of them") {
@@ -2258,25 +2258,25 @@ TRIAL("Submenu: a list inside a list closes from the deepest, and the menu takes
 
     (void)top.render({{0, 0}, {60, 10}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
-    ought(pressed(top, ui::KeyEvent{ui::Code::up}));
-    ought(deepest->focused());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::up}));
+    OUGHT(deepest->focused());
 
     (void)top.render({{0, 0}, {60, 10}});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::right}));
-    ought(last->focused());
-    same(made.window->children().many(), std::size_t{4});
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::right}));
+    OUGHT(last->focused());
+    SAME(made.window->children().many(), std::size_t{4});
 
-    ought(pressed(top, ui::KeyEvent{ui::Code::escape}));
-    ought(deepest->focused());
-    ought(made.deeper->menu().opened());
+    OUGHT(pressed(top, ui::KeyEvent{ui::Code::escape}));
+    OUGHT(deepest->focused());
+    OUGHT(made.deeper->menu().opened());
 
     deepest->pick();
     made.menu->close();
 
-    same(made.window->children().many(), std::size_t{1});
-    ought(!deepest->menu().opened());
+    SAME(made.window->children().many(), std::size_t{1});
+    OUGHT(!deepest->menu().opened());
 }
 
 TRIAL("Submenu: the bar does not take a menu that is not its own") {
@@ -2290,6 +2290,6 @@ TRIAL("Submenu: the bar does not take a menu that is not its own") {
         threw = true;
     }
 
-    ought(threw);
-    same(static_cast<int>(window.children().many()), 1);
+    OUGHT(threw);
+    SAME(static_cast<int>(window.children().many()), 1);
 }

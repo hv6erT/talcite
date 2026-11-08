@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -90,16 +90,16 @@ TRIAL("Tabs: the names in the middle, a stroke under the one shown, its page bel
 
     const Snapshot made = top.render({{0, 0}, {40, 6}});
 
-    same(read(made, 0), std::string{"        Alpha     Beta     Gamma"});
-    same(read(made, 1), line(7, 7, 26));
-    same(read(made, 2), std::string{"page of Alpha"});
-    same(three.tabs->which(), std::size_t{0});
+    SAME(read(made, 0), std::string{"        Alpha     Beta     Gamma"});
+    SAME(read(made, 1), line(7, 7, 26));
+    SAME(read(made, 2), std::string{"page of Alpha"});
+    SAME(three.tabs->which(), std::size_t{0});
 
     // The name shown in its role, the others plain, and each key letter in the key role.
-    ought(made.at({9, 0}).style == top.skin().style("talcite.tab.current"));
-    ought(made.at({19, 0}).style == top.skin().style("talcite.tab"));
-    ought(made.at({8, 0}).style != top.skin().style("talcite.tab.current"));
-    ought(made.at({18, 0}).style != top.skin().style("talcite.tab"));
+    OUGHT(made.at({9, 0}).style == top.skin().style("talcite.tab.current"));
+    OUGHT(made.at({19, 0}).style == top.skin().style("talcite.tab"));
+    OUGHT(made.at({8, 0}).style != top.skin().style("talcite.tab.current"));
+    OUGHT(made.at({18, 0}).style != top.skin().style("talcite.tab"));
 }
 
 TRIAL("Tabs: they ask for the strip and the largest page") {
@@ -109,11 +109,11 @@ TRIAL("Tabs: they ask for the strip and the largest page") {
 
     const ui::Size asked = three.tabs->wants({80, 20});
 
-    same(asked.wide, static_cast<int>(std::string{"a longer line on the page of Gamma"}.size()));
-    same(asked.high, 2 + 3);
+    SAME(asked.wide, static_cast<int>(std::string{"a longer line on the page of Gamma"}.size()));
+    SAME(asked.high, 2 + 3);
 
-    same(three.tabs->wants({20, 4}).wide, 20);
-    same(three.tabs->wants({20, 4}).high, 4);
+    SAME(three.tabs->wants({20, 4}).wide, 20);
+    SAME(three.tabs->wants({20, 4}).high, 4);
 
     // Drawn once, the pages of Beta and Gamma are kept aside, and Gamma's still counts.
     ui::Root top;
@@ -122,8 +122,8 @@ TRIAL("Tabs: they ask for the strip and the largest page") {
 
     (void)top.render({{0, 0}, {80, 20}});
 
-    ought(three.gamma.button->root() == nullptr);
-    same(three.tabs->wants({80, 20}).wide, asked.wide);
+    OUGHT(three.gamma.button->root() == nullptr);
+    SAME(three.tabs->wants({80, 20}).wide, asked.wide);
 }
 
 TRIAL("Tabs: only the page shown is in the tree, so a hidden page's button does not answer its key") {
@@ -138,9 +138,9 @@ TRIAL("Tabs: only the page shown is in the tree, so a hidden page's button does 
 
     (void)top.render({{0, 0}, {40, 10}});
 
-    ought(three.alpha.button->root() != nullptr);
-    ought(three.beta.button->root() == nullptr);
-    ought(three.gamma.button->root() == nullptr);
+    OUGHT(three.alpha.button->root() != nullptr);
+    OUGHT(three.beta.button->root() == nullptr);
+    OUGHT(three.gamma.button->root() == nullptr);
 
     int bob = 0;
     const ui::Hook counted = three.beta.button->on<ui::PickEvent>([&bob](ui::PickEvent&) {
@@ -153,20 +153,20 @@ TRIAL("Tabs: only the page shown is in the tree, so a hidden page's button does 
 
     (void)top.dispatch(hidden);
 
-    same(bob, 0);
+    SAME(bob, 0);
 
     // Its tab's key shows the page, and then the button answers.
     ui::KeyEvent beta{ui::Key{U'B'}};
 
-    ought(top.dispatch(beta));
-    same(three.tabs->which(), std::size_t{1});
-    ought(three.alpha.button->root() == nullptr);
-    ought(three.beta.button->root() != nullptr);
+    OUGHT(top.dispatch(beta));
+    SAME(three.tabs->which(), std::size_t{1});
+    OUGHT(three.alpha.button->root() == nullptr);
+    OUGHT(three.beta.button->root() != nullptr);
 
     ui::KeyEvent again{ui::Key{U'O'}};
 
-    ought(top.dispatch(again));
-    same(bob, 1);
+    OUGHT(top.dispatch(again));
+    SAME(bob, 1);
 }
 
 TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below is the page's") {
@@ -186,13 +186,13 @@ TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below
 
     ui::ClickEvent on_gamma{{28, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(on_gamma));
-    same(three.tabs->which(), std::size_t{2});
-    same(picked, 1);
+    OUGHT(top.dispatch(on_gamma));
+    SAME(three.tabs->which(), std::size_t{2});
+    SAME(picked, 1);
 
     const Snapshot made = top.render({{0, 0}, {40, 6}});
 
-    same(read(made, 2), std::string{"page of Gamma"});
+    SAME(read(made, 2), std::string{"page of Gamma"});
 
     // The line under a name counts too, and a click on the name shown changes nothing: its tab does
     // not say it again.
@@ -205,16 +205,16 @@ TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below
 
     ui::ClickEvent under_beta{{19, 1}, ui::Mouse::left};
 
-    ought(top.dispatch(under_beta));
-    same(three.tabs->which(), std::size_t{1});
-    same(beta, 1);
+    OUGHT(top.dispatch(under_beta));
+    SAME(three.tabs->which(), std::size_t{1});
+    SAME(beta, 1);
 
     ui::ClickEvent shown{{19, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(shown));
-    same(three.tabs->which(), std::size_t{1});
-    same(picked, 1);
-    same(beta, 1);
+    OUGHT(top.dispatch(shown));
+    SAME(three.tabs->which(), std::size_t{1});
+    SAME(picked, 1);
+    SAME(beta, 1);
 
     // Below the strip the page's button takes the click, not a hidden page that stood there before.
     (void)top.render({{0, 0}, {40, 6}});
@@ -228,8 +228,8 @@ TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below
 
     ui::ClickEvent on_bob{{2, 3}, ui::Mouse::left};
 
-    ought(top.dispatch(on_bob));
-    same(bob, 1);
+    OUGHT(top.dispatch(on_bob));
+    SAME(bob, 1);
 
     // Back on Alpha: Beta, later among the tabs, would win the spot if it kept the place it had.
     three.tabs->which(0);
@@ -245,17 +245,17 @@ TRIAL("Tabs: a click on a name shows its page and the tab says so; a click below
 
     ui::ClickEvent on_ala{{2, 3}, ui::Mouse::left};
 
-    ought(top.dispatch(on_ala));
-    same(ala, 1);
-    same(bob, 1);
+    OUGHT(top.dispatch(on_ala));
+    SAME(ala, 1);
+    SAME(bob, 1);
 
     // An empty spot of the page under Beta's name is not Beta's name: nobody takes the click.
     (void)top.render({{0, 0}, {40, 6}});
 
     ui::ClickEvent below{{19, 4}, ui::Mouse::left};
 
-    ought(!top.dispatch(below));
-    same(three.tabs->which(), std::size_t{0});
+    OUGHT(!top.dispatch(below));
+    SAME(three.tabs->which(), std::size_t{0});
 }
 
 TRIAL("Tabs: Ctrl+PgDn and Ctrl+PgUp go round, from the page and from a dialog's broadcast") {
@@ -278,21 +278,21 @@ TRIAL("Tabs: Ctrl+PgDn and Ctrl+PgUp go round, from the page and from a dialog's
 
     ui::KeyEvent next{ui::Key{ui::Code::pagedown, ui::Mods{.ctrl = true}}};
 
-    ought(top.dispatch(next));
-    same(three.tabs->which(), std::size_t{1});
+    OUGHT(top.dispatch(next));
+    SAME(three.tabs->which(), std::size_t{1});
 
     // The focus under the tabs: the dialog passes the key round.
     outside->focus();
 
     ui::KeyEvent back{ui::Key{ui::Code::pageup, ui::Mods{.ctrl = true}}};
 
-    ought(top.dispatch(back));
-    same(three.tabs->which(), std::size_t{0});
+    OUGHT(top.dispatch(back));
+    SAME(three.tabs->which(), std::size_t{0});
 
     ui::KeyEvent round{ui::Key{ui::Code::pageup, ui::Mods{.ctrl = true}}};
 
-    ought(top.dispatch(round));
-    same(three.tabs->which(), std::size_t{2});
+    OUGHT(top.dispatch(round));
+    SAME(three.tabs->which(), std::size_t{2});
 
     // Without Ctrl, or with more than Ctrl, the keys are not the tabs'.
     three.tabs->which(0);
@@ -303,7 +303,7 @@ TRIAL("Tabs: Ctrl+PgDn and Ctrl+PgUp go round, from the page and from a dialog's
 
     (void)top.dispatch(plain);
     (void)top.dispatch(shifted);
-    same(three.tabs->which(), std::size_t{0});
+    SAME(three.tabs->which(), std::size_t{0});
 }
 
 TRIAL("Tabs: the focus on the page that goes moves to the page that comes; elsewhere it stays") {
@@ -327,17 +327,17 @@ TRIAL("Tabs: the focus on the page that goes moves to the page that comes; elsew
     second->focus();
     three.tabs->which(0);
 
-    ought(second->focused());
+    OUGHT(second->focused());
 
     three.alpha.button->focus();
     three.tabs->which(1);
 
-    ought(three.beta.button->focused());
+    OUGHT(three.beta.button->focused());
 
     outside->focus();
     three.tabs->which(2);
 
-    ought(outside->focused());
+    OUGHT(outside->focused());
 }
 
 TRIAL("Tabs: too narrow for all the names, the one shown stands alone between arrows") {
@@ -350,20 +350,20 @@ TRIAL("Tabs: too narrow for all the names, the one shown stands alone between ar
 
     const Snapshot made = top.render({{0, 0}, {14, 5}});
 
-    same(read(made, 0), std::string{"  <  Beta  >"});
-    same(read(made, 1), line(4, 6, 4));
+    SAME(read(made, 0), std::string{"  <  Beta  >"});
+    SAME(read(made, 1), line(4, 6, 4));
 
     ui::ClickEvent left{{3, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(left));
-    same(three.tabs->which(), std::size_t{0});
+    OUGHT(top.dispatch(left));
+    SAME(three.tabs->which(), std::size_t{0});
 
     (void)top.render({{0, 0}, {14, 5}});
 
     ui::ClickEvent right{{12, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(right));
-    same(three.tabs->which(), std::size_t{1});
+    OUGHT(top.dispatch(right));
+    SAME(three.tabs->which(), std::size_t{1});
 
     // The arrows turn from the name shown, whatever name would stand there were they all in a row.
     three.tabs->which(2);
@@ -372,23 +372,23 @@ TRIAL("Tabs: too narrow for all the names, the one shown stands alone between ar
 
     ui::ClickEvent back{{1, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(back));
-    same(three.tabs->which(), std::size_t{1});
+    OUGHT(top.dispatch(back));
+    SAME(three.tabs->which(), std::size_t{1});
 }
 
 TRIAL("Tabs: only tabs go in, and a tab holds one page") {
     const auto tabs = std::make_shared<ui::Tabs>();
     const auto tab = std::make_shared<ui::Tab>("Alpha");
 
-    ought(tabs->accepts(*tab));
-    ought(!tabs->accepts(ui::Span{"x"}));
-    same(tab->capacity(), 1);
+    OUGHT(tabs->accepts(*tab));
+    OUGHT(!tabs->accepts(ui::Span{"x"}));
+    SAME(tab->capacity(), 1);
 
     // A tab's key and a step past the end are nothing without tabs.
     tabs->step(1);
     tabs->which(3);
 
-    same(tabs->which(), std::size_t{0});
+    SAME(tabs->which(), std::size_t{0});
 }
 
 // A tab's name stands in the strip, which the tabs paint, not over the tab's own page: so a renamed
@@ -405,10 +405,10 @@ TRIAL("Tabs: a renamed tab shows its new name in the strip at the next frame") {
 
     const std::string row = read(top.render({{0, 0}, {40, 6}}), 0);
 
-    ought(row.find("Beta") == std::string::npos);
-    ought(row.find("Alpha") < row.find("Bravo"));
-    ought(row.find("Bravo") < row.find("Gamma"));
-    ought(row.find("Gamma") != std::string::npos);
+    OUGHT(row.find("Beta") == std::string::npos);
+    OUGHT(row.find("Alpha") < row.find("Bravo"));
+    OUGHT(row.find("Bravo") < row.find("Gamma"));
+    OUGHT(row.find("Gamma") != std::string::npos);
 }
 
 // A number past the last tab is cut to the last one, as in a list and a menu, so the program never
@@ -421,8 +421,8 @@ TRIAL("Tabs: which past the last shows the last") {
 
     three.tabs->which(99);
 
-    same(three.tabs->which(), std::size_t{2});
-    same(read(top.render({{0, 0}, {40, 6}}), 2), std::string{"page of Gamma"});
+    SAME(three.tabs->which(), std::size_t{2});
+    SAME(read(top.render({{0, 0}, {40, 6}}), 2), std::string{"page of Gamma"});
 }
 
 // Without tabs there is nothing to show, and nothing breaks.
@@ -435,5 +435,5 @@ TRIAL("Tabs: which without tabs does nothing") {
 
     tabs->which(3);
 
-    same(tabs->which(), std::size_t{0});
+    SAME(tabs->which(), std::size_t{0});
 }

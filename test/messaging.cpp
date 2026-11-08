@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -125,16 +125,16 @@ TRIAL("Message: title above the content box, buttons in a second box") {
 
     const Snapshot seen = made.drawn({30, 12});
 
-    same(read(seen, 0), std::string{"      ╔═════════════╗"});
-    same(read(seen, 1), std::string{"      ║    Error    ║"});
-    same(read(seen, 2), std::string{"      ║┌───────────┐║"});
-    same(read(seen, 3), std::string{"      ║│Nie da się.│║"});
-    same(read(seen, 4), std::string{"      ║└───────────┘║"});
-    same(read(seen, 5), std::string{"      ║             ║"});
-    same(read(seen, 6), std::string{"      ║┌───────────┐║"});
-    same(read(seen, 7), std::string{"      ║│  [ OK ]   │║"});
-    same(read(seen, 8), std::string{"      ║└───────────┘║"});
-    same(read(seen, 9), std::string{"      ╚═════════════╝"});
+    SAME(read(seen, 0), std::string{"      ╔═════════════╗"});
+    SAME(read(seen, 1), std::string{"      ║    Error    ║"});
+    SAME(read(seen, 2), std::string{"      ║┌───────────┐║"});
+    SAME(read(seen, 3), std::string{"      ║│Nie da się.│║"});
+    SAME(read(seen, 4), std::string{"      ║└───────────┘║"});
+    SAME(read(seen, 5), std::string{"      ║             ║"});
+    SAME(read(seen, 6), std::string{"      ║┌───────────┐║"});
+    SAME(read(seen, 7), std::string{"      ║│  [ OK ]   │║"});
+    SAME(read(seen, 8), std::string{"      ║└───────────┘║"});
+    SAME(read(seen, 9), std::string{"      ╚═════════════╝"});
 }
 
 // A single answer is an ordinary button, not the primary one: that is how `[ OK ]` looks in
@@ -142,7 +142,7 @@ TRIAL("Message: title above the content box, buttons in a second box") {
 TRIAL("Message: a single answer is not primary") {
     Opened made{"Uwaga", "Coś.", {{"OK", U'O'}}};
 
-    ought(!made.one->buttons()[0]->primary());
+    OUGHT(!made.one->buttons()[0]->primary());
 }
 
 TRIAL("Message: without a title there is no title row") {
@@ -150,8 +150,8 @@ TRIAL("Message: without a title there is no title row") {
 
     const Snapshot seen = made.drawn({30, 12});
 
-    same(read(seen, 2), std::string{"      ║┌───────────┐║"});
-    same(read(seen, 3), std::string{"      ║│Sama treść.│║"});
+    SAME(read(seen, 2), std::string{"      ║┌───────────┐║"});
+    SAME(read(seen, 3), std::string{"      ║│Sama treść.│║"});
 }
 
 TRIAL("Message: without answers there is no second box") {
@@ -159,12 +159,12 @@ TRIAL("Message: without answers there is no second box") {
 
     const Snapshot seen = made.drawn({30, 10});
 
-    same(read(seen, 1), std::string{"      ╔═════════════╗"});
-    same(read(seen, 2), std::string{"      ║   Czekaj    ║"});
-    same(read(seen, 3), std::string{"      ║┌───────────┐║"});
-    same(read(seen, 4), std::string{"      ║│Przeglądam…│║"});
-    same(read(seen, 5), std::string{"      ║└───────────┘║"});
-    same(read(seen, 6), std::string{"      ╚═════════════╝"});
+    SAME(read(seen, 1), std::string{"      ╔═════════════╗"});
+    SAME(read(seen, 2), std::string{"      ║   Czekaj    ║"});
+    SAME(read(seen, 3), std::string{"      ║┌───────────┐║"});
+    SAME(read(seen, 4), std::string{"      ║│Przeglądam…│║"});
+    SAME(read(seen, 5), std::string{"      ║└───────────┘║"});
+    SAME(read(seen, 6), std::string{"      ╚═════════════╝"});
 }
 
 // Without boxes the message looks like a form: the title on the edge of the frame, the content with
@@ -174,12 +174,12 @@ TRIAL("Message: boxes off give the title on the frame and content with breathing
 
     const Snapshot seen = made.drawn({30, 10});
 
-    same(read(seen, 2), std::string{"      ╔════ Bez ════╗"});
-    same(read(seen, 3), std::string{"      ║ Goła treść. ║"});
-    same(read(seen, 4), std::string{"      ║             ║"});
-    same(read(seen, 5), std::string{"      ║   [ OK ]    ║"});
-    same(read(seen, 6), std::string{"      ╚═════════════╝"});
-    same(made.one->role(), std::string{"talcite.message"});
+    SAME(read(seen, 2), std::string{"      ╔════ Bez ════╗"});
+    SAME(read(seen, 3), std::string{"      ║ Goła treść. ║"});
+    SAME(read(seen, 4), std::string{"      ║             ║"});
+    SAME(read(seen, 5), std::string{"      ║   [ OK ]    ║"});
+    SAME(read(seen, 6), std::string{"      ╚═════════════╝"});
+    SAME(made.one->role(), std::string{"talcite.message"});
 }
 
 // Long content without boxes wraps in a room narrower by the breathing room, so no word is lost
@@ -201,10 +201,10 @@ TRIAL("Message: without boxes long content wraps with breathing room, the window
             last = last || read(seen, y).find("osiem") != std::string::npos;
         }
 
-        ought(first && last);
+        OUGHT(first && last);
     }
 
-    ought(made.one->wants({3, 10}).wide <= 3);
+    OUGHT(made.one->wants({3, 10}).wide <= 3);
 }
 
 // A title changed after construction goes onto the frame, and a long title widens the window
@@ -214,11 +214,11 @@ TRIAL("Message: without boxes a new title stands on the frame and widens the win
 
     made.one->title("Bardzo długi tytuł");
 
-    same(made.one->title(), std::string{"Bardzo długi tytuł"});
+    SAME(made.one->title(), std::string{"Bardzo długi tytuł"});
 
     const Snapshot seen = made.drawn({40, 10});
 
-    ought(read(seen, 2).find("═ Bardzo długi tytuł ═") != std::string::npos);
+    OUGHT(read(seen, 2).find("═ Bardzo długi tytuł ═") != std::string::npos);
 }
 
 // Without content there is no content row and no gap; without buttons, no gap and no row.
@@ -232,7 +232,7 @@ TRIAL("Message: without boxes empty content and no buttons leave no holes") {
     for (int y = 0; y < 10; ++y)
         if (!read(one, y).empty()) ++rows;
 
-    same(rows, 3);
+    SAME(rows, 3);
 
     Opened mute{"Tytuł", "Czekam.", {}, ui::MessageShape{ui::Border::twin, false}};
 
@@ -243,7 +243,7 @@ TRIAL("Message: without boxes empty content and no buttons leave no holes") {
     for (int y = 0; y < 10; ++y)
         if (!read(two, y).empty()) ++rows;
 
-    same(rows, 3);
+    SAME(rows, 3);
 }
 
 TRIAL("Message: buttons stand in the middle and have a gap") {
@@ -251,7 +251,7 @@ TRIAL("Message: buttons stand in the middle and have a gap") {
 
     const Snapshot seen = made.drawn({40, 12});
 
-    same(read(seen, 7), std::string{"        ║│ [ Tak ] [ Nie ]  │║"});
+    SAME(read(seen, 7), std::string{"        ║│ [ Tak ] [ Nie ]  │║"});
 }
 
 // --- Width ------------------------------------------------------------------------------------
@@ -266,13 +266,13 @@ TRIAL("Message: long content wraps instead of stretching the window across the s
 
     // Four cells of breathing room on the sides and room for the shadow: the window does not touch
     // the edge.
-    ought(read(seen, 1).size() > 40);
-    same(seen.at({0, 1}).letter, U' ');
-    same(seen.at({59, 1}).letter, U' ');
+    OUGHT(read(seen, 1).size() > 40);
+    SAME(seen.at({0, 1}).letter, U' ');
+    SAME(seen.at({59, 1}).letter, U' ');
 
     // The content went onto several rows instead of being cut.
-    ought(read(seen, 4).find("To jest") != std::string::npos);
-    ought(!read(seen, 5).empty());
+    OUGHT(read(seen, 4).find("To jest") != std::string::npos);
+    OUGHT(!read(seen, 5).empty());
 }
 
 TRIAL("Message: short content does not inflate the window") {
@@ -281,8 +281,8 @@ TRIAL("Message: short content does not inflate the window") {
     const Snapshot seen = made.drawn({60, 12});
 
     // The width is dictated by the widest child, here the row of buttons, not the content.
-    same(read(seen, 3), std::string{"                        ║│  b   │║"});
-    same(read(seen, 7), std::string{"                        ║│[ OK ]│║"});
+    SAME(read(seen, 3), std::string{"                        ║│  b   │║"});
+    SAME(read(seen, 7), std::string{"                        ║│[ OK ]│║"});
 }
 
 // --- Answer -----------------------------------------------------------------------------------
@@ -296,8 +296,8 @@ TRIAL("Message: an answer does what the caller attached") {
 
     made.one->buttons()[1]->pick();
 
-    same(made.said, 1);
-    ought(made.window->empty());
+    SAME(made.said, 1);
+    OUGHT(made.window->empty());
 }
 
 // Escape does not close by itself, because the veil does not take it: a window performing an
@@ -311,8 +311,8 @@ TRIAL("Message: Esc closes only with a handler, and the close is announced") {
 
     pressed(made.top, ui::Code::escape);
 
-    same(made.closed, 0);
-    ought(!made.window->empty());
+    SAME(made.closed, 0);
+    OUGHT(!made.window->empty());
 
     const std::weak_ptr<ui::Message> weak = made.one;
 
@@ -326,9 +326,9 @@ TRIAL("Message: Esc closes only with a handler, and the close is announced") {
 
     pressed(made.top, ui::Code::escape);
 
-    same(made.said, -99);
-    same(made.closed, 1);
-    ought(made.window->empty());
+    SAME(made.said, -99);
+    SAME(made.closed, 1);
+    OUGHT(made.window->empty());
 }
 
 // Every close is announced, not only the one from Esc, also when the caller's handler calls it.
@@ -340,8 +340,8 @@ TRIAL("Message: a close from a handler is announced too") {
 
     made.one->buttons()[0]->pick();
 
-    same(made.said, 0);
-    same(made.closed, 1);
+    SAME(made.said, 0);
+    SAME(made.closed, 1);
 }
 
 // Opening puts the focus on the first answer, so Enter presses the one you are on; the primary mark
@@ -356,7 +356,7 @@ TRIAL("Message: Enter presses the answer under focus") {
 
     pressed(made.top, ui::Code::enter);
 
-    same(made.said, 0);
+    SAME(made.said, 0);
 }
 
 // The primary mark presses nothing: it draws the bracket with arrows and that is all. Enter belongs
@@ -373,9 +373,9 @@ TRIAL("Message: without focus on a button Enter presses nothing") {
 
     pressed(made.top, ui::Code::enter);
 
-    same(made.said, -99);
-    same(made.closed, 0);
-    ought(!made.window->empty());
+    SAME(made.said, -99);
+    SAME(made.closed, 0);
+    OUGHT(!made.window->empty());
 }
 
 TRIAL("Message: a hotkey works from the whole window") {
@@ -385,7 +385,7 @@ TRIAL("Message: a hotkey works from the whole window") {
 
     typed(made.top, U'n');
 
-    same(made.said, 1);
+    SAME(made.said, 1);
 }
 
 // The primary mark belongs to the button, not to the message, since it is something the button
@@ -394,18 +394,18 @@ TRIAL("Message: a hotkey works from the whole window") {
 TRIAL("Message: the primary answer is marked on the button") {
     Opened made{"Pytanie", "Co robić?", {{"Tak", U'T'}, {"Nie", U'N'}}};
 
-    ought(!made.one->buttons()[0]->primary());
-    ought(!made.one->buttons()[1]->primary());
+    OUGHT(!made.one->buttons()[0]->primary());
+    OUGHT(!made.one->buttons()[1]->primary());
 
     made.one->buttons()[0]->primary(true);
 
-    ought(made.one->buttons()[0]->primary());
-    ought(!made.one->buttons()[1]->primary());
+    OUGHT(made.one->buttons()[0]->primary());
+    OUGHT(!made.one->buttons()[1]->primary());
 
     made.one->buttons()[0]->primary(false);
 
-    ought(!made.one->buttons()[0]->primary());
-    ought(!made.one->buttons()[1]->primary());
+    OUGHT(!made.one->buttons()[0]->primary());
+    OUGHT(!made.one->buttons()[1]->primary());
 }
 
 TRIAL("Message: the primary answer is drawn in a bracket with arrows") {
@@ -413,7 +413,7 @@ TRIAL("Message: the primary answer is drawn in a bracket with arrows") {
 
     made.one->buttons()[0]->primary(true);
 
-    same(read(made.drawn({40, 12}), 7), std::string{"        ║│[< Tak >] [ Nie ]│║"});
+    SAME(read(made.drawn({40, 12}), 7), std::string{"        ║│[< Tak >] [ Nie ]│║"});
 }
 
 // --- Roles ------------------------------------------------------------------------------------
@@ -421,7 +421,7 @@ TRIAL("Message: the primary answer is drawn in a bracket with arrows") {
 TRIAL("Message: the role's stem is handed out to all the parts") {
     Opened made{"Error", "Nie da się.", {{"OK", U'O'}}};
 
-    same(made.one->role(), std::string{"talcite.message"});
+    SAME(made.one->role(), std::string{"talcite.message"});
 
     ui::Styles these;
 
@@ -454,11 +454,11 @@ TRIAL("Message: the role's stem is handed out to all the parts") {
 
     // The window's edge, the title, the box's line, the content and the button, each from its own
     // role.
-    same(seen.at({6, 0}).style.background, (Color{false, 1, 1, 1}));
-    same(seen.at({11, 1}).style.foreground, (Color{false, 2, 2, 2}));
-    same(seen.at({7, 2}).style.foreground, (Color{false, 4, 4, 4}));
-    same(seen.at({8, 3}).style.foreground, (Color{false, 3, 3, 3}));
-    same(seen.at({10, 7}).style.foreground, (Color{false, 5, 5, 5}));
+    SAME(seen.at({6, 0}).style.background, (Color{false, 1, 1, 1}));
+    SAME(seen.at({11, 1}).style.foreground, (Color{false, 2, 2, 2}));
+    SAME(seen.at({7, 2}).style.foreground, (Color{false, 4, 4, 4}));
+    SAME(seen.at({8, 3}).style.foreground, (Color{false, 3, 3, 3}));
+    SAME(seen.at({10, 7}).style.foreground, (Color{false, 5, 5, 5}));
 }
 
 TRIAL("Message: a button under focus takes the suffix of its stem") {
@@ -477,7 +477,7 @@ TRIAL("Message: a button under focus takes the suffix of its stem") {
 
     made.one->buttons()[0]->focus();
 
-    same(made.drawn({30, 12}).at({10, 7}).style.foreground, (Color{false, 9, 9, 9}));
+    SAME(made.drawn({30, 12}).at({10, 7}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
 // --- Construction -----------------------------------------------------------------------------
@@ -495,7 +495,7 @@ TRIAL("Message: does not accept a child from outside") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Message: content and title can be changed after construction") {
@@ -504,14 +504,14 @@ TRIAL("Message: content and title can be changed after construction") {
     made.one->title("Nowy");
     made.one->text("Nowa treść.");
 
-    same(made.one->title(), std::string{"Nowy"});
-    same(made.one->text(), std::string{"Nowa treść."});
+    SAME(made.one->title(), std::string{"Nowy"});
+    SAME(made.one->text(), std::string{"Nowa treść."});
 
     const Snapshot seen = made.drawn({30, 12});
 
-    ought(read(seen, 1).find("Nowy") != std::string::npos);
-    ought(read(seen, 3).find("Nowa treść.") != std::string::npos);
-    ought(read(seen, 3).find("Stara") == std::string::npos);
+    OUGHT(read(seen, 1).find("Nowy") != std::string::npos);
+    OUGHT(read(seen, 3).find("Nowa treść.") != std::string::npos);
+    OUGHT(read(seen, 3).find("Stara") == std::string::npos);
 }
 
 // Content set after construction shows. The content box stands in the column from the start, and
@@ -520,11 +520,11 @@ TRIAL("Message: content and title can be changed after construction") {
 TRIAL("Message: content set after construction shows") {
     Opened made{"Uwaga", std::string{}, {{"OK", U'O'}}};
 
-    ought(!shown(made.drawn({30, 12}), "Jest treść."));
+    OUGHT(!shown(made.drawn({30, 12}), "Jest treść."));
 
     made.one->text("Jest treść.");
 
-    ought(shown(made.drawn({30, 12}), "Jest treść."));
+    OUGHT(shown(made.drawn({30, 12}), "Jest treść."));
 }
 
 // The same from the other side: the content box disappears when the content is taken away, and
@@ -538,12 +538,12 @@ TRIAL("Message: content taken away after construction hides the box") {
 
     const Snapshot seen = made.drawn({30, 12});
 
-    ought(!shown(seen, "Była treść."));
-    ought(shown(seen, "[ OK ]"));
+    OUGHT(!shown(seen, "Była treść."));
+    OUGHT(shown(seen, "[ OK ]"));
 
     // Without content the window is shorter by the box and by the row between the boxes.
-    ought(read(seen, 9).empty());
-    ought(!read(was, 9).empty());
+    OUGHT(read(seen, 9).empty());
+    OUGHT(!read(was, 9).empty());
 }
 
 TRIAL("Message: an answer added after construction works like any other") {
@@ -561,21 +561,21 @@ TRIAL("Message: an answer added after construction works like any other") {
         return true;
     });
 
-    ought(shown(made.drawn({44, 14}), "[ Nie ]"));
+    OUGHT(shown(made.drawn({44, 14}), "[ Nie ]"));
 
     typed(made.top, U'n');
 
-    same(seen, 1);
+    SAME(seen, 1);
 }
 
 TRIAL("Message: the first answer added after construction shows the second box") {
     Opened made{"Czekaj", "Przeglądam…"};
 
-    ought(!shown(made.drawn({30, 12}), "[ Stop ]"));
+    OUGHT(!shown(made.drawn({30, 12}), "[ Stop ]"));
 
     made.one->buttons().add("Stop");
 
-    ought(shown(made.drawn({30, 12}), "[ Stop ]"));
+    OUGHT(shown(made.drawn({30, 12}), "[ Stop ]"));
 }
 
 TRIAL("Message: clear() takes the answers away together with the box") {
@@ -585,12 +585,12 @@ TRIAL("Message: clear() takes the answers away together with the box") {
 
     made.one->buttons().clear();
 
-    same(made.one->buttons().many(), std::size_t{0});
+    SAME(made.one->buttons().many(), std::size_t{0});
 
     const Snapshot seen = made.drawn({44, 14});
 
-    ought(!shown(seen, "[ Tak ]"));
-    ought(shown(seen, "Co robić?"));
+    OUGHT(!shown(seen, "[ Tak ]"));
+    OUGHT(shown(seen, "Co robić?"));
 }
 
 // An answer without an action does nothing, and that is how it should be. The library does not add
@@ -607,9 +607,9 @@ TRIAL("Message: an answer without a handler does nothing") {
 
     only->pick();
 
-    same(made.said, -99);
-    same(made.closed, 0);
-    ought(!made.window->empty());
+    SAME(made.said, -99);
+    SAME(made.closed, 0);
+    OUGHT(!made.window->empty());
 }
 
 // A button removed from the window still has its action: it belongs to the caller, and nobody takes
@@ -626,8 +626,8 @@ TRIAL("Message: a button removed by clear() still does its job") {
 
     was->pick();
 
-    same(made.said, 0);
-    same(made.closed, 1);
+    SAME(made.said, 0);
+    SAME(made.closed, 1);
 }
 
 // The answer's role is handed out both when it is added and when the stem changes, in both
@@ -639,10 +639,10 @@ TRIAL("Message: an answer added after the stem changes takes its suffix") {
 
     const std::shared_ptr<ui::Button> more = made.one->buttons().add("Anuluj");
 
-    same(more->role(), std::string{"moj.blad.button"});
+    SAME(more->role(), std::string{"moj.blad.button"});
 
     made.one->role("inny.blad");
 
-    same(more->role(), std::string{"inny.blad.button"});
-    same(made.one->buttons()[0]->role(), std::string{"inny.blad.button"});
+    SAME(more->role(), std::string{"inny.blad.button"});
+    SAME(made.one->buttons()[0]->role(), std::string{"inny.blad.button"});
 }

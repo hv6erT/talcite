@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -165,44 +165,44 @@ bool pressed(Sheet& sheet, ui::Key key) {
 TRIAL("Diff: equal texts have no differences") {
     const auto [one, two] = ui::diffed("Heat (1995).mkv", "Heat (1995).mkv");
 
-    ought(one.marked.empty());
-    ought(two.marked.empty());
-    same(one.text, std::string{"Heat (1995).mkv"});
+    OUGHT(one.marked.empty());
+    OUGHT(two.marked.empty());
+    SAME(one.text, std::string{"Heat (1995).mkv"});
 }
 
 TRIAL("Diff: a move into a directory highlights only the directory") {
     const auto [one, two] = ui::diffed("a.mkv", "Dir/a.mkv");
 
-    ought(one.marked.empty());
-    same(marked(two), std::string{"[Dir/]"});
+    OUGHT(one.marked.empty());
+    SAME(marked(two), std::string{"[Dir/]"});
 }
 
 TRIAL("Diff: the difference goes by words, not by letters") {
     const auto [one, two] = ui::diffed("The.Matrix.1999.1080p.BluRay.mkv", "The Matrix (1999).mkv");
 
-    same(kept(one), kept(two));
-    ought(marked(one).find("1080p.BluRay") != std::string::npos);
-    ought(kept(one).find("Matrix") != std::string::npos);
-    ought(kept(one).find("1999") != std::string::npos);
+    SAME(kept(one), kept(two));
+    OUGHT(marked(one).find("1080p.BluRay") != std::string::npos);
+    OUGHT(kept(one).find("Matrix") != std::string::npos);
+    OUGHT(kept(one).find("1999") != std::string::npos);
 }
 
 TRIAL("Diff: letters with diacritics belong to the word") {
     const auto [one, two] = ui::diffed("zażółć", "zażółć gęślą");
 
-    ought(one.marked.empty());
-    same(marked(two), std::string{"[ gęślą]"});
+    OUGHT(one.marked.empty());
+    SAME(marked(two), std::string{"[ gęślą]"});
 }
 
 TRIAL("Diff: an empty side means all of the other one") {
     const auto [one, two] = ui::diffed("", "abc def");
 
-    ought(one.marked.empty());
-    same(marked(two), std::string{"[abc def]"});
+    OUGHT(one.marked.empty());
+    SAME(marked(two), std::string{"[abc def]"});
 
     const auto [three, four] = ui::diffed("abc", "");
 
-    same(marked(three), std::string{"[abc]"});
-    ought(four.marked.empty());
+    SAME(marked(three), std::string{"[abc]"});
+    OUGHT(four.marked.empty());
 }
 
 // Myers finds the longest common subsequence: on random texts of a few words the unmarked parts
@@ -225,13 +225,13 @@ TRIAL("Diff: the kept words are the longest common subsequence") {
 
         const auto [one, two] = ui::diffed(left, right);
 
-        same(kept(one), kept(two));
-        same(words(kept(one)).size() <= common(words(left), words(right)), true);
-        same(words(left).size() - words(kept(one)).size() + words(right).size() - words(kept(two)).size(),
+        SAME(kept(one), kept(two));
+        SAME(words(kept(one)).size() <= common(words(left), words(right)), true);
+        SAME(words(left).size() - words(kept(one)).size() + words(right).size() - words(kept(two)).size(),
              words(left).size() + words(right).size() - 2 * common(words(left), words(right)));
 
-        for (const ui::DiffSpan& span : one.marked) ought(span.from < span.upto && span.upto <= left.size());
-        for (std::size_t at = 1; at < one.marked.size(); ++at) ought(one.marked[at - 1].upto < one.marked[at].from);
+        for (const ui::DiffSpan& span : one.marked) OUGHT(span.from < span.upto && span.upto <= left.size());
+        for (std::size_t at = 1; at < one.marked.size(); ++at) OUGHT(one.marked[at - 1].upto < one.marked[at].from);
     }
 }
 
@@ -250,11 +250,11 @@ TRIAL("Diff: with many differences the whole middle is marked") {
 
     const auto [one, two] = ui::diffed(left, right);
 
-    same(one.marked.size(), std::size_t{1});
-    same(one.marked.front().from, std::size_t{2});
-    same(one.marked.front().upto, left.size() - 2);
-    same(two.marked.size(), std::size_t{1});
-    same(kept(one), std::string{"X  Y"});
+    SAME(one.marked.size(), std::size_t{1});
+    SAME(one.marked.front().from, std::size_t{2});
+    SAME(one.marked.front().upto, left.size() - 2);
+    SAME(two.marked.size(), std::size_t{1});
+    SAME(kept(one), std::string{"X  Y"});
 }
 
 // --- View ----------------------------------------------------------------------------------------
@@ -262,10 +262,10 @@ TRIAL("Diff: with many differences the whole middle is marked") {
 TRIAL("DiffViewer: an empty one carries nothing") {
     const ui::DiffViewer one;
 
-    same(one.hunks(), std::size_t{0});
-    ought(!one.which().has_value());
-    ought(!one.unified().has_value());
-    ought(one.scrollbar());
+    SAME(one.hunks(), std::size_t{0});
+    OUGHT(!one.which().has_value());
+    OUGHT(!one.unified().has_value());
+    OUGHT(one.scrollbar());
 }
 
 // The scroll bar is there only when there is something to scroll: a plan that fits entirely has
@@ -289,15 +289,15 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
     };
 
     // The plan: two section headings and three hunks (the first folded), five rows.
-    ought(!barred(planned(), 5));
-    ought(!barred(planned(), 12));
-    ought(barred(planned(), 4));
+    OUGHT(!barred(planned(), 5));
+    OUGHT(!barred(planned(), 12));
+    OUGHT(barred(planned(), 4));
 
     std::vector<ui::DiffHunk> long_plan;
 
     for (int one = 0; one < 30; ++one) long_plan.push_back(hunk({row("x" + std::to_string(one), "y")}));
 
-    ought(barred(long_plan, 10));
+    OUGHT(barred(long_plan, 10));
 
     // At the end of a long plan the rest fits, but the start is above the window, so the bar
     // stays.
@@ -314,7 +314,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 
         one->focus();
 
-        ought(pressed(sheet, ui::Code::end));
+        OUGHT(pressed(sheet, ui::Code::end));
 
         const Snapshot made = sheet.render({{0, 0}, {70, 10}});
 
@@ -322,7 +322,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 
         for (int y = 0; y < 10; ++y) bar = bar || made.at({69, y}).letter != U' ';
 
-        ought(bar);
+        OUGHT(bar);
     }
 
     // A source that makes us wait for further hunks gives a bar too.
@@ -346,7 +346,7 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 
         for (int y = 0; y < 10; ++y) bar = bar || made.at({69, y}).letter != U' ';
 
-        ought(bar);
+        OUGHT(bar);
     }
 }
 
@@ -363,30 +363,30 @@ TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
 
     const Snapshot made = sheet.render({{0, 0}, {70, 8}});
 
-    same(one->which(), std::optional<std::size_t>{1});
+    SAME(one->which(), std::optional<std::size_t>{1});
 
-    ought(said(made, 0).find("Było") != std::string::npos);
-    ought(said(made, 0).find("Będzie") != std::string::npos);
-    ought(said(made, 1).find("Pewne (2)") != std::string::npos);
-    ought(said(made, 2).rfind("[ ] a.mkv", 0) == 0);
-    ought(said(made, 2).find("+1 ▸") != std::string::npos);
-    ought(said(made, 2).find("A (2000)/A (2000).mkv") != std::string::npos);
-    ought(said(made, 3).rfind("[ ] b.mkv", 0) == 0);
-    ought(said(made, 3).find("▸") == std::string::npos && said(made, 3).find("▾") == std::string::npos);
-    ought(said(made, 4).find("Kolizje (1)") != std::string::npos);
-    ought(said(made, 5).rfind("    c.mkv", 0) == 0);
-    same(said(made, 6), std::string{});
+    OUGHT(said(made, 0).find("Było") != std::string::npos);
+    OUGHT(said(made, 0).find("Będzie") != std::string::npos);
+    OUGHT(said(made, 1).find("Pewne (2)") != std::string::npos);
+    OUGHT(said(made, 2).rfind("[ ] a.mkv", 0) == 0);
+    OUGHT(said(made, 2).find("+1 ▸") != std::string::npos);
+    OUGHT(said(made, 2).find("A (2000)/A (2000).mkv") != std::string::npos);
+    OUGHT(said(made, 3).rfind("[ ] b.mkv", 0) == 0);
+    OUGHT(said(made, 3).find("▸") == std::string::npos && said(made, 3).find("▾") == std::string::npos);
+    OUGHT(said(made, 4).find("Kolizje (1)") != std::string::npos);
+    OUGHT(said(made, 5).rfind("    c.mkv", 0) == 0);
+    SAME(said(made, 6), std::string{});
 
     one->opened(1, true);
 
     const Snapshot open = sheet.render({{0, 0}, {70, 8}});
 
-    ought(said(open, 2).find("+1") == std::string::npos);
-    ought(said(open, 2).find("▾") != std::string::npos);
-    ought(said(open, 3).find("a.srt") != std::string::npos);
-    ought(said(open, 3).find("A (2000).srt") != std::string::npos);
-    ought(one->opened(1));
-    ought(!one->opened(2));
+    OUGHT(said(open, 2).find("+1") == std::string::npos);
+    OUGHT(said(open, 2).find("▾") != std::string::npos);
+    OUGHT(said(open, 3).find("a.srt") != std::string::npos);
+    OUGHT(said(open, 3).find("A (2000).srt") != std::string::npos);
+    OUGHT(one->opened(1));
+    OUGHT(!one->opened(2));
 }
 
 // When narrow, the view switches to one column by itself: the removed side with a minus, the added
@@ -400,28 +400,28 @@ TRIAL("DiffViewer: a narrow view switches to one column") {
 
     const Snapshot narrow = sheet.render({{0, 0}, {40, 5}});
 
-    same(bare(narrow, 0), std::string{"- a.mkv"});
-    same(said(narrow, 1), std::string{"+ A/a.mkv"});
-    same(said(narrow, 2), std::string{"  same.txt"});
+    SAME(bare(narrow, 0), std::string{"- a.mkv"});
+    SAME(said(narrow, 1), std::string{"+ A/a.mkv"});
+    SAME(said(narrow, 2), std::string{"  same.txt"});
 
     one->unified(false);
 
     const Snapshot split = sheet.render({{0, 0}, {40, 5}});
 
-    ought(said(split, 0).rfind("a.mkv", 0) == 0);
-    ought(said(split, 0).find("A/a.mkv") != std::string::npos);
+    OUGHT(said(split, 0).rfind("a.mkv", 0) == 0);
+    OUGHT(said(split, 0).find("A/a.mkv") != std::string::npos);
 
     one->unified(true);
 
-    same(one->unified(), std::optional<bool>{true});
+    SAME(one->unified(), std::optional<bool>{true});
 
     const Snapshot wide = sheet.render({{0, 0}, {120, 5}});
 
-    same(bare(wide, 0), std::string{"- a.mkv"});
+    SAME(bare(wide, 0), std::string{"- a.mkv"});
 
     one->unified(std::nullopt);
 
-    ought(said(sheet.render({{0, 0}, {120, 5}}), 0).find("A/a.mkv") != std::string::npos);
+    OUGHT(said(sheet.render({{0, 0}, {120, 5}}), 0).find("A/a.mkv") != std::string::npos);
 }
 
 // Space toggles the box of the hunk under the cursor and notifies; on a hunk without a box it does
@@ -447,36 +447,36 @@ TRIAL("DiffViewer: space, plus and minus toggle the boxes") {
         return false;
     });
 
-    ought(pressed(sheet, ui::Key{U' '}));
-    ought(one->chosen().contains(1));
-    same(heard, 1);
+    OUGHT(pressed(sheet, ui::Key{U' '}));
+    OUGHT(one->chosen().contains(1));
+    SAME(heard, 1);
 
-    ought(pressed(sheet, ui::Key{U'+'}));
-    ought(one->chosen().contains(2));
-    ought(!one->chosen().contains(5));
-    same(heard, 2);
+    OUGHT(pressed(sheet, ui::Key{U'+'}));
+    OUGHT(one->chosen().contains(2));
+    OUGHT(!one->chosen().contains(5));
+    SAME(heard, 2);
 
-    ought(pressed(sheet, ui::Key{U'+'}));
-    same(heard, 2);
+    OUGHT(pressed(sheet, ui::Key{U'+'}));
+    SAME(heard, 2);
 
     one->which(4);
 
-    ought(pressed(sheet, ui::Key{U' '}));
-    ought(!one->chosen().contains(4));
-    same(heard, 2);
+    OUGHT(pressed(sheet, ui::Key{U' '}));
+    OUGHT(!one->chosen().contains(4));
+    SAME(heard, 2);
 
-    ought(pressed(sheet, ui::Key{U'+'}));
-    ought(one->chosen().contains(5));
-    ought(one->chosen().contains(1));
-    same(one->chosen().many(), std::size_t{3});
+    OUGHT(pressed(sheet, ui::Key{U'+'}));
+    OUGHT(one->chosen().contains(5));
+    OUGHT(one->chosen().contains(1));
+    SAME(one->chosen().many(), std::size_t{3});
 
     one->which(1);
 
-    ought(pressed(sheet, ui::Key{U'-'}));
-    same(one->chosen().many(), std::size_t{1});
-    ought(one->chosen().contains(5));
+    OUGHT(pressed(sheet, ui::Key{U'-'}));
+    SAME(one->chosen().many(), std::size_t{1});
+    OUGHT(one->chosen().contains(5));
 
-    ought(said(sheet.render({{0, 0}, {70, 10}}), 5).rfind("[x] d.mkv", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {70, 10}}), 5).rfind("[x] d.mkv", 0) == 0);
 }
 
 // The arrows move through hunks with rows, skipping headings; Ctrl with an arrow jumps through
@@ -502,59 +502,59 @@ TRIAL("DiffViewer: keys move through hunks and sections") {
         return false;
     });
 
-    ought(pressed(sheet, ui::Code::down));
-    same(one->which(), std::optional<std::size_t>{2});
-    same(moved, 1);
+    OUGHT(pressed(sheet, ui::Code::down));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    SAME(moved, 1);
 
-    ought(pressed(sheet, ui::Code::down));
-    same(one->which(), std::optional<std::size_t>{4});
+    OUGHT(pressed(sheet, ui::Code::down));
+    SAME(one->which(), std::optional<std::size_t>{4});
 
-    ought(pressed(sheet, ui::Code::up));
-    same(one->which(), std::optional<std::size_t>{2});
+    OUGHT(pressed(sheet, ui::Code::up));
+    SAME(one->which(), std::optional<std::size_t>{2});
 
-    ought(pressed(sheet, ui::Key{ui::Code::down, ui::Mods{.ctrl = true}}));
-    same(one->which(), std::optional<std::size_t>{4});
+    OUGHT(pressed(sheet, ui::Key{ui::Code::down, ui::Mods{.ctrl = true}}));
+    SAME(one->which(), std::optional<std::size_t>{4});
 
-    ought(pressed(sheet, ui::Key{ui::Code::down, ui::Mods{.ctrl = true}}));
-    same(one->which(), std::optional<std::size_t>{4});
+    OUGHT(pressed(sheet, ui::Key{ui::Code::down, ui::Mods{.ctrl = true}}));
+    SAME(one->which(), std::optional<std::size_t>{4});
 
     one->which(5);
 
-    ought(pressed(sheet, ui::Key{ui::Code::up, ui::Mods{.ctrl = true}}));
-    same(one->which(), std::optional<std::size_t>{4});
+    OUGHT(pressed(sheet, ui::Key{ui::Code::up, ui::Mods{.ctrl = true}}));
+    SAME(one->which(), std::optional<std::size_t>{4});
 
-    ought(pressed(sheet, ui::Key{ui::Code::up, ui::Mods{.ctrl = true}}));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(pressed(sheet, ui::Key{ui::Code::up, ui::Mods{.ctrl = true}}));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
-    ought(pressed(sheet, ui::Code::end));
-    same(one->which(), std::optional<std::size_t>{5});
+    OUGHT(pressed(sheet, ui::Code::end));
+    SAME(one->which(), std::optional<std::size_t>{5});
 
-    ought(pressed(sheet, ui::Code::home));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(pressed(sheet, ui::Code::home));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
     // At either end the keys stay with the viewer, as with a list: in the plan window, an arrow
     // pressed once too often must not carry the focus off to a button.
-    ought(pressed(sheet, ui::Code::up));
-    ought(pressed(sheet, ui::Code::home));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(pressed(sheet, ui::Code::up));
+    OUGHT(pressed(sheet, ui::Code::home));
+    SAME(one->which(), std::optional<std::size_t>{1});
 
     one->which(5);
 
-    ought(pressed(sheet, ui::Code::down));
-    ought(pressed(sheet, ui::Code::end));
-    same(one->which(), std::optional<std::size_t>{5});
+    OUGHT(pressed(sheet, ui::Code::down));
+    OUGHT(pressed(sheet, ui::Code::end));
+    SAME(one->which(), std::optional<std::size_t>{5});
 
     one->which(1);
 
-    ought(pressed(sheet, ui::Code::right));
-    ought(one->opened(1));
+    OUGHT(pressed(sheet, ui::Code::right));
+    OUGHT(one->opened(1));
 
-    ought(pressed(sheet, ui::Code::left));
-    ought(!one->opened(1));
+    OUGHT(pressed(sheet, ui::Code::left));
+    OUGHT(!one->opened(1));
 
-    ought(!pressed(sheet, ui::Code::tab));
-    ought(!pressed(sheet, ui::Code::enter));
-    ought(!pressed(sheet, ui::Key{U'x', ui::Mods{.alt = true}}));
+    OUGHT(!pressed(sheet, ui::Code::tab));
+    OUGHT(!pressed(sheet, ui::Code::enter));
+    OUGHT(!pressed(sheet, ui::Key{U'x', ui::Mods{.alt = true}}));
 }
 
 // The viewer's own keys and wheel move it by hand, a call from the program does not.
@@ -579,19 +579,19 @@ TRIAL("DiffViewer: a move says whether it came by hand") {
         return false;
     });
 
-    ought(pressed(sheet, ui::Code::down));
+    OUGHT(pressed(sheet, ui::Code::down));
 
     ui::WheelEvent wheel{{2, 2}, -1};
 
-    ought(sheet.dispatch(wheel));
+    OUGHT(sheet.dispatch(wheel));
 
-    same(heard, (std::vector<bool>{true, true}));
+    SAME(heard, (std::vector<bool>{true, true}));
 
     heard.clear();
 
     one->which(0);
 
-    same(heard, (std::vector<bool>{false}));
+    SAME(heard, (std::vector<bool>{false}));
 }
 
 // A long list: the cursor going down drags the view along, and the end lands at the bottom of the
@@ -611,35 +611,35 @@ TRIAL("DiffViewer: the view follows the cursor and does not go past the end") {
 
     one->focus();
 
-    for (int step = 0; step < 7; ++step) ought(pressed(sheet, ui::Code::down));
+    for (int step = 0; step < 7; ++step) OUGHT(pressed(sheet, ui::Code::down));
 
-    same(one->which(), std::optional<std::size_t>{7});
+    SAME(one->which(), std::optional<std::size_t>{7});
 
     const Snapshot seen = sheet.render({{0, 0}, {40, 5}});
 
-    ought(said(seen, 4).rfind("[ ] f7", 0) == 0);
-    ought(said(seen, 0).rfind("[ ] f3", 0) == 0);
+    OUGHT(said(seen, 4).rfind("[ ] f7", 0) == 0);
+    OUGHT(said(seen, 0).rfind("[ ] f3", 0) == 0);
 
-    ought(pressed(sheet, ui::Code::end));
+    OUGHT(pressed(sheet, ui::Code::end));
 
     const Snapshot last = sheet.render({{0, 0}, {40, 5}});
 
-    ought(said(last, 4).rfind("[ ] f29", 0) == 0);
-    ought(said(last, 0).rfind("[ ] f25", 0) == 0);
+    OUGHT(said(last, 4).rfind("[ ] f29", 0) == 0);
+    OUGHT(said(last, 0).rfind("[ ] f25", 0) == 0);
 
-    ought(pressed(sheet, ui::Code::home));
+    OUGHT(pressed(sheet, ui::Code::home));
 
     ui::WheelEvent wheel{{0, 0}, -2};
 
-    ought(sheet.dispatch(wheel));
-    same(one->which(), std::optional<std::size_t>{0});
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f6", 0) == 0);
+    OUGHT(sheet.dispatch(wheel));
+    SAME(one->which(), std::optional<std::size_t>{0});
+    OUGHT(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f6", 0) == 0);
 
     one->which(29);
 
     ui::WheelEvent more{{0, 0}, -2};
 
-    ought(!sheet.dispatch(more));
+    OUGHT(!sheet.dispatch(more));
 }
 
 // Line numbers stand at the sides that carry them, aligned to the largest visible one. An empty
@@ -660,18 +660,18 @@ TRIAL("DiffViewer: line numbers and empty sides") {
 
     const Snapshot made = sheet.render({{0, 0}, {60, 4}});
 
-    ought(said(made, 0).rfind(" 9 dziewięć", 0) == 0);
-    ought(said(made, 1).rfind("10 dziesięć", 0) == 0);
-    ought(said(made, 2).find("11 nowy") != std::string::npos);
-    ought(said(made, 2).rfind("  ", 0) == 0);
+    OUGHT(said(made, 0).rfind(" 9 dziewięć", 0) == 0);
+    OUGHT(said(made, 1).rfind("10 dziesięć", 0) == 0);
+    OUGHT(said(made, 2).find("11 nowy") != std::string::npos);
+    OUGHT(said(made, 2).rfind("  ", 0) == 0);
 
     one->unified(true);
 
     const Snapshot flat = sheet.render({{0, 0}, {60, 4}});
 
-    same(bare(flat, 0), std::string{" 9  9   dziewięć"});
-    same(said(flat, 1), std::string{"10    - dziesięć"});
-    same(said(flat, 2), std::string{"   11 + nowy"});
+    SAME(bare(flat, 0), std::string{" 9  9   dziewięć"});
+    SAME(said(flat, 1), std::string{"10    - dziesięć"});
+    SAME(said(flat, 2), std::string{"   11 + nowy"});
 }
 
 // Eliding in the middle keeps the marks with their letters: after eliding, the tail still shows as
@@ -689,16 +689,16 @@ TRIAL("DiffViewer: eliding in the middle keeps the marks with their letters") {
 
     const std::string line = said(made, 1);
 
-    ought(line.find("…") != std::string::npos || line.find("~") != std::string::npos);
-    ought(line.find("pliku.mkv") != std::string::npos);
+    OUGHT(line.find("…") != std::string::npos || line.find("~") != std::string::npos);
+    OUGHT(line.find("pliku.mkv") != std::string::npos);
 
     // The start of the added path is highlighted, because the first side has nothing there; the
     // tail is not, because it is shared.
     const Cell head = made.at({2, 1});
     const Cell tail = made.at({23, 1});
 
-    ought(head.style.bold);
-    ought(!tail.style.bold);
+    OUGHT(head.style.bold);
+    OUGHT(!tail.style.bold);
 }
 
 // A source that makes us wait leaves an empty view; after `refresh()` what arrived is visible.
@@ -719,15 +719,15 @@ TRIAL("DiffViewer: a source that waits, and refreshing") {
 
     sheet.children().add(one);
 
-    ought(!one->which().has_value());
-    same(said(sheet.render({{0, 0}, {40, 3}}), 0), std::string{});
+    OUGHT(!one->which().has_value());
+    SAME(said(sheet.render({{0, 0}, {40, 3}}), 0), std::string{});
 
     ready = true;
 
     one->refresh();
 
-    ought(said(sheet.render({{0, 0}, {40, 3}}), 0).rfind("[ ] - a", 0) == 0);
-    same(one->which(), std::optional<std::size_t>{0});
+    OUGHT(said(sheet.render({{0, 0}, {40, 3}}), 0).rfind("[ ] - a", 0) == 0);
+    SAME(one->which(), std::optional<std::size_t>{0});
 }
 
 // A click puts the cursor on the hunk under it, and a click on the box toggles it. A click on a
@@ -741,20 +741,20 @@ TRIAL("DiffViewer: a click moves the cursor and toggles the box") {
 
     ui::ClickEvent row_click{{10, 2}, ui::Mouse::left};
 
-    ought(sheet.dispatch(row_click));
-    same(one->which(), std::optional<std::size_t>{2});
-    ought(one->chosen().empty());
+    OUGHT(sheet.dispatch(row_click));
+    SAME(one->which(), std::optional<std::size_t>{2});
+    OUGHT(one->chosen().empty());
 
     ui::ClickEvent box{{1, 1}, ui::Mouse::left};
 
-    ought(sheet.dispatch(box));
-    same(one->which(), std::optional<std::size_t>{1});
-    ought(one->chosen().contains(1));
+    OUGHT(sheet.dispatch(box));
+    SAME(one->which(), std::optional<std::size_t>{1});
+    OUGHT(one->chosen().contains(1));
 
     ui::ClickEvent title{{1, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(title));
-    same(one->which(), std::optional<std::size_t>{1});
+    OUGHT(sheet.dispatch(title));
+    SAME(one->which(), std::optional<std::size_t>{1});
 }
 
 // A new source clears the choices and the unfolding; fewer hunks trim the choices when painting.
@@ -768,8 +768,8 @@ TRIAL("DiffViewer: a new source starts clean") {
 
     one->source(sourced(planned()), 5);
 
-    ought(one->chosen().empty());
-    ought(!one->opened(1));
+    OUGHT(one->chosen().empty());
+    OUGHT(!one->opened(1));
 
     one->chosen().add(4);
 
@@ -779,8 +779,8 @@ TRIAL("DiffViewer: a new source starts clean") {
 
     (void)sheet.render({{0, 0}, {40, 3}});
 
-    same(one->chosen().many(), std::size_t{1});
-    same(one->hunks(), std::size_t{1});
+    SAME(one->chosen().many(), std::size_t{1});
+    SAME(one->hunks(), std::size_t{1});
 }
 
 // A letter whose second byte is 0x80 (U+0100) still belongs to the word: a word that differs
@@ -788,8 +788,8 @@ TRIAL("DiffViewer: a new source starts clean") {
 TRIAL("Diff: a letter with the byte 0x80 does not split a word") {
     const auto [one, two] = ui::diffed("\xc4\x80" "a", "\xc4\x80" "b");
 
-    same(marked(one), std::string{"[\xc4\x80" "a]"});
-    same(marked(two), std::string{"[\xc4\x80" "b]"});
+    SAME(marked(one), std::string{"[\xc4\x80" "a]"});
+    SAME(marked(two), std::string{"[\xc4\x80" "b]"});
 }
 
 // A middle longer than the limit is marked in full, however few differences there are; here only
@@ -801,14 +801,14 @@ TRIAL("Diff: a very long middle is marked in full") {
 
     const auto [one, two] = ui::diffed("A" + middle + " B", "C" + middle + " D");
 
-    same(one.marked.size(), std::size_t{1});
-    same(one.marked.front().from, std::size_t{0});
-    same(one.marked.front().upto, one.text.size());
+    SAME(one.marked.size(), std::size_t{1});
+    SAME(one.marked.front().from, std::size_t{0});
+    SAME(one.marked.front().upto, one.text.size());
 
     const auto [three, four] = ui::diffed("A w1 w2 B", "C w1 w2 D");
 
-    same(marked(three), std::string{"[A][B]"});
-    same(marked(four), std::string{"[C][D]"});
+    SAME(marked(three), std::string{"[A][B]"});
+    SAME(marked(four), std::string{"[C][D]"});
 }
 
 // A hunk with a title and rows (this is how a hunk of a file comparison looks: @@ ... @@ and rows
@@ -827,23 +827,23 @@ TRIAL("DiffViewer: a title above rows, an empty hunk, a tab and a mark in the mi
 
     const Snapshot made = sheet.render({{0, 0}, {40, 8}});
 
-    same(said(made, 0), std::string{"@@ -1,2 +1,2 @@"});
-    same(bare(made, 1), std::string{"- x a"});
-    same(said(made, 2), std::string{"+ x b a"});
-    same(said(made, 3), std::string{"  t       u"});
-    same(said(made, 4), std::string{});
-    same(said(made, 5), std::string{"  k"});
+    SAME(said(made, 0), std::string{"@@ -1,2 +1,2 @@"});
+    SAME(bare(made, 1), std::string{"- x a"});
+    SAME(said(made, 2), std::string{"+ x b a"});
+    SAME(said(made, 3), std::string{"  t       u"});
+    SAME(said(made, 4), std::string{});
+    SAME(said(made, 5), std::string{"  k"});
 
-    ought(!made.at({2, 2}).style.bold);
-    ought(made.at({4, 2}).style.bold);
-    ought(!made.at({6, 2}).style.bold);
+    OUGHT(!made.at({2, 2}).style.bold);
+    OUGHT(made.at({4, 2}).style.bold);
+    OUGHT(!made.at({6, 2}).style.bold);
 
     one->focus();
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 
-    ought(pressed(sheet, ui::Code::down));
-    same(one->which(), std::optional<std::size_t>{2});
+    OUGHT(pressed(sheet, ui::Code::down));
+    SAME(one->which(), std::optional<std::size_t>{2});
 }
 
 // A hunk scrolled halfway by the wheel: moving the cursor onto it puts its start at the top. A
@@ -865,18 +865,18 @@ TRIAL("DiffViewer: a jump to a hunk scrolled halfway, and a click beside the box
 
     ui::WheelEvent wheel{{0, 0}, -1};
 
-    ought(sheet.dispatch(wheel));
-    ought(said(sheet.render({{0, 0}, {40, 4}}), 0).rfind("r3", 0) == 0);
+    OUGHT(sheet.dispatch(wheel));
+    OUGHT(said(sheet.render({{0, 0}, {40, 4}}), 0).rfind("r3", 0) == 0);
 
     one->which(1);
     one->which(0);
 
-    ought(said(sheet.render({{0, 0}, {40, 4}}), 0).rfind("r0", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {40, 4}}), 0).rfind("r0", 0) == 0);
 
     ui::ClickEvent box{{1, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(box));
-    ought(one->chosen().empty());
+    OUGHT(sheet.dispatch(box));
+    OUGHT(one->chosen().empty());
 }
 
 // The mouse on the diff scroll bar: the track scrolls by a page, the thumb to a hunk; the view
@@ -910,15 +910,15 @@ TRIAL("DiffViewer: the mouse on the scroll bar scrolls the view, not the cursor"
 
     clicked({39, 4});
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f5", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f5", 0) == 0);
 
     clicked({39, 3});
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f10", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f10", 0) == 0);
 
     clicked({39, 0});
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f5", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f5", 0) == 0);
 
     ui::MouseEvent grab{{39, 1}, ui::Press::down, ui::Mouse::left};
     ui::MouseEvent pull{{39, 9}, ui::Press::move, ui::Mouse::left};
@@ -928,7 +928,7 @@ TRIAL("DiffViewer: the mouse on the scroll bar scrolls the view, not the cursor"
     (void)sheet.dispatch(pull);
     (void)sheet.dispatch(drop);
 
-    ought(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f25", 0) == 0);
+    OUGHT(said(sheet.render({{0, 0}, {40, 5}}), 0).rfind("[ ] f25", 0) == 0);
 
-    same(one->which(), std::optional<std::size_t>{0});
+    SAME(one->which(), std::optional<std::size_t>{0});
 }

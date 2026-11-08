@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -52,20 +52,20 @@ bool missing() {
 }
 
 TRIAL("Randomness: returns as many bytes as requested") {
-    same(random(0).size(), static_cast<std::size_t>(0));
-    same(random(1).size(), static_cast<std::size_t>(1));
-    same(random(12).size(), static_cast<std::size_t>(12));
+    SAME(random(0).size(), static_cast<std::size_t>(0));
+    SAME(random(1).size(), static_cast<std::size_t>(1));
+    SAME(random(12).size(), static_cast<std::size_t>(12));
 
     // A large request must not be truncated: getrandom without flags returns at most 32 MiB at once
     // and may return fewer bytes than requested, so the loop that fetches the rest has to be there.
-    same(random(70000).size(), static_cast<std::size_t>(70000));
+    SAME(random(70000).size(), static_cast<std::size_t>(70000));
 }
 
 TRIAL("Randomness: two calls differ") {
     const Bytes one = random(32);
     const Bytes two = random(32);
 
-    ought(!(one == two));
+    OUGHT(!(one == two));
 }
 
 // This is not a test of the quality of the randomness (no test can check that), only that something
@@ -76,45 +76,45 @@ TRIAL("Randomness: does not return only zeros") {
     for (const std::byte one : random(32))
         if (one != std::byte{0}) something = true;
 
-    ought(something);
+    OUGHT(something);
 }
 
 // The well-known CRC-32 check value: the checksum of "123456789" is 0xCBF43926. This is a checksum,
 // not cryptography, so we compute it ourselves and check it completely.
 TRIAL("Checksum: CRC-32 matches the check value") {
-    same(net::tallied(bytes("123456789"), 9), 0xCBF43926u);
-    same(net::tallied(Bytes{}, 0), 0u);
+    SAME(net::tallied(bytes("123456789"), 9), 0xCBF43926u);
+    SAME(net::tallied(Bytes{}, 0), 0u);
 }
 
 TRIAL("Digest: SHA-1 matches the test vector") {
     if (missing()) return;
 
-    same(spelled(summed(Sum::sha1, bytes("abc"))),
+    SAME(spelled(summed(Sum::sha1, bytes("abc"))),
          std::string{"a9993e364706816aba3e25717850c26c9cd0d89d"});
 
-    same(spelled(summed(Sum::sha1, Bytes{})),
+    SAME(spelled(summed(Sum::sha1, Bytes{})),
          std::string{"da39a3ee5e6b4b0d3255bfef95601890afd80709"});
 }
 
 TRIAL("Digest: MD5 matches the test vector") {
     if (missing()) return;
 
-    same(spelled(summed(Sum::md5, bytes("abc"))), std::string{"900150983cd24fb0d6963f7d28e17f72"});
+    SAME(spelled(summed(Sum::md5, bytes("abc"))), std::string{"900150983cd24fb0d6963f7d28e17f72"});
 
-    same(spelled(summed(Sum::md5, Bytes{})), std::string{"d41d8cd98f00b204e9800998ecf8427e"});
+    SAME(spelled(summed(Sum::md5, Bytes{})), std::string{"d41d8cd98f00b204e9800998ecf8427e"});
 }
 
 TRIAL("Digest: SHA-256 matches the test vector") {
     if (missing()) return;
 
-    same(spelled(summed(Sum::sha256, bytes("abc"))),
+    SAME(spelled(summed(Sum::sha256, bytes("abc"))),
          std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
 }
 
 TRIAL("Digest: SHA-512 matches the test vector") {
     if (missing()) return;
 
-    same(spelled(summed(Sum::sha512, bytes("abc"))),
+    SAME(spelled(summed(Sum::sha512, bytes("abc"))),
          std::string{"ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a"
                      "2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"});
 }
@@ -123,7 +123,7 @@ TRIAL("Digest: SHA-512 matches the test vector") {
 TRIAL("Signature: HMAC-SHA-512 matches the RFC 4231 vector") {
     if (missing()) return;
 
-    same(spelled(stamped(Sum::sha512, bytes("Jefe"), bytes("what do ya want for nothing?"))),
+    SAME(spelled(stamped(Sum::sha512, bytes("Jefe"), bytes("what do ya want for nothing?"))),
          std::string{"164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea250554"
                      "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"});
 }
@@ -140,30 +140,30 @@ TRIAL("Derivation: HKDF matches the RFC 5869 vectors") {
 
     for (int at = 0xf0; at <= 0xf9; ++at) info.push_back(static_cast<std::byte>(at));
 
-    same(spelled(derived(Sum::sha256, salt, Bytes(22, std::byte{0x0b}), info, 42)),
+    SAME(spelled(derived(Sum::sha256, salt, Bytes(22, std::byte{0x0b}), info, 42)),
          std::string{"3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf"
                      "34007208d5b887185865"});
 
-    same(spelled(derived(Sum::sha256, {}, Bytes(22, std::byte{0x0b}), {}, 42)),
+    SAME(spelled(derived(Sum::sha256, {}, Bytes(22, std::byte{0x0b}), {}, 42)),
          std::string{"8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d"
                      "9d201395faa4b61a96c8"});
 
     // A longer derivation starts with the shorter one: the blocks come in order.
     const Bytes longer = derived(Sum::sha512, {}, bytes("x"), {}, 100);
 
-    same(longer.size(), std::size_t{100});
-    ought(derived(Sum::sha512, {}, bytes("x"), {}, 64) == Bytes(longer.begin(), longer.begin() + 64));
-    threw((void)derived(Sum::sha256, {}, bytes("x"), {}, 255 * 32 + 1));
+    SAME(longer.size(), std::size_t{100});
+    OUGHT(derived(Sum::sha512, {}, bytes("x"), {}, 64) == Bytes(longer.begin(), longer.begin() + 64));
+    THREW((void)derived(Sum::sha256, {}, bytes("x"), {}, 255 * 32 + 1));
 }
 
 // RFC 2202, test cases 1 and 2.
 TRIAL("Signature: HMAC-SHA1 matches the RFC 2202 vectors") {
     if (missing()) return;
 
-    same(spelled(stamped(Sum::sha1, Bytes(20, std::byte{0x0b}), bytes("Hi There"))),
+    SAME(spelled(stamped(Sum::sha1, Bytes(20, std::byte{0x0b}), bytes("Hi There"))),
          std::string{"b617318655057264e28bc0b6fb378c8ef146be00"});
 
-    same(spelled(stamped(Sum::sha1, bytes("Jefe"), bytes("what do ya want for nothing?"))),
+    SAME(spelled(stamped(Sum::sha1, bytes("Jefe"), bytes("what do ya want for nothing?"))),
          std::string{"effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"});
 }
 
@@ -171,10 +171,10 @@ TRIAL("Signature: HMAC-SHA1 matches the RFC 2202 vectors") {
 TRIAL("Signature: the long-term key is the digest of the joined parts") {
     if (missing()) return;
 
-    same(spelled(net::keyed("user", "realm", "pass")),
+    SAME(spelled(net::keyed("user", "realm", "pass")),
          spelled(summed(Sum::md5, bytes("user:realm:pass"))));
 
-    same(net::keyed("user", "realm", "pass").size(), static_cast<std::size_t>(16));
+    SAME(net::keyed("user", "realm", "pass").size(), static_cast<std::size_t>(16));
 }
 
 // A signed message must verify with its own key and must not verify with someone else's. The trap
@@ -192,15 +192,15 @@ TRIAL("Signature: a message verifies with its own key") {
 
     net::stamping(made, key);
 
-    ought(net::trusted(made, key));
-    ought(!net::trusted(made, bytes("inna")));
+    OUGHT(net::trusted(made, key));
+    OUGHT(!net::trusted(made, bytes("inna")));
 
     // Changing even one byte of the content invalidates the signature.
     Bytes other = made;
 
     other[24] = ~other[24];
 
-    ought(!net::trusted(other, key));
+    OUGHT(!net::trusted(other, key));
 }
 
 TRIAL("Signature: a message without a signature is not trusted") {
@@ -208,7 +208,7 @@ TRIAL("Signature: a message without a signature is not trusted") {
 
     const Bytes made = net::asked(net::numbered());
 
-    ought(!net::trusted(made, bytes("tajemnica")));
+    OUGHT(!net::trusted(made, bytes("tajemnica")));
 }
 
 // The fingerprint itself needs no digests (it is a checksum), so this trial runs everywhere and
@@ -219,10 +219,10 @@ TRIAL("Fingerprint: the fingerprint alone is correct without any digests") {
 
     net::printing(made);
 
-    same(made.size(), static_cast<std::size_t>(28));
+    SAME(made.size(), static_cast<std::size_t>(28));
 
     // The length field must count everything after the header, including the fingerprint.
-    same(static_cast<unsigned>(std::to_integer<unsigned>(made[2]) << 8 |
+    SAME(static_cast<unsigned>(std::to_integer<unsigned>(made[2]) << 8 |
                                std::to_integer<unsigned>(made[3])),
          8u);
 
@@ -230,7 +230,7 @@ TRIAL("Fingerprint: the fingerprint alone is correct without any digests") {
 
     const std::size_t at = made.size() - 4;
 
-    same(static_cast<unsigned>(std::to_integer<unsigned>(made[at]) << 24 |
+    SAME(static_cast<unsigned>(std::to_integer<unsigned>(made[at]) << 24 |
                                std::to_integer<unsigned>(made[at + 1]) << 16 |
                                std::to_integer<unsigned>(made[at + 2]) << 8 |
                                std::to_integer<unsigned>(made[at + 3])),
@@ -238,7 +238,7 @@ TRIAL("Fingerprint: the fingerprint alone is correct without any digests") {
 
     net::Message told;
 
-    ought(net::understood(made, told));
+    OUGHT(net::understood(made, told));
 }
 
 // The fingerprint goes at the very end and also covers the signature, so both must be correct at
@@ -253,11 +253,11 @@ TRIAL("Fingerprint: a message with a fingerprint and a signature is consistent")
     net::stamping(made, key);
     net::printing(made);
 
-    ought(net::trusted(made, key));
+    OUGHT(net::trusted(made, key));
 
     net::Message told;
 
-    ought(net::understood(made, told));
+    OUGHT(net::understood(made, told));
 
     // The fingerprint is checked the way the peer will check it: a checksum over everything before
     // it.
@@ -265,7 +265,7 @@ TRIAL("Fingerprint: a message with a fingerprint and a signature is consistent")
 
     const std::size_t at = made.size() - 4;
 
-    same(static_cast<unsigned>(std::to_integer<unsigned>(made[at]) << 24 |
+    SAME(static_cast<unsigned>(std::to_integer<unsigned>(made[at]) << 24 |
                                std::to_integer<unsigned>(made[at + 1]) << 16 |
                                std::to_integer<unsigned>(made[at + 2]) << 8 |
                                std::to_integer<unsigned>(made[at + 3])),
@@ -293,12 +293,12 @@ TRIAL("Digest: feeding in parts gives the same as the whole") {
             keyed.feed(part);
         }
 
-        same(spelled(plain.done()), spelled(summed(which, bytes(whole))));
-        same(spelled(keyed.done()), spelled(stamped(which, bytes("klucz"), bytes(whole))));
+        SAME(spelled(plain.done()), spelled(summed(which, bytes(whole))));
+        SAME(spelled(keyed.done()), spelled(stamped(which, bytes("klucz"), bytes(whole))));
 
         Digest empty{which};
 
-        same(spelled(empty.done()), spelled(summed(which, Bytes{})));
+        SAME(spelled(empty.done()), spelled(summed(which, Bytes{})));
     }
 }
 
@@ -311,7 +311,7 @@ TRIAL("Digest: finished and moved-from digests refuse") {
 
     one.feed(bytes("abc"));
 
-    same(spelled(one.done()), std::string{"a9993e364706816aba3e25717850c26c9cd0d89d"});
+    SAME(spelled(one.done()), std::string{"a9993e364706816aba3e25717850c26c9cd0d89d"});
 
     const auto refused = [](auto doing) {
         try {
@@ -323,8 +323,8 @@ TRIAL("Digest: finished and moved-from digests refuse") {
         return false;
     };
 
-    ought(refused([&] { (void)one.done(); }));
-    ought(refused([&] { one.feed(bytes("x")); }));
+    OUGHT(refused([&] { (void)one.done(); }));
+    OUGHT(refused([&] { one.feed(bytes("x")); }));
 
     Digest two{Sum::sha256};
 
@@ -334,16 +334,16 @@ TRIAL("Digest: finished and moved-from digests refuse") {
 
     three.feed(bytes("c"));
 
-    ought(refused([&] { two.feed(bytes("x")); }));
+    OUGHT(refused([&] { two.feed(bytes("x")); }));
 
-    same(spelled(three.done()), std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
+    SAME(spelled(three.done()), std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
 }
 
 TRIAL("Digest: when the system provides no digests, it says so plainly") {
     if (summing()) {
         // Where digests are available, we check the opposite: it does not throw and returns the
         // right length.
-        same(summed(Sum::sha1, Bytes{}).size(), static_cast<std::size_t>(20));
+        SAME(summed(Sum::sha1, Bytes{}).size(), static_cast<std::size_t>(20));
 
         return;
     }
@@ -356,7 +356,7 @@ TRIAL("Digest: when the system provides no digests, it says so plainly") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 namespace {
@@ -413,25 +413,25 @@ TRIAL("Digest: the spare computes only when the system provides none") {
 
     spared(spare);
 
-    ought(summing());
+    OUGHT(summing());
 
     if (system) {
-        same(spelled(summed(Sum::sha256, bytes("abc"))),
+        SAME(spelled(summed(Sum::sha256, bytes("abc"))),
              std::string{"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});
-        same(spare->fed(), std::size_t{0});
+        SAME(spare->fed(), std::size_t{0});
     } else {
-        same(summed(Sum::sha256, bytes("abc")), Bytes(32, std::byte{0x11}));
-        same(stamped(Sum::sha256, bytes("klucz"), bytes("abc")), Bytes(32, std::byte{0x77}));
-        same(spare->fed(), std::size_t{6});
+        SAME(summed(Sum::sha256, bytes("abc")), Bytes(32, std::byte{0x11}));
+        SAME(stamped(Sum::sha256, bytes("klucz"), bytes("abc")), Bytes(32, std::byte{0x77}));
+        SAME(spare->fed(), std::size_t{6});
 
         spared(std::make_shared<Pretend>(std::byte{0x11}, 31));
 
-        threw(static_cast<void>(summed(Sum::sha256, bytes("abc"))));
+        THREW(static_cast<void>(summed(Sum::sha256, bytes("abc"))));
     }
 
     spared(nullptr);
 
-    ought(summing() == system);
+    OUGHT(summing() == system);
 
-    if (!system) threw(static_cast<void>(summed(Sum::sha256, bytes("abc"))));
+    if (!system) THREW(static_cast<void>(summed(Sum::sha256, bytes("abc"))));
 }

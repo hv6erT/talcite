@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <memory>
@@ -83,15 +83,15 @@ TRIAL("FocusHolder: takes focus by default, since that is what it is for") {
 
     const auto one = std::make_shared<ui::FocusHolder>();
 
-    ought(one->focusable());
+    OUGHT(one->focusable());
 
     top.children().add(one);
     (void)top.render({{0, 0}, {20, 10}});
 
     clicked(top, {5, 5});
 
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
-    ought(one->focused());
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
+    OUGHT(one->focused());
 }
 
 TRIAL("FocusHolder: a disabled one does not take focus") {
@@ -101,14 +101,14 @@ TRIAL("FocusHolder: a disabled one does not take focus") {
 
     one->enabled(false);
 
-    ought(!one->focusable());
+    OUGHT(!one->focusable());
 
     top.children().add(one);
     (void)top.render({{0, 0}, {20, 10}});
 
     clicked(top, {5, 5});
 
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
 // The container does not take clicks away from its children. The mouse goes from the deepest node
@@ -126,9 +126,9 @@ TRIAL("FocusHolder: a click taken by the child does not reach the container") {
 
     clicked(top, {5, 5});
 
-    same(said->clicks, 1);
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
-    same(top.clicks, 0);
+    SAME(said->clicks, 1);
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
+    SAME(top.clicks, 0);
 }
 
 TRIAL("FocusHolder: a click refused by the child gives focus to the container") {
@@ -143,9 +143,9 @@ TRIAL("FocusHolder: a click refused by the child gives focus to the container") 
 
     clicked(top, {5, 5});
 
-    same(said->clicks, 1);
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
-    same(top.clicks, 0);
+    SAME(said->clicks, 1);
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
+    SAME(top.clicks, 0);
 }
 
 // A disabled container is transparent to the mouse too: the click goes further up, as if the
@@ -163,9 +163,9 @@ TRIAL("FocusHolder: a disabled one passes the click further up") {
 
     clicked(top, {5, 5});
 
-    same(said->clicks, 1);
-    same(top.clicks, 1);
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
+    SAME(said->clicks, 1);
+    SAME(top.clicks, 1);
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }
 
 // This is the real reason this element exists. A key bubbles up from the focus, and the key bar is
@@ -194,7 +194,7 @@ TRIAL("FocusHolder: the key bar gets keys only with focus") {
 
     (void)top.dispatch(before);
 
-    same(hits, 0);
+    SAME(hits, 0);
 
     one->focus();
 
@@ -202,7 +202,7 @@ TRIAL("FocusHolder: the key bar gets keys only with focus") {
 
     (void)top.dispatch(after);
 
-    same(hits, 1);
+    SAME(hits, 1);
 }
 
 // --- Room ---------------------------------------------------------------------------------------
@@ -212,14 +212,14 @@ TRIAL("FocusHolder: the key bar gets keys only with focus") {
 TRIAL("FocusHolder: wants what its child wants, and nothing without one") {
     const auto one = std::make_shared<ui::FocusHolder>();
 
-    same(one->wants({20, 10}).wide, 0);
-    same(one->wants({20, 10}).high, 0);
+    SAME(one->wants({20, 10}).wide, 0);
+    SAME(one->wants({20, 10}).high, 0);
 
     const auto said = std::make_shared<ui::Span>(std::string{"trzy"});
 
     one->children().add(said);
 
-    same(one->wants({20, 10}), said->wants({20, 10}));
+    SAME(one->wants({20, 10}), said->wants({20, 10}));
 }
 
 // In a `Box` it covers the whole room, however small its content: a click beside the content
@@ -237,7 +237,7 @@ TRIAL("FocusHolder: in a box it covers the room, a click beside the content take
 
     clicked(top, {15, 8});
 
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(one.get()));
 }
 
 // --- Painting -----------------------------------------------------------------------------------
@@ -258,7 +258,7 @@ TRIAL("FocusHolder: an empty one leaves no trace on the sheet") {
     for (int y = 0; y < 3; ++y)
         for (int x = 0; x < 6; ++x) held = held && made.at({x, y}).shown == Shown::none;
 
-    ought(held);
+    OUGHT(held);
 }
 
 TRIAL("FocusHolder: the child gets the whole assigned rectangle") {
@@ -272,8 +272,8 @@ TRIAL("FocusHolder: the child gets the whole assigned rectangle") {
 
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
-    same(made.at({0, 0}).letter, U'a');
-    same(made.at({2, 0}).letter, U'c');
+    SAME(made.at({0, 0}).letter, U'a');
+    SAME(made.at({2, 0}).letter, U'c');
 }
 
 // Disabling gives up the focus, as in the button, the field and the list row; a node that says it
@@ -291,12 +291,12 @@ TRIAL("FocusHolder: a disabled one under focus hands it to the ancestor") {
 
     one->focus();
 
-    ought(one->focused());
+    OUGHT(one->focused());
 
     one->enabled(false);
 
-    ought(!one->focused());
-    ought(up->focused());
+    OUGHT(!one->focused());
+    OUGHT(up->focused());
 }
 
 TRIAL("FocusHolder: a disabled one without a willing ancestor clears the focus") {
@@ -312,5 +312,5 @@ TRIAL("FocusHolder: a disabled one without a willing ancestor clears the focus")
 
     one->enabled(false);
 
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(nullptr));
 }

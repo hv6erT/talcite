@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <vector>
@@ -114,10 +114,10 @@ TRIAL("Visibility: the whole rectangle when nobody says otherwise") {
 
     (void)one->render({{0, 0}, {4, 4}});
 
-    same(one->tally->last.at.x, 0);
-    same(one->tally->last.at.y, 0);
-    same(one->tally->last.size.wide, 4);
-    same(one->tally->last.size.high, 4);
+    SAME(one->tally->last.at.x, 0);
+    SAME(one->tally->last.at.y, 0);
+    SAME(one->tally->last.size.wide, 4);
+    SAME(one->tally->last.size.high, 4);
 }
 
 TRIAL("Visibility: what cannot be seen is not drawn") {
@@ -131,29 +131,29 @@ TRIAL("Visibility: what cannot be seen is not drawn") {
 
     (void)top.render({{0, 0}, {4, 2}});
 
-    same(first->tally->drawn, 1);
-    same(second->tally->drawn, 0);
+    SAME(first->tally->drawn, 1);
+    SAME(second->tally->drawn, 0);
 }
 
 TRIAL("Visibility: the intersection is computed in both directions") {
     const ui::Area one = ui::Area::crossed(ui::Area{{0, 0}, {10, 10}}, ui::Area{{5, 5}, {10, 10}});
 
-    same(one.at.x, 5);
-    same(one.at.y, 5);
-    same(one.size.wide, 5);
-    same(one.size.high, 5);
+    SAME(one.at.x, 5);
+    SAME(one.at.y, 5);
+    SAME(one.size.wide, 5);
+    SAME(one.size.high, 5);
 
     const ui::Area apart = ui::Area::crossed(ui::Area{{0, 0}, {4, 4}}, ui::Area{{9, 9}, {2, 2}});
 
-    same(apart.size.wide, 0);
-    same(apart.size.high, 0);
+    SAME(apart.size.wide, 0);
+    SAME(apart.size.high, 0);
 
     const ui::Area over = ui::Area::crossed(ui::Area{{0, 0}, {4, 4}}, ui::Area{{-2, -2}, {3, 3}});
 
-    same(over.at.x, 0);
-    same(over.at.y, 0);
-    same(over.size.wide, 1);
-    same(over.size.high, 1);
+    SAME(over.at.x, 0);
+    SAME(over.at.y, 0);
+    SAME(over.size.wide, 1);
+    SAME(over.size.high, 1);
 }
 
 TRIAL("Vertical scroll: without scrolling the start of the content is visible") {
@@ -163,9 +163,9 @@ TRIAL("Vertical scroll: without scrolling the start of the content is visible") 
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"wiersz 0"});
-    same(read(made, 2), std::string{"wiersz 2"});
-    same(one.shift().y, 0);
+    SAME(read(made, 0), std::string{"wiersz 0"});
+    SAME(read(made, 2), std::string{"wiersz 2"});
+    SAME(one.shift().y, 0);
 }
 
 TRIAL("Vertical scroll: scrolling moves the content up") {
@@ -177,8 +177,8 @@ TRIAL("Vertical scroll: scrolling moves the content up") {
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"wiersz 4"});
-    same(read(made, 1), std::string{"wiersz 5"});
+    SAME(read(made, 0), std::string{"wiersz 4"});
+    SAME(read(made, 1), std::string{"wiersz 5"});
 }
 
 TRIAL("Vertical scroll: cannot scroll past the end of the content") {
@@ -190,8 +190,8 @@ TRIAL("Vertical scroll: cannot scroll past the end of the content") {
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    same(one.shift().y, 2);
-    same(read(made, 0), std::string{"wiersz 2"});
+    SAME(one.shift().y, 2);
+    SAME(read(made, 0), std::string{"wiersz 2"});
 }
 
 TRIAL("Vertical scroll: content shorter than the window does not scroll at all") {
@@ -203,7 +203,7 @@ TRIAL("Vertical scroll: content shorter than the window does not scroll at all")
 
     (void)one.render({{0, 0}, {10, 6}});
 
-    same(one.shift().y, 0);
+    SAME(one.shift().y, 0);
 }
 
 TRIAL("Vertical scroll: a negative scroll goes down to zero") {
@@ -211,7 +211,7 @@ TRIAL("Vertical scroll: a negative scroll goes down to zero") {
 
     one.shift({0, -5});
 
-    same(one.shift().y, 0);
+    SAME(one.shift().y, 0);
 }
 
 TRIAL("Vertical scroll: draws only the rows that are visible") {
@@ -232,9 +232,9 @@ TRIAL("Vertical scroll: draws only the rows that are visible") {
 
     (void)one.render({{0, 0}, {6, 2}});
 
-    same(first->tally->drawn, 0);
-    same(second->tally->drawn, 1);
-    same(third->tally->drawn, 0);
+    SAME(first->tally->drawn, 0);
+    SAME(second->tally->drawn, 1);
+    SAME(third->tally->drawn, 0);
 }
 
 TRIAL("Vertical scroll: the child gets its visibility in its own coordinates") {
@@ -248,8 +248,8 @@ TRIAL("Vertical scroll: the child gets its visibility in its own coordinates") {
 
     (void)one.render({{0, 0}, {6, 3}});
 
-    same(inner->tally->last.at.y, 4);
-    same(inner->tally->last.size.high, 3);
+    SAME(inner->tally->last.at.y, 4);
+    SAME(inner->tally->last.size.high, 3);
 }
 
 TRIAL("Vertical scroll: the wheel scrolls, and at the end passes the event up") {
@@ -264,8 +264,8 @@ TRIAL("Vertical scroll: the wheel scrolls, and at the end passes the event up") 
 
     ui::WheelEvent down{{1, 1}, -1};
 
-    ought(top.dispatch(down));
-    same(scroll->shift().y, 3);
+    OUGHT(top.dispatch(down));
+    SAME(scroll->shift().y, 3);
 
     scroll->shift({0, 7});
 
@@ -273,8 +273,8 @@ TRIAL("Vertical scroll: the wheel scrolls, and at the end passes the event up") 
 
     ui::WheelEvent more{{1, 1}, -1};
 
-    ought(!top.dispatch(more));
-    same(scroll->shift().y, 7);
+    OUGHT(!top.dispatch(more));
+    SAME(scroll->shift().y, 7);
 }
 
 TRIAL("Vertical scroll: a click hits what is visible after scrolling") {
@@ -294,9 +294,9 @@ TRIAL("Vertical scroll: a click hits what is visible after scrolling") {
 
     (void)top.render({{0, 0}, {6, 2}});
 
-    same(first->area().at.y, 0);
-    same(second->area().at.y, 2);
-    same(scroll->children().front()->area().at.y, -2);
+    SAME(first->area().at.y, 0);
+    SAME(second->area().at.y, 2);
+    SAME(scroll->children().front()->area().at.y, -2);
 }
 
 TRIAL("Horizontal scroll: scrolling moves the content left") {
@@ -308,7 +308,7 @@ TRIAL("Horizontal scroll: scrolling moves the content left") {
 
     const Snapshot made = one.render({{0, 0}, {4, 1}});
 
-    same(read(made, 0), std::string{"defg"});
+    SAME(read(made, 0), std::string{"defg"});
 }
 
 TRIAL("Horizontal scroll: cannot scroll past the end of the content") {
@@ -320,7 +320,7 @@ TRIAL("Horizontal scroll: cannot scroll past the end of the content") {
 
     (void)one.render({{0, 0}, {4, 1}});
 
-    same(one.shift().x, 6);
+    SAME(one.shift().x, 6);
 }
 
 TRIAL("Horizontal scroll: wants at most as much as it got") {
@@ -328,8 +328,8 @@ TRIAL("Horizontal scroll: wants at most as much as it got") {
 
     one.children().add(std::make_shared<ui::Span>("abcdefghij"));
 
-    same(one.wants({4, 1}).wide, 4);
-    same(one.wants({40, 1}).wide, 10);
+    SAME(one.wants({4, 1}).wide, 4);
+    SAME(one.wants({40, 1}).wide, 10);
 }
 
 TRIAL("Scroll: scrolls in both directions at once") {
@@ -343,12 +343,12 @@ TRIAL("Scroll: scrolls in both directions at once") {
 
     (void)one.render({{0, 0}, {5, 5}});
 
-    same(one.shift().x, 3);
-    same(one.shift().y, 4);
-    same(inner->tally->last.at.x, 3);
-    same(inner->tally->last.at.y, 4);
-    same(inner->tally->last.size.wide, 5);
-    same(inner->tally->last.size.high, 5);
+    SAME(one.shift().x, 3);
+    SAME(one.shift().y, 4);
+    SAME(inner->tally->last.at.x, 3);
+    SAME(inner->tally->last.at.y, 4);
+    SAME(inner->tally->last.size.wide, 5);
+    SAME(inner->tally->last.size.high, 5);
 }
 
 TRIAL("Scroll: the wheel scrolls vertically, and with Shift horizontally") {
@@ -363,20 +363,20 @@ TRIAL("Scroll: the wheel scrolls vertically, and with Shift horizontally") {
 
     ui::WheelEvent down{{1, 1}, -1};
 
-    ought(top.dispatch(down));
+    OUGHT(top.dispatch(down));
 
-    same(scroll->shift().y, 3);
-    same(scroll->shift().x, 0);
+    SAME(scroll->shift().y, 3);
+    SAME(scroll->shift().x, 0);
 
     ui::Mods with;
     with.shift = true;
 
     ui::WheelEvent aside{{1, 1}, -1, with};
 
-    ought(top.dispatch(aside));
+    OUGHT(top.dispatch(aside));
 
-    same(scroll->shift().x, 3);
-    same(scroll->shift().y, 3);
+    SAME(scroll->shift().x, 3);
+    SAME(scroll->shift().y, 3);
 }
 
 // The wheel moves the scroller by hand, a call from the program does not.
@@ -400,11 +400,11 @@ TRIAL("Scroll: a move says whether it came by hand") {
 
     ui::WheelEvent down{{1, 1}, -1};
 
-    ought(top.dispatch(down));
+    OUGHT(top.dispatch(down));
 
     scroll->shift({1, 1});
 
-    same(heard, (std::vector<bool>{true, false}));
+    SAME(heard, (std::vector<bool>{true, false}));
 }
 
 TRIAL("Scroll: scrolling does not go beyond the content") {
@@ -416,8 +416,8 @@ TRIAL("Scroll: scrolling does not go beyond the content") {
 
     (void)one.render({{0, 0}, {5, 5}});
 
-    same(one.shift().x, 3);
-    same(one.shift().y, 3);
+    SAME(one.shift().x, 3);
+    SAME(one.shift().y, 3);
 }
 
 TRIAL("Scroll: a span in a scroller does not wrap at all") {
@@ -425,7 +425,7 @@ TRIAL("Scroll: a span in a scroller does not wrap at all") {
 
     one.children().add(std::make_shared<ui::Span>("ala ma kota", ui::SpanShape{true}));
 
-    same(one.wants({4, 10}).high, 1);
+    SAME(one.wants({4, 10}).high, 1);
 }
 
 TRIAL("Scrollbar: without turning it on there is none") {
@@ -435,8 +435,8 @@ TRIAL("Scrollbar: without turning it on there is none") {
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    ought(!one.scrollbar());
-    same(read(made, 0), std::string{"wiersz 0"});
+    OUGHT(!one.scrollbar());
+    SAME(read(made, 0), std::string{"wiersz 0"});
 }
 
 // The bar is a thin line with a solid slider on it, from edge to edge, without arrows.
@@ -447,10 +447,10 @@ TRIAL("Scrollbar: a line from edge to edge, the slider on it") {
 
     const Snapshot made = one.render({{0, 0}, {10, 5}});
 
-    ought(one.scrollbar());
-    same(made.at({9, 0}).letter, U'█');
-    same(made.at({9, 1}).letter, U'│');
-    same(made.at({9, 4}).letter, U'│');
+    OUGHT(one.scrollbar());
+    SAME(made.at({9, 0}).letter, U'█');
+    SAME(made.at({9, 1}).letter, U'│');
+    SAME(made.at({9, 4}).letter, U'│');
 }
 
 TRIAL("Scrollbar: the slider moves down together with scrolling") {
@@ -462,8 +462,8 @@ TRIAL("Scrollbar: the slider moves down together with scrolling") {
 
     const Snapshot made = one.render({{0, 0}, {10, 5}});
 
-    same(made.at({9, 4}).letter, U'█');
-    same(made.at({9, 0}).letter, U'│');
+    SAME(made.at({9, 4}).letter, U'█');
+    SAME(made.at({9, 0}).letter, U'│');
 }
 
 // The pager computes the bar in bytes, so a file larger than `int` is an ordinary case, not a
@@ -483,11 +483,11 @@ TRIAL("Scrollbar: three billion at the middle give the slider in the middle") {
                   .role = role}
         .draw(onto);
 
-    same(made.at({0, 0}).letter, U'│');
-    same(made.at({0, 11}).letter, U'│');
-    same(made.at({0, 5}).letter, U'│');
-    same(made.at({0, 6}).letter, U'█');
-    same(made.at({0, 7}).letter, U'│');
+    SAME(made.at({0, 0}).letter, U'│');
+    SAME(made.at({0, 11}).letter, U'│');
+    SAME(made.at({0, 5}).letter, U'│');
+    SAME(made.at({0, 6}).letter, U'█');
+    SAME(made.at({0, 7}).letter, U'│');
 }
 
 // The other half of the same trap: the slider's length is the track times the window over the
@@ -506,8 +506,8 @@ TRIAL("Scrollbar: a window of half of three billion gives a slider of half the t
                   .role = role}
         .draw(onto);
 
-    for (int y = 0; y <= 5; ++y) same(made.at({0, y}).letter, U'█');
-    for (int y = 6; y <= 11; ++y) same(made.at({0, y}).letter, U'│');
+    for (int y = 0; y <= 5; ++y) SAME(made.at({0, y}).letter, U'█');
+    for (int y = 6; y <= 11; ++y) SAME(made.at({0, y}).letter, U'│');
 }
 
 TRIAL("Scrollbar: content that fits in the window gives a slider over the whole track") {
@@ -517,7 +517,7 @@ TRIAL("Scrollbar: content that fits in the window gives a slider over the whole 
 
     const Snapshot made = one.render({{0, 0}, {10, 5}});
 
-    for (int y = 0; y < 5; ++y) same(made.at({9, y}).letter, U'█');
+    for (int y = 0; y < 5; ++y) SAME(made.at({9, y}).letter, U'█');
 }
 
 // The scrollbar "when needed" (`needed`): content that fits in the window gets the full width and
@@ -532,22 +532,22 @@ TRIAL("Scrollbar when needed: content that fits has no bar, longer content has o
 
     const Snapshot fits = one.render({{0, 0}, {10, 5}});
 
-    same(inner->area().size.wide, 10);
-    same(fits.at({9, 0}).letter, U'a');
-    same(one.wants({80, 5}).wide, 10);
+    SAME(inner->area().size.wide, 10);
+    SAME(fits.at({9, 0}).letter, U'a');
+    SAME(one.wants({80, 5}).wide, 10);
 
     const Snapshot tight = one.render({{0, 0}, {10, 3}});
 
-    same(inner->area().size.wide, 9);
-    same(tight.at({9, 0}).letter, U'█');
-    same(tight.at({9, 1}).letter, U'█');
-    same(tight.at({9, 2}).letter, U'│');
-    same(one.wants({80, 3}).wide, 11);
+    SAME(inner->area().size.wide, 9);
+    SAME(tight.at({9, 0}).letter, U'█');
+    SAME(tight.at({9, 1}).letter, U'█');
+    SAME(tight.at({9, 2}).letter, U'│');
+    SAME(one.wants({80, 3}).wide, 11);
 
     // Content equal to the window fits too; the last column belongs to the content (row 3 is "d").
     const Snapshot exact = one.render({{0, 0}, {10, 4}});
 
-    same(exact.at({9, 3}).letter, U'd');
+    SAME(exact.at({9, 3}).letter, U'd');
 }
 
 // Both bars "when needed": the vertical one appears because the content is too tall, and takes a
@@ -560,10 +560,10 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     const Snapshot made = one.render({{0, 0}, {6, 6}});
 
-    same(made.at({5, 0}).letter, U'█');
-    same(made.at({5, 4}).letter, U'│');
-    same(made.at({0, 5}).letter, U'█');
-    same(made.at({4, 5}).letter, U'─');
+    SAME(made.at({5, 0}).letter, U'█');
+    SAME(made.at({5, 4}).letter, U'│');
+    SAME(made.at({0, 5}).letter, U'█');
+    SAME(made.at({4, 5}).letter, U'─');
 
     ui::Scroll wide{ui::Axis::both, ui::ScrollShape{true, true}};
 
@@ -571,15 +571,15 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     const Snapshot none = wide.render({{0, 0}, {6, 6}});
 
-    same(none.at({5, 0}).letter, U' ');
-    same(none.at({0, 5}).letter, U' ');
+    SAME(none.at({5, 0}).letter, U' ');
+    SAME(none.at({0, 5}).letter, U' ');
 
     // Content exactly as wide as the window fits horizontally.
     ui::Scroll exact{ui::Axis::both, ui::ScrollShape{true, true}};
 
     exact.children().add(std::make_shared<Sheet>(ui::Size{6, 5}, U'a'));
 
-    same(exact.render({{0, 0}, {6, 6}}).at({0, 5}).letter, U' ');
+    SAME(exact.render({{0, 0}, {6, 6}}).at({0, 5}).letter, U' ');
 
     // A horizontal-only scroller has no vertical bar, even if the content is taller than the
     // window.
@@ -589,9 +589,9 @@ TRIAL("Scrollbar when needed: the vertical one brings the horizontal one when it
 
     const Snapshot flat = across.render({{0, 0}, {6, 3}});
 
-    same(flat.at({5, 0}).letter, U'a');
-    same(flat.at({0, 2}).letter, U'█');
-    same(flat.at({5, 2}).letter, U'─');
+    SAME(flat.at({5, 0}).letter, U'a');
+    SAME(flat.at({0, 2}).letter, U'█');
+    SAME(flat.at({5, 2}).letter, U'─');
 }
 
 TRIAL("Scrollbar: takes one column from the content") {
@@ -603,13 +603,13 @@ TRIAL("Scrollbar: takes one column from the content") {
 
     (void)one.render({{0, 0}, {10, 4}});
 
-    same(inner->area().size.wide, 10);
+    SAME(inner->area().size.wide, 10);
 
     one.scrollbar(true);
 
     (void)one.render({{0, 0}, {10, 4}});
 
-    same(inner->area().size.wide, 9);
+    SAME(inner->area().size.wide, 9);
 }
 
 TRIAL("Scrollbar: also counts in what the scroller wants") {
@@ -617,7 +617,7 @@ TRIAL("Scrollbar: also counts in what the scroller wants") {
 
     one.children().add(std::make_shared<ui::Span>("kot"));
 
-    same(one.wants({80, 5}).wide, 4);
+    SAME(one.wants({80, 5}).wide, 4);
 }
 
 TRIAL("Horizontal scrollbar: a line in the bottom row, the slider on it") {
@@ -627,10 +627,10 @@ TRIAL("Horizontal scrollbar: a line in the bottom row, the slider on it") {
 
     const Snapshot made = one.render({{0, 0}, {6, 2}});
 
-    same(made.at({0, 1}).letter, U'█');
-    same(made.at({1, 1}).letter, U'─');
-    same(made.at({5, 1}).letter, U'─');
-    same(read(made, 0), std::string{"abcdef"});
+    SAME(made.at({0, 1}).letter, U'█');
+    SAME(made.at({1, 1}).letter, U'─');
+    SAME(made.at({5, 1}).letter, U'─');
+    SAME(read(made, 0), std::string{"abcdef"});
 }
 
 TRIAL("Scroll: two bars and an empty corner") {
@@ -640,11 +640,11 @@ TRIAL("Scroll: two bars and an empty corner") {
 
     const Snapshot made = one.render({{0, 0}, {6, 6}});
 
-    same(made.at({5, 0}).letter, U'█');
-    same(made.at({5, 4}).letter, U'│');
-    same(made.at({0, 5}).letter, U'█');
-    same(made.at({4, 5}).letter, U'─');
-    same(made.at({5, 5}).letter, U' ');
+    SAME(made.at({5, 0}).letter, U'█');
+    SAME(made.at({5, 4}).letter, U'│');
+    SAME(made.at({0, 5}).letter, U'█');
+    SAME(made.at({4, 5}).letter, U'─');
+    SAME(made.at({5, 5}).letter, U' ');
 }
 
 TRIAL("Scroll: the bars take a column and a row from the content") {
@@ -656,8 +656,8 @@ TRIAL("Scroll: the bars take a column and a row from the content") {
 
     (void)one.render({{0, 0}, {6, 6}});
 
-    same(inner->tally->last.size.wide, 5);
-    same(inner->tally->last.size.high, 5);
+    SAME(inner->tally->last.size.wide, 5);
+    SAME(inner->tally->last.size.high, 5);
 }
 
 TRIAL("Scrollers take one child") {
@@ -665,9 +665,9 @@ TRIAL("Scrollers take one child") {
     ui::Scroll second{ui::Axis::horizontal};
     ui::Scroll third{ui::Axis::both};
 
-    same(first.capacity(), 1);
-    same(second.capacity(), 1);
-    same(third.capacity(), 1);
+    SAME(first.capacity(), 1);
+    SAME(second.capacity(), 1);
+    SAME(third.capacity(), 1);
 }
 
 // The slider is drawn by free functions that have no node through which to reach a role, so they
@@ -679,7 +679,7 @@ TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
     const auto one = std::make_shared<ui::Scroll>(ui::Axis::vertical, ui::ScrollShape{true});
     const auto body = std::make_shared<Sheet>(ui::Size{4, 20}, U'x');
 
-    same(one->scrollbar_role(), std::string{"talcite.scroll"});
+    SAME(one->scrollbar_role(), std::string{"talcite.scroll"});
 
     one->children().add(body);
     top.children().add(one);
@@ -697,7 +697,7 @@ TRIAL("Vertical scroll: the stem of the slider's role can be replaced") {
 
     const Snapshot made = top.render({{0, 0}, {6, 5}});
 
-    same(made.at({5, 4}).style.foreground, (Color{false, 6, 6, 6}));
+    SAME(made.at({5, 4}).style.foreground, (Color{false, 6, 6, 6}));
 }
 
 // The bar is drawn in the foreground only: a style that gives no background leaves the ground of
@@ -726,10 +726,10 @@ TRIAL("Scrollbar: a style without a background takes the ground below") {
 
     const Snapshot made = top.render({{0, 0}, {10, 5}});
 
-    same(made.at({9, 0}).letter, U'█');
-    same(made.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
-    same(made.at({9, 3}).style.background, (Color{false, 0, 0, 9}));
-    same(made.at({9, 3}).style.foreground, (Color{false, 7, 7, 7}));
+    SAME(made.at({9, 0}).letter, U'█');
+    SAME(made.at({9, 0}).style.background, (Color{false, 0, 0, 9}));
+    SAME(made.at({9, 3}).style.background, (Color{false, 0, 0, 9}));
+    SAME(made.at({9, 3}).style.foreground, (Color{false, 7, 7, 7}));
 
     Style own = lit;
 
@@ -737,7 +737,7 @@ TRIAL("Scrollbar: a style without a background takes the ground below") {
 
     top.skin(ui::Skin{ui::Styles{{"talcite.scroll", own}, {"talcite.scroll.thumb", own}}});
 
-    same(top.render({{0, 0}, {10, 5}}).at({9, 3}).style.background, (Color{false, 3, 3, 3}));
+    SAME(top.render({{0, 0}, {10, 5}}).at({9, 3}).style.background, (Color{false, 3, 3, 3}));
 }
 
 // The bar of a widget the keys move takes the .focus styles: a scroller's bar while the focus is
@@ -776,15 +776,15 @@ TRIAL("Scrollbar: with the focus inside, the bar takes the .focus styles") {
 
     Snapshot made = top.render({{0, 0}, {8, 6}});
 
-    same(made.at({7, 0}).style.foreground, (Color{false, 2, 2, 2}));
-    same(made.at({7, 4}).style.foreground, (Color{false, 1, 1, 1}));
+    SAME(made.at({7, 0}).style.foreground, (Color{false, 2, 2, 2}));
+    SAME(made.at({7, 4}).style.foreground, (Color{false, 1, 1, 1}));
 
     inner->children()[0]->focus();
 
     made = top.render({{0, 0}, {8, 6}});
 
-    same(made.at({7, 0}).style.foreground, (Color{false, 4, 4, 4}));
-    same(made.at({7, 4}).style.foreground, (Color{false, 3, 3, 3}));
+    SAME(made.at({7, 0}).style.foreground, (Color{false, 4, 4, 4}));
+    SAME(made.at({7, 4}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 // --- Following the focus --------------------------------------------------------------------
@@ -817,39 +817,39 @@ TRIAL("Vertical scroll: focus outside the window adjusts the scrolling, inside i
 
     (void)top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 0);
+    SAME(scroll->shift().y, 0);
 
     column->children()[19]->focus();
 
     Snapshot shown = top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 15);
-    same(read(shown, 4), std::string{"19"});
+    SAME(scroll->shift().y, 15);
+    SAME(read(shown, 4), std::string{"19"});
 
     column->children()[17]->focus();
 
     (void)top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 15);
+    SAME(scroll->shift().y, 15);
 
     column->children()[3]->focus();
 
     shown = top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 3);
-    same(read(shown, 0), std::string{"3"});
+    SAME(scroll->shift().y, 3);
+    SAME(read(shown, 0), std::string{"3"});
 
     column->children()[0]->focus();
 
     (void)top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 0);
+    SAME(scroll->shift().y, 0);
 
     column->children()[29]->focus();
 
     (void)top.render({{0, 0}, {10, 5}});
 
-    same(scroll->shift().y, 25);
+    SAME(scroll->shift().y, 25);
 }
 
 // The wheel moves the view and the focus stays, and the next frame does not undo the wheel: the
@@ -875,22 +875,22 @@ TRIAL("Vertical scroll: the wheel does not fight the focus, and focus beside the
 
     (void)top.render({{0, 0}, {10, 6}});
 
-    same(scroll->shift().y, 6);
+    SAME(scroll->shift().y, 6);
 
     ui::WheelEvent up{{1, 1}, 1};
 
-    ought(top.dispatch(up));
-    same(scroll->shift().y, 3);
+    OUGHT(top.dispatch(up));
+    SAME(scroll->shift().y, 3);
 
     (void)top.render({{0, 0}, {10, 6}});
 
-    same(scroll->shift().y, 3);
+    SAME(scroll->shift().y, 3);
 
     outside->focus();
 
     (void)top.render({{0, 0}, {10, 6}});
 
-    same(scroll->shift().y, 3);
+    SAME(scroll->shift().y, 3);
 }
 
 // A node taller than the window is brought in by its top; the start matters more than the end.
@@ -918,7 +918,7 @@ TRIAL("Vertical scroll: a node taller than the window is brought in by its top")
 
     (void)top.render({{0, 0}, {6, 3}});
 
-    same(scroll->shift().y, 8);
+    SAME(scroll->shift().y, 8);
 }
 
 TRIAL("Horizontal scroll: focus outside the window adjusts the horizontal scrolling") {
@@ -939,13 +939,13 @@ TRIAL("Horizontal scroll: focus outside the window adjusts the horizontal scroll
 
     (void)top.render({{0, 0}, {10, 1}});
 
-    same(scroll->shift().x, 14);
+    SAME(scroll->shift().x, 14);
 
     row->children()[0]->focus();
 
     (void)top.render({{0, 0}, {10, 1}});
 
-    same(scroll->shift().x, 0);
+    SAME(scroll->shift().x, 0);
 }
 
 TRIAL("Scroll: the focus adjusts the scrolling on both axes at once") {
@@ -974,15 +974,15 @@ TRIAL("Scroll: the focus adjusts the scrolling on both axes at once") {
 
     (void)top.render({{0, 0}, {10, 3}});
 
-    same(scroll->shift().x, 14);
-    same(scroll->shift().y, 4);
+    SAME(scroll->shift().x, 14);
+    SAME(scroll->shift().y, 4);
 
     column->children()[0]->children()[0]->focus();
 
     (void)top.render({{0, 0}, {10, 3}});
 
-    same(scroll->shift().x, 0);
-    same(scroll->shift().y, 0);
+    SAME(scroll->shift().x, 0);
+    SAME(scroll->shift().y, 0);
 }
 
 // --- Scrolling axis ------------------------------------------------------------------------------
@@ -1036,46 +1036,46 @@ ui::Size window(ui::Axis axis) {
 // one long line.
 TRIAL("Scroll: an open axis asks the child for plenty, a closed one for the room") {
     const ui::Size vertical = asked(ui::Axis::vertical);
-    same(vertical.wide, 19);
-    same(vertical.high, ui::plenty);
+    SAME(vertical.wide, 19);
+    SAME(vertical.high, ui::plenty);
 
     const ui::Size horizontal = asked(ui::Axis::horizontal);
-    same(horizontal.wide, ui::plenty);
-    same(horizontal.high, 9);
+    SAME(horizontal.wide, ui::plenty);
+    SAME(horizontal.high, 9);
 
     const ui::Size both = asked(ui::Axis::both);
-    same(both.wide, ui::plenty - 1);
-    same(both.high, ui::plenty - 1);
+    SAME(both.wide, ui::plenty - 1);
+    SAME(both.high, ui::plenty - 1);
 }
 
 TRIAL("Scroll: a bar stands only along an open axis") {
-    same(window(ui::Axis::vertical).wide, 9);
-    same(window(ui::Axis::vertical).high, 5);
+    SAME(window(ui::Axis::vertical).wide, 9);
+    SAME(window(ui::Axis::vertical).high, 5);
 
-    same(window(ui::Axis::horizontal).wide, 10);
-    same(window(ui::Axis::horizontal).high, 4);
+    SAME(window(ui::Axis::horizontal).wide, 10);
+    SAME(window(ui::Axis::horizontal).high, 4);
 
-    same(window(ui::Axis::both).wide, 9);
-    same(window(ui::Axis::both).high, 4);
+    SAME(window(ui::Axis::both).wide, 9);
+    SAME(window(ui::Axis::both).high, 4);
 }
 
 TRIAL("Scroll: the component of a closed axis is always zero") {
     ui::Scroll vertical{ui::Axis::vertical};
     vertical.shift({5, 2});
-    same(vertical.shift().x, 0);
-    same(vertical.shift().y, 2);
+    SAME(vertical.shift().x, 0);
+    SAME(vertical.shift().y, 2);
 
     ui::Scroll horizontal{ui::Axis::horizontal};
     horizontal.shift({5, 2});
-    same(horizontal.shift().x, 5);
-    same(horizontal.shift().y, 0);
+    SAME(horizontal.shift().x, 5);
+    SAME(horizontal.shift().y, 0);
 
     ui::Scroll both{ui::Axis::both};
     both.shift({5, 2});
-    same(both.shift().x, 5);
-    same(both.shift().y, 2);
+    SAME(both.shift().x, 5);
+    SAME(both.shift().y, 2);
 
-    same(both.axis(), ui::Axis::both);
+    SAME(both.axis(), ui::Axis::both);
 }
 
 TRIAL("Horizontal scroll: the wheel scrolls horizontally, without Shift") {
@@ -1090,9 +1090,9 @@ TRIAL("Horizontal scroll: the wheel scrolls horizontally, without Shift") {
 
     ui::WheelEvent down{{1, 1}, -1};
 
-    ought(top.dispatch(down));
-    same(scroll->shift().x, 3);
-    same(scroll->shift().y, 0);
+    OUGHT(top.dispatch(down));
+    SAME(scroll->shift().x, 3);
+    SAME(scroll->shift().y, 0);
 }
 
 TRIAL("Vertical scroll: the wheel with Shift does not scroll horizontally") {
@@ -1107,9 +1107,9 @@ TRIAL("Vertical scroll: the wheel with Shift does not scroll horizontally") {
 
     ui::WheelEvent down{{1, 1}, -1, ui::Mods{.shift = true}};
 
-    ought(top.dispatch(down));
-    same(scroll->shift().y, 3);
-    same(scroll->shift().x, 0);
+    OUGHT(top.dispatch(down));
+    SAME(scroll->shift().y, 3);
+    SAME(scroll->shift().x, 0);
 }
 
 // The tilted wheel (a touchpad's sideways swipe) scrolls sideways wherever there is a horizontal
@@ -1126,9 +1126,9 @@ TRIAL("Scroll: the tilted wheel scrolls sideways, and a vertical scroller passes
 
     ui::WheelEvent right{{1, 1}, -1, {}, ui::Axis::horizontal};
 
-    ought(top.dispatch(right));
-    same(both->shift().x, 3);
-    same(both->shift().y, 0);
+    OUGHT(top.dispatch(right));
+    SAME(both->shift().x, 3);
+    SAME(both->shift().y, 0);
 
     ui::Root other;
 
@@ -1141,6 +1141,6 @@ TRIAL("Scroll: the tilted wheel scrolls sideways, and a vertical scroller passes
 
     ui::WheelEvent tilted{{1, 1}, -1, {}, ui::Axis::horizontal};
 
-    ought(!other.dispatch(tilted));
-    same(upright->shift().y, 0);
+    OUGHT(!other.dispatch(tilted));
+    SAME(upright->shift().y, 0);
 }

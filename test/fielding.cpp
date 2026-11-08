@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <optional>
@@ -68,18 +68,18 @@ TRIAL("Field: typing puts characters at the cursor") {
 
     typed(top, "abc");
 
-    same(one->text(), std::string{"abc"});
-    same(one->cursor(), static_cast<std::size_t>(3));
+    SAME(one->text(), std::string{"abc"});
+    SAME(one->cursor(), static_cast<std::size_t>(3));
 
     pressed(top, ui::Code::left);
     pressed(top, ui::Code::left);
 
     typed(top, "X");
 
-    same(one->text(), std::string{"aXbc"});
-    same(one->cursor(), static_cast<std::size_t>(2));
+    SAME(one->text(), std::string{"aXbc"});
+    SAME(one->cursor(), static_cast<std::size_t>(2));
 
-    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"aXbc"});
+    SAME(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"aXbc"});
 }
 
 TRIAL("Field: Backspace deletes before the cursor, Delete under it") {
@@ -93,23 +93,23 @@ TRIAL("Field: Backspace deletes before the cursor, Delete under it") {
 
     pressed(top, ui::Code::backspace);
 
-    same(one->text(), std::string{"abc"});
+    SAME(one->text(), std::string{"abc"});
 
     pressed(top, ui::Code::home);
     pressed(top, ui::Code::remove);
 
-    same(one->text(), std::string{"bc"});
-    same(one->cursor(), static_cast<std::size_t>(0));
+    SAME(one->text(), std::string{"bc"});
+    SAME(one->cursor(), static_cast<std::size_t>(0));
 
     // At the edges there is nothing to delete and nothing happens.
     pressed(top, ui::Code::backspace);
 
-    same(one->text(), std::string{"bc"});
+    SAME(one->text(), std::string{"bc"});
 
     pressed(top, ui::Code::end);
     pressed(top, ui::Code::remove);
 
-    same(one->text(), std::string{"bc"});
+    SAME(one->text(), std::string{"bc"});
 }
 
 TRIAL("Field: the cursor counts characters, not bytes") {
@@ -122,23 +122,23 @@ TRIAL("Field: the cursor counts characters, not bytes") {
     one->focus();
 
     // Six characters, though more bytes.
-    same(one->cursor(), static_cast<std::size_t>(6));
+    SAME(one->cursor(), static_cast<std::size_t>(6));
 
     pressed(top, ui::Code::left);
 
-    same(one->cursor(), static_cast<std::size_t>(5));
+    SAME(one->cursor(), static_cast<std::size_t>(5));
 
     pressed(top, ui::Code::backspace);
 
-    same(one->text(), std::string{"zażóć"});
+    SAME(one->text(), std::string{"zażóć"});
 
     one->cursor(2);
 
-    same(one->cursor(), static_cast<std::size_t>(2));
+    SAME(one->cursor(), static_cast<std::size_t>(2));
 
     typed(top, "X");
 
-    same(one->text(), std::string{"zaXżóć"});
+    SAME(one->text(), std::string{"zaXżóć"});
 }
 
 TRIAL("Field: a paste goes in at the cursor, with line ends as spaces") {
@@ -152,10 +152,10 @@ TRIAL("Field: a paste goes in at the cursor, with line ends as spaces") {
 
     ui::PasteEvent what{"raz\ndwa"};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(one->text(), std::string{"abraz dwa"});
-    same(one->cursor(), static_cast<std::size_t>(9));
+    SAME(one->text(), std::string{"abraz dwa"});
+    SAME(one->cursor(), static_cast<std::size_t>(9));
 }
 
 // A field scrolls rather than cuts: an ellipsis in the text being typed would be a lie about what
@@ -171,18 +171,18 @@ TRIAL("Field: scrolls so that the cursor is visible") {
 
     const Snapshot made = top.render({{0, 0}, {5, 1}});
 
-    same(read(made, 0), std::string{"efgh"});
+    SAME(read(made, 0), std::string{"efgh"});
 
-    ought(top.caret().has_value());
-    same(*top.caret(), (ui::Spot{4, 0}));
+    OUGHT(top.caret().has_value());
+    SAME(*top.caret(), (ui::Spot{4, 0}));
 
     // Going back to the start scrolls back.
     pressed(top, ui::Code::home);
 
     const Snapshot other = top.render({{0, 0}, {5, 1}});
 
-    same(read(other, 0), std::string{"abcde"});
-    same(*top.caret(), (ui::Spot{0, 0}));
+    SAME(read(other, 0), std::string{"abcde"});
+    SAME(*top.caret(), (ui::Spot{0, 0}));
 }
 
 // At rest the field is not being typed in, so the ellipsis tells no lie there: a field without the
@@ -201,19 +201,19 @@ TRIAL("Field: without the focus a text that does not fit ends with the ellipsis"
 
     one->focus();
 
-    same(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
+    SAME(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
 
     other->focus();
 
     const Snapshot rest = top.render({{0, 0}, {5, 2}});
 
-    same(read(rest, 0), std::string{"abcd…"});
-    same(read(rest, 1), std::string{"ab"});
-    same(one->text(), std::string{"abcdefgh"});
+    SAME(read(rest, 0), std::string{"abcd…"});
+    SAME(read(rest, 1), std::string{"ab"});
+    SAME(one->text(), std::string{"abcdefgh"});
 
     one->focus();
 
-    same(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
+    SAME(read(top.render({{0, 0}, {5, 2}}), 0), std::string{"efgh"});
 }
 
 TRIAL("Field: a double-width character takes two cells") {
@@ -229,8 +229,8 @@ TRIAL("Field: a double-width character takes two cells") {
 
     // Six cells of content leave no room for the cursor after it, so the first character leaves the
     // view.
-    same(read(made, 0), std::string{"本ab"});
-    same(*top.caret(), (ui::Spot{4, 0}));
+    SAME(read(made, 0), std::string{"本ab"});
+    SAME(*top.caret(), (ui::Spot{4, 0}));
 }
 
 TRIAL("Field: the cursor is visible only with the focus") {
@@ -242,13 +242,13 @@ TRIAL("Field: the cursor is visible only with the focus") {
 
     (void)top.render({{0, 0}, {6, 1}});
 
-    ought(!top.caret().has_value());
+    OUGHT(!top.caret().has_value());
 
     one->focus();
 
     (void)top.render({{0, 0}, {6, 1}});
 
-    ought(top.caret().has_value());
+    OUGHT(top.caret().has_value());
 }
 
 // A mouse event carries a screen cell, not the node's own. Subtracting only `area().at` would count
@@ -268,12 +268,12 @@ TRIAL("Field: a click hits the right character also deep in the tree") {
     (void)top.render({{0, 0}, {30, 8}});
 
     // Two frames of one cell on each side, so character number 3 stands in screen column 5.
-    same(one->area().at, (ui::Spot{1, 1}));
+    SAME(one->area().at, (ui::Spot{1, 1}));
 
     ui::ClickEvent what{{5, 2}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    same(one->cursor(), static_cast<std::size_t>(3));
+    OUGHT(top.dispatch(what));
+    SAME(one->cursor(), static_cast<std::size_t>(3));
 }
 
 TRIAL("Field: a click puts the cursor where it clicked") {
@@ -287,17 +287,17 @@ TRIAL("Field: a click puts the cursor where it clicked") {
 
     ui::ClickEvent what{{3, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(one->cursor(), static_cast<std::size_t>(3));
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(one->cursor(), static_cast<std::size_t>(3));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     // A click past the content puts the cursor at its end.
     ui::ClickEvent aside{{9, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(aside));
+    OUGHT(top.dispatch(aside));
 
-    same(one->cursor(), static_cast<std::size_t>(6));
+    SAME(one->cursor(), static_cast<std::size_t>(6));
 }
 
 // A field justified to the right stands its content at the right edge with one cell to spare, where
@@ -315,32 +315,32 @@ TRIAL("Field: justified to the right, the content and the cursor stand at the ri
 
     const Snapshot shown = top.render({{0, 0}, {8, 1}});
 
-    same(read(shown, 0), std::string{"    750"});
-    same(one->caret(), (std::optional{ui::Spot{7, 0}}));
+    SAME(read(shown, 0), std::string{"    750"});
+    SAME(one->caret(), (std::optional{ui::Spot{7, 0}}));
 
     ui::ClickEvent what{{5, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    same(one->cursor(), static_cast<std::size_t>(1));
+    OUGHT(top.dispatch(what));
+    SAME(one->cursor(), static_cast<std::size_t>(1));
 
     // Before the content the cursor goes to its start.
     ui::ClickEvent before{{1, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(before));
-    same(one->cursor(), static_cast<std::size_t>(0));
+    OUGHT(top.dispatch(before));
+    SAME(one->cursor(), static_cast<std::size_t>(0));
 
     typed(top, "1");
 
-    same(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"   1750"});
+    SAME(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"   1750"});
 
     one->text("12345678");
 
-    same(read(top.render({{0, 0}, {8, 1}}), 0).substr(0, 1), std::string{"2"});
+    SAME(read(top.render({{0, 0}, {8, 1}}), 0).substr(0, 1), std::string{"2"});
 
     one->text("12");
     one->justify(ui::Justify::center);
 
-    same(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"  12"});
+    SAME(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"  12"});
 }
 
 TRIAL("Field: a disabled field takes neither the focus nor characters") {
@@ -352,15 +352,15 @@ TRIAL("Field: a disabled field takes neither the focus nor characters") {
 
     one->enabled(false);
 
-    ought(!one->focusable());
+    OUGHT(!one->focusable());
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     typed(top, "c");
 
-    same(one->text(), std::string{"ab"});
+    SAME(one->text(), std::string{"ab"});
 }
 
 // A suggestion is a grayed-out addition after the content and does not belong to the content until
@@ -380,20 +380,20 @@ TRIAL("Suggestion: drawn grayed out and not part of the content") {
 
     typed(top, "ka");
 
-    same(one->text(), std::string{"ka"});
-    same(one->guessed(), std::string{"talog"});
+    SAME(one->text(), std::string{"ka"});
+    SAME(one->guessed(), std::string{"talog"});
 
     const Snapshot made = top.render({{0, 0}, {12, 1}});
 
-    same(read(made, 0), std::string{"katalog"});
+    SAME(read(made, 0), std::string{"katalog"});
 
     // The content is normal, the addition faint.
-    ought(!made.at({1, 0}).style.faint);
-    ought(made.at({2, 0}).style.faint);
-    ought(made.at({6, 0}).style.faint);
+    OUGHT(!made.at({1, 0}).style.faint);
+    OUGHT(made.at({2, 0}).style.faint);
+    OUGHT(made.at({6, 0}).style.faint);
 
     // The cursor stands at the end of the content, not of the suggestion.
-    same(*top.caret(), (ui::Spot{2, 0}));
+    SAME(*top.caret(), (ui::Spot{2, 0}));
 }
 
 TRIAL("Suggestion: the right arrow accepts one letter") {
@@ -411,12 +411,12 @@ TRIAL("Suggestion: the right arrow accepts one letter") {
 
     pressed(top, ui::Code::right);
 
-    same(one->text(), std::string{"kat"});
-    same(one->guessed(), std::string{"alog"});
+    SAME(one->text(), std::string{"kat"});
+    SAME(one->guessed(), std::string{"alog"});
 
     pressed(top, ui::Code::right);
 
-    same(one->text(), std::string{"kata"});
+    SAME(one->text(), std::string{"kata"});
 }
 
 // A field does not take Tab. If it completed the suggestion only when there was one, the same key
@@ -437,10 +437,10 @@ TRIAL("Suggestion: Tab does not complete it and goes up") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(!top.dispatch(tab));
+    OUGHT(!top.dispatch(tab));
 
-    same(one->text(), std::string{"ka"});
-    same(one->guessed(), std::string{"talog"});
+    SAME(one->text(), std::string{"ka"});
+    SAME(one->guessed(), std::string{"talog"});
 }
 
 TRIAL("Suggestion: appears only with the cursor at the end") {
@@ -456,15 +456,15 @@ TRIAL("Suggestion: appears only with the cursor at the end") {
 
     typed(top, "ka");
 
-    ought(!one->guessed().empty());
+    OUGHT(!one->guessed().empty());
 
     pressed(top, ui::Code::left);
 
-    ought(one->guessed().empty());
+    OUGHT(one->guessed().empty());
 
     pressed(top, ui::Code::end);
 
-    ought(!one->guessed().empty());
+    OUGHT(!one->guessed().empty());
 }
 
 TRIAL("Suggestion: one that does not match the content is dropped") {
@@ -481,12 +481,12 @@ TRIAL("Suggestion: one that does not match the content is dropped") {
 
     typed(top, "ka");
 
-    ought(one->guessed().empty());
+    OUGHT(one->guessed().empty());
 
     ui::KeyEvent tab{ui::Code::tab};
 
     // Without a suggestion, Tab does not belong to the field either.
-    ought(!top.dispatch(tab));
+    OUGHT(!top.dispatch(tab));
 }
 
 namespace {
@@ -547,16 +547,16 @@ TRIAL("Dialog: a letter in a field is typed, not pressing a button") {
 
     typed(top, "t");
 
-    same(asked.field->text(), std::string{"t"});
-    same(done, 0);
+    SAME(asked.field->text(), std::string{"t"});
+    SAME(done, 0);
 
     // Without the focus in the field, the same letter presses the button.
     asked.no->focus();
 
     typed(top, "t");
 
-    same(asked.field->text(), std::string{"t"});
-    same(done, 1);
+    SAME(asked.field->text(), std::string{"t"});
+    SAME(done, 1);
 }
 
 // The field lets Enter through, and the window does not intercept it. So nobody confirms the form
@@ -573,10 +573,10 @@ TRIAL("Dialog: Enter in a field presses no button") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
+    OUGHT(top.dispatch(enter));
 
-    same(done, 0);
-    same(asked.field->text(), std::string{"nazwa"});
+    SAME(done, 0);
+    SAME(asked.field->text(), std::string{"nazwa"});
 }
 
 // Enter in a field is a `SubmitEvent`, and the event goes up: one hook on the window hears every
@@ -604,11 +604,11 @@ TRIAL("Dialog: Enter in a field announces a SubmitEvent that the window hears") 
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
+    OUGHT(top.dispatch(enter));
 
-    same(submitted, 1);
-    same(done, 1);
-    same(asked.field->text(), std::string{"nazwa"});
+    SAME(submitted, 1);
+    SAME(done, 1);
+    SAME(asked.field->text(), std::string{"nazwa"});
 
     int refused = 0;
 
@@ -622,11 +622,11 @@ TRIAL("Dialog: Enter in a field announces a SubmitEvent that the window hears") 
 
     ui::KeyEvent again{ui::Code::enter};
 
-    ought(top.dispatch(again));
+    OUGHT(top.dispatch(again));
 
-    same(refused, 1);
-    same(submitted, 1);
-    same(done, 1);
+    SAME(refused, 1);
+    SAME(submitted, 1);
+    SAME(done, 1);
 }
 
 // Esc in a field does not close the window: the field does not take it, and the veil only swallows
@@ -640,9 +640,9 @@ TRIAL("Dialog: Esc in a field does not close the window") {
 
     ui::KeyEvent what{ui::Code::escape};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    ought(!asked.window->empty());
+    OUGHT(!asked.window->empty());
 }
 
 // Tab belongs to focus navigation and only to it: the field does not take it, so there is no place
@@ -656,9 +656,9 @@ TRIAL("Dialog: Tab in a field without a suggestion moves to the button") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
+    OUGHT(top.dispatch(tab));
 
-    same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
 // Tab always moves the focus, also when the field has something to complete. Otherwise navigation
@@ -676,10 +676,10 @@ TRIAL("Dialog: Tab in a field with a suggestion moves the focus at once") {
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
+    OUGHT(top.dispatch(tab));
 
-    same(asked.field->text(), std::string{"na"});
-    same(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
+    SAME(asked.field->text(), std::string{"na"});
+    SAME(top.focused_node(), static_cast<ui::Node*>(asked.yes.get()));
 }
 
 // A numeric field is one lambda, not a separate widget. Midnight Commander has no numeric widget
@@ -697,8 +697,8 @@ TRIAL("Field: the filter drops characters while typing") {
 
     typed(top, "a1b2c3");
 
-    same(one->text(), std::string{"123"});
-    same(one->cursor(), static_cast<std::size_t>(3));
+    SAME(one->text(), std::string{"123"});
+    SAME(one->cursor(), static_cast<std::size_t>(3));
 }
 
 TRIAL("Field: the filter drops characters on paste and lets the rest in") {
@@ -714,10 +714,10 @@ TRIAL("Field: the filter drops characters on paste and lets the rest in") {
 
     ui::PasteEvent what{"12ab34"};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
     // One bad character in the middle does not invalidate the whole paste.
-    same(one->text(), std::string{"1234"});
+    SAME(one->text(), std::string{"1234"});
 }
 
 // Without a filter the field accepts everything: the filter is an addition, not a condition for
@@ -733,7 +733,7 @@ TRIAL("Field: without a filter everything goes in") {
 
     typed(top, "a1b2");
 
-    same(one->text(), std::string{"a1b2"});
+    SAME(one->text(), std::string{"a1b2"});
 }
 
 // Setting the content from the program does not ask the filter: the caller knows what it does, and
@@ -745,7 +745,7 @@ TRIAL("Field: the filter leaves content set by the program alone") {
 
     one->text("abc");
 
-    same(one->text(), std::string{"abc"});
+    SAME(one->text(), std::string{"abc"});
 }
 
 // A filtered-out character does not go up. Otherwise a "t" rejected in a digits-only field would
@@ -761,12 +761,12 @@ TRIAL("Dialog: a character dropped by the filter does not press a button") {
 
     typed(top, "t");
 
-    ought(asked.field->text().empty());
-    same(done, 0);
+    OUGHT(asked.field->text().empty());
+    SAME(done, 0);
 
     typed(top, "7");
 
-    same(asked.field->text(), std::string{"7"});
+    SAME(asked.field->text(), std::string{"7"});
 }
 
 // --- Caret ---------------------------------------------------------------------------------------
@@ -794,8 +794,8 @@ TRIAL("Caret: a nested field composes its position from the areas") {
 
     // The frame moves the content one cell in from every side, the column puts the second field in
     // the next row, and the caret stands after the third letter.
-    ought(top.caret().has_value());
-    same(*top.caret(), (ui::Spot{4, 2}));
+    OUGHT(top.caret().has_value());
+    SAME(*top.caret(), (ui::Spot{4, 2}));
 }
 
 TRIAL("Caret: a field scrolled out of the viewport reports no caret") {
@@ -819,22 +819,22 @@ TRIAL("Caret: a field scrolled out of the viewport reports no caret") {
     // wheel), the field keeps the focus outside the viewport and there is no caret.
     (void)top.render({{0, 0}, {8, 3}});
 
-    ought(top.caret().has_value());
-    same(*top.caret(), (ui::Spot{2, 2}));
+    OUGHT(top.caret().has_value());
+    SAME(*top.caret(), (ui::Spot{2, 2}));
 
     scroll->shift({0, 0});
 
     (void)top.render({{0, 0}, {8, 3}});
 
-    ought(!top.caret().has_value());
+    OUGHT(!top.caret().has_value());
 
     // Scrolling to it brings the caret back, at the edge of the viewport and not somewhere further.
     scroll->shift({0, 8});
 
     (void)top.render({{0, 0}, {8, 3}});
 
-    ought(top.caret().has_value());
-    same(*top.caret(), (ui::Spot{2, 2}));
+    OUGHT(top.caret().has_value());
+    SAME(*top.caret(), (ui::Spot{2, 2}));
 }
 
 TRIAL("Caret: a field without the focus reports none, even when visible") {
@@ -852,13 +852,13 @@ TRIAL("Caret: a field without the focus reports none, even when visible") {
 
     (void)top.render({{0, 0}, {8, 2}});
 
-    same(*top.caret(), (ui::Spot{2, 1}));
+    SAME(*top.caret(), (ui::Spot{2, 1}));
 
     one->focus();
 
     (void)top.render({{0, 0}, {8, 2}});
 
-    same(*top.caret(), (ui::Spot{2, 0}));
+    SAME(*top.caret(), (ui::Spot{2, 0}));
 }
 
 // The role root can be replaced, just as in a button, a menu item and a key bar item.
@@ -867,7 +867,7 @@ TRIAL("Field: the role root can be replaced") {
 
     const auto one = std::make_shared<ui::Field>(6, "abc");
 
-    same(one->role(), std::string{"talcite.input"});
+    SAME(one->role(), std::string{"talcite.input"});
 
     top.children().add(one);
 
@@ -884,7 +884,7 @@ TRIAL("Field: the role root can be replaced") {
 
     const Snapshot made = top.render({{0, 0}, {6, 1}});
 
-    same(made.at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
+    SAME(made.at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 TRIAL("Hidden field: dots instead of characters, content unchanged") {
@@ -900,13 +900,13 @@ TRIAL("Hidden field: dots instead of characters, content unchanged") {
 
     typed(top, "!");
 
-    same(one->text(), std::string{"tajne!"});
-    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••••"});
-    ought(one->concealed());
+    SAME(one->text(), std::string{"tajne!"});
+    SAME(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••••"});
+    OUGHT(one->concealed());
 
     one->concealed(false);
 
-    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"tajne!"});
+    SAME(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"tajne!"});
 }
 
 TRIAL("Hidden field: a wide character is one dot") {
@@ -920,8 +920,8 @@ TRIAL("Hidden field: a wide character is one dot") {
 
     one->focus();
 
-    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••"});
-    same(*top.caret(), (ui::Spot{4, 0}));
+    SAME(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"••••"});
+    SAME(*top.caret(), (ui::Spot{4, 0}));
 }
 
 TRIAL("Hidden field: scrolls by dots") {
@@ -935,8 +935,8 @@ TRIAL("Hidden field: scrolls by dots") {
 
     one->focus();
 
-    same(read(top.render({{0, 0}, {4, 1}}), 0), std::string{"•••"});
-    same(*top.caret(), (ui::Spot{3, 0}));
+    SAME(read(top.render({{0, 0}, {4, 1}}), 0), std::string{"•••"});
+    SAME(*top.caret(), (ui::Spot{3, 0}));
 }
 
 TRIAL("Hidden field: a click counts cells in dots") {
@@ -952,8 +952,8 @@ TRIAL("Hidden field: a click counts cells in dots") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    same(one->cursor(), static_cast<std::size_t>(2));
+    OUGHT(top.dispatch(what));
+    SAME(one->cursor(), static_cast<std::size_t>(2));
 }
 
 TRIAL("Hidden field: no suggestion") {
@@ -963,11 +963,11 @@ TRIAL("Hidden field: no suggestion") {
 
     one->guess([](const std::string&) { return std::string{"katalog"}; });
 
-    same(one->guessed(), std::string{"talog"});
+    SAME(one->guessed(), std::string{"talog"});
 
     one->concealed(true);
 
-    ought(one->guessed().empty());
+    OUGHT(one->guessed().empty());
 
     top.children().add(one);
 
@@ -975,10 +975,10 @@ TRIAL("Hidden field: no suggestion") {
 
     typed(top, "t");
 
-    ought(one->guessed().empty());
-    same(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"•••"});
+    OUGHT(one->guessed().empty());
+    SAME(read(top.render({{0, 0}, {10, 1}}), 0), std::string{"•••"});
 
     one->concealed(false);
 
-    same(one->guessed(), std::string{"alog"});
+    SAME(one->guessed(), std::string{"alog"});
 }

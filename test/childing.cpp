@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -34,7 +34,7 @@ namespace {
 Command pretending(std::vector<std::string> what) {
     Command made;
 
-    made.program = fs::path{proving::mine()};
+    made.program = talcite::fs::from_string(tal::testing::mine().text());
     made.arguments.emplace_back("--pretending");
 
     for (std::string& one : what) made.arguments.push_back(std::move(one));
@@ -50,32 +50,32 @@ Command pretending(std::vector<std::string> what) {
 TRIAL("Child: an empty child knows nothing") {
     const Child one;
 
-    ought(!one.held());
-    same(one.pid(), std::int64_t{-1});
+    OUGHT(!one.held());
+    SAME(one.pid(), std::int64_t{-1});
 }
 
 TRIAL("Child: a started program gives its output and code zero") {
     const Output made = Child::run(pretending({"said", "dzień dobry"})).get();
 
-    same(text(made.out), std::string{"dzień dobry"});
-    ought(made.err.empty());
-    ought(made.exit.ended == Ended::normal);
-    same(made.exit.code, 0);
+    SAME(text(made.out), std::string{"dzień dobry"});
+    OUGHT(made.err.empty());
+    OUGHT(made.exit.ended == Ended::normal);
+    SAME(made.exit.code, 0);
 }
 
 TRIAL("Child: the exit code comes back as the program gave it") {
     const Output made = Child::run(pretending({"code", "7"})).get();
 
-    ought(made.exit.ended == Ended::normal);
-    same(made.exit.code, 7);
+    OUGHT(made.exit.ended == Ended::normal);
+    SAME(made.exit.code, 7);
 }
 
 // The two streams are separate until someone asks for them to be merged into one.
 TRIAL("Child: output and errors go separately") {
     const Output made = Child::run(pretending({"both"})).get();
 
-    same(text(made.out), std::string{"output"});
-    same(text(made.err), std::string{"error"});
+    SAME(text(made.out), std::string{"output"});
+    SAME(text(made.err), std::string{"error"});
 }
 
 TRIAL("Child: merge pours errors into the output") {
@@ -84,8 +84,8 @@ TRIAL("Child: merge pours errors into the output") {
 
     const Output made = Child::run(std::move(what)).get();
 
-    ought(made.err.empty());
-    same(made.out.size(), std::string{"output"}.size() + std::string{"error"}.size());
+    OUGHT(made.err.empty());
+    SAME(made.out.size(), std::string{"output"}.size() + std::string{"error"}.size());
 }
 
 // A program that cannot be started is a refusal on every system. On Windows CreateProcessW
@@ -95,12 +95,12 @@ TRIAL("Child: a missing program is a refusal on every system") {
     Command what;
     what.program = fs::path{"nie-ma-takiego-programu-w-talcite"};
 
-    threw((void)Child::run(what).get());
-    threw((void)Child::start(what).get());
+    THREW((void)Child::run(what).get());
+    THREW((void)Child::start(what).get());
 
     what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
 
-    threw((void)Child::start(what).get());
+    THREW((void)Child::start(what).get());
 }
 
 // A working directory that does not exist is a refusal as well, not a program started elsewhere.
@@ -109,11 +109,11 @@ TRIAL("Child: a missing working directory is a refusal") {
 
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
 
-    threw((void)Child::start(what).get());
+    THREW((void)Child::start(what).get());
 }
 
 TRIAL("Child: no program is a refusal, not silence") {
-    threw((void)Child::run(Command{}).get());
+    THREW((void)Child::run(Command{}).get());
 }
 
 // --- Input ---------------------------------------------------------------------------------------
@@ -121,8 +121,8 @@ TRIAL("Child: no program is a refusal, not silence") {
 TRIAL("Child: the given input comes back as output") {
     const Output made = Child::run(pretending({"echo"}), bytes("tam i z powrotem")).get();
 
-    same(text(made.out), std::string{"tam i z powrotem"});
-    same(made.exit.code, 0);
+    SAME(text(made.out), std::string{"tam i z powrotem"});
+    SAME(made.exit.code, 0);
 }
 
 // A second program does not inherit the first one's pipes. Without the close-on-exec flag on our
@@ -139,9 +139,9 @@ TRIAL("Child: a second program does not hold the first one's input") {
     while (!first.read(4096).get().empty()) {
     }
 
-    same(first.wait().get().code, 0);
+    SAME(first.wait().get().code, 0);
 
-    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{4});
+    OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{4});
 
     second.kill();
     (void)second.wait().get();
@@ -174,7 +174,7 @@ TRIAL("Child: a pipe on descriptor zero reaches the program") {
     ::dup2(saved, STDIN_FILENO);
     ::close(saved);
 
-    same(got, std::string{"tam i z powrotem"});
+    SAME(got, std::string{"tam i z powrotem"});
 }
 
 #endif
@@ -212,7 +212,7 @@ TRIAL("Child: our sockets do not reach the program") {
     one.kill();
     (void)one.wait().get();
 
-    same(sockets, std::size_t{0});
+    SAME(sockets, std::size_t{0});
 }
 
 #endif
@@ -234,8 +234,8 @@ TRIAL("Child: without closing the input the program waits, with it the program e
         whole.insert(whole.end(), got.begin(), got.end());
     }
 
-    same(text(whole), std::string{"raz"});
-    same(one.wait().get().code, 0);
+    SAME(text(whole), std::string{"raz"});
+    SAME(one.wait().get().code, 0);
 }
 
 // A pipe has a bottom. A program that writes to both streams more than they hold deadlocks a reader
@@ -243,9 +243,9 @@ TRIAL("Child: without closing the input the program waits, with it the program e
 TRIAL("Child: taken does not deadlock on plentiful output") {
     const Output made = Child::run(pretending({"much"})).get();
 
-    same(made.out.size(), std::size_t{300 * 1000});
-    same(made.err.size(), std::size_t{300 * 1000});
-    same(made.exit.code, 0);
+    SAME(made.out.size(), std::size_t{300 * 1000});
+    SAME(made.err.size(), std::size_t{300 * 1000});
+    SAME(made.exit.code, 0);
 }
 
 // --- Command -------------------------------------------------------------------------------------
@@ -253,7 +253,7 @@ TRIAL("Child: taken does not deadlock on plentiful output") {
 TRIAL("Child: arguments go separately, also with spaces") {
     const Output made = Child::run(pretending({"args", "jeden dwa", "trzy"})).get();
 
-    same(text(made.out), std::string{"jeden dwa\ntrzy\n"});
+    SAME(text(made.out), std::string{"jeden dwa\ntrzy\n"});
 }
 
 TRIAL("Child: the working directory is the one given") {
@@ -266,7 +266,7 @@ TRIAL("Child: the working directory is the one given") {
     // (Windows gives the temporary directory with a trailing backslash and the current directory
     // without one), so a character-by-character comparison would speak of the spelling, not of
     // what we ask.
-    ought(fs::equivalent(fs::path{text(made.out)}, fs::temp()).get());
+    OUGHT(fs::equivalent(fs::path{text(made.out)}, fs::temp()).get());
 }
 
 TRIAL("Child: an environment variable reaches the program") {
@@ -275,7 +275,7 @@ TRIAL("Child: an environment variable reaches the program") {
 
     const Output made = Child::run(std::move(what)).get();
 
-    same(text(made.out), std::string{"wartość"});
+    SAME(text(made.out), std::string{"wartość"});
 }
 
 // Without inheritance the program has nothing but what it was given, and that is the only way to
@@ -320,8 +320,8 @@ TRIAL("Child: without inheritance only what was given remains") {
     ::unsetenv("TALCITE_ODZIEDZICZONA");
 #endif
 
-    same(text(ours.out), std::string{"<none>"});
-    same(text(theirs.out), std::string{"wartość"});
+    SAME(text(ours.out), std::string{"<none>"});
+    SAME(text(theirs.out), std::string{"wartość"});
 }
 
 // --- Ending --------------------------------------------------------------------------------------
@@ -337,12 +337,12 @@ TRIAL("Child: kill ends a program that is still sleeping") {
 
     const Exit made = std::move(waiting).get();
 
-    ought(made.ended != Ended::lost);
+    OUGHT(made.ended != Ended::lost);
 
 #ifndef _WIN32
 
-    ought(made.ended == Ended::killed);
-    same(made.signal, SIGKILL);
+    OUGHT(made.ended == Ended::killed);
+    SAME(made.signal, SIGKILL);
 
 #endif
 }
@@ -400,13 +400,13 @@ TRIAL("Child: kill also ends what the program started") {
 
     const std::int64_t grandchild = std::stoll(line);
 
-    ought(alive(grandchild, std::chrono::milliseconds{0}));
+    OUGHT(alive(grandchild, std::chrono::milliseconds{0}));
 
     one.kill();
 
     (void)one.wait().get();
 
-    ought(!alive(grandchild, std::chrono::milliseconds{3000}));
+    OUGHT(!alive(grandchild, std::chrono::milliseconds{3000}));
 }
 
 // `stop()` asks the whole group to end (the parent and the grandchild), not the parent alone.
@@ -432,7 +432,7 @@ TRIAL("Child: stop also asks what the program started to end") {
     // and how soon tell whether the event reached the group at all (a parent asleep for its full
     // thirty seconds did not get it either) or the parent alone.
     if (alive(grandchild, std::chrono::milliseconds{3000})) {
-        same("parent: code " + std::to_string(static_cast<unsigned>(ended.code)) + ", signal " + std::to_string(ended.signal) + ", after " +
+        SAME("parent: code " + std::to_string(static_cast<unsigned>(ended.code)) + ", signal " + std::to_string(ended.signal) + ", after " +
                  std::to_string(took.count()) + " ms",
              std::string{"the grandchild ends with it"});
 
@@ -450,20 +450,20 @@ TRIAL("Child: stop also asks what the program started to end") {
 TRIAL("Child: kill after the end does nothing") {
     const Child one = Child::start(pretending({"code", "3"})).get();
 
-    same(one.wait().get().code, 3);
+    SAME(one.wait().get().code, 3);
 
     one.kill();
     one.stop();
 
-    same(one.wait().get().code, 3);
+    SAME(one.wait().get().code, 3);
 }
 
 TRIAL("Child: the end can be asked for many times and always says the same") {
     const Child one = Child::start(pretending({"code", "5"})).get();
 
-    same(one.wait().get().code, 5);
-    same(one.wait().get().code, 5);
-    same(one.wait().get().code, 5);
+    SAME(one.wait().get().code, 5);
+    SAME(one.wait().get().code, 5);
+    SAME(one.wait().get().code, 5);
 }
 
 // Letting go of the handle is not an order to die; the program should finish its work.
@@ -474,8 +474,8 @@ TRIAL("Child: close does not kill the program") {
 
     one.close();
 
-    ought(!one.held());
-    same(std::move(waiting).get().code, 0);
+    OUGHT(!one.held());
+    SAME(std::move(waiting).get().code, 0);
 }
 
 #ifndef _WIN32
@@ -503,7 +503,7 @@ TRIAL("Child: an abandoned child is reaped without being asked") {
         std::this_thread::sleep_for(std::chrono::milliseconds{20});
     }
 
-    ought(!"a zombie was left after the child");
+    OUGHT(!"a zombie was left after the child");
 }
 
 #endif
@@ -511,8 +511,8 @@ TRIAL("Child: an abandoned child is reaped without being asked") {
 TRIAL("Child: the process id is known at once") {
     const Child one = Child::start(pretending({"code", "0"})).get();
 
-    ought(one.held());
-    ought(one.pid() > 0);
+    OUGHT(one.held());
+    OUGHT(one.pid() > 0);
 
     (void)one.wait().get();
 }
@@ -546,7 +546,7 @@ TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
 
     // The write ends on both systems, but for different reasons, so only that is checked
     // everywhere.
-    ought(told);
+    OUGHT(told);
 
     // Immediacy holds on both systems. On POSIX the wake-up pipe in the poll set, next to the
     // input and the bell, wakes it; under Windows an event that the writer waits for together with
@@ -555,7 +555,7 @@ TRIAL("Child: seal() interrupts a write stuck on a full pipe") {
     //
     // A ceiling with a huge margin: the child lives five seconds, and the measured interruption
     // takes 0 ms.
-    ought(took < 2000);
+    OUGHT(took < 2000);
 
     one.kill();
 }
@@ -574,7 +574,7 @@ TRIAL("Child: a write after seal() is a refusal") {
         told = true;
     }
 
-    ought(told);
+    OUGHT(told);
 
     (void)one.wait().get();
 }
@@ -598,8 +598,8 @@ TRIAL("Child: seal() twice breaks nothing") {
         whole.insert(whole.end(), got.begin(), got.end());
     }
 
-    same(text(whole), std::string{"raz"});
-    same(one.wait().get().code, 0);
+    SAME(text(whole), std::string{"raz"});
+    SAME(one.wait().get().code, 0);
 }
 
 #ifdef _WIN32
@@ -669,7 +669,7 @@ TRIAL("Child: a batch file run by name gets its arguments literally") {
 
     const Output made = Child::run(what).get();
 
-    same(text(made.out), std::string{"\"a & echo WSTRZYK\"\r\n\"b|c\"\r\n"});
+    SAME(text(made.out), std::string{"\"a & echo WSTRZYK\"\r\n\"b|c\"\r\n"});
 }
 
 // Quotes do not protect a percent sign from cmd.exe: %PATH% would expand inside the argument.
@@ -686,7 +686,7 @@ TRIAL("Child: an argument with a percent sign does not go to a batch file") {
     what.program = "pomoc";
     what.arguments = {"%PATH%"};
 
-    threw((void)Child::run(what).get());
+    THREW((void)Child::run(what).get());
 }
 
 // A program that lies only in the current directory does not start by its bare name: the current
@@ -697,7 +697,7 @@ TRIAL("Child: a program in the current directory does not start by name") {
     const std::filesystem::path aside = planted.where() / "osobno";
 
     std::filesystem::create_directories(aside);
-    std::filesystem::copy_file(proving::mine(), aside / "obcy.exe");
+    std::filesystem::copy_file(talcite::fs::from_string(tal::testing::mine().text()), aside / "obcy.exe");
 
     std::wstring was(32768, L'\0');
 
@@ -720,7 +720,7 @@ TRIAL("Child: a program in the current directory does not start by name") {
 
     SetCurrentDirectoryW(was.c_str());
 
-    ought(refused);
+    OUGHT(refused);
 }
 
 #endif
@@ -756,29 +756,29 @@ TRIAL("Child: detached, the program lives on its own and we know its id") {
 
     const std::int64_t pid = Child::detached(pretending({"noted", where.string(), "200"})).get();
 
-    ought(pid > 0);
+    OUGHT(pid > 0);
 
     const std::string told = awaited_note(where);
 
-    ought(!told.empty());
+    OUGHT(!told.empty());
 
     const std::int64_t said = std::atoll(told.c_str());
 
-    same(said, pid);
+    SAME(said, pid);
 
 #ifndef _WIN32
     const std::size_t first = told.find(' ');
     const std::size_t second = told.find(' ', first + 1);
 
-    ought(first != std::string::npos && second != std::string::npos);
+    OUGHT(first != std::string::npos && second != std::string::npos);
 
     if (first == std::string::npos || second == std::string::npos) return;
 
     const long session = std::atol(told.c_str() + first + 1);
     const long parent = std::atol(told.c_str() + second + 1);
 
-    ought(session != static_cast<long>(::getsid(0)));
-    ought(parent != static_cast<long>(::getpid()));
+    OUGHT(session != static_cast<long>(::getsid(0)));
+    OUGHT(parent != static_cast<long>(::getpid()));
 #endif
 
     std::filesystem::remove(where, why);
@@ -789,8 +789,8 @@ TRIAL("Child: detached, a missing program is a refusal, not silence") {
 
     what.program = fs::temp() / "talcite-nie-ma-takiego-programu";
 
-    threw(Child::detached(what).get());
-    threw(Child::detached(Command{}).get());
+    THREW(Child::detached(what).get());
+    THREW(Child::detached(Command{}).get());
 }
 
 // A working directory that does not exist is a refusal too, not a program started elsewhere.
@@ -799,7 +799,7 @@ TRIAL("Child: detached, a missing working directory is a refusal") {
 
     what.where = fs::temp() / "talcite-nie-ma-takiego-katalogu";
 
-    threw(Child::detached(what).get());
+    THREW(Child::detached(what).get());
 }
 
 // --- Waiting and running to the end --------------------------------------------------------------
@@ -809,12 +809,12 @@ TRIAL("Child: detached, a missing working directory is a refusal") {
 TRIAL("Child: a caller who gives up waiting does not take the end from others") {
     const Child one = Child::start(pretending({"sleeping", "300"})).get();
 
-    threw((void)one.wait().timeout(std::chrono::milliseconds{20}).get());
+    THREW((void)one.wait().timeout(std::chrono::milliseconds{20}).get());
 
     const Exit made = one.wait().get();
 
-    ought(made.ended == Ended::normal);
-    same(made.code, 0);
+    OUGHT(made.ended == Ended::normal);
+    SAME(made.code, 0);
 }
 
 // A program may stop reading before it has taken its whole input. For `run` that is the end of the
@@ -823,9 +823,9 @@ TRIAL("Child: a caller who gives up waiting does not take the end from others") 
 TRIAL("Child: run takes a program that stops reading as the end of its input") {
     const Output made = Child::run(pretending({"said", "dosyć"}), Bytes(4 << 20, std::byte{'x'})).get();
 
-    same(text(made.out), std::string{"dosyć"});
-    ought(made.exit.ended == Ended::normal);
-    same(made.exit.code, 0);
+    SAME(text(made.out), std::string{"dosyć"});
+    OUGHT(made.exit.ended == Ended::normal);
+    SAME(made.exit.code, 0);
 }
 
 // A run given up on the way kills its program, which would otherwise go on with nobody to read
@@ -841,15 +841,15 @@ TRIAL("Child: cancelling run kills the program") {
 
     const std::string told = awaited_note(where);
 
-    ought(!told.empty());
+    OUGHT(!told.empty());
 
     const std::int64_t which = std::atoll(told.c_str());
 
-    ought(which > 0);
+    OUGHT(which > 0);
 
     running.cancel();
 
-    ought(!alive(which, std::chrono::milliseconds{5000}));
+    OUGHT(!alive(which, std::chrono::milliseconds{5000}));
 
     std::filesystem::remove(where, why);
 }

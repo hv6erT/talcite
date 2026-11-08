@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <memory>
@@ -21,11 +21,11 @@ using namespace talcite::ui;
 namespace {
 
 // The test binary pretending to be a program: `tty` answers line by line, `prompted` shows a prompt
-// with its marks and its folder (see proving.cpp).
+// with its marks and its folder (see pretending.cpp in tal/test).
 Command pretending(const char* what) {
     Command made;
 
-    made.program = fs::path{proving::mine()};
+    made.program = talcite::fs::from_string(tal::testing::mine().text());
     made.arguments = {"--pretending", what};
 
     return made;
@@ -82,22 +82,22 @@ std::string key(Key one, Modes modes = {}) { return text(Terminal::keyed(one, mo
 
 // Letters go as UTF-8, Ctrl with a letter as its control character, Alt as a leading escape.
 TRIAL("Terminal: letters, Ctrl and Alt as xterm writes them") {
-    same(key(Key{U'a'}), std::string{"a"});
-    same(key(Key{U'ż'}), std::string{"ż"});
-    same(key(Key{U'c', Mods{.ctrl = true}}), std::string{"\x03"});
-    same(key(Key{U'C', Mods{.ctrl = true}}), std::string{"\x03"});
-    same(key(Key{U'[', Mods{.ctrl = true}}), std::string{"\x1b"});
-    same(key(Key{U' ', Mods{.ctrl = true}}), std::string(1, '\0'));
-    same(key(Key{U'x', Mods{.alt = true}}), std::string{"\x1bx"});
+    SAME(key(Key{U'a'}), std::string{"a"});
+    SAME(key(Key{U'ż'}), std::string{"ż"});
+    SAME(key(Key{U'c', Mods{.ctrl = true}}), std::string{"\x03"});
+    SAME(key(Key{U'C', Mods{.ctrl = true}}), std::string{"\x03"});
+    SAME(key(Key{U'[', Mods{.ctrl = true}}), std::string{"\x1b"});
+    SAME(key(Key{U' ', Mods{.ctrl = true}}), std::string(1, '\0'));
+    SAME(key(Key{U'x', Mods{.alt = true}}), std::string{"\x1bx"});
 }
 
 // The keys of editing: Enter as a carriage return, Backspace as DEL, Shift+Tab as back tab.
 TRIAL("Terminal: Enter, Backspace, Tab and Escape") {
-    same(key(Key{Code::enter}), std::string{"\r"});
-    same(key(Key{Code::backspace}), std::string{"\x7f"});
-    same(key(Key{Code::tab}), std::string{"\t"});
-    same(key(Key{Code::tab, Mods{.shift = true}}), std::string{"\x1b[Z"});
-    same(key(Key{Code::escape}), std::string{"\x1b"});
+    SAME(key(Key{Code::enter}), std::string{"\r"});
+    SAME(key(Key{Code::backspace}), std::string{"\x7f"});
+    SAME(key(Key{Code::tab}), std::string{"\t"});
+    SAME(key(Key{Code::tab, Mods{.shift = true}}), std::string{"\x1b[Z"});
+    SAME(key(Key{Code::escape}), std::string{"\x1b"});
 }
 
 // The arrows and Home and End: CSI in normal mode, SS3 in the application mode a program asks for,
@@ -107,23 +107,23 @@ TRIAL("Terminal: arrows in both cursor modes and with modifiers") {
 
     application.cursor_keys = true;
 
-    same(key(Key{Code::up}), std::string{"\x1b[A"});
-    same(key(Key{Code::up}, application), std::string{"\x1bOA"});
-    same(key(Key{Code::left, Mods{.ctrl = true}}), std::string{"\x1b[1;5D"});
-    same(key(Key{Code::right, Mods{.shift = true}}, application), std::string{"\x1b[1;2C"});
-    same(key(Key{Code::home}), std::string{"\x1b[H"});
-    same(key(Key{Code::end}, application), std::string{"\x1bOF"});
+    SAME(key(Key{Code::up}), std::string{"\x1b[A"});
+    SAME(key(Key{Code::up}, application), std::string{"\x1bOA"});
+    SAME(key(Key{Code::left, Mods{.ctrl = true}}), std::string{"\x1b[1;5D"});
+    SAME(key(Key{Code::right, Mods{.shift = true}}, application), std::string{"\x1b[1;2C"});
+    SAME(key(Key{Code::home}), std::string{"\x1b[H"});
+    SAME(key(Key{Code::end}, application), std::string{"\x1bOF"});
 }
 
 // The keys with a number: Insert, Delete, the pages and F5–F12; F1–F4 as SS3; F13 as Shift+F1.
 TRIAL("Terminal: function keys and the keys with a number") {
-    same(key(Key{Code::remove}), std::string{"\x1b[3~"});
-    same(key(Key{Code::pageup, Mods{.ctrl = true}}), std::string{"\x1b[5;5~"});
-    same(key(Key{Code::f1}), std::string{"\x1bOP"});
-    same(key(Key{Code::f4, Mods{.alt = true}}), std::string{"\x1b[1;3S"});
-    same(key(Key{Code::f5}), std::string{"\x1b[15~"});
-    same(key(Key{Code::f12}), std::string{"\x1b[24~"});
-    same(key(Key{Code::f13}), std::string{"\x1b[1;2P"});
+    SAME(key(Key{Code::remove}), std::string{"\x1b[3~"});
+    SAME(key(Key{Code::pageup, Mods{.ctrl = true}}), std::string{"\x1b[5;5~"});
+    SAME(key(Key{Code::f1}), std::string{"\x1bOP"});
+    SAME(key(Key{Code::f4, Mods{.alt = true}}), std::string{"\x1b[1;3S"});
+    SAME(key(Key{Code::f5}), std::string{"\x1b[15~"});
+    SAME(key(Key{Code::f12}), std::string{"\x1b[24~"});
+    SAME(key(Key{Code::f13}), std::string{"\x1b[1;2P"});
 }
 
 // --- A program in the node -------------------------------------------------------------------
@@ -150,27 +150,27 @@ TRIAL("Terminal: a program runs in the node") {
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
+    OUGHT(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
 
     one->send("dzień dobry\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "got:dzień dobry"); }));
+    OUGHT(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "got:dzień dobry"); }));
 
-    ought(awaited(loop, top, {30, 4}, [](const Snapshot&) { return true; }));
+    OUGHT(awaited(loop, top, {30, 4}, [](const Snapshot&) { return true; }));
 
     KeyEvent typed{Key{U's'}};
 
-    ought(top.dispatch(typed));
+    OUGHT(top.dispatch(typed));
 
     one->send("ize\r");
 
-    ought(awaited(loop, top, {30, 4}, [](const Snapshot& seen) { return showing(seen, "size 30x4"); }));
+    OUGHT(awaited(loop, top, {30, 4}, [](const Snapshot& seen) { return showing(seen, "size 30x4"); }));
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {30, 4}, [&end](const Snapshot&) { return end.has_value(); }));
-    ought(end.has_value() && end->ended == Ended::normal && end->code == 0);
-    ought(!one->running());
+    OUGHT(awaited(loop, top, {30, 4}, [&end](const Snapshot&) { return end.has_value(); }));
+    OUGHT(end.has_value() && end->ended == Ended::normal && end->code == 0);
+    OUGHT(!one->running());
 }
 
 // A shell integrated with its terminal tells it its folder and its prompt. Asked not to show the
@@ -201,29 +201,29 @@ TRIAL("Terminal: the folder and the prompt of a shell") {
 
     one->run();
 
-    ought(awaited(loop, top, {30, 3}, [](const Snapshot& seen) { return showing(seen, "$"); }));
-    same(folder, std::string{"/tmp/prompted"});
-    ought(marks == (std::vector<Marked>{Marked::prompt, Marked::input}));
-    ought(one->screen().waiting());
+    OUGHT(awaited(loop, top, {30, 3}, [](const Snapshot& seen) { return showing(seen, "$"); }));
+    SAME(folder, std::string{"/tmp/prompted"});
+    OUGHT(marks == (std::vector<Marked>{Marked::prompt, Marked::input}));
+    OUGHT(one->screen().waiting());
 
     one->prompt_shown(false);
 
     const std::vector<std::string> shown = rows(top.render({{0, 0}, {30, 3}}));
 
-    same(shown[1], std::string{"one"});
-    same(shown[2], std::string{"two"});
-    ought(!showing(top.render({{0, 0}, {30, 3}}), "$"));
+    SAME(shown[1], std::string{"one"});
+    SAME(shown[2], std::string{"two"});
+    OUGHT(!showing(top.render({{0, 0}, {30, 3}}), "$"));
 
     // A command line given to the shell makes it busy until its next prompt.
-    ought(one->idle());
+    OUGHT(one->idle());
 
     one->submit("ls");
 
-    ought(!one->idle());
+    OUGHT(!one->idle());
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {30, 3}, [&one](const Snapshot&) { return !one->running(); }));
+    OUGHT(awaited(loop, top, {30, 3}, [&one](const Snapshot&) { return !one->running(); }));
 }
 
 // What the program writes and its exit come on their own threads, so the exit may be known first.
@@ -255,12 +255,12 @@ TRIAL("Terminal: the end comes after all that the program wrote") {
 
     one->run();
 
-    ought(awaited(loop, top, {60, 4}, [&end](const Snapshot&) { return end.has_value(); }));
-    ought(end.has_value() && end->ended == Ended::normal && end->code == 0);
-    ought(marks == (std::vector<Marked>{Marked::done}));
-    same(before, std::size_t{1});
-    ought(showing(top.render({{0, 0}, {60, 4}}), "bye"));
-    ought(!one->running());
+    OUGHT(awaited(loop, top, {60, 4}, [&end](const Snapshot&) { return end.has_value(); }));
+    OUGHT(end.has_value() && end->ended == Ended::normal && end->code == 0);
+    OUGHT(marks == (std::vector<Marked>{Marked::done}));
+    SAME(before, std::size_t{1});
+    OUGHT(showing(top.render({{0, 0}, {60, 4}}), "bye"));
+    OUGHT(!one->running());
 }
 
 // A program may leave another one behind that holds the terminal open, so the end of what is
@@ -286,10 +286,10 @@ TRIAL("Terminal: a program that leaves another holding the terminal still ends")
 
     one->run();
 
-    ought(awaited(loop, top, {30, 3}, [&end](const Snapshot&) { return end.has_value(); }));
-    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{2});
-    ought(showing(top.render({{0, 0}, {30, 3}}), "left"));
-    ought(!one->running());
+    OUGHT(awaited(loop, top, {30, 3}, [&end](const Snapshot&) { return end.has_value(); }));
+    OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{2});
+    OUGHT(showing(top.render({{0, 0}, {30, 3}}), "left"));
+    OUGHT(!one->running());
 }
 
 // Shift+Page Up walks the history back and Shift+Page Down forward again; the program gets neither.
@@ -304,16 +304,16 @@ TRIAL("Terminal: Shift with the page keys walks the history") {
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "tty 1"); }));
+    OUGHT(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "tty 1"); }));
 
     one->send("a\rb\rc\r");
 
-    ought(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "got:c"); }));
+    OUGHT(awaited(loop, top, {20, 2}, [](const Snapshot& seen) { return showing(seen, "got:c"); }));
 
     KeyEvent back{Key{Code::pageup, Mods{.shift = true}}};
 
-    ought(top.dispatch(back));
-    ought(one->scrolled() > 0);
+    OUGHT(top.dispatch(back));
+    OUGHT(one->scrolled() > 0);
 
     for (int turn = 0; turn < 10; ++turn) {
         KeyEvent again{Key{Code::pagedown, Mods{.shift = true}}};
@@ -321,11 +321,11 @@ TRIAL("Terminal: Shift with the page keys walks the history") {
         (void)top.dispatch(again);
     }
 
-    same(one->scrolled(), 0);
+    SAME(one->scrolled(), 0);
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {20, 2}, [&one](const Snapshot&) { return !one->running(); }));
+    OUGHT(awaited(loop, top, {20, 2}, [&one](const Snapshot&) { return !one->running(); }));
 }
 
 // The cursor's shape: the one the node was given while the program asks for none, the program's
@@ -344,20 +344,20 @@ TRIAL("Terminal: the cursor's shape is the program's when it asks, otherwise the
     one->focus();
     one->run();
 
-    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
-    ought(top.caret_shape() == (CaretShape{Caret::underline, false}));
+    OUGHT(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "tty 1 40x5"); }));
+    OUGHT(top.caret_shape() == (CaretShape{Caret::underline, false}));
 
     one->send("bar\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "barred"); }));
-    ought(top.caret_shape() == (CaretShape{Caret::bar, true}));
+    OUGHT(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "barred"); }));
+    OUGHT(top.caret_shape() == (CaretShape{Caret::bar, true}));
 
     one->send("usual\r");
 
-    ought(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "as usual"); }));
-    ought(top.caret_shape() == (CaretShape{Caret::underline, false}));
+    OUGHT(awaited(loop, top, {40, 5}, [](const Snapshot& seen) { return showing(seen, "as usual"); }));
+    OUGHT(top.caret_shape() == (CaretShape{Caret::underline, false}));
 
     one->send("quit\r");
 
-    ought(awaited(loop, top, {40, 5}, [&one](const Snapshot&) { return !one->running(); }));
+    OUGHT(awaited(loop, top, {40, 5}, [&one](const Snapshot&) { return !one->running(); }));
 }

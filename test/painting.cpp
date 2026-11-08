@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -212,10 +212,10 @@ TRIAL("Canvas: a child paints from its own corner, cut to its rectangle and to i
 
     child.put({0, 0}, std::string_view{"abcdefgh"}, Style{});
 
-    same(read(sheet, 0), std::string{".........."});
-    same(read(sheet, 1), std::string{"...abcd..."});
-    same(child.size(), (ui::Size{8, 1}));
-    same(child.seen(), (ui::Area{{0, 0}, {4, 1}}));
+    SAME(read(sheet, 0), std::string{".........."});
+    SAME(read(sheet, 1), std::string{"...abcd..."});
+    SAME(child.size(), (ui::Size{8, 1}));
+    SAME(child.seen(), (ui::Area{{0, 0}, {4, 1}}));
 }
 
 // A clip cuts the painting without moving the corner: the window of a scroller without its bars.
@@ -228,9 +228,9 @@ TRIAL("Canvas: clipped keeps the corner and paints only inside the clip") {
     cut.fill({{0, 0}, {5, 2}}, Style{});
     cut.put({0, 1}, U'x', Style{});
 
-    same(read(sheet, 0), std::string{"......"});
-    same(read(sheet, 1), std::string{".x  .."});
-    same(cut.seen(), (ui::Area{{0, 1}, {3, 1}}));
+    SAME(read(sheet, 0), std::string{"......"});
+    SAME(read(sheet, 1), std::string{".x  .."});
+    SAME(cut.seen(), (ui::Area{{0, 1}, {3, 1}}));
 }
 
 // The edge of a clip is an edge as that of a sheet: half a double-width character does not stand
@@ -243,14 +243,14 @@ TRIAL("Canvas: a double-width character cut by the edge becomes a space") {
 
     left.put({2, 0}, U'界', Style{});
 
-    same(sheet.at({2, 0}).letter, U' ');
-    ought(sheet.at({3, 0}).shown == Shown::none);
+    SAME(sheet.at({2, 0}).letter, U' ');
+    OUGHT(sheet.at({3, 0}).shown == Shown::none);
 
     Canvas right = whole.within({{3, 0}, {1, 1}});
 
     right.put({0, 0}, U'́', Style{});
 
-    ought(sheet.at({3, 0}).shown == Shown::none);
+    OUGHT(sheet.at({3, 0}).shown == Shown::none);
 }
 
 // A shade dims what lies under it and keeps its character; over nothing it stays a shade, which the
@@ -265,10 +265,10 @@ TRIAL("Canvas: a shade keeps the character under it, and over nothing it is a sh
     whole.put({0, 0}, U'a', Style{});
     whole.shade({{0, 0}, {2, 1}}, dim);
 
-    same(sheet.at({0, 0}).letter, U'a');
-    ought(sheet.at({0, 0}).style == dim);
-    ought(sheet.at({1, 0}).shown == Shown::shade);
-    ought(sheet.at({2, 0}).shown == Shown::none);
+    SAME(sheet.at({0, 0}).letter, U'a');
+    OUGHT(sheet.at({0, 0}).style == dim);
+    OUGHT(sheet.at({1, 0}).shown == Shown::shade);
+    OUGHT(sheet.at({2, 0}).shown == Shown::none);
 }
 
 // A foreground character without a background of its own takes that of what lies under it, and
@@ -284,10 +284,10 @@ TRIAL("Canvas: a foreground character takes the background from below") {
     whole.foreground({0, 0}, U'x', Style{});
     whole.foreground({1, 0}, U'y', Style{});
 
-    same(sheet.at({0, 0}).letter, U'x');
-    ought(sheet.at({0, 0}).style.background == ground.background);
-    ought(sheet.at({0, 0}).shown == Shown::own);
-    ought(sheet.at({1, 0}).shown == Shown::foreground);
+    SAME(sheet.at({0, 0}).letter, U'x');
+    OUGHT(sheet.at({0, 0}).style.background == ground.background);
+    OUGHT(sheet.at({0, 0}).shown == Shown::own);
+    OUGHT(sheet.at({1, 0}).shown == Shown::foreground);
 }
 
 // What lies under a node can be read in its own coordinates; outside the clip there is nothing.
@@ -300,8 +300,8 @@ TRIAL("Canvas: at reads the sheet under the node, and nothing outside the clip")
 
     const Canvas inner = whole.within({{1, 0}, {2, 1}});
 
-    same(inner.at({0, 0}).letter, U'b');
-    ought(inner.at({2, 0}) == Cell{});
+    SAME(inner.at({0, 0}).letter, U'b');
+    OUGHT(inner.at({2, 0}) == Cell{});
 }
 
 // A node's own render starts from nothing: what the node does not paint stays undrawn, as the root
@@ -310,9 +310,9 @@ TRIAL("Node: what a node does not paint stays undrawn in its own render") {
     const auto plain = std::make_shared<ui::Node>();
     const Snapshot seen = plain->render({{0, 0}, {3, 1}});
 
-    same(seen.size().wide, 3);
-    ought(seen.at({0, 0}).shown == Shown::none);
-    ought(seen.at({2, 0}).shown == Shown::none);
+    SAME(seen.size().wide, 3);
+    OUGHT(seen.at({0, 0}).shown == Shown::none);
+    OUGHT(seen.at({2, 0}).shown == Shown::none);
 }
 
 // Only the rows of an announced change are painted again; the rest of the screen stays as the last
@@ -328,7 +328,7 @@ TRIAL("Root: a frame paints only the rows of an announced change") {
 
     Snapshot made = top.render({{0, 0}, {3, 3}});
 
-    same(read(made, 0), std::string{"aaa"});
+    SAME(read(made, 0), std::string{"aaa"});
 
     const int before = three.b->painted();
 
@@ -337,14 +337,14 @@ TRIAL("Root: a frame paints only the rows of an announced change") {
 
     made = top.render({{0, 0}, {3, 3}});
 
-    same(read(made, 0), std::string{"aaa"});
-    same(read(made, 1), std::string{"bbb"});
-    same(read(made, 2), std::string{"zzz"});
-    same(three.b->painted(), before);
+    SAME(read(made, 0), std::string{"aaa"});
+    SAME(read(made, 1), std::string{"bbb"});
+    SAME(read(made, 2), std::string{"zzz"});
+    SAME(three.b->painted(), before);
 
     top.repaint();
 
-    same(read(top.render({{0, 0}, {3, 3}}), 0), std::string{"xxx"});
+    SAME(read(top.render({{0, 0}, {3, 3}}), 0), std::string{"xxx"});
 }
 
 // A frame without any announcement paints nothing at all. The check of frames, which paints the
@@ -363,7 +363,7 @@ TRIAL("Root: a frame after no change paints nothing") {
 
     (void)top.render({{0, 0}, {3, 3}});
 
-    same(three.a->painted() + three.b->painted() + three.c->painted(), before);
+    SAME(three.a->painted() + three.b->painted() + three.c->painted(), before);
 }
 
 // With the check of frames on, a change nobody announced fails the frame that should show it.
@@ -377,7 +377,7 @@ TRIAL("Root: the check of frames finds a change nobody announced") {
 
     three.b->unannounced(U'y');
 
-    threw((void)top.render({{0, 0}, {3, 3}}));
+    THREW((void)top.render({{0, 0}, {3, 3}}));
 }
 
 // A node that moves need not announce it: the layout finds that it stands elsewhere and repaints
@@ -394,17 +394,17 @@ TRIAL("Root: a node pushed down by its neighbour is painted again in both places
 
     const Snapshot made = top.render({{0, 0}, {3, 4}});
 
-    same(read(made, 0), std::string{"aaa"});
-    same(read(made, 1), std::string{"aaa"});
-    same(read(made, 2), std::string{"bbb"});
-    same(read(made, 3), std::string{"ccc"});
+    SAME(read(made, 0), std::string{"aaa"});
+    SAME(read(made, 1), std::string{"aaa"});
+    SAME(read(made, 2), std::string{"bbb"});
+    SAME(read(made, 3), std::string{"ccc"});
 
     three.a->high(1);
 
     const Snapshot back = top.render({{0, 0}, {3, 4}});
 
-    same(read(back, 2), std::string{"ccc"});
-    same(read(back, 3), std::string{"..."});
+    SAME(read(back, 2), std::string{"ccc"});
+    SAME(read(back, 3), std::string{"..."});
 }
 
 // A change announced in the middle of the layout is laid out again before the frame is painted: the
@@ -425,8 +425,8 @@ TRIAL("Root: a change announced in the layout is laid out again in the same fram
 
     const Snapshot made = top.render({{0, 0}, {1, 2}});
 
-    same(read(made, 0), std::string{"2"});
-    same(read(made, 1), std::string{"2"});
+    SAME(read(made, 0), std::string{"2"});
+    SAME(read(made, 1), std::string{"2"});
 }
 
 // A layout that announces a change every time never settles: the frame gives up after a few passes
@@ -436,7 +436,7 @@ TRIAL("Root: a layout that never settles ends the frame, and the check reports i
 
     top.children().add(std::make_shared<Restless>());
 
-    threw((void)top.render({{0, 0}, {2, 2}}));
+    THREW((void)top.render({{0, 0}, {2, 2}}));
 
     const Unchecked off;
 
@@ -454,21 +454,21 @@ TRIAL("Canvas: ASCII over a double-width character leaves no half of it") {
     whole.put({0, 0}, U'界', Style{});
     whole.put({0, 0}, std::string_view{"a"}, Style{});
 
-    same(sheet.at({0, 0}).letter, U'a');
-    same(sheet.at({1, 0}).letter, U' ');
+    SAME(sheet.at({0, 0}).letter, U'a');
+    SAME(sheet.at({1, 0}).letter, U' ');
 
     whole.put({2, 0}, U'界', Style{});
     whole.put({3, 0}, std::string_view{"b"}, Style{});
 
-    same(sheet.at({2, 0}).letter, U' ');
-    same(sheet.at({3, 0}).letter, U'b');
+    SAME(sheet.at({2, 0}).letter, U' ');
+    SAME(sheet.at({3, 0}).letter, U'b');
 
     // A wide character below the CJK block: a Hangul jamo.
     whole.put({0, 0}, U'\u1100', Style{});
     whole.put({0, 0}, std::string_view{"c"}, Style{});
 
-    same(sheet.at({0, 0}).letter, U'c');
-    same(sheet.at({1, 0}).letter, U' ');
+    SAME(sheet.at({0, 0}).letter, U'c');
+    SAME(sheet.at({1, 0}).letter, U' ');
 }
 
 // A shadow keeps a double-width character whole, since only its style changes, while a letter over
@@ -488,14 +488,14 @@ TRIAL("Canvas: a shadow keeps a double-width character whole and a letter cuts i
     whole.shade({{2, 0}, {2, 1}}, dark);
     whole.put({4, 0}, U'b', Style{});
 
-    same(sheet.at({0, 0}).letter, U' ');
-    same(sheet.at({1, 0}).letter, U'a');
-    same(sheet.at({2, 0}).letter, U'画');
-    same(sheet.at({3, 0}).letter, char32_t{0});
-    ought(sheet.at({2, 0}).style.faint);
-    ought(sheet.at({3, 0}).style.faint);
-    same(sheet.at({4, 0}).letter, U'b');
-    same(sheet.at({5, 0}).letter, U' ');
+    SAME(sheet.at({0, 0}).letter, U' ');
+    SAME(sheet.at({1, 0}).letter, U'a');
+    SAME(sheet.at({2, 0}).letter, U'画');
+    SAME(sheet.at({3, 0}).letter, char32_t{0});
+    OUGHT(sheet.at({2, 0}).style.faint);
+    OUGHT(sheet.at({3, 0}).style.faint);
+    SAME(sheet.at({4, 0}).letter, U'b');
+    SAME(sheet.at({5, 0}).letter, U' ');
 }
 
 // A foreground character with a background of its own is an ordinary cell, and so is a plain one
@@ -515,11 +515,11 @@ TRIAL("Canvas: a foreground with its own background and a plain cell cover the g
     whole.put({1, 0}, U'▌', red);
     whole.foreground({2, 0}, 0, red);
 
-    ought(sheet.at({0, 0}).style.background == papered.background);
-    ought(sheet.at({0, 0}).shown == Shown::own);
-    ought(sheet.at({1, 0}).style.background.transparent);
-    ought(sheet.at({2, 0}).style.background == ground.background);
-    same(sheet.at({2, 0}).letter, U' ');
+    OUGHT(sheet.at({0, 0}).style.background == papered.background);
+    OUGHT(sheet.at({0, 0}).shown == Shown::own);
+    OUGHT(sheet.at({1, 0}).style.background.transparent);
+    OUGHT(sheet.at({2, 0}).style.background == ground.background);
+    SAME(sheet.at({2, 0}).letter, U' ');
 }
 
 // A link painted through a child's canvas marks the child's cells on the sheet; whatever is put
@@ -536,16 +536,16 @@ TRIAL("Canvas: a hyperlink marks what is painted, a cover takes it away and a sh
 
     child.link({{0, 0}, {3, 1}}, made);
 
-    same(sheet.at({2, 0}).link, made.mark);
-    same(sheet.at({4, 0}).link, made.mark);
-    same(sheet.at({5, 0}).link, std::uint32_t{0});
-    same(sheet.links().size(), std::size_t{1});
+    SAME(sheet.at({2, 0}).link, made.mark);
+    SAME(sheet.at({4, 0}).link, made.mark);
+    SAME(sheet.at({5, 0}).link, std::uint32_t{0});
+    SAME(sheet.links().size(), std::size_t{1});
 
     whole.put({2, 0}, U'x', Style{});
 
-    same(sheet.at({2, 0}).link, std::uint32_t{0});
+    SAME(sheet.at({2, 0}).link, std::uint32_t{0});
 
     whole.shade({{3, 0}, {1, 1}}, Style{});
 
-    same(sheet.at({3, 0}).link, made.mark);
+    SAME(sheet.at({3, 0}).link, made.mark);
 }

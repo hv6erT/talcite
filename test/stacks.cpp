@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <optional>
@@ -85,7 +85,7 @@ TRIAL("Stack: a child takes the whole room") {
 
     (void)stack.render({{0, 0}, {6, 3}});
 
-    same(one->area(), (ui::Area{{0, 0}, {6, 3}}));
+    SAME(one->area(), (ui::Area{{0, 0}, {6, 3}}));
 }
 
 // --- A place of its own --------------------------------------------------------------------------
@@ -104,13 +104,13 @@ TRIAL("Stack: a child the container lays in one spot stands there") {
 
     const Snapshot made = stack.render({{0, 0}, {6, 3}});
 
-    same(over->area(), (ui::Area{{2, 1}, {3, 1}}));
+    SAME(over->area(), (ui::Area{{2, 1}, {3, 1}}));
 
-    same(made.at({0, 0}).letter, U'a');
-    same(made.at({2, 1}).letter, U'b');
-    same(made.at({4, 1}).letter, U'b');
-    same(made.at({5, 1}).letter, U'a');
-    same(made.at({2, 2}).letter, U'a');
+    SAME(made.at({0, 0}).letter, U'a');
+    SAME(made.at({2, 1}).letter, U'b');
+    SAME(made.at({4, 1}).letter, U'b');
+    SAME(made.at({5, 1}).letter, U'a');
+    SAME(made.at({2, 2}).letter, U'a');
 }
 
 // The stack is transparent where no child lies; otherwise it would paint spaces over everything
@@ -131,9 +131,9 @@ TRIAL("Stack: outside its children it lets through what lies below") {
 
     const Snapshot made = outer.render({{0, 0}, {6, 3}});
 
-    same(made.at({2, 1}).letter, U'b');
-    same(made.at({0, 0}).letter, U'a');
-    same(made.at({5, 2}).letter, U'a');
+    SAME(made.at({2, 1}).letter, U'b');
+    SAME(made.at({0, 0}).letter, U'a');
+    SAME(made.at({5, 2}).letter, U'a');
 }
 
 // A child may overlap its siblings but may not go outside its parent, and the container enforces
@@ -149,8 +149,8 @@ TRIAL("Stack: a place sticking out of the room is clipped") {
 
     const Snapshot made = stack.render({{0, 0}, {6, 3}});
 
-    same(one->area(), (ui::Area{{4, 2}, {2, 1}}));
-    same(made.size(), (ui::Size{6, 3}));
+    SAME(one->area(), (ui::Area{{4, 2}, {2, 1}}));
+    SAME(made.size(), (ui::Size{6, 3}));
 }
 
 TRIAL("Stack: a place outside the room gives an empty rectangle, not a negative one") {
@@ -163,10 +163,10 @@ TRIAL("Stack: a place outside the room gives an empty rectangle, not a negative 
 
     (void)stack.render({{0, 0}, {6, 3}});
 
-    ought(one->area().size.wide >= 0);
-    ought(one->area().size.high >= 0);
-    ought(one->area().at.x >= 0);
-    ought(one->area().at.y <= 3);
+    OUGHT(one->area().size.wide >= 0);
+    OUGHT(one->area().size.high >= 0);
+    OUGHT(one->area().at.x >= 0);
+    OUGHT(one->area().at.y <= 3);
 }
 
 // --- Hitting -------------------------------------------------------------------------------------
@@ -198,12 +198,12 @@ TRIAL("Stack: a click hits the overlay only where it is") {
     ui::ClickEvent inside{{3, 1}, ui::Mouse::left, {}};
 
     (void)top.dispatch(inside);
-    same(hits, 1);
+    SAME(hits, 1);
 
     ui::ClickEvent outside{{0, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(outside);
-    same(hits, 1);
+    SAME(hits, 1);
 }
 
 // A float occupies only what it holds: over the whole room of a stack, a click beside its child
@@ -224,8 +224,8 @@ TRIAL("Stack: a click beside what a float holds goes to the layer below") {
 
     (void)top.render({{0, 0}, {6, 3}});
 
-    same(right->area(), (ui::Area{{0, 0}, {6, 3}}));
-    same(held->area().at.x, 4);
+    SAME(right->area(), (ui::Area{{0, 0}, {6, 3}}));
+    SAME(held->area().at.x, 4);
 
     int below = 0;
     int above = 0;
@@ -252,15 +252,15 @@ TRIAL("Stack: a click beside what a float holds goes to the layer below") {
     ui::ClickEvent beside{{1, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(beside);
-    same(below, 1);
-    same(above, 0);
+    SAME(below, 1);
+    SAME(above, 0);
 
     ui::ClickEvent on{{5, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(on);
-    same(below, 1);
-    same(above, 1);
-    same(floated, 0);
+    SAME(below, 1);
+    SAME(above, 1);
+    SAME(floated, 0);
 }
 
 // Icons in the top right corner of a window: two floats, one in the other, over the content. A
@@ -283,9 +283,9 @@ TRIAL("Stack: through nested floats a click hits only what the innermost holds")
 
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
-    same(icons->screen_area()->at, (ui::Spot{4, 0}));
-    same(made.at({4, 0}).letter, U'i');
-    same(made.at({0, 0}).letter, U'a');
+    SAME(icons->screen_area()->at, (ui::Spot{4, 0}));
+    SAME(made.at({4, 0}).letter, U'i');
+    SAME(made.at({0, 0}).letter, U'a');
 
     int below = 0;
     int hit = 0;
@@ -308,14 +308,14 @@ TRIAL("Stack: through nested floats a click hits only what the innermost holds")
         (void)top.dispatch(beside);
     }
 
-    same(below, 2);
-    same(hit, 0);
+    SAME(below, 2);
+    SAME(hit, 0);
 
     ui::ClickEvent on{{5, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(on);
-    same(below, 2);
-    same(hit, 1);
+    SAME(below, 2);
+    SAME(hit, 1);
 }
 
 // --- screen_area, area_in -----------------------------------------------------------------------
@@ -345,12 +345,12 @@ TRIAL("screen_area: assembles the place on the screen through the levels and see
     (void)top.render({{0, 0}, {6, 4}});
 
     // The own rectangle says "second row of the inner column"; the place on the screen says "third".
-    same(second->area().at, (ui::Spot{0, 1}));
+    SAME(second->area().at, (ui::Spot{0, 1}));
 
     const std::optional<ui::Area> where = second->screen_area();
 
-    ought(where.has_value());
-    same(where->at, (ui::Spot{0, 2}));
+    OUGHT(where.has_value());
+    SAME(where->at, (ui::Spot{0, 2}));
 
     // Something above disappeared; the place has to see that without any notification.
     outer->children().remove(head.get());
@@ -358,13 +358,13 @@ TRIAL("screen_area: assembles the place on the screen through the levels and see
 
     (void)top.render({{0, 0}, {6, 5}});
 
-    same(second->screen_area()->at, (ui::Spot{0, 1}));
+    SAME(second->screen_area()->at, (ui::Spot{0, 1}));
 }
 
 TRIAL("screen_area: a node without a rectangle has no place") {
     const auto one = std::make_shared<Box>(ui::Size{6, 1}, U'a');
 
-    ought(!one->screen_area().has_value());
+    OUGHT(!one->screen_area().has_value());
 }
 
 // The same in the other axis: the trial above stands entirely at the left edge, so it could not
@@ -386,9 +386,9 @@ TRIAL("screen_area: adds up the ancestors' offsets horizontally too") {
 
     (void)top.render({{0, 0}, {10, 1}});
 
-    same(third->area().at, (ui::Spot{2, 0}));
-    same(third->screen_area()->at, (ui::Spot{5, 0}));
-    same(third->local({6, 0}), (ui::Spot{1, 0}));
+    SAME(third->area().at, (ui::Spot{2, 0}));
+    SAME(third->screen_area()->at, (ui::Spot{5, 0}));
+    SAME(third->local({6, 0}), (ui::Spot{1, 0}));
 }
 
 // A rectangle in an ancestor's coordinates: without the ancestor's own offset, and for a node
@@ -411,8 +411,8 @@ TRIAL("area_in: counts from the ancestor and does not answer for nodes outside i
 
     (void)top.render({{0, 0}, {10, 1}});
 
-    same(third->area_in(*inner)->at, (ui::Spot{2, 0}));
-    same(third->area_in(*row)->at, (ui::Spot{5, 0}));
-    ought(!third->area_in(*first).has_value());
-    ought(!first->area_in(*inner).has_value());
+    SAME(third->area_in(*inner)->at, (ui::Spot{2, 0}));
+    SAME(third->area_in(*row)->at, (ui::Spot{5, 0}));
+    OUGHT(!third->area_in(*first).has_value());
+    OUGHT(!first->area_in(*inner).has_value());
 }

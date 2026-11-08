@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -55,16 +55,16 @@ constexpr std::string_view leaving =
 // --- Recognition ---------------------------------------------------------------------------
 
 TRIAL("guessed: recognizes GIF by both ages of the signature") {
-    same(static_cast<int>(format_of(lump(leaving))), static_cast<int>(Format::gif));
-    same(static_cast<int>(format_of(lump("474946383761040004000000003b"))), static_cast<int>(Format::gif));
+    SAME(static_cast<int>(format_of(lump(leaving))), static_cast<int>(Format::gif));
+    SAME(static_cast<int>(format_of(lump("474946383761040004000000003b"))), static_cast<int>(Format::gif));
 }
 
 TRIAL("guessed: recognizes PNG, JPEG and BMP by the header, without a decoder") {
-    same(static_cast<int>(format_of(lump("89504e470d0a1a0a0000000d49484452"))),
+    SAME(static_cast<int>(format_of(lump("89504e470d0a1a0a0000000d49484452"))),
          static_cast<int>(Format::png));
-    same(static_cast<int>(format_of(lump("ffd8ffe000104a464946"))),
+    SAME(static_cast<int>(format_of(lump("ffd8ffe000104a464946"))),
          static_cast<int>(Format::jpeg));
-    same(static_cast<int>(format_of(lump("424d3a0000000000000036000000280000000100000001000000"))),
+    SAME(static_cast<int>(format_of(lump("424d3a0000000000000036000000280000000100000001000000"))),
          static_cast<int>(Format::bmp));
 }
 
@@ -75,64 +75,64 @@ TRIAL("guessed: recognizes PNG, JPEG and BMP by the header, without a decoder") 
 TRIAL("shaped: size from the PNG, GIF, BMP and JPEG header, nothing when it is missing") {
     const std::optional<ui::Size> png = size_of(lump("89504e470d0a1a0a0000000d49484452000002800000016008060000"));
 
-    ought(png.has_value());
-    same(png->wide, 640);
-    same(png->high, 352);
+    OUGHT(png.has_value());
+    SAME(png->wide, 640);
+    SAME(png->high, 352);
 
     const std::optional<ui::Size> gif = size_of(lump(leaving));
 
-    ought(gif.has_value());
-    same(gif->wide, 16);
-    same(gif->high, 12);
+    OUGHT(gif.has_value());
+    SAME(gif->wide, 16);
+    SAME(gif->high, 12);
 
     const std::optional<ui::Size> bmp =
         size_of(lump("424d3a0000000000000036000000280000000300000005000000"));
 
-    ought(bmp.has_value());
-    same(bmp->wide, 3);
-    same(bmp->high, 5);
+    OUGHT(bmp.has_value());
+    SAME(bmp->wide, 3);
+    SAME(bmp->high, 5);
 
     const std::optional<ui::Size> upside =
         size_of(lump("424d3a00000000000000360000002800000003000000fbffffff"));
 
-    ought(upside.has_value());
-    same(upside->wide, 3);
-    same(upside->high, 5);
+    OUGHT(upside.has_value());
+    SAME(upside->wide, 3);
+    SAME(upside->high, 5);
 
     const std::optional<ui::Size> old =
         size_of(lump("424d3a00000000000000360000000c0000000700090001000100"));
 
-    ought(old.has_value());
-    same(old->wide, 7);
-    same(old->high, 9);
+    OUGHT(old.has_value());
+    SAME(old->wide, 7);
+    SAME(old->high, 9);
 
     // JPEG: SOI, APP1 (EXIF, length 16), then SOF0: length, depth, height 16, width 32.
     const std::optional<ui::Size> jpeg = size_of(lump("ffd8"
                                                      "ffe100104578696600000000000000000000"
                                                      "ffc0001108001000200301220002110103110100"));
 
-    ought(jpeg.has_value());
-    same(jpeg->wide, 32);
-    same(jpeg->high, 16);
+    OUGHT(jpeg.has_value());
+    SAME(jpeg->wide, 32);
+    SAME(jpeg->high, 16);
 
-    ought(!size_of(lump("ffd8ffe100104578696600000000000000000000")).has_value());
-    ought(!size_of(lump("ffd8ffe1001045786966")).has_value());
-    ought(!size_of(lump("89504e470d0a1a0a0000000d49484452")).has_value());
-    ought(!size_of(lump("47494638396110")).has_value());
-    ought(!size_of(lump("424d3a0000000000000036000000280000")).has_value());
-    ought(!size_of(lump("89504e470d0a1a0a0000000d494844520000000000000160")).has_value());
-    ought(!size_of(lump("hello")).has_value());
+    OUGHT(!size_of(lump("ffd8ffe100104578696600000000000000000000")).has_value());
+    OUGHT(!size_of(lump("ffd8ffe1001045786966")).has_value());
+    OUGHT(!size_of(lump("89504e470d0a1a0a0000000d49484452")).has_value());
+    OUGHT(!size_of(lump("47494638396110")).has_value());
+    OUGHT(!size_of(lump("424d3a0000000000000036000000280000")).has_value());
+    OUGHT(!size_of(lump("89504e470d0a1a0a0000000d494844520000000000000160")).has_value());
+    OUGHT(!size_of(lump("hello")).has_value());
 }
 
 TRIAL("guessed: BM alone without the rest of the header is not an image") {
-    same(static_cast<int>(format_of(lump("424d"))), static_cast<int>(Format::none));
-    same(static_cast<int>(format_of(lump("424d3a000000"))), static_cast<int>(Format::none));
+    SAME(static_cast<int>(format_of(lump("424d"))), static_cast<int>(Format::none));
+    SAME(static_cast<int>(format_of(lump("424d3a000000"))), static_cast<int>(Format::none));
 }
 
 TRIAL("guessed: garbage and emptiness are not an image") {
-    same(static_cast<int>(format_of(Bytes{})), static_cast<int>(Format::none));
-    same(static_cast<int>(format_of(lump("47494638"))), static_cast<int>(Format::none));
-    same(static_cast<int>(format_of(lump("474946383861"))), static_cast<int>(Format::none));
+    SAME(static_cast<int>(format_of(Bytes{})), static_cast<int>(Format::none));
+    SAME(static_cast<int>(format_of(lump("47494638"))), static_cast<int>(Format::none));
+    SAME(static_cast<int>(format_of(lump("474946383861"))), static_cast<int>(Format::none));
 }
 
 // --- Image seam ----------------------------------------------------------------------------------
@@ -140,7 +140,7 @@ TRIAL("guessed: garbage and emptiness are not an image") {
 TRIAL("Image: an empty seam refuses with Unbound naming the kind") {
     const Seam<ImageProvider> none;
 
-    ought(!none.bound());
+    OUGHT(!none.bound());
 
     bool amiss = false;
 
@@ -150,7 +150,7 @@ TRIAL("Image: an empty seam refuses with Unbound naming the kind") {
         amiss = std::string{why.what()} == "No provider for Image.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -160,14 +160,14 @@ TRIAL("Image: an empty seam refuses with Unbound naming the kind") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // The provider's reason comes out as `Refused` with the kind's name in front, in both forms.
 TRIAL("Image: a provider's refusal comes out as Refused") {
     const Seam<ImageProvider> images = faking::images();
 
-    same(std::string{images.provider().name()}, std::string{"fake images"});
+    SAME(std::string{images.provider().name()}, std::string{"fake images"});
 
     bool amiss = false;
 
@@ -177,7 +177,7 @@ TRIAL("Image: a provider's refusal comes out as Refused") {
         amiss = std::string{why.what()} == "Image provider refused: not a GIF the fake would read";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Image: collecting the stream gives all frames with size and delays") {
@@ -185,21 +185,21 @@ TRIAL("Image: collecting the stream gives all frames with size and delays") {
 
     const Pixels one = images.decoded(lump(leaving));
 
-    ought(one.held());
-    same(one.size().wide, 16);
-    same(one.size().high, 12);
-    same(one.stills().size(), std::size_t{4});
-    same(one.stills()[0].after.count(), 40LL);
-    same(one.stills()[3].after.count(), 120LL);
-    same(one.stills()[0].bytes.size(), std::size_t{16 * 12 * 4});
+    OUGHT(one.held());
+    SAME(one.size().wide, 16);
+    SAME(one.size().high, 12);
+    SAME(one.stills().size(), std::size_t{4});
+    SAME(one.stills()[0].after.count(), 40LL);
+    SAME(one.stills()[3].after.count(), 120LL);
+    SAME(one.stills()[0].bytes.size(), std::size_t{16 * 12 * 4});
 }
 
 TRIAL("Image: asking for fewer frames stops the unfolding") {
     const Seam<ImageProvider> images = faking::images();
 
-    same(images.decoded(lump(leaving), 1).stills().size(), std::size_t{1});
-    same(images.decoded(lump(leaving), 3).stills().size(), std::size_t{3});
-    same(images.decoded(lump(leaving), 9).stills().size(), std::size_t{4});
+    SAME(images.decoded(lump(leaving), 1).stills().size(), std::size_t{1});
+    SAME(images.decoded(lump(leaving), 3).stills().size(), std::size_t{3});
+    SAME(images.decoded(lump(leaving), 9).stills().size(), std::size_t{4});
 }
 
 // The streaming form hands over a frame and forgets it. False from the caller means "enough" and is
@@ -212,17 +212,17 @@ TRIAL("Image: the stream can be stopped, and without an action it does nothing")
     images.decoded(lump(leaving), [&](const Bytes& canvas, ui::Size size, std::chrono::milliseconds) {
         ++seen;
 
-        same(size.wide, 16);
-        same(canvas.size(), std::size_t{16 * 12 * 4});
+        SAME(size.wide, 16);
+        SAME(canvas.size(), std::size_t{16 * 12 * 4});
 
         return seen < 2;
     });
 
-    same(seen, std::size_t{2});
+    SAME(seen, std::size_t{2});
 
     images.decoded(lump(leaving), Taking{});
 
-    ought(true);
+    OUGHT(true);
 }
 
 // The ceiling is enforced by the seam, equally for every provider: a frame above `ceiling` does not
@@ -241,8 +241,8 @@ TRIAL("Image: a frame above the ceiling does not reach the caller") {
                        return true;
                    });
 
-    same(seen, std::size_t{0});
-    ought(!images.decoded(lump("474946383961ffffffff000000" "21f9040400000000" "3b")).held());
+    SAME(seen, std::size_t{0});
+    OUGHT(!images.decoded(lump("474946383961ffffffff000000" "21f9040400000000" "3b")).held());
 }
 
 // --- Image as a source ----------------------------------------------------------------------------
@@ -253,19 +253,19 @@ TRIAL("Image: a frame above the ceiling does not reach the caller") {
 TRIAL("Image: figured gives kind and shape at once, and pixels at the requested size") {
     const Figure one = figured(lump(leaving), faking::images());
 
-    same(static_cast<int>(one.format), static_cast<int>(Format::gif));
-    same(one.size.wide, 16);
-    same(one.size.high, 12);
-    ought(static_cast<bool>(one.fetch));
+    SAME(static_cast<int>(one.format), static_cast<int>(Format::gif));
+    SAME(one.size.wide, 16);
+    SAME(one.size.high, 12);
+    OUGHT(static_cast<bool>(one.fetch));
 
     const Pixels made = one.fetch({8, 6}).get();
 
-    ought(made.held());
-    same(made.size().wide, 8);
-    same(made.size().high, 6);
-    same(made.stills().size(), std::size_t{4});
-    same(made.stills()[3].after.count(), 120LL);
-    same(made.stills()[0].bytes.size(), std::size_t{8 * 6 * 4});
+    OUGHT(made.held());
+    SAME(made.size().wide, 8);
+    SAME(made.size().high, 6);
+    SAME(made.stills().size(), std::size_t{4});
+    SAME(made.stills()[3].after.count(), 120LL);
+    SAME(made.stills()[0].bytes.size(), std::size_t{8 * 6 * 4});
 }
 
 // The provider's refusal is not lost in the source: the promise is rejected with the same `Refused`
@@ -273,7 +273,7 @@ TRIAL("Image: figured gives kind and shape at once, and pixels at the requested 
 TRIAL("Image: figured rejects the promise when the provider refuses") {
     const Figure one = figured(lump("ffd8ffe000104a464946000102000000"), faking::images());
 
-    same(static_cast<int>(one.format), static_cast<int>(Format::jpeg));
+    SAME(static_cast<int>(one.format), static_cast<int>(Format::jpeg));
 
     bool amiss = false;
 
@@ -283,7 +283,7 @@ TRIAL("Image: figured rejects the promise when the provider refuses") {
         amiss = std::string{why.what()} == "Image provider refused: not a GIF the fake would read";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // Without a provider there is nothing to promise: the shape is empty, so that the layout asks for no
@@ -291,9 +291,9 @@ TRIAL("Image: figured rejects the promise when the provider refuses") {
 TRIAL("Image: figured without a provider has no shape and rejects with Unbound") {
     const Figure one = figured(lump(leaving), Seam<ImageProvider>{});
 
-    same(static_cast<int>(one.format), static_cast<int>(Format::gif));
-    same(one.size.wide, 0);
-    same(one.size.high, 0);
+    SAME(static_cast<int>(one.format), static_cast<int>(Format::gif));
+    SAME(one.size.wide, 0);
+    SAME(one.size.high, 0);
 
     bool amiss = false;
 
@@ -303,5 +303,5 @@ TRIAL("Image: figured without a provider has no shape and rejects with Unbound")
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }

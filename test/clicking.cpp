@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <memory>
@@ -111,10 +111,10 @@ TRIAL("Click: press and release in the same cell is a click, at once") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.size(), std::size_t{3});
-    same(top.told[0], std::string{"wciśnięcie"});
-    same(top.told[1], std::string{"puszczenie"});
-    same(top.told[2], std::string{"kliknięcie 3,2"});
+    SAME(top.told.size(), std::size_t{3});
+    SAME(top.told[0], std::string{"wciśnięcie"});
+    SAME(top.told[1], std::string{"puszczenie"});
+    SAME(top.told[2], std::string{"kliknięcie 3,2"});
 }
 
 TRIAL("Click: after the double-click window the next one in the same cell is single again") {
@@ -128,14 +128,14 @@ TRIAL("Click: after the double-click window the next one in the same cell is sin
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.size(), std::size_t{6});
-    same(top.told.back(), std::string{"kliknięcie 3,2"});
+    SAME(top.told.size(), std::size_t{6});
+    SAME(top.told.back(), std::string{"kliknięcie 3,2"});
 
     // And it opens a new window: the next one right after it is a double click.
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 // The window's limit belongs to the window: a second click exactly `double_click()` later is still
@@ -151,13 +151,13 @@ TRIAL("Click: a second one exactly at the window's limit is a double click") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 TRIAL("Click: the double-click window is set on the root, 400 ms by default") {
     Sheet top;
 
-    same(top.double_click(), std::chrono::milliseconds{400});
+    SAME(top.double_click(), std::chrono::milliseconds{400});
 
     top.double_click(std::chrono::milliseconds{100});
 
@@ -169,7 +169,7 @@ TRIAL("Click: the double-click window is set on the root, 400 ms by default") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"kliknięcie 3,2"});
+    SAME(top.told.back(), std::string{"kliknięcie 3,2"});
 
     top.double_click(std::chrono::milliseconds{1000});
 
@@ -178,7 +178,7 @@ TRIAL("Click: the double-click window is set on the root, 400 ms by default") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 // A moment that is not given is the moment the event is made; this is how the terminal works.
@@ -189,8 +189,8 @@ TRIAL("Click: a mouse event without a given moment carries now") {
 
     const auto after = std::chrono::steady_clock::now();
 
-    ought(what.when() >= before);
-    ought(what.when() <= after);
+    OUGHT(what.when() >= before);
+    OUGHT(what.when() <= after);
 }
 
 TRIAL("Click: a second one within the window gives a double click, without a second single") {
@@ -201,14 +201,14 @@ TRIAL("Click: a second one within the window gives a double click, without a sec
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 
     // One click, the first, as in Windows; the second release is already a double click.
     int clicks = 0;
 
     for (const std::string& one : top.told) clicks += one.rfind("kliknięcie", 0) == 0 ? 1 : 0;
 
-    same(clicks, 1);
+    SAME(clicks, 1);
 }
 
 TRIAL("Click: after a double click it starts over") {
@@ -222,13 +222,13 @@ TRIAL("Click: after a double click it starts over") {
     pressed(top, {1, 1});
     freed(top, {1, 1});
 
-    same(top.told.back(), std::string{"kliknięcie 1,1"});
+    SAME(top.told.back(), std::string{"kliknięcie 1,1"});
 
     // The third opened a new window, so the fourth is a double click again.
     pressed(top, {1, 1});
     freed(top, {1, 1});
 
-    same(top.told.back(), std::string{"podwójne 1,1"});
+    SAME(top.told.back(), std::string{"podwójne 1,1"});
 }
 
 TRIAL("Click: release in another cell is a drag") {
@@ -237,13 +237,13 @@ TRIAL("Click: release in another cell is a drag") {
     pressed(top, {3, 2});
     freed(top, {5, 2});
 
-    same(top.told.size(), std::size_t{2});
+    SAME(top.told.size(), std::size_t{2});
 
     // The drag opened no window: a click in the release cell is single.
     pressed(top, {5, 2});
     freed(top, {5, 2});
 
-    same(top.told.back(), std::string{"kliknięcie 5,2"});
+    SAME(top.told.back(), std::string{"kliknięcie 5,2"});
 }
 
 TRIAL("Click: a drag does not break the double-click window after a click") {
@@ -258,7 +258,7 @@ TRIAL("Click: a drag does not break the double-click window after a click") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 TRIAL("Click: a second one in another cell is a separate single") {
@@ -270,13 +270,13 @@ TRIAL("Click: a second one in another cell is a separate single") {
     pressed(top, {8, 4});
     freed(top, {8, 4});
 
-    same(top.told.back(), std::string{"kliknięcie 8,4"});
+    SAME(top.told.back(), std::string{"kliknięcie 8,4"});
 
     // The window moved to the second cell: a third click there is a double click.
     pressed(top, {8, 4});
     freed(top, {8, 4});
 
-    same(top.told.back(), std::string{"podwójne 8,4"});
+    SAME(top.told.back(), std::string{"podwójne 8,4"});
 }
 
 TRIAL("Click: a second one with another button is not a double") {
@@ -288,13 +288,13 @@ TRIAL("Click: a second one with another button is not a double") {
     pressed(top, {3, 2}, ui::Mouse::right);
     freed(top, {3, 2}, ui::Mouse::right);
 
-    same(top.told.back(), std::string{"kliknięcie 3,2"});
+    SAME(top.told.back(), std::string{"kliknięcie 3,2"});
 
     // The window moved to the right button: a second right click is a double click.
     pressed(top, {3, 2}, ui::Mouse::right);
     freed(top, {3, 2}, ui::Mouse::right);
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 TRIAL("Click: releasing a button other than the pressed one means nothing") {
@@ -303,7 +303,7 @@ TRIAL("Click: releasing a button other than the pressed one means nothing") {
     pressed(top, {3, 2}, ui::Mouse::left);
     freed(top, {3, 2}, ui::Mouse::right);
 
-    same(top.told.size(), std::size_t{2});
+    SAME(top.told.size(), std::size_t{2});
 }
 
 TRIAL("Click: a release alone, without a press, starts nothing") {
@@ -311,13 +311,13 @@ TRIAL("Click: a release alone, without a press, starts nothing") {
 
     freed(top, {3, 2});
 
-    same(top.told.size(), std::size_t{1});
+    SAME(top.told.size(), std::size_t{1});
 
     // Nothing is waiting: a full click in this cell is single.
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"kliknięcie 3,2"});
+    SAME(top.told.back(), std::string{"kliknięcie 3,2"});
 }
 
 TRIAL("Click: mouse motion decides nothing") {
@@ -333,7 +333,7 @@ TRIAL("Click: mouse motion decides nothing") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.back(), std::string{"podwójne 3,2"});
+    SAME(top.told.back(), std::string{"podwójne 3,2"});
 }
 
 TRIAL("Click: the raw event goes before the derived one") {
@@ -344,10 +344,10 @@ TRIAL("Click: the raw event goes before the derived one") {
     pressed(top, {3, 2});
     freed(top, {3, 2});
 
-    same(top.told.size(), std::size_t{6});
-    same(top.told[2], std::string{"kliknięcie 3,2"});
-    same(top.told[4], std::string{"puszczenie"});
-    same(top.told[5], std::string{"podwójne 3,2"});
+    SAME(top.told.size(), std::size_t{6});
+    SAME(top.told[2], std::string{"kliknięcie 3,2"});
+    SAME(top.told[4], std::string{"puszczenie"});
+    SAME(top.told[5], std::string{"podwójne 3,2"});
 }
 
 TRIAL("Click: targets the node under the cursor, not the root") {
@@ -368,15 +368,15 @@ TRIAL("Click: targets the node under the cursor, not the root") {
 
     later(top.double_click() + std::chrono::milliseconds{1});
 
-    same(first->clicks, 0);
-    same(second->clicks, 1);
+    SAME(first->clicks, 0);
+    SAME(second->clicks, 1);
 
     pressed(top, {2, 3});
     freed(top, {2, 3});
     pressed(top, {2, 3});
     freed(top, {2, 3});
 
-    same(second->doubles, 1);
+    SAME(second->doubles, 1);
 }
 
 // --- Mouse capture -------------------------------------------------------------------------------
@@ -450,16 +450,16 @@ TRIAL("Root: the captor gets motion and release outside itself") {
     pair.sent({7, 0}, ui::Press::move);
     pair.sent({8, 0}, ui::Press::up);
 
-    same(pair.left->downs, 1);
-    same(pair.left->moves, 1);
-    same(pair.left->ups, 1);
-    same(pair.right->moves, 0);
-    same(pair.right->ups, 0);
+    SAME(pair.left->downs, 1);
+    SAME(pair.left->moves, 1);
+    SAME(pair.left->ups, 1);
+    SAME(pair.right->moves, 0);
+    SAME(pair.right->ups, 0);
 
     pair.sent({7, 0}, ui::Press::move, ui::Mouse::none);
 
-    same(pair.left->moves, 1);
-    same(pair.right->moves, 1);
+    SAME(pair.left->moves, 1);
+    SAME(pair.right->moves, 1);
 }
 
 // Capture is on request: whoever did not ask gets no motion outside itself; this is how hovering
@@ -471,11 +471,11 @@ TRIAL("Root: without a request motion goes under the cursor") {
     pair.sent({7, 0}, ui::Press::move);
     pair.sent({8, 0}, ui::Press::up);
 
-    same(pair.left->downs, 1);
-    same(pair.left->moves, 0);
-    same(pair.left->ups, 0);
-    same(pair.right->moves, 1);
-    same(pair.right->ups, 1);
+    SAME(pair.left->downs, 1);
+    SAME(pair.left->moves, 0);
+    SAME(pair.left->ups, 0);
+    SAME(pair.right->moves, 1);
+    SAME(pair.right->ups, 1);
 }
 
 // A lost release does not tie the mouse forever: a new press goes under the cursor and removes
@@ -487,10 +487,10 @@ TRIAL("Root: a press removes an old capture") {
     pair.sent({7, 0}, ui::Press::down);
     pair.sent({8, 0}, ui::Press::move);
 
-    same(pair.left->downs, 1);
-    same(pair.right->downs, 1);
-    same(pair.left->moves, 0);
-    same(pair.right->moves, 1);
+    SAME(pair.left->downs, 1);
+    SAME(pair.right->downs, 1);
+    SAME(pair.left->moves, 0);
+    SAME(pair.right->moves, 1);
 }
 
 // A captor that left the tree during a drag gets nothing more.
@@ -505,8 +505,8 @@ TRIAL("Root: a captor that left the tree gets nothing") {
     // The right field has moved into the left one's place.
     pair.sent({1, 0}, ui::Press::move);
 
-    same(pair.left->moves, 0);
-    same(pair.right->moves, 1);
+    SAME(pair.left->moves, 0);
+    SAME(pair.right->moves, 1);
 }
 
 // The back and forward buttons are commands, not pointing: they make no click, and a back press in
@@ -517,13 +517,13 @@ TRIAL("Click: the back and forward buttons make no clicks") {
     pressed(top, {3, 2}, ui::Mouse::back);
     freed(top, {3, 2}, ui::Mouse::back);
 
-    same(top.told.size(), std::size_t{2});
+    SAME(top.told.size(), std::size_t{2});
 
     pressed(top, {3, 2});
     pressed(top, {3, 2}, ui::Mouse::forward);
     freed(top, {3, 2}, ui::Mouse::forward);
     freed(top, {3, 2});
 
-    same(top.told.size(), std::size_t{7});
-    same(top.told.back(), std::string{"kliknięcie 3,2"});
+    SAME(top.told.size(), std::size_t{7});
+    SAME(top.told.back(), std::string{"kliknięcie 3,2"});
 }

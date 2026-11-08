@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 // Comments are the documentation of this code, so a name quoted in one with backticks has to
 // exist. A comment that speaks of things that are gone looks true and is therefore worse than
@@ -805,7 +805,7 @@ TRIAL("Names: every name quoted in a comment exists") {
 
         said += "\n\n  A name from elsewhere, or one that is gone, is written without backticks.";
 
-        ::proving::fell(__FILE__, __LINE__, said);
+        ::tal::testing::fell(__FILE__, __LINE__, said);
     }
 }
 
@@ -826,7 +826,7 @@ TRIAL("Names: headers carry no comments") {
 
         for (const std::string& one : bad) said += '\n' + one;
 
-        ::proving::fell(__FILE__, __LINE__, said);
+        ::tal::testing::fell(__FILE__, __LINE__, said);
     }
 }
 
@@ -853,7 +853,7 @@ TRIAL("Names: every function that does something has a comment above it") {
 
         for (const std::string& one : bad) said += '\n' + one;
 
-        ::proving::fell(__FILE__, __LINE__, said);
+        ::tal::testing::fell(__FILE__, __LINE__, said);
     }
 }
 
@@ -877,7 +877,7 @@ TRIAL("Names: the inline headers on the list exist") {
 
         for (const std::string& one : bad) said += '\n' + one;
 
-        ::proving::fell(__FILE__, __LINE__, said);
+        ::tal::testing::fell(__FILE__, __LINE__, said);
     }
 }
 
@@ -905,31 +905,31 @@ TRIAL("Names: function definitions are told apart from statements, lambdas and c
         "}\n"                                                    // 20
         "}\n");
 
-    same(found.size(), std::size_t{4});
+    SAME(found.size(), std::size_t{4});
 
     if (found.size() == 4) {
-        same(found[0].line, std::size_t{4});
-        ought(found[0].empty);
-        same(found[1].line, std::size_t{5});
-        same(found[2].line, std::size_t{7});
-        same(found[3].line, std::size_t{16});
-        ought(!found[3].empty);
+        SAME(found[0].line, std::size_t{4});
+        OUGHT(found[0].empty);
+        SAME(found[1].line, std::size_t{5});
+        SAME(found[2].line, std::size_t{7});
+        SAME(found[3].line, std::size_t{16});
+        OUGHT(!found[3].empty);
     }
 
     // Brace initialization in a constructor's initializer list is not a body.
     const std::vector<Definition> built = definitions("A::A(int x)\n    : b_{x}, c_(Shape{x}) {\n    go();\n}\n");
 
-    same(built.size(), std::size_t{1});
+    SAME(built.size(), std::size_t{1});
 
     if (built.size() == 1) {
-        same(built[0].line, std::size_t{1});
-        ought(!built[0].empty);
+        SAME(built[0].line, std::size_t{1});
+        OUGHT(!built[0].empty);
     }
 
     // Neither are braces in a default argument.
     const std::vector<Definition> defaulted = definitions("void f(int a, Mods b = {}) {\n    go();\n}\n");
 
-    same(defaulted.size(), std::size_t{1});
+    SAME(defaulted.size(), std::size_t{1});
 }
 
 TRIAL("Names: the split keeps strings and raw strings as code") {
@@ -937,21 +937,21 @@ TRIAL("Names: the split keeps strings and raw strings as code") {
                              "const char* b = \"https://x\"; /* two\nthree */ char c = '/';\n"
                              "const char* d = R\"j(// not a comment)j\";\n");
 
-    same(made.comments.size(), std::size_t{3});
+    SAME(made.comments.size(), std::size_t{3});
 
     if (made.comments.size() == 3) {
-        same(made.comments[0].line, std::size_t{1});
-        same(made.comments[0].text, std::string{" one"});
-        same(made.comments[1].line, std::size_t{2});
-        same(made.comments[1].text, std::string{" two"});
-        same(made.comments[2].line, std::size_t{3});
-        same(made.comments[2].text, std::string{"three "});
+        SAME(made.comments[0].line, std::size_t{1});
+        SAME(made.comments[0].text, std::string{" one"});
+        SAME(made.comments[1].line, std::size_t{2});
+        SAME(made.comments[1].text, std::string{" two"});
+        SAME(made.comments[2].line, std::size_t{3});
+        SAME(made.comments[2].text, std::string{"three "});
     }
 
-    ought(made.code.find("https://x") != std::string::npos);
-    ought(made.code.find("// not a comment") != std::string::npos);
-    ought(made.code.find("one") == std::string::npos);
-    same(std::count(made.code.begin(), made.code.end(), '\n'), std::ptrdiff_t{4});
+    OUGHT(made.code.find("https://x") != std::string::npos);
+    OUGHT(made.code.find("// not a comment") != std::string::npos);
+    OUGHT(made.code.find("one") == std::string::npos);
+    SAME(std::count(made.code.begin(), made.code.end(), '\n'), std::ptrdiff_t{4});
 }
 
 namespace {
@@ -1186,7 +1186,7 @@ TRIAL("Names: on Windows the shared fs code gives std::filesystem every path thr
 
         for (const std::string& one : bad) said += '\n' + one;
 
-        ::proving::fell(__FILE__, __LINE__, said);
+        ::tal::testing::fell(__FILE__, __LINE__, said);
     }
 }
 
@@ -1209,11 +1209,11 @@ TRIAL("Names: the Windows branches are told from the POSIX ones") {
                                               "g\n"
                                               "#endif\n");
 
-    same(live.size(), std::size_t{17});
+    SAME(live.size(), std::size_t{17});
 
     if (live.size() == 17) {
-        ought(live[1] && live[3] && !live[5]);
-        ought(!live[8] && live[10] && live[12]);
-        ought(!live[15]);
+        OUGHT(live[1] && live[3] && !live[5]);
+        OUGHT(!live[8] && live[10] && live[12]);
+        OUGHT(!live[15]);
     }
 }

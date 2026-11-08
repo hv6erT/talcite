@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -71,12 +71,12 @@ TRIAL("Button: the label is drawn in full, with no conventions about characters"
 
     top.children().add(one);
 
-    same(one->text(), std::string{"Tak & nie"});
-    same(one->wants({40, 4}), (ui::Size{13, 1}));
+    SAME(one->text(), std::string{"Tak & nie"});
+    SAME(one->wants({40, 4}), (ui::Size{13, 1}));
 
     const Snapshot made = top.render({{0, 0}, {13, 1}});
 
-    same(read(made, 0), std::string{"[ Tak & nie ]"});
+    SAME(read(made, 0), std::string{"[ Tak & nie ]"});
 }
 
 namespace {
@@ -116,34 +116,34 @@ TRIAL("Button: the caller gives the shortcut keys") {
     top.children().add(one);
 
     // Without keys the button answers nothing.
-    ought(!hotly(top, one, ui::Key{U'T'}));
+    OUGHT(!hotly(top, one, ui::Key{U'T'}));
 
     one->keys().add(U'T');
 
-    ought(hotly(top, one, ui::Key{U'T'}));
+    OUGHT(hotly(top, one, ui::Key{U'T'}));
 
     // Letters regardless of case.
-    ought(hotly(top, one, ui::Key{U't'}));
+    OUGHT(hotly(top, one, ui::Key{U't'}));
 
-    ought(!hotly(top, one, ui::Key{U'n'}));
+    OUGHT(!hotly(top, one, ui::Key{U'n'}));
 
     // There may be several keys, and they need not be letters.
     one->keys().add(std::vector<ui::Key>{U'T', ui::Code::f2});
 
-    ought(hotly(top, one, ui::Key{U't'}));
-    ought(hotly(top, one, ui::Key{ui::Code::f2}));
-    ought(!hotly(top, one, ui::Key{ui::Code::f3}));
+    OUGHT(hotly(top, one, ui::Key{U't'}));
+    OUGHT(hotly(top, one, ui::Key{ui::Code::f2}));
+    OUGHT(!hotly(top, one, ui::Key{ui::Code::f3}));
 
     // The set clears.
     one->keys().clear();
 
-    ought(one->keys().empty());
-    ought(!hotly(top, one, ui::Key{U't'}));
+    OUGHT(one->keys().empty());
+    OUGHT(!hotly(top, one, ui::Key{U't'}));
 
     // An empty key is not a key.
     one->keys().add(U'T');
 
-    ought(!hotly(top, one, ui::Key{}));
+    OUGHT(!hotly(top, one, ui::Key{}));
 }
 
 // The key set answers the same four words as a node's children, and it folds case everywhere,
@@ -151,29 +151,29 @@ TRIAL("Button: the caller gives the shortcut keys") {
 TRIAL("Button: the key set adds, removes and clears") {
     const auto one = std::make_shared<ui::Button>("Tak");
 
-    ought(one->keys().empty());
-    same(one->keys().many(), std::size_t{0});
+    OUGHT(one->keys().empty());
+    SAME(one->keys().many(), std::size_t{0});
 
     one->keys().add(U'T');
     one->keys().add(ui::Code::f2);
 
-    same(one->keys().many(), std::size_t{2});
-    ought(one->keys().contains(ui::Key{U'T'}));
-    ought(one->keys().contains(ui::Key{U't'}));
-    ought(one->keys().contains(ui::Key{ui::Code::f2}));
-    ought(!one->keys().contains(ui::Key{U'n'}));
-    ought(!one->keys().contains(ui::Key{}));
+    SAME(one->keys().many(), std::size_t{2});
+    OUGHT(one->keys().contains(ui::Key{U'T'}));
+    OUGHT(one->keys().contains(ui::Key{U't'}));
+    OUGHT(one->keys().contains(ui::Key{ui::Code::f2}));
+    OUGHT(!one->keys().contains(ui::Key{U'n'}));
+    OUGHT(!one->keys().contains(ui::Key{}));
 
     // A letter ignores Shift (case folds), a coded key does not: Shift+F2 is a different key from
     // F2, as in MC, where Shift+F7 repeats a search and F7 starts one.
-    ought(one->keys().contains(ui::Key{U't', ui::Mods{.shift = true}}));
-    ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
-    ought(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.ctrl = true}}));
+    OUGHT(one->keys().contains(ui::Key{U't', ui::Mods{.shift = true}}));
+    OUGHT(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
+    OUGHT(!one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.ctrl = true}}));
 
     one->keys().add(ui::Key{ui::Code::f2, ui::Mods{.shift = true}});
 
-    ought(one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
-    same(one->keys().many(), std::size_t{3});
+    OUGHT(one->keys().contains(ui::Key{ui::Code::f2, ui::Mods{.shift = true}}));
+    SAME(one->keys().many(), std::size_t{3});
 
     one->keys().remove(ui::Key{ui::Code::f2, ui::Mods{.shift = true}});
 
@@ -181,18 +181,18 @@ TRIAL("Button: the key set adds, removes and clears") {
     one->keys().add(ui::Key{});
     one->keys().add(U't');
 
-    same(one->keys().many(), std::size_t{2});
+    SAME(one->keys().many(), std::size_t{2});
 
     // Removing ignores case too.
     one->keys().remove(ui::Key{U't'});
 
-    same(one->keys().many(), std::size_t{1});
-    ought(!one->keys().contains(ui::Key{U'T'}));
+    SAME(one->keys().many(), std::size_t{1});
+    OUGHT(!one->keys().contains(ui::Key{U'T'}));
 
     // Removing something that is not there has no effect.
     one->keys().remove(ui::Key{U'z'});
 
-    same(one->keys().many(), std::size_t{1});
+    SAME(one->keys().many(), std::size_t{1});
 
     // The set can be iterated.
     int much = 0;
@@ -203,19 +203,19 @@ TRIAL("Button: the key set adds, removes and clears") {
         ++much;
     }
 
-    same(much, 1);
-    same(static_cast<int>(one->keys().many()), 1);
-    same(one->keys().front(), one->keys().back());
-    same(one->keys()[0], one->keys().front());
+    SAME(much, 1);
+    SAME(static_cast<int>(one->keys().many()), 1);
+    SAME(one->keys().front(), one->keys().back());
+    SAME(one->keys()[0], one->keys().front());
 
     // Reaching past the end is the caller's error, just as in the set of options.
-    threw((void)one->keys()[1]);
+    THREW((void)one->keys()[1]);
 
     one->keys().clear();
 
-    threw((void)one->keys().front());
+    THREW((void)one->keys().front());
 
-    ought(one->keys().empty());
+    OUGHT(one->keys().empty());
 }
 
 TRIAL("Button: a disabled one does not answer its keys") {
@@ -228,7 +228,7 @@ TRIAL("Button: a disabled one does not answer its keys") {
     one->keys().add(U'T');
     one->enabled(false);
 
-    ought(!hotly(top, one, ui::Key{U'T'}));
+    OUGHT(!hotly(top, one, ui::Key{U'T'}));
 }
 
 // The marking is a consequence, not a separate setting: if the key's letter occurs in the label,
@@ -244,14 +244,14 @@ TRIAL("Button: the key's letter is underlined in the label") {
 
     const Snapshot made = top.render({{0, 0}, {12, 1}});
 
-    same(read(made, 0), std::string{"[ Przerwij ]"});
+    SAME(read(made, 0), std::string{"[ Przerwij ]"});
 
     // "[ " is two cells, and "w" is the sixth letter of the label.
-    ought(made.at({7, 0}).style.under);
-    same(made.at({7, 0}).letter, U'w');
+    OUGHT(made.at({7, 0}).style.under);
+    SAME(made.at({7, 0}).letter, U'w');
 
-    ought(!made.at({6, 0}).style.under);
-    ought(!made.at({8, 0}).style.under);
+    OUGHT(!made.at({6, 0}).style.under);
+    OUGHT(!made.at({8, 0}).style.under);
 }
 
 TRIAL("Button: the first occurrence is underlined, regardless of case") {
@@ -266,11 +266,11 @@ TRIAL("Button: the first occurrence is underlined, regardless of case") {
 
     const Snapshot made = top.render({{0, 0}, {12, 1}});
 
-    ought(made.at({3, 0}).style.under);
-    same(made.at({3, 0}).letter, U'r');
+    OUGHT(made.at({3, 0}).style.under);
+    SAME(made.at({3, 0}).letter, U'r');
 
     // The second "r" stays plain.
-    ought(!made.at({6, 0}).style.under);
+    OUGHT(!made.at({6, 0}).style.under);
 }
 
 // Case folds beyond basic Latin too: the Russian and Ukrainian menus of twa underline Cyrillic
@@ -289,23 +289,23 @@ TRIAL("Button: case folds in Cyrillic and in Latin with diacritics") {
 
     const Snapshot made = top.render({{0, 0}, {9, 1}});
 
-    same(made.at({3, 0}).letter, U'а');
-    ought(made.at({3, 0}).style.under);
-    ought(!made.at({2, 0}).style.under);
+    SAME(made.at({3, 0}).letter, U'а');
+    OUGHT(made.at({3, 0}).style.under);
+    OUGHT(!made.at({2, 0}).style.under);
 
-    ought(hotly(top, one, ui::Key{U'а'}));
-    ought(hotly(top, one, ui::Key{U'А'}));
-    ought(!hotly(top, one, ui::Key{U'a'}));
+    OUGHT(hotly(top, one, ui::Key{U'а'}));
+    OUGHT(hotly(top, one, ui::Key{U'А'}));
+    OUGHT(!hotly(top, one, ui::Key{U'a'}));
 
     top.children().clear();
     top.children().add(two);
 
     const Snapshot other = top.render({{0, 0}, {10, 1}});
 
-    same(other.at({3, 0}).letter, U'ż');
-    ought(other.at({3, 0}).style.under);
+    SAME(other.at({3, 0}).letter, U'ż');
+    OUGHT(other.at({3, 0}).style.under);
 
-    ought(hotly(top, two, ui::Key{U'ż'}));
+    OUGHT(hotly(top, two, ui::Key{U'ż'}));
 }
 
 TRIAL("Button: a key not in the label marks nothing") {
@@ -319,11 +319,11 @@ TRIAL("Button: a key not in the label marks nothing") {
 
     const Snapshot made = top.render({{0, 0}, {7, 1}});
 
-    for (int x = 0; x < 7; ++x) ought(!made.at({x, 0}).style.under);
+    for (int x = 0; x < 7; ++x) OUGHT(!made.at({x, 0}).style.under);
 
     // But it answers both.
-    ought(hotly(top, one, ui::Key{ui::Code::f2}));
-    ought(hotly(top, one, ui::Key{U'z'}));
+    OUGHT(hotly(top, one, ui::Key{ui::Code::f2}));
+    OUGHT(hotly(top, one, ui::Key{U'z'}));
 }
 
 TRIAL("Button: the first key that occurs in the label decides") {
@@ -338,8 +338,8 @@ TRIAL("Button: the first key that occurs in the label decides") {
 
     const Snapshot made = top.render({{0, 0}, {12, 1}});
 
-    same(made.at({8, 0}).letter, U'i');
-    ought(made.at({8, 0}).style.under);
+    SAME(made.at({8, 0}).letter, U'i');
+    OUGHT(made.at({8, 0}).style.under);
 }
 
 TRIAL("Button: the default one has wider brackets") {
@@ -349,13 +349,13 @@ TRIAL("Button: the default one has wider brackets") {
 
     top.children().add(one);
 
-    same(one->wants({40, 4}), (ui::Size{7, 1}));
-    same(read(top.render({{0, 0}, {7, 1}}), 0), std::string{"[ Tak ]"});
+    SAME(one->wants({40, 4}), (ui::Size{7, 1}));
+    SAME(read(top.render({{0, 0}, {7, 1}}), 0), std::string{"[ Tak ]"});
 
     one->primary(true);
 
-    same(one->wants({40, 4}), (ui::Size{9, 1}));
-    same(read(top.render({{0, 0}, {9, 1}}), 0), std::string{"[< Tak >]"});
+    SAME(one->wants({40, 4}), (ui::Size{9, 1}));
+    SAME(read(top.render({{0, 0}, {9, 1}}), 0), std::string{"[< Tak >]"});
 }
 
 TRIAL("Button: with the focus it is all in reverse video") {
@@ -367,17 +367,17 @@ TRIAL("Button: with the focus it is all in reverse video") {
 
     top.children().add(one);
 
-    ought(!top.render({{0, 0}, {7, 1}}).at({2, 0}).style.reverse);
+    OUGHT(!top.render({{0, 0}, {7, 1}}).at({2, 0}).style.reverse);
 
     one->focus();
 
     const Snapshot made = top.render({{0, 0}, {7, 1}});
 
-    ought(made.at({0, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({0, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
 
     // The underline stays with the focus too.
-    ought(made.at({2, 0}).style.under);
+    OUGHT(made.at({2, 0}).style.under);
 }
 
 // A button reports a height of one, and a row gives its children its own height, so painting
@@ -397,11 +397,11 @@ TRIAL("Button: paints one row, not as many as it is given") {
 
     const Snapshot made = top.render({{0, 0}, {11, 3}});
 
-    ought(made.at({0, 0}).style.reverse);
+    OUGHT(made.at({0, 0}).style.reverse);
 
     // The second and third rows at the button's column do not belong to it.
-    ought(!made.at({0, 1}).style.reverse);
-    ought(!made.at({0, 2}).style.reverse);
+    OUGHT(!made.at({0, 1}).style.reverse);
+    OUGHT(!made.at({0, 2}).style.reverse);
 }
 
 // The bracket is what makes a button a button. When too narrow it cuts the label, not the
@@ -413,8 +413,8 @@ TRIAL("Button: when too narrow it cuts the label, not the bracket") {
 
     top.children().add(one);
 
-    same(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"[ Prz… ]"});
-    same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"[ … ]"});
+    SAME(read(top.render({{0, 0}, {8, 1}}), 0), std::string{"[ Prz… ]"});
+    SAME(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"[ … ]"});
 }
 
 TRIAL("Button: Enter presses the focused one, space does not") {
@@ -432,22 +432,22 @@ TRIAL("Button: Enter presses the focused one, space does not") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
-    same(done, 1);
+    OUGHT(top.dispatch(enter));
+    SAME(done, 1);
 
     // Space is not the button's business. That habit comes from a world other than Midnight
     // Commander, and it would take from the application a key that, in a window with a text field,
     // belongs to typing.
     ui::KeyEvent space{U' '};
 
-    ought(!top.dispatch(space));
-    same(done, 1);
+    OUGHT(!top.dispatch(space));
+    SAME(done, 1);
 
     // A plain letter is not the button's business; the dialog takes care of that.
     ui::KeyEvent other{U'z'};
 
-    ought(!top.dispatch(other));
-    same(done, 1);
+    OUGHT(!top.dispatch(other));
+    SAME(done, 1);
 }
 
 // Ctrl+Enter and Alt+Space are other shortcuts by design. The key bar filters them out the same
@@ -467,13 +467,13 @@ TRIAL("Button: does not catch keys with a modifier") {
 
     ui::KeyEvent held{ui::Key{ui::Code::enter, ui::Mods{true, false, false}}};
 
-    ought(!top.dispatch(held));
+    OUGHT(!top.dispatch(held));
 
     ui::KeyEvent aside{ui::Key{U' ', ui::Mods{false, true, false}}};
 
-    ought(!top.dispatch(aside));
+    OUGHT(!top.dispatch(aside));
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 TRIAL("Button: a disabled one takes no focus and does not answer") {
@@ -489,17 +489,17 @@ TRIAL("Button: a disabled one takes no focus and does not answer") {
 
     top.children().add(one);
 
-    ought(!one->focusable());
+    OUGHT(!one->focusable());
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
-    ought(top.render({{0, 0}, {7, 1}}).at({2, 0}).style.faint);
+    OUGHT(top.render({{0, 0}, {7, 1}}).at({2, 0}).style.faint);
 
     one->pick();
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 // Disabling gives up the focus. Without this the focus would stay on a node that is no longer
@@ -513,13 +513,13 @@ TRIAL("Button: disabling gives up the focus") {
 
     one->focus();
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     one->enabled(false);
 
     // Outside a dialog there is no focusable ancestor (the root takes no focus), so the focus
     // goes out entirely.
-    same(top.focused_node(), static_cast<ui::Node*>(nullptr));
+    SAME(top.focused_node(), static_cast<ui::Node*>(nullptr));
 
     // Disabling a button without the focus changes nothing.
     const auto other = std::make_shared<ui::Button>("Nie");
@@ -530,7 +530,7 @@ TRIAL("Button: disabling gives up the focus") {
     other->focus();
     one->enabled(true);
 
-    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(other.get()));
 }
 
 TRIAL("Button: a click takes the focus and presses") {
@@ -548,10 +548,10 @@ TRIAL("Button: a click takes the focus and presses") {
 
     ui::ClickEvent what{{3, 0}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(done, 1);
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(done, 1);
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 namespace {
@@ -602,15 +602,15 @@ TRIAL("Dialog: Tab walks the focusable nodes and wraps") {
 
     const Both both = asking(top, &done);
 
-    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
 TRIAL("Dialog: Shift+Tab walks backwards") {
@@ -622,11 +622,11 @@ TRIAL("Dialog: Shift+Tab walks backwards") {
 
     ui::KeyEvent back{ui::Key{ui::Code::tab, ui::Mods{false, false, true}}};
 
-    ought(top.dispatch(back));
-    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
+    OUGHT(top.dispatch(back));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
-    ought(top.dispatch(back));
-    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
+    OUGHT(top.dispatch(back));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
 }
 
 // The down and up arrows walk like Tab and Shift+Tab: a dialog does not send them out as
@@ -640,14 +640,14 @@ TRIAL("Dialog: the down and up arrows walk like Tab") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(top.dispatch(down));
-    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
+    OUGHT(top.dispatch(down));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(top.dispatch(up));
-    same(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
-    same(done, 0);
+    OUGHT(top.dispatch(up));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.first.get()));
+    SAME(done, 0);
 }
 
 TRIAL("Dialog: Tab does not leave the dialog") {
@@ -668,11 +668,11 @@ TRIAL("Dialog: Tab does not leave the dialog") {
     ui::KeyEvent tab{ui::Code::tab};
 
     for (int turn = 0; turn < 4; ++turn) {
-        ought(top.dispatch(tab));
+        OUGHT(top.dispatch(tab));
 
         // The only focusable node in the dialog, so the focus does not leave it, and certainly
         // not for what lies below.
-        same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+        SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
     }
 }
 
@@ -709,8 +709,8 @@ TRIAL("Dialog: Enter does not press the default button when the focus is off the
     ui::KeyEvent enter{ui::Code::enter};
 
     // The modal still swallows everything nobody took; modality stays.
-    ought(top.dispatch(enter));
-    same(done, 0);
+    OUGHT(top.dispatch(enter));
+    SAME(done, 0);
 }
 
 // And when the focus is on a button, Enter presses that button. The button takes the key first,
@@ -735,10 +735,10 @@ TRIAL("Dialog: Enter on a button presses that one, not the default") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
+    OUGHT(top.dispatch(enter));
 
-    same(other, 1);
-    same(done, 0);
+    SAME(other, 1);
+    SAME(done, 0);
 }
 
 // Opening puts the focus on the first focusable node, not on the default button. Otherwise, in a
@@ -764,7 +764,7 @@ TRIAL("Dialog: opening lands on the first focusable node") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focused_node(), static_cast<ui::Node*>(first.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(first.get()));
 }
 
 // This is what the rule is for: a window with a text field must start with the focus in the
@@ -788,7 +788,7 @@ TRIAL("Dialog: opening with a text field lands on the field") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focused_node(), static_cast<ui::Node*>(field.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(field.get()));
 
     // Enter stays with the focus: the button marked as default is not pressed because of it.
     int done = 0;
@@ -801,8 +801,8 @@ TRIAL("Dialog: opening with a text field lands on the field") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(top.dispatch(enter));
-    same(done, 0);
+    OUGHT(top.dispatch(enter));
+    SAME(done, 0);
 }
 
 TRIAL("Dialog: a shortcut key presses from anywhere in the window") {
@@ -815,19 +815,19 @@ TRIAL("Dialog: a shortcut key presses from anywhere in the window") {
     // The focus is on "Tak", and its key is pressed as a lower-case letter.
     ui::KeyEvent small{U't'};
 
-    ought(top.dispatch(small));
-    same(done, 1);
+    OUGHT(top.dispatch(small));
+    SAME(done, 1);
 
     ui::KeyEvent large{U'T'};
 
-    ought(top.dispatch(large));
-    same(done, 2);
+    OUGHT(top.dispatch(large));
+    SAME(done, 2);
 
     // A key no button has does nothing, but the dialog swallows it anyway.
     ui::KeyEvent other{U'z'};
 
-    ought(top.dispatch(other));
-    same(done, 2);
+    OUGHT(top.dispatch(other));
+    SAME(done, 2);
 }
 
 TRIAL("Dialog: a disabled button drops out of the walk and the keys") {
@@ -842,17 +842,17 @@ TRIAL("Dialog: a disabled button drops out of the walk and the keys") {
     // The focus moved from the disabled button to the nearest focusable ancestor, the dialog
     // itself. If it went out entirely, keys would go straight to the root, and the modal window
     // would stop being modal.
-    same(top.focused_node(), static_cast<ui::Node*>(both.dialog.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.dialog.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(both.second.get()));
 
     ui::KeyEvent small{U't'};
 
-    ought(top.dispatch(small));
-    same(done, 0);
+    OUGHT(top.dispatch(small));
+    SAME(done, 0);
 }
 
 // When nothing in the dialog takes the focus, the dialog takes it itself, and then it swallows
@@ -868,10 +868,10 @@ TRIAL("Dialog: with nothing focusable inside, the focus stays on the dialog") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(dialog.get()));
 }

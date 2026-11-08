@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -63,9 +63,9 @@ Pair joined(const net::Listener& gate) {
 TRIAL("Gate: gets a port from the system") {
     const net::Listener gate = standing();
 
-    ought(gate.held());
-    ought(gate.mine().port() != 0);
-    same(gate.mine().text(), std::string{"127.0.0.1"});
+    OUGHT(gate.held());
+    OUGHT(gate.mine().port() != 0);
+    SAME(gate.mine().text(), std::string{"127.0.0.1"});
 }
 
 TRIAL("Gate: rejects an empty address") {
@@ -79,7 +79,7 @@ TRIAL("Gate: rejects an empty address") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Stream: connect and accept meet") {
@@ -87,12 +87,12 @@ TRIAL("Stream: connect and accept meet") {
 
     const Pair both = joined(gate);
 
-    ought(both.server.held());
-    ought(both.client.held());
+    OUGHT(both.server.held());
+    OUGHT(both.client.held());
 
-    same(both.client.peer().port(), gate.mine().port());
-    same(both.server.mine().port(), gate.mine().port());
-    same(both.server.peer().port(), both.client.mine().port());
+    SAME(both.client.peer().port(), gate.mine().port());
+    SAME(both.server.mine().port(), gate.mine().port());
+    SAME(both.server.peer().port(), both.client.mine().port());
 }
 
 TRIAL("Stream: bytes pass both ways") {
@@ -102,11 +102,11 @@ TRIAL("Stream: bytes pass both ways") {
 
     both.client.write(bytes("witaj"), soon).get();
 
-    same(text(both.server.read(64, soon).get()), std::string{"witaj"});
+    SAME(text(both.server.read(64, soon).get()), std::string{"witaj"});
 
     both.server.write(bytes("i wzajemnie"), soon).get();
 
-    same(text(both.client.read(64, soon).get()), std::string{"i wzajemnie"});
+    SAME(text(both.client.read(64, soon).get()), std::string{"i wzajemnie"});
 }
 
 TRIAL("Stream: a larger batch arrives whole") {
@@ -130,8 +130,8 @@ TRIAL("Stream: a larger batch arrives whole") {
 
     std::move(writing).get();
 
-    same(made.size(), much.size());
-    ought(made == much);
+    SAME(made.size(), much.size());
+    OUGHT(made == much);
 }
 
 TRIAL("Stream: the other side closing gives emptiness") {
@@ -141,7 +141,7 @@ TRIAL("Stream: the other side closing gives emptiness") {
 
     both.client.close();
 
-    same(static_cast<int>(both.server.read(64, soon).get().size()), 0);
+    SAME(static_cast<int>(both.server.read(64, soon).get().size()), 0);
 }
 
 TRIAL("Stream: silence ends with the deadline, not with emptiness") {
@@ -157,7 +157,7 @@ TRIAL("Stream: silence ends with the deadline, not with emptiness") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Stream: a second read at the same time is refused") {
@@ -175,7 +175,7 @@ TRIAL("Stream: a second read at the same time is refused") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(first).get();
@@ -190,11 +190,11 @@ TRIAL("Stream: after a read one can read again") {
 
     both.client.write(bytes("raz"), soon).get();
 
-    same(text(both.server.read(64, soon).get()), std::string{"raz"});
+    SAME(text(both.server.read(64, soon).get()), std::string{"raz"});
 
     both.client.write(bytes("dwa"), soon).get();
 
-    same(text(both.server.read(64, soon).get()), std::string{"dwa"});
+    SAME(text(both.server.read(64, soon).get()), std::string{"dwa"});
 }
 
 TRIAL("Stream: closing interrupts a waiting read") {
@@ -216,7 +216,7 @@ TRIAL("Stream: closing interrupts a waiting read") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Stream: connecting to a closed port is rejected") {
@@ -238,7 +238,7 @@ TRIAL("Stream: connecting to a closed port is rejected") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Stream: an empty address is not a target") {
@@ -250,7 +250,7 @@ TRIAL("Stream: an empty address is not a target") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Stream: a closed one accepts no requests") {
@@ -268,7 +268,7 @@ TRIAL("Stream: a closed one accepts no requests") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Gate: accepts several connections in turn") {
@@ -279,7 +279,7 @@ TRIAL("Gate: accepts several connections in turn") {
 
         both.client.write(bytes(std::to_string(which)), soon).get();
 
-        same(text(both.server.read(8, soon).get()), std::to_string(which));
+        SAME(text(both.server.read(8, soon).get()), std::to_string(which));
     }
 }
 
@@ -297,7 +297,7 @@ TRIAL("Exchange: when all is done nobody waits") {
     for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > 1; ++tried)
         later(std::chrono::milliseconds{5}).get();
 
-    ought(net::Exchange::running().waiting() <= 1);
+    OUGHT(net::Exchange::running().waiting() <= 1);
 }
 
 // The exchange holds one request per socket per direction, so a second accept must be refused
@@ -316,13 +316,13 @@ TRIAL("Gate: a second accept is refused and the first lives on") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     const net::Stream client = net::Stream::connect(gate.mine(), net::Patience{3000}).get();
 
     const net::Stream server = std::move(first).get();
 
-    same(server.peer(), client.mine());
+    SAME(server.peer(), client.mine());
 }
 
 // The caller gives the size, so allocating the buffer can throw. An exception thrown after the
@@ -343,11 +343,11 @@ TRIAL("Stream: an exception from allocation does not block reading forever") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 
     client.write(bytes("po wyjątku"), net::Patience{3000}).get();
 
-    same(text(server.read(64, net::Patience{3000}).get()), std::string{"po wyjątku"});
+    SAME(text(server.read(64, net::Patience{3000}).get()), std::string{"po wyjątku"});
 }
 
 // A zero-length read must be refused: recv with zero length returns zero even on a healthy socket,
@@ -370,9 +370,9 @@ TRIAL("Stream: a zero-length read does not pretend to be the end of the stream")
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
-    same(text(server.read(64, soon).get()), std::string{"osiem!!!"});
+    SAME(text(server.read(64, soon).get()), std::string{"osiem!!!"});
 }
 
 // After closing, every method answers politely; these have to as well, instead of violating memory.
@@ -387,14 +387,14 @@ TRIAL("Stream: addresses after closing are empty and do not blow up") {
 
     client.close();
 
-    ought(!client.peer().held());
-    ought(!client.mine().held());
+    OUGHT(!client.peer().held());
+    OUGHT(!client.mine().held());
 
     net::Listener other{net::Address::loopback(net::Family::four, 0)};
 
     other.close();
 
-    ought(!other.mine().held());
+    OUGHT(!other.mine().held());
 }
 
 // --- Cancelling -------------------------------------------------------------------------------
@@ -442,7 +442,7 @@ TRIAL("Stream: a cancelled read frees the direction") {
 
     both.client.write(bytes("hej"), soon).get();
 
-    same(text(patiently(both.server, 8)), std::string{"hej"});
+    SAME(text(patiently(both.server, 8)), std::string{"hej"});
 }
 
 TRIAL("Exchange: cancelling removes the request") {
@@ -457,13 +457,13 @@ TRIAL("Exchange: cancelling removes the request") {
     for (int tried = 0; tried < 200 && net::Exchange::running().waiting() <= before; ++tried)
         later(std::chrono::milliseconds{5}).get();
 
-    ought(net::Exchange::running().waiting() > before);
+    OUGHT(net::Exchange::running().waiting() > before);
 
     one.cancel();
 
     settling(before);
 
-    same(net::Exchange::running().waiting(), before);
+    SAME(net::Exchange::running().waiting(), before);
 }
 
 // A gate has one request for itself, so an abandoned accept must not shut it for good: every later
@@ -483,7 +483,7 @@ TRIAL("Gate: a cancelled accept does not shut the gate") {
 
     both.client.write(bytes("znowu"), soon).get();
 
-    same(text(both.server.read(8, soon).get()), std::string{"znowu"});
+    SAME(text(both.server.read(8, soon).get()), std::string{"znowu"});
 }
 
 // --- Cancelling frees the place at once ----------------------------------------------------------
@@ -506,7 +506,7 @@ TRIAL("Gate: after cancelling one can accept again at once") {
 
     both.client.write(bytes("znowu"), soon).get();
 
-    same(text(both.server.read(8, soon).get()), std::string{"znowu"});
+    SAME(text(both.server.read(8, soon).get()), std::string{"znowu"});
 }
 
 // Reading, not writing: a short write on the loopback finishes before it can be cancelled, so it
@@ -525,7 +525,7 @@ TRIAL("Stream: a hundred cancelled reads do not occupy the direction for good") 
 
     both.client.write(bytes("po stu"), soon).get();
 
-    same(text(patiently(both.server, 6)), std::string{"po stu"});
+    SAME(text(patiently(both.server, 6)), std::string{"po stu"});
 }
 
 // A hundred turns, because the window is narrow. If any cancellation left the place occupied, the
@@ -544,7 +544,7 @@ TRIAL("Gate: a hundred cancellations in a row do not occupy it for good") {
 
     both.client.write(bytes("po stu"), soon).get();
 
-    same(text(both.server.read(8, soon).get()), std::string{"po stu"});
+    SAME(text(both.server.read(8, soon).get()), std::string{"po stu"});
 }
 
 // A write after disconnection must not kill the process. The default reaction to SIGPIPE is death,
@@ -578,7 +578,7 @@ TRIAL("Stream: a write after disconnection is refused instead of killing the pro
         }
     }
 
-    ought(told);
+    OUGHT(told);
 }
 
 // --- Local socket ------------------------------------------------------------------------------
@@ -604,8 +604,8 @@ TRIAL("Local socket: the conversation goes by path, not by port") {
 
     const net::Listener gate{net::Address::local(said)};
 
-    same(gate.mine().family(), net::Family::local);
-    same(gate.mine().path(), said);
+    SAME(gate.mine().family(), net::Family::local);
+    SAME(gate.mine().path(), said);
 
     auto meeting = gate.accept(soon);
     auto joining = net::Stream::connect(net::Address::local(said), soon);
@@ -615,11 +615,11 @@ TRIAL("Local socket: the conversation goes by path, not by port") {
 
     client.write(bytes("dzień dobry"), soon).get();
 
-    same(text(server.read(64, soon).get()), std::string{"dzień dobry"});
+    SAME(text(server.read(64, soon).get()), std::string{"dzień dobry"});
 
     // The peer on this side knows the gate's path; our own end has no name, and that is the truth,
     // not something missing.
-    same(client.peer().path(), said);
+    SAME(client.peer().path(), said);
 }
 
 // On the other side of a local socket is the same user: the system says so, and the sharing daemon
@@ -638,24 +638,24 @@ TRIAL("Local socket: the peer is the same user, and on the network it is empty")
     const net::Stream client = std::move(joining).get();
 
 #ifdef _WIN32
-    ought(!server.kindred().has_value() || *server.kindred());
+    OUGHT(!server.kindred().has_value() || *server.kindred());
 
     // A pipe tells about the peer on both sides.
     if (net::pipes::chosen()) {
-        ought(server.kindred() == std::optional<bool>{true});
-        ought(client.kindred() == std::optional<bool>{true});
+        OUGHT(server.kindred() == std::optional<bool>{true});
+        OUGHT(client.kindred() == std::optional<bool>{true});
     }
 #else
-    ought(server.kindred() == std::optional<bool>{true});
-    ought(client.kindred() == std::optional<bool>{true});
+    OUGHT(server.kindred() == std::optional<bool>{true});
+    OUGHT(client.kindred() == std::optional<bool>{true});
 #endif
 
     const net::Listener far = standing();
     const Pair both = joined(far);
 
-    ought(!both.server.kindred().has_value());
-    ought(!both.client.kindred().has_value());
-    ought(!net::Stream{}.kindred().has_value());
+    OUGHT(!both.server.kindred().has_value());
+    OUGHT(!both.client.kindred().has_value());
+    OUGHT(!net::Stream{}.kindred().has_value());
 }
 
 #ifndef _WIN32
@@ -701,7 +701,7 @@ TRIAL("Local socket: a peer of another user is not us") {
 
     const net::Stream server = std::move(meeting).get();
 
-    ought(server.kindred() == std::optional<bool>{false});
+    OUGHT(server.kindred() == std::optional<bool>{false});
 
     server.write(bytes("k"), soon).get();
 
@@ -709,7 +709,7 @@ TRIAL("Local socket: a peer of another user is not us") {
 
     ::waitpid(child, &status, 0);
 
-    ought(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    OUGHT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
 #endif
@@ -721,11 +721,11 @@ TRIAL("Local socket: the gate cleans up its file") {
     {
         const net::Listener gate{net::Address::local(said)};
 
-        same(gate.mine().path(), said);
-        ought(fs::exists(said).get() != net::pipes::chosen());
+        SAME(gate.mine().path(), said);
+        OUGHT(fs::exists(said).get() != net::pipes::chosen());
     }
 
-    ought(!fs::exists(said).get());
+    OUGHT(!fs::exists(said).get());
 }
 
 // Several clients connect before the gate starts accepting, and all of them get through. With a
@@ -754,7 +754,7 @@ TRIAL("Local socket: several peers at once, also before accepting") {
 
     std::sort(heard.begin(), heard.end());
 
-    same(heard, (std::vector<std::string>{"0", "1", "2"}));
+    SAME(heard, (std::vector<std::string>{"0", "1", "2"}));
 
     // An answer and the end: for the client a closed server side is emptiness after reading the
     // rest.
@@ -775,11 +775,11 @@ TRIAL("Local socket: several peers at once, also before accepting") {
         if (text(got) == "pa") {
             answered = true;
 
-            ought(one.read(16, soon).get().empty());
+            OUGHT(one.read(16, soon).get().empty());
         }
     }
 
-    ought(answered);
+    OUGHT(answered);
 }
 
 // Closing one copy of a stream ends the conversation even while the other copy still lives, like
@@ -798,7 +798,7 @@ TRIAL("Local socket: closing a copy ends the conversation, and an empty write do
     client.write(Bytes{}, soon).get();
     client.write(bytes("x"), soon).get();
 
-    same(text(server.read(16, soon).get()), std::string{"x"});
+    SAME(text(server.read(16, soon).get()), std::string{"x"});
 
     const net::Stream twin = client;
 
@@ -807,8 +807,8 @@ TRIAL("Local socket: closing a copy ends the conversation, and an empty write do
 
     client.close();
 
-    ought(std::move(waiting).get().empty());
-    ought(twin.held());
+    OUGHT(std::move(waiting).get().empty());
+    OUGHT(twin.held());
 }
 
 // An accept cancelled, then a new one: the client reaches the new one, not an instance beside it
@@ -836,7 +836,7 @@ TRIAL("Local socket: after a cancelled accept the client reaches the next one") 
 
         client.write(bytes("tak"), soon).get();
 
-        same(text(server.read(16, soon).get()), std::string{"tak"});
+        SAME(text(server.read(16, soon).get()), std::string{"tak"});
     }
 }
 
@@ -863,8 +863,8 @@ TRIAL("Local socket: a closed gate gives up its path, and between accepts there 
         }
 
         // At once, not after the deadline: closing interrupts the waiting accept.
-        ought(told);
-        ought(std::chrono::steady_clock::now() - closed < std::chrono::seconds{2});
+        OUGHT(told);
+        OUGHT(std::chrono::steady_clock::now() - closed < std::chrono::seconds{2});
     }
 
     const net::Listener again{net::Address::local(said)};
@@ -893,7 +893,7 @@ TRIAL("Local socket: a closed gate gives up its path, and between accepts there 
 
     client.write(bytes("jestem"), soon).get();
 
-    same(text(server.read(16, soon).get()), std::string{"jestem"});
+    SAME(text(server.read(16, soon).get()), std::string{"jestem"});
 }
 
 #ifdef _WIN32
@@ -924,7 +924,7 @@ TRIAL("Local socket: a dead file does not block listening") {
     // A file nobody listens under, exactly what a program that crashed leaves behind.
     fs::write(said, Bytes{}).get();
 
-    ought(fs::exists(said).get());
+    OUGHT(fs::exists(said).get());
 
     const net::Listener gate{net::Address::local(said)};
 
@@ -936,7 +936,7 @@ TRIAL("Local socket: a dead file does not block listening") {
 
     client.write(bytes("stoję"), soon).get();
 
-    same(text(server.read(16, soon).get()), std::string{"stoję"});
+    SAME(text(server.read(16, soon).get()), std::string{"stoję"});
 }
 
 TRIAL("Local socket: a second gate does not cover a live one") {
@@ -952,7 +952,7 @@ TRIAL("Local socket: a second gate does not cover a live one") {
         told = true;
     }
 
-    ought(told);
+    OUGHT(told);
 
     // The first gate has to keep working; refusing the second must not clean up its file.
     auto meeting = first.accept(soon);

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -86,11 +86,11 @@ TRIAL("KeyBar: the items share the row and touch side by side") {
 
     const Snapshot made = top.render({{0, 0}, {16, 4}});
 
-    same(read(made, 3), std::string{"1Kopiuj 2Wyjdź"});
+    SAME(read(made, 3), std::string{"1Kopiuj 2Wyjdź"});
 
     // The items share the width equally and stand one next to another.
-    same(window->items()[0]->area(), (ui::Area{{0, 3}, {8, 1}}));
-    same(window->items()[1]->area(), (ui::Area{{8, 3}, {8, 1}}));
+    SAME(window->items()[0]->area(), (ui::Area{{0, 3}, {8, 1}}));
+    SAME(window->items()[1]->area(), (ui::Area{{8, 3}, {8, 1}}));
 }
 
 // The remainder of the division goes to the items from the left, so the bar fills the row to the
@@ -106,9 +106,9 @@ TRIAL("KeyBar: the remainder of the division goes to the items from the left") {
 
     (void)top.render({{0, 0}, {11, 4}});
 
-    same(window->items()[0]->area(), (ui::Area{{0, 3}, {4, 1}}));
-    same(window->items()[1]->area(), (ui::Area{{4, 3}, {4, 1}}));
-    same(window->items()[2]->area(), (ui::Area{{8, 3}, {3, 1}}));
+    SAME(window->items()[0]->area(), (ui::Area{{0, 3}, {4, 1}}));
+    SAME(window->items()[1]->area(), (ui::Area{{4, 3}, {4, 1}}));
+    SAME(window->items()[2]->area(), (ui::Area{{8, 3}, {3, 1}}));
 }
 
 // The tag is derived from the key rather than standing next to it in a separate field; otherwise
@@ -118,20 +118,20 @@ TRIAL("KeyBar: an item does not take the focus, even when enabled") {
 
     const auto one = window.add(ui::Code::f5, "Kopiuj");
 
-    ought(one->enabled());
-    ought(!one->focusable());
+    OUGHT(one->enabled());
+    OUGHT(!one->focusable());
 }
 
 TRIAL("KeyBar: the tag comes from the key") {
-    same((ui::KeyBarItem{ui::Code::f1, ""}.tag()), std::string{"1"});
-    same((ui::KeyBarItem{ui::Code::f5, ""}.tag()), std::string{"5"});
-    same((ui::KeyBarItem{ui::Code::f10, ""}.tag()), std::string{"10"});
-    same((ui::KeyBarItem{ui::Code::f12, ""}.tag()), std::string{"12"});
-    same((ui::KeyBarItem{U'q', ""}.tag()), std::string{"q"});
+    SAME((ui::KeyBarItem{ui::Code::f1, ""}.tag()), std::string{"1"});
+    SAME((ui::KeyBarItem{ui::Code::f5, ""}.tag()), std::string{"5"});
+    SAME((ui::KeyBarItem{ui::Code::f10, ""}.tag()), std::string{"10"});
+    SAME((ui::KeyBarItem{ui::Code::f12, ""}.tag()), std::string{"12"});
+    SAME((ui::KeyBarItem{U'q', ""}.tag()), std::string{"q"});
 
     // Escape and the other named keys have no tag in Midnight Commander.
-    same((ui::KeyBarItem{ui::Code::escape, ""}.tag()), std::string{});
-    same((ui::KeyBarItem{ui::Key{}, ""}.tag()), std::string{});
+    SAME((ui::KeyBarItem{ui::Code::escape, ""}.tag()), std::string{});
+    SAME((ui::KeyBarItem{ui::Key{}, ""}.tag()), std::string{});
 }
 
 TRIAL("KeyBar: the key bubbles up from the focus") {
@@ -154,14 +154,14 @@ TRIAL("KeyBar: the key bubbles up from the focus") {
 
     ui::KeyEvent what{ui::Code::f5};
 
-    ought(top.dispatch(what));
-    same(done, 1);
+    OUGHT(top.dispatch(what));
+    SAME(done, 1);
 
     // A key the key bar does not hold is none of its business.
     ui::KeyEvent other{ui::Code::f6};
 
-    ought(!top.dispatch(other));
-    same(done, 1);
+    OUGHT(!top.dispatch(other));
+    SAME(done, 1);
 }
 
 // Ctrl+F5 and Alt+F5 are by design different shortcuts from F5, and the key bar does not model
@@ -186,13 +186,13 @@ TRIAL("KeyBar: does not catch a key with a modifier") {
 
     ui::KeyEvent held{ui::Key{ui::Code::f5, ui::Mods{true, false, false}}};
 
-    ought(!top.dispatch(held));
+    OUGHT(!top.dispatch(held));
 
     ui::KeyEvent aside{ui::Key{ui::Code::f5, ui::Mods{false, true, false}}};
 
-    ought(!top.dispatch(aside));
+    OUGHT(!top.dispatch(aside));
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 // A click does the same as the key and does not take the focus: after clicking "Kopiuj" (copy),
@@ -217,9 +217,9 @@ TRIAL("KeyBar: a click does the same and does not take the focus") {
 
     ui::ClickEvent what{{3, 3}, ui::Mouse::left};
 
-    ought(top.dispatch(what));
-    same(done, 1);
-    same(top.focused_node(), static_cast<ui::Node*>(body.get()));
+    OUGHT(top.dispatch(what));
+    SAME(done, 1);
+    SAME(top.focused_node(), static_cast<ui::Node*>(body.get()));
 }
 
 TRIAL("KeyBar: a disabled item stays silent on a key and on a click") {
@@ -246,14 +246,14 @@ TRIAL("KeyBar: a disabled item stays silent on a key and on a click") {
 
     ui::KeyEvent what{ui::Code::f5};
 
-    ought(!top.dispatch(what));
+    OUGHT(!top.dispatch(what));
 
     ui::ClickEvent where{{3, 3}, ui::Mouse::left};
 
     // The item takes the click (because it was hit), but does not perform its action.
-    ought(top.dispatch(where));
+    OUGHT(top.dispatch(where));
 
-    same(done, 0);
+    SAME(done, 0);
 }
 
 TRIAL("KeyBar: the content gets all rows but the last") {
@@ -268,9 +268,9 @@ TRIAL("KeyBar: the content gets all rows but the last") {
 
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
-    same(read(made, 0), std::string{"xxxxxx"});
-    same(read(made, 1), std::string{"xxxxxx"});
-    same(read(made, 2), std::string{"1Raz"});
+    SAME(read(made, 0), std::string{"xxxxxx"});
+    SAME(read(made, 1), std::string{"xxxxxx"});
+    SAME(read(made, 2), std::string{"1Raz"});
 }
 
 // An empty bar is a bar that is not there, not an empty strip at the bottom of the screen.
@@ -285,7 +285,7 @@ TRIAL("KeyBar: without items it takes no row") {
 
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
-    same(read(made, 2), std::string{"xxxxxx"});
+    SAME(read(made, 2), std::string{"xxxxxx"});
 }
 
 TRIAL("KeyBar: an item that is too narrow cuts the name, then the tag") {
@@ -300,12 +300,12 @@ TRIAL("KeyBar: an item that is too narrow cuts the name, then the tag") {
     const Snapshot made = top.render({{0, 0}, {8, 2}});
 
     // Four cells per item: the tag and three for the name, with an ellipsis.
-    same(read(made, 1), std::string{"1Ko…2Wy…"});
+    SAME(read(made, 1), std::string{"1Ko…2Wy…"});
 
     // With one cell per item only the tag remains, and nothing goes outside its own area.
     const Snapshot tight = top.render({{0, 0}, {2, 2}});
 
-    same(read(tight, 1), std::string{"12"});
+    SAME(read(tight, 1), std::string{"12"});
 }
 
 // A letter regardless of case: the same rule as in a button and in a menu. With F keys there is
@@ -333,13 +333,13 @@ TRIAL("KeyBar: a letter answers regardless of case") {
 
     ui::KeyEvent small{U'q'};
 
-    ought(top.dispatch(small));
-    same(said, 1);
+    OUGHT(top.dispatch(small));
+    SAME(said, 1);
 
     ui::KeyEvent big{U'Q'};
 
-    ought(top.dispatch(big));
-    same(said, 2);
+    OUGHT(top.dispatch(big));
+    SAME(said, 2);
 }
 
 TRIAL("KeyBar: clearing lets the bar be put together again") {
@@ -351,19 +351,19 @@ TRIAL("KeyBar: clearing lets the bar be put together again") {
     (void)window->add(ui::Code::f2, "Dwa");
     top.children().add(window);
 
-    same(static_cast<int>(window->items().size()), 2);
-    same(window->capacity(), 3);
+    SAME(static_cast<int>(window->items().size()), 2);
+    SAME(window->capacity(), 3);
 
     window->clear();
 
-    ought(window->items().empty());
-    same(window->capacity(), 1);
+    OUGHT(window->items().empty());
+    SAME(window->capacity(), 1);
 
     (void)window->add(ui::Code::f3, "Trzy");
 
     const Snapshot made = top.render({{0, 0}, {8, 2}});
 
-    same(read(made, 1), std::string{"3Trzy"});
+    SAME(read(made, 1), std::string{"3Trzy"});
 }
 
 // The key bar is the outer window, and the menu bar sits in its content. Thanks to that, an open
@@ -390,10 +390,10 @@ TRIAL("KeyBar: an open menu does not paint over the key bar") {
 
     const Snapshot made = top.render({{0, 0}, {12, 7}});
 
-    ought(one->opened());
+    OUGHT(one->opened());
 
     // The last row belongs to the key bar and nothing touches it.
-    same(read(made, 6), std::string{"5Kopiuj"});
+    SAME(read(made, 6), std::string{"5Kopiuj"});
 }
 
 // An open menu is modal: a key it does not handle itself is not to go further up. Without that, F5
@@ -426,23 +426,23 @@ TRIAL("KeyBar: with a menu open, the key bar's key does not work") {
     // With the menu closed, the key bar works.
     ui::KeyEvent first{ui::Code::f5};
 
-    ought(top.dispatch(first));
-    same(done, 1);
+    OUGHT(top.dispatch(first));
+    SAME(done, 1);
 
     // F9 takes the bar, and opening a menu is chosen separately; only an open menu is modal.
     ui::KeyEvent open{ui::Code::f9};
 
-    ought(top.dispatch(open));
+    OUGHT(top.dispatch(open));
 
     ui::KeyEvent drop{ui::Code::down};
 
-    ought(top.dispatch(drop));
-    ought(one->opened());
+    OUGHT(top.dispatch(drop));
+    OUGHT(one->opened());
 
     ui::KeyEvent second{ui::Code::f5};
 
-    ought(top.dispatch(second));
-    same(done, 1);
+    OUGHT(top.dispatch(second));
+    SAME(done, 1);
 }
 
 // --- Group ---------------------------------------------------------------------------------------
@@ -458,21 +458,21 @@ TRIAL("KeyBar: a removed item also leaves the tree") {
 
     top.children().add(window);
 
-    same(window->items().size(), std::size_t{2});
-    ought(window->children().contains(two.get()));
+    SAME(window->items().size(), std::size_t{2});
+    OUGHT(window->children().contains(two.get()));
 
     window->clear();
 
-    ought(window->items().empty());
-    ought(!window->children().contains(two.get()));
-    ought(!window->children().contains(one.get()));
+    OUGHT(window->items().empty());
+    OUGHT(!window->children().contains(two.get()));
+    OUGHT(!window->children().contains(one.get()));
 
     // A cleared bar is put together again, and the old items no longer have anything to do with it.
     const auto again = window->add(ui::Code::f1, "Kopiuj");
 
-    ought(window->children().contains(again.get()));
+    OUGHT(window->children().contains(again.get()));
 
-    same(read(top.render({{0, 0}, {16, 4}}), 3), std::string{"1Kopiuj"});
+    SAME(read(top.render({{0, 0}, {16, 4}}), 3), std::string{"1Kopiuj"});
 }
 
 TRIAL("KeyBar: the role root of an item can be replaced") {
@@ -481,7 +481,7 @@ TRIAL("KeyBar: the role root of an item can be replaced") {
     const auto window = std::make_shared<ui::KeyBar>();
     const auto one = window->add(ui::Code::f1, "Kopiuj");
 
-    same(one->role(), std::string{"talcite.keybar"});
+    SAME(one->role(), std::string{"talcite.keybar"});
 
     top.children().add(window);
 
@@ -501,8 +501,8 @@ TRIAL("KeyBar: the role root of an item can be replaced") {
 
     const Snapshot made = top.render({{0, 0}, {16, 4}});
 
-    same(made.at({0, 3}).style.foreground, (Color{false, 1, 1, 1}));
-    same(made.at({1, 3}).style.foreground, (Color{false, 2, 2, 2}));
+    SAME(made.at({0, 3}).style.foreground, (Color{false, 1, 1, 1}));
+    SAME(made.at({1, 3}).style.foreground, (Color{false, 2, 2, 2}));
 }
 
 // An item has a set of keys, not one key: the first of them draws the tag, but every one answers.
@@ -530,17 +530,17 @@ TRIAL("KeyBar: an item answers to each of its keys") {
 
     body->focus();
 
-    same(one->tag(), std::string{"10"});
+    SAME(one->tag(), std::string{"10"});
 
     ui::KeyEvent named{ui::Code::f10};
 
-    ought(top.dispatch(named));
-    same(said, 1);
+    OUGHT(top.dispatch(named));
+    SAME(said, 1);
 
     ui::KeyEvent letter{U'Q'};
 
-    ought(top.dispatch(letter));
-    same(said, 2);
+    OUGHT(top.dispatch(letter));
+    SAME(said, 2);
 }
 
 // The bar hands out items with a shortcut event, so a hook attached from outside answers on equal
@@ -568,8 +568,8 @@ TRIAL("KeyBar: an item answers a key through a hook attached from outside") {
 
     ui::KeyEvent key{ui::Code::f5};
 
-    ought(top.dispatch(key));
-    same(said, 1);
+    OUGHT(top.dispatch(key));
+    SAME(said, 1);
 }
 
 // The handing out goes only over the bar's items: the content has no right to get a shortcut from
@@ -597,8 +597,8 @@ TRIAL("KeyBar: the handing out does not enter the content") {
 
     ui::KeyEvent key{ui::Code::f7};
 
-    ought(!top.dispatch(key));
-    same(said, 0);
+    OUGHT(!top.dispatch(key));
+    SAME(said, 0);
 }
 
 // A hot letter replaces the tag rather than standing next to it: an item whose key is a letter
@@ -613,9 +613,9 @@ TRIAL("KeyBar: a letter key is underlined in the name instead of a tag") {
 
     const Snapshot made = top.render({{0, 0}, {6, 2}});
 
-    same(read(made, 1), std::string{"Kopiuj"});
-    ought(made.at({0, 1}).style.under);
-    ought(!made.at({1, 1}).style.under);
+    SAME(read(made, 1), std::string{"Kopiuj"});
+    OUGHT(made.at({0, 1}).style.under);
+    OUGHT(!made.at({1, 1}).style.under);
 }
 
 // A letter that is not in the name has nothing to underline, so the tag comes back; otherwise it
@@ -628,11 +628,11 @@ TRIAL("KeyBar: a letter key not in the name stays a tag") {
 
     top.children().add(window);
 
-    same(one->tag(), std::string{"q"});
+    SAME(one->tag(), std::string{"q"});
 
     const Snapshot made = top.render({{0, 0}, {6, 2}});
 
-    same(read(made, 1), std::string{"qWyjdź"});
+    SAME(read(made, 1), std::string{"qWyjdź"});
 }
 
 // A function key has no letter, so the tag always stays, as in Midnight Commander.
@@ -647,7 +647,7 @@ TRIAL("KeyBar: a function key keeps its digit") {
 
     const Snapshot made = top.render({{0, 0}, {7, 2}});
 
-    same(read(made, 1), std::string{"5Kopiuj"});
+    SAME(read(made, 1), std::string{"5Kopiuj"});
 }
 
 // An item registered with a function key keeps its digit, even when it also has a letter in
@@ -666,9 +666,9 @@ TRIAL("KeyBar: the digit stays, though the item also has a letter") {
 
     const Snapshot made = top.render({{0, 0}, {7, 2}});
 
-    same(read(made, 1), std::string{"5Kopiuj"});
-    ought(made.at({1, 1}).style.under);
-    ought(!made.at({2, 1}).style.under);
+    SAME(read(made, 1), std::string{"5Kopiuj"});
+    OUGHT(made.at({1, 1}).style.under);
+    OUGHT(!made.at({2, 1}).style.under);
 }
 
 // Modifiers are part of the key, so the bar does not have to filter them: an item registered for F5
@@ -698,15 +698,15 @@ TRIAL("KeyBar: an item with a modifier answers only to its own combination") {
 
     ui::KeyEvent bare{ui::Key{ui::Code::f5}};
 
-    ought(top.dispatch(bare));
-    same(plain, 1);
-    same(held, 0);
+    OUGHT(top.dispatch(bare));
+    SAME(plain, 1);
+    SAME(held, 0);
 
     ui::KeyEvent with{ui::Key{ui::Code::f5, ctrl}};
 
-    ought(top.dispatch(with));
-    same(plain, 1);
-    same(held, 1);
+    OUGHT(top.dispatch(with));
+    SAME(plain, 1);
+    SAME(held, 1);
 }
 
 // There is one content: a new one displaces the old, and a null pointer empties the slot. The old
@@ -720,12 +720,12 @@ TRIAL("KeyBar: new content displaces the old, and an empty one empties the slot"
     window.content(one);
     window.content(two);
 
-    same(window.content(), static_cast<ui::Node*>(two.get()));
-    ought(one->parent() == nullptr);
-    same(read(window.render({{0, 0}, {4, 2}}), 0), std::string{"bbbb"});
+    SAME(window.content(), static_cast<ui::Node*>(two.get()));
+    OUGHT(one->parent() == nullptr);
+    SAME(read(window.render({{0, 0}, {4, 2}}), 0), std::string{"bbbb"});
 
     window.content(nullptr);
 
-    ought(window.content() == nullptr);
-    ought(two->parent() == nullptr);
+    OUGHT(window.content() == nullptr);
+    OUGHT(two->parent() == nullptr);
 }

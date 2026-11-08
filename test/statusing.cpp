@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -14,18 +14,18 @@ using namespace talcite;
 TRIAL("Status: an empty one keeps its row, an empty span takes none") {
     const ui::Status empty;
 
-    same(empty.wants({20, 5}), (ui::Size{0, 1}));
-    same(empty.wants({20, 0}), (ui::Size{0, 0}));
-    same(ui::Span{""}.wants({20, 5}), (ui::Size{0, 0}));
+    SAME(empty.wants({20, 5}), (ui::Size{0, 1}));
+    SAME(empty.wants({20, 0}), (ui::Size{0, 0}));
+    SAME(ui::Span{""}.wants({20, 5}), (ui::Size{0, 0}));
 
     ui::Status said{"Ready"};
 
-    same(said.wants({20, 5}), (ui::Size{5, 1}));
+    SAME(said.wants({20, 5}), (ui::Size{5, 1}));
 
     said.wrapped(true);
     said.text("one two three");
 
-    same(said.wants({7, 5}).high, 2);
+    SAME(said.wants({7, 5}).high, 2);
 }
 
 // In a column the row stays: what stands under the line keeps its place when the text goes.
@@ -40,11 +40,11 @@ TRIAL("Status: in a column what stands under it keeps its place") {
 
     (void)one.render({{0, 0}, {20, 3}});
 
-    same(under->area().at.y, 1);
+    SAME(under->area().at.y, 1);
 
     line->text({});
 
     (void)one.render({{0, 0}, {20, 3}});
 
-    same(under->area().at.y, 1);
+    SAME(under->area().at.y, 1);
 }

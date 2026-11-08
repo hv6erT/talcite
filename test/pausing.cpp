@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -110,7 +110,7 @@ TRIAL("pause: work on a loop's own thread does not rest, since the loop may be w
         std::this_thread::sleep_for(10ms);
     }
 
-    same(asked->load(), 1);
+    SAME(asked->load(), 1);
 }
 
 TRIAL("pause: the body rests while the pause is held, and goes on when it goes") {
@@ -118,19 +118,19 @@ TRIAL("pause: the body rests while the pause is held, and goes on when it goes")
 
     Promise<void> work = stepping(steps);
 
-    ought(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
 
     {
         const Pause pause = work.pause();
 
-        ought(pause.held());
-        ought(standing(*steps));
+        OUGHT(pause.held());
+        OUGHT(standing(*steps));
     }
 
     std::move(work).get();
 
-    same(steps->made.load(), 40);
-    ought(!steps->stopped.load());
+    SAME(steps->made.load(), 40);
+    OUGHT(!steps->stopped.load());
 }
 
 TRIAL("pause: a pause of the end of a chain reaches the body at its start") {
@@ -138,15 +138,15 @@ TRIAL("pause: a pause of the end of a chain reaches the body at its start") {
 
     Promise<int> work = stepping(steps).then([] { return 7; });
 
-    ought(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
 
     Pause pause = work.pause();
 
-    ought(standing(*steps));
+    OUGHT(standing(*steps));
 
     pause = Pause{};
 
-    same(std::move(work).get(), 7);
+    SAME(std::move(work).get(), 7);
 }
 
 TRIAL("pause: work linked after the pause began rests too, in a chain and in a coroutine") {
@@ -155,28 +155,28 @@ TRIAL("pause: work linked after the pause began rests too, in a chain and in a c
     Promise<void> later = run(io(), [] { std::this_thread::sleep_for(30ms); }).then([chained] { return stepping(chained); });
     Pause first = later.pause();
 
-    ought(standing(*chained));
-    same(chained->made.load(), 0);
+    OUGHT(standing(*chained));
+    SAME(chained->made.load(), 0);
 
     first = Pause{};
 
     std::move(later).get();
 
-    same(chained->made.load(), 40);
+    SAME(chained->made.load(), 40);
 
     const auto awaited = std::make_shared<Steps>();
 
     Promise<void> coroutine = walked(awaited);
     Pause second = coroutine.pause();
 
-    ought(standing(*awaited));
-    same(awaited->made.load(), 0);
+    OUGHT(standing(*awaited));
+    SAME(awaited->made.load(), 0);
 
     second = Pause{};
 
     std::move(coroutine).get();
 
-    same(awaited->made.load(), 40);
+    SAME(awaited->made.load(), 40);
 }
 
 TRIAL("pause: the members of a join rest with it, and so does work a body waits for") {
@@ -190,18 +190,18 @@ TRIAL("pause: the members of a join rest with it, and so does work a body waits 
 
     Promise<void> joined = all(std::move(both));
 
-    ought(came([&first, &second] { return first->made.load() >= 2 && second->made.load() >= 2; }));
+    OUGHT(came([&first, &second] { return first->made.load() >= 2 && second->made.load() >= 2; }));
 
     {
         const Pause pause = joined.pause();
 
-        ought(standing(*first));
-        ought(standing(*second));
+        OUGHT(standing(*first));
+        OUGHT(standing(*second));
     }
 
     std::move(joined).get();
 
-    same(first->made.load() + second->made.load(), 80);
+    SAME(first->made.load() + second->made.load(), 80);
 
     const auto inner = std::make_shared<Steps>();
     const auto waiting = std::make_shared<std::atomic<bool>>(false);
@@ -214,17 +214,17 @@ TRIAL("pause: the members of a join rest with it, and so does work a body waits 
         std::move(work).get();
     });
 
-    ought(came([&inner, &waiting] { return waiting->load() && inner->made.load() >= 2; }));
+    OUGHT(came([&inner, &waiting] { return waiting->load() && inner->made.load() >= 2; }));
 
     {
         const Pause pause = outer.pause();
 
-        ought(standing(*inner));
+        OUGHT(standing(*inner));
     }
 
     std::move(outer).get();
 
-    same(inner->made.load(), 40);
+    SAME(inner->made.load(), 40);
 }
 
 TRIAL("pause: the work rests while any pause is held, a view's pause holds the shared work") {
@@ -232,23 +232,23 @@ TRIAL("pause: the work rests while any pause is held, a view's pause holds the s
 
     SharedPromise<void> work = stepping(steps).share();
 
-    ought(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
 
     Promise<void> view = work.view();
     Pause one = view.pause();
     Pause two = work.pause();
 
-    ought(standing(*steps));
+    OUGHT(standing(*steps));
 
     one = Pause{};
 
-    ought(standing(*steps));
+    OUGHT(standing(*steps));
 
     two = Pause{};
 
     std::move(view).get();
 
-    same(steps->made.load(), 40);
+    SAME(steps->made.load(), 40);
 }
 
 // One reader's pause does not stop the shared work for another reader: the work rests only while
@@ -258,7 +258,7 @@ TRIAL("pause: a shared work rests only when all its views are paused") {
 
     SharedPromise<void> work = stepping(steps, 80).share();
 
-    ought(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
 
     Promise<void> first = work.view();
     Promise<void> second = work.view();
@@ -269,22 +269,22 @@ TRIAL("pause: a shared work rests only when all its views are paused") {
 
     std::this_thread::sleep_for(150ms);
 
-    ought(steps->made.load() > before + 5);
+    OUGHT(steps->made.load() > before + 5);
 
     Pause two = second.pause();
 
-    ought(standing(*steps));
+    OUGHT(standing(*steps));
 
     one = Pause{};
 
-    ought(came([&steps, &before] { return steps->made.load() > before + 20; }) || steps->over.load());
+    OUGHT(came([&steps, &before] { return steps->made.load() > before + 20; }) || steps->over.load());
 
     two = Pause{};
 
     std::move(first).get();
     std::move(second).get();
 
-    same(steps->made.load(), 80);
+    SAME(steps->made.load(), 80);
 }
 
 // Work started in the continuation of a paused chain is paused from its birth, even when the
@@ -304,13 +304,13 @@ TRIAL("pause: work started in a paused continuation is born paused") {
 
     std::this_thread::sleep_for(250ms);
 
-    same(later->made.load(), 0);
+    SAME(later->made.load(), 0);
 
     pause = Pause{};
 
     std::move(chain).get();
 
-    same(later->made.load(), 40);
+    SAME(later->made.load(), 40);
 }
 
 TRIAL("pause: a stop ends the rest at once, and the body sees it as a stop") {
@@ -318,17 +318,17 @@ TRIAL("pause: a stop ends the rest at once, and the body sees it as a stop") {
 
     Promise<void> work = stepping(steps);
 
-    ought(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
 
     const Pause pause = work.pause();
 
-    ought(standing(*steps));
+    OUGHT(standing(*steps));
 
     work.cancel();
 
-    ought(came([&steps] { return steps->over.load(); }));
-    ought(steps->stopped.load());
-    ought(steps->made.load() < 40);
+    OUGHT(came([&steps] { return steps->over.load(); }));
+    OUGHT(steps->stopped.load());
+    OUGHT(steps->made.load() < 40);
 }
 
 TRIAL("pause: the body knows whether it is paused, and an empty promise gives no pause") {
@@ -348,16 +348,16 @@ TRIAL("pause: the body knows whether it is paused, and an empty promise gives no
 
         go->store(true);
 
-        ought(came([&asked] { return asked->load() != 0; }));
+        OUGHT(came([&asked] { return asked->load() != 0; }));
     }
 
-    same(asked->load(), 1);
+    SAME(asked->load(), 1);
 
     std::move(work).get();
 
     const Promise<void> none;
 
-    ought(!none.pause().held());
+    OUGHT(!none.pause().held());
 }
 
 TRIAL("pause: a copy of a large file rests between its pieces") {
@@ -388,15 +388,15 @@ TRIAL("pause: a copy of a large file rests between its pieces") {
 
     std::this_thread::sleep_for(200ms);
 
-    ought(!copying.ready());
-    ought(copying.progress() == before);
-    ought(before.done < whole);
+    OUGHT(!copying.ready());
+    OUGHT(copying.progress() == before);
+    OUGHT(before.done < whole);
 
     pause = Pause{};
 
     std::move(copying).get();
 
-    same(stood::file_size(to), whole);
+    SAME(stood::file_size(to), whole);
 
     stood::remove_all(where, ignored);
 }

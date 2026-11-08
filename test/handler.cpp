@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <optional>
 #include <string>
@@ -70,9 +70,9 @@ TRIAL("Handler: the target's handle receives the event") {
     Knot one{told, "jeden"};
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{1});
-    same(told[0], std::string{"jeden:handle"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{1});
+    SAME(told[0], std::string{"jeden:handle"});
 }
 
 TRIAL("Handler: an unhandled event goes to the parent") {
@@ -85,10 +85,10 @@ TRIAL("Handler: an unhandled event goes to the parent") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!down.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"dół:handle"});
-    same(told[1], std::string{"góra:handle"});
+    OUGHT(!down.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"dół:handle"});
+    SAME(told[1], std::string{"góra:handle"});
 }
 
 TRIAL("Handler: a handled event goes no higher") {
@@ -102,9 +102,9 @@ TRIAL("Handler: a handled event goes no higher") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(down.send(what));
-    same(told.size(), std::size_t{1});
-    same(told[0], std::string{"dół:handle"});
+    OUGHT(down.send(what));
+    SAME(told.size(), std::size_t{1});
+    SAME(told[0], std::string{"dół:handle"});
 }
 
 TRIAL("Handler: the target is the first node, not the last") {
@@ -118,8 +118,8 @@ TRIAL("Handler: the target is the first node, not the last") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(down.send(what));
-    ought(what.target() == &down);
+    OUGHT(down.send(what));
+    OUGHT(what.target() == &down);
 }
 
 TRIAL("Handler: a hook from on receives the event when handle did not take it") {
@@ -135,10 +135,10 @@ TRIAL("Handler: a hook from on receives the event when handle did not take it") 
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"jeden:handle"});
-    same(told[1], std::string{"uchwyt"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"jeden:handle"});
+    SAME(told[1], std::string{"uchwyt"});
 }
 
 // Two channels, two independent stops. The widget and the caller travel the same way, but each
@@ -160,10 +160,10 @@ TRIAL("Handler: a handle that took the event does not silence the hooks") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(one.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"jeden:handle"});
-    same(told[1], std::string{"uchwyt"});
+    OUGHT(one.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"jeden:handle"});
+    SAME(told[1], std::string{"uchwyt"});
 }
 
 TRIAL("Handler: all hooks run, even when the first one took the event") {
@@ -185,10 +185,10 @@ TRIAL("Handler: all hooks run, even when the first one took the event") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(one.send(what));
-    same(told.size(), std::size_t{3});
-    same(told[1], std::string{"pierwszy"});
-    same(told[2], std::string{"drugi"});
+    OUGHT(one.send(what));
+    SAME(told.size(), std::size_t{3});
+    SAME(told[1], std::string{"pierwszy"});
+    SAME(told[2], std::string{"drugi"});
 }
 
 // True from a hook closes the path of hooks, not the whole journey: the ancestor's `handle` still
@@ -214,13 +214,13 @@ TRIAL("Handler: a hook that took the event stops only its own channel") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(down.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"dół:handle"});
-    same(told[1], std::string{"góra:handle"});
+    OUGHT(down.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"dół:handle"});
+    SAME(told[1], std::string{"góra:handle"});
 
     // The hook at the top no longer runs: its channel was closed at the bottom.
-    same(seen, 0);
+    SAME(seen, 0);
 }
 
 TRIAL("Handler: hooks of another kind stay silent") {
@@ -236,9 +236,9 @@ TRIAL("Handler: hooks of another kind stay silent") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{1});
-    same(told[0], std::string{"jeden:handle"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{1});
+    SAME(told[0], std::string{"jeden:handle"});
 }
 
 // A hook unhooks its listener when it goes: the listener lasts exactly as long as whoever keeps the
@@ -257,15 +257,15 @@ TRIAL("Handler: a hook that goes unhooks its listener") {
 
         ui::KeyEvent what{U'a'};
 
-        ought(one.send(what));
-        same(told.size(), std::size_t{2});
+        OUGHT(one.send(what));
+        SAME(told.size(), std::size_t{2});
     }
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{3});
-    same(told[2], std::string{"jeden:handle"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{3});
+    SAME(told[2], std::string{"jeden:handle"});
 }
 
 // A hook is empty when fresh, after it gave its listener away and after it was emptied by
@@ -278,28 +278,28 @@ TRIAL("Handler: a hook moves its listener and empties when given away") {
 
     const ui::Hook fresh;
 
-    ought(fresh.empty());
+    OUGHT(fresh.empty());
 
     ui::Hook which = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
-    ought(!which.empty());
+    OUGHT(!which.empty());
 
     ui::Hook moved = std::move(which);
 
-    ought(which.empty());
-    ought(!moved.empty());
+    OUGHT(which.empty());
+    OUGHT(!moved.empty());
 
     ui::KeyEvent first{U'a'};
 
-    ought(one.send(first));
+    OUGHT(one.send(first));
 
     moved = ui::Hook{};
 
-    ought(moved.empty());
+    OUGHT(moved.empty());
 
     ui::KeyEvent second{U'a'};
 
-    ought(!one.send(second));
+    OUGHT(!one.send(second));
 }
 
 // Assigning a hook over a full one unhooks what the old one held and keeps the new listener.
@@ -322,9 +322,9 @@ TRIAL("Handler: a hook assigned over another unhooks the old listener") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[1], std::string{"nowy"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[1], std::string{"nowy"});
 }
 
 // A hook with the same number on a different type does not remove someone else's: the type is in
@@ -342,7 +342,7 @@ TRIAL("Handler: a hook detaches only its own type") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(one.send(what));
+    OUGHT(one.send(what));
 }
 
 TRIAL("Handler: a hook that goes removes one listener, not all") {
@@ -366,9 +366,9 @@ TRIAL("Handler: a hook that goes removes one listener, not all") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[1], std::string{"drugi"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[1], std::string{"drugi"});
 }
 
 // A hook that outlives its handler has nothing left to unhook: it is empty, and its end breaks
@@ -383,14 +383,14 @@ TRIAL("Handler: a hook outliving its handler is empty and goes quietly") {
 
         which = one.on<ui::KeyEvent>([](ui::KeyEvent&) { return true; });
 
-        ought(!which.empty());
+        OUGHT(!which.empty());
     }
 
-    ought(which.empty());
+    OUGHT(which.empty());
 
     which = ui::Hook{};
 
-    ought(which.empty());
+    OUGHT(which.empty());
 }
 
 TRIAL("Handler: a hook sees the target") {
@@ -411,8 +411,8 @@ TRIAL("Handler: a hook sees the target") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(down.send(what));
-    ought(seen == &down);
+    OUGHT(down.send(what));
+    OUGHT(seen == &down);
 }
 
 TRIAL("Handler: the journey through three levels") {
@@ -429,11 +429,11 @@ TRIAL("Handler: the journey through three levels") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(low.send(what));
-    same(told.size(), std::size_t{3});
-    same(told[0], std::string{"spód:handle"});
-    same(told[1], std::string{"środek:handle"});
-    same(told[2], std::string{"szczyt:handle"});
+    OUGHT(low.send(what));
+    SAME(told.size(), std::size_t{3});
+    SAME(told[0], std::string{"spód:handle"});
+    SAME(told[1], std::string{"środek:handle"});
+    SAME(told[2], std::string{"szczyt:handle"});
 }
 
 TRIAL("Handler: every kind of event travels the same way") {
@@ -446,10 +446,10 @@ TRIAL("Handler: every kind of event travels the same way") {
 
     ui::MouseEvent what{ui::Spot{}, ui::Press::down, ui::Mouse::left};
 
-    ought(!down.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"dół:mysz"});
-    same(told[1], std::string{"góra:mysz"});
+    OUGHT(!down.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"dół:mysz"});
+    SAME(told[1], std::string{"góra:mysz"});
 }
 
 TRIAL("Handler: a hook detached while it runs does not break the loop") {
@@ -474,15 +474,15 @@ TRIAL("Handler: a hook detached while it runs does not break the loop") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{3});
-    same(told[2], std::string{"drugi"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{3});
+    SAME(told[2], std::string{"drugi"});
 
     ui::KeyEvent again{U'a'};
 
-    ought(!one.send(again));
-    same(told.size(), std::size_t{5});
-    same(told[4], std::string{"drugi"});
+    OUGHT(!one.send(again));
+    SAME(told.size(), std::size_t{5});
+    SAME(told[4], std::string{"drugi"});
 }
 
 // A listener unhooked by an earlier one during the same delivery is not called any more: its keeper
@@ -509,9 +509,9 @@ TRIAL("Handler: a listener unhooked during a delivery is skipped in it") {
 
     ui::KeyEvent what{U'a'};
 
-    ought(!one.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[1], std::string{"pierwszy"});
+    OUGHT(!one.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[1], std::string{"pierwszy"});
 }
 
 TRIAL("Handler: a node detached from its parent during handle still passes the event up") {
@@ -530,9 +530,9 @@ TRIAL("Handler: a node detached from its parent during handle still passes the e
 
     ui::KeyEvent what{U'a'};
 
-    ought(!down.send(what));
-    same(told.size(), std::size_t{2});
-    same(told[1], std::string{"góra:handle"});
+    OUGHT(!down.send(what));
+    SAME(told.size(), std::size_t{2});
+    SAME(told[1], std::string{"góra:handle"});
 }
 
 // An event of the program travels only on the callers' channel. The widget's channel knows only the
@@ -585,9 +585,9 @@ TRIAL("Handler: a program's event travels up to the hooks") {
 
     Own what;
 
-    ought(under.send(what));
-    same(heard.size(), std::size_t{2});
-    same(heard[1], std::string{"góra"});
+    OUGHT(under.send(what));
+    SAME(heard.size(), std::size_t{2});
+    SAME(heard[1], std::string{"góra"});
 }
 
 TRIAL("Handler: a program's event that nobody took returns false") {
@@ -606,6 +606,6 @@ TRIAL("Handler: a program's event that nobody took returns false") {
 
     Own what;
 
-    ought(!under.send(what));
-    same(heard, 1);
+    OUGHT(!under.send(what));
+    SAME(heard, 1);
 }

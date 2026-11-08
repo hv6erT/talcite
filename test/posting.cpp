@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -23,9 +23,9 @@ net::Udp standing() { return net::Udp{net::Address::loopback(net::Family::four, 
 TRIAL("Post: gets a port from the system") {
     const net::Udp one = standing();
 
-    ought(one.held());
-    ought(one.mine().port() != 0);
-    same(one.mine().text(), std::string{"127.0.0.1"});
+    OUGHT(one.held());
+    OUGHT(one.mine().port() != 0);
+    SAME(one.mine().text(), std::string{"127.0.0.1"});
 }
 
 TRIAL("Post: an empty address is refused") {
@@ -39,7 +39,7 @@ TRIAL("Post: an empty address is refused") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Post: a datagram arrives and knows who sent it") {
@@ -52,9 +52,9 @@ TRIAL("Post: a datagram arrives and knows who sent it") {
 
     const net::Datagram made = std::move(waiting).get();
 
-    same(text(made.bytes), std::string{"kartka"});
-    same(made.from.port(), there.mine().port());
-    same(made.from.text(), std::string{"127.0.0.1"});
+    SAME(text(made.bytes), std::string{"kartka"});
+    SAME(made.from.port(), there.mine().port());
+    SAME(made.from.text(), std::string{"127.0.0.1"});
 }
 
 TRIAL("Post: an empty datagram is not the same as no datagram") {
@@ -67,8 +67,8 @@ TRIAL("Post: an empty datagram is not the same as no datagram") {
 
     const net::Datagram made = std::move(waiting).get();
 
-    same(static_cast<int>(made.bytes.size()), 0);
-    ought(made.from.held());
+    SAME(static_cast<int>(made.bytes.size()), 0);
+    OUGHT(made.from.held());
 }
 
 TRIAL("Post: a truncated datagram reports trouble, not a piece") {
@@ -86,10 +86,10 @@ TRIAL("Post: a truncated datagram reports trouble, not a piece") {
     } catch (const net::Trouble& why) {
         cut = true;
 
-        ought(std::string{why.what()}.find("buffer") != std::string::npos);
+        OUGHT(std::string{why.what()}.find("buffer") != std::string::npos);
     }
 
-    ought(cut);
+    OUGHT(cut);
 }
 
 TRIAL("Post: silence ends with the deadline") {
@@ -103,7 +103,7 @@ TRIAL("Post: silence ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Post: a second receive at the same time is refused") {
@@ -119,7 +119,7 @@ TRIAL("Post: a second receive at the same time is refused") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(first).get();
@@ -138,7 +138,7 @@ TRIAL("Post: an empty address is not a destination") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Post: several datagrams in a row keep their order on loopback") {
@@ -150,7 +150,7 @@ TRIAL("Post: several datagrams in a row keep their order on loopback") {
 
         there.send(here.mine(), bytes(std::to_string(which)), soon).get();
 
-        same(text(std::move(waiting).get().bytes), std::to_string(which));
+        SAME(text(std::move(waiting).get().bytes), std::to_string(which));
     }
 }
 
@@ -168,7 +168,7 @@ TRIAL("Post: the reply comes back to the sender's address") {
 
     here.send(made.from, bytes("odpowiedź"), soon).get();
 
-    same(text(std::move(back).get().bytes), std::string{"odpowiedź"});
+    SAME(text(std::move(back).get().bytes), std::string{"odpowiedź"});
 }
 
 TRIAL("Post: a closed socket accepts no requests") {
@@ -184,7 +184,7 @@ TRIAL("Post: a closed socket accepts no requests") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Post: closing cancels a pending receive") {
@@ -204,7 +204,7 @@ TRIAL("Post: closing cancels a pending receive") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // After closing, the socket answers everything politely, including the question about its own
@@ -214,7 +214,7 @@ TRIAL("Post: the address after closing is empty instead of blowing up") {
 
     one.close();
 
-    ought(!one.mine().held());
+    OUGHT(!one.mine().held());
 }
 
 // A cancelled receive must free the socket; it is the same rule as in the stream, because the
@@ -231,7 +231,7 @@ TRIAL("Post: a cancelled receive frees the socket") {
 
     for (int tried = 0; tried < 200; ++tried) {
         try {
-            same(text(here.receive(1024, soon).get().bytes), std::string{"paczka"});
+            SAME(text(here.receive(1024, soon).get().bytes), std::string{"paczka"});
 
             return;
         } catch (const net::Trouble&) {
@@ -239,7 +239,7 @@ TRIAL("Post: a cancelled receive frees the socket") {
         }
     }
 
-    ought(false);
+    OUGHT(false);
 }
 
 // Cancelling frees the direction at once: the same rule and the same reason as for the listener
@@ -257,7 +257,7 @@ TRIAL("Post: after cancelling, receiving again works at once") {
 
     other.send(one.mine(), bytes("znowu"), soon).get();
 
-    same(text(std::move(waiting).get().bytes), std::string{"znowu"});
+    SAME(text(std::move(waiting).get().bytes), std::string{"znowu"});
 }
 
 TRIAL("Post: a hundred cancels in a row do not leave it busy for good") {
@@ -274,7 +274,7 @@ TRIAL("Post: a hundred cancels in a row do not leave it busy for good") {
 
     other.send(one.mine(), bytes("po stu"), soon).get();
 
-    same(text(std::move(waiting).get().bytes), std::string{"po stu"});
+    SAME(text(std::move(waiting).get().bytes), std::string{"po stu"});
 }
 
 TRIAL("Post: a local socket refuses, because there are no datagrams there") {
@@ -286,5 +286,5 @@ TRIAL("Post: a local socket refuses, because there are no datagrams there") {
         told = true;
     }
 
-    ought(told);
+    OUGHT(told);
 }

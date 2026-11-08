@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include "faking.hpp"
 
@@ -57,10 +57,10 @@ TRIAL("Seam: the handshake completes on both sides") {
 
     Pair both = guarded(gate, guard);
 
-    ought(both.server.held());
-    ought(both.client.held());
+    OUGHT(both.server.held());
+    OUGHT(both.client.held());
 
-    same(both.client.peer().port(), gate.mine().port());
+    SAME(both.client.peer().port(), gate.mine().port());
 }
 
 TRIAL("Seam: content passes both ways") {
@@ -72,11 +72,11 @@ TRIAL("Seam: content passes both ways") {
 
     both.client.write(bytes("tajna wiadomość"), soon).get();
 
-    same(text(both.server.read(1024, soon).get()), std::string{"tajna wiadomość"});
+    SAME(text(both.server.read(1024, soon).get()), std::string{"tajna wiadomość"});
 
     both.server.write(bytes("i odpowiedź"), soon).get();
 
-    same(text(both.client.read(1024, soon).get()), std::string{"i odpowiedź"});
+    SAME(text(both.client.read(1024, soon).get()), std::string{"i odpowiedź"});
 }
 
 TRIAL("Seam: a hundred thousand bytes pass in pieces") {
@@ -102,8 +102,8 @@ TRIAL("Seam: a hundred thousand bytes pass in pieces") {
 
     std::move(writing).get();
 
-    same(made.size(), much.size());
-    ought(made == much);
+    SAME(made.size(), much.size());
+    OUGHT(made == much);
 }
 
 TRIAL("Seam: reading less than a record leaves the rest for later") {
@@ -115,9 +115,9 @@ TRIAL("Seam: reading less than a record leaves the rest for later") {
 
     both.client.write(bytes("abcdefghij"), soon).get();
 
-    same(text(both.server.read(4, soon).get()), std::string{"abcd"});
-    same(text(both.server.read(4, soon).get()), std::string{"efgh"});
-    same(text(both.server.read(4, soon).get()), std::string{"ij"});
+    SAME(text(both.server.read(4, soon).get()), std::string{"abcd"});
+    SAME(text(both.server.read(4, soon).get()), std::string{"efgh"});
+    SAME(text(both.server.read(4, soon).get()), std::string{"ij"});
 }
 
 TRIAL("Seam: the other side closing gives emptiness") {
@@ -129,7 +129,7 @@ TRIAL("Seam: the other side closing gives emptiness") {
 
     both.client.close();
 
-    same(static_cast<int>(both.server.read(64, soon).get().size()), 0);
+    SAME(static_cast<int>(both.server.read(64, soon).get().size()), 0);
 }
 
 TRIAL("Seam: silence ends with the deadline") {
@@ -147,7 +147,7 @@ TRIAL("Seam: silence ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Seam: a second read at the same time is refused") {
@@ -167,7 +167,7 @@ TRIAL("Seam: a second read at the same time is refused") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(first).get();
@@ -191,10 +191,10 @@ TRIAL("Seam: trouble reported by the protection comes to the surface") {
     } catch (const net::Trouble& why) {
         amiss = true;
 
-        ought(std::string{why.what()}.find("Poison") != std::string::npos);
+        OUGHT(std::string{why.what()}.find("Poison") != std::string::npos);
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // Trouble that the adapter did not recognize is also `TlsTrouble`, with the reason "other"; on the
@@ -215,12 +215,12 @@ TRIAL("Seam: trouble without a recognized reason is TlsTrouble with reason other
     } catch (const net::TlsTrouble& why) {
         amiss = true;
 
-        same(why.why(), net::TlsTrouble::Why::other);
-        ought(why.host().empty());
-        ought(why.where().held());
+        SAME(why.why(), net::TlsTrouble::Why::other);
+        OUGHT(why.host().empty());
+        OUGHT(why.where().held());
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // A handshake refusal with a reason from the adapter: each reason reaches the caller as it was,
@@ -243,13 +243,13 @@ TRIAL("Seam: a handshake refusal carries the reason, the server name and the add
         } catch (const net::TlsTrouble& why) {
             refused = true;
 
-            same(why.why(), one);
-            same(why.host(), std::string{"talcite.test"});
-            ought(why.where() == gate.mine());
-            same(std::string{why.what()}, std::string{"Handshake rejected."});
+            SAME(why.why(), one);
+            SAME(why.host(), std::string{"talcite.test"});
+            OUGHT(why.where() == gate.mine());
+            SAME(std::string{why.what()}, std::string{"Handshake rejected."});
         }
 
-        ought(refused);
+        OUGHT(refused);
     }
 }
 
@@ -277,7 +277,7 @@ TRIAL("Seam: a handshake cut off halfway rejects the promise") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Seam: writing and reading at once do not mix on the socket") {
@@ -292,8 +292,8 @@ TRIAL("Seam: writing and reading at once do not mix on the socket") {
     both.server.write(bytes("od serwera"), soon).get();
     both.client.write(bytes("od klienta"), soon).get();
 
-    same(text(std::move(reading).get()), std::string{"od serwera"});
-    same(text(both.server.read(1024, soon).get()), std::string{"od klienta"});
+    SAME(text(std::move(reading).get()), std::string{"od serwera"});
+    SAME(text(both.server.read(1024, soon).get()), std::string{"od klienta"});
 }
 
 // The guard is a value, so it may be absent. An empty one must say so plainly instead of reaching
@@ -322,7 +322,7 @@ TRIAL("Seam: an empty seam refuses with Unbound, and provider() on it throws the
 
     const talcite::Seam<net::TlsProvider> none;
 
-    ought(!none.bound());
+    OUGHT(!none.bound());
 
     bool amiss = false;
 
@@ -332,7 +332,7 @@ TRIAL("Seam: an empty seam refuses with Unbound, and provider() on it throws the
         amiss = std::string{why.what()} == "No provider for TLS.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -342,14 +342,14 @@ TRIAL("Seam: an empty seam refuses with Unbound, and provider() on it throws the
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Seam: the provider has a name, and the seam hands it out") {
     const talcite::Seam<net::TlsProvider> guard{std::make_shared<Watching>()};
 
-    ought(guard.bound());
-    same(std::string{guard.provider().name()}, std::string{"flipping"});
+    OUGHT(guard.bound());
+    SAME(std::string{guard.provider().name()}, std::string{"flipping"});
 }
 
 TRIAL("Seam: a guard that gives nothing refuses with a reason") {
@@ -361,8 +361,8 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
 
     const talcite::Seam<net::TlsProvider> guard{std::make_shared<Nothing>()};
 
-    ought(guard.bound());
-    ought(guard.provider().server() == nullptr);
+    OUGHT(guard.bound());
+    OUGHT(guard.provider().server() == nullptr);
 
     bool amiss = false;
 
@@ -372,7 +372,7 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // Rejections from `TlsStream` come out as trouble, not as a bare string: `Settle::fail` would wrap a
@@ -395,7 +395,7 @@ TRIAL("Seam: rejections come out as trouble, not as a bare string") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -405,7 +405,7 @@ TRIAL("Seam: rejections come out as trouble, not as a bare string") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 // A second read in flight must refuse with trouble, like everything else. The pair has to be fresh
@@ -430,7 +430,7 @@ TRIAL("Seam: a second read at the same time refuses with trouble") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(reading).get();
@@ -474,5 +474,5 @@ TRIAL("Seam: closing during a write crashes nobody") {
         both.server.close();
     }
 
-    ought(true);
+    OUGHT(true);
 }

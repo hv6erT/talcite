@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -66,45 +66,45 @@ std::shared_ptr<Box> box(ui::Size wants, char32_t what) {
 TRIAL("Children: a plain node takes one and throws on the second") {
     ui::Node one;
 
-    same(one.capacity(), 1);
+    SAME(one.capacity(), 1);
 
     one.children().add(box({2, 1}, U'a'));
 
-    threw(one.children().add(box({2, 1}, U'b')));
+    THREW(one.children().add(box({2, 1}, U'b')));
 }
 
 TRIAL("Children: a span takes none") {
     ui::Span one{"kot"};
 
-    same(one.capacity(), 0);
+    SAME(one.capacity(), 0);
 
-    threw(one.children().add(box({2, 1}, U'a')));
+    THREW(one.children().add(box({2, 1}, U'a')));
 }
 
 TRIAL("Children: the root is a wrapper, not a layout") {
     ui::Root top;
 
-    same(top.capacity(), 1);
+    SAME(top.capacity(), 1);
 
     top.children().add(box({2, 1}, U'a'));
 
-    threw(top.children().add(box({2, 1}, U'b')));
+    THREW(top.children().add(box({2, 1}, U'b')));
 }
 
 TRIAL("Children: a row and a column take as many as needed") {
     ui::Row row;
     ui::Column column;
 
-    same(row.capacity(), ui::plenty);
-    same(column.capacity(), ui::plenty);
+    SAME(row.capacity(), ui::plenty);
+    SAME(column.capacity(), ui::plenty);
 
     for (int which = 0; which < 5; ++which) {
         row.children().add(box({1, 1}, U'a'));
         column.children().add(box({1, 1}, U'a'));
     }
 
-    same(row.children().many(), std::size_t{5});
-    same(column.children().many(), std::size_t{5});
+    SAME(row.children().many(), std::size_t{5});
+    SAME(column.children().many(), std::size_t{5});
 }
 
 TRIAL("Node: the only child gets the whole rectangle") {
@@ -116,8 +116,8 @@ TRIAL("Node: the only child gets the whole rectangle") {
 
     (void)one.render({{0, 0}, {6, 3}});
 
-    same(inner->area().size.wide, 6);
-    same(inner->area().size.high, 3);
+    SAME(inner->area().size.wide, 6);
+    SAME(inner->area().size.high, 3);
 }
 
 TRIAL("Node: wants as much as its only child") {
@@ -127,15 +127,15 @@ TRIAL("Node: wants as much as its only child") {
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 4);
-    same(wants.high, 2);
+    SAME(wants.wide, 4);
+    SAME(wants.high, 2);
 }
 
 TRIAL("Node without children wants nothing") {
     const ui::Node one;
 
-    same(one.wants({80, 25}).wide, 0);
-    same(one.wants({80, 25}).high, 0);
+    SAME(one.wants({80, 25}).wide, 0);
+    SAME(one.wants({80, 25}).high, 0);
 }
 
 TRIAL("Column: children stand one below the other") {
@@ -149,12 +149,12 @@ TRIAL("Column: children stand one below the other") {
 
     const Snapshot made = one.render({{0, 0}, {6, 4}});
 
-    same(first->area().at.y, 0);
-    same(second->area().at.y, 1);
-    same(read(made, 0), std::string{"aaaaaa"});
-    same(read(made, 1), std::string{"bbbbbb"});
-    same(read(made, 2), std::string{"bbbbbb"});
-    same(read(made, 3), std::string{""});
+    SAME(first->area().at.y, 0);
+    SAME(second->area().at.y, 1);
+    SAME(read(made, 0), std::string{"aaaaaa"});
+    SAME(read(made, 1), std::string{"bbbbbb"});
+    SAME(read(made, 2), std::string{"bbbbbb"});
+    SAME(read(made, 3), std::string{""});
 }
 
 TRIAL("Row: children stand side by side") {
@@ -168,9 +168,9 @@ TRIAL("Row: children stand side by side") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(first->area().at.x, 0);
-    same(second->area().at.x, 2);
-    same(read(made, 0), std::string{"aabbb"});
+    SAME(first->area().at.x, 0);
+    SAME(second->area().at.x, 2);
+    SAME(read(made, 0), std::string{"aabbb"});
 }
 
 // A flow: a child that does not fit in the rest of the line starts the next one, and each
@@ -191,32 +191,32 @@ TRIAL("Flow: carries over what does not fit and centers the lines") {
     one.children().add(third);
     one.children().add(wide);
 
-    same(one.wants({12, 10}), (ui::Size{12, 3}));
-    same(one.wants({12, 2}), (ui::Size{12, 2}));
+    SAME(one.wants({12, 10}), (ui::Size{12, 3}));
+    SAME(one.wants({12, 2}), (ui::Size{12, 2}));
 
     const Snapshot made = one.render({{0, 0}, {12, 3}});
 
-    same(read(made, 0), std::string{"aaaaa bbbbb"});
-    same(read(made, 1), std::string{"   ccccc"});
-    same(read(made, 2), std::string{"dddddddddddd"});
-    same(third->area().at.y, 1);
-    same(empty->area().size.wide, 0);
-    same(wide->area().size.wide, 12);
+    SAME(read(made, 0), std::string{"aaaaa bbbbb"});
+    SAME(read(made, 1), std::string{"   ccccc"});
+    SAME(read(made, 2), std::string{"dddddddddddd"});
+    SAME(third->area().at.y, 1);
+    SAME(empty->area().size.wide, 0);
+    SAME(wide->area().size.wide, 12);
 
     // The gap counts when wrapping: two fives in ten columns make two lines, not one.
-    same(one.wants({10, 10}), (ui::Size{10, 4}));
+    SAME(one.wants({10, 10}), (ui::Size{10, 4}));
 
     // A child that stopped taking any room gets a zero rectangle, not the old one.
     first->wanting({0, 1});
 
     (void)one.render({{0, 0}, {12, 3}});
 
-    same(first->area().size.wide, 0);
+    SAME(first->area().size.wide, 0);
 
     first->wanting({5, 1});
 
     // Enough room: one line, as without wrapping.
-    same(one.wants({60, 10}), (ui::Size{38, 1}));
+    SAME(one.wants({60, 10}), (ui::Size{38, 1}));
 }
 
 TRIAL("Row: a child gets the full height") {
@@ -228,7 +228,7 @@ TRIAL("Row: a child gets the full height") {
 
     (void)one.render({{0, 0}, {6, 3}});
 
-    same(first->area().size.high, 3);
+    SAME(first->area().size.high, 3);
 }
 
 TRIAL("Column: a child gets the full width") {
@@ -240,7 +240,7 @@ TRIAL("Column: a child gets the full width") {
 
     (void)one.render({{0, 0}, {6, 3}});
 
-    same(first->area().size.wide, 6);
+    SAME(first->area().size.wide, 6);
 }
 
 TRIAL("Column: wants the sum of heights, but no more than it got") {
@@ -249,9 +249,9 @@ TRIAL("Column: wants the sum of heights, but no more than it got") {
     one.children().add(box({4, 3}, U'a'));
     one.children().add(box({4, 3}, U'b'));
 
-    same(one.wants({10, 10}).high, 6);
-    same(one.wants({10, 4}).high, 4);
-    same(one.wants({2, 10}).wide, 2);
+    SAME(one.wants({10, 10}).high, 6);
+    SAME(one.wants({10, 4}).high, 4);
+    SAME(one.wants({2, 10}).wide, 2);
 }
 
 // A child of zero height, an empty line or a hidden part, opens no gap and adds no width: the rule
@@ -265,11 +265,11 @@ TRIAL("Column: a child of zero height opens no gap and adds no width") {
     one.children().add(box({5, 0}, U'e'));
     one.children().add(last);
 
-    same(one.wants({10, 10}), (ui::Size{2, 3}));
+    SAME(one.wants({10, 10}), (ui::Size{2, 3}));
 
     (void)one.render({{0, 0}, {10, 3}});
 
-    same(last->area().at.y, 2);
+    SAME(last->area().at.y, 2);
 }
 
 TRIAL("Row: wants the sum of widths, but no more than it got") {
@@ -278,9 +278,9 @@ TRIAL("Row: wants the sum of widths, but no more than it got") {
     one.children().add(box({4, 1}, U'a'));
     one.children().add(box({4, 1}, U'b'));
 
-    same(one.wants({10, 10}).wide, 8);
-    same(one.wants({5, 10}).wide, 5);
-    same(one.wants({10, 1}).high, 1);
+    SAME(one.wants({10, 10}).wide, 8);
+    SAME(one.wants({5, 10}).wide, 5);
+    SAME(one.wants({10, 1}).high, 1);
 }
 
 TRIAL("Row: a child past the right edge gets zero width") {
@@ -294,9 +294,9 @@ TRIAL("Row: a child past the right edge gets zero width") {
 
     (void)one.render({{0, 0}, {4, 1}});
 
-    same(first->area().size.wide, 4);
-    same(second->area().size.wide, 0);
-    same(second->area().at.x, 4);
+    SAME(first->area().size.wide, 4);
+    SAME(second->area().size.wide, 0);
+    SAME(second->area().at.x, 4);
 }
 
 TRIAL("Row in a column is laid out as expected") {
@@ -312,6 +312,6 @@ TRIAL("Row in a column is laid out as expected") {
 
     const Snapshot made = outer.render({{0, 0}, {8, 2}});
 
-    same(read(made, 0), std::string{"alakot"});
-    same(read(made, 1), std::string{"pies"});
+    SAME(read(made, 0), std::string{"alakot"});
+    SAME(read(made, 1), std::string{"pies"});
 }

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -96,17 +96,17 @@ TRIAL("Window: the last one opened is current, and focus goes into it") {
 
     const auto one = stage.opened(U'a');
 
-    ought(one->current());
-    ought(stage.window->current() == one.get());
-    same(stage.top.focused_node(), inside(*one));
-    same(stage.window->many(), std::size_t{1});
+    OUGHT(one->current());
+    OUGHT(stage.window->current() == one.get());
+    SAME(stage.top.focused_node(), inside(*one));
+    SAME(stage.window->many(), std::size_t{1});
 
     const auto two = stage.opened(U'b');
 
-    ought(two->current());
-    ought(!one->current());
-    same(stage.top.focused_node(), inside(*two));
-    same(stage.window->many(), std::size_t{2});
+    OUGHT(two->current());
+    OUGHT(!one->current());
+    SAME(stage.top.focused_node(), inside(*two));
+    SAME(stage.window->many(), std::size_t{2});
 }
 
 // A full window paints over the whole room; a seated one stands where it was told, and what lies
@@ -117,23 +117,23 @@ TRIAL("Window: a full one takes the whole room, a seated one its rectangle") {
     const auto under = stage.opened(U'a');
     const auto over = stage.opened(U'b');
 
-    ought(under->full());
+    OUGHT(under->full());
 
     over->seat({2, 1}, {4, 2});
 
-    ought(!over->full());
-    same(over->seat().at.x, 2);
+    OUGHT(!over->full());
+    SAME(over->seat().at.x, 2);
 
     const Snapshot made = stage.top.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"aaaaaaaaaa"});
-    same(read(made, 1), std::string{"aabbbbaaaa"});
-    same(read(made, 2), std::string{"aabbbbaaaa"});
+    SAME(read(made, 0), std::string{"aaaaaaaaaa"});
+    SAME(read(made, 1), std::string{"aabbbbaaaa"});
+    SAME(read(made, 2), std::string{"aabbbbaaaa"});
 
     // Back to full: the whole room again.
     over->full(true);
 
-    same(read(stage.top.render({{0, 0}, {10, 3}}), 0), std::string{"bbbbbbbbbb"});
+    SAME(read(stage.top.render({{0, 0}, {10, 3}}), 0), std::string{"bbbbbbbbbb"});
 }
 
 // Raising brings a window to the top and gives focus back to where it was: the file one was walking
@@ -160,16 +160,16 @@ TRIAL("Window: raising comes back with focus where it was") {
 
     const auto two = stage.opened(U'b');
 
-    same(stage.top.focused_node(), inside(*two));
+    SAME(stage.top.focused_node(), inside(*two));
 
     one->raise();
 
-    ought(one->current());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
+    OUGHT(one->current());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(other.get()));
 
     two->raise();
 
-    same(stage.top.focused_node(), inside(*two));
+    SAME(stage.top.focused_node(), inside(*two));
 }
 
 // --- Order and closing ---------------------------------------------------------------------------
@@ -183,24 +183,24 @@ TRIAL("Window: next and previous walk the opening order, round and round") {
     const auto two = stage.opened(U'b');
     const auto three = stage.opened(U'c');
 
-    ought(three->current());
+    OUGHT(three->current());
 
     stage.window->next();
-    ought(one->current());
+    OUGHT(one->current());
 
     stage.window->next();
-    ought(two->current());
+    OUGHT(two->current());
 
     stage.window->previous();
-    ought(one->current());
+    OUGHT(one->current());
 
     stage.window->previous();
-    ought(three->current());
+    OUGHT(three->current());
 
     // Raising by hand does not change the walking order.
     one->raise();
     stage.window->next();
-    ought(two->current());
+    OUGHT(two->current());
 }
 
 // Closing announces itself while the window still stands in the tree, and after it whatever was
@@ -225,20 +225,20 @@ TRIAL("Window: closing announces itself and gives focus to the top one") {
 
     two->close();
 
-    same(said, 1);
-    ought(stood);
-    same(stage.window->many(), std::size_t{1});
-    ought(one->current());
-    same(stage.top.focused_node(), inside(*one));
+    SAME(said, 1);
+    OUGHT(stood);
+    SAME(stage.window->many(), std::size_t{1});
+    OUGHT(one->current());
+    SAME(stage.top.focused_node(), inside(*one));
 
     // Just one: `next` has nowhere to go.
     stage.window->next();
-    ought(one->current());
+    OUGHT(one->current());
 
     one->close();
 
-    same(stage.window->many(), std::size_t{0});
-    ought(stage.window->current() == nullptr);
+    SAME(stage.window->many(), std::size_t{0});
+    OUGHT(stage.window->current() == nullptr);
 }
 
 // A click on a window raises it but does not swallow it. Only what the content did not take
@@ -263,15 +263,15 @@ TRIAL("Window: a click on the frame raises, and the content still gets its own")
 
     (void)stage.top.render({{0, 0}, {10, 3}});
 
-    ought(two->current());
+    OUGHT(two->current());
 
     // A click on the first window's frame: the frame takes nothing, so it reaches the window.
     ui::ClickEvent edge{{0, 0}, ui::Mouse::left};
 
     (void)stage.top.dispatch(edge);
 
-    ought(one->current());
-    same(box->hit, 0);
+    OUGHT(one->current());
+    SAME(box->hit, 0);
 
     // A click on the content: the content takes it, and the window does not know about it.
     two->raise();
@@ -280,8 +280,8 @@ TRIAL("Window: a click on the frame raises, and the content still gets its own")
 
     (void)stage.top.dispatch(mine);
 
-    same(box->hit, 1);
-    ought(two->current());
+    SAME(box->hit, 1);
+    OUGHT(two->current());
 }
 
 // --- Moving and resizing -------------------------------------------------------------------------
@@ -298,22 +298,22 @@ TRIAL("Window: moving keeps the top row and one column in the room") {
     (void)stage.top.render({{0, 0}, {10, 5}});
 
     one->move(3, 2);
-    same(one->seat().at.x, 5);
-    same(one->seat().at.y, 3);
+    SAME(one->seat().at.x, 5);
+    SAME(one->seat().at.y, 3);
 
     // Right to the last column, down to the last row, and not one cell further.
     one->move(100, 100);
-    same(one->seat().at.x, 9);
-    same(one->seat().at.y, 4);
+    SAME(one->seat().at.x, 9);
+    SAME(one->seat().at.y, 4);
 
     // Left so far that one column of the window is left; up to the first row.
     one->move(-100, -100);
-    same(one->seat().at.x, -3);
-    same(one->seat().at.y, 0);
+    SAME(one->seat().at.x, -3);
+    SAME(one->seat().at.y, 0);
 
     // The size stays while moving.
-    same(one->seat().size.wide, 4);
-    same(one->seat().size.high, 2);
+    SAME(one->seat().size.wide, 4);
+    SAME(one->seat().size.high, 2);
 }
 
 // Resizing works like WindowResize: the upper left corner stays, the window grows only up to the
@@ -326,30 +326,30 @@ TRIAL("Window: resizing up to the room's edge and no less than least") {
     one->seat({2, 1}, {4, 2});
     one->least({3, 2});
 
-    same(one->least().wide, 3);
+    SAME(one->least().wide, 3);
 
     (void)stage.top.render({{0, 0}, {10, 5}});
 
     one->resize(1, 1);
-    same(one->seat().size.wide, 5);
-    same(one->seat().size.high, 3);
+    SAME(one->seat().size.wide, 5);
+    SAME(one->seat().size.high, 3);
 
     one->resize(100, 100);
-    same(one->seat().size.wide, 8);
-    same(one->seat().size.high, 4);
+    SAME(one->seat().size.wide, 8);
+    SAME(one->seat().size.high, 4);
 
     one->resize(-100, -100);
-    same(one->seat().size.wide, 3);
-    same(one->seat().size.high, 2);
+    SAME(one->seat().size.wide, 3);
+    SAME(one->seat().size.high, 2);
 
     // The corner stays.
-    same(one->seat().at.x, 2);
-    same(one->seat().at.y, 1);
+    SAME(one->seat().at.x, 2);
+    SAME(one->seat().at.y, 1);
 
     // The smallest window has at least one cell.
     one->least({0, -4});
-    same(one->least().wide, 1);
-    same(one->least().high, 1);
+    SAME(one->least().wide, 1);
+    SAME(one->least().high, 1);
 }
 
 // A window that already stands beyond the limit, because the terminal narrowed under it, does not
@@ -366,21 +366,21 @@ TRIAL("Window: a window beyond the limit does not jump, it comes back step by st
     (void)stage.top.render({{0, 0}, {10, 5}});
 
     one->move(1, 1);
-    same(one->seat().at.x, 15);
-    same(one->seat().at.y, 8);
+    SAME(one->seat().at.x, 15);
+    SAME(one->seat().at.y, 8);
 
     one->move(-1, -1);
-    same(one->seat().at.x, 14);
-    same(one->seat().at.y, 7);
+    SAME(one->seat().at.x, 14);
+    SAME(one->seat().at.y, 7);
 
     // Too wide and too tall: it cannot grow, but it can shrink by a step.
     one->resize(1, 1);
-    same(one->seat().size.wide, 12);
-    same(one->seat().size.high, 6);
+    SAME(one->seat().size.wide, 12);
+    SAME(one->seat().size.high, 6);
 
     one->resize(-1, -1);
-    same(one->seat().size.wide, 11);
-    same(one->seat().size.high, 5);
+    SAME(one->seat().size.wide, 11);
+    SAME(one->seat().size.high, 5);
 
     // The same on the other side: above the top edge and narrower than `least`. It goes no further
     // up or left and does not shrink, but it does not jump to the limit either.
@@ -388,12 +388,12 @@ TRIAL("Window: a window beyond the limit does not jump, it comes back step by st
     one->least({3, 2});
 
     one->move(-1, -1);
-    same(one->seat().at.x, -20);
-    same(one->seat().at.y, -2);
+    SAME(one->seat().at.x, -20);
+    SAME(one->seat().at.y, -2);
 
     one->resize(-1, -1);
-    same(one->seat().size.wide, 2);
-    same(one->seat().size.high, 1);
+    SAME(one->seat().size.wide, 2);
+    SAME(one->seat().size.high, 1);
 }
 
 // A full window has nothing to move, and a window without a room (not drawn yet) has nothing to
@@ -409,20 +409,20 @@ TRIAL("Window: full and undrawn windows stay") {
     one->move(-1, -1);
     one->resize(1, 1);
     one->resize(-1, -1);
-    same(one->seat().at.x, 2);
-    same(one->seat().at.y, 1);
-    same(one->seat().size.wide, 4);
-    same(one->seat().size.high, 2);
+    SAME(one->seat().at.x, 2);
+    SAME(one->seat().at.y, 1);
+    SAME(one->seat().size.wide, 4);
+    SAME(one->seat().size.high, 2);
 
     (void)stage.top.render({{0, 0}, {10, 5}});
 
     one->full(true);
     one->move(1, 1);
     one->resize(1, 1);
-    same(one->seat().at.x, 2);
-    same(one->seat().at.y, 1);
-    same(one->seat().size.wide, 4);
-    same(one->seat().size.high, 2);
+    SAME(one->seat().at.x, 2);
+    SAME(one->seat().at.y, 1);
+    SAME(one->seat().size.wide, 4);
+    SAME(one->seat().size.high, 2);
 
     // A window outside a container stays too.
     ui::Window alone;
@@ -430,21 +430,21 @@ TRIAL("Window: full and undrawn windows stay") {
     alone.seat({1, 1}, {2, 2});
     alone.move(1, 1);
     alone.resize(1, 1);
-    same(alone.seat().at.x, 1);
-    same(alone.seat().size.wide, 2);
+    SAME(alone.seat().at.x, 1);
+    SAME(alone.seat().size.wide, 2);
 }
 
 // A full window wants the whole room, a seated one its own place, regardless of the room.
 TRIAL("Window: a full one wants the room, a seated one its own size") {
     ui::Window one;
 
-    same(one.wants({10, 5}).wide, 10);
-    same(one.wants({10, 5}).high, 5);
+    SAME(one.wants({10, 5}).wide, 10);
+    SAME(one.wants({10, 5}).high, 5);
 
     one.seat({1, 1}, {4, 2});
 
-    same(one.wants({10, 5}).wide, 4);
-    same(one.wants({10, 5}).high, 2);
+    SAME(one.wants({10, 5}).wide, 4);
+    SAME(one.wants({10, 5}).high, 2);
 }
 
 namespace {
@@ -487,7 +487,7 @@ TRIAL("Window: a click on a window goes on up") {
 
     (void)top.dispatch(edge);
 
-    same(catcher->hit, 1);
+    SAME(catcher->hit, 1);
 }
 
 // --- Dragging with the mouse ---------------------------------------------------------------------
@@ -518,31 +518,31 @@ TRIAL("Window: dragging by the top row moves the window, and the grab stays in p
 
     mouse(stage.top, {4, 1}, ui::Press::down);
 
-    ought(one->dragged());
+    OUGHT(one->dragged());
 
     mouse(stage.top, {10, 5}, ui::Press::move);
-    same(one->seat().at.x, 8);
-    same(one->seat().at.y, 5);
+    SAME(one->seat().at.x, 8);
+    SAME(one->seat().at.y, 5);
 
     mouse(stage.top, {100, 100}, ui::Press::move);
-    same(one->seat().at.x, 19);
-    same(one->seat().at.y, 9);
+    SAME(one->seat().at.x, 19);
+    SAME(one->seat().at.y, 9);
 
     mouse(stage.top, {10, 5}, ui::Press::move);
-    same(one->seat().at.x, 8);
-    same(one->seat().at.y, 5);
+    SAME(one->seat().at.x, 8);
+    SAME(one->seat().at.y, 5);
 
     // The size stays while moving.
-    same(one->seat().size.wide, 6);
-    same(one->seat().size.high, 3);
+    SAME(one->seat().size.wide, 6);
+    SAME(one->seat().size.high, 3);
 
     mouse(stage.top, {12, 7}, ui::Press::up);
 
-    ought(!one->dragged());
+    OUGHT(!one->dragged());
 
     mouse(stage.top, {15, 8}, ui::Press::move, ui::Mouse::none);
-    same(one->seat().at.x, 8);
-    same(one->seat().at.y, 5);
+    SAME(one->seat().at.x, 8);
+    SAME(one->seat().at.y, 5);
 }
 
 // A press in the lower right corner grabs the size: the corner follows the cursor, no less than
@@ -559,23 +559,23 @@ TRIAL("Window: dragging by the lower right corner resizes") {
 
     mouse(stage.top, {7, 3}, ui::Press::down);
 
-    ought(one->dragged());
+    OUGHT(one->dragged());
 
     mouse(stage.top, {11, 6}, ui::Press::move);
-    same(one->seat().size.wide, 10);
-    same(one->seat().size.high, 6);
+    SAME(one->seat().size.wide, 10);
+    SAME(one->seat().size.high, 6);
 
     mouse(stage.top, {0, 0}, ui::Press::move);
-    same(one->seat().size.wide, 3);
-    same(one->seat().size.high, 2);
+    SAME(one->seat().size.wide, 3);
+    SAME(one->seat().size.high, 2);
 
     // The upper left corner stays.
-    same(one->seat().at.x, 2);
-    same(one->seat().at.y, 1);
+    SAME(one->seat().at.x, 2);
+    SAME(one->seat().at.y, 1);
 
     mouse(stage.top, {0, 0}, ui::Press::up);
 
-    ought(!one->dragged());
+    OUGHT(!one->dragged());
 }
 
 // A press elsewhere raises the window but does not grab it; the right button does not grab at all,
@@ -591,32 +591,32 @@ TRIAL("Window: the middle raises without grabbing, the right button and a full w
 
     (void)stage.top.render({{0, 0}, {20, 10}});
 
-    ought(two->current());
+    OUGHT(two->current());
 
     mouse(stage.top, {2, 2}, ui::Press::down);
 
-    ought(one->current());
-    ought(!one->dragged());
+    OUGHT(one->current());
+    OUGHT(!one->dragged());
 
     mouse(stage.top, {5, 5}, ui::Press::move);
-    same(one->seat().at.x, 0);
-    same(one->seat().at.y, 0);
+    SAME(one->seat().at.x, 0);
+    SAME(one->seat().at.y, 0);
 
     mouse(stage.top, {5, 5}, ui::Press::up);
 
     // The right edge and the bottom edge are not yet the corner.
     mouse(stage.top, {5, 2}, ui::Press::down);
-    ought(!one->dragged());
+    OUGHT(!one->dragged());
     mouse(stage.top, {5, 2}, ui::Press::up);
 
     mouse(stage.top, {2, 3}, ui::Press::down);
-    ought(!one->dragged());
+    OUGHT(!one->dragged());
     mouse(stage.top, {2, 3}, ui::Press::up);
 
     mouse(stage.top, {9, 0}, ui::Press::down, ui::Mouse::right);
 
-    ought(!two->dragged());
-    ought(one->current());
+    OUGHT(!two->dragged());
+    OUGHT(one->current());
 
     mouse(stage.top, {9, 0}, ui::Press::up, ui::Mouse::right);
 
@@ -626,8 +626,8 @@ TRIAL("Window: the middle raises without grabbing, the right button and a full w
 
     mouse(stage.top, {9, 0}, ui::Press::down);
 
-    ought(two->current());
-    ought(!two->dragged());
+    OUGHT(two->current());
+    OUGHT(!two->dragged());
 }
 
 // A lost release does not leave the window grabbed: a new press elsewhere starts over, and a move
@@ -643,16 +643,16 @@ TRIAL("Window: a new press after a lost release does not drag on") {
 
     mouse(stage.top, {4, 1}, ui::Press::down);
 
-    ought(one->dragged());
+    OUGHT(one->dragged());
 
     mouse(stage.top, {4, 2}, ui::Press::down);
 
-    ought(!one->dragged());
+    OUGHT(!one->dragged());
 
     mouse(stage.top, {12, 7}, ui::Press::move);
 
-    same(one->seat().at.x, 2);
-    same(one->seat().at.y, 1);
+    SAME(one->seat().at.x, 2);
+    SAME(one->seat().at.y, 1);
 }
 
 namespace {
@@ -696,8 +696,8 @@ TRIAL("Window: dragging does not leave the window") {
     mouse(top, {8, 4}, ui::Press::move);
     mouse(top, {8, 4}, ui::Press::up);
 
-    same(one->seat().at.x, 6);
-    same(watcher->heard, 0);
+    SAME(one->seat().at.x, 6);
+    SAME(watcher->heard, 0);
 
     (void)top.render({{0, 0}, {20, 10}});
 
@@ -705,6 +705,6 @@ TRIAL("Window: dragging does not leave the window") {
     // press goes up.
     mouse(top, {8, 2}, ui::Press::down);
 
-    ought(!one->dragged());
-    same(watcher->heard, 1);
+    OUGHT(!one->dragged());
+    SAME(watcher->heard, 1);
 }

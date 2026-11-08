@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -48,9 +48,9 @@ std::uint8_t band(const Pixels& one, int x, int y, std::size_t which, std::size_
 TRIAL("Pixels: an empty one carries nothing") {
     const Pixels one;
 
-    ought(!one.held());
-    same(one.size().wide, 0);
-    ought(one.stills().empty());
+    OUGHT(!one.held());
+    SAME(one.size().wide, 0);
+    OUGHT(one.stills().empty());
 }
 
 TRIAL("Pixels: a frame that does not match the size is an error") {
@@ -62,7 +62,7 @@ TRIAL("Pixels: a frame that does not match the size is an error") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Pixels: frames without a size are an error") {
@@ -74,7 +74,7 @@ TRIAL("Pixels: frames without a size are an error") {
         threw = true;
     }
 
-    ought(threw);
+    OUGHT(threw);
 }
 
 TRIAL("Pixels: several frames keep their delays") {
@@ -82,9 +82,9 @@ TRIAL("Pixels: several frames keep their delays") {
                      {Still{lump({1, 2, 3, 255}), std::chrono::milliseconds{40}},
                       Still{lump({4, 5, 6, 255}), std::chrono::milliseconds{80}}}};
 
-    same(one.stills().size(), static_cast<std::size_t>(2));
-    same(one.stills()[0].after.count(), static_cast<long long>(40));
-    same(one.stills()[1].after.count(), static_cast<long long>(80));
+    SAME(one.stills().size(), static_cast<std::size_t>(2));
+    SAME(one.stills()[0].after.count(), static_cast<long long>(40));
+    SAME(one.stills()[1].after.count(), static_cast<long long>(80));
 }
 
 // --- Linear light -------------------------------------------------------------------------------
@@ -98,8 +98,8 @@ TRIAL("Pixels: black and white give 188 at half, not 127") {
 
     const Pixels half = one.scaled({1, 1});
 
-    same(static_cast<int>(band(half, 0, 0, 0)), 188);
-    same(static_cast<int>(band(half, 0, 0, 3)), 255);
+    SAME(static_cast<int>(band(half, 0, 0, 0)), 188);
+    SAME(static_cast<int>(band(half, 0, 0, 3)), 255);
 }
 
 TRIAL("Pixels: a uniform color survives downscaling unchanged") {
@@ -116,9 +116,9 @@ TRIAL("Pixels: a uniform color survives downscaling unchanged") {
 
     const Pixels small = red.scaled({2, 2});
 
-    same(static_cast<int>(band(small, 0, 0, 0)), 200);
-    same(static_cast<int>(band(small, 1, 1, 0)), 200);
-    same(static_cast<int>(band(small, 1, 1, 1)), 0);
+    SAME(static_cast<int>(band(small, 0, 0, 0)), 200);
+    SAME(static_cast<int>(band(small, 1, 1, 0)), 200);
+    SAME(static_cast<int>(band(small, 1, 1, 1)), 0);
 }
 
 // --- Alpha --------------------------------------------------------------------------------------
@@ -133,11 +133,11 @@ TRIAL("Pixels: a transparent neighbor does not darken the color") {
     const Pixels half = one.scaled({1, 1});
 
     // Red stays full; naive averaging would give 128 here.
-    same(static_cast<int>(band(half, 0, 0, 0)), 255);
-    same(static_cast<int>(band(half, 0, 0, 1)), 0);
+    SAME(static_cast<int>(band(half, 0, 0, 0)), 255);
+    SAME(static_cast<int>(band(half, 0, 0, 1)), 0);
 
     // Transparency averages normally: half from the visible pixel and half from the invisible one.
-    same(static_cast<int>(band(half, 0, 0, 3)), 128);
+    SAME(static_cast<int>(band(half, 0, 0, 3)), 128);
 }
 
 TRIAL("Pixels: pure transparency stays transparent") {
@@ -145,8 +145,8 @@ TRIAL("Pixels: pure transparency stays transparent") {
 
     const Pixels half = one.scaled({1, 1});
 
-    same(static_cast<int>(band(half, 0, 0, 3)), 0);
-    same(static_cast<int>(band(half, 0, 0, 0)), 0);
+    SAME(static_cast<int>(band(half, 0, 0, 3)), 0);
+    SAME(static_cast<int>(band(half, 0, 0, 0)), 0);
 }
 
 // --- Scaling ------------------------------------------------------------------------------------
@@ -159,7 +159,7 @@ TRIAL("Pixels: a thin line does not vanish when downscaling") {
 
     const Pixels small = one.scaled({1, 1});
 
-    ought(band(small, 0, 0, 0) > 0);
+    OUGHT(band(small, 0, 0, 0) > 0);
 }
 
 TRIAL("Pixels: downscaling merges squares evenly") {
@@ -168,9 +168,9 @@ TRIAL("Pixels: downscaling merges squares evenly") {
 
     const Pixels small = one.scaled({1, 1});
 
-    same(small.size().wide, 1);
-    same(small.size().high, 1);
-    same(static_cast<int>(band(small, 0, 0, 0)), 255);
+    SAME(small.size().wide, 1);
+    SAME(small.size().high, 1);
+    SAME(static_cast<int>(band(small, 0, 0, 0)), 255);
 }
 
 // Upscaling uses nearest neighbor, that is sharp squares, and that is the right answer for an icon
@@ -180,11 +180,11 @@ TRIAL("Pixels: upscaling multiplies pixels instead of blurring") {
 
     const Pixels big = one.scaled({4, 1});
 
-    same(big.size().wide, 4);
-    same(static_cast<int>(band(big, 0, 0, 0)), 10);
-    same(static_cast<int>(band(big, 1, 0, 0)), 10);
-    same(static_cast<int>(band(big, 2, 0, 0)), 200);
-    same(static_cast<int>(band(big, 3, 0, 0)), 200);
+    SAME(big.size().wide, 4);
+    SAME(static_cast<int>(band(big, 0, 0, 0)), 10);
+    SAME(static_cast<int>(band(big, 1, 0, 0)), 10);
+    SAME(static_cast<int>(band(big, 2, 0, 0)), 200);
+    SAME(static_cast<int>(band(big, 3, 0, 0)), 200);
 }
 
 TRIAL("Pixels: the same size gives back the same image") {
@@ -192,16 +192,16 @@ TRIAL("Pixels: the same size gives back the same image") {
 
     const Pixels same_size = one.scaled({2, 1});
 
-    same(static_cast<int>(band(same_size, 1, 0, 1)), 5);
-    same(same_size.size().wide, 2);
+    SAME(static_cast<int>(band(same_size, 1, 0, 1)), 5);
+    SAME(same_size.size().wide, 2);
 }
 
 TRIAL("Pixels: a zero target carries nothing") {
     const Pixels one = made({2, 1}, {1, 2, 3, 255, 4, 5, 6, 255});
 
-    ought(!one.scaled({0, 4}).held());
-    ought(!one.scaled({4, 0}).held());
-    ought(!Pixels{}.scaled({4, 4}).held());
+    OUGHT(!one.scaled({0, 4}).held());
+    OUGHT(!one.scaled({4, 0}).held());
+    OUGHT(!Pixels{}.scaled({4, 4}).held());
 }
 
 TRIAL("Pixels: delays survive scaling") {
@@ -211,10 +211,10 @@ TRIAL("Pixels: delays survive scaling") {
 
     const Pixels half = one.scaled({1, 1});
 
-    same(half.stills().size(), static_cast<std::size_t>(2));
-    same(half.stills()[0].after.count(), static_cast<long long>(40));
-    same(half.stills()[1].after.count(), static_cast<long long>(90));
-    same(static_cast<int>(band(half, 0, 0, 0, 1)), 188);
+    SAME(half.stills().size(), static_cast<std::size_t>(2));
+    SAME(half.stills()[0].after.count(), static_cast<long long>(40));
+    SAME(half.stills()[1].after.count(), static_cast<long long>(90));
+    SAME(static_cast<int>(band(half, 0, 0, 0, 1)), 188);
 }
 
 // --- Fitting -------------------------------------------------------------------------------------
@@ -225,45 +225,45 @@ TRIAL("Pixels: delays survive scaling") {
 TRIAL("fitting: a square in a 1:2 cell takes half as many rows") {
     const ui::Size made_size = fitting({100, 100}, {40, 40}, {10, 20});
 
-    same(made_size.wide, 40);
-    same(made_size.high, 20);
+    SAME(made_size.wide, 40);
+    SAME(made_size.high, 20);
 }
 
 TRIAL("fitting: an unknown cell means 1:2") {
-    same(fitting({100, 100}, {40, 40}, {0, 0}).high, 20);
-    same(fitting({100, 100}, {40, 40}, {0, 0}).wide, 40);
+    SAME(fitting({100, 100}, {40, 40}, {0, 0}).high, 20);
+    SAME(fitting({100, 100}, {40, 40}, {0, 0}).wide, 40);
 }
 
 TRIAL("fitting: a square cell does not squeeze the height") {
     const ui::Size one = fitting({100, 100}, {40, 40}, {10, 10});
 
-    same(one.wide, 40);
-    same(one.high, 40);
+    SAME(one.wide, 40);
+    SAME(one.high, 40);
 }
 
 TRIAL("fitting: a wide image takes the full width") {
     const ui::Size one = fitting({100, 50}, {40, 20}, {10, 20});
 
-    same(one.wide, 40);
-    same(one.high, 10);
+    SAME(one.wide, 40);
+    SAME(one.high, 10);
 }
 
 TRIAL("fitting: a tall image is limited by the height of the space") {
     const ui::Size one = fitting({50, 100}, {40, 20}, {10, 20});
 
-    same(one.wide, 20);
-    same(one.high, 20);
+    SAME(one.wide, 20);
+    SAME(one.high, 20);
 }
 
 // An image taking zero cells is an image nobody sees, and the caller asked for a preview.
 TRIAL("fitting: always at least one cell") {
-    same(fitting({1000, 1}, {40, 20}, {10, 20}).high, 1);
-    same(fitting({1, 1000}, {40, 20}, {10, 20}).wide, 1);
+    SAME(fitting({1000, 1}, {40, 20}, {10, 20}).high, 1);
+    SAME(fitting({1, 1000}, {40, 20}, {10, 20}).wide, 1);
 }
 
 TRIAL("fitting: anything zero gives nothing") {
-    same(fitting({0, 10}, {40, 20}, {10, 20}).wide, 0);
-    same(fitting({10, 0}, {40, 20}, {10, 20}).wide, 0);
-    same(fitting({10, 10}, {0, 20}, {10, 20}).wide, 0);
-    same(fitting({10, 10}, {40, 0}, {10, 20}).wide, 0);
+    SAME(fitting({0, 10}, {40, 20}, {10, 20}).wide, 0);
+    SAME(fitting({10, 0}, {40, 20}, {10, 20}).wide, 0);
+    SAME(fitting({10, 10}, {0, 20}, {10, 20}).wide, 0);
+    SAME(fitting({10, 10}, {40, 0}, {10, 20}).wide, 0);
 }

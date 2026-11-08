@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -68,11 +68,11 @@ struct Stage {
 TRIAL("HistoryField: a fresh one remembers nothing and is an ordinary field") {
     const ui::HistoryField one{20};
 
-    ought(one.options().empty());
-    ought(one.text().empty());
-    ought(one.focusable());
-    ought(!one.opened());
-    same(one.keeps(), 60);
+    OUGHT(one.options().empty());
+    OUGHT(one.text().empty());
+    OUGHT(one.focusable());
+    OUGHT(!one.opened());
+    SAME(one.keeps(), 60);
 }
 
 TRIAL("HistoryField: adding puts the most recent entry at the head") {
@@ -80,9 +80,9 @@ TRIAL("HistoryField: adding puts the most recent entry at the head") {
 
     stage.filled();
 
-    same(static_cast<int>(stage.one->options().many()), 3);
-    same(stage.one->options().front(), std::string{"git status"});
-    same(stage.one->options().back(), std::string{"make -j8"});
+    SAME(static_cast<int>(stage.one->options().many()), 3);
+    SAME(stage.one->options().front(), std::string{"git status"});
+    SAME(stage.one->options().back(), std::string{"make -j8"});
 }
 
 // A repeated entry goes back to the head instead of lying there twice; otherwise the history of
@@ -93,8 +93,8 @@ TRIAL("HistoryField: a repeated entry goes back to the head instead of being add
     stage.filled();
     stage.one->options().insert(0, "make -j8");
 
-    same(static_cast<int>(stage.one->options().many()), 3);
-    same(stage.one->options().front(), std::string{"make -j8"});
+    SAME(static_cast<int>(stage.one->options().many()), 3);
+    SAME(stage.one->options().front(), std::string{"make -j8"});
 }
 
 // The rule belongs to the option set, not to the history, and holds the same in a select and in an
@@ -104,7 +104,7 @@ TRIAL("HistoryField: an empty entry does not go in") {
 
     stage.one->options().insert(0, "");
 
-    ought(stage.one->options().empty());
+    OUGHT(stage.one->options().empty());
 }
 
 // The ceiling applies from the next frame. The history tidies up after itself, when painting and on
@@ -119,9 +119,9 @@ TRIAL("HistoryField: the ceiling cuts the oldest") {
 
     (void)stage.drawn();
 
-    same(static_cast<int>(stage.one->options().many()), 2);
-    same(stage.one->options().front(), std::string{"git status"});
-    same(stage.one->options().back(), std::string{"ls -la /etc"});
+    SAME(static_cast<int>(stage.one->options().many()), 2);
+    SAME(stage.one->options().front(), std::string{"git status"});
+    SAME(stage.one->options().back(), std::string{"ls -la /etc"});
 }
 
 TRIAL("HistoryField: lowering the ceiling cuts what is already there") {
@@ -130,8 +130,8 @@ TRIAL("HistoryField: lowering the ceiling cuts what is already there") {
     stage.filled();
     stage.one->keeps(1);
 
-    same(static_cast<int>(stage.one->options().many()), 1);
-    same(stage.one->options().front(), std::string{"git status"});
+    SAME(static_cast<int>(stage.one->options().many()), 1);
+    SAME(stage.one->options().front(), std::string{"git status"});
 }
 
 TRIAL("HistoryField: clear clears everything") {
@@ -140,7 +140,7 @@ TRIAL("HistoryField: clear clears everything") {
     stage.filled();
     stage.one->clear();
 
-    ought(stage.one->options().empty());
+    OUGHT(stage.one->options().empty());
 }
 
 // --- Walking with the arrows ---------------------------------------------------------------------
@@ -152,16 +152,16 @@ TRIAL("HistoryField: up goes into the past, down comes back from it") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    same(stage.one->text(), std::string{"git status"});
+    OUGHT(stage.top.dispatch(up));
+    SAME(stage.one->text(), std::string{"git status"});
 
-    ought(stage.top.dispatch(up));
-    same(stage.one->text(), std::string{"ls -la /etc"});
+    OUGHT(stage.top.dispatch(up));
+    SAME(stage.one->text(), std::string{"ls -la /etc"});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
-    same(stage.one->text(), std::string{"git status"});
+    OUGHT(stage.top.dispatch(down));
+    SAME(stage.one->text(), std::string{"git status"});
 }
 
 // This is the thing without which the history is a trap: once in, there is no way back to your own
@@ -174,13 +174,13 @@ TRIAL("HistoryField: down from the most recent returns to what the user was typi
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    same(stage.one->text(), std::string{"git status"});
+    OUGHT(stage.top.dispatch(up));
+    SAME(stage.one->text(), std::string{"git status"});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
-    same(stage.one->text(), std::string{"cos wlasnego"});
+    OUGHT(stage.top.dispatch(down));
+    SAME(stage.one->text(), std::string{"cos wlasnego"});
 }
 
 // Further steps up must come back to the same own line, not to the previous entry.
@@ -193,17 +193,17 @@ TRIAL("HistoryField: the own line is remembered once, on entering the past") {
     ui::KeyEvent up{ui::Code::up};
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(up));
-    ought(stage.top.dispatch(up));
-    ought(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
 
-    same(stage.one->text(), std::string{"make -j8"});
+    SAME(stage.one->text(), std::string{"make -j8"});
 
-    ought(stage.top.dispatch(down));
-    ought(stage.top.dispatch(down));
-    ought(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
 
-    same(stage.one->text(), std::string{"moje"});
+    SAME(stage.one->text(), std::string{"moje"});
 }
 
 // At either end the arrow goes up the tree, so that in a window it passes on instead of getting
@@ -216,17 +216,17 @@ TRIAL("HistoryField: at the ends it passes the arrow up") {
     ui::KeyEvent down{ui::Code::down};
 
     // At the own line there is nowhere to go forward.
-    ought(!stage.top.dispatch(down));
+    OUGHT(!stage.top.dispatch(down));
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    ought(stage.top.dispatch(up));
-    ought(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
 
     // The oldest entry is the end of the past.
-    ought(!stage.top.dispatch(up));
-    same(stage.one->text(), std::string{"make -j8"});
+    OUGHT(!stage.top.dispatch(up));
+    SAME(stage.one->text(), std::string{"make -j8"});
 }
 
 TRIAL("HistoryField: an empty one does not take the arrows") {
@@ -234,11 +234,11 @@ TRIAL("HistoryField: an empty one does not take the arrows") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(!stage.top.dispatch(up));
+    OUGHT(!stage.top.dispatch(up));
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(!stage.top.dispatch(down));
+    OUGHT(!stage.top.dispatch(down));
 }
 
 // --- Notification --------------------------------------------------------------------------------
@@ -256,19 +256,19 @@ TRIAL("HistoryField: taking an entry notifies, returning to your own does not") 
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    same(done, 1);
+    OUGHT(stage.top.dispatch(up));
+    SAME(done, 1);
 
-    ought(stage.top.dispatch(up));
-    same(done, 2);
+    OUGHT(stage.top.dispatch(up));
+    SAME(done, 2);
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
-    same(done, 3);
+    OUGHT(stage.top.dispatch(down));
+    SAME(done, 3);
 
-    ought(stage.top.dispatch(down));
-    same(done, 3);
+    OUGHT(stage.top.dispatch(down));
+    SAME(done, 3);
 }
 
 TRIAL("HistoryField: typing does not notify") {
@@ -282,10 +282,10 @@ TRIAL("HistoryField: typing does not notify") {
 
     ui::KeyEvent letter{U'x'};
 
-    ought(stage.top.dispatch(letter));
+    OUGHT(stage.top.dispatch(letter));
 
-    same(stage.one->text(), std::string{"x"});
-    same(done, 0);
+    SAME(stage.one->text(), std::string{"x"});
+    SAME(done, 0);
 }
 
 // --- The text field underneath -------------------------------------------------------------------
@@ -300,20 +300,20 @@ TRIAL("HistoryField: it is still an ordinary text field") {
     for (const char32_t one : {U'a', U'b', U'c'}) {
         ui::KeyEvent what{one};
 
-        ought(stage.top.dispatch(what));
+        OUGHT(stage.top.dispatch(what));
     }
 
-    same(stage.one->text(), std::string{"abc"});
+    SAME(stage.one->text(), std::string{"abc"});
 
     ui::KeyEvent left{ui::Code::left};
 
-    ought(stage.top.dispatch(left));
+    OUGHT(stage.top.dispatch(left));
 
     ui::KeyEvent back{ui::Code::backspace};
 
-    ought(stage.top.dispatch(back));
+    OUGHT(stage.top.dispatch(back));
 
-    same(stage.one->text(), std::string{"ac"});
+    SAME(stage.one->text(), std::string{"ac"});
 }
 
 // An entry taken from the past has the cursor at the end, so that typing can go on at once.
@@ -324,9 +324,9 @@ TRIAL("HistoryField: a taken entry has the cursor at the end") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
 
-    same(stage.one->cursor(), std::string{"git status"}.size());
+    SAME(stage.one->cursor(), std::string{"git status"}.size());
 }
 
 // --- Unrolling -----------------------------------------------------------------------------------
@@ -343,8 +343,8 @@ TRIAL("HistoryField: without a given key nothing unrolls") {
 
     ui::KeyEvent what{ui::Key{U'h', alt}};
 
-    ought(!stage.top.dispatch(what));
-    ought(!stage.one->opened());
+    OUGHT(!stage.top.dispatch(what));
+    OUGHT(!stage.one->opened());
 }
 
 TRIAL("HistoryField: the given unroll key opens the list, Esc closes it") {
@@ -359,16 +359,16 @@ TRIAL("HistoryField: the given unroll key opens the list, Esc closes it") {
 
     ui::KeyEvent what{ui::Key{U'h', alt}};
 
-    ought(stage.top.dispatch(what));
-    ought(stage.one->opened());
-    same(static_cast<int>(stage.window->many()), 1);
+    OUGHT(stage.top.dispatch(what));
+    OUGHT(stage.one->opened());
+    SAME(static_cast<int>(stage.window->many()), 1);
 
     ui::KeyEvent escape{ui::Code::escape};
 
-    ought(stage.top.dispatch(escape));
+    OUGHT(stage.top.dispatch(escape));
 
-    ought(!stage.one->opened());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(!stage.one->opened());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
 TRIAL("HistoryField: the unroll key can be changed") {
@@ -379,8 +379,8 @@ TRIAL("HistoryField: the unroll key can be changed") {
 
     ui::KeyEvent what{ui::Code::f4};
 
-    ought(stage.top.dispatch(what));
-    ought(stage.one->opened());
+    OUGHT(stage.top.dispatch(what));
+    OUGHT(stage.one->opened());
 }
 
 // A plain key without a modifier must type, not unroll.
@@ -391,10 +391,10 @@ TRIAL("HistoryField: a plain letter without a modifier does not unroll") {
 
     ui::KeyEvent what{U'h'};
 
-    ought(stage.top.dispatch(what));
+    OUGHT(stage.top.dispatch(what));
 
-    ought(!stage.one->opened());
-    same(stage.one->text(), std::string{"h"});
+    OUGHT(!stage.one->opened());
+    SAME(stage.one->text(), std::string{"h"});
 }
 
 TRIAL("HistoryField: an empty one has nothing to unroll") {
@@ -407,8 +407,8 @@ TRIAL("HistoryField: an empty one has nothing to unroll") {
 
     (void)stage.top.dispatch(what);
 
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
 }
 
 // The unrolled list stands below the field, as with a select, because it is the same veil.
@@ -423,22 +423,22 @@ TRIAL("HistoryField: the unrolled list stands below the field") {
 
     const Snapshot made = stage.drawn();
 
-    same(made.at({0, 1}).letter, U'┌');
-    same(made.at({1, 2}).letter, U'g');
+    SAME(made.at({0, 1}).letter, U'┌');
+    SAME(made.at({1, 2}).letter, U'g');
 }
 
 TRIAL("HistoryField: the number of list rows has a lower bound") {
     ui::HistoryField one{20};
 
-    same(one.rows(), 8);
+    SAME(one.rows(), 8);
 
     one.rows(-3);
 
-    same(one.rows(), 1);
+    SAME(one.rows(), 1);
 
     one.rows(2);
 
-    same(one.rows(), 2);
+    SAME(one.rows(), 2);
 
     Stage stage;
 
@@ -448,9 +448,9 @@ TRIAL("HistoryField: the number of list rows has a lower bound") {
 
     const ui::List* list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->high(), 2);
-    ought(list->scrollbar());
+    OUGHT(list != nullptr);
+    SAME(list->high(), 2);
+    OUGHT(list->scrollbar());
 }
 
 // The list stands where the walk stands: two steps up and unrolling shows the second entry.
@@ -461,15 +461,15 @@ TRIAL("HistoryField: the unrolled list stands on the walk's entry") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    ought(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
+    OUGHT(stage.top.dispatch(up));
 
     stage.one->open();
 
     const ui::List* list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->which(), std::optional<std::size_t>{1});
+    OUGHT(list != nullptr);
+    SAME(list->which(), std::optional<std::size_t>{1});
 }
 
 // Unrolling first tidies up after the caller, as painting and keys do: entries above the ceiling do
@@ -483,8 +483,8 @@ TRIAL("HistoryField: unrolling trims to the ceiling") {
 
     const ui::List* list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->children().many(), std::size_t{2});
+    OUGHT(list != nullptr);
+    SAME(list->children().many(), std::size_t{2});
 }
 
 TRIAL("HistoryField: a pick from the list goes into the field and notifies") {
@@ -502,15 +502,15 @@ TRIAL("HistoryField: a pick from the list goes into the field and notifies") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(stage.top.dispatch(enter));
+    OUGHT(stage.top.dispatch(enter));
 
-    same(stage.one->text(), std::string{"ls -la /etc"});
-    same(done, 1);
-    ought(!stage.one->opened());
+    SAME(stage.one->text(), std::string{"ls -la /etc"});
+    SAME(done, 1);
+    OUGHT(!stage.one->opened());
 }
 
 // Adding a fresh entry ends the walk: we are back at what is in the field.
@@ -521,15 +521,15 @@ TRIAL("HistoryField: adding an entry ends the walk") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(stage.top.dispatch(up));
-    same(stage.one->text(), std::string{"git status"});
+    OUGHT(stage.top.dispatch(up));
+    SAME(stage.one->text(), std::string{"git status"});
 
     stage.one->options().insert(0, "cargo build");
 
     ui::KeyEvent down{ui::Code::down};
 
     // Since the walk has ended, down has nowhere to go and goes up the tree.
-    ought(!stage.top.dispatch(down));
+    OUGHT(!stage.top.dispatch(down));
 }
 
 // --- Disabled ------------------------------------------------------------------------------------
@@ -542,13 +542,13 @@ TRIAL("HistoryField: a disabled one neither unrolls nor walks") {
 
     stage.one->open();
 
-    ought(!stage.one->opened());
+    OUGHT(!stage.one->opened());
 
     ui::KeyEvent up{ui::Code::up};
 
     (void)stage.top.dispatch(up);
 
-    ought(stage.one->text().empty());
+    OUGHT(stage.one->text().empty());
 }
 
 TRIAL("HistoryField: disabling midway closes the unrolled list and gives up the focus") {
@@ -557,14 +557,14 @@ TRIAL("HistoryField: disabling midway closes the unrolled list and gives up the 
     stage.filled();
     stage.one->open();
 
-    ought(stage.one->opened());
-    ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(stage.one->opened());
+    OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
 
     stage.one->enabled(false);
 
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
-    ought(!stage.one->focused());
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
+    OUGHT(!stage.one->focused());
 }
 
 namespace {
@@ -600,8 +600,8 @@ TRIAL("HistoryField: rolling up the list does not hide the disabling from ancest
     one->open();
     one->enabled(false);
 
-    ought(!one->opened());
-    same(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
+    OUGHT(!one->opened());
+    SAME(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
 }
 
 // A hotkey checks availability in `KeyedMixin`, and the history gets it from the text field. A
@@ -619,8 +619,8 @@ TRIAL("HistoryField: a disabled one does not take its key") {
 
     ui::KeyEvent with{ui::Key{U'h', alt}};
 
-    ought(!stage.top.dispatch(with));
-    ought(!stage.one->opened());
+    OUGHT(!stage.top.dispatch(with));
+    OUGHT(!stage.one->opened());
 }
 
 // The history is a node with keys, so its unroll key lies in `keys()`, together with its
@@ -637,12 +637,12 @@ TRIAL("HistoryField: a key with Alt answers only with Alt") {
 
     ui::KeyEvent bare{ui::Key{U'h'}};
 
-    ought(stage.top.dispatch(bare));
-    ought(!stage.one->opened());
-    same(stage.one->text(), std::string{"h"});
+    OUGHT(stage.top.dispatch(bare));
+    OUGHT(!stage.one->opened());
+    SAME(stage.one->text(), std::string{"h"});
 
     ui::KeyEvent with{ui::Key{U'h', alt}};
 
-    ought(stage.top.dispatch(with));
-    ought(stage.one->opened());
+    OUGHT(stage.top.dispatch(with));
+    OUGHT(stage.one->opened());
 }

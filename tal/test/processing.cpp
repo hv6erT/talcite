@@ -15,7 +15,7 @@
 #include "tal/stream.hpp"
 #include "tal/task.hpp"
 
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 // Streams and processes of tal::core: pipes in memory, running a program to its end, its streams,
 // stopping and killing it, its terminal size, programs on their own and opened ones, through the
@@ -98,8 +98,8 @@ TRIAL("Stream: a pipe gives what was written in order, waits for more and ends w
 
     tal::wait(loop, writing.write(tal::bytes("abc")));
     tal::wait(loop, writing.write(tal::bytes("def")));
-    same(tal::text::of(tal::wait(loop, reading.read(4))), std::string{"abcd"});
-    same(tal::text::of(tal::wait(loop, reading.read(10))), std::string{"ef"});
+    SAME(tal::text::of(tal::wait(loop, reading.read(4))), std::string{"abcd"});
+    SAME(tal::text::of(tal::wait(loop, reading.read(10))), std::string{"ef"});
 
     const auto [got, wrote] = tal::wait(loop, tal::all(reading.read(10), [](tal::Stream into) -> tal::Task<int> {
         co_await tal::to(tal::pool());
@@ -108,22 +108,22 @@ TRIAL("Stream: a pipe gives what was written in order, waits for more and ends w
         co_return 1;
     }(writing)));
 
-    same(tal::text::of(got), std::string{"!"});
-    same(wrote, 1);
+    SAME(tal::text::of(got), std::string{"!"});
+    SAME(wrote, 1);
 
     writing.close();
 
-    same(tal::wait(loop, reading.read(10)).size(), std::size_t{0});
-    ought(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
+    SAME(tal::wait(loop, reading.read(10)).size(), std::size_t{0});
+    OUGHT(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
 }
 
 TRIAL("Stream: a closed reader breaks the writer; wrong ends, nothing held and two readers refuse") {
     tal::Loop loop;
     auto [reading, writing] = tal::detail::piped();
 
-    ought(refused(loop, reading.write(tal::bytes("x"))) == tal::Kind::unsupported);
-    ought(refused(loop, writing.read(1)) == tal::Kind::unsupported);
-    ought(refused(loop, tal::Stream{}.read(1)) == tal::Kind::missing);
+    OUGHT(refused(loop, reading.write(tal::bytes("x"))) == tal::Kind::unsupported);
+    OUGHT(refused(loop, writing.read(1)) == tal::Kind::unsupported);
+    OUGHT(refused(loop, tal::Stream{}.read(1)) == tal::Kind::missing);
 
     tal::Scope scope{loop};
     std::atomic<int> ended{0};
@@ -134,14 +134,14 @@ TRIAL("Stream: a closed reader breaks the writer; wrong ends, nothing held and t
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    ought(refused(loop, reading.read(1)) == tal::Kind::busy);
+    OUGHT(refused(loop, reading.read(1)) == tal::Kind::busy);
 
     reading.close();
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(ended.load(), 1);
-    ought(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
+    SAME(ended.load(), 1);
+    OUGHT(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
 }
 
 TRIAL("Stream: drained() gathers everything until the end, also from a writer that went away") {
@@ -158,8 +158,8 @@ TRIAL("Stream: drained() gathers everything until the end, also from a writer th
 
     const tal::Bytes all = tal::wait(loop, tal::drained(reading));
 
-    same(all.size(), std::size_t{100003});
-    same(tal::text::of(std::span{all}.subspan(100000)), std::string{"end"});
+    SAME(all.size(), std::size_t{100003});
+    SAME(tal::text::of(std::span{all}.subspan(100000)), std::string{"end"});
 }
 
 TRIAL("Process: run() writes the input, gathers output and errors, and gives the exit code") {
@@ -171,12 +171,12 @@ TRIAL("Process: run() writes the input, gathers output and errors, and gives the
 
     const tal::Output got = tal::wait(loop, tal::Process::run(command("/usr/bin/shout", {"-v"}), tal::bytes("poirot")));
 
-    ought(got.exit == (Exit{Exit::Ended::normal, 3, 0}));
-    same(tal::text::of(got.output), std::string{"POIROT"});
-    same(tal::text::of(got.errors), std::string{"uwaga"});
-    same(scripted->started().size(), std::size_t{1});
-    ought(scripted->started()[0].program == Path{"/usr/bin/shout"});
-    same(scripted->started()[0].arguments, (std::vector<std::string>{"-v"}));
+    OUGHT(got.exit == (Exit{Exit::Ended::normal, 3, 0}));
+    SAME(tal::text::of(got.output), std::string{"POIROT"});
+    SAME(tal::text::of(got.errors), std::string{"uwaga"});
+    SAME(scripted->started().size(), std::size_t{1});
+    OUGHT(scripted->started()[0].program == Path{"/usr/bin/shout"});
+    SAME(scripted->started()[0].arguments, (std::vector<std::string>{"-v"}));
 
     Command merged = command("shout");
 
@@ -184,12 +184,12 @@ TRIAL("Process: run() writes the input, gathers output and errors, and gives the
 
     const tal::Output together = tal::wait(loop, tal::Process::run(merged, tal::bytes("a")));
 
-    same(tal::text::of(together.output), std::string{"Auwaga"});
-    same(together.errors.size(), std::size_t{0});
+    SAME(tal::text::of(together.output), std::string{"Auwaga"});
+    SAME(together.errors.size(), std::size_t{0});
 
     const tal::Output opened = tal::wait(loop, tal::Process::run(command("plik.pdf", {}, tal::Mode::opened), tal::bytes("x")));
 
-    ought(opened.exit.ended == Exit::Ended::lost);
+    OUGHT(opened.exit.ended == Exit::Ended::lost);
 
     tal::defaults().clear<tal::Processes>();
 }
@@ -204,13 +204,13 @@ TRIAL("Process: an unknown program refuses, a failing script is lost, and run() 
         throw tal::Trouble{tal::Kind::broken, "zepsuty"};
     });
 
-    ought(refused(loop, scripted.start(command("none"))) == tal::Kind::missing);
+    OUGHT(refused(loop, scripted.start(command("none"))) == tal::Kind::missing);
 
     const tal::Process child = tal::wait(loop, scripted.start(command("failing")));
 
-    ought(tal::wait(loop, child.ended()).ended == Exit::Ended::lost);
-    ought(refused(loop, tal::Process::run(command("none"))) == tal::Kind::missing);
-    ought(refused(loop, tal::Process{}.ended()) == tal::Kind::missing);
+    OUGHT(tal::wait(loop, child.ended()).ended == Exit::Ended::lost);
+    OUGHT(refused(loop, tal::Process::run(command("none"))) == tal::Kind::missing);
+    OUGHT(refused(loop, tal::Process{}.ended()) == tal::Kind::missing);
 }
 
 TRIAL("Process: kill() and stop() end a waiting program, destroy its frames and end its streams") {
@@ -225,23 +225,23 @@ TRIAL("Process: kill() and stop() end a waiting program, destroy its frames and 
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(alive.load(), 2);
-    ought(killed.id() != stopped.id());
-    ought(killed.id() > 0);
+    SAME(alive.load(), 2);
+    OUGHT(killed.id() != stopped.id());
+    OUGHT(killed.id() > 0);
 
     killed.kill();
     stopped.stop();
 
     const auto [first, second] = tal::wait(loop, tal::all(killed.ended(), stopped.ended()));
 
-    ought(first == (Exit{Exit::Ended::killed, 0, 9}));
-    ought(second == (Exit{Exit::Ended::killed, 0, 15}));
-    ought(tal::wait(loop, killed.ended()) == first);
-    same(tal::wait(loop, tal::drained(killed.output())).size(), std::size_t{0});
+    OUGHT(first == (Exit{Exit::Ended::killed, 0, 9}));
+    OUGHT(second == (Exit{Exit::Ended::killed, 0, 15}));
+    OUGHT(tal::wait(loop, killed.ended()) == first);
+    SAME(tal::wait(loop, tal::drained(killed.output())).size(), std::size_t{0});
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(alive.load(), 0);
+    SAME(alive.load(), 0);
 }
 
 TRIAL("Process: a program in a terminal sees its size change; letting the process go does not end it") {
@@ -266,19 +266,19 @@ TRIAL("Process: a program in a terminal sees its size change; letting the proces
     const tal::Stream output = child.output();
 
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"120x40 "});
+    SAME(tal::text::of(tal::wait(loop, output.read(100))), std::string{"120x40 "});
 
     child.resize(100, 30);
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
+    SAME(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
 
     child = tal::Process{};
 
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
+    SAME(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
 
     input.close();
-    same(tal::wait(loop, output.read(100)).size(), std::size_t{0});
+    SAME(tal::wait(loop, output.read(100)).size(), std::size_t{0});
 }
 
 TRIAL("Process: a detached program runs on its own and an opened one needs no script; both are lost") {
@@ -297,19 +297,19 @@ TRIAL("Process: a detached program runs on its own and an opened one needs no sc
 
     const tal::Process daemon = tal::wait(loop, scripted.start(command("daemon", {}, tal::Mode::detached)));
 
-    ought(tal::wait(loop, daemon.ended()).ended == Exit::Ended::lost);
+    OUGHT(tal::wait(loop, daemon.ended()).ended == Exit::Ended::lost);
 
     for (int at = 0; at < 10 && done.load() == 0; ++at) (void)loop.turn();
 
-    same(done.load(), 1);
+    SAME(done.load(), 1);
 
     const tal::Process opened = tal::wait(loop, scripted.start(command("https://example.org", {}, tal::Mode::opened)));
 
-    same(opened.id(), std::int64_t{0});
-    ought(tal::wait(loop, opened.ended()).ended == Exit::Ended::lost);
-    same(tal::wait(loop, tal::drained(opened.output())).size(), std::size_t{0});
-    ought(refused(loop, opened.input().write(tal::bytes("x"))) == tal::Kind::broken);
-    same(scripted.started().size(), std::size_t{2});
+    SAME(opened.id(), std::int64_t{0});
+    OUGHT(tal::wait(loop, opened.ended()).ended == Exit::Ended::lost);
+    SAME(tal::wait(loop, tal::drained(opened.output())).size(), std::size_t{0});
+    OUGHT(refused(loop, opened.input().write(tal::bytes("x"))) == tal::Kind::broken);
+    SAME(scripted.started().size(), std::size_t{2});
 }
 
 TRIAL("Process: the scripted adapter going away ends every program it still runs") {
@@ -325,14 +325,14 @@ TRIAL("Process: the scripted adapter going away ends every program it still runs
 
         for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-        same(alive.load(), 1);
+        SAME(alive.load(), 1);
     }
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(alive.load(), 0);
-    ought(tal::wait(loop, child.ended()) == (Exit{Exit::Ended::killed, 0, 9}));
-    same(tal::wait(loop, tal::drained(child.output())).size(), std::size_t{0});
+    SAME(alive.load(), 0);
+    OUGHT(tal::wait(loop, child.ended()) == (Exit{Exit::Ended::killed, 0, 9}));
+    SAME(tal::wait(loop, tal::drained(child.output())).size(), std::size_t{0});
 }
 
 namespace {
@@ -342,7 +342,11 @@ namespace {
 Command pretended(std::vector<std::string> what, tal::Mode mode = tal::Mode::piped) {
     what.insert(what.begin(), "--pretending");
 
-    return command(proving::mine(), std::move(what), mode);
+    Command made = command({}, std::move(what), mode);
+
+    made.program = tal::testing::mine();
+
+    return made;
 }
 
 // A program run to its end by the system's adapter, the built-in default of the port.
@@ -358,15 +362,15 @@ tal::Process started(tal::Loop& loop, Command what) { return tal::wait(loop, tal
 TRIAL("System: run() gives what a program writes on its output and errors, and its exit code") {
     tal::Loop loop;
 
-    ought(tal::Port<tal::Processes>{}->name() == "system");
+    OUGHT(tal::Port<tal::Processes>{}->name() == "system");
 
     const tal::Output said = ran(loop, pretended({"said", "Poirot"}));
 
-    ought(said.exit == (Exit{Exit::Ended::normal, 0, 0}));
-    same(tal::text::of(said.output), std::string{"Poirot"});
-    same(said.errors.size(), std::size_t{0});
-    same(tal::text::of(ran(loop, pretended({"moaned", "zawiodło"})).errors), std::string{"zawiodło"});
-    same(ran(loop, pretended({"code", "7"})).exit.code, 7);
+    OUGHT(said.exit == (Exit{Exit::Ended::normal, 0, 0}));
+    SAME(tal::text::of(said.output), std::string{"Poirot"});
+    SAME(said.errors.size(), std::size_t{0});
+    SAME(tal::text::of(ran(loop, pretended({"moaned", "zawiodło"})).errors), std::string{"zawiodło"});
+    SAME(ran(loop, pretended({"code", "7"})).exit.code, 7);
 
     Command both = pretended({"both"});
 
@@ -374,9 +378,9 @@ TRIAL("System: run() gives what a program writes on its output and errors, and i
 
     const tal::Output merged = ran(loop, both);
 
-    ought(tal::text::of(merged.output).find("output") != std::string::npos);
-    ought(tal::text::of(merged.output).find("error") != std::string::npos);
-    same(merged.errors.size(), std::size_t{0});
+    OUGHT(tal::text::of(merged.output).find("output") != std::string::npos);
+    OUGHT(tal::text::of(merged.output).find("error") != std::string::npos);
+    SAME(merged.errors.size(), std::size_t{0});
 }
 
 // The input goes whole and the outputs come whole, read both at once: a program that writes more
@@ -385,12 +389,12 @@ TRIAL("System: run() feeds the input and reads both outputs at once, byte for by
     tal::Loop loop;
     const std::string given = std::string{"zażółć\0\xFF", sizeof("zażółć\0\xFF") - 1} + std::string(200000, 'x');
 
-    same(tal::text::of(ran(loop, pretended({"echo"}), tal::bytes(given)).output), given);
+    SAME(tal::text::of(ran(loop, pretended({"echo"}), tal::bytes(given)).output), given);
 
     const tal::Output much = ran(loop, pretended({"much"}));
 
-    same(much.output.size(), std::size_t{300000});
-    same(much.errors.size(), std::size_t{300000});
+    SAME(much.output.size(), std::size_t{300000});
+    SAME(much.errors.size(), std::size_t{300000});
 }
 
 // Arguments reach the program as they were given, also with spaces, quotes and nothing at all,
@@ -406,38 +410,38 @@ TRIAL("System: arguments, the folder and the environment reach the program as gi
 
     for (const std::string& one : odd) wanted += one + "\n";
 
-    same(tal::text::of(ran(loop, pretended(asked)).output), wanted);
+    SAME(tal::text::of(ran(loop, pretended(asked)).output), wanted);
 
     const std::filesystem::path folder = std::filesystem::canonical(std::filesystem::temp_directory_path());
     Command where = pretended({"where"});
 
     where.folder = Path{folder.generic_string()};
 
-    ought((Path{tal::text::of(ran(loop, where).output)}.same)(where.folder));
+    OUGHT((Path{tal::text::of(ran(loop, where).output)}.same)(where.folder));
 
     Command around = pretended({"around", "TAL_TRIAL_SAID"});
 
     around.environment.push_back({"TAL_TRIAL_SAID", "inspektor"});
 
-    same(tal::text::of(ran(loop, around).output), std::string{"inspektor"});
+    SAME(tal::text::of(ran(loop, around).output), std::string{"inspektor"});
 
     Command gone = pretended({"around", "PATH"});
 
     gone.environment.push_back({"PATH", std::nullopt});
 
-    same(tal::text::of(ran(loop, gone).output), std::string{"<none>"});
+    SAME(tal::text::of(ran(loop, gone).output), std::string{"<none>"});
 }
 
 TRIAL("System: a program that is not there refuses, a missing folder too") {
     tal::Loop loop;
 
-    ought(refused(loop, tal::Process::start(command("/nie/ma/takiego/programu"))) == tal::Kind::missing);
+    OUGHT(refused(loop, tal::Process::start(command("/nie/ma/takiego/programu"))) == tal::Kind::missing);
 
     Command nowhere = pretended({"where"});
 
     nowhere.folder = Path{"/nie/ma/takiego/folderu"};
 
-    ought(refused(loop, tal::Process::start(nowhere)).has_value());
+    OUGHT(refused(loop, tal::Process::start(nowhere)).has_value());
 }
 
 // Ending a program: killing it at once, or asking it to end, with its group (its job on Windows).
@@ -446,8 +450,8 @@ TRIAL("System: kill() and stop() end a program that sleeps, and ended() tells ho
     const tal::Process killed = started(loop, pretended({"sleeping", "20000"}));
     const tal::Process stopped = started(loop, pretended({"sleeping", "20000"}));
 
-    ought(killed.id() > 0);
-    ought(killed.id() != stopped.id());
+    OUGHT(killed.id() > 0);
+    OUGHT(killed.id() != stopped.id());
 
     killed.kill();
     stopped.stop();
@@ -455,15 +459,15 @@ TRIAL("System: kill() and stop() end a program that sleeps, and ended() tells ho
     const auto [first, second] = tal::wait(loop, tal::all(killed.ended(), stopped.ended()));
 
 #ifdef _WIN32
-    ought(first.ended != Exit::Ended::lost);
-    ought(second.ended != Exit::Ended::lost);
+    OUGHT(first.ended != Exit::Ended::lost);
+    OUGHT(second.ended != Exit::Ended::lost);
 #else
-    ought(first == (Exit{Exit::Ended::killed, 0, 9}));
-    ought(second == (Exit{Exit::Ended::killed, 0, 15}));
+    OUGHT(first == (Exit{Exit::Ended::killed, 0, 9}));
+    OUGHT(second == (Exit{Exit::Ended::killed, 0, 15}));
 #endif
 
-    ought(tal::wait(loop, killed.ended()) == first);
-    same(tal::wait(loop, tal::drained(killed.output())).size(), std::size_t{0});
+    OUGHT(tal::wait(loop, killed.ended()) == first);
+    SAME(tal::wait(loop, tal::drained(killed.output())).size(), std::size_t{0});
 }
 
 // A program that will not end when asked is killed `patience` later, and two tasks that wait for
@@ -473,7 +477,7 @@ TRIAL("System: stop() kills a program that ignores it three seconds later") {
     const tal::Process stubborn = started(loop, pretended({"stubborn", "20000"}));
 
     // Its "ready" says it ignores the request already.
-    same(tal::text::of(tal::wait(loop, tal::within(5000ms, stubborn.output().read(6)))), std::string{"ready\n"});
+    SAME(tal::text::of(tal::wait(loop, tal::within(5000ms, stubborn.output().read(6)))), std::string{"ready\n"});
 
     const auto since = std::chrono::steady_clock::now();
 
@@ -482,11 +486,11 @@ TRIAL("System: stop() kills a program that ignores it three seconds later") {
     const auto [first, second] = tal::wait(loop, tal::all(stubborn.ended(), stubborn.ended()));
     const auto took = std::chrono::steady_clock::now() - since;
 
-    ought(first == second);
-    ought(took >= 2500ms);
-    ought(took < 10s);
+    OUGHT(first == second);
+    OUGHT(took >= 2500ms);
+    OUGHT(took < 10s);
 #ifndef _WIN32
-    ought(first == (Exit{Exit::Ended::killed, 0, 9}));
+    OUGHT(first == (Exit{Exit::Ended::killed, 0, 9}));
 #endif
 }
 
@@ -511,7 +515,7 @@ TRIAL("System: cancelling a task that waits for a silent program's output ends t
         // Time for the read to reach the io pool and block in the system there.
         std::this_thread::sleep_for(300ms);
 
-        same(alive.load(), 1);
+        SAME(alive.load(), 1);
     }
 
     const auto since = std::chrono::steady_clock::now();
@@ -520,8 +524,8 @@ TRIAL("System: cancelling a task that waits for a silent program's output ends t
         if (!loop.turn()) std::this_thread::sleep_for(std::chrono::milliseconds{1});
     }
 
-    same(alive.load(), 0);
-    ought(std::chrono::steady_clock::now() - since < std::chrono::seconds{2});
+    SAME(alive.load(), 0);
+    OUGHT(std::chrono::steady_clock::now() - since < std::chrono::seconds{2});
 
     silent.kill();
     (void)tal::wait(loop, silent.ended());
@@ -549,15 +553,15 @@ TRIAL("System: a program in a terminal sees one, of the size given and then of t
     };
 
     until("tty 1 120x40");
-    ought(heard.find("tty 1 120x40") != std::string::npos);
+    OUGHT(heard.find("tty 1 120x40") != std::string::npos);
 
     child.resize(100, 30);
     tal::wait(loop, child.input().write(tal::bytes("size\r\n")));
     until("size 100x30");
-    ought(heard.find("size 100x30") != std::string::npos);
+    OUGHT(heard.find("size 100x30") != std::string::npos);
 
     tal::wait(loop, child.input().write(tal::bytes("quit\r\n")));
-    ought(tal::wait(loop, tal::within(5000ms, child.ended())).ended == Exit::Ended::normal);
+    OUGHT(tal::wait(loop, tal::within(5000ms, child.ended())).ended == Exit::Ended::normal);
 }
 
 // A program let loose is nobody's child: lost to us at once, with a number of its own.
@@ -565,7 +569,7 @@ TRIAL("System: a program let loose has a number and is lost at once") {
     tal::Loop loop;
     const tal::Process loose = started(loop, pretended({"sleeping", "100"}, tal::Mode::detached));
 
-    ought(loose.id() > 0);
-    ought(tal::wait(loop, loose.ended()).ended == Exit::Ended::lost);
-    same(tal::wait(loop, tal::drained(loose.output())).size(), std::size_t{0});
+    OUGHT(loose.id() > 0);
+    OUGHT(tal::wait(loop, loose.ended()).ended == Exit::Ended::lost);
+    SAME(tal::wait(loop, tal::drained(loose.output())).size(), std::size_t{0});
 }

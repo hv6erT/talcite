@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -165,16 +165,16 @@ std::array<int, 3> wanted(Rgba one) { return {percent(one.red), percent(one.gree
 }
 
 TRIAL("sixel: an empty image and a frame outside the image give an empty string") {
-    same(sixel(Pixels{}, 0), std::string{});
-    same(sixel(held({1, 1}, {Rgba{1, 2, 3}}), 1), std::string{});
+    SAME(sixel(Pixels{}, 0), std::string{});
+    SAME(sixel(held({1, 1}, {Rgba{1, 2, 3}}), 1), std::string{});
 }
 
 TRIAL("sixel: header with P2 = 1, a raster of square pixels and a closing ST") {
     const std::string made = sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{0, 0, 255}}), 0);
 
-    ought(made.rfind("\x1bP0;1;0q\"1;1;2;1#", 0) == 0);
-    ought(made.size() > 2 && made.substr(made.size() - 2) == "\x1b\\");
-    ought(decoded(made).whole);
+    OUGHT(made.rfind("\x1bP0;1;0q\"1;1;2;1#", 0) == 0);
+    OUGHT(made.size() > 2 && made.substr(made.size() - 2) == "\x1b\\");
+    OUGHT(decoded(made).whole);
 }
 
 TRIAL("sixel: an image with few colors comes back exactly, pixel by pixel") {
@@ -187,41 +187,41 @@ TRIAL("sixel: an image with few colors comes back exactly, pixel by pixel") {
 
     const Read read = decoded(sixel(held(size, all), 0));
 
-    ought(read.whole);
-    same(read.wide, 13);
-    same(read.high, 12);
-    same(read.palette.size(), std::size_t{5});
+    OUGHT(read.whole);
+    SAME(read.wide, 13);
+    SAME(read.high, 12);
+    SAME(read.palette.size(), std::size_t{5});
 
     for (int y = 0; y < 12; ++y)
-        for (int x = 0; x < 13; ++x) ought(tone(read, x, y) == wanted(all[static_cast<std::size_t>(y * 13 + x)]));
+        for (int x = 0; x < 13; ++x) OUGHT(tone(read, x, y) == wanted(all[static_cast<std::size_t>(y * 13 + x)]));
 }
 
 TRIAL("sixel: a nearly transparent pixel is not drawn, from half opacity it is") {
     const std::vector<Rgba> all = {{200, 0, 0, 0}, {200, 0, 0, 127}, {200, 0, 0, 128}, {200, 0, 0, 255}};
     const Read read = decoded(sixel(held({4, 1}, all), 0));
 
-    ought(read.whole);
-    same(read.at(0, 0), -1);
-    same(read.at(1, 0), -1);
-    ought(read.at(2, 0) >= 0);
-    ought(read.at(3, 0) >= 0);
-    same(read.palette.size(), std::size_t{1});
+    OUGHT(read.whole);
+    SAME(read.at(0, 0), -1);
+    SAME(read.at(1, 0), -1);
+    OUGHT(read.at(2, 0) >= 0);
+    OUGHT(read.at(3, 0) >= 0);
+    SAME(read.palette.size(), std::size_t{1});
 }
 
 TRIAL("sixel: a fully transparent image is just the header with no colors") {
     const std::string made = sixel(held({3, 2}, std::vector<Rgba>(6, Rgba{9, 9, 9, 0})), 0);
     const Read read = decoded(made);
 
-    ought(read.whole);
-    ought(read.palette.empty());
-    same(made, std::string{"\x1bP0;1;0q\"1;1;3;2\x1b\\"});
+    OUGHT(read.whole);
+    OUGHT(read.palette.empty());
+    SAME(made, std::string{"\x1bP0;1;0q\"1;1;3;2\x1b\\"});
 }
 
 TRIAL("sixel: the height is cut to full bands, an image lower than a band stays") {
-    same(decoded(sixel(held({1, 7}, std::vector<Rgba>(7, Rgba{})), 0)).high, 6);
-    same(decoded(sixel(held({1, 17}, std::vector<Rgba>(17, Rgba{})), 0)).high, 12);
-    same(decoded(sixel(held({1, 5}, std::vector<Rgba>(5, Rgba{})), 0)).high, 5);
-    same(decoded(sixel(held({1, 12}, std::vector<Rgba>(12, Rgba{})), 0)).high, 12);
+    SAME(decoded(sixel(held({1, 7}, std::vector<Rgba>(7, Rgba{})), 0)).high, 6);
+    SAME(decoded(sixel(held({1, 17}, std::vector<Rgba>(17, Rgba{})), 0)).high, 12);
+    SAME(decoded(sixel(held({1, 5}, std::vector<Rgba>(5, Rgba{})), 0)).high, 5);
+    SAME(decoded(sixel(held({1, 12}, std::vector<Rgba>(12, Rgba{})), 0)).high, 12);
 }
 
 TRIAL("sixel: bands go in order with a dash between them, not after the last") {
@@ -232,15 +232,15 @@ TRIAL("sixel: bands go in order with a dash between them, not after the last") {
     const std::string made = sixel(held({1, 12}, all), 0);
     const Read read = decoded(made);
 
-    ought(read.whole);
+    OUGHT(read.whole);
 
-    for (int y = 0; y < 12; ++y) ought(tone(read, 0, y) == wanted(all[static_cast<std::size_t>(y)]));
+    for (int y = 0; y < 12; ++y) OUGHT(tone(read, 0, y) == wanted(all[static_cast<std::size_t>(y)]));
 
-    ought(made.find("-\x1b\\") == std::string::npos);
-    same(std::count(made.begin(), made.end(), '-'), std::ptrdiff_t{1});
+    OUGHT(made.find("-\x1b\\") == std::string::npos);
+    SAME(std::count(made.begin(), made.end(), '-'), std::ptrdiff_t{1});
 
     // One color per band: no carriage return, the first color of a band starts at the left anyway.
-    same(std::count(made.begin(), made.end(), '$'), std::ptrdiff_t{0});
+    SAME(std::count(made.begin(), made.end(), '$'), std::ptrdiff_t{0});
 }
 
 TRIAL("sixel: from four repeats a character goes through an exclamation mark, shorter ones directly") {
@@ -248,9 +248,9 @@ TRIAL("sixel: from four repeats a character goes through an exclamation mark, sh
     const std::string three = sixel(held({3, 1}, std::vector<Rgba>(3, Rgba{0, 0, 0})), 0);
     const std::string four = sixel(held({4, 1}, std::vector<Rgba>(4, Rgba{0, 0, 0})), 0);
 
-    ought(ten.find("#0!10@") != std::string::npos);
-    ought(three.find("#0@@@\x1b") != std::string::npos);
-    ought(four.find("#0!4@\x1b") != std::string::npos);
+    OUGHT(ten.find("#0!10@") != std::string::npos);
+    OUGHT(three.find("#0@@@\x1b") != std::string::npos);
+    OUGHT(four.find("#0!4@\x1b") != std::string::npos);
 }
 
 TRIAL("sixel: a carriage return separates two colors in a band, empty columns at the end are left out") {
@@ -258,21 +258,21 @@ TRIAL("sixel: a carriage return separates two colors in a band, empty columns at
     const std::string made = sixel(held({4, 1}, all), 0);
     const Read read = decoded(made);
 
-    ought(read.whole);
-    ought(tone(read, 0, 0) == wanted(all[0]));
-    ought(tone(read, 1, 0) == wanted(all[1]));
-    same(read.at(2, 0), -1);
-    same(read.at(3, 0), -1);
+    OUGHT(read.whole);
+    OUGHT(tone(read, 0, 0) == wanted(all[0]));
+    OUGHT(tone(read, 1, 0) == wanted(all[1]));
+    SAME(read.at(2, 0), -1);
+    SAME(read.at(3, 0), -1);
 
     // The palette is in color order: (0,0,255) before (255,0,0). Blue stands in the second column,
     // red only in the first; no run adds empty columns after itself.
-    ought(made.find("#0?@$#1@\x1b") != std::string::npos);
+    OUGHT(made.find("#0?@$#1@\x1b") != std::string::npos);
 }
 
 TRIAL("sixel: colors in percent, rounded to the nearest") {
     const std::string made = sixel(held({1, 1}, {Rgba{255, 128, 1}}), 0);
 
-    ought(made.find("#0;2;100;50;0") != std::string::npos);
+    OUGHT(made.find("#0;2;100;50;0") != std::string::npos);
 }
 
 TRIAL("sixel: more colors than allowed: the palette fits and pixels go to close colors") {
@@ -286,9 +286,9 @@ TRIAL("sixel: more colors than allowed: the palette fits and pixels go to close 
 
     const Read read = decoded(sixel(held(size, all), 0));
 
-    ought(read.whole);
-    ought(read.palette.size() <= 256);
-    ought(read.palette.size() > 200);
+    OUGHT(read.whole);
+    OUGHT(read.palette.size() <= 256);
+    OUGHT(read.palette.size() > 200);
 
     int worst = 0;
 
@@ -297,12 +297,12 @@ TRIAL("sixel: more colors than allowed: the palette fits and pixels go to close 
             const std::array<int, 3> got = tone(read, x, y);
             const std::array<int, 3> want = wanted(all[static_cast<std::size_t>(y * size.wide + x)]);
 
-            ought(got[0] >= 0);
+            OUGHT(got[0] >= 0);
 
             for (std::size_t band = 0; band < 3; ++band) worst = std::max(worst, std::abs(got[band] - want[band]));
         }
 
-    ought(worst <= 12);
+    OUGHT(worst <= 12);
 }
 
 TRIAL("sixel: small palette: exactly as many colors as allowed, each of them in use") {
@@ -316,8 +316,8 @@ TRIAL("sixel: small palette: exactly as many colors as allowed, each of them in 
 
     const Read read = decoded(sixel(held(size, all), 0, 2));
 
-    ought(read.whole);
-    same(read.palette.size(), std::size_t{2});
+    OUGHT(read.whole);
+    SAME(read.palette.size(), std::size_t{2});
 
     std::set<int> seen;
 
@@ -327,10 +327,10 @@ TRIAL("sixel: small palette: exactly as many colors as allowed, each of them in 
 
             const std::array<int, 3> got = tone(read, x, y);
 
-            ought(x < 4 ? got[0] > 90 && got[2] == 0 : got[2] > 90 && got[0] == 0);
+            OUGHT(x < 4 ? got[0] > 90 && got[2] == 0 : got[2] > 90 && got[0] == 0);
         }
 
-    same(seen.size(), std::size_t{2});
+    SAME(seen.size(), std::size_t{2});
 }
 
 // The limit of the exact path: exactly as many colors as allowed. These two fall into one 5×5×5
@@ -338,18 +338,18 @@ TRIAL("sixel: small palette: exactly as many colors as allowed, each of them in 
 TRIAL("sixel: as many colors as allowed, all exact") {
     const Read read = decoded(sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{249, 0, 0}}), 0, 2));
 
-    ought(read.whole);
-    same(read.palette.size(), std::size_t{2});
-    ought(tone(read, 0, 0) == wanted(Rgba{255, 0, 0}));
-    ought(tone(read, 1, 0) == wanted(Rgba{249, 0, 0}));
+    OUGHT(read.whole);
+    SAME(read.palette.size(), std::size_t{2});
+    OUGHT(tone(read, 0, 0) == wanted(Rgba{255, 0, 0}));
+    OUGHT(tone(read, 1, 0) == wanted(Rgba{249, 0, 0}));
 }
 
 TRIAL("sixel: zero colors means one, the encoder does not write an image without a palette") {
     const Read read = decoded(sixel(held({2, 1}, {Rgba{255, 0, 0}, Rgba{0, 0, 255}}), 0, 0));
 
-    ought(read.whole);
-    same(read.palette.size(), std::size_t{1});
-    ought(read.at(0, 0) == 0 && read.at(1, 0) == 0);
+    OUGHT(read.whole);
+    SAME(read.palette.size(), std::size_t{1});
+    OUGHT(read.at(0, 0) == 0 && read.at(1, 0) == 0);
 }
 
 TRIAL("sixel: the second frame of a moving image is its own pixels") {
@@ -361,6 +361,6 @@ TRIAL("sixel: the second frame of a moving image is its own pixels") {
 
     const Pixels moving{{1, 1}, {Still{first, std::chrono::milliseconds{50}}, Still{second, std::chrono::milliseconds{50}}}};
 
-    ought(sixel(moving, 0).find("#0;2;100;0;0") != std::string::npos);
-    ought(sixel(moving, 1).find("#0;2;0;100;0") != std::string::npos);
+    OUGHT(sixel(moving, 0).find("#0;2;100;0;0") != std::string::npos);
+    OUGHT(sixel(moving, 1).find("#0;2;0;100;0") != std::string::npos);
 }

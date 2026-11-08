@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -103,7 +103,7 @@ protected:
 TRIAL("Term: the 256-color palette comes out as 38;5") {
     const std::string said = drawn(faking::terminal());
 
-    ought(holds(said, "\x1b[0;38;5;196mx"));
+    OUGHT(holds(said, "\x1b[0;38;5;196mx"));
 }
 
 TRIAL("Term: sixteen colors come out as bright red") {
@@ -111,7 +111,7 @@ TRIAL("Term: sixteen colors come out as bright red") {
 
     line->environment["TERM"] = "vt220";
 
-    ought(holds(drawn(line), "\x1b[0;91mx"));
+    OUGHT(holds(drawn(line), "\x1b[0;91mx"));
 }
 
 TRIAL("Term: NO_COLOR leaves the character alone without color") {
@@ -121,8 +121,8 @@ TRIAL("Term: NO_COLOR leaves the character alone without color") {
 
     const std::string said = drawn(line);
 
-    ought(holds(said, "\x1b[0mx"));
-    ought(!holds(said, "38;"));
+    OUGHT(holds(said, "\x1b[0mx"));
+    OUGHT(!holds(said, "38;"));
 }
 
 // A wish beats a measurement: `Setup` says what to draw with, whatever the console claims.
@@ -130,7 +130,7 @@ TRIAL("Term: Setup overrides the detected colors") {
     Setup given;
     given.colors = Colors::rgb;
 
-    ought(holds(drawn(faking::terminal(), given), "\x1b[0;38;2;255;0;0mx"));
+    OUGHT(holds(drawn(faking::terminal(), given), "\x1b[0;38;2;255;0;0mx"));
 }
 
 TRIAL("Term: the probe goes through the same console") {
@@ -138,7 +138,7 @@ TRIAL("Term: the probe goes through the same console") {
 
     Term term{Setup{}, Seam<Console>{line}};
 
-    ought(line->written.rfind("\x1b[>c", 0) == 0);
+    OUGHT(line->written.rfind("\x1b[>c", 0) == 0);
 }
 
 // --- Dressing the terminal -----------------------------------------------------------------------
@@ -174,12 +174,12 @@ TRIAL("Term: dressing and undressing go in opposite order") {
 
     const std::string off = line->written;
 
-    ought(on.find("\x1b[?1049h") < on.find("\x1b[?1000h\x1b[?1002h\x1b[?1006h"));
-    ought(on.find("\x1b[?1006h") < on.find("\x1b[?2004h"));
+    OUGHT(on.find("\x1b[?1049h") < on.find("\x1b[?1000h\x1b[?1002h\x1b[?1006h"));
+    OUGHT(on.find("\x1b[?1006h") < on.find("\x1b[?2004h"));
 
-    ought(off.find("\x1b[?2004l") < off.find("\x1b[?1006l\x1b[?1002l\x1b[?1000l"));
-    ought(off.find("\x1b[?1000l") < off.find("\x1b[?1049l"));
-    ought(holds(off, "\x1b[?25h"));
+    OUGHT(off.find("\x1b[?2004l") < off.find("\x1b[?1006l\x1b[?1002l\x1b[?1000l"));
+    OUGHT(off.find("\x1b[?1000l") < off.find("\x1b[?1049l"));
+    OUGHT(holds(off, "\x1b[?25h"));
 }
 
 // A terminal without SGR gets drags and the urxvt encoding too, and loses them in reverse order.
@@ -199,9 +199,9 @@ TRIAL("Term: the mouse without SGR asks for drags and the decimal encoding") {
         line->written.clear();
     }
 
-    ought(holds(on, "\x1b[?1000h\x1b[?1002h\x1b[?1015h"));
-    ought(!holds(on, "\x1b[?1006h"));
-    ought(holds(line->written, "\x1b[?1015l\x1b[?1002l\x1b[?1000l"));
+    OUGHT(holds(on, "\x1b[?1000h\x1b[?1002h\x1b[?1015h"));
+    OUGHT(!holds(on, "\x1b[?1006h"));
+    OUGHT(holds(line->written, "\x1b[?1015l\x1b[?1002l\x1b[?1000l"));
 }
 
 TRIAL("Term: without wishes the mouse and the screen follow the measurement") {
@@ -211,9 +211,9 @@ TRIAL("Term: without wishes the mouse and the screen follow the measurement") {
 
     Term term{Setup{}, Seam<Console>{line}};
 
-    ought(!holds(line->written, "\x1b[?1000h"));
-    ought(!holds(line->written, "\x1b[?47h"));
-    ought(!holds(line->written, "\x1b[?1049h"));
+    OUGHT(!holds(line->written, "\x1b[?1000h"));
+    OUGHT(!holds(line->written, "\x1b[?47h"));
+    OUGHT(!holds(line->written, "\x1b[?1049h"));
 }
 
 // Stepping aside takes everything off, coming back puts it on again, and a nested step aside does
@@ -238,10 +238,10 @@ TRIAL("Term: Pause takes off once and puts on once") {
 
     const std::string back = line->written;
 
-    ought(holds(away, "\x1b[?1049l"));
-    ought(away.find("\x1b[?1049l") == away.rfind("\x1b[?1049l"));
-    ought(holds(back, "\x1b[?1049h"));
-    ought(back.find("\x1b[?1049h") == back.rfind("\x1b[?1049h"));
+    OUGHT(holds(away, "\x1b[?1049l"));
+    OUGHT(away.find("\x1b[?1049l") == away.rfind("\x1b[?1049l"));
+    OUGHT(holds(back, "\x1b[?1049h"));
+    OUGHT(back.find("\x1b[?1049h") == back.rfind("\x1b[?1049h"));
 }
 
 // The dressing hides the cursor. Coming back from another program, or resuming after Ctrl+Z, dresses
@@ -257,7 +257,7 @@ TRIAL("Term: the cursor shows again after stepping aside") {
     term.show(root);
     term.draw();
 
-    ought(holds(line->written, "\x1b[?25h"));
+    OUGHT(holds(line->written, "\x1b[?25h"));
 
     {
         const Term::Pause away{term};
@@ -267,7 +267,7 @@ TRIAL("Term: the cursor shows again after stepping aside") {
 
     term.draw();
 
-    ought(holds(line->written, "\x1b[?25h"));
+    OUGHT(holds(line->written, "\x1b[?25h"));
 }
 
 // The cursor's shape goes to the terminal once, when it changes, before the cursor shows; a root
@@ -284,7 +284,7 @@ TRIAL("Term: the cursor's shape goes once, comes again after stepping aside, and
         term.show(root);
         term.draw();
 
-        ought(!holds(line->written, " q"));
+        OUGHT(!holds(line->written, " q"));
     }
 
     auto line = faking::terminal();
@@ -297,8 +297,8 @@ TRIAL("Term: the cursor's shape goes once, comes again after stepping aside, and
         term.show(root);
         term.draw();
 
-        ought(holds(line->written, "\x1b[3 q"));
-        ought(line->written.find("\x1b[3 q") < line->written.rfind("\x1b[?25h"));
+        OUGHT(holds(line->written, "\x1b[3 q"));
+        OUGHT(line->written.find("\x1b[3 q") < line->written.rfind("\x1b[?25h"));
 
         line->written.clear();
 
@@ -306,30 +306,30 @@ TRIAL("Term: the cursor's shape goes once, comes again after stepping aside, and
 
         term.draw();
 
-        ought(holds(line->written, "\x1b[6 q"));
+        OUGHT(holds(line->written, "\x1b[6 q"));
 
         line->written.clear();
 
         term.draw();
 
-        ought(!holds(line->written, " q"));
+        OUGHT(!holds(line->written, " q"));
 
         {
             const Term::Pause away{term};
         }
 
-        ought(holds(line->written, "\x1b[0 q"));
+        OUGHT(holds(line->written, "\x1b[0 q"));
 
         line->written.clear();
 
         term.draw();
 
-        ought(holds(line->written, "\x1b[6 q"));
+        OUGHT(holds(line->written, "\x1b[6 q"));
 
         line->written.clear();
     }
 
-    ought(holds(line->written, "\x1b[0 q"));
+    OUGHT(holds(line->written, "\x1b[0 q"));
 }
 
 // After a signal there is no time to undress the terminal the way `Term` does; the console writes
@@ -389,12 +389,12 @@ TRIAL("Term: the farewell after a signal undoes everything Term turns on") {
 
         const std::vector<std::string> off = sequences(line->written);
 
-        ought(off.size() >= 8);
+        OUGHT(off.size() >= 8);
 
-        for (const std::string& one : off) ought(farewell.find(one) != std::string::npos);
+        for (const std::string& one : off) OUGHT(farewell.find(one) != std::string::npos);
 
-        ought(holds(on, "\x1b[?2026h"));
-        ought(farewell.find("\x1b[?2026l") != std::string::npos);
+        OUGHT(holds(on, "\x1b[?2026h"));
+        OUGHT(farewell.find("\x1b[?2026l") != std::string::npos);
     }
 }
 
@@ -413,7 +413,7 @@ TRIAL("Term: draws nothing while stepped aside") {
 
     term.draw();
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 }
 
 // --- Frame ---------------------------------------------------------------------------------------
@@ -432,7 +432,7 @@ TRIAL("Term: a second identical frame sends not a single byte") {
 
     term.draw();
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 }
 
 TRIAL("Term: the frame is synchronized when allowed") {
@@ -441,8 +441,8 @@ TRIAL("Term: the frame is synchronized when allowed") {
 
     const std::string said = drawn(faking::terminal(), given);
 
-    ought(said.rfind("\x1b[?2026h", 0) == 0);
-    ought(said.size() >= 8 && said.compare(said.size() - 8, 8, "\x1b[?2026l") == 0);
+    OUGHT(said.rfind("\x1b[?2026h", 0) == 0);
+    OUGHT(said.size() >= 8 && said.compare(said.size() - 8, 8, "\x1b[?2026l") == 0);
 }
 
 // --- Title ---------------------------------------------------------------------------------------
@@ -456,7 +456,7 @@ TRIAL("Term: the title goes out as OSC 0") {
 
     term.title("abc");
 
-    same(line->written, std::string{"\x1b]0;abc\x1b\\"});
+    SAME(line->written, std::string{"\x1b]0;abc\x1b\\"});
 }
 
 TRIAL("Term: a title forbidden in Setup does not go out") {
@@ -471,7 +471,7 @@ TRIAL("Term: a title forbidden in Setup does not go out") {
 
     term.title("abc");
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 }
 
 // The change goes through the loop, so only a turn carries it out, and it sends just the difference.
@@ -489,7 +489,7 @@ TRIAL("Term: reconfigure sends just the difference") {
 
     (void)term.loop().turn();
 
-    same(line->written, std::string{"\x1b[?2004l"});
+    SAME(line->written, std::string{"\x1b[?2004l"});
 }
 
 // --- Raw mode, input and size --------------------------------------------------------------------
@@ -533,11 +533,11 @@ TRIAL("Term: raw mode from construction to the end, the probe nested inside it")
     {
         Term term{Setup{}, Seam<Console>{line}};
 
-        same(line->depth, 1);
-        same(line->entered, 2);
+        SAME(line->depth, 1);
+        SAME(line->entered, 2);
     }
 
-    same(line->depth, 0);
+    SAME(line->depth, 0);
 }
 
 TRIAL("Term: Pause takes off raw mode, coming back puts it on and measures the window again") {
@@ -551,14 +551,14 @@ TRIAL("Term: Pause takes off raw mode, coming back puts it on and measures the w
         const Term::Pause one{term};
         const Term::Pause two{term};
 
-        same(line->depth, 0);
+        SAME(line->depth, 0);
 
         line->window = ui::Size{70, 20};
     }
 
-    same(line->depth, 1);
-    same(term.size().wide, 70);
-    same(term.size().high, 20);
+    SAME(line->depth, 1);
+    SAME(term.size().wide, 70);
+    SAME(term.size().high, 20);
 }
 
 TRIAL("Term: the console does not listen while stepped aside") {
@@ -578,8 +578,8 @@ TRIAL("Term: the console does not listen while stepped aside") {
 
     (void)term.turn();
 
-    same(line->rounds, before);
-    ought(root.keys.empty());
+    SAME(line->rounds, before);
+    OUGHT(root.keys.empty());
 }
 
 TRIAL("Term: a key from the console reaches the root") {
@@ -595,7 +595,7 @@ TRIAL("Term: a key from the console reaches the root") {
 
     (void)term.turn();
 
-    ought(root.keys == U"ab");
+    OUGHT(root.keys == U"ab");
 }
 
 // Bytes that arrived during the probe and were not an answer are keys pressed at startup. They go
@@ -613,7 +613,7 @@ TRIAL("Term: keys from the probe go before fresh ones") {
 
     (void)term.turn();
 
-    ought(root.keys == U"qa");
+    OUGHT(root.keys == U"qa");
 }
 
 TRIAL("Term: a lone Esc waits fifty milliseconds and resolves by itself") {
@@ -629,12 +629,12 @@ TRIAL("Term: a lone Esc waits fifty milliseconds and resolves by itself") {
 
     (void)term.turn();
 
-    ought(root.keys.empty());
+    OUGHT(root.keys.empty());
 
     (void)term.turn();
 
-    ought(line->patience.back() == std::chrono::milliseconds{50});
-    ought(root.keys == U"⎋");
+    OUGHT(line->patience.back() == std::chrono::milliseconds{50});
+    OUGHT(root.keys == U"⎋");
 }
 
 // With no Esc in the decoder and no request from the tree there is nothing to resolve, so the
@@ -652,8 +652,8 @@ TRIAL("Term: with no reason it waits without a limit, but with the bell") {
 
     (void)term.turn();
 
-    ought(!line->patience.back().has_value());
-    same(line->belled, before + 1);
+    OUGHT(!line->patience.back().has_value());
+    SAME(line->belled, before + 1);
 }
 
 // The nearest appointment with the root's schedule bounds the wait for the console; the tree itself
@@ -672,8 +672,8 @@ TRIAL("Term: an appointment with the root's schedule goes to the console as pati
 
     (void)term.turn();
 
-    ought(line->patience.back().has_value());
-    same(*line->patience.back(), std::chrono::milliseconds{30});
+    OUGHT(line->patience.back().has_value());
+    SAME(*line->patience.back(), std::chrono::milliseconds{30});
 }
 
 // What the schedule has due is called in the turn after the wait, once.
@@ -695,8 +695,8 @@ TRIAL("Term: an appointment due is called in the turn") {
     (void)term.turn();
     (void)term.turn();
 
-    same(called, 1);
-    ought(!now.active());
+    SAME(called, 1);
+    OUGHT(!now.active());
 }
 
 TRIAL("Term: the size from the console at startup, and 80×25 without it") {
@@ -708,10 +708,10 @@ TRIAL("Term: the size from the console at startup, and 80×25 without it") {
     const Term one{Setup{}, Seam<Console>{sized}};
     const Term two{Setup{}, Seam<Console>{blind}};
 
-    same(one.size().wide, 100);
-    same(one.size().high, 30);
-    same(two.size().wide, 80);
-    same(two.size().high, 25);
+    SAME(one.size().wide, 100);
+    SAME(one.size().high, 30);
+    SAME(two.size().wide, 80);
+    SAME(two.size().high, 25);
 }
 
 TRIAL("Term: a size change arrives as SizeEvent and repaints everything") {
@@ -732,16 +732,16 @@ TRIAL("Term: a size change arrives as SizeEvent and repaints everything") {
 
     (void)term.turn();
 
-    same(root.sizes.size(), std::size_t{1});
-    same(root.sizes.front().wide, 50);
-    same(root.sizes.front().high, 12);
-    ought(holds(line->written, "\x1b[2J"));
+    SAME(root.sizes.size(), std::size_t{1});
+    SAME(root.sizes.front().wide, 50);
+    SAME(root.sizes.front().high, 12);
+    OUGHT(holds(line->written, "\x1b[2J"));
 
     line->written.clear();
 
     (void)term.turn();
 
-    same(root.sizes.size(), std::size_t{1});
+    SAME(root.sizes.size(), std::size_t{1});
 }
 
 // Resumed after being stopped: the shell had the terminal meanwhile, took our dressing off it and
@@ -761,21 +761,21 @@ TRIAL("Term: resuming after a stop dresses the terminal and paints everything") 
 
     (void)term.turn();
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 
     line->comeback = true;
 
     (void)term.turn();
 
-    ought(holds(line->written, "\x1b[?1049h"));
-    ought(holds(line->written, "\x1b[2J"));
-    ought(holds(line->written, "x"));
+    OUGHT(holds(line->written, "\x1b[?1049h"));
+    OUGHT(holds(line->written, "\x1b[2J"));
+    OUGHT(holds(line->written, "x"));
 
     line->written.clear();
 
     (void)term.turn();
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 }
 
 TRIAL("Term: the double-click time comes from the console") {
@@ -789,7 +789,7 @@ TRIAL("Term: the double-click time comes from the console") {
 
     term.show(root);
 
-    ought(root.double_click() == std::chrono::milliseconds{777});
+    OUGHT(root.double_click() == std::chrono::milliseconds{777});
 }
 
 namespace {
@@ -834,8 +834,8 @@ TRIAL("Term: keys after switching the root in the middle of a chunk go to the ne
 
     (void)term.turn();
 
-    ought(first.keys == U"ax");
-    ought(second.keys == U"yz");
+    OUGHT(first.keys == U"ax");
+    OUGHT(second.keys == U"yz");
 }
 
 // An escape sequence in text does not reach the terminal: not a write to the clipboard (OSC 52),
@@ -852,11 +852,11 @@ TRIAL("Term: text with an escape sequence does not command the terminal") {
 
     const std::string& said = line->written;
 
-    ought(!holds(said, "\x1b]52"));
-    ought(!holds(said, "\x1bZ"));
-    ought(!holds(said, "\xc2\x9b"));
-    ought(!holds(said, "\x07"));
-    ought(holds(said, "\xe2\x90\x9b]52;c;"));
+    OUGHT(!holds(said, "\x1b]52"));
+    OUGHT(!holds(said, "\x1bZ"));
+    OUGHT(!holds(said, "\xc2\x9b"));
+    OUGHT(!holds(said, "\x07"));
+    OUGHT(holds(said, "\xe2\x90\x9b]52;c;"));
 }
 
 // --- Hyperlinks ----------------------------------------------------------------------------------
@@ -922,11 +922,11 @@ TRIAL("Term: a hyperlink goes out as OSC 8 around its cells, its address escaped
     const std::size_t closed = said.find(closing);
     const std::size_t after = said.find('x', word);
 
-    ought(opened != std::string::npos);
-    ought(opened < word);
-    ought(word < closed);
-    ought(closed < after);
-    ought(said.find("\x1b]8", closed + closing.size()) == std::string::npos);
+    OUGHT(opened != std::string::npos);
+    OUGHT(opened < word);
+    OUGHT(word < closed);
+    OUGHT(closed < after);
+    OUGHT(said.find("\x1b]8", closed + closing.size()) == std::string::npos);
 }
 
 // A terminal that is not given links gets the cells as plain text: forbidden in `Setup`, on the
@@ -940,23 +940,23 @@ TRIAL("Term: without hyperlinks the cells go out as plain text") {
 
     const std::string forbidden = linked(sequenced(), root, forbidding);
 
-    ought(!holds(forbidden, "\x1b]8"));
-    ought(holds(forbidden, "go"));
+    OUGHT(!holds(forbidden, "\x1b]8"));
+    OUGHT(holds(forbidden, "go"));
 
     auto kernel = sequenced();
 
     kernel->environment["TERM"] = "linux";
 
 #ifndef _WIN32
-    ought(!holds(linked(kernel, root), "\x1b]8"));
+    OUGHT(!holds(linked(kernel, root), "\x1b]8"));
 #endif
 
     Linking far{"https://example.org/" + std::string(3000, 'a')};
 
     const std::string long_one = linked(sequenced(), far);
 
-    ought(!holds(long_one, "\x1b]8"));
-    ought(holds(long_one, "go"));
+    OUGHT(!holds(long_one, "\x1b]8"));
+    OUGHT(holds(long_one, "go"));
 }
 
 // A link is part of the cell for comparing frames: the same frame again sends nothing, and a new
@@ -975,18 +975,18 @@ TRIAL("Term: the same link sends nothing again, a new address rewrites its cells
 
     term.draw();
 
-    same(line->written, std::string{});
+    SAME(line->written, std::string{});
 
     root.target = hyperlink("https://example.org/two");
     root.repaint();
 
     term.draw();
 
-    ought(holds(line->written, "\x1b]8;id=" + std::to_string(root.target.mark) + ";https://example.org/two\x1b\\go"));
+    OUGHT(holds(line->written, "\x1b]8;id=" + std::to_string(root.target.mark) + ";https://example.org/two\x1b\\go"));
 
     const std::string tail = std::string{"go"} + "\x1b]8;;\x1b\\";
 
-    ought(line->written.size() >= tail.size() && line->written.compare(line->written.size() - tail.size(), tail.size(), tail) == 0);
+    OUGHT(line->written.size() >= tail.size() && line->written.compare(line->written.size() - tail.size(), tail.size(), tail) == 0);
 }
 
 // --- Words the terminal counts otherwise ---------------------------------------------------------
@@ -1169,7 +1169,7 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
 
     term.draw();
 
-    ought(holds(line->written, "\x1b[1;1H\x1b[4X" + word + "\x1b[1;5H (2026)"));
+    OUGHT(holds(line->written, "\x1b[1;1H\x1b[4X" + word + "\x1b[1;5H (2026)"));
 
     // An unchanged word stays; a change after it goes by itself.
     root.text = word + " (2027)";
@@ -1179,9 +1179,9 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
 
     term.draw();
 
-    ought(!holds(line->written, word));
-    ought(!erasing(line->written));
-    ought(holds(line->written, "7"));
+    OUGHT(!holds(line->written, word));
+    OUGHT(!erasing(line->written));
+    OUGHT(holds(line->written, "7"));
 
     // A changed word takes the rest of the row with it.
     root.text = word.substr(0, word.size() - 3) + "\xe0\xa5\x80 (2027)";
@@ -1191,7 +1191,7 @@ TRIAL("Term: a word the terminal may count otherwise is erased, written whole an
 
     term.draw();
 
-    ought(holds(line->written, "\x1b[4X" + root.text.substr(0, root.text.find(' ')) + "\x1b[1;5H (2027)"));
+    OUGHT(holds(line->written, "\x1b[4X" + root.text.substr(0, root.text.find(' ')) + "\x1b[1;5H (2027)"));
 }
 
 // A cluster is cut and measured by the terminal's own rules; talcite gives a spacing mark and a
@@ -1221,7 +1221,7 @@ TRIAL("Term: a cluster, a spacing mark and a prepended character make their word
 
         term.draw();
 
-        ought(holds(line->written, "\x1b[1;1Hab \x1b[" + std::to_string(wide) + "X" + word + "\x1b[1;" +
+        OUGHT(holds(line->written, "\x1b[1;1Hab \x1b[" + std::to_string(wide) + "X" + word + "\x1b[1;" +
                                        std::to_string(4 + wide) + "H cd"));
 
         // Changes on both sides of an unchanged word close to it: the word is not rewritten as a
@@ -1233,8 +1233,8 @@ TRIAL("Term: a cluster, a spacing mark and a prepended character make their word
 
         term.draw();
 
-        ought(!holds(line->written, word));
-        ought(holds(line->written, "\x1b[1;" + std::to_string(5 + wide) + "Hy"));
+        OUGHT(!holds(line->written, word));
+        OUGHT(holds(line->written, "\x1b[1;" + std::to_string(5 + wide) + "Hy"));
     }
 }
 
@@ -1258,7 +1258,7 @@ TRIAL("Term: the erasing before a word goes in the word's own style") {
 
     term.draw();
 
-    ought(holds(line->written, "m\x1b[2X" + root.text));
+    OUGHT(holds(line->written, "m\x1b[2X" + root.text));
 }
 
 TRIAL("Term: plain words go out in one piece, without erasing and without extra jumps") {
@@ -1279,8 +1279,8 @@ TRIAL("Term: plain words go out in one piece, without erasing and without extra 
 
     term.draw();
 
-    ought(holds(line->written, "\x1b[1;1HHeat (1995) abc"));
-    ought(!erasing(line->written));
+    OUGHT(holds(line->written, "\x1b[1;1HHeat (1995) abc"));
+    OUGHT(!erasing(line->written));
 }
 
 // Whatever the terminal's count, the columns after the word stay where talcite put them, and
@@ -1320,17 +1320,17 @@ TRIAL("Term: after a word the terminal counts otherwise, the columns stay in pla
         drawing("Heat (1995) abc");
         drawing(word + " (2026) abc");
 
-        same(shown.from(4), std::string{" (2026) abc         "});
+        SAME(shown.from(4), std::string{" (2026) abc         "});
 
-        if (counting == &narrower) same(shown.cells[2] + shown.cells[3], std::string{"  "});
+        if (counting == &narrower) SAME(shown.cells[2] + shown.cells[3], std::string{"  "});
 
         drawing(word + " (2026) abd");
 
-        same(shown.from(4), std::string{" (2026) abd         "});
+        SAME(shown.from(4), std::string{" (2026) abd         "});
 
         drawing(other + " (2026) abd");
 
-        same(shown.from(4), std::string{" (2026) abd         "});
+        SAME(shown.from(4), std::string{" (2026) abd         "});
 
         // A word that went out again takes the next one with it, though that one is unchanged: a
         // terminal counting wider drew over it.
@@ -1340,8 +1340,8 @@ TRIAL("Term: after a word the terminal counts otherwise, the columns stay in pla
         drawing(twice + " " + word + " abc");
         drawing(changed + " " + word + " abc");
 
-        same(shown.cells[5], std::string{"\xe0\xa4\x87"});
-        same(shown.from(10), std::string{"abc           "});
+        SAME(shown.cells[5], std::string{"\xe0\xa4\x87"});
+        SAME(shown.from(10), std::string{"abc           "});
     }
 }
 
@@ -1371,8 +1371,8 @@ TRIAL("Term: a frame nobody drew does not lose its rows") {
 
     term.draw();
 
-    ought(holds(line->written, "ccc"));
-    ought(!holds(line->written, "aaa"));
+    OUGHT(holds(line->written, "ccc"));
+    OUGHT(!holds(line->written, "aaa"));
 
     low->text("ddd");
 
@@ -1382,5 +1382,5 @@ TRIAL("Term: a frame nobody drew does not lose its rows") {
 
     term.draw();
 
-    ought(holds(line->written, "ddd"));
+    OUGHT(holds(line->written, "ddd"));
 }

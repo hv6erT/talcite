@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -185,9 +185,9 @@ TRIAL("Scout: the reflected address from the XOR-ed attribute") {
 
     const net::Address made = std::move(asking).get();
 
-    same(made.text(), std::string{"203.0.113.7"});
-    same(made.port(), static_cast<std::uint16_t>(40404));
-    same(scout.last().text(), std::string{"203.0.113.7"});
+    SAME(made.text(), std::string{"203.0.113.7"});
+    SAME(made.port(), static_cast<std::uint16_t>(40404));
+    SAME(scout.last().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: the old attribute without XOR is understood too") {
@@ -206,7 +206,7 @@ TRIAL("Scout: the old attribute without XOR is understood too") {
                 soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
+    SAME(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 TRIAL("Scout: an address of the IPv6 family") {
@@ -225,9 +225,9 @@ TRIAL("Scout: an address of the IPv6 family") {
 
     const net::Address made = std::move(asking).get();
 
-    same(made.family(), net::Family::six);
-    same(made.text(), std::string{"2001:db8::1"});
-    same(made.port(), static_cast<std::uint16_t>(9999));
+    SAME(made.family(), net::Family::six);
+    SAME(made.text(), std::string{"2001:db8::1"});
+    SAME(made.port(), static_cast<std::uint16_t>(9999));
 }
 
 TRIAL("Scout: someone else's response is not accepted") {
@@ -252,7 +252,7 @@ TRIAL("Scout: someone else's response is not accepted") {
         .send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true), soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
+    SAME(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: garbage on the socket does not get in the way") {
@@ -274,7 +274,7 @@ TRIAL("Scout: garbage on the socket does not get in the way") {
         .send(came.from, addressed(0x0020, "203.0.113.7", 40404, numbered(came.bytes), true), soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
+    SAME(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: the server's refusal comes out as trouble") {
@@ -298,10 +298,10 @@ TRIAL("Scout: the server's refusal comes out as trouble") {
     } catch (const net::Trouble& why) {
         amiss = true;
 
-        same(why.code(), 420);
+        SAME(why.code(), 420);
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Scout: a retry after a lost request") {
@@ -323,7 +323,7 @@ TRIAL("Scout: a retry after a lost request") {
                 soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
+    SAME(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 TRIAL("Scout: silence ends with the deadline") {
@@ -342,7 +342,7 @@ TRIAL("Scout: silence ends with the deadline") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 }
 
 TRIAL("Scout: without servers there is nothing to ask") {
@@ -358,7 +358,7 @@ TRIAL("Scout: without servers there is nothing to ask") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Scout: two questions at once are refused") {
@@ -379,7 +379,7 @@ TRIAL("Scout: two questions at once are refused") {
         busy = true;
     }
 
-    ought(busy);
+    OUGHT(busy);
 
     try {
         (void)std::move(first).get();
@@ -411,8 +411,8 @@ TRIAL("Scout: matching reflections mean hole punching makes sense") {
              soon)
         .get();
 
-    same(std::move(asking).get(), net::StunClient::Mapping::alike);
-    same(scout.known(), net::StunClient::Mapping::alike);
+    SAME(std::move(asking).get(), net::StunClient::Mapping::alike);
+    SAME(scout.known(), net::StunClient::Mapping::alike);
 }
 
 TRIAL("Scout: differing reflections mean a symmetric NAT") {
@@ -439,7 +439,7 @@ TRIAL("Scout: differing reflections mean a symmetric NAT") {
              soon)
         .get();
 
-    same(std::move(asking).get(), net::StunClient::Mapping::symmetric);
+    SAME(std::move(asking).get(), net::StunClient::Mapping::symmetric);
 }
 
 TRIAL("Scout: with one server there is no verdict") {
@@ -450,7 +450,7 @@ TRIAL("Scout: with one server there is no verdict") {
 
     scout.add(server.mine());
 
-    same(scout.mapping().get(), net::StunClient::Mapping::unknown);
+    SAME(scout.mapping().get(), net::StunClient::Mapping::unknown);
 }
 
 // The only trial in the whole suite that goes out to the internet. No network is not a failure
@@ -493,8 +493,8 @@ TRIAL("Scout: real servers on the internet") {
 
     std::cout << "        they see me as " << seen.spelled() << "\n";
 
-    ought(seen.held());
-    ought(seen.port() != 0);
+    OUGHT(seen.held());
+    OUGHT(seen.port() != 0);
 
     const net::StunClient::Mapping what = scout.mapping().get();
 
@@ -540,7 +540,7 @@ TRIAL("Scout: a cancelled question does not freeze the scout for good") {
         }
     }
 
-    ought(again);
+    OUGHT(again);
 }
 
 // The same socket later carries the peer's traffic, so one ordinary large packet must not end the
@@ -563,7 +563,7 @@ TRIAL("Scout: an oversized datagram does not break the question") {
                 soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"203.0.113.7"});
+    SAME(std::move(asking).get().text(), std::string{"203.0.113.7"});
 }
 
 // One misconfigured server at the head of the list must not rule out all the ones after it.
@@ -589,7 +589,7 @@ TRIAL("Scout: one server's refusal does not end the round") {
               soon)
         .get();
 
-    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
+    SAME(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 // The same address added twice must not give two identical answers and from them the verdict
@@ -603,7 +603,7 @@ TRIAL("Scout: the same server twice gives no verdict") {
     scout.add(server.mine());
     scout.add(server.mine());
 
-    same(scout.mapping().get(), net::StunClient::Mapping::unknown);
+    SAME(scout.mapping().get(), net::StunClient::Mapping::unknown);
 }
 
 // A broken XOR-ed attribute must not erase a correctly read old one.
@@ -642,7 +642,7 @@ TRIAL("Scout: a bad attribute does not erase a good one") {
 
     server.send(came.from, made, soon).get();
 
-    same(std::move(asking).get().text(), std::string{"198.51.100.9"});
+    SAME(std::move(asking).get().text(), std::string{"198.51.100.9"});
 }
 
 // The reason for a refusal is written by a stranger, and the text goes to the terminal.
@@ -694,8 +694,8 @@ TRIAL("Scout: the refusal reason carries no control characters") {
 
         const std::string said{why.what()};
 
-        for (const char one : said) ought(one >= 0x20 || one < 0);
+        for (const char one : said) OUGHT(one >= 0x20 || one < 0);
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }

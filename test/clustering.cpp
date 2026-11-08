@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -112,24 +112,24 @@ const std::string poland = "\xf0\x9f\x87\xb5\xf0\x9f\x87\xb1";
 TRIAL("Clusters: the width of a single character") {
     const Rendered joined{Rendering{true, true}};
 
-    same(width(U'a'), 1);
-    same(width(U'\x142'), 1);
-    same(width(U'\x4F60'), 2);
-    same(width(U'\x301'), 0);
-    same(width(U'\x200B'), 0);
-    same(width(U'\x200D'), 0);
-    same(width(U'\xFE0F'), 0);
-    same(width(U'\x1161'), 0);
-    same(width(U'\x1100'), 2);
-    same(width(U'\x01'), 1);
-    same(width(U'\x202E'), 1);
-    same(width(U'\U0001F469'), 2);
-    same(width(U'\x231A'), 2);
-    same(width(U'\U0001F3FD'), 0);
+    SAME(width(U'a'), 1);
+    SAME(width(U'\x142'), 1);
+    SAME(width(U'\x4F60'), 2);
+    SAME(width(U'\x301'), 0);
+    SAME(width(U'\x200B'), 0);
+    SAME(width(U'\x200D'), 0);
+    SAME(width(U'\xFE0F'), 0);
+    SAME(width(U'\x1161'), 0);
+    SAME(width(U'\x1100'), 2);
+    SAME(width(U'\x01'), 1);
+    SAME(width(U'\x202E'), 1);
+    SAME(width(U'\U0001F469'), 2);
+    SAME(width(U'\x231A'), 2);
+    SAME(width(U'\U0001F3FD'), 0);
 
     const Rendered apart{Rendering{false, false}};
 
-    same(width(U'\U0001F3FD'), 2);
+    SAME(width(U'\U0001F3FD'), 2);
 }
 
 // --- Boundaries ------------------------------------------------------------------------------------
@@ -137,11 +137,11 @@ TRIAL("Clusters: the width of a single character") {
 // A letter keeps its accents, whatever came before them, and a mark after a control has nothing to
 // sit on.
 TRIAL("Clusters: letters with their marks, as names from macOS have them") {
-    same(parted("Zoe" + acute), std::string{"Z|o|e" + acute});
-    same(parted("o" + acute + "\xcc\xa8" + "x"), std::string{"o" + acute + "\xcc\xa8|x"});
-    same(parted(acute + "a"), std::string{acute + "|a"});
-    same(parted("\x01" + acute), std::string{"\x01|" + acute});
-    same(parted("a\r\nb"), std::string{"a|\r|\n|b"});
+    SAME(parted("Zoe" + acute), std::string{"Z|o|e" + acute});
+    SAME(parted("o" + acute + "\xcc\xa8" + "x"), std::string{"o" + acute + "\xcc\xa8|x"});
+    SAME(parted(acute + "a"), std::string{acute + "|a"});
+    SAME(parted("\x01" + acute), std::string{"\x01|" + acute});
+    SAME(parted("a\r\nb"), std::string{"a|\r|\n|b"});
 }
 
 // Korean from macOS comes as jamo: an initial, a vowel and a final make one syllable.
@@ -153,27 +153,27 @@ TRIAL("Clusters: a cluster holds at most thirty marks after its letter") {
 
     for (int one = 0; one < 100; ++one) text += acute;
 
-    same(cluster_after(text, 0), std::size_t{1 + 30 * 2});
-    same(cluster_after(text, 61), std::size_t{61 + 31 * 2});
-    same(cluster_before(text, 61), std::size_t{0});
-    same(cluster_before(text, text.size()), std::size_t{61 + 31 * 2 + 31 * 2});
-    same(width(text), 4);
+    SAME(cluster_after(text, 0), std::size_t{1 + 30 * 2});
+    SAME(cluster_after(text, 61), std::size_t{61 + 31 * 2});
+    SAME(cluster_before(text, 61), std::size_t{0});
+    SAME(cluster_before(text, text.size()), std::size_t{61 + 31 * 2 + 31 * 2});
+    SAME(width(text), 4);
 }
 
 TRIAL("Clusters: Hangul jamo make syllables") {
     const std::string han = "\xe1\x84\x92\xe1\x85\xa1\xe1\x86\xab";
     const std::string geul = "\xe1\x84\x80\xe1\x85\xb3\xe1\x86\xaf";
 
-    same(parted(han + geul), han + "|" + geul);
-    same(width(han + geul), 4);
-    same(parted("\xea\xb0\x80\xe1\x86\xa8"), std::string{"\xea\xb0\x80\xe1\x86\xa8"});
+    SAME(parted(han + geul), han + "|" + geul);
+    SAME(width(han + geul), 4);
+    SAME(parted("\xea\xb0\x80\xe1\x86\xa8"), std::string{"\xea\xb0\x80\xe1\x86\xa8"});
 }
 
 // Regional indicators pair up from the left: three make a flag and a lone half.
 TRIAL("Clusters: flags are pairs of regional indicators") {
-    same(parted(poland + "\xf0\x9f\x87\xa9"), poland + "|\xf0\x9f\x87\xa9");
-    same(width(poland), 2);
-    same(width(poland + "\xf0\x9f\x87\xa9"), 3);
+    SAME(parted(poland + "\xf0\x9f\x87\xa9"), poland + "|\xf0\x9f\x87\xa9");
+    SAME(width(poland), 2);
+    SAME(width(poland + "\xf0\x9f\x87\xa9"), 3);
 }
 
 // A terminal that joins draws a programmer and a dark thumb in two cells; one that does not draws
@@ -182,28 +182,28 @@ TRIAL("Clusters: emoji sequences follow the terminal") {
     {
         const Rendered joined{Rendering{true, true}};
 
-        same(parted(woman + zwj + laptop + "!"), woman + zwj + laptop + "|!");
-        same(width(woman + zwj + laptop), 2);
-        same(parted(thumb + tone), thumb + tone);
-        same(width(thumb + tone), 2);
-        same(width(heart + selector), 2);
+        SAME(parted(woman + zwj + laptop + "!"), woman + zwj + laptop + "|!");
+        SAME(width(woman + zwj + laptop), 2);
+        SAME(parted(thumb + tone), thumb + tone);
+        SAME(width(thumb + tone), 2);
+        SAME(width(heart + selector), 2);
     }
 
     {
         const Rendered apart{Rendering{false, false}};
 
-        same(parted(woman + zwj + laptop + "!"), woman + zwj + "|" + laptop + "|!");
-        same(width(woman + zwj + laptop), 4);
-        same(parted(thumb + tone), thumb + "|" + tone);
-        same(width(thumb + tone), 4);
-        same(width(heart + selector), 1);
+        SAME(parted(woman + zwj + laptop + "!"), woman + zwj + "|" + laptop + "|!");
+        SAME(width(woman + zwj + laptop), 4);
+        SAME(parted(thumb + tone), thumb + "|" + tone);
+        SAME(width(thumb + tone), 4);
+        SAME(width(heart + selector), 1);
     }
 }
 
 TRIAL("Clusters: a format character alone shows nothing, a mark alone takes a cell") {
-    same(width("a\xe2\x80\x8b" "b"), 2);
-    same(width(acute), 1);
-    same(width("\xe2\x80\x8d"), 0);
+    SAME(width("a\xe2\x80\x8b" "b"), 2);
+    SAME(width(acute), 1);
+    SAME(width("\xe2\x80\x8d"), 0);
 }
 
 // Walking back finds the same boundaries as walking forward, for strings mixed from every kind of
@@ -227,7 +227,7 @@ TRIAL("Clusters: walking back agrees with walking forward") {
             for (int one = 0; one < many; ++one) text += pieces[random() % pieces.size()];
 
             if (backward(text) != forward(text)) {
-                ought(false);
+                OUGHT(false);
 
                 return;
             }
@@ -238,20 +238,20 @@ TRIAL("Clusters: walking back agrees with walking forward") {
 // --- Glyphs ----------------------------------------------------------------------------------------
 
 TRIAL("Clusters: a glyph is the character itself, or a handle that gives the cluster back") {
-    same(static_cast<std::uint32_t>(glyph("a")), static_cast<std::uint32_t>(U'a'));
-    same(static_cast<std::uint32_t>(glyph("\x01")), static_cast<std::uint32_t>(U'\x2401'));
+    SAME(static_cast<std::uint32_t>(glyph("a")), static_cast<std::uint32_t>(U'a'));
+    SAME(static_cast<std::uint32_t>(glyph("\x01")), static_cast<std::uint32_t>(U'\x2401'));
 
     const char32_t accented = glyph("e" + acute);
 
-    ought(accented >= 0x110000);
-    same(spelled(accented), std::string{"e" + acute});
-    same(static_cast<std::uint32_t>(glyph("e" + acute)), static_cast<std::uint32_t>(accented));
-    same(width(accented), 1);
+    OUGHT(accented >= 0x110000);
+    SAME(spelled(accented), std::string{"e" + acute});
+    SAME(static_cast<std::uint32_t>(glyph("e" + acute)), static_cast<std::uint32_t>(accented));
+    SAME(width(accented), 1);
 
     // A mark alone stands on a dotted circle; a format character alone is no glyph at all.
-    same(spelled(glyph(acute)), std::string{"\xe2\x97\x8c" + acute});
-    same(static_cast<std::uint32_t>(glyph("\xe2\x80\x8b")), 0u);
-    same(spelled(0), std::string{});
+    SAME(spelled(glyph(acute)), std::string{"\xe2\x97\x8c" + acute});
+    SAME(static_cast<std::uint32_t>(glyph("\xe2\x80\x8b")), 0u);
+    SAME(spelled(0), std::string{});
 }
 
 // The same cluster is wider on a terminal that presents the selector, so it gets its own handle.
@@ -271,9 +271,9 @@ TRIAL("Clusters: a glyph remembers the rendering it was measured in") {
         narrow = glyph(heart + selector);
     }
 
-    ought(wide != narrow);
-    same(width(wide), 2);
-    same(width(narrow), 1);
+    OUGHT(wide != narrow);
+    SAME(width(wide), 2);
+    SAME(width(narrow), 1);
 }
 
 // --- Drawing ---------------------------------------------------------------------------------------
@@ -284,10 +284,10 @@ TRIAL("Clusters: a canvas puts a letter with its accent in one cell") {
 
     onto.put({0, 0}, "Zoe" + acute + "!", Style{});
 
-    same(row(one, 0), std::string{"Zoe" + acute + "!"});
-    same(spelled(one.at({2, 0}).letter), std::string{"e" + acute});
-    same(static_cast<std::uint32_t>(one.at({3, 0}).letter), static_cast<std::uint32_t>(U'!'));
-    same(measured("Zoe" + acute + "!").wide, 4);
+    SAME(row(one, 0), std::string{"Zoe" + acute + "!"});
+    SAME(spelled(one.at({2, 0}).letter), std::string{"e" + acute});
+    SAME(static_cast<std::uint32_t>(one.at({3, 0}).letter), static_cast<std::uint32_t>(U'!'));
+    SAME(measured("Zoe" + acute + "!").wide, 4);
 }
 
 // Code that puts text character by character and moves by `width` still gets one letter: the mark
@@ -300,14 +300,14 @@ TRIAL("Clusters: a mark put alone joins the glyph on its left") {
     one.put({1, 0}, U'\x4F60', Style{});
     one.put({3, 0}, U'\x301', Style{});
 
-    same(spelled(one.at({0, 0}).letter), std::string{"e" + acute});
-    same(spelled(one.at({1, 0}).letter), std::string{"\xe4\xbd\xa0" + acute});
+    SAME(spelled(one.at({0, 0}).letter), std::string{"e" + acute});
+    SAME(spelled(one.at({1, 0}).letter), std::string{"\xe4\xbd\xa0" + acute});
 
     detail::Sheet empty{{3, 1}};
 
     empty.put({0, 0}, U'\x301', Style{});
 
-    same(row(empty, 0), std::string{});
+    SAME(row(empty, 0), std::string{});
 }
 
 namespace {
@@ -342,7 +342,7 @@ TRIAL("Clusters: Term writes a cluster whole") {
 
     term.draw();
 
-    ought(line->written.find("e" + acute + "x") != std::string::npos);
+    OUGHT(line->written.find("e" + acute + "x") != std::string::npos);
 }
 
 // The probe's widths decide the rendering: a programmer four columns wide means the terminal does
@@ -356,12 +356,12 @@ TRIAL("Clusters: Term takes the rendering from the probe and gives it back") {
 
         const Term term{Setup{}, Seam<Console>{line}};
 
-        same(rendering().joined, false);
-        same(rendering().presented, true);
+        SAME(rendering().joined, false);
+        SAME(rendering().presented, true);
     }
 
-    same(rendering().joined, true);
-    same(rendering().presented, false);
+    SAME(rendering().joined, true);
+    SAME(rendering().presented, false);
 }
 
 // --- Editing ---------------------------------------------------------------------------------------
@@ -389,29 +389,29 @@ TRIAL("Clusters: the editor takes a character whole") {
 
     ui::KeyEvent back{ui::Code::backspace};
 
-    ought(sheet.dispatch(back));
-    same(one->text(), std::string{"Zoe" + acute + "!"});
+    OUGHT(sheet.dispatch(back));
+    SAME(one->text(), std::string{"Zoe" + acute + "!"});
 
     ui::KeyEvent again{ui::Code::backspace};
 
-    ought(sheet.dispatch(again));
-    same(one->text(), std::string{"Zo!"});
+    OUGHT(sheet.dispatch(again));
+    SAME(one->text(), std::string{"Zo!"});
 
     one->hold(bytes("Zoe" + acute + "!"));
     one->cursor(2);
 
     ui::KeyEvent remove{ui::Code::remove};
 
-    ought(sheet.dispatch(remove));
-    same(one->text(), std::string{"Zo!"});
+    OUGHT(sheet.dispatch(remove));
+    SAME(one->text(), std::string{"Zo!"});
 
     one->hold(bytes("e" + acute + "x"));
     one->cursor(0);
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{3});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{3});
 }
 
 TRIAL("Clusters: a field takes a character whole and counts it as one") {
@@ -422,12 +422,12 @@ TRIAL("Clusters: a field takes a character whole and counts it as one") {
     top.children().add(one);
     one->focus();
 
-    same(one->cursor(), std::size_t{3});
+    SAME(one->cursor(), std::size_t{3});
 
     ui::KeyEvent back{ui::Code::backspace};
 
-    ought(top.dispatch(back));
-    same(one->text(), std::string{"Zo"});
+    OUGHT(top.dispatch(back));
+    SAME(one->text(), std::string{"Zo"});
 }
 
 // --- The old Windows console ------------------------------------------------------------------------
@@ -439,7 +439,7 @@ TRIAL("Clusters: the old console's screen keeps a cluster in one cell") {
 
     one.fed("e" + acute + "x");
 
-    same(spelled(one.at(0, 0).glyph), std::string{"e" + acute});
-    same(static_cast<std::uint32_t>(one.at(1, 0).glyph), static_cast<std::uint32_t>(U'x'));
-    same(one.cursor().x, 2);
+    SAME(spelled(one.at(0, 0).glyph), std::string{"e" + acute});
+    SAME(static_cast<std::uint32_t>(one.at(1, 0).glyph), static_cast<std::uint32_t>(U'x'));
+    SAME(one.cursor().x, 2);
 }

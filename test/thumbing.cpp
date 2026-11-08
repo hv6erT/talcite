@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -131,8 +131,8 @@ TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end, and le
     // The thumb stands at the top of the track, so the track below it is a page down.
     clicked(top, {19, 9});
 
-    same(one->first(), std::size_t{10});
-    same(*one->which(), std::size_t{0});
+    SAME(one->first(), std::size_t{10});
+    SAME(*one->which(), std::size_t{0});
 
     // The last cell of the track stays below the thumb until the end.
     for (int round = 0; round < 20; ++round) {
@@ -140,12 +140,12 @@ TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end, and le
         clicked(top, {19, 10});
     }
 
-    same(one->first(), std::size_t{90});
+    SAME(one->first(), std::size_t{90});
 
     (void)top.render({{0, 0}, {20, 11}});
     clicked(top, {19, 1});
 
-    same(one->first(), std::size_t{80});
+    SAME(one->first(), std::size_t{80});
 
     // A page past the end stops at the end, not beyond it.
     one->first(85);
@@ -153,7 +153,7 @@ TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end, and le
     (void)top.render({{0, 0}, {20, 11}});
     clicked(top, {19, 1});
 
-    same(one->first(), std::size_t{75});
+    SAME(one->first(), std::size_t{75});
 
     // In a taller window (twenty rows, a track of twenty cells under the heading, a thumb of four)
     // the thumb at 75 stands in rows 16–19, so there is track below it: a page down from 75 is 80,
@@ -163,7 +163,7 @@ TRIAL("Scrollbar: a table's track scrolls by a page and stops at the end, and le
     (void)top.render({{0, 0}, {20, 21}});
     clicked(top, {19, 20});
 
-    same(one->first(), std::size_t{80});
+    SAME(one->first(), std::size_t{80});
 }
 
 TRIAL("Scrollbar: a table's thumb can be dragged, also outside the scrollbar") {
@@ -173,33 +173,33 @@ TRIAL("Scrollbar: a table's thumb can be dragged, also outside the scrollbar") {
 
     const int y = thumb_row(top, 19, 1, 11);
 
-    ought(y == 1);
+    OUGHT(y == 1);
 
     pressed(top, {19, y}, ui::Press::down);
     pressed(top, {19, 10}, ui::Press::move);
 
-    same(one->first(), std::size_t{90});
+    SAME(one->first(), std::size_t{90});
 
     // One cell of the track is ten rows: the fourth cell, in row 4, gives 30.
     pressed(top, {19, 4}, ui::Press::move);
 
-    same(one->first(), std::size_t{30});
+    SAME(one->first(), std::size_t{30});
 
     // A move sideways, off the scrollbar: holding the button still leads it to the table.
     pressed(top, {3, 5}, ui::Press::move);
 
-    ought(one->first() > 0 && one->first() < 90);
+    OUGHT(one->first() > 0 && one->first() < 90);
 
     pressed(top, {40, 0}, ui::Press::move);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     pressed(top, {40, 0}, ui::Press::up);
 
     // After release a move drags nothing.
     pressed(top, {19, 9}, ui::Press::move);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 }
 
 // A thumb several cells long keeps to the cursor by the cell it was grabbed at: a move by one cell
@@ -222,11 +222,11 @@ TRIAL("Scrollbar: a thumb grabbed in the middle follows the cursor by the same c
     pressed(top, {19, 3}, ui::Press::down);
     pressed(top, {19, 3}, ui::Press::move);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     pressed(top, {19, 4}, ui::Press::move);
 
-    same(one->first(), std::size_t{2});
+    SAME(one->first(), std::size_t{2});
 
     pressed(top, {19, 4}, ui::Press::up);
 }
@@ -245,28 +245,28 @@ TRIAL("Scrollbar: grabbing the thumb does not move the view, moving it moves the
 
     const int y = thumb_row(top, 19, 1, 11);
 
-    ought(y == 2);
+    OUGHT(y == 2);
 
     pressed(top, {19, y}, ui::Press::down);
     pressed(top, {19, y}, ui::Press::move);
 
-    same(one->first(), std::size_t{5});
+    SAME(one->first(), std::size_t{5});
 
     pressed(top, {19, y + 1}, ui::Press::move);
 
-    same(one->first(), std::size_t{15});
+    SAME(one->first(), std::size_t{15});
 
     pressed(top, {19, y}, ui::Press::move);
 
-    same(one->first(), std::size_t{5});
+    SAME(one->first(), std::size_t{5});
 
     pressed(top, {19, 1}, ui::Press::move);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     pressed(top, {19, 10}, ui::Press::move);
 
-    same(one->first(), std::size_t{90});
+    SAME(one->first(), std::size_t{90});
 
     pressed(top, {19, 10}, ui::Press::up);
 
@@ -274,12 +274,12 @@ TRIAL("Scrollbar: grabbing the thumb does not move the view, moving it moves the
     // a grab there keeps 3 all the same.
     one->first(3);
 
-    ought(thumb_row(top, 19, 1, 11) == 1);
+    OUGHT(thumb_row(top, 19, 1, 11) == 1);
 
     pressed(top, {19, 1}, ui::Press::down);
     pressed(top, {19, 1}, ui::Press::move);
 
-    same(one->first(), std::size_t{3});
+    SAME(one->first(), std::size_t{3});
 
     pressed(top, {19, 1}, ui::Press::up);
 }
@@ -294,14 +294,14 @@ TRIAL("Scrollbar: a click on a table's scrollbar does not set a row and is not a
     clicked(top, {19, 5});
     clicked(top, {19, 5});
 
-    same(*one->which(), std::size_t{3});
-    same(top.doubled, 0);
+    SAME(*one->which(), std::size_t{3});
+    SAME(top.doubled, 0);
 
     // A click beside the scrollbar sets the row as always.
     (void)top.render({{0, 0}, {20, 11}});
     clicked(top, {2, 2});
 
-    same(*one->which(), one->first() + 1);
+    SAME(*one->which(), one->first() + 1);
 }
 
 TRIAL("Scrollbar: the right button and a table without a scrollbar scroll nothing") {
@@ -311,7 +311,7 @@ TRIAL("Scrollbar: the right button and a table without a scrollbar scroll nothin
 
     pressed(top, {19, 10}, ui::Press::down, ui::Mouse::right);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     one->scrollbar(false);
 
@@ -319,7 +319,7 @@ TRIAL("Scrollbar: the right button and a table without a scrollbar scroll nothin
 
     clicked(top, {19, 10});
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 }
 
 TRIAL("Table: column_under tells which heading column a cell stands under") {
@@ -328,13 +328,13 @@ TRIAL("Table: column_under tells which heading column a cell stands under") {
     const auto one = table(top);
 
     // A width of 19 without the scrollbar: Wiek 4, a gap of 1, Nazwa 14.
-    same(one->column_under({0, 0}).value_or(9), std::size_t{0});
-    same(one->column_under({13, 0}).value_or(9), std::size_t{0});
-    same(one->column_under({14, 0}).value_or(9), std::size_t{0});
-    same(one->column_under({15, 0}).value_or(9), std::size_t{1});
-    same(one->column_under({18, 0}).value_or(9), std::size_t{1});
-    ought(!one->column_under({19, 0}).has_value());
-    ought(!one->column_under({2, 1}).has_value());
+    SAME(one->column_under({0, 0}).value_or(9), std::size_t{0});
+    SAME(one->column_under({13, 0}).value_or(9), std::size_t{0});
+    SAME(one->column_under({14, 0}).value_or(9), std::size_t{0});
+    SAME(one->column_under({15, 0}).value_or(9), std::size_t{1});
+    SAME(one->column_under({18, 0}).value_or(9), std::size_t{1});
+    OUGHT(!one->column_under({19, 0}).has_value());
+    OUGHT(!one->column_under({2, 1}).has_value());
 }
 
 TRIAL("Scrollbar: a text page, with track and thumb") {
@@ -350,12 +350,12 @@ TRIAL("Scrollbar: a text page, with track and thumb") {
 
     clicked(top, {19, 8});
 
-    same(one->first().value_or(99), std::size_t{10});
+    SAME(one->first().value_or(99), std::size_t{10});
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {19, 0});
 
-    same(one->first().value_or(99), std::size_t{0});
+    SAME(one->first().value_or(99), std::size_t{0});
 
     // The thumb dragged to the very bottom of the track: the end of the text.
     const Snapshot shown = top.render({{0, 0}, {20, 10}});
@@ -366,13 +366,13 @@ TRIAL("Scrollbar: a text page, with track and thumb") {
     for (int row = 0; row < 9 && y < 0; ++row)
         if (shown.at({19, row}).letter != track) y = row;
 
-    ought(y >= 0);
+    OUGHT(y >= 0);
 
     pressed(top, {19, y}, ui::Press::down);
     pressed(top, {19, 30}, ui::Press::move);
     pressed(top, {19, 30}, ui::Press::up);
 
-    same(one->first().value_or(0), std::size_t{90});
+    SAME(one->first().value_or(0), std::size_t{90});
 }
 
 // The editor's scrollbar is the page's: the track scrolls a page and the thumb drags, and neither
@@ -391,16 +391,16 @@ TRIAL("Scrollbar: in an editor the track and thumb move the view, not the cursor
 
     clicked(top, {19, 8});
 
-    same(one->first().value_or(99), std::size_t{10});
-    same(one->cursor(), std::size_t{0});
+    SAME(one->first().value_or(99), std::size_t{10});
+    SAME(one->cursor(), std::size_t{0});
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {19, 0});
     clicked(top, {19, 0});
 
-    same(one->first().value_or(99), std::size_t{0});
-    same(one->cursor(), std::size_t{0});
-    ought(one->selection().empty());
+    SAME(one->first().value_or(99), std::size_t{0});
+    SAME(one->cursor(), std::size_t{0});
+    OUGHT(one->selection().empty());
 
     const Snapshot shown = top.render({{0, 0}, {20, 10}});
     const char32_t track = shown.at({19, 9}).letter;
@@ -410,19 +410,19 @@ TRIAL("Scrollbar: in an editor the track and thumb move the view, not the cursor
     for (int row = 0; row < 9 && y < 0; ++row)
         if (shown.at({19, row}).letter != track) y = row;
 
-    ought(y >= 0);
+    OUGHT(y >= 0);
 
     pressed(top, {19, y}, ui::Press::down);
     pressed(top, {19, 30}, ui::Press::move);
     pressed(top, {19, 30}, ui::Press::up);
 
-    same(one->first().value_or(0), std::size_t{90});
-    same(one->cursor(), std::size_t{0});
+    SAME(one->first().value_or(0), std::size_t{90});
+    SAME(one->cursor(), std::size_t{0});
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {2, 1});
 
-    ought(one->cursor() > 0);
+    OUGHT(one->cursor() > 0);
 }
 
 // A click on a page's scrollbar is the bar's even where a mark with an address runs under it: the
@@ -452,14 +452,14 @@ TRIAL("Scrollbar: a click on a page's scrollbar follows no link beside it") {
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(followed, 0);
+    SAME(followed, 0);
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {2, 0});
 
     for (int at = 0; at < 5; ++at) (void)loop.turn();
 
-    same(followed, 1);
+    SAME(followed, 1);
 }
 
 TRIAL("Scrollbar: in a list the track and thumb move the view, not the choice") {
@@ -473,30 +473,30 @@ TRIAL("Scrollbar: in a list the track and thumb move the view, not the choice") 
 
     const Snapshot first = top.render({{0, 0}, {20, 10}});
 
-    ought(said_at(first, 0).starts_with("pozycja 0"));
+    OUGHT(said_at(first, 0).starts_with("pozycja 0"));
 
     // A track of ten cells, a window of 10 out of 50: the thumb is two cells, at the top.
     clicked(top, {19, 9});
 
-    ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 10"));
+    OUGHT(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 10"));
 
     // At 10 the thumb stands in cells 2–3.
     pressed(top, {19, 2}, ui::Press::down);
     pressed(top, {19, 40}, ui::Press::move);
     pressed(top, {19, 40}, ui::Press::up);
 
-    ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
+    OUGHT(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
 
     // The track above the thumb is a page up.
     clicked(top, {19, 1});
 
-    ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 30"));
+    OUGHT(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 30"));
 
     // The thumb at 30 stands in cells 6–7 of the track; the track below it is a page down, to the
     // end.
     clicked(top, {19, 9});
 
-    ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
+    OUGHT(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
 
     int moved = 0;
 
@@ -509,8 +509,8 @@ TRIAL("Scrollbar: in a list the track and thumb move the view, not the choice") 
     // At the end the thumb fills the last cells; a click on it moves nothing and does not notify.
     clicked(top, {19, 9});
 
-    same(moved, 0);
-    ought(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
+    SAME(moved, 0);
+    OUGHT(said_at(top.render({{0, 0}, {20, 10}}), 0).starts_with("pozycja 40"));
 }
 
 TRIAL("Scrollbar: a scroller in both axes, each scrollbar with its own axis") {
@@ -532,27 +532,27 @@ TRIAL("Scrollbar: a scroller in both axes, each scrollbar with its own axis") {
     // nineteen columns right, which is as far as the widest row goes, nine.
     clicked(top, {19, 8});
 
-    same(one->shift().y, 9);
-    same(one->shift().x, 0);
+    SAME(one->shift().y, 9);
+    SAME(one->shift().x, 0);
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {18, 9});
 
-    same(one->shift().x, 9);
-    same(one->shift().y, 9);
+    SAME(one->shift().x, 9);
+    SAME(one->shift().y, 9);
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {0, 9});
 
     // A row scrolled under the horizontal scrollbar does not catch the click: the scrollbar gets it,
     // and the vertical view stays.
-    same(one->shift().x, 0);
-    same(one->shift().y, 9);
+    SAME(one->shift().x, 0);
+    SAME(one->shift().y, 9);
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {19, 7});
 
-    same(one->shift().y, 18);
+    SAME(one->shift().y, 18);
 
     // A vertical thumb dragged across the horizontal scrollbar is still vertical: the move goes to
     // the grab that holds it, not to the scrollbar under the cursor.
@@ -563,8 +563,8 @@ TRIAL("Scrollbar: a scroller in both axes, each scrollbar with its own axis") {
     pressed(top, {19, 1}, ui::Press::down);
     pressed(top, {5, 9}, ui::Press::move);
 
-    same(one->shift().y, 31);
-    same(one->shift().x, 0);
+    SAME(one->shift().y, 31);
+    SAME(one->shift().x, 0);
 
     pressed(top, {5, 9}, ui::Press::up);
 }

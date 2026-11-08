@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -39,8 +39,8 @@ TRIAL("Span: without wrapping it wants as many cells as it has characters") {
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 3);
-    same(wants.high, 1);
+    SAME(wants.wide, 3);
+    SAME(wants.high, 1);
 }
 
 TRIAL("Span: an empty one wants nothing, not even a row") {
@@ -48,20 +48,20 @@ TRIAL("Span: an empty one wants nothing, not even a row") {
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 0);
-    same(wants.high, 0);
+    SAME(wants.wide, 0);
+    SAME(wants.high, 0);
 }
 
 TRIAL("Span: letters with diacritics count as characters, not bytes") {
     const ui::Span one{"żółw"};
 
-    same(one.wants({80, 25}).wide, 4);
+    SAME(one.wants({80, 25}).wide, 4);
 }
 
 TRIAL("Span: a double-width character counts as two") {
     const ui::Span one{"漢字"};
 
-    same(one.wants({80, 25}).wide, 4);
+    SAME(one.wants({80, 25}).wide, 4);
 }
 
 TRIAL("Span: without wrapping it ignores the available room") {
@@ -69,8 +69,8 @@ TRIAL("Span: without wrapping it ignores the available room") {
 
     const ui::Size wants = one.wants({5, 25});
 
-    same(wants.wide, 18);
-    same(wants.high, 1);
+    SAME(wants.wide, 18);
+    SAME(wants.high, 1);
 }
 
 TRIAL("Span: with wrapping it breaks at spaces") {
@@ -78,24 +78,24 @@ TRIAL("Span: with wrapping it breaks at spaces") {
 
     const ui::Size wants = one.wants({7, 25});
 
-    same(wants.high, 2);
-    same(wants.wide, 6);
+    SAME(wants.high, 2);
+    SAME(wants.wide, 6);
 
     const Snapshot made = one.render({{0, 0}, {7, 2}});
 
-    same(read(made, 0), std::string{"ala ma"});
-    same(read(made, 1), std::string{"kota"});
+    SAME(read(made, 0), std::string{"ala ma"});
+    SAME(read(made, 1), std::string{"kota"});
 }
 
 TRIAL("Span: wrapping switches on the fly") {
     ui::Span one{"ala ma kota"};
 
-    same(one.wants({7, 25}).high, 1);
+    SAME(one.wants({7, 25}).high, 1);
 
     one.wrapped(true);
 
-    same(one.wants({7, 25}).high, 2);
-    ought(one.wrapped());
+    SAME(one.wants({7, 25}).high, 2);
+    OUGHT(one.wrapped());
 }
 
 TRIAL("Span: a word longer than the row breaks where it stands") {
@@ -103,10 +103,10 @@ TRIAL("Span: a word longer than the row breaks where it stands") {
 
     const Snapshot made = one.render({{0, 0}, {5, 4}});
 
-    same(read(made, 0), std::string{"niepr"});
-    same(read(made, 1), std::string{"zewid"});
-    same(read(made, 2), std::string{"ywaln"});
-    same(read(made, 3), std::string{"ie"});
+    SAME(read(made, 0), std::string{"niepr"});
+    SAME(read(made, 1), std::string{"zewid"});
+    SAME(read(made, 2), std::string{"ywaln"});
+    SAME(read(made, 3), std::string{"ie"});
 }
 
 TRIAL("Span: a long word does not swallow a row that already stands") {
@@ -114,34 +114,34 @@ TRIAL("Span: a long word does not swallow a row that already stands") {
 
     const Snapshot made = one.render({{0, 0}, {5, 5}});
 
-    same(read(made, 0), std::string{"do"});
-    same(read(made, 1), std::string{"niepr"});
+    SAME(read(made, 0), std::string{"do"});
+    SAME(read(made, 1), std::string{"niepr"});
 }
 
 TRIAL("Span: breaking counts widths, not bytes") {
     ui::Span one{"żółw żółw", ui::SpanShape{true}};
 
-    same(one.wants({9, 25}).high, 1);
-    same(one.wants({8, 25}).high, 2);
+    SAME(one.wants({9, 25}).high, 1);
+    SAME(one.wants({8, 25}).high, 2);
 }
 
 TRIAL("Span: double-width characters also break by cells, not by characters") {
     ui::Span one{"漢字 漢字", ui::SpanShape{true}};
 
-    same(one.wants({9, 25}).high, 1);
-    same(one.wants({8, 25}).high, 2);
+    SAME(one.wants({9, 25}).high, 1);
+    SAME(one.wants({8, 25}).high, 2);
 }
 
 TRIAL("Span: a run of spaces makes no empty rows") {
     ui::Span one{"ala   ma", ui::SpanShape{true}};
 
-    same(one.wants({3, 25}).high, 2);
+    SAME(one.wants({3, 25}).high, 2);
 }
 
 TRIAL("Span: zero width does not hang the breaking") {
     const ui::Span one{"cokolwiek", ui::SpanShape{true}};
 
-    same(one.wants({0, 25}).high, 0);
+    SAME(one.wants({0, 25}).high, 0);
 }
 
 TRIAL("Span: draws only as many rows as it was given") {
@@ -149,8 +149,8 @@ TRIAL("Span: draws only as many rows as it was given") {
 
     const Snapshot made = one.render({{0, 0}, {6, 2}});
 
-    same(read(made, 0), std::string{"ala ma"});
-    same(read(made, 1), std::string{"kota i"});
+    SAME(read(made, 0), std::string{"ala ma"});
+    SAME(read(made, 1), std::string{"kota i"});
 }
 
 TRIAL("Span: without wrapping the page cuts off what sticks out") {
@@ -158,23 +158,23 @@ TRIAL("Span: without wrapping the page cuts off what sticks out") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(read(made, 0), std::string{"bardzo"});
+    SAME(read(made, 0), std::string{"bardzo"});
 }
 
 TRIAL("Span: the text can be replaced and the measurement follows it") {
     ui::Span one{"kot"};
 
-    same(one.text(), std::string{"kot"});
-    same(one.wants({80, 25}).wide, 3);
+    SAME(one.text(), std::string{"kot"});
+    SAME(one.wants({80, 25}).wide, 3);
 
     one.text("kotek");
 
-    same(one.text(), std::string{"kotek"});
-    same(one.wants({80, 25}).wide, 5);
+    SAME(one.text(), std::string{"kotek"});
+    SAME(one.wants({80, 25}).wide, 5);
 
     const Snapshot made = one.render({{0, 0}, {8, 1}});
 
-    same(read(made, 0), std::string{"kotek"});
+    SAME(read(made, 0), std::string{"kotek"});
 }
 
 TRIAL("Span: replaced with an empty text it stops wanting anything") {
@@ -182,7 +182,7 @@ TRIAL("Span: replaced with an empty text it stops wanting anything") {
 
     one.text("");
 
-    same(one.wants({80, 25}).high, 0);
+    SAME(one.wants({80, 25}).high, 0);
 }
 
 // The color comes from the role in the skin, not from the span: `Span` has nothing to set.
@@ -201,11 +201,11 @@ TRIAL("Span: the role's color travels with the characters") {
 
     const Snapshot made = top.render({{0, 0}, {6, 1}});
 
-    ought(!made.at({0, 0}).style.foreground.transparent);
-    same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(200));
+    OUGHT(!made.at({0, 0}).style.foreground.transparent);
+    SAME(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(200));
 
     // Beyond the text there is nothing: the color travels with the characters, not the rectangle.
-    ought(made.at({5, 0}).style.foreground.transparent);
+    OUGHT(made.at({5, 0}).style.foreground.transparent);
 }
 
 TRIAL("Span: the built-in skin leaves the terminal's color") {
@@ -213,7 +213,7 @@ TRIAL("Span: the built-in skin leaves the terminal's color") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    ought(made.at({0, 0}).style.foreground.transparent);
+    OUGHT(made.at({0, 0}).style.foreground.transparent);
 }
 
 TRIAL("Span: right alignment moves the text away from the left edge") {
@@ -223,9 +223,9 @@ TRIAL("Span: right alignment moves the text away from the left edge") {
 
     const Snapshot made = one.render({{0, 0}, {7, 1}});
 
-    same(made.at({4, 0}).letter, U'k');
-    same(made.at({0, 0}).letter, U' ');
-    same(one.justify(), ui::Justify::right);
+    SAME(made.at({4, 0}).letter, U'k');
+    SAME(made.at({0, 0}).letter, U' ');
+    SAME(one.justify(), ui::Justify::right);
 }
 
 TRIAL("Span: centering splits the excess in half") {
@@ -235,7 +235,7 @@ TRIAL("Span: centering splits the excess in half") {
 
     const Snapshot made = one.render({{0, 0}, {7, 1}});
 
-    same(made.at({2, 0}).letter, U'k');
+    SAME(made.at({2, 0}).letter, U'k');
 }
 
 TRIAL("Span: alignment counts cells, not bytes") {
@@ -245,7 +245,7 @@ TRIAL("Span: alignment counts cells, not bytes") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(made.at({2, 0}).letter, U'ż');
+    SAME(made.at({2, 0}).letter, U'ż');
 }
 
 TRIAL("Span: each wrapped row is aligned on its own") {
@@ -255,8 +255,8 @@ TRIAL("Span: each wrapped row is aligned on its own") {
 
     const Snapshot made = one.render({{0, 0}, {7, 2}});
 
-    same(read(made, 0), std::string{" ala ma"});
-    same(read(made, 1), std::string{"   kota"});
+    SAME(read(made, 0), std::string{" ala ma"});
+    SAME(read(made, 1), std::string{"   kota"});
 }
 
 TRIAL("Span: without eliding the text is simply cut off") {
@@ -264,7 +264,7 @@ TRIAL("Span: without eliding the text is simply cut off") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(read(made, 0), std::string{"nieprz"});
+    SAME(read(made, 0), std::string{"nieprz"});
 }
 
 TRIAL("Span: eliding on the right keeps the start and an ellipsis") {
@@ -274,8 +274,8 @@ TRIAL("Span: eliding on the right keeps the start and an ellipsis") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(read(made, 0), std::string{"niepr…"});
-    same(one.elide(), ui::Elide::right);
+    SAME(read(made, 0), std::string{"niepr…"});
+    SAME(one.elide(), ui::Elide::right);
 }
 
 TRIAL("Span: eliding on the left keeps the end") {
@@ -285,7 +285,7 @@ TRIAL("Span: eliding on the left keeps the end") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(read(made, 0), std::string{"…alnie"});
+    SAME(read(made, 0), std::string{"…alnie"});
 }
 
 TRIAL("Span: eliding in the middle keeps both ends") {
@@ -295,7 +295,7 @@ TRIAL("Span: eliding in the middle keeps both ends") {
 
     const Snapshot made = one.render({{0, 0}, {7, 1}});
 
-    same(read(made, 0), std::string{"nie…nie"});
+    SAME(read(made, 0), std::string{"nie…nie"});
 }
 
 TRIAL("Span: a text that fits is not elided") {
@@ -305,7 +305,7 @@ TRIAL("Span: a text that fits is not elided") {
 
     const Snapshot made = one.render({{0, 0}, {6, 1}});
 
-    same(read(made, 0), std::string{"kot"});
+    SAME(read(made, 0), std::string{"kot"});
 }
 
 TRIAL("Span: a single cell is just the ellipsis") {
@@ -315,7 +315,7 @@ TRIAL("Span: a single cell is just the ellipsis") {
 
     const Snapshot made = one.render({{0, 0}, {1, 1}});
 
-    same(read(made, 0), std::string{"…"});
+    SAME(read(made, 0), std::string{"…"});
 }
 
 TRIAL("Span: eliding does not change what the text wants") {
@@ -323,7 +323,7 @@ TRIAL("Span: eliding does not change what the text wants") {
 
     one.elide(ui::Elide::right);
 
-    same(one.wants({6, 1}).wide, 17);
+    SAME(one.wants({6, 1}).wide, 17);
 }
 
 TRIAL("Span: eliding counts the cells of double-width characters") {
@@ -333,7 +333,7 @@ TRIAL("Span: eliding counts the cells of double-width characters") {
 
     const Snapshot made = one.render({{0, 0}, {5, 1}});
 
-    same(read(made, 0), std::string{"漢字…"});
+    SAME(read(made, 0), std::string{"漢字…"});
 }
 
 TRIAL("Span: in a tree it stands where its parent puts it") {
@@ -347,9 +347,9 @@ TRIAL("Span: in a tree it stands where its parent puts it") {
 
     const Snapshot made = top.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"pierwszy"});
-    same(read(made, 1), std::string{"drugi"});
-    same(second->area().at.y, 1);
+    SAME(read(made, 0), std::string{"pierwszy"});
+    SAME(read(made, 1), std::string{"drugi"});
+    SAME(second->area().at.y, 1);
 }
 
 // --- Hard line ends ---------------------------------------------------------------------------
@@ -363,15 +363,15 @@ TRIAL("Span: a hard line end splits, also without wrapping") {
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 8);
-    same(wants.high, 2);
+    SAME(wants.wide, 8);
+    SAME(wants.high, 2);
 
     ui::Span other{"pierwszy\ndrugi"};
 
     const Snapshot made = other.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"pierwszy"});
-    same(read(made, 1), std::string{"drugi"});
+    SAME(read(made, 0), std::string{"pierwszy"});
+    SAME(read(made, 1), std::string{"drugi"});
 }
 
 TRIAL("Span: an empty paragraph stays an empty row") {
@@ -379,16 +379,16 @@ TRIAL("Span: an empty paragraph stays an empty row") {
 
     const Snapshot made = one.render({{0, 0}, {10, 4}});
 
-    same(read(made, 0), std::string{"nad"});
-    same(read(made, 1), std::string{});
-    same(read(made, 2), std::string{"pod"});
-    same(one.wants({80, 25}).high, 3);
+    SAME(read(made, 0), std::string{"nad"});
+    SAME(read(made, 1), std::string{});
+    SAME(read(made, 2), std::string{"pod"});
+    SAME(one.wants({80, 25}).high, 3);
 }
 
 TRIAL("Span: a line end at the end gives an empty row after it") {
     const ui::Span one{"sam\n"};
 
-    same(one.wants({80, 25}).high, 2);
+    SAME(one.wants({80, 25}).high, 2);
 }
 
 TRIAL("Span: a carriage return does not stay in the content") {
@@ -396,9 +396,9 @@ TRIAL("Span: a carriage return does not stay in the content") {
 
     const Snapshot made = one.render({{0, 0}, {12, 2}});
 
-    same(read(made, 0), std::string{"pierwszy"});
-    same(read(made, 1), std::string{"drugi"});
-    same(one.wants({80, 25}).wide, 8);
+    SAME(read(made, 0), std::string{"pierwszy"});
+    SAME(read(made, 1), std::string{"drugi"});
+    SAME(one.wants({80, 25}).wide, 8);
 }
 
 TRIAL("Span: each paragraph wraps on its own") {
@@ -406,10 +406,10 @@ TRIAL("Span: each paragraph wraps on its own") {
 
     const Snapshot made = one.render({{0, 0}, {7, 4}});
 
-    same(read(made, 0), std::string{"ala ma"});
-    same(read(made, 1), std::string{"kota"});
-    same(read(made, 2), std::string{"as"});
-    same(one.wants({7, 25}).high, 3);
+    SAME(read(made, 0), std::string{"ala ma"});
+    SAME(read(made, 1), std::string{"kota"});
+    SAME(read(made, 2), std::string{"as"});
+    SAME(one.wants({7, 25}).high, 3);
 }
 
 TRIAL("Span: alignment is computed for each hard line separately") {
@@ -417,8 +417,8 @@ TRIAL("Span: alignment is computed for each hard line separately") {
 
     const Snapshot made = one.render({{0, 0}, {9, 2}});
 
-    same(read(made, 0), std::string{" dluuugi"});
-    same(read(made, 1), std::string{"   kot"});
+    SAME(read(made, 0), std::string{" dluuugi"});
+    SAME(read(made, 1), std::string{"   kot"});
 }
 
 
@@ -432,7 +432,7 @@ TRIAL("Span: a very long word wraps in one pass") {
 
     const ui::Size want = one.wants({40, 100});
 
-    ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
-    same(want.high, 10001);
-    same(want.wide, 40);
+    OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{1});
+    SAME(want.high, 10001);
+    SAME(want.wide, 40);
 }

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -63,8 +63,8 @@ const std::string product = "c3da55379de9c6908e94ea4df28d084f32eccf03491c71f754b
 }
 
 TRIAL("X25519: both vectors from RFC 7748 §5.2") {
-    same(spelled(x25519(scalar, point)), product);
-    same(spelled(x25519(lump("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"),
+    SAME(spelled(x25519(scalar, point)), product);
+    SAME(spelled(x25519(lump("4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d"),
                         lump("e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493"))),
          std::string{"95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957"});
 }
@@ -77,7 +77,7 @@ TRIAL("X25519: the iterated vectors from RFC 7748 §5.2, once and a thousand tim
     for (int round = 1; round <= 1000; ++round) {
         const std::optional<Bytes> next = x25519(k, u);
 
-        ought(next.has_value());
+        OUGHT(next.has_value());
 
         if (!next) return;
 
@@ -85,10 +85,10 @@ TRIAL("X25519: the iterated vectors from RFC 7748 §5.2, once and a thousand tim
         k = *next;
 
         if (round == 1)
-            same(spelled(k), std::string{"422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079"});
+            SAME(spelled(k), std::string{"422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079"});
     }
 
-    same(spelled(k), std::string{"684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51"});
+    SAME(spelled(k), std::string{"684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51"});
 }
 
 TRIAL("X25519: Alice and Bob from RFC 7748 §6.1") {
@@ -98,15 +98,15 @@ TRIAL("X25519: Alice and Bob from RFC 7748 §6.1") {
     const std::optional<Bytes> alice_public = x25519(alice, base());
     const std::optional<Bytes> bob_public = x25519(bob, base());
 
-    same(spelled(alice_public), std::string{"8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"});
-    same(spelled(bob_public), std::string{"de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"});
+    SAME(spelled(alice_public), std::string{"8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"});
+    SAME(spelled(bob_public), std::string{"de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"});
 
     if (!alice_public || !bob_public) return;
 
     const std::string shared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
 
-    same(spelled(x25519(alice, *bob_public)), shared);
-    same(spelled(x25519(bob, *alice_public)), shared);
+    SAME(spelled(x25519(alice, *bob_public)), shared);
+    SAME(spelled(x25519(bob, *alice_public)), shared);
 }
 
 // Seven small-order points (0, 1, two of order 8, p − 1, p, p + 1), each also with bit 255 set; a
@@ -125,11 +125,11 @@ TRIAL("X25519: a small-order point is refused, with and without bit 255") {
     for (const std::string_view one : low) {
         Bytes u = lump(one);
 
-        same(spelled(x25519(scalar, u)), std::string{"none"});
+        SAME(spelled(x25519(scalar, u)), std::string{"none"});
 
         u.back() |= std::byte{0x80};
 
-        same(spelled(x25519(scalar, u)), std::string{"none"});
+        SAME(spelled(x25519(scalar, u)), std::string{"none"});
     }
 }
 
@@ -139,11 +139,11 @@ TRIAL("X25519: bit 255 ignored, a non-canonical u reduced") {
 
     high.back() |= std::byte{0x80};
 
-    same(spelled(x25519(scalar, high)), product);
+    SAME(spelled(x25519(scalar, high)), product);
 
     Bytes past = lump("f6ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
 
-    same(spelled(x25519(scalar, past)), spelled(x25519(scalar, base())));
+    SAME(spelled(x25519(scalar, past)), spelled(x25519(scalar, base())));
 }
 
 // Clamping from the RFC: bits 0–2 and 255 of the scalar mean nothing, bit 254 is always one.
@@ -153,13 +153,13 @@ TRIAL("X25519: the scalar is clamped as in RFC 7748") {
     flipped.front() ^= std::byte{0x07};
     flipped.back() ^= std::byte{0xc0};
 
-    same(spelled(x25519(flipped, point)), product);
+    SAME(spelled(x25519(flipped, point)), product);
 
     Bytes other = scalar;
 
     other.front() ^= std::byte{0x08};
 
-    ought(spelled(x25519(other, point)) != product);
+    OUGHT(spelled(x25519(other, point)) != product);
 }
 
 // The edges of `packed`: 2²⁵⁶ − 1 lies above 2p, so it needs two subtractions of p; an excess in
@@ -170,26 +170,26 @@ TRIAL("X25519: the field gives the canonical form also at the edges") {
 
     full.fill(0xffff);
 
-    same(spelled(curving::packed(full)), std::string{"2500000000000000000000000000000000000000000000000000000000000000"});
+    SAME(spelled(curving::packed(full)), std::string{"2500000000000000000000000000000000000000000000000000000000000000"});
 
     curving::Limbs around = full;
 
     around[15] += std::int64_t{1724} << 16;
 
-    same(spelled(curving::packed(around)), std::string{"0d00010000000000000000000000000000000000000000000000000000000000"});
+    SAME(spelled(curving::packed(around)), std::string{"0d00010000000000000000000000000000000000000000000000000000000000"});
 
     curving::Limbs below{};
 
     below[0] = -1;
 
-    same(spelled(curving::packed(below)), std::string{"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"});
+    SAME(spelled(curving::packed(below)), std::string{"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"});
 }
 
 TRIAL("X25519: a wrong scalar size throws, a wrong u size is a refusal") {
-    threw(static_cast<void>(x25519(Bytes(31), point)));
-    threw(static_cast<void>(x25519(Bytes(33), point)));
+    THREW(static_cast<void>(x25519(Bytes(31), point)));
+    THREW(static_cast<void>(x25519(Bytes(33), point)));
 
-    same(spelled(x25519(scalar, Bytes(31))), std::string{"none"});
-    same(spelled(x25519(scalar, Bytes(33))), std::string{"none"});
-    same(spelled(x25519(scalar, Bytes{})), std::string{"none"});
+    SAME(spelled(x25519(scalar, Bytes(31))), std::string{"none"});
+    SAME(spelled(x25519(scalar, Bytes(33))), std::string{"none"});
+    SAME(spelled(x25519(scalar, Bytes{})), std::string{"none"});
 }

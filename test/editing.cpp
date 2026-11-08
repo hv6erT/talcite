@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <exception>
@@ -75,10 +75,10 @@ std::shared_ptr<ui::Editor> shown(Sheet& sheet, const std::string& what,
 TRIAL("Editor: an empty one holds nothing") {
     const ui::Editor one;
 
-    ought(!one.held());
-    ought(!one.dirty());
-    ought(!one.readonly());
-    same(one.cursor(), std::size_t{0});
+    OUGHT(!one.held());
+    OUGHT(!one.dirty());
+    OUGHT(!one.readonly());
+    SAME(one.cursor(), std::size_t{0});
 }
 
 TRIAL("Editor: once given text, it knows the lines and stands at the start") {
@@ -86,12 +86,12 @@ TRIAL("Editor: once given text, it knows the lines and stands at the start") {
 
     const auto one = shown(sheet, "a\nbb\nccc");
 
-    ought(one->held());
-    ought(!one->dirty());
-    same(*one->lines(), std::size_t{3});
-    same(*one->whole(), std::size_t{8});
-    same(one->cursor(), std::size_t{0});
-    same(one->text(), std::string{"a\nbb\nccc"});
+    OUGHT(one->held());
+    OUGHT(!one->dirty());
+    SAME(*one->lines(), std::size_t{3});
+    SAME(*one->whole(), std::size_t{8});
+    SAME(one->cursor(), std::size_t{0});
+    SAME(one->text(), std::string{"a\nbb\nccc"});
 }
 
 // --- Changes -------------------------------------------------------------------------------------
@@ -107,15 +107,15 @@ TRIAL("Editor: the wheel moves the view and not the cursor") {
 
     ui::WheelEvent down{{1, 1}, -2};
 
-    ought(sheet.dispatch(down));
-    same(*one->first(), std::size_t{6});
-    same(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"l6"});
-    same(one->cursor(), std::size_t{0});
+    OUGHT(sheet.dispatch(down));
+    SAME(*one->first(), std::size_t{6});
+    SAME(said(sheet.render({{0, 0}, {40, 10}}), 0), std::string{"l6"});
+    SAME(one->cursor(), std::size_t{0});
 
     ui::WheelEvent up{{1, 1}, 1};
 
-    ought(sheet.dispatch(up));
-    same(*one->first(), std::size_t{3});
+    OUGHT(sheet.dispatch(up));
+    SAME(*one->first(), std::size_t{3});
 }
 
 TRIAL("Editor: typing a character moves the cursor and makes the document dirty") {
@@ -126,9 +126,9 @@ TRIAL("Editor: typing a character moves the cursor and makes the document dirty"
     one->cursor(1);
     one->insert("X");
 
-    same(one->text(), std::string{"aXbc"});
-    same(one->cursor(), std::size_t{2});
-    ought(one->dirty());
+    SAME(one->text(), std::string{"aXbc"});
+    SAME(one->cursor(), std::size_t{2});
+    OUGHT(one->dirty());
 }
 
 // The editor's own keys, typing among them, move the cursor by hand; a call from the program does
@@ -154,11 +154,11 @@ TRIAL("Editor: a move says whether it came by hand") {
     ui::KeyEvent letter{ui::Key{U'x'}};
     ui::KeyEvent back{ui::Code::backspace};
 
-    ought(sheet.dispatch(right));
-    ought(sheet.dispatch(letter));
-    ought(sheet.dispatch(back));
+    OUGHT(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(letter));
+    OUGHT(sheet.dispatch(back));
 
-    same(heard, (std::vector<bool>{true, true, true}));
+    SAME(heard, (std::vector<bool>{true, true, true}));
 
     heard.clear();
 
@@ -166,7 +166,7 @@ TRIAL("Editor: a move says whether it came by hand") {
     one->insert("y");
     one->back_erase(1);
 
-    same(heard, (std::vector<bool>{false, false, false}));
+    SAME(heard, (std::vector<bool>{false, false, false}));
 }
 
 // Enter splits a line, so the number of lines grows, and that is the adjustment the spool gets from
@@ -176,13 +176,13 @@ TRIAL("Editor: enter adds a line") {
 
     const auto one = shown(sheet, "abcdef");
 
-    same(*one->lines(), std::size_t{1});
+    SAME(*one->lines(), std::size_t{1});
 
     one->cursor(3);
     one->insert("\n");
 
-    same(*one->lines(), std::size_t{2});
-    same(one->text(), std::string{"abc\ndef"});
+    SAME(*one->lines(), std::size_t{2});
+    SAME(one->text(), std::string{"abc\ndef"});
 }
 
 TRIAL("Editor: deleting backward removes the character before the cursor") {
@@ -193,8 +193,8 @@ TRIAL("Editor: deleting backward removes the character before the cursor") {
     one->cursor(3);
     one->back_erase(1);
 
-    same(one->text(), std::string{"abd"});
-    same(one->cursor(), std::size_t{2});
+    SAME(one->text(), std::string{"abd"});
+    SAME(one->cursor(), std::size_t{2});
 }
 
 TRIAL("Editor: deleting forward removes the character after the cursor") {
@@ -205,8 +205,8 @@ TRIAL("Editor: deleting forward removes the character after the cursor") {
     one->cursor(1);
     one->front_erase(1);
 
-    same(one->text(), std::string{"acd"});
-    same(one->cursor(), std::size_t{1});
+    SAME(one->text(), std::string{"acd"});
+    SAME(one->cursor(), std::size_t{1});
 }
 
 TRIAL("Editor: deleting a newline joins the lines") {
@@ -214,13 +214,13 @@ TRIAL("Editor: deleting a newline joins the lines") {
 
     const auto one = shown(sheet, "abc\ndef");
 
-    same(*one->lines(), std::size_t{2});
+    SAME(*one->lines(), std::size_t{2});
 
     one->cursor(4);
     one->back_erase(1);
 
-    same(*one->lines(), std::size_t{1});
-    same(one->text(), std::string{"abcdef"});
+    SAME(*one->lines(), std::size_t{1});
+    SAME(one->text(), std::string{"abcdef"});
 }
 
 TRIAL("Editor: read-only accepts no changes") {
@@ -232,8 +232,8 @@ TRIAL("Editor: read-only accepts no changes") {
     one->insert("X");
     one->back_erase(1);
 
-    same(one->text(), std::string{"abc"});
-    ought(!one->dirty());
+    SAME(one->text(), std::string{"abc"});
+    OUGHT(!one->dirty());
 }
 
 // --- Selection -----------------------------------------------------------------------------------
@@ -243,14 +243,14 @@ TRIAL("Editor: the selection returns its text") {
 
     const auto one = shown(sheet, "abcdef");
 
-    ought(one->selection().empty());
+    OUGHT(one->selection().empty());
 
     one->selection().set(2, 5);
 
-    ought(!one->selection().empty());
-    same(one->selection().text(), std::string{"cde"});
-    same(one->selection().anchor(), std::size_t{2});
-    same(one->cursor(), std::size_t{5});
+    OUGHT(!one->selection().empty());
+    SAME(one->selection().text(), std::string{"cde"});
+    SAME(one->selection().anchor(), std::size_t{2});
+    SAME(one->cursor(), std::size_t{5});
 }
 
 TRIAL("Editor: typing over a selection replaces it") {
@@ -261,8 +261,8 @@ TRIAL("Editor: typing over a selection replaces it") {
     one->selection().set(2, 5);
     one->insert("X");
 
-    same(one->text(), std::string{"abXf"});
-    ought(one->selection().empty());
+    SAME(one->text(), std::string{"abXf"});
+    OUGHT(one->selection().empty());
 }
 
 TRIAL("Editor: deleting on a selection removes all of it") {
@@ -273,8 +273,8 @@ TRIAL("Editor: deleting on a selection removes all of it") {
     one->selection().set(1, 4);
     one->back_erase(1);
 
-    same(one->text(), std::string{"aef"});
-    same(one->cursor(), std::size_t{1});
+    SAME(one->text(), std::string{"aef"});
+    SAME(one->cursor(), std::size_t{1});
 }
 
 // The selection is a subobject: the anchor and the cursor under one roof. The parameters of `set`
@@ -287,33 +287,33 @@ TRIAL("Selection: backward, extending and clearing") {
 
     one->selection().set(5, 2);
 
-    same(one->selection().anchor(), std::size_t{5});
-    same(one->cursor(), std::size_t{2});
-    same(one->selection().from(), std::size_t{2});
-    same(one->selection().upto(), std::size_t{5});
-    same(one->selection().text(), std::string{"cde"});
+    SAME(one->selection().anchor(), std::size_t{5});
+    SAME(one->cursor(), std::size_t{2});
+    SAME(one->selection().from(), std::size_t{2});
+    SAME(one->selection().upto(), std::size_t{5});
+    SAME(one->selection().text(), std::string{"cde"});
 
     one->selection().extend(0);
 
-    same(one->selection().anchor(), std::size_t{5});
-    same(one->cursor(), std::size_t{0});
-    same(one->selection().text(), std::string{"abcde"});
+    SAME(one->selection().anchor(), std::size_t{5});
+    SAME(one->cursor(), std::size_t{0});
+    SAME(one->selection().text(), std::string{"abcde"});
 
     one->selection().clear();
 
-    ought(one->selection().empty());
-    same(one->cursor(), std::size_t{0});
-    same(one->selection().anchor(), std::size_t{0});
-    same(one->selection().text(), std::string{});
+    OUGHT(one->selection().empty());
+    SAME(one->cursor(), std::size_t{0});
+    SAME(one->selection().anchor(), std::size_t{0});
+    SAME(one->selection().text(), std::string{});
 
     // Outside the document it clamps, and a cursor set directly clears the selection.
     one->selection().set(99, 1);
 
-    same(one->selection().anchor(), std::size_t{6});
+    SAME(one->selection().anchor(), std::size_t{6});
 
     one->cursor(3);
 
-    ought(one->selection().empty());
+    OUGHT(one->selection().empty());
 }
 
 TRIAL("Selection: erasing removes the selection in one change, and an empty one does nothing") {
@@ -321,25 +321,25 @@ TRIAL("Selection: erasing removes the selection in one change, and an empty one 
 
     const auto one = shown(sheet, "abcdef");
 
-    ought(!one->selection().erase());
-    ought(!one->undoable());
+    OUGHT(!one->selection().erase());
+    OUGHT(!one->undoable());
 
     one->selection().set(4, 1);
 
-    ought(one->selection().erase());
-    same(one->text(), std::string{"aef"});
-    same(one->cursor(), std::size_t{1});
-    ought(one->selection().empty());
+    OUGHT(one->selection().erase());
+    SAME(one->text(), std::string{"aef"});
+    SAME(one->cursor(), std::size_t{1});
+    OUGHT(one->selection().empty());
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
+    SAME(one->text(), std::string{"abcdef"});
 
     one->readonly(true);
     one->selection().set(0, 2);
 
-    ought(!one->selection().erase());
-    same(one->text(), std::string{"abcdef"});
+    OUGHT(!one->selection().erase());
+    SAME(one->text(), std::string{"abcdef"});
 }
 
 // Delete with a selection deletes the selection, not the characters after the cursor, just like
@@ -352,8 +352,8 @@ TRIAL("Editor: deleting forward on a selection removes all of it") {
     one->selection().set(1, 4);
     one->front_erase(1);
 
-    same(one->text(), std::string{"aef"});
-    same(one->cursor(), std::size_t{1});
+    SAME(one->text(), std::string{"aef"});
+    SAME(one->cursor(), std::size_t{1});
 }
 
 // The whole document directly, without touching the cursor and the selection.
@@ -362,15 +362,15 @@ TRIAL("Editor: text returns the whole document and touches nothing") {
 
     const auto empty = std::make_shared<ui::Editor>();
 
-    same(empty->text(), std::string{});
+    SAME(empty->text(), std::string{});
 
     const auto one = shown(sheet, "ab\ncd");
 
     one->selection().set(1, 3);
 
-    same(one->text(), std::string{"ab\ncd"});
-    same(one->selection().anchor(), std::size_t{1});
-    same(one->cursor(), std::size_t{3});
+    SAME(one->text(), std::string{"ab\ncd"});
+    SAME(one->selection().anchor(), std::size_t{1});
+    SAME(one->cursor(), std::size_t{3});
 }
 
 // The selection is drawn with marks, one per line, but only for what is visible.
@@ -383,10 +383,10 @@ TRIAL("Editor: the selection is visible on the screen") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(made.at({4, 0}).style.reverse);
-    ought(!made.at({5, 0}).style.reverse);
+    OUGHT(!made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({4, 0}).style.reverse);
+    OUGHT(!made.at({5, 0}).style.reverse);
 }
 
 TRIAL("Editor: a selection across two lines gives a mark on each") {
@@ -398,12 +398,12 @@ TRIAL("Editor: a selection across two lines gives a mark on each") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 3}});
 
-    ought(!made.at({0, 0}).style.reverse);
-    ought(made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(made.at({0, 1}).style.reverse);
-    ought(made.at({1, 1}).style.reverse);
-    ought(!made.at({2, 1}).style.reverse);
+    OUGHT(!made.at({0, 0}).style.reverse);
+    OUGHT(made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({0, 1}).style.reverse);
+    OUGHT(made.at({1, 1}).style.reverse);
+    OUGHT(!made.at({2, 1}).style.reverse);
 }
 
 // --- Going to a line -----------------------------------------------------------------------------
@@ -421,9 +421,9 @@ TRIAL("Editor: line(n) jumps to the start of a line, past the end to the last, a
     one->selection().set(1, 4);
     one->line(42);
 
-    same(one->line(), std::size_t{42});
-    same(one->column(), std::size_t{0});
-    ought(one->selection().empty());
+    SAME(one->line(), std::size_t{42});
+    SAME(one->column(), std::size_t{0});
+    OUGHT(one->selection().empty());
 
     const Snapshot made = sheet.render({{0, 0}, {20, 5}});
 
@@ -432,16 +432,16 @@ TRIAL("Editor: line(n) jumps to the start of a line, past the end to the last, a
     for (int y = 0; y < 5; ++y)
         if (said(made, y) == "l42") seen = true;
 
-    ought(seen);
+    OUGHT(seen);
 
     one->line(9999);
 
-    same(one->line(), std::size_t{99});
-    same(one->column(), std::size_t{0});
+    SAME(one->line(), std::size_t{99});
+    SAME(one->column(), std::size_t{0});
 
     one->line(0);
 
-    same(one->cursor(), std::size_t{0});
+    SAME(one->cursor(), std::size_t{0});
 
     // An empty document: zero and nothing more.
     const auto empty = std::make_shared<ui::Editor>();
@@ -449,7 +449,7 @@ TRIAL("Editor: line(n) jumps to the start of a line, past the end to the last, a
     empty->hold(bytes(""));
     empty->line(5);
 
-    same(empty->cursor(), std::size_t{0});
+    SAME(empty->cursor(), std::size_t{0});
 }
 
 // --- The mcedit block ----------------------------------------------------------------------------
@@ -463,17 +463,17 @@ TRIAL("Editor: mark starts, ends and starts again; the block stays after the cur
     const auto one = shown(sheet, "abcdef");
     ui::Editor::Block& block = one->block();
 
-    ought(block.empty());
-    ought(!block.pending());
-    same(block.text(), std::string{});
+    OUGHT(block.empty());
+    OUGHT(!block.pending());
+    SAME(block.text(), std::string{});
 
     one->cursor(2);
     block.mark();
 
-    ought(!block.empty());
-    ought(block.pending());
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{2});
+    OUGHT(!block.empty());
+    OUGHT(block.pending());
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{2});
 
     // Extending: the end is the cursor, also with a key, without Shift.
     one->focus();
@@ -481,29 +481,29 @@ TRIAL("Editor: mark starts, ends and starts again; the block stays after the cur
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(sheet.dispatch(right));
-    ought(sheet.dispatch(right));
-    ought(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
 
-    same(block.upto(), std::size_t{5});
-    same(block.text(), std::string{"cde"});
+    SAME(block.upto(), std::size_t{5});
+    SAME(block.text(), std::string{"cde"});
 
     block.mark();
 
-    ought(!block.empty());
-    ought(!block.pending());
+    OUGHT(!block.empty());
+    OUGHT(!block.pending());
 
     one->cursor(0);
 
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
-    same(block.text(), std::string{"cde"});
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
+    SAME(block.text(), std::string{"cde"});
 
     // A third F3: a new block at the cursor, the old one disappears.
     block.mark();
 
-    ought(block.pending());
-    same(block.from(), std::size_t{0});
+    OUGHT(block.pending());
+    SAME(block.from(), std::size_t{0});
 
     // Backward: the cursor before the start, and the text is in order anyway.
     block.clear();
@@ -511,18 +511,18 @@ TRIAL("Editor: mark starts, ends and starts again; the block stays after the cur
     block.mark();
     one->cursor(2);
 
-    same(block.text(), std::string{"cde"});
+    SAME(block.text(), std::string{"cde"});
 
     block.mark();
 
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
 
     // Zero length: it disappears.
     block.mark();
     block.mark();
 
-    ought(block.empty());
+    OUGHT(block.empty());
 }
 
 // F5: the block's content goes in at the cursor and the block stays; when it lay after the cursor,
@@ -533,7 +533,7 @@ TRIAL("Editor: copy inserts the block at the cursor and keeps it, undo goes back
     const auto one = shown(sheet, "abcdef");
     ui::Editor::Block& block = one->block();
 
-    ought(!block.copy());
+    OUGHT(!block.copy());
 
     one->cursor(2);
     block.mark();
@@ -542,33 +542,33 @@ TRIAL("Editor: copy inserts the block at the cursor and keeps it, undo goes back
 
     one->cursor(0);
 
-    ought(block.copy());
-    same(one->text(), std::string{"cdeabcdef"});
-    same(one->cursor(), std::size_t{3});
-    same(block.from(), std::size_t{5});
-    same(block.upto(), std::size_t{8});
-    same(block.text(), std::string{"cde"});
+    OUGHT(block.copy());
+    SAME(one->text(), std::string{"cdeabcdef"});
+    SAME(one->cursor(), std::size_t{3});
+    SAME(block.from(), std::size_t{5});
+    SAME(block.upto(), std::size_t{8});
+    SAME(block.text(), std::string{"cde"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"abcdef"});
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
+    OUGHT(!one->undoable());
 
     one->redo();
 
-    same(one->text(), std::string{"cdeabcdef"});
-    same(block.from(), std::size_t{5});
+    SAME(one->text(), std::string{"cdeabcdef"});
+    SAME(block.from(), std::size_t{5});
 
     // After the block: the block does not move.
     one->undo();
     one->cursor(6);
 
-    ought(block.copy());
-    same(one->text(), std::string{"abcdefcde"});
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
+    OUGHT(block.copy());
+    SAME(one->text(), std::string{"abcdefcde"});
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
 
     // While extending, F5 first ends the block.
     one->undo();
@@ -576,8 +576,8 @@ TRIAL("Editor: copy inserts the block at the cursor and keeps it, undo goes back
     block.mark();
     one->cursor(2);
 
-    ought(block.copy());
-    ought(!block.pending());
+    OUGHT(block.copy());
+    OUGHT(!block.pending());
 
     // The copy's journal entry is sealed: a character typed right after it is undone separately.
     // Nothing that moves the cursor may stand between the copy and the character, because moving
@@ -588,12 +588,12 @@ TRIAL("Editor: copy inserts the block at the cursor and keeps it, undo goes back
 
     ui::KeyEvent letter{U'X'};
 
-    ought(sheet.dispatch(letter));
-    same(one->text(), std::string{"ababXcdef"});
+    OUGHT(sheet.dispatch(letter));
+    SAME(one->text(), std::string{"ababXcdef"});
 
     one->undo();
 
-    same(one->text(), std::string{"ababcdef"});
+    SAME(one->text(), std::string{"ababcdef"});
 }
 
 // F6: the block goes out and comes in where the cursor stood after the cut; before the block the
@@ -605,7 +605,7 @@ TRIAL("Editor: move carries the block before and after the cursor, refuses insid
     const auto one = shown(sheet, "abcdef");
     ui::Editor::Block& block = one->block();
 
-    ought(!block.move());
+    OUGHT(!block.move());
 
     one->cursor(2);
     block.mark();
@@ -615,37 +615,37 @@ TRIAL("Editor: move carries the block before and after the cursor, refuses insid
     // Before the block.
     one->cursor(0);
 
-    ought(block.move());
-    same(one->text(), std::string{"cdeabf"});
-    same(block.from(), std::size_t{0});
-    same(block.upto(), std::size_t{3});
-    same(one->cursor(), std::size_t{3});
+    OUGHT(block.move());
+    SAME(one->text(), std::string{"cdeabf"});
+    SAME(block.from(), std::size_t{0});
+    SAME(block.upto(), std::size_t{3});
+    SAME(one->cursor(), std::size_t{3});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"abcdef"});
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
+    OUGHT(!one->undoable());
 
     // After the block: to the end.
     one->cursor(6);
 
-    ought(block.move());
-    same(one->text(), std::string{"abfcde"});
-    same(block.from(), std::size_t{3});
-    same(block.upto(), std::size_t{6});
-    same(one->cursor(), std::size_t{6});
+    OUGHT(block.move());
+    SAME(one->text(), std::string{"abfcde"});
+    SAME(block.from(), std::size_t{3});
+    SAME(block.upto(), std::size_t{6});
+    SAME(one->cursor(), std::size_t{6});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
+    SAME(one->text(), std::string{"abcdef"});
 
     // Redo restores both the text and the block.
     one->redo();
 
-    same(one->text(), std::string{"abfcde"});
-    same(block.from(), std::size_t{3});
+    SAME(one->text(), std::string{"abfcde"});
+    SAME(block.from(), std::size_t{3});
 
     one->undo();
 
@@ -653,9 +653,9 @@ TRIAL("Editor: move carries the block before and after the cursor, refuses insid
     for (const std::size_t at : {std::size_t{2}, std::size_t{3}, std::size_t{5}}) {
         one->cursor(at);
 
-        ought(!block.move());
-        same(one->text(), std::string{"abcdef"});
-        same(block.from(), std::size_t{2});
+        OUGHT(!block.move());
+        SAME(one->text(), std::string{"abcdef"});
+        SAME(block.from(), std::size_t{2});
     }
 }
 
@@ -668,7 +668,7 @@ TRIAL("Editor: erase deletes the block and removes it, the cursor by position, u
     const auto one = shown(sheet, "abcdef");
     ui::Editor::Block& block = one->block();
 
-    ought(!block.erase());
+    OUGHT(!block.erase());
 
     one->cursor(2);
     block.mark();
@@ -677,29 +677,29 @@ TRIAL("Editor: erase deletes the block and removes it, the cursor by position, u
 
     one->cursor(6);
 
-    ought(block.erase());
-    same(one->text(), std::string{"abf"});
-    same(one->cursor(), std::size_t{3});
-    ought(block.empty());
+    OUGHT(block.erase());
+    SAME(one->text(), std::string{"abf"});
+    SAME(one->cursor(), std::size_t{3});
+    OUGHT(block.empty());
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    ought(!block.empty());
-    same(block.from(), std::size_t{2});
-    same(block.upto(), std::size_t{5});
+    SAME(one->text(), std::string{"abcdef"});
+    OUGHT(!block.empty());
+    SAME(block.from(), std::size_t{2});
+    SAME(block.upto(), std::size_t{5});
 
     one->cursor(3);
 
-    ought(block.erase());
-    same(one->cursor(), std::size_t{2});
+    OUGHT(block.erase());
+    SAME(one->cursor(), std::size_t{2});
 
     one->undo();
     one->cursor(0);
 
-    ought(block.erase());
-    same(one->cursor(), std::size_t{0});
-    same(one->text(), std::string{"abf"});
+    OUGHT(block.erase());
+    SAME(one->cursor(), std::size_t{0});
+    SAME(one->text(), std::string{"abf"});
 }
 
 // The block follows the document: a change before it shifts it, one after it does nothing, one
@@ -719,59 +719,59 @@ TRIAL("Editor: the block shifts and trims with changes to the document") {
     one->cursor(0);
     one->insert("XY");
 
-    same(one->text(), std::string{"XYabcdef"});
-    same(block.from(), std::size_t{4});
-    same(block.upto(), std::size_t{7});
-    same(block.text(), std::string{"cde"});
+    SAME(one->text(), std::string{"XYabcdef"});
+    SAME(block.from(), std::size_t{4});
+    SAME(block.upto(), std::size_t{7});
+    SAME(block.text(), std::string{"cde"});
 
     // After: nothing.
     one->cursor(8);
     one->back_erase(1);
 
-    same(one->text(), std::string{"XYabcde"});
-    same(block.from(), std::size_t{4});
-    same(block.upto(), std::size_t{7});
+    SAME(one->text(), std::string{"XYabcde"});
+    SAME(block.from(), std::size_t{4});
+    SAME(block.upto(), std::size_t{7});
 
     // Exactly at the start: the text goes before the block; exactly at the end: it does not enter
     // the block.
     one->cursor(4);
     one->insert("-");
 
-    same(block.text(), std::string{"cde"});
-    same(block.from(), std::size_t{5});
+    SAME(block.text(), std::string{"cde"});
+    SAME(block.from(), std::size_t{5});
 
     one->cursor(8);
     one->insert("+");
 
-    same(block.text(), std::string{"cde"});
-    same(one->text(), std::string{"XYab-cde+"});
+    SAME(block.text(), std::string{"cde"});
+    SAME(one->text(), std::string{"XYab-cde+"});
 
     // Inside: it lengthens.
     one->cursor(6);
     one->insert("Z");
 
-    same(block.text(), std::string{"cZde"});
+    SAME(block.text(), std::string{"cZde"});
 
     // Overlapping the start: trims to what is left.
     one->selection().set(4, 7);
     one->selection().erase();
 
-    same(one->text(), std::string{"XYabde+"});
-    same(block.text(), std::string{"de"});
-    same(block.from(), std::size_t{4});
-    same(block.upto(), std::size_t{6});
+    SAME(one->text(), std::string{"XYabde+"});
+    SAME(block.text(), std::string{"de"});
+    SAME(block.from(), std::size_t{4});
+    SAME(block.upto(), std::size_t{6});
 
     // The whole block cut: it disappears.
     one->selection().set(3, 7);
     one->selection().erase();
 
-    ought(block.empty());
+    OUGHT(block.empty());
 
     // Undo restores it.
     one->undo();
 
-    ought(!block.empty());
-    same(block.text(), std::string{"de"});
+    OUGHT(!block.empty());
+    SAME(block.text(), std::string{"de"});
 
     // A replacement overlapping the start puts the start after the inserted text; one overlapping
     // the end trims the end to the place of the change, so the inserted text enters the block from
@@ -785,9 +785,9 @@ TRIAL("Editor: the block shifts and trims with changes to the document") {
     one->selection().set(1, 4);
     one->insert("QQ");
 
-    same(one->text(), std::string{"aQQef"});
-    same(block.text(), std::string{"e"});
-    same(block.from(), std::size_t{3});
+    SAME(one->text(), std::string{"aQQef"});
+    SAME(block.text(), std::string{"e"});
+    SAME(block.from(), std::size_t{3});
 
     one->hold(bytes("abcdef"));
     one->cursor(2);
@@ -798,9 +798,9 @@ TRIAL("Editor: the block shifts and trims with changes to the document") {
     one->selection().set(4, 6);
     one->insert("QQ");
 
-    same(one->text(), std::string{"abcdQQ"});
-    same(block.text(), std::string{"cd"});
-    same(block.upto(), std::size_t{4});
+    SAME(one->text(), std::string{"abcdQQ"});
+    SAME(block.text(), std::string{"cd"});
+    SAME(block.upto(), std::size_t{4});
 
     // While extending, the start also follows a change before it.
     one->hold(bytes("abcdef"));
@@ -809,9 +809,9 @@ TRIAL("Editor: the block shifts and trims with changes to the document") {
     one->cursor(0);
     one->insert("XY");
 
-    ought(block.pending());
-    same(block.from(), std::size_t{4});
-    same(block.text(), std::string{"ab"});
+    OUGHT(block.pending());
+    SAME(block.from(), std::size_t{4});
+    SAME(block.text(), std::string{"ab"});
 }
 
 TRIAL("Editor: the block is visible on the screen, also while extending; readonly and hold") {
@@ -828,17 +828,17 @@ TRIAL("Editor: the block is visible on the screen, also while extending; readonl
 
     Snapshot made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({1, 0}).style.reverse);
-    ought(made.at({2, 0}).style.reverse);
-    ought(made.at({4, 0}).style.reverse);
-    ought(!made.at({5, 0}).style.reverse);
+    OUGHT(!made.at({1, 0}).style.reverse);
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(made.at({4, 0}).style.reverse);
+    OUGHT(!made.at({5, 0}).style.reverse);
 
     // While extending: it grows with the cursor.
     block.clear();
 
     made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({2, 0}).style.reverse);
+    OUGHT(!made.at({2, 0}).style.reverse);
 
     one->cursor(1);
     block.mark();
@@ -846,29 +846,29 @@ TRIAL("Editor: the block is visible on the screen, also while extending; readonl
 
     made = sheet.render({{0, 0}, {20, 2}});
 
-    ought(!made.at({0, 0}).style.reverse);
-    ought(made.at({1, 0}).style.reverse);
-    ought(made.at({3, 0}).style.reverse);
-    ought(!made.at({4, 0}).style.reverse);
+    OUGHT(!made.at({0, 0}).style.reverse);
+    OUGHT(made.at({1, 0}).style.reverse);
+    OUGHT(made.at({3, 0}).style.reverse);
+    OUGHT(!made.at({4, 0}).style.reverse);
 
     block.mark();
 
     // Read-only: the actions refuse, but a block can be set.
     one->readonly(true);
 
-    ought(!block.copy());
-    ought(!block.move());
-    ought(!block.erase());
-    ought(!block.empty());
-    same(one->text(), std::string{"abcdef"});
+    OUGHT(!block.copy());
+    OUGHT(!block.move());
+    OUGHT(!block.erase());
+    OUGHT(!block.empty());
+    SAME(one->text(), std::string{"abcdef"});
 
     one->readonly(false);
 
     // A new document removes the block.
     one->hold(bytes("xyz"));
 
-    ought(block.empty());
-    ought(!block.pending());
+    OUGHT(block.empty());
+    OUGHT(!block.pending());
 }
 
 // --- The cursor on the screen --------------------------------------------------------------------
@@ -884,9 +884,9 @@ TRIAL("Editor: the cursor stands where the byte points") {
 
     const std::optional<ui::Spot> at = one->caret();
 
-    ought(at.has_value());
-    same(at->x, 1);
-    same(at->y, 1);
+    OUGHT(at.has_value());
+    SAME(at->x, 1);
+    SAME(at->y, 1);
 }
 
 TRIAL("Editor: a cursor after the last character of a line also has a place") {
@@ -900,9 +900,9 @@ TRIAL("Editor: a cursor after the last character of a line also has a place") {
 
     const std::optional<ui::Spot> at = one->caret();
 
-    ought(at.has_value());
-    same(at->x, 3);
-    same(at->y, 0);
+    OUGHT(at.has_value());
+    SAME(at->x, 3);
+    SAME(at->y, 0);
 }
 
 // --- Keys ----------------------------------------------------------------------------------------
@@ -916,8 +916,8 @@ TRIAL("Editor: a letter goes into the document") {
 
     ui::KeyEvent what{U'X'};
 
-    ought(sheet.dispatch(what));
-    same(one->text(), std::string{"Xab"});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->text(), std::string{"Xab"});
 }
 
 TRIAL("Editor: the arrows move by characters and by lines") {
@@ -931,18 +931,18 @@ TRIAL("Editor: the arrows move by characters and by lines") {
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{1});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{1});
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{5});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{5});
 
     ui::KeyEvent left{ui::Code::left};
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{4});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{4});
 }
 
 // A multibyte character is deleted as a whole; otherwise Backspace would cut it in half and leave
@@ -959,9 +959,9 @@ TRIAL("Editor: deleting removes a whole character, not one byte") {
 
     ui::KeyEvent back{ui::Code::backspace};
 
-    ought(sheet.dispatch(back));
-    same(one->text(), std::string{"ab"});
-    same(one->cursor(), std::size_t{1});
+    OUGHT(sheet.dispatch(back));
+    SAME(one->text(), std::string{"ab"});
+    SAME(one->cursor(), std::size_t{1});
 }
 
 // --- Undo ----------------------------------------------------------------------------------------
@@ -971,14 +971,14 @@ TRIAL("Editor: a fresh document has nothing to undo") {
 
     const auto one = shown(sheet, "abc");
 
-    ought(!one->undoable());
-    ought(!one->redoable());
-    ought(!one->dirty());
+    OUGHT(!one->undoable());
+    OUGHT(!one->redoable());
+    OUGHT(!one->dirty());
 
     one->undo();
     one->redo();
 
-    same(one->text(), std::string{"abc"});
+    SAME(one->text(), std::string{"abc"});
 }
 
 TRIAL("Editor: undo returns the document from before the change, redo restores it") {
@@ -989,21 +989,21 @@ TRIAL("Editor: undo returns the document from before the change, redo restores i
     one->cursor(1);
     one->insert("X");
 
-    same(one->text(), std::string{"aXbc"});
-    ought(one->undoable());
-    ought(!one->redoable());
+    SAME(one->text(), std::string{"aXbc"});
+    OUGHT(one->undoable());
+    OUGHT(!one->redoable());
 
     one->undo();
 
-    same(one->text(), std::string{"abc"});
-    ought(!one->undoable());
-    ought(one->redoable());
+    SAME(one->text(), std::string{"abc"});
+    OUGHT(!one->undoable());
+    OUGHT(one->redoable());
 
     one->redo();
 
-    same(one->text(), std::string{"aXbc"});
-    ought(one->undoable());
-    ought(!one->redoable());
+    SAME(one->text(), std::string{"aXbc"});
+    OUGHT(one->undoable());
+    OUGHT(!one->redoable());
 }
 
 // A typed word is gathered into one entry; otherwise undo would go letter by letter, and five
@@ -1017,12 +1017,12 @@ TRIAL("Editor: a typed word is undone as a whole") {
     one->insert("b");
     one->insert("c");
 
-    same(one->text(), std::string{"abc"});
+    SAME(one->text(), std::string{"abc"});
 
     one->undo();
 
-    same(one->text(), std::string{});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{});
+    OUGHT(!one->undoable());
 }
 
 TRIAL("Editor: a space ends a word, so it is undone separately") {
@@ -1033,15 +1033,15 @@ TRIAL("Editor: a space ends a word, so it is undone separately") {
     for (const char sign : std::string{"ala "}) one->insert(std::string{sign});
     for (const char sign : std::string{"ma"}) one->insert(std::string{sign});
 
-    same(one->text(), std::string{"ala ma"});
+    SAME(one->text(), std::string{"ala ma"});
 
     one->undo();
 
-    same(one->text(), std::string{"ala "});
+    SAME(one->text(), std::string{"ala "});
 
     one->undo();
 
-    same(one->text(), std::string{});
+    SAME(one->text(), std::string{});
 }
 
 TRIAL("Editor: moving the cursor closes the word") {
@@ -1056,15 +1056,15 @@ TRIAL("Editor: moving the cursor closes the word") {
     one->cursor(0);
     one->insert("Z");
 
-    same(one->text(), std::string{"Zxyab"});
+    SAME(one->text(), std::string{"Zxyab"});
 
     one->undo();
 
-    same(one->text(), std::string{"xyab"});
+    SAME(one->text(), std::string{"xyab"});
 
     one->undo();
 
-    same(one->text(), std::string{"xy"});
+    SAME(one->text(), std::string{"xy"});
 }
 
 TRIAL("Editor: enter is a separate step") {
@@ -1076,16 +1076,16 @@ TRIAL("Editor: enter is a separate step") {
     one->insert("\n");
     one->insert("b");
 
-    same(*one->lines(), std::size_t{2});
+    SAME(*one->lines(), std::size_t{2});
 
     one->undo();
 
-    same(one->text(), std::string{"a\n"});
+    SAME(one->text(), std::string{"a\n"});
 
     one->undo();
 
-    same(one->text(), std::string{"a"});
-    same(*one->lines(), std::size_t{1});
+    SAME(one->text(), std::string{"a"});
+    SAME(*one->lines(), std::size_t{1});
 }
 
 // Typing over a selection is one change. If it were a deletion followed by typing, one undo would
@@ -1098,12 +1098,12 @@ TRIAL("Editor: typing over a selection is undone in one step") {
     one->selection().set(2, 5);
     one->insert("X");
 
-    same(one->text(), std::string{"abXf"});
+    SAME(one->text(), std::string{"abXf"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"abcdef"});
+    OUGHT(!one->undoable());
 }
 
 TRIAL("Editor: a held backspace is gathered into one step") {
@@ -1116,12 +1116,12 @@ TRIAL("Editor: a held backspace is gathered into one step") {
     one->back_erase(1);
     one->back_erase(1);
 
-    same(one->text(), std::string{"abc"});
+    SAME(one->text(), std::string{"abc"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    same(one->cursor(), std::size_t{6});
+    SAME(one->text(), std::string{"abcdef"});
+    SAME(one->cursor(), std::size_t{6});
 }
 
 // A long held Backspace. The deleted characters are collected from the back; putting each new one
@@ -1140,16 +1140,16 @@ TRIAL("Editor: a long held backspace is undone in full in one step") {
 
     while (one->cursor() > 0) one->back_erase(1);
 
-    same(one->text(), std::string{});
+    SAME(one->text(), std::string{});
 
     one->undo();
 
-    same(one->text(), was);
-    ought(!one->undoable());
+    SAME(one->text(), was);
+    OUGHT(!one->undoable());
 
     one->redo();
 
-    same(one->text(), std::string{});
+    SAME(one->text(), std::string{});
 }
 
 // A held Backspace a few bytes at a time: every piece comes back in its own order.
@@ -1163,11 +1163,11 @@ TRIAL("Editor: a backspace of several bytes comes back in order") {
     one->back_erase(3);
     one->back_erase(3);
 
-    same(one->text(), std::string{});
+    SAME(one->text(), std::string{});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdefghi"});
+    SAME(one->text(), std::string{"abcdefghi"});
 }
 
 // A held Backspace followed by a held Delete at the same place is one entry, and it comes back in
@@ -1183,12 +1183,12 @@ TRIAL("Editor: backspace and delete at the same place come back in order") {
     one->front_erase(1);
     one->front_erase(1);
 
-    same(one->text(), std::string{"af"});
+    SAME(one->text(), std::string{"af"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"abcdef"});
+    OUGHT(!one->undoable());
 }
 
 TRIAL("Editor: a held delete is gathered into one step") {
@@ -1200,11 +1200,11 @@ TRIAL("Editor: a held delete is gathered into one step") {
     one->front_erase(1);
     one->front_erase(1);
 
-    same(one->text(), std::string{"adef"});
+    SAME(one->text(), std::string{"adef"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
+    SAME(one->text(), std::string{"abcdef"});
 }
 
 // A new change after an undo cuts off the redo branch: there is nothing left to redo.
@@ -1217,13 +1217,13 @@ TRIAL("Editor: a change after an undo cuts off redo") {
     one->insert("X");
     one->undo();
 
-    ought(one->redoable());
+    OUGHT(one->redoable());
 
     one->cursor(0);
     one->insert("Y");
 
-    ought(!one->redoable());
-    same(one->text(), std::string{"Yabc"});
+    OUGHT(!one->redoable());
+    SAME(one->text(), std::string{"Yabc"});
 }
 
 // Dirtiness is computed from the journal, not from the quilt: undoing everything returns to the
@@ -1236,23 +1236,23 @@ TRIAL("Editor: undoing everything makes the document clean") {
     one->cursor(1);
     one->insert("X");
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 
     one->undo();
 
-    ought(!one->dirty());
+    OUGHT(!one->dirty());
 
     one->redo();
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 
     one->clean();
 
-    ought(!one->dirty());
+    OUGHT(!one->dirty());
 
     one->undo();
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 }
 
 TRIAL("Editor: undo puts the cursor where it stood before the change") {
@@ -1263,11 +1263,11 @@ TRIAL("Editor: undo puts the cursor where it stood before the change") {
     one->cursor(4);
     one->insert("XY");
 
-    same(one->cursor(), std::size_t{6});
+    SAME(one->cursor(), std::size_t{6});
 
     one->undo();
 
-    same(one->cursor(), std::size_t{4});
+    SAME(one->cursor(), std::size_t{4});
 }
 
 TRIAL("Editor: undo restores the number of lines") {
@@ -1275,23 +1275,23 @@ TRIAL("Editor: undo restores the number of lines") {
 
     const auto one = shown(sheet, "abc\ndef\nghi");
 
-    same(*one->lines(), std::size_t{3});
+    SAME(*one->lines(), std::size_t{3});
 
     one->cursor(3);
     one->back_erase(1);
 
-    same(*one->lines(), std::size_t{3});
-    same(one->text(), std::string{"ab\ndef\nghi"});
+    SAME(*one->lines(), std::size_t{3});
+    SAME(one->text(), std::string{"ab\ndef\nghi"});
 
     one->cursor(2);
     one->front_erase(1);
 
-    same(*one->lines(), std::size_t{2});
+    SAME(*one->lines(), std::size_t{2});
 
     one->undo();
 
-    same(*one->lines(), std::size_t{3});
-    same(one->text(), std::string{"ab\ndef\nghi"});
+    SAME(*one->lines(), std::size_t{3});
+    SAME(one->text(), std::string{"ab\ndef\nghi"});
 }
 
 // A line does not come from a newline but from whether something follows it: "abc" and "abc\n" are
@@ -1302,22 +1302,22 @@ TRIAL("Editor: enter at the end of the document adds no line") {
 
     const auto one = shown(sheet, "abc");
 
-    same(*one->lines(), std::size_t{1});
+    SAME(*one->lines(), std::size_t{1});
 
     one->cursor(3);
     one->insert("\n");
 
-    same(*one->lines(), std::size_t{1});
+    SAME(*one->lines(), std::size_t{1});
 
     one->insert("d");
 
-    same(*one->lines(), std::size_t{2});
+    SAME(*one->lines(), std::size_t{2});
 
     one->undo();
     one->undo();
 
-    same(*one->lines(), std::size_t{1});
-    same(one->text(), std::string{"abc"});
+    SAME(*one->lines(), std::size_t{1});
+    SAME(one->text(), std::string{"abc"});
 }
 
 TRIAL("Editor: an empty document has no line, and one character already has one") {
@@ -1325,15 +1325,15 @@ TRIAL("Editor: an empty document has no line, and one character already has one"
 
     const auto one = shown(sheet, "");
 
-    same(*one->lines(), std::size_t{0});
+    SAME(*one->lines(), std::size_t{0});
 
     one->insert("a");
 
-    same(*one->lines(), std::size_t{1});
+    SAME(*one->lines(), std::size_t{1});
 
     one->back_erase(1);
 
-    same(*one->lines(), std::size_t{0});
+    SAME(*one->lines(), std::size_t{0});
 }
 
 TRIAL("Editor: read-only does not undo") {
@@ -1345,11 +1345,11 @@ TRIAL("Editor: read-only does not undo") {
     one->insert("X");
     one->readonly(true);
 
-    ought(!one->undoable());
+    OUGHT(!one->undoable());
 
     one->undo();
 
-    same(one->text(), std::string{"aXbc"});
+    SAME(one->text(), std::string{"aXbc"});
 }
 
 // A random sequence of changes undone to the end must give the original to the byte: it is the only
@@ -1396,14 +1396,14 @@ TRIAL("Editor: a random sequence of changes is undone to the original") {
         while (!steps.empty()) {
             one->undo();
 
-            same(one->text(), steps.back());
+            SAME(one->text(), steps.back());
 
             steps.pop_back();
         }
 
-        ought(!one->undoable());
-        ought(!one->dirty());
-        same(one->text(), was);
+        OUGHT(!one->undoable());
+        OUGHT(!one->dirty());
+        SAME(one->text(), was);
     }
 }
 
@@ -1418,25 +1418,25 @@ TRIAL("Editor: ctrl with an arrow moves by words") {
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{4});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{4});
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{7});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{7});
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{11});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{11});
 
     ui::KeyEvent left{ui::Key{ui::Code::left, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{7});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{7});
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{4});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{4});
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{0});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{0});
 }
 
 TRIAL("Editor: jumping by words crosses between lines") {
@@ -1450,13 +1450,13 @@ TRIAL("Editor: jumping by words crosses between lines") {
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{4});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{4});
 
     ui::KeyEvent left{ui::Key{ui::Code::left, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{3});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{3});
 }
 
 TRIAL("Editor: jumping by words does not split a multibyte character") {
@@ -1468,8 +1468,8 @@ TRIAL("Editor: jumping by words does not split a multibyte character") {
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{5});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{5});
 }
 
 TRIAL("Editor: ctrl with an arrow and shift extends the selection") {
@@ -1481,11 +1481,11 @@ TRIAL("Editor: ctrl with an arrow and shift extends the selection") {
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{true, false, true}}};
 
-    ought(sheet.dispatch(right));
-    ought(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
 
-    same(one->selection().anchor(), std::size_t{0});
-    same(one->selection().text(), std::string{"ala ma "});
+    SAME(one->selection().anchor(), std::size_t{0});
+    SAME(one->selection().text(), std::string{"ala ma "});
 }
 
 TRIAL("Editor: jumping by words at the ends stays in place") {
@@ -1497,15 +1497,15 @@ TRIAL("Editor: jumping by words at the ends stays in place") {
 
     ui::KeyEvent left{ui::Key{ui::Code::left, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(left));
-    same(one->cursor(), std::size_t{0});
+    OUGHT(sheet.dispatch(left));
+    SAME(one->cursor(), std::size_t{0});
 
     one->cursor(3);
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(right));
-    same(one->cursor(), std::size_t{3});
+    OUGHT(sheet.dispatch(right));
+    SAME(one->cursor(), std::size_t{3});
 }
 
 // --- Clipboard -----------------------------------------------------------------------------------
@@ -1517,14 +1517,14 @@ TRIAL("Editor: copy and paste go through the clipboard") {
 
     one->selection().set(0, 3);
 
-    ought(one->copy());
+    OUGHT(one->copy());
 
     one->cursor(11);
     one->insert(" ");
 
-    ought(one->paste());
+    OUGHT(one->paste());
 
-    same(one->text(), std::string{"ala ma kota ala"});
+    SAME(one->text(), std::string{"ala ma kota ala"});
 }
 
 TRIAL("Editor: copying without a selection touches nothing") {
@@ -1532,7 +1532,7 @@ TRIAL("Editor: copying without a selection touches nothing") {
 
     const auto one = shown(sheet, "abc");
 
-    ought(!one->copy());
+    OUGHT(!one->copy());
 }
 
 // Cutting goes through the same deletion of the selection as Backspace, so it is one change in the
@@ -1544,14 +1544,14 @@ TRIAL("Editor: cutting removes the text and is undone in one step") {
 
     one->selection().set(4, 6);
 
-    ought(one->cut());
+    OUGHT(one->cut());
 
-    same(one->text(), std::string{"ala  kota"});
+    SAME(one->text(), std::string{"ala  kota"});
 
     one->undo();
 
-    same(one->text(), std::string{"ala ma kota"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"ala ma kota"});
+    OUGHT(!one->undoable());
 }
 
 TRIAL("Editor: pasting over a selection replaces it") {
@@ -1561,13 +1561,13 @@ TRIAL("Editor: pasting over a selection replaces it") {
 
     one->selection().set(0, 2);
 
-    ought(one->copy());
+    OUGHT(one->copy());
 
     one->selection().set(4, 6);
 
-    ought(one->paste());
+    OUGHT(one->paste());
 
-    same(one->text(), std::string{"abcdab"});
+    SAME(one->text(), std::string{"abcdab"});
 }
 
 TRIAL("Editor: read-only copies, but does not cut or paste") {
@@ -1577,15 +1577,15 @@ TRIAL("Editor: read-only copies, but does not cut or paste") {
 
     one->selection().set(0, 3);
 
-    ought(one->copy());
+    OUGHT(one->copy());
 
     one->readonly(true);
 
-    ought(!one->cut());
-    ought(!one->paste());
+    OUGHT(!one->cut());
+    OUGHT(!one->paste());
 
-    same(one->text(), std::string{"ala ma kota"});
-    ought(!one->dirty());
+    SAME(one->text(), std::string{"ala ma kota"});
+    OUGHT(!one->dirty());
 }
 
 TRIAL("Editor: a copy goes to the given clipboard") {
@@ -1596,8 +1596,8 @@ TRIAL("Editor: a copy goes to the given clipboard") {
 
     one->selection().set(0, 3);
 
-    ought(one->copy());
-    same(kept->kept.value_or(""), std::string{"ala"});
+    OUGHT(one->copy());
+    SAME(kept->kept.value_or(""), std::string{"ala"});
 }
 
 // When the clipboard refuses, cutting does not delete: the document would be left without text that
@@ -1613,10 +1613,10 @@ TRIAL("Editor: a clipboard refusal does not cut") {
 
     one->selection().set(0, 3);
 
-    ought(!one->cut());
-    same(kept->copies, 1);
-    same(one->text(), std::string{"ala ma kota"});
-    ought(!one->dirty());
+    OUGHT(!one->cut());
+    SAME(kept->copies, 1);
+    SAME(one->text(), std::string{"ala ma kota"});
+    OUGHT(!one->dirty());
 }
 
 TRIAL("Editor: two editors on one clipboard exchange text") {
@@ -1629,12 +1629,12 @@ TRIAL("Editor: two editors on one clipboard exchange text") {
 
     one->selection().set(4, 6);
 
-    ought(one->cut());
+    OUGHT(one->cut());
 
     two->cursor(4);
 
-    ought(two->paste());
-    same(two->text(), std::string{"piesma"});
+    OUGHT(two->paste());
+    SAME(two->text(), std::string{"piesma"});
 }
 
 // Ctrl with a letter is not the editor's business: the editor binds no clipboard key at all. In raw
@@ -1651,19 +1651,19 @@ TRIAL("Editor: ctrl with a letter goes up and leaves the clipboard alone") {
 
     ui::KeyEvent copy{ui::Key{U'c', ui::Mods{true, false, false}}};
 
-    ought(!sheet.dispatch(copy));
+    OUGHT(!sheet.dispatch(copy));
 
     one->cursor(11);
 
     ui::KeyEvent paste{ui::Key{U'v', ui::Mods{true, false, false}}};
 
-    ought(!sheet.dispatch(paste));
+    OUGHT(!sheet.dispatch(paste));
 
     ui::KeyEvent cut{ui::Key{U'x', ui::Mods{true, false, false}}};
 
-    ought(!sheet.dispatch(cut));
+    OUGHT(!sheet.dispatch(cut));
 
-    same(one->text(), std::string{"ala ma kota"});
+    SAME(one->text(), std::string{"ala ma kota"});
 }
 
 // The application binds the clipboard keys it wants with a hook, and then they work, because a hook
@@ -1688,9 +1688,9 @@ TRIAL("Editor: clipboard on ctrl can be added with a hook") {
 
     ui::KeyEvent copy{ui::Key{U'c', ui::Mods{true, false, false}}};
 
-    ought(sheet.dispatch(copy));
+    OUGHT(sheet.dispatch(copy));
 
-    same(one->selection().text(), std::string{"ala "});
+    SAME(one->selection().text(), std::string{"ala "});
 }
 
 // The keys of Midnight Commander's clipboard (Ctrl+Ins, Shift+Ins, Shift+Del) go up as well: they
@@ -1706,22 +1706,22 @@ TRIAL("Editor: insert and delete with modifiers go up and leave the text alone")
 
     ui::KeyEvent copy{ui::Key{ui::Code::insert, ui::Mods{true, false, false}}};
 
-    ought(!sheet.dispatch(copy));
+    OUGHT(!sheet.dispatch(copy));
 
     one->cursor(11);
 
     ui::KeyEvent paste{ui::Key{ui::Code::insert, ui::Mods{false, false, true}}};
 
-    ought(!sheet.dispatch(paste));
+    OUGHT(!sheet.dispatch(paste));
 
     one->cursor(0);
 
     ui::KeyEvent cut{ui::Key{ui::Code::remove, ui::Mods{false, false, true}}};
 
-    ought(!sheet.dispatch(cut));
+    OUGHT(!sheet.dispatch(cut));
 
-    same(one->text(), std::string{"ala ma kota"});
-    same(one->cursor(), std::size_t{0});
+    SAME(one->text(), std::string{"ala ma kota"});
+    SAME(one->cursor(), std::size_t{0});
 }
 
 // Delete alone, without Shift, still deletes a character rather than cutting.
@@ -1735,8 +1735,8 @@ TRIAL("Editor: delete alone deletes a character, it does not cut") {
 
     ui::KeyEvent remove{ui::Code::remove};
 
-    ought(sheet.dispatch(remove));
-    same(one->text(), std::string{"bcdef"});
+    OUGHT(sheet.dispatch(remove));
+    SAME(one->text(), std::string{"bcdef"});
 }
 
 // --- Mouse ---------------------------------------------------------------------------------------
@@ -1750,10 +1750,10 @@ TRIAL("Editor: a double click takes a word") {
 
     ui::DoubleClickEvent what{{5, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->selection().text(), std::string{"ma"});
-    same(one->selection().anchor(), std::size_t{4});
-    same(one->cursor(), std::size_t{6});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->selection().text(), std::string{"ma"});
+    SAME(one->selection().anchor(), std::size_t{4});
+    SAME(one->cursor(), std::size_t{6});
 }
 
 // A letter with a diacritic is a letter by the same rule by which the comb searches for whole
@@ -1767,8 +1767,8 @@ TRIAL("Editor: a double click does not split a word with a diacritic") {
 
     ui::DoubleClickEvent what{{3, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->selection().text(), std::string{"k\xc4\x85t"});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->selection().text(), std::string{"k\xc4\x85t"});
 }
 
 // A click on a place that is not a word takes a run of characters of the same kind, so a double
@@ -1782,8 +1782,8 @@ TRIAL("Editor: a double click outside a word takes a run of characters of the sa
 
     ui::DoubleClickEvent what{{4, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->selection().text(), std::string{"   "});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->selection().text(), std::string{"   "});
 }
 
 TRIAL("Editor: a double click after a tab takes the word after it") {
@@ -1795,8 +1795,8 @@ TRIAL("Editor: a double click after a tab takes the word after it") {
 
     ui::DoubleClickEvent what{{9, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->selection().text(), std::string{"ala"});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->selection().text(), std::string{"ala"});
 }
 
 // A press sets the cursor together with the anchor; movement with the button held extends the
@@ -1810,30 +1810,30 @@ TRIAL("Editor: dragging with the mouse extends the selection") {
 
     ui::MouseEvent down{{2, 0}, ui::Press::down, ui::Mouse::left};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{2});
-    ought(one->selection().empty());
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{2});
+    OUGHT(one->selection().empty());
 
     ui::MouseEvent move{{5, 0}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(move));
-    same(one->selection().anchor(), std::size_t{2});
-    same(one->selection().text(), std::string{"cde"});
+    OUGHT(sheet.dispatch(move));
+    SAME(one->selection().anchor(), std::size_t{2});
+    SAME(one->selection().text(), std::string{"cde"});
 
     ui::MouseEvent far{{3, 1}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(far));
-    same(one->selection().text(), std::string{"cdef\nghi"});
+    OUGHT(sheet.dispatch(far));
+    SAME(one->selection().text(), std::string{"cdef\nghi"});
 
     ui::MouseEvent up{{3, 1}, ui::Press::up, ui::Mouse::left};
 
-    ought(sheet.dispatch(up));
+    OUGHT(sheet.dispatch(up));
 
     // After release, movement over the editor has no right to extend anything.
     ui::MouseEvent after{{5, 1}, ui::Press::move, ui::Mouse::none};
 
-    ought(sheet.dispatch(after));
-    same(one->selection().text(), std::string{"cdef\nghi"});
+    OUGHT(sheet.dispatch(after));
+    SAME(one->selection().text(), std::string{"cdef\nghi"});
 }
 
 // The edge row scrolls by one line, and the speed comes from how much the user really moves the
@@ -1845,29 +1845,29 @@ TRIAL("Editor: dragging in the edge row scrolls") {
 
     (void)sheet.render({{0, 0}, {20, 3}});
 
-    same(*one->first(), std::size_t{0});
+    SAME(*one->first(), std::size_t{0});
 
     ui::MouseEvent down{{1, 0}, ui::Press::down, ui::Mouse::left};
 
-    ought(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(down));
 
     ui::MouseEvent low{{1, 2}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(low));
+    OUGHT(sheet.dispatch(low));
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 
-    ought(sheet.dispatch(low));
+    OUGHT(sheet.dispatch(low));
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{2});
+    SAME(*one->first(), std::size_t{2});
 
-    ought(!one->selection().empty());
+    OUGHT(!one->selection().empty());
 
     ui::MouseEvent high{{1, 0}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(high));
+    OUGHT(sheet.dispatch(high));
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 }
 
 // A drag goes outside the editor: the press asks for capture, so movement below and above the
@@ -1882,29 +1882,29 @@ TRIAL("Editor: dragging outside the editor scrolls and selects to the outermost 
 
     ui::MouseEvent down{{1, 0}, ui::Press::down, ui::Mouse::left};
 
-    ought(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(down));
 
     ui::MouseEvent below{{1, 10}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(below));
-    same(one->selection().text(), std::string{"0\nl1\nl"});
+    OUGHT(sheet.dispatch(below));
+    SAME(one->selection().text(), std::string{"0\nl1\nl"});
 
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 
-    ought(sheet.dispatch(below));
-    same(one->selection().text(), std::string{"0\nl1\nl2\nl"});
+    OUGHT(sheet.dispatch(below));
+    SAME(one->selection().text(), std::string{"0\nl1\nl2\nl"});
 
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{2});
+    SAME(*one->first(), std::size_t{2});
 
     ui::MouseEvent above{{1, -5}, ui::Press::move, ui::Mouse::left};
 
-    ought(sheet.dispatch(above));
-    same(one->selection().text(), std::string{"0\nl1\nl"});
+    OUGHT(sheet.dispatch(above));
+    SAME(one->selection().text(), std::string{"0\nl1\nl"});
 
     (void)sheet.render({{0, 0}, {20, 3}});
-    same(*one->first(), std::size_t{1});
+    SAME(*one->first(), std::size_t{1});
 }
 
 // A release outside the editor also comes back to it and ends the drag; otherwise it would go to
@@ -1920,17 +1920,17 @@ TRIAL("Editor: releasing outside the editor ends the drag") {
     ui::MouseEvent move{{4, 0}, ui::Press::move, ui::Mouse::left};
     ui::MouseEvent up{{4, 10}, ui::Press::up, ui::Mouse::left};
 
-    ought(sheet.dispatch(down));
-    ought(sheet.dispatch(move));
+    OUGHT(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(move));
     (void)sheet.dispatch(up);
 
-    same(one->selection().text(), std::string{"bcd"});
+    SAME(one->selection().text(), std::string{"bcd"});
 
     ui::MouseEvent later{{3, 1}, ui::Press::move, ui::Mouse::left};
 
     (void)sheet.dispatch(later);
 
-    same(one->selection().text(), std::string{"bcd"});
+    SAME(one->selection().text(), std::string{"bcd"});
 }
 
 // `at()` means in the editor what it means in the viewer: the byte at which the first visible line
@@ -1945,9 +1945,9 @@ TRIAL("Editor: at is the byte of the first visible line, not of the cursor's lin
     one->cursor(std::size_t{0});
     one->first(std::size_t{4});
 
-    same(one->cursor(), std::size_t{0});
-    same(*one->at(), std::size_t{12});
-    same(*one->whole(), many(20).size());
+    SAME(one->cursor(), std::size_t{0});
+    SAME(*one->at(), std::size_t{12});
+    SAME(*one->whole(), many(20).size());
 }
 
 // --- Search --------------------------------------------------------------------------------------
@@ -1961,11 +1961,11 @@ TRIAL("Editor: search finds and selects") {
 
     const std::optional<Hit> got = one->find(how, 0, false);
 
-    ought(got.has_value());
-    same(got->from, std::size_t{9});
-    same(got->upto, std::size_t{14});
-    same(one->selection().text(), std::string{"drugi"});
-    same(one->line(), std::size_t{1});
+    OUGHT(got.has_value());
+    SAME(got->from, std::size_t{9});
+    SAME(got->upto, std::size_t{14});
+    SAME(one->selection().text(), std::string{"drugi"});
+    SAME(one->line(), std::size_t{1});
 }
 
 TRIAL("Editor: search goes on from the given place") {
@@ -1975,8 +1975,8 @@ TRIAL("Editor: search goes on from the given place") {
 
     const Comb how{"drugi", {}};
 
-    same(one->find(how, 10, false)->from, std::size_t{22});
-    ought(!one->find(how, 23, false).has_value());
+    SAME(one->find(how, 10, false)->from, std::size_t{22});
+    OUGHT(!one->find(how, 23, false).has_value());
 }
 
 TRIAL("Editor: backward search takes the previous match") {
@@ -1986,10 +1986,10 @@ TRIAL("Editor: backward search takes the previous match") {
 
     const Comb how{"ala", {}};
 
-    same(one->find(how, 19, true)->from, std::size_t{16});
-    same(one->find(how, 16, true)->from, std::size_t{7});
-    same(one->find(how, 7, true)->from, std::size_t{0});
-    ought(!one->find(how, 0, true).has_value());
+    SAME(one->find(how, 19, true)->from, std::size_t{16});
+    SAME(one->find(how, 16, true)->from, std::size_t{7});
+    SAME(one->find(how, 7, true)->from, std::size_t{0});
+    OUGHT(!one->find(how, 0, true).has_value());
 }
 
 TRIAL("Editor: search does not find what is not there") {
@@ -1999,8 +1999,8 @@ TRIAL("Editor: search does not find what is not there") {
 
     const Comb how{"xyz", {}};
 
-    ought(!one->find(how, 0, false).has_value());
-    ought(!one->find(how, 7, true).has_value());
+    OUGHT(!one->find(how, 0, false).has_value());
+    OUGHT(!one->find(how, 7, true).has_value());
 }
 
 // Replacing takes the selection only when the whole of it is a hit. A selection that merely
@@ -2014,10 +2014,10 @@ TRIAL("Editor: replacing does not take a selection that merely contains a hit") 
 
     one->selection().set(0, 4);
 
-    ought(!one->replace(how, "ola"));
-    same(one->text(), std::string{"xala ala"});
-    same(one->selection().from(), std::size_t{5});
-    same(one->selection().upto(), std::size_t{8});
+    OUGHT(!one->replace(how, "ola"));
+    SAME(one->text(), std::string{"xala ala"});
+    SAME(one->selection().from(), std::size_t{5});
+    SAME(one->selection().upto(), std::size_t{8});
 }
 
 // A bad pattern has no right to do anything: neither find nor throw.
@@ -2028,7 +2028,7 @@ TRIAL("Editor: a comb that is not ready finds nothing") {
 
     const Comb how{"[", Sift{true, false, false}};
 
-    ought(!one->find(how, 0, false).has_value());
+    OUGHT(!one->find(how, 0, false).has_value());
 }
 
 TRIAL("Editor: a regular expression search goes line by line") {
@@ -2038,13 +2038,13 @@ TRIAL("Editor: a regular expression search goes line by line") {
 
     const Comb how{"[0-9]+", Sift{true, false, false}};
 
-    same(one->selection().text(), std::string{});
+    SAME(one->selection().text(), std::string{});
 
-    ought(one->find(how, 0, false).has_value());
-    same(one->selection().text(), std::string{"2026"});
+    OUGHT(one->find(how, 0, false).has_value());
+    SAME(one->selection().text(), std::string{"2026"});
 
-    ought(one->find(how, 8, false).has_value());
-    same(one->selection().text(), std::string{"12"});
+    OUGHT(one->find(how, 8, false).has_value());
+    SAME(one->selection().text(), std::string{"12"});
 }
 
 // A pattern does not cross the end of a line: we search by lines, because the document is served in
@@ -2056,7 +2056,7 @@ TRIAL("Editor: a pattern does not cross the end of a line") {
 
     const Comb how{"b\nc", {}};
 
-    ought(!one->find(how, 0, false).has_value());
+    OUGHT(!one->find(how, 0, false).has_value());
 }
 
 // Searching a document longer than one batch of lines: the batches compute their starting byte
@@ -2076,11 +2076,11 @@ TRIAL("Editor: search crosses a batch boundary") {
 
     const std::optional<Hit> got = one->find(how, 0, false);
 
-    ought(got.has_value());
-    same(got->from, big.size() - 4);
-    same(one->line(), std::size_t{300});
+    OUGHT(got.has_value());
+    SAME(got->from, big.size() - 4);
+    SAME(one->line(), std::size_t{300});
 
-    same(one->find(how, big.size(), true)->from, big.size() - 4);
+    SAME(one->find(how, big.size(), true)->from, big.size() - 4);
 }
 
 // --- Replace -------------------------------------------------------------------------------------
@@ -2092,9 +2092,9 @@ TRIAL("Editor: replacing without a selection first shows the match") {
 
     const Comb how{"ala", {}};
 
-    ought(!one->replace(how, "ola"));
-    same(one->selection().text(), std::string{"ala"});
-    same(one->text(), std::string{"ala ma ala"});
+    OUGHT(!one->replace(how, "ola"));
+    SAME(one->selection().text(), std::string{"ala"});
+    SAME(one->text(), std::string{"ala ma ala"});
 }
 
 TRIAL("Editor: replacing takes the selected match and shows the next one") {
@@ -2108,13 +2108,13 @@ TRIAL("Editor: replacing takes the selected match and shows the next one") {
 
     // Replacing leaves the next match selected, so a second call replaces it without searching. A
     // helper `whole` along the way would break that, since it selects the whole document.
-    ought(one->replace(how, "ola"));
-    same(one->selection().text(), std::string{"ala"});
+    OUGHT(one->replace(how, "ola"));
+    SAME(one->selection().text(), std::string{"ala"});
 
-    ought(one->replace(how, "ola"));
-    same(one->selection().text(), std::string{});
+    OUGHT(one->replace(how, "ola"));
+    SAME(one->selection().text(), std::string{});
 
-    same(one->text(), std::string{"ola ma ola"});
+    SAME(one->text(), std::string{"ola ma ola"});
 }
 
 TRIAL("Editor: replacing leaves alone a selection that is not a match") {
@@ -2126,8 +2126,8 @@ TRIAL("Editor: replacing leaves alone a selection that is not a match") {
 
     one->selection().set(4, 6);
 
-    ought(!one->replace(how, "ola"));
-    same(one->text(), std::string{"ala ma kota"});
+    OUGHT(!one->replace(how, "ola"));
+    SAME(one->text(), std::string{"ala ma kota"});
 }
 
 TRIAL("Editor: replacing all takes every match") {
@@ -2137,8 +2137,8 @@ TRIAL("Editor: replacing all takes every match") {
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "ola"), std::size_t{3});
-    same(one->text(), std::string{"ola ma ola\nola kot"});
+    SAME(one->replace_all(how, "ola"), std::size_t{3});
+    SAME(one->text(), std::string{"ola ma ola\nola kot"});
 }
 
 // A line ends in LF or in CRLF, and a line's text holds neither. The place of a hit is counted from
@@ -2153,14 +2153,14 @@ TRIAL("Editor: searching and replacing all hit the right bytes in a CRLF documen
 
     const std::optional<Hit> second = one->find(how, 1, false);
 
-    ought(second.has_value() && second->from == 5 && second->upto == 8);
+    OUGHT(second.has_value() && second->from == 5 && second->upto == 8);
 
     const std::optional<Hit> back = one->find(how, 15, true);
 
-    ought(back.has_value() && back->from == 12 && back->upto == 15);
+    OUGHT(back.has_value() && back->from == 12 && back->upto == 15);
 
-    same(one->replace_all(how, "bar"), std::size_t{3});
-    same(one->text(), std::string{"bar\r\nbar\r\nx bar\r\n"});
+    SAME(one->replace_all(how, "bar"), std::size_t{3});
+    SAME(one->text(), std::string{"bar\r\nbar\r\nx bar\r\n"});
 }
 
 // All the replacements are tied to the first, so they are undone in one step.
@@ -2171,16 +2171,16 @@ TRIAL("Editor: replacing all is undone in one step") {
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "ola"), std::size_t{3});
+    SAME(one->replace_all(how, "ola"), std::size_t{3});
 
     one->undo();
 
-    same(one->text(), std::string{"ala ma ala\nala kot"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"ala ma ala\nala kot"});
+    OUGHT(!one->undoable());
 
     one->redo();
 
-    same(one->text(), std::string{"ola ma ola\nola kot"});
+    SAME(one->text(), std::string{"ola ma ola\nola kot"});
 }
 
 // A replacement that contains the pattern has no right to make replacing loop.
@@ -2191,8 +2191,8 @@ TRIAL("Editor: replacing with text containing the pattern does not loop") {
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "alala"), std::size_t{2});
-    same(one->text(), std::string{"alala alala"});
+    SAME(one->replace_all(how, "alala"), std::size_t{2});
+    SAME(one->text(), std::string{"alala alala"});
 }
 
 TRIAL("Editor: replacing with nothing deletes the matches") {
@@ -2202,8 +2202,8 @@ TRIAL("Editor: replacing with nothing deletes the matches") {
 
     const Comb how{"[0-9]+", Sift{true, false, false}};
 
-    same(one->replace_all(how, ""), std::size_t{3});
-    same(one->text(), std::string{"abcd"});
+    SAME(one->replace_all(how, ""), std::size_t{3});
+    SAME(one->text(), std::string{"abcd"});
 }
 
 TRIAL("Editor: replacing whole words") {
@@ -2213,8 +2213,8 @@ TRIAL("Editor: replacing whole words") {
 
     const Comb how{"ala", Sift{false, false, true}};
 
-    same(one->replace_all(how, "ola"), std::size_t{2});
-    same(one->text(), std::string{"ola alama ola"});
+    SAME(one->replace_all(how, "ola"), std::size_t{2});
+    SAME(one->text(), std::string{"ola alama ola"});
 }
 
 // Replacing all shifts the block together with the text and puts the cursor after the last
@@ -2230,29 +2230,29 @@ TRIAL("Editor: replacing all shifts the block, places the cursor and is undone i
     one->cursor(6);
     block.mark();
 
-    same(block.text(), std::string{"ma"});
+    SAME(block.text(), std::string{"ma"});
 
     one->cursor(3);
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "kasia"), std::size_t{3});
-    same(one->text(), std::string{"kasia ma kasia i kasia"});
-    same(block.from(), std::size_t{6});
-    same(block.upto(), std::size_t{8});
-    same(one->cursor(), std::size_t{22});
+    SAME(one->replace_all(how, "kasia"), std::size_t{3});
+    SAME(one->text(), std::string{"kasia ma kasia i kasia"});
+    SAME(block.from(), std::size_t{6});
+    SAME(block.upto(), std::size_t{8});
+    SAME(one->cursor(), std::size_t{22});
 
     one->undo();
 
-    same(one->text(), std::string{"ala ma ala i ala"});
-    same(block.from(), std::size_t{4});
-    same(block.upto(), std::size_t{6});
-    same(one->cursor(), std::size_t{3});
+    SAME(one->text(), std::string{"ala ma ala i ala"});
+    SAME(block.from(), std::size_t{4});
+    SAME(block.upto(), std::size_t{6});
+    SAME(one->cursor(), std::size_t{3});
 
     one->redo();
 
-    same(one->text(), std::string{"kasia ma kasia i kasia"});
-    same(one->cursor(), std::size_t{22});
+    SAME(one->text(), std::string{"kasia ma kasia i kasia"});
+    SAME(one->cursor(), std::size_t{22});
 }
 
 // A pattern that also matches nothing does not make replacing loop: an empty hit replaces nothing
@@ -2264,8 +2264,8 @@ TRIAL("Editor: an empty hit does not make replacing all loop") {
 
     const Comb how{"x*", Sift{true, false, false}};
 
-    same(one->replace_all(how, "y"), std::size_t{2});
-    same(one->text(), std::string{"ayby"});
+    SAME(one->replace_all(how, "y"), std::size_t{2});
+    SAME(one->text(), std::string{"ayby"});
 }
 
 // Twenty thousand hits are replaced and undone at once. Going separately through search, selection
@@ -2278,18 +2278,18 @@ TRIAL("Editor: twenty thousand hits are replaced and undone in one step") {
 
     const Comb how{"l", {}};
 
-    same(one->replace_all(how, "wiersz "), std::size_t{20000});
-    same(one->text().substr(0, 17), std::string{"wiersz 0\nwiersz 1"});
-    same(one->text().size(), was.size() + 20000 * 6);
+    SAME(one->replace_all(how, "wiersz "), std::size_t{20000});
+    SAME(one->text().substr(0, 17), std::string{"wiersz 0\nwiersz 1"});
+    SAME(one->text().size(), was.size() + 20000 * 6);
 
     one->undo();
 
-    same(one->text(), was);
-    ought(!one->undoable());
+    SAME(one->text(), was);
+    OUGHT(!one->undoable());
 
     one->redo();
 
-    same(one->text().size(), was.size() + 20000 * 6);
+    SAME(one->text().size(), was.size() + 20000 * 6);
 }
 
 // Replacements with line ends change the number of lines, so going to a line past the old end
@@ -2301,16 +2301,16 @@ TRIAL("Editor: replacing all with lines adjusts the number of lines") {
 
     one->line(2);
 
-    same(one->line(), std::size_t{2});
+    SAME(one->line(), std::size_t{2});
 
     const Comb how{"a", {}};
 
-    same(one->replace_all(how, "x\ny"), std::size_t{3});
+    SAME(one->replace_all(how, "x\ny"), std::size_t{3});
 
     one->line(5);
 
-    same(one->line(), std::size_t{5});
-    same(one->cursor(), std::size_t{10});
+    SAME(one->line(), std::size_t{5});
+    SAME(one->cursor(), std::size_t{10});
 }
 
 // Replacing after undoing past the saved point cuts off the branch it lay on: the document is
@@ -2327,8 +2327,8 @@ TRIAL("Editor: replacing all after undoing past the save leaves the document dir
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "ola"), std::size_t{1});
-    ought(one->dirty());
+    SAME(one->replace_all(how, "ola"), std::size_t{1});
+    OUGHT(one->dirty());
 }
 
 TRIAL("Editor: read-only does not replace") {
@@ -2340,8 +2340,8 @@ TRIAL("Editor: read-only does not replace") {
 
     const Comb how{"ala", {}};
 
-    same(one->replace_all(how, "ola"), std::size_t{0});
-    same(one->text(), std::string{"ala ma ala"});
+    SAME(one->replace_all(how, "ola"), std::size_t{0});
+    SAME(one->text(), std::string{"ala ma ala"});
 }
 
 // --- Saving --------------------------------------------------------------------------------------
@@ -2395,7 +2395,7 @@ TRIAL("Editor: saving gives the whole content, ends with an empty chunk and make
     one->cursor(0);
     one->insert("X");
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 
     std::string got;
     int much = 0;
@@ -2404,16 +2404,16 @@ TRIAL("Editor: saving gives the whole content, ends with an empty chunk and make
     Promise<void> made = one->save(into(got, much, &ended));
 
     // Until fulfilled, the editor is busy and dirty: it becomes clean only after the whole.
-    ought(one->busy());
-    ought(one->dirty());
+    OUGHT(one->busy());
+    OUGHT(one->dirty());
 
-    ought(saved(loop, std::move(made)));
+    OUGHT(saved(loop, std::move(made)));
 
-    same(got, std::string{"Xabc\ndef"});
-    same(much, 1);
-    same(ended, 1);
-    ought(!one->dirty());
-    ought(!one->busy());
+    SAME(got, std::string{"Xabc\ndef"});
+    SAME(much, 1);
+    SAME(ended, 1);
+    OUGHT(!one->dirty());
+    OUGHT(!one->busy());
 }
 
 // An empty document is a single call for the end: the drain has something to close, though nothing
@@ -2428,11 +2428,11 @@ TRIAL("Editor: saving an empty document gives only the end") {
     int much = 0;
     int ended = 0;
 
-    ought(saved(loop, one->save(into(got, much, &ended))));
+    OUGHT(saved(loop, one->save(into(got, much, &ended))));
 
-    same(got, std::string{});
-    same(much, 0);
-    same(ended, 1);
+    SAME(got, std::string{});
+    SAME(much, 0);
+    SAME(ended, 1);
 }
 
 // "Clean" means "on disk": a drain that refuses only at the end, because the file could not be
@@ -2448,7 +2448,7 @@ TRIAL("Editor: a refusal at the end leaves the document dirty") {
 
     std::string got;
 
-    ought(!saved(loop, one->save([&got](Bytes given) {
+    OUGHT(!saved(loop, one->save([&got](Bytes given) {
         if (given.empty())
             return failed<void>(std::make_exception_ptr(std::runtime_error{"rename failed"}));
 
@@ -2457,9 +2457,9 @@ TRIAL("Editor: a refusal at the end leaves the document dirty") {
         return ready();
     })));
 
-    same(got, std::string{"Xabcdef"});
-    ought(one->dirty());
-    ought(!one->busy());
+    SAME(got, std::string{"Xabcdef"});
+    OUGHT(one->dirty());
+    OUGHT(!one->busy());
 }
 
 // An unfinished save is not a save: the document stays dirty, so that the application does not
@@ -2474,22 +2474,22 @@ TRIAL("Editor: a drain that refuses interrupts the save") {
     one->cursor(0);
     one->insert("X");
 
-    ought(!saved(loop, one->save([](Bytes) {
+    OUGHT(!saved(loop, one->save([](Bytes) {
         return failed<void>(std::make_exception_ptr(std::runtime_error{"disk full"}));
     })));
-    ought(one->dirty());
-    ought(!one->busy());
+    OUGHT(one->dirty());
+    OUGHT(!one->busy());
 
-    ought(!saved(loop, one->save({})));
+    OUGHT(!saved(loop, one->save({})));
 
     std::string got;
     int much = 0;
 
     Promise<void> first = one->save(into(got, much));
 
-    ought(!saved(loop, one->save(into(got, much))));
-    ought(saved(loop, std::move(first)));
-    ought(!one->dirty());
+    OUGHT(!saved(loop, one->save(into(got, much))));
+    OUGHT(saved(loop, std::move(first)));
+    OUGHT(!one->dirty());
 }
 
 // A drain that throws before it returns a promise: the save is rejected and the editor does not
@@ -2513,16 +2513,16 @@ TRIAL("Editor: a drain that throws before its promise does not leave the editor 
         sync = true;
     }
 
-    ought(!sync);
-    ought(made.has_value() && !saved(loop, std::move(*made)));
-    ought(!one->busy());
-    ought(one->dirty());
+    OUGHT(!sync);
+    OUGHT(made.has_value() && !saved(loop, std::move(*made)));
+    OUGHT(!one->busy());
+    OUGHT(one->dirty());
 
     std::string got;
     int much = 0;
 
-    ought(saved(loop, one->save(into(got, much))));
-    same(got, std::string{"Xabcdef"});
+    OUGHT(saved(loop, one->save(into(got, much))));
+    SAME(got, std::string{"Xabcdef"});
 }
 
 // During a save the content stands still: keys that change it bounce off, so does undo, and after
@@ -2544,16 +2544,16 @@ TRIAL("Editor: the content does not change during a save") {
     one->cursor(0);
     one->insert("Y");
 
-    same(one->text(), std::string{"Xabcdef"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"Xabcdef"});
+    OUGHT(!one->undoable());
 
-    ought(saved(loop, std::move(made)));
+    OUGHT(saved(loop, std::move(made)));
 
     one->cursor(0);
     one->insert("Y");
 
-    same(one->text(), std::string{"YXabcdef"});
-    ought(one->undoable());
+    SAME(one->text(), std::string{"YXabcdef"});
+    OUGHT(one->undoable());
 }
 
 TRIAL("Editor: a large document flows in chunks") {
@@ -2569,10 +2569,10 @@ TRIAL("Editor: a large document flows in chunks") {
     std::string got;
     int much = 0;
 
-    ought(saved(loop, one->save(into(got, much))));
+    OUGHT(saved(loop, one->save(into(got, much))));
 
-    same(got, big);
-    ought(much > 1);
+    SAME(got, big);
+    OUGHT(much > 1);
 }
 
 // --- Clean or dirty ------------------------------------------------------------------------------
@@ -2593,19 +2593,19 @@ TRIAL("Editor: typing on after saving makes the document dirty") {
     std::string got;
     int much = 0;
 
-    ought(saved(loop, one->save(into(got, much))));
-    ought(!one->dirty());
+    OUGHT(saved(loop, one->save(into(got, much))));
+    OUGHT(!one->dirty());
 
     one->insert("y");
 
-    ought(one->dirty());
-    same(one->text(), std::string{"abcxy"});
+    OUGHT(one->dirty());
+    SAME(one->text(), std::string{"abcxy"});
 
     // Undoing just the `y` returns to the saved state, because the `y` started its own entry.
     one->undo();
 
-    ought(!one->dirty());
-    same(one->text(), std::string{"abcx"});
+    OUGHT(!one->dirty());
+    SAME(one->text(), std::string{"abcx"});
 }
 
 TRIAL("Editor: a new change after undoing past the save makes the document dirty for good") {
@@ -2622,24 +2622,24 @@ TRIAL("Editor: a new change after undoing past the save makes the document dirty
     std::string got;
     int much = 0;
 
-    ought(saved(loop, one->save(into(got, much))));
-    ought(!one->dirty());
+    OUGHT(saved(loop, one->save(into(got, much))));
+    OUGHT(!one->dirty());
 
     one->undo();
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 
     one->cursor(0);
     one->insert("q");
 
-    ought(one->dirty());
-    same(one->text(), std::string{"qabcx"});
+    OUGHT(one->dirty());
+    SAME(one->text(), std::string{"qabcx"});
 
     // No undo returns to the saved state any more.
     one->undo();
     one->undo();
 
-    ought(one->dirty());
+    OUGHT(one->dirty());
 }
 
 // --- Clicking ------------------------------------------------------------------------------------
@@ -2653,8 +2653,8 @@ TRIAL("Editor: a click puts the cursor in the clicked cell") {
 
     ui::ClickEvent what{{2, 1}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->cursor(), std::size_t{6});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->cursor(), std::size_t{6});
 }
 
 // A screen row is not a line number: with wrapping, one line takes several rows. Computed by adding
@@ -2669,9 +2669,9 @@ TRIAL("Editor: a click on a wrapped line hits the right line") {
 
     ui::ClickEvent what{{1, 1}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->cursor(), std::size_t{5});
-    same(one->line(), std::size_t{0});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->cursor(), std::size_t{5});
+    SAME(one->line(), std::size_t{0});
 }
 
 // A column is not a byte: a tab takes eight cells, and all of them point to the same byte.
@@ -2684,13 +2684,13 @@ TRIAL("Editor: a click after a tab hits the right byte") {
 
     ui::ClickEvent what{{8, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->cursor(), std::size_t{1});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->cursor(), std::size_t{1});
 
     ui::ClickEvent far{{3, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(far));
-    same(one->cursor(), std::size_t{0});
+    OUGHT(sheet.dispatch(far));
+    SAME(one->cursor(), std::size_t{0});
 }
 
 TRIAL("Editor: a click past the end of a line stops at its end") {
@@ -2702,8 +2702,8 @@ TRIAL("Editor: a click past the end of a line stops at its end") {
 
     ui::ClickEvent what{{15, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(one->cursor(), std::size_t{3});
+    OUGHT(sheet.dispatch(what));
+    SAME(one->cursor(), std::size_t{3});
 }
 
 // --- Line and column -----------------------------------------------------------------------------
@@ -2715,8 +2715,8 @@ TRIAL("Editor: the cursor's place is counted in lines and cells") {
 
     one->cursor(5);
 
-    same(one->line(), std::size_t{1});
-    same(one->column(), std::size_t{1});
+    SAME(one->line(), std::size_t{1});
+    SAME(one->column(), std::size_t{1});
 }
 
 TRIAL("Editor: the column counts a tab as the screen does, not as a byte") {
@@ -2726,11 +2726,11 @@ TRIAL("Editor: the column counts a tab as the screen does, not as a byte") {
 
     one->cursor(1);
 
-    same(one->column(), std::size_t{8});
+    SAME(one->column(), std::size_t{8});
 
     one->cursor(2);
 
-    same(one->column(), std::size_t{9});
+    SAME(one->column(), std::size_t{9});
 }
 
 // --- Selecting with keys -------------------------------------------------------------------------
@@ -2742,18 +2742,18 @@ TRIAL("Editor: the cursor clears the selection, and extend drags it") {
 
     one->cursor(2);
 
-    ought(one->selection().empty());
+    OUGHT(one->selection().empty());
 
     one->selection().extend(5);
 
-    ought(!one->selection().empty());
-    same(one->selection().anchor(), std::size_t{2});
-    same(one->cursor(), std::size_t{5});
-    same(one->selection().text(), std::string{"cde"});
+    OUGHT(!one->selection().empty());
+    SAME(one->selection().anchor(), std::size_t{2});
+    SAME(one->cursor(), std::size_t{5});
+    SAME(one->selection().text(), std::string{"cde"});
 
     one->cursor(4);
 
-    ought(one->selection().empty());
+    OUGHT(one->selection().empty());
 }
 
 TRIAL("Editor: shift with an arrow extends the selection") {
@@ -2766,12 +2766,12 @@ TRIAL("Editor: shift with an arrow extends the selection") {
 
     ui::KeyEvent right{ui::Key{ui::Code::right, ui::Mods{false, false, true}}};
 
-    ought(sheet.dispatch(right));
-    ought(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
+    OUGHT(sheet.dispatch(right));
 
-    same(one->selection().anchor(), std::size_t{2});
-    same(one->cursor(), std::size_t{4});
-    same(one->selection().text(), std::string{"cd"});
+    SAME(one->selection().anchor(), std::size_t{2});
+    SAME(one->cursor(), std::size_t{4});
+    SAME(one->selection().text(), std::string{"cd"});
 }
 
 TRIAL("Editor: shift with moving down selects across lines") {
@@ -2787,8 +2787,8 @@ TRIAL("Editor: shift with moving down selects across lines") {
 
     ui::KeyEvent down{ui::Key{ui::Code::down, ui::Mods{false, false, true}}};
 
-    ought(sheet.dispatch(down));
-    same(one->selection().text(), std::string{"bc\nd"});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->selection().text(), std::string{"bc\nd"});
 }
 
 TRIAL("Editor: shift with Home takes the start of the line") {
@@ -2801,9 +2801,9 @@ TRIAL("Editor: shift with Home takes the start of the line") {
 
     ui::KeyEvent home{ui::Key{ui::Code::home, ui::Mods{false, false, true}}};
 
-    ought(sheet.dispatch(home));
-    same(one->selection().text(), std::string{"abcd"});
-    same(one->selection().anchor(), std::size_t{4});
+    OUGHT(sheet.dispatch(home));
+    SAME(one->selection().text(), std::string{"abcd"});
+    SAME(one->selection().anchor(), std::size_t{4});
 }
 
 // --- Paging --------------------------------------------------------------------------------------
@@ -2819,16 +2819,16 @@ TRIAL("Editor: a page key moves the cursor by a screen") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
-    same(one->line(), std::size_t{3});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->line(), std::size_t{3});
 
-    ought(sheet.dispatch(down));
-    same(one->line(), std::size_t{6});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->line(), std::size_t{6});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(sheet.dispatch(up));
-    same(one->line(), std::size_t{3});
+    OUGHT(sheet.dispatch(up));
+    SAME(one->line(), std::size_t{3});
 }
 
 // Near the end of the document a page should reach the last line, not refuse to move.
@@ -2843,15 +2843,15 @@ TRIAL("Editor: a page near the end of the document stops on the last line") {
 
     one->cursor(24);
 
-    same(one->line(), std::size_t{8});
+    SAME(one->line(), std::size_t{8});
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
-    same(one->line(), std::size_t{9});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->line(), std::size_t{9});
 
-    ought(!sheet.dispatch(down));
-    same(one->line(), std::size_t{9});
+    OUGHT(!sheet.dispatch(down));
+    SAME(one->line(), std::size_t{9});
 }
 
 // A key the editor did not use is to go up; eating it blocks the ancestor.
@@ -2868,13 +2868,13 @@ TRIAL("Editor: an arrow with nowhere to go passes the key up") {
 
     ui::KeyEvent up{ui::Code::up};
 
-    ought(!sheet.dispatch(up));
+    OUGHT(!sheet.dispatch(up));
 
     one->cursor(5);
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(!sheet.dispatch(down));
+    OUGHT(!sheet.dispatch(down));
 }
 
 TRIAL("Editor: F keys go up") {
@@ -2886,7 +2886,7 @@ TRIAL("Editor: F keys go up") {
 
     ui::KeyEvent f2{ui::Code::f2};
 
-    ought(!sheet.dispatch(f2));
+    OUGHT(!sheet.dispatch(f2));
 }
 
 // --- After a change ------------------------------------------------------------------------------
@@ -2905,8 +2905,8 @@ TRIAL("Editor: the screen shows the content after a change") {
 
     const Snapshot made = sheet.render({{0, 0}, {20, 3}});
 
-    same(said(made, 0), std::string{"nowy pierwszy"});
-    same(said(made, 1), std::string{"drugi"});
+    SAME(said(made, 0), std::string{"nowy pierwszy"});
+    SAME(said(made, 1), std::string{"drugi"});
 }
 
 TRIAL("Editor: many changes in different places lose no content") {
@@ -2923,8 +2923,8 @@ TRIAL("Editor: many changes in different places lose no content") {
     one->cursor(*one->whole());
     one->insert("Z");
 
-    same(one->text(), std::string{"Yaaa\nXbbb\nccc\ndddZ"});
-    same(*one->lines(), std::size_t{4});
+    SAME(one->text(), std::string{"Yaaa\nXbbb\nccc\ndddZ"});
+    SAME(*one->lines(), std::size_t{4});
 }
 
 // A held Backspace and Delete across the boundary of typed text. The deleted characters lie partly
@@ -2941,31 +2941,31 @@ TRIAL("Editor: deleting across the boundary of typed text is undone in one step"
 
     for (int step = 0; step < 4; ++step) one->back_erase(1);
 
-    same(one->text(), std::string{"adef"});
+    SAME(one->text(), std::string{"adef"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcXYdef"});
+    SAME(one->text(), std::string{"abcXYdef"});
 
     one->redo();
 
-    same(one->text(), std::string{"adef"});
+    SAME(one->text(), std::string{"adef"});
 
     one->undo();
     one->cursor(2);
 
     for (int step = 0; step < 4; ++step) one->front_erase(1);
 
-    same(one->text(), std::string{"abef"});
+    SAME(one->text(), std::string{"abef"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcXYdef"});
+    SAME(one->text(), std::string{"abcXYdef"});
 
     one->undo();
 
-    same(one->text(), std::string{"abcdef"});
-    ought(!one->undoable());
+    SAME(one->text(), std::string{"abcdef"});
+    OUGHT(!one->undoable());
 }
 
 // Journal entries are scraps of the quilt. Random typing, deleting in both directions and blocks
@@ -3031,18 +3031,18 @@ TRIAL("Editor: random blocks and deletions are undone and redone") {
         for (std::size_t at = states.size() - 1; at > 0; --at) {
             one->undo();
 
-            same(one->text(), states[at - 1]);
+            SAME(one->text(), states[at - 1]);
         }
 
-        ought(!one->undoable());
+        OUGHT(!one->undoable());
 
         for (std::size_t at = 1; at < states.size(); ++at) {
             one->redo();
 
-            same(one->text(), states[at]);
+            SAME(one->text(), states[at]);
         }
 
-        ought(!one->redoable());
+        OUGHT(!one->redoable());
     }
 }
 
@@ -3065,29 +3065,29 @@ TRIAL("Editor: a large block is undone and redone many times") {
 
     one->cursor(was.size());
 
-    ought(block.copy());
+    OUGHT(block.copy());
 
     const std::string copied = one->text();
 
-    ought(block.erase());
+    OUGHT(block.erase());
 
     const std::string erased = one->text();
 
-    same(erased, was.substr(0, 10) + was.substr(was.size() - 10) + was.substr(10, was.size() - 20));
+    SAME(erased, was.substr(0, 10) + was.substr(was.size() - 10) + was.substr(10, was.size() - 20));
 
     for (int round = 0; round < 20; ++round) {
         one->undo();
 
-        same(one->text().size(), copied.size());
+        SAME(one->text().size(), copied.size());
 
         one->undo();
 
-        same(one->text(), was);
+        SAME(one->text(), was);
 
         one->redo();
         one->redo();
 
-        same(one->text(), erased);
+        SAME(one->text(), erased);
     }
 }
 
@@ -3103,26 +3103,26 @@ TRIAL("Editor: a deleted line end is a separate step") {
     one->back_erase(1);
     one->back_erase(1);
 
-    same(one->text(), std::string{"ab"});
+    SAME(one->text(), std::string{"ab"});
 
     one->undo();
 
-    same(one->text(), std::string{"ab\n"});
+    SAME(one->text(), std::string{"ab\n"});
 
     one->undo();
 
-    same(one->text(), std::string{"ab\ncd"});
+    SAME(one->text(), std::string{"ab\ncd"});
 
     one->cursor(0);
     one->front_erase(1);
     one->front_erase(1);
     one->front_erase(1);
 
-    same(one->text(), std::string{"cd"});
+    SAME(one->text(), std::string{"cd"});
 
     one->undo();
 
-    same(one->text(), std::string{"\ncd"});
+    SAME(one->text(), std::string{"\ncd"});
 }
 
 // --- Long lines and columns ----------------------------------------------------------------------
@@ -3143,16 +3143,16 @@ TRIAL("Editor: the vertical arrows keep the column, not the byte") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{5 + 5});
-    same(one->column(), std::size_t{3});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{5 + 5});
+    SAME(one->column(), std::size_t{3});
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{13 + 2});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{13 + 2});
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{16 + 3});
-    same(one->column(), std::size_t{3});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{16 + 3});
+    SAME(one->column(), std::size_t{3});
 }
 
 // The column of the cursor deep in a long line is counted from the remembered columns, and agrees
@@ -3173,7 +3173,7 @@ TRIAL("Editor: the column deep in a long line") {
         if (at % 997 == 0) {
             one->cursor(byte);
 
-            same(one->column(), column);
+            SAME(one->column(), column);
         }
 
         if (at % 7 == 0) {
@@ -3202,15 +3202,15 @@ TRIAL("Editor: without wrapping the view follows the cursor sideways") {
 
     const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
-    same(one->left(), std::size_t{91});
-    same(said(made, 0), std::string{"aaaaaaaaab"});
-    same(*one->caret(), (ui::Spot{9, 0}));
+    SAME(one->left(), std::size_t{91});
+    SAME(said(made, 0), std::string{"aaaaaaaaab"});
+    SAME(*one->caret(), (ui::Spot{9, 0}));
 
     one->cursor(0);
 
     (void)sheet.render({{0, 0}, {10, 3}});
 
-    same(one->left(), std::size_t{0});
+    SAME(one->left(), std::size_t{0});
 }
 
 // A line longer than the search windows: a hit past them is found at its byte, a hit lying across
@@ -3225,21 +3225,21 @@ TRIAL("Editor: searching a line longer than the search windows") {
 
     const Comb plain{"igla", Sift{false, false, false}};
 
-    same(one->find(plain, 0, false)->from, std::size_t{64 * 1024 - 2});
-    same(one->find(plain, 64 * 1024, false)->from, text.size() - 5);
-    same(one->find(plain, text.size(), true)->from, text.size() - 5);
+    SAME(one->find(plain, 0, false)->from, std::size_t{64 * 1024 - 2});
+    SAME(one->find(plain, 64 * 1024, false)->from, text.size() - 5);
+    SAME(one->find(plain, text.size(), true)->from, text.size() - 5);
 
     const Comb pattern{"ig.a", Sift{true, false, false}};
 
-    same(one->find(pattern, 64 * 1024, false)->from, text.size() - 5);
+    SAME(one->find(pattern, 64 * 1024, false)->from, text.size() - 5);
 
     const Comb end{"x$", Sift{true, false, false}};
 
-    ought(!one->find(end, 0, false).has_value());
+    OUGHT(!one->find(end, 0, false).has_value());
 
     const Comb last{"b$", Sift{true, false, false}};
 
-    same(one->find(last, 0, false)->from, text.size() - 1);
+    SAME(one->find(last, 0, false)->from, text.size() - 1);
 }
 
 // "Replace all" in a long line finds every hit exactly once, those across window boundaries
@@ -3255,9 +3255,9 @@ TRIAL("Editor: replacing all in a long line takes every hit once") {
 
     const Comb how{"abc", Sift{false, false, false}};
 
-    same(one->replace_all(how, "d"), std::size_t{3000});
-    same(one->text().size(), std::size_t{3000 * 98});
-    ought(one->text().find("abc") == std::string::npos);
+    SAME(one->replace_all(how, "d"), std::size_t{3000});
+    SAME(one->text().size(), std::size_t{3000 * 98});
+    OUGHT(one->text().find("abc") == std::string::npos);
 }
 
 // With wrapping, the caret of a cursor in the second row of a line stands in that row, where the
@@ -3275,13 +3275,13 @@ TRIAL("Editor: the caret in a wrapped line stands in the row of its character") 
 
     (void)sheet.render({{0, 0}, {4, 3}});
 
-    same(*one->caret(), (ui::Spot{2, 1}));
+    SAME(*one->caret(), (ui::Spot{2, 1}));
 
     one->cursor(10);
 
     (void)sheet.render({{0, 0}, {4, 3}});
 
-    same(*one->caret(), (ui::Spot{2, 2}));
+    SAME(*one->caret(), (ui::Spot{2, 2}));
 }
 
 // With wrapping the vertical arrows go by screen rows: a wrapped line is walked row by row at the
@@ -3300,22 +3300,22 @@ TRIAL("Editor: with wrapping the arrows go by screen rows") {
     ui::KeyEvent down{ui::Code::down};
     ui::KeyEvent up{ui::Code::up};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{5});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{5});
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{9});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{9});
 
     ui::KeyEvent again{ui::Code::down};
 
-    ought(!sheet.dispatch(again));
-    same(one->cursor(), std::size_t{9});
+    OUGHT(!sheet.dispatch(again));
+    SAME(one->cursor(), std::size_t{9});
 
-    ought(sheet.dispatch(up));
-    same(one->cursor(), std::size_t{5});
+    OUGHT(sheet.dispatch(up));
+    SAME(one->cursor(), std::size_t{5});
 
-    ought(sheet.dispatch(up));
-    same(one->cursor(), std::size_t{1});
+    OUGHT(sheet.dispatch(up));
+    SAME(one->cursor(), std::size_t{1});
 }
 
 // A row that does not end its line ends where the next row starts, so a column past its end lands
@@ -3335,11 +3335,11 @@ TRIAL("Editor: past the end of a row that does not end its line the cursor stays
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{7});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{7});
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{12});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{12});
 }
 
 // A page key goes by the height of the screen in rows, also inside one long wrapped line.
@@ -3354,11 +3354,11 @@ TRIAL("Editor: a page goes by screen rows") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
-    same(one->cursor(), std::size_t{12});
+    OUGHT(sheet.dispatch(down));
+    SAME(one->cursor(), std::size_t{12});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(sheet.dispatch(up));
-    same(one->cursor(), std::size_t{0});
+    OUGHT(sheet.dispatch(up));
+    SAME(one->cursor(), std::size_t{0});
 }

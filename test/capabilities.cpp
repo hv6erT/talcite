@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -83,35 +83,35 @@ TRIAL("Capabilities: the questions end with a sentinel") {
 
     const std::string& asked = one.asked();
 
-    ought(!asked.empty());
-    ought(asked.rfind("\x1b[c") == asked.size() - 3);
+    OUGHT(!asked.empty());
+    OUGHT(asked.rfind("\x1b[c") == asked.size() - 3);
 }
 
 TRIAL("Capabilities: a modern terminal reports everything") {
     const Taped one{modern};
 
-    same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
-    same(static_cast<int>(one.screen()), static_cast<int>(Screen::apart));
-    ought(one.bracketed_paste());
-    ought(one.focus_events());
-    ought(one.synchronized());
-    same(static_cast<int>(one.shade()), static_cast<int>(Shade::dark));
-    same(one.version(), 280);
-    same(one.named(), std::string{"xterm"});
+    SAME(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
+    SAME(static_cast<int>(one.screen()), static_cast<int>(Screen::apart));
+    OUGHT(one.bracketed_paste());
+    OUGHT(one.focus_events());
+    OUGHT(one.synchronized());
+    SAME(static_cast<int>(one.shade()), static_cast<int>(Shade::dark));
+    SAME(one.version(), 280);
+    SAME(one.named(), std::string{"xterm"});
 }
 
 TRIAL("Capabilities: the width measurements come back in order") {
     const Taped one{modern};
 
-    same(one.wide(), 2);
-    same(one.varied(), 1);
-    same(one.joined(), 2);
+    SAME(one.wide(), 2);
+    SAME(one.varied(), 1);
+    SAME(one.joined(), 2);
 }
 
 TRIAL("Capabilities: XTGETTCAP raises color to full") {
     const Taped one{modern};
 
-    same(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
+    SAME(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
 }
 
 TRIAL("Capabilities: an unknown mode stays unknown") {
@@ -121,9 +121,9 @@ TRIAL("Capabilities: an unknown mode stays unknown") {
         "\x1b[?2026;0$y"
         "\x1b[?62;1c"};
 
-    same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::basic));
-    ought(!one.bracketed_paste());
-    ought(!one.synchronized());
+    SAME(static_cast<int>(one.mouse()), static_cast<int>(Mouse::basic));
+    OUGHT(!one.bracketed_paste());
+    OUGHT(!one.synchronized());
 }
 
 TRIAL("Capabilities: a light background is recognized") {
@@ -131,7 +131,7 @@ TRIAL("Capabilities: a light background is recognized") {
         "\x1b]11;rgb:ffff/ffff/ffff\x1b\\"
         "\x1b[?62;1c"};
 
-    same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
+    SAME(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
 TRIAL("Capabilities: the sentinel ends the wait at once") {
@@ -139,18 +139,18 @@ TRIAL("Capabilities: the sentinel ends the wait at once") {
 
     (void)one.colors();
 
-    same(one.rounds(), 1);
+    SAME(one.rounds(), 1);
 }
 
 TRIAL("Capabilities: a silent terminal stays at the floor") {
     const Taped one{mute()};
 
-    same(static_cast<int>(one.screen()), static_cast<int>(Screen::older));
-    ought(!one.bracketed_paste());
-    ought(!one.synchronized());
-    same(one.wide(), 0);
-    same(one.varied(), 0);
-    same(one.joined(), 0);
+    SAME(static_cast<int>(one.screen()), static_cast<int>(Screen::older));
+    OUGHT(!one.bracketed_paste());
+    OUGHT(!one.synchronized());
+    SAME(one.wide(), 0);
+    SAME(one.varied(), 0);
+    SAME(one.joined(), 0);
 }
 
 TRIAL("Capabilities: without a terminal not a single byte is sent") {
@@ -158,7 +158,7 @@ TRIAL("Capabilities: without a terminal not a single byte is sent") {
 
     (void)one.colors();
 
-    ought(one.asked().empty());
+    OUGHT(one.asked().empty());
 }
 
 TRIAL("Capabilities: the probe runs once, however many questions there are") {
@@ -169,7 +169,7 @@ TRIAL("Capabilities: the probe runs once, however many questions there are") {
     (void)one.bracketed_paste();
     (void)one.wide();
 
-    same(one.rounds(), 1);
+    SAME(one.rounds(), 1);
 }
 
 TRIAL("Capabilities: other bytes are not lost") {
@@ -179,16 +179,16 @@ TRIAL("Capabilities: other bytes are not lost") {
         "q"
         "\x1b[?62;1c"};
 
-    ought(one.bracketed_paste());
-    same(one.rest(), std::string{"abcq"});
+    OUGHT(one.bracketed_paste());
+    SAME(one.rest(), std::string{"abcq"});
 }
 
 TRIAL("Capabilities: a fragmented answer is put back together") {
     const Taped one{modern, 3};
 
-    same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
-    ought(one.bracketed_paste());
-    same(one.wide(), 2);
+    SAME(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
+    OUGHT(one.bracketed_paste());
+    SAME(one.wide(), 2);
 }
 
 TRIAL("Capabilities: the short form of the background color works too") {
@@ -196,7 +196,7 @@ TRIAL("Capabilities: the short form of the background color works too") {
         "\x1b]11;rgb:f/f/f\x1b\\"
         "\x1b[?62;1c"};
 
-    same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
+    SAME(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
 TRIAL("Capabilities: pure blue is a dark background, though its component is high") {
@@ -204,7 +204,7 @@ TRIAL("Capabilities: pure blue is a dark background, though its component is hig
         "\x1b]11;rgb:0000/0000/ffff\x1b\\"
         "\x1b[?62;1c"};
 
-    same(static_cast<int>(one.shade()), static_cast<int>(Shade::dark));
+    SAME(static_cast<int>(one.shade()), static_cast<int>(Shade::dark));
 }
 
 TRIAL("Capabilities: a background color ended with BEL counts too") {
@@ -212,7 +212,7 @@ TRIAL("Capabilities: a background color ended with BEL counts too") {
         "\x1b]11;rgb:ffff/ffff/ffff\x07"
         "\x1b[?62;1c"};
 
-    same(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
+    SAME(static_cast<int>(one.shade()), static_cast<int>(Shade::light));
 }
 
 // A tail that is unfinished when the probe ends may just as well be the start of a pressed key.
@@ -223,16 +223,16 @@ TRIAL("Capabilities: an unfinished tail is not lost") {
         "\x1b[?62;1c"
         "\x1b[A"};
 
-    ought(one.bracketed_paste());
-    same(one.rest(), std::string{"\x1b[A"});
+    OUGHT(one.bracketed_paste());
+    SAME(one.rest(), std::string{"\x1b[A"});
 }
 
 TRIAL("Capabilities: tmux and screen are recognized by their family") {
     const Taped one{"\x1b[>84;0;0c\x1b[?62;1c"};
     const Taped two{"\x1b[>83;40500;0c\x1b[?62;1c"};
 
-    same(one.named(), std::string{"tmux"});
-    same(two.named(), std::string{"screen"});
+    SAME(one.named(), std::string{"tmux"});
+    SAME(two.named(), std::string{"screen"});
 }
 
 TRIAL("Capabilities: keys pressed during startup are not lost") {
@@ -242,8 +242,8 @@ TRIAL("Capabilities: keys pressed during startup are not lost") {
         "\x1b[?62;1c"
         "q"};
 
-    ought(one.bracketed_paste());
-    same(one.rest(), std::string{"\x1b[A" "q"});
+    OUGHT(one.bracketed_paste());
+    SAME(one.rest(), std::string{"\x1b[A" "q"});
 }
 
 // The probe reads the answers with the decoder's own syntax and hands every other token back as
@@ -261,9 +261,9 @@ TRIAL("Capabilities: keys of every form come back as they came") {
         "\x1b[?62;1c"
         "\x1b[1;5"};
 
-    same(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
-    same(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
-    same(one.rest(), std::string{"\x1bx" "ł" "\x1b[200~wklej\x1b[201~" "\x1bOP" "\x1b[<0;3;4M" "\x1b[1;5"});
+    SAME(static_cast<int>(one.mouse()), static_cast<int>(Mouse::sgr));
+    SAME(static_cast<int>(one.colors()), static_cast<int>(Colors::rgb));
+    SAME(one.rest(), std::string{"\x1bx" "ł" "\x1b[200~wklej\x1b[201~" "\x1bOP" "\x1b[<0;3;4M" "\x1b[1;5"});
 }
 
 TRIAL("Capabilities: an unknown OSC answer also comes back whole") {
@@ -271,7 +271,7 @@ TRIAL("Capabilities: an unknown OSC answer also comes back whole") {
         "\x1b]10;rgb:1111/1111/1111\x1b\\"
         "\x1b[?62;1c"};
 
-    same(one.rest(), std::string{"\x1b]10;rgb:1111/1111/1111\x1b\\"});
+    SAME(one.rest(), std::string{"\x1b]10;rgb:1111/1111/1111\x1b\\"});
 }
 
 // The floor reads the environment from the console, so the trial sets it on the fake instead of
@@ -285,7 +285,7 @@ TRIAL("Capabilities: NO_COLOR turns color off despite the terminal's answer") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::mono));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::mono));
 }
 
 TRIAL("Capabilities: COLORTERM raises to the full palette") {
@@ -296,7 +296,7 @@ TRIAL("Capabilities: COLORTERM raises to the full palette") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
 TRIAL("Capabilities: TERM with 256 gives the indexed palette") {
@@ -306,7 +306,7 @@ TRIAL("Capabilities: TERM with 256 gives the indexed palette") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
 }
 
 TRIAL("Capabilities: TERM dumb means nothing") {
@@ -316,10 +316,10 @@ TRIAL("Capabilities: TERM dumb means nothing") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::mono));
-    same(static_cast<int>(told.screen()), static_cast<int>(Screen::none));
-    same(static_cast<int>(told.mouse()), static_cast<int>(Mouse::none));
-    ought(!told.titles());
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::mono));
+    SAME(static_cast<int>(told.screen()), static_cast<int>(Screen::none));
+    SAME(static_cast<int>(told.mouse()), static_cast<int>(Mouse::none));
+    OUGHT(!told.titles());
 }
 
 // Hyperlinks have no question a terminal answers, so the floor decides: every terminal that skips an
@@ -337,30 +337,30 @@ TRIAL("Capabilities: hyperlinks wherever an unknown OSC is skipped, not on the L
 
     line->environment["TERM"] = "xterm-256color";
 
-    ought(Taped{line}.links());
+    OUGHT(Taped{line}.links());
 
     auto kernel = mute(sequences);
 
     kernel->environment["TERM"] = "linux";
 
 #ifdef _WIN32
-    ought(Taped{kernel}.links());
+    OUGHT(Taped{kernel}.links());
 #else
-    ought(!Taped{kernel}.links());
+    OUGHT(!Taped{kernel}.links());
 #endif
 
     auto dumb = mute(sequences);
 
     dumb->environment["TERM"] = "dumb";
 
-    ought(!Taped{dumb}.links());
+    OUGHT(!Taped{dumb}.links());
 
 #ifdef _WIN32
     auto old = mute(false);
 
     old->environment["TERM"] = "xterm-256color";
 
-    ought(!Taped{old}.links());
+    OUGHT(!Taped{old}.links());
 #endif
 }
 
@@ -375,7 +375,7 @@ TRIAL("Capabilities: a plain TERM with a console without sequences gives sixteen
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::ansi));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::ansi));
 }
 
 TRIAL("Capabilities: a plain TERM with a console with sequences gives the full palette") {
@@ -385,7 +385,7 @@ TRIAL("Capabilities: a plain TERM with a console with sequences gives the full p
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
 TRIAL("Capabilities: COLORTERM 24bit also raises to the full palette") {
@@ -395,7 +395,7 @@ TRIAL("Capabilities: COLORTERM 24bit also raises to the full palette") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
 // Windows Terminal sets neither COLORTERM nor TERM, but it has the full palette and announces
@@ -408,7 +408,7 @@ TRIAL("Capabilities: WT_SESSION gives the full palette without TERM") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::rgb));
 }
 
 // The NO_COLOR convention says "present and not empty". An empty variable turns nothing off.
@@ -419,7 +419,7 @@ TRIAL("Capabilities: an empty NO_COLOR does not turn color off") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
 }
 
 TRIAL("Capabilities: KITTY_WINDOW_ID guesses kitty images without a probe") {
@@ -429,7 +429,7 @@ TRIAL("Capabilities: KITTY_WINDOW_ID guesses kitty images without a probe") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.graphics()), static_cast<int>(Graphics::kitty));
+    SAME(static_cast<int>(told.graphics()), static_cast<int>(Graphics::kitty));
 }
 
 TRIAL("Capabilities: the name comes from TERM_PROGRAM, and without it from TERM") {
@@ -441,8 +441,8 @@ TRIAL("Capabilities: the name comes from TERM_PROGRAM, and without it from TERM"
     const Taped first{one};
     const Taped second{two};
 
-    same(first.named(), std::string{"WezTerm"});
-    same(second.named(), std::string{"xterm-256color"});
+    SAME(first.named(), std::string{"WezTerm"});
+    SAME(second.named(), std::string{"xterm-256color"});
 }
 
 // On Windows the floor always assumes unicode, so the variables decide only on POSIX.
@@ -459,15 +459,15 @@ TRIAL("Capabilities: LANG, LC_ALL or LC_CTYPE decide unicode") {
 
 #ifdef _WIN32
 
-    ought(one.unicode());
+    OUGHT(one.unicode());
 
 #else
 
-    ought(!one.unicode());
+    OUGHT(!one.unicode());
 
 #endif
 
-    ought(two.unicode());
+    OUGHT(two.unicode());
 }
 
 TRIAL("Capabilities: the probe runs in raw mode and leaves it afterwards") {
@@ -475,8 +475,8 @@ TRIAL("Capabilities: the probe runs in raw mode and leaves it afterwards") {
 
     (void)one.colors();
 
-    same(one.terminal().entered, 1);
-    same(one.terminal().depth, 0);
+    SAME(one.terminal().entered, 1);
+    SAME(one.terminal().depth, 0);
 }
 
 TRIAL("Capabilities: without a terminal there is no raw mode") {
@@ -484,7 +484,7 @@ TRIAL("Capabilities: without a terminal there is no raw mode") {
 
     (void)one.colors();
 
-    same(one.terminal().entered, 0);
+    SAME(one.terminal().entered, 0);
 }
 
 // --- Images -------------------------------------------------------------------------------------
@@ -521,13 +521,13 @@ const char* const drawing = "\x1b[?62;1;2;4;6;22c";
 TRIAL("Capabilities: sixel is recognized from the primary DA") {
     const Taped one{taped("21211", drawing)};
 
-    same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::sixel));
+    SAME(static_cast<int>(one.graphics()), static_cast<int>(Graphics::sixel));
 }
 
 TRIAL("Capabilities: without a 4 in DA there is no sixel") {
     const Taped one{taped("21211", plain)};
 
-    same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::none));
+    SAME(static_cast<int>(one.graphics()), static_cast<int>(Graphics::none));
 }
 
 // tmux from 3.4 on answers with a 4, but it loses images and draws them into other panes, so
@@ -542,14 +542,14 @@ TRIAL("Capabilities: in tmux and in screen a 4 in DA gives no sixel") {
 
         const Taped one{line};
 
-        same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::none));
+        SAME(static_cast<int>(one.graphics()), static_cast<int>(Graphics::none));
     }
 
     auto line = faking::terminal(taped("21211", drawing));
 
     line->environment["TERM"] = "tmux-256color";
 
-    same(static_cast<int>(Taped{line}.graphics()), static_cast<int>(Graphics::none));
+    SAME(static_cast<int>(Taped{line}.graphics()), static_cast<int>(Graphics::none));
 }
 
 // Kitty is better than sixel (full color instead of a palette), so when a terminal can do both,
@@ -557,21 +557,21 @@ TRIAL("Capabilities: in tmux and in screen a 4 in DA gives no sixel") {
 TRIAL("Capabilities: kitty wins over sixel") {
     const Taped one{taped("21211", drawing, "\x1b_Gi=31;OK\x1b\\")};
 
-    same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
+    SAME(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
 }
 
 TRIAL("Capabilities: the kitty answer does not come back as pressed keys") {
     const Taped one{taped("21211", plain, "\x1b_Gi=31;OK\x1b\\")};
 
-    same(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
-    same(one.rest(), std::string{});
+    SAME(static_cast<int>(one.graphics()), static_cast<int>(Graphics::kitty));
+    SAME(one.rest(), std::string{});
 }
 
 TRIAL("Capabilities: the cell size comes from 16t") {
     const Taped one{taped("21211", plain, "\x1b[6;20;10t")};
 
-    same(one.cell().wide, 10);
-    same(one.cell().high, 20);
+    SAME(one.cell().wide, 10);
+    SAME(one.cell().high, 20);
 }
 
 // Zero means "unknown", not "zero pixels", and the caller is entitled to tell them apart, because
@@ -579,14 +579,14 @@ TRIAL("Capabilities: the cell size comes from 16t") {
 TRIAL("Capabilities: an unknown cell size is zero") {
     const Taped one{taped("21211", plain)};
 
-    same(one.cell().wide, 0);
-    same(one.cell().high, 0);
+    SAME(one.cell().wide, 0);
+    SAME(one.cell().high, 0);
 }
 
 TRIAL("Capabilities: another window report is not the cell size") {
     const Taped one{taped("21211", plain, "\x1b[8;24;80t")};
 
-    same(one.cell().wide, 0);
+    SAME(one.cell().wide, 0);
 }
 
 // --- Block characters ---------------------------------------------------------------------------
@@ -599,19 +599,19 @@ TRIAL("Capabilities: another window report is not the cell size") {
 TRIAL("Blocks: both characters one cell wide raise the ceiling to octants") {
     const Taped one{taped("21211", plain)};
 
-    same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
+    SAME(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
 }
 
 TRIAL("Blocks: a misaligned sextant lowers the ceiling to block characters") {
     const Taped one{taped("21221", plain)};
 
-    same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::basic));
+    SAME(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::basic));
 }
 
 TRIAL("Blocks: a misaligned octant lowers the ceiling to sextants") {
     const Taped one{taped("21212", plain)};
 
-    same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::sextants));
+    SAME(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::sextants));
 }
 
 // A silent terminal has disproved nothing, so the ceiling stays high. No measurement is not the
@@ -619,7 +619,7 @@ TRIAL("Blocks: a misaligned octant lowers the ceiling to sextants") {
 TRIAL("Blocks: without a measurement the ceiling stays highest") {
     const Taped one{mute()};
 
-    same(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
+    SAME(static_cast<int>(one.blocks()), static_cast<int>(ui::Blocks::octants));
 }
 
 TRIAL("Capabilities: the probe asks for the cell and for kitty, and the sentinel is still last") {
@@ -629,9 +629,9 @@ TRIAL("Capabilities: the probe asks for the cell and for kitty, and the sentinel
 
     const std::string& asked = one.asked();
 
-    ought(asked.find("\x1b[16t") != std::string::npos);
-    ought(asked.find("\x1b_Gi=31") != std::string::npos);
-    ought(asked.rfind("\x1b[c") == asked.size() - 3);
+    OUGHT(asked.find("\x1b[16t") != std::string::npos);
+    OUGHT(asked.find("\x1b_Gi=31") != std::string::npos);
+    OUGHT(asked.rfind("\x1b[c") == asked.size() - 3);
 }
 
 
@@ -648,9 +648,9 @@ TRIAL("Capabilities: in tmux the outer terminal's variables guess nothing") {
 
     const Taped told{line};
 
-    same(static_cast<int>(told.graphics()), static_cast<int>(Graphics::none));
-    same(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
-    same(told.named(), std::string{"tmux-256color"});
+    SAME(static_cast<int>(told.graphics()), static_cast<int>(Graphics::none));
+    SAME(static_cast<int>(told.colors()), static_cast<int>(Colors::palette));
+    SAME(told.named(), std::string{"tmux-256color"});
 
     // screen and tmux recognized in other ways: by screen's variable, by TERM alone.
     for (const auto& [name, value] : std::vector<std::pair<std::string, std::string>>{
@@ -666,8 +666,8 @@ TRIAL("Capabilities: in tmux the outer terminal's variables guess nothing") {
 
         const Taped muxed{other};
 
-        same(static_cast<int>(muxed.graphics()), static_cast<int>(Graphics::none));
-        ought(muxed.named() != "WezTerm");
+        SAME(static_cast<int>(muxed.graphics()), static_cast<int>(Graphics::none));
+        OUGHT(muxed.named() != "WezTerm");
     }
 
     // The same set without tmux: the variables speak again.
@@ -678,8 +678,8 @@ TRIAL("Capabilities: in tmux the outer terminal's variables guess nothing") {
 
     const Taped bare{plain};
 
-    same(static_cast<int>(bare.graphics()), static_cast<int>(Graphics::kitty));
-    same(bare.named(), std::string{"WezTerm"});
+    SAME(static_cast<int>(bare.graphics()), static_cast<int>(Graphics::kitty));
+    SAME(bare.named(), std::string{"WezTerm"});
 }
 
 // Over SSH the probe waits longer, because the answer comes back after a full network round trip.
@@ -695,11 +695,11 @@ TRIAL("Capabilities: over SSH the probe waits longer") {
     (void)here.colors();
     (void)there.colors();
 
-    ought(!near->patience.empty() && near->patience.front().has_value());
-    ought(!far->patience.empty() && far->patience.front().has_value());
+    OUGHT(!near->patience.empty() && near->patience.front().has_value());
+    OUGHT(!far->patience.empty() && far->patience.front().has_value());
 
-    ought(*near->patience.front() <= std::chrono::milliseconds{250});
-    ought(*far->patience.front() > std::chrono::milliseconds{900});
+    OUGHT(*near->patience.front() <= std::chrono::milliseconds{250});
+    OUGHT(*far->patience.front() > std::chrono::milliseconds{900});
 
     auto tty = mute();
 
@@ -709,6 +709,6 @@ TRIAL("Capabilities: over SSH the probe waits longer") {
 
     (void)through.colors();
 
-    ought(!tty->patience.empty() && tty->patience.front().has_value() &&
+    OUGHT(!tty->patience.empty() && tty->patience.front().has_value() &&
           *tty->patience.front() > std::chrono::milliseconds{900});
 }

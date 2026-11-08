@@ -34,6 +34,8 @@ public:
 
     bool turn();
 
+    bool turn(std::chrono::steady_clock::time_point latest);
+
     int run();
 
     void pause();

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -75,10 +75,10 @@ std::shared_ptr<ui::Table> shown(Sheet& sheet, std::size_t much) {
 TRIAL("Table: an empty one carries nothing") {
     const ui::Table one;
 
-    ought(!one.sourced());
-    same(one.rows(), std::size_t{0});
-    ought(!one.which().has_value());
-    same(one.first(), std::size_t{0});
+    OUGHT(!one.sourced());
+    SAME(one.rows(), std::size_t{0});
+    OUGHT(!one.which().has_value());
+    SAME(one.first(), std::size_t{0});
 }
 
 TRIAL("Table: once given a source it stands on the first row") {
@@ -86,10 +86,10 @@ TRIAL("Table: once given a source it stands on the first row") {
 
     const auto one = shown(sheet, 10);
 
-    ought(one->sourced());
-    same(one->rows(), std::size_t{10});
-    same(*one->which(), std::size_t{0});
-    same(one->first(), std::size_t{0});
+    OUGHT(one->sourced());
+    SAME(one->rows(), std::size_t{10});
+    SAME(*one->which(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 }
 
 TRIAL("Table: a source with no rows gives no current row") {
@@ -97,11 +97,11 @@ TRIAL("Table: a source with no rows gives no current row") {
 
     const auto one = shown(sheet, 0);
 
-    ought(!one->which().has_value());
+    OUGHT(!one->which().has_value());
 
     (void)sheet.render({{0, 0}, {30, 5}});
 
-    same(one->shown(), std::size_t{0});
+    SAME(one->shown(), std::size_t{0});
 }
 
 // --- Columns -------------------------------------------------------------------------------------
@@ -115,9 +115,9 @@ TRIAL("Table: a column with zero takes the rest of the width") {
 
     const Snapshot made = sheet.render({{0, 0}, {30, 4}});
 
-    same(said(made, 0), std::string{"Nazwa                  Rozmiar"});
-    same(said(made, 1), std::string{"plik0                        0"});
-    same(said(made, 2), std::string{"plik1                       10"});
+    SAME(said(made, 0), std::string{"Nazwa                  Rozmiar"});
+    SAME(said(made, 1), std::string{"plik0                        0"});
+    SAME(said(made, 2), std::string{"plik1                       10"});
 }
 
 TRIAL("Table: right alignment pads from the left") {
@@ -139,7 +139,7 @@ TRIAL("Table: right alignment pads from the left") {
 
     sheet.children().add(one);
 
-    same(said(sheet.render({{0, 0}, {6, 1}}), 0), std::string{"    ab"});
+    SAME(said(sheet.render({{0, 0}, {6, 1}}), 0), std::string{"    ab"});
 }
 
 // A window narrower than the sum of the columns clips from the right, since a panel does not scroll
@@ -149,7 +149,7 @@ TRIAL("Table: a narrower window gives the flexible column less") {
 
     const auto one = shown(sheet, 3);
 
-    same(said(sheet.render({{0, 0}, {14, 3}}), 1), std::string{"plik0        0"});
+    SAME(said(sheet.render({{0, 0}, {14, 3}}), 1), std::string{"plik0        0"});
 }
 
 // Flexible columns share the room by their weights: in twenty-six cells, one taken by the gap,
@@ -175,7 +175,7 @@ TRIAL("Table: flexible columns share the room by their weights") {
 
     weighed.children().add(one);
 
-    same(said(weighed.render({{0, 0}, {26, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJKLMNO"});
+    SAME(said(weighed.render({{0, 0}, {26, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJKLMNO"});
 
     Sheet even;
 
@@ -187,7 +187,7 @@ TRIAL("Table: flexible columns share the room by their weights") {
 
     even.children().add(other);
 
-    same(said(even.render({{0, 0}, {21, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJ"});
+    SAME(said(even.render({{0, 0}, {21, 1}}), 0), std::string{"abcdefghij ABCDEFGHIJ"});
 }
 
 // A fixed-width column that does not fit in the window by itself must not take everything: the
@@ -199,7 +199,7 @@ TRIAL("Table: the flexible column does not vanish in an extremely narrow window"
 
     const Snapshot made = sheet.render({{0, 0}, {8, 3}});
 
-    same(made.at({0, 1}).letter, U'p');
+    SAME(made.at({0, 1}).letter, U'p');
 }
 
 // A spanning cell takes the rest of its row, the gaps included, so a heading among the rows is not
@@ -231,8 +231,8 @@ TRIAL("Table: a spanning cell takes the rest of the row") {
 
     const Snapshot made = sheet.render({{0, 0}, {40, 2}});
 
-    same(said(made, 0), std::string{"    Uporządkowane i zatwierdzone: 12"});
-    same(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
+    SAME(said(made, 0), std::string{"    Uporządkowane i zatwierdzone: 12"});
+    SAME(said(made, 1), std::string{"[ ] Uporządkowane i z x"});
 }
 
 // A cell elides only when it asks: from the start it keeps the end of the text, a path's file name,
@@ -264,9 +264,9 @@ TRIAL("Table: a cell elides at the end it asks for, and only then") {
 
     const Snapshot made = sheet.render({{0, 0}, {19, 3}});
 
-    same(said(made, 0), std::string{"…uRay.en.srt a.srt"});
-    same(said(made, 1), std::string{"Alien…en.srt"});
-    same(said(made, 2), std::string{"Alien.1979.B"});
+    SAME(said(made, 0), std::string{"…uRay.en.srt a.srt"});
+    SAME(said(made, 1), std::string{"Alien…en.srt"});
+    SAME(said(made, 2), std::string{"Alien.1979.B"});
 }
 
 // A spanning cell reaches the edge of the table, also past columns that together are narrower than
@@ -292,7 +292,7 @@ TRIAL("Table: a spanning cell reaches the edge past narrow columns") {
 
     sheet.children().add(one);
 
-    same(said(sheet.render({{0, 0}, {30, 1}}), 0), std::string{"ab a heading that is long"});
+    SAME(said(sheet.render({{0, 0}, {30, 1}}), 0), std::string{"ab a heading that is long"});
 }
 
 TRIAL("Table: without a heading the first row stands at the top") {
@@ -302,7 +302,7 @@ TRIAL("Table: without a heading the first row stands at the top") {
 
     one->heading(false);
 
-    same(said(sheet.render({{0, 0}, {30, 3}}), 0), std::string{"plik0                        0"});
+    SAME(said(sheet.render({{0, 0}, {30, 3}}), 0), std::string{"plik0                        0"});
 }
 
 // --- Movement ------------------------------------------------------------------------------------
@@ -315,19 +315,19 @@ TRIAL("Table: a step down and up moves through the rows") {
     (void)sheet.render({{0, 0}, {30, 5}});
 
     one->step(1);
-    same(*one->which(), std::size_t{1});
+    SAME(*one->which(), std::size_t{1});
 
     one->step(3);
-    same(*one->which(), std::size_t{4});
+    SAME(*one->which(), std::size_t{4});
 
     one->step(-2);
-    same(*one->which(), std::size_t{2});
+    SAME(*one->which(), std::size_t{2});
 
     one->step(-100);
-    same(*one->which(), std::size_t{0});
+    SAME(*one->which(), std::size_t{0});
 
     one->step(100);
-    same(*one->which(), std::size_t{9});
+    SAME(*one->which(), std::size_t{9});
 }
 
 // The view follows the current row, not the other way round.
@@ -338,17 +338,17 @@ TRIAL("Table: going below the screen scrolls the view") {
 
     (void)sheet.render({{0, 0}, {30, 4}});
 
-    same(one->shown(), std::size_t{3});
+    SAME(one->shown(), std::size_t{3});
 
     one->step(2);
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     one->step(1);
-    same(one->first(), std::size_t{1});
+    SAME(one->first(), std::size_t{1});
 
     (void)sheet.render({{0, 0}, {30, 4}});
 
-    same(said(sheet.render({{0, 0}, {30, 4}}), 1), std::string{"plik1                       10"});
+    SAME(said(sheet.render({{0, 0}, {30, 4}}), 1), std::string{"plik1                       10"});
 }
 
 // A cursor put before the table knew its height: the first frame moves the view only as far as
@@ -364,8 +364,8 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         const Snapshot made = sheet.render({{0, 0}, {30, 6}});
 
-        same(one->first(), std::size_t{0});
-        same(said(made, 1), std::string{"plik0                        0"});
+        SAME(one->first(), std::size_t{0});
+        SAME(said(made, 1), std::string{"plik0                        0"});
     }
 
     {
@@ -377,8 +377,8 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         const Snapshot made = sheet.render({{0, 0}, {30, 4}});
 
-        same(one->first(), std::size_t{6});
-        same(said(made, 3), std::string{"plik8                       80"});
+        SAME(one->first(), std::size_t{6});
+        SAME(said(made, 3), std::string{"plik8                       80"});
     }
 
     // Rows that open above the cursor before the first frame: the view waits too.
@@ -392,8 +392,8 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         (void)sheet.render({{0, 0}, {30, 4}});
 
-        same(*one->which(), std::size_t{6});
-        same(one->first(), std::size_t{4});
+        SAME(*one->which(), std::size_t{6});
+        SAME(one->first(), std::size_t{4});
     }
 
     // A view asked for by name, then rows replaced before the first frame: the cursor stands above
@@ -408,8 +408,8 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         (void)sheet.render({{0, 0}, {30, 4}});
 
-        same(*one->which(), std::size_t{0});
-        same(one->first(), std::size_t{0});
+        SAME(*one->which(), std::size_t{0});
+        SAME(one->first(), std::size_t{0});
     }
 
     // A view asked for by name wins over one still waiting for the cursor.
@@ -423,7 +423,7 @@ TRIAL("Table: a cursor put before the first frame scrolls only as far as the fra
 
         (void)sheet.render({{0, 0}, {30, 4}});
 
-        same(one->first(), std::size_t{2});
+        SAME(one->first(), std::size_t{2});
     }
 }
 
@@ -436,8 +436,8 @@ TRIAL("Table: end stands on the last row") {
 
     one->end();
 
-    same(*one->which(), std::size_t{19});
-    same(one->first(), std::size_t{17});
+    SAME(*one->which(), std::size_t{19});
+    SAME(one->first(), std::size_t{17});
 }
 
 TRIAL("Table: a page moves by one screen") {
@@ -451,16 +451,16 @@ TRIAL("Table: a page moves by one screen") {
 
     ui::KeyEvent down{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
-    same(*one->which(), std::size_t{5});
+    OUGHT(sheet.dispatch(down));
+    SAME(*one->which(), std::size_t{5});
 
-    ought(sheet.dispatch(down));
-    same(*one->which(), std::size_t{10});
+    OUGHT(sheet.dispatch(down));
+    SAME(*one->which(), std::size_t{10});
 
     ui::KeyEvent up{ui::Code::pageup};
 
-    ought(sheet.dispatch(up));
-    same(*one->which(), std::size_t{5});
+    OUGHT(sheet.dispatch(up));
+    SAME(*one->which(), std::size_t{5});
 }
 
 // A table keeps its keys at its ends, as a list does: in a dialog, an arrow pressed once too often
@@ -477,8 +477,8 @@ TRIAL("Table: at the ends the keys stay with the table") {
     for (const ui::Code code : {ui::Code::up, ui::Code::pageup, ui::Code::home}) {
         ui::KeyEvent what{code};
 
-        ought(sheet.dispatch(what));
-        same(*one->which(), std::size_t{0});
+        OUGHT(sheet.dispatch(what));
+        SAME(*one->which(), std::size_t{0});
     }
 
     one->end();
@@ -486,8 +486,8 @@ TRIAL("Table: at the ends the keys stay with the table") {
     for (const ui::Code code : {ui::Code::down, ui::Code::pagedown, ui::Code::end}) {
         ui::KeyEvent what{code};
 
-        ought(sheet.dispatch(what));
-        same(*one->which(), std::size_t{2});
+        OUGHT(sheet.dispatch(what));
+        SAME(*one->which(), std::size_t{2});
     }
 }
 
@@ -501,10 +501,10 @@ TRIAL("Table: the wheel scrolls the view and leaves the row alone") {
 
     ui::WheelEvent what{{2, 2}, -1};
 
-    ought(sheet.dispatch(what));
+    OUGHT(sheet.dispatch(what));
 
-    same(one->first(), std::size_t{3});
-    same(*one->which(), std::size_t{0});
+    SAME(one->first(), std::size_t{3});
+    SAME(*one->which(), std::size_t{0});
 }
 
 TRIAL("Table: the wheel at the end of scrolling passes the event up") {
@@ -516,7 +516,7 @@ TRIAL("Table: the wheel at the end of scrolling passes the event up") {
 
     ui::WheelEvent up{{2, 2}, 1};
 
-    ought(!sheet.dispatch(up));
+    OUGHT(!sheet.dispatch(up));
 }
 
 TRIAL("Table: movement notifies through an event, not a callback") {
@@ -535,13 +535,13 @@ TRIAL("Table: movement notifies through an event, not a callback") {
     (void)sheet.render({{0, 0}, {30, 5}});
 
     one->step(1);
-    same(moves, 1);
+    SAME(moves, 1);
 
     one->step(0);
-    same(moves, 1);
+    SAME(moves, 1);
 
     one->first(3);
-    same(moves, 2);
+    SAME(moves, 2);
 }
 
 // The event says how the move came: the table's own keys, wheel and click by hand, a call from the
@@ -571,20 +571,20 @@ TRIAL("Table: a move says whether it came by hand") {
     ui::KeyEvent home{ui::Code::home};
     ui::KeyEvent page{ui::Code::pagedown};
 
-    ought(sheet.dispatch(down));
-    ought(sheet.dispatch(page));
-    ought(sheet.dispatch(end));
-    ought(sheet.dispatch(home));
+    OUGHT(sheet.dispatch(down));
+    OUGHT(sheet.dispatch(page));
+    OUGHT(sheet.dispatch(end));
+    OUGHT(sheet.dispatch(home));
 
     ui::WheelEvent wheel{{2, 2}, -1};
 
-    ought(sheet.dispatch(wheel));
+    OUGHT(sheet.dispatch(wheel));
 
     ui::ClickEvent click{{2, 3}, ui::Mouse::left, {}};
 
-    ought(sheet.dispatch(click));
+    OUGHT(sheet.dispatch(click));
 
-    same(heard, (std::vector<bool>{true, true, true, true, true, true}));
+    SAME(heard, (std::vector<bool>{true, true, true, true, true, true}));
 
     heard.clear();
 
@@ -594,13 +594,13 @@ TRIAL("Table: a move says whether it came by hand") {
     one->page(1);
     one->end();
 
-    same(heard, (std::vector<bool>{false, false, false, false, false}));
+    SAME(heard, (std::vector<bool>{false, false, false, false, false}));
 
     heard.clear();
 
     one->step(-1, ui::Moved::by_hand);
 
-    same(heard, (std::vector<bool>{true}));
+    SAME(heard, (std::vector<bool>{true}));
 }
 
 // --- Clicking ------------------------------------------------------------------------------------
@@ -614,8 +614,8 @@ TRIAL("Table: a click sets the current row below the heading") {
 
     ui::ClickEvent what{{4, 3}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(*one->which(), std::size_t{2});
+    OUGHT(sheet.dispatch(what));
+    SAME(*one->which(), std::size_t{2});
 }
 
 // A click on the heading itself is not a click on a row.
@@ -630,8 +630,8 @@ TRIAL("Table: a click on the heading does not move the row") {
 
     ui::ClickEvent what{{4, 0}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(*one->which(), std::size_t{4});
+    OUGHT(sheet.dispatch(what));
+    SAME(*one->which(), std::size_t{4});
 }
 
 TRIAL("Table: a click below the last row changes nothing") {
@@ -643,8 +643,8 @@ TRIAL("Table: a click below the last row changes nothing") {
 
     ui::ClickEvent what{{4, 6}, ui::Mouse::left};
 
-    ought(sheet.dispatch(what));
-    same(*one->which(), std::size_t{0});
+    OUGHT(sheet.dispatch(what));
+    SAME(*one->which(), std::size_t{0});
 }
 
 // A double click on a row makes it current and goes up the widget path; what it means is up to the
@@ -674,17 +674,17 @@ TRIAL("Table: a double click on a row goes up, on the heading and empty space it
 
     ui::DoubleClickEvent row{{4, 3}, ui::Mouse::left};
 
-    ought(sheet.dispatch(row));
-    same(*one->which(), std::size_t{2});
-    same(sheet.many, 1);
+    OUGHT(sheet.dispatch(row));
+    SAME(*one->which(), std::size_t{2});
+    SAME(sheet.many, 1);
 
     ui::DoubleClickEvent head{{4, 0}, ui::Mouse::left};
     ui::DoubleClickEvent below{{4, 6}, ui::Mouse::left};
 
-    ought(sheet.dispatch(head));
-    ought(sheet.dispatch(below));
-    same(sheet.many, 1);
-    same(*one->which(), std::size_t{2});
+    OUGHT(sheet.dispatch(head));
+    OUGHT(sheet.dispatch(below));
+    SAME(sheet.many, 1);
+    SAME(*one->which(), std::size_t{2});
 }
 
 // --- Selection -----------------------------------------------------------------------------------
@@ -694,23 +694,23 @@ TRIAL("Table: selection is something other than the current row") {
 
     const auto one = shown(sheet, 5);
 
-    ought(!one->chosen().contains(0));
+    OUGHT(!one->chosen().contains(0));
 
     one->chosen().add(2);
     one->chosen().add(4);
 
-    ought(one->chosen().contains(2));
-    ought(one->chosen().contains(4));
-    ought(!one->chosen().contains(3));
-    same(*one->which(), std::size_t{0});
+    OUGHT(one->chosen().contains(2));
+    OUGHT(one->chosen().contains(4));
+    OUGHT(!one->chosen().contains(3));
+    SAME(*one->which(), std::size_t{0});
 
     const std::vector<std::size_t> want{2, 4};
 
-    same(one->chosen().all(), want);
+    SAME(one->chosen().all(), want);
 
     one->chosen().clear();
 
-    ought(one->chosen().all().empty());
+    OUGHT(one->chosen().all().empty());
 }
 
 TRIAL("Table: a selection out of range waits, and drawing clips it") {
@@ -722,14 +722,14 @@ TRIAL("Table: a selection out of range waits, and drawing clips it") {
 
     // The set does not know the row count, so it remembers, and that is intended: the selection
     // survives until the table grows enough for that row to exist.
-    ought(one->chosen().contains(9));
+    OUGHT(one->chosen().contains(9));
 
     // The table clips on the next drawing, the same lazy way the history clips its list and a page
     // drops the cursor of the walk over tags.
     (void)sheet.render({{0, 0}, {30, 5}});
 
-    ought(!one->chosen().contains(9));
-    ought(one->chosen().all().empty());
+    OUGHT(!one->chosen().contains(9));
+    OUGHT(one->chosen().all().empty());
 }
 
 // The count of selected rows goes along with the bits: adding the same row twice and removing an
@@ -740,7 +740,7 @@ TRIAL("Table: the selected count keeps up with adding, removing and clipping") {
 
     const auto one = shown(sheet, 3);
 
-    ought(one->chosen().empty());
+    OUGHT(one->chosen().empty());
 
     one->chosen().add(1);
     one->chosen().add(1);
@@ -748,24 +748,24 @@ TRIAL("Table: the selected count keeps up with adding, removing and clipping") {
     one->chosen().add(7);
     one->chosen().add(9);
 
-    same(one->chosen().many(), std::size_t{4});
+    SAME(one->chosen().many(), std::size_t{4});
 
     one->chosen().remove(0);
     one->chosen().remove(20);
     one->chosen().remove(2);
     one->chosen().remove(2);
 
-    same(one->chosen().many(), std::size_t{3});
+    SAME(one->chosen().many(), std::size_t{3});
 
     (void)sheet.render({{0, 0}, {30, 5}});
 
-    same(one->chosen().many(), std::size_t{1});
-    ought(!one->chosen().empty());
+    SAME(one->chosen().many(), std::size_t{1});
+    OUGHT(!one->chosen().empty());
 
     one->chosen().clear();
 
-    same(one->chosen().many(), std::size_t{0});
-    ought(one->chosen().empty());
+    SAME(one->chosen().many(), std::size_t{0});
+    OUGHT(one->chosen().empty());
 }
 
 // The table does not take Insert. Marking with a step down would be the only place in the library
@@ -782,10 +782,10 @@ TRIAL("Table: Insert passes up and leaves the selection alone") {
 
     ui::KeyEvent what{ui::Code::insert};
 
-    ought(!sheet.dispatch(what));
+    OUGHT(!sheet.dispatch(what));
 
-    ought(!one->chosen().contains(0));
-    same(*one->which(), std::size_t{0});
+    OUGHT(!one->chosen().contains(0));
+    SAME(*one->which(), std::size_t{0});
 }
 
 // Whoever wants that habit from file panels hangs a handler and calls `mark` themselves, and then it
@@ -822,10 +822,10 @@ TRIAL("Table: marking with Insert can be added through a handler") {
 
     ui::KeyEvent what{ui::Code::insert};
 
-    ought(sheet.dispatch(what));
+    OUGHT(sheet.dispatch(what));
 
-    ought(one->chosen().contains(0));
-    same(*one->which(), std::size_t{1});
+    OUGHT(one->chosen().contains(0));
+    SAME(*one->which(), std::size_t{1});
 }
 
 // --- Roles ---------------------------------------------------------------------------------------
@@ -840,11 +840,11 @@ TRIAL("Table: the current, selected and plain rows have different roles") {
     const Snapshot made = sheet.render({{0, 0}, {30, 5}});
 
     // The heading and the current row in reverse video, the selected row bold, the rest plain.
-    ought(made.at({0, 0}).style.reverse);
-    ought(made.at({0, 1}).style.reverse);
-    ought(made.at({0, 2}).style.bold);
-    ought(!made.at({0, 2}).style.reverse);
-    ought(!made.at({0, 3}).style.bold);
+    OUGHT(made.at({0, 0}).style.reverse);
+    OUGHT(made.at({0, 1}).style.reverse);
+    OUGHT(made.at({0, 2}).style.bold);
+    OUGHT(!made.at({0, 2}).style.reverse);
+    OUGHT(!made.at({0, 3}).style.bold);
 }
 
 TRIAL("Table: a cell's role is laid over the row's role") {
@@ -870,10 +870,10 @@ TRIAL("Table: a cell's role is laid over the row's role") {
     const Snapshot made = sheet.render({{0, 0}, {9, 1}});
 
     // The row is current, so it is in reverse video; the first cell adds bold to that.
-    ought(made.at({0, 0}).style.reverse);
-    ought(made.at({0, 0}).style.bold);
-    ought(made.at({5, 0}).style.reverse);
-    ought(!made.at({5, 0}).style.bold);
+    OUGHT(made.at({0, 0}).style.reverse);
+    OUGHT(made.at({0, 0}).style.bold);
+    OUGHT(made.at({5, 0}).style.reverse);
+    OUGHT(!made.at({5, 0}).style.bold);
 }
 
 // A cell's marks lay their roles over stretches of its text, as a label's do: a meter of five
@@ -917,20 +917,20 @@ TRIAL("Table: a cell's marks lay roles over stretches of its text") {
 
     const Snapshot made = sheet.render({{0, 0}, {19, 1}});
 
-    same(said(made, 0), std::string{"\u25AC\u25AC\u25AC\u25AC\u25AC \u2026fghij     ok"});
+    SAME(said(made, 0), std::string{"\u25AC\u25AC\u25AC\u25AC\u25AC \u2026fghij     ok"});
 
-    for (int x = 0; x < 3; ++x) ought(made.at({x, 0}).style.foreground == lit.foreground);
-    for (int x = 3; x < 5; ++x) ought(made.at({x, 0}).style.foreground == dim.foreground);
-    for (int x = 0; x < 5; ++x) ought(made.at({x, 0}).style.reverse);
+    for (int x = 0; x < 3; ++x) OUGHT(made.at({x, 0}).style.foreground == lit.foreground);
+    for (int x = 3; x < 5; ++x) OUGHT(made.at({x, 0}).style.foreground == dim.foreground);
+    for (int x = 0; x < 5; ++x) OUGHT(made.at({x, 0}).style.reverse);
 
-    ought(made.at({6, 0}).style.foreground != lit.foreground);
-    ought(made.at({7, 0}).style.foreground != lit.foreground);
-    ought(made.at({8, 0}).style.foreground != dim.foreground);
-    for (int x = 9; x < 12; ++x) ought(made.at({x, 0}).style.foreground == dim.foreground);
+    OUGHT(made.at({6, 0}).style.foreground != lit.foreground);
+    OUGHT(made.at({7, 0}).style.foreground != lit.foreground);
+    OUGHT(made.at({8, 0}).style.foreground != dim.foreground);
+    for (int x = 9; x < 12; ++x) OUGHT(made.at({x, 0}).style.foreground == dim.foreground);
 
-    ought(made.at({16, 0}).style.foreground != lit.foreground);
-    ought(made.at({17, 0}).style.foreground == lit.foreground);
-    ought(made.at({18, 0}).style.foreground == lit.foreground);
+    OUGHT(made.at({16, 0}).style.foreground != lit.foreground);
+    OUGHT(made.at({17, 0}).style.foreground == lit.foreground);
+    OUGHT(made.at({18, 0}).style.foreground == lit.foreground);
 }
 
 // --- Refreshing ----------------------------------------------------------------------------------
@@ -968,13 +968,13 @@ TRIAL("Table: refresh asks the source again and keeps the selection") {
 
     const Snapshot made = sheet.render({{0, 0}, {10, 1}});
 
-    ought(one->chosen().contains(0));
+    OUGHT(one->chosen().contains(0));
 
     std::string got;
 
     for (int x = 0; x < 4; ++x) utf8::encode(made.at({x, 0}).letter, got);
 
-    same(got, std::string{"nowe"});
+    SAME(got, std::string{"nowe"});
 }
 
 // Giving a new source starts from zero: a new document means a new selection and a new position.
@@ -990,10 +990,10 @@ TRIAL("Table: a new source resets the position and the selection") {
 
     one->source(numbered(4), 4);
 
-    same(*one->which(), std::size_t{0});
-    same(one->first(), std::size_t{0});
-    ought(one->chosen().all().empty());
-    same(one->rows(), std::size_t{4});
+    SAME(*one->which(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
+    OUGHT(one->chosen().all().empty());
+    SAME(one->rows(), std::size_t{4});
 }
 
 // --- Rows replaced in the middle -----------------------------------------------------------------
@@ -1059,26 +1059,26 @@ TRIAL("Table: rows replaced around the cursor keep its row and the view") {
     names->insert(names->begin() + 7, {"a", "b", "c"});
     one->changed(7, 0, 3);
 
-    same(*one->which(), std::size_t{6});
-    same(one->first(), std::size_t{4});
-    same(one->rows(), std::size_t{23});
+    SAME(*one->which(), std::size_t{6});
+    SAME(one->first(), std::size_t{4});
+    SAME(one->rows(), std::size_t{23});
 
     Snapshot made = sheet.render({{0, 0}, {10, 5}});
 
-    same(said(made, 2), std::string{"r6"});
-    same(said(made, 3), std::string{"a"});
+    SAME(said(made, 2), std::string{"r6"});
+    SAME(said(made, 3), std::string{"a"});
 
     // r2 and r3 fold away above the view: everything below moves up by two, with the cursor.
     names->erase(names->begin() + 2, names->begin() + 4);
     one->changed(2, 2, 0);
 
-    same(*one->which(), std::size_t{4});
-    same(one->first(), std::size_t{2});
+    SAME(*one->which(), std::size_t{4});
+    SAME(one->first(), std::size_t{2});
 
     made = sheet.render({{0, 0}, {10, 5}});
 
-    same(said(made, 2), std::string{"r6"});
-    same(moves, 0);
+    SAME(said(made, 2), std::string{"r6"});
+    SAME(moves, 0);
 }
 
 // A cursor on a row that went away stands where the rows were, and that is a move; rows pushed
@@ -1104,9 +1104,9 @@ TRIAL("Table: a cursor on replaced rows moves to their place, and stays in view"
 
     one->changed(2, 3, 1);
 
-    same(*one->which(), std::size_t{2});
-    same(one->rows(), std::size_t{8});
-    same(moves, 1);
+    SAME(*one->which(), std::size_t{2});
+    SAME(one->rows(), std::size_t{8});
+    SAME(moves, 1);
 
     // Six rows open above the cursor at the top of the view: the cursor goes down with its row, and
     // the view follows it so it is still seen.
@@ -1116,22 +1116,22 @@ TRIAL("Table: a cursor on replaced rows moves to their place, and stays in view"
 
     one->changed(1, 0, 6);
 
-    same(*one->which(), std::size_t{7});
-    same(one->first(), std::size_t{4});
-    same(moves, 0);
+    SAME(*one->which(), std::size_t{7});
+    SAME(one->first(), std::size_t{4});
+    SAME(moves, 0);
 
     // Everything goes: no current row. Rows that come again bring the cursor to the first.
     one->changed(0, 14, 0);
 
-    ought(!one->which().has_value());
-    same(one->rows(), std::size_t{0});
+    OUGHT(!one->which().has_value());
+    SAME(one->rows(), std::size_t{0});
 
     moves = 0;
 
     one->changed(0, 0, 3);
 
-    same(one->which(), std::optional<std::size_t>{0});
-    same(moves, 1);
+    SAME(one->which(), std::optional<std::size_t>{0});
+    SAME(moves, 1);
 }
 
 // The selection stays with its rows: those after the change move, those replaced go.
@@ -1146,9 +1146,9 @@ TRIAL("Table: the selection follows rows replaced in the middle") {
 
     one->changed(3, 2, 5);
 
-    ought(one->chosen().all() == std::vector<std::size_t>({1, 11}));
-    same(one->chosen().many(), std::size_t{2});
-    same(one->rows(), std::size_t{13});
+    OUGHT(one->chosen().all() == std::vector<std::size_t>({1, 11}));
+    SAME(one->chosen().many(), std::size_t{2});
+    SAME(one->rows(), std::size_t{13});
 }
 
 // --- Scrollbar -----------------------------------------------------------------------------------
@@ -1161,15 +1161,15 @@ TRIAL("Table: the scrollbar takes a column from the content") {
     one->heading(false);
 
     // Without the scrollbar, a right-aligned number ends in the last column of the window.
-    same(sheet.render({{0, 0}, {30, 3}}).at({29, 0}).letter, U'0');
+    SAME(sheet.render({{0, 0}, {30, 3}}).at({29, 0}).letter, U'0');
 
     one->scrollbar(true);
 
     const Snapshot made = sheet.render({{0, 0}, {30, 3}});
 
     // With the scrollbar the content narrows by one cell, and the scrollbar stands in its place.
-    same(made.at({28, 0}).letter, U'0');
-    ought(made.at({29, 0}).letter != U' ');
+    SAME(made.at({28, 0}).letter, U'0');
+    OUGHT(made.at({29, 0}).letter != U' ');
 }
 
 // The scrollbar stands only when there are more rows than are visible; the column for it stays, so
@@ -1184,8 +1184,8 @@ TRIAL("Table: the scrollbar only with rows that are not visible") {
 
     const Snapshot fits = sheet.render({{0, 0}, {30, 3}});
 
-    same(fits.at({29, 0}).letter, U' ');
-    same(fits.at({28, 0}).letter, U'0');
+    SAME(fits.at({29, 0}).letter, U' ');
+    SAME(fits.at({28, 0}).letter, U'0');
 
     Sheet other;
 
@@ -1194,7 +1194,7 @@ TRIAL("Table: the scrollbar only with rows that are not visible") {
     more->heading(false);
     more->scrollbar(true);
 
-    ought(other.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
+    OUGHT(other.render({{0, 0}, {30, 3}}).at({29, 0}).letter != U' ');
 
     // The heading takes a row: three rows under a heading no longer fit in a window of three.
     Sheet headed;
@@ -1203,7 +1203,7 @@ TRIAL("Table: the scrollbar only with rows that are not visible") {
 
     titled->scrollbar(true);
 
-    ought(headed.render({{0, 0}, {30, 3}}).at({29, 1}).letter != U' ');
+    OUGHT(headed.render({{0, 0}, {30, 3}}).at({29, 1}).letter != U' ');
 }
 
 // The heading does not scroll, so the bar runs beside the rows only: it starts under the heading,
@@ -1217,27 +1217,27 @@ TRIAL("Table: the scrollbar starts under the heading") {
 
     const Snapshot made = sheet.render({{0, 0}, {30, 5}});
 
-    ought(made.at({29, 0}).letter == U' ' || made.at({29, 0}).letter == 0);
+    OUGHT(made.at({29, 0}).letter == U' ' || made.at({29, 0}).letter == 0);
 
-    for (int y = 1; y < 5; ++y) ought(made.at({29, y}).letter != U' ' && made.at({29, y}).letter != 0);
+    for (int y = 1; y < 5; ++y) OUGHT(made.at({29, y}).letter != U' ' && made.at({29, y}).letter != 0);
 
     // The thumb at the top of the bar, under the heading, the track below it: the first rows are
     // shown.
-    ought(made.at({29, 1}).letter != made.at({29, 2}).letter);
-    same(made.at({29, 2}).letter, made.at({29, 4}).letter);
+    OUGHT(made.at({29, 1}).letter != made.at({29, 2}).letter);
+    SAME(made.at({29, 2}).letter, made.at({29, 4}).letter);
 
     // A press on the heading's cell does not move the view; one on the track below the thumb does.
     ui::MouseEvent heading{{29, 0}, ui::Press::down, ui::Mouse::left};
 
     (void)sheet.dispatch(heading);
 
-    same(one->first(), std::size_t{0});
+    SAME(one->first(), std::size_t{0});
 
     ui::MouseEvent track{{29, 4}, ui::Press::down, ui::Mouse::left};
 
     (void)sheet.dispatch(track);
 
-    ought(one->first() > 0);
+    OUGHT(one->first() > 0);
 }
 
 // --- What goes up --------------------------------------------------------------------------------
@@ -1253,21 +1253,21 @@ TRIAL("Table: Enter and letters pass up") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(!sheet.dispatch(enter));
+    OUGHT(!sheet.dispatch(enter));
 
     ui::KeyEvent letter{U'a'};
 
-    ought(!sheet.dispatch(letter));
+    OUGHT(!sheet.dispatch(letter));
 
     ui::KeyEvent f2{ui::Code::f2};
 
-    ought(!sheet.dispatch(f2));
+    OUGHT(!sheet.dispatch(f2));
 }
 
 TRIAL("Table: takes no children") {
     ui::Table one;
 
-    same(one.capacity(), 0);
+    SAME(one.capacity(), 0);
 }
 
 // The rest of the selection's vocabulary: the count, removing one, and emptiness. The table holds
@@ -1277,19 +1277,19 @@ TRIAL("Table: the selection counts, removes one at a time and knows it is empty"
 
     const auto one = shown(sheet, 10);
 
-    ought(one->chosen().empty());
+    OUGHT(one->chosen().empty());
 
     one->chosen().add(1);
     one->chosen().add(4);
     one->chosen().add(9);
 
-    same(one->chosen().many(), std::size_t{3});
-    ought(!one->chosen().empty());
+    SAME(one->chosen().many(), std::size_t{3});
+    OUGHT(!one->chosen().empty());
 
     one->chosen().remove(4);
 
-    ought(!one->chosen().contains(4));
-    same(one->chosen().all(), (std::vector<std::size_t>{1, 9}));
+    OUGHT(!one->chosen().contains(4));
+    SAME(one->chosen().all(), (std::vector<std::size_t>{1, 9}));
 }
 
 // A refresh asks the source again, and of the visible rows only those that came out different are
@@ -1321,15 +1321,15 @@ TRIAL("Table: a refresh repaints only the rows that came out different") {
 
     const Snapshot made = sheet.render({{0, 0}, {10, 3}});
 
-    same(said(made, 0), std::string{"a"});
-    same(said(made, 1), std::string{"B"});
-    same(sheet.painted(), (std::vector<std::pair<int, int>>{{1, 2}}));
+    SAME(said(made, 0), std::string{"a"});
+    SAME(said(made, 1), std::string{"B"});
+    SAME(sheet.painted(), (std::vector<std::pair<int, int>>{{1, 2}}));
 
     one->refresh();
 
     (void)sheet.render({{0, 0}, {10, 3}});
 
-    ought(sheet.painted().empty());
+    OUGHT(sheet.painted().empty());
 }
 
 // The room a cell's text leaves in its column is the cell's too: it takes the cell's role over the
@@ -1356,14 +1356,14 @@ TRIAL("Table: the room a cell's text leaves takes the cell's role too") {
 
     const Snapshot made = sheet.render({{0, 0}, {14, 1}});
 
-    ought(made.at({2, 0}).style.bold);
-    ought(made.at({3, 0}).style.bold);
-    ought(made.at({5, 0}).style.bold);
-    ought(made.at({6, 0}).style.bold);
-    same(made.at({7, 0}).letter, U'b');
-    ought(made.at({10, 0}).style.bold);
-    same(made.at({11, 0}).letter, U'c');
-    ought(made.at({13, 0}).style.bold);
+    OUGHT(made.at({2, 0}).style.bold);
+    OUGHT(made.at({3, 0}).style.bold);
+    OUGHT(made.at({5, 0}).style.bold);
+    OUGHT(made.at({6, 0}).style.bold);
+    SAME(made.at({7, 0}).letter, U'b');
+    OUGHT(made.at({10, 0}).style.bold);
+    SAME(made.at({11, 0}).letter, U'c');
+    OUGHT(made.at({13, 0}).style.bold);
 }
 
 // A tab in a cell is a stray character of a name, shown as its picture in one cell, and the
@@ -1396,9 +1396,9 @@ TRIAL("Table: a tab in a cell takes one cell, also for the justification and the
 
     const Snapshot made = sheet.render({{0, 0}, {6, 1}});
 
-    same(made.at({3, 0}).letter, U'a');
-    same(made.at({4, 0}).letter, U'␉');
-    same(made.at({5, 0}).letter, U'b');
-    ought(made.at({5, 0}).style.bold);
-    ought(!made.at({3, 0}).style.bold);
+    SAME(made.at({3, 0}).letter, U'a');
+    SAME(made.at({4, 0}).letter, U'␉');
+    SAME(made.at({5, 0}).letter, U'b');
+    OUGHT(made.at({5, 0}).style.bold);
+    OUGHT(!made.at({3, 0}).style.bold);
 }

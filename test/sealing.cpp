@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -489,10 +489,10 @@ TRIAL("Channel: messages go both ways, in order and unchanged") {
     ends.calling.send(big, soon).get();
     ends.answering.send(bytes("odpowiedź"), soon).get();
 
-    ought(ends.answering.receive(soon).get() == bytes("pierwsza"));
-    ought(ends.answering.receive(soon).get().empty());
-    ought(ends.answering.receive(soon).get() == big);
-    ought(ends.calling.receive(soon).get() == bytes("odpowiedź"));
+    OUGHT(ends.answering.receive(soon).get() == bytes("pierwsza"));
+    OUGHT(ends.answering.receive(soon).get().empty());
+    OUGHT(ends.answering.receive(soon).get() == big);
+    OUGHT(ends.calling.receive(soon).get() == bytes("odpowiedź"));
 }
 
 TRIAL("Channel: many sends at once arrive in order") {
@@ -503,7 +503,7 @@ TRIAL("Channel: many sends at once arrive in order") {
 
     for (int at = 0; at < 50; ++at) sending.push_back(ends.calling.send(bytes(std::to_string(at)), soon));
 
-    for (int at = 0; at < 50; ++at) ought(ends.answering.receive(soon).get() == bytes(std::to_string(at)));
+    for (int at = 0; at < 50; ++at) OUGHT(ends.answering.receive(soon).get() == bytes(std::to_string(at)));
 
     for (auto& one : sending) std::move(one).get();
 }
@@ -536,12 +536,12 @@ TRIAL("Channel: sends from many threads at once keep the order of their seals") 
         const std::string came = text(ends.answering.receive(soon).get());
         const std::size_t colon = came.find(':');
 
-        ought(colon != std::string::npos);
+        OUGHT(colon != std::string::npos);
 
         const int who = std::stoi(came.substr(0, colon));
         const int at = std::stoi(came.substr(colon + 1));
 
-        same(at, next[static_cast<std::size_t>(who)]);
+        SAME(at, next[static_cast<std::size_t>(who)]);
 
         ++next[static_cast<std::size_t>(who)];
     }
@@ -565,12 +565,12 @@ TRIAL("Channel: a cancelled send cancels nothing before it and breaks nothing af
 
     Promise<void> third = ends.calling.send(bytes("trzecia"), soon);
 
-    ought(ends.answering.receive(soon).get() == big);
-    ought(ends.answering.receive(soon).get() == bytes("druga"));
-    ought(ends.answering.receive(soon).get() == bytes("trzecia"));
+    OUGHT(ends.answering.receive(soon).get() == big);
+    OUGHT(ends.answering.receive(soon).get() == bytes("druga"));
+    OUGHT(ends.answering.receive(soon).get() == bytes("trzecia"));
 
     std::move(first).get();
-    threw(std::move(second).get());
+    THREW(std::move(second).get());
     std::move(third).get();
 }
 
@@ -585,9 +585,9 @@ TRIAL("Channel: there is no plain text on the wire") {
 
     const Bytes wire = drained(raw.raw);
 
-    same(wire.size(), static_cast<std::size_t>(4 + 17 + 16));
-    ought(!found(wire, secret));
-    ought(wire == sealed_frame(calling_key, 0, secret));
+    SAME(wire.size(), static_cast<std::size_t>(4 + 17 + 16));
+    OUGHT(!found(wire, secret));
+    OUGHT(wire == sealed_frame(calling_key, 0, secret));
 }
 
 TRIAL("Channel: a frame from the other side opens with the receiving key") {
@@ -597,8 +597,8 @@ TRIAL("Channel: a frame from the other side opens with the receiving key") {
     raw.raw.write(sealed_frame(answering_key, 0, bytes("raz")), soon).get();
     raw.raw.write(sealed_frame(answering_key, 1, bytes("dwa")), soon).get();
 
-    ought(raw.calling.receive(soon).get() == bytes("raz"));
-    ought(raw.calling.receive(soon).get() == bytes("dwa"));
+    OUGHT(raw.calling.receive(soon).get() == bytes("raz"));
+    OUGHT(raw.calling.receive(soon).get() == bytes("dwa"));
 }
 
 TRIAL("Channel: a forged frame is a refusal and a close") {
@@ -611,9 +611,9 @@ TRIAL("Channel: a forged frame is a refusal and a close") {
 
     raw.raw.write(forged, soon).get();
 
-    threw(raw.calling.receive(soon).get());
+    THREW(raw.calling.receive(soon).get());
 
-    ought(drained(raw.raw).empty());
+    OUGHT(drained(raw.raw).empty());
 }
 
 TRIAL("Channel: a repeated or reordered frame is a refusal") {
@@ -626,8 +626,8 @@ TRIAL("Channel: a repeated or reordered frame is a refusal") {
         raw.raw.write(once, soon).get();
         raw.raw.write(once, soon).get();
 
-        ought(raw.calling.receive(soon).get() == bytes("raz"));
-        threw(raw.calling.receive(soon).get());
+        OUGHT(raw.calling.receive(soon).get() == bytes("raz"));
+        THREW(raw.calling.receive(soon).get());
     }
     {
         const net::Listener gate = standing();
@@ -635,7 +635,7 @@ TRIAL("Channel: a repeated or reordered frame is a refusal") {
 
         raw.raw.write(sealed_frame(answering_key, 1, bytes("dwa")), soon).get();
 
-        threw(raw.calling.receive(soon).get());
+        THREW(raw.calling.receive(soon).get());
     }
 }
 
@@ -645,7 +645,7 @@ TRIAL("Channel: a frame sealed with the same side's key is a refusal") {
 
     raw.raw.write(sealed_frame(calling_key, 0, bytes("odbite")), soon).get();
 
-    threw(raw.calling.receive(soon).get());
+    THREW(raw.calling.receive(soon).get());
 }
 
 TRIAL("Channel: announcing a too long frame is a refusal") {
@@ -654,9 +654,9 @@ TRIAL("Channel: announcing a too long frame is a refusal") {
 
     raw.raw.write(header((4u << 20) + 17), soon).get();
 
-    threw(raw.calling.receive(soon).get());
+    THREW(raw.calling.receive(soon).get());
 
-    ought(drained(raw.raw).empty());
+    OUGHT(drained(raw.raw).empty());
 }
 
 TRIAL("Channel: a too long frame already read with the previous one rejects the promise, not the call") {
@@ -670,7 +670,7 @@ TRIAL("Channel: a too long frame already read with the previous one rejects the 
 
     raw.raw.write(both, soon).get();
 
-    ought(raw.calling.receive(soon).get() == bytes("raz"));
+    OUGHT(raw.calling.receive(soon).get() == bytes("raz"));
 
     Promise<Bytes> next;
 
@@ -682,8 +682,8 @@ TRIAL("Channel: a too long frame already read with the previous one rejects the 
     } catch (...) {
     }
 
-    ought(called);
-    threw(std::move(next).get());
+    OUGHT(called);
+    THREW(std::move(next).get());
 }
 
 TRIAL("Channel: many frames read at once come out whole and in order") {
@@ -700,7 +700,7 @@ TRIAL("Channel: many frames read at once come out whole and in order") {
 
     raw.raw.write(many, soon).get();
 
-    for (std::uint64_t at = 0; at < 300; ++at) ought(raw.calling.receive(soon).get() == bytes("ramka " + std::to_string(at)));
+    for (std::uint64_t at = 0; at < 300; ++at) OUGHT(raw.calling.receive(soon).get() == bytes("ramka " + std::to_string(at)));
 }
 
 TRIAL("Channel: the longest message passes, a longer one is refused") {
@@ -711,11 +711,11 @@ TRIAL("Channel: the longest message passes, a longer one is refused") {
 
     auto sending = ends.calling.send(most, net::Patience{20000});
 
-    ought(ends.answering.receive(net::Patience{20000}).get() == most);
+    OUGHT(ends.answering.receive(net::Patience{20000}).get() == most);
 
     std::move(sending).get();
 
-    threw(ends.calling.send(Bytes((4u << 20) + 1), soon).get());
+    THREW(ends.calling.send(Bytes((4u << 20) + 1), soon).get());
 }
 
 TRIAL("Channel: the end of the stream in the middle of a frame is trouble") {
@@ -727,7 +727,7 @@ TRIAL("Channel: the end of the stream in the middle of a frame is trouble") {
     raw.raw.write(Bytes(whole.begin(), whole.begin() + 10), soon).get();
     raw.raw.close();
 
-    threw(raw.calling.receive(soon).get());
+    THREW(raw.calling.receive(soon).get());
 }
 
 // A refusal at once, not after the patience runs out: the other side is silent, so only the check
@@ -740,17 +740,17 @@ TRIAL("Channel: without a handshake or a cipher it refuses at once") {
     {
         Pair pair = joined(gate);
 
-        threw(net::Channel::opened(std::move(pair.calling), nullptr, ciphers(), long_enough).get());
+        THREW(net::Channel::opened(std::move(pair.calling), nullptr, ciphers(), long_enough).get());
     }
     {
         Pair pair = joined(gate);
 
-        threw(net::Channel::opened(std::move(pair.calling), std::make_shared<Greeting>(net::Side::calling),
+        THREW(net::Channel::opened(std::move(pair.calling), std::make_shared<Greeting>(net::Side::calling),
                                    Seam<CipherProvider>{}, long_enough)
                   .get());
     }
 
-    ought(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
+    OUGHT(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
 }
 
 TRIAL("Channel: a failed handshake closes the stream") {
@@ -768,13 +768,13 @@ TRIAL("Channel: a failed handshake closes the stream") {
         heard.insert(heard.end(), came.begin(), came.end());
     }
 
-    ought(heard == frame(bytes("talcite?")));
+    OUGHT(heard == frame(bytes("talcite?")));
 
     pair.answering.write(frame(bytes("obcy!")), soon).get();
 
-    threw(std::move(calling).get());
+    THREW(std::move(calling).get());
 
-    ought(drained(pair.answering).empty());
+    OUGHT(drained(pair.answering).empty());
 }
 
 TRIAL("Channel: an endless handshake stops by itself") {
@@ -789,26 +789,26 @@ TRIAL("Channel: an endless handshake stops by itself") {
         net::Channel::opened(std::move(pair.answering), std::make_shared<Endless>(), ciphers(), long_enough);
     auto calling = net::Channel::opened(std::move(pair.calling), std::make_shared<Endless>(), ciphers(), long_enough);
 
-    threw(std::move(answering).get());
-    threw(std::move(calling).get());
+    THREW(std::move(answering).get());
+    THREW(std::move(calling).get());
 
-    ought(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
+    OUGHT(std::chrono::steady_clock::now() - started < std::chrono::seconds{20});
 }
 
 TRIAL("Channel: a closed one refuses and has no address") {
     const net::Listener gate = standing();
     Ends ends = greeted(gate);
 
-    ought(ends.calling.held());
-    ought(ends.calling.peer().port() == gate.mine().port());
+    OUGHT(ends.calling.held());
+    OUGHT(ends.calling.peer().port() == gate.mine().port());
 
     ends.calling.close();
 
-    ought(!ends.calling.held());
-    same(ends.calling.peer().port(), static_cast<std::uint16_t>(0));
-    threw(ends.calling.send(bytes("po"), soon).get());
-    threw(ends.calling.receive(soon).get());
-    threw(ends.answering.receive(soon).get());
+    OUGHT(!ends.calling.held());
+    SAME(ends.calling.peer().port(), static_cast<std::uint16_t>(0));
+    THREW(ends.calling.send(bytes("po"), soon).get());
+    THREW(ends.calling.receive(soon).get());
+    THREW(ends.answering.receive(soon).get());
 }
 
 TRIAL("Long-key handshake: both sides have the same keys, crosswise") {
@@ -819,13 +819,13 @@ TRIAL("Long-key handshake: both sides have the same keys, crosswise") {
 
     talked(*calling, *answering);
 
-    ought(calling->ready());
-    ought(answering->ready());
-    same(calling->keys().sending.size(), static_cast<std::size_t>(32));
-    ought(calling->keys().sending == answering->keys().receiving);
-    ought(calling->keys().receiving == answering->keys().sending);
-    ought(!(calling->keys().sending == calling->keys().receiving));
-    ought(!(calling->keys().sending == long_key()));
+    OUGHT(calling->ready());
+    OUGHT(answering->ready());
+    SAME(calling->keys().sending.size(), static_cast<std::size_t>(32));
+    OUGHT(calling->keys().sending == answering->keys().receiving);
+    OUGHT(calling->keys().receiving == answering->keys().sending);
+    OUGHT(!(calling->keys().sending == calling->keys().receiving));
+    OUGHT(!(calling->keys().sending == long_key()));
 }
 
 // Messages and keys computed here straight from the description of the protocol: HKDF-SHA-512 with
@@ -868,17 +868,17 @@ TRIAL("Long-key handshake: bytes agree with the description of the protocol") {
 
     const Bytes first = *calling->said();
 
-    ought(first == e_c);
+    OUGHT(first == e_c);
 
     answering->heard(first);
 
-    ought(*answering->said() == second);
+    OUGHT(*answering->said() == second);
 
     calling->heard(second);
 
-    ought(*calling->said() == stamped(Sum::sha256, part(3), bytes("calling")));
-    ought(calling->keys().sending == part(0));
-    ought(calling->keys().receiving == part(1));
+    OUGHT(*calling->said() == stamped(Sum::sha256, part(3), bytes("calling")));
+    OUGHT(calling->keys().sending == part(0));
+    OUGHT(calling->keys().receiving == part(1));
 }
 
 TRIAL("Long-key handshake: three messages and nothing more") {
@@ -887,37 +887,37 @@ TRIAL("Long-key handshake: three messages and nothing more") {
     const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
     const auto answering = net::keyed(net::Side::answering, long_key(), "", ciphers());
 
-    ought(!answering->said());
+    OUGHT(!answering->said());
 
     const std::optional<Bytes> first = calling->said();
 
-    ought(first.has_value());
-    same(first->size(), static_cast<std::size_t>(32));
-    ought(!calling->said());
+    OUGHT(first.has_value());
+    SAME(first->size(), static_cast<std::size_t>(32));
+    OUGHT(!calling->said());
 
     answering->heard(*first);
 
     const std::optional<Bytes> second = answering->said();
 
-    ought(second.has_value());
-    same(second->size(), static_cast<std::size_t>(64));
-    ought(!answering->ready());
+    OUGHT(second.has_value());
+    SAME(second->size(), static_cast<std::size_t>(64));
+    OUGHT(!answering->ready());
 
     calling->heard(*second);
 
-    ought(!calling->ready());
+    OUGHT(!calling->ready());
 
     const std::optional<Bytes> third = calling->said();
 
-    ought(third.has_value());
-    same(third->size(), static_cast<std::size_t>(32));
-    ought(calling->ready());
-    ought(!calling->said());
+    OUGHT(third.has_value());
+    SAME(third->size(), static_cast<std::size_t>(32));
+    OUGHT(calling->ready());
+    OUGHT(!calling->said());
 
     answering->heard(*third);
 
-    ought(answering->ready());
-    ought(!answering->said());
+    OUGHT(answering->ready());
+    OUGHT(!answering->said());
 }
 
 TRIAL("Long-key handshake: fresh keys every time") {
@@ -931,8 +931,8 @@ TRIAL("Long-key handshake: fresh keys every time") {
     talked(*one, *two);
     talked(*three, *four);
 
-    ought(one->ready() && three->ready());
-    ought(!(one->keys().sending == three->keys().sending));
+    OUGHT(one->ready() && three->ready());
+    OUGHT(!(one->keys().sending == three->keys().sending));
 }
 
 TRIAL("Long-key handshake: another key or context is a refusal") {
@@ -948,9 +948,9 @@ TRIAL("Long-key handshake: another key or context is a refusal") {
 
         answering->heard(*calling->said());
 
-        threw(calling->heard(*answering->said()));
-        ought(!calling->ready());
-        threw((void)calling->keys());
+        THREW(calling->heard(*answering->said()));
+        OUGHT(!calling->ready());
+        THREW((void)calling->keys());
     }
     {
         const auto calling = net::keyed(net::Side::calling, long_key(), "twa 1", ciphers());
@@ -958,7 +958,7 @@ TRIAL("Long-key handshake: another key or context is a refusal") {
 
         answering->heard(*calling->said());
 
-        threw(calling->heard(*answering->said()));
+        THREW(calling->heard(*answering->said()));
     }
 }
 
@@ -993,31 +993,31 @@ TRIAL("Long-key handshake: a changed byte in any message is a refusal") {
             refused = true;
         }
 
-        ought(refused);
-        ought(!answering->ready());
+        OUGHT(refused);
+        OUGHT(!answering->ready());
     }
 }
 
 TRIAL("Long-key handshake: a short key, a wrong length, a bad point and a wrong turn are refusals") {
     if (missing()) return;
 
-    threw((void)net::keyed(net::Side::calling, Bytes(31, std::byte{7}), "", ciphers()));
-    threw((void)net::keyed(net::Side::calling, long_key(), "", Seam<CipherProvider>{}));
+    THREW((void)net::keyed(net::Side::calling, Bytes(31, std::byte{7}), "", ciphers()));
+    THREW((void)net::keyed(net::Side::calling, long_key(), "", Seam<CipherProvider>{}));
 
     {
         const auto answering = net::keyed(net::Side::answering, long_key(), "", ciphers());
 
-        threw(answering->heard(Bytes(31, std::byte{9})));
+        THREW(answering->heard(Bytes(31, std::byte{9})));
     }
     {
         const auto answering = net::keyed(net::Side::answering, long_key(), "", ciphers());
 
-        threw(answering->heard(Bytes(32)));
+        THREW(answering->heard(Bytes(32)));
     }
     {
         const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
 
-        threw(calling->heard(Bytes(64)));
+        THREW(calling->heard(Bytes(64)));
     }
     {
         const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
@@ -1027,7 +1027,7 @@ TRIAL("Long-key handshake: a short key, a wrong length, a bad point and a wrong 
 
         const Bytes second = *answering->said();
 
-        threw(calling->heard(Bytes(second.begin(), second.begin() + 63)));
+        THREW(calling->heard(Bytes(second.begin(), second.begin() + 63)));
     }
     {
         const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
@@ -1039,7 +1039,7 @@ TRIAL("Long-key handshake: a short key, a wrong length, a bad point and a wrong 
 
         second.push_back(std::byte{0});
 
-        threw(calling->heard(second));
+        THREW(calling->heard(second));
     }
     {
         const auto calling = net::keyed(net::Side::calling, long_key(), "", ciphers());
@@ -1052,8 +1052,8 @@ TRIAL("Long-key handshake: a short key, a wrong length, a bad point and a wrong 
 
         third.push_back(std::byte{0});
 
-        threw(answering->heard(third));
-        ought(!answering->ready());
+        THREW(answering->heard(third));
+        OUGHT(!answering->ready());
     }
 }
 
@@ -1078,8 +1078,8 @@ TRIAL("Long-key channel: talks over the network, does not start with another key
         two.send(bytes("dzień dobry"), soon).get();
         one.send(bytes("dobry wieczór"), soon).get();
 
-        ought(one.receive(soon).get() == bytes("dzień dobry"));
-        ought(two.receive(soon).get() == bytes("dobry wieczór"));
+        OUGHT(one.receive(soon).get() == bytes("dzień dobry"));
+        OUGHT(two.receive(soon).get() == bytes("dobry wieczór"));
     }
     {
         Pair pair = joined(gate);
@@ -1095,7 +1095,7 @@ TRIAL("Long-key channel: talks over the network, does not start with another key
                                             net::keyed(net::Side::calling, long_key(), "twa 1", ciphers()), ciphers(),
                                             soon);
 
-        threw(std::move(calling).get());
-        threw(std::move(answering).get());
+        THREW(std::move(calling).get());
+        THREW(std::move(answering).get());
     }
 }

@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <random>
@@ -24,30 +24,30 @@ std::string whole(Quilt& one) { return text(one.bytes(0, one.whole())); }
 TRIAL("Quilt: an empty one carries nothing") {
     Quilt one{bytes("")};
 
-    same(one.whole(), std::size_t{0});
-    same(whole(one), std::string{});
+    SAME(one.whole(), std::size_t{0});
+    SAME(whole(one), std::string{});
 }
 
 TRIAL("Quilt: untouched, it gives back the original") {
     Quilt one{bytes("abcdef")};
 
-    same(one.whole(), std::size_t{6});
-    same(whole(one), std::string{"abcdef"});
-    same(text(one.bytes(2, 3)), std::string{"cde"});
-    same(text(one.bytes(4, 100)), std::string{"ef"});
+    SAME(one.whole(), std::size_t{6});
+    SAME(whole(one), std::string{"abcdef"});
+    SAME(text(one.bytes(2, 3)), std::string{"cde"});
+    SAME(text(one.bytes(4, 100)), std::string{"ef"});
 }
 
 TRIAL("Quilt: inserting at the start, in the middle and at the end") {
     Quilt one{bytes("abc")};
 
     one.insert(0, "X");
-    same(whole(one), std::string{"Xabc"});
+    SAME(whole(one), std::string{"Xabc"});
 
     one.insert(2, "Y");
-    same(whole(one), std::string{"XaYbc"});
+    SAME(whole(one), std::string{"XaYbc"});
 
     one.insert(one.whole(), "Z");
-    same(whole(one), std::string{"XaYbcZ"});
+    SAME(whole(one), std::string{"XaYbcZ"});
 
 }
 
@@ -55,23 +55,23 @@ TRIAL("Quilt: erasing at the start, in the middle and at the end") {
     Quilt one{bytes("abcdef")};
 
     one.erase(0, 1);
-    same(whole(one), std::string{"bcdef"});
+    SAME(whole(one), std::string{"bcdef"});
 
     one.erase(2, 2);
-    same(whole(one), std::string{"bcf"});
+    SAME(whole(one), std::string{"bcf"});
 
     one.erase(2, 100);
-    same(whole(one), std::string{"bc"});
+    SAME(whole(one), std::string{"bc"});
 }
 
 TRIAL("Quilt: inserting and erasing returns to the original") {
     Quilt one{bytes("abcdef")};
 
     one.insert(3, "XYZ");
-    same(whole(one), std::string{"abcXYZdef"});
+    SAME(whole(one), std::string{"abcXYZdef"});
 
     one.erase(3, 3);
-    same(whole(one), std::string{"abcdef"});
+    SAME(whole(one), std::string{"abcdef"});
 }
 
 // Typing in a row extends the last piece instead of making a new one. Without that, five thousand
@@ -86,8 +86,8 @@ TRIAL("Quilt: five thousand characters one at a time") {
         want.push_back('x');
     }
 
-    same(one.whole(), std::size_t{5000});
-    same(whole(one), want);
+    SAME(one.whole(), std::size_t{5000});
+    SAME(whole(one), want);
 }
 
 // Comparison with `std::string` on a random series of changes; it is the only way to catch a bug in
@@ -126,8 +126,8 @@ TRIAL("Quilt: random changes agree with the model") {
                 one.erase(at, size);
             }
 
-            same(one.whole(), want.size());
-            same(whole(one), want);
+            SAME(one.whole(), want.size());
+            SAME(whole(one), want);
         }
     }
 }
@@ -187,10 +187,10 @@ TRIAL("Quilt: many cuts at once agree with the model") {
 
         one.spliced(cuts);
 
-        same(one.whole(), made.size());
-        same(whole(one), made);
+        SAME(one.whole(), made.size());
+        SAME(whole(one), made);
 
-        for (std::size_t at = 0; at < made.size(); at += 3) same(text(one.bytes(at, 5)), made.substr(at, 5));
+        for (std::size_t at = 0; at < made.size(); at += 3) SAME(text(one.bytes(at, 5)), made.substr(at, 5));
     }
 }
 
@@ -203,12 +203,12 @@ TRIAL("Quilt: the shared text of cuts does not leak to neighbors when typing on"
 
     one.spliced({Quilt::Cut{1, 1, with}, Quilt::Cut{3, 1, with}});
 
-    same(whole(one), std::string{"aXXbXXc"});
+    SAME(whole(one), std::string{"aXXbXXc"});
 
     one.insert(6, "!");
     one.insert(3, "?");
 
-    same(whole(one), std::string{"aXX?bXX!c"});
+    SAME(whole(one), std::string{"aXX?bXX!c"});
 }
 
 // Scraps agree with the model. Random insertions, erasures and moves by scraps: a taken scrap has
@@ -252,19 +252,19 @@ TRIAL("Quilt: scraps agree with the model") {
 
                 const Quilt::Scrap cut = one.taken(at, size);
 
-                same(cut.much, size);
-                same(one.text(cut), want.substr(at, size));
-                same(one.lines(cut), static_cast<std::size_t>(std::count(want.begin() + static_cast<std::ptrdiff_t>(at),
+                SAME(cut.much, size);
+                SAME(one.text(cut), want.substr(at, size));
+                SAME(one.lines(cut), static_cast<std::size_t>(std::count(want.begin() + static_cast<std::ptrdiff_t>(at),
                                                                         want.begin() + static_cast<std::ptrdiff_t>(at + size), '\n')));
-                same(one.last(cut), want[at + size - 1]);
+                SAME(one.last(cut), want[at + size - 1]);
 
                 const bool front = gen() % 2 == 0;
 
                 Quilt::joined(kept, cut, front);
                 told = front ? want.substr(at, size) + told : told + want.substr(at, size);
 
-                same(one.text(kept), told);
-                same(kept.much, told.size());
+                SAME(one.text(kept), told);
+                SAME(kept.much, told.size());
 
                 want.erase(at, size);
                 one.erase(at, size);
@@ -284,19 +284,19 @@ TRIAL("Quilt: scraps agree with the model") {
                 one.put(target, one.taken(at, size));
             }
 
-            same(one.whole(), want.size());
-            same(whole(one), want);
+            SAME(one.whole(), want.size());
+            SAME(whole(one), want);
         }
     }
 
     Quilt none{bytes("abc")};
 
-    same(none.last(Quilt::Scrap{}), '\0');
-    same(none.taken(3, 5).much, std::size_t{0});
-    same(none.taken(1, 0).much, std::size_t{0});
-    ought(none.taken(1, 0).pieces.empty());
-    ought(none.stored("").pieces.empty());
-    same(none.taken(1, 100).much, std::size_t{2});
+    SAME(none.last(Quilt::Scrap{}), '\0');
+    SAME(none.taken(3, 5).much, std::size_t{0});
+    SAME(none.taken(1, 0).much, std::size_t{0});
+    OUGHT(none.taken(1, 0).pieces.empty());
+    OUGHT(none.stored("").pieces.empty());
+    SAME(none.taken(1, 100).much, std::size_t{2});
 }
 
 // Erasing and undoing it copy no text and stitch the document back together. The additions do not
@@ -318,9 +318,9 @@ TRIAL("Quilt: a scrap returns without a copy and stitches the pieces") {
         one.put(1000, cut);
     }
 
-    same(one.appended(), std::size_t{0});
-    same(whole(one), doc);
-    same(one.taken(0, one.whole()).pieces.size(), std::size_t{1});
+    SAME(one.appended(), std::size_t{0});
+    SAME(whole(one), doc);
+    SAME(one.taken(0, one.whole()).pieces.size(), std::size_t{1});
 
     one.insert(500, "abcdef");
 
@@ -328,13 +328,13 @@ TRIAL("Quilt: a scrap returns without a copy and stitches the pieces") {
 
     one.erase(502, 2);
 
-    same(one.taken(0, one.whole()).pieces.size(), std::size_t{4});
+    SAME(one.taken(0, one.whole()).pieces.size(), std::size_t{4});
 
     one.put(502, mid);
 
-    same(one.appended(), std::size_t{6});
-    same(one.taken(0, one.whole()).pieces.size(), std::size_t{3});
-    same(text(one.bytes(498, 10)), doc.substr(498, 2) + "abcdef" + doc.substr(500, 2));
+    SAME(one.appended(), std::size_t{6});
+    SAME(one.taken(0, one.whole()).pieces.size(), std::size_t{3});
+    SAME(text(one.bytes(498, 10)), doc.substr(498, 2) + "abcdef" + doc.substr(500, 2));
 }
 
 // Pieces merge at every seam. Typing one character at a time at the end and in the middle extends
@@ -349,12 +349,12 @@ TRIAL("Quilt: pieces merge at the seams") {
 
     for (const char sign : std::string{"xyz"}) one.insert(one.whole(), std::string(1, sign));
 
-    same(pieces(), std::size_t{2});
+    SAME(pieces(), std::size_t{2});
 
     for (const char sign : std::string{"123"}) one.insert(3 + static_cast<std::size_t>(sign - '1'), std::string(1, sign));
 
-    same(whole(one), std::string{"abc123defxyz"});
-    same(pieces(), std::size_t{4});
+    SAME(whole(one), std::string{"abc123defxyz"});
+    SAME(pieces(), std::size_t{4});
 
     Quilt other{bytes("abcdef")};
 
@@ -363,21 +363,21 @@ TRIAL("Quilt: pieces merge at the seams") {
     other.erase(0, 3);
     other.put(0, head);
 
-    same(other.taken(0, other.whole()).pieces.size(), std::size_t{1});
+    SAME(other.taken(0, other.whole()).pieces.size(), std::size_t{1});
 
     Quilt::Scrap kept = other.taken(2, 1);
 
     Quilt::joined(kept, other.taken(1, 1), true);
     Quilt::joined(kept, other.taken(3, 2), false);
 
-    same(kept.pieces.size(), std::size_t{1});
-    same(other.text(kept), std::string{"bcde"});
+    SAME(kept.pieces.size(), std::size_t{1});
+    SAME(other.text(kept), std::string{"bcde"});
 
     Quilt::joined(kept, Quilt::Scrap{}, true);
     Quilt::joined(kept, Quilt::Scrap{}, false);
 
-    same(kept.pieces.size(), std::size_t{1});
-    same(kept.much, std::size_t{4});
+    SAME(kept.pieces.size(), std::size_t{1});
+    SAME(kept.much, std::size_t{4});
 
     // A scrap of two pieces whose ends go one into each neighbor leaves the neighbors side by side,
     // and they are sewn too: typing a character and taking it back, then cutting across that place
@@ -389,13 +389,13 @@ TRIAL("Quilt: pieces merge at the seams") {
 
     const Quilt::Scrap middle = third.taken(1, 4);
 
-    same(middle.pieces.size(), std::size_t{2});
+    SAME(middle.pieces.size(), std::size_t{2});
 
     third.erase(1, 4);
     third.put(1, middle);
 
-    same(whole(third), std::string{"abcdef"});
-    same(third.taken(0, third.whole()).pieces.size(), std::size_t{1});
+    SAME(whole(third), std::string{"abcdef"});
+    SAME(third.taken(0, third.whole()).pieces.size(), std::size_t{1});
 }
 
 // Thousands of pieces lie in many patches: random insertions cut the document into pieces of one
@@ -419,8 +419,8 @@ TRIAL("Quilt: changes across patches agree with the model") {
         one.insert(at, what);
     }
 
-    same(whole(one), want);
-    ought(one.taken(0, one.whole()).pieces.size() > 4096);
+    SAME(whole(one), want);
+    OUGHT(one.taken(0, one.whole()).pieces.size() > 4096);
 
     for (int step = 0; step < 300; ++step) {
         const std::size_t kind = gen() % 4;
@@ -437,7 +437,7 @@ TRIAL("Quilt: changes across patches agree with the model") {
 
             const Quilt::Scrap cut = one.taken(at, much);
 
-            same(one.text(cut), want.substr(at, much));
+            SAME(one.text(cut), want.substr(at, much));
 
             const std::string moved = want.substr(at, much);
 
@@ -456,23 +456,23 @@ TRIAL("Quilt: changes across patches agree with the model") {
             one.insert(at, what);
         }
 
-        same(one.whole(), want.size());
+        SAME(one.whole(), want.size());
 
-        if (step % 10 == 0) same(whole(one), want);
+        if (step % 10 == 0) SAME(whole(one), want);
     }
 
-    same(whole(one), want);
+    SAME(whole(one), want);
 
     const Quilt::Scrap all = one.taken(0, one.whole());
 
     one.erase(0, one.whole());
 
-    same(one.whole(), std::size_t{0});
-    same(whole(one), std::string{});
+    SAME(one.whole(), std::size_t{0});
+    SAME(whole(one), std::string{});
 
     one.put(0, all);
 
-    same(whole(one), want);
+    SAME(whole(one), want);
 
-    for (std::size_t at = 0; at + 4096 <= want.size(); at += 997) same(text(one.bytes(at, 4096)), want.substr(at, 4096));
+    for (std::size_t at = 0; at + 4096 <= want.size(); at += 997) SAME(text(one.bytes(at, 4096)), want.substr(at, 4096));
 }

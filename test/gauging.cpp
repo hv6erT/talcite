@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -59,10 +59,10 @@ std::string drawn(ui::Gauge& one, int wide) { return read(one.render({{0, 0}, {w
 TRIAL("Gauge: wants the width it was given, and always one row") {
     ui::Gauge one{20};
 
-    same(one.wants({40, 3}), (ui::Size{20, 3 > 1 ? 1 : 3}));
-    same(one.wants({12, 3}), (ui::Size{12, 1}));
-    same(one.wants({40, 0}), (ui::Size{20, 0}));
-    same(one.capacity(), 0);
+    SAME(one.wants({40, 3}), (ui::Size{20, 3 > 1 ? 1 : 3}));
+    SAME(one.wants({12, 3}), (ui::Size{12, 1}));
+    SAME(one.wants({40, 0}), (ui::Size{20, 0}));
+    SAME(one.capacity(), 0);
 }
 
 // The fraction is clamped in one place, where it comes in. The inverted comparison also catches
@@ -71,30 +71,30 @@ TRIAL("Gauge: the fraction is clamped to zero and one") {
     ui::Gauge one{20};
 
     one.part(-3.0);
-    same(one.part(), 0.0);
+    SAME(one.part(), 0.0);
 
     one.part(7.5);
-    same(one.part(), 1.0);
+    SAME(one.part(), 1.0);
 
     one.part(std::nan(""));
-    same(one.part(), 0.0);
+    SAME(one.part(), 0.0);
 
     one.part(0.25);
-    same(one.part(), 0.25);
+    SAME(one.part(), 0.25);
 }
 
 TRIAL("Gauge: bar, brackets and the percentage on the right") {
     ui::Gauge one{20};
 
-    same(drawn(one, 20), std::string{"[░░░░░░░░░░░░░]   0%"});
+    SAME(drawn(one, 20), std::string{"[░░░░░░░░░░░░░]   0%"});
 
     one.part(0.5);
 
-    same(drawn(one, 20), std::string{"[███████░░░░░░]  50%"});
+    SAME(drawn(one, 20), std::string{"[███████░░░░░░]  50%"});
 
     one.part(1.0);
 
-    same(drawn(one, 20), std::string{"[█████████████] 100%"});
+    SAME(drawn(one, 20), std::string{"[█████████████] 100%"});
 }
 
 // Full only when finished. Both numbers follow the same rule, so the bar and the percentage never
@@ -104,11 +104,11 @@ TRIAL("Gauge: a hundred percent only at exactly one") {
 
     one.part(0.999);
 
-    same(drawn(one, 20), std::string{"[████████████░]  99%"});
+    SAME(drawn(one, 20), std::string{"[████████████░]  99%"});
 
     one.part(1.0);
 
-    same(drawn(one, 20), std::string{"[█████████████] 100%"});
+    SAME(drawn(one, 20), std::string{"[█████████████] 100%"});
 }
 
 TRIAL("Gauge: when tight, the percentage goes first, then the brackets") {
@@ -116,17 +116,17 @@ TRIAL("Gauge: when tight, the percentage goes first, then the brackets") {
 
     one.part(0.5);
 
-    same(drawn(one, 12), std::string{"[███░░]  50%"});
-    same(drawn(one, 8), std::string{"[░]  50%"});
+    SAME(drawn(one, 12), std::string{"[███░░]  50%"});
+    SAME(drawn(one, 8), std::string{"[░]  50%"});
 
     // Below eight cells the percentage has no room.
-    same(drawn(one, 7), std::string{"[███░░]"});
-    same(drawn(one, 3), std::string{"[░]"});
+    SAME(drawn(one, 7), std::string{"[███░░]"});
+    SAME(drawn(one, 3), std::string{"[░]"});
 
     // Below three there is no room for the brackets, but the bar still says something.
-    same(drawn(one, 2), std::string{"█░"});
-    same(drawn(one, 1), std::string{"░"});
-    same(drawn(one, 0), std::string{});
+    SAME(drawn(one, 2), std::string{"█░"});
+    SAME(drawn(one, 1), std::string{"░"});
+    SAME(drawn(one, 0), std::string{});
 }
 
 TRIAL("Gauge: without the percentage the whole width goes to the bar") {
@@ -135,7 +135,7 @@ TRIAL("Gauge: without the percentage the whole width goes to the bar") {
     one.percent(false);
     one.part(0.5);
 
-    same(drawn(one, 20), std::string{"[█████████░░░░░░░░░]"});
+    SAME(drawn(one, 20), std::string{"[█████████░░░░░░░░░]"});
 }
 
 // Indeterminate: the block travels back and forth, and there is no percentage, because there is
@@ -146,22 +146,22 @@ TRIAL("Gauge: an indeterminate gauge travels and bounces off the edges") {
     one.part(0.5);
     one.busy(true);
 
-    ought(one.busy());
+    OUGHT(one.busy());
 
-    same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
+    SAME(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 
     one.step();
 
-    same(drawn(one, 20), std::string{"[░██░░░░░░░░░░]"});
+    SAME(drawn(one, 20), std::string{"[░██░░░░░░░░░░]"});
 
     // Eleven steps bring the block to the right edge.
     for (int which = 1; which < 11; ++which) one.step();
 
-    same(drawn(one, 20), std::string{"[░░░░░░░░░░░██]"});
+    SAME(drawn(one, 20), std::string{"[░░░░░░░░░░░██]"});
 
     one.step();
 
-    same(drawn(one, 20), std::string{"[░░░░░░░░░░██░]"});
+    SAME(drawn(one, 20), std::string{"[░░░░░░░░░░██░]"});
 }
 
 TRIAL("Gauge: returning from indeterminate shows the remembered fraction") {
@@ -174,14 +174,14 @@ TRIAL("Gauge: returning from indeterminate shows the remembered fraction") {
 
     one.busy(false);
 
-    ought(!one.busy());
-    same(one.part(), 0.5);
-    same(drawn(one, 20), std::string{"[███████░░░░░░]  50%"});
+    OUGHT(!one.busy());
+    SAME(one.part(), 0.5);
+    SAME(drawn(one, 20), std::string{"[███████░░░░░░]  50%"});
 
     // Turning it on again starts from the left, not from where it stopped.
     one.busy(true);
 
-    same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
+    SAME(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
 // A gauge without an owner and without a loop simply does not move by itself, and does not break
@@ -193,7 +193,7 @@ TRIAL("Gauge: an indeterminate gauge without a loop starts no timer and does not
     one.busy(false);
     one.busy(true);
 
-    same(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
+    SAME(drawn(one, 20), std::string{"[██░░░░░░░░░░░]"});
 }
 
 // The gauge spins by itself. `later` measures the time, `here()` moves the continuation to
@@ -218,7 +218,7 @@ TRIAL("Gauge: an indeterminate gauge spins by itself on the library's timer") {
         if (drawn(*one, 20) != was) break;
     }
 
-    ought(drawn(*one, 20) != was);
+    OUGHT(drawn(*one, 20) != was);
 
     // Once stopped, it stops ticking: after it is turned off, the loop gets nothing more to do.
     one->busy(false);
@@ -229,7 +229,7 @@ TRIAL("Gauge: an indeterminate gauge spins by itself on the library's timer") {
 
     std::this_thread::sleep_for(std::chrono::milliseconds{300});
 
-    same(loop.turn(), std::size_t{0});
+    SAME(loop.turn(), std::size_t{0});
 }
 
 // All skin keys of the gauge grow from one role root, as everywhere else, so replacing the root
@@ -239,7 +239,7 @@ TRIAL("Gauge: the role root can be replaced") {
 
     const auto one = std::make_shared<ui::Gauge>(8);
 
-    same(one->role(), std::string{"talcite.gauge"});
+    SAME(one->role(), std::string{"talcite.gauge"});
 
     one->part(0.0);
 
@@ -258,7 +258,7 @@ TRIAL("Gauge: the role root can be replaced") {
 
     const Snapshot made = top.render({{0, 0}, {8, 1}});
 
-    same(made.at({1, 0}).style.foreground, (Color{false, 4, 4, 4}));
+    SAME(made.at({1, 0}).style.foreground, (Color{false, 4, 4, 4}));
 }
 
 // The percentage stands on whatever the gauge stands on: without a background of its own in the
@@ -278,9 +278,9 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
 
     const Snapshot made = under.render({{0, 0}, {20, 1}});
 
-    same(read(made), std::string{"[███████░░░░░░]  50%"});
+    SAME(read(made), std::string{"[███████░░░░░░]  50%"});
 
-    for (int x = 17; x < 20; ++x) same(made.at({x, 0}).style.background, (Color{false, 9, 9, 9}));
+    for (int x = 17; x < 20; ++x) SAME(made.at({x, 0}).style.background, (Color{false, 9, 9, 9}));
 
     ui::Root top;
 
@@ -305,5 +305,5 @@ TRIAL("Gauge: the percentage takes the background it stands on") {
 
     const Snapshot again = top.render({{0, 0}, {20, 1}});
 
-    same(again.at({19, 0}).style.background, (Color{false, 4, 4, 4}));
+    SAME(again.at({19, 0}).style.background, (Color{false, 4, 4, 4}));
 }

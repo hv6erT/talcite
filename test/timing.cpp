@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <memory>
@@ -38,8 +38,8 @@ std::optional<std::chrono::milliseconds> waiting(ui::Root& top) {
 TRIAL("Schedule: without appointments nothing waits and nothing is called") {
     Timed one;
 
-    ought(!waiting(one.top).has_value());
-    ought(!one.top.elapse());
+    OUGHT(!waiting(one.top).has_value());
+    OUGHT(!one.top.elapse());
 }
 
 TRIAL("Schedule: once after a delay, not before, then the timer is spent") {
@@ -49,25 +49,25 @@ TRIAL("Schedule: once after a delay, not before, then the timer is spent") {
 
     const ui::Timer later = one.top.schedule().after(100ms, [&called] { ++called; });
 
-    ought(later.active());
-    ought(waiting(one.top) == std::optional{100ms});
+    OUGHT(later.active());
+    OUGHT(waiting(one.top) == std::optional{100ms});
 
     one.time.advance(99ms);
 
-    ought(!one.top.elapse());
-    same(called, 0);
+    OUGHT(!one.top.elapse());
+    SAME(called, 0);
 
     one.time.advance(1ms);
 
-    ought(one.top.elapse());
-    same(called, 1);
-    ought(!later.active());
-    ought(!waiting(one.top).has_value());
+    OUGHT(one.top.elapse());
+    SAME(called, 1);
+    OUGHT(!later.active());
+    OUGHT(!waiting(one.top).has_value());
 
     one.time.advance(1s);
 
-    ought(!one.top.elapse());
-    same(called, 1);
+    OUGHT(!one.top.elapse());
+    SAME(called, 1);
 }
 
 // A repeating appointment keeps to its own grid: called at every period, and after a long delay
@@ -80,20 +80,20 @@ TRIAL("Schedule: every period on its grid, and once after being late") {
     const ui::Timer beat = one.top.schedule().every(100ms, [&called] { ++called; });
 
     one.time.advance(100ms);
-    ought(one.top.elapse());
+    OUGHT(one.top.elapse());
 
     one.time.advance(130ms);
-    ought(one.top.elapse());
+    OUGHT(one.top.elapse());
 
-    same(called, 2);
-    ought(waiting(one.top) == std::optional{70ms});
+    SAME(called, 2);
+    OUGHT(waiting(one.top) == std::optional{70ms});
 
     one.time.advance(570ms);
-    ought(one.top.elapse());
+    OUGHT(one.top.elapse());
 
-    same(called, 3);
-    ought(waiting(one.top) == std::optional{100ms});
-    ought(beat.active());
+    SAME(called, 3);
+    OUGHT(waiting(one.top) == std::optional{100ms});
+    OUGHT(beat.active());
 }
 
 // The timer is the appointment: dropping it, emptying it or stopping it takes the appointment
@@ -110,8 +110,8 @@ TRIAL("Schedule: a timer that goes takes its appointment back, and moving hands 
     ui::Timer kept = one.top.schedule().after(10ms, [&told] { told.push_back("przeniesiony"); });
     ui::Timer moved = std::move(kept);
 
-    ought(!kept.active());
-    ought(moved.active());
+    OUGHT(!kept.active());
+    OUGHT(moved.active());
 
     ui::Timer replaced = one.top.schedule().after(10ms, [&told] { told.push_back("zastąpiony"); });
 
@@ -121,14 +121,14 @@ TRIAL("Schedule: a timer that goes takes its appointment back, and moving hands 
 
     stopped.stop();
 
-    ought(!stopped.active());
+    OUGHT(!stopped.active());
 
     one.time.advance(10ms);
 
-    ought(one.top.elapse());
-    same(told.size(), std::size_t{2});
-    same(told[0], std::string{"przeniesiony"});
-    same(told[1], std::string{"nowy"});
+    OUGHT(one.top.elapse());
+    SAME(told.size(), std::size_t{2});
+    SAME(told[0], std::string{"przeniesiony"});
+    SAME(told[1], std::string{"nowy"});
 }
 
 // Calls come in the order of their moments and, for one moment, in the order the appointments were
@@ -142,15 +142,15 @@ TRIAL("Schedule: calls in the order of moments, and of making for one moment") {
     const ui::Timer first = one.top.schedule().after(10ms, [&told] { told.push_back("pierwszy"); });
     const ui::Timer second = one.top.schedule().after(10ms, [&told] { told.push_back("drugi"); });
 
-    ought(waiting(one.top) == std::optional{10ms});
+    OUGHT(waiting(one.top) == std::optional{10ms});
 
     one.time.advance(50ms);
 
-    ought(one.top.elapse());
-    same(told.size(), std::size_t{3});
-    same(told[0], std::string{"pierwszy"});
-    same(told[1], std::string{"drugi"});
-    same(told[2], std::string{"trzeci"});
+    OUGHT(one.top.elapse());
+    SAME(told.size(), std::size_t{3});
+    SAME(told[0], std::string{"pierwszy"});
+    SAME(told[1], std::string{"drugi"});
+    SAME(told[2], std::string{"trzeci"});
 }
 
 // An appointment made by a call waits for the next turn, even without a delay, so a call that
@@ -175,13 +175,13 @@ TRIAL("Schedule: made in a call waits for the next turn, taken back in a call is
 
     one.time.advance(10ms);
 
-    ought(one.top.elapse());
-    same(told.size(), std::size_t{1});
-    ought(chained.active());
+    OUGHT(one.top.elapse());
+    SAME(told.size(), std::size_t{1});
+    OUGHT(chained.active());
 
-    ought(one.top.elapse());
-    same(told.size(), std::size_t{2});
-    same(told[1], std::string{"następny"});
+    OUGHT(one.top.elapse());
+    SAME(told.size(), std::size_t{2});
+    SAME(told[1], std::string{"następny"});
 }
 
 // A call may take back its own appointment, also a repeating one, by emptying its timer.
@@ -199,13 +199,13 @@ TRIAL("Schedule: a call that stops its own repeating appointment ends it") {
     });
 
     one.time.advance(10ms);
-    ought(one.top.elapse());
+    OUGHT(one.top.elapse());
 
     one.time.advance(10ms);
-    ought(!one.top.elapse());
+    OUGHT(!one.top.elapse());
 
-    same(called, 1);
-    ought(!waiting(one.top).has_value());
+    SAME(called, 1);
+    OUGHT(!waiting(one.top).has_value());
 }
 
 // An empty call only wakes the loop: the turn counts as one in which something was due.
@@ -216,8 +216,8 @@ TRIAL("Schedule: an empty call only wakes") {
 
     one.time.advance(5ms);
 
-    ought(one.top.elapse());
-    ought(!frame.active());
+    OUGHT(one.top.elapse());
+    OUGHT(!frame.active());
 }
 
 // A timer that outlives its root has nothing to take back.
@@ -229,14 +229,14 @@ TRIAL("Schedule: a timer outliving its root is spent and goes quietly") {
 
         left = one.top.schedule().after(10ms, [] {});
 
-        ought(left.active());
+        OUGHT(left.active());
     }
 
-    ought(!left.active());
+    OUGHT(!left.active());
 
     left = ui::Timer{};
 
-    ought(!left.active());
+    OUGHT(!left.active());
 }
 
 // A call runs inside a delivery: a node it takes off the tree lives until the calls are over, as
@@ -260,7 +260,7 @@ TRIAL("Schedule: a node taken off the tree in a call lives until the calls end")
 
     one.time.advance(1ms);
 
-    ought(one.top.elapse());
-    ought(alive_in_call);
-    ought(seen.expired());
+    OUGHT(one.top.elapse());
+    OUGHT(alive_in_call);
+    OUGHT(seen.expired());
 }

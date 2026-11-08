@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -68,10 +68,10 @@ TRIAL("Frame: corners, sides and interior") {
 
     const Snapshot made = one.render({{0, 0}, {6, 4}});
 
-    same(read(made, 0), std::string{"┌────┐"});
-    same(read(made, 1), std::string{"│xxxx│"});
-    same(read(made, 2), std::string{"│xxxx│"});
-    same(read(made, 3), std::string{"└────┘"});
+    SAME(read(made, 0), std::string{"┌────┐"});
+    SAME(read(made, 1), std::string{"│xxxx│"});
+    SAME(read(made, 2), std::string{"│xxxx│"});
+    SAME(read(made, 3), std::string{"└────┘"});
 }
 
 TRIAL("Frame: double and thick lines") {
@@ -79,11 +79,11 @@ TRIAL("Frame: double and thick lines") {
 
     one.border(ui::Border::twin);
 
-    same(read(one.render({{0, 0}, {4, 2}}), 0), std::string{"╔══╗"});
+    SAME(read(one.render({{0, 0}, {4, 2}}), 0), std::string{"╔══╗"});
 
     one.border(ui::Border::thick);
 
-    same(read(one.render({{0, 0}, {4, 2}}), 0), std::string{"┏━━┓"});
+    SAME(read(one.render({{0, 0}, {4, 2}}), 0), std::string{"┏━━┓"});
 }
 
 TRIAL("Frame: without a line there is no frame and the child gets everything") {
@@ -95,9 +95,9 @@ TRIAL("Frame: without a line there is no frame and the child gets everything") {
 
     const Snapshot made = one.render({{0, 0}, {6, 4}});
 
-    same(inner->area().size.wide, 6);
-    same(inner->area().size.high, 4);
-    same(read(made, 0), std::string{"xxxxxx"});
+    SAME(inner->area().size.wide, 6);
+    SAME(inner->area().size.high, 4);
+    SAME(read(made, 0), std::string{"xxxxxx"});
 }
 
 TRIAL("Frame: the frame takes one cell from the child on each side") {
@@ -109,10 +109,10 @@ TRIAL("Frame: the frame takes one cell from the child on each side") {
 
     (void)one.render({{0, 0}, {8, 5}});
 
-    same(inner->area().at.x, 1);
-    same(inner->area().at.y, 1);
-    same(inner->area().size.wide, 6);
-    same(inner->area().size.high, 3);
+    SAME(inner->area().at.x, 1);
+    SAME(inner->area().at.y, 1);
+    SAME(inner->area().size.wide, 6);
+    SAME(inner->area().size.high, 3);
 }
 
 TRIAL("Frame: wants as much as the child, plus two in both dimensions") {
@@ -122,8 +122,8 @@ TRIAL("Frame: wants as much as the child, plus two in both dimensions") {
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 6);
-    same(wants.high, 4);
+    SAME(wants.wide, 6);
+    SAME(wants.high, 4);
 }
 
 TRIAL("Frame: wants no more than it got from the parent") {
@@ -133,8 +133,8 @@ TRIAL("Frame: wants no more than it got from the parent") {
 
     const ui::Size wants = one.wants({8, 5});
 
-    same(wants.wide, 8);
-    same(wants.high, 5);
+    SAME(wants.wide, 8);
+    SAME(wants.high, 5);
 }
 
 TRIAL("Frame: the title stands in the top edge, centered") {
@@ -142,7 +142,7 @@ TRIAL("Frame: the title stands in the top edge, centered") {
 
     const Snapshot made = one.render({{0, 0}, {11, 3}});
 
-    same(read(made, 0), std::string{"┌── kot ──┐"});
+    SAME(read(made, 0), std::string{"┌── kot ──┐"});
 }
 
 TRIAL("Frame: the title to the left and to the right") {
@@ -150,11 +150,11 @@ TRIAL("Frame: the title to the left and to the right") {
 
     one.justify(ui::Justify::left);
 
-    same(read(one.render({{0, 0}, {11, 3}}), 0), std::string{"┌ kot ────┐"});
+    SAME(read(one.render({{0, 0}, {11, 3}}), 0), std::string{"┌ kot ────┐"});
 
     one.justify(ui::Justify::right);
 
-    same(read(one.render({{0, 0}, {11, 3}}), 0), std::string{"┌──── kot ┐"});
+    SAME(read(one.render({{0, 0}, {11, 3}}), 0), std::string{"┌──── kot ┐"});
 }
 
 // The title and the footer have separate alignments: in MC the path stands in the middle of the top
@@ -164,19 +164,19 @@ TRIAL("Frame: the footer has its own alignment, independent of the title") {
 
     one.footer("pies");
 
-    same(one.footing(), ui::Justify::center);
+    SAME(one.footing(), ui::Justify::center);
 
     one.footing(ui::Justify::left);
 
     const Snapshot made = one.render({{0, 0}, {11, 3}});
 
-    same(read(made, 0), std::string{"┌── kot ──┐"});
-    same(read(made, 2), std::string{"└ pies ───┘"});
-    same(one.justify(), ui::Justify::center);
+    SAME(read(made, 0), std::string{"┌── kot ──┐"});
+    SAME(read(made, 2), std::string{"└ pies ───┘"});
+    SAME(one.justify(), ui::Justify::center);
 
     one.justify(ui::Justify::right);
 
-    same(read(one.render({{0, 0}, {11, 3}}), 2), std::string{"└ pies ───┘"});
+    SAME(read(one.render({{0, 0}, {11, 3}}), 2), std::string{"└ pies ───┘"});
 }
 
 TRIAL("Frame: a title that is too long is shortened with an ellipsis") {
@@ -184,7 +184,7 @@ TRIAL("Frame: a title that is too long is shortened with an ellipsis") {
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"┌ bardzo…┐"});
+    SAME(read(made, 0), std::string{"┌ bardzo…┐"});
 }
 
 TRIAL("Frame: the footer stands in the bottom edge") {
@@ -194,22 +194,22 @@ TRIAL("Frame: the footer stands in the bottom edge") {
 
     const Snapshot made = one.render({{0, 0}, {13, 3}});
 
-    same(read(made, 0), std::string{"┌─── kot ───┐"});
-    same(read(made, 2), std::string{"└─ 3 pliki ─┘"});
+    SAME(read(made, 0), std::string{"┌─── kot ───┐"});
+    SAME(read(made, 2), std::string{"└─ 3 pliki ─┘"});
 }
 
 TRIAL("Frame: the texts are exchanged through getters and setters") {
     ui::Frame one{"kot"};
 
-    same(one.title(), std::string{"kot"});
-    same(one.footer(), std::string{""});
+    SAME(one.title(), std::string{"kot"});
+    SAME(one.footer(), std::string{""});
 
     one.title("pies");
     one.footer("dwa");
 
-    same(one.title(), std::string{"pies"});
-    same(one.footer(), std::string{"dwa"});
-    same(one.border(), ui::Border::thin);
+    SAME(one.title(), std::string{"pies"});
+    SAME(one.footer(), std::string{"dwa"});
+    SAME(one.border(), ui::Border::thin);
 }
 
 // The lines and the title have separate roles, so the skin decides about each of them on its own.
@@ -231,8 +231,8 @@ TRIAL("Frame: the lines and the text take their color from separate roles") {
 
     const Snapshot made = top.render({{0, 0}, {11, 3}});
 
-    same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(10));
-    same(made.at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
+    SAME(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(10));
+    SAME(made.at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
 
     // A changed root takes the title along with it: that is the whole point of deriving the title's
     // role from the root.
@@ -243,7 +243,7 @@ TRIAL("Frame: the lines and the text take their color from separate roles") {
     one->role("app.panel");
     top.skin(ui::Skin{{{"app.panel.title", other}}});
 
-    same(top.render({{0, 0}, {11, 3}}).at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
+    SAME(top.render({{0, 0}, {11, 3}}).at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
 }
 
 // The footer is in the color of the lines, not of the title, like the status line under the file
@@ -268,9 +268,9 @@ TRIAL("Frame: the footer takes the color of the lines, not of the title") {
 
     const Snapshot made = top.render({{0, 0}, {11, 3}});
 
-    same(read(made, 2), std::string{"└─ pies ──┘"});
-    same(made.at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
-    same(made.at({4, 2}).style.foreground.red, static_cast<std::uint8_t>(10));
+    SAME(read(made, 2), std::string{"└─ pies ──┘"});
+    SAME(made.at({4, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
+    SAME(made.at({4, 2}).style.foreground.red, static_cast<std::uint8_t>(10));
 }
 
 TRIAL("Frame: a tight area breaks nothing") {
@@ -280,12 +280,12 @@ TRIAL("Frame: a tight area breaks nothing") {
 
     const Snapshot first = one.render({{0, 0}, {1, 1}});
 
-    same(first.size().wide, 1);
+    SAME(first.size().wide, 1);
 
     const Snapshot second = one.render({{0, 0}, {2, 2}});
 
-    same(read(second, 0), std::string{"┌┐"});
-    same(read(second, 1), std::string{"└┘"});
+    SAME(read(second, 0), std::string{"┌┐"});
+    SAME(read(second, 1), std::string{"└┘"});
 }
 
 TRIAL("Frame: an empty frame is drawn without a child") {
@@ -293,11 +293,11 @@ TRIAL("Frame: an empty frame is drawn without a child") {
 
     const Snapshot made = one.render({{0, 0}, {7, 3}});
 
-    same(read(made, 1), std::string{"│     │"});
+    SAME(read(made, 1), std::string{"│     │"});
 
     // Empty, it still fits its title: three letters, a cell of padding on each side and one more
     // beyond, and the two edges.
-    same(one.wants({80, 25}).wide, 9);
+    SAME(one.wants({80, 25}).wide, 9);
 }
 
 TRIAL("Frame: without the top edge the line runs across the full width") {
@@ -307,8 +307,8 @@ TRIAL("Frame: without the top edge the line runs across the full width") {
 
     const Snapshot made = one.render({{0, 0}, {6, 3}});
 
-    same(read(made, 0), std::string{"│    │"});
-    same(read(made, 2), std::string{"└────┘"});
+    SAME(read(made, 0), std::string{"│    │"});
+    SAME(read(made, 2), std::string{"└────┘"});
 }
 
 TRIAL("Frame: without the top edge there is no title") {
@@ -319,11 +319,11 @@ TRIAL("Frame: without the top edge there is no title") {
 
     const Snapshot made = one.render({{0, 0}, {12, 3}});
 
-    ought(read(made, 0).find("kot") == std::string::npos);
-    ought(read(made, 2).find("stopka") != std::string::npos);
+    OUGHT(read(made, 0).find("kot") == std::string::npos);
+    OUGHT(read(made, 2).find("stopka") != std::string::npos);
 
     // A title that does not show takes no room: the frame is as wide as its edges.
-    same(one.wants({80, 25}).wide, 2);
+    SAME(one.wants({80, 25}).wide, 2);
 }
 
 TRIAL("Frame: without the bottom edge there is no footer") {
@@ -334,8 +334,8 @@ TRIAL("Frame: without the bottom edge there is no footer") {
 
     const Snapshot made = one.render({{0, 0}, {12, 3}});
 
-    ought(read(made, 0).find("kot") != std::string::npos);
-    ought(read(made, 2).find("stopka") == std::string::npos);
+    OUGHT(read(made, 0).find("kot") != std::string::npos);
+    OUGHT(read(made, 2).find("stopka") == std::string::npos);
 }
 
 TRIAL("Frame: without a side, the column and the corners on that side disappear") {
@@ -345,9 +345,9 @@ TRIAL("Frame: without a side, the column and the corners on that side disappear"
 
     const Snapshot made = one.render({{0, 0}, {5, 3}});
 
-    same(read(made, 0), std::string{"────┐"});
-    same(read(made, 1), std::string{"    │"});
-    same(read(made, 2), std::string{"────┘"});
+    SAME(read(made, 0), std::string{"────┐"});
+    SAME(read(made, 1), std::string{"    │"});
+    SAME(read(made, 2), std::string{"────┘"});
 }
 
 TRIAL("Frame: a disabled edge takes no room from the content") {
@@ -362,15 +362,15 @@ TRIAL("Frame: a disabled edge takes no room from the content") {
 
     (void)one.render({{0, 0}, {8, 5}});
 
-    same(inner->area().at.x, 1);
-    same(inner->area().at.y, 0);
-    same(inner->area().size.wide, 7);
-    same(inner->area().size.high, 4);
+    SAME(inner->area().at.x, 1);
+    SAME(inner->area().at.y, 0);
+    SAME(inner->area().size.wide, 7);
+    SAME(inner->area().size.high, 4);
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 11);
-    same(wants.high, 11);
+    SAME(wants.wide, 11);
+    SAME(wants.high, 11);
 }
 
 TRIAL("Frame: the top edge alone is a plain line with a title") {
@@ -386,9 +386,9 @@ TRIAL("Frame: the top edge alone is a plain line with a title") {
 
     const Snapshot made = one.render({{0, 0}, {9, 3}});
 
-    same(read(made, 0), std::string{"── kot ──"});
-    same(read(made, 1), std::string{"xxxxxxxxx"});
-    same(inner->area().at.y, 1);
+    SAME(read(made, 0), std::string{"── kot ──"});
+    SAME(read(made, 1), std::string{"xxxxxxxxx"});
+    SAME(inner->area().at.y, 1);
 }
 
 TRIAL("Frame: all edges disabled is the same as no line") {
@@ -405,8 +405,8 @@ TRIAL("Frame: all edges disabled is the same as no line") {
 
     const Snapshot made = one.render({{0, 0}, {4, 2}});
 
-    same(read(made, 0), std::string{"xxxx"});
-    same(inner->area().size.wide, 4);
+    SAME(read(made, 0), std::string{"xxxx"});
+    SAME(inner->area().size.wide, 4);
 }
 
 TRIAL("Frame: a scrolled frame draws the right piece") {
@@ -422,8 +422,8 @@ TRIAL("Frame: a scrolled frame draws the right piece") {
 
     const Snapshot made = scroll.render({{0, 0}, {6, 3}});
 
-    same(read(made, 0), std::string{"│xxxx│"});
-    same(read(made, 2), std::string{"│xxxx│"});
+    SAME(read(made, 0), std::string{"│xxxx│"});
+    SAME(read(made, 2), std::string{"│xxxx│"});
 }
 
 TRIAL("Frame: a frame within a frame") {
@@ -438,9 +438,9 @@ TRIAL("Frame: a frame within a frame") {
 
     const Snapshot made = outer.render({{0, 0}, {8, 5}});
 
-    same(read(made, 1), std::string{"│╔════╗│"});
-    same(read(made, 2), std::string{"│║xxxx║│"});
-    same(read(made, 3), std::string{"│╚════╝│"});
+    SAME(read(made, 1), std::string{"│╔════╗│"});
+    SAME(read(made, 2), std::string{"│║xxxx║│"});
+    SAME(read(made, 3), std::string{"│╚════╝│"});
 }
 
 TRIAL("Line: a bare line across the whole given width") {
@@ -448,7 +448,7 @@ TRIAL("Line: a bare line across the whole given width") {
 
     const Snapshot made = one.render({{0, 0}, {8, 1}});
 
-    same(read(made, 0), std::string{"────────"});
+    SAME(read(made, 0), std::string{"────────"});
 }
 
 // A separator does not push its parent wider: it asks for the width of its text alone, and without
@@ -456,16 +456,16 @@ TRIAL("Line: a bare line across the whole given width") {
 TRIAL("Line: asks for its text, and without text for nothing") {
     ui::Line bare;
 
-    same(bare.wants({20, 3}), (ui::Size{0, 1}));
+    SAME(bare.wants({20, 3}), (ui::Size{0, 1}));
 
     ui::Line said{"Opcje"};
 
     // Five letters and a space on each side.
-    same(said.wants({20, 3}), (ui::Size{7, 1}));
-    same(said.wants({4, 3}), (ui::Size{4, 1}));
+    SAME(said.wants({20, 3}), (ui::Size{7, 1}));
+    SAME(said.wants({4, 3}), (ui::Size{4, 1}));
 
     // A separator that wraps is not a separator.
-    same(said.wants({20, 0}), (ui::Size{7, 0}));
+    SAME(said.wants({20, 0}), (ui::Size{7, 0}));
 }
 
 TRIAL("Line: the text stands in the line, in the middle by default") {
@@ -473,19 +473,19 @@ TRIAL("Line: the text stands in the line, in the middle by default") {
 
     Snapshot made = one.render({{0, 0}, {13, 1}});
 
-    same(read(made, 0), std::string{"─── Opcje ───"});
+    SAME(read(made, 0), std::string{"─── Opcje ───"});
 
     one.justify(ui::Justify::left);
 
     made = one.render({{0, 0}, {13, 1}});
 
-    same(read(made, 0), std::string{" Opcje ──────"});
+    SAME(read(made, 0), std::string{" Opcje ──────"});
 
     one.justify(ui::Justify::right);
 
     made = one.render({{0, 0}, {13, 1}});
 
-    same(read(made, 0), std::string{"────── Opcje"});
+    SAME(read(made, 0), std::string{"────── Opcje"});
 }
 
 TRIAL("Line: a text that is too long is cut with an ellipsis") {
@@ -493,27 +493,27 @@ TRIAL("Line: a text that is too long is cut with an ellipsis") {
 
     const Snapshot made = one.render({{0, 0}, {8, 1}});
 
-    same(read(made, 0), std::string{" Ustawi…"});
+    SAME(read(made, 0), std::string{" Ustawi…"});
 }
 
 TRIAL("Line: the weight comes from the style, and no line leaves only the text") {
     ui::Line twin{"Opcje", ui::Border::twin};
 
-    same(read(twin.render({{0, 0}, {13, 1}}), 0), std::string{"═══ Opcje ═══"});
+    SAME(read(twin.render({{0, 0}, {13, 1}}), 0), std::string{"═══ Opcje ═══"});
 
     ui::Line thick{std::string{}, ui::Border::thick};
 
-    same(read(thick.render({{0, 0}, {4, 1}}), 0), std::string{"━━━━"});
+    SAME(read(thick.render({{0, 0}, {4, 1}}), 0), std::string{"━━━━"});
 
     ui::Line none{"Opcje", ui::Border::none};
 
-    same(read(none.render({{0, 0}, {13, 1}}), 0), std::string{"    Opcje"});
+    SAME(read(none.render({{0, 0}, {13, 1}}), 0), std::string{"    Opcje"});
 }
 
 TRIAL("Line: takes no children") {
     ui::Line one;
 
-    same(one.capacity(), 0);
+    SAME(one.capacity(), 0);
 }
 
 // A separator is a piece of a frame: without a role it looks like `talcite.frame`, with a role like
@@ -526,7 +526,7 @@ TRIAL("Line: the line and the text take their color from the role, by default ta
 
     top.children().add(one);
 
-    same(one->role(), std::string{"talcite.frame"});
+    SAME(one->role(), std::string{"talcite.frame"});
 
     Style edge{};
     Style told{};
@@ -543,16 +543,16 @@ TRIAL("Line: the line and the text take their color from the role, by default ta
 
     const Snapshot first = top.render({{0, 0}, {9, 1}});
 
-    same(read(first, 0), std::string{"── kot ──"});
-    same(first.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(10));
-    same(first.at({3, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
+    SAME(read(first, 0), std::string{"── kot ──"});
+    SAME(first.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(10));
+    SAME(first.at({3, 0}).style.foreground.red, static_cast<std::uint8_t>(40));
 
     one->role("app.panel");
 
     const Snapshot second = top.render({{0, 0}, {9, 1}});
 
-    same(second.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
-    same(second.at({3, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
+    SAME(second.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
+    SAME(second.at({3, 0}).style.foreground.red, static_cast<std::uint8_t>(70));
 }
 
 // A separator reaches the frame. A child does not paint outside its area, so the joint is placed by
@@ -571,11 +571,11 @@ TRIAL("Frame: a separator inside gets joints") {
 
     const Snapshot made = frame.render({{0, 0}, {8, 5}});
 
-    same(read(made, 0), std::string{"┌──────┐"});
-    same(read(made, 1), std::string{"│xxxxxx│"});
-    same(read(made, 2), std::string{"├──────┤"});
-    same(read(made, 3), std::string{"│yyyyyy│"});
-    same(read(made, 4), std::string{"└──────┘"});
+    SAME(read(made, 0), std::string{"┌──────┐"});
+    SAME(read(made, 1), std::string{"│xxxxxx│"});
+    SAME(read(made, 2), std::string{"├──────┤"});
+    SAME(read(made, 3), std::string{"│yyyyyy│"});
+    SAME(read(made, 4), std::string{"└──────┘"});
 }
 
 TRIAL("Frame: a joint goes in only when the weights match") {
@@ -591,8 +591,8 @@ TRIAL("Frame: a joint goes in only when the weights match") {
     const Snapshot made = frame.render({{0, 0}, {8, 4}});
 
     // A thin line in a double frame does not join, as there is nothing to join it with.
-    same(read(made, 1), std::string{"║──────║"});
-    same(read(made, 2), std::string{"╠══════╣"});
+    SAME(read(made, 1), std::string{"║──────║"});
+    SAME(read(made, 2), std::string{"╠══════╣"});
 }
 
 TRIAL("Frame: only content touching both sides gets joints") {
@@ -608,10 +608,10 @@ TRIAL("Frame: only content touching both sides gets joints") {
     const Snapshot made = frame.render({{0, 0}, {14, 4}});
 
     // The text does not reach the sides, but the line does, so there are joints.
-    same(read(made, 1), std::string{"├── Opcje ───┤"});
+    SAME(read(made, 1), std::string{"├── Opcje ───┤"});
 
     // Ordinary content does not.
-    same(read(made, 2), std::string{"│xxxxxxxxxxxx│"});
+    SAME(read(made, 2), std::string{"│xxxxxxxxxxxx│"});
 }
 
 // A text wider than the interior eats the line at the edges, and then there are no joints, because
@@ -627,7 +627,7 @@ TRIAL("Frame: a separator filled with text gets no joints") {
 
     const Snapshot made = frame.render({{0, 0}, {8, 3}});
 
-    same(read(made, 1), std::string{"│ Usta…│"});
+    SAME(read(made, 1), std::string{"│ Usta…│"});
 }
 
 // --- Frame background ----------------------------------------------------------------------------
@@ -671,18 +671,18 @@ TRIAL("Frame: the interior takes the color of the frame's role, also where nothi
 
     // The edge, the gap beside the shorter text and the row under the last child: in the window's
     // background.
-    same(made.at({0, 0}).style.background, background);
-    same(made.at({8, 1}).style.background, background);
-    same(made.at({5, 3}).style.background, background);
+    SAME(made.at({0, 0}).style.background, background);
+    SAME(made.at({8, 1}).style.background, background);
+    SAME(made.at({5, 3}).style.background, background);
 
     // A cell has one style, not two. Under a letter of the text stands the text's role, not the
     // frame's background: the background is what is visible where nobody painted anything, not a
     // layer underneath. In a colored skin the text's role has to give its own background, and the
     // demo skin does exactly that.
-    same(read(made, 1), std::string{"│kot       │"});
-    same(made.at({1, 1}).letter, U'k');
-    same(made.at({1, 1}).style.foreground, (Color{false, 255, 255, 0}));
-    ought(made.at({1, 1}).style.background.transparent);
+    SAME(read(made, 1), std::string{"│kot       │"});
+    SAME(made.at({1, 1}).letter, U'k');
+    SAME(made.at({1, 1}).style.foreground, (Color{false, 255, 255, 0}));
+    OUGHT(made.at({1, 1}).style.background.transparent);
 }
 
 TRIAL("Frame: without edges the background is still there") {
@@ -697,8 +697,8 @@ TRIAL("Frame: without edges the background is still there") {
 
     const Snapshot made = top.render({{0, 0}, {6, 2}});
 
-    same(made.at({0, 0}).style.background, (Color{false, 0, 0, 160}));
-    same(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
+    SAME(made.at({0, 0}).style.background, (Color{false, 0, 0, 160}));
+    SAME(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
 }
 
 // The built-in skin has no colors, so the fill writes exactly what was on the sheet anyway.
@@ -709,8 +709,8 @@ TRIAL("Frame: under the built-in skin the background changes nothing") {
 
     const Snapshot made = frame.render({{0, 0}, {9, 4}});
 
-    same(made.at({4, 2}), (Cell{U' ', Style{}, Shown::own}));
-    same(made.at({7, 1}), (Cell{U' ', Style{}, Shown::own}));
+    SAME(made.at({4, 2}), (Cell{U' ', Style{}, Shown::own}));
+    SAME(made.at({7, 1}), (Cell{U' ', Style{}, Shown::own}));
 }
 
 // --- Transparency of containers ------------------------------------------------------------------
@@ -738,9 +738,9 @@ TRIAL("Frame: the background passes through a column and a row into the gaps") {
     const Color background = Color{false, 0, 0, 160};
 
     // Beside the shorter text, under the last child and in the corner of the interior.
-    same(made.at({5, 1}).style.background, background);
-    same(made.at({3, 3}).style.background, background);
-    same(made.at({8, 4}).style.background, background);
+    SAME(made.at({5, 1}).style.background, background);
+    SAME(made.at({3, 3}).style.background, background);
+    SAME(made.at({8, 4}).style.background, background);
 }
 
 // An empty node is not a spacer: without children it wants zero by zero, so the column gives it no
@@ -765,12 +765,12 @@ TRIAL("Frame: an empty node takes no room, and the background is still there") {
 
     const Snapshot made = top.render({{0, 0}, {10, 6}});
 
-    same(read(made, 1), std::string{"│ab      │"});
-    same(read(made, 2), std::string{"│cd      │"});
+    SAME(read(made, 1), std::string{"│ab      │"});
+    SAME(read(made, 2), std::string{"│cd      │"});
 
     // The gap beside the text and the row under the last child: in the window's background.
-    same(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
-    same(made.at({3, 3}).style.background, (Color{false, 0, 0, 160}));
+    SAME(made.at({5, 1}).style.background, (Color{false, 0, 0, 160}));
+    SAME(made.at({3, 3}).style.background, (Color{false, 0, 0, 160}));
 }
 
 
@@ -825,19 +825,19 @@ TRIAL("Frame: an overlaid content takes the right side, which shows where the co
 
     const Snapshot made = one.render({{0, 0}, {7, 5}});
 
-    same(inner->area().at.x, 1);
-    same(inner->area().size.wide, 6);
-    same(read(made, 0), std::string{"┌─────┐"});
-    same(read(made, 1), std::string{"│xxxxx│"});
-    same(read(made, 2), std::string{"│xxxxx#"});
-    same(read(made, 3), std::string{"│xxxxx│"});
-    same(read(made, 4), std::string{"└─────┘"});
+    SAME(inner->area().at.x, 1);
+    SAME(inner->area().size.wide, 6);
+    SAME(read(made, 0), std::string{"┌─────┐"});
+    SAME(read(made, 1), std::string{"│xxxxx│"});
+    SAME(read(made, 2), std::string{"│xxxxx#"});
+    SAME(read(made, 3), std::string{"│xxxxx│"});
+    SAME(read(made, 4), std::string{"└─────┘"});
 
     one.overlaid(false);
 
     (void)one.render({{0, 0}, {7, 5}});
 
-    same(inner->area().size.wide, 5);
+    SAME(inner->area().size.wide, 5);
 }
 
 TRIAL("Frame: an overlaid content wants the side as its own cell") {
@@ -846,8 +846,8 @@ TRIAL("Frame: an overlaid content wants the side as its own cell") {
     one.overlaid(true);
     one.children().add(std::make_shared<Box>(ui::Size{4, 2}, U'x'));
 
-    same(one.wants({80, 25}).wide, 5);
-    same(one.wants({80, 25}).high, 4);
+    SAME(one.wants({80, 25}).wide, 5);
+    SAME(one.wants({80, 25}).high, 4);
 }
 
 TRIAL("Frame: a separator over the side still gets its joints") {
@@ -865,7 +865,7 @@ TRIAL("Frame: a separator over the side still gets its joints") {
 
     const Snapshot made = frame.render({{0, 0}, {8, 5}});
 
-    same(read(made, 2), std::string{"├──────┤"});
+    SAME(read(made, 2), std::string{"├──────┤"});
 }
 
 // --- Double-width characters ---------------------------------------------------------------------
@@ -905,12 +905,12 @@ TRIAL("Frame: double-width characters, a side takes two cells and the interior s
 
     (void)top.render({{0, 0}, {12, 5}});
 
-    same(inner->area().at.x, 2);
-    same(inner->area().at.y, 1);
-    same(inner->area().size.wide, 8);
-    same(inner->area().size.high, 3);
+    SAME(inner->area().at.x, 2);
+    SAME(inner->area().at.y, 1);
+    SAME(inner->area().size.wide, 8);
+    SAME(inner->area().size.high, 3);
 
-    same(frame->wants({80, 25}).wide, 24);
+    SAME(frame->wants({80, 25}).wide, 24);
 }
 
 TRIAL("Frame: double-width characters, the edge goes every two cells and the rest stays background") {
@@ -927,9 +927,9 @@ TRIAL("Frame: double-width characters, the edge goes every two cells and the res
     // space, not half a character.
     const Snapshot made = top.render({{0, 0}, {9, 3}});
 
-    same(read(made, 0), std::string{"口一一 口"});
-    same(read(made, 1), std::string{"丨xxxxx丨"});
-    same(read(made, 2), std::string{"口一一 口"});
+    SAME(read(made, 0), std::string{"口一一 口"});
+    SAME(read(made, 1), std::string{"丨xxxxx丨"});
+    SAME(read(made, 2), std::string{"口一一 口"});
 }
 
 TRIAL("Frame: double-width characters, a joint stands at the width of the side") {
@@ -949,15 +949,15 @@ TRIAL("Frame: double-width characters, a joint stands at the width of the side")
 
     const Snapshot made = top.render({{0, 0}, {10, 5}});
 
-    same(read(made, 1), std::string{"丨xxxxxx丨"});
-    same(read(made, 2), std::string{"卜一一一卜"});
-    same(read(made, 3), std::string{"丨yyyyyy丨"});
+    SAME(read(made, 1), std::string{"丨xxxxxx丨"});
+    SAME(read(made, 2), std::string{"卜一一一卜"});
+    SAME(read(made, 3), std::string{"丨yyyyyy丨"});
 
     // An odd interior: the last character of the line does not fit, and the joint goes in anyway,
     // because the line got as far as it could.
     const Snapshot odd = top.render({{0, 0}, {9, 5}});
 
-    same(read(odd, 2), std::string{"卜一一 卜"});
+    SAME(read(odd, 2), std::string{"卜一一 卜"});
 }
 
 TRIAL("Frame: double-width characters, an overlaid content stays inside the side it cannot split") {
@@ -974,6 +974,6 @@ TRIAL("Frame: double-width characters, an overlaid content stays inside the side
 
     (void)top.render({{0, 0}, {12, 5}});
 
-    same(inner->area().size.wide, 8);
-    same(frame->wants({80, 25}).wide, 24);
+    SAME(inner->area().size.wide, 8);
+    SAME(frame->wants({80, 25}).wide, 24);
 }

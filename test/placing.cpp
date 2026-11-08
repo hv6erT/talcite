@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -190,14 +190,14 @@ TRIAL("Sheet: an image's cells carry its mark, a transparent one becomes an empt
     made.put({0, 0}, U'a', paper(1, 2, 3));
     made.picture({{0, 0}, {2, 1}}, Picture{9, {2, 1}, encoded("x")});
 
-    same(made.at({0, 0}).picture, std::uint32_t{9});
-    same(made.at({0, 0}).letter, char32_t{U'a'});
-    same(made.at({1, 0}).picture, std::uint32_t{9});
-    same(static_cast<int>(made.at({1, 0}).shown), static_cast<int>(Shown::foreground));
-    same(made.at({1, 0}).letter, char32_t{U' '});
-    same(made.at({2, 0}).picture, std::uint32_t{0});
-    same(static_cast<int>(made.at({2, 0}).shown), static_cast<int>(Shown::none));
-    same(made.pictures().size(), std::size_t{1});
+    SAME(made.at({0, 0}).picture, std::uint32_t{9});
+    SAME(made.at({0, 0}).letter, char32_t{U'a'});
+    SAME(made.at({1, 0}).picture, std::uint32_t{9});
+    SAME(static_cast<int>(made.at({1, 0}).shown), static_cast<int>(Shown::foreground));
+    SAME(made.at({1, 0}).letter, char32_t{U' '});
+    SAME(made.at({2, 0}).picture, std::uint32_t{0});
+    SAME(static_cast<int>(made.at({2, 0}).shown), static_cast<int>(Shown::none));
+    SAME(made.pictures().size(), std::size_t{1});
 }
 
 TRIAL("Sheet: the same mark a second time replaces the entry instead of adding another") {
@@ -206,26 +206,26 @@ TRIAL("Sheet: the same mark a second time replaces the entry instead of adding a
     made.picture({{0, 0}, {2, 1}}, Picture{3, {2, 1}, encoded("a")});
     made.picture({{0, 0}, {2, 1}}, Picture{3, {2, 1}, encoded("b")});
 
-    same(made.pictures().size(), std::size_t{1});
-    same(*made.pictures().front().sixel, std::string{"b"});
+    SAME(made.pictures().size(), std::size_t{1});
+    SAME(*made.pictures().front().sixel, std::string{"b"});
 }
 
 TRIAL("Sheet: an image painted through a canvas stands where the canvas puts it") {
     detail::Sheet made = sheet();
 
-    same(made.pictures().size(), std::size_t{1});
-    same(made.at({1, 1}).picture, std::uint32_t{7});
-    same(made.at({2, 2}).picture, std::uint32_t{7});
-    same(made.at({0, 0}).picture, std::uint32_t{0});
+    SAME(made.pictures().size(), std::size_t{1});
+    SAME(made.at({1, 1}).picture, std::uint32_t{7});
+    SAME(made.at({2, 2}).picture, std::uint32_t{7});
+    SAME(made.at({0, 0}).picture, std::uint32_t{0});
 
     // The transparent cell took the background from below when painted.
-    ought(made.at({1, 2}).style.background == paper(0, 0, 200).background);
+    OUGHT(made.at({1, 2}).style.background == paper(0, 0, 200).background);
 
     const std::vector<detail::Placement> found = made.bared({{0, 0}, {6, 4}});
 
-    same(found.size(), std::size_t{1});
-    ought(found.front().at == (ui::Spot{1, 1}));
-    same(*found.front().picture.sixel, std::string{"SIX"});
+    SAME(found.size(), std::size_t{1});
+    OUGHT(found.front().at == (ui::Spot{1, 1}));
+    SAME(*found.front().picture.sixel, std::string{"SIX"});
 }
 
 TRIAL("Sheet: an image visible as a whole has empty cells with their background and its mark") {
@@ -233,13 +233,13 @@ TRIAL("Sheet: an image visible as a whole has empty cells with their background 
 
     (void)made.bared({{0, 0}, {6, 4}});
 
-    same(made.at({1, 1}), (Cell{U' ', paper(250, 0, 0), Shown::own, 7}));
-    same(made.at({2, 1}), (Cell{U' ', paper(0, 250, 0), Shown::own, 7}));
-    same(made.at({1, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
-    same(made.at({2, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
+    SAME(made.at({1, 1}), (Cell{U' ', paper(250, 0, 0), Shown::own, 7}));
+    SAME(made.at({2, 1}), (Cell{U' ', paper(0, 250, 0), Shown::own, 7}));
+    SAME(made.at({1, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
+    SAME(made.at({2, 2}), (Cell{U' ', paper(0, 0, 200), Shown::own, 7}));
 
     // An empty image cell and an ordinary empty cell with the same background are not equal.
-    ought(!(made.at({2, 2}) == made.at({0, 0})));
+    OUGHT(!(made.at({2, 2}) == made.at({0, 0})));
 }
 
 TRIAL("Sheet: an image covered in even one cell stays in characters and loses its mark") {
@@ -247,10 +247,10 @@ TRIAL("Sheet: an image covered in even one cell stays in characters and loses it
 
     Canvas{made}.put({2, 2}, U'x', paper(9, 9, 9));
 
-    same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
-    same(made.at({1, 1}).letter, char32_t{U'▀'});
-    same(made.at({1, 1}).picture, std::uint32_t{0});
-    same(made.at({2, 1}).picture, std::uint32_t{0});
+    SAME(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
+    SAME(made.at({1, 1}).letter, char32_t{U'▀'});
+    SAME(made.at({1, 1}).picture, std::uint32_t{0});
+    SAME(made.at({2, 1}).picture, std::uint32_t{0});
 }
 
 TRIAL("Sheet: a shadow over an image covers it, since pixels cannot be dimmed") {
@@ -258,8 +258,8 @@ TRIAL("Sheet: a shadow over an image covers it, since pixels cannot be dimmed") 
 
     Canvas{made}.shade({{1, 1}, {1, 1}}, paper(10, 10, 10));
 
-    same(made.at({1, 1}).picture, std::uint32_t{0});
-    same(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
+    SAME(made.at({1, 1}).picture, std::uint32_t{0});
+    SAME(made.bared({{0, 0}, {6, 4}}).size(), std::size_t{0});
 }
 
 TRIAL("Sheet: an image clipped by the canvas edge or sticking out of the field gets no pixels") {
@@ -268,27 +268,27 @@ TRIAL("Sheet: an image clipped by the canvas edge or sticking out of the field g
 
     imaged(Canvas{narrow}, {1, 1});
 
-    same(narrow.pictures().size(), std::size_t{1});
-    same(narrow.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
-    same(narrow.at({1, 1}).picture, std::uint32_t{0});
+    SAME(narrow.pictures().size(), std::size_t{1});
+    SAME(narrow.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
+    SAME(narrow.at({1, 1}).picture, std::uint32_t{0});
 
     // Whole, but the field ends one row earlier.
     detail::Sheet whole = sheet();
 
-    same(whole.bared({{0, 0}, {6, 2}}).size(), std::size_t{0});
+    SAME(whole.bared({{0, 0}, {6, 2}}).size(), std::size_t{0});
 
     detail::Sheet fits = sheet();
 
-    same(fits.bared({{0, 0}, {6, 3}}).size(), std::size_t{1});
+    SAME(fits.bared({{0, 0}, {6, 3}}).size(), std::size_t{1});
 
     // The field ends one column earlier, and the field starts one column later.
     detail::Sheet right = sheet();
 
-    same(right.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
+    SAME(right.bared({{0, 0}, {2, 4}}).size(), std::size_t{0});
 
     detail::Sheet left = sheet();
 
-    same(left.bared({{2, 0}, {4, 4}}).size(), std::size_t{0});
+    SAME(left.bared({{2, 0}, {4, 4}}).size(), std::size_t{0});
 }
 
 TRIAL("Sheet: an image without a visible cell and an image without a mark give nothing") {
@@ -296,7 +296,7 @@ TRIAL("Sheet: an image without a visible cell and an image without a mark give n
 
     away.picture({{10, 10}, {2, 2}}, Picture{4, {2, 2}, encoded("a")});
 
-    same(away.bared({{0, 0}, {4, 4}}).size(), std::size_t{0});
+    SAME(away.bared({{0, 0}, {4, 4}}).size(), std::size_t{0});
 
     // Zero means "no image"; every ordinary cell carries it, so a sheet that happens to be the size
     // of the image would look like an image as a whole.
@@ -304,7 +304,7 @@ TRIAL("Sheet: an image without a visible cell and an image without a mark give n
 
     plain.picture({{0, 0}, {2, 2}}, Picture{0, {2, 2}, encoded("b")});
 
-    same(plain.bared({{0, 0}, {2, 2}}).size(), std::size_t{0});
+    SAME(plain.bared({{0, 0}, {2, 2}}).size(), std::size_t{0});
 }
 
 TRIAL("Sheet: the same image painted twice is listed once") {
@@ -313,8 +313,8 @@ TRIAL("Sheet: the same image painted twice is listed once") {
     imaged(Canvas{made}, {1, 1});
     imaged(Canvas{made}, {1, 1});
 
-    same(made.pictures().size(), std::size_t{1});
-    same(made.bared({{0, 0}, {8, 4}}).size(), std::size_t{1});
+    SAME(made.pictures().size(), std::size_t{1});
+    SAME(made.bared({{0, 0}, {8, 4}}).size(), std::size_t{1});
 }
 
 TRIAL("Sheet: cells in a shape other than the image's are not an image as a whole") {
@@ -322,7 +322,7 @@ TRIAL("Sheet: cells in a shape other than the image's are not an image as a whol
 
     made.picture({{0, 0}, {3, 1}}, Picture{8, {1, 3}, encoded("a")});
 
-    same(made.bared({{0, 0}, {3, 3}}).size(), std::size_t{0});
+    SAME(made.bared({{0, 0}, {3, 3}}).size(), std::size_t{0});
 }
 
 TRIAL("Sheet: two images side by side, both whole, each in its place") {
@@ -339,11 +339,11 @@ TRIAL("Sheet: two images side by side, both whole, each in its place") {
 
     const std::vector<detail::Placement> found = made.bared({{0, 0}, {8, 3}});
 
-    same(found.size(), std::size_t{2});
-    same(found[0].picture.mark, std::uint32_t{1});
-    ought(found[0].at == (ui::Spot{1, 1}));
-    same(found[1].picture.mark, std::uint32_t{2});
-    ought(found[1].at == (ui::Spot{5, 0}));
+    SAME(found.size(), std::size_t{2});
+    SAME(found[0].picture.mark, std::uint32_t{1});
+    OUGHT(found[0].at == (ui::Spot{1, 1}));
+    SAME(found[1].picture.mark, std::uint32_t{2});
+    OUGHT(found[1].at == (ui::Spot{5, 0}));
 }
 
 // --- Terminal ------------------------------------------------------------------------------------
@@ -354,13 +354,13 @@ TRIAL("Term: an image visible as a whole goes as a sixel, after the cells, in it
     const std::string said = rig.drawn();
     const std::size_t at = said.find(sixel_head);
 
-    ought(at != std::string::npos);
-    ought(said.compare(at - 6, 6, "\x1b[2;3H") == 0);
+    OUGHT(at != std::string::npos);
+    OUGHT(said.compare(at - 6, 6, "\x1b[2;3H") == 0);
 
     // The image's cells went out empty, with the mark's background, and before the image.
-    ought(said.find("\x1b[0;48;5;") < at);
-    same(said.find(std::string{"▒"}), std::string::npos);
-    same(counted(said, sixel_head), std::size_t{1});
+    OUGHT(said.find("\x1b[0;48;5;") < at);
+    SAME(said.find(std::string{"▒"}), std::string::npos);
+    SAME(counted(said, sixel_head), std::size_t{1});
 }
 
 TRIAL("Term: an unchanged image does not go a second time, and a change beside it does not send it") {
@@ -368,15 +368,15 @@ TRIAL("Term: an unchanged image does not go a second time, and a change beside i
 
     (void)rig.drawn();
 
-    same(rig.drawn(), std::string{});
+    SAME(rig.drawn(), std::string{});
 
     rig.root.elsewhere = U'k';
     rig.root.repaint();
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, "k"));
-    ought(!holds(said, sixel_head));
+    OUGHT(holds(said, "k"));
+    OUGHT(!holds(said, sixel_head));
 }
 
 // A changed word the terminal may count otherwise takes the rest of its row with it, the image's
@@ -393,7 +393,7 @@ TRIAL("Term: an image in a row going out again after a word the terminal counts 
     rig.root.elsewhere = U'\u0940';
     rig.root.repaint();
 
-    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+    SAME(counted(rig.drawn(), sixel_head), std::size_t{1});
 
     // The row goes out again from the first such word, not from the last.
     rig.root.yonder = U'\u093E';
@@ -406,7 +406,7 @@ TRIAL("Term: an image in a row going out again after a word the terminal counts 
     rig.root.yonder = U'\u0940';
     rig.root.repaint();
 
-    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+    SAME(counted(rig.drawn(), sixel_head), std::size_t{1});
 
     rig.root.other = {0, 4};
     rig.root.repaint();
@@ -416,7 +416,7 @@ TRIAL("Term: an image in a row going out again after a word the terminal counts 
     rig.root.elsewhere = U'\u093E';
     rig.root.repaint();
 
-    ought(!holds(rig.drawn(), sixel_head));
+    OUGHT(!holds(rig.drawn(), sixel_head));
 }
 
 TRIAL("Term: a covered image goes back to characters, an uncovered one gets its pixels anew") {
@@ -429,19 +429,19 @@ TRIAL("Term: a covered image goes back to characters, an uncovered one gets its 
 
     const std::string hidden = rig.drawn();
 
-    ought(!holds(hidden, sixel_head));
-    ought(holds(hidden, "x"));
+    OUGHT(!holds(hidden, sixel_head));
+    OUGHT(holds(hidden, "x"));
 
     // All the image's cells rewritten with characters; otherwise the pixels would stay under them.
-    same(counted(hidden, std::string{"▒"}), std::size_t{5});
+    SAME(counted(hidden, std::string{"▒"}), std::size_t{5});
 
     rig.root.covered = false;
     rig.root.repaint();
 
     const std::string back = rig.drawn();
 
-    same(counted(back, sixel_head), std::size_t{1});
-    ought(!holds(back, std::string{"▒"}));
+    SAME(counted(back, sixel_head), std::size_t{1});
+    OUGHT(!holds(back, std::string{"▒"}));
 }
 
 TRIAL("Term: another mark in the same place, another animation frame, goes anew") {
@@ -452,7 +452,7 @@ TRIAL("Term: another mark in the same place, another animation frame, goes anew"
     rig.root.mark = 6;
     rig.root.repaint();
 
-    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+    SAME(counted(rig.drawn(), sixel_head), std::size_t{1});
 }
 
 TRIAL("Term: a moved image goes to the new place, the old cells go back to the background") {
@@ -465,8 +465,8 @@ TRIAL("Term: a moved image goes to the new place, the old cells go back to the b
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, "\x1b[3;6H" + sixel_head));
-    ought(holds(said, "\x1b[2;3H"));
+    OUGHT(holds(said, "\x1b[3;6H" + sixel_head));
+    OUGHT(holds(said, "\x1b[2;3H"));
 }
 
 // After an image the cursor stands where the terminal put it: the cell right after the image gets
@@ -481,13 +481,13 @@ TRIAL("Term: after an image the next character goes with its own jump") {
 
     const std::string again = rig.drawn();
 
-    ought(holds(again, sixel_head));
+    OUGHT(holds(again, sixel_head));
 
     rig.root.elsewhere = U'k';
     rig.root.other = {5, 2};
     rig.root.repaint();
 
-    ought(holds(rig.drawn(), "\x1b[3;6H"));
+    OUGHT(holds(rig.drawn(), "\x1b[3;6H"));
 }
 
 TRIAL("Term: an image without bytes has empty cells and sends nothing") {
@@ -498,8 +498,8 @@ TRIAL("Term: an image without bytes has empty cells and sends nothing") {
 
     const std::string said = rig.drawn();
 
-    ought(!holds(said, sixel_head));
-    ought(!holds(said, std::string{"▒"}));
+    OUGHT(!holds(said, sixel_head));
+    OUGHT(!holds(said, std::string{"▒"}));
 }
 
 // An image without bytes, before another in the list, does not stop the ones after it.
@@ -529,7 +529,7 @@ TRIAL("Term: an image without bytes does not stop the image after it") {
     line->written.clear();
     term.draw();
 
-    ought(holds(line->written, "\x1b[2;5H\x1bP0;1;0qSECOND"));
+    OUGHT(holds(line->written, "\x1b[2;5H\x1bP0;1;0qSECOND"));
 }
 
 TRIAL("Term: an image reaching the last row stays in characters") {
@@ -537,8 +537,8 @@ TRIAL("Term: an image reaching the last row stays in characters") {
 
     const std::string said = rig.drawn();
 
-    ought(!holds(said, sixel_head));
-    ought(holds(said, std::string{"▒"}));
+    OUGHT(!holds(said, sixel_head));
+    OUGHT(holds(said, std::string{"▒"}));
 }
 
 TRIAL("Term: without sixel, without a cell size, or with a wish for no graphics, characters only") {
@@ -548,7 +548,7 @@ TRIAL("Term: without sixel, without a cell size, or with a wish for no graphics,
 
     Rig none{plain};
 
-    ought(!holds(none.drawn(), sixel_head));
+    OUGHT(!holds(none.drawn(), sixel_head));
 
     Setup blind;
 
@@ -556,7 +556,7 @@ TRIAL("Term: without sixel, without a cell size, or with a wish for no graphics,
 
     Rig unknown{blind};
 
-    ought(!holds(unknown.drawn(), sixel_head));
+    OUGHT(!holds(unknown.drawn(), sixel_head));
 
     Setup kitty = pixeled();
 
@@ -564,13 +564,13 @@ TRIAL("Term: without sixel, without a cell size, or with a wish for no graphics,
 
     Rig other{kitty};
 
-    ought(!holds(other.drawn(), sixel_head));
+    OUGHT(!holds(other.drawn(), sixel_head));
 }
 
 TRIAL("Term: the root gets its graphics from the terminal, also after a configuration change") {
     Rig rig;
 
-    same(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::sixel));
+    SAME(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::sixel));
 
     Setup none = pixeled();
 
@@ -579,13 +579,13 @@ TRIAL("Term: the root gets its graphics from the terminal, also after a configur
     rig.term->reconfigure(none);
     (void)rig.term->loop().turn();
 
-    same(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::none));
+    SAME(static_cast<int>(rig.root.graphics()), static_cast<int>(Graphics::none));
 
     // After a configuration change the screen is redrawn, now without the image.
     const std::string said = rig.drawn();
 
-    ought(!holds(said, sixel_head));
-    ought(holds(said, std::string{"▒"}));
+    OUGHT(!holds(said, sixel_head));
+    OUGHT(holds(said, std::string{"▒"}));
 }
 
 TRIAL("Term: refreshing the whole screen sends the image again") {
@@ -596,7 +596,7 @@ TRIAL("Term: refreshing the whole screen sends the image again") {
     rig.term->reconfigure(pixeled());
     (void)rig.term->loop().turn();
 
-    same(counted(rig.drawn(), sixel_head), std::size_t{1});
+    SAME(counted(rig.drawn(), sixel_head), std::size_t{1});
 }
 
 // --- Widget --------------------------------------------------------------------------------------
@@ -674,24 +674,24 @@ TRIAL("Image: with sixel it orders the field's pixels and marks the cells with i
 
     top.image->hold(square({40, 40}, 200));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(made.pictures().size(), std::size_t{1});
+    SAME(made.pictures().size(), std::size_t{1});
 
     const Picture& one = made.pictures().front();
 
     // A 20×5 field of 10×20-pixel cells: the square has five rows and ten columns.
-    ought(one.size == (ui::Size{10, 5}));
-    same(raster(*one.sixel), std::string{"\"1;1;100;96"});
-    same(made.at({5, 0}).picture, one.mark);
-    same(made.at({14, 4}).picture, one.mark);
-    same(made.at({4, 0}).picture, std::uint32_t{0});
-    same(made.at({15, 0}).picture, std::uint32_t{0});
+    OUGHT(one.size == (ui::Size{10, 5}));
+    SAME(raster(*one.sixel), std::string{"\"1;1;100;96"});
+    SAME(made.at({5, 0}).picture, one.mark);
+    SAME(made.at({14, 4}).picture, one.mark);
+    SAME(made.at({4, 0}).picture, std::uint32_t{0});
+    SAME(made.at({15, 0}).picture, std::uint32_t{0});
 
     // The image's characters are computed from the pixels: red, not emptiness.
-    ought(made.at({5, 0}).style.foreground.red > 150 || made.at({5, 0}).style.background.red > 150);
+    OUGHT(made.at({5, 0}).style.foreground.red > 150 || made.at({5, 0}).style.background.red > 150);
 }
 
 TRIAL("Image: without sixel the image is in characters and leaves no image mark") {
@@ -700,13 +700,13 @@ TRIAL("Image: without sixel the image is in characters and leaves no image mark"
 
     top.image->hold(square({40, 40}, 200));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(made.pictures().size(), std::size_t{0});
-    same(made.at({5, 0}).picture, std::uint32_t{0});
-    ought(made.at({5, 0}).shown != Shown::none);
+    SAME(made.pictures().size(), std::size_t{0});
+    SAME(made.at({5, 0}).picture, std::uint32_t{0});
+    OUGHT(made.at({5, 0}).shown != Shown::none);
 }
 
 TRIAL("Image: an unknown cell size means characters, with sixel and with kitty") {
@@ -717,18 +717,18 @@ TRIAL("Image: an unknown cell size means characters, with sixel and with kitty")
 
         top.image->hold(square({40, 40}, 200));
 
-        ought(settled(loop, top, *top.image));
+        OUGHT(settled(loop, top, *top.image));
 
         const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-        same(made.pictures().size(), std::size_t{0});
+        SAME(made.pictures().size(), std::size_t{0});
 
         // The image is there, in characters.
         bool red = false;
 
         for (int x = 0; x < 20; ++x) red = red || made.at({x, 2}).style.foreground.red > 150;
 
-        ought(red);
+        OUGHT(red);
     }
 }
 
@@ -747,14 +747,14 @@ TRIAL("Image: the fallback characters are the whole image, reduced") {
 
     top.image->hold(Pixels{{40, 40}, {Still{halves, std::chrono::milliseconds{0}}}});
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
     const Cell left = made.at({5, 2});
     const Cell right = made.at({14, 2});
 
-    ought(left.style.foreground.red > 200 && left.style.foreground.blue < 50);
-    ought(right.style.foreground.blue > 200 && right.style.foreground.red < 50);
+    OUGHT(left.style.foreground.red > 200 && left.style.foreground.blue < 50);
+    OUGHT(right.style.foreground.blue > 200 && right.style.foreground.red < 50);
 }
 
 // An encoding result for an image that is gone does not get in; it is recognized by its sequence
@@ -768,12 +768,12 @@ TRIAL("Image: a late sixel of the previous image is dropped") {
 
     top.image->hold(square({40, 40}, 51));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(made.pictures().size(), std::size_t{1});
-    ought(holds(*made.pictures().front().sixel, "#0;2;20;0;0"));
+    SAME(made.pictures().size(), std::size_t{1});
+    OUGHT(holds(*made.pictures().front().sixel, "#0;2;20;0;0"));
 }
 
 TRIAL("Image: switching to sixel while running recomputes the image, switching back removes it") {
@@ -782,17 +782,17 @@ TRIAL("Image: switching to sixel while running recomputes the image, switching b
 
     top.image->hold(square({40, 40}, 200));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     top.graphics(Graphics::sixel);
 
-    ought(settled(loop, top, *top.image));
-    same(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
+    OUGHT(settled(loop, top, *top.image));
+    SAME(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
 
     top.graphics(Graphics::none);
 
-    ought(settled(loop, top, *top.image));
-    same(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{0});
+    OUGHT(settled(loop, top, *top.image));
+    SAME(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{0});
 }
 
 TRIAL("Image: a new image gets a new mark") {
@@ -801,18 +801,18 @@ TRIAL("Image: a new image gets a new mark") {
 
     top.image->hold(square({40, 40}, 200));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const std::uint32_t first = top.render({{0, 0}, {20, 6}}).pictures().front().mark;
 
     top.image->hold(square({40, 40}, 90));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    same(made.pictures().size(), std::size_t{1});
-    ought(made.pictures().front().mark != first);
+    SAME(made.pictures().size(), std::size_t{1});
+    OUGHT(made.pictures().front().mark != first);
 }
 
 TRIAL("Image: an image from a file with sixel also orders the field's pixels") {
@@ -832,11 +832,11 @@ TRIAL("Image: an image from a file with sixel also orders the field's pixels") {
 
     top.image->hold(std::move(figure));
 
-    ought(settled(loop, top, *top.image));
+    OUGHT(settled(loop, top, *top.image));
 
-    ought(!asked.empty());
-    ought(asked.back() == (ui::Size{100, 100}));
-    same(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
+    OUGHT(!asked.empty());
+    OUGHT(asked.back() == (ui::Size{100, 100}));
+    SAME(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
 }
 
 TRIAL("Image: through the terminal, characters, and once the sixel is ready, the image") {
@@ -853,7 +853,7 @@ TRIAL("Image: through the terminal, characters, and once the sixel is ready, the
     line->written.clear();
     term.draw();
 
-    ought(!holds(line->written, sixel_head));
+    OUGHT(!holds(line->written, sixel_head));
 
     for (int tries = 0; tries < 500 && top.image->busy(); ++tries) {
         (void)term.loop().turn();
@@ -864,7 +864,7 @@ TRIAL("Image: through the terminal, characters, and once the sixel is ready, the
     line->written.clear();
     term.draw();
 
-    ought(holds(line->written, "\x1b[1;6H" + sixel_head + "\"1;1;100;96"));
+    OUGHT(holds(line->written, "\x1b[1;6H" + sixel_head + "\"1;1;100;96"));
 }
 
 // --- Kitty ---------------------------------------------------------------------------------------
@@ -898,13 +898,13 @@ TRIAL("Term: kitty sends the image once and places it in its cells") {
     const std::size_t sending = said.find(sent_whole(5, *rig.root.pixels, 0));
     const std::size_t standing = said.find(stood_at("2;3", 5));
 
-    ought(sending != std::string::npos);
-    ought(standing != std::string::npos);
-    ought(sending < standing);
-    ought(!holds(said, sixel_head));
-    ought(!holds(said, std::string{"▒"}));
+    OUGHT(sending != std::string::npos);
+    OUGHT(standing != std::string::npos);
+    OUGHT(sending < standing);
+    OUGHT(!holds(said, sixel_head));
+    OUGHT(!holds(said, std::string{"▒"}));
 
-    same(rig.drawn(), std::string{});
+    SAME(rig.drawn(), std::string{});
 }
 
 TRIAL("Term: a covered kitty image is removed before the characters, an uncovered one comes back without sending") {
@@ -917,20 +917,20 @@ TRIAL("Term: a covered kitty image is removed before the characters, an uncovere
 
     const std::string hidden = rig.drawn();
 
-    ought(holds(hidden, taken(5)));
-    ought(hidden.find(taken(5)) < hidden.find("▒"));
-    same(counted(hidden, std::string{"▒"}), std::size_t{5});
-    ought(!holds(hidden, kitty_send));
-    ought(!holds(hidden, "a=p"));
+    OUGHT(holds(hidden, taken(5)));
+    OUGHT(hidden.find(taken(5)) < hidden.find("▒"));
+    SAME(counted(hidden, std::string{"▒"}), std::size_t{5});
+    OUGHT(!holds(hidden, kitty_send));
+    OUGHT(!holds(hidden, "a=p"));
 
     rig.root.covered = false;
     rig.root.repaint();
 
     const std::string back = rig.drawn();
 
-    ought(holds(back, stood_at("2;3", 5)));
-    ought(!holds(back, kitty_send));
-    ought(!holds(back, "a=d"));
+    OUGHT(holds(back, stood_at("2;3", 5)));
+    OUGHT(!holds(back, kitty_send));
+    OUGHT(!holds(back, "a=d"));
 }
 
 TRIAL("Term: a moved kitty image is removed and placed in the new place, without sending") {
@@ -943,9 +943,9 @@ TRIAL("Term: a moved kitty image is removed and placed in the new place, without
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, taken(5)));
-    ought(holds(said, stood_at("3;6", 5)));
-    ought(!holds(said, kitty_send));
+    OUGHT(holds(said, taken(5)));
+    OUGHT(holds(said, stood_at("3;6", 5)));
+    OUGHT(!holds(said, kitty_send));
 }
 
 TRIAL("Term: kitty animation frames are sent once, then only switched") {
@@ -959,10 +959,10 @@ TRIAL("Term: kitty animation frames are sent once, then only switched") {
 
     const std::string second = rig.drawn();
 
-    ought(holds(second, taken(5)));
-    ought(holds(second, sent_whole(6, *rig.root.pixels, 1)));
-    ought(holds(second, stood_at("2;3", 6)));
-    ought(!holds(second, taken(5, 'I')));
+    OUGHT(holds(second, taken(5)));
+    OUGHT(holds(second, sent_whole(6, *rig.root.pixels, 1)));
+    OUGHT(holds(second, stood_at("2;3", 6)));
+    OUGHT(!holds(second, taken(5, 'I')));
 
     rig.root.mark = 5;
     rig.root.still = 0;
@@ -970,9 +970,9 @@ TRIAL("Term: kitty animation frames are sent once, then only switched") {
 
     const std::string again = rig.drawn();
 
-    ought(holds(again, taken(6)));
-    ought(holds(again, stood_at("2;3", 5)));
-    ought(!holds(again, kitty_send));
+    OUGHT(holds(again, taken(6)));
+    OUGHT(holds(again, stood_at("2;3", 5)));
+    OUGHT(!holds(again, kitty_send));
 }
 
 TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the terminal at once") {
@@ -988,16 +988,16 @@ TRIAL("Term: a kitty image whose pixels nobody holds is forgotten by the termina
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, taken(5)));
-    ought(old.expired());
-    same(found(said, taken(5, 'I')), taken(5, 'I'));
-    ought(holds(said, sent_whole(8, *rig.root.pixels, 0)));
+    OUGHT(holds(said, taken(5)));
+    OUGHT(old.expired());
+    SAME(found(said, taken(5, 'I')), taken(5, 'I'));
+    OUGHT(holds(said, sent_whole(8, *rig.root.pixels, 0)));
 
     // A covered one is not forgotten: someone still holds its pixels.
     rig.root.covered = true;
     rig.root.repaint();
 
-    ought(!holds(rig.drawn(), taken(8, 'I')));
+    OUGHT(!holds(rig.drawn(), taken(8, 'I')));
 }
 
 TRIAL("Term: a large kitty image goes in chunks of 4096 characters, m=0 only at the end") {
@@ -1009,14 +1009,14 @@ TRIAL("Term: a large kitty image goes in chunks of 4096 characters, m=0 only at 
     const std::string said = rig.drawn();
     const std::string coded = base64(rig.root.pixels->stills()[0].bytes);
 
-    same(coded.size(), std::size_t{8536});
+    SAME(coded.size(), std::size_t{8536});
 
     const std::string wanted = "\x1b_Ga=t,f=32,s=40,v=40,i=5,q=2,m=1;" + coded.substr(0, 4096) + "\x1b\\" +
                                "\x1b_Gq=2,m=1;" + coded.substr(4096, 4096) + "\x1b\\" + "\x1b_Gq=2,m=0;" +
                                coded.substr(8192) + "\x1b\\";
 
-    ought(holds(said, wanted));
-    same(counted(said, "m=0;"), std::size_t{1});
+    OUGHT(holds(said, wanted));
+    SAME(counted(said, "m=0;"), std::size_t{1});
 }
 
 TRIAL("Term: base64 that splits evenly into chunks gets no empty chunk at the end") {
@@ -1028,9 +1028,9 @@ TRIAL("Term: base64 that splits evenly into chunks gets no empty chunk at the en
     const std::string said = rig.drawn();
     const std::string coded = base64(rig.root.pixels->stills()[0].bytes);
 
-    same(coded.size(), std::size_t{8192});
-    ought(holds(said, "\x1b_Gq=2,m=0;" + coded.substr(4096) + "\x1b\\"));
-    same(counted(said, "\x1b_G"), std::size_t{3});
+    SAME(coded.size(), std::size_t{8192});
+    OUGHT(holds(said, "\x1b_Gq=2,m=0;" + coded.substr(4096) + "\x1b\\"));
+    SAME(counted(said, "\x1b_G"), std::size_t{3});
 }
 
 TRIAL("Term: a frame beyond the image's pixels does not go to kitty") {
@@ -1041,14 +1041,14 @@ TRIAL("Term: a frame beyond the image's pixels does not go to kitty") {
 
     const std::string said = rig.drawn();
 
-    ought(!holds(said, "\x1b_G"));
-    ought(!holds(said, std::string{"▒"}));
+    OUGHT(!holds(said, "\x1b_G"));
+    OUGHT(!holds(said, std::string{"▒"}));
 }
 
 TRIAL("Term: kitty places an image in the last row too") {
     Rig rig{kittied(), {12, 3}};
 
-    ought(holds(rig.drawn(), stood_at("2;3", 5)));
+    OUGHT(holds(rig.drawn(), stood_at("2;3", 5)));
 }
 
 TRIAL("Term: refreshing the screen removes kitty images and places them without sending") {
@@ -1061,10 +1061,10 @@ TRIAL("Term: refreshing the screen removes kitty images and places them without 
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, "\x1b_Ga=d,d=a,q=2\x1b\\"));
-    ought(said.find("\x1b_Ga=d,d=a") < said.find("\x1b[2J"));
-    ought(holds(said, stood_at("2;3", 5)));
-    ought(!holds(said, kitty_send));
+    OUGHT(holds(said, "\x1b_Ga=d,d=a,q=2\x1b\\"));
+    OUGHT(said.find("\x1b_Ga=d,d=a") < said.find("\x1b[2J"));
+    OUGHT(holds(said, stood_at("2;3", 5)));
+    OUGHT(!holds(said, kitty_send));
 }
 
 // The pixels of an image replaced by another are held by nobody once the frame is drawn. When
@@ -1125,7 +1125,7 @@ TRIAL("Term: the pixels of a replaced kitty image are held by nobody after the f
         }
     }
 
-    same(holder, std::string{"nobody"});
+    SAME(holder, std::string{"nobody"});
 }
 
 TRIAL("Term: switching from kitty to characters removes the image, and the terminal forgets it when the pixels go") {
@@ -1142,9 +1142,9 @@ TRIAL("Term: switching from kitty to characters removes the image, and the termi
 
     const std::string said = rig.drawn();
 
-    ought(holds(said, "\x1b_Ga=d,d=a"));
-    ought(holds(said, std::string{"▒"}));
-    ought(!holds(said, "a=p"));
+    OUGHT(holds(said, "\x1b_Ga=d,d=a"));
+    OUGHT(holds(said, std::string{"▒"}));
+    OUGHT(!holds(said, "a=p"));
 
     const std::weak_ptr<const Pixels> old = rig.root.pixels;
 
@@ -1153,8 +1153,8 @@ TRIAL("Term: switching from kitty to characters removes the image, and the termi
 
     const std::string again = rig.drawn();
 
-    ought(old.expired());
-    same(found(again, taken(5, 'I')), taken(5, 'I'));
+    OUGHT(old.expired());
+    SAME(found(again, taken(5, 'I')), taken(5, 'I'));
 }
 
 TRIAL("Term: leaving and handing over the terminal free all kitty images") {
@@ -1175,19 +1175,19 @@ TRIAL("Term: leaving and handing over the terminal free all kitty images") {
 
             const Term::Pause away{term};
 
-            ought(holds(line->written, "\x1b_Ga=d,d=A,q=2\x1b\\"));
+            OUGHT(holds(line->written, "\x1b_Ga=d,d=A,q=2\x1b\\"));
         }
 
         line->written.clear();
         term.draw();
 
         // After coming back the image goes anew: the terminal forgot it.
-        ought(holds(line->written, sent_whole(5, *root.pixels, 0)));
+        OUGHT(holds(line->written, sent_whole(5, *root.pixels, 0)));
 
         line->written.clear();
     }
 
-    ought(holds(line->written, "\x1b_Ga=d,d=A,q=2\x1b\\"));
+    OUGHT(holds(line->written, "\x1b_Ga=d,d=A,q=2\x1b\\"));
 }
 
 TRIAL("Term: without kitty images, leaving sends nothing about graphics") {
@@ -1199,7 +1199,7 @@ TRIAL("Term: without kitty images, leaving sends nothing about graphics") {
         line->written.clear();
     }
 
-    ought(!holds(line->written, "\x1b_G"));
+    OUGHT(!holds(line->written, "\x1b_G"));
 }
 
 TRIAL("Image: with kitty the images are ready at once, with the field's pixels, one per frame") {
@@ -1216,16 +1216,16 @@ TRIAL("Image: with kitty the images are ready at once, with the field's pixels, 
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
-    ought(!top.image->busy());
-    same(made.pictures().size(), std::size_t{1});
+    OUGHT(!top.image->busy());
+    SAME(made.pictures().size(), std::size_t{1});
 
     const Picture& one = made.pictures().front();
 
-    ought(one.pixels != nullptr);
-    ought(one.sixel == nullptr);
-    ought(one.pixels->size() == (ui::Size{100, 100}));
-    same(one.pixels->stills().size(), std::size_t{2});
-    ought(one.size == (ui::Size{10, 5}));
+    OUGHT(one.pixels != nullptr);
+    OUGHT(one.sixel == nullptr);
+    OUGHT(one.pixels->size() == (ui::Size{100, 100}));
+    SAME(one.pixels->stills().size(), std::size_t{2});
+    OUGHT(one.size == (ui::Size{10, 5}));
 
     // The second frame is another mark on the same pixels.
     top.image->play(false);
@@ -1234,9 +1234,9 @@ TRIAL("Image: with kitty the images are ready at once, with the field's pixels, 
     const Snapshot later = top.render({{0, 0}, {20, 6}});
     const Picture& two = later.pictures().front();
 
-    ought(two.mark != one.mark);
-    ought(two.pixels == one.pixels);
-    same(two.still, std::size_t{1});
+    OUGHT(two.mark != one.mark);
+    OUGHT(two.pixels == one.pixels);
+    SAME(two.still, std::size_t{1});
 
     (void)loop;
 }
@@ -1247,18 +1247,18 @@ TRIAL("Image: switching sixel ↔ kitty while running recomputes the image") {
 
     top.image->hold(square({40, 40}, 200));
 
-    ought(settled(loop, top, *top.image));
-    ought(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
+    OUGHT(settled(loop, top, *top.image));
+    OUGHT(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
 
     top.graphics(Graphics::kitty);
 
     const Snapshot kitty = top.render({{0, 0}, {20, 6}});
 
-    same(kitty.pictures().size(), std::size_t{1});
-    ought(kitty.pictures().front().pixels != nullptr);
+    SAME(kitty.pictures().size(), std::size_t{1});
+    OUGHT(kitty.pictures().front().pixels != nullptr);
 
     top.graphics(Graphics::sixel);
 
-    ought(settled(loop, top, *top.image));
-    ought(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
+    OUGHT(settled(loop, top, *top.image));
+    OUGHT(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
 }

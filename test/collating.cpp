@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <string>
@@ -27,63 +27,63 @@ std::vector<std::string> ordered(const Collation& by, std::vector<std::string> w
 TRIAL("Collation: marks and case come after the letter, punctuation and digits before letters") {
     const Collation common;
 
-    same(ordered(common, {"Zebra", "éclair", "eclair", "Eclair", "apple", "Äpfel", "2001", "-x", "zoo"}),
+    SAME(ordered(common, {"Zebra", "éclair", "eclair", "Eclair", "apple", "Äpfel", "2001", "-x", "zoo"}),
          (std::vector<std::string>{"-x", "2001", "Äpfel", "apple", "eclair", "Eclair", "éclair", "Zebra", "zoo"}));
 
-    ought(common.compare("a", "b") < 0);
-    ought(common.compare("b", "a") > 0);
-    same(common.compare("same", "same"), 0);
+    OUGHT(common.compare("a", "b") < 0);
+    OUGHT(common.compare("b", "a") > 0);
+    SAME(common.compare("same", "same"), 0);
 
     // A shorter text that begins the longer one comes first.
-    ought(common.compare("Alien", "Aliens") < 0);
+    OUGHT(common.compare("Alien", "Aliens") < 0);
 }
 
 // Polish puts its letters after their bases: a < ą < b, l < ł < m, z < ź < ż, and ó after o.
 TRIAL("Collation: Polish letters stand after their bases") {
     const Collation polish{"pl-PL"};
 
-    same(ordered(polish, {"żaba", "zebra", "źrebię", "łoś", "lis", "mysz", "ąb", "b", "a", "ósmy", "ozon", "pies"}),
+    SAME(ordered(polish, {"żaba", "zebra", "źrebię", "łoś", "lis", "mysz", "ąb", "b", "a", "ósmy", "ozon", "pies"}),
          (std::vector<std::string>{"a", "ąb", "b", "lis", "łoś", "mysz", "ozon", "ósmy", "pies", "zebra", "źrebię", "żaba"}));
 
     // Uppercase letters keep the same places.
-    same(ordered(polish, {"Żółw", "Zorro", "Łódź", "Lublin"}), (std::vector<std::string>{"Lublin", "Łódź", "Zorro", "Żółw"}));
+    SAME(ordered(polish, {"Żółw", "Zorro", "Łódź", "Lublin"}), (std::vector<std::string>{"Lublin", "Łódź", "Zorro", "Żółw"}));
 
     // Without the tailoring ą is a with a mark and stands before b, as in German.
     const Collation common{"de-DE"};
 
-    same(ordered(common, {"az", "ąb"}), (std::vector<std::string>{"ąb", "az"}));
-    same(ordered(polish, {"az", "ąb"}), (std::vector<std::string>{"az", "ąb"}));
+    SAME(ordered(common, {"az", "ąb"}), (std::vector<std::string>{"ąb", "az"}));
+    SAME(ordered(polish, {"az", "ąb"}), (std::vector<std::string>{"az", "ąb"}));
 }
 
 // Czech and Slovak read ch as one letter after h, and č, ř, š, ž as letters after their bases.
 TRIAL("Collation: Czech ch comes after h, and č after c") {
     const Collation czech{"cs"};
 
-    same(ordered(czech, {"chata", "hrad", "cibule", "čaj", "dům", "ivan", "Chrudim"}),
+    SAME(ordered(czech, {"chata", "hrad", "cibule", "čaj", "dům", "ivan", "Chrudim"}),
          (std::vector<std::string>{"cibule", "čaj", "dům", "hrad", "chata", "Chrudim", "ivan"}));
 
     const Collation slovak{"sk-SK"};
 
-    same(ordered(slovak, {"ôsmy", "oko", "päť", "ändern", "auto", "b"}),
+    SAME(ordered(slovak, {"ôsmy", "oko", "päť", "ändern", "auto", "b"}),
          (std::vector<std::string>{"auto", "ändern", "b", "oko", "ôsmy", "päť"}));
 
     // In English ch is just c and h.
-    same(ordered(Collation{"en"}, {"chata", "hrad", "cibule"}), (std::vector<std::string>{"chata", "cibule", "hrad"}));
+    SAME(ordered(Collation{"en"}, {"chata", "hrad", "cibule"}), (std::vector<std::string>{"chata", "cibule", "hrad"}));
 }
 
 // Spanish ñ after n; German ß as ss, æ as ae; ł and ø with their base letters in the common order.
 TRIAL("Collation: ñ in Spanish, ß and æ as two letters, ł and ø by their bases") {
-    same(ordered(Collation{"es-ES"}, {"ñu", "nube", "oso"}), (std::vector<std::string>{"nube", "ñu", "oso"}));
+    SAME(ordered(Collation{"es-ES"}, {"ñu", "nube", "oso"}), (std::vector<std::string>{"nube", "ñu", "oso"}));
     // Elsewhere ñ is n with a mark, so the shorter word comes first.
-    same(ordered(Collation{"en"}, {"ñu", "nube", "oso"}), (std::vector<std::string>{"ñu", "nube", "oso"}));
+    SAME(ordered(Collation{"en"}, {"ñu", "nube", "oso"}), (std::vector<std::string>{"ñu", "nube", "oso"}));
 
     const Collation german{"de"};
 
-    same(ordered(german, {"Strauß", "Strausberg", "Straus", "Strauss"}),
+    SAME(ordered(german, {"Strauß", "Strausberg", "Straus", "Strauss"}),
          (std::vector<std::string>{"Straus", "Strausberg", "Strauss", "Strauß"}));
-    same(ordered(german, {"Aesop", "Æneid", "Afrika"}), (std::vector<std::string>{"Æneid", "Aesop", "Afrika"}));
-    same(ordered(Collation{}, {"Lyon", "Łódź", "Lima"}), (std::vector<std::string>{"Lima", "Łódź", "Lyon"}));
-    same(ordered(Collation{}, {"Oslo", "Ørsted", "Osaka", "Paris"}), (std::vector<std::string>{"Ørsted", "Osaka", "Oslo", "Paris"}));
+    SAME(ordered(german, {"Aesop", "Æneid", "Afrika"}), (std::vector<std::string>{"Æneid", "Aesop", "Afrika"}));
+    SAME(ordered(Collation{}, {"Lyon", "Łódź", "Lima"}), (std::vector<std::string>{"Lima", "Łódź", "Lyon"}));
+    SAME(ordered(Collation{}, {"Oslo", "Ørsted", "Osaka", "Paris"}), (std::vector<std::string>{"Ørsted", "Osaka", "Oslo", "Paris"}));
 }
 
 // Cyrillic goes by its alphabet: й after и, ё with е, and the Ukrainian і, ї, ґ, є in their places;
@@ -91,17 +91,17 @@ TRIAL("Collation: ñ in Spanish, ß and æ as two letters, ł and ø by their ba
 TRIAL("Collation: Cyrillic and Greek by their alphabets") {
     const Collation russian{"ru-RU"};
 
-    same(ordered(russian, {"яблоко", "ёж", "еда", "йога", "игра", "кот", "Юла", "жук"}),
+    SAME(ordered(russian, {"яблоко", "ёж", "еда", "йога", "игра", "кот", "Юла", "жук"}),
          (std::vector<std::string>{"еда", "ёж", "жук", "игра", "йога", "кот", "Юла", "яблоко"}));
 
     const Collation ukrainian{"uk-UA"};
 
-    same(ordered(ukrainian, {"їжак", "іній", "йод", "ґанок", "гора", "дім", "єнот", "ехо", "иній"}),
+    SAME(ordered(ukrainian, {"їжак", "іній", "йод", "ґанок", "гора", "дім", "єнот", "ехо", "иній"}),
          (std::vector<std::string>{"гора", "ґанок", "дім", "ехо", "єнот", "иній", "іній", "їжак", "йод"}));
 
-    same(ordered(Collation{"el"}, {"ωμέγα", "άλφα", "βήτα", "αλφα"}), (std::vector<std::string>{"αλφα", "άλφα", "βήτα", "ωμέγα"}));
+    SAME(ordered(Collation{"el"}, {"ωμέγα", "άλφα", "βήτα", "αλφα"}), (std::vector<std::string>{"αλφα", "άλφα", "βήτα", "ωμέγα"}));
 
-    same(ordered(Collation{}, {"дом", "home", "οίκος"}), (std::vector<std::string>{"home", "οίκος", "дом"}));
+    SAME(ordered(Collation{}, {"дом", "home", "οίκος"}), (std::vector<std::string>{"home", "οίκος", "дом"}));
 }
 
 // A mark written apart, after its letter, weighs as the same letter written whole; the texts stay
@@ -112,13 +112,13 @@ TRIAL("Collation: a separate combining mark weighs as the composed letter") {
     const std::string composed = "caf\xc3\xa9";
     const std::string apart = "cafe\xcc\x81";
 
-    ought(common.compare(composed, apart) != 0);
-    ought(common.compare("cafe", apart) < 0);
-    ought(common.compare(apart, "cafes") < 0);
-    ought(common.compare(composed, "cafes") < 0);
+    OUGHT(common.compare(composed, apart) != 0);
+    OUGHT(common.compare("cafe", apart) < 0);
+    OUGHT(common.compare(apart, "cafes") < 0);
+    OUGHT(common.compare(composed, "cafes") < 0);
 
     // Hangul syllables keep the order of their code points, which is that of the alphabet.
-    same(ordered(common, {"하나", "가방", "나무"}), (std::vector<std::string>{"가방", "나무", "하나"}));
+    SAME(ordered(common, {"하나", "가방", "나무"}), (std::vector<std::string>{"가방", "나무", "하나"}));
 }
 
 // A key is the levels and then the text itself, which is what tells apart two texts that weigh
@@ -131,18 +131,18 @@ TRIAL("Collation: a key ends with its text") {
              {"", "abc", "Caf\xc3\xa9 2", "cafe\xcc\x81", "\xc5\x82\xc3\xb3" "d\xc5\xba\xcc\x88"}) {
             const std::string key = polish.key(text);
 
-            ought(key.size() > text.size());
-            ought(key.ends_with(text));
+            OUGHT(key.size() > text.size());
+            OUGHT(key.ends_with(text));
         }
     }
 }
 
 // The language is the part of the code before the region, in any case; an unknown one is common.
 TRIAL("Collation: the language code picks the tailoring, region and case aside") {
-    same(Collation{"PL_pl"}.compare("łza", "mama"), Collation{"pl"}.compare("łza", "mama"));
-    ought(Collation{"pl"}.compare("łza", "lza") > 0);
-    ought(Collation{"xx"}.compare("ąb", "az") < 0);
-    same(Collation{"pt-BR"}.language(), std::string{"pt-BR"});
+    SAME(Collation{"PL_pl"}.compare("łza", "mama"), Collation{"pl"}.compare("łza", "mama"));
+    OUGHT(Collation{"pl"}.compare("łza", "lza") > 0);
+    OUGHT(Collation{"xx"}.compare("ąb", "az") < 0);
+    SAME(Collation{"pt-BR"}.language(), std::string{"pt-BR"});
 }
 
 // Numbers are numbers: a shorter one comes first, then digit by digit, so "Part 2" stands before
@@ -151,20 +151,20 @@ TRIAL("Collation: the language code picks the tailoring, region and case aside")
 TRIAL("Collation: numbers in a text compare as numbers") {
     const Collation common;
 
-    same(ordered(common, {"Part 10", "Part 2", "Part 1", "Part 100", "Part 02", "Part"}),
+    SAME(ordered(common, {"Part 10", "Part 2", "Part 1", "Part 100", "Part 02", "Part"}),
          (std::vector<std::string>{"Part", "Part 1", "Part 02", "Part 2", "Part 10", "Part 100"}));
-    same(ordered(common, {"2001", "1999", "300", "0"}), (std::vector<std::string>{"0", "300", "1999", "2001"}));
-    same(ordered(common, {"S01E10", "S01E9", "S02E01", "S1E2"}), (std::vector<std::string>{"S1E2", "S01E9", "S01E10", "S02E01"}));
+    SAME(ordered(common, {"2001", "1999", "300", "0"}), (std::vector<std::string>{"0", "300", "1999", "2001"}));
+    SAME(ordered(common, {"S01E10", "S01E9", "S02E01", "S1E2"}), (std::vector<std::string>{"S1E2", "S01E9", "S01E10", "S02E01"}));
 
-    ought(common.compare("007", "7") != 0);
-    ought(common.compare("007", "8") < 0);
+    OUGHT(common.compare("007", "7") != 0);
+    OUGHT(common.compare("007", "8") < 0);
 
     // Numbers stand before letters, as digits do, and a number of any length before a letter.
-    ought(common.compare("99999 x", "a") < 0);
+    OUGHT(common.compare("99999 x", "a") < 0);
 
     const Collation digits{"", CollationShape{.numeric = false}};
 
-    same(ordered(digits, {"Part 10", "Part 2"}), (std::vector<std::string>{"Part 10", "Part 2"}));
+    SAME(ordered(digits, {"Part 10", "Part 2"}), (std::vector<std::string>{"Part 10", "Part 2"}));
 }
 
 // An exact collation keeps the order of code points, uppercase before lowercase and ASCII before
@@ -172,11 +172,11 @@ TRIAL("Collation: numbers in a text compare as numbers") {
 TRIAL("Collation: an exact order goes by code points, with numbers as numbers") {
     const Collation exact{"pl", CollationShape{.exact = true}};
 
-    same(ordered(exact, {"b", "a", "B", "ą", "Z", "file10", "file9", "file-", "file:"}),
+    SAME(ordered(exact, {"b", "a", "B", "ą", "Z", "file10", "file9", "file-", "file:"}),
          (std::vector<std::string>{"B", "Z", "a", "b", "file-", "file9", "file10", "file:", "ą"}));
 
     const Collation bytes{"pl", CollationShape{.numeric = false, .exact = true}};
 
-    same(ordered(bytes, {"file10", "file9"}), (std::vector<std::string>{"file10", "file9"}));
-    same(exact.shape().exact, true);
+    SAME(ordered(bytes, {"file10", "file9"}), (std::vector<std::string>{"file10", "file9"}));
+    SAME(exact.shape().exact, true);
 }

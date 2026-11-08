@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -80,7 +80,7 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
 #ifdef _WIN32
     const scan::Scanned one = scan::scanned(root / "film.mkv").get();
 
-    ought(one.verdict != scan::Verdict::infected);
+    OUGHT(one.verdict != scan::Verdict::infected);
 #else
     const stdfs::path bin = root / "bin";
 
@@ -96,23 +96,23 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
         const scan::Scanned clean = scan::scanned(root / "film.mkv").get();
         const scan::Scanned bad = scan::scanned(root / "groźny.exe").get();
 
-        ought(clean.verdict == scan::Verdict::clean);
-        same(clean.by, std::string{"clamscan"});
-        ought(bad.verdict == scan::Verdict::infected);
-        ought(bad.said.find("FOUND") != std::string::npos);
-        ought(!bad.said.empty() && bad.said.back() != '\n');
+        OUGHT(clean.verdict == scan::Verdict::clean);
+        SAME(clean.by, std::string{"clamscan"});
+        OUGHT(bad.verdict == scan::Verdict::infected);
+        OUGHT(bad.said.find("FOUND") != std::string::npos);
+        OUGHT(!bad.said.empty() && bad.said.back() != '\n');
 
         // A working daemon is enough; the scanner is no longer asked.
         program(bin / "clamdscan", "if grep -q ZARAZA \"$3\"; then exit 1; fi\nexit 0\n");
         program(bin / "clamscan", "exit 2\n");
 
-        same(scan::scanned(root / "groźny.exe").get().by, std::string{"clamdscan"});
-        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::clean);
+        SAME(scan::scanned(root / "groźny.exe").get().by, std::string{"clamdscan"});
+        OUGHT(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::clean);
 
         // A scanner without a database (exit code 2): the result is unknown, not "clean".
         program(bin / "clamdscan", "exit 2\n");
 
-        ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
+        OUGHT(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
 
         // A scanner killed by a signal said nothing, even if the signal number looks like a threat code.
         // Under nohup SIGHUP is ignored, and every program started from here inherits that, so the
@@ -122,7 +122,7 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
         if (::sigaction(SIGHUP, nullptr, &hangup) == 0 && hangup.sa_handler != SIG_IGN) {
             program(bin / "clamscan", "kill -HUP $$\n");
 
-            ought(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
+            OUGHT(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
         }
     }
 
@@ -131,8 +131,8 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
 
         const scan::Scanned none = scan::scanned(root / "film.mkv").get();
 
-        ought(none.verdict == scan::Verdict::unknown);
-        ought(none.by.empty());
+        OUGHT(none.verdict == scan::Verdict::unknown);
+        OUGHT(none.by.empty());
     }
 #endif
 }

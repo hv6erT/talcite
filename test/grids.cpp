@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -86,12 +86,12 @@ TRIAL("Grid: a column is as wide as its widest cell") {
     one.children().add(row({std::make_shared<ui::Span>("Pattern:"), std::make_shared<ui::Span>("*.mkv")}));
     one.children().add(row({std::make_shared<ui::Span>("Age rating:"), std::make_shared<ui::Span>("any")}));
 
-    same(one.wants({40, 10}), (ui::Size{18, 2}));
+    SAME(one.wants({40, 10}), (ui::Size{18, 2}));
 
     const Snapshot made = one.render({{0, 0}, {20, 2}});
 
-    same(read(made, 0), std::string{"Pattern:     *.mkv"});
-    same(read(made, 1), std::string{"Age rating:  any"});
+    SAME(read(made, 0), std::string{"Pattern:     *.mkv"});
+    SAME(read(made, 1), std::string{"Age rating:  any"});
 }
 
 // A column of empty cells takes no room and opens no gap, as a child that occupies nothing in a
@@ -101,7 +101,7 @@ TRIAL("Grid: an empty column opens no gap") {
 
     one.children().add(row({box({1, 1}, U'a'), std::make_shared<ui::Blank>(), box({1, 1}, U'b')}));
 
-    same(read(one.render({{0, 0}, {10, 1}}), 0), std::string{"a b"});
+    SAME(read(one.render({{0, 0}, {10, 1}}), 0), std::string{"a b"});
 }
 
 // A cell gets the width it wants, at most its column's, and the height of its row, which is as
@@ -116,16 +116,16 @@ TRIAL("Grid: a row is as tall as its tallest cell, a cell as wide as it wants") 
     one.children().add(row({tall, low}));
     one.children().add(row({wide, std::make_shared<ui::Blank>()}));
 
-    same(one.wants({40, 10}), (ui::Size{7, 3}));
+    SAME(one.wants({40, 10}), (ui::Size{7, 3}));
 
     const Snapshot made = one.render({{0, 0}, {10, 3}});
 
-    same(read(made, 0), std::string{"aa    b"});
-    same(read(made, 1), std::string{"aa    b"});
-    same(read(made, 2), std::string{"ccccc"});
-    same(tall->area().size, (ui::Size{2, 2}));
-    same(low->area().at.x, 6);
-    same(wide->area().at.y, 0);
+    SAME(read(made, 0), std::string{"aa    b"});
+    SAME(read(made, 1), std::string{"aa    b"});
+    SAME(read(made, 2), std::string{"ccccc"});
+    SAME(tall->area().size, (ui::Size{2, 2}));
+    SAME(low->area().at.x, 6);
+    SAME(wide->area().at.y, 0);
 }
 
 // A cell across takes everything from its column to the end of the last one. One that wants more
@@ -138,19 +138,19 @@ TRIAL("Grid: a cell across takes the rest of its row, and a wider one widens the
     one.children().add(row({box({2, 1}, U'l'), box({3, 1}, U'a'), box({3, 1}, U'b')}));
     one.children().add(row({std::make_shared<ui::Blank>(), across(field)}));
 
-    same(read(one.render({{0, 0}, {20, 2}}), 1), std::string{"   fffffff"});
-    same(field->area().size.wide, 7);
+    SAME(read(one.render({{0, 0}, {20, 2}}), 1), std::string{"   fffffff"});
+    SAME(field->area().size.wide, 7);
 
     const auto longer = box({10, 1}, U'h');
 
     one.children().add(row({std::make_shared<ui::Blank>(), across(longer)}));
 
-    same(one.wants({40, 10}).wide, 13);
+    SAME(one.wants({40, 10}).wide, 13);
 
     const Snapshot made = one.render({{0, 0}, {20, 3}});
 
-    same(read(made, 0), std::string{"ll aaa bbb"});
-    same(read(made, 2), std::string{"   hhhhhhhhhh"});
+    SAME(read(made, 0), std::string{"ll aaa bbb"});
+    SAME(read(made, 2), std::string{"   hhhhhhhhhh"});
 }
 
 // A child that is not a row of cells is a row of its own over the whole width: a line across, an
@@ -162,14 +162,14 @@ TRIAL("Grid: any other child takes a row of its own over the whole width") {
     one.children().add(std::make_shared<ui::Blank>(ui::Size{0, 1}));
     one.children().add(box({9, 2}, U'-'));
 
-    same(one.wants({40, 10}), (ui::Size{9, 4}));
+    SAME(one.wants({40, 10}), (ui::Size{9, 4}));
 
     const Snapshot made = one.render({{0, 0}, {10, 4}});
 
-    same(read(made, 0), std::string{"ll vvv"});
-    same(read(made, 1), std::string{""});
-    same(read(made, 2), std::string{"----------"});
-    same(read(made, 3), std::string{"----------"});
+    SAME(read(made, 0), std::string{"ll vvv"});
+    SAME(read(made, 1), std::string{""});
+    SAME(read(made, 2), std::string{"----------"});
+    SAME(read(made, 3), std::string{"----------"});
 }
 
 // The grid gives its rows their rectangles and the cells theirs inside them, so a click goes down
@@ -197,22 +197,22 @@ TRIAL("Grid: a click reaches the cell through its row") {
     ui::ClickEvent on{{4, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(on);
-    same(hits, 1);
+    SAME(hits, 1);
 
     ui::ClickEvent beside{{1, 0}, ui::Mouse::left, {}};
 
     (void)top.dispatch(beside);
-    same(hits, 1);
+    SAME(hits, 1);
 }
 
 // An empty place: its size within the room, and nothing inside.
 TRIAL("Blank: wants its size within the room and holds nothing") {
     const ui::Blank one{{4, 2}};
 
-    same(one.wants({10, 10}), (ui::Size{4, 2}));
-    same(one.wants({3, 1}), (ui::Size{3, 1}));
-    same(one.capacity(), 0);
+    SAME(one.wants({10, 10}), (ui::Size{4, 2}));
+    SAME(one.wants({3, 1}), (ui::Size{3, 1}));
+    SAME(one.capacity(), 0);
     const ui::Blank none{{-2, -1}};
 
-    same(none.wants({10, 10}), (ui::Size{0, 0}));
+    SAME(none.wants({10, 10}), (ui::Size{0, 0}));
 }

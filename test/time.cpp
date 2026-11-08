@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -20,12 +20,12 @@ TRIAL("Time: the stopwatch measures what has passed") {
 
     std::this_thread::sleep_for(60ms);
 
-    ought(held.spent() >= 50ms);
-    ought(held.spent() < 400ms);
+    OUGHT(held.spent() >= 50ms);
+    OUGHT(held.spent() < 400ms);
 
     held.reset();
 
-    ought(held.spent() < 50ms);
+    OUGHT(held.spent() < 50ms);
 }
 
 TRIAL("Time: later is fulfilled after the time, not before") {
@@ -33,8 +33,8 @@ TRIAL("Time: later is fulfilled after the time, not before") {
 
     later(120ms).get();
 
-    ought(held.spent() >= 100ms);
-    ought(held.spent() < 600ms);
+    OUGHT(held.spent() >= 100ms);
+    OUGHT(held.spent() < 600ms);
 }
 
 TRIAL("Time: later counts from the call, not from the first wait") {
@@ -42,13 +42,13 @@ TRIAL("Time: later counts from the call, not from the first wait") {
 
     std::this_thread::sleep_for(200ms);
 
-    ought(waiting.ready());
+    OUGHT(waiting.ready());
 
     Stopwatch held;
 
     std::move(waiting).get();
 
-    ought(held.spent() < 100ms);
+    OUGHT(held.spent() < 100ms);
 }
 
 TRIAL("Time: a stopwatch is not a clock") {
@@ -63,7 +63,7 @@ TRIAL("timeout: work that made it in time gives its value") {
         return 7;
     });
 
-    same(std::move(quick).timeout(800ms).get(), 7);
+    SAME(std::move(quick).timeout(800ms).get(), 7);
 }
 
 TRIAL("timeout: work that did not make it in time fails with an Overdue exception and is stopped") {
@@ -78,9 +78,9 @@ TRIAL("timeout: work that did not make it in time fails with an Overdue exceptio
         caught = true;
     }
 
-    ought(caught);
-    ought(held.spent() < 500ms);
-    ought(settle.stop().wait(5s));
+    OUGHT(caught);
+    OUGHT(held.spent() < 500ms);
+    OUGHT(settle.stop().wait(5s));
 }
 
 TRIAL("timeout: the work's rejection passes through as it is") {
@@ -96,7 +96,7 @@ TRIAL("timeout: the work's rejection passes through as it is") {
         said = why.what();
     }
 
-    same(said, std::string{"zepsute"});
+    SAME(said, std::string{"zepsute"});
 }
 
 TRIAL("timeout: a value that came in time stays, however long the result waits") {
@@ -104,7 +104,7 @@ TRIAL("timeout: a value that came in time stays, however long the result waits")
 
     std::this_thread::sleep_for(120ms);
 
-    same(std::move(bounded).get(), 5);
+    SAME(std::move(bounded).get(), 5);
 }
 
 TRIAL("timeout: cancelling the result stops the work") {
@@ -114,7 +114,7 @@ TRIAL("timeout: cancelling the result stops the work") {
 
     bounded.cancel();
 
-    ought(settle.stop().wait(5s));
+    OUGHT(settle.stop().wait(5s));
 }
 
 TRIAL("timeout: works on a link of a chain and stops it all the way to the source") {
@@ -122,9 +122,9 @@ TRIAL("timeout: works on a link of a chain and stops it all the way to the sourc
 
     Promise<int> chained = std::move(made).then([] { return 1; });
 
-    threw(std::move(chained).timeout(40ms).get());
+    THREW(std::move(chained).timeout(40ms).get());
 
-    ought(settle.stop().wait(5s));
+    OUGHT(settle.stop().wait(5s));
 }
 
 TRIAL("Time: a hundred waits do not cost a hundred threads") {
@@ -139,7 +139,7 @@ TRIAL("Time: a hundred waits do not cost a hundred threads") {
 
     // If every wait slept in its own task, a hundred of them on two cores would drag on much longer
     // than one.
-    ought(held.spent() < 900ms);
+    OUGHT(held.spent() < 900ms);
 }
 
 TRIAL("Time: a cancelled wait never comes due") {
@@ -153,7 +153,7 @@ TRIAL("Time: a cancelled wait never comes due") {
 
     later(200ms).get();
 
-    ought(!fired->load());
+    OUGHT(!fired->load());
 }
 
 // Many waits with deadlines in no order, half of them cancelled on the way: the rest come due, each
@@ -178,16 +178,16 @@ TRIAL("Time: of many waits the cancelled ones never come due and the rest do on 
     for (std::size_t at = 0; at < among.size(); at += 2) {
         std::move(among[at]).get();
 
-        ought(held.spent() + 5ms >= patience[at]);
+        OUGHT(held.spent() + 5ms >= patience[at]);
     }
 
     later(200ms).get();
 
-    for (std::size_t at = 1; at < among.size(); at += 2) ought(!(*fired)[at].load());
+    for (std::size_t at = 1; at < among.size(); at += 2) OUGHT(!(*fired)[at].load());
 }
 
 TRIAL("Time: the calendar stamp moves forward") {
     const std::chrono::sys_seconds one = Time::stamp();
 
-    ought(one.time_since_epoch().count() > 1700000000);
+    OUGHT(one.time_since_epoch().count() > 1700000000);
 }

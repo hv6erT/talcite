@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <memory>
 #include <string>
@@ -84,23 +84,23 @@ struct Stage {
 TRIAL("Select: an empty one carries nothing but takes focus") {
     const ui::Select one;
 
-    same(one.options().many(), std::size_t{0});
-    ought(!one.value().has_value());
-    ought(one.focusable());
-    same(one.capacity(), 0);
-    ought(!one.opened());
+    SAME(one.options().many(), std::size_t{0});
+    OUGHT(!one.value().has_value());
+    OUGHT(one.focusable());
+    SAME(one.capacity(), 0);
+    OUGHT(!one.opened());
 }
 
 TRIAL("Select: a fresh one stands on the first option") {
     const ui::Select one{three()};
 
-    same(one.options().many(), std::size_t{3});
-    same(*one.value(), std::string{"UTF-8"});
+    SAME(one.options().many(), std::size_t{3});
+    SAME(*one.value(), std::string{"UTF-8"});
 }
 
 TRIAL("Select: the choice can be given at construction and is clamped") {
-    same(*ui::Select(three(), 2).value(), std::string{"CP1250"});
-    same(*ui::Select(three(), 9).value(), std::string{"CP1250"});
+    SAME(*ui::Select(three(), 2).value(), std::string{"CP1250"});
+    SAME(*ui::Select(three(), 9).value(), std::string{"CP1250"});
 }
 
 // The longest option plus two cells for a space and the roll-out mark; the height is always one
@@ -108,8 +108,8 @@ TRIAL("Select: the choice can be given at construction and is clamped") {
 TRIAL("Select: wants the longest option and one row") {
     const ui::Select one{three()};
 
-    same(one.wants({40, 10}), (ui::Size{12, 1}));
-    same(one.wants({6, 3}), (ui::Size{6, 1}));
+    SAME(one.wants({40, 10}), (ui::Size{12, 1}));
+    SAME(one.wants({6, 3}), (ui::Size{6, 1}));
 }
 
 TRIAL("Select: giving new options clamps the choice") {
@@ -117,7 +117,7 @@ TRIAL("Select: giving new options clamps the choice") {
 
     one.options().all({"raz"});
 
-    same(*one.value(), std::string{"raz"});
+    SAME(*one.value(), std::string{"raz"});
 }
 
 // --- Drawing -------------------------------------------------------------------------------------
@@ -129,7 +129,7 @@ TRIAL("Select: draws the current value and the roll-out mark at the right edge")
 
     const Snapshot made = stage.drawn();
 
-    same(read(made, 0), std::string{"UTF-8"} + std::string(6, ' ') + "\xe2\x96\xbc");
+    SAME(read(made, 0), std::string{"UTF-8"} + std::string(6, ' ') + "\xe2\x96\xbc");
 }
 
 TRIAL("Select: when too narrow it cuts the text, not the roll-out mark") {
@@ -140,19 +140,19 @@ TRIAL("Select: when too narrow it cuts the text, not the roll-out mark") {
     const Snapshot made = stage.drawn({8, 12});
 
     // The roll-out mark keeps its place, and the text makes way for it with an ellipsis.
-    same(made.at({7, 0}).letter, U'▼');
-    same(made.at({5, 0}).letter, U'…');
-    same(made.at({0, 0}).letter, U'I');
+    SAME(made.at({7, 0}).letter, U'▼');
+    SAME(made.at({5, 0}).letter, U'…');
+    SAME(made.at({0, 0}).letter, U'I');
 }
 
 TRIAL("Select: has its own role when focused") {
     Stage stage;
 
-    ought(!stage.drawn().at({0, 0}).style.reverse);
+    OUGHT(!stage.drawn().at({0, 0}).style.reverse);
 
     stage.one->focus();
 
-    ought(stage.drawn().at({0, 0}).style.reverse);
+    OUGHT(stage.drawn().at({0, 0}).style.reverse);
 }
 
 // --- Keys while closed ---------------------------------------------------------------------------
@@ -171,25 +171,25 @@ TRIAL("Select: the side arrows change the value and notify, up and down pass") {
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(stage.top.dispatch(right));
-    same(*stage.one->value(), std::string{"ISO-8859-2"});
-    same(done, 1);
+    OUGHT(stage.top.dispatch(right));
+    SAME(*stage.one->value(), std::string{"ISO-8859-2"});
+    SAME(done, 1);
 
     ui::KeyEvent left{ui::Code::left};
 
-    ought(stage.top.dispatch(left));
-    same(*stage.one->value(), std::string{"UTF-8"});
-    same(done, 2);
+    OUGHT(stage.top.dispatch(left));
+    SAME(*stage.one->value(), std::string{"UTF-8"});
+    SAME(done, 2);
 
     ui::KeyEvent down{ui::Code::down};
     ui::KeyEvent up{ui::Code::up};
 
-    ought(!stage.top.dispatch(down));
-    ought(!stage.top.dispatch(up));
-    same(*stage.one->value(), std::string{"UTF-8"});
-    same(done, 2);
+    OUGHT(!stage.top.dispatch(down));
+    OUGHT(!stage.top.dispatch(up));
+    SAME(*stage.one->value(), std::string{"UTF-8"});
+    SAME(done, 2);
 
-    ought(!stage.one->opened());
+    OUGHT(!stage.one->opened());
 }
 
 // At either end a side arrow goes up the tree too.
@@ -200,14 +200,14 @@ TRIAL("Select: at either end it passes the side arrow up") {
 
     ui::KeyEvent left{ui::Code::left};
 
-    ought(!stage.top.dispatch(left));
+    OUGHT(!stage.top.dispatch(left));
 
     stage.one->value("CP1250");
 
     ui::KeyEvent right{ui::Code::right};
 
-    ought(!stage.top.dispatch(right));
-    same(*stage.one->value(), std::string{"CP1250"});
+    OUGHT(!stage.top.dispatch(right));
+    SAME(*stage.one->value(), std::string{"CP1250"});
 }
 
 TRIAL("Select: Home and End jump to the ends") {
@@ -217,13 +217,13 @@ TRIAL("Select: Home and End jump to the ends") {
 
     ui::KeyEvent end{ui::Code::end};
 
-    ought(stage.top.dispatch(end));
-    same(*stage.one->value(), std::string{"CP1250"});
+    OUGHT(stage.top.dispatch(end));
+    SAME(*stage.one->value(), std::string{"CP1250"});
 
     ui::KeyEvent home{ui::Code::home};
 
-    ought(stage.top.dispatch(home));
-    same(*stage.one->value(), std::string{"UTF-8"});
+    OUGHT(stage.top.dispatch(home));
+    SAME(*stage.one->value(), std::string{"UTF-8"});
 }
 
 // Letters go up the tree, and that is required so that a button's hotkey works while focus is on
@@ -235,11 +235,11 @@ TRIAL("Select: letters and Tab go up the tree") {
 
     ui::KeyEvent letter{U'z'};
 
-    ought(!stage.top.dispatch(letter));
+    OUGHT(!stage.top.dispatch(letter));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(!stage.top.dispatch(tab));
+    OUGHT(!stage.top.dispatch(tab));
 }
 
 TRIAL("Select: setting the value is silent") {
@@ -251,8 +251,8 @@ TRIAL("Select: setting the value is silent") {
 
     stage.one->value("CP1250");
 
-    same(*stage.one->value(), std::string{"CP1250"});
-    same(done, 0);
+    SAME(*stage.one->value(), std::string{"CP1250"});
+    SAME(done, 0);
 }
 
 // --- Rolling out ---------------------------------------------------------------------------------
@@ -264,17 +264,17 @@ TRIAL("Select: Enter rolls out, Esc closes and gives focus back") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(stage.top.dispatch(enter));
-    ought(stage.one->opened());
-    same(static_cast<int>(stage.window->many()), 1);
+    OUGHT(stage.top.dispatch(enter));
+    OUGHT(stage.one->opened());
+    SAME(static_cast<int>(stage.window->many()), 1);
 
     ui::KeyEvent escape{ui::Code::escape};
 
-    ought(stage.top.dispatch(escape));
+    OUGHT(stage.top.dispatch(escape));
 
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
 // Space does not roll out. In a window with a text field that key belongs to typing, so the select
@@ -286,8 +286,8 @@ TRIAL("Select: space does not roll out") {
 
     ui::KeyEvent space{U' '};
 
-    ought(!stage.top.dispatch(space));
-    ought(!stage.one->opened());
+    OUGHT(!stage.top.dispatch(space));
+    OUGHT(!stage.one->opened());
 }
 
 // The rolled-out list stands below the widget, not in the middle of the screen like a plain window.
@@ -301,10 +301,10 @@ TRIAL("Select: the rolled-out list stands below the select") {
     const Snapshot made = stage.drawn();
 
     // Row zero is the select itself; the list's frame starts in row one, at the left edge.
-    same(made.at({0, 1}).letter, U'┌');
-    same(made.at({0, 2}).letter, U'│');
-    same(made.at({1, 2}).letter, U'U');
-    same(made.at({1, 3}).letter, U'I');
+    SAME(made.at({0, 1}).letter, U'┌');
+    SAME(made.at({0, 2}).letter, U'│');
+    SAME(made.at({1, 2}).letter, U'U');
+    SAME(made.at({1, 3}).letter, U'I');
 }
 
 // There is no room below the bottom edge, so the list opens upward. Only the one who has the whole
@@ -331,11 +331,11 @@ TRIAL("Select: with no room below, the list opens upward") {
     const Snapshot made = top.render({{0, 0}, {30, 7}});
 
     // The select is in the last row, so row 6 still shows the select itself with its mark.
-    same(made.at({11, 6}).letter, U'▼');
+    SAME(made.at({11, 6}).letter, U'▼');
 
     // And the list's frame ends right above it.
-    same(made.at({0, 5}).letter, U'└');
-    same(made.at({0, 1}).letter, U'┌');
+    SAME(made.at({0, 5}).letter, U'└');
+    SAME(made.at({0, 1}).letter, U'┌');
 }
 
 // The caller says how many rows are visible at once; fewer than one makes no sense, so zero means
@@ -343,15 +343,15 @@ TRIAL("Select: with no room below, the list opens upward") {
 TRIAL("Select: the number of list rows has a lower bound") {
     ui::Select one{three()};
 
-    same(one.rows(), 8);
+    SAME(one.rows(), 8);
 
     one.rows(0);
 
-    same(one.rows(), 1);
+    SAME(one.rows(), 1);
 
     one.rows(2);
 
-    same(one.rows(), 2);
+    SAME(one.rows(), 2);
 }
 
 // A list longer than the row count gets as many rows as it was told, with a scrollbar beside it. A
@@ -364,9 +364,9 @@ TRIAL("Select: the list has the rows it was told, and a longer one gets a scroll
 
     const ui::List* list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->high(), 2);
-    ought(list->scrollbar());
+    OUGHT(list != nullptr);
+    SAME(list->high(), 2);
+    OUGHT(list->scrollbar());
 
     stage.one->close();
     stage.one->rows(5);
@@ -374,9 +374,9 @@ TRIAL("Select: the list has the rows it was told, and a longer one gets a scroll
 
     list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->high(), 3);
-    ought(!list->scrollbar());
+    OUGHT(list != nullptr);
+    SAME(list->high(), 3);
+    OUGHT(!list->scrollbar());
 }
 
 // The rolled-out list stands on the current value: Enter without moving chooses what is already
@@ -389,8 +389,8 @@ TRIAL("Select: the rolled-out list stands on the current value") {
 
     const ui::List* list = rolled(*stage.window);
 
-    ought(list != nullptr);
-    same(list->which(), std::optional<std::size_t>{2});
+    OUGHT(list != nullptr);
+    SAME(list->which(), std::optional<std::size_t>{2});
 }
 
 // Closing by the caller reports "closed" at once, even though the removed veil may live on in the
@@ -401,8 +401,8 @@ TRIAL("Select: closing reports closed at once") {
     stage.one->open();
     stage.one->close();
 
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
 }
 
 TRIAL("Select: rolling out twice does not make two lists") {
@@ -411,7 +411,7 @@ TRIAL("Select: rolling out twice does not make two lists") {
     stage.one->open();
     stage.one->open();
 
-    same(static_cast<int>(stage.window->many()), 1);
+    SAME(static_cast<int>(stage.window->many()), 1);
 }
 
 TRIAL("Select: an empty one has nothing to roll out") {
@@ -425,8 +425,8 @@ TRIAL("Select: an empty one has nothing to roll out") {
 
     one->open();
 
-    ought(!one->opened());
-    ought(window->empty());
+    OUGHT(!one->opened());
+    OUGHT(window->empty());
 }
 
 // --- Choosing from the rolled-out list -----------------------------------------------------------
@@ -448,15 +448,15 @@ TRIAL("Select: an item chosen with Enter comes back as an event and closes the l
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(stage.top.dispatch(enter));
+    OUGHT(stage.top.dispatch(enter));
 
-    same(*stage.one->value(), std::string{"ISO-8859-2"});
-    same(done, 1);
-    ought(!stage.one->opened());
+    SAME(*stage.one->value(), std::string{"ISO-8859-2"});
+    SAME(done, 1);
+    OUGHT(!stage.one->opened());
 }
 
 // The choice arrives once the list is gone: a caller that opens something new in response, or asks
@@ -479,13 +479,13 @@ TRIAL("Select: the pick event arrives with the list rolled up") {
 
     ui::KeyEvent down{ui::Code::down};
 
-    ought(stage.top.dispatch(down));
+    OUGHT(stage.top.dispatch(down));
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(stage.top.dispatch(enter));
+    OUGHT(stage.top.dispatch(enter));
 
-    ought(!open);
+    OUGHT(!open);
 }
 
 // Choosing the same item is not a change, the same rule as clicking an already chosen option in a
@@ -505,10 +505,10 @@ TRIAL("Select: choosing the same item does not notify") {
 
     ui::KeyEvent enter{ui::Code::enter};
 
-    ought(stage.top.dispatch(enter));
+    OUGHT(stage.top.dispatch(enter));
 
-    same(done, 0);
-    ought(!stage.one->opened());
+    SAME(done, 0);
+    OUGHT(!stage.one->opened());
 }
 
 // --- Clicking ------------------------------------------------------------------------------------
@@ -522,16 +522,16 @@ TRIAL("Select: a click takes focus and rolls out") {
 
     ui::ClickEvent what{{2, 0}, ui::Mouse::left};
 
-    ought(stage.top.dispatch(what));
-    ought(stage.one->opened());
-    ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(stage.top.dispatch(what));
+    OUGHT(stage.one->opened());
+    OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
 
     ui::KeyEvent escape{ui::Code::escape};
 
-    ought(stage.top.dispatch(escape));
+    OUGHT(stage.top.dispatch(escape));
 
-    ought(!stage.one->opened());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(!stage.one->opened());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
 }
 
 // A click beside the rolled-out list rolls it up and gives the focus back, choosing nothing; a
@@ -552,11 +552,11 @@ TRIAL("Select: a click beside the rolled-out list closes it, a click on a row ch
 
     ui::ClickEvent beside{{25, 10}, ui::Mouse::left};
 
-    ought(stage.top.dispatch(beside));
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
-    same(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
-    same(done, 0);
+    OUGHT(stage.top.dispatch(beside));
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
+    SAME(stage.top.focused_node(), static_cast<ui::Node*>(stage.one.get()));
+    SAME(done, 0);
 
     stage.one->open();
 
@@ -565,10 +565,10 @@ TRIAL("Select: a click beside the rolled-out list closes it, a click on a row ch
     // Rows: the select in row zero, the frame from row one, the options in rows two to four.
     ui::ClickEvent third{{2, 4}, ui::Mouse::left};
 
-    ought(stage.top.dispatch(third));
-    ought(!stage.one->opened());
-    same(done, 1);
-    same(*stage.one->value(), std::string{"CP1250"});
+    OUGHT(stage.top.dispatch(third));
+    OUGHT(!stage.one->opened());
+    SAME(done, 1);
+    SAME(*stage.one->value(), std::string{"CP1250"});
 }
 
 // --- Disabled ------------------------------------------------------------------------------------
@@ -579,18 +579,18 @@ TRIAL("Select: when disabled it does not roll out, does not choose and gives up 
     stage.one->focus();
     stage.one->enabled(false);
 
-    ought(!stage.one->focusable());
-    ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(!stage.one->focusable());
+    OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
 
     stage.one->open();
 
-    ought(!stage.one->opened());
+    OUGHT(!stage.one->opened());
 
     ui::KeyEvent down{ui::Code::down};
 
     (void)stage.top.dispatch(down);
 
-    same(*stage.one->value(), std::string{"UTF-8"});
+    SAME(*stage.one->value(), std::string{"UTF-8"});
 }
 
 TRIAL("Select: disabling it while open closes the rolled-out list") {
@@ -599,18 +599,18 @@ TRIAL("Select: disabling it while open closes the rolled-out list") {
     stage.one->focus();
     stage.one->open();
 
-    ought(stage.one->opened());
-    ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(stage.one->opened());
+    OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
 
     stage.one->enabled(false);
 
-    ought(!stage.one->opened());
-    ought(stage.window->empty());
+    OUGHT(!stage.one->opened());
+    OUGHT(stage.window->empty());
 
     // Focus was in the list. The closed list gives it back to the select, which is now disabled and
     // passes it on.
-    ought(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
-    ought(!stage.one->focused());
+    OUGHT(stage.top.focused_node() != static_cast<ui::Node*>(stage.one.get()));
+    OUGHT(!stage.one->focused());
 }
 
 namespace {
@@ -645,8 +645,8 @@ TRIAL("Select: rolling up the list does not hide the disable event from ancestor
     one->open();
     one->enabled(false);
 
-    ought(!one->opened());
-    same(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
+    OUGHT(!one->opened());
+    SAME(static_cast<const void*>(column->seen), static_cast<const void*>(one.get()));
 }
 
 // --- In a dialog ---------------------------------------------------------------------------------
@@ -673,12 +673,12 @@ TRIAL("Select: disabled in a dialog with the list rolled out, it gives focus to 
     one->open();
     one->enabled(false);
 
-    ought(!one->opened());
-    same(static_cast<const void*>(top.focused_node()), static_cast<const void*>(dialog.get()));
+    OUGHT(!one->opened());
+    SAME(static_cast<const void*>(top.focused_node()), static_cast<const void*>(dialog.get()));
 
     ui::KeyEvent key{ui::Key{U'x'}};
 
-    ought(top.dispatch(key));
+    OUGHT(top.dispatch(key));
 }
 
 // A select is one stop of the Tab cycle, and a rolled-out list does not break the cycle.
@@ -698,15 +698,15 @@ TRIAL("Select: in a window it is one stop for Tab") {
     top.children().add(window);
     window->open(dialog);
 
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 
     ui::KeyEvent tab{ui::Code::tab};
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(other.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(other.get()));
 
-    ought(top.dispatch(tab));
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    OUGHT(top.dispatch(tab));
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 
 // The rolled-out list lies above the dialog, because both are veils in the same window and the
@@ -729,15 +729,15 @@ TRIAL("Select: a list rolled out in a dialog closes above it and gives focus bac
 
     one->open();
 
-    same(static_cast<int>(window->many()), 2);
-    ought(one->opened());
-    ought(window->current() != static_cast<ui::Modal*>(dialog.get()));
+    SAME(static_cast<int>(window->many()), 2);
+    OUGHT(one->opened());
+    OUGHT(window->current() != static_cast<ui::Modal*>(dialog.get()));
 
     ui::KeyEvent escape{ui::Code::escape};
 
-    ought(top.dispatch(escape));
+    OUGHT(top.dispatch(escape));
 
-    same(static_cast<int>(window->many()), 1);
-    same(top.focused_node(), static_cast<ui::Node*>(one.get()));
+    SAME(static_cast<int>(window->many()), 1);
+    SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
 }
 

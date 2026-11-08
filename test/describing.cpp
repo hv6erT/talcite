@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -85,7 +85,7 @@ public:
 TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
     const Seam<MetaProvider> none;
 
-    ought(!none.bound());
+    OUGHT(!none.bound());
 
     const stdfs::path file = written("unbound.bin", "WAVEdata");
 
@@ -97,7 +97,7 @@ TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
         amiss = std::string{why.what()} == "No provider for Meta.";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -107,7 +107,7 @@ TRIAL("Meta: an empty seam rejects the promise with Unbound naming the kind") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Meta: the provider sees the file's size and bytes, and a read past the end is shorter") {
@@ -118,20 +118,20 @@ TRIAL("Meta: the provider sees the file's size and bytes, and a read past the en
 
     const meta::Description got = meta.described(file).get();
 
-    same(faked->asked.load(), 1);
-    same(got.type, std::string{"fLaC"});
-    same(got.fields.size(), std::size_t{4});
-    ought(got.fields[0].value == meta::Value{std::int64_t{11}});
-    ought(got.fields[1].value == meta::Value{std::string{"yz"}});
-    ought(got.fields[2].value == meta::Value{std::int64_t{3}});
-    ought(got.fields[3].value == meta::Value{std::int64_t{0}});
-    ought(!got.damaged);
+    SAME(faked->asked.load(), 1);
+    SAME(got.type, std::string{"fLaC"});
+    SAME(got.fields.size(), std::size_t{4});
+    OUGHT(got.fields[0].value == meta::Value{std::int64_t{11}});
+    OUGHT(got.fields[1].value == meta::Value{std::string{"yz"}});
+    OUGHT(got.fields[2].value == meta::Value{std::int64_t{3}});
+    OUGHT(got.fields[3].value == meta::Value{std::int64_t{0}});
+    OUGHT(!got.damaged);
 }
 
 TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
     const Seam<MetaProvider> meta{std::make_shared<Faked>()};
 
-    same(std::string{meta.provider().name()}, std::string{"fake meta"});
+    SAME(std::string{meta.provider().name()}, std::string{"fake meta"});
 
     bool amiss = false;
 
@@ -141,7 +141,7 @@ TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
         amiss = std::string{why.what()} == "Meta provider refused: not a file the fake would read";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 
     amiss = false;
 
@@ -151,7 +151,7 @@ TRIAL("Meta: the provider's refusal comes out as Refused naming the kind") {
         amiss = std::string{why.what()} == "Meta provider refused: no such picture";
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Meta: a missing file rejects with a file system error, and the provider is not asked") {
@@ -166,8 +166,8 @@ TRIAL("Meta: a missing file rejects with a file system error, and the provider i
         amiss = true;
     }
 
-    ought(amiss);
-    same(faked->asked.load(), 0);
+    OUGHT(amiss);
+    SAME(faked->asked.load(), 0);
 }
 
 TRIAL("Meta: the picture comes from the provider with the number asked for") {
@@ -175,8 +175,8 @@ TRIAL("Meta: the picture comes from the provider with the number asked for") {
 
     const Bytes got = meta.pictured(written("picture.bin", "Zebra"), 7).get();
 
-    same(got.size(), std::size_t{4});
-    same(std::to_integer<int>(got[0]), 7);
-    same(std::to_integer<int>(got[2]), 7);
-    same(std::to_integer<char>(got[3]), 'Z');
+    SAME(got.size(), std::size_t{4});
+    SAME(std::to_integer<int>(got[0]), 7);
+    SAME(std::to_integer<int>(got[2]), 7);
+    SAME(std::to_integer<char>(got[3]), 'Z');
 }

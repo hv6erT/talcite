@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -48,30 +48,30 @@ TRIAL("Canvas: put tells a character from a string") {
     onto.put({4, 0}, std::string{"d"}, Style{});
     onto.put({5, 0}, std::string_view{"e"}, Style{});
 
-    same(one.at({0, 0}).letter, U'ż');
-    ought(one.at({0, 0}).style == marked());
-    same(one.at({1, 0}).letter, U'a');
-    same(one.at({2, 0}).letter, U'b');
-    same(one.at({3, 0}).letter, U'c');
-    same(one.at({4, 0}).letter, U'd');
-    same(one.at({5, 0}).letter, U'e');
+    SAME(one.at({0, 0}).letter, U'ż');
+    OUGHT(one.at({0, 0}).style == marked());
+    SAME(one.at({1, 0}).letter, U'a');
+    SAME(one.at({2, 0}).letter, U'b');
+    SAME(one.at({3, 0}).letter, U'c');
+    SAME(one.at({4, 0}).letter, U'd');
+    SAME(one.at({5, 0}).letter, U'e');
 }
 
 TRIAL("Sheet: a fresh page has its size and nothing but spaces") {
     const detail::Sheet one{{4, 2}};
 
-    same(one.size().wide, 4);
-    same(one.size().high, 2);
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({3, 1}).letter, U' ');
+    SAME(one.size().wide, 4);
+    SAME(one.size().high, 2);
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({3, 1}).letter, U' ');
 }
 
 TRIAL("Sheet: a negative dimension goes down to zero, not to an exception") {
     const detail::Sheet one{{-5, 3}};
 
-    same(one.size().wide, 0);
-    same(one.size().high, 3);
-    same(one.at({0, 0}).letter, U' ');
+    SAME(one.size().wide, 0);
+    SAME(one.size().high, 3);
+    SAME(one.at({0, 0}).letter, U' ');
 }
 
 TRIAL("Sheet: a letter stands where it was told") {
@@ -79,9 +79,9 @@ TRIAL("Sheet: a letter stands where it was told") {
 
     one.put({2, 1}, U'A', marked());
 
-    same(one.at({2, 1}).letter, U'A');
-    ought(one.at({2, 1}).style.bold);
-    same(one.at({1, 1}).letter, U' ');
+    SAME(one.at({2, 1}).letter, U'A');
+    OUGHT(one.at({2, 1}).style.bold);
+    SAME(one.at({1, 1}).letter, U' ');
 }
 
 TRIAL("Sheet: writing outside the page does nothing") {
@@ -91,8 +91,8 @@ TRIAL("Sheet: writing outside the page does nothing") {
     one.put({-1, 0}, U'B', Style{});
     one.put({0, 9}, U'C', Style{});
 
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({1, 1}).letter, U' ');
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({1, 1}).letter, U' ');
 }
 
 TRIAL("Canvas: a string goes to the right") {
@@ -101,10 +101,10 @@ TRIAL("Canvas: a string goes to the right") {
 
     onto.put({1, 0}, "abc", Style{});
 
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({1, 0}).letter, U'a');
-    same(one.at({2, 0}).letter, U'b');
-    same(one.at({3, 0}).letter, U'c');
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({1, 0}).letter, U'a');
+    SAME(one.at({2, 0}).letter, U'b');
+    SAME(one.at({3, 0}).letter, U'c');
 }
 
 TRIAL("Canvas: a string with diacritics counts characters, not bytes") {
@@ -113,10 +113,10 @@ TRIAL("Canvas: a string with diacritics counts characters, not bytes") {
 
     onto.put({0, 0}, "żółw", Style{});
 
-    same(one.at({0, 0}).letter, U'ż');
-    same(one.at({1, 0}).letter, U'ó');
-    same(one.at({2, 0}).letter, U'ł');
-    same(one.at({3, 0}).letter, U'w');
+    SAME(one.at({0, 0}).letter, U'ż');
+    SAME(one.at({1, 0}).letter, U'ó');
+    SAME(one.at({2, 0}).letter, U'ł');
+    SAME(one.at({3, 0}).letter, U'w');
 }
 
 TRIAL("Canvas: a string is cut off at the edge") {
@@ -125,9 +125,9 @@ TRIAL("Canvas: a string is cut off at the edge") {
 
     onto.put({1, 0}, "abcdef", Style{});
 
-    same(one.at({1, 0}).letter, U'a');
-    same(one.at({2, 0}).letter, U'b');
-    same(one.size().wide, 3);
+    SAME(one.at({1, 0}).letter, U'a');
+    SAME(one.at({2, 0}).letter, U'b');
+    SAME(one.size().wide, 3);
 }
 
 TRIAL("Canvas: broken UTF-8 gives a replacement character instead of vanishing") {
@@ -140,9 +140,9 @@ TRIAL("Canvas: broken UTF-8 gives a replacement character instead of vanishing")
 
     onto.put({0, 0}, said, Style{});
 
-    same(one.at({0, 0}).letter, U'a');
-    same(one.at({1, 0}).letter, U'�');
-    same(one.at({2, 0}).letter, U'b');
+    SAME(one.at({0, 0}).letter, U'a');
+    SAME(one.at({1, 0}).letter, U'�');
+    SAME(one.at({2, 0}).letter, U'b');
 }
 
 TRIAL("Sheet: a double-width character takes two cells") {
@@ -150,8 +150,8 @@ TRIAL("Sheet: a double-width character takes two cells") {
 
     one.put({1, 0}, U'漢', Style{});
 
-    same(one.at({1, 0}).letter, U'漢');
-    same(one.at({2, 0}).letter, static_cast<char32_t>(0));
+    SAME(one.at({1, 0}).letter, U'漢');
+    SAME(one.at({2, 0}).letter, static_cast<char32_t>(0));
 }
 
 TRIAL("Sheet: a double-width character in the last column stays a space") {
@@ -159,7 +159,7 @@ TRIAL("Sheet: a double-width character in the last column stays a space") {
 
     one.put({2, 0}, U'漢', Style{});
 
-    same(one.at({2, 0}).letter, U' ');
+    SAME(one.at({2, 0}).letter, U' ');
 }
 
 TRIAL("Sheet: overwriting half of a double-width character cleans up the other half") {
@@ -168,8 +168,8 @@ TRIAL("Sheet: overwriting half of a double-width character cleans up the other h
     one.put({0, 0}, U'漢', Style{});
     one.put({1, 0}, U'x', Style{});
 
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({1, 0}).letter, U'x');
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({1, 0}).letter, U'x');
 }
 
 TRIAL("Sheet: overwriting the first half cleans up the continuation") {
@@ -178,8 +178,8 @@ TRIAL("Sheet: overwriting the first half cleans up the continuation") {
     one.put({1, 0}, U'漢', Style{});
     one.put({1, 0}, U'x', Style{});
 
-    same(one.at({1, 0}).letter, U'x');
-    same(one.at({2, 0}).letter, U' ');
+    SAME(one.at({1, 0}).letter, U'x');
+    SAME(one.at({2, 0}).letter, U' ');
 }
 
 TRIAL("Sheet: fill paints a rectangle and does not go outside it") {
@@ -187,10 +187,10 @@ TRIAL("Sheet: fill paints a rectangle and does not go outside it") {
 
     one.fill({{1, 1}, {2, 1}}, marked());
 
-    ought(one.at({1, 1}).style.bold);
-    ought(one.at({2, 1}).style.bold);
-    ought(!one.at({0, 1}).style.bold);
-    ought(!one.at({1, 0}).style.bold);
+    OUGHT(one.at({1, 1}).style.bold);
+    OUGHT(one.at({2, 1}).style.bold);
+    OUGHT(!one.at({0, 1}).style.bold);
+    OUGHT(!one.at({1, 0}).style.bold);
 }
 
 TRIAL("Sheet: fill cuts a double-width character at both of its edges") {
@@ -201,16 +201,16 @@ TRIAL("Sheet: fill cuts a double-width character at both of its edges") {
 
     one.fill({{1, 0}, {4, 1}}, marked());
 
-    same(one.at({0, 0}).letter, U' ');
-    ought(!one.at({0, 0}).style.bold);
+    SAME(one.at({0, 0}).letter, U' ');
+    OUGHT(!one.at({0, 0}).style.bold);
 
     for (int x = 1; x < 5; ++x) {
-        same(one.at({x, 0}).letter, U' ');
-        ought(one.at({x, 0}).style.bold);
+        SAME(one.at({x, 0}).letter, U' ');
+        OUGHT(one.at({x, 0}).style.bold);
     }
 
-    same(one.at({5, 0}).letter, U' ');
-    ought(!one.at({5, 0}).style.bold);
+    SAME(one.at({5, 0}).letter, U' ');
+    OUGHT(!one.at({5, 0}).style.bold);
 }
 
 TRIAL("Sheet: fill and clear reaching past the page stop at its edge") {
@@ -219,13 +219,13 @@ TRIAL("Sheet: fill and clear reaching past the page stop at its edge") {
     one.fill({{-2, -1}, {9, 9}}, marked());
 
     for (int y = 0; y < 2; ++y)
-        for (int x = 0; x < 3; ++x) ought(one.at({x, y}).style.bold);
+        for (int x = 0; x < 3; ++x) OUGHT(one.at({x, y}).style.bold);
 
     one.clear({{2, -5}, {7, 6}});
 
-    same(static_cast<int>(one.at({2, 0}).shown), static_cast<int>(Shown::none));
-    ought(one.at({1, 0}).style.bold);
-    same(static_cast<int>(one.at({2, 1}).shown), static_cast<int>(Shown::own));
+    SAME(static_cast<int>(one.at({2, 0}).shown), static_cast<int>(Shown::none));
+    OUGHT(one.at({1, 0}).style.bold);
+    SAME(static_cast<int>(one.at({2, 1}).shown), static_cast<int>(Shown::own));
 }
 
 TRIAL("Sheet: clearing half of a double-width character leaves no half behind") {
@@ -235,20 +235,20 @@ TRIAL("Sheet: clearing half of a double-width character leaves no half behind") 
 
     one.clear({{1, 0}, {2, 1}});
 
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({3, 0}).letter, U' ');
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({3, 0}).letter, U' ');
 
     one.put({1, 0}, U'y', Style{});
 
-    same(one.at({0, 0}).letter, U' ');
-    same(one.at({1, 0}).letter, U'y');
+    SAME(one.at({0, 0}).letter, U' ');
+    SAME(one.at({1, 0}).letter, U'y');
 }
 
 TRIAL("Sheet: asking for a cell outside the page gives an empty one") {
     const detail::Sheet one{{2, 2}};
 
-    same(one.at({9, 9}).letter, U' ');
-    same(one.at({-1, 0}).letter, U' ');
+    SAME(one.at({9, 9}).letter, U' ');
+    SAME(one.at({-1, 0}).letter, U' ');
 }
 
 // A file name, a title from the network, a description from an NFO: foreign text goes to the
@@ -264,22 +264,22 @@ TRIAL("Canvas: control characters become visible instead of being executed") {
     // As numbers, not literals: the compiler rightly warns about direction characters in source.
     constexpr char32_t substitute = 0xFFFD;
 
-    same(one.at({0, 0}).letter, U'a');
-    same(one.at({1, 0}).letter, char32_t{0x241B});
-    same(one.at({2, 0}).letter, U']');
-    same(one.at({4, 0}).letter, U';');
-    same(one.at({5, 0}).letter, char32_t{0x2407});
-    same(one.at({6, 0}).letter, substitute);
-    same(one.at({7, 0}).letter, substitute);
-    same(one.at({8, 0}).letter, char32_t{0x2421});
+    SAME(one.at({0, 0}).letter, U'a');
+    SAME(one.at({1, 0}).letter, char32_t{0x241B});
+    SAME(one.at({2, 0}).letter, U']');
+    SAME(one.at({4, 0}).letter, U';');
+    SAME(one.at({5, 0}).letter, char32_t{0x2407});
+    SAME(one.at({6, 0}).letter, substitute);
+    SAME(one.at({7, 0}).letter, substitute);
+    SAME(one.at({8, 0}).letter, char32_t{0x2421});
 
     for (const char32_t each : {0x200Eu, 0x200Fu, 0x061Cu, 0x2028u, 0x2029u, 0x202Au, 0x202Eu, 0x2066u, 0x2069u, 0x80u, 0x9Fu})
-        same(shown(each), substitute);
+        SAME(shown(each), substitute);
 
-    for (const char32_t each : {0x20u, 0x7Eu, 0xA0u, 0x17Cu, 0x2400u, 0x206Au, 0x2027u, 0x6F22u}) same(shown(each), each);
+    for (const char32_t each : {0x20u, 0x7Eu, 0xA0u, 0x17Cu, 0x2400u, 0x206Au, 0x2027u, 0x6F22u}) SAME(shown(each), each);
 
-    same(shown(0), char32_t{0x2400});
-    same(shown(0x1F), char32_t{0x241F});
+    SAME(shown(0), char32_t{0x2400});
+    SAME(shown(0x1F), char32_t{0x241F});
 }
 
 // --- Hyperlinks ----------------------------------------------------------------------------------
@@ -296,16 +296,16 @@ TRIAL("Sheet: a hyperlink marks the cells that show something, and the list keep
 
     one.link({{0, 0}, {5, 1}}, made);
 
-    same(one.at({0, 0}).link, made.mark);
-    same(one.at({2, 0}).link, made.mark);
-    same(one.at({3, 0}).link, std::uint32_t{0});
-    same(one.links().size(), std::size_t{1});
-    same(one.links().front().address, std::string{"https://example.org/"});
+    SAME(one.at({0, 0}).link, made.mark);
+    SAME(one.at({2, 0}).link, made.mark);
+    SAME(one.at({3, 0}).link, std::uint32_t{0});
+    SAME(one.links().size(), std::size_t{1});
+    SAME(one.links().front().address, std::string{"https://example.org/"});
 
     // The same link once more is one entry, not two.
     one.link({{0, 0}, {1, 1}}, made);
 
-    same(one.links().size(), std::size_t{1});
+    SAME(one.links().size(), std::size_t{1});
 }
 
 // One address keeps one mark, frame after frame and whoever draws it, so that frames compare equal;
@@ -315,9 +315,9 @@ TRIAL("Sheet: one address keeps its hyperlink mark, two addresses get two") {
     const Hyperlink again = hyperlink("https://a.example/");
     const Hyperlink two = hyperlink("https://b.example/");
 
-    ought(one.mark != 0);
-    same(again.mark, one.mark);
-    ought(two.mark != one.mark);
-    ought(two.mark != 0);
+    OUGHT(one.mark != 0);
+    SAME(again.mark, one.mark);
+    OUGHT(two.mark != one.mark);
+    OUGHT(two.mark != 0);
 }
 

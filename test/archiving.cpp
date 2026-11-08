@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -341,7 +341,7 @@ const archive::Member& member(const archive::Archive& one, std::string_view name
 
     const std::optional<std::size_t> at = one.found(stood::path{name});
 
-    ought(at.has_value());
+    OUGHT(at.has_value());
 
     return at ? one.members()[*at] : none;
 }
@@ -427,7 +427,7 @@ public:
 
     // A swelling unpacker.
     [[nodiscard]] std::unique_ptr<Unpacking> started(Packing which) override {
-        ought(which == Packing::gzip);
+        OUGHT(which == Packing::gzip);
 
         return std::make_unique<Swelling>(fed_);
     }
@@ -444,7 +444,7 @@ public:
 
     // A doubling unpacker.
     [[nodiscard]] std::unique_ptr<Unpacking> started(Packing which) override {
-        ought(which == Packing::deflate);
+        OUGHT(which == Packing::deflate);
 
         return std::make_unique<Doubling>();
     }
@@ -461,7 +461,7 @@ public:
 
     // A passing unpacker, for gzip only.
     [[nodiscard]] std::unique_ptr<Unpacking> started(Packing which) override {
-        ought(which == Packing::gzip);
+        OUGHT(which == Packing::gzip);
 
         return std::make_unique<Passing>(fed_);
     }
@@ -473,14 +473,14 @@ private:
 }
 
 TRIAL("Archive: the format comes from the end of the name") {
-    ought(archive::format_of("napisy.zip") == archive::Format::zip);
-    ought(archive::format_of("NAPISY.ZIP") == archive::Format::zip);
-    ought(archive::format_of("kopia.tar") == archive::Format::tar);
-    ought(archive::format_of("kopia.tar.gz") == archive::Format::tar_gzip);
-    ought(archive::format_of("kopia.TGZ") == archive::Format::tar_gzip);
-    ought(!archive::format_of("napisy.srt.gz").has_value());
-    ought(!archive::format_of(".zip").has_value());
-    ought(!archive::format_of("film.mkv").has_value());
+    OUGHT(archive::format_of("napisy.zip") == archive::Format::zip);
+    OUGHT(archive::format_of("NAPISY.ZIP") == archive::Format::zip);
+    OUGHT(archive::format_of("kopia.tar") == archive::Format::tar);
+    OUGHT(archive::format_of("kopia.tar.gz") == archive::Format::tar_gzip);
+    OUGHT(archive::format_of("kopia.TGZ") == archive::Format::tar_gzip);
+    OUGHT(!archive::format_of("napisy.srt.gz").has_value());
+    OUGHT(!archive::format_of(".zip").has_value());
+    OUGHT(!archive::format_of("film.mkv").has_value());
 }
 
 // The members of a ZIP with their sizes, kinds, times and rights; folders no entry names come
@@ -501,23 +501,23 @@ TRIAL("Archive: a ZIP lists its members, folders implied by the names too") {
 
     const archive::Archive got = archive::opened(where, {}).get();
 
-    same(names(got), (std::vector<std::string>{"Polskie", "Polskie/Heat.srt", "Angielskie/Lata/Ronin.srt", "czytaj.txt", "Angielskie/Lata",
+    SAME(names(got), (std::vector<std::string>{"Polskie", "Polskie/Heat.srt", "Angielskie/Lata/Ronin.srt", "czytaj.txt", "Angielskie/Lata",
                                                "Angielskie"}));
-    ought(got.format() == archive::Format::zip);
-    ought(member(got, "Polskie").kind == fs::Kind::folder);
-    same(member(got, "Polskie/Heat.srt").size, std::uintmax_t{14});
-    same(member(got, "Polskie/Heat.srt").modified.time_since_epoch().count(), std::int64_t{1'700'000'000});
-    ought(member(got, "Polskie/Heat.srt").rights == stood::perms{0644});
-    ought(member(got, "Angielskie").kind == fs::Kind::folder);
-    ought(member(got, "Polskie/Heat.srt").refusal == archive::Refusal::none);
+    OUGHT(got.format() == archive::Format::zip);
+    OUGHT(member(got, "Polskie").kind == fs::Kind::folder);
+    SAME(member(got, "Polskie/Heat.srt").size, std::uintmax_t{14});
+    SAME(member(got, "Polskie/Heat.srt").modified.time_since_epoch().count(), std::int64_t{1'700'000'000});
+    OUGHT(member(got, "Polskie/Heat.srt").rights == stood::perms{0644});
+    OUGHT(member(got, "Angielskie").kind == fs::Kind::folder);
+    OUGHT(member(got, "Polskie/Heat.srt").refusal == archive::Refusal::none);
 
     std::vector<std::string> top;
 
     for (const std::size_t at : got.within({})) top.push_back(fs::to_string(got.members()[at].name));
 
-    same(top, (std::vector<std::string>{"Polskie", "czytaj.txt", "Angielskie"}));
-    same(got.within("Angielskie").size(), std::size_t{1});
-    ought(!got.found("Brak").has_value());
+    SAME(top, (std::vector<std::string>{"Polskie", "czytaj.txt", "Angielskie"}));
+    SAME(got.within("Angielskie").size(), std::size_t{1});
+    OUGHT(!got.found("Brak").has_value());
 }
 
 // Names that would write outside the place given stay listed, refused; so do links, encrypted
@@ -547,11 +547,11 @@ TRIAL("Archive: unsafe names, links, encryption and unknown methods are refused,
     for (const archive::Member& one : got.members())
         if (one.stored == "../poza.txt" || one.stored == "/korzen.txt" || one.stored == "C:/dysk.txt" || one.stored == "a\\..\\..\\b.txt" ||
             one.stored == "strumien.txt:ukryty")
-            ought(one.refusal == archive::Refusal::unsafe);
+            OUGHT(one.refusal == archive::Refusal::unsafe);
 
-    ought(member(got, "skrot").refusal == archive::Refusal::link);
-    ought(member(got, "tajne.txt").refusal == archive::Refusal::encrypted);
-    ought(member(got, "bzip.txt").refusal == archive::Refusal::method);
+    OUGHT(member(got, "skrot").refusal == archive::Refusal::link);
+    OUGHT(member(got, "tajne.txt").refusal == archive::Refusal::encrypted);
+    OUGHT(member(got, "bzip.txt").refusal == archive::Refusal::method);
 
     const stood::path to = nook.where() / "cel" / "w";
 
@@ -559,15 +559,15 @@ TRIAL("Archive: unsafe names, links, encryption and unknown methods are refused,
 
     const std::vector<archive::Member> left = got.extracted({archive::Pick{{}, to}}).get();
 
-    same(left.size(), std::size_t{8});
-    same(read(to / "dobry.txt"), std::string{"f"});
+    SAME(left.size(), std::size_t{8});
+    SAME(read(to / "dobry.txt"), std::string{"f"});
 
     std::size_t there = 0;
 
     for (auto at = stood::recursive_directory_iterator{nook.where() / "cel"}; at != stood::recursive_directory_iterator{}; ++at) ++there;
 
-    same(there, std::size_t{2});
-    ought(!stood::exists(nook.where() / "poza.txt"));
+    SAME(there, std::size_t{2});
+    OUGHT(!stood::exists(nook.where() / "poza.txt"));
 }
 
 // The contents go where the picks say, with the archive's times; a file's own pick writes just it.
@@ -589,22 +589,22 @@ TRIAL("Archive: extraction writes files whole with their times, and a wrong CRC 
     const archive::Archive got = archive::opened(where, {}).get();
     const stood::path to = nook.where() / "film";
 
-    same(got.extracted({archive::Pick{"film", to}}).get().size(), std::size_t{0});
-    same(read(to / "opis.txt"), std::string{"opis filmu"});
-    same(read(to / "plakat" / "maly.txt"), std::string{"maly"});
-    same(fs::modified(to / "opis.txt").get().time_since_epoch().count(), std::int64_t{1'600'000'000});
+    SAME(got.extracted({archive::Pick{"film", to}}).get().size(), std::size_t{0});
+    SAME(read(to / "opis.txt"), std::string{"opis filmu"});
+    SAME(read(to / "plakat" / "maly.txt"), std::string{"maly"});
+    SAME(fs::modified(to / "opis.txt").get().time_since_epoch().count(), std::int64_t{1'600'000'000});
 
     const std::string why = trouble(got.extracted({archive::Pick{"zly.txt", nook.where() / "zly.txt"}}));
 
-    ought(why.find("CRC-32") != std::string::npos);
-    ought(!stood::exists(nook.where() / "zly.txt"));
+    OUGHT(why.find("CRC-32") != std::string::npos);
+    OUGHT(!stood::exists(nook.where() / "zly.txt"));
 
     std::size_t parts = 0;
 
     for (const auto& one : stood::directory_iterator{nook.where()})
         if (one.path().extension() == ".part") ++parts;
 
-    same(parts, std::size_t{0});
+    SAME(parts, std::size_t{0});
 }
 
 // A conflict with what stands there is settled by the rule given, file by file, and for a folder
@@ -620,29 +620,29 @@ TRIAL("Archive: a conflict is refused, skipped, overwritten or renamed") {
 
     put(target, talcite::bytes("stare"));
 
-    ought(!trouble(got.extracted({archive::Pick{"a.txt", target}})).empty());
-    same(read(target), std::string{"stare"});
+    OUGHT(!trouble(got.extracted({archive::Pick{"a.txt", target}})).empty());
+    SAME(read(target), std::string{"stare"});
 
     static_cast<void>(got.extracted({archive::Pick{"a.txt", target}}, fs::Conflict::skip).get());
-    same(read(target), std::string{"stare"});
+    SAME(read(target), std::string{"stare"});
 
     static_cast<void>(got.extracted({archive::Pick{"a.txt", target}}, fs::Conflict::rename).get());
-    same(read(nook.where() / "a (2).txt"), std::string{"nowe"});
+    SAME(read(nook.where() / "a (2).txt"), std::string{"nowe"});
 
     static_cast<void>(got.extracted({archive::Pick{"a.txt", target}}, fs::Conflict::overwrite).get());
-    same(read(target), std::string{"nowe"});
+    SAME(read(target), std::string{"nowe"});
 
     stood::create_directories(nook.where() / "d");
     put(nook.where() / "d" / "c.txt", talcite::bytes("swoje"));
 
-    ought(!trouble(got.extracted({archive::Pick{"d", nook.where() / "d"}})).empty());
+    OUGHT(!trouble(got.extracted({archive::Pick{"d", nook.where() / "d"}})).empty());
 
     static_cast<void>(got.extracted({archive::Pick{"d", nook.where() / "d"}}, fs::Conflict::overwrite).get());
-    same(read(nook.where() / "d" / "b.txt"), std::string{"nowe b"});
-    same(read(nook.where() / "d" / "c.txt"), std::string{"swoje"});
+    SAME(read(nook.where() / "d" / "b.txt"), std::string{"nowe b"});
+    SAME(read(nook.where() / "d" / "c.txt"), std::string{"swoje"});
 
     static_cast<void>(got.extracted({archive::Pick{"d", nook.where() / "d"}}, fs::Conflict::rename).get());
-    same(read(nook.where() / "d (2)" / "b.txt"), std::string{"nowe b"});
+    SAME(read(nook.where() / "d (2)" / "b.txt"), std::string{"nowe b"});
 }
 
 // Sizes and the offset past 32 bits come from ZIP64; a program before the archive shifts every
@@ -659,12 +659,12 @@ TRIAL("Archive: ZIP64, a program in front, and names in UTF-8 or code page 437")
 
     const archive::Archive got = archive::opened(wide, {}).get();
 
-    same(member(got, "duzy.bin").size, std::uintmax_t{4});
-    ought(got.found(fs::from_string("\xC3\xBC" "ber.txt")).has_value());
-    ought(got.found(fs::from_string("\xC5\xBC\xC3\xB3\xC5\x82w.txt")).has_value());
+    SAME(member(got, "duzy.bin").size, std::uintmax_t{4});
+    OUGHT(got.found(fs::from_string("\xC3\xBC" "ber.txt")).has_value());
+    OUGHT(got.found(fs::from_string("\xC5\xBC\xC3\xB3\xC5\x82w.txt")).has_value());
 
     static_cast<void>(got.extracted({archive::Pick{"duzy.bin", nook.where() / "duzy.bin"}}).get());
-    same(read(nook.where() / "duzy.bin"), std::string{"dane"});
+    SAME(read(nook.where() / "duzy.bin"), std::string{"dane"});
 
     const stood::path selfish = nook.where() / "program.zip";
 
@@ -673,7 +673,7 @@ TRIAL("Archive: ZIP64, a program in front, and names in UTF-8 or code page 437")
     const archive::Archive inside = archive::opened(selfish, {}).get();
 
     static_cast<void>(inside.extracted({archive::Pick{"w.txt", nook.where() / "w.txt"}}).get());
-    same(read(nook.where() / "w.txt"), std::string{"w srodku"});
+    SAME(read(nook.where() / "w.txt"), std::string{"w srodku"});
 }
 
 // What is not a ZIP is said to be one, and a ZIP cut short is damaged.
@@ -681,20 +681,20 @@ TRIAL("Archive: bytes that are no ZIP, and a ZIP cut short, are refused") {
     const Nook nook;
 
     put(nook.where() / "nie.zip", talcite::bytes("to nie jest archiwum, tylko tekst o dlugosci ponad dwadziescia bajtow"));
-    ought(trouble(archive::opened(nook.where() / "nie.zip", {})).find("Not a ZIP") != std::string::npos);
+    OUGHT(trouble(archive::opened(nook.where() / "nie.zip", {})).find("Not a ZIP") != std::string::npos);
 
     put(nook.where() / "puste.zip", Bytes{});
-    ought(trouble(archive::opened(nook.where() / "puste.zip", {})).find("Not a ZIP") != std::string::npos);
+    OUGHT(trouble(archive::opened(nook.where() / "puste.zip", {})).find("Not a ZIP") != std::string::npos);
 
     Bytes whole = zipped({Entry{"a.txt", "aaaa"}});
 
     whole.erase(whole.begin() + 10, whole.begin() + 40);
 
     put(nook.where() / "uciety.zip", whole);
-    ought(!trouble(archive::opened(nook.where() / "uciety.zip", {})).empty());
+    OUGHT(!trouble(archive::opened(nook.where() / "uciety.zip", {})).empty());
 
     put(nook.where() / "pusty.zip", zipped({}));
-    ought(archive::opened(nook.where() / "pusty.zip", {}).get().members().empty());
+    OUGHT(archive::opened(nook.where() / "pusty.zip", {}).get().members().empty());
 }
 
 // A tar walks its headers: files, folders, the ustar prefix, GNU long names, pax paths and times,
@@ -720,20 +720,20 @@ TRIAL("Archive: a tar lists files, folders, long names and pax, and extracts the
 
     const archive::Archive got = archive::opened(where, {}).get();
 
-    same(names(got), (std::vector<std::string>{"kopia", "kopia/a.txt", "kopia/" + longest + ".txt", "kopia/z pax \xC5\xBC.txt", "kopia/skrot"}));
-    ought(member(got, "kopia").kind == fs::Kind::folder);
-    same(member(got, "kopia/a.txt").modified.time_since_epoch().count(), std::int64_t{1'650'000'100});
-    ought(member(got, "kopia/a.txt").rights == stood::perms{0600});
-    same(got.members()[3].modified.time_since_epoch().count(), std::int64_t{1'234'567'890});
-    ought(member(got, "kopia/skrot").refusal == archive::Refusal::link);
+    SAME(names(got), (std::vector<std::string>{"kopia", "kopia/a.txt", "kopia/" + longest + ".txt", "kopia/z pax \xC5\xBC.txt", "kopia/skrot"}));
+    OUGHT(member(got, "kopia").kind == fs::Kind::folder);
+    SAME(member(got, "kopia/a.txt").modified.time_since_epoch().count(), std::int64_t{1'650'000'100});
+    OUGHT(member(got, "kopia/a.txt").rights == stood::perms{0600});
+    SAME(got.members()[3].modified.time_since_epoch().count(), std::int64_t{1'234'567'890});
+    OUGHT(member(got, "kopia/skrot").refusal == archive::Refusal::link);
 
     const std::vector<archive::Member> left = got.extracted({archive::Pick{"kopia", nook.where() / "wynik"}}).get();
 
-    same(left.size(), std::size_t{1});
-    same(read(nook.where() / "wynik" / "a.txt"), std::string{"pierwszy"});
-    same(read(nook.where() / "wynik" / (longest + ".txt")), std::string{"dlugi"});
-    same(read(nook.where() / "wynik" / fs::from_string("z pax \xC5\xBC.txt")), std::string{"pax"});
-    same(fs::modified(nook.where() / "wynik").get().time_since_epoch().count(), std::int64_t{1'650'000'000});
+    SAME(left.size(), std::size_t{1});
+    SAME(read(nook.where() / "wynik" / "a.txt"), std::string{"pierwszy"});
+    SAME(read(nook.where() / "wynik" / (longest + ".txt")), std::string{"dlugi"});
+    SAME(read(nook.where() / "wynik" / fs::from_string("z pax \xC5\xBC.txt")), std::string{"pax"});
+    SAME(fs::modified(nook.where() / "wynik").get().time_since_epoch().count(), std::int64_t{1'650'000'000});
 }
 
 // A tar whose header does not add up, one cut short, and something that is no tar at all.
@@ -745,20 +745,20 @@ TRIAL("Archive: a damaged tar header and a tar cut short are refused") {
     bent[1024 + 5] = std::byte{'X'};
 
     put(nook.where() / "zgiety.tar", bent);
-    ought(trouble(archive::opened(nook.where() / "zgiety.tar", {})).find("damaged") != std::string::npos);
+    OUGHT(trouble(archive::opened(nook.where() / "zgiety.tar", {})).find("damaged") != std::string::npos);
 
     Bytes cut = tar_of({Tarred{'0', "a.txt", std::string(2000, 'a')}});
 
     cut.resize(1000);
 
     put(nook.where() / "uciety.tar", cut);
-    ought(trouble(archive::opened(nook.where() / "uciety.tar", {})).find("cut short") != std::string::npos);
+    OUGHT(trouble(archive::opened(nook.where() / "uciety.tar", {})).find("cut short") != std::string::npos);
 
     put(nook.where() / "nie.tar", Bytes(512, std::byte{'z'}));
-    ought(trouble(archive::opened(nook.where() / "nie.tar", {})).find("Not a tar") != std::string::npos);
+    OUGHT(trouble(archive::opened(nook.where() / "nie.tar", {})).find("Not a tar") != std::string::npos);
 
     put(nook.where() / "pusty.tar", Bytes(1024, std::byte{0}));
-    ought(archive::opened(nook.where() / "pusty.tar", {}).get().members().empty());
+    OUGHT(archive::opened(nook.where() / "pusty.tar", {}).get().members().empty());
 }
 
 // A .tar.gz goes through the unpacker, there and again for the extraction; without one it does not
@@ -772,16 +772,16 @@ TRIAL("Archive: a tar.gz is read through the unpacker") {
     const auto fed = std::make_shared<std::size_t>(0);
     const archive::Archive got = archive::opened(where, Seam<UnpackProvider>{std::make_shared<Passer>(fed)}).get();
 
-    same(names(got), (std::vector<std::string>{"a.txt", "b.txt"}));
-    ought(*fed > 0);
+    SAME(names(got), (std::vector<std::string>{"a.txt", "b.txt"}));
+    OUGHT(*fed > 0);
 
     const std::size_t listed = *fed;
 
     static_cast<void>(got.extracted({archive::Pick{"b.txt", nook.where() / "b.txt"}}).get());
-    same(read(nook.where() / "b.txt"), std::string{"drugi"});
-    ought(*fed > listed);
+    SAME(read(nook.where() / "b.txt"), std::string{"drugi"});
+    OUGHT(*fed > listed);
 
-    ought(!trouble(archive::opened(where, {})).empty());
+    OUGHT(!trouble(archive::opened(where, {})).empty());
 }
 
 // Of two entries with one name the later counts, as unpackers have it: in the list once, with the
@@ -794,10 +794,10 @@ TRIAL("Archive: of two entries with one name the later counts") {
 
     const archive::Archive got = archive::opened(where, {}).get();
 
-    same(names(got), (std::vector<std::string>{"a.txt", "b.txt"}));
+    SAME(names(got), (std::vector<std::string>{"a.txt", "b.txt"}));
 
     static_cast<void>(got.extracted({archive::Pick{"a.txt", nook.where() / "a.txt"}}).get());
-    same(read(nook.where() / "a.txt"), std::string{"druga"});
+    SAME(read(nook.where() / "a.txt"), std::string{"druga"});
 }
 
 // An extraction into a folder it makes itself, which fails on the way, takes back what it made:
@@ -814,14 +814,14 @@ TRIAL("Archive: a failed extraction takes back the folder it made") {
 
     const archive::Archive got = archive::opened(where, {}).get();
 
-    ought(!trouble(got.extracted({archive::Pick{{}, nook.where() / "nowy"}})).empty());
-    ought(!stood::exists(nook.where() / "nowy"));
+    OUGHT(!trouble(got.extracted({archive::Pick{{}, nook.where() / "nowy"}})).empty());
+    OUGHT(!stood::exists(nook.where() / "nowy"));
 
     stood::create_directories(nook.where() / "stary");
 
-    ought(!trouble(got.extracted({archive::Pick{{}, nook.where() / "stary"}}, fs::Conflict::overwrite)).empty());
-    same(read(nook.where() / "stary" / "d" / "dobry.txt"), std::string{"dobrze"});
-    ought(!stood::exists(nook.where() / "stary" / "d" / "zly.txt"));
+    OUGHT(!trouble(got.extracted({archive::Pick{{}, nook.where() / "stary"}}, fs::Conflict::overwrite)).empty());
+    SAME(read(nook.where() / "stary" / "d" / "dobry.txt"), std::string{"dobrze"});
+    OUGHT(!stood::exists(nook.where() / "stary" / "d" / "zly.txt"));
 }
 
 // A ZIP64 member whose packed size differs from its size: the extra field gives the size first,
@@ -840,11 +840,11 @@ TRIAL("Archive: a ZIP64 member's size and packed size come in the order of the f
 
     const archive::Archive got = archive::opened(where, Seam<UnpackProvider>{std::make_shared<Doubler>()}).get();
 
-    same(member(got, "podwojny.txt").size, std::uintmax_t{6});
-    same(member(got, "podwojny.txt").packed, std::uintmax_t{3});
+    SAME(member(got, "podwojny.txt").size, std::uintmax_t{6});
+    SAME(member(got, "podwojny.txt").packed, std::uintmax_t{3});
 
     static_cast<void>(got.extracted({archive::Pick{"podwojny.txt", nook.where() / "podwojny.txt"}}).get());
-    same(read(nook.where() / "podwojny.txt"), std::string{"aabbcc"});
+    SAME(read(nook.where() / "podwojny.txt"), std::string{"aabbcc"});
 }
 
 // The trick of a zip bomb that needs no nesting: many entries of the central directory read one
@@ -859,11 +859,11 @@ TRIAL("Archive: members that share their data are refused, as a zip bomb's do") 
 
     put(where, zipped({Entry{"a.txt", "aaaa"}, second}));
 
-    ought(trouble(archive::opened(where, {})).find("overlap") != std::string::npos);
+    OUGHT(trouble(archive::opened(where, {})).find("overlap") != std::string::npos);
 
     put(where, zipped({Entry{"a.txt", "aaaa"}, Entry{"b.txt", "bbbb"}}));
 
-    same(names(archive::opened(where, {}).get()), (std::vector<std::string>{"a.txt", "b.txt"}));
+    SAME(names(archive::opened(where, {}).get()), (std::vector<std::string>{"a.txt", "b.txt"}));
 }
 
 // A central directory may claim any count of entries; past a million the archive is refused before
@@ -901,7 +901,7 @@ TRIAL("Archive: more than a million members are refused") {
 
     put(where, made);
 
-    ought(trouble(archive::opened(where, {})).find("too many members") != std::string::npos);
+    OUGHT(trouble(archive::opened(where, {})).find("too many members") != std::string::npos);
 }
 
 // No member comes out larger than it declares, so what the members declare is what an extraction
@@ -919,13 +919,13 @@ TRIAL("Archive: an extraction larger than the free space is refused before it wr
 
     const archive::Archive got = archive::opened(where, {}).get();
 
-    same(member(got, "zera.bin").size, std::uintmax_t{std::uint64_t{1} << 60});
+    SAME(member(got, "zera.bin").size, std::uintmax_t{std::uint64_t{1} << 60});
 
-    ought(trouble(got.extracted({archive::Pick{{}, nook.where() / "cel"}})).find("free space") != std::string::npos);
-    ought(!stood::exists(nook.where() / "cel"));
-    ought(!stood::exists(nook.where() / "zera.bin"));
-    ought(!trouble(got.extracted({archive::Pick{"zera.bin", nook.where() / "zera.bin"}})).empty());
-    ought(!stood::exists(nook.where() / "zera.bin"));
+    OUGHT(trouble(got.extracted({archive::Pick{{}, nook.where() / "cel"}})).find("free space") != std::string::npos);
+    OUGHT(!stood::exists(nook.where() / "cel"));
+    OUGHT(!stood::exists(nook.where() / "zera.bin"));
+    OUGHT(!trouble(got.extracted({archive::Pick{"zera.bin", nook.where() / "zera.bin"}})).empty());
+    OUGHT(!stood::exists(nook.where() / "zera.bin"));
 }
 
 // A tar.gz has no table of contents, so its opening inflates the whole stream; a stream that swells
@@ -962,6 +962,6 @@ TRIAL("Archive: opening a tar.gz stops when it is no longer wanted") {
 
     std::this_thread::sleep_for(std::chrono::milliseconds{150});
 
-    ought(fed->load() <= then + 1);
-    ought(fed->load() < 200);
+    OUGHT(fed->load() <= then + 1);
+    OUGHT(fed->load() < 200);
 }

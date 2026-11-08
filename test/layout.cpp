@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <algorithm>
 #include <memory>
@@ -83,8 +83,8 @@ TRIAL("Layout: the default wants adds up the heights and takes the widest child"
 
     const ui::Size wants = one.wants({80, 25});
 
-    same(wants.wide, 5);
-    same(wants.high, 3);
+    SAME(wants.wide, 5);
+    SAME(wants.high, 3);
 }
 
 TRIAL("Layout: render records the area it was given") {
@@ -92,10 +92,10 @@ TRIAL("Layout: render records the area it was given") {
 
     (void)one.render({{2, 3}, {10, 4}});
 
-    same(one.area().at.x, 2);
-    same(one.area().at.y, 3);
-    same(one.area().size.wide, 10);
-    same(one.area().size.high, 4);
+    SAME(one.area().at.x, 2);
+    SAME(one.area().at.y, 3);
+    SAME(one.area().size.wide, 10);
+    SAME(one.area().size.high, 4);
 }
 
 TRIAL("Layout: children stand one below another, across the full width") {
@@ -109,12 +109,12 @@ TRIAL("Layout: children stand one below another, across the full width") {
 
     (void)one.render({{0, 0}, {8, 6}});
 
-    same(first->area().at.y, 0);
-    same(first->area().size.high, 2);
-    same(first->area().size.wide, 8);
+    SAME(first->area().at.y, 0);
+    SAME(first->area().size.high, 2);
+    SAME(first->area().size.wide, 8);
 
-    same(second->area().at.y, 2);
-    same(second->area().size.high, 1);
+    SAME(second->area().at.y, 2);
+    SAME(second->area().size.high, 1);
 }
 
 TRIAL("Layout: a child's content lands at its own height") {
@@ -125,10 +125,10 @@ TRIAL("Layout: a child's content lands at its own height") {
 
     const Snapshot made = one.render({{0, 0}, {4, 4}});
 
-    same(made.at({0, 0}).letter, U'a');
-    same(made.at({3, 1}).letter, U'a');
-    same(made.at({0, 2}).letter, U'b');
-    same(made.at({0, 3}).letter, U' ');
+    SAME(made.at({0, 0}).letter, U'a');
+    SAME(made.at({3, 1}).letter, U'a');
+    SAME(made.at({0, 2}).letter, U'b');
+    SAME(made.at({0, 3}).letter, U' ');
 }
 
 TRIAL("Layout: a child below the bottom edge gets zero height") {
@@ -142,9 +142,9 @@ TRIAL("Layout: a child below the bottom edge gets zero height") {
 
     (void)one.render({{0, 0}, {4, 3}});
 
-    same(first->area().size.high, 3);
-    same(second->area().size.high, 0);
-    same(second->area().at.y, 3);
+    SAME(first->area().size.high, 3);
+    SAME(second->area().size.high, 0);
+    SAME(second->area().at.y, 3);
 }
 
 TRIAL("Layout: a child's area is relative to the parent, not the screen") {
@@ -156,8 +156,8 @@ TRIAL("Layout: a child's area is relative to the parent, not the screen") {
 
     (void)one.render({{5, 7}, {4, 2}});
 
-    same(inner->area().at.x, 0);
-    same(inner->area().at.y, 0);
+    SAME(inner->area().at.x, 0);
+    SAME(inner->area().at.y, 0);
 }
 
 TRIAL("Hit testing: a click lands in the child under the cursor") {
@@ -175,11 +175,11 @@ TRIAL("Hit testing: a click lands in the child under the cursor") {
 
     ui::MouseEvent what{{2, 3}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(first->hit, 0);
-    same(second->hit, 1);
-    same(top.hit, 0);
+    SAME(first->hit, 0);
+    SAME(second->hit, 1);
+    SAME(top.hit, 0);
 }
 
 TRIAL("Hit testing: a click beside the children stays in the root") {
@@ -195,10 +195,10 @@ TRIAL("Hit testing: a click beside the children stays in the root") {
 
     ui::MouseEvent what{{3, 3}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(first->hit, 0);
-    same(top.hit, 1);
+    SAME(first->hit, 0);
+    SAME(top.hit, 1);
 }
 
 TRIAL("Hit testing: it descends through several levels") {
@@ -214,9 +214,9 @@ TRIAL("Hit testing: it descends through several levels") {
 
     ui::MouseEvent what{{1, 0}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(deep->hit, 1);
+    SAME(deep->hit, 1);
 }
 
 TRIAL("Hit testing: of overlapping siblings, the last one wins") {
@@ -234,10 +234,10 @@ TRIAL("Hit testing: of overlapping siblings, the last one wins") {
 
     ui::MouseEvent what{{1, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(under->hit, 0);
-    same(over->hit, 1);
+    SAME(under->hit, 0);
+    SAME(over->hit, 1);
 }
 
 TRIAL("Hit testing: the wheel aims the same way as a click") {
@@ -255,9 +255,9 @@ TRIAL("Hit testing: the wheel aims the same way as a click") {
 
     ui::WheelEvent what{{0, 2}, 1};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(second->hit, 1);
+    SAME(second->hit, 1);
 }
 
 // On top is the child attached last, and that is the only source of this truth. Painting goes in
@@ -278,10 +278,10 @@ TRIAL("Stacking: the child attached last wins in hit testing") {
 
     ui::MouseEvent what{{1, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(under->hit, 0);
-    same(over->hit, 1);
+    SAME(under->hit, 0);
+    SAME(over->hit, 1);
 }
 
 TRIAL("Stacking: the child attached last is painted over its siblings") {
@@ -295,7 +295,7 @@ TRIAL("Stacking: the child attached last is painted over its siblings") {
 
     const Snapshot made = stack.render({{0, 0}, {4, 1}});
 
-    same(made.at({0, 0}).letter, U'b');
+    SAME(made.at({0, 0}).letter, U'b');
 }
 
 TRIAL("Stacking: an overlay does not extend beyond its parent") {
@@ -309,9 +309,9 @@ TRIAL("Stacking: an overlay does not extend beyond its parent") {
 
     const Snapshot made = top.render({{0, 0}, {3, 2}});
 
-    same(made.size().wide, 3);
-    same(made.size().high, 2);
-    same(made.at({2, 1}).letter, U'b');
+    SAME(made.size().wide, 3);
+    SAME(made.size().high, 2);
+    SAME(made.at({2, 1}).letter, U'b');
 }
 
 TRIAL("Hit testing: without a layout pass everything goes to the root") {
@@ -323,8 +323,8 @@ TRIAL("Hit testing: without a layout pass everything goes to the root") {
 
     ui::MouseEvent what{{2, 1}, ui::Press::down, ui::Mouse::left};
 
-    ought(top.dispatch(what));
+    OUGHT(top.dispatch(what));
 
-    same(first->hit, 0);
-    same(top.hit, 1);
+    SAME(first->hit, 0);
+    SAME(top.hit, 1);
 }

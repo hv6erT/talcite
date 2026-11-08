@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -63,18 +63,18 @@ std::vector<std::uint8_t> flat(ui::Size size, std::uint8_t red, std::uint8_t gre
 // --- Grain ----------------------------------------------------------------------------------
 
 TRIAL("grain: blocks cut a cell into eight by eight, sextants into two by three") {
-    same(grain(ui::Blocks::basic).wide, 8);
-    same(grain(ui::Blocks::basic).high, 8);
-    same(grain(ui::Blocks::sextants).wide, 2);
-    same(grain(ui::Blocks::sextants).high, 3);
+    SAME(grain(ui::Blocks::basic).wide, 8);
+    SAME(grain(ui::Blocks::basic).high, 8);
+    SAME(grain(ui::Blocks::sextants).wide, 2);
+    SAME(grain(ui::Blocks::sextants).high, 3);
 }
 
 // The octant mapping is a table of two hundred and thirty characters, not a formula; twenty-six of
 // the patterns live in Block Elements and at U+1FB00. The table must not be guessed, so until it is
 // added, octants are reduced to sextants.
 TRIAL("grain: octants are reduced to sextants") {
-    same(grain(ui::Blocks::octants).wide, grain(ui::Blocks::sextants).wide);
-    same(grain(ui::Blocks::octants).high, grain(ui::Blocks::sextants).high);
+    SAME(grain(ui::Blocks::octants).wide, grain(ui::Blocks::sextants).wide);
+    SAME(grain(ui::Blocks::octants).high, grain(ui::Blocks::sextants).high);
 }
 
 // --- Uniformity and transparency ------------------------------------------------------------
@@ -82,15 +82,15 @@ TRIAL("grain: octants are reduced to sextants") {
 TRIAL("Mosaic: a uniform color gives a full block") {
     const Cell got = one(held({2, 3}, flat({2, 3}, 30, 160, 90)), ui::Blocks::sextants);
 
-    same(got.letter, U'█');
-    same(got.style.foreground, (Color{false, 30, 160, 90}));
+    SAME(got.letter, U'█');
+    SAME(got.style.foreground, (Color{false, 30, 160, 90}));
 
     // There is no second color, so the paper stays as the caller gave it, transparent by default,
     // and then the cell goes as foreground only: the background from below shows even under a full
     // block, because a terminal with spacing between rows would show a seam there in its own
     // background color.
-    ought(got.style.background.transparent);
-    same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
+    OUGHT(got.style.background.transparent);
+    SAME(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
 }
 
 // Transparency maps straight onto the library's model. A cell without a single visible sub-cell is
@@ -99,7 +99,7 @@ TRIAL("Mosaic: a uniform color gives a full block") {
 TRIAL("Mosaic: a cell without content is not drawn") {
     const Cell got = one(held({2, 3}, flat({2, 3}, 255, 0, 0, 0)), ui::Blocks::sextants);
 
-    same(static_cast<int>(got.shown), static_cast<int>(Shown::none));
+    SAME(static_cast<int>(got.shown), static_cast<int>(Shown::none));
 }
 
 TRIAL("Mosaic: a partly covered cell follows the silhouette") {
@@ -114,13 +114,13 @@ TRIAL("Mosaic: a partly covered cell follows the silhouette") {
 
     const Cell got = one(held({2, 3}, bytes), ui::Blocks::sextants);
 
-    same(got.letter, U'▌');
-    same(got.style.foreground, (Color{false, 200, 0, 0}));
-    ought(got.style.background.transparent);
+    SAME(got.letter, U'▌');
+    SAME(got.style.foreground, (Color{false, 200, 0, 0}));
+    OUGHT(got.style.background.transparent);
 
     // Without paper the cell goes as foreground only: when pasted, it takes the background from
     // what lies below.
-    same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
+    SAME(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
 }
 
 // The paper for the uncovered part is given by the caller, because only the caller knows what lies
@@ -141,8 +141,8 @@ TRIAL("Mosaic: the given paper goes under the silhouette") {
 
     const Cell got = one(held({2, 3}, bytes), ui::Blocks::sextants, under);
 
-    same(got.style.background, (Color{false, 0, 0, 160}));
-    same(static_cast<int>(got.shown), static_cast<int>(Shown::own));
+    SAME(got.style.background, (Color{false, 0, 0, 160}));
+    SAME(static_cast<int>(got.shown), static_cast<int>(Shown::own));
 }
 
 // --- Cutting --------------------------------------------------------------------------------
@@ -158,9 +158,9 @@ TRIAL("Mosaic: a horizontal split gives the sextant of the top row") {
 
     const Cell got = one(held({2, 3}, bytes), ui::Blocks::sextants);
 
-    same(static_cast<unsigned>(got.letter), 0x1FB02u);
-    same(got.style.foreground, (Color{false, 255, 255, 255}));
-    same(got.style.background, (Color{false, 0, 0, 0}));
+    SAME(static_cast<unsigned>(got.letter), 0x1FB02u);
+    SAME(got.style.foreground, (Color{false, 255, 255, 255}));
+    SAME(got.style.background, (Color{false, 0, 0, 0}));
 }
 
 // --- Quality: sextants versus blocks -----------------------------------------------------------
@@ -194,9 +194,9 @@ std::vector<std::uint8_t> banded(int wide, int high, int from, int upto) {
 TRIAL("Mosaic: sextants render a band through the middle with both colors clean") {
     const Cell got = one(held({2, 3}, banded(2, 3, 1, 2)), ui::Blocks::sextants);
 
-    same(static_cast<unsigned>(got.letter), 0x1FB0Bu);
-    same(got.style.foreground, (Color{false, 255, 255, 255}));
-    same(got.style.background, (Color{false, 0, 0, 0}));
+    SAME(static_cast<unsigned>(got.letter), 0x1FB0Bu);
+    SAME(got.style.foreground, (Color{false, 255, 255, 255}));
+    SAME(got.style.background, (Color{false, 0, 0, 0}));
 }
 
 TRIAL("Mosaic: blocks cannot render the same band cleanly") {
@@ -208,8 +208,8 @@ TRIAL("Mosaic: blocks cannot render the same band cleanly") {
                       (got.style.background == Color{false, 255, 255, 255} ||
                        got.style.background == Color{false, 0, 0, 0});
 
-    ought(!pure);
-    same(got.style.background, (Color{false, 170, 170, 170}));
+    OUGHT(!pure);
+    SAME(got.style.background, (Color{false, 170, 170, 170}));
 }
 
 // --- Perceptually weighted variance -------------------------------------------------------------
@@ -227,12 +227,12 @@ TRIAL("Mosaic: the cut follows what is visible, not the raw numbers") {
     const Cell got = one(held({2, 3}, bytes), ui::Blocks::sextants);
 
     // The top row, not the left column: 🬂, not ▌.
-    same(static_cast<unsigned>(got.letter), 0x1FB02u);
-    ought(got.letter != U'▌');
+    SAME(static_cast<unsigned>(got.letter), 0x1FB02u);
+    OUGHT(got.letter != U'▌');
 
     // The average is computed in linear light: zero and 255 give 188.
-    same(got.style.foreground, (Color{false, 0, 0, 188}));
-    same(got.style.background, (Color{false, 0, 255, 188}));
+    SAME(got.style.foreground, (Color{false, 0, 0, 188}));
+    SAME(got.style.background, (Color{false, 0, 255, 188}));
 }
 
 // --- Splitting into cells ----------------------------------------------------------------------
@@ -254,10 +254,10 @@ TRIAL("Mosaic: each cell takes its own piece of the image") {
 
     drawn(onto, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants);
 
-    same(made.at({0, 0}).letter, U'█');
-    same(made.at({0, 0}).style.foreground, (Color{false, 0, 0, 0}));
-    same(made.at({1, 0}).letter, U'█');
-    same(made.at({1, 0}).style.foreground, (Color{false, 255, 0, 0}));
+    SAME(made.at({0, 0}).letter, U'█');
+    SAME(made.at({0, 0}).style.foreground, (Color{false, 0, 0, 0}));
+    SAME(made.at({1, 0}).letter, U'█');
+    SAME(made.at({1, 0}).style.foreground, (Color{false, 255, 0, 0}));
 }
 
 TRIAL("Mosaic: draws from the given place") {
@@ -267,9 +267,9 @@ TRIAL("Mosaic: draws from the given place") {
 
     drawn(onto, {1, 2}, held({2, 3}, flat({2, 3}, 10, 20, 30)), 0, ui::Blocks::sextants);
 
-    same(made.at({1, 2}).letter, U'█');
-    same(made.at({0, 0}).letter, U' ');
-    same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
+    SAME(made.at({1, 2}).letter, U'█');
+    SAME(made.at({0, 0}).letter, U' ');
+    SAME(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
 // --- Refusals -----------------------------------------------------------------------------------
@@ -281,8 +281,8 @@ TRIAL("Mosaic: an empty image draws nothing") {
 
     drawn(onto, {0, 0}, Pixels{}, 0, ui::Blocks::sextants);
 
-    same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
-    same(made.at({0, 0}).letter, U' ');
+    SAME(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
+    SAME(made.at({0, 0}).letter, U' ');
 }
 
 TRIAL("Mosaic: a frame out of range draws nothing") {
@@ -292,7 +292,7 @@ TRIAL("Mosaic: a frame out of range draws nothing") {
 
     drawn(onto, {0, 0}, held({2, 3}, flat({2, 3}, 255, 0, 0)), 7, ui::Blocks::sextants);
 
-    same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
+    SAME(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
 TRIAL("Mosaic: an image smaller than a cell draws nothing") {
@@ -302,7 +302,7 @@ TRIAL("Mosaic: an image smaller than a cell draws nothing") {
 
     drawn(onto, {0, 0}, held({1, 1}, flat({1, 1}, 255, 0, 0)), 0, ui::Blocks::sextants);
 
-    same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
+    SAME(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::own));
 }
 
 // --- Color depth and characters -----------------------------------------------------------------
@@ -342,11 +342,11 @@ Pixels covered(int much, std::uint8_t red = 200) {
 // the terminal could do with Unicode.
 TRIAL("grain: without Unicode, two by four sub-cells") {
     for (const ui::Blocks kind : {ui::Blocks::basic, ui::Blocks::sextants, ui::Blocks::octants}) {
-        same(grain(kind, false).wide, 2);
-        same(grain(kind, false).high, 4);
+        SAME(grain(kind, false).wide, 2);
+        SAME(grain(kind, false).high, 4);
     }
 
-    same(grain(ui::Blocks::basic, true).wide, 8);
+    SAME(grain(ui::Blocks::basic, true).wide, 8);
 }
 
 // Without Unicode the character comes from an ASCII ladder by coverage, in the image's color; a
@@ -358,16 +358,16 @@ TRIAL("Mosaic: without Unicode, a ladder of characters by coverage") {
     for (int much = 1; much <= 8; ++much) {
         const Cell mono = dressed_as(covered(much), ui::Blocks::sextants, Colors::mono, false);
 
-        same(mono.letter, ladder[static_cast<std::size_t>(much) - 1]);
+        SAME(mono.letter, ladder[static_cast<std::size_t>(much) - 1]);
     }
 
     for (int much = 1; much < 8; ++much) {
         const Cell got = dressed_as(covered(much), ui::Blocks::sextants, Colors::ansi, false);
 
-        same(got.letter, ladder[static_cast<std::size_t>(much) - 1]);
-        same(got.style.foreground, (Color{false, 200, 0, 0}));
-        ought(got.style.background.transparent);
-        same(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
+        SAME(got.letter, ladder[static_cast<std::size_t>(much) - 1]);
+        SAME(got.style.foreground, (Color{false, 200, 0, 0}));
+        OUGHT(got.style.background.transparent);
+        SAME(static_cast<int>(got.shown), static_cast<int>(Shown::foreground));
     }
 
     Style under{};
@@ -376,13 +376,13 @@ TRIAL("Mosaic: without Unicode, a ladder of characters by coverage") {
 
     const Cell full = dressed_as(covered(8), ui::Blocks::sextants, Colors::rgb, false, under);
 
-    same(full.letter, U' ');
-    same(full.style.background, (Color{false, 200, 0, 0}));
-    same(full.style.foreground, (Color{false, 1, 2, 3}));
+    SAME(full.letter, U' ');
+    SAME(full.style.background, (Color{false, 200, 0, 0}));
+    SAME(full.style.foreground, (Color{false, 1, 2, 3}));
 
     const Cell none = dressed_as(covered(0), ui::Blocks::sextants, Colors::rgb, false);
 
-    same(static_cast<int>(none.shown), static_cast<int>(Shown::none));
+    SAME(static_cast<int>(none.shown), static_cast<int>(Shown::none));
 }
 
 // Monochrome: a two-colored cell in full color has two colors, but in monochrome it would lose its
@@ -413,9 +413,9 @@ TRIAL("Mosaic: monochrome with transparency is the silhouette of what is visible
     drawn(on_colored, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::rgb, true);
     drawn(on_mono, {0, 0}, held({4, 3}, bytes), 0, ui::Blocks::sextants, {}, Colors::mono, true);
 
-    ought(colored.at({1, 0}).letter != U'█');
-    same(mono.at({1, 0}).letter, U'█');
-    same(static_cast<int>(mono.at({0, 0}).shown), static_cast<int>(Shown::none));
+    OUGHT(colored.at({1, 0}).letter != U'█');
+    SAME(mono.at({1, 0}).letter, U'█');
+    SAME(static_cast<int>(mono.at({0, 0}).shown), static_cast<int>(Shown::none));
 
     // Block characters the same way: a full cell is a full block.
     std::vector<std::uint8_t> big = flat({8, 8}, 0, 0, 200, 255);
@@ -424,7 +424,7 @@ TRIAL("Mosaic: monochrome with transparency is the silhouette of what is visible
 
     big[3] = 254;
 
-    same(dressed_as(held({8, 8}, big), ui::Blocks::basic, Colors::mono, true).letter, U'█');
+    SAME(dressed_as(held({8, 8}, big), ui::Blocks::basic, Colors::mono, true).letter, U'█');
 }
 
 // Monochrome without transparency (a photo): the ink is whatever is brighter than the image's
@@ -438,7 +438,7 @@ TRIAL("Mosaic: monochrome without transparency takes what is brighter than avera
         at[0] = at[1] = at[2] = 240;
     }
 
-    same(dressed_as(held({2, 3}, bytes), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB02');
+    SAME(dressed_as(held({2, 3}, bytes), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB02');
 
     // A bright third of three rows in a 2×4 grid without Unicode: two sub-cells out of eight.
     std::vector<std::uint8_t> tall = flat({2, 4}, 20, 20, 20);
@@ -449,7 +449,7 @@ TRIAL("Mosaic: monochrome without transparency takes what is brighter than avera
         at[0] = at[1] = at[2] = 240;
     }
 
-    same(dressed_as(held({2, 4}, tall), ui::Blocks::sextants, Colors::mono, false).letter, U':');
+    SAME(dressed_as(held({2, 4}, tall), ui::Blocks::sextants, Colors::mono, false).letter, U':');
 
     // Brightness weighs the channels as the eye does: pure red is darker than the average green, so
     // the ink is the two lower rows of green, not the upper row of red.
@@ -462,10 +462,10 @@ TRIAL("Mosaic: monochrome without transparency takes what is brighter than avera
         at[1] = 0;
     }
 
-    same(dressed_as(held({2, 3}, hues), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB39');
+    SAME(dressed_as(held({2, 3}, hues), ui::Blocks::sextants, Colors::mono, true).letter, U'\U0001FB39');
 
     // A uniform color equals the average, so all of it is ink.
-    same(dressed_as(held({2, 3}, flat({2, 3}, 90, 90, 90)), ui::Blocks::sextants, Colors::mono, true).letter, U'█');
+    SAME(dressed_as(held({2, 3}, flat({2, 3}, 90, 90, 90)), ui::Blocks::sextants, Colors::mono, true).letter, U'█');
 }
 
 // Palettes (256 and 16 colors) draw like full color; colors are reduced to the terminal's palette
@@ -480,8 +480,8 @@ TRIAL("Mosaic: palettes draw like full color") {
     for (const Colors colors : {Colors::palette, Colors::ansi}) {
         const Cell got = dressed_as(held({2, 3}, bytes), ui::Blocks::sextants, colors, true);
 
-        same(got.letter, full.letter);
-        same(got.style.foreground, full.style.foreground);
-        same(got.style.background, full.style.background);
+        SAME(got.letter, full.letter);
+        SAME(got.style.foreground, full.style.foreground);
+        SAME(got.style.background, full.style.background);
     }
 }

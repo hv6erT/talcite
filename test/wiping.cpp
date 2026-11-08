@@ -7,7 +7,7 @@
 
 #include "talcite/bytes.hpp"
 
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 using namespace talcite;
 
@@ -23,16 +23,16 @@ TRIAL("Secret: wiped zeroes bytes, text and limbs and keeps their size") {
     secret::wiped(password);
     secret::wiped(limbs);
 
-    same(key, Bytes(11, std::byte{0}));
-    same(password, std::string(6, '\0'));
-    ought(limbs == std::array<std::int64_t, 4>{});
+    SAME(key, Bytes(11, std::byte{0}));
+    SAME(password, std::string(6, '\0'));
+    OUGHT(limbs == std::array<std::int64_t, 4>{});
 }
 
 TRIAL("Secret: alike tells equal bytes from bytes that differ anywhere or in length") {
-    ought(secret::alike(bytes("potwierdzenie"), bytes("potwierdzenie")));
-    ought(secret::alike(Bytes{}, Bytes{}));
-    ought(!secret::alike(bytes("potwierdzenie"), bytes("potwierdzeniE")));
-    ought(!secret::alike(bytes("potwierdzenie"), bytes("Potwierdzenie")));
-    ought(!secret::alike(bytes("potwierdzenie"), bytes("potwierdzeni")));
-    ought(!secret::alike(bytes("ab"), bytes("abc")));
+    OUGHT(secret::alike(bytes("potwierdzenie"), bytes("potwierdzenie")));
+    OUGHT(secret::alike(Bytes{}, Bytes{}));
+    OUGHT(!secret::alike(bytes("potwierdzenie"), bytes("potwierdzeniE")));
+    OUGHT(!secret::alike(bytes("potwierdzenie"), bytes("Potwierdzenie")));
+    OUGHT(!secret::alike(bytes("potwierdzenie"), bytes("potwierdzeni")));
+    OUGHT(!secret::alike(bytes("ab"), bytes("abc")));
 }

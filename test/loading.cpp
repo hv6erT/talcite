@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstddef>
 #include <string>
@@ -51,7 +51,7 @@ TRIAL("Load: fifty connections one after another") {
 
         both.client.write(bytes(std::to_string(which)), soon).get();
 
-        same(text(both.server.read(16, soon).get()), std::to_string(which));
+        SAME(text(both.server.read(16, soon).get()), std::to_string(which));
     }
 }
 
@@ -77,7 +77,7 @@ TRIAL("Load: fifty connections at once") {
         clients[static_cast<std::size_t>(which)].write(bytes(std::to_string(which)), soon).get();
 
     for (int which = 0; which < 50; ++which)
-        same(text(std::move(reading[static_cast<std::size_t>(which)]).get()), std::to_string(which));
+        SAME(text(std::move(reading[static_cast<std::size_t>(which)]).get()), std::to_string(which));
 }
 
 TRIAL("Load: reading and writing at once on one stream") {
@@ -90,8 +90,8 @@ TRIAL("Load: reading and writing at once on one stream") {
     both.server.write(bytes("z drugiej strony"), soon).get();
     both.client.write(bytes("i z tej"), soon).get();
 
-    same(text(std::move(reading).get()), std::string{"z drugiej strony"});
-    same(text(both.server.read(64, soon).get()), std::string{"i z tej"});
+    SAME(text(std::move(reading).get()), std::string{"z drugiej strony"});
+    SAME(text(both.server.read(64, soon).get()), std::string{"i z tej"});
 }
 
 // The most important case for IOCP: cancelling one operation, not the whole socket. One stream has
@@ -115,7 +115,7 @@ TRIAL("Load: a deadline cancels one operation, not the socket") {
         late = true;
     }
 
-    ought(late);
+    OUGHT(late);
 
     std::string made;
 
@@ -129,12 +129,12 @@ TRIAL("Load: a deadline cancels one operation, not the socket") {
 
     std::move(writing).get();
 
-    same(made.size(), much.size());
+    SAME(made.size(), much.size());
 
     // The stream lives on: the cancelled read did not take the connection with it.
     both.server.write(bytes("dalej stoję"), soon).get();
 
-    same(text(both.client.read(64, soon).get()), std::string{"dalej stoję"});
+    SAME(text(both.client.read(64, soon).get()), std::string{"dalej stoję"});
 }
 
 TRIAL("Load: an empty write breaks nothing") {
@@ -145,7 +145,7 @@ TRIAL("Load: an empty write breaks nothing") {
     both.client.write(Bytes{}, soon).get();
     both.client.write(bytes("po pustym"), soon).get();
 
-    same(text(both.server.read(64, soon).get()), std::string{"po pustym"});
+    SAME(text(both.server.read(64, soon).get()), std::string{"po pustym"});
 }
 
 TRIAL("Load: reading less than what arrived") {
@@ -155,9 +155,9 @@ TRIAL("Load: reading less than what arrived") {
 
     both.client.write(bytes("abcdefgh"), soon).get();
 
-    same(text(both.server.read(3, soon).get()), std::string{"abc"});
-    same(text(both.server.read(3, soon).get()), std::string{"def"});
-    same(text(both.server.read(3, soon).get()), std::string{"gh"});
+    SAME(text(both.server.read(3, soon).get()), std::string{"abc"});
+    SAME(text(both.server.read(3, soon).get()), std::string{"def"});
+    SAME(text(both.server.read(3, soon).get()), std::string{"gh"});
 }
 
 TRIAL("Load: closing cancels both directions at once") {
@@ -188,7 +188,7 @@ TRIAL("Load: closing cancels both directions at once") {
 
     // The write may have reached the kernel buffer before the close, so we only require that the
     // read fails and that nothing hangs.
-    ought(amiss >= 1);
+    OUGHT(amiss >= 1);
 }
 
 TRIAL("Load: listener closed while waiting for a connection") {
@@ -206,7 +206,7 @@ TRIAL("Load: listener closed while waiting for a connection") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Load: connecting to a dead port fails instead of hanging") {
@@ -226,7 +226,7 @@ TRIAL("Load: connecting to a dead port fails instead of hanging") {
         amiss = true;
     }
 
-    ought(amiss);
+    OUGHT(amiss);
 }
 
 TRIAL("Load: twenty datagrams in a row") {
@@ -238,7 +238,7 @@ TRIAL("Load: twenty datagrams in a row") {
 
         there.send(here.mine(), bytes(std::to_string(which)), soon).get();
 
-        same(text(std::move(waiting).get().bytes), std::to_string(which));
+        SAME(text(std::move(waiting).get().bytes), std::to_string(which));
     }
 }
 
@@ -258,5 +258,5 @@ TRIAL("Load: afterwards the exchange holds no sockets") {
     for (int tried = 0; tried < 400 && net::Exchange::running().waiting() > 0; ++tried)
         later(std::chrono::milliseconds{5}).get();
 
-    same(static_cast<int>(net::Exchange::running().waiting()), 0);
+    SAME(static_cast<int>(net::Exchange::running().waiting()), 0);
 }

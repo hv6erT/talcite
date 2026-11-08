@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -162,8 +162,8 @@ TRIAL("figured: decoding runs on the cpu lane") {
     for (int at = 0; at < 500 && hold->left.load() < most; ++at)
         std::this_thread::sleep_for(std::chrono::milliseconds{2});
 
-    ought(!early);
-    same(hold->left.load(), most);
+    OUGHT(!early);
+    SAME(hold->left.load(), most);
 }
 
 TRIAL("Image: an empty one holds nothing and asks for nothing") {
@@ -174,9 +174,9 @@ TRIAL("Image: an empty one holds nothing and asks for nothing") {
     sheet.children().add(one);
     (void)sheet.render({{0, 0}, {40, 20}});
 
-    ought(!one->held());
-    same(one->wants({40, 20}).wide, 0);
-    ought(!waiting(sheet).has_value());
+    OUGHT(!one->held());
+    SAME(one->wants({40, 20}).wide, 0);
+    OUGHT(!waiting(sheet).has_value());
 }
 
 // The size must be known before painting, because the layout asks for it, so `hold` reads it from
@@ -189,22 +189,22 @@ TRIAL("Image: after loading it knows the format and size, the frames only after 
 
     const auto one = shown(leaping);
 
-    ought(one->held());
-    ought(!one->busy());
-    same(static_cast<int>(one->format()), static_cast<int>(Format::gif));
-    same(one->size().wide, 16);
-    same(one->size().high, 12);
-    same(one->frames(), std::size_t{0});
+    OUGHT(one->held());
+    OUGHT(!one->busy());
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::gif));
+    SAME(one->size().wide, 16);
+    SAME(one->size().high, 12);
+    SAME(one->frames(), std::size_t{0});
 
     sheet.children().add(one);
     (void)sheet.render({{0, 0}, {40, 20}});
 
-    ought(one->busy());
-    same(one->frames(), std::size_t{0});
+    OUGHT(one->busy());
+    SAME(one->frames(), std::size_t{0});
 
-    ought(settled(loop, sheet, *one, {40, 20}));
-    ought(!one->busy());
-    same(one->frames(), std::size_t{4});
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(!one->busy());
+    SAME(one->frames(), std::size_t{4});
 }
 
 // A refusal by the provider and no provider at all end the same way: an empty widget, with the
@@ -219,8 +219,8 @@ TRIAL("Image: a provider's refusal holds nothing, the format stays from the head
 
     one->hold(figured(lump("ffd8ffe000104a464946000102000000"), faking::images()));
 
-    same(static_cast<int>(one->format()), static_cast<int>(Format::jpeg));
-    ought(!one->held());
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::jpeg));
+    OUGHT(!one->held());
 
     // A header with dimensions, but the provider refuses: the size is there until the first
     // request, then the widget is empty. It shows what it can, and the legend, through `kind()`,
@@ -230,13 +230,13 @@ TRIAL("Image: a provider's refusal holds nothing, the format stays from the head
     other->hold(figured(lump("ffd8ffe100104578696600000000000000000000ffc0001108001000200301220002110103110100"),
                         faking::images()));
 
-    ought(other->held());
+    OUGHT(other->held());
 
     sheet.children().add(other);
 
-    ought(settled(loop, sheet, *other, {40, 20}));
-    ought(!other->held());
-    same(static_cast<int>(other->format()), static_cast<int>(Format::jpeg));
+    OUGHT(settled(loop, sheet, *other, {40, 20}));
+    OUGHT(!other->held());
+    SAME(static_cast<int>(other->format()), static_cast<int>(Format::jpeg));
 }
 
 TRIAL("Image: without a provider a file stays empty, while a picture made in code works") {
@@ -244,18 +244,18 @@ TRIAL("Image: without a provider a file stays empty, while a picture made in cod
 
     one->hold(figured(lump(leaping), {}));
 
-    same(static_cast<int>(one->format()), static_cast<int>(Format::gif));
-    ought(!one->held());
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::gif));
+    OUGHT(!one->held());
 
     one->hold(Pixels{{2, 2}, {Still{Bytes(16, std::byte{200}), std::chrono::milliseconds{0}}}});
 
-    ought(one->held());
+    OUGHT(one->held());
 
     one->clear();
 
-    ought(!one->held());
-    same(one->frames(), std::size_t{0});
-    same(static_cast<int>(one->format()), static_cast<int>(Format::none));
+    OUGHT(!one->held());
+    SAME(one->frames(), std::size_t{0});
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::none));
 }
 
 // The widget knows only the source. Bytes, the seam, the decoder: it needs none of them; a
@@ -284,41 +284,41 @@ TRIAL("Image: the source is called with the size from the layout, and again afte
 
     one->hold(made);
 
-    same(static_cast<int>(one->format()), static_cast<int>(Format::png));
-    ought(one->held());
-    same(one->frames(), std::size_t{0});
-    ought(asked->empty());
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::png));
+    OUGHT(one->held());
+    SAME(one->frames(), std::size_t{0});
+    OUGHT(asked->empty());
 
     sheet.children().add(one);
 
-    ought(settled(loop, sheet, *one, {40, 20}));
-    same(one->frames(), std::size_t{1});
-    same(asked->size(), std::size_t{1});
-    ought(asked->front().wide > 0);
-    ought(asked->front().high > 0);
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    SAME(one->frames(), std::size_t{1});
+    SAME(asked->size(), std::size_t{1});
+    OUGHT(asked->front().wide > 0);
+    OUGHT(asked->front().high > 0);
 
     // The same place: nothing new is requested.
     (void)sheet.render({{0, 0}, {40, 20}});
     (void)loop.turn();
 
-    same(asked->size(), std::size_t{1});
+    SAME(asked->size(), std::size_t{1});
 
     // A smaller place: it requests again, with a smaller size.
-    ought(settled(loop, sheet, *one, {20, 10}));
-    same(asked->size(), std::size_t{2});
-    ought(asked->back().wide < asked->front().wide);
+    OUGHT(settled(loop, sheet, *one, {20, 10}));
+    SAME(asked->size(), std::size_t{2});
+    OUGHT(asked->back().wide < asked->front().wide);
 
     // Without Unicode the grain is different, so it requests again: once, not on every frame.
     sheet.unicode(false);
 
-    ought(settled(loop, sheet, *one, {20, 10}));
-    same(asked->size(), std::size_t{3});
+    OUGHT(settled(loop, sheet, *one, {20, 10}));
+    SAME(asked->size(), std::size_t{3});
 
     (void)sheet.render({{0, 0}, {20, 10}});
     (void)loop.turn();
     (void)sheet.render({{0, 0}, {20, 10}});
 
-    same(asked->size(), std::size_t{3});
+    SAME(asked->size(), std::size_t{3});
 }
 
 // A refusal by the source (a rejected promise, not an empty result) empties the widget the same
@@ -338,14 +338,14 @@ TRIAL("Image: a rejected promise from the source empties the widget, the kind st
     const auto one = std::make_shared<ui::Image>();
 
     one->hold(made);
-    ought(one->held());
+    OUGHT(one->held());
 
     sheet.children().add(one);
 
-    ought(settled(loop, sheet, *one, {40, 20}));
-    ought(!one->held());
-    ought(!one->busy());
-    same(static_cast<int>(one->format()), static_cast<int>(Format::bmp));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(!one->held());
+    OUGHT(!one->busy());
+    SAME(static_cast<int>(one->format()), static_cast<int>(Format::bmp));
 }
 
 // --- Aspect ratio --------------------------------------------------------------------------------
@@ -359,8 +359,8 @@ TRIAL("Image: the aspect ratio is computed from the cell size") {
 
     sheet.children().add(one);
 
-    same(one->wants({40, 20}).wide, 40);
-    same(one->wants({40, 20}).high, 15);
+    SAME(one->wants({40, 20}).wide, 40);
+    SAME(one->wants({40, 20}).high, 15);
 }
 
 // Outside a tree there is nobody to ask about the cell, so the widget assumes one to two, the same
@@ -368,8 +368,8 @@ TRIAL("Image: the aspect ratio is computed from the cell size") {
 TRIAL("Image: without a cell size we assume one to two") {
     const auto one = shown(leaping);
 
-    same(one->wants({40, 20}).wide, 40);
-    same(one->wants({40, 20}).high, 15);
+    SAME(one->wants({40, 20}).wide, 40);
+    SAME(one->wants({40, 20}).high, 15);
 }
 
 // --- Placement in the area -----------------------------------------------------------------------
@@ -384,17 +384,17 @@ TRIAL("Image: the picture stands in the middle of the area") {
 
     sheet.children().add(one);
 
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
     const Snapshot made = sheet.render({{0, 0}, {40, 20}});
 
     // Fifteen rows in an area of twenty: two empty at the top, three at the bottom.
-    same(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::none));
-    same(static_cast<int>(made.at({0, 1}).shown), static_cast<int>(Shown::none));
-    ought(made.at({0, 2}).shown != Shown::none);
-    ought(made.at({0, 16}).shown != Shown::none);
-    same(static_cast<int>(made.at({0, 17}).shown), static_cast<int>(Shown::none));
-    same(static_cast<int>(made.at({0, 19}).shown), static_cast<int>(Shown::none));
+    SAME(static_cast<int>(made.at({0, 0}).shown), static_cast<int>(Shown::none));
+    SAME(static_cast<int>(made.at({0, 1}).shown), static_cast<int>(Shown::none));
+    OUGHT(made.at({0, 2}).shown != Shown::none);
+    OUGHT(made.at({0, 16}).shown != Shown::none);
+    SAME(static_cast<int>(made.at({0, 17}).shown), static_cast<int>(Shown::none));
+    SAME(static_cast<int>(made.at({0, 19}).shown), static_cast<int>(Shown::none));
 }
 
 // The edge of a picture in a window has the window's background. A partly covered cell has no paper
@@ -442,10 +442,10 @@ TRIAL("Image: the picture's edge takes the background of the window it stands in
 
             ++seen;
 
-            same(cell.style.background, (Color{false, 0, 0, 160}));
+            SAME(cell.style.background, (Color{false, 0, 0, 160}));
         }
 
-    ought(seen > 0);
+    OUGHT(seen > 0);
 }
 
 // --- Clock ---------------------------------------------------------------------------------------
@@ -457,7 +457,7 @@ TRIAL("Image: before it is drawn there is nothing to ask for") {
 
     sheet.children().add(one);
 
-    ought(!waiting(sheet).has_value());
+    OUGHT(!waiting(sheet).has_value());
 }
 
 TRIAL("Image: a decoded animation asks to be woken up") {
@@ -467,13 +467,13 @@ TRIAL("Image: a decoded animation asks to be woken up") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
     (void)sheet.render({{0, 0}, {40, 20}});
 
-    ought(waiting(sheet).has_value());
-    ought(*waiting(sheet) > std::chrono::milliseconds{0});
-    ought(*waiting(sheet) <= std::chrono::milliseconds{40});
+    OUGHT(waiting(sheet).has_value());
+    OUGHT(*waiting(sheet) > std::chrono::milliseconds{0});
+    OUGHT(*waiting(sheet) <= std::chrono::milliseconds{40});
 }
 
 // Setting the frame is seeking: it moves the start of the countdown as if the animation had just
@@ -486,9 +486,9 @@ TRIAL("Image: seeking sets the frame together with the time") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
-    same(one->frames(), std::size_t{4});
+    SAME(one->frames(), std::size_t{4});
 
     const int these[4] = {40, 100, 100, 120};
 
@@ -512,7 +512,7 @@ TRIAL("Image: seeking sets the frame together with the time") {
         held = held && left.has_value() && left->count() >= these[at] - spent - 1;
     }
 
-    ought(held);
+    OUGHT(held);
 }
 
 TRIAL("Image: seeking past the end stops at the last frame") {
@@ -522,11 +522,11 @@ TRIAL("Image: seeking past the end stops at the last frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
     one->still(9);
 
-    same(one->still(), std::size_t{3});
+    SAME(one->still(), std::size_t{3});
 }
 
 // Pausing freezes the frame that is visible, not frame zero; otherwise a pause would make the
@@ -538,18 +538,18 @@ TRIAL("Image: pausing freezes the visible frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
     (void)sheet.render({{0, 0}, {40, 20}});
 
-    ought(waiting(sheet).has_value());
+    OUGHT(waiting(sheet).has_value());
 
     one->still(2);
     one->play(false);
 
-    ought(!one->play());
-    same(one->still(), std::size_t{2});
-    ought(!waiting(sheet).has_value());
+    OUGHT(!one->play());
+    SAME(one->still(), std::size_t{2});
+    OUGHT(!waiting(sheet).has_value());
 }
 
 // Resuming starts from the frozen frame, not from the one the clock started at `hold` would point
@@ -563,7 +563,7 @@ TRIAL("Image: resuming starts from the frozen frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {40, 20}));
+    OUGHT(settled(loop, sheet, *one, {40, 20}));
 
     one->still(1);
     one->play(false);
@@ -574,9 +574,9 @@ TRIAL("Image: resuming starts from the frozen frame") {
 
     (void)sheet.render({{0, 0}, {40, 20}});
 
-    ought(one->play());
-    same(one->still(), std::size_t{1});
-    ought(waiting(sheet).has_value());
+    OUGHT(one->play());
+    SAME(one->still(), std::size_t{1});
+    OUGHT(waiting(sheet).has_value());
 }
 
 // The only trial that really waits. The first frame lasts twenty milliseconds, the second three
@@ -588,20 +588,20 @@ TRIAL("Image: the clock advances the frame by itself") {
     const auto one = shown(quick);
 
     sheet.children().add(one);
-    ought(settled(loop, sheet, *one, {20, 10}));
+    OUGHT(settled(loop, sheet, *one, {20, 10}));
 
     one->still(0);
 
-    same(one->still(), std::size_t{0});
+    SAME(one->still(), std::size_t{0});
 
     std::this_thread::sleep_for(std::chrono::milliseconds{100});
 
-    same(one->still(), std::size_t{1});
+    SAME(one->still(), std::size_t{1});
 
     // Pausing freezes the frame the clock has reached, not the one set last.
     one->play(false);
 
-    same(one->still(), std::size_t{1});
+    SAME(one->still(), std::size_t{1});
 }
 
 // Frames without a delay are not an animation, just a picture. The GIF decoder never produces such
@@ -621,8 +621,8 @@ TRIAL("Image: frames without delays are not an animation") {
     sheet.children().add(one);
     (void)sheet.render({{0, 0}, {20, 10}});
 
-    ought(one->held());
-    ought(!waiting(sheet).has_value());
+    OUGHT(one->held());
+    OUGHT(!waiting(sheet).has_value());
 }
 
 // --- Color depth and characters from the root ----------------------------------------------------
@@ -655,19 +655,19 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     const Snapshot drawn_blocks = sheet.render({{0, 0}, {1, 1}});
 
-    same(drawn_blocks.at({0, 0}).letter, U'▀');
-    same(drawn_blocks.at({0, 0}).style.foreground, (Color{false, 220, 0, 0}));
+    SAME(drawn_blocks.at({0, 0}).letter, U'▀');
+    SAME(drawn_blocks.at({0, 0}).style.foreground, (Color{false, 220, 0, 0}));
 
     sheet.unicode(false);
 
     const Snapshot drawn_ascii = sheet.render({{0, 0}, {1, 1}});
 
-    same(drawn_ascii.at({0, 0}).letter, U'=');
+    SAME(drawn_ascii.at({0, 0}).letter, U'=');
 
     sheet.colors(Colors::mono);
     sheet.unicode(true);
 
-    same(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    SAME(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 
     // Color depth from the root: two colors in full color give a half block, while in black and
     // white a picture with transparency (one pixel) is a silhouette only: a full block.
@@ -682,11 +682,11 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     one->hold(Pixels{{8, 8}, {Still{std::move(two), std::chrono::milliseconds{0}}}});
 
-    same(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'█');
+    SAME(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'█');
 
     sheet.colors(Colors::rgb);
 
-    same(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    SAME(sheet.render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 
     one->hold(halved());
 
@@ -695,7 +695,7 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     alone->hold(halved());
 
-    same(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    SAME(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 
     Bytes pair(8 * 8 * 4, std::byte{0});
 
@@ -708,6 +708,6 @@ TRIAL("Image: characters and color depth come from the root, a change of charact
 
     alone->hold(Pixels{{8, 8}, {Still{std::move(pair), std::chrono::milliseconds{0}}}});
 
-    same(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
+    SAME(alone->render({{0, 0}, {1, 1}}).at({0, 0}).letter, U'▀');
 }
 

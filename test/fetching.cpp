@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -176,39 +176,39 @@ const Seam<net::TlsProvider> nothing{};
 TRIAL("HTTP: a URL breaks down and is put back together") {
     const auto plain = net::Url::from_string("http://Example.COM");
 
-    ought(plain.has_value());
-    ought(!plain->secure);
-    same(plain->host, std::string{"example.com"});
-    same(static_cast<int>(plain->port), 80);
-    same(plain->target, std::string{"/"});
-    same(net::to_string(*plain), std::string{"http://example.com/"});
+    OUGHT(plain.has_value());
+    OUGHT(!plain->secure);
+    SAME(plain->host, std::string{"example.com"});
+    SAME(static_cast<int>(plain->port), 80);
+    SAME(plain->target, std::string{"/"});
+    SAME(net::to_string(*plain), std::string{"http://example.com/"});
 
     const auto secure = net::Url::from_string("HTTPS://api.themoviedb.org/3/movie/550?api_key=x#góra");
 
-    ought(secure.has_value());
-    ought(secure->secure);
-    same(static_cast<int>(secure->port), 443);
-    same(secure->target, std::string{"/3/movie/550?api_key=x"});
-    same(net::to_string(*secure), std::string{"https://api.themoviedb.org/3/movie/550?api_key=x"});
+    OUGHT(secure.has_value());
+    OUGHT(secure->secure);
+    SAME(static_cast<int>(secure->port), 443);
+    SAME(secure->target, std::string{"/3/movie/550?api_key=x"});
+    SAME(net::to_string(*secure), std::string{"https://api.themoviedb.org/3/movie/550?api_key=x"});
 
     const auto ported = net::Url::from_string("http://localhost:8080?q=1");
 
-    ought(ported.has_value());
-    same(static_cast<int>(ported->port), 8080);
-    same(ported->target, std::string{"/?q=1"});
-    same(net::to_string(*ported), std::string{"http://localhost:8080/?q=1"});
+    OUGHT(ported.has_value());
+    SAME(static_cast<int>(ported->port), 8080);
+    SAME(ported->target, std::string{"/?q=1"});
+    SAME(net::to_string(*ported), std::string{"http://localhost:8080/?q=1"});
 
     const auto six = net::Url::from_string("https://[::1]:8443/a");
 
-    ought(six.has_value());
-    same(six->host, std::string{"::1"});
-    same(static_cast<int>(six->port), 8443);
-    same(net::to_string(*six), std::string{"https://[::1]:8443/a"});
+    OUGHT(six.has_value());
+    SAME(six->host, std::string{"::1"});
+    SAME(static_cast<int>(six->port), 8443);
+    SAME(net::to_string(*six), std::string{"https://[::1]:8443/a"});
 
-    same(net::Url::from_string("http://ZOO.Example.pl/").value().host, std::string{"zoo.example.pl"});
-    same(net::to_string(*net::Url::from_string("https://[::1]/")), std::string{"https://[::1]/"});
-    same(net::to_string(*net::Url::from_string("http://a:443/")), std::string{"http://a:443/"});
-    same(net::to_string(*net::Url::from_string("https://a:80/")), std::string{"https://a:80/"});
+    SAME(net::Url::from_string("http://ZOO.Example.pl/").value().host, std::string{"zoo.example.pl"});
+    SAME(net::to_string(*net::Url::from_string("https://[::1]/")), std::string{"https://[::1]/"});
+    SAME(net::to_string(*net::Url::from_string("http://a:443/")), std::string{"http://a:443/"});
+    SAME(net::to_string(*net::Url::from_string("https://a:80/")), std::string{"https://a:80/"});
 }
 
 // What a URL does not accept: another scheme, no scheme, a user in the URL, an empty host, port
@@ -219,10 +219,10 @@ TRIAL("HTTP: a malformed URL is not a URL") {
                             "http://a:x/", "http://a:/", "http://[::1/", "http://[::1]x/", "http://[::1]:/", "http://::1/",
                             "http://a/b c", "http://a/\x01", "http://a/\x7f", "http://a/zażółć", "http://a b/",
                             "http://[a_b]/", "http://a:80x/", "http://[::1]x80/"})
-        ought(!net::Url::from_string(bad).has_value());
+        OUGHT(!net::Url::from_string(bad).has_value());
 
-    ought(net::Url::from_string("http://moja_nazwa/").has_value());
-    ought(net::Url::from_string("http://a:65535/").has_value());
+    OUGHT(net::Url::from_string("http://moja_nazwa/").has_value());
+    OUGHT(net::Url::from_string("http://a:65535/").has_value());
 }
 
 // --- Conversation --------------------------------------------------------------------------------
@@ -244,19 +244,19 @@ TRIAL("HTTP: GET sends the request and reads a response of the stated length") {
 
     const std::string head = desk.heard();
 
-    same(head, "GET /3/movie/550?language=pl-PL HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(gate.mine().port()) +
+    SAME(head, "GET /3/movie/550?language=pl-PL HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(gate.mine().port()) +
                    "\r\nAccept: application/json\r\nAccept-Encoding: identity\r\n\r\n");
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"id\":550}\n");
 
     const net::Response one = std::move(got).get();
 
-    same(one.status, 200);
-    same(body(one), std::string{"{\"id\":550}\n"});
-    ought(one.header("content-TYPE") != nullptr);
-    same(*one.header("content-type"), std::string{"application/json"});
-    ought(one.header("x-nie-ma") == nullptr);
-    same(net::to_string(one.url), at(gate, "/3/movie/550?language=pl-PL"));
+    SAME(one.status, 200);
+    SAME(body(one), std::string{"{\"id\":550}\n"});
+    OUGHT(one.header("content-TYPE") != nullptr);
+    SAME(*one.header("content-type"), std::string{"application/json"});
+    OUGHT(one.header("x-nie-ma") == nullptr);
+    SAME(net::to_string(one.url), at(gate, "/3/movie/550?language=pl-PL"));
 }
 
 // POST (for SOAP in UPnP): the method, the body length from the client rather than from the caller,
@@ -274,22 +274,22 @@ TRIAL("HTTP: POST sends a body, always over a new connection") {
 
     Desk desk = accepted(gate);
 
-    same(desk.heard(), "POST /ctl HTTP/1.1\r\nHost: 127.0.0.1:" + port +
+    SAME(desk.heard(), "POST /ctl HTTP/1.1\r\nHost: 127.0.0.1:" + port +
                            "\r\nContent-Type: text/xml\r\nContent-Length: 8\r\nAccept-Encoding: identity\r\n\r\n");
-    same(desk.taken(8), std::string{"<a>1</a>"});
+    SAME(desk.taken(8), std::string{"<a>1</a>"});
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(first).get()), std::string{"ok"});
+    SAME(body(std::move(first).get()), std::string{"ok"});
 
     auto second = client.post(asked(at(gate, "/ctl")), Bytes{});
 
     Desk other = accepted(gate);
 
-    same(other.heard().substr(0, 34), std::string{"POST /ctl HTTP/1.1\r\nHost: 127.0.0."});
+    SAME(other.heard().substr(0, 34), std::string{"POST /ctl HTTP/1.1\r\nHost: 127.0.0."});
     other.wrote("HTTP/1.1 500 Internal\r\nContent-Length: 0\r\n\r\n");
 
-    same(std::move(second).get().status, 500);
+    SAME(std::move(second).get().status, 500);
 
     // The method and body fields of the request mean nothing to `get`: it is always a GET without a
     // body.
@@ -303,12 +303,12 @@ TRIAL("HTTP: POST sends a body, always over a new connection") {
     // The pool keeps one connection per server: the last one that came back.
     const std::string head = other.heard();
 
-    same(head.substr(0, 11), std::string{"GET /x HTTP"});
-    ought(head.find("Content-Length") == std::string::npos);
+    SAME(head.substr(0, 11), std::string{"GET /x HTTP"});
+    OUGHT(head.find("Content-Length") == std::string::npos);
 
     other.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(std::move(third).get().status, 204);
+    SAME(std::move(third).get().status, 204);
 }
 
 // 307 and 308 repeat a POST together with its body; 301, 302 and 303 turn it into a GET without a
@@ -323,25 +323,25 @@ TRIAL("HTTP: redirecting a POST, 307 with the body, 303 as a GET") {
     Desk desk = accepted(gate);
 
     (void)desk.heard();
-    same(desk.taken(7), std::string{"treść"});
+    SAME(desk.taken(7), std::string{"treść"});
     desk.wrote("HTTP/1.1 307 Temporary\r\nLocation: /b\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
 
     Desk second = accepted(gate);
 
     const std::string again = second.heard();
 
-    same(again.substr(0, 12), std::string{"POST /b HTTP"});
-    ought(again.find("Content-Length: 7") != std::string::npos);
-    same(second.taken(7), std::string{"treść"});
+    SAME(again.substr(0, 12), std::string{"POST /b HTTP"});
+    OUGHT(again.find("Content-Length: 7") != std::string::npos);
+    SAME(second.taken(7), std::string{"treść"});
     second.wrote("HTTP/1.1 303 See Other\r\nLocation: /c\r\nContent-Length: 0\r\n\r\n");
 
     const std::string last = second.heard();
 
-    same(last.substr(0, 11), std::string{"GET /c HTTP"});
-    ought(last.find("Content-Length") == std::string::npos);
+    SAME(last.substr(0, 11), std::string{"GET /c HTTP"});
+    OUGHT(last.find("Content-Length") == std::string::npos);
     second.wrote("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
 
-    same(std::move(got).get().status, 200);
+    SAME(std::move(got).get().status, 200);
 }
 
 // A status is not an error: 404 and 429 come back as a response, with the Retry-After header along
@@ -359,7 +359,7 @@ TRIAL("HTTP: 404 and 429 are responses, not errors") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n");
 
-    same(std::move(first).get().status, 404);
+    SAME(std::move(first).get().status, 404);
 
     auto second = client.get(asked(at(gate, "/b")));
 
@@ -368,10 +368,10 @@ TRIAL("HTTP: 404 and 429 are responses, not errors") {
 
     const net::Response two = std::move(second).get();
 
-    same(two.status, 429);
-    same(*two.header("retry-after"), std::string{"2"});
-    ought(two.header("x-limit-2") != nullptr);
-    ought(two.header("x.dziwna_nazwa!#") != nullptr);
+    SAME(two.status, 429);
+    SAME(*two.header("retry-after"), std::string{"2"});
+    OUGHT(two.header("x-limit-2") != nullptr);
+    OUGHT(two.header("x.dziwna_nazwa!#") != nullptr);
 }
 
 // A chunked body: lengths in hexadecimal, extensions after a semicolon, the zero chunk and the
@@ -393,14 +393,14 @@ TRIAL("HTTP: a chunked body is joined into a whole") {
                "3 \r\nsa.\r\n"
                "0\r\nX-Przyczepka: tak\r\nX-Druga: też\r\n\r\n");
 
-    same(body(std::move(got).get()), std::string{"Ala ma kota i psa."});
+    SAME(body(std::move(got).get()), std::string{"Ala ma kota i psa."});
 
     auto again = client.get(asked(at(gate, "/2")));
 
-    same(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
+    SAME(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(again).get()), std::string{"ok"});
+    SAME(body(std::move(again).get()), std::string{"ok"});
 }
 
 // A file of the trials for downloads, in a directory of its own, removed first so each trial
@@ -450,32 +450,32 @@ TRIAL("HTTP: a download takes the body into a file, beyond the body limit, by le
 
     Desk desk = accepted(gate);
 
-    same(desk.heard().substr(0, 14), std::string{"GET /plik HTTP"});
+    SAME(desk.heard().substr(0, 14), std::string{"GET /plik HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(whole.size()) + "\r\n\r\n" + whole);
 
     for (int tries = 0; tries < 5000 && !got.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    same(got.progress().fraction(), 1.0);
+    SAME(got.progress().fraction(), 1.0);
 
     const net::Response one = std::move(got).get();
 
-    same(one.status, 200);
-    ought(one.body.empty());
-    same(inside(first), whole);
+    SAME(one.status, 200);
+    OUGHT(one.body.empty());
+    SAME(inside(first), whole);
 
     // The next request on the same connection: in chunks, through a redirect to another target.
     const std::filesystem::path second = saved_as("kawalki.bin");
 
     auto again = client.save(asked(at(gate, "/stary")), second);
 
-    same(desk.heard().substr(0, 15), std::string{"GET /stary HTTP"});
+    SAME(desk.heard().substr(0, 15), std::string{"GET /stary HTTP"});
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: /nowy\r\nContent-Length: 4\r\n\r\ntu: ");
-    same(desk.heard().substr(0, 14), std::string{"GET /nowy HTTP"});
+    SAME(desk.heard().substr(0, 14), std::string{"GET /nowy HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
                "5\r\nAla m\r\nD\r\na kota i psa.\r\n0\r\n\r\n");
 
-    same(std::move(again).get().status, 200);
-    same(inside(second), std::string{"Ala ma kota i psa."});
+    SAME(std::move(again).get().status, 200);
+    SAME(inside(second), std::string{"Ala ma kota i psa."});
 }
 
 // An answer other than 2xx comes back as usual, with its body in memory and within the limit, and
@@ -497,21 +497,21 @@ TRIAL("HTTP: a download that is not 2xx or is cut off leaves no file") {
 
     const net::Response one = std::move(got).get();
 
-    same(one.status, 404);
-    same(body(one), std::string{"brak!"});
-    ought(!std::filesystem::exists(missing));
+    SAME(one.status, 404);
+    SAME(body(one), std::string{"brak!"});
+    OUGHT(!std::filesystem::exists(missing));
 
     const std::filesystem::path cut = saved_as("urwany.bin");
 
     auto broken = client.save(asked(at(gate, "/urwany")), cut);
 
-    same(desk.heard().substr(0, 16), std::string{"GET /urwany HTTP"});
+    SAME(desk.heard().substr(0, 16), std::string{"GET /urwany HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npoczatek");
     desk.close();
 
-    same(why(broken), std::optional{net::HttpTrouble::Why::malformed});
-    ought(!std::filesystem::exists(cut));
-    same(leftovers(), std::size_t{0});
+    SAME(why(broken), std::optional{net::HttpTrouble::Why::malformed});
+    OUGHT(!std::filesystem::exists(cut));
+    SAME(leftovers(), std::size_t{0});
 }
 
 // A download over a file that already stands leaves it as it was, byte for byte, when the answer is
@@ -535,8 +535,8 @@ TRIAL("HTTP: a failed download leaves the file from before whole, and a whole on
     (void)desk.heard();
     desk.wrote("HTTP/1.1 404 Not Found\r\nContent-Length: 5\r\n\r\nbrak!");
 
-    same(std::move(missing).get().status, 404);
-    same(inside(poster), std::string{"stary plakat"});
+    SAME(std::move(missing).get().status, 404);
+    SAME(inside(poster), std::string{"stary plakat"});
 
     auto broken = client.save(asked(at(gate, "/urwany")), poster);
 
@@ -544,8 +544,8 @@ TRIAL("HTTP: a failed download leaves the file from before whole, and a whole on
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npoczatek");
     desk.close();
 
-    same(why(broken), std::optional{net::HttpTrouble::Why::malformed});
-    same(inside(poster), std::string{"stary plakat"});
+    SAME(why(broken), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(inside(poster), std::string{"stary plakat"});
 
     auto whole = client.save(asked(at(gate, "/nowy")), poster);
 
@@ -554,9 +554,9 @@ TRIAL("HTTP: a failed download leaves the file from before whole, and a whole on
     (void)again.heard();
     again.wrote("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nnowy plakat");
 
-    same(std::move(whole).get().status, 200);
-    same(inside(poster), std::string{"nowy plakat"});
-    same(leftovers(), std::size_t{0});
+    SAME(std::move(whole).get().status, 200);
+    SAME(inside(poster), std::string{"nowy plakat"});
+    SAME(leftovers(), std::size_t{0});
 }
 
 // A download cancelled while the body comes stops at once, from the pool, and leaves no file.
@@ -576,14 +576,14 @@ TRIAL("HTTP: a cancelled download stops and leaves no file") {
 
     for (int tries = 0; tries < 2000 && got.progress().fraction() == 0.0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    ought(got.progress().fraction() > 0.0 && got.progress().fraction() < 1.0);
+    OUGHT(got.progress().fraction() > 0.0 && got.progress().fraction() < 1.0);
 
     got.cancel();
 
     for (int tries = 0; tries < 2000 && leftovers() > 0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
 
-    ought(!std::filesystem::exists(place));
-    same(leftovers(), std::size_t{0});
+    OUGHT(!std::filesystem::exists(place));
+    SAME(leftovers(), std::size_t{0});
 
     desk.close();
 }
@@ -604,7 +604,7 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     one.wrote("HTTP/1.1 200 OK\r\n\r\nwszystko, co jest");
     one.close();
 
-    same(body(std::move(first).get()), std::string{"wszystko, co jest"});
+    SAME(body(std::move(first).get()), std::string{"wszystko, co jest"});
 
     auto second = client.get(asked(at(gate, "/2")));
 
@@ -613,8 +613,8 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     (void)two.heard();
     two.wrote("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(second).get()), std::string{"ok"});
-    ought(two.ended());
+    SAME(body(std::move(second).get()), std::string{"ok"});
+    OUGHT(two.ended());
 
     auto third = client.get(asked(at(gate, "/3")));
 
@@ -623,17 +623,17 @@ TRIAL("HTTP: a body until close, HTTP/1.0 and Connection: close do not return to
     (void)three.heard();
     three.wrote("HTTP/1.1 200 OK\r\nConnection: keep-alive, Close\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(third).get()), std::string{"ok"});
-    ought(three.ended());
+    SAME(body(std::move(third).get()), std::string{"ok"});
+    OUGHT(three.ended());
 
     auto fourth = client.get(asked(at(gate, "/4")));
 
     Desk four = accepted(gate);
 
-    same(four.heard().substr(0, 10), std::string{"GET /4 HTT"});
+    SAME(four.heard().substr(0, 10), std::string{"GET /4 HTT"});
     four.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(std::move(fourth).get().status, 204);
+    SAME(std::move(fourth).get().status, 204);
 }
 
 // One connection per server: after a response with a known end the connection waits in the pool and
@@ -651,21 +651,21 @@ TRIAL("HTTP: a connection returns to the pool and carries the next requests") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 204 No Content\r\n\r\n");
 
-    same(std::move(first).get().status, 204);
+    SAME(std::move(first).get().status, 204);
 
     auto second = client.get(asked(at(gate, "/2")));
 
-    same(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
+    SAME(desk.heard().substr(0, 10), std::string{"GET /2 HTT"});
     desk.wrote("HTTP/1.1 304 Not Modified\r\n\r\n");
 
-    same(std::move(second).get().status, 304);
+    SAME(std::move(second).get().status, 304);
 
     auto third = client.get(asked(at(gate, "/3")));
 
-    same(desk.heard().substr(0, 10), std::string{"GET /3 HTT"});
+    SAME(desk.heard().substr(0, 10), std::string{"GET /3 HTT"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\ntak");
 
-    same(body(std::move(third).get()), std::string{"tak"});
+    SAME(body(std::move(third).get()), std::string{"tak"});
 }
 
 // Bytes beyond the announced length are not the next response: a connection with them does not
@@ -682,17 +682,17 @@ TRIAL("HTTP: excess bytes close the connection") {
     (void)one.heard();
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nab");
 
-    same(body(std::move(first).get()), std::string{"a"});
+    SAME(body(std::move(first).get()), std::string{"a"});
 
     auto second = client.get(asked(at(gate, "/2")));
 
     Desk two = accepted(gate);
 
-    same(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
+    SAME(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
     two.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nc");
 
-    same(body(std::move(second).get()), std::string{"c"});
-    ought(one.ended());
+    SAME(body(std::move(second).get()), std::string{"c"});
+    OUGHT(one.ended());
 }
 
 // A pooled connection that the server closed while idle fails before the first byte of the
@@ -710,7 +710,7 @@ TRIAL("HTTP: a connection closed while idle is replaced by a new one") {
     (void)one.heard();
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na");
 
-    same(body(std::move(first).get()), std::string{"a"});
+    SAME(body(std::move(first).get()), std::string{"a"});
 
     one.close();
 
@@ -718,10 +718,10 @@ TRIAL("HTTP: a connection closed while idle is replaced by a new one") {
 
     Desk two = accepted(gate);
 
-    same(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
+    SAME(two.heard().substr(0, 10), std::string{"GET /2 HTT"});
     two.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nb");
 
-    same(body(std::move(second).get()), std::string{"b"});
+    SAME(body(std::move(second).get()), std::string{"b"});
 }
 
 // A pooled connection that died in the middle of a response is not an idle one: the request is not
@@ -746,7 +746,7 @@ TRIAL("HTTP: a connection cut in the middle of a response does not repeat the re
     one.wrote("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\npół");
     one.close();
 
-    same(why(second), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(second), std::optional{net::HttpTrouble::Why::malformed});
 }
 
 // 1xx responses before the real one are skipped.
@@ -764,8 +764,8 @@ TRIAL("HTTP: an interim 1xx response lets the real one through") {
 
     const net::Response one = std::move(got).get();
 
-    same(one.status, 200);
-    same(body(one), std::string{"ok"});
+    SAME(one.status, 200);
+    SAME(body(one), std::string{"ok"});
 }
 
 // --- Limits --------------------------------------------------------------------------------------
@@ -789,16 +789,16 @@ TRIAL("HTTP: limits of the head and the body") {
         return why(got);
     };
 
-    same(tried("HTTP/1.1 200 OK\r\nX-Długi: " + std::string(100, 'x') + "\r\n\r\n"),
+    SAME(tried("HTTP/1.1 200 OK\r\nX-Długi: " + std::string(100, 'x') + "\r\n\r\n"),
          std::optional{net::HttpTrouble::Why::oversized});
-    same(tried("HTTP/1.1 200 OK\r\nX-Bez-Końca: " + std::string(100, 'x')),
+    SAME(tried("HTTP/1.1 200 OK\r\nX-Bez-Końca: " + std::string(100, 'x')),
          std::optional{net::HttpTrouble::Why::oversized});
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n"), std::optional{net::HttpTrouble::Why::oversized});
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nabcdef\r\n5\r\nghijk\r\n0\r\n\r\n"),
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\n"), std::optional{net::HttpTrouble::Why::oversized});
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nabcdef\r\n5\r\nghijk\r\n0\r\n\r\n"),
          std::optional{net::HttpTrouble::Why::oversized});
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n"),
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nffffffffffffffff\r\n"),
          std::optional{net::HttpTrouble::Why::oversized});
-    same(tried("HTTP/1.1 200 OK\r\n\r\n" + std::string(11, 'x')), std::optional{net::HttpTrouble::Why::oversized});
+    SAME(tried("HTTP/1.1 200 OK\r\n\r\n" + std::string(11, 'x')), std::optional{net::HttpTrouble::Why::oversized});
 
     auto exact = client.get(asked(at(gate, "/")));
 
@@ -807,7 +807,7 @@ TRIAL("HTTP: limits of the head and the body") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789");
 
-    same(body(std::move(exact).get()), std::string{"0123456789"});
+    SAME(body(std::move(exact).get()), std::string{"0123456789"});
 }
 
 // Responses that cannot be read: a status line not from HTTP/1.x, a code that is not a number, a
@@ -833,34 +833,34 @@ TRIAL("HTTP: a malformed response is a protocol violation") {
 
     const std::optional<net::HttpTrouble::Why> bad{net::HttpTrouble::Why::malformed};
 
-    same(tried("SPDY/3 200 OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.2 200 OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.1_200 OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 20\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nZła nazwa: x\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: 2x\r\n\r\nab"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5x\r\nabcde\r\n0\r\n\r\n"), bad);
-    same(tried("HTTP/2.0 200 OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 2x0 OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 099 Za mało\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200OK\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 20\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nBez dwukropka\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\n: pusta nazwa\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nX-A: 1\r\n  zawinięte\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nabc"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: dwa\r\n\r\nab"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n0\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nabc\r\n0\r\n\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + std::string(5000, '1')), bad);
-    same(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Le"), bad);
-    same(tried("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nab"), bad);
-    same(tried("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\n\r\n"), bad);
+    SAME(tried("SPDY/3 200 OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.2 200 OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1_200 OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 20\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nZła nazwa: x\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: 2x\r\n\r\nab"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5x\r\nabcde\r\n0\r\n\r\n"), bad);
+    SAME(tried("HTTP/2.0 200 OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 2x0 OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 099 Za mało\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200OK\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 20\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nBez dwukropka\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\n: pusta nazwa\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nX-A: 1\r\n  zawinięte\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Length: 3\r\n\r\nabc"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: dwa\r\n\r\nab"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: \r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n0\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip, chunked\r\n\r\n0\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nabc\r\n0\r\n\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n" + std::string(5000, '1')), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n0\r\n"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Le"), bad);
+    SAME(tried("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nab"), bad);
+    SAME(tried("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 102 Processing\r\n\r\nHTTP/1.1 200 OK\r\n\r\n"), bad);
 }
 
 // Silence from the server ends after `patience` with a refusal, not with waiting forever.
@@ -875,8 +875,8 @@ TRIAL("HTTP: a silent server ends with a timeout") {
 
     (void)desk.heard();
 
-    ought(refused(got));
-    ought(!why(got).has_value());
+    OUGHT(refused(got));
+    OUGHT(!why(got).has_value());
 }
 
 // --- Redirects -----------------------------------------------------------------------------------
@@ -895,38 +895,38 @@ TRIAL("HTTP: redirects lead to the target, and credentials stay with their serve
 
     Desk desk = accepted(gate);
 
-    same(desk.heard().substr(0, 17), std::string{"GET /a/b?x=/1 HTT"});
+    SAME(desk.heard().substr(0, 17), std::string{"GET /a/b?x=/1 HTT"});
     desk.wrote("HTTP/1.1 301 Moved\r\nLocation: c/d\r\nContent-Length: 0\r\n\r\n");
 
     const std::string second = desk.heard();
 
-    same(second.substr(0, 14), std::string{"GET /a/c/d HTT"});
-    ought(second.find("Authorization: Bearer sekret") != std::string::npos);
+    SAME(second.substr(0, 14), std::string{"GET /a/c/d HTT"});
+    OUGHT(second.find("Authorization: Bearer sekret") != std::string::npos);
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: /e#kotwica\r\nContent-Length: 0\r\n\r\n");
 
-    same(desk.heard().substr(0, 10), std::string{"GET /e HTT"});
+    SAME(desk.heard().substr(0, 10), std::string{"GET /e HTT"});
     desk.wrote("HTTP/1.1 303 See Other\r\nLocation: //127.0.0.1:" + port + "/f\r\nContent-Length: 0\r\n\r\n");
 
-    same(desk.heard().substr(0, 10), std::string{"GET /f HTT"});
+    SAME(desk.heard().substr(0, 10), std::string{"GET /f HTT"});
     desk.wrote("HTTP/1.1 307 Temporary\r\nLocation: http://localhost:" + port + "/g\r\nContent-Length: 0\r\n\r\n");
 
     Desk other = accepted(gate);
 
     const std::string moved = other.heard();
 
-    same(moved.substr(0, 10), std::string{"GET /g HTT"});
-    ought(moved.find("Host: localhost:" + port) != std::string::npos);
-    ought(moved.find("Authorization") == std::string::npos);
-    ought(moved.find("X-Inny: 1") != std::string::npos);
+    SAME(moved.substr(0, 10), std::string{"GET /g HTT"});
+    OUGHT(moved.find("Host: localhost:" + port) != std::string::npos);
+    OUGHT(moved.find("Authorization") == std::string::npos);
+    OUGHT(moved.find("X-Inny: 1") != std::string::npos);
     other.wrote("HTTP/1.1 308 Permanent\r\nLocation: /h\r\nContent-Length: 0\r\n\r\n");
 
-    same(other.heard().substr(0, 10), std::string{"GET /h HTT"});
+    SAME(other.heard().substr(0, 10), std::string{"GET /h HTT"});
     other.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
     const net::Response one = std::move(got).get();
 
-    same(one.status, 200);
-    same(net::to_string(one.url), "http://localhost:" + port + "/h");
+    SAME(one.status, 200);
+    SAME(net::to_string(one.url), "http://localhost:" + port + "/h");
 }
 
 // A redirect without Location is an ordinary response; a Location that is not a URL is a protocol
@@ -943,28 +943,28 @@ TRIAL("HTTP: a redirect without a target, with a malformed target and over the l
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nContent-Length: 0\r\n\r\n");
 
-    same(std::move(bare).get().status, 302);
+    SAME(std::move(bare).get().status, 302);
 
     auto crooked = client.get(asked(at(gate, "/")));
 
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: ftp://a/b\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(crooked), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(crooked), std::optional{net::HttpTrouble::Why::malformed});
 
     auto empty = client.get(asked(at(gate, "/")));
 
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: \r\nContent-Length: 0\r\n\r\n");
 
-    same(why(empty), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(empty), std::optional{net::HttpTrouble::Why::malformed});
 
     auto spaced = client.get(asked(at(gate, "/")));
 
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: /a b\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(spaced), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(spaced), std::optional{net::HttpTrouble::Why::malformed});
 
     auto looped = client.get(asked(at(gate, "/")));
 
@@ -973,7 +973,7 @@ TRIAL("HTTP: a redirect without a target, with a malformed target and over the l
     (void)desk.heard();
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: /2\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(looped), std::optional{net::HttpTrouble::Why::redirected});
+    SAME(why(looped), std::optional{net::HttpTrouble::Why::redirected});
 }
 
 // --- HTTPS ---------------------------------------------------------------------------------------
@@ -989,7 +989,7 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
 
     auto refused_now = bare.get(asked(at(gate, "/", "https")));
 
-    same(why(refused_now), std::optional{net::HttpTrouble::Why::insecure});
+    SAME(why(refused_now), std::optional{net::HttpTrouble::Why::insecure});
 
     const Seam<net::TlsProvider> tls{std::make_shared<faking::Watching>()};
 
@@ -999,28 +999,28 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
 
     Desk desk = accepted(gate, tls);
 
-    same(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
+    SAME(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nszyfr!");
 
-    same(body(std::move(got).get()), std::string{"szyfr!"});
+    SAME(body(std::move(got).get()), std::string{"szyfr!"});
 
     auto jump = client.get(asked(at(gate, "/skok", "https")));
 
-    same(desk.heard().substr(0, 14), std::string{"GET /skok HTTP"});
+    SAME(desk.heard().substr(0, 14), std::string{"GET /skok HTTP"});
     desk.wrote("HTTP/1.1 302 Found\r\nLocation: //127.0.0.1:" + std::to_string(gate.mine().port()) +
                "/cel\r\nContent-Length: 0\r\n\r\n");
 
-    same(desk.heard().substr(0, 13), std::string{"GET /cel HTTP"});
+    SAME(desk.heard().substr(0, 13), std::string{"GET /cel HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(net::to_string(std::move(jump).get().url), at(gate, "/cel", "https"));
+    SAME(net::to_string(std::move(jump).get().url), at(gate, "/cel", "https"));
 
     auto down = client.get(asked(at(gate, "/znowu", "https")));
 
-    same(desk.heard().substr(0, 15), std::string{"GET /znowu HTTP"});
+    SAME(desk.heard().substr(0, 15), std::string{"GET /znowu HTTP"});
     desk.wrote("HTTP/1.1 301 Moved\r\nLocation: http://127.0.0.1/\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(down), std::optional{net::HttpTrouble::Why::downgraded});
+    SAME(why(down), std::optional{net::HttpTrouble::Why::downgraded});
 
     net::HttpClient plain{nothing};
 
@@ -1031,7 +1031,7 @@ TRIAL("HTTP: HTTPS through the TLS seam, refused without it, and a downgrade to 
     (void)third.heard();
     third.wrote("HTTP/1.1 301 Moved\r\nLocation: https://127.0.0.1/\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(upward), std::optional{net::HttpTrouble::Why::insecure});
+    SAME(why(upward), std::optional{net::HttpTrouble::Why::insecure});
 }
 
 // A body without a length lasts until the connection closes. Over TLS that end is whole only when
@@ -1054,7 +1054,7 @@ TRIAL("HTTP: a body until close over TLS is whole only after the server's close 
         desk.close();
     }
 
-    same(why(cut), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(cut), std::optional{net::HttpTrouble::Why::malformed});
 
     auto whole = client.get(asked(at(gate, "/caly", "https")));
 
@@ -1065,7 +1065,7 @@ TRIAL("HTTP: a body until close over TLS is whole only after the server's close 
     desk.wrote("ZAMKNIJ");
     desk.close();
 
-    same(body(std::move(whole).get()), std::string{"całość"});
+    SAME(body(std::move(whole).get()), std::string{"całość"});
 }
 
 // A handshake refusal with a reason passes through the HTTP client untouched: the caller gets a
@@ -1087,11 +1087,11 @@ TRIAL("HTTP: a TLS handshake refusal reaches the caller with the reason and the 
     } catch (const net::TlsTrouble& trouble) {
         refused = true;
 
-        same(trouble.why(), net::TlsTrouble::Why::untrusted);
-        same(trouble.host(), std::string{"127.0.0.1"});
+        SAME(trouble.why(), net::TlsTrouble::Why::untrusted);
+        SAME(trouble.host(), std::string{"127.0.0.1"});
     }
 
-    ought(refused);
+    OUGHT(refused);
 }
 
 // --- The caller ----------------------------------------------------------------------------------
@@ -1106,16 +1106,16 @@ TRIAL("HTTP: a header that breaks the line, an empty client and a closed port") 
                                    net::Header{"X A", "1"}, net::Header{"", "1"}, net::Header{"X-A", std::string{"a\0b", 3}}}) {
         auto got = client.get(net::Request{*net::Url::from_string("http://127.0.0.1:9/"), {bad}});
 
-        same(why(got), std::optional{net::HttpTrouble::Why::malformed});
+        SAME(why(got), std::optional{net::HttpTrouble::Why::malformed});
     }
 
     net::HttpClient empty;
 
-    ought(!empty.held());
+    OUGHT(!empty.held());
 
     auto none = empty.get(asked("http://127.0.0.1/"));
 
-    ought(refused(none));
+    OUGHT(refused(none));
 
     std::uint16_t port = 0;
 
@@ -1127,8 +1127,8 @@ TRIAL("HTTP: a header that breaks the line, an empty client and a closed port") 
 
     auto closed = client.get(asked("http://127.0.0.1:" + std::to_string(port) + "/"));
 
-    ought(refused(closed));
-    ought(!why(closed).has_value());
+    OUGHT(refused(closed));
+    OUGHT(!why(closed).has_value());
 }
 
 // Two requests at once to one server go over two connections; one returns to the pool and the other
@@ -1151,12 +1151,12 @@ TRIAL("HTTP: two requests at once, one connection in the pool") {
         desk->wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + path);
     }
 
-    same(body(std::move(first).get()), std::string{"/1"});
-    same(body(std::move(second).get()), std::string{"/2"});
+    SAME(body(std::move(first).get()), std::string{"/1"});
+    SAME(body(std::move(second).get()), std::string{"/2"});
 
     const int closed = static_cast<int>(one.ended(net::Patience{300})) + static_cast<int>(two.ended(net::Patience{300}));
 
-    same(closed, 1);
+    SAME(closed, 1);
 }
 
 // --- Proxy ---------------------------------------------------------------------------------------
@@ -1169,28 +1169,28 @@ TRIAL("Proxy: the form from the environment breaks down into the address, creden
     const net::Proxy made = net::Proxy::from_strings("Pośrednik", "ala:ma%40kota@Proxy.Example:3128/cokolwiek",
                                                      " .Wewn.Example, localhost:8080  *.lan,,[::1]:80 ");
 
-    ought(!made.plain.has_value());
-    ought(made.secure.has_value());
-    same(made.secure->url.host, std::string{"proxy.example"});
-    same(static_cast<int>(made.secure->url.port), 3128);
-    ought(!made.secure->url.secure);
-    same(made.secure->login, std::string{"ala:ma@kota"});
-    same(made.bypass, (std::vector<std::string>{".wewn.example", "localhost", ".lan", "::1"}));
+    OUGHT(!made.plain.has_value());
+    OUGHT(made.secure.has_value());
+    SAME(made.secure->url.host, std::string{"proxy.example"});
+    SAME(static_cast<int>(made.secure->url.port), 3128);
+    OUGHT(!made.secure->url.secure);
+    SAME(made.secure->login, std::string{"ala:ma@kota"});
+    SAME(made.bypass, (std::vector<std::string>{".wewn.example", "localhost", ".lan", "::1"}));
 
     const net::Proxy bare = net::Proxy::from_strings("pośrednik.lan:8080", "socks5://pośrednik:1080", "");
 
-    ought(!bare.plain.has_value());
-    ought(!bare.secure.has_value());
+    OUGHT(!bare.plain.has_value());
+    OUGHT(!bare.secure.has_value());
 
     const net::Proxy plain = net::Proxy::from_strings("posrednik.lan:8080", "https://posrednik.lan", "*");
 
-    ought(plain.plain.has_value());
-    same(plain.plain->url.host, std::string{"posrednik.lan"});
-    same(static_cast<int>(plain.plain->url.port), 8080);
-    same(plain.plain->login, std::string{});
-    ought(plain.secure.has_value());
-    ought(plain.secure->url.secure);
-    same(static_cast<int>(plain.secure->url.port), 443);
+    OUGHT(plain.plain.has_value());
+    SAME(plain.plain->url.host, std::string{"posrednik.lan"});
+    SAME(static_cast<int>(plain.plain->url.port), 8080);
+    SAME(plain.plain->login, std::string{});
+    OUGHT(plain.secure.has_value());
+    OUGHT(plain.secure->url.secure);
+    SAME(static_cast<int>(plain.secure->url.port), 443);
 }
 
 namespace {
@@ -1239,11 +1239,11 @@ TRIAL("Proxy: the environment gives the proxy, the fallback and the exceptions")
 
     const net::Proxy made = net::Proxy::from_environment();
 
-    ought(made.secure.has_value());
-    same(made.secure->url.host, std::string{"male"});
-    ought(made.plain.has_value());
-    same(made.plain->url.host, std::string{"wszystkie"});
-    same(made.bypass, (std::vector<std::string>{"lan", ".dom"}));
+    OUGHT(made.secure.has_value());
+    SAME(made.secure->url.host, std::string{"male"});
+    OUGHT(made.plain.has_value());
+    SAME(made.plain->url.host, std::string{"wszystkie"});
+    SAME(made.bypass, (std::vector<std::string>{"lan", ".dom"}));
 }
 
 #ifndef _WIN32
@@ -1263,11 +1263,11 @@ TRIAL("Proxy: the environment as in curl") {
 
     const net::Proxy made = net::Proxy::from_environment();
 
-    ought(made.secure.has_value());
-    same(made.secure->url.host, std::string{"male"});
-    ought(made.plain.has_value());
-    same(made.plain->url.host, std::string{"wszystkie"});
-    same(made.bypass, std::vector<std::string>{"lan"});
+    OUGHT(made.secure.has_value());
+    SAME(made.secure->url.host, std::string{"male"});
+    OUGHT(made.plain.has_value());
+    SAME(made.plain->url.host, std::string{"wszystkie"});
+    SAME(made.bypass, std::vector<std::string>{"lan"});
 
     const Planted secure_gone{"https_proxy", ""};
     const Planted all_set{"all_proxy", "http://male-wszystkie:5"};
@@ -1275,9 +1275,9 @@ TRIAL("Proxy: the environment as in curl") {
 
     const net::Proxy second = net::Proxy::from_environment();
 
-    same(second.secure->url.host, std::string{"wielkie"});
-    same(second.plain->url.host, std::string{"male-wszystkie"});
-    same(second.bypass, std::vector<std::string>{"*"});
+    SAME(second.secure->url.host, std::string{"wielkie"});
+    SAME(second.plain->url.host, std::string{"male-wszystkie"});
+    SAME(second.bypass, std::vector<std::string>{"*"});
 }
 
 #endif
@@ -1293,18 +1293,18 @@ TRIAL("Proxy: exceptions bypass the proxy, the rest goes to the right one") {
         return one != nullptr ? one->url.host : std::string{"wprost"};
     };
 
-    same(via("http://inny.pl/"), std::string{"jeden"});
-    same(via("https://inny.pl/"), std::string{"dwa"});
-    same(via("https://example.com/"), std::string{"wprost"});
-    same(via("https://api.example.com/"), std::string{"wprost"});
-    same(via("https://notexample.com/"), std::string{"dwa"});
-    same(via("http://nas.lan/"), std::string{"wprost"});
-    same(via("http://lan/"), std::string{"wprost"});
+    SAME(via("http://inny.pl/"), std::string{"jeden"});
+    SAME(via("https://inny.pl/"), std::string{"dwa"});
+    SAME(via("https://example.com/"), std::string{"wprost"});
+    SAME(via("https://api.example.com/"), std::string{"wprost"});
+    SAME(via("https://notexample.com/"), std::string{"dwa"});
+    SAME(via("http://nas.lan/"), std::string{"wprost"});
+    SAME(via("http://lan/"), std::string{"wprost"});
 
     const net::Proxy all = net::Proxy::from_strings("http://jeden:1", "", "*");
 
-    ought(all.chosen(*net::Url::from_string("http://inny.pl/")) == nullptr);
-    ought(net::Proxy{}.chosen(*net::Url::from_string("http://inny.pl/")) == nullptr);
+    OUGHT(all.chosen(*net::Url::from_string("http://inny.pl/")) == nullptr);
+    OUGHT(net::Proxy{}.chosen(*net::Url::from_string("http://inny.pl/")) == nullptr);
 }
 
 // Plain HTTP through a proxy: the full URL in the request line, the server's Host and Basic
@@ -1320,12 +1320,12 @@ TRIAL("Proxy: plain HTTP goes with the full URL and credentials") {
 
     Desk desk = accepted(gate);
 
-    same(desk.heard(), std::string{"GET http://kino.example:8080/film?id=1 HTTP/1.1\r\nHost: kino.example:8080\r\n"
+    SAME(desk.heard(), std::string{"GET http://kino.example:8080/film?id=1 HTTP/1.1\r\nHost: kino.example:8080\r\n"
                                    "Proxy-Authorization: Basic YWxhOm1hQGtvdGE=\r\nAccept-Encoding: identity\r\n\r\n"});
 
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(got).get()), std::string{"ok"});
+    SAME(body(std::move(got).get()), std::string{"ok"});
 }
 
 // HTTPS through a proxy: CONNECT with the name and port, a 200 response and TLS with the server
@@ -1343,16 +1343,16 @@ TRIAL("Proxy: HTTPS goes through a CONNECT tunnel, and a refused tunnel is a pro
 
     Desk desk = accepted(gate);
 
-    same(desk.heard(), std::string{"CONNECT kino.example:8443 HTTP/1.1\r\nHost: kino.example:8443\r\n\r\n"});
+    SAME(desk.heard(), std::string{"CONNECT kino.example:8443 HTTP/1.1\r\nHost: kino.example:8443\r\n\r\n"});
 
     desk.wrote("HTTP/1.1 200 Connection established\r\nProxy-Agent: próba\r\n\r\n");
 
     desk.secure = net::TlsStream::server(desk.plain, tls, soon).get();
 
-    same(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
+    SAME(desk.heard().substr(0, 15), std::string{"GET /tajne HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nszyfr!");
 
-    same(body(std::move(got).get()), std::string{"szyfr!"});
+    SAME(body(std::move(got).get()), std::string{"szyfr!"});
 
     net::HttpClient fresh{tls, {}, net::Proxy::from_strings("", proxy, "")};
 
@@ -1360,16 +1360,16 @@ TRIAL("Proxy: HTTPS goes through a CONNECT tunnel, and a refused tunnel is a pro
 
     Desk second = accepted(gate);
 
-    same(second.heard().substr(0, 32), std::string{"CONNECT inne.example:443 HTTP/1."});
+    SAME(second.heard().substr(0, 32), std::string{"CONNECT inne.example:443 HTTP/1."});
     second.wrote("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n");
 
-    same(why(shut), std::optional{net::HttpTrouble::Why::proxy});
+    SAME(why(shut), std::optional{net::HttpTrouble::Why::proxy});
 
     net::HttpClient over{tls, {}, net::Proxy::from_strings("", "https://127.0.0.1:1", "")};
 
     auto tls_proxy = over.get(asked("https://inne.example/"));
 
-    same(why(tls_proxy), std::optional{net::HttpTrouble::Why::proxy});
+    SAME(why(tls_proxy), std::optional{net::HttpTrouble::Why::proxy});
 }
 
 // A proxy that sends anything after the 200 before the TLS greeting violates the protocol: the
@@ -1387,7 +1387,7 @@ TRIAL("Proxy: bytes after the tunnel is granted are a protocol violation") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 200 OK\r\n\r\nniespodzianka");
 
-    same(why(got), std::optional{net::HttpTrouble::Why::malformed});
+    SAME(why(got), std::optional{net::HttpTrouble::Why::malformed});
 }
 
 // A URL in the exceptions goes directly, even when a proxy is given; here the proxy is a closed
@@ -1401,10 +1401,10 @@ TRIAL("Proxy: an exception goes directly to the server") {
 
     Desk desk = accepted(gate);
 
-    same(desk.heard().substr(0, 16), std::string{"GET /wprost HTTP"});
+    SAME(desk.heard().substr(0, 16), std::string{"GET /wprost HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
 
-    same(body(std::move(got).get()), std::string{"ok"});
+    SAME(body(std::move(got).get()), std::string{"ok"});
 }
 
 // --- Address race --------------------------------------------------------------------------------
@@ -1418,10 +1418,10 @@ TRIAL("Race: addresses alternate by family") {
     const net::Address four_a{"127.0.0.1", 4};
     const net::Address four_b{"127.0.0.2", 5};
 
-    same(net::interleaved({six_a, six_b, six_c, four_a, four_b}),
+    SAME(net::interleaved({six_a, six_b, six_c, four_a, four_b}),
          (std::vector<net::Address>{six_a, four_a, six_b, four_b, six_c}));
-    same(net::interleaved({four_a, six_a, four_b}), (std::vector<net::Address>{four_a, six_a, four_b}));
-    ought(net::interleaved({}).empty());
+    SAME(net::interleaved({four_a, six_a, four_b}), (std::vector<net::Address>{four_a, six_a, four_b}));
+    OUGHT(net::interleaved({}).empty());
 }
 
 // A port that refuses at once does not wait for the timer: the next address starts right after the
@@ -1445,8 +1445,8 @@ TRIAL("Race: an immediate refusal lets the next address through") {
 
     net::Stream won = std::move(got).get();
 
-    ought(watch.spent() < std::chrono::milliseconds{3000});
-    same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
+    OUGHT(watch.spent() < std::chrono::milliseconds{3000});
+    SAME(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
 
     desk.close();
     won.close();
@@ -1475,8 +1475,8 @@ TRIAL("Race: a silent address gives way after the delay") {
 
     net::Stream won = std::move(got).get();
 
-    ought(watch.spent() < std::chrono::milliseconds{2500});
-    same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
+    OUGHT(watch.spent() < std::chrono::milliseconds{2500});
+    SAME(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
 
     desk.close();
     won.close();
@@ -1515,7 +1515,7 @@ TRIAL("Race: the failure of all is the failure of the whole") {
     } catch (const std::exception&) {
     }
 
-    ought(network);
+    OUGHT(network);
 
     auto none = net::raced({}, soon);
 
@@ -1527,7 +1527,7 @@ TRIAL("Race: the failure of all is the failure of the whole") {
         empty = true;
     }
 
-    ought(empty);
+    OUGHT(empty);
 }
 
 // An address that cannot even be started (an empty one, for which no socket can be opened) refuses
@@ -1542,7 +1542,7 @@ TRIAL("Race: an address refused at once does not stop the race") {
 
     net::Stream won = std::move(got).get();
 
-    same(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
+    SAME(static_cast<int>(won.peer().port()), static_cast<int>(gate.mine().port()));
 
     desk.close();
     won.close();

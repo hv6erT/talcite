@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -87,28 +87,28 @@ private:
 // A POSIX locale name to a tag: the encoding and the modifier are dropped, the underscore becomes a
 // hyphen.
 TRIAL("Language: a POSIX locale name to a tag") {
-    same(language_of("pl_PL.UTF-8"), std::string{"pl-PL"});
-    same(language_of("de_DE@euro"), std::string{"de-DE"});
-    same(language_of("pt_BR"), std::string{"pt-BR"});
-    same(language_of("es_419.UTF-8"), std::string{"es-419"});
-    same(language_of("fil_PH"), std::string{"fil-PH"});
-    same(language_of("en"), std::string{"en"});
+    SAME(language_of("pl_PL.UTF-8"), std::string{"pl-PL"});
+    SAME(language_of("de_DE@euro"), std::string{"de-DE"});
+    SAME(language_of("pt_BR"), std::string{"pt-BR"});
+    SAME(language_of("es_419.UTF-8"), std::string{"es-419"});
+    SAME(language_of("fil_PH"), std::string{"fil-PH"});
+    SAME(language_of("en"), std::string{"en"});
 }
 
 // `C` and `POSIX` mean no language, not English; anything that does not look like a language means
 // none as well.
 TRIAL("Language: C, POSIX and foreign strings mean no language") {
-    same(language_of(""), std::string{});
-    same(language_of("C"), std::string{});
-    same(language_of("C.UTF-8"), std::string{});
-    same(language_of("POSIX"), std::string{});
-    same(language_of("P"), std::string{});
-    same(language_of("polski"), std::string{});
-    same(language_of("PL_pl"), std::string{});
-    same(language_of("pl_pl"), std::string{"pl"});
-    same(language_of("pl_P1"), std::string{"pl"});
-    same(language_of("pl_PLX"), std::string{"pl"});
-    same(language_of("es_41"), std::string{"es"});
+    SAME(language_of(""), std::string{});
+    SAME(language_of("C"), std::string{});
+    SAME(language_of("C.UTF-8"), std::string{});
+    SAME(language_of("POSIX"), std::string{});
+    SAME(language_of("P"), std::string{});
+    SAME(language_of("polski"), std::string{});
+    SAME(language_of("PL_pl"), std::string{});
+    SAME(language_of("pl_pl"), std::string{"pl"});
+    SAME(language_of("pl_P1"), std::string{"pl"});
+    SAME(language_of("pl_PLX"), std::string{"pl"});
+    SAME(language_of("es_41"), std::string{"es"});
 }
 
 #ifndef _WIN32
@@ -119,16 +119,16 @@ TRIAL("Language: LC_ALL before LC_MESSAGES before LANG") {
     const Planted messages{"LC_MESSAGES", ""};
     const Planted lang{"LANG", "pl_PL.UTF-8"};
 
-    same(language(), std::string{"pl-PL"});
+    SAME(language(), std::string{"pl-PL"});
 
     {
         const Planted told{"LC_MESSAGES", "de_DE.UTF-8"};
 
-        same(language(), std::string{"de-DE"});
+        SAME(language(), std::string{"de-DE"});
 
         const Planted over{"LC_ALL", "C"};
 
-        same(language(), std::string{});
+        SAME(language(), std::string{});
     }
 }
 
@@ -141,7 +141,7 @@ TRIAL("Language: an empty variable passes on to the next one") {
     ::setenv("LC_ALL", "", 1);
     ::setenv("LC_MESSAGES", "", 1);
 
-    same(language(), std::string{"pl-PL"});
+    SAME(language(), std::string{"pl-PL"});
 }
 
 TRIAL("Language: without the variables there is no language") {
@@ -149,7 +149,7 @@ TRIAL("Language: without the variables there is no language") {
     const Planted messages{"LC_MESSAGES", ""};
     const Planted lang{"LANG", ""};
 
-    same(language(), std::string{});
+    SAME(language(), std::string{});
 }
 
 // Outside Windows the arguments are simply `argv`, in the same order.
@@ -160,8 +160,8 @@ TRIAL("Arguments: outside Windows they are argv") {
 
     const std::vector<std::string> made = arguments(2, given);
 
-    same(made.size(), std::size_t{2});
-    same(made[1], std::string{"Filmy Ździśka"});
+    SAME(made.size(), std::size_t{2});
+    SAME(made[1], std::string{"Filmy Ździśka"});
 }
 
 // A folder known from user-dirs.dirs: relative to `$HOME` and absolute, quoted or not.
@@ -184,10 +184,10 @@ TRIAL("Folders: entries from user-dirs.dirs") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", ""};
 
-    same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{house});
-    same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Pobrane"});
-    same(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Wideo"});
-    same(fs::folder(fs::Known::music).get(), std::optional<stood::path>{nook.where() / "muzyka"});
+    SAME(fs::folder(fs::Known::home).get(), std::optional<stood::path>{house});
+    SAME(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Pobrane"});
+    SAME(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Wideo"});
+    SAME(fs::folder(fs::Known::music).get(), std::optional<stood::path>{nook.where() / "muzyka"});
 }
 
 // An entry equal to the home directory means "disabled"; without an entry, and with a malformed
@@ -211,11 +211,11 @@ TRIAL("Folders: disabled, customary and missing") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", (nook.where() / "konfiguracja").c_str()};
 
-    same(fs::folder(fs::Known::desktop).get(), std::optional<stood::path>{house / "Desktop"});
-    same(fs::folder(fs::Known::documents).get(), std::optional<stood::path>{});
-    same(fs::folder(fs::Known::pictures).get(), std::optional<stood::path>{});
-    same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Downloads"});
-    same(fs::folder(fs::Known::music).get(), std::optional<stood::path>{});
+    SAME(fs::folder(fs::Known::desktop).get(), std::optional<stood::path>{house / "Desktop"});
+    SAME(fs::folder(fs::Known::documents).get(), std::optional<stood::path>{});
+    SAME(fs::folder(fs::Known::pictures).get(), std::optional<stood::path>{});
+    SAME(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{house / "Downloads"});
+    SAME(fs::folder(fs::Known::music).get(), std::optional<stood::path>{});
 }
 
 // A relative XDG_CONFIG_HOME does not count: the specification says to ignore it then.
@@ -232,7 +232,7 @@ TRIAL("Folders: a relative XDG_CONFIG_HOME is ignored") {
     const Planted home{"HOME", house.c_str()};
     const Planted config{"XDG_CONFIG_HOME", "konfiguracja"};
 
-    same(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Kino"});
+    SAME(fs::folder(fs::Known::videos).get(), std::optional<stood::path>{house / "Kino"});
 }
 
 // Without a home directory there is no folder at all, also when `Downloads` exists in the current
@@ -253,8 +253,8 @@ TRIAL("Folders: without a home directory there are none") {
         const Planted home{"HOME", ""};
         const Planted config{"XDG_CONFIG_HOME", ""};
 
-        same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{});
-        same(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{});
+        SAME(fs::folder(fs::Known::home).get(), std::optional<stood::path>{});
+        SAME(fs::folder(fs::Known::downloads).get(), std::optional<stood::path>{});
     }
 
     stood::current_path(was, why);
@@ -265,11 +265,11 @@ TRIAL("Folders: without a home directory there are none") {
 TRIAL("Language: Windows gives a tag with a hyphen") {
     const std::string made = language();
 
-    ought(made.empty() || made.find('-') != std::string::npos);
+    OUGHT(made.empty() || made.find('-') != std::string::npos);
 }
 
 TRIAL("Folders: home is the user profile") {
-    same(fs::folder(fs::Known::home).get(), std::optional<stood::path>{fs::home()});
+    SAME(fs::folder(fs::Known::home).get(), std::optional<stood::path>{fs::home()});
 }
 
 #endif
@@ -280,6 +280,6 @@ TRIAL("Folders: every folder returned is a directory") {
                                 fs::Known::music, fs::Known::pictures, fs::Known::videos}) {
         const std::optional<stood::path> made = fs::folder(one).get();
 
-        if (made) ought(stood::is_directory(*made));
+        if (made) OUGHT(stood::is_directory(*made));
     }
 }

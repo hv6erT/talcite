@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -109,9 +109,9 @@ TRIAL("Console without VT: text lands at the cursor, and CUP counts from one") {
 
     one.fed("ab\x1b[3;5Hcd");
 
-    same(row(one, 0), std::u32string{U"ab"});
-    same(row(one, 2), std::u32string{U"    cd"});
-    ought(one.cursor() == ui::Spot{6, 2});
+    SAME(row(one, 0), std::u32string{U"ab"});
+    SAME(row(one, 2), std::u32string{U"    cd"});
+    OUGHT(one.cursor() == ui::Spot{6, 2});
 }
 
 // The cursor's shape (DECSCUSR) is kept for the console, which shows a block or an underline; 0 is
@@ -119,19 +119,19 @@ TRIAL("Console without VT: text lands at the cursor, and CUP counts from one") {
 TRIAL("Console without VT: the cursor's shape is kept") {
     conhost::Screen one = screen();
 
-    same(one.caret(), 0);
+    SAME(one.caret(), 0);
 
     one.fed("\x1b[3 q");
 
-    same(one.caret(), 3);
+    SAME(one.caret(), 3);
 
     one.fed("\x1b[6 q");
 
-    same(one.caret(), 6);
+    SAME(one.caret(), 6);
 
     one.fed("\x1b[ q");
 
-    same(one.caret(), 0);
+    SAME(one.caret(), 0);
 }
 
 TRIAL("Console without VT: UTF-8 cut off halfway comes out as a question mark") {
@@ -140,7 +140,7 @@ TRIAL("Console without VT: UTF-8 cut off halfway comes out as a question mark") 
     one.fed("\xc4");
     one.fed("\x85!\xc4x");
 
-    same(row(one, 0), std::u32string{U"ą!?x"});
+    SAME(row(one, 0), std::u32string{U"ą!?x"});
 }
 
 // The console reads UTF-8 by the one rule (`utf8::span`): a "/" written longer than it needs is two
@@ -150,7 +150,7 @@ TRIAL("Console without VT: an overlong form and a surrogate are broken bytes") {
 
     one.fed("\xc0\xaf|\xed\xa0\x80|");
 
-    same(row(one, 0), std::u32string{U"??|???|"});
+    SAME(row(one, 0), std::u32string{U"??|???|"});
 }
 
 TRIAL("Console without VT: a Chinese character takes two cells, the second empty and marked") {
@@ -158,11 +158,11 @@ TRIAL("Console without VT: a Chinese character takes two cells, the second empty
 
     one.fed("a你b");
 
-    same(one.at(1, 0).glyph, U'你');
-    ought(!one.at(1, 0).trailing);
-    ought(one.at(2, 0).trailing);
-    same(one.at(3, 0).glyph, U'b');
-    ought(one.cursor() == ui::Spot{4, 0});
+    SAME(one.at(1, 0).glyph, U'你');
+    OUGHT(!one.at(1, 0).trailing);
+    OUGHT(one.at(2, 0).trailing);
+    SAME(one.at(3, 0).glyph, U'b');
+    OUGHT(one.cursor() == ui::Spot{4, 0});
 }
 
 TRIAL("Console without VT: covering half of a wide character clears the other half") {
@@ -170,9 +170,9 @@ TRIAL("Console without VT: covering half of a wide character clears the other ha
 
     one.fed("你好\x1b[1;2Hx\x1b[1;3Hy");
 
-    same(row(one, 0), std::u32string{U" xy"});
-    ought(!one.at(2, 0).trailing);
-    ought(!one.at(3, 0).trailing);
+    SAME(row(one, 0), std::u32string{U" xy"});
+    OUGHT(!one.at(2, 0).trailing);
+    OUGHT(!one.at(3, 0).trailing);
 }
 
 TRIAL("Console without VT: a character outside the BMP lands as a question mark on two cells") {
@@ -180,8 +180,8 @@ TRIAL("Console without VT: a character outside the BMP lands as a question mark 
 
     one.fed("\xf0\x9f\xac\x80|");
 
-    same(row(one, 0), std::u32string{U"? |"});
-    ought(one.at(1, 0).trailing);
+    SAME(row(one, 0), std::u32string{U"? |"});
+    OUGHT(one.at(1, 0).trailing);
 }
 
 TRIAL("Console without VT: without wrapping the last column takes the following characters") {
@@ -189,8 +189,8 @@ TRIAL("Console without VT: without wrapping the last column takes the following 
 
     one.fed("\x1b[?7labcdef");
 
-    same(row(one, 0), std::u32string{U"abcf"});
-    same(row(one, 1), std::u32string{});
+    SAME(row(one, 0), std::u32string{U"abcf"});
+    SAME(row(one, 1), std::u32string{});
 }
 
 TRIAL("Console without VT: with wrapping text moves a row down, and at the bottom the grid scrolls up") {
@@ -198,8 +198,8 @@ TRIAL("Console without VT: with wrapping text moves a row down, and at the botto
 
     one.fed("abcdefg");
 
-    same(row(one, 0), std::u32string{U"def"});
-    same(row(one, 1), std::u32string{U"g"});
+    SAME(row(one, 0), std::u32string{U"def"});
+    SAME(row(one, 1), std::u32string{U"g"});
 }
 
 TRIAL("Console without VT: ECH blanks cells from the cursor without moving it, up to the edge") {
@@ -207,15 +207,15 @@ TRIAL("Console without VT: ECH blanks cells from the cursor without moving it, u
 
     one.fed("abcdef\x1b[1;2H\x1b[3Xz");
 
-    same(row(one, 0), std::u32string{U"az  ef"});
+    SAME(row(one, 0), std::u32string{U"az  ef"});
 
     one.fed("\x1b[1;5H\x1b[9X");
 
-    same(row(one, 0), std::u32string{U"az"});
+    SAME(row(one, 0), std::u32string{U"az"});
 
     one.fed("\x1b[1;1H\x1b[X");
 
-    same(row(one, 0), std::u32string{U" z"});
+    SAME(row(one, 0), std::u32string{U" z"});
 }
 
 TRIAL("Console without VT: EL and ED clear from the cursor, up to the cursor and everything") {
@@ -224,19 +224,19 @@ TRIAL("Console without VT: EL and ED clear from the cursor, up to the cursor and
     one.fed("abcdef\r\nghijkl\r\nmnopqr");
     one.fed("\x1b[1;3H\x1b[K\x1b[2;3H\x1b[1K\x1b[3;4H\x1b[J");
 
-    same(row(one, 0), std::u32string{U"ab"});
-    same(row(one, 1), std::u32string{U"   jkl"});
-    same(row(one, 2), std::u32string{U"mno"});
+    SAME(row(one, 0), std::u32string{U"ab"});
+    SAME(row(one, 1), std::u32string{U"   jkl"});
+    SAME(row(one, 2), std::u32string{U"mno"});
 
     one.fed("\x1b[2;5H\x1b[J");
 
-    same(row(one, 1), std::u32string{U"   j"});
-    same(row(one, 2), std::u32string{});
-    same(row(one, 0), std::u32string{U"ab"});
+    SAME(row(one, 1), std::u32string{U"   j"});
+    SAME(row(one, 2), std::u32string{});
+    SAME(row(one, 0), std::u32string{U"ab"});
 
     one.fed("\x1b[2J");
 
-    for (int y = 0; y < 3; ++y) same(row(one, y), std::u32string{});
+    for (int y = 0; y < 3; ++y) SAME(row(one, y), std::u32string{});
 }
 
 TRIAL("Console without VT: changed rows come out once, in ascending order") {
@@ -246,8 +246,8 @@ TRIAL("Console without VT: changed rows come out once, in ascending order") {
 
     one.fed("\x1b[3;1Hx\x1b[1;1Hy");
 
-    ought(one.dirty() == std::vector<int>{0, 2});
-    ought(one.dirty().empty());
+    OUGHT(one.dirty() == std::vector<int>{0, 2});
+    OUGHT(one.dirty().empty());
 }
 
 // --- Colors --------------------------------------------------------------------------------------
@@ -257,13 +257,13 @@ TRIAL("Console without VT: ANSI SGR maps to console bits, and bold brightens") {
 
     one.fed("\x1b[0;31;44ma\x1b[0;1;32mb\x1b[0;93;100mc\x1b[0md");
 
-    same(int{one.at(0, 0).ink}, 4);
-    same(int{one.at(0, 0).paper}, 1);
-    same(int{one.at(1, 0).ink}, 10);
-    same(int{one.at(2, 0).ink}, 14);
-    same(int{one.at(2, 0).paper}, 8);
-    same(int{one.at(3, 0).ink}, 7);
-    same(int{one.at(3, 0).paper}, 0);
+    SAME(int{one.at(0, 0).ink}, 4);
+    SAME(int{one.at(0, 0).paper}, 1);
+    SAME(int{one.at(1, 0).ink}, 10);
+    SAME(int{one.at(2, 0).ink}, 14);
+    SAME(int{one.at(2, 0).paper}, 8);
+    SAME(int{one.at(3, 0).ink}, 7);
+    SAME(int{one.at(3, 0).paper}, 0);
 }
 
 TRIAL("Console without VT: reverse swaps ink and paper, and the underline stays on the cell") {
@@ -271,9 +271,9 @@ TRIAL("Console without VT: reverse swaps ink and paper, and the underline stays 
 
     one.fed("\x1b[0;4;7;31ma");
 
-    same(int{one.at(0, 0).ink}, 0);
-    same(int{one.at(0, 0).paper}, 4);
-    ought(one.at(0, 0).under);
+    SAME(int{one.at(0, 0).ink}, 0);
+    SAME(int{one.at(0, 0).paper}, 4);
+    OUGHT(one.at(0, 0).under);
 }
 
 TRIAL("Console without VT: 256 colors and RGB go to the nearest console color") {
@@ -281,19 +281,19 @@ TRIAL("Console without VT: 256 colors and RGB go to the nearest console color") 
 
     one.fed("\x1b[0;38;5;196ma\x1b[0;38;2;0;0;140mb\x1b[0;48;5;9mc\x1b[0;38;5;244md");
 
-    same(int{one.at(0, 0).ink}, 12);
-    same(int{one.at(1, 0).ink}, 1);
-    same(int{one.at(2, 0).paper}, 12);
-    same(int{one.at(3, 0).ink}, 8);
+    SAME(int{one.at(0, 0).ink}, 12);
+    SAME(int{one.at(1, 0).ink}, 1);
+    SAME(int{one.at(2, 0).paper}, 12);
+    SAME(int{one.at(3, 0).ink}, 8);
 }
 
 TRIAL("Console without VT: the nearest color takes the first of equally near ones") {
     const conhost::Palette among = conhost::classic();
 
-    same(int{conhost::nearest(among, 0, 0, 0)}, 0);
-    same(int{conhost::nearest(among, 255, 255, 255)}, 15);
-    same(int{conhost::nearest(among, 200, 200, 200)}, 7);
-    same(int{conhost::nearest(among, 64, 0, 0)}, 0);
+    SAME(int{conhost::nearest(among, 0, 0, 0)}, 0);
+    SAME(int{conhost::nearest(among, 255, 255, 255)}, 15);
+    SAME(int{conhost::nearest(among, 200, 200, 200)}, 7);
+    SAME(int{conhost::nearest(among, 64, 0, 0)}, 0);
 }
 
 // --- Modes and the alternate screen --------------------------------------------------------------
@@ -303,13 +303,13 @@ TRIAL("Console without VT: cursor and mouse modes follow DECSET and DECRST") {
 
     one.fed("\x1b[?25l\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 
-    ought(!one.shown());
-    ought(one.tracking() == conhost::Tracking{true, true, false, true});
+    OUGHT(!one.shown());
+    OUGHT(one.tracking() == conhost::Tracking{true, true, false, true});
 
     one.fed("\x1b[?1006l\x1b[?1002l\x1b[?1000l\x1b[?1003h\x1b[?25h");
 
-    ought(one.shown());
-    ought(one.tracking() == conhost::Tracking{false, false, true, false});
+    OUGHT(one.shown());
+    OUGHT(one.tracking() == conhost::Tracking{false, false, true, false});
 }
 
 TRIAL("Console without VT: the alternate screen clears and asks for a full rewrite, returning gives back the old one without rewriting") {
@@ -320,17 +320,17 @@ TRIAL("Console without VT: the alternate screen clears and asks for a full rewri
 
     one.fed("\x1b[?1049h");
 
-    ought(one.apart());
-    same(row(one, 0), std::u32string{});
-    ought(one.dirty() == std::vector<int>{0, 1, 2});
+    OUGHT(one.apart());
+    SAME(row(one, 0), std::u32string{});
+    OUGHT(one.dirty() == std::vector<int>{0, 1, 2});
 
     one.fed("\x1b[3;1Hapart");
     one.fed("\x1b[?1049l");
 
-    ought(!one.apart());
-    same(row(one, 0), std::u32string{U"main"});
-    ought(one.cursor() == ui::Spot{2, 1});
-    ought(one.dirty().empty());
+    OUGHT(!one.apart());
+    SAME(row(one, 0), std::u32string{U"main"});
+    OUGHT(one.cursor() == ui::Spot{2, 1});
+    OUGHT(one.dirty().empty());
 }
 
 TRIAL("Console without VT: resizing on the alternate screen also clips the main one") {
@@ -340,9 +340,9 @@ TRIAL("Console without VT: resizing on the alternate screen also clips the main 
     one.resize({3, 2});
     one.fed("\x1b[?1049l");
 
-    same(one.size(), (ui::Size{3, 2}));
-    same(row(one, 0), std::u32string{U"abc"});
-    same(row(one, 1), std::u32string{});
+    SAME(one.size(), (ui::Size{3, 2}));
+    SAME(row(one, 0), std::u32string{U"abc"});
+    SAME(row(one, 1), std::u32string{});
 }
 
 TRIAL("Console without VT: a too long CSI sequence vanishes entirely and does not leak into the text") {
@@ -350,7 +350,7 @@ TRIAL("Console without VT: a too long CSI sequence vanishes entirely and does no
 
     one.fed("\x1b[" + std::string(100, '1') + "mx");
 
-    same(row(one, 0), std::u32string{U"x"});
+    SAME(row(one, 0), std::u32string{U"x"});
 }
 
 TRIAL("Console without VT: resizing keeps what fits and asks for a full rewrite") {
@@ -361,9 +361,9 @@ TRIAL("Console without VT: resizing keeps what fits and asks for a full rewrite"
 
     one.resize({4, 2});
 
-    same(row(one, 0), std::u32string{U"abcd"});
-    ought(one.cursor() == ui::Spot{3, 1});
-    ought(one.dirty() == std::vector<int>{0, 1});
+    SAME(row(one, 0), std::u32string{U"abcd"});
+    OUGHT(one.cursor() == ui::Spot{3, 1});
+    OUGHT(one.dirty() == std::vector<int>{0, 1});
 }
 
 // --- Answers -------------------------------------------------------------------------------------
@@ -373,8 +373,8 @@ TRIAL("Console without VT: DECRQM knows only what the translation can do") {
 
     one.fed("\x1b[?1006$p\x1b[?1049$p\x1b[?2004$p\x1b[?2026$p\x1b[?1004$p\x1b[?25$p");
 
-    same(one.answers(), std::string{"\x1b[?1006;2$y\x1b[?1049;2$y\x1b[?2004;0$y\x1b[?2026;0$y\x1b[?1004;0$y\x1b[?25;1$y"});
-    same(one.answers(), std::string{});
+    SAME(one.answers(), std::string{"\x1b[?1006;2$y\x1b[?1049;2$y\x1b[?2004;0$y\x1b[?2026;0$y\x1b[?1004;0$y\x1b[?25;1$y"});
+    SAME(one.answers(), std::string{});
 }
 
 TRIAL("Console without VT: CPR, DA1, 16t and OSC 11 answer, DA2, APC and DCS stay silent") {
@@ -382,13 +382,13 @@ TRIAL("Console without VT: CPR, DA1, 16t and OSC 11 answer, DA2, APC and DCS sta
 
     one.fed("\x1b[>c\x1b_Gi=31,a=q;AAAA\x1b\\\x1bP+q5463\x1b\\\x1b[16t\x1b]11;?\x1b\\\x1b[2;4H\x1b[6n\x1b[c");
 
-    same(one.answers(), std::string{"\x1b]11;rgb:0000/0000/8080\x1b\\\x1b[2;4R\x1b[?62;22c"});
-    same(row(one, 0), std::u32string{});
+    SAME(one.answers(), std::string{"\x1b]11;rgb:0000/0000/8080\x1b\\\x1b[2;4R\x1b[?62;22c"});
+    SAME(row(one, 0), std::u32string{});
 
     one.pixels({8, 16});
     one.fed("\x1b[18t\x1b[16t");
 
-    same(one.answers(), std::string{"\x1b[6;16;8t"});
+    SAME(one.answers(), std::string{"\x1b[6;16;8t"});
 }
 
 TRIAL("Console without VT: the title comes from OSC 0 and OSC 2, ended by ST or BEL") {
@@ -396,13 +396,13 @@ TRIAL("Console without VT: the title comes from OSC 0 and OSC 2, ended by ST or 
 
     one.fed("\x1b]0;twa \xe2\x80\x94 filmy\x1b\\");
 
-    ought(one.title() == std::optional<std::string>{"twa \xe2\x80\x94 filmy"});
-    ought(!one.title().has_value());
+    OUGHT(one.title() == std::optional<std::string>{"twa \xe2\x80\x94 filmy"});
+    OUGHT(!one.title().has_value());
 
     one.fed("\x1b]2;drugi\x07x");
 
-    ought(one.title() == std::optional<std::string>{"drugi"});
-    same(row(one, 0), std::u32string{U"x"});
+    OUGHT(one.title() == std::optional<std::string>{"drugi"});
+    SAME(row(one, 0), std::u32string{U"x"});
 }
 
 TRIAL("Console without VT: the capability probe sees sixteen colors, SGR mouse, the alternate screen and basic blocks") {
@@ -410,15 +410,15 @@ TRIAL("Console without VT: the capability probe sees sixteen colors, SGR mouse, 
 
     const Capabilities seen{Seam<Console>{line}};
 
-    same(static_cast<int>(seen.mouse()), static_cast<int>(Mouse::sgr));
-    same(static_cast<int>(seen.screen()), static_cast<int>(Screen::apart));
-    same(static_cast<int>(seen.shade()), static_cast<int>(Shade::dark));
-    ought(!seen.bracketed_paste());
-    ought(!seen.synchronized());
-    same(static_cast<int>(seen.graphics()), static_cast<int>(Graphics::none));
-    same(static_cast<int>(seen.blocks()), static_cast<int>(ui::Blocks::basic));
-    same(seen.wide(), 2);
-    same(seen.rest(), std::string{});
+    SAME(static_cast<int>(seen.mouse()), static_cast<int>(Mouse::sgr));
+    SAME(static_cast<int>(seen.screen()), static_cast<int>(Screen::apart));
+    SAME(static_cast<int>(seen.shade()), static_cast<int>(Shade::dark));
+    OUGHT(!seen.bracketed_paste());
+    OUGHT(!seen.synchronized());
+    SAME(static_cast<int>(seen.graphics()), static_cast<int>(Graphics::none));
+    SAME(static_cast<int>(seen.blocks()), static_cast<int>(ui::Blocks::basic));
+    SAME(seen.wide(), 2);
+    SAME(seen.rest(), std::string{});
 }
 
 TRIAL("Console without VT: a Term frame lands in the grid in console colors") {
@@ -434,19 +434,19 @@ TRIAL("Console without VT: a Term frame lands in the grid in console colors") {
 
         const conhost::Screen& shown = line->shown;
 
-        ought(shown.apart());
-        same(shown.at(0, 0).glyph, U'x');
-        same(int{shown.at(0, 0).ink}, 12);
-        same(shown.at(2, 0).glyph, U'你');
-        ought(shown.at(3, 0).trailing);
-        same(shown.at(0, 1).glyph, U'o');
-        same(int{shown.at(0, 1).paper}, 7);
-        same(int{shown.at(0, 1).ink}, 0);
-        ought(shown.tracking().sgr);
+        OUGHT(shown.apart());
+        SAME(shown.at(0, 0).glyph, U'x');
+        SAME(int{shown.at(0, 0).ink}, 12);
+        SAME(shown.at(2, 0).glyph, U'你');
+        OUGHT(shown.at(3, 0).trailing);
+        SAME(shown.at(0, 1).glyph, U'o');
+        SAME(int{shown.at(0, 1).paper}, 7);
+        SAME(int{shown.at(0, 1).ink}, 0);
+        OUGHT(shown.tracking().sgr);
     }
 
-    ought(!line->shown.apart());
-    ought(line->shown.tracking() == conhost::Tracking{});
+    OUGHT(!line->shown.apart());
+    OUGHT(line->shown.tracking() == conhost::Tracking{});
 }
 
 // --- Keyboard ------------------------------------------------------------------------------------
@@ -464,42 +464,42 @@ std::string key(std::uint16_t code, char16_t unit = 0, std::uint32_t state = 0, 
 }
 
 TRIAL("Console without VT: named keys go as in conhost with VT") {
-    same(key(0x26), std::string{"\x1b[A"});
-    same(key(0x25, 0, 0x10), std::string{"\x1b[1;2D"});
-    same(key(0x24, 0, 0x08), std::string{"\x1b[1;5H"});
-    same(key(0x23), std::string{"\x1b[F"});
-    same(key(0x2E), std::string{"\x1b[3~"});
-    same(key(0x21, 0, 0x02), std::string{"\x1b[5;3~"});
-    same(key(0x70), std::string{"\x1bOP"});
-    same(key(0x73, 0, 0x10), std::string{"\x1b[1;2S"});
-    same(key(0x74), std::string{"\x1b[15~"});
-    same(key(0x79), std::string{"\x1b[21~"});
-    same(key(0x7B), std::string{"\x1b[24~"});
-    same(key(0x0D, u'\r'), std::string{"\r"});
-    same(key(0x09, u'\t', 0x10), std::string{"\x1b[Z"});
-    same(key(0x08, 0x08), std::string{"\x7f"});
-    same(key(0x08, 0x7F, 0x08), std::string{"\x08"});
-    same(key(0x1B, 0x1B), std::string{"\x1b"});
+    SAME(key(0x26), std::string{"\x1b[A"});
+    SAME(key(0x25, 0, 0x10), std::string{"\x1b[1;2D"});
+    SAME(key(0x24, 0, 0x08), std::string{"\x1b[1;5H"});
+    SAME(key(0x23), std::string{"\x1b[F"});
+    SAME(key(0x2E), std::string{"\x1b[3~"});
+    SAME(key(0x21, 0, 0x02), std::string{"\x1b[5;3~"});
+    SAME(key(0x70), std::string{"\x1bOP"});
+    SAME(key(0x73, 0, 0x10), std::string{"\x1b[1;2S"});
+    SAME(key(0x74), std::string{"\x1b[15~"});
+    SAME(key(0x79), std::string{"\x1b[21~"});
+    SAME(key(0x7B), std::string{"\x1b[24~"});
+    SAME(key(0x0D, u'\r'), std::string{"\r"});
+    SAME(key(0x09, u'\t', 0x10), std::string{"\x1b[Z"});
+    SAME(key(0x08, 0x08), std::string{"\x7f"});
+    SAME(key(0x08, 0x7F, 0x08), std::string{"\x08"});
+    SAME(key(0x1B, 0x1B), std::string{"\x1b"});
 }
 
 TRIAL("Console without VT: a character with Alt gets Esc, with AltGr it stays the layout's letter") {
-    same(key('A', u'a', 0x02), std::string{"\x1b" "a"});
-    same(key('A', u'ą', 0x01 | 0x08), std::string{"ą"});
-    same(key('A', u'ą', 0x02 | 0x08), std::string{"ą"});
-    same(key('C', 0x03, 0x08), std::string{"\x03"});
-    same(key('C', 0, 0x02 | 0x08), std::string{"\x1b\x03"});
-    same(key(0x20, 0, 0x08), std::string(1, '\0'));
-    same(key(0x10), std::string{});
+    SAME(key('A', u'a', 0x02), std::string{"\x1b" "a"});
+    SAME(key('A', u'ą', 0x01 | 0x08), std::string{"ą"});
+    SAME(key('A', u'ą', 0x02 | 0x08), std::string{"ą"});
+    SAME(key('C', 0x03, 0x08), std::string{"\x03"});
+    SAME(key('C', 0, 0x02 | 0x08), std::string{"\x1b\x03"});
+    SAME(key(0x20, 0, 0x08), std::string(1, '\0'));
+    SAME(key(0x10), std::string{});
 }
 
 TRIAL("Console without VT: a surrogate pair is put together from two records, and the repeat count multiplies the character") {
     char16_t pending = 0;
 
-    same(conhost::typed({0, 0xD83D, 0, 1}, pending), std::string{});
-    same(conhost::typed({0, 0xDE00, 0, 1}, pending), std::string{"\xf0\x9f\x98\x80"});
-    same(conhost::typed({0, 0xDE00, 0, 1}, pending), std::string{});
+    SAME(conhost::typed({0, 0xD83D, 0, 1}, pending), std::string{});
+    SAME(conhost::typed({0, 0xDE00, 0, 1}, pending), std::string{"\xf0\x9f\x98\x80"});
+    SAME(conhost::typed({0, 0xDE00, 0, 1}, pending), std::string{});
 
-    same(key('X', u'x', 0, 3), std::string{"xxx"});
+    SAME(key('X', u'x', 0, 3), std::string{"xxx"});
 }
 
 // --- Mouse ---------------------------------------------------------------------------------------
@@ -508,11 +508,11 @@ TRIAL("Console without VT: press and release come from the memory of buttons") {
     conhost::Pointing one;
     const conhost::Tracking wanted{true, true, false, true};
 
-    same(one.pointed({{4, 2}, 0x1, 0, 0}, wanted), std::string{"\x1b[<0;5;3M"});
-    same(one.pointed({{5, 2}, 0x1, 0x01, 0}, wanted), std::string{"\x1b[<32;6;3M"});
-    same(one.pointed({{5, 2}, 0x3, 0, 0x10}, wanted), std::string{"\x1b[<6;6;3M"});
-    same(one.pointed({{5, 2}, 0x0, 0, 0}, wanted), std::string{"\x1b[<0;6;3m\x1b[<2;6;3m"});
-    same(one.pointed({{6, 2}, 0x0, 0x01, 0}, wanted), std::string{});
+    SAME(one.pointed({{4, 2}, 0x1, 0, 0}, wanted), std::string{"\x1b[<0;5;3M"});
+    SAME(one.pointed({{5, 2}, 0x1, 0x01, 0}, wanted), std::string{"\x1b[<32;6;3M"});
+    SAME(one.pointed({{5, 2}, 0x3, 0, 0x10}, wanted), std::string{"\x1b[<6;6;3M"});
+    SAME(one.pointed({{5, 2}, 0x0, 0, 0}, wanted), std::string{"\x1b[<0;6;3m\x1b[<2;6;3m"});
+    SAME(one.pointed({{6, 2}, 0x0, 0x01, 0}, wanted), std::string{});
 }
 
 TRIAL("Console without VT: the wheel, motion without a button and a button pressed before tracking") {
@@ -520,18 +520,18 @@ TRIAL("Console without VT: the wheel, motion without a button and a button press
 
     // Without 1006 nothing: the translation speaks only SGR, and the console's own answers tell
     // the probe that it does.
-    same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, false}), std::string{});
+    SAME(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, false}), std::string{});
 
-    same(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, true}), std::string{"\x1b[<64;1;1M"});
-    same(one.pointed({{0, 0}, 0xFF880000u, 0x04, 0x08}, {true, false, false, true}), std::string{"\x1b[<81;1;1M"});
+    SAME(one.pointed({{0, 0}, 0x00780000u, 0x04, 0}, {true, false, false, true}), std::string{"\x1b[<64;1;1M"});
+    SAME(one.pointed({{0, 0}, 0xFF880000u, 0x04, 0x08}, {true, false, false, true}), std::string{"\x1b[<81;1;1M"});
 
     // The tilted wheel: to the right is button 7 (67), to the left button 6 (66).
-    same(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<67;1;1M"});
-    same(one.pointed({{0, 0}, 0xFF880000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<66;1;1M"});
-    same(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, false}), std::string{});
-    same(one.pointed({{2, 3}, 0, 0x01, 0}, {true, true, true, true}), std::string{"\x1b[<35;3;4M"});
-    same(one.pointed({{2, 3}, 0x1, 0, 0}, {}), std::string{});
-    same(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, false, false, true}), std::string{});
-    same(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, true, false, true}), std::string{"\x1b[<32;3;4M"});
-    same(one.pointed({{2, 3}, 0x0, 0, 0}, {true, false, false, true}), std::string{"\x1b[<0;3;4m"});
+    SAME(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<67;1;1M"});
+    SAME(one.pointed({{0, 0}, 0xFF880000u, 0x08, 0}, {true, false, false, true}), std::string{"\x1b[<66;1;1M"});
+    SAME(one.pointed({{0, 0}, 0x00780000u, 0x08, 0}, {true, false, false, false}), std::string{});
+    SAME(one.pointed({{2, 3}, 0, 0x01, 0}, {true, true, true, true}), std::string{"\x1b[<35;3;4M"});
+    SAME(one.pointed({{2, 3}, 0x1, 0, 0}, {}), std::string{});
+    SAME(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, false, false, true}), std::string{});
+    SAME(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, true, false, true}), std::string{"\x1b[<32;3;4M"});
+    SAME(one.pointed({{2, 3}, 0x0, 0, 0}, {true, false, false, true}), std::string{"\x1b[<0;3;4m"});
 }

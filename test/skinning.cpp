@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -96,13 +96,13 @@ Style tinted(std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
 TRIAL("Skin: the built-in one knows the roles and glyphs") {
     const ui::Skin one;
 
-    ought(one.style("talcite.list.focus").reverse);
-    ought(one.style("talcite.input").under);
-    ought(one.style("talcite.shade").faint);
+    OUGHT(one.style("talcite.list.focus").reverse);
+    OUGHT(one.style("talcite.input").under);
+    OUGHT(one.style("talcite.shade").faint);
 
-    same(one.glyph("talcite.line.thin.across"), U'─');
-    same(one.glyph("talcite.line.twin.across"), U'═');
-    same(one.glyph("talcite.scroll.thumb"), U'█');
+    SAME(one.glyph("talcite.line.thin.across"), U'─');
+    SAME(one.glyph("talcite.line.twin.across"), U'═');
+    SAME(one.glyph("talcite.scroll.thumb"), U'█');
 }
 
 // Reading never throws, because it is called from painting. An unknown role gives the terminal's
@@ -110,8 +110,8 @@ TRIAL("Skin: the built-in one knows the roles and glyphs") {
 TRIAL("Skin: an unknown role gives an empty style, an unknown glyph a question mark") {
     const ui::Skin one;
 
-    same(one.style("czego.tu.nie.ma"), Style{});
-    same(one.glyph("czego.tu.nie.ma"), U'?');
+    SAME(one.style("czego.tu.nie.ma"), Style{});
+    SAME(one.glyph("czego.tu.nie.ma"), U'?');
 }
 
 // Zero is forbidden: in a `Sheet` it marks the continuation of a two-column character, and
@@ -120,8 +120,8 @@ TRIAL("Skin: an unknown role gives an empty style, an unknown glyph a question m
 TRIAL("Skin: an unknown glyph is never zero") {
     const ui::Skin one;
 
-    ought(one.glyph("nie.ma.takiego") != 0);
-    ought(ui::Skin::plain().glyph("nie.ma.takiego") != 0);
+    OUGHT(one.glyph("nie.ma.takiego") != 0);
+    OUGHT(ui::Skin::plain().glyph("nie.ma.takiego") != 0);
 }
 
 // This is `Store(spare, held)`: the caller gives its own entries and the library adds the rest, only
@@ -129,22 +129,22 @@ TRIAL("Skin: an unknown glyph is never zero") {
 TRIAL("Skin: given entries override, the rest stays built in") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
-    same(one.style("talcite.list.focus"), tinted(10, 20, 30));
+    SAME(one.style("talcite.list.focus"), tinted(10, 20, 30));
 
     // Untouched roles are still as in the built-in skin.
-    ought(one.style("talcite.input").under);
-    ought(one.style("talcite.shade").faint);
-    same(one.glyph("talcite.line.thin.across"), U'─');
+    OUGHT(one.style("talcite.input").under);
+    OUGHT(one.style("talcite.shade").faint);
+    SAME(one.glyph("talcite.line.thin.across"), U'─');
 }
 
 TRIAL("Skin: plain always gives the built-in skin, also when overridden") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
-    same(one.style("talcite.list.focus"), tinted(10, 20, 30));
-    ought(ui::Skin::plain().style("talcite.list.focus").reverse);
-    ought(ui::Skin::plain().style("talcite.list.focus").foreground.transparent);
+    SAME(one.style("talcite.list.focus"), tinted(10, 20, 30));
+    OUGHT(ui::Skin::plain().style("talcite.list.focus").reverse);
+    OUGHT(ui::Skin::plain().style("talcite.list.focus").foreground.transparent);
 
-    same(ui::Skin::plain().glyph("talcite.line.thin.across"), U'─');
+    SAME(ui::Skin::plain().glyph("talcite.line.thin.across"), U'─');
 }
 
 TRIAL("Skin: a border set is made of single glyphs") {
@@ -152,21 +152,21 @@ TRIAL("Skin: a border set is made of single glyphs") {
 
     const ui::Lines thin = one.lines(ui::Border::thin);
 
-    same(thin.across, U'─');
-    same(thin.upright, U'│');
-    same(thin.upper_left, U'┌');
-    same(thin.right_joint, U'┤');
+    SAME(thin.across, U'─');
+    SAME(thin.upright, U'│');
+    SAME(thin.upper_left, U'┌');
+    SAME(thin.right_joint, U'┤');
 
     const ui::Lines twin = one.lines(ui::Border::twin);
 
-    same(twin.across, U'═');
-    same(twin.lower_right, U'╝');
+    SAME(twin.across, U'═');
+    SAME(twin.lower_right, U'╝');
 
     // Without a border it gives the thin set, the same choice `drawn` makes for `Border::none`.
-    same(one.lines(ui::Border::none).across, U'─');
-    same(one.lines(ui::Border::none).upper_left, U'┌');
+    SAME(one.lines(ui::Border::none).across, U'─');
+    SAME(one.lines(ui::Border::none).upper_left, U'┌');
 
-    same(one.lines(ui::Border::thick).across, U'━');
+    SAME(one.lines(ui::Border::thick).across, U'━');
 }
 
 // The set is assembled, not stored separately: replacing one glyph changes the whole set of eight.
@@ -174,25 +174,25 @@ TRIAL("Skin: a border set is made of single glyphs") {
 TRIAL("Skin: replacing a glyph changes the assembled set") {
     const ui::Skin one{{}, {{"talcite.line.thin.across", U'='}}};
 
-    same(one.glyph("talcite.line.thin.across"), U'=');
-    same(one.lines(ui::Border::thin).across, U'=');
+    SAME(one.glyph("talcite.line.thin.across"), U'=');
+    SAME(one.lines(ui::Border::thin).across, U'=');
 
     // The rest of the set is unchanged.
-    same(one.lines(ui::Border::thin).upright, U'│');
+    SAME(one.lines(ui::Border::thin).upright, U'│');
 
     // And the heavier sets are not touched.
-    same(one.lines(ui::Border::twin).across, U'═');
+    SAME(one.lines(ui::Border::twin).across, U'═');
 }
 
 TRIAL("Skin: the built-in skin is always the same instance") {
-    same(&ui::Skin::plain(), &ui::Skin::plain());
+    SAME(&ui::Skin::plain(), &ui::Skin::plain());
 }
 
 TRIAL("Skin: a node without a root gets the built-in skin") {
     const Peek one;
 
-    same(&one.seen(), &ui::Skin::plain());
-    ought(one.seen().style("talcite.list.focus").reverse);
+    SAME(&one.seen(), &ui::Skin::plain());
+    OUGHT(one.seen().style("talcite.list.focus").reverse);
 }
 
 TRIAL("Skin: a node in a tree gets the root's skin") {
@@ -204,11 +204,11 @@ TRIAL("Skin: a node in a tree gets the root's skin") {
     one->children().add(deeper);
     top.children().add(one);
 
-    same(&one->seen(), &top.skin());
-    same(&deeper->seen(), &top.skin());
+    SAME(&one->seen(), &top.skin());
+    SAME(&deeper->seen(), &top.skin());
 
     // The built-in skin is a different instance; the root has its own.
-    ought(&top.skin() != &ui::Skin::plain());
+    OUGHT(&top.skin() != &ui::Skin::plain());
 }
 
 // Replacing the whole palette is the entire change of look on the fly: there is no notification and
@@ -222,14 +222,14 @@ TRIAL("Skin: a replacement on the root is visible deep down at once") {
     one->children().add(deeper);
     top.children().add(one);
 
-    ought(deeper->seen().style("talcite.list.focus").reverse);
+    OUGHT(deeper->seen().style("talcite.list.focus").reverse);
 
     top.skin(ui::Skin{{{"talcite.list.focus", tinted(1, 2, 3)}}});
 
-    same(deeper->seen().style("talcite.list.focus"), tinted(1, 2, 3));
+    SAME(deeper->seen().style("talcite.list.focus"), tinted(1, 2, 3));
 
     // The rest still comes from the built-in skin, because a new skin is also complete from birth.
-    ought(deeper->seen().style("talcite.input").under);
+    OUGHT(deeper->seen().style("talcite.input").under);
 }
 
 // A node removed from the tree stops seeing the root's skin, and is not left with nothing.
@@ -241,12 +241,12 @@ TRIAL("Skin: a removed node goes back to the built-in skin") {
     top.children().add(one);
     top.skin(ui::Skin{{{"talcite.input", tinted(9, 9, 9)}}});
 
-    same(one->seen().style("talcite.input"), tinted(9, 9, 9));
+    SAME(one->seen().style("talcite.input"), tinted(9, 9, 9));
 
     (void)top.children().remove(one.get());
 
-    same(&one->seen(), &ui::Skin::plain());
-    ought(one->seen().style("talcite.input").under);
+    SAME(&one->seen(), &ui::Skin::plain());
+    OUGHT(one->seen().style("talcite.input").under);
 }
 
 // The skin is not closed. An application invents its own roles beside the ones the library knows,
@@ -265,19 +265,19 @@ TRIAL("Skin: an application adds its own roles beside the built-in ones") {
         {"fork.panel.exec", tinted(4, 5, 6)},
     }});
 
-    same(one->seen().style("fork.panel.directory"), tinted(1, 2, 3));
-    same(one->seen().style("fork.panel.exec"), tinted(4, 5, 6));
+    SAME(one->seen().style("fork.panel.directory"), tinted(1, 2, 3));
+    SAME(one->seen().style("fork.panel.exec"), tinted(4, 5, 6));
 
     // The library's roles stand beside them, untouched.
-    ought(one->seen().style("talcite.list.focus").reverse);
-    ought(one->seen().style("talcite.input").under);
+    OUGHT(one->seen().style("talcite.list.focus").reverse);
+    OUGHT(one->seen().style("talcite.input").under);
 }
 
 TRIAL("Skin: custom glyphs are added the same way as custom roles") {
     const ui::Skin one{{}, {{"fork.panel.mark", U'*'}}};
 
-    same(one.glyph("fork.panel.mark"), U'*');
-    same(one.glyph("talcite.line.thin.across"), U'─');
+    SAME(one.glyph("fork.panel.mark"), U'*');
+    SAME(one.glyph("talcite.line.thin.across"), U'─');
 }
 
 // A role nobody set gives the terminal's default colors, and that cannot be told apart from a role
@@ -286,8 +286,8 @@ TRIAL("Skin: custom glyphs are added the same way as custom roles") {
 TRIAL("Skin: a foreign role without an entry gives the terminal defaults") {
     const ui::Skin one;
 
-    same(one.style("fork.panel.directory"), Style{});
-    same(ui::Skin::plain().style("fork.panel.directory"), Style{});
+    SAME(one.style("fork.panel.directory"), Style{});
+    SAME(ui::Skin::plain().style("fork.panel.directory"), Style{});
 }
 
 // The upper style adds but does not take away. That is what merging is for: a widget from outside
@@ -308,12 +308,12 @@ TRIAL("Style: merging adds the upper color and combines the flags") {
 
     // The lower foreground stayed, because the upper style did not give one; the background came
     // from the upper style.
-    same(made.foreground, (Color{false, 1, 2, 3}));
-    same(made.background, (Color{false, 9, 9, 9}));
+    SAME(made.foreground, (Color{false, 1, 2, 3}));
+    SAME(made.background, (Color{false, 9, 9, 9}));
 
-    ought(made.under);
-    ought(made.reverse);
-    ought(!made.bold);
+    OUGHT(made.under);
+    OUGHT(made.reverse);
+    OUGHT(!made.bold);
 }
 
 TRIAL("Style: a color set in the upper style hides the lower one") {
@@ -325,7 +325,7 @@ TRIAL("Style: a color set in the upper style hides the lower one") {
 
     over.foreground = Color{false, 7, 7, 7};
 
-    same(Style::merge(base, over).foreground, (Color{false, 7, 7, 7}));
+    SAME(Style::merge(base, over).foreground, (Color{false, 7, 7, 7}));
 }
 
 // An empty style changes nothing, and this is the case merging exists for: a role the skin has not
@@ -337,10 +337,10 @@ TRIAL("Style: merging with an empty style keeps the fallback look") {
     base.bold = true;
     base.under = true;
 
-    same(Style::merge(base, Style{}), base);
+    SAME(Style::merge(base, Style{}), base);
 
     // The same the other way round: an empty lower style gives the upper one unchanged.
-    same(Style::merge(Style{}, base), base);
+    SAME(Style::merge(Style{}, base), base);
 }
 
 // The cost of the rule, stated plainly: the upper style cannot turn off a flag of the lower one,
@@ -350,7 +350,7 @@ TRIAL("Style: the upper style does not turn off a lower flag") {
 
     base.under = true;
 
-    ought(Style::merge(base, Style{}).under);
+    OUGHT(Style::merge(base, Style{}).under);
 }
 
 // This is how it is used: a widget from outside the library with its own fallback look.
@@ -362,14 +362,14 @@ TRIAL("Skin: a foreign widget lays the skin over its own fallback look") {
     const ui::Skin bare;
 
     // The skin does not know this role, so the widget's own look stays.
-    same(Style::merge(mine, bare.style("fork.panel.directory")), mine);
+    SAME(Style::merge(mine, bare.style("fork.panel.directory")), mine);
 
     const ui::Skin told{{{"fork.panel.directory", tinted(1, 2, 3)}}};
 
     const Style made = Style::merge(mine, told.style("fork.panel.directory"));
 
-    same(made.foreground, (Color{false, 1, 2, 3}));
-    ought(made.bold);
+    SAME(made.foreground, (Color{false, 1, 2, 3}));
+    OUGHT(made.bold);
 }
 
 // The current row without focus has a role of its own, which the built-in skin leaves empty. It
@@ -403,21 +403,21 @@ TRIAL("Skin: the current row without focus takes the list.mark role") {
     (void)top.render({{0, 0}, {20, 3}});
 
     // With focus the current row is in reverse video, not in the "without focus" role.
-    same(list->which(), std::optional<std::size_t>{0});
-    ought(top.render({{0, 0}, {20, 3}}).at({0, 0}).style.reverse);
+    SAME(list->which(), std::optional<std::size_t>{0});
+    OUGHT(top.render({{0, 0}, {20, 3}}).at({0, 0}).style.reverse);
 
     // Once focus leaves, only the marker remains, and the role applies.
     perch->focus();
 
     const Snapshot made = top.render({{0, 0}, {20, 3}});
 
-    same(list->which(), std::optional<std::size_t>{0});
-    ought(!made.at({0, 0}).style.reverse);
-    same(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(5));
+    SAME(list->which(), std::optional<std::size_t>{0});
+    OUGHT(!made.at({0, 0}).style.reverse);
+    SAME(made.at({0, 0}).style.foreground.red, static_cast<std::uint8_t>(5));
 
     // A row that is not current does not get the role.
-    ought(list->which() != std::optional<std::size_t>{1});
-    ought(made.at({0, 1}).style.foreground.transparent);
+    OUGHT(list->which() != std::optional<std::size_t>{1});
+    OUGHT(made.at({0, 1}).style.foreground.transparent);
 }
 
 // Glyphs come from the skin too. The widget still chooses the weight, since that is a choice of
@@ -429,11 +429,11 @@ TRIAL("Skin: a frame glyph from the skin goes onto the frame") {
 
     top.children().add(frame);
 
-    same(read(top.render({{0, 0}, {11, 3}}), 0), std::string{"╔══ kot ══╗"});
+    SAME(read(top.render({{0, 0}, {11, 3}}), 0), std::string{"╔══ kot ══╗"});
 
     top.skin(ui::Skin{{}, {{"talcite.line.twin.across", U'*'}}});
 
-    same(read(top.render({{0, 0}, {11, 3}}), 0), std::string{"╔** kot **╗"});
+    SAME(read(top.render({{0, 0}, {11, 3}}), 0), std::string{"╔** kot **╗"});
 }
 
 // A terminal without box-drawing characters needs no separate branch in the code, only a second
@@ -457,9 +457,9 @@ TRIAL("Skin: an ASCII skin draws a frame without box-drawing characters") {
 
     const Snapshot made = top.render({{0, 0}, {11, 3}});
 
-    same(read(made, 0), std::string{"+-- kot --+"});
-    same(read(made, 1), std::string{"|         |"});
-    same(read(made, 2), std::string{"+---------+"});
+    SAME(read(made, 0), std::string{"+-- kot --+"});
+    SAME(read(made, 1), std::string{"|         |"});
+    SAME(read(made, 2), std::string{"+---------+"});
 }
 
 TRIAL("Skin: the ellipsis comes from the skin") {
@@ -471,11 +471,11 @@ TRIAL("Skin: the ellipsis comes from the skin") {
 
     top.children().add(one);
 
-    same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku…"});
+    SAME(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku…"});
 
     top.skin(ui::Skin{{}, {{"talcite.elide", U'~'}}});
 
-    same(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku~"});
+    SAME(read(top.render({{0, 0}, {5, 1}}), 0), std::string{"doku~"});
 }
 
 TRIAL("Skin: the scroller's track and thumb take their glyphs from the skin") {
@@ -490,8 +490,8 @@ TRIAL("Skin: the scroller's track and thumb take their glyphs from the skin") {
 
     Snapshot made = top.render({{0, 0}, {8, 4}});
 
-    same(made.at({7, 0}).letter, U'█');
-    same(made.at({7, 3}).letter, U'│');
+    SAME(made.at({7, 0}).letter, U'█');
+    SAME(made.at({7, 3}).letter, U'│');
 
     top.skin(ui::Skin{{},
                       {
@@ -501,9 +501,9 @@ TRIAL("Skin: the scroller's track and thumb take their glyphs from the skin") {
 
     made = top.render({{0, 0}, {8, 4}});
 
-    same(made.at({7, 0}).letter, U'#');
-    same(made.at({7, 1}).letter, U'.');
-    same(made.at({7, 3}).letter, U'.');
+    SAME(made.at({7, 0}).letter, U'#');
+    SAME(made.at({7, 1}).letter, U'.');
+    SAME(made.at({7, 3}).letter, U'.');
 }
 
 // --- The role stem given to a widget -----------------------------------------------------------
@@ -535,12 +535,12 @@ TRIAL("Role: a span asks for the stem it was given") {
 
     top.children().add(one);
 
-    same(one->role(), std::string{"talcite.normal"});
-    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
+    SAME(one->role(), std::string{"talcite.normal"});
+    SAME(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
 
     one->role("moja.rola");
 
-    same(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 9, 9, 9}));
+    SAME(top.render({{0, 0}, {5, 1}}).at({0, 0}).style.foreground, (Color{false, 9, 9, 9}));
 }
 
 TRIAL("Role: a frame asks for the stem it was given") {
@@ -561,8 +561,8 @@ TRIAL("Role: a frame asks for the stem it was given") {
     const Snapshot made = top.render({{0, 0}, {6, 3}});
 
     // The line and the background come from the same role.
-    same(made.at({0, 0}).style.background, (Color{false, 7, 7, 7}));
-    same(made.at({2, 1}).style.background, (Color{false, 7, 7, 7}));
+    SAME(made.at({0, 0}).style.background, (Color{false, 7, 7, 7}));
+    SAME(made.at({2, 1}).style.background, (Color{false, 7, 7, 7}));
 }
 
 TRIAL("Role: a button adds a suffix for its state") {
@@ -580,19 +580,19 @@ TRIAL("Role: a button adds a suffix for its state") {
 
     top.children().add(one);
 
-    same(one->role(), std::string{"talcite.button"});
+    SAME(one->role(), std::string{"talcite.button"});
 
     one->role("moj.guzik");
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
+    SAME(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 1, 1, 1}));
 
     one->focus();
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 2, 2, 2}));
+    SAME(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 2, 2, 2}));
 
     one->enabled(false);
 
-    same(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
+    SAME(top.render({{0, 0}, {9, 1}}).at({0, 0}).style.foreground, (Color{false, 3, 3, 3}));
 }
 
 TRIAL("Role: the hotkey letter also follows the stem") {
@@ -619,9 +619,9 @@ TRIAL("Role: the hotkey letter also follows the stem") {
     const Snapshot made = top.render({{0, 0}, {9, 1}});
 
     // `[ Tak ]`: the letter T stands in the third cell.
-    same(made.at({2, 0}).letter, U'T');
-    ought(made.at({2, 0}).style.reverse);
-    ought(!made.at({3, 0}).style.reverse);
+    SAME(made.at({2, 0}).letter, U'T');
+    OUGHT(made.at({2, 0}).style.reverse);
+    OUGHT(!made.at({3, 0}).style.reverse);
 }
 
 // The hotkey letter changes the foreground and the attributes, never the background. Midnight
@@ -661,20 +661,20 @@ TRIAL("Role: the hotkey letter takes the background beneath it and the foregroun
     // `.key`.
     Snapshot made = top.render({{0, 0}, {9, 1}});
 
-    same(made.at({2, 0}).letter, U'T');
-    same(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
-    same(made.at({2, 0}).style.background, (Color{false, 10, 10, 10}));
-    ought(made.at({2, 0}).style.bold);
+    SAME(made.at({2, 0}).letter, U'T');
+    SAME(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
+    SAME(made.at({2, 0}).style.background, (Color{false, 10, 10, 10}));
+    OUGHT(made.at({2, 0}).style.bold);
 
     // With focus: the foreground still from `.key`, but the background of focus, not from `.key`.
     one->focus();
 
     made = top.render({{0, 0}, {9, 1}});
 
-    same(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
-    same(made.at({2, 0}).style.background, (Color{false, 20, 20, 20}));
-    same(made.at({3, 0}).style.background, (Color{false, 20, 20, 20}));
-    ought(made.at({2, 0}).style.bold);
+    SAME(made.at({2, 0}).style.foreground, (Color{false, 9, 9, 9}));
+    SAME(made.at({2, 0}).style.background, (Color{false, 20, 20, 20}));
+    SAME(made.at({3, 0}).style.background, (Color{false, 20, 20, 20}));
+    OUGHT(made.at({2, 0}).style.bold);
 }
 
 // The message family and the error family have to be in the built-in skin, otherwise a focused
@@ -683,16 +683,16 @@ TRIAL("Skin: the built-in skin knows the message and error families") {
     const ui::Skin one;
 
     for (const std::string& stem : {std::string{"talcite.message"}, std::string{"talcite.error"}}) {
-        ought(one.style(stem + ".button.focus").reverse);
-        ought(one.style(stem + ".button.key").under);
-        ought(one.style(stem + ".button.disabled").faint);
+        OUGHT(one.style(stem + ".button.focus").reverse);
+        OUGHT(one.style(stem + ".button.key").under);
+        OUGHT(one.style(stem + ".button.disabled").faint);
 
         // The rest of the family is empty on purpose: without colors an error box looks no different
         // from a plain window, just as in Midnight Commander's mono skin.
-        same(one.style(stem), Style{});
-        same(one.style(stem + ".title"), Style{});
-        same(one.style(stem + ".text"), Style{});
-        same(one.style(stem + ".box"), Style{});
+        SAME(one.style(stem), Style{});
+        SAME(one.style(stem + ".title"), Style{});
+        SAME(one.style(stem + ".text"), Style{});
+        SAME(one.style(stem + ".box"), Style{});
     }
 }
 
@@ -723,7 +723,7 @@ TRIAL("Skin: a single value applies at every level") {
     for (const Colors level : {Colors::mono, Colors::ansi, Colors::palette, Colors::rgb}) {
         one.colors(level);
 
-        same(one.style("talcite.list.focus"), tinted(10, 20, 30));
+        SAME(one.style("talcite.list.focus"), tinted(10, 20, 30));
     }
 }
 
@@ -731,14 +731,14 @@ TRIAL("Skin: the variant is the highest one not above the level") {
     ui::Skin one{{{"talcite.list.focus", shaded()}}};
 
     one.colors(Colors::ansi);
-    same(one.style("talcite.list.focus"), tinted(1, 1, 1));
+    SAME(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
     // `palette` has no variant of its own, so `ansi` applies, not `rgb`: it never reaches higher.
     one.colors(Colors::palette);
-    same(one.style("talcite.list.focus"), tinted(1, 1, 1));
+    SAME(one.style("talcite.list.focus"), tinted(1, 1, 1));
 
     one.colors(Colors::rgb);
-    same(one.style("talcite.list.focus"), tinted(3, 3, 3));
+    SAME(one.style("talcite.list.focus"), tinted(3, 3, 3));
 }
 
 TRIAL("Skin: with no variant for the level, the role goes back to the built-in one, not an approximation") {
@@ -748,9 +748,9 @@ TRIAL("Skin: with no variant for the level, the role goes back to the built-in o
     // reverse video.
     one.colors(Colors::mono);
 
-    same(one.style("talcite.list.focus"), ui::Skin::plain().style("talcite.list.focus"));
-    ought(one.style("talcite.list.focus").reverse);
-    ought(one.style("talcite.list.focus").foreground.transparent);
+    SAME(one.style("talcite.list.focus"), ui::Skin::plain().style("talcite.list.focus"));
+    OUGHT(one.style("talcite.list.focus").reverse);
+    OUGHT(one.style("talcite.list.focus").foreground.transparent);
 }
 
 TRIAL("Skin: a role outside the built-in ones with no variant gives an empty style") {
@@ -758,7 +758,7 @@ TRIAL("Skin: a role outside the built-in ones with no variant gives an empty sty
 
     one.colors(Colors::mono);
 
-    same(one.style("app.thing"), Style{});
+    SAME(one.style("app.thing"), Style{});
 }
 
 TRIAL("Skin: a glyph has an ASCII and a Unicode version, a terminal without Unicode takes only ASCII") {
@@ -769,13 +769,13 @@ TRIAL("Skin: a glyph has an ASCII and a Unicode version, a terminal without Unic
 
     ui::Skin one{{}, {{"talcite.line.thin.across", sign}}};
 
-    same(one.glyph("talcite.line.thin.across"), U'-');
-    same(one.lines(ui::Border::thin).across, U'-');
+    SAME(one.glyph("talcite.line.thin.across"), U'-');
+    SAME(one.lines(ui::Border::thin).across, U'-');
 
     one.unicode(true);
 
-    same(one.glyph("talcite.line.thin.across"), U'─');
-    same(one.lines(ui::Border::thin).across, U'─');
+    SAME(one.glyph("talcite.line.thin.across"), U'─');
+    SAME(one.lines(ui::Border::thin).across, U'─');
 }
 
 TRIAL("Skin: a glyph with only a Unicode version falls back to the built-in one without Unicode") {
@@ -785,11 +785,11 @@ TRIAL("Skin: a glyph with only a Unicode version falls back to the built-in one 
 
     ui::Skin one{{}, {{"talcite.line.thin.across", sign}}};
 
-    same(one.glyph("talcite.line.thin.across"), U'─');
+    SAME(one.glyph("talcite.line.thin.across"), U'─');
 
     one.unicode(true);
 
-    same(one.glyph("talcite.line.thin.across"), U'=');
+    SAME(one.glyph("talcite.line.thin.across"), U'=');
 }
 
 TRIAL("Root: facts about the terminal carry over to every later skin") {
@@ -800,20 +800,20 @@ TRIAL("Root: facts about the terminal carry over to every later skin") {
 
     top.skin(ui::Skin{{{"talcite.list.focus", shaded()}}});
 
-    same(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::rgb));
-    ought(top.skin().unicode());
-    same(top.skin().style("talcite.list.focus"), tinted(3, 3, 3));
+    SAME(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::rgb));
+    OUGHT(top.skin().unicode());
+    SAME(top.skin().style("talcite.list.focus"), tinted(3, 3, 3));
 
     top.colors(Colors::ansi);
 
-    same(top.skin().style("talcite.list.focus"), tinted(1, 1, 1));
+    SAME(top.skin().style("talcite.list.focus"), tinted(1, 1, 1));
 }
 
 TRIAL("Root: without facts the skin stands on mono and ASCII") {
     ui::Root top;
 
-    same(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::mono));
-    ought(!top.skin().unicode());
+    SAME(static_cast<int>(top.skin().colors()), static_cast<int>(Colors::mono));
+    OUGHT(!top.skin().unicode());
 }
 
 // The 256-color palette: sixteen basic colors in xterm's values, the 6×6×6 cube and the gray ramp.
@@ -827,18 +827,18 @@ TRIAL("Palette: Color::indexed gives the basic colors, the cube and the grays, a
                    : std::string{"-"};
     };
 
-    same(rgb(0), std::string{"0,0,0"});
-    same(rgb(4), std::string{"0,0,128"});
-    same(rgb(7), std::string{"192,192,192"});
-    same(rgb(8), std::string{"128,128,128"});
-    same(rgb(15), std::string{"255,255,255"});
-    same(rgb(16), std::string{"0,0,0"});
-    same(rgb(17), std::string{"0,0,95"});
-    same(rgb(52), std::string{"95,0,0"});
-    same(rgb(231), std::string{"255,255,255"});
-    same(rgb(232), std::string{"8,8,8"});
-    same(rgb(255), std::string{"238,238,238"});
-    same(rgb(-1), std::string{"-"});
-    same(rgb(256), std::string{"-"});
-    ought(!Color::indexed(3)->transparent);
+    SAME(rgb(0), std::string{"0,0,0"});
+    SAME(rgb(4), std::string{"0,0,128"});
+    SAME(rgb(7), std::string{"192,192,192"});
+    SAME(rgb(8), std::string{"128,128,128"});
+    SAME(rgb(15), std::string{"255,255,255"});
+    SAME(rgb(16), std::string{"0,0,0"});
+    SAME(rgb(17), std::string{"0,0,95"});
+    SAME(rgb(52), std::string{"95,0,0"});
+    SAME(rgb(231), std::string{"255,255,255"});
+    SAME(rgb(232), std::string{"8,8,8"});
+    SAME(rgb(255), std::string{"238,238,238"});
+    SAME(rgb(-1), std::string{"-"});
+    SAME(rgb(256), std::string{"-"});
+    OUGHT(!Color::indexed(3)->transparent);
 }

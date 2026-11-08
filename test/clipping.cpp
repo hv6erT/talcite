@@ -1,4 +1,4 @@
-#include "proving.hpp"
+#include "tal/testing.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -54,19 +54,19 @@ std::string spouted(const std::string& what) {
 TRIAL("Clipboard: what was copied comes back on paste") {
     Wired one;
 
-    ought(one.kept.provider().copy("ala ma kota"));
+    OUGHT(one.kept.provider().copy("ala ma kota"));
 
     const std::optional<std::string> got = one.kept.provider().paste();
 
-    ought(got.has_value());
-    same(*got, std::string{"ala ma kota"});
+    OUGHT(got.has_value());
+    SAME(*got, std::string{"ala ma kota"});
 }
 
 TRIAL("Clipboard: emptiness is not content") {
     Wired one;
 
-    ought(one.kept.provider().copy(""));
-    ought(!one.kept.provider().paste().has_value());
+    OUGHT(one.kept.provider().copy(""));
+    OUGHT(!one.kept.provider().paste().has_value());
 }
 
 // The threshold applies only to the way through the terminal: OSC 52 is sometimes silently cut,
@@ -77,12 +77,12 @@ TRIAL("Clipboard: content over the threshold stays with us in full") {
 
     const std::string big(200 * 1024, 'x');
 
-    ought(!one.kept.provider().copy(big));
+    OUGHT(!one.kept.provider().copy(big));
 
     const std::optional<std::string> got = one.kept.provider().paste();
 
-    ought(got.has_value());
-    same(got->size(), big.size());
+    OUGHT(got.has_value());
+    SAME(got->size(), big.size());
 }
 
 TRIAL("Clipboard: multibyte characters pass unchanged") {
@@ -90,12 +90,12 @@ TRIAL("Clipboard: multibyte characters pass unchanged") {
 
     const std::string what = "z\xc4\x85\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87";
 
-    ought(one.kept.provider().copy(what));
+    OUGHT(one.kept.provider().copy(what));
 
     const std::optional<std::string> got = one.kept.provider().paste();
 
-    ought(got.has_value());
-    same(got.value_or(""), what);
+    OUGHT(got.has_value());
+    SAME(got.value_or(""), what);
 }
 
 // Our own copy belongs to the clipboard, not to the process: two clipboards on two consoles do
@@ -104,43 +104,43 @@ TRIAL("Clipboard: two clipboards do not share a copy") {
     Wired one;
     Wired two;
 
-    ought(one.kept.provider().copy("abc"));
-    ought(!two.kept.provider().paste().has_value());
+    OUGHT(one.kept.provider().copy("abc"));
+    OUGHT(!two.kept.provider().paste().has_value());
 }
 
 TRIAL("Clipboard: there is one default per process") {
-    ought(&clipboard().provider() == &clipboard().provider());
+    OUGHT(&clipboard().provider() == &clipboard().provider());
 }
 
 // --- What goes to the terminal -------------------------------------------------------------------
 
 TRIAL("Clipboard: OSC 52 goes out with the content in base64") {
-    same(spouted("abc"), std::string{"\x1b]52;c;YWJj\x07"});
+    SAME(spouted("abc"), std::string{"\x1b]52;c;YWJj\x07"});
 }
 
 // Padding counts to the character: a terminal that gets base64 without padding may reject the
 // whole thing.
 TRIAL("Clipboard: base64 pads for all three remainders") {
-    same(spouted("a"), std::string{"\x1b]52;c;YQ==\x07"});
-    same(spouted("ab"), std::string{"\x1b]52;c;YWI=\x07"});
-    same(spouted("abc"), std::string{"\x1b]52;c;YWJj\x07"});
-    same(spouted("abcd"), std::string{"\x1b]52;c;YWJjZA==\x07"});
+    SAME(spouted("a"), std::string{"\x1b]52;c;YQ==\x07"});
+    SAME(spouted("ab"), std::string{"\x1b]52;c;YWI=\x07"});
+    SAME(spouted("abc"), std::string{"\x1b]52;c;YWJj\x07"});
+    SAME(spouted("abcd"), std::string{"\x1b]52;c;YWJjZA==\x07"});
 }
 
 TRIAL("Clipboard: base64 does not lose non-ASCII bytes") {
-    same(spouted("\xc4\x85"), std::string{"\x1b]52;c;xIU=\x07"});
+    SAME(spouted("\xc4\x85"), std::string{"\x1b]52;c;xIU=\x07"});
 }
 
 TRIAL("Clipboard: over the threshold nothing goes out") {
-    same(spouted(std::string(200 * 1024, 'x')), std::string{});
+    SAME(spouted(std::string(200 * 1024, 'x')), std::string{});
 }
 
 // The threshold is inclusive: exactly that much still goes out.
 TRIAL("Clipboard: content equal to the threshold still goes out") {
     Wired one;
 
-    ought(one.kept.provider().copy(std::string(64 * 1024, 'x')));
-    ought(!one.line->written.empty());
+    OUGHT(one.kept.provider().copy(std::string(64 * 1024, 'x')));
+    OUGHT(!one.line->written.empty());
 }
 
 // --- Files --------------------------------------------------------------------------------------
@@ -166,8 +166,8 @@ Files two(Handing how) {
 TRIAL("Clipboard: a clipboard that knows only text takes no files") {
     faking::Clipboard one;
 
-    ought(!one.give(two(Handing::copy)));
-    ought(!one.taken().has_value());
+    OUGHT(!one.give(two(Handing::copy)));
+    OUGHT(!one.taken().has_value());
 }
 
 // Over ssh the system clipboard is not the user's, so files stay in our own copy: `give` says they
@@ -176,17 +176,17 @@ TRIAL("Clipboard: a clipboard that knows only text takes no files") {
 TRIAL("Clipboard: over ssh files stay in our own copy, with their paths as text") {
     Wired one;
 
-    ought(!one.kept.provider().give(two(Handing::cut)));
+    OUGHT(!one.kept.provider().give(two(Handing::cut)));
 
     const std::optional<Files> got = one.kept.provider().taken();
 
-    ought(got.has_value());
-    ought(got.has_value() && got->paths == two(Handing::cut).paths);
-    ought(got.has_value() && got->how == Handing::cut);
+    OUGHT(got.has_value());
+    OUGHT(got.has_value() && got->paths == two(Handing::cut).paths);
+    OUGHT(got.has_value() && got->how == Handing::cut);
 
-    same(one.kept.provider().paste().value_or(""),
+    SAME(one.kept.provider().paste().value_or(""),
          fs::to_string(rooted("a.mkv")) + "\n" + fs::to_string(rooted("b")));
-    same(one.line->written, std::string{});
+    SAME(one.line->written, std::string{});
 }
 
 // One clipboard, one content: copied text replaces the files, and an empty list takes files away
@@ -194,19 +194,19 @@ TRIAL("Clipboard: over ssh files stay in our own copy, with their paths as text"
 TRIAL("Clipboard: copied text replaces the files, and an empty list takes only files away") {
     Wired one;
 
-    ought(!one.kept.provider().give(two(Handing::copy)));
-    ought(one.kept.provider().copy("abc"));
-    ought(!one.kept.provider().taken().has_value());
+    OUGHT(!one.kept.provider().give(two(Handing::copy)));
+    OUGHT(one.kept.provider().copy("abc"));
+    OUGHT(!one.kept.provider().taken().has_value());
 
     (void)one.kept.provider().give({});
 
-    same(one.kept.provider().paste().value_or(""), std::string{"abc"});
+    SAME(one.kept.provider().paste().value_or(""), std::string{"abc"});
 
     (void)one.kept.provider().give(two(Handing::copy));
     (void)one.kept.provider().give({});
 
-    ought(!one.kept.provider().taken().has_value());
-    ought(!one.kept.provider().paste().has_value());
+    OUGHT(!one.kept.provider().taken().has_value());
+    OUGHT(!one.kept.provider().paste().has_value());
 }
 
 // Another process does not share our working directory, so a relative path would point it
@@ -220,11 +220,11 @@ TRIAL("Clipboard: a relative path refuses the whole list and changes nothing") {
 
     wrong.paths = {rooted("c"), std::filesystem::path{"relative.txt"}};
 
-    ought(!one.kept.provider().give(wrong));
+    OUGHT(!one.kept.provider().give(wrong));
 
     const std::optional<Files> got = one.kept.provider().taken();
 
-    ought(got.has_value() && got->paths == two(Handing::cut).paths);
+    OUGHT(got.has_value() && got->paths == two(Handing::cut).paths);
 }
 
 #ifndef _WIN32
@@ -299,10 +299,10 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         const Seam<Clipboard> kept = clipboard(Seam<Console>{line});
 
-        ought(kept.provider().copy("zażółć"));
+        OUGHT(kept.provider().copy("zażółć"));
 
-        same(helper.got(), std::string{"zażółć"});
-        same(line->written, std::string{});
+        SAME(helper.got(), std::string{"zażółć"});
+        SAME(line->written, std::string{});
     }
 
     {
@@ -314,9 +314,9 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         const Seam<Clipboard> kept = clipboard(Seam<Console>{line});
 
-        ought(kept.provider().copy("abc"));
+        OUGHT(kept.provider().copy("abc"));
 
-        same(line->written, std::string{"\x1b]52;c;YWJj\x07"});
+        SAME(line->written, std::string{"\x1b]52;c;YWJj\x07"});
     }
 
     // Under X: xclip, and without it xsel.
@@ -329,10 +329,10 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         const Seam<Clipboard> kept = clipboard(Seam<Console>{line});
 
-        ought(kept.provider().copy("pod X"));
+        OUGHT(kept.provider().copy("pod X"));
 
-        same(helper.got(), std::string{"pod X"});
-        same(line->written, std::string{});
+        SAME(helper.got(), std::string{"pod X"});
+        SAME(line->written, std::string{});
     }
 
     // A program that got stuck gives way to OSC 52 after a second and a half.
@@ -347,10 +347,10 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         const auto began = std::chrono::steady_clock::now();
 
-        ought(kept.provider().copy("abc"));
+        OUGHT(kept.provider().copy("abc"));
 
-        ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{4});
-        same(line->written, std::string{"\x1b]52;c;YWJj\x07"});
+        OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{4});
+        SAME(line->written, std::string{"\x1b]52;c;YWJj\x07"});
     }
 
     // Over ssh the clipboard program of that machine is not the user's clipboard.
@@ -361,10 +361,10 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
         one.line->environment["WAYLAND_DISPLAY"] = "wayland-0";
 
-        ought(one.kept.provider().copy("abc"));
+        OUGHT(one.kept.provider().copy("abc"));
 
-        same(helper.got(), std::string{});
-        same(one.line->written, std::string{"\x1b]52;c;YWJj\x07"});
+        SAME(helper.got(), std::string{});
+        SAME(one.line->written, std::string{"\x1b]52;c;YWJj\x07"});
     }
 }
 
@@ -471,15 +471,15 @@ TRIAL("Clipboard: files go to the session's clipboard program as a uri-list") {
 
     what.paths = {"/tmp/a b/za\xc5\xbc\xc3\xb3\xc5\x82\xc4\x87.mkv", "/srv/100%"};
 
-    ought(one.kept.provider().give(what));
+    OUGHT(one.kept.provider().give(what));
 
-    same(one.args(), std::string{"--type text/uri-list"});
-    same(one.given(), std::string{"file:///tmp/a%20b/za%C5%BC%C3%B3%C5%82%C4%87.mkv\r\nfile:///srv/100%25\r\n"});
-    same(one.line->written, std::string{});
+    SAME(one.args(), std::string{"--type text/uri-list"});
+    SAME(one.given(), std::string{"file:///tmp/a%20b/za%C5%BC%C3%B3%C5%82%C4%87.mkv\r\nfile:///srv/100%25\r\n"});
+    SAME(one.line->written, std::string{});
 
     (void)one.kept.provider().give({});
 
-    same(one.args(), std::string{"--clear"});
+    SAME(one.args(), std::string{"--clear"});
 }
 
 // A uri-list from another program: comments and lines naming no local file are skipped, the host
@@ -493,14 +493,14 @@ TRIAL("Clipboard: a uri-list from another program is read as copied files") {
 
     const std::optional<Files> got = one.kept.provider().taken();
 
-    ought(got.has_value());
+    OUGHT(got.has_value());
 
     if (!got.has_value()) return;
 
-    same(got->paths.size(), std::size_t{2});
-    ought(got->paths.size() == 2 && got->paths[0] == std::filesystem::path{"/tmp/a b"} &&
+    SAME(got->paths.size(), std::size_t{2});
+    OUGHT(got->paths.size() == 2 && got->paths[0] == std::filesystem::path{"/tmp/a b"} &&
           got->paths[1] == std::filesystem::path{"/srv/z\xc5\xbc"});
-    ought(got->how == Handing::copy);
+    OUGHT(got->how == Handing::copy);
 }
 
 // GNOME's file managers mark a cut in their own type, "cut" or "copy" above the URIs.
@@ -512,13 +512,13 @@ TRIAL("Clipboard: a cut from a GNOME file manager is read as cut") {
 
     std::optional<Files> got = one.kept.provider().taken();
 
-    ought(got.has_value() && got->how == Handing::cut && got->paths.size() == 2);
+    OUGHT(got.has_value() && got->how == Handing::cut && got->paths.size() == 2);
 
     one.offer("x-special/gnome-copied-files", "copy\nfile:///tmp/a\nfile:///tmp/b");
 
     got = one.kept.provider().taken();
 
-    ought(got.has_value() && got->how == Handing::copy && got->paths.size() == 2);
+    OUGHT(got.has_value() && got->how == Handing::copy && got->paths.size() == 2);
 }
 
 // The uri-list cannot say "cut", so our own cut is recognized by its list: the same paths as we cut
@@ -531,19 +531,19 @@ TRIAL("Clipboard: our own cut comes back as cut, another list as a copy") {
     what.paths = {"/tmp/a", "/tmp/b"};
     what.how = Handing::cut;
 
-    ought(one.kept.provider().give(what));
+    OUGHT(one.kept.provider().give(what));
 
     one.offer("text/uri-list", one.given());
 
     std::optional<Files> got = one.kept.provider().taken();
 
-    ought(got.has_value() && got->how == Handing::cut && got->paths == what.paths);
+    OUGHT(got.has_value() && got->how == Handing::cut && got->paths == what.paths);
 
     one.offer("text/uri-list", "file:///tmp/a\r\n");
 
     got = one.kept.provider().taken();
 
-    ought(got.has_value() && got->how == Handing::copy && got->paths.size() == 1);
+    OUGHT(got.has_value() && got->how == Handing::copy && got->paths.size() == 1);
 }
 
 // The session's clipboard answers, not our older copy: when it holds something else, there is
@@ -553,8 +553,8 @@ TRIAL("Clipboard: a session clipboard without files gives none, even after our o
     {
         const Session one;
 
-        ought(one.kept.provider().give(two(Handing::copy)));
-        ought(!one.kept.provider().taken().has_value());
+        OUGHT(one.kept.provider().give(two(Handing::copy)));
+        OUGHT(!one.kept.provider().taken().has_value());
     }
 
     {
@@ -564,8 +564,8 @@ TRIAL("Clipboard: a session clipboard without files gives none, even after our o
 
         const auto began = std::chrono::steady_clock::now();
 
-        ought(!one.kept.provider().taken().has_value());
-        ought(std::chrono::steady_clock::now() - began < std::chrono::seconds{8});
+        OUGHT(!one.kept.provider().taken().has_value());
+        OUGHT(std::chrono::steady_clock::now() - began < std::chrono::seconds{8});
     }
 }
 

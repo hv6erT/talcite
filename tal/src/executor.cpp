@@ -90,6 +90,29 @@ bool Loop::turn() {
     return !now.empty() || !fired.empty();
 }
 
+// Waits for work at most until `latest`, then turns once as `turn()` does. Work posted, a timer
+// already due, a timer falling due (only on a clock that runs by itself; a manual one moves only
+// by hand) or a stop ends the wait early. Returns whether any work ran, so a trial can wait for a
+// condition by a deadline instead of counting turns.
+bool Loop::turn(std::chrono::steady_clock::time_point latest) {
+    {
+        std::unique_lock<std::mutex> kept{guard_};
+
+        const auto stirred = [this] { return !ready_.empty() || stopping_; };
+        const bool due = !due_.empty() && due_.begin()->first <= time_->now();
+
+        if (!stirred() && !due) {
+            auto until = latest;
+
+            if (!due_.empty() && !time_->manual()) until = std::min(until, due_.begin()->first);
+
+            (void)stirred_.wait_until(kept, until, stirred);
+        }
+    }
+
+    return turn();
+}
+
 // Waits until work is queued, the next timer falls due or the loop is stopped. On a manual clock
 // time moves only by hand, so the wait is for work alone: such a loop is driven by `turn`.
 void Loop::pause() {
