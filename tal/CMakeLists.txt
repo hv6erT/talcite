@@ -8,6 +8,7 @@ find_package(Threads REQUIRED)
 add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp
   src/collate.cpp src/language.cpp src/text.cpp src/unicode.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
+  src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
 target_include_directories(tal-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(tal-core PUBLIC Threads::Threads)

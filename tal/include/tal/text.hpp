@@ -83,6 +83,8 @@ private:
 
 void choose(Language which);
 
+[[nodiscard]] std::optional<Language> proposed();
+
 enum class Case { ignored, considered };
 
 class Collation {

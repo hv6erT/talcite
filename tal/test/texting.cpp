@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstddef>
 #include <ctime>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -731,4 +733,51 @@ TRIAL("Text: dates and times are written in numbers, in the order of the languag
     same(text::date(when, text::Style::date, Language{"ko"}), std::string{"2026. 11. 8."});
     same(text::date(when, text::Style::date, Language{"nl"}), std::string{"08-11-2026"});
     same(text::date(at_local(2026, 1, 2, 0, 5), text::Style::time, Language{"en-US"}), "12:05" + space + "AM");
+}
+
+// The system's language is a proposal for the program, which chooses its own. POSIX looks at
+// LC_ALL, LC_MESSAGES and LANG in turn; the C locale names no language.
+TRIAL("Text: proposed() gives the language of the system's locale") {
+#ifdef _WIN32
+    if (const auto found = text::proposed()) ought(!found->base().empty());
+#else
+    const auto kept = [](const char* name) -> std::optional<std::string> {
+        const char* given = std::getenv(name);
+
+        return given != nullptr ? std::optional<std::string>{given} : std::nullopt;
+    };
+    const auto put = [](const char* name, const std::optional<std::string>& value) {
+        if (value) {
+            ::setenv(name, value->c_str(), 1);
+        } else {
+            ::unsetenv(name);
+        }
+    };
+
+    const std::optional<std::string> all = kept("LC_ALL");
+    const std::optional<std::string> messages = kept("LC_MESSAGES");
+    const std::optional<std::string> lang = kept("LANG");
+
+    put("LC_ALL", std::nullopt);
+    put("LC_MESSAGES", std::nullopt);
+    put("LANG", "pl_PL.UTF-8@euro");
+
+    const std::optional<Language> polish = text::proposed();
+
+    put("LC_MESSAGES", "cs_CZ");
+
+    const std::optional<Language> czech = text::proposed();
+
+    put("LC_ALL", "C.UTF-8");
+
+    const std::optional<Language> none = text::proposed();
+
+    put("LC_ALL", all);
+    put("LC_MESSAGES", messages);
+    put("LANG", lang);
+
+    ought(polish == Language{"pl-PL"});
+    ought(czech == Language{"cs-CZ"});
+    ought(!none.has_value());
+#endif
 }
