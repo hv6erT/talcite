@@ -1,3 +1,4 @@
+#include "tal/bytes.hpp"
 #include "tal/clock.hpp"
 #include "tal/log.hpp"
 #include "tal/port.hpp"
@@ -11,6 +12,24 @@
 #include <string>
 
 namespace tal {
+
+// The bytes of a text, as they are.
+Bytes bytes(std::string_view text) {
+    Bytes made(text.size());
+
+    for (std::size_t at = 0; at < text.size(); ++at) made[at] = static_cast<std::byte>(text[at]);
+
+    return made;
+}
+
+// The text of some bytes, as they are.
+std::string text(std::span<const std::byte> given) {
+    std::string made(given.size(), '\0');
+
+    for (std::size_t at = 0; at < given.size(); ++at) made[at] = static_cast<char>(given[at]);
+
+    return made;
+}
 
 // A trouble of the given kind, with the sentence a person may read, the place it concerns (a path
 // or an address, as text) and the system's own code when there was one.
