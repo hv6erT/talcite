@@ -23,7 +23,7 @@ Bytes bytes(std::string_view text) {
 }
 
 // The text of some bytes, as they are.
-std::string text(std::span<const std::byte> given) {
+std::string text::of(std::span<const std::byte> given) {
     std::string made(given.size(), '\0');
 
     for (std::size_t at = 0; at < given.size(); ++at) made[at] = static_cast<char>(given[at]);

@@ -12,6 +12,10 @@ using Bytes = std::vector<std::byte>;
 
 [[nodiscard]] Bytes bytes(std::string_view text);
 
-[[nodiscard]] std::string text(std::span<const std::byte> given);
+namespace text {
+
+[[nodiscard]] std::string of(std::span<const std::byte> given);
+
+}
 
 }

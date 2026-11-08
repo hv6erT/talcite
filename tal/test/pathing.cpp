@@ -113,6 +113,6 @@ TRIAL("Path: on Windows backslashes separate names, drives and shares are roots"
 TRIAL("Bytes: text and bytes turn into each other unchanged") {
     const std::string given{"zażółć\0\xFF", sizeof("zażółć\0\xFF") - 1};
 
-    same(tal::text(tal::bytes(given)), given);
+    same(tal::text::of(tal::bytes(given)), given);
     same(tal::bytes("ab").size(), std::size_t{2});
 }

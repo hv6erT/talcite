@@ -184,6 +184,8 @@ class Files : public Adapter {
 public:
     static constexpr std::string_view kind = "files";
 
+    [[nodiscard]] static std::shared_ptr<Files> builtin();
+
     [[nodiscard]] virtual Task<std::vector<Entry>> list(const Path& folder) = 0;
 
     [[nodiscard]] virtual Task<std::vector<Entry>> walk(const Path& folder) = 0;

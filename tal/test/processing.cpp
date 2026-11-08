@@ -93,8 +93,8 @@ TRIAL("Stream: a pipe gives what was written in order, waits for more and ends w
 
     tal::wait(loop, writing.write(tal::bytes("abc")));
     tal::wait(loop, writing.write(tal::bytes("def")));
-    same(tal::text(tal::wait(loop, reading.read(4))), std::string{"abcd"});
-    same(tal::text(tal::wait(loop, reading.read(10))), std::string{"ef"});
+    same(tal::text::of(tal::wait(loop, reading.read(4))), std::string{"abcd"});
+    same(tal::text::of(tal::wait(loop, reading.read(10))), std::string{"ef"});
 
     const auto [got, wrote] = tal::wait(loop, tal::all(reading.read(10), [](tal::Stream into) -> tal::Task<int> {
         co_await tal::to(tal::pool());
@@ -103,7 +103,7 @@ TRIAL("Stream: a pipe gives what was written in order, waits for more and ends w
         co_return 1;
     }(writing)));
 
-    same(tal::text(got), std::string{"!"});
+    same(tal::text::of(got), std::string{"!"});
     same(wrote, 1);
 
     writing.close();
@@ -154,7 +154,7 @@ TRIAL("Stream: drained() gathers everything until the end, also from a writer th
     const tal::Bytes all = tal::wait(loop, tal::drained(reading));
 
     same(all.size(), std::size_t{100003});
-    same(tal::text(std::span{all}.subspan(100000)), std::string{"end"});
+    same(tal::text::of(std::span{all}.subspan(100000)), std::string{"end"});
 }
 
 TRIAL("Process: run() writes the input, gathers output and errors, and gives the exit code") {
@@ -167,8 +167,8 @@ TRIAL("Process: run() writes the input, gathers output and errors, and gives the
     const tal::Output got = tal::wait(loop, tal::Process::run(command("/usr/bin/shout", {"-v"}), tal::bytes("poirot")));
 
     ought(got.exit == (Exit{Exit::Ended::normal, 3, 0}));
-    same(tal::text(got.output), std::string{"POIROT"});
-    same(tal::text(got.errors), std::string{"uwaga"});
+    same(tal::text::of(got.output), std::string{"POIROT"});
+    same(tal::text::of(got.errors), std::string{"uwaga"});
     same(scripted->started().size(), std::size_t{1});
     ought(scripted->started()[0].program == Path{"/usr/bin/shout"});
     same(scripted->started()[0].arguments, (std::vector<std::string>{"-v"}));
@@ -179,7 +179,7 @@ TRIAL("Process: run() writes the input, gathers output and errors, and gives the
 
     const tal::Output together = tal::wait(loop, tal::Process::run(merged, tal::bytes("a")));
 
-    same(tal::text(together.output), std::string{"Auwaga"});
+    same(tal::text::of(together.output), std::string{"Auwaga"});
     same(together.errors.size(), std::size_t{0});
 
     const tal::Output opened = tal::wait(loop, tal::Process::run(command("plik.pdf", {}, tal::Mode::opened), tal::bytes("x")));
@@ -261,16 +261,16 @@ TRIAL("Process: a program in a terminal sees its size change; letting the proces
     const tal::Stream output = child.output();
 
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text(tal::wait(loop, output.read(100))), std::string{"120x40 "});
+    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"120x40 "});
 
     child.resize(100, 30);
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text(tal::wait(loop, output.read(100))), std::string{"100x30 "});
+    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
 
     child = tal::Process{};
 
     tal::wait(loop, input.write(tal::bytes(".")));
-    same(tal::text(tal::wait(loop, output.read(100))), std::string{"100x30 "});
+    same(tal::text::of(tal::wait(loop, output.read(100))), std::string{"100x30 "});
 
     input.close();
     same(tal::wait(loop, output.read(100)).size(), std::size_t{0});

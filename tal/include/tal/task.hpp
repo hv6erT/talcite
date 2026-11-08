@@ -39,6 +39,8 @@ public:
 
     [[nodiscard]] bool cancelled() const { return cancelled_.load(); }
 
+    [[nodiscard]] const std::atomic<bool>* cancelling() const { return &cancelled_; }
+
     void rooted(std::coroutine_handle<> root, Work gone);
 
     void start();
@@ -266,6 +268,21 @@ struct Here {
     }
 
     [[nodiscard]] Executor& await_resume() const noexcept { return *found; }
+};
+
+struct Current {
+    std::shared_ptr<Chain> found;
+
+    [[nodiscard]] bool await_ready() const noexcept { return false; }
+
+    template <typename P>
+    bool await_suspend(std::coroutine_handle<P> handle) {
+        found = chain_of(handle);
+
+        return false;
+    }
+
+    [[nodiscard]] std::shared_ptr<Chain> await_resume() { return std::move(found); }
 };
 
 struct Moving {
