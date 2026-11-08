@@ -103,6 +103,8 @@ public:
 
     void add(Change change);
 
+    void add(std::vector<Change> changes);
+
     void close();
 
     [[nodiscard]] bool closed() const;

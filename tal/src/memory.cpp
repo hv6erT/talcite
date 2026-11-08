@@ -287,17 +287,26 @@ struct Memory::State {
     // Notes a change for the watches; they get it once the operation lets go of the lock.
     void noted(Change::Kind kind, const Path& where, const Path& was = {}) { made.push_back({kind, where, was}); }
 
-    // Gives the changes noted by the operation to the watches that see them, then forgets them and
-    // the watches that are gone. Called with the lock held; the watches take their own locks.
+    // Gives the changes noted by the operation to the watches that see them, each watch its own in
+    // one batch, then forgets them and the watches that are gone. Called with the lock held; the
+    // watches take their own locks.
     void told() {
         std::vector<Change> changes = std::exchange(made, {});
 
         std::erase_if(watchers, [](const std::weak_ptr<Watcher>& one) { return one.expired(); });
 
-        for (const Change& change : changes)
-            for (const std::weak_ptr<Watcher>& weak : watchers)
-                if (const auto one = weak.lock(); one != nullptr && (sees(*one, change.where) || sees(*one, change.was)))
-                    one->add(change);
+        for (const std::weak_ptr<Watcher>& weak : watchers) {
+            const auto one = weak.lock();
+
+            if (one == nullptr) continue;
+
+            std::vector<Change> seen;
+
+            for (const Change& change : changes)
+                if (sees(*one, change.where) || sees(*one, change.was)) seen.push_back(change);
+
+            one->add(std::move(seen));
+        }
     }
 
     // Whether a watch sees a change at `where`: the folder itself, an entry in it, or one below it

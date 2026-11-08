@@ -15,7 +15,6 @@
 // talcite. The adapter checks first what the trials of the port expect of every adapter alike (a
 // relative path is malformed, a root stays, a read-only file is not replaced even for root), and
 // leaves the rest to the system, whose errors become troubles of their kind (`core::kind_of`).
-// Watching and the trash come in the next step of E1e.
 
 namespace tal::platform {
 
@@ -404,7 +403,7 @@ public:
         });
     }
 
-    // Removes an entry: a folder that holds anything only when deep.
+    // Removes an entry: a folder that holds anything only when deep, into the trash when asked.
     Task<void> remove(const Path& what, fs::Removing how) override {
         return offloaded([what, how] {
             const path where = absolute(what);
@@ -414,12 +413,14 @@ public:
 
             if (found == platform::Kind::none) amiss("There is no such entry.", where, ::tal::Kind::missing);
 
-            if (how.trash) amiss("The trash comes in the next step of E1e.", where, ::tal::Kind::unsupported);
-
             if (!how.deep && found == platform::Kind::folder && !core::list_whole_at(where).empty())
                 amiss("The folder is not empty.", where, ::tal::Kind::other);
 
-            core::erase_whole(where);
+            if (how.trash) {
+                core::trashed_at(where);
+            } else {
+                core::erase_whole(where);
+            }
         });
     }
 
@@ -516,10 +517,8 @@ public:
         });
     }
 
-    // Watching comes in the next step of E1e.
-    fs::Watch watch(const Path& folder, bool) override {
-        throw Trouble{::tal::Kind::unsupported, "Watching the disk comes in the next step of E1e.", folder.text()};
-    }
+    // Watches a folder that is there; its changes come from the system as they happen.
+    fs::Watch watch(const Path& folder, bool deep) override { return fs::Watch{core::watched(folder_there(absolute(folder)), deep)}; }
 
 private:
     // A volume of the core in the port's terms.

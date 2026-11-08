@@ -38,21 +38,31 @@ auto through(F call) -> decltype(call(std::declval<Files&>())) {
 // Queues a change for the reader, from any thread, and wakes a reader that waits; a closed watch
 // takes nothing.
 void Watching::add(Change change) {
+    std::vector<Change> one;
+
+    one.push_back(std::move(change));
+    add(std::move(one));
+}
+
+// Queues changes heard together, so that a reader that waits gets them in one batch.
+void Watching::add(std::vector<Change> changes) {
     std::optional<Pending<std::vector<Change>>> woken;
     std::vector<Change> given;
 
     {
         const std::lock_guard<std::mutex> kept{guard_};
 
-        if (closed_) return;
+        if (closed_ || changes.empty()) return;
 
-        if (!queued_.empty() && queued_.back().kind == Change::Kind::overflow) return;
+        for (Change& change : changes) {
+            if (!queued_.empty() && queued_.back().kind == Change::Kind::overflow) break;
 
-        if (queued_.size() + 1 >= most_queued) {
-            queued_.clear();
-            queued_.push_back({Change::Kind::overflow, {}, {}});
-        } else {
-            queued_.push_back(std::move(change));
+            if (queued_.size() + 1 >= most_queued) {
+                queued_.clear();
+                queued_.push_back({Change::Kind::overflow, {}, {}});
+            } else {
+                queued_.push_back(std::move(change));
+            }
         }
 
         if (waiter_) {

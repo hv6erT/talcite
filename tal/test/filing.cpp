@@ -1,6 +1,10 @@
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -19,8 +23,8 @@
 // Files of tal::core, through the port: reading and writing, folders, conflicts, moving, copying
 // and removing, links, attributes, watches and the default adapter. The trials of the port run on
 // the memory and on the system's disk alike (`FILES_TRIAL`); what only the memory can show (its
-// clock, its trash, its roots, its watches for now) is tried on the memory alone, and a difference
-// of a disk is named where it is.
+// clock, its roots, the exact changes it tells) is tried on the memory alone, the disk's watches
+// and trash have trials of their own, and a difference of a disk is named where it is.
 
 using namespace std::chrono_literals;
 
@@ -343,7 +347,8 @@ FILES_TRIAL("remove() takes a folder that holds anything only when deep; the tra
     ought(!desk.there("/empty"));
     ought(desk.refused(desk.files.remove(desk.at("/a"))) == tal::Kind::missing);
 
-    // The trash of the disk comes with the next step of E1e; only the memory's top is a root.
+    // The memory keeps a list of its trash, the disk's trash has a trial of its own; only the
+    // memory's top is a root.
     if constexpr (Desk::manual) {
         same(desk.memory.trashed().size(), std::size_t{1});
         ought(desk.memory.trashed()[0] == desk.at("/a"));
@@ -738,4 +743,138 @@ TRIAL("Disk: names that are not UTF-8 come back whole") {
     ought(found[0].where == file);
     same(found[0].where.text(), desk.root.text() + "/" + shown);
     same(tal::text::of(desk.run(desk.files.read(found[0].where))), std::string{"x"});
+}
+
+namespace {
+
+// The next changes of a watch, or none when nothing came within two seconds.
+std::vector<Change> heard(DiskDesk& desk, const tal::fs::Watch& watch) {
+    try {
+        return desk.run(tal::within(2000ms, watch.next()));
+    } catch (const tal::Overdue&) {
+        return {};
+    }
+}
+
+// Whether the changes hold one of the kind at the path.
+bool among(const std::vector<Change>& changes, Change::Kind kind, const Path& where) {
+    return std::any_of(changes.begin(), changes.end(), [&](const Change& one) { return one.kind == kind && one.where == where; });
+}
+
+// Gathers changes until one of the kind at the path is among them, or two seconds pass quietly.
+std::vector<Change> awaited(DiskDesk& desk, const tal::fs::Watch& watch, Change::Kind kind, const Path& where) {
+    std::vector<Change> all;
+
+    for (int round = 0; round < 10 && !among(all, kind, where); ++round) {
+        const std::vector<Change> more = heard(desk, watch);
+
+        if (more.empty()) break;
+
+        all.insert(all.end(), more.begin(), more.end());
+    }
+
+    return all;
+}
+
+}
+
+// The system tells more than the memory does, and in its own words: a new file is created and then
+// modified, a file written beside and renamed over shows as a rename. So the trials of the disk ask
+// whether the change they made is among what the system told.
+TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a deep one also below") {
+    DiskDesk desk;
+
+    desk.run(desk.files.make(desk.at("/f/inner")));
+
+    const tal::fs::Watch shallow = desk.files.watch(desk.at("/f"));
+    const tal::fs::Watch deep = desk.files.watch(desk.at("/f"), true);
+
+    desk.put("/f/a.txt", "1");
+    ought(among(awaited(desk, shallow, Change::Kind::created, desk.at("/f/a.txt")), Change::Kind::created, desk.at("/f/a.txt")));
+
+    desk.run(desk.files.move(desk.at("/f/a.txt"), desk.at("/f/c.txt")));
+
+    const std::vector<Change> moved = awaited(desk, shallow, Change::Kind::renamed, desk.at("/f/c.txt"));
+    const auto renamed = std::find_if(moved.begin(), moved.end(), [&](const Change& one) { return one.kind == Change::Kind::renamed; });
+
+    ought(renamed != moved.end() && renamed->where == desk.at("/f/c.txt") && renamed->was == desk.at("/f/a.txt"));
+
+    desk.run(desk.files.remove(desk.at("/f/c.txt")));
+    ought(among(awaited(desk, shallow, Change::Kind::removed, desk.at("/f/c.txt")), Change::Kind::removed, desk.at("/f/c.txt")));
+
+    desk.put("/f/inner/b.txt", "2");
+
+    ought(among(awaited(desk, deep, Change::Kind::created, desk.at("/f/inner/b.txt")), Change::Kind::created, desk.at("/f/inner/b.txt")));
+    ought(!among(heard(desk, shallow), Change::Kind::created, desk.at("/f/inner/b.txt")));
+}
+
+// A file written in many small pieces wakes the reader a few times, not once for every piece:
+// changes of content alone settle for a fifth of a second and repeat into one.
+TRIAL("Disk: changes of content settle and merge before they reach the reader") {
+    DiskDesk desk;
+
+    desk.put("/one.log", "");
+    desk.put("/two.log", "");
+
+    const tal::fs::Watch watch = desk.files.watch(desk.root);
+    const tal::fs::File one = desk.run(desk.files.open(desk.at("/one.log"), tal::fs::Mode::append));
+    const tal::fs::File two = desk.run(desk.files.open(desk.at("/two.log"), tal::fs::Mode::append));
+
+    // In turns, so that the system does not merge them itself, as inotify merges the same event
+    // told twice in a row.
+    for (int at = 0; at < 25; ++at) {
+        desk.run(one.write(0, tal::bytes("x")));
+        desk.run(two.write(0, tal::bytes("y")));
+    }
+
+    const std::vector<Change> first = heard(desk, watch);
+
+    same(first.size(), std::size_t{2});
+    ought(among(first, Change::Kind::modified, desk.at("/one.log")));
+    ought(among(first, Change::Kind::modified, desk.at("/two.log")));
+}
+
+// The trash of freedesktop.org, here under a home of the trial's own, so that the trial leaves
+// nothing in the trash of the person running it: the entry goes to `files`, a `.trashinfo` tells
+// where it was, and a second entry of the same name gets a free one. Windows has its recycle bin
+// behind the shell; trying it puts a file into the bin of whoever runs the trials, so it is tried
+// only when TAL_TRASH_TRIAL is set.
+TRIAL("Disk: remove() into the trash keeps the entry there and tells where it was") {
+    DiskDesk desk;
+
+    desk.run(desk.files.make(desk.at("/a/inner")));
+    desk.put("/a/inner/x.txt", "x");
+
+#ifdef _WIN32
+    if (std::getenv("TAL_TRASH_TRIAL") == nullptr) return;
+
+    desk.run(desk.files.remove(desk.at("/a"), {true, true}));
+
+    ought(!desk.there("/a"));
+#else
+    const std::filesystem::path home = desk.made / "home";
+    const char* was = std::getenv("XDG_DATA_HOME");
+    const std::string kept = was != nullptr ? was : "";
+
+    ::setenv("XDG_DATA_HOME", home.c_str(), 1);
+
+    desk.run(desk.files.remove(desk.at("/a"), {true, true}));
+    desk.put("/a", "second");
+    desk.run(desk.files.remove(desk.at("/a"), {true, false}));
+
+    if (was != nullptr) {
+        ::setenv("XDG_DATA_HOME", kept.c_str(), 1);
+    } else {
+        ::unsetenv("XDG_DATA_HOME");
+    }
+
+    ought(!desk.there("/a"));
+    ought(std::filesystem::exists(home / "Trash/files/a/inner/x.txt"));
+    ought(std::filesystem::exists(home / "Trash/files/a.2"));
+
+    std::ifstream info{home / "Trash/info/a.trashinfo"};
+    const std::string told{std::istreambuf_iterator<char>{info}, std::istreambuf_iterator<char>{}};
+
+    ought(told.starts_with("[Trash Info]\nPath=" + std::string{desk.at("/a").stored()} + "\nDeletionDate="));
+#endif
 }

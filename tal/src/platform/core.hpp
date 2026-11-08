@@ -79,6 +79,14 @@ enum class Conflict : std::uint8_t { overwrite, skip, rename, fail };
 
 enum class Mode : std::uint8_t { read, write, truncate, exclusive, append };
 
+struct Change {
+    enum class Kind : std::uint8_t { created, removed, modified, renamed, overflow };
+
+    path where;
+    path was;
+    Kind kind = Kind::modified;
+};
+
 struct Handle {
     path where;
     Mode mode = Mode::read;
@@ -137,6 +145,10 @@ void unmade_at(const path& where);
 [[nodiscard]] path target_at(const path& where);
 
 [[nodiscard]] std::optional<path> known_at(fs::Known which);
+
+[[nodiscard]] std::shared_ptr<fs::Watching> watched(const path& where, bool deep);
+
+void trashed_at(const path& where);
 
 [[nodiscard]] Bytes read_whole(const path& where);
 
