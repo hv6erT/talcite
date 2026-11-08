@@ -83,6 +83,9 @@ option(TALCITE_DEMOS "Build the demo programs" ON)
 option(TALCITE_LEGACY_CONSOLE "Translate the Windows console even when it accepts VT" OFF)
 add_subdirectory(talcite)
 
+# talcite.next grows beside the old library under tal/, until twa moves over and talcite/ goes.
+add_subdirectory(tal)
+
 # There are no adapters here, neither in the library nor next to it. talcite compiles and links
 # without OpenSSL, and without an injected Seam<TlsProvider> no encrypted connection can be made, so
 # "talcite does not implement TLS" is a fact rather than a promise. The adapters live in the
