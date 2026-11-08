@@ -26,6 +26,17 @@ class Task;
 
 namespace detail {
 
+class Waking {
+public:
+    Waking() = default;
+    virtual ~Waking() = default;
+
+    Waking(const Waking&) = delete;
+    Waking& operator=(const Waking&) = delete;
+
+    virtual void woken() = 0;
+};
+
 class Chain : public std::enable_shared_from_this<Chain> {
 public:
     explicit Chain(Executor& where) : where_(&where) {}
@@ -57,11 +68,15 @@ public:
 
     void destroyed();
 
+    void heed(Waking* one);
+
 private:
     enum State : int { running, waiting, doomed, ended };
 
     void doom();
 
+    std::mutex heeding_;
+    Waking* heeded_ = nullptr;
     std::atomic<Executor*> where_;
     std::atomic<bool> cancelled_{false};
     std::atomic<int> state_{waiting};

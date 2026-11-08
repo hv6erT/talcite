@@ -113,6 +113,8 @@ class Processes : public Adapter {
 public:
     static constexpr std::string_view kind = "processes";
 
+    [[nodiscard]] static std::shared_ptr<Processes> builtin();
+
     [[nodiscard]] virtual Task<Process> start(Command what) = 0;
 };
 

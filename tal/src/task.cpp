@@ -29,9 +29,16 @@ void Chain::rooted(std::coroutine_handle<> root, Work gone) {
 // Starts the root on the chain's executor; a chain cancelled before it ran is destroyed instead.
 void Chain::start() { resume(root_); }
 
-// Cancels the chain: a waiting one is doomed at once, a running one at its next suspension.
+// Cancels the chain: a waiting one is doomed at once, a running one at its next suspension, and
+// one that blocks in a call of the system is woken out of it (`heed`).
 void Chain::cancel() {
     cancelled_.store(true);
+
+    {
+        const std::lock_guard<std::mutex> kept{heeding_};
+
+        if (heeded_ != nullptr) heeded_->woken();
+    }
 
     int was = waiting;
 
@@ -112,6 +119,16 @@ void Chain::destroyed() {
     if (root_) std::exchange(root_, {}).destroy();
 
     if (gone_) std::exchange(gone_, {})();
+}
+
+// Gives what wakes the chain out of a blocking call of the system when it is cancelled, or none
+// once the call is over; a cancellation that came before is told at once.
+void Chain::heed(Waking* one) {
+    const std::lock_guard<std::mutex> kept{heeding_};
+
+    heeded_ = one;
+
+    if (heeded_ != nullptr && cancelled_.load()) heeded_->woken();
 }
 
 // Wakes the chain waiting here, once: a leaf whose awaiter is gone, or that already fired, does

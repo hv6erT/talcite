@@ -13,21 +13,34 @@ namespace tal {
 Process::Process(std::shared_ptr<Spawned> held, Stream input, Stream output, Stream errors)
     : held_(std::move(held)), input_(std::move(input)), output_(std::move(output)), errors_(std::move(errors)) {}
 
-// Runs a program to its end through the default adapter: writes `input` to it, gathers what it
-// writes and how it ended. A program that stops reading early does not make the run fail.
-Task<Output> Process::run(Command what, Bytes input) {
-    const Process child = co_await start(std::move(what));
+namespace {
 
+// Writes the input to a program and ends it; a program that stops reading early does not make the
+// run fail, it has what it needs.
+Task<int> fed(Stream input, Bytes given) {
     try {
-        if (!input.empty()) co_await child.input().write(std::move(input));
+        if (!given.empty()) co_await input.write(std::move(given));
     } catch (const Trouble& why) {
         if (why.kind() != Kind::broken) throw;
     }
 
-    child.input().close();
+    input.close();
 
-    auto [output, errors] = co_await all(drained(child.output()), drained(child.errors()));
+    co_return 0;
+}
+
+}
+
+// Runs a program to its end through the default adapter: writes `input` to it while it gathers what
+// the program writes on both outputs, all at once, since a program that fills a pipe nobody reads
+// stops, and then how it ended.
+Task<Output> Process::run(Command what, Bytes input) {
+    const Process child = co_await start(std::move(what));
+
+    auto [done, output, errors] = co_await all(fed(child.input(), std::move(input)), drained(child.output()), drained(child.errors()));
     const Exit exit = co_await child.ended();
+
+    (void)done;
 
     co_return Output{exit, std::move(output), std::move(errors)};
 }

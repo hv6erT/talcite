@@ -688,6 +688,8 @@ bool rested() { return !stopped(); }
             case ERROR_FILENAME_EXCED_RANGE: return ::tal::Kind::malformed;
             case ERROR_NOT_SUPPORTED: return ::tal::Kind::unsupported;
             case ERROR_SEM_TIMEOUT: return ::tal::Kind::overdue;
+            case ERROR_BROKEN_PIPE:
+            case ERROR_NO_DATA: return ::tal::Kind::broken;
             default: break;
         }
     }
@@ -713,7 +715,7 @@ bool rested() { return !stopped(); }
     if (plain == std::errc::not_supported || plain == std::errc::operation_not_supported || plain == std::errc::function_not_supported)
         return ::tal::Kind::unsupported;
 
-    if (plain == std::errc::io_error) return ::tal::Kind::broken;
+    if (plain == std::errc::io_error || plain == std::errc::broken_pipe) return ::tal::Kind::broken;
 
     if (plain == std::errc::timed_out) return ::tal::Kind::overdue;
 

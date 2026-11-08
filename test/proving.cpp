@@ -4,6 +4,7 @@
 #include "talcite/root.hpp"
 
 #include <chrono>
+#include <csignal>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -271,6 +272,13 @@ std::string started(const std::string& said) {
 // the machine happens to have a shell, `echo` or cmd. Returns the exit code of the pretended
 // program.
 //
+#ifdef _WIN32
+
+// Takes every console event as handled, so that a Ctrl-Break does not end the program.
+BOOL WINAPI deaf_to_breaks(DWORD) { return TRUE; }
+
+#endif
+
 // Called before anything else in `main`, so that pretending does not pull in the trials.
 int pretending(const std::vector<std::string>& given) {
     const std::string what = given.empty() ? std::string{} : given[0];
@@ -327,6 +335,22 @@ int pretending(const std::vector<std::string>& given) {
     if (what == "code") return rest.empty() ? 0 : std::atoi(rest.c_str());
 
     if (what == "sleeping") {
+        std::this_thread::sleep_for(std::chrono::milliseconds{rest.empty() ? 0 : std::atoi(rest.c_str())});
+
+        return 0;
+    }
+
+    // A program that will not be asked to end: it ignores SIGTERM (Ctrl-Break on Windows) and
+    // sleeps on, so that only killing ends it.
+    if (what == "stubborn") {
+#ifdef _WIN32
+        SetConsoleCtrlHandler(&deaf_to_breaks, TRUE);
+#else
+        (void)std::signal(SIGTERM, SIG_IGN);
+#endif
+
+        said(stdout, "ready\n");
+
         std::this_thread::sleep_for(std::chrono::milliseconds{rest.empty() ? 0 : std::atoi(rest.c_str())});
 
         return 0;

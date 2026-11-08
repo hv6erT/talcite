@@ -9,6 +9,7 @@
 #include "tal/task.hpp"
 
 #include "core.hpp"
+#include "offload.hpp"
 
 // The disk of the system as the `Files` port: every operation goes to the pool for calls that block
 // (`io`) and comes back to the executor it was called on, around the synchronous core ported from
@@ -21,55 +22,6 @@ namespace tal::platform {
 namespace {
 
 using core::amiss;
-
-// Runs synchronous work on the io pool and comes back to the executor of the caller with its
-// result or its failure. While the work runs, the core sees whether the task was cancelled
-// (`core::stopped`).
-template <typename F>
-auto offloaded(F work) -> Task<std::invoke_result_t<F&>> {
-    using Result = std::invoke_result_t<F&>;
-
-    Executor& back = co_await detail::Here{};
-    const std::shared_ptr<detail::Chain> chain = co_await detail::Current{};
-
-    co_await to(io());
-
-    std::exception_ptr failed;
-
-    if constexpr (std::is_void_v<Result>) {
-        core::halted(chain->cancelling());
-
-        try {
-            work();
-        } catch (...) {
-            failed = std::current_exception();
-        }
-
-        core::halted(nullptr);
-
-        co_await to(back);
-
-        if (failed) std::rethrow_exception(failed);
-    } else {
-        std::optional<Result> made;
-
-        core::halted(chain->cancelling());
-
-        try {
-            made.emplace(work());
-        } catch (...) {
-            failed = std::current_exception();
-        }
-
-        core::halted(nullptr);
-
-        co_await to(back);
-
-        if (failed) std::rethrow_exception(failed);
-
-        co_return std::move(*made);
-    }
-}
 
 // A path the disk takes: absolute, in the system's form.
 path absolute(const Path& given) {

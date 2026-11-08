@@ -108,6 +108,8 @@ struct Handle {
     void released();
 };
 
+class Bell;
+
 namespace core {
 
 [[nodiscard]] ::tal::Kind kind_of(const std::error_code& why);
@@ -125,6 +127,8 @@ namespace core {
 [[nodiscard]] path native(const Path& given);
 
 void halted(const std::atomic<bool>* flag);
+
+[[nodiscard]] Bell* ringing();
 
 [[nodiscard]] Volume volume_at(const path& where);
 
