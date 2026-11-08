@@ -46,10 +46,4 @@ private:
     std::string stored_;
 };
 
-namespace detail {
-
-[[nodiscard]] std::string folded(std::string_view text);
-
-}
-
 }

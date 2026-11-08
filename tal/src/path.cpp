@@ -1,5 +1,7 @@
 #include "tal/path.hpp"
 
+#include "tal/text.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -15,108 +17,6 @@ constexpr bool windows = true;
 #else
 constexpr bool windows = false;
 #endif
-
-// One code point read from UTF-8 at `at`, which moves past it; none for a byte that does not begin
-// a well-formed sequence, and then `at` moves past the bytes of the broken sequence.
-std::optional<char32_t> decoded(std::string_view text, std::size_t& at) {
-    const auto lead = static_cast<unsigned char>(text[at]);
-
-    if (lead < 0x80) {
-        ++at;
-
-        return lead;
-    }
-
-    std::size_t length = 0;
-    char32_t point = 0;
-    unsigned char low = 0x80;
-    unsigned char high = 0xBF;
-
-    if (lead >= 0xC2 && lead <= 0xDF) {
-        length = 2;
-        point = lead & 0x1FU;
-    } else if (lead >= 0xE0 && lead <= 0xEF) {
-        length = 3;
-        point = lead & 0x0FU;
-        low = lead == 0xE0 ? 0xA0 : 0x80;
-        high = lead == 0xED ? 0x9F : 0xBF;
-    } else if (lead >= 0xF0 && lead <= 0xF4) {
-        length = 4;
-        point = lead & 0x07U;
-        low = lead == 0xF0 ? 0x90 : 0x80;
-        high = lead == 0xF4 ? 0x8F : 0xBF;
-    } else {
-        ++at;
-
-        return std::nullopt;
-    }
-
-    std::size_t next = at + 1;
-
-    for (std::size_t taken = 1; taken < length; ++taken, ++next) {
-        if (next >= text.size()) {
-            at = next;
-
-            return std::nullopt;
-        }
-
-        const auto one = static_cast<unsigned char>(text[next]);
-
-        if (one < low || one > high) {
-            at = next;
-
-            return std::nullopt;
-        }
-
-        low = 0x80;
-        high = 0xBF;
-        point = (point << 6U) | (one & 0x3FU);
-    }
-
-    at = next;
-
-    return point;
-}
-
-// Appends a code point as UTF-8.
-void encoded(std::string& into, char32_t point) {
-    if (point < 0x80) {
-        into += static_cast<char>(point);
-    } else if (point < 0x800) {
-        into += static_cast<char>(0xC0U | (point >> 6U));
-        into += static_cast<char>(0x80U | (point & 0x3FU));
-    } else if (point < 0x10000) {
-        into += static_cast<char>(0xE0U | (point >> 12U));
-        into += static_cast<char>(0x80U | ((point >> 6U) & 0x3FU));
-        into += static_cast<char>(0x80U | (point & 0x3FU));
-    } else {
-        into += static_cast<char>(0xF0U | (point >> 18U));
-        into += static_cast<char>(0x80U | ((point >> 12U) & 0x3FU));
-        into += static_cast<char>(0x80U | ((point >> 6U) & 0x3FU));
-        into += static_cast<char>(0x80U | (point & 0x3FU));
-    }
-}
-
-// The small letter of a capital in the scripts whose case Windows folds in names: Latin with its
-// first extensions, Greek and Cyrillic; any other code point stays.
-char32_t lowered(char32_t point) {
-    if (point >= U'A' && point <= U'Z') return point + 0x20;
-    if (point >= 0xC0 && point <= 0xDE && point != 0xD7) return point + 0x20;
-    if (point == 0x178) return 0xFF;
-
-    const bool even = point % 2 == 0;
-
-    if ((point >= 0x100 && point <= 0x12F) || (point >= 0x132 && point <= 0x137) || (point >= 0x14A && point <= 0x177))
-        return even ? point + 1 : point;
-
-    if ((point >= 0x139 && point <= 0x148) || (point >= 0x179 && point <= 0x17E)) return even ? point : point + 1;
-    if (point >= 0x391 && point <= 0x3A9 && point != 0x3A2) return point + 0x20;
-    if (point == 0x3C2) return 0x3C3;
-    if (point >= 0x410 && point <= 0x42F) return point + 0x20;
-    if (point >= 0x400 && point <= 0x40F) return point + 0x50;
-
-    return point;
-}
 
 // The length of the root at the start of a path in the system's form: "/", "C:/" or
 // "//server/share" on Windows, "/" elsewhere; 0 for a relative path.
@@ -179,29 +79,6 @@ std::string normalized(std::string_view given) {
 
 }
 
-namespace detail {
-
-// The text with letter case folded the way Windows compares names; broken UTF-8 stays as it is.
-std::string folded(std::string_view text) {
-    std::string made;
-
-    made.reserve(text.size());
-
-    for (std::size_t at = 0; at < text.size();) {
-        const std::size_t from = at;
-
-        if (const auto point = decoded(text, at)) {
-            encoded(made, lowered(*point));
-        } else {
-            made.append(text.substr(from, at - from));
-        }
-    }
-
-    return made;
-}
-
-}
-
 // A path from UTF-8 text; on Windows '\' separates names as '/' does.
 Path::Path(std::string_view utf8) : stored_(normalized(utf8)) {}
 
@@ -217,10 +94,10 @@ std::string Path::text() const {
     for (std::size_t at = 0; at < stored_.size();) {
         const std::size_t from = at;
 
-        if (decoded(stored_, at)) {
+        if (text::decoded(stored_, at)) {
             made.append(stored_, from, at - from);
         } else {
-            encoded(made, 0xFFFD);
+            text::encoded(made, 0xFFFD);
         }
     }
 
@@ -299,8 +176,8 @@ bool Path::absolute() const { return root_length(stored_) > 0; }
 bool Path::within(const Path& folder) const {
     if (folder.empty() || empty()) return false;
 
-    const std::string mine = windows ? detail::folded(stored_) : stored_;
-    std::string theirs = windows ? detail::folded(folder.stored_) : folder.stored_;
+    const std::string mine = windows ? text::folded(stored_) : stored_;
+    std::string theirs = windows ? text::folded(folder.stored_) : folder.stored_;
 
     if (mine == theirs) return true;
 
@@ -312,7 +189,7 @@ bool Path::within(const Path& folder) const {
 // Whether both paths name the same place as the system compares names: exactly, or on Windows
 // regardless of letter case.
 bool Path::same(const Path& other) const {
-    if constexpr (windows) return detail::folded(stored_) == detail::folded(other.stored_);
+    if constexpr (windows) return text::folded(stored_) == text::folded(other.stored_);
 
     return stored_ == other.stored_;
 }

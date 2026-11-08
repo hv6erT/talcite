@@ -6,7 +6,7 @@
 #include "proving.hpp"
 
 // Paths of tal::core: their one stored form, joining and taking apart, comparing as the system
-// does, showing names that are not UTF-8, and the folding of letter case that Windows uses.
+// does and showing names that are not UTF-8.
 
 namespace {
 
@@ -95,13 +95,6 @@ TRIAL("Path: names that are not UTF-8 are kept whole and shown with U+FFFD") {
     ought(tal::Path::restored(odd.stored()) == odd);
     same(tal::Path::restored("/\xED\xA0\x80").text(), std::string{"/\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"});
     same(tal::Path{"/zażółć/gęślą"}.text(), std::string{"/zażółć/gęślą"});
-}
-
-TRIAL("Path: letter case is folded in Latin, Greek and Cyrillic as Windows folds it in names") {
-    same(tal::detail::folded("ŁÓDŹ Ąę ÀÉÞ Ÿ"), std::string{"łódź ąę àéþ ÿ"});
-    same(tal::detail::folded("ΣΑς ПРИВЕТ ЁЖ"), std::string{"σασ привет ёж"});
-    same(tal::detail::folded("× ß 1"), std::string{"× ß 1"});
-    same(tal::detail::folded("a\xFF" "B"), std::string{"a\xFF" "b"});
 }
 
 #ifdef _WIN32
