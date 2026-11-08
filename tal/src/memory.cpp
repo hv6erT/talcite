@@ -27,6 +27,7 @@ struct Node {
     std::chrono::system_clock::time_point modified;
     Attributes attributes;
     Path target;
+    std::uint16_t rights = 0644;
 };
 
 // A watch kept by the memory: the folder it watches, resolved, and whether below it too.
@@ -79,6 +80,8 @@ Task<std::invoke_result_t<F&>> later(F work) {
 
 // What the memory holds, shared with the tasks of its operations, which may outlive it.
 struct Memory::State {
+    struct Handle;
+
     mutable std::mutex guard;
     std::shared_ptr<Clock> time;
     std::map<std::string, Node, std::less<>> nodes;
@@ -179,6 +182,7 @@ struct Memory::State {
         made_entry.size = node.type == Type::file ? node.data.size() : 0;
         made_entry.modified = node.modified;
         made_entry.attributes = node.attributes;
+        made_entry.rights = node.rights;
 
         if (node.type == Type::link) {
             made_entry.target = node.target;
@@ -338,6 +342,95 @@ auto locked(const std::shared_ptr<S>& state, F work) {
 
 }
 
+// A file of the memory kept open: it finds its node by the resolved path at every operation, so a
+// file moved or removed meanwhile is missing to it.
+struct Memory::State::Handle : Opened {
+    std::shared_ptr<State> state;
+    Path key;
+    Mode mode = Mode::read;
+
+    // A handle on the resolved path, opened as asked.
+    Handle(std::shared_ptr<State> given, Path where, Mode how) : state(std::move(given)), key(std::move(where)), mode(how) {}
+
+    // The node of the file, which must still be there.
+    static Node& file(State& from, const Path& where) {
+        Node* const node = from.at(where);
+
+        if (node == nullptr || node->type != Type::file) throw missing(where);
+
+        return *node;
+    }
+
+    // At most `most` bytes from `at`.
+    Task<Bytes> read(std::uint64_t at, std::size_t most) override {
+        return locked(state, [where = key, at, most](State& from) {
+            const Bytes& data = file(from, where).data;
+            const std::uint64_t begin = std::min<std::uint64_t>(at, data.size());
+            const std::uint64_t end = std::min<std::uint64_t>(begin + most, data.size());
+
+            return Bytes{data.begin() + static_cast<std::ptrdiff_t>(begin), data.begin() + static_cast<std::ptrdiff_t>(end)};
+        });
+    }
+
+    // Writes at `at`, or at the end when appending; a gap before `at` fills with zeros.
+    Task<void> write(std::uint64_t at, Bytes what) override {
+        return locked(state, [where = key, how = mode, at, what = std::move(what)](State& from) mutable {
+            if (how == Mode::read) throw Trouble{Kind::denied, where.text() + " is open for reading only.", where.text()};
+
+            Node& node = file(from, where);
+            const std::uint64_t place = how == Mode::append ? node.data.size() : at;
+
+            if (node.data.size() < place + what.size()) node.data.resize(place + what.size());
+
+            std::copy(what.begin(), what.end(), node.data.begin() + static_cast<std::ptrdiff_t>(place));
+            node.modified = from.now();
+            from.noted(Change::Kind::modified, where);
+        });
+    }
+
+    // The size of the file now.
+    Task<std::uint64_t> size() override {
+        return locked(state, [where = key](State& from) { return std::uint64_t{file(from, where).data.size()}; });
+    }
+
+    // Nothing to keep: the memory holds what was written at once.
+    Task<void> flush() override {
+        return later([] {});
+    }
+};
+
+// Opens a file: to read one that is there, to write or append to one made if missing, to write
+// one emptied first, or to make a new one only. A read-only file opens only to read.
+Task<File> Memory::open(const Path& file, Mode how) {
+    return locked(state_, [file, how, self = state_](State& state) {
+        const Path actual = state.resolved(file, true);
+        Node* const node = state.at(actual);
+
+        if (actual.root() || (node != nullptr && node->type != Type::file)) throw mistyped(file, "a file");
+
+        if (node == nullptr && how == Mode::read) throw missing(file);
+
+        if (node != nullptr && how == Mode::exclusive) throw existing(file);
+
+        if (node != nullptr && how != Mode::read && node->attributes.readonly)
+            throw Trouble{Kind::denied, file.text() + " is read-only.", file.text()};
+
+        Path where = actual;
+
+        if (node == nullptr) {
+            where = state.placed(actual);
+            state.nodes[std::string{where.stored()}] = Node{Type::file, {}, state.now(), {}, {}};
+            state.noted(Change::Kind::created, where);
+        } else if (how == Mode::truncate) {
+            node->data.clear();
+            node->modified = state.now();
+            state.noted(Change::Kind::modified, where);
+        }
+
+        return File{std::make_shared<State::Handle>(self, where, how)};
+    });
+}
+
 // The entries directly inside a folder, in order of name.
 Task<std::vector<Entry>> Memory::list(const Path& folder) {
     return locked(state_, [folder](State& state) {
@@ -434,7 +527,7 @@ Task<void> Memory::make(const Path& folder) {
             const Path next = state.resolved(current / name, true);
 
             if (!state.there(next)) {
-                state.nodes[std::string{next.stored()}] = Node{Type::folder, {}, state.now(), {}, {}};
+                state.nodes[std::string{next.stored()}] = Node{Type::folder, {}, state.now(), {}, {}, 0755};
                 state.noted(Change::Kind::created, next);
             } else if (!state.folder(next)) {
                 throw existing(next);
@@ -560,6 +653,8 @@ Task<void> Memory::change(const Path& what, Changing how) {
 
         if (how.modified) node->modified = *how.modified;
 
+        if (how.rights) node->rights = *how.rights;
+
         state.noted(Change::Kind::modified, actual);
     });
 }
@@ -572,7 +667,7 @@ Task<void> Memory::link(const Path& where, const Path& onto) {
 
         if (state.there(actual)) throw existing(where);
 
-        state.nodes[std::string{actual.stored()}] = Node{Type::link, {}, state.now(), {}, onto};
+        state.nodes[std::string{actual.stored()}] = Node{Type::link, {}, state.now(), {}, onto, 0777};
         state.noted(Change::Kind::created, actual);
     });
 }

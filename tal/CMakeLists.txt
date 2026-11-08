@@ -1,9 +1,9 @@
 # tal::core of talcite.next: tasks and their owners, executors, the clock, troubles, ports, the
-# log, paths and the files port with its memory adapter. It depends on nothing but the standard
-# library and the system's threads.
+# log, paths, the files port with its memory adapter, streams and the processes port with its
+# scripted adapter. It depends on nothing but the standard library and the system's threads.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/task.cpp)
+add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp)
 target_include_directories(tal-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(tal-core PUBLIC Threads::Threads)
 target_compile_features(tal-core PUBLIC cxx_std_20)

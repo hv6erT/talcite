@@ -840,12 +840,13 @@ TRIAL("fs: a copy of a file that keeps changing refuses and leaves no target") {
 
     // The copy starts only once the file is growing: on a busy machine the writer's thread may
     // start later than a copy of sixteen megabytes ends. It may also stand still for as long as a
-    // whole copy takes, which then rightly ends whole; the trial tries again, a few times.
+    // whole copy takes, which then rightly ends whole; the trial tries again. Five tries were too
+    // few on two busy cores, where all five copies once ended whole; it tries twenty times.
     while (!growing.load()) std::this_thread::yield();
 
     std::string said;
 
-    for (int attempt = 0; attempt < 5 && said.empty(); ++attempt) {
+    for (int attempt = 0; attempt < 20 && said.empty(); ++attempt) {
         try {
             fs::copy(from, to).get();
             fs::erase(to).get();

@@ -134,6 +134,45 @@ Task<std::vector<Change>> Watch::next() const {
     }(held_);
 }
 
+// A file kept open by what the adapter gave; it closes once neither the file nor a task of it
+// holds it any longer.
+File::File(std::shared_ptr<Opened> held) : held_(std::move(held)) {}
+
+namespace {
+
+// The opened file a task works on, or a refusal when the file was closed.
+const std::shared_ptr<Opened>& opened(const std::shared_ptr<Opened>& held) {
+    if (held == nullptr) throw Trouble{Kind::missing, "The file is closed."};
+
+    return held;
+}
+
+}
+
+// Reads at most `most` bytes from `at`; fewer at the end of the file, none past it.
+Task<Bytes> File::read(std::uint64_t at, std::size_t most) const {
+    return [](std::shared_ptr<Opened> held, std::uint64_t from, std::size_t much) -> Task<Bytes> {
+        co_return co_await opened(held)->read(from, much);
+    }(held_, at, most);
+}
+
+// Writes the bytes at `at`, or at the end for a file opened to append.
+Task<void> File::write(std::uint64_t at, Bytes what) const {
+    return [](std::shared_ptr<Opened> held, std::uint64_t from, Bytes given) -> Task<void> {
+        co_await opened(held)->write(from, std::move(given));
+    }(held_, at, std::move(what));
+}
+
+// The size of the file now.
+Task<std::uint64_t> File::size() const {
+    return [](std::shared_ptr<Opened> held) -> Task<std::uint64_t> { co_return co_await opened(held)->size(); }(held_);
+}
+
+// Waits until what was written is kept by the system.
+Task<void> File::flush() const {
+    return [](std::shared_ptr<Opened> held) -> Task<void> { co_await opened(held)->flush(); }(held_);
+}
+
 // Lists a folder through the default adapter.
 Task<std::vector<Entry>> list(const Path& folder) {
     return through([folder](Files& files) { return files.list(folder); });
@@ -157,6 +196,11 @@ Task<Bytes> read(const Path& file, Range part) {
 // Writes a file through the default adapter.
 Task<void> write(const Path& file, Bytes what, Writing how) {
     return through([file, what = std::move(what), how](Files& files) mutable { return files.write(file, std::move(what), how); });
+}
+
+// Opens a file through the default adapter.
+Task<File> open(const Path& file, Mode how) {
+    return through([file, how](Files& files) { return files.open(file, how); });
 }
 
 // Makes a folder with its parents through the default adapter.

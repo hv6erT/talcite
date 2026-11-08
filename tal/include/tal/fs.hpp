@@ -24,6 +24,8 @@ enum class Conflict { fail, replace, skip, rename };
 
 enum class Known { home, desktop, documents, downloads, music, pictures, videos, temp };
 
+enum class Mode { read, write, truncate, exclusive, append };
+
 struct Attributes {
     bool hidden = false;
     bool readonly = false;
@@ -41,6 +43,7 @@ struct Entry {
     std::uint64_t size = 0;
     std::chrono::system_clock::time_point modified;
     Attributes attributes;
+    std::optional<std::uint16_t> rights;
 };
 
 struct Range {
@@ -66,6 +69,7 @@ struct Removing {
 struct Changing {
     std::optional<Attributes> attributes;
     std::optional<std::chrono::system_clock::time_point> modified;
+    std::optional<std::uint16_t> rights;
 };
 
 struct Volume {
@@ -137,6 +141,45 @@ private:
     std::shared_ptr<Watching> held_;
 };
 
+class Opened {
+public:
+    Opened() = default;
+    virtual ~Opened() = default;
+
+    Opened(const Opened&) = delete;
+    Opened& operator=(const Opened&) = delete;
+
+    [[nodiscard]] virtual Task<Bytes> read(std::uint64_t at, std::size_t most) = 0;
+
+    [[nodiscard]] virtual Task<void> write(std::uint64_t at, Bytes what) = 0;
+
+    [[nodiscard]] virtual Task<std::uint64_t> size() = 0;
+
+    [[nodiscard]] virtual Task<void> flush() = 0;
+};
+
+class File {
+public:
+    File() = default;
+
+    explicit File(std::shared_ptr<Opened> held);
+
+    [[nodiscard]] bool held() const { return held_ != nullptr; }
+
+    [[nodiscard]] Task<Bytes> read(std::uint64_t at, std::size_t most) const;
+
+    [[nodiscard]] Task<void> write(std::uint64_t at, Bytes what) const;
+
+    [[nodiscard]] Task<std::uint64_t> size() const;
+
+    [[nodiscard]] Task<void> flush() const;
+
+    void close() { held_.reset(); }
+
+private:
+    std::shared_ptr<Opened> held_;
+};
+
 class Files : public Adapter {
 public:
     static constexpr std::string_view kind = "files";
@@ -150,6 +193,8 @@ public:
     [[nodiscard]] virtual Task<Bytes> read(const Path& file, Range part = {}) = 0;
 
     [[nodiscard]] virtual Task<void> write(const Path& file, Bytes what, Writing how = {}) = 0;
+
+    [[nodiscard]] virtual Task<File> open(const Path& file, Mode how = Mode::read) = 0;
 
     [[nodiscard]] virtual Task<void> make(const Path& folder) = 0;
 
@@ -183,6 +228,8 @@ public:
 [[nodiscard]] Task<Bytes> read(const Path& file, Range part = {});
 
 [[nodiscard]] Task<void> write(const Path& file, Bytes what, Writing how = {});
+
+[[nodiscard]] Task<File> open(const Path& file, Mode how = Mode::read);
 
 [[nodiscard]] Task<void> make(const Path& folder);
 
@@ -221,6 +268,8 @@ public:
     [[nodiscard]] Task<Bytes> read(const Path& file, Range part = {}) override;
 
     [[nodiscard]] Task<void> write(const Path& file, Bytes what, Writing how = {}) override;
+
+    [[nodiscard]] Task<File> open(const Path& file, Mode how = Mode::read) override;
 
     [[nodiscard]] Task<void> make(const Path& folder) override;
 

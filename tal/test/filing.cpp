@@ -156,7 +156,7 @@ TRIAL("Memory: a write over a file fails, skips, renames or replaces as asked; r
     same(desk.got("/a.txt"), std::string{"replaced"});
     ought(desk.run(desk.memory.look(Path{"/a.txt"})).modified == desk.time->calendar());
 
-    desk.run(desk.memory.change(Path{"/a.txt"}, {tal::fs::Attributes{false, true, false, false}, {}}));
+    desk.run(desk.memory.change(Path{"/a.txt"}, {tal::fs::Attributes{false, true, false, false}, {}, {}}));
     ought(desk.refused(desk.memory.write(Path{"/a.txt"}, tal::bytes("x"))) == tal::Kind::denied);
 }
 
@@ -285,7 +285,7 @@ TRIAL("Memory: change() sets attributes and the time; a root refuses") {
     const auto then = desk.time->calendar() - 24h;
 
     desk.put("/a.sh", "echo");
-    desk.run(desk.memory.change(Path{"/a.sh"}, {tal::fs::Attributes{true, false, false, true}, then}));
+    desk.run(desk.memory.change(Path{"/a.sh"}, {tal::fs::Attributes{true, false, false, true}, then, {}}));
 
     const tal::fs::Entry entry = desk.run(desk.memory.look(Path{"/a.sh"}));
 
@@ -455,4 +455,124 @@ TRIAL("fs: the free functions use the program's default adapter, and refuse with
     } catch (const tal::Trouble& why) {
         ought(why.kind() == tal::Kind::missing);
     }
+}
+
+TRIAL("Memory: an open file reads and writes at a place, pads a gap with zeros and appends at the end") {
+    Desk desk;
+
+    desk.put("/a.bin", "abcdef");
+
+    const tal::fs::File file = desk.run(desk.memory.open(Path{"/a.bin"}, tal::fs::Mode::write));
+
+    same(tal::text(desk.run(file.read(2, 3))), std::string{"cde"});
+    same(tal::text(desk.run(file.read(5, 10))), std::string{"f"});
+    same(tal::text(desk.run(file.read(9, 10))), std::string{});
+
+    desk.run(file.write(1, tal::bytes("XY")));
+    desk.run(file.write(8, tal::bytes("Z")));
+
+    same(desk.got("/a.bin"), (std::string{"aXYdef\0\0Z", 9}));
+    same(desk.run(file.size()), std::uint64_t{9});
+
+    desk.run(file.flush());
+
+    const tal::fs::File log = desk.run(desk.memory.open(Path{"/log.txt"}, tal::fs::Mode::append));
+
+    desk.run(log.write(0, tal::bytes("one ")));
+    desk.run(log.write(0, tal::bytes("two")));
+    same(desk.got("/log.txt"), std::string{"one two"});
+}
+
+TRIAL("Memory: open() reads only what is there, truncates, makes only new files exclusively") {
+    Desk desk;
+
+    desk.put("/a.txt", "content");
+
+    ought(desk.refused(desk.memory.open(Path{"/none.txt"})) == tal::Kind::missing);
+    ought(desk.refused(desk.memory.open(Path{"/a.txt"}, tal::fs::Mode::exclusive)) == tal::Kind::exists);
+    ought(desk.refused(desk.memory.open(Path{"/"})) == tal::Kind::other);
+    ought(desk.refused(desk.memory.open(Path{"/none/x"}, tal::fs::Mode::write)) == tal::Kind::missing);
+
+    const tal::fs::File reading = desk.run(desk.memory.open(Path{"/a.txt"}));
+
+    ought(desk.refused(reading.write(0, tal::bytes("x"))) == tal::Kind::denied);
+
+    (void)desk.run(desk.memory.open(Path{"/a.txt"}, tal::fs::Mode::truncate));
+    same(desk.got("/a.txt"), std::string{});
+
+    const tal::fs::File fresh = desk.run(desk.memory.open(Path{"/new.txt"}, tal::fs::Mode::exclusive));
+
+    desk.run(fresh.write(0, tal::bytes("1")));
+    same(desk.got("/new.txt"), std::string{"1"});
+
+    desk.run(desk.memory.change(Path{"/new.txt"}, {tal::fs::Attributes{false, true, false, false}, {}, {}}));
+    ought(desk.refused(desk.memory.open(Path{"/new.txt"}, tal::fs::Mode::append)) == tal::Kind::denied);
+}
+
+TRIAL("Memory: a closed file refuses; an open file outlives the memory; a removed one is missing") {
+    tal::Loop loop;
+    auto memory = std::make_unique<tal::fs::Memory>();
+
+    tal::wait(loop, memory->write(Path{"/a.txt"}, tal::bytes("kept")));
+
+    tal::fs::File file = tal::wait(loop, memory->open(Path{"/a.txt"}));
+    tal::fs::File other = tal::wait(loop, memory->open(Path{"/a.txt"}));
+    tal::Task<tal::Bytes> later = other.read(0, 4);
+
+    other.close();
+    same(tal::text(tal::wait(loop, std::move(later))), std::string{"kept"});
+    ought(!other.held());
+
+    try {
+        (void)tal::wait(loop, other.read(0, 1));
+        ought(false);
+    } catch (const tal::Trouble& why) {
+        ought(why.kind() == tal::Kind::missing);
+    }
+
+    memory.reset();
+    same(tal::text(tal::wait(loop, file.read(0, 4))), std::string{"kept"});
+
+    auto again = std::make_unique<tal::fs::Memory>();
+
+    tal::wait(loop, again->write(Path{"/b.txt"}, tal::bytes("x")));
+
+    const tal::fs::File gone = tal::wait(loop, again->open(Path{"/b.txt"}));
+
+    tal::wait(loop, again->remove(Path{"/b.txt"}));
+
+    try {
+        (void)tal::wait(loop, gone.size());
+        ought(false);
+    } catch (const tal::Trouble& why) {
+        ought(why.kind() == tal::Kind::missing);
+    }
+}
+
+TRIAL("Memory: rights are 644 for files, 755 for folders and change() sets them") {
+    Desk desk;
+
+    desk.put("/script.sh", "echo");
+    desk.run(desk.memory.make(Path{"/bin"}));
+
+    ought(desk.run(desk.memory.look(Path{"/script.sh"})).rights == std::uint16_t{0644});
+    ought(desk.run(desk.memory.look(Path{"/bin"})).rights == std::uint16_t{0755});
+
+    desk.run(desk.memory.change(Path{"/script.sh"}, {{}, {}, std::uint16_t{0700}}));
+
+    ought(desk.run(desk.memory.look(Path{"/script.sh"})).rights == std::uint16_t{0700});
+    ought(!desk.run(desk.memory.look(Path{"/script.sh"})).attributes.hidden);
+}
+
+TRIAL("fs: open() goes through the default adapter too") {
+    tal::Loop loop;
+
+    tal::defaults().set<tal::fs::Files>(std::make_shared<tal::fs::Memory>());
+
+    const tal::fs::File file = tal::wait(loop, tal::fs::open(Path{"/a.txt"}, tal::fs::Mode::exclusive));
+
+    tal::wait(loop, file.write(0, tal::bytes("x")));
+    same(tal::text(tal::wait(loop, tal::fs::read(Path{"/a.txt"}))), std::string{"x"});
+
+    tal::defaults().clear<tal::fs::Files>();
 }
