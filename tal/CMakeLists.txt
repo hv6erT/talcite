@@ -20,6 +20,11 @@ if(WIN32)
   target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32)
 endif()
 
+# tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
+# and the built-in sheet, and the surface of cells a frame is painted on.
+add_library(tal-ui STATIC src/geometry.cpp src/reading.cpp src/style.cpp src/surface.cpp)
+target_link_libraries(tal-ui PUBLIC tal-core)
+
 # tal::testing: the runner of the trials with its watch, which writes the stacks of a hung run's
 # threads (dbghelp on Windows; on Linux the trial binaries export their symbols, so that the
 # stacks name the functions of the trials too).
@@ -37,6 +42,6 @@ if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES})
-  target_link_libraries(tal-test PRIVATE tal-testing)
+  target_link_libraries(tal-test PRIVATE tal-testing tal-ui)
   add_test(NAME tal COMMAND tal-test)
 endif()
