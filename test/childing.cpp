@@ -195,7 +195,7 @@ TRIAL("Child: our sockets do not reach the program") {
     // that really got through stays forever, so waiting does not hide it.
     std::size_t sockets = 0;
 
-    for (int round = 0; round < 200; ++round) {
+    (void)tal::testing::came([&] {
         sockets = 0;
 
         std::error_code ignored;
@@ -204,10 +204,8 @@ TRIAL("Child: our sockets do not reach the program") {
              std::filesystem::directory_iterator{"/proc/" + std::to_string(one.pid()) + "/fd", ignored})
             if (std::filesystem::read_symlink(fd.path(), ignored).string().rfind("socket:", 0) == 0) ++sockets;
 
-        if (sockets == 0) break;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{10});
-    }
+        return sockets == 0;
+    });
 
     one.kill();
     (void)one.wait().get();
@@ -497,13 +495,7 @@ TRIAL("Child: an abandoned child is reaped without being asked") {
     // We ask with signal zero, not with waitpid: waitpid would clean up the zombie itself and the
     // trial would stop checking anything. A zombie still answers this question, a reaped one does
     // not.
-    for (int again = 0; again < 200; ++again) {
-        if (::kill(static_cast<pid_t>(which), 0) != 0 && errno == ESRCH) return;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-    }
-
-    OUGHT(!"a zombie was left after the child");
+    SOON(::kill(static_cast<pid_t>(which), 0) != 0 && errno == ESRCH);
 }
 
 #endif
@@ -729,18 +721,22 @@ TRIAL("Child: a program in the current directory does not start by name") {
 
 namespace {
 
-// The contents of the file a detached program writes when it starts; we wait for it at most a
-// few seconds, and an empty string means it never came.
+// The contents of the file a detached program writes when it starts; we wait for it at most ten
+// seconds, and an empty string means it never came.
 std::string awaited_note(const std::filesystem::path& where) {
-    for (int turn = 0; turn < 250; ++turn) {
+    std::string made;
+
+    (void)tal::testing::came([&] {
         std::ifstream input{where, std::ios::binary};
 
-        if (input) return std::string{std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{}};
+        if (!input) return false;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-    }
+        made.assign(std::istreambuf_iterator<char>{input}, std::istreambuf_iterator<char>{});
 
-    return {};
+        return true;
+    });
+
+    return made;
 }
 
 }

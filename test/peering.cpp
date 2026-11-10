@@ -109,7 +109,8 @@ TRIAL("Peer: another port of a known host is added by itself") {
 
     bool knows = false;
 
-    for (int turn = 0; turn < 30 && !knows; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !knows && std::chrono::steady_clock::now() < latest;) {
         three.send(one.mine(), knocking(), soon).get();
 
         later(std::chrono::milliseconds{50}).get();
@@ -408,7 +409,8 @@ TRIAL("Peer: an oversized message is not lost on refusal") {
 
     bool amiss = false;
 
-    for (int turn = 0; turn < 40 && !amiss; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !amiss && std::chrono::steady_clock::now() < latest;) {
         try {
             (void)right.receive(4, net::Patience{100}).get();
         } catch (const Overdue&) {

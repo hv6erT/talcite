@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <chrono>
 #include <cstddef>
@@ -57,28 +58,6 @@ Launched answered(const std::shared_ptr<faking::Terminal>& line, const std::shar
     return launcher(Seam<Console>{line}, Seam<Clipboard>{board}).provider().open(std::move(address)).get();
 }
 
-// Turns the loop until `done` says so, waiting on its bell between turns, for at most two seconds:
-// an answer reaches the loop from elsewhere and may come a moment after it was given.
-template <typename Done>
-bool awaited(Loop& loop, Done done) {
-    for (int at = 0; at < 200; ++at) {
-        (void)loop.turn();
-
-        if (done()) return true;
-
-        (void)loop.bell().wait(std::chrono::milliseconds{10});
-    }
-
-    return false;
-}
-
-// Turns the loop for a while, so that whatever would come has had its time to come.
-void settled(Loop& loop) {
-    for (int at = 0; at < 5; ++at) {
-        (void)loop.turn();
-        (void)loop.bell().wait(std::chrono::milliseconds{10});
-    }
-}
 
 }
 
@@ -198,7 +177,7 @@ TRIAL("Link: Enter follows it through the launcher, and the answer comes as Foll
     ui::KeyEvent enter{ui::Key{ui::Code::enter}};
 
     OUGHT(top.dispatch(enter));
-    OUGHT(awaited(loop, [&told] { return told.has_value(); }));
+    UNTIL(loop, told.has_value());
 
     SAME(opening->asked, (std::vector<std::string>{"https://example.org/"}));
     SAME(static_cast<int>(told.value_or(Launched::refused)), static_cast<int>(Launched::copied));
@@ -224,7 +203,7 @@ TRIAL("Link: a FollowEvent taken keeps the launcher out") {
 
     one->follow();
 
-    settled(loop);
+    QUIETED(loop);
 
     SAME(taken, std::string{"https://example.org/"});
     OUGHT(opening->asked.empty());
@@ -256,7 +235,7 @@ TRIAL("Link: a click follows it, a click with Ctrl or another button does not") 
 
     (void)top.dispatch(right);
 
-    settled(loop);
+    QUIETED(loop);
 
     OUGHT(opening->asked.empty());
 
@@ -264,7 +243,7 @@ TRIAL("Link: a click follows it, a click with Ctrl or another button does not") 
 
     OUGHT(top.dispatch(plain));
 
-    settled(loop);
+    QUIETED(loop);
 
     SAME(opening->asked.size(), std::size_t{1});
     SAME(top.focused_node(), static_cast<ui::Node*>(one.get()));
@@ -288,7 +267,7 @@ TRIAL("Link: disabled or without an address it follows nowhere") {
     off->follow();
     empty->follow();
 
-    settled(loop);
+    QUIETED(loop);
 
     OUGHT(opening->asked.empty());
 }
@@ -480,14 +459,14 @@ TRIAL("Span: a click on a link follows it, a click elsewhere is not the label's"
 
     (void)top.dispatch(held);
 
-    settled(loop);
+    QUIETED(loop);
 
     OUGHT(opening->asked.empty());
 
     ui::ClickEvent on{{7, 0}, ui::Mouse::left};
 
     OUGHT(top.dispatch(on));
-    OUGHT(awaited(loop, [&opening] { return !opening->asked.empty(); }));
+    UNTIL(loop, !opening->asked.empty());
 
     SAME(opening->asked.front(), std::string{"https://example.org/"});
 }
@@ -523,20 +502,20 @@ TRIAL("Viewer: a mark with an address is a hyperlink, Enter and a click follow i
     // No current mark yet: Enter follows nothing.
     (void)top.dispatch(enter);
 
-    settled(loop);
+    QUIETED(loop);
 
     OUGHT(opening->asked.empty());
 
     OUGHT(one->step(1));
     OUGHT(top.dispatch(enter));
-    OUGHT(awaited(loop, [&opening] { return opening->asked.size() == 1; }));
+    UNTIL(loop, opening->asked.size() == 1);
 
     SAME(opening->asked.front(), std::string{"https://example.org/a"});
 
     ui::ClickEvent click{{5, 1}, ui::Mouse::left};
 
     OUGHT(top.dispatch(click));
-    OUGHT(awaited(loop, [&opening] { return opening->asked.size() == 2; }));
+    UNTIL(loop, opening->asked.size() == 2);
 
     SAME(opening->asked.back(), std::string{"https://example.org/b"});
 }

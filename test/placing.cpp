@@ -1,9 +1,11 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <source_location>
 #include <string>
 #include <thread>
 #include <utility>
@@ -642,19 +644,14 @@ protected:
     }
 };
 
-// Renders and turns the loop until the image is no longer busy; false when it did not settle in
-// 500 tries.
-bool settled(Loop& loop, ui::Root& top, const ui::Image& one) {
-    for (int tries = 0; tries < 500; ++tries) {
+// Renders and turns the loop until the image is no longer busy; the trial fails where it asked
+// when that does not come within ten seconds.
+void settled(Loop& loop, ui::Root& top, const ui::Image& one, std::source_location where = std::source_location::current()) {
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "the image never settled", loop, [&] {
         (void)top.render({{0, 0}, {20, 6}});
-        (void)loop.turn();
 
-        if (!one.busy()) return true;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    }
-
-    return false;
+        return !one.busy();
+    });
 }
 
 // The raster attributes of a sixel, from the quote up to the first color.
@@ -674,7 +671,7 @@ TRIAL("Image: with sixel it orders the field's pixels and marks the cells with i
 
     top.image->hold(square({40, 40}, 200));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
@@ -700,7 +697,7 @@ TRIAL("Image: without sixel the image is in characters and leaves no image mark"
 
     top.image->hold(square({40, 40}, 200));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
@@ -717,7 +714,7 @@ TRIAL("Image: an unknown cell size means characters, with sixel and with kitty")
 
         top.image->hold(square({40, 40}, 200));
 
-        OUGHT(settled(loop, top, *top.image));
+        settled(loop, top, *top.image);
 
         const Snapshot made = top.render({{0, 0}, {20, 6}});
 
@@ -747,7 +744,7 @@ TRIAL("Image: the fallback characters are the whole image, reduced") {
 
     top.image->hold(Pixels{{40, 40}, {Still{halves, std::chrono::milliseconds{0}}}});
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
     const Cell left = made.at({5, 2});
@@ -768,7 +765,7 @@ TRIAL("Image: a late sixel of the previous image is dropped") {
 
     top.image->hold(square({40, 40}, 51));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
@@ -782,16 +779,16 @@ TRIAL("Image: switching to sixel while running recomputes the image, switching b
 
     top.image->hold(square({40, 40}, 200));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     top.graphics(Graphics::sixel);
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
     SAME(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{1});
 
     top.graphics(Graphics::none);
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
     SAME(top.render({{0, 0}, {20, 6}}).pictures().size(), std::size_t{0});
 }
 
@@ -801,13 +798,13 @@ TRIAL("Image: a new image gets a new mark") {
 
     top.image->hold(square({40, 40}, 200));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const std::uint32_t first = top.render({{0, 0}, {20, 6}}).pictures().front().mark;
 
     top.image->hold(square({40, 40}, 90));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     const Snapshot made = top.render({{0, 0}, {20, 6}});
 
@@ -832,7 +829,7 @@ TRIAL("Image: an image from a file with sixel also orders the field's pixels") {
 
     top.image->hold(std::move(figure));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
 
     OUGHT(!asked.empty());
     OUGHT(asked.back() == (ui::Size{100, 100}));
@@ -855,11 +852,7 @@ TRIAL("Image: through the terminal, characters, and once the sixel is ready, the
 
     OUGHT(!holds(line->written, sixel_head));
 
-    for (int tries = 0; tries < 500 && top.image->busy(); ++tries) {
-        (void)term.loop().turn();
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    }
+    UNTIL(term.loop(), !top.image->busy());
 
     line->written.clear();
     term.draw();
@@ -1247,7 +1240,7 @@ TRIAL("Image: switching sixel ↔ kitty while running recomputes the image") {
 
     top.image->hold(square({40, 40}, 200));
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
     OUGHT(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
 
     top.graphics(Graphics::kitty);
@@ -1259,6 +1252,6 @@ TRIAL("Image: switching sixel ↔ kitty while running recomputes the image") {
 
     top.graphics(Graphics::sixel);
 
-    OUGHT(settled(loop, top, *top.image));
+    settled(loop, top, *top.image);
     OUGHT(top.render({{0, 0}, {20, 6}}).pictures().front().sixel != nullptr);
 }

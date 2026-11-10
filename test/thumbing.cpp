@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <cstddef>
 #include <memory>
@@ -450,14 +451,14 @@ TRIAL("Scrollbar: a click on a page's scrollbar follows no link beside it") {
 
     clicked(top, {19, 0});
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     SAME(followed, 0);
 
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {2, 0});
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     SAME(followed, 1);
 }

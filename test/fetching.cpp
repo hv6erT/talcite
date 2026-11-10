@@ -453,7 +453,7 @@ TRIAL("HTTP: a download takes the body into a file, beyond the body limit, by le
     SAME(desk.heard().substr(0, 14), std::string{"GET /plik HTTP"});
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(whole.size()) + "\r\n\r\n" + whole);
 
-    for (int tries = 0; tries < 5000 && !got.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    SOON(got.ready());
 
     SAME(got.progress().fraction(), 1.0);
 
@@ -574,13 +574,13 @@ TRIAL("HTTP: a cancelled download stops and leaves no file") {
     (void)desk.heard();
     desk.wrote("HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\n\r\n" + std::string(1000, 'a'));
 
-    for (int tries = 0; tries < 2000 && got.progress().fraction() == 0.0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    SOON(got.progress().fraction() > 0.0);
 
     OUGHT(got.progress().fraction() > 0.0 && got.progress().fraction() < 1.0);
 
     got.cancel();
 
-    for (int tries = 0; tries < 2000 && leftovers() > 0; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    SOON(leftovers() == 0);
 
     OUGHT(!std::filesystem::exists(place));
     SAME(leftovers(), std::size_t{0});

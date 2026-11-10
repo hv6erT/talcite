@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -56,18 +57,6 @@ Promise<void> stepping(std::shared_ptr<Steps> steps, int many = 40) {
     });
 }
 
-// Waits until `until` holds, at most five seconds; whether it came.
-template <typename F>
-bool came(F until) {
-    for (int again = 0; again < 500; ++again) {
-        if (until()) return true;
-
-        std::this_thread::sleep_for(10ms);
-    }
-
-    return until();
-}
-
 // Whether the steps stand still: after a moment for a step under way, no step for a while.
 bool standing(const Steps& steps) {
     std::this_thread::sleep_for(40ms);
@@ -104,11 +93,7 @@ TRIAL("pause: work on a loop's own thread does not rest, since the loop may be w
     Promise<void> work = looped(asked);
     const Pause pause = work.pause();
 
-    for (int again = 0; again < 500 && asked->load() == 0; ++again) {
-        (void)loop.turn();
-
-        std::this_thread::sleep_for(10ms);
-    }
+    UNTIL(loop, asked->load() != 0);
 
     SAME(asked->load(), 1);
 }
@@ -118,7 +103,7 @@ TRIAL("pause: the body rests while the pause is held, and goes on when it goes")
 
     Promise<void> work = stepping(steps);
 
-    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&steps] { return steps->made.load() >= 2; }));
 
     {
         const Pause pause = work.pause();
@@ -138,7 +123,7 @@ TRIAL("pause: a pause of the end of a chain reaches the body at its start") {
 
     Promise<int> work = stepping(steps).then([] { return 7; });
 
-    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&steps] { return steps->made.load() >= 2; }));
 
     Pause pause = work.pause();
 
@@ -190,7 +175,7 @@ TRIAL("pause: the members of a join rest with it, and so does work a body waits 
 
     Promise<void> joined = all(std::move(both));
 
-    OUGHT(came([&first, &second] { return first->made.load() >= 2 && second->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&first, &second] { return first->made.load() >= 2 && second->made.load() >= 2; }));
 
     {
         const Pause pause = joined.pause();
@@ -214,7 +199,7 @@ TRIAL("pause: the members of a join rest with it, and so does work a body waits 
         std::move(work).get();
     });
 
-    OUGHT(came([&inner, &waiting] { return waiting->load() && inner->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&inner, &waiting] { return waiting->load() && inner->made.load() >= 2; }));
 
     {
         const Pause pause = outer.pause();
@@ -232,7 +217,7 @@ TRIAL("pause: the work rests while any pause is held, a view's pause holds the s
 
     SharedPromise<void> work = stepping(steps).share();
 
-    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&steps] { return steps->made.load() >= 2; }));
 
     Promise<void> view = work.view();
     Pause one = view.pause();
@@ -258,7 +243,7 @@ TRIAL("pause: a shared work rests only when all its views are paused") {
 
     SharedPromise<void> work = stepping(steps, 80).share();
 
-    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&steps] { return steps->made.load() >= 2; }));
 
     Promise<void> first = work.view();
     Promise<void> second = work.view();
@@ -277,7 +262,7 @@ TRIAL("pause: a shared work rests only when all its views are paused") {
 
     one = Pause{};
 
-    OUGHT(came([&steps, &before] { return steps->made.load() > before + 20; }) || steps->over.load());
+    OUGHT(tal::testing::came([&steps, &before] { return steps->made.load() > before + 20; }) || steps->over.load());
 
     two = Pause{};
 
@@ -318,7 +303,7 @@ TRIAL("pause: a stop ends the rest at once, and the body sees it as a stop") {
 
     Promise<void> work = stepping(steps);
 
-    OUGHT(came([&steps] { return steps->made.load() >= 2; }));
+    OUGHT(tal::testing::came([&steps] { return steps->made.load() >= 2; }));
 
     const Pause pause = work.pause();
 
@@ -326,7 +311,7 @@ TRIAL("pause: a stop ends the rest at once, and the body sees it as a stop") {
 
     work.cancel();
 
-    OUGHT(came([&steps] { return steps->over.load(); }));
+    OUGHT(tal::testing::came([&steps] { return steps->over.load(); }));
     OUGHT(steps->stopped.load());
     OUGHT(steps->made.load() < 40);
 }
@@ -348,7 +333,7 @@ TRIAL("pause: the body knows whether it is paused, and an empty promise gives no
 
         go->store(true);
 
-        OUGHT(came([&asked] { return asked->load() != 0; }));
+        OUGHT(tal::testing::came([&asked] { return asked->load() != 0; }));
     }
 
     SAME(asked->load(), 1);

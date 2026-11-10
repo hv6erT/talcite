@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -35,11 +36,9 @@ using namespace std::chrono_literals;
 
 namespace {
 
-// Waits until the flag is up, at most five seconds; returns whether it came up.
+// Waits until the flag is up, at most ten seconds; returns whether it came up.
 bool risen(const std::atomic<bool>& flag) {
-    for (int again = 0; again < 500 && !flag.load(); ++again) std::this_thread::sleep_for(10ms);
-
-    return flag.load();
+    return tal::testing::came([&flag] { return flag.load(); });
 }
 
 // Turns the loop until the flag rises, at most five seconds; returns whether it did.
@@ -55,11 +54,9 @@ bool turned(Loop& loop, const std::atomic<bool>& flag) {
     return flag.load();
 }
 
-// Waits until the counter reaches `want`, at most five seconds; returns whether it did.
+// Waits until the counter reaches `want`, at most ten seconds; returns whether it did.
 bool reached(const std::atomic<int>& counter, int want) {
-    for (int again = 0; again < 500 && counter.load() < want; ++again) std::this_thread::sleep_for(10ms);
-
-    return counter.load() >= want;
+    return tal::testing::came([&counter, want] { return counter.load() >= want; });
 }
 
 // A job that holds its worker until it is let go, at most five seconds.
@@ -527,7 +524,7 @@ TRIAL("finally: after a cancellation it runs on the executor the chain moved to"
 
     (void)settle.value(1);
 
-    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    SOON(executor.waiting() != 0);
 
     OUGHT(!cleaned.load());
 
@@ -546,13 +543,13 @@ TRIAL("finally: after a move to an executor it runs there, as a task of its own"
 
     Promise<int> one = ready(4).on(executor).finally([&cleaned] { cleaned.store(true); });
 
-    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    SOON(executor.waiting() != 0);
 
     SAME(executor.turn(), std::size_t{1});
     OUGHT(!cleaned.load());
     OUGHT(!one.ready());
 
-    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    SOON(executor.waiting() != 0);
 
     SAME(executor.turn(), std::size_t{1});
     OUGHT(cleaned.load());
@@ -867,7 +864,7 @@ TRIAL("on: the rest of the chain runs on the given executor, at its turn") {
 
     Promise<void> one = ready(1).on(executor).then([&ran](int) { ran.store(true); });
 
-    for (int again = 0; again < 500 && executor.waiting() == 0; ++again) std::this_thread::sleep_for(10ms);
+    SOON(executor.waiting() != 0);
 
     OUGHT(!ran.load());
     SAME(executor.turn(), std::size_t{1});
@@ -903,13 +900,7 @@ TRIAL("here: moves the rest to the loop of this thread, and without a loop it re
             ran.store(true);
         });
 
-        for (int again = 0; again < 500 && !ran.load(); ++again) {
-            (void)loop.turn();
-
-            std::this_thread::sleep_for(5ms);
-        }
-
-        OUGHT(ran.load());
+        UNTIL(loop, ran.load());
         OUGHT(home.load());
     }
 
@@ -985,13 +976,7 @@ TRIAL("here: a continuation hung on a promise that has already ended runs on the
 
     Promise<int> ended = run(io(), [] { return 1; }).here();
 
-    for (int again = 0; again < 500 && !ended.ready(); ++again) {
-        (void)loop.turn();
-
-        std::this_thread::sleep_for(10ms);
-    }
-
-    OUGHT(ended.ready());
+    UNTIL(loop, ended.ready());
 
     std::atomic<bool> ran{false};
     std::atomic<bool> home{false};
@@ -1012,13 +997,7 @@ TRIAL("on: a promise that has ended on the loop moves to the pool without the lo
 
     Promise<int> ended = run(io(), [] { return 1; }).here();
 
-    for (int again = 0; again < 500 && !ended.ready(); ++again) {
-        (void)loop.turn();
-
-        std::this_thread::sleep_for(10ms);
-    }
-
-    OUGHT(ended.ready());
+    UNTIL(loop, ended.ready());
 
     std::atomic<bool> ran{false};
 
@@ -1057,11 +1036,7 @@ TRIAL("all: a join dwells at the executor its members share, and nowhere when th
     const auto joined = [&loop](std::vector<Promise<int>> among) {
         Promise<std::vector<int>> made = all(std::move(among));
 
-        for (int again = 0; again < 500 && !made.ready(); ++again) {
-            (void)loop.turn();
-
-            std::this_thread::sleep_for(10ms);
-        }
+        UNTIL(loop, made.ready());
 
         return made;
     };
@@ -1158,7 +1133,7 @@ TRIAL("timeout: one in time gives its value and leaves the clock") {
 
     SAME(std::move(one).get(), 6);
 
-    for (int again = 0; again < 500 && clock.waiting() != 0; ++again) std::this_thread::sleep_for(10ms);
+    SOON(clock.waiting() == 0);
 
     SAME(clock.waiting(), std::size_t{0});
 }
@@ -1365,7 +1340,7 @@ TRIAL("progress: a body reports through its work, and an ended one is whole") {
 
     go.store(true);
 
-    for (int again = 0; again < 500 && !one.ready(); ++again) std::this_thread::sleep_for(10ms);
+    SOON(one.ready());
 
     SAME(one.progress(), (Progress{10, 10}));
     SAME(one.progress().fraction(), 1.0);
@@ -1636,13 +1611,7 @@ TRIAL("Loop: an ending loop cancels a deadline and a continuation it was to deli
 
         Promise<int> ended = run(io(), [] { return 2; }).here();
 
-        for (int again = 0; again < 500 && !ended.ready(); ++again) {
-            (void)loop.turn();
-
-            std::this_thread::sleep_for(10ms);
-        }
-
-        OUGHT(ended.ready());
+        UNTIL(loop, ended.ready());
 
         hung.emplace(std::move(ended).then([&ran](int) { ran.store(true); }));
 
@@ -1983,7 +1952,7 @@ TRIAL("Pool: idle workers above the ceiling leave after their rest") {
 
     OUGHT(mine.staff() >= 2);
 
-    for (int again = 0; again < 300 && mine.staff() > 1; ++again) std::this_thread::sleep_for(10ms);
+    SOON(mine.staff() <= 1);
 
     SAME(mine.staff(), std::size_t{1});
 

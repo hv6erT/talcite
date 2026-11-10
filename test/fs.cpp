@@ -282,9 +282,7 @@ TRIAL("fs: work starts at once, without waiting for the result to be asked for")
 
     Promise<void> making = fs::make_folder(deep);
 
-    for (int tries = 0; tries < 2000 && !fs::exists(deep).get(); ++tries) std::this_thread::sleep_for(1ms);
-
-    OUGHT(fs::exists(deep).get());
+    SOON(fs::exists(deep).get());
 
     std::move(making).get();
 }
@@ -703,7 +701,7 @@ TRIAL("fs: read progress grows and ends at one") {
 
     OUGHT(first >= 0.0 && first <= 1.0);
 
-    for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    SOON(going.ready());
 
     SAME(going.progress().fraction(), 1.0);
 
@@ -741,7 +739,7 @@ TRIAL("fs: folder copy and move progress never goes back and ends at one") {
             std::this_thread::yield();
         }
 
-        for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        SOON(going.ready());
 
         SAME(going.progress().fraction(), 1.0);
 
@@ -841,12 +839,13 @@ TRIAL("fs: a copy of a file that keeps changing refuses and leaves no target") {
     // The copy starts only once the file is growing: on a busy machine the writer's thread may
     // start later than a copy of sixteen megabytes ends. It may also stand still for as long as a
     // whole copy takes, which then rightly ends whole; the trial tries again. Five tries were too
-    // few on two busy cores, where all five copies once ended whole; it tries twenty times.
+    // few on two busy cores, where all five copies once ended whole; it tries for twenty seconds.
     while (!growing.load()) std::this_thread::yield();
 
     std::string said;
 
-    for (int attempt = 0; attempt < 20 && said.empty(); ++attempt) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         said.empty() && std::chrono::steady_clock::now() < latest;) {
         try {
             fs::copy(from, to).get();
             fs::erase(to).get();
@@ -898,17 +897,13 @@ TRIAL("fs: copy carries the whole tree") {
 // pool and the case would pass without checking anything. We look at the target, not at the
 // progress: the progress of a settled promise is one also after a rejection, so it does not tell
 // work in progress from work that never started. Returns whether the target grew past the given
-// size in time.
+// size within ten seconds.
 bool grew(const fs::path& to, std::uintmax_t past) {
-    for (int at = 0; at < 400; ++at) {
+    return tal::testing::came([&] {
         std::error_code ignored;
 
-        if (stood::exists(to, ignored) && stood::file_size(to, ignored) > past) return true;
-
-        std::this_thread::sleep_for(5ms);
-    }
-
-    return false;
+        return stood::exists(to, ignored) && stood::file_size(to, ignored) > past;
+    });
 }
 
 // The cancellation may hit the copy before the first chunk or already after the last; that cannot
@@ -982,14 +977,14 @@ TRIAL("fs: a cancelled copy leaves an existing target alone") {
 
     Promise<void> going = fs::copy(from, to, fs::Conflict::overwrite);
 
-    bool aside = false;
-
-    for (int at = 0; at < 400 && !aside; ++at) {
+    // The copy goes to a file alongside first; a copy so quick that it is already done needs no
+    // waiting either.
+    (void)tal::testing::came([&] {
         for (const fs::Entry& one : fs::list(nook.where()).get())
-            if (fs::to_string(one.where.filename()).find(".part") != std::string::npos) aside = true;
+            if (fs::to_string(one.where.filename()).find(".part") != std::string::npos) return true;
 
-        if (!aside) std::this_thread::sleep_for(5ms);
-    }
+        return going.ready();
+    });
 
     going.cancel();
 
@@ -1259,7 +1254,7 @@ TRIAL("fs: erase progress ends at one") {
 
     OUGHT(first >= 0.0 && first <= 1.0);
 
-    for (int tries = 0; tries < 5000 && !going.ready(); ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    SOON(going.ready());
 
     SAME(going.progress().fraction(), 1.0);
 
@@ -2797,6 +2792,54 @@ bool among(const std::vector<fs::Change>& given, const fs::path& where, fs::Chan
     return false;
 }
 
+// The changes as text, one per line, for a failure to tell what the watch did report.
+std::string told(const std::vector<fs::Change>& given) {
+    static constexpr std::string_view kinds[] = {"created", "removed", "modified", "renamed", "overflow"};
+
+    std::string made;
+
+    for (const fs::Change& one : given) {
+        made += "\n          ";
+        made += kinds[static_cast<std::size_t>(one.kind)];
+        made += " " + fs::to_string(one.where);
+
+        if (!one.was.empty()) made += " from " + fs::to_string(one.was);
+    }
+
+    return made.empty() ? std::string{" nothing"} : made;
+}
+
+// Whether the batches the watch reports satisfy `done` in time (ten seconds, or the patience given:
+// a polling watch pauses ten times as long as a look takes, so on a loaded machine it can take many
+// seconds). Batches before the awaited one, of earlier work, are passed over. Each request waits for
+// the rest of the time and none is given up before the end: a request given up may still take the
+// next batch with it.
+template <typename Done>
+bool reported(fs::Watch& watch, Done done, std::chrono::milliseconds patience = 10000ms) {
+    const auto latest = std::chrono::steady_clock::now() + patience;
+    std::vector<fs::Change> heard;
+
+    while (!done(heard)) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(latest - std::chrono::steady_clock::now());
+
+        if (left <= 0ms) return false;
+
+        const std::vector<fs::Change> more = awaited(watch, left);
+
+        if (more.empty()) return false;
+
+        heard.insert(heard.end(), more.begin(), more.end());
+    }
+
+    return true;
+}
+
+// Whether the watch reports the change of the given kind at the given path in time, as above.
+bool reported(fs::Watch& watch, const fs::path& where, fs::Change::Kind stir,
+              std::chrono::milliseconds patience = 10000ms) {
+    return reported(watch, [&](const std::vector<fs::Change>& heard) { return among(heard, where, stir); }, patience);
+}
+
 }
 
 // A polling look that cannot read a folder (a NAS silent for a moment, rights taken away) does not
@@ -2859,7 +2902,7 @@ TRIAL("Watch: a new file is reported as created") {
         making << "treść";
     }
 
-    OUGHT(among(awaited(watch), one, Changed::created));
+    OUGHT(reported(watch, one, Changed::created));
 }
 
 TRIAL("Watch: a deleted file is reported as removed") {
@@ -2871,7 +2914,7 @@ TRIAL("Watch: a deleted file is reported as removed") {
 
     fs::erase(one).get();
 
-    OUGHT(among(awaited(watch), one, Changed::removed));
+    OUGHT(reported(watch, one, Changed::removed));
 }
 
 // Writing an existing file goes alongside and is renamed onto the target, so the watch sees a file
@@ -2886,10 +2929,10 @@ TRIAL("Watch: a change of content is reported as a modification") {
 
     fs::write(one, bytes("nowe")).get();
 
-    const std::vector<fs::Change> given = awaited(watch);
-
-    OUGHT(among(given, one, Changed::modified) || among(given, one, Changed::created) ||
-          among(given, one, Changed::renamed));
+    OUGHT(reported(watch, [&one](const std::vector<fs::Change>& heard) {
+        return among(heard, one, Changed::modified) || among(heard, one, Changed::created) ||
+               among(heard, one, Changed::renamed);
+    }));
 
     fs::Watch again = fs::watch(nook.where()).get();
 
@@ -2901,7 +2944,7 @@ TRIAL("Watch: a change of content is reported as a modification") {
     // same-length write through an open file only at closing; inotify reports it at once.
     file.close();
 
-    OUGHT(among(awaited(again), one, Changed::modified));
+    OUGHT(reported(again, one, Changed::modified));
 }
 
 // Two writes of the same length within one second, with a look of the watch between them: when
@@ -2928,7 +2971,7 @@ TRIAL("Watch: a write of the same length in the same second is reported") {
         file << "inne";
     }
 
-    OUGHT(among(awaited(watch), one, Changed::modified));
+    OUGHT(reported(watch, one, Changed::modified));
 }
 
 // A file written in a hundred small pieces, as a copy into the watched folder writes it, wakes the
@@ -2941,9 +2984,9 @@ TRIAL("Watch: a file written in many pieces comes in few batches") {
 
     fs::Watch watch = fs::watch(nook.where()).get();
 
-    std::atomic<bool> done{false};
+    const fs::path other = nook.where() / "drugi.bin";
 
-    std::thread writer{[&one, &done] {
+    std::thread writer{[&one, &other] {
         fs::File file = fs::open(one, fs::Mode::write).get();
 
         for (std::uint64_t at = 0; at < 100; ++at) {
@@ -2954,23 +2997,36 @@ TRIAL("Watch: a file written in many pieces comes in few batches") {
 
         file.close();
 
-        done.store(true);
+        std::ofstream making{other, std::ios::binary};
+        making << "y";
     }};
 
+    // The batches are read until the one with the creation, every request waiting for the rest of
+    // the time: a request given up at a moment of silence could take the next batch with it.
+    const auto latest = std::chrono::steady_clock::now() + 20000ms;
+    std::vector<fs::Change> heard;
     int batches = 0;
 
-    while (!done.load())
-        if (!awaited(watch, 100ms).empty()) ++batches;
+    while (!among(heard, other, Changed::created)) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(latest - std::chrono::steady_clock::now());
+
+        if (left <= 0ms) break;
+
+        const std::vector<fs::Change> more = awaited(watch, left);
+
+        if (more.empty()) break;
+
+        ++batches;
+        heard.insert(heard.end(), more.begin(), more.end());
+    }
 
     writer.join();
 
-    while (!awaited(watch, 600ms).empty()) ++batches;
+    if (!among(heard, other, Changed::created)) tal::testing::fell(__FILE__, __LINE__, "the new file was not heard; heard:" + told(heard));
 
-    OUGHT(batches <= 10);
-
-    const fs::path other = nook.made("drugi.bin", "y");
-
-    OUGHT(among(awaited(watch), other, Changed::created));
+    // A hundred writes and the creation after them: at most ten batches of writes and the one with
+    // the creation.
+    OUGHT(batches <= 11);
 }
 
 TRIAL("Watch: a rename carries the previous name") {
@@ -2983,18 +3039,15 @@ TRIAL("Watch: a rename carries the previous name") {
 
     fs::rename(from, to).get();
 
-    const std::vector<fs::Change> given = awaited(watch);
-
-    bool jedno = false;
-
-    for (const fs::Change& one : given)
-        if (one.kind == Changed::renamed && one.where == to && one.was == from) jedno = true;
-
     // Polling has no way to recognize a rename: it only sees that one name is gone and another has
     // appeared. That is an honest limit of this path, and the case allows it.
-    const bool parami = among(given, from, Changed::removed) && among(given, to, Changed::created);
+    OUGHT(reported(watch, [&from, &to](const std::vector<fs::Change>& heard) {
+        const bool jedno = std::any_of(heard.begin(), heard.end(), [&](const fs::Change& one) {
+            return one.kind == Changed::renamed && one.where == to && one.was == from;
+        });
 
-    OUGHT(jedno || parami);
+        return jedno || (among(heard, from, Changed::removed) && among(heard, to, Changed::created));
+    }));
 }
 
 TRIAL("Watch: events from before the request are not lost") {
@@ -3011,7 +3064,7 @@ TRIAL("Watch: events from before the request are not lost") {
 
     later(300ms).get();
 
-    OUGHT(among(awaited(watch), one, Changed::created));
+    OUGHT(reported(watch, one, Changed::created));
 }
 
 TRIAL("Watch: a shallow watch does not see into the depth, a deep one does") {
@@ -3030,7 +3083,7 @@ TRIAL("Watch: a shallow watch does not see into the depth, a deep one does") {
         making << "treść";
     }
 
-    OUGHT(among(awaited(głęboka), one, Changed::created));
+    OUGHT(reported(głęboka, one, Changed::created));
     OUGHT(!among(awaited(płytka, 300ms), one, Changed::created));
 }
 
@@ -3042,7 +3095,7 @@ TRIAL("Watch: a deep watch covers directories created later") {
     const fs::path głąb = nook.where() / "później";
     fs::make_folder(głąb).get();
 
-    (void)awaited(watch);
+    OUGHT(reported(watch, głąb, Changed::created));
 
     const fs::path one = głąb / "świeży.txt";
 
@@ -3051,7 +3104,7 @@ TRIAL("Watch: a deep watch covers directories created later") {
         making << "treść";
     }
 
-    OUGHT(among(awaited(watch), one, Changed::created));
+    OUGHT(reported(watch, one, Changed::created));
 }
 
 TRIAL("Watch: two watches of the same directory both receive") {
@@ -3067,8 +3120,8 @@ TRIAL("Watch: two watches of the same directory both receive") {
         making << "treść";
     }
 
-    OUGHT(among(awaited(first), one, Changed::created));
-    OUGHT(among(awaited(second), one, Changed::created));
+    OUGHT(reported(first, one, Changed::created));
+    OUGHT(reported(second, one, Changed::created));
 }
 
 TRIAL("Watch: a closed watch rejects") {
@@ -3104,7 +3157,7 @@ TRIAL("Watch: a cancelled request does not take the batch from the next one") {
         making << "treść";
     }
 
-    OUGHT(among(awaited(watch), one, Changed::created));
+    OUGHT(reported(watch, one, Changed::created));
 }
 
 TRIAL("Watch: a hundred watches are still one thread") {
@@ -3126,7 +3179,7 @@ TRIAL("Watch: a hundred watches are still one thread") {
         making << "treść";
     }
 
-    OUGHT(::among(awaited(among[42]), one, Changed::created));
+    OUGHT(reported(among[42], one, Changed::created));
 }
 
 TRIAL("Flow: a tight loop of reads never hears busy") {
@@ -3172,9 +3225,9 @@ TRIAL("Watch: watching a single file, not a directory") {
 
     fs::write(one, bytes("zupełnie inna treść")).get();
 
-    const std::vector<fs::Change> given = awaited(watch);
-
-    OUGHT(among(given, one, Changed::modified) || among(given, one, Changed::created));
+    OUGHT(reported(watch, [&one](const std::vector<fs::Change>& heard) {
+        return among(heard, one, Changed::modified) || among(heard, one, Changed::created);
+    }));
 }
 
 TRIAL("Watch: the disappearance of a watched file is reported") {
@@ -3186,7 +3239,7 @@ TRIAL("Watch: the disappearance of a watched file is reported") {
 
     fs::erase(one).get();
 
-    OUGHT(among(awaited(watch), one, Changed::removed));
+    OUGHT(reported(watch, one, Changed::removed));
 }
 
 TRIAL("Watch: a watch survives many batches in a row") {
@@ -3202,10 +3255,7 @@ TRIAL("Watch: a watch survives many batches in a row") {
             making << at;
         }
 
-        bool widziany = false;
-
-        for (int próba = 0; próba < 4 && !widziany; ++próba)
-            widziany = among(awaited(watch), one, Changed::created);
+        const bool widziany = reported(watch, one, Changed::created, 24000ms);
 
         OUGHT(widziany);
     }
@@ -3229,13 +3279,12 @@ TRIAL("Watch: a file watch survives saving by replacement") {
 
     fs::rename(obok, one, fs::Conflict::overwrite).get();
 
-    bool widziany = false;
-
-    for (int próba = 0; próba < 4 && !widziany; ++próba) {
-        const std::vector<fs::Change> given = awaited(watch);
-
-        widziany = among(given, one, Changed::modified) || among(given, one, Changed::created);
-    }
+    const bool widziany = reported(
+        watch,
+        [&one](const std::vector<fs::Change>& heard) {
+            return among(heard, one, Changed::modified) || among(heard, one, Changed::created);
+        },
+        24000ms);
 
     OUGHT(widziany);
     SAME(said_of(fs::read(one).get()), std::string{"zupełnie inna treść"});
@@ -3244,13 +3293,12 @@ TRIAL("Watch: a file watch survives saving by replacement") {
     // old inode, it would see only its death and fall silent.
     fs::write(one, bytes("jeszcze inna"), fs::Conflict::overwrite).get();
 
-    bool dalej = false;
-
-    for (int próba = 0; próba < 4 && !dalej; ++próba) {
-        const std::vector<fs::Change> given = awaited(watch);
-
-        dalej = among(given, one, Changed::modified) || among(given, one, Changed::created);
-    }
+    const bool dalej = reported(
+        watch,
+        [&one](const std::vector<fs::Change>& heard) {
+            return among(heard, one, Changed::modified) || among(heard, one, Changed::created);
+        },
+        24000ms);
 
     OUGHT(dalej);
 }
@@ -3264,20 +3312,23 @@ TRIAL("Watch: a file watch is silent about its neighbors") {
     fs::Watch watch = fs::watch(one).get();
 
     fs::write(sąsiad, bytes("zupełnie inna treść"), fs::Conflict::overwrite).get();
-
-    OUGHT(awaited(watch, 700ms).empty());
-
     fs::write(one, bytes("moja nowa treść"), fs::Conflict::overwrite).get();
 
-    bool widziany = false;
+    // The batches are read until the watched file's own change, and nothing about the neighbor,
+    // written first, may come before it or with it. No request is given up on the way: one given
+    // up at a moment of silence could take the next batch with it.
+    std::vector<fs::Change> given;
 
-    for (int próba = 0; próba < 4 && !widziany; ++próba) {
-        const std::vector<fs::Change> given = awaited(watch);
+    const bool widziany = reported(
+        watch,
+        [&](const std::vector<fs::Change>& heard) {
+            given = heard;
 
-        widziany = among(given, one, Changed::modified) || among(given, one, Changed::created);
+            return among(heard, one, Changed::modified) || among(heard, one, Changed::created);
+        },
+        24000ms);
 
-        for (const fs::Change& jeden : given) OUGHT(jeden.where == one);
-    }
+    for (const fs::Change& jeden : given) OUGHT(jeden.where == one);
 
     OUGHT(widziany);
 }
@@ -3407,6 +3458,32 @@ TRIAL("fs: a large file is copied faithfully in chunks") {
 
 namespace {
 
+// Batches until those heard so far satisfy `done`, at most ten seconds (earlier work may still come
+// in batches of its own on a loaded machine), then until silence, so that a change reported twice
+// is among them too. Each request waits for the rest of the time, as in `reported`.
+template <typename Done>
+std::vector<fs::Change> gathered(fs::Watch& watch, Done done) {
+    const auto latest = std::chrono::steady_clock::now() + 10000ms;
+    std::vector<fs::Change> made;
+
+    while (!done(made)) {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(latest - std::chrono::steady_clock::now());
+
+        if (left <= 0ms) break;
+
+        const std::vector<fs::Change> more = awaited(watch, left);
+
+        if (more.empty()) break;
+
+        made.insert(made.end(), more.begin(), more.end());
+    }
+
+    for (std::vector<fs::Change> more = awaited(watch, 700ms); !more.empty(); more = awaited(watch, 700ms))
+        made.insert(made.end(), more.begin(), more.end());
+
+    return made;
+}
+
 // All batches until silence: the first with generous patience, then briefly.
 std::vector<fs::Change> gathered(fs::Watch& watch) {
     std::vector<fs::Change> made = awaited(watch);
@@ -3442,14 +3519,20 @@ TRIAL("Watch: a renamed subdirectory is heard under its new name, once") {
 
     fs::rename(stary, nowy).get();
 
-    (void)gathered(watch);
+    // The rename itself is waited for, not silence after it: a request given up at the end of a
+    // silence could take the next batch with it.
+    OUGHT(reported(watch, [&nowy](const std::vector<fs::Change>& heard) {
+        return among(heard, nowy, Changed::renamed) || among(heard, nowy, Changed::created);
+    }));
 
     {
         std::ofstream making{nowy / "w środku" / "świeży.txt", std::ios::binary};
         making << "treść";
     }
 
-    const std::vector<fs::Change> given = gathered(watch);
+    const std::vector<fs::Change> given = gathered(watch, [&nowy](const std::vector<fs::Change>& heard) {
+        return among(heard, nowy / "w środku" / "świeży.txt", Changed::created);
+    });
 
     std::size_t seen = 0;
 
@@ -3459,7 +3542,7 @@ TRIAL("Watch: a renamed subdirectory is heard under its new name, once") {
         if (one.where == nowy / "w środku" / "świeży.txt" && one.kind == Changed::created) ++seen;
     }
 
-    SAME(seen, std::size_t{1});
+    if (seen != 1) tal::testing::fell(__FILE__, __LINE__, "heard instead of one creation:" + told(given));
 }
 
 // A deleted subdirectory is one removal, not three entries: from the parent, from the directory
@@ -3475,7 +3558,8 @@ TRIAL("Watch: a deleted subdirectory is reported once") {
 
     fs::erase(głąb).get();
 
-    const std::vector<fs::Change> given = gathered(watch);
+    const std::vector<fs::Change> given =
+        gathered(watch, [&głąb](const std::vector<fs::Change>& heard) { return among(heard, głąb, Changed::removed); });
 
     std::size_t about = 0;
 
@@ -3527,9 +3611,7 @@ TRIAL("Watch: a deleted empty root is reported as removed") {
 
     fs::erase(root).get();
 
-    bool heard = false;
-
-    for (int again = 0; again < 4 && !heard; ++again) heard = among(awaited(watch), root, Changed::removed);
+    const bool heard = reported(watch, root, Changed::removed, 24000ms);
 
     OUGHT(heard);
 }
@@ -3575,11 +3657,7 @@ void recovered(const fs::path& where) {
 
     if (probe < 0) return;
 
-    for (int tries = 0; tries < 250; ++tries) {
-        if (inotify_add_watch(probe, where.c_str(), IN_MODIFY) >= 0) break;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{20});
-    }
+    (void)tal::testing::came([&] { return inotify_add_watch(probe, where.c_str(), IN_MODIFY) >= 0; });
 
     ::close(probe);
 }
@@ -3630,9 +3708,7 @@ TRIAL("Watch: without inotify descriptors a watch polls") {
             making << "treść";
         }
 
-        bool made = false;
-
-        for (int again = 0; again < 4 && !made; ++again) made = among(awaited(watch), one, Changed::created);
+        const bool made = reported(watch, one, Changed::created, 24000ms);
 
         return made;
     };
@@ -3679,10 +3755,7 @@ TRIAL("Watch: without inotify descriptors a watch polls") {
     // Switching to polling reports an overflow only after the first look; a file written earlier
     // could already be part of that look and not be reported as new, which is what the overflow is
     // for.
-    bool switched = false;
-
-    for (int again = 0; again < 4 && !switched; ++again)
-        switched = among(awaited(later), third.where(), Changed::overflow);
+    const bool switched = reported(later, third.where(), Changed::overflow, 24000ms);
 
     OUGHT(switched);
 
@@ -3736,7 +3809,9 @@ TRIAL("Watch: a root created again is still heard") {
 
     fs::erase(root).get();
 
-    const std::vector<fs::Change> given = gathered(watch);
+    const std::vector<fs::Change> given = gathered(watch, [&root](const std::vector<fs::Change>& heard) {
+        return among(heard, root, Changed::removed) && among(heard, root, Changed::overflow);
+    });
 
     // The disappearance of the root, and the admission that from now on the watch goes another way.
     OUGHT(among(given, root, Changed::removed));
@@ -3751,9 +3826,7 @@ TRIAL("Watch: a root created again is still heard") {
         making << "treść";
     }
 
-    bool heard = false;
-
-    for (int again = 0; again < 4 && !heard; ++again) heard = among(awaited(watch), one, Changed::created);
+    const bool heard = reported(watch, one, Changed::created, 24000ms);
 
     OUGHT(heard);
 }

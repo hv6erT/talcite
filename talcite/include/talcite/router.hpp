@@ -37,6 +37,7 @@ struct Routing {
     Seam<Codec<xml::Document>> xml;
     std::string label = "talcite";
     Patience patience{10000};
+    Patience turn{1750};
 };
 
 class Router {

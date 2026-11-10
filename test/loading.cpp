@@ -255,8 +255,5 @@ TRIAL("Load: afterwards the exchange holds no sockets") {
         }
     }
 
-    for (int tried = 0; tried < 400 && net::Exchange::running().waiting() > 0; ++tried)
-        later(std::chrono::milliseconds{5}).get();
-
-    SAME(static_cast<int>(net::Exchange::running().waiting()), 0);
+    SOON(net::Exchange::running().waiting() == 0);
 }

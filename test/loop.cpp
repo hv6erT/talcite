@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -107,14 +108,10 @@ TRIAL("Promise: here moves the rest of the chain to the loop's thread") {
                                  return given;
                              });
 
-    for (int at = 0; at < 200 && !done.load(); ++at) {
-        (void)loop.turn();
-        std::this_thread::sleep_for(std::chrono::milliseconds{5});
-    }
+    UNTIL(loop, done.load());
 
     OUGHT(off.load());
     OUGHT(home.load());
-    OUGHT(done.load());
 }
 
 // `on(loop)` names the loop directly, so a chain built on one thread can finish on another
@@ -184,12 +181,7 @@ TRIAL("then: on a settled promise with here, waits for the turn instead of runni
 
     OUGHT(!ran.load());
 
-    for (int at = 0; at < 100 && !ran.load(); ++at) {
-        (void)loop.turn();
-        std::this_thread::sleep_for(std::chrono::milliseconds{5});
-    }
-
-    OUGHT(ran.load());
+    UNTIL(loop, ran.load());
 }
 
 // Pool work that finishes after the loop is gone does not reach it. In trials the loop dies with the

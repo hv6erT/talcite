@@ -17,6 +17,8 @@
 
 #include "tal/testing.hpp"
 
+#include "quieting.hpp"
+
 // Streams and processes of tal::core: pipes in memory, running a program to its end, its streams,
 // stopping and killing it, its terminal size, programs on their own and opened ones, through the
 // scripted adapter whose programs the trials write. The system's adapter of platform/ will run
@@ -132,15 +134,14 @@ TRIAL("Stream: a closed reader breaks the writer; wrong ends, nothing held and t
         if ((co_await from.read(1)).empty()) ++into;
     }(reading, ended));
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     OUGHT(refused(loop, reading.read(1)) == tal::Kind::busy);
 
     reading.close();
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, ended.load() == 1);
 
-    SAME(ended.load(), 1);
     OUGHT(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
 }
 
@@ -223,9 +224,8 @@ TRIAL("Process: kill() and stop() end a waiting program, destroy its frames and 
     const tal::Process killed = tal::wait(loop, scripted.start(command("wait")));
     const tal::Process stopped = tal::wait(loop, scripted.start(command("wait")));
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, alive.load() == 2);
 
-    SAME(alive.load(), 2);
     OUGHT(killed.id() != stopped.id());
     OUGHT(killed.id() > 0);
 
@@ -239,9 +239,7 @@ TRIAL("Process: kill() and stop() end a waiting program, destroy its frames and 
     OUGHT(tal::wait(loop, killed.ended()) == first);
     SAME(tal::wait(loop, tal::drained(killed.output())).size(), std::size_t{0});
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
-
-    SAME(alive.load(), 0);
+    UNTIL(loop, alive.load() == 0);
 }
 
 TRIAL("Process: a program in a terminal sees its size change; letting the process go does not end it") {
@@ -299,7 +297,8 @@ TRIAL("Process: a detached program runs on its own and an opened one needs no sc
 
     OUGHT(tal::wait(loop, daemon.ended()).ended == Exit::Ended::lost);
 
-    for (int at = 0; at < 10 && done.load() == 0; ++at) (void)loop.turn();
+    UNTIL(loop, done.load() != 0);
+
 
     SAME(done.load(), 1);
 
@@ -323,14 +322,11 @@ TRIAL("Process: the scripted adapter going away ends every program it still runs
         scripted.add("wait", [&alive](tal::Running& with) { return waiting(with, alive); });
         child = tal::wait(loop, scripted.start(command("wait")));
 
-        for (int at = 0; at < 5; ++at) (void)loop.turn();
-
-        SAME(alive.load(), 1);
+        UNTIL(loop, alive.load() == 1);
     }
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, alive.load() == 0);
 
-    SAME(alive.load(), 0);
     OUGHT(tal::wait(loop, child.ended()) == (Exit{Exit::Ended::killed, 0, 9}));
     SAME(tal::wait(loop, tal::drained(child.output())).size(), std::size_t{0});
 }
@@ -510,7 +506,7 @@ TRIAL("System: cancelling a task that waits for a silent program's output ends t
             (void)co_await from.read(10);
         }(silent.output(), alive));
 
-        for (int at = 0; at < 5; ++at) (void)loop.turn();
+        QUIETED(loop);
 
         // Time for the read to reach the io pool and block in the system there.
         std::this_thread::sleep_for(300ms);

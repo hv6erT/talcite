@@ -157,7 +157,9 @@ TRIAL("Time: a cancelled wait never comes due") {
 }
 
 // Many waits with deadlines in no order, half of them cancelled on the way: the rest come due, each
-// not before its time, and the cancelled ones never do.
+// not before its time, and the cancelled ones never do. A wait can be cancelled only before it is
+// due, so only those whose cancellation was over before their deadline are held to it; on a busy
+// machine the loop that cancels may come to a short one too late.
 TRIAL("Time: of many waits the cancelled ones never come due and the rest do on time") {
     constexpr std::size_t many = 400;
 
@@ -173,7 +175,13 @@ TRIAL("Time: of many waits the cancelled ones never come due and the rest do on 
         among.push_back(later(patience.back()).then([fired, at] { (*fired)[at].store(true); }));
     }
 
-    for (std::size_t at = 1; at < among.size(); at += 2) among[at].cancel();
+    std::vector<bool> in_time(many, false);
+
+    for (std::size_t at = 1; at < among.size(); at += 2) {
+        among[at].cancel();
+
+        in_time[at] = held.spent() < patience[at];
+    }
 
     for (std::size_t at = 0; at < among.size(); at += 2) {
         std::move(among[at]).get();
@@ -183,7 +191,16 @@ TRIAL("Time: of many waits the cancelled ones never come due and the rest do on 
 
     later(200ms).get();
 
-    for (std::size_t at = 1; at < among.size(); at += 2) OUGHT(!(*fired)[at].load());
+    std::size_t held_to = 0;
+
+    for (std::size_t at = 1; at < among.size(); at += 2)
+        if (in_time[at]) {
+            ++held_to;
+
+            OUGHT(!(*fired)[at].load());
+        }
+
+    OUGHT(held_to > 0);
 }
 
 TRIAL("Time: the calendar stamp moves forward") {

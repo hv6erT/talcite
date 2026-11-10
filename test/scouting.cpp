@@ -530,7 +530,8 @@ TRIAL("Scout: a cancelled question does not freeze the scout for good") {
 
     bool again = false;
 
-    for (int turn = 0; turn < 40 && !again; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !again && std::chrono::steady_clock::now() < latest;) {
         try {
             (void)scout.seen().get();
         } catch (const Overdue&) {

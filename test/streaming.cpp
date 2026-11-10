@@ -294,10 +294,7 @@ TRIAL("Exchange: when all is done nobody waits") {
         (void)both.server.read(8, soon).get();
     }
 
-    for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > 1; ++tried)
-        later(std::chrono::milliseconds{5}).get();
-
-    OUGHT(net::Exchange::running().waiting() <= 1);
+    SOON(net::Exchange::running().waiting() <= 1);
 }
 
 // The exchange holds one request per socket per direction, so a second accept must be refused
@@ -423,10 +420,9 @@ Bytes patiently(const net::Stream& one, std::size_t most) {
     return Bytes{};
 }
 
-// Waits, for up to about a second, until the exchange has at most `below` requests waiting.
+// Waits, for up to ten seconds, until the exchange has at most `below` requests waiting.
 void settling(std::size_t below) {
-    for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > below; ++tried)
-        later(std::chrono::milliseconds{5}).get();
+    (void)tal::testing::came([below] { return net::Exchange::running().waiting() <= below; });
 }
 
 }
@@ -454,10 +450,7 @@ TRIAL("Exchange: cancelling removes the request") {
 
     auto one = both.server.read(64, net::Patience{0});
 
-    for (int tried = 0; tried < 200 && net::Exchange::running().waiting() <= before; ++tried)
-        later(std::chrono::milliseconds{5}).get();
-
-    OUGHT(net::Exchange::running().waiting() > before);
+    SOON(net::Exchange::running().waiting() > before);
 
     one.cancel();
 
@@ -570,7 +563,8 @@ TRIAL("Stream: a write after disconnection is refused instead of killing the pro
 
     bool told = false;
 
-    for (int turn = 0; turn < 3 && !told; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !told && std::chrono::steady_clock::now() < latest;) {
         try {
             two.write(much, soon).get();
         } catch (const std::exception&) {

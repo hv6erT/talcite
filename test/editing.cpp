@@ -1,10 +1,12 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <chrono>
 #include <exception>
 #include <memory>
 #include <optional>
 #include <random>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -2364,11 +2366,12 @@ Drain into(std::string& what, int& much, int* ended = nullptr) {
     };
 }
 
-// Turns the loop until the write's promise settles; returns whether it was fulfilled. The
+// Turns the loop until the write's promise settles, at most ten seconds (then the trial fails
+// where it asked); returns whether it was fulfilled. The
 // continuation goes onto the loop (`on`): the write finishes on a pool thread, and the variable is
 // read by this thread. Otherwise a rejected write would store the result from the pool thread, a
 // data race that the thread sanitizer reports.
-bool saved(Loop& loop, Promise<void> made) {
+bool saved(Loop& loop, Promise<void> made, std::source_location where = std::source_location::current()) {
     std::optional<bool> went;
 
     Promise<void> watched = std::move(made)
@@ -2376,12 +2379,9 @@ bool saved(Loop& loop, Promise<void> made) {
                                 .then([&went] { went = true; })
                                 .recover([&went](const std::exception&) { went = false; });
 
-    for (int tries = 0; tries < 4000 && !went.has_value(); ++tries) {
-        (void)loop.bell().wait(std::chrono::milliseconds{5});
-        (void)loop.turn();
-    }
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "the write never settled", loop, [&went] { return went.has_value(); });
 
-    return went.value_or(false);
+    return *went;
 }
 
 }

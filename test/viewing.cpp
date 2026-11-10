@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -6,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <source_location>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -68,20 +70,15 @@ Feed fed(const Bytes& raw) {
     };
 }
 
-// Turns the loop and paints until the condition becomes true, as `Term` does between frames;
-// false if it does not within 4000 turns.
+// Turns the loop and paints until the condition becomes true, as `Term` does between frames; the
+// trial fails where it asked when that does not come within ten seconds.
 template <typename Fn>
-bool turned(Loop& loop, Sheet& sheet, ui::Size size, Fn until) {
-    for (int tries = 0; tries < 4000; ++tries) {
+void turned(Loop& loop, Sheet& sheet, ui::Size size, Fn until, std::source_location where = std::source_location::current()) {
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "the condition never came", loop, [&] {
         (void)sheet.render({{0, 0}, size});
 
-        if (until()) return true;
-
-        (void)loop.bell().wait(std::chrono::milliseconds{5});
-        (void)loop.turn();
-    }
-
-    return false;
+        return until();
+    });
 }
 
 // A text of `much` numbered lines.
@@ -563,7 +560,7 @@ TRIAL("Viewer: movement within a window does not go back to the source") {
 
     one->scrollbar(false);
 
-    OUGHT(turned(loop, sheet, {10, 6}, [&one] { return one->shown() > 0; }));
+    turned(loop, sheet, {10, 6}, [&one] { return one->shown() > 0; });
 
     const int was = calls;
 
@@ -603,12 +600,12 @@ TRIAL("Viewer: a frame of a very long line reads only what it shows") {
 
     one->scrollbar(false);
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); });
     SAME(calls, 1);
 
     for (int step = 0; step < 100; ++step) one->slide(10);
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); }));
+    turned(loop, sheet, {40, 10}, [&sheet] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == std::string(40, 'x'); });
     SAME(*one->at(), std::size_t{100 * 10 * 40});
     OUGHT(calls <= 2);
 }
@@ -840,7 +837,7 @@ TRIAL("Viewer: a byte scrollbar measures its window by what is visible") {
     one->scrollbar(true);
     sheet.children().add(one);
 
-    OUGHT(turned(loop, sheet, {20, 10}, [&] { return said(sheet.render({{0, 0}, {20, 10}}), 9).starts_with("j"); }));
+    turned(loop, sheet, {20, 10}, [&] { return said(sheet.render({{0, 0}, {20, 10}}), 9).starts_with("j"); });
     OUGHT(!one->lines().has_value());
 
     const Snapshot made = sheet.render({{0, 0}, {20, 10}});
@@ -880,13 +877,11 @@ TRIAL("Viewer: a new document does not inherit the old one's intentions") {
 
     one->hold(fed(other), other.size());
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; });
 
-    for (int turns = 0; turns < 50; ++turns) {
-        (void)loop.bell().wait(std::chrono::milliseconds{2});
-        (void)loop.turn();
-        (void)sheet.render({{0, 0}, {40, 10}});
-    }
+    // Whatever the old document still asks for comes through the loop, and a frame may ask again,
+    // so the loop is quiet once a frame leaves nothing for it.
+    UNTIL(loop, ((void)sheet.render({{0, 0}, {40, 10}}), loop.turn() == 0));
 
     SAME(*one->first(), std::size_t{0});
 }
@@ -1292,7 +1287,7 @@ TRIAL("Viewer: an asynchronous source paints emptiness, and rows after a turn of
     SAME(said(first, 0), std::string{});
     OUGHT(!one->lines().has_value());
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; }));
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 0"; });
 
     const Snapshot made = sheet.render({{0, 0}, {40, 10}});
 
@@ -1335,11 +1330,11 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
 
     // Past the head: scrolling row by row stops at the end of the head until the window arrives from
     // the loop, and every question to the source starts past the head.
-    OUGHT(turned(loop, sheet, {40, 2}, [&] {
+    turned(loop, sheet, {40, 2}, [&] {
         one->slide(1);
 
         return said(sheet.render({{0, 0}, {40, 2}}), 0) == "wiersz 8";
-    }));
+    });
     OUGHT(!asked->empty());
 
     for (const std::size_t at : *asked) OUGHT(at >= 40);
@@ -1359,7 +1354,7 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
     (void)second.render({{0, 0}, {40, 4}});
     other->end();
 
-    OUGHT(turned(loop, second, {40, 4}, [&] { return other->lines().has_value(); }));
+    turned(loop, second, {40, 4}, [&] { return other->lines().has_value(); });
     SAME(*other->lines(), std::size_t{2});
 }
 
@@ -1383,8 +1378,8 @@ TRIAL("Viewer: End on an asynchronous source finishes once the row count arrives
     OUGHT(!one->lines().has_value());
     SAME(*one->first(), std::size_t{0});
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return one->lines().has_value() && *one->first() == 29990; }));
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == "wiersz 29999"; }));
+    turned(loop, sheet, {40, 10}, [&] { return one->lines().has_value() && *one->first() == 29990; });
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 9) == "wiersz 29999"; });
 }
 
 // A jump by byte far beyond the window is also an intention: the spool reaches the byte once it has
@@ -1406,8 +1401,8 @@ TRIAL("Viewer: a jump by byte on an asynchronous source finishes from the handle
 
     one->at(byte);
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return *one->first() == 20000; }));
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 20000"; }));
+    turned(loop, sheet, {40, 10}, [&] { return *one->first() == 20000; });
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0) == "wiersz 20000"; });
     SAME(*one->at(), byte);
 }
 
@@ -1424,7 +1419,7 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     one->hold(fed(raw), raw.size());
     sheet.children().add(one);
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 0", 0) == 0; }));
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 0", 0) == 0; });
     OUGHT(!one->lines().has_value());
 
     ui::MouseEvent grab{{39, 0}, ui::Press::down, ui::Mouse::left};
@@ -1435,7 +1430,7 @@ TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     (void)sheet.dispatch(pull);
     (void)sheet.dispatch(drop);
 
-    OUGHT(turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 9", 0) == 0; }));
+    turned(loop, sheet, {40, 10}, [&] { return said(sheet.render({{0, 0}, {40, 10}}), 0).rfind("wiersz 9", 0) == 0; });
 }
 
 // --- Long lines ----------------------------------------------------------------------------------

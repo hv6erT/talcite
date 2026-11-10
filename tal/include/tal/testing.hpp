@@ -9,6 +9,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 
 #include "tal/executor.hpp"
 #include "tal/path.hpp"
@@ -98,6 +100,27 @@ void waited(std::string_view file, int line, std::string_view shown, Loop& loop,
     }
 }
 
+template <typename Condition>
+[[nodiscard]] bool came(Condition done, std::chrono::milliseconds patience = std::chrono::seconds{10}) {
+    const auto latest = std::chrono::steady_clock::now() + patience;
+
+    while (!done()) {
+        const auto now = std::chrono::steady_clock::now();
+
+        if (now >= latest) return false;
+
+        std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(latest - now, std::chrono::milliseconds{10}));
+    }
+
+    return true;
+}
+
+template <typename Condition>
+void waited(std::string_view file, int line, std::string_view shown, Condition done,
+            std::chrono::milliseconds patience = std::chrono::seconds{10}) {
+    if (!came(std::move(done), patience)) fell(file, line, std::string{shown});
+}
+
 }
 
 #define TAL_TRIAL_JOINED(one, two) TAL_TRIAL_GLUED(one, two)
@@ -130,4 +153,8 @@ void waited(std::string_view file, int line, std::string_view shown, Loop& loop,
 
 #define UNTIL(loop, ...)                                                                                               \
     ::tal::testing::waited(__FILE__, __LINE__, "never came: " #__VA_ARGS__, (loop),                                   \
+                           [&]() -> bool { return static_cast<bool>(__VA_ARGS__); })
+
+#define SOON(...)                                                                                                      \
+    ::tal::testing::waited(__FILE__, __LINE__, "never came: " #__VA_ARGS__,                                           \
                            [&]() -> bool { return static_cast<bool>(__VA_ARGS__); })

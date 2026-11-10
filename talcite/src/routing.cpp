@@ -57,6 +57,10 @@ namespace talcite::net {
 // router object remembers which way worked and starts from it at renewal; it also remembers the
 // PCP nonce and the UPnP service, without which a mapping can be neither renewed nor closed.
 //
+// One UDP way (PCP, NAT-PMP) is given `Routing::turn`, by default 250 + 500 + 1000 ms: a home router
+// answers within milliseconds, and one that stays silent for almost two seconds does not know this
+// way. The trials give their fake router more, since a busy machine may not run it for that long.
+//
 // Nothing here sets anything permanently without the caller knowing: a mapping has a lifetime and
 // expires by itself, unless a UPnP router knows only permanent mappings; then `lasting` comes back
 // as zero and closing is up to the caller.
@@ -361,10 +365,6 @@ namespace {
 
 using Kept = std::shared_ptr<Router::Held>;
 
-// The time for one UDP way: 250 + 500 + 1000 ms. A home router answers within milliseconds; one
-// that stays silent for almost two seconds does not know this way.
-constexpr Patience udp_turn{1750};
-
 // The router's address for PCP and NAT-PMP: the gateway, on port 5351 unless a port is given.
 Address aimed(const Routing& routing) {
     Address made = routing.gateway;
@@ -511,7 +511,7 @@ std::optional<Opening> pmp(const Kept& held, Carrier carrier, std::uint16_t insi
 
     const std::uint16_t port = made->outside.port();
 
-    (void)asked(post, where, Bytes{std::byte{0}, std::byte{0}}, sooner(until, Clock::now() + udp_turn), [&](const Bytes& came) {
+    (void)asked(post, where, Bytes{std::byte{0}, std::byte{0}}, sooner(until, Clock::now() + held->routing.turn), [&](const Bytes& came) {
         if (came.size() < 12 || came[0] != std::byte{0} || got8(came, 1) != 128 || got16(came, 2) != 0) return false;
 
         std::array<std::byte, 16> raw{};
@@ -920,7 +920,7 @@ Opening opening(const Kept& held, Carrier carrier, std::uint16_t inside, std::ch
     };
 
     const auto by_pmp = [&] {
-        return tried([&] { return pmp(held, carrier, inside, inside, lifetime, sooner(until, Clock::now() + udp_turn)); });
+        return tried([&] { return pmp(held, carrier, inside, inside, lifetime, sooner(until, Clock::now() + held->routing.turn)); });
     };
 
     const auto by_upnp = [&] { return tried([&] { return upnp(held, mine, carrier, inside, lifetime, until); }); };
@@ -934,7 +934,7 @@ Opening opening(const Kept& held, Carrier carrier, std::uint16_t inside, std::ch
         bool old = false;
 
         made = tried([&]() -> std::optional<Opening> {
-            const PcpOutcome got = pcp(held, mine, carrier, inside, inside, lifetime, sooner(until, Clock::now() + udp_turn));
+            const PcpOutcome got = pcp(held, mine, carrier, inside, inside, lifetime, sooner(until, Clock::now() + held->routing.turn));
 
             old = got.old;
 

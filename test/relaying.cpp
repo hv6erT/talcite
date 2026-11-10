@@ -242,7 +242,8 @@ Ready readied(net::Relay& relay, net::Udp& server, const net::Address& them) {
 
     relay.send(them, bytes("raz"), soon).get();
 
-    for (int turn = 0; turn < 6 && made.channel == 0; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         made.channel == 0 && std::chrono::steady_clock::now() < latest;) {
         const net::Datagram came = server.receive(1024, soon).get();
 
         net::Message told;
@@ -479,7 +480,8 @@ TRIAL("Relay: sending goes as an indication with content") {
 
     bool sent = false;
 
-    for (int turn = 0; turn < 6 && !sent; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !sent && std::chrono::steady_clock::now() < latest;) {
         came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
@@ -606,7 +608,8 @@ TRIAL("Relay: an oversized message is not lost on refusal") {
 
     bool amiss = false;
 
-    for (int turn = 0; turn < 40 && !amiss; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !amiss && std::chrono::steady_clock::now() < latest;) {
         try {
             (void)relay.receive(4, net::Patience{100}).get();
         } catch (const Overdue&) {
@@ -741,7 +744,8 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
     net::Number number{};
 
-    for (int turn = 0; turn < 8 && !(answered && asked); ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !(answered && asked) && std::chrono::steady_clock::now() < latest;) {
         came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
@@ -785,7 +789,8 @@ TRIAL("Peer: through a relay it answers on the same channel and talks on it") {
 
     bool sent = false;
 
-    for (int turn = 0; turn < 8 && !sent; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !sent && std::chrono::steady_clock::now() < latest;) {
         came = server.receive(1024, soon).get();
 
         if (!net::understood(came.bytes, told)) continue;
@@ -860,7 +865,8 @@ TRIAL("Relay: the channel is requested by itself, and then the header has four b
 
     bool tight = false;
 
-    for (int turn = 0; turn < 40 && !tight; ++turn) {
+    for (const auto latest = std::chrono::steady_clock::now() + std::chrono::seconds{20};
+         !tight && std::chrono::steady_clock::now() < latest;) {
         relay.send(them, bytes("dwa"), soon).get();
 
         try {

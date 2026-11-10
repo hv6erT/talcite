@@ -1,9 +1,11 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -98,19 +100,18 @@ std::optional<std::vector<std::string>> texts(Spool& one, std::size_t which, std
 }
 
 // Asks until the spool stops waiting for a window; between the questions it turns the loop, as
-// `Term` would. Throws if the spool does not settle within 4000 turns.
+// `Term` would. The trial fails where it asked when the spool does not settle within ten seconds.
 template <typename Fn>
-auto settled(Loop& loop, Spool& one, Fn fn) {
-    for (int tries = 0; tries < 4000; ++tries) {
-        auto got = fn();
+auto settled(Loop& loop, Spool& one, Fn fn, std::source_location where = std::source_location::current()) {
+    std::optional<decltype(fn())> got;
 
-        if (!one.stalled()) return got;
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "the spool never settled", loop, [&] {
+        got = fn();
 
-        (void)loop.bell().wait(std::chrono::milliseconds{5});
-        (void)loop.turn();
-    }
+        return !one.stalled();
+    });
 
-    throw std::runtime_error{"The spool never settled."};
+    return std::move(*got);
 }
 
 // Rows from `which` on, at most `most` of them, once the spool has them; empty if it has none.
@@ -286,10 +287,7 @@ TRIAL("Spool: counting reaches the end window by window and wakes the handle") {
 
     OUGHT(!one->counted().has_value());
 
-    for (int tries = 0; tries < 4000 && !one->counted().has_value(); ++tries) {
-        (void)loop.bell().wait(std::chrono::milliseconds{5});
-        (void)loop.turn();
-    }
+    UNTIL(loop, one->counted().has_value());
 
     SAME(*one->counted(), std::size_t{30000});
     OUGHT(woken > 1);
@@ -381,10 +379,7 @@ TRIAL("Spool: the window is on its way before scrolling reaches it") {
 
     SAME(tape.calls(), 2);
 
-    for (int tries = 0; tries < 4000 && woken < 2; ++tries) {
-        (void)loop.bell().wait(std::chrono::milliseconds{5});
-        (void)loop.turn();
-    }
+    UNTIL(loop, woken >= 2);
 
     SAME(woken, 2);
 

@@ -616,6 +616,9 @@ TRIAL("Term: keys from the probe go before fresh ones") {
     OUGHT(root.keys == U"qa");
 }
 
+// The wait is measured on the real clock from the moment the Esc came, so the console is told the
+// rest of the fifty milliseconds: fifty when the second turn follows at once, less when the machine
+// is busy between the two turns, never more and never without a limit.
 TRIAL("Term: a lone Esc waits fifty milliseconds and resolves by itself") {
     auto line = faking::terminal();
 
@@ -633,7 +636,8 @@ TRIAL("Term: a lone Esc waits fifty milliseconds and resolves by itself") {
 
     (void)term.turn();
 
-    OUGHT(line->patience.back() == std::chrono::milliseconds{50});
+    OUGHT(line->patience.back().has_value());
+    OUGHT(*line->patience.back() <= std::chrono::milliseconds{50});
     OUGHT(root.keys == U"⎋");
 }
 

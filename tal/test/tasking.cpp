@@ -1,5 +1,3 @@
-#include "tal/testing.hpp"
-
 #include <atomic>
 #include <chrono>
 #include <memory>
@@ -15,6 +13,8 @@
 #include "tal/port.hpp"
 #include "tal/task.hpp"
 #include "tal/testing.hpp"
+
+#include "quieting.hpp"
 
 // The tasks of tal::core: running, awaiting and failing, moving between executors, results from
 // other threads, timers on a manual clock, the owner's scope and its cancellation, and the ways of
@@ -192,22 +192,21 @@ TRIAL("after(): on a manual clock the task waits until the clock is moved past t
 
     scope.run([](std::atomic<int>& into) -> tal::Task<void> { into = co_await late(500ms, 5); }(done));
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     SAME(done.load(), 0);
     OUGHT(scope.busy());
 
     time->advance(499ms);
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     SAME(done.load(), 0);
 
     time->advance(1ms);
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, done.load() == 5);
 
-    SAME(done.load(), 5);
     OUGHT(!scope.busy());
 }
 
@@ -222,18 +221,15 @@ TRIAL("Scope: a scope destroyed while its task waits destroys the task's frames 
 
         scope.run(waiting(pending, alive, went_on));
 
-        for (int at = 0; at < 5; ++at) (void)loop.turn();
-
-        SAME(alive.load(), 1);
+        UNTIL(loop, alive.load() == 1);
     }
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, alive.load() == 0);
 
-    SAME(alive.load(), 0);
 
     pending.settle(3);
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     OUGHT(!went_on);
 }
@@ -267,10 +263,8 @@ TRIAL("Scope: cancelling a task that runs on the pool ends it at its next checkp
 
     scope.cancel();
 
-    for (int tries = 0; tries < 2000 && (alive.load() != 0 || scope.busy()); ++tries) {
-        (void)loop.turn();
-        std::this_thread::sleep_for(1ms);
-    }
+    UNTIL(loop, alive.load() == 0 && !scope.busy());
+
 
     SAME(alive.load(), 0);
     OUGHT(!finished);
@@ -289,7 +283,7 @@ TRIAL("Scope: an unhandled failure of its work goes to the log, a cancellation d
         throw tal::Cancelled{};
     }());
 
-    for (int at = 0; at < 10; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     const auto entries = tal::recent();
     int failures = 0;
@@ -326,16 +320,12 @@ TRIAL("first(): the first success wins and the other tasks are destroyed") {
         into = co_await tal::first(std::move(racing));
     }(alive, got));
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, alive.load() == 1);
 
-    SAME(alive.load(), 1);
 
     time->advance(100ms);
 
-    for (int at = 0; at < 10; ++at) (void)loop.turn();
-
-    SAME(got.load(), 1);
-    SAME(alive.load(), 0);
+    UNTIL(loop, got.load() == 1 && alive.load() == 0);
 }
 
 TRIAL("first(): when every task fails, the last failure comes out") {
@@ -382,10 +372,8 @@ TRIAL("all(): the results come together in order, and a failure cancels the othe
     }(alive, failed));
 
     // The failing task moves to the program's loop, the first one made here.
-    for (int at = 0; at < 10; ++at) {
-        (void)timed.turn();
-        (void)loop.turn();
-    }
+    UNTIL(loop, ((void)timed.turn(), failed.load() && alive.load() == 0));
+
 
     OUGHT(failed);
     SAME(alive.load(), 0);
@@ -407,20 +395,18 @@ TRIAL("within(): a task that does not finish in time gives Overdue, one that doe
         }
     }(overdue));
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    QUIETED(loop);
 
     time->advance(200ms);
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, value.load() == 6);
 
-    SAME(value.load(), 6);
     OUGHT(!overdue);
 
     time->advance(800ms);
 
-    for (int at = 0; at < 5; ++at) (void)loop.turn();
+    UNTIL(loop, overdue.load());
 
-    OUGHT(overdue);
     OUGHT(!scope.busy());
 }
 
@@ -496,9 +482,7 @@ TRIAL("Task: a thousand tasks hopping between the pool, the io pool and the loop
 
     SAME(finished.load(), 1000);
 
-    for (int tries = 0; tries < 1000 && scope.busy(); ++tries) (void)loop.turn();
-
-    OUGHT(!scope.busy());
+    UNTIL(loop, !scope.busy());
 }
 
 TRIAL("Scope: scopes destroyed while their results arrive from other threads leave no frame alive") {
@@ -515,7 +499,7 @@ TRIAL("Scope: scopes destroyed while their results arrive from other threads lea
 
             for (tal::Pending<int>& one : pendings) scope.run(waiting(one, alive, went_on));
 
-            for (int at = 0; at < 3; ++at) (void)loop.turn();
+            QUIETED(loop);
 
             settling = std::thread{[&pendings] {
                 for (tal::Pending<int>& one : pendings) one.settle(1);
@@ -524,10 +508,8 @@ TRIAL("Scope: scopes destroyed while their results arrive from other threads lea
 
         settling.join();
 
-        for (int at = 0; at < 20; ++at) (void)loop.turn();
+        QUIETED(loop);
     }
 
-    for (int tries = 0; tries < 1000 && alive.load() != 0; ++tries) (void)loop.turn();
-
-    SAME(alive.load(), 0);
+    UNTIL(loop, alive.load() == 0);
 }

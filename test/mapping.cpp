@@ -152,6 +152,17 @@ struct Fake {
         return made;
     }
 
+    // Routing settings for trials in which the fake router answers every request: each UDP way may
+    // wait long, since a busy machine may not run the fake router within the usual two seconds.
+    // Trials of a silent router keep the usual time, after which the next way is tried.
+    net::Routing patient() const {
+        net::Routing made = routing();
+
+        made.turn = net::Patience{6000};
+
+        return made;
+    }
+
     // The next datagram that reaches the fake port 5351.
     net::Datagram heard(net::Patience patience = soon) const { return pcp.receive(1500, patience).get(); }
 
@@ -378,7 +389,7 @@ TRIAL("Router: empty, port zero and no gateway are refusals") {
 // protocol, internal port, suggested port and external address; "any" is ::ffff:0.0.0.0).
 TRIAL("Router: PCP opens a port, the MAP request byte for byte, the answer gives address and time") {
     const Fake fake;
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{3600});
 
@@ -413,7 +424,7 @@ TRIAL("Router: PCP opens a port, the MAP request byte for byte, the answer gives
 // lifetime of zero; after it the nonce is gone, and a second close is a refusal.
 TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
     const Fake fake;
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto first = router.open(net::Carrier::udp, 5000, std::chrono::seconds{600});
     const net::Datagram one = fake.heard();
@@ -460,7 +471,7 @@ TRIAL("Router: PCP renews and closes with the same nonce, UDP with its own") {
 TRIAL("Router: PCP repeats the request and skips others' answers") {
     const Fake fake;
     const net::Udp stranger{net::Address::loopback(net::Family::four, 0)};
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{60});
 
@@ -501,7 +512,7 @@ TRIAL("Router: PCP repeats the request and skips others' answers") {
 
 TRIAL("Router: a PCP refusal comes back with its code when there is no other way") {
     const Fake fake;
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{60});
     const net::Datagram came = fake.heard();
@@ -522,7 +533,7 @@ TRIAL("Router: a PCP refusal comes back with its code when there is no other way
 // opening goes straight the way that worked.
 TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away after that") {
     const Fake fake;
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{7200});
 
@@ -595,7 +606,7 @@ TRIAL("Router: NAT-PMP when the router does not know PCP, and straight away afte
 
 TRIAL("Router: a NAT-PMP refusal comes back with its code") {
     const Fake fake;
-    const net::Router router{fake.routing()};
+    const net::Router router{fake.patient()};
 
     auto opening = router.open(net::Carrier::tcp, 4000, std::chrono::seconds{60});
     const net::Datagram pcp = fake.heard();

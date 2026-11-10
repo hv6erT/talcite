@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,6 +15,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -71,18 +73,13 @@ std::optional<std::vector<std::string>> line_of(std::string exec, std::string ic
     return desktops::expanded(one, "/tmp/a b.txt", "/usr/share/applications/edytor.desktop");
 }
 
-// The value the promise ends with, turning the loop until it does, for at most five seconds; an
-// error comes back as the exception it is.
+// The value the promise ends with, turning the loop until it does, for at most ten seconds (then
+// the trial fails where it asked); an error comes back as the exception it is.
 template <typename T>
-T answered(Loop& loop, Promise<T> asked) {
+T answered(Loop& loop, Promise<T> asked, std::source_location where = std::source_location::current()) {
     Promise<Outcome<T>> waiting = std::move(asked).outcome();
 
-    for (int at = 0; at < 500 && !waiting.ready(); ++at) {
-        (void)loop.turn();
-        (void)loop.bell().wait(std::chrono::milliseconds{10});
-    }
-
-    if (!waiting.ready()) throw tal::testing::Failed{"no answer in five seconds"};
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "no answer", loop, [&waiting] { return waiting.ready(); });
 
     return std::move(waiting).get().value();
 }

@@ -255,8 +255,7 @@ TRIAL("Beacon: broadcast in the local network") {
 TRIAL("Beacon: an abandoned one leaves no wait in the hub") {
     // First, quiet after the earlier trials: a socket that is just going away would change the
     // counter meanwhile, and the comparison would speak of it, not of the beacon.
-    for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > 0; ++tried)
-        later(std::chrono::milliseconds{5}).get();
+    (void)tal::testing::came([] { return net::Exchange::running().waiting() == 0; });
 
     const std::size_t before = net::Exchange::running().waiting();
 
@@ -268,10 +267,7 @@ TRIAL("Beacon: an abandoned one leaves no wait in the hub") {
         OUGHT(net::Exchange::running().waiting() > before);
     }
 
-    for (int tried = 0; tried < 200 && net::Exchange::running().waiting() > before; ++tried)
-        later(std::chrono::milliseconds{5}).get();
-
-    OUGHT(net::Exchange::running().waiting() <= before);
+    SOON(net::Exchange::running().waiting() <= before);
 }
 
 // A flood of questions does not make the beacon an amplifier: at most 32 answers in one second.

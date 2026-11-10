@@ -154,6 +154,47 @@ TRIAL("Running: a wait that never comes fails with the condition") {
     OUGHT(std::chrono::steady_clock::now() - began >= 80ms);
 }
 
+// `came` sleeps until another thread makes the condition true, and `SOON` passes on the same.
+TRIAL("Running: came and SOON wait for a condition without a loop") {
+    std::atomic<int> set{0};
+
+    std::thread setter{[&] {
+        std::this_thread::sleep_for(20ms);
+        set = 1;
+        std::this_thread::sleep_for(20ms);
+        set = 2;
+    }};
+
+    const auto began = std::chrono::steady_clock::now();
+
+    OUGHT(tal::testing::came([&] { return set.load() >= 1; }));
+    SOON(set.load() == 2);
+
+    setter.join();
+
+    OUGHT(std::chrono::steady_clock::now() - began < 5s);
+}
+
+// A condition that never comes makes `came` answer false at the deadline, not before, and the wait
+// behind `SOON` fails the trial there with the place and the condition.
+TRIAL("Running: came gives up at its deadline, and SOON fails with the condition") {
+    const auto began = std::chrono::steady_clock::now();
+
+    OUGHT(!tal::testing::came([] { return false; }, 60ms));
+    OUGHT(std::chrono::steady_clock::now() - began >= 60ms);
+
+    std::string said;
+
+    try {
+        tal::testing::waited(__FILE__, __LINE__, "never came: false", [] { return false; }, 60ms);
+    } catch (const tal::testing::Failed& why) {
+        said = why.what();
+    }
+
+    OUGHT(said.find("running.cpp:") == 0);
+    OUGHT(said.find("never came: false") != std::string::npos);
+}
+
 // `--list` names every trial with its file; `--file` and `--only` choose which run.
 TRIAL("Running: the command line lists and chooses the trials") {
     const tal::Output listed = again({"--list"});

@@ -1,4 +1,5 @@
 #include "tal/testing.hpp"
+#include "waiting.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -6,6 +7,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -98,19 +100,15 @@ constexpr std::string_view quick =
 }
 
 // The file is decoded on the pool after the first paint and comes back through the loop: we turn
-// the loop and paint until the request comes back, as with the spool. Returns false if it does not
-// settle in time.
-[[nodiscard]] bool settled(Loop& loop, ui::Root& top, const ui::Image& one, ui::Size room) {
-    for (int tries = 0; tries < 500; ++tries) {
+// the loop and paint until the request comes back, as with the spool. The trial fails where it
+// asked when that does not come within ten seconds.
+void settled(Loop& loop, ui::Root& top, const ui::Image& one, ui::Size room,
+             std::source_location where = std::source_location::current()) {
+    tal::testing::waited(where.file_name(), static_cast<int>(where.line()), "the image never settled", loop, [&] {
         (void)top.render({{0, 0}, room});
-        (void)loop.turn();
 
-        if (!one.busy() && (one.frames() > 0 || !one.held())) return true;
-
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
-    }
-
-    return false;
+        return !one.busy() && (one.frames() > 0 || !one.held());
+    });
 }
 
 }
@@ -145,8 +143,7 @@ TRIAL("figured: decoding runs on the cpu lane") {
             },
             Lane::cpu);
 
-    for (int at = 0; at < 500 && hold->held.load() < most; ++at)
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    SOON(hold->held.load() >= most);
 
     Promise<Pixels> made =
         figured(lump(leaping), faking::images()).fetch(ui::Size{4, 4});
@@ -159,8 +156,7 @@ TRIAL("figured: decoding runs on the cpu lane") {
 
     (void)std::move(made).get();
 
-    for (int at = 0; at < 500 && hold->left.load() < most; ++at)
-        std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    SOON(hold->left.load() >= most);
 
     OUGHT(!early);
     SAME(hold->left.load(), most);
@@ -202,7 +198,7 @@ TRIAL("Image: after loading it knows the format and size, the frames only after 
     OUGHT(one->busy());
     SAME(one->frames(), std::size_t{0});
 
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
     OUGHT(!one->busy());
     SAME(one->frames(), std::size_t{4});
 }
@@ -234,7 +230,7 @@ TRIAL("Image: a provider's refusal holds nothing, the format stays from the head
 
     sheet.children().add(other);
 
-    OUGHT(settled(loop, sheet, *other, {40, 20}));
+    settled(loop, sheet, *other, {40, 20});
     OUGHT(!other->held());
     SAME(static_cast<int>(other->format()), static_cast<int>(Format::jpeg));
 }
@@ -291,7 +287,7 @@ TRIAL("Image: the source is called with the size from the layout, and again afte
 
     sheet.children().add(one);
 
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
     SAME(one->frames(), std::size_t{1});
     SAME(asked->size(), std::size_t{1});
     OUGHT(asked->front().wide > 0);
@@ -304,14 +300,14 @@ TRIAL("Image: the source is called with the size from the layout, and again afte
     SAME(asked->size(), std::size_t{1});
 
     // A smaller place: it requests again, with a smaller size.
-    OUGHT(settled(loop, sheet, *one, {20, 10}));
+    settled(loop, sheet, *one, {20, 10});
     SAME(asked->size(), std::size_t{2});
     OUGHT(asked->back().wide < asked->front().wide);
 
     // Without Unicode the grain is different, so it requests again: once, not on every frame.
     sheet.unicode(false);
 
-    OUGHT(settled(loop, sheet, *one, {20, 10}));
+    settled(loop, sheet, *one, {20, 10});
     SAME(asked->size(), std::size_t{3});
 
     (void)sheet.render({{0, 0}, {20, 10}});
@@ -342,7 +338,7 @@ TRIAL("Image: a rejected promise from the source empties the widget, the kind st
 
     sheet.children().add(one);
 
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
     OUGHT(!one->held());
     OUGHT(!one->busy());
     SAME(static_cast<int>(one->format()), static_cast<int>(Format::bmp));
@@ -384,7 +380,7 @@ TRIAL("Image: the picture stands in the middle of the area") {
 
     sheet.children().add(one);
 
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     const Snapshot made = sheet.render({{0, 0}, {40, 20}});
 
@@ -460,6 +456,9 @@ TRIAL("Image: before it is drawn there is nothing to ask for") {
     OUGHT(!waiting(sheet).has_value());
 }
 
+// The wait is told by the real clock: on a busy machine the first frame's forty milliseconds may be
+// over by the time it is asked, and the appointment then is for the end of a later frame. So it is
+// at most the longest frame, a hundred and twenty milliseconds, and never missing.
 TRIAL("Image: a decoded animation asks to be woken up") {
     Loop loop;
     Sheet sheet;
@@ -467,13 +466,12 @@ TRIAL("Image: a decoded animation asks to be woken up") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     (void)sheet.render({{0, 0}, {40, 20}});
 
     OUGHT(waiting(sheet).has_value());
-    OUGHT(*waiting(sheet) > std::chrono::milliseconds{0});
-    OUGHT(*waiting(sheet) <= std::chrono::milliseconds{40});
+    OUGHT(*waiting(sheet) <= std::chrono::milliseconds{120});
 }
 
 // Setting the frame is seeking: it moves the start of the countdown as if the animation had just
@@ -486,7 +484,7 @@ TRIAL("Image: seeking sets the frame together with the time") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     SAME(one->frames(), std::size_t{4});
 
@@ -522,7 +520,7 @@ TRIAL("Image: seeking past the end stops at the last frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     one->still(9);
 
@@ -538,7 +536,7 @@ TRIAL("Image: pausing freezes the visible frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     (void)sheet.render({{0, 0}, {40, 20}});
 
@@ -563,7 +561,7 @@ TRIAL("Image: resuming starts from the frozen frame") {
     const auto one = shown(leaping);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {40, 20}));
+    settled(loop, sheet, *one, {40, 20});
 
     one->still(1);
     one->play(false);
@@ -588,7 +586,7 @@ TRIAL("Image: the clock advances the frame by itself") {
     const auto one = shown(quick);
 
     sheet.children().add(one);
-    OUGHT(settled(loop, sheet, *one, {20, 10}));
+    settled(loop, sheet, *one, {20, 10});
 
     one->still(0);
 

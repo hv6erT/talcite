@@ -429,12 +429,22 @@ void Image::sharpened() {
                          }));
 }
 
-// The picture fitted to the room (`spread`), and the appointment for the next frame of an animation
-// with the root's schedule, made anew at every layout; it marks the picture changed, and the frame
-// is chosen by the time when it is drawn. A still picture and a paused animation make none, and
-// neither does a picture off the tree, which is not drawn.
+// The picture fitted to the room (`spread`), the frame to draw, and the appointment for the next
+// frame of an animation with the root's schedule, made anew at every layout; it marks the picture
+// changed, so the next frame is chosen at the next layout. The frame is chosen here and not when
+// drawing, so every painting of one layout draws the same frame, the whole painting as well as the
+// painting of the changes; and a layout for another reason that finds the time of another frame
+// come announces it, so the cells drawn earlier do not keep the old one. A still picture and a
+// paused animation make no appointment, and neither does a picture off the tree, which is not
+// drawn.
 void Image::layout(Size given) {
     spread(given);
+
+    if (const std::size_t now = chosen(); now != shown_) {
+        shown_ = now;
+
+        changed();
+    }
 
     if (fit_.stills().empty()) return;
 
@@ -453,7 +463,7 @@ void Image::paint(Canvas& onto) const {
     const Style look = skin().style(role());
 
     const Spot at{(given.wide - placed_.wide) / 2, (given.high - placed_.high) / 2};
-    const std::size_t which = chosen();
+    const std::size_t which = shown_;
 
     drawn(onto, at, fine_ != Graphics::none ? coarse_ : fit_, which, made_, look, colored(*this), unicode_);
 

@@ -951,7 +951,7 @@ TRIAL("Archive: opening a tar.gz stops when it is no longer wanted") {
     {
         std::optional<Promise<archive::Archive>> opening{archive::opened(where, Seam<UnpackProvider>{std::make_shared<Sweller>(fed)})};
 
-        for (int tries = 0; tries < 2000 && fed->load() < 3; ++tries) std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        SOON(fed->load() >= 3);
 
         opening.reset();
     }

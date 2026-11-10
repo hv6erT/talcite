@@ -20,6 +20,8 @@
 
 #include "tal/testing.hpp"
 
+#include "quieting.hpp"
+
 // Files of tal::core, through the port: reading and writing, folders, conflicts, moving, copying
 // and removing, links, attributes, watches and the default adapter. The trials of the port run on
 // the memory and on the system's disk alike (`FILES_TRIAL`); what only the memory can show (its
@@ -495,23 +497,23 @@ TRIAL("Memory: a watch ended while its reader waits cancels the reader; a second
 
     scope.run(counted(watch->next(), cancelled));
 
-    for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
+    QUIETED(desk.loop);
 
     OUGHT(desk.refused(watch->next()) == tal::Kind::busy);
 
     *watch = desk.memory.watch(Path{"/"});
 
-    for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
+    UNTIL(desk.loop, cancelled.load() == 1);
 
-    SAME(cancelled.load(), 1);
 
     scope.run(counted(watch->next(), cancelled));
 
-    for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
+    QUIETED(desk.loop);
 
     watch.reset();
 
-    for (int at = 0; at < 5; ++at) (void)desk.loop.turn();
+    UNTIL(desk.loop, cancelled.load() == 2 && !scope.busy());
+
 
     SAME(cancelled.load(), 2);
     OUGHT(!scope.busy());
