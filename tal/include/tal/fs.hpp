@@ -112,11 +112,17 @@ public:
 private:
     friend class Watch;
 
-    [[nodiscard]] std::optional<std::vector<Change>> taken(const Pending<std::vector<Change>>& waiter);
+    [[nodiscard]] std::uint64_t begun();
+
+    [[nodiscard]] std::optional<std::vector<Change>> taken(const Pending<void>& waiter, std::uint64_t reader);
+
+    void forgotten(std::uint64_t reader);
 
     mutable std::mutex guard_;
     std::vector<Change> queued_;
-    std::optional<Pending<std::vector<Change>>> waiter_;
+    std::optional<Pending<void>> waiter_;
+    std::uint64_t waiting_ = 0;
+    std::uint64_t readers_ = 0;
     bool closed_ = false;
 };
 

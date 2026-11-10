@@ -145,6 +145,38 @@ TRIAL("Stream: a closed reader breaks the writer; wrong ends, nothing held and t
     OUGHT(refused(loop, writing.write(tal::bytes("x"))) == tal::Kind::broken);
 }
 
+// A read cancelled while it waits (its owner gave up) leaves the stream to the next read, which is
+// not refused, and the bytes written after it are not lost to it.
+TRIAL("Stream: a read cancelled while it waits leaves the stream, and no bytes are lost") {
+    tal::Loop loop;
+    auto [reading, writing] = tal::detail::piped();
+
+    {
+        tal::Scope scope{loop};
+
+        scope.run([](tal::Stream from) -> tal::Task<void> { (void)co_await from.read(10); }(reading));
+
+        QUIETED(loop);
+
+        scope.cancel();
+
+        UNTIL(loop, !scope.busy());
+    }
+
+    tal::Scope scope{loop};
+    std::string got;
+
+    scope.run([](tal::Stream from, std::string& into) -> tal::Task<void> {
+        into = tal::text::of(co_await from.read(10));
+    }(reading, got));
+
+    QUIETED(loop);
+
+    tal::wait(loop, writing.write(tal::bytes("abc")));
+
+    UNTIL(loop, got == "abc");
+}
+
 TRIAL("Stream: drained() gathers everything until the end, also from a writer that went away") {
     tal::Loop loop;
     tal::Stream reading;

@@ -489,6 +489,33 @@ tal::Task<void> counted(tal::Task<std::vector<Change>> next, std::atomic<int>& c
 
 }
 
+// A reader cancelled while it waits (its owner gave up, as a panel that moves to another folder
+// does) leaves the watch to the next reader, and the change that comes meanwhile is not lost to it.
+TRIAL("Memory: a reader cancelled while it waits leaves the watch, and no change is lost") {
+    MemoryDesk desk;
+    std::atomic<int> cancelled{0};
+    const tal::fs::Watch watch = desk.memory.watch(Path{"/"});
+
+    {
+        tal::Scope scope{desk.loop};
+
+        scope.run(counted(watch.next(), cancelled));
+
+        QUIETED(desk.loop);
+
+        scope.cancel();
+
+        UNTIL(desk.loop, !scope.busy());
+    }
+
+    (void)desk.run(desk.memory.write(Path{"/x.txt"}, tal::bytes("x")));
+
+    const std::vector<Change> seen = desk.run(watch.next());
+
+    SAME(seen.size(), std::size_t{1});
+    OUGHT(seen[0].where == Path{"/x.txt"});
+}
+
 TRIAL("Memory: a watch ended while its reader waits cancels the reader; a second reader refuses") {
     MemoryDesk desk;
     tal::Scope scope{desk.loop};
@@ -785,6 +812,20 @@ std::vector<Change> awaited(DiskDesk& desk, const tal::fs::Watch& watch, Change:
 // The system tells more than the memory does, and in its own words: a new file is created and then
 // modified, a file written beside and renamed over shows as a rename. So the trials of the disk ask
 // whether the change they made is among what the system told.
+// A reader that gives up at its deadline (`within`) leaves the watch: the next reader is not
+// refused, and the change that comes after hears it.
+TRIAL("Disk: a reader that gives up at its deadline leaves the watch to the next one") {
+    DiskDesk desk;
+
+    const tal::fs::Watch watch = desk.files.watch(desk.root);
+
+    OUGHT(heard(desk, watch).empty());
+
+    desk.put("/after.txt", "1");
+
+    OUGHT(among(awaited(desk, watch, Change::Kind::created, desk.at("/after.txt")), Change::Kind::created, desk.at("/after.txt")));
+}
+
 TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a deep one also below") {
     DiskDesk desk;
 

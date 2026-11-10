@@ -44,10 +44,11 @@ void Watching::add(Change change) {
     add(std::move(one));
 }
 
-// Queues changes heard together, so that a reader that waits gets them in one batch.
+// Queues changes heard together, so that a reader that waits gets them in one batch. The changes
+// stay in the queue and the reader is only woken: it takes them itself, so a reader that went away
+// meanwhile (cancelled) takes nothing with it, and the next reader finds them.
 void Watching::add(std::vector<Change> changes) {
-    std::optional<Pending<std::vector<Change>>> woken;
-    std::vector<Change> given;
+    std::optional<Pending<void>> woken;
 
     {
         const std::lock_guard<std::mutex> kept{guard_};
@@ -65,18 +66,16 @@ void Watching::add(std::vector<Change> changes) {
             }
         }
 
-        if (waiter_) {
-            woken = std::exchange(waiter_, std::nullopt);
-            given.swap(queued_);
-        }
+        woken = std::exchange(waiter_, std::nullopt);
+        waiting_ = 0;
     }
 
-    if (woken) woken->settle(std::move(given));
+    if (woken) woken->settle();
 }
 
 // Ends the watch: a reader that waits is cancelled, and changes no longer come.
 void Watching::close() {
-    std::optional<Pending<std::vector<Change>>> woken;
+    std::optional<Pending<void>> woken;
 
     {
         const std::lock_guard<std::mutex> kept{guard_};
@@ -84,6 +83,7 @@ void Watching::close() {
         closed_ = true;
         queued_.clear();
         woken = std::exchange(waiter_, std::nullopt);
+        waiting_ = 0;
     }
 
     if (woken) woken->fail(Cancelled{});
@@ -96,20 +96,44 @@ bool Watching::closed() const {
     return closed_;
 }
 
-// The changes queued so far, or none when there are none yet and `waiter` is kept to be settled
-// by the next one. One reader at a time; a closed watch cancels its reader.
-std::optional<std::vector<Change>> Watching::taken(const Pending<std::vector<Change>>& waiter) {
+// A number for a new reader, so that its waiting can be told from another reader's.
+std::uint64_t Watching::begun() {
+    const std::lock_guard<std::mutex> kept{guard_};
+
+    return ++readers_;
+}
+
+// The changes queued so far, or none when there are none yet and `waiter` is kept to wake
+// `reader` at the next one. One reader at a time; a closed watch cancels its reader.
+std::optional<std::vector<Change>> Watching::taken(const Pending<void>& waiter, std::uint64_t reader) {
     const std::lock_guard<std::mutex> kept{guard_};
 
     if (closed_) throw Cancelled{};
 
-    if (waiter_) throw Trouble{Kind::busy, "The watch has a reader already."};
+    if (waiter_ && waiting_ != reader) throw Trouble{Kind::busy, "The watch has a reader already."};
 
-    if (!queued_.empty()) return std::exchange(queued_, {});
+    if (!queued_.empty()) {
+        waiter_.reset();
+        waiting_ = 0;
+
+        return std::exchange(queued_, {});
+    }
 
     waiter_ = waiter;
+    waiting_ = reader;
 
     return std::nullopt;
+}
+
+// A reader that went away without its changes (cancelled while it waited) no longer waits, so the
+// next reader is not refused and the next changes are not given to nobody.
+void Watching::forgotten(std::uint64_t reader) {
+    const std::lock_guard<std::mutex> kept{guard_};
+
+    if (waiting_ != reader) return;
+
+    waiter_.reset();
+    waiting_ = 0;
 }
 
 // A watch over the changes that `held` gathers.
@@ -131,16 +155,36 @@ Watch::~Watch() {
     if (held_) held_->close();
 }
 
-// Waits for the next changes; they come in batches, oldest first. A watch of nothing refuses.
+// Waits for the next changes; they come in batches, oldest first. A watch of nothing refuses. The
+// reader is woken when changes come and takes them itself; when it goes away while it waits (its
+// task cancelled and destroyed), it takes itself off the watch on the way (`Forgetting`).
 Task<std::vector<Change>> Watch::next() const {
     return [](std::shared_ptr<Watching> held) -> Task<std::vector<Change>> {
         if (held == nullptr) throw Trouble{Kind::missing, "Nothing is watched."};
 
-        const Pending<std::vector<Change>> waiter;
+        struct Forgetting {
+            std::shared_ptr<Watching> held;
+            std::uint64_t reader;
 
-        if (auto ready = held->taken(waiter)) co_return std::move(*ready);
+            // Keeps the watch and the reader's number.
+            Forgetting(std::shared_ptr<Watching> watched, std::uint64_t number) : held(std::move(watched)), reader(number) {}
 
-        co_return co_await waiter.task();
+            Forgetting(const Forgetting&) = delete;
+            Forgetting& operator=(const Forgetting&) = delete;
+
+            // Takes the reader off the watch, if it still waits there.
+            ~Forgetting() { held->forgotten(reader); }
+        };
+
+        const Forgetting forgetting{held, held->begun()};
+
+        while (true) {
+            const Pending<void> waiter;
+
+            if (auto ready = held->taken(waiter, forgetting.reader)) co_return std::move(*ready);
+
+            co_await waiter.task();
+        }
     }(held_);
 }
 

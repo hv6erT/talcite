@@ -1,6 +1,7 @@
 #include "tal/stream.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -27,8 +28,9 @@ const std::shared_ptr<Channel>& channel(const std::shared_ptr<Channel>& held) {
 struct Pipe {
     std::mutex guard;
     std::deque<std::byte> buffer;
-    std::optional<Pending<Bytes>> reader;
-    std::size_t asked = 0;
+    std::optional<Pending<void>> reader;
+    std::uint64_t reading = 0;
+    std::uint64_t readers = 0;
     bool ended = false;
     bool deaf = false;
 
@@ -42,18 +44,37 @@ struct Pipe {
         return made;
     }
 
+    // Wakes the reader that waits, if any; called with the lock held, the waking done by the caller
+    // once the lock is let go.
+    std::optional<Pending<void>> woken() {
+        reading = 0;
+
+        return std::exchange(reader, std::nullopt);
+    }
+
+    // A reader that went away while it waited (cancelled) no longer waits: the next reader is not
+    // refused, and what comes stays in the buffer for it.
+    void forgotten(std::uint64_t who) {
+        const std::lock_guard<std::mutex> kept{guard};
+
+        if (reading != who) return;
+
+        reader.reset();
+        reading = 0;
+    }
+
     // Ends the stream for the reader, who gets what is left and then nothing.
     void end() {
-        std::optional<Pending<Bytes>> woken;
+        std::optional<Pending<void>> waking;
 
         {
             const std::lock_guard<std::mutex> kept{guard};
 
             ended = true;
-            woken = std::exchange(reader, std::nullopt);
+            waking = woken();
         }
 
-        if (woken) woken->settle(Bytes{});
+        if (waking) waking->settle();
     }
 };
 
@@ -71,23 +92,55 @@ struct Reading : Channel {
     Reading& operator=(const Reading&) = delete;
 
     // What is in the pipe, at most `most` bytes, waiting for some when it is empty; nothing once
-    // the writer has ended. One reader at a time.
+    // the writer has ended. One reader at a time. The reader is woken when bytes come and takes
+    // them itself, so a reader that goes away while it waits (cancelled and destroyed) takes
+    // nothing with it; it takes itself off the pipe on the way (`Forgetting`).
     Task<Bytes> read(std::size_t most) override {
         return [](std::shared_ptr<Pipe> held, std::size_t much) -> Task<Bytes> {
-            Pending<Bytes> waiter;
+            struct Forgetting {
+                std::shared_ptr<Pipe> pipe;
+                std::uint64_t who;
+
+                // Keeps the pipe and the reader's number.
+                Forgetting(std::shared_ptr<Pipe> given, std::uint64_t number) : pipe(std::move(given)), who(number) {}
+
+                Forgetting(const Forgetting&) = delete;
+                Forgetting& operator=(const Forgetting&) = delete;
+
+                // Takes the reader off the pipe, if it still waits there.
+                ~Forgetting() { pipe->forgotten(who); }
+            };
+
+            std::uint64_t number = 0;
 
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
 
-                if (!held->buffer.empty() || held->ended || much == 0) co_return held->taken(much);
-
-                if (held->reader) throw Trouble{Kind::busy, "The stream has a reader already."};
-
-                held->reader = waiter;
-                held->asked = much;
+                number = ++held->readers;
             }
 
-            co_return co_await waiter.task();
+            const Forgetting forgetting{held, number};
+
+            while (true) {
+                const Pending<void> waiter;
+
+                {
+                    const std::lock_guard<std::mutex> kept{held->guard};
+
+                    if (!held->buffer.empty() || held->ended || held->deaf || much == 0) {
+                        if (held->reading == number) (void)held->woken();
+
+                        co_return held->taken(much);
+                    }
+
+                    if (held->reader && held->reading != number) throw Trouble{Kind::busy, "The stream has a reader already."};
+
+                    held->reader = waiter;
+                    held->reading = number;
+                }
+
+                co_await waiter.task();
+            }
         }(pipe, most);
     }
 
@@ -102,17 +155,17 @@ struct Reading : Channel {
 
     // Stops reading: what is buffered goes, later writes fail, and a read that waits gets nothing.
     void close() override {
-        std::optional<Pending<Bytes>> woken;
+        std::optional<Pending<void>> waking;
 
         {
             const std::lock_guard<std::mutex> kept{pipe->guard};
 
             pipe->deaf = true;
             pipe->buffer.clear();
-            woken = std::exchange(pipe->reader, std::nullopt);
+            waking = pipe->woken();
         }
 
-        if (woken) woken->settle(Bytes{});
+        if (waking) waking->settle();
     }
 };
 
@@ -141,8 +194,7 @@ struct Writing : Channel {
     // Puts the bytes in the pipe and wakes a reader that waits; fails once either end has closed.
     Task<void> write(Bytes what) override {
         return [](std::shared_ptr<Pipe> held, Bytes given) -> Task<void> {
-            std::optional<Pending<Bytes>> woken;
-            Bytes handed;
+            std::optional<Pending<void>> waking;
 
             {
                 const std::lock_guard<std::mutex> kept{held->guard};
@@ -151,13 +203,10 @@ struct Writing : Channel {
 
                 held->buffer.insert(held->buffer.end(), given.begin(), given.end());
 
-                if (held->reader) {
-                    woken = std::exchange(held->reader, std::nullopt);
-                    handed = held->taken(held->asked);
-                }
+                waking = held->woken();
             }
 
-            if (woken) woken->settle(std::move(handed));
+            if (waking) waking->settle();
 
             co_return;
         }(pipe, std::move(what));
