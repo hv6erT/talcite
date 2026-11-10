@@ -48,11 +48,15 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(tal-testing INTERFACE -rdynamic)
 endif()
 
+# tal::testing::Scene: a document driven by hand on a manual clock, for the trials of programs.
+add_library(tal-scene STATIC src/scene.cpp)
+target_link_libraries(tal-scene PUBLIC tal-ui)
+
 if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES})
-  target_link_libraries(tal-test PRIVATE tal-testing tal-ui)
+  target_link_libraries(tal-test PRIVATE tal-testing tal-scene)
   # Some trials check internal parts (the console translation without VT) through their headers.
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   add_test(NAME tal COMMAND tal-test)
