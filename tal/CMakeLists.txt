@@ -24,9 +24,16 @@ endif()
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed.
-add_library(tal-ui STATIC src/damage.cpp src/document.cpp src/event.cpp src/geometry.cpp src/key.cpp
-  src/node.cpp src/reading.cpp src/style.cpp src/surface.cpp)
+add_library(tal-ui STATIC src/capabilities.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/document.cpp src/event.cpp
+  src/geometry.cpp src/key.cpp src/node.cpp src/reading.cpp src/style.cpp src/surface.cpp src/vt.cpp
+  src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-core)
+
+# Windows: the double-click time (user32) and NormalizeString (normaliz), which composes a letter
+# with its marks for the console without VT, whose cell holds one UTF-16 unit.
+if(WIN32)
+  target_link_libraries(tal-ui PUBLIC user32 normaliz)
+endif()
 
 # tal::testing: the runner of the trials with its watch, which writes the stacks of a hung run's
 # threads (dbghelp on Windows; on Linux the trial binaries export their symbols, so that the
@@ -46,5 +53,7 @@ if(TALCITE_TESTS)
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES})
   target_link_libraries(tal-test PRIVATE tal-testing tal-ui)
+  # Some trials check internal parts (the console translation without VT) through their headers.
+  target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   add_test(NAME tal COMMAND tal-test)
 endif()
