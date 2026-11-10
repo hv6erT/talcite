@@ -71,6 +71,8 @@ std::shared_ptr<Node> Children::remove(Node& one) {
     owner_.changing();
     one.repaint();
 
+    if (owner_.document_ != nullptr) owner_.document_->forgotten(one);
+
     std::shared_ptr<Node> made = std::move(*at);
 
     held_.erase(at);
@@ -85,6 +87,9 @@ void Children::clear() {
     owner_.changing();
 
     for (const std::shared_ptr<Node>& one : held_) one->repaint();
+
+    if (owner_.document_ != nullptr)
+        for (const std::shared_ptr<Node>& one : held_) owner_.document_->forgotten(*one);
 
     std::vector<std::shared_ptr<Node>> gone = std::move(held_);
 
@@ -203,7 +208,61 @@ void Node::placed(Area outer) {
     if (document_ != nullptr) {
         ++document_->tally_.arranged;
         arranged_in_ = document_->frames_;
+
+        if (document_ != this) document_->arranged_.push_back(shared_from_this());
     }
+}
+
+// Makes the node active or not. An inactive node is greyed out (the state `disabled`), and it and
+// everything under it take no events and no focus: a focus inside moves on as Tab moves it, and a
+// capture inside ends.
+void Node::enable(bool on) {
+    if (enabled_ == on) return;
+
+    changing();
+
+    enabled_ = on;
+
+    state(State::disabled, !on);
+
+    if (on || document_ == nullptr) return;
+
+    if (document_->captured_ != nullptr && holds(*document_->captured_)) document_->captured_ = nullptr;
+
+    if (document_->focus_ != nullptr && holds(*document_->focus_)) document_->moved(document_->following(document_->focus_, false, this));
+}
+
+// Whether the node can take the focus now: it asks for it, it and every node above it are active,
+// and it stands placed in a document with cells to show.
+bool Node::focusable() const {
+    if (!focusable_ || document_ == nullptr || inert()) return false;
+
+    const std::optional<Area> where = absolute();
+
+    return where && where->size.wide > 0 && where->size.high > 0;
+}
+
+// Takes the focus, when the node can take it (`focusable`); otherwise nothing happens.
+void Node::focus() {
+    if (focusable()) document_->moved(this);
+}
+
+// Whether the node has the focus of its document.
+bool Node::focused() const { return document_ != nullptr && document_->focus_ == this; }
+
+// Says whether the node wants the focus. A node that has it and stops wanting it passes it on.
+void Node::focusable(bool on) {
+    if (focusable_ == on) return;
+
+    focusable_ = on;
+
+    if (!on && focused()) document_->moved(document_->following(this, false, this));
+}
+
+// Makes the mouse go to this node, wherever the pointer is, until the button is released: a drag
+// that leaves the node keeps it. A node outside a document has no mouse to capture.
+void Node::capture() {
+    if (document_ != nullptr) document_->captured_ = this;
 }
 
 // Sets the state `one` on or off; the node and everything under it is styled again.
@@ -276,7 +335,7 @@ void Node::repaint() {
     if (document_ == nullptr) return;
 
 #ifndef NDEBUG
-    if (document_->phase_ == Document::Phase::painting) throw std::logic_error{"tal::Node: repainted while painting"};
+    if (document_->stage_ == Document::Stage::painting) throw std::logic_error{"tal::Node: repainted while painting"};
 #endif
 
     if (const std::optional<Area> where = absolute()) document_->damaged(*where);
@@ -301,6 +360,74 @@ Node* Node::found(std::string_view id) {
     }
 
     return nullptr;
+}
+
+// Adds a handler of events of `type` to the node; the hook it returns takes it away again.
+Hook Node::hooked(std::type_index type, std::shared_ptr<detail::Slot> slot) {
+    std::erase_if(slots_, [](const auto& one) { return !one.second->live; });
+
+    std::weak_ptr<detail::Slot> held = slot;
+
+    slots_.emplace_back(type, std::move(slot));
+
+    return Hook{std::move(held)};
+}
+
+// The live handlers of the node for an event of the kind of `one`: the default actions when
+// `fallback`, otherwise those of the phase `phase`. A copy, so that a handler may add or remove
+// handlers while the event is delivered.
+std::vector<std::shared_ptr<detail::Slot>> Node::slots(const Event& one, bool fallback, Phase phase) const {
+    std::vector<std::shared_ptr<detail::Slot>> made;
+    const std::type_index type{typeid(one)};
+
+    for (const auto& [kind, slot] : slots_)
+        if (kind == type && slot->live && slot->fallback == fallback && (fallback || slot->phase == phase)) made.push_back(slot);
+
+    return made;
+}
+
+// Calls the handlers of the node for `one` (`slots`) in the order they were added, skipping those
+// whose hook went meanwhile; stops at the first that takes the event. Returns whether it is taken.
+bool Node::called(Event& one, bool fallback, Phase phase) {
+    for (const std::shared_ptr<detail::Slot>& slot : slots(one, fallback, phase)) {
+        if (!slot->live) continue;
+
+        slot->called(one);
+
+        if (one.taken()) return true;
+    }
+
+    return one.taken();
+}
+
+// Delivers a notification to this node alone, its capturing handlers first.
+void Node::notified(Event& one) {
+    one.target_ = this;
+
+    if (!called(one, false, Phase::capture)) (void)called(one, false, Phase::bubble);
+}
+
+// Tells the node that its property at `source` changed (`Changed`).
+void Node::changed(const void* source) {
+    Changed one{source};
+
+    notified(one);
+}
+
+// Whether the node or a node above it is inactive.
+bool Node::inert() const {
+    for (const Node* at = this; at != nullptr; at = at->parent_)
+        if (!at->enabled_) return true;
+
+    return false;
+}
+
+// Whether `one` is this node or lies under it.
+bool Node::holds(const Node& one) const {
+    for (const Node* at = &one; at != nullptr; at = at->parent_)
+        if (at == this) return true;
+
+    return false;
 }
 
 // The margin, border and padding together, side by side.
@@ -350,7 +477,7 @@ void Node::touched(Effect effect) {
 // or painted: a layout that changes what it lays out would never settle.
 void Node::changing() const {
 #ifndef NDEBUG
-    if (document_ != nullptr && (document_->phase_ == Document::Phase::laying || document_->phase_ == Document::Phase::painting))
+    if (document_ != nullptr && (document_->stage_ == Document::Stage::laying || document_->stage_ == Document::Stage::painting))
         throw std::logic_error{"tal::Node: the tree changed during layout or painting"};
 #endif
 }

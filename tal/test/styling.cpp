@@ -300,7 +300,7 @@ TRIAL("Sheet: a sheet with a mistake is refused, not read in half") {
 
     OUGHT(rule("knob", R"({"ink": "nocolor"})").ends_with("unknown color \"nocolor\""));
     OUGHT(rule("knob", R"({"colour": "red"})").ends_with("unknown field \"colour\""));
-    OUGHT(rule("knob:hover", "{}").ends_with("unknown state \"hover\""));
+    OUGHT(rule("knob:press", "{}").ends_with("unknown state \"press\""));
     OUGHT(rule("Knob", "{}").ends_with("the selector needs class names"));
     OUGHT(rule("a b c", "{}").ends_with("a selector has at most one ancestor"));
     OUGHT(rule("knob::a::b", "{}").ends_with("a selector has at most one part"));

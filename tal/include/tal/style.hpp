@@ -47,7 +47,7 @@ struct Style {
     friend bool operator==(const Style&, const Style&) = default;
 };
 
-enum class State { focus, disabled, select, current, mark, drag };
+enum class State { focus, disabled, select, current, mark, drag, hover };
 
 class States {
 public:

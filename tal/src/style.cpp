@@ -24,7 +24,7 @@ constexpr std::array<std::string_view, 4> levels{"mono", "16", "256", "rgb"};
 
 constexpr std::array<std::string_view, 6> flag_names{"bold", "faint", "italic", "under", "reverse", "crossed"};
 
-constexpr std::array<std::string_view, 6> state_names{"focus", "disabled", "select", "current", "mark", "drag"};
+constexpr std::array<std::string_view, 7> state_names{"focus", "disabled", "select", "current", "mark", "drag", "hover"};
 
 constexpr std::array<std::string_view, 4> border_names{"none", "thin", "twin", "thick"};
 

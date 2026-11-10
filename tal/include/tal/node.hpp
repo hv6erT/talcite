@@ -7,9 +7,12 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <typeindex>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
+#include "tal/event.hpp"
 #include "tal/geometry.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
@@ -19,12 +22,6 @@ namespace tal {
 inline constexpr int endless = std::numeric_limits<int>::max();
 
 enum class Effect { none, paint, layout };
-
-class Node;
-class Document;
-
-template <typename T>
-class Property;
 
 class Children {
 public:
@@ -122,7 +119,39 @@ public:
 
     [[nodiscard]] Area area() const { return area_; }
 
+    template <typename E>
+    [[nodiscard]] Hook on(Fn<E> what, Phase phase = Phase::bubble) {
+        auto made = std::make_shared<detail::Typed<E>>(std::move(what));
+
+        made->phase = phase;
+
+        return hooked(typeid(E), std::move(made));
+    }
+
+    void enable(bool on);
+
+    [[nodiscard]] bool enabled() const { return enabled_; }
+
+    [[nodiscard]] bool focusable() const;
+
+    void focus();
+
+    [[nodiscard]] bool focused() const;
+
 protected:
+    template <typename E>
+    [[nodiscard]] Hook otherwise(Fn<E> what) {
+        auto made = std::make_shared<detail::Typed<E>>(std::move(what));
+
+        made->fallback = true;
+
+        return hooked(typeid(E), std::move(made));
+    }
+
+    void focusable(bool on);
+
+    void capture();
+
     void state(State one, bool on);
 
     [[nodiscard]] const Style& style() const { return style_; }
@@ -149,6 +178,20 @@ private:
     friend class Property;
 
     [[nodiscard]] Node* found(std::string_view id);
+
+    [[nodiscard]] Hook hooked(std::type_index type, std::shared_ptr<detail::Slot> slot);
+
+    [[nodiscard]] std::vector<std::shared_ptr<detail::Slot>> slots(const Event& one, bool fallback, Phase phase) const;
+
+    bool called(Event& one, bool fallback, Phase phase);
+
+    void notified(Event& one);
+
+    void changed(const void* source);
+
+    [[nodiscard]] bool inert() const;
+
+    [[nodiscard]] bool holds(const Node& one) const;
 
     [[nodiscard]] Sides box() const;
 
@@ -180,6 +223,9 @@ private:
     std::optional<std::pair<Limits, Size>> sized_;
     Area area_;
     std::uint64_t arranged_in_ = 0;
+    std::vector<std::pair<std::type_index, std::shared_ptr<detail::Slot>>> slots_;
+    bool enabled_ = true;
+    bool focusable_ = false;
 };
 
 template <typename T>
@@ -195,6 +241,7 @@ public:
 
         owner_.touched(effect_);
         held_ = std::move(given);
+        owner_.changed(this);
     }
 
     [[nodiscard]] const T& operator*() const { return held_; }
