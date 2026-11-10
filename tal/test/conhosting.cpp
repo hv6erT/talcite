@@ -6,8 +6,13 @@
 #include <vector>
 
 #include "conhost.hpp"
+#include "tal/app.hpp"
 #include "tal/capabilities.hpp"
+#include "tal/clock.hpp"
 #include "tal/console.hpp"
+#include "tal/document.hpp"
+#include "tal/node.hpp"
+#include "tal/surface.hpp"
 
 #include "tal/testing.hpp"
 
@@ -513,4 +518,61 @@ TRIAL("Console without VT: the wheel, motion without a button and a button press
     SAME(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, false, false, true}), std::string{});
     SAME(one.pointed({{2, 3}, 0x1, 0x01, 0}, {true, true, false, true}), std::string{"\x1b[<32;3;4M"});
     SAME(one.pointed({{2, 3}, 0x0, 0, 0}, {true, false, false, true}), std::string{"\x1b[<0;3;4m"});
+}
+
+// --- An application on it ------------------------------------------------------------------------
+
+namespace {
+
+// A node that draws a red x, a wide character and "ok" in reverse video.
+class Painted : public Node {
+protected:
+    // Draws the three samples in the top left corner.
+    void paint(Canvas& onto) const override {
+        Look red;
+
+        red.ink = Color{255, 0, 0};
+
+        Look turned;
+
+        turned.reverse = true;
+
+        (void)onto.put({0, 0}, "x", red);
+        (void)onto.put({2, 0}, "\u4f60", Look{});
+        (void)onto.put({0, 1}, "ok", turned);
+    }
+};
+
+}
+
+TRIAL("Console without VT: an application's frame lands in the grid in console colors") {
+    const auto line = std::make_shared<Translated>();
+    const auto clock = std::make_shared<ManualClock>();
+
+    Document document{Port<Clock>{clock}};
+
+    (void)document.children().add<Painted>();
+
+    {
+        App app{Setup{}, Port<Console>{line}, Port<Clock>{clock}};
+
+        app.show(document);
+
+        (void)app.turn();
+
+        const conhost::Screen& shown = line->shown;
+
+        OUGHT(shown.apart());
+        SAME(shown.at(0, 0).glyph, U'x');
+        SAME(int{shown.at(0, 0).ink}, 12);
+        SAME(shown.at(2, 0).glyph, U'\u4f60');
+        OUGHT(shown.at(3, 0).trailing);
+        SAME(shown.at(0, 1).glyph, U'o');
+        SAME(int{shown.at(0, 1).paper}, 7);
+        SAME(int{shown.at(0, 1).ink}, 0);
+        OUGHT(shown.tracking().sgr);
+    }
+
+    OUGHT(!line->shown.apart());
+    OUGHT(line->shown.tracking() == conhost::Tracking{});
 }

@@ -90,8 +90,8 @@ struct KeyEvent : Event {
 };
 
 struct MouseEvent : Event {
-    MouseEvent(Press made, Button which, Mods with, Spot screened, int stepped)
-        : press(made), button(which), mods(with), screen(screened), steps(stepped) {}
+    MouseEvent(Press made, Button which, Mods with, Spot screened, int stepped, Axis along = Axis::vertical)
+        : press(made), button(which), mods(with), screen(screened), steps(stepped), axis(along) {}
 
     Press press;
     Button button;
@@ -99,6 +99,7 @@ struct MouseEvent : Event {
     Spot at;
     Spot screen;
     int steps = 0;
+    Axis axis = Axis::vertical;
 };
 
 struct PasteEvent : Event {

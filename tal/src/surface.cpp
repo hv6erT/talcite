@@ -51,9 +51,11 @@ std::string shown(std::string_view cluster) {
 
 }
 
-// A surface of `size` cells, every one a blank without colors. A negative size counts as none.
-Surface::Surface(Size size)
+// A surface of `size` cells, every one a blank without colors, measuring clusters as a terminal
+// that renders them `how` draws them. A negative size counts as none.
+Surface::Surface(Size size, text::Rendering how)
     : size_{std::max(0, size.wide), std::max(0, size.high)},
+      rendering_(how),
       cells_(static_cast<std::size_t>(size_.wide) * static_cast<std::size_t>(size_.high)) {}
 
 // The number of columns and rows.
@@ -212,23 +214,25 @@ Area Canvas::cut(Area part) const {
     return Area{{origin_.x + part.at.x, origin_.y + part.at.y}, part.size}.common(clip_);
 }
 
-// Writes `text` from `at`, cluster by cluster, each as wide as tal::text measures it; a cluster
-// that takes no cell is left out and a control character shows as its picture. What falls outside
-// the clip is not written. Returns how many columns the whole text takes, also the part cut off,
-// so that the caller can go on after it.
+// Writes `text` from `at`, cluster by cluster, each as wide as tal::text measures it for the
+// surface's rendering; a cluster that takes no cell is left out and a control character shows as
+// its picture. What falls outside the clip is not written. Returns how many columns the whole text
+// takes, also the part cut off, so that the caller can go on after it.
 int Canvas::put(Spot at, std::string_view text, const Look& look) {
     const int row = origin_.y + at.y;
     int x = origin_.x + at.x;
     int from = onto_->size_.wide;
     int to = -1;
 
-    if (row < clip_.at.y || row >= clip_.at.y + clip_.size.high) return text::width(text);
+    const text::Rendering how = onto_->rendering_;
+
+    if (row < clip_.at.y || row >= clip_.at.y + clip_.size.high) return text::width(text, how);
 
     const int right = clip_.at.x + clip_.size.wide;
     int taken = 0;
 
-    for (const std::string_view one : text::clusters(text)) {
-        const int wide = text::width(one);
+    for (const std::string_view one : text::clusters(text, how)) {
+        const int wide = text::width(one, how);
 
         if (wide <= 0) continue;
 

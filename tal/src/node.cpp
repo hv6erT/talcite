@@ -296,6 +296,14 @@ std::string_view Node::glyph(std::string_view name) const {
     return document_->sheet_.glyph(name, document_->unicode_);
 }
 
+// How the terminal of the document draws emoji sequences, so that the node measures text as the
+// surface paints it; outside a document tal's usual rendering.
+text::Rendering Node::rendering() const {
+    if (document_ == nullptr) return {};
+
+    return document_->rendering_;
+}
+
 // What the content needs: by default as much as the largest child, and at least the least room.
 Size Node::measure(Limits room) const {
     Size made = room.least;
@@ -316,6 +324,10 @@ void Node::arrange(Area inside) {
 
 // Paints the content; a plain node has none, only the background and border the document paints.
 void Node::paint(Canvas& onto) const { (void)onto; }
+
+// Where the node's caret stands, in the coordinates of its content, and how it looks; a plain node
+// has none. The document asks the node that has the focus.
+std::optional<Caret> Node::caret() const { return std::nullopt; }
 
 // Marks the node to be measured and arranged again, and so every node above it, whose size may
 // depend on it; it is repainted too.

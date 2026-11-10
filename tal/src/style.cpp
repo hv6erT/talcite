@@ -9,6 +9,7 @@
 #include <tuple>
 #include <utility>
 
+#include "palette.hpp"
 #include "reading.hpp"
 #include "tal/text.hpp"
 
@@ -32,24 +33,7 @@ constexpr std::array<std::string_view, 16> basics{
     "black", "red", "green", "brown", "blue", "magenta", "cyan", "lightgray",
     "gray", "brightred", "brightgreen", "yellow", "brightblue", "brightmagenta", "brightcyan", "white"};
 
-constexpr std::array<Color, 16> basic_values{{{0, 0, 0},
-                                              {128, 0, 0},
-                                              {0, 128, 0},
-                                              {128, 128, 0},
-                                              {0, 0, 128},
-                                              {128, 0, 128},
-                                              {0, 128, 128},
-                                              {192, 192, 192},
-                                              {128, 128, 128},
-                                              {255, 0, 0},
-                                              {0, 255, 0},
-                                              {255, 255, 0},
-                                              {0, 0, 255},
-                                              {255, 0, 255},
-                                              {0, 255, 255},
-                                              {255, 255, 255}}};
-
-constexpr std::array<std::uint8_t, 6> steps{0, 95, 135, 175, 215, 255};
+using palette::indexed;
 
 // What one rule says at one level: only the fields it gives. A color given as "default" is an
 // empty color, which differs from a color not given at all.
@@ -85,23 +69,6 @@ struct Kept {
     std::map<std::string, Sign, std::less<>> glyphs;
 };
 
-// The color of palette number `which` (0 to 255): the basic colors with xterm's values, the 6x6x6
-// cube and the grey ramp, as in the old talcite, so that a skin reads the same colors.
-Color indexed(int which) {
-    if (which < 16) return basic_values[static_cast<std::size_t>(which)];
-
-    if (which >= 232) {
-        const auto grey = static_cast<std::uint8_t>(8 + 10 * (which - 232));
-
-        return Color{grey, grey, grey};
-    }
-
-    const int cube = which - 16;
-
-    return Color{steps[static_cast<std::size_t>(cube / 36)], steps[static_cast<std::size_t>((cube / 6) % 6)],
-                 steps[static_cast<std::size_t>(cube % 6)]};
-}
-
 // A decimal number of one to three digits, or nothing.
 std::optional<int> numbered(std::string_view said) {
     if (said.empty() || said.size() > 3) return std::nullopt;
@@ -132,7 +99,7 @@ std::optional<std::optional<Color>> colored(std::string_view said) {
     if (said == "default") return std::optional<Color>{};
 
     for (std::size_t at = 0; at < basics.size(); ++at)
-        if (said == basics[at]) return std::optional<Color>{basic_values[at]};
+        if (said == basics[at]) return std::optional<Color>{palette::basics[at]};
 
     if (said.starts_with("color")) {
         const std::optional<int> which = numbered(said.substr(5));

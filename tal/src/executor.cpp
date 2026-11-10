@@ -57,6 +57,7 @@ void Loop::post(Work what) {
     }
 
     stirred_.notify_all();
+    stirred();
 }
 
 // One turn: the work queued so far and the timers due by the loop's clock, run outside the lock,
@@ -158,6 +159,7 @@ void Loop::stop(int code) {
     }
 
     stirred_.notify_all();
+    stirred();
 }
 
 // Runs `what` on the loop once its clock reaches `when`; the number withdraws it (`unwake`).
@@ -173,6 +175,7 @@ std::uint64_t Loop::wake(std::chrono::steady_clock::time_point when, Work what) 
     }
 
     stirred_.notify_all();
+    stirred();
 
     return which;
 }
@@ -190,6 +193,21 @@ void Loop::unwake(std::uint64_t which) {
         }
     }
 }
+
+// When the earliest timer that has not been withdrawn falls due, or nothing when none waits.
+std::optional<std::chrono::steady_clock::time_point> Loop::next() const {
+    const std::lock_guard<std::mutex> kept{guard_};
+
+    for (const auto& [when, which] : due_)
+        if (timers_.contains(which)) return when;
+
+    return std::nullopt;
+}
+
+// Told after work is posted, a timer set or a stop asked for, from whatever thread did it, once the
+// loop's own waiting has been woken. A loop that waits elsewhere (an application waiting on its
+// console) overrides it to end that wait; the loop itself needs nothing more.
+void Loop::stirred() {}
 
 // Whether nothing is queued and no timer waits.
 bool Loop::idle() const {

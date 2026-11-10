@@ -24,7 +24,7 @@ endif()
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed.
-add_library(tal-ui STATIC src/capabilities.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/document.cpp src/event.cpp
+add_library(tal-ui STATIC src/app.cpp src/capabilities.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/document.cpp src/event.cpp
   src/geometry.cpp src/key.cpp src/node.cpp src/reading.cpp src/style.cpp src/surface.cpp src/vt.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-core)

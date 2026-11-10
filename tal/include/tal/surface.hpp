@@ -11,6 +11,7 @@
 
 #include "tal/geometry.hpp"
 #include "tal/style.hpp"
+#include "tal/text.hpp"
 
 namespace tal {
 
@@ -27,7 +28,7 @@ class Canvas;
 
 class Surface {
 public:
-    explicit Surface(Size size);
+    explicit Surface(Size size, text::Rendering how = {});
 
     [[nodiscard]] Size size() const;
 
@@ -61,6 +62,7 @@ private:
     void spoiled(Area part);
 
     Size size_;
+    text::Rendering rendering_;
     std::vector<Cell> cells_;
     std::vector<Area> damaged_;
     std::vector<std::string> addresses_;

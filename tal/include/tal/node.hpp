@@ -23,6 +23,16 @@ inline constexpr int endless = std::numeric_limits<int>::max();
 
 enum class Effect { none, paint, layout };
 
+struct Caret {
+    enum class Form { usual, block, underline, bar };
+
+    Spot at;
+    Form form = Form::usual;
+    bool blink = true;
+
+    friend bool operator==(const Caret&, const Caret&) = default;
+};
+
 class Children {
 public:
     class Iterator {
@@ -160,11 +170,15 @@ protected:
 
     [[nodiscard]] std::string_view glyph(std::string_view name) const;
 
+    [[nodiscard]] text::Rendering rendering() const;
+
     [[nodiscard]] virtual Size measure(Limits room) const;
 
     virtual void arrange(Area inside);
 
     virtual void paint(Canvas& onto) const;
+
+    [[nodiscard]] virtual std::optional<Caret> caret() const;
 
     void relayout();
 

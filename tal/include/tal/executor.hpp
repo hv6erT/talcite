@@ -6,6 +6,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -49,6 +50,11 @@ public:
     void unwake(std::uint64_t which);
 
     [[nodiscard]] bool idle() const;
+
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> next() const;
+
+protected:
+    virtual void stirred();
 
 private:
     Port<Clock> time_;

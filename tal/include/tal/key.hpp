@@ -61,6 +61,8 @@ public:
 
     constexpr Key(Code code, Mods with = {}) : held_(code == Code::none ? 0 : apart + static_cast<char32_t>(code)), with_(with) {}
 
+    constexpr Key(Key one, Mods with) : held_(one.held_), with_(with) {}
+
     [[nodiscard]] constexpr bool empty() const { return held_ == 0; }
 
     [[nodiscard]] constexpr char32_t letter() const { return held_ < apart ? held_ : 0; }

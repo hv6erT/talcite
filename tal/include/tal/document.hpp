@@ -14,6 +14,7 @@
 #include "tal/port.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
+#include "tal/text.hpp"
 
 namespace tal {
 
@@ -59,7 +60,7 @@ public:
 
     [[nodiscard]] const StyleSheet& sheet() const { return sheet_; }
 
-    void display(Size screen, Colors colors, bool unicode);
+    void display(Size screen, Colors colors, bool unicode, text::Rendering how = {});
 
     [[nodiscard]] bool due() const;
 
@@ -67,13 +68,19 @@ public:
 
     [[nodiscard]] const Tally& tally() const { return tally_; }
 
+    [[nodiscard]] std::uint64_t framed() const { return frames_; }
+
+    void double_click(std::chrono::milliseconds most);
+
     [[nodiscard]] Node* focused() const { return focus_; }
+
+    [[nodiscard]] std::optional<Caret> caret() const override;
 
     [[nodiscard]] Timer after(std::chrono::milliseconds wait, Fn<Timer> what);
 
     void key(Key one);
 
-    void mouse(Press press, Button button, Spot screen, Mods mods = {}, int steps = 0);
+    void mouse(Press press, Button button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical);
 
     void paste(std::string text);
 
@@ -114,11 +121,13 @@ private:
     Size screen_;
     Colors colors_ = Colors::mono;
     bool unicode_ = false;
+    text::Rendering rendering_;
     Surface surface_{{0, 0}};
     std::vector<Area> damage_;
     bool restyling_ = true;
     Stage stage_ = Stage::idle;
     std::uint64_t frames_ = 0;
+    std::chrono::milliseconds double_click_{400};
     Tally tally_;
     std::vector<std::shared_ptr<Node>> arranged_;
     Node* focus_ = nullptr;

@@ -2,6 +2,8 @@
 
 namespace tal {
 
+enum class Axis { vertical, horizontal };
+
 struct Spot {
     int x = 0;
     int y = 0;

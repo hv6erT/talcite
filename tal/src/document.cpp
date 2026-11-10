@@ -1,6 +1,7 @@
 #include "tal/document.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -13,8 +14,6 @@ namespace tal {
 namespace {
 
 constexpr std::size_t most_damaged = 64;
-
-constexpr std::chrono::milliseconds double_click{400};
 
 }
 
@@ -112,19 +111,38 @@ void Document::sheet(StyleSheet given) {
     damaged(Area{{0, 0}, screen_});
 }
 
-// Says what the document is shown on: the size of the screen in cells, its color level and
-// whether it shows Unicode. A new size is a new surface, laid out and painted whole; a new level
-// styles every node again; Unicode changes the glyphs, so everything is painted again.
-void Document::display(Size screen, Colors colors, bool unicode) {
-    if (screen == screen_ && colors == colors_ && unicode == unicode_) return;
+// Says what the document is shown on: the size of the screen in cells, its color level, whether
+// it shows Unicode and how it renders clusters (whether it joins emoji sequences and presents
+// pictographs as emoji). A new size is a new surface, laid out and painted whole; a new rendering
+// changes the width of text, so every node is measured again on a new surface; a new level styles
+// every node again; Unicode changes the glyphs, so everything is painted again.
+void Document::display(Size screen, Colors colors, bool unicode, text::Rendering how) {
+    if (screen == screen_ && colors == colors_ && unicode == unicode_ && how == rendering_) return;
 
     changing();
 
-    if (screen != screen_) {
+    if (screen != screen_ || how != rendering_) {
         screen_ = screen;
-        surface_ = Surface{screen};
+        surface_ = Surface{screen, how};
 
         relayout();
+    }
+
+    if (how != rendering_) {
+        rendering_ = how;
+
+        std::vector<Node*> waiting{this};
+
+        while (!waiting.empty()) {
+            Node* one = waiting.back();
+
+            waiting.pop_back();
+
+            one->sizing_ = true;
+            one->arranging_ = true;
+
+            for (const std::shared_ptr<Node>& child : one->children_.held_) waiting.push_back(child.get());
+        }
     }
 
     if (colors != colors_) {
@@ -258,6 +276,30 @@ void Document::painted(Node& one, Spot origin, Area clip, Area part) {
     for (Node& child : one.children_) painted(child, box.at, box.common(clip), part);
 }
 
+// The caret of the node with the focus, on the screen: where the node says it stands inside its
+// content, as long as that lies inside the content and on the screen. Nothing without a focus, a
+// placed focus or a caret; the document itself has no caret of its own.
+std::optional<Caret> Document::caret() const {
+    if (focus_ == nullptr || focus_ == this) return std::nullopt;
+
+    std::optional<Caret> made = focus_->caret();
+    const std::optional<Area> where = focus_->absolute();
+
+    if (!made || !where) return std::nullopt;
+
+    const Style& style = focus_->style_;
+    const int line = style.border == Border::none ? 0 : 1;
+    const Area content = Area{where->at, where->size}.inner(Sides{style.padding.top + line, style.padding.right + line,
+                                                                   style.padding.bottom + line, style.padding.left + line});
+    const Spot at{content.at.x + made->at.x, content.at.y + made->at.y};
+
+    if (!content.contains(at) || !Area{{0, 0}, screen_}.contains(at)) return std::nullopt;
+
+    made->at = at;
+
+    return made;
+}
+
 // Starts the timer `what`, to ring once `wait` from now by the document's clock (`ring`). The
 // handle it returns owns it: gone, it never rings. `what` gets the handle and may set it `again`.
 Timer Document::after(std::chrono::milliseconds wait, Fn<Timer> what) {
@@ -282,12 +324,12 @@ void Document::key(Key one) {
     delivered(made, focus_ != nullptr ? *focus_ : *this);
 }
 
-// Delivers what the mouse did at `screen`: to the node that captured it, or else to the deepest
-// active node under the pointer, which with the nodes above it is hovered. A press ends any
-// capture before it is aimed and a release after it is delivered. A release where the press was,
-// with the same button, adds a click, or a double click when it is the second one there within
-// 400 ms; the back and forward buttons make no clicks.
-void Document::mouse(Press press, Button button, Spot screen, Mods mods, int steps) {
+// Delivers what the mouse did at `screen` (for the wheel, `steps` along `axis`): to the node that
+// captured it, or else to the deepest active node under the pointer, which with the nodes above it
+// is hovered. A press ends any capture before it is aimed and a release after it is delivered. A
+// release where the press was, with the same button, adds a click, or a double click when it is the
+// second one there within the double-click time; the back and forward buttons make no clicks.
+void Document::mouse(Press press, Button button, Spot screen, Mods mods, int steps, Axis axis) {
     changing();
 
     if (press == Press::down) captured_ = nullptr;
@@ -297,7 +339,7 @@ void Document::mouse(Press press, Button button, Spot screen, Mods mods, int ste
     hovered(&below);
 
     Node& aimed = captured_ != nullptr ? *captured_ : below;
-    MouseEvent made{press, button, mods, screen, steps};
+    MouseEvent made{press, button, mods, screen, steps, axis};
 
     if (const std::optional<Area> where = aimed.absolute()) made.at = Spot{screen.x - where->at.x, screen.y - where->at.y};
 
@@ -327,6 +369,10 @@ std::optional<std::chrono::steady_clock::time_point> Document::alarm() const {
 
     return made;
 }
+
+// Sets the double-click time: the longest wait between two clicks that still make a double click,
+// 400 ms until set; a negative time counts as none.
+void Document::double_click(std::chrono::milliseconds most) { double_click_ = std::max(most, std::chrono::milliseconds{0}); }
 
 // Rings the timers that are due by the clock, the earliest first and those due together in the
 // order they were made. A timer set again while ringing waits for the next call.
@@ -511,9 +557,9 @@ void Document::hovered(Node* now) {
     hover_ = std::move(made);
 }
 
-// Turns a press and a release in the same cell with the same button into a click for the node
-// under the pointer, or a double click when a click with that button in that cell came no more
-// than 400 ms before by the document's clock. A release elsewhere is a drag, not a click.
+// Turns a press and a release in the same cell with the same button into a click for the node under
+// the pointer, or a double click when a click with that button in that cell came no longer than the
+// double-click time before by the document's clock. A release elsewhere is a drag, not a click.
 void Document::clicked(Press press, Button button, Spot screen, Mods mods) {
     if (button == Button::back || button == Button::forward) return;
 
@@ -531,7 +577,7 @@ void Document::clicked(Press press, Button button, Spot screen, Mods mods) {
     if (which == Button::none || which != button || began_ != screen) return;
 
     const auto now = time_->now();
-    const bool twice = first_click_ && clicked_ == button && waiting_ == screen && now - *first_click_ <= double_click;
+    const bool twice = first_click_ && clicked_ == button && waiting_ == screen && now - *first_click_ <= double_click_;
 
     if (twice) {
         first_click_.reset();
