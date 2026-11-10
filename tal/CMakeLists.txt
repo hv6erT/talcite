@@ -21,8 +21,10 @@ if(WIN32)
 endif()
 
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
-# and the built-in sheet, and the surface of cells a frame is painted on.
-add_library(tal-ui STATIC src/geometry.cpp src/reading.cpp src/style.cpp src/surface.cpp)
+# and the built-in sheet, the surface of cells a frame is painted on, and the tree of nodes with
+# its document, which styles, lays out and paints what changed.
+add_library(tal-ui STATIC src/damage.cpp src/document.cpp src/geometry.cpp src/node.cpp src/reading.cpp src/style.cpp
+  src/surface.cpp)
 target_link_libraries(tal-ui PUBLIC tal-core)
 
 # tal::testing: the runner of the trials with its watch, which writes the stacks of a hung run's

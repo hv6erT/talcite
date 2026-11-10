@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "tal/text.hpp"
+#include "damage.hpp"
 #include "unicode.hpp"
 
 namespace tal {
@@ -14,35 +15,6 @@ namespace tal {
 namespace {
 
 constexpr std::size_t most_damaged = 64;
-
-// The smallest area that holds both.
-Area joined(Area one, Area two) {
-    const int left = std::min(one.at.x, two.at.x);
-    const int top = std::min(one.at.y, two.at.y);
-    const int right = std::max(one.at.x + one.size.wide, two.at.x + two.size.wide);
-    const int bottom = std::max(one.at.y + one.size.high, two.at.y + two.size.high);
-
-    return Area{{left, top}, {right - left, bottom - top}};
-}
-
-// Whether `outer` holds all of `inner`.
-bool holds(Area outer, Area inner) {
-    return inner.at.x >= outer.at.x && inner.at.y >= outer.at.y &&
-           inner.at.x + inner.size.wide <= outer.at.x + outer.size.wide &&
-           inner.at.y + inner.size.high <= outer.at.y + outer.size.high;
-}
-
-// Whether two areas together make exactly a rectangle: the same columns, touching or overlapping
-// rows, or the same rows, touching or overlapping columns.
-bool fitting(Area one, Area two) {
-    if (one.at.x == two.at.x && one.size.wide == two.size.wide)
-        return one.at.y <= two.at.y + two.size.high && two.at.y <= one.at.y + one.size.high;
-
-    if (one.at.y == two.at.y && one.size.high == two.size.high)
-        return one.at.x <= two.at.x + two.size.wide && two.at.x <= one.at.x + one.size.wide;
-
-    return false;
-}
 
 // The look `over` laid on `under`: a color it does not give stays, the attributes are its own.
 Look laid(const Look& under, const Look& over) {
@@ -216,36 +188,8 @@ void Surface::released(std::uint32_t link) {
     spare_.push_back(link);
 }
 
-// Notes that the cells of `part` changed. A rectangle already noted that holds it takes it in; one
-// it holds goes; one that makes a rectangle with it joins it. Past `most_damaged` rectangles they
-// all become the one that holds them.
-void Surface::spoiled(Area part) {
-    if (part.size.wide <= 0 || part.size.high <= 0) return;
-
-    for (std::size_t at = 0; at < damaged_.size();) {
-        if (holds(damaged_[at], part)) return;
-
-        if (holds(part, damaged_[at]) || fitting(part, damaged_[at])) {
-            part = joined(part, damaged_[at]);
-            damaged_.erase(damaged_.begin() + static_cast<std::ptrdiff_t>(at));
-            at = 0;
-
-            continue;
-        }
-
-        ++at;
-    }
-
-    damaged_.push_back(part);
-
-    if (damaged_.size() <= most_damaged) return;
-
-    Area all = damaged_.front();
-
-    for (const Area& one : damaged_) all = joined(all, one);
-
-    damaged_.assign(1, all);
-}
+// Notes that the cells of `part` changed (`damage::added`).
+void Surface::spoiled(Area part) { damage::added(damaged_, part, most_damaged); }
 
 // A canvas onto `onto` whose own (0, 0) lies at `origin` of the surface, `size` large, drawing only
 // inside `clip` (in the surface's coordinates).
