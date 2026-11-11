@@ -76,6 +76,118 @@ std::string_view lined(Border kind) {
     return "thin";
 }
 
+// Writes the stretch from `from` to `upto` of `whole` in a row of `wide` columns from `at`: cut as
+// `elide` asks, with `dots` where it was cut, and stood as `justify` says. What lies under one of
+// `marks` (bytes of `whole`) takes the look `marked` holds for that mark and, with an address,
+// becomes a link; the rest and the dots take `plain`. Returns how many columns it took.
+int line(Canvas& onto, Spot at, int wide, std::string_view whole, std::size_t from, std::size_t upto, const std::vector<Mark>& marks,
+         const std::vector<Look>& marked, Elide elide, Edge justify, const Look& plain, std::string_view dots, text::Rendering how) {
+    struct Stretch {
+        std::size_t from = 0;
+        std::size_t upto = 0;
+    };
+
+    // The pieces of the line in order: stretches of the text and, where it was cut, the dots.
+    struct Piece {
+        Stretch part;
+        bool glyph = false;
+    };
+
+    const std::string_view view = whole.substr(from, upto - from);
+    const int dotted = text::width(dots, how);
+    std::vector<Piece> pieces{Piece{{from, upto}}};
+
+    if (text::width(view, how) > wide && elide != Elide::none) {
+        const std::vector<std::string_view> clusters = text::clusters(view, how);
+
+        // The first clusters that fit `room` columns, as a stretch, and their width.
+        const auto front = [&](int room, int& taken) {
+            std::size_t end = from;
+
+            taken = 0;
+
+            for (const std::string_view one : clusters) {
+                const int cells = text::width(one, how);
+
+                if (taken + cells > room) break;
+
+                taken += cells;
+                end = static_cast<std::size_t>(one.data() - whole.data()) + one.size();
+            }
+
+            return Stretch{from, end};
+        };
+
+        // The last clusters that fit `room` columns, as a stretch.
+        const auto back = [&](int room) {
+            std::size_t start = upto;
+            int taken = 0;
+
+            for (auto one = clusters.rbegin(); one != clusters.rend(); ++one) {
+                const int cells = text::width(*one, how);
+
+                if (taken + cells > room) break;
+
+                taken += cells;
+                start = static_cast<std::size_t>(one->data() - whole.data());
+            }
+
+            return Stretch{start, upto};
+        };
+
+        const int room = wide - dotted;
+        int taken = 0;
+
+        if (room < 0) pieces = {Piece{front(wide, taken)}};
+        else if (elide == Elide::end) pieces = {Piece{front(room, taken)}, Piece{{}, true}};
+        else if (elide == Elide::start) pieces = {Piece{{}, true}, Piece{back(room)}};
+        else {
+            const Stretch first = front((room + 1) / 2, taken);
+
+            pieces = {Piece{first}, Piece{{}, true}, Piece{back(room - taken)}};
+        }
+    }
+
+    int length = 0;
+
+    for (const Piece& one : pieces) length += one.glyph ? dotted : text::width(whole.substr(one.part.from, one.part.upto - one.part.from), how);
+
+    const int spare = std::max(wide - length, 0);
+    int x = at.x + (justify == Edge::start ? 0 : justify == Edge::middle ? spare / 2 : spare);
+
+    for (const Piece& one : pieces) {
+        if (one.glyph) {
+            x += onto.put({x, at.y}, dots, plain);
+
+            continue;
+        }
+
+        // The stretch cut where marks begin and end, each piece in its own look.
+        std::vector<std::size_t> cuts{one.part.from, one.part.upto};
+
+        for (const Mark& mark : marks)
+            for (const std::size_t edge : {mark.from, mark.upto})
+                if (edge > one.part.from && edge < one.part.upto) cuts.push_back(edge);
+
+        std::sort(cuts.begin(), cuts.end());
+        cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+
+        for (std::size_t piece = 0; piece + 1 < cuts.size(); ++piece) {
+            const std::size_t start = cuts[piece];
+            const auto found = std::find_if(marks.begin(), marks.end(), [start](const Mark& mark) { return mark.from <= start && start < mark.upto; });
+            const bool under = found != marks.end();
+            const Look& chosen = under ? marked[static_cast<std::size_t>(found - marks.begin())] : plain;
+            const int width = onto.put({x, at.y}, whole.substr(start, cuts[piece + 1] - start), chosen);
+
+            if (under && !found->address.empty()) onto.link(Area{{x, at.y}, {width, 1}}, found->address);
+
+            x += width;
+        }
+    }
+
+    return x - at.x;
+}
+
 }
 
 using controlling::clicking;
@@ -138,117 +250,18 @@ std::vector<Label::Stretch> Label::lines(int wide) const {
 // where `elide` says, with the sheet's `elide` glyph in the gap; without elision its end is cut.
 void Label::paint(Canvas& onto) const {
     const std::string& said = *text;
-    const text::Rendering how = rendering();
-    const int wide = onto.size().wide;
-    const std::vector<Stretch> shown = lines(wide);
-    const std::string_view mark = glyph("elide");
-    const int marked = text::width(mark, how);
-
-    for (std::size_t y = 0; y < shown.size() && static_cast<int>(y) < onto.size().high; ++y) {
-        const Stretch line = shown[y];
-        const std::string_view view = std::string_view{said}.substr(line.from, line.upto - line.from);
-        const int width = text::width(view, how);
-
-        // The pieces of the line in order: stretches of the text and, where it was cut, the glyph.
-        struct Piece {
-            Stretch part;
-            bool glyph = false;
-        };
-
-        std::vector<Piece> pieces{Piece{line}};
-
-        if (width > wide && *elide != Elide::none) {
-            std::vector<std::string_view> clusters = text::clusters(view, how);
-
-            // The first clusters that fit `room` columns, as a stretch, and their width.
-            const auto front = [&](int room, int& taken) {
-                std::size_t upto = line.from;
-
-                taken = 0;
-
-                for (const std::string_view one : clusters) {
-                    const int cells = text::width(one, how);
-
-                    if (taken + cells > room) break;
-
-                    taken += cells;
-                    upto = static_cast<std::size_t>(one.data() - said.data()) + one.size();
-                }
-
-                return Stretch{line.from, upto};
-            };
-
-            // The last clusters that fit `room` columns, as a stretch.
-            const auto back = [&](int room) {
-                std::size_t from = line.upto;
-                int taken = 0;
-
-                for (auto one = clusters.rbegin(); one != clusters.rend(); ++one) {
-                    const int cells = text::width(*one, how);
-
-                    if (taken + cells > room) break;
-
-                    taken += cells;
-                    from = static_cast<std::size_t>(one->data() - said.data());
-                }
-
-                return Stretch{from, line.upto};
-            };
-
-            const int room = wide - marked;
-            int taken = 0;
-
-            if (room < 0) pieces = {Piece{front(wide, taken)}};
-            else if (*elide == Elide::end) pieces = {Piece{front(room, taken)}, Piece{{}, true}};
-            else if (*elide == Elide::start) pieces = {Piece{{}, true}, Piece{back(room)}};
-            else {
-                const Stretch first = front((room + 1) / 2, taken);
-
-                pieces = {Piece{first}, Piece{{}, true}, Piece{back(room - taken)}};
-            }
-        }
-
-        int length = 0;
-
-        for (const Piece& one : pieces)
-            length += one.glyph ? marked : text::width(std::string_view{said}.substr(one.part.from, one.part.upto - one.part.from), how);
-
-        const int spare = std::max(wide - length, 0);
-        int x = *justify == Edge::start ? 0 : *justify == Edge::middle ? spare / 2 : spare;
-
-        for (const Piece& one : pieces)
-            x += one.glyph ? onto.put({x, static_cast<int>(y)}, mark, look()) : written(onto, {x, static_cast<int>(y)}, one.part);
-    }
-}
-
-// Writes the stretch `part` of the text at `at`, cut where marks begin and end: what lies under a
-// mark in the look of its part and, when it has an address, as a link; the rest in the label's
-// look. Returns how many columns it took.
-int Label::written(Canvas& onto, Spot at, Stretch part) const {
-    const std::string& said = *text;
     const std::vector<Mark>& all = *marks;
-    std::vector<std::size_t> cuts{part.from, part.upto};
+    std::vector<Look> marked;
 
-    for (const Mark& one : all)
-        for (const std::size_t edge : {one.from, one.upto})
-            if (edge > part.from && edge < part.upto) cuts.push_back(edge);
+    marked.reserve(all.size());
 
-    std::sort(cuts.begin(), cuts.end());
-    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+    for (const Mark& one : all) marked.push_back(look(one.part));
 
-    int x = at.x;
+    const std::vector<Stretch> shown = lines(onto.size().wide);
 
-    for (std::size_t piece = 0; piece + 1 < cuts.size(); ++piece) {
-        const std::size_t from = cuts[piece];
-        const auto found = std::find_if(all.begin(), all.end(), [from](const Mark& one) { return one.from <= from && from < one.upto; });
-        const int width = onto.put({x, at.y}, std::string_view{said}.substr(from, cuts[piece + 1] - from), found == all.end() ? look() : look(found->part));
-
-        if (found != all.end() && !found->address.empty()) onto.link(Area{{x, at.y}, {width, 1}}, found->address);
-
-        x += width;
-    }
-
-    return x - at.x;
+    for (std::size_t y = 0; y < shown.size() && static_cast<int>(y) < onto.size().high; ++y)
+        (void)controlling::line(onto, {0, static_cast<int>(y)}, onto.size().wide, said, shown[y].from, shown[y].upto, all, marked, *elide,
+                                *justify, look(), glyph("elide"), rendering());
 }
 
 // A status line showing `said`, in the class "status", cut at its end when it does not fit.

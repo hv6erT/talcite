@@ -143,6 +143,8 @@ constexpr std::string_view built_sheet =
 "scroll.track.upright":"│",
 "select.mark":"▼",
 "tab.left":{"ascii":"<","unicode":"◀"},
-"tab.right":{"ascii":">","unicode":"▶"}
+"tab.right":{"ascii":">","unicode":"▶"},
+"tree.closed":{"ascii":"+","unicode":"▸"},
+"tree.open":{"ascii":"-","unicode":"▾"}
 }}
 )json";

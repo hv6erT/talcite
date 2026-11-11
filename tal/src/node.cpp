@@ -326,6 +326,17 @@ Look Node::look(std::string_view part) const {
     return document_->sheet_.style(Selection{classes, states_, part}, document_->colors_).look;
 }
 
+// The look the node's part `part` (none for the node itself) would have in the states `states`
+// instead of its own: a view draws its rows so, as if each were a node of its own. Outside a
+// document a plain look.
+Look Node::look(std::string_view part, States states) const {
+    if (document_ == nullptr) return Look{};
+
+    const std::vector<std::vector<std::string>> classes = lineage();
+
+    return document_->sheet_.style(Selection{classes, states, part}, document_->colors_).look;
+}
+
 // The glyph `name` from the sheet of the document, for its terminal; outside a document from the
 // built-in sheet without Unicode.
 std::string_view Node::glyph(std::string_view name) const {
@@ -400,6 +411,22 @@ void Node::repaint() {
 
     if (style_.shadow)
         for (const Area one : damage::shadowed(*where)) document_->damaged(one);
+}
+
+// Paints the node again where `part` (counted from the corner of its box) meets it at the next
+// frame: only there, without its shadow, which does not change with what lies inside.
+void Node::repaint(Area part) {
+    if (document_ == nullptr) return;
+
+#ifndef NDEBUG
+    if (document_->stage_ == Document::Stage::painting) throw std::logic_error{"tal::Node: repainted while painting"};
+#endif
+
+    const std::optional<Area> where = absolute();
+
+    if (!where) return;
+
+    document_->damaged(Area{{where->at.x + part.at.x, where->at.y + part.at.y}, part.size}.common(*where));
 }
 
 // The first node named `id`, in the whole document (or the tree, outside one), or none.

@@ -51,8 +51,6 @@ private:
     };
 
     [[nodiscard]] std::vector<Stretch> lines(int wide) const;
-
-    int written(Canvas& onto, Spot at, Stretch part) const;
 };
 
 class Status : public Label {

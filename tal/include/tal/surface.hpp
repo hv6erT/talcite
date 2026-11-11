@@ -77,6 +77,8 @@ public:
 
     [[nodiscard]] Canvas within(Area part) const;
 
+    [[nodiscard]] Area seen() const;
+
     int put(Spot at, std::string_view text, const Look& look);
 
     void fill(Area part, const Look& look);

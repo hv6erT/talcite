@@ -4,9 +4,11 @@
 #include <cstddef>
 #include <stdexcept>
 
+#include "dividing.hpp"
+
 namespace tal {
 
-namespace {
+namespace dividing {
 
 // Splits `room` cells among stretches that want `wanted` cells and share as `shares` say: those
 // with weight 0 get what they want, in order, while room lasts; then those with a weight get their
@@ -54,6 +56,12 @@ std::vector<int> divided(const std::vector<int>& wanted, const std::vector<Share
 
     return made;
 }
+
+}
+
+using dividing::divided;
+
+namespace {
 
 // The size along an axis: the width across, the height down.
 int along(Size one, Axis axis) { return axis == Axis::horizontal ? one.wide : one.high; }

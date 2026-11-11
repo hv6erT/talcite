@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <string_view>
+#include <vector>
 
+#include "tal/controls.hpp"
 #include "tal/event.hpp"
 #include "tal/geometry.hpp"
 #include "tal/key.hpp"
@@ -22,5 +25,8 @@ int spelled(Canvas& onto, Spot at, std::string_view said, std::optional<char32_t
 [[nodiscard]] bool clicking(const MouseEvent& one);
 
 [[nodiscard]] std::string_view lined(Border kind);
+
+int line(Canvas& onto, Spot at, int wide, std::string_view whole, std::size_t from, std::size_t upto, const std::vector<Mark>& marks,
+         const std::vector<Look>& marked, Elide elide, Edge justify, const Look& plain, std::string_view dots, text::Rendering how);
 
 }

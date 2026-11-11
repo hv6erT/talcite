@@ -181,6 +181,8 @@ protected:
 
     [[nodiscard]] Look look(std::string_view part = {}) const;
 
+    [[nodiscard]] Look look(std::string_view part, States states) const;
+
     [[nodiscard]] std::string_view glyph(std::string_view name) const;
 
     [[nodiscard]] text::Rendering rendering() const;
@@ -198,6 +200,8 @@ protected:
     void relayout();
 
     void repaint();
+
+    void repaint(Area part);
 
     void notified(Event& one);
 

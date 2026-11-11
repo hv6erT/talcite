@@ -15,11 +15,15 @@
 #include "tal/console.hpp"
 #include "tal/document.hpp"
 #include "tal/geometry.hpp"
+#include "tal/key.hpp"
+#include "tal/layout.hpp"
+#include "tal/model.hpp"
 #include "tal/node.hpp"
 #include "tal/port.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
 #include "tal/text.hpp"
+#include "tal/views.hpp"
 
 #include "tal/testing.hpp"
 
@@ -28,23 +32,25 @@
 #define TAL_CALLGRIND 1
 #endif
 
-// The measurements of talcite.next's acceptance (E3e). They run only when `TAL_BENCH` is set; in an
-// ordinary run each passes at once. As in twa's test/benching.cpp, each measured stretch prints
-// `BENCH <name> <milliseconds per repetition>`, and under callgrind (started with
-// `--instr-atstart=no`) it is the only instrumented code, dumped as `<name>/<repetitions>`. The
-// tree is built like twa's screen of panels on the terminal of twa's measurement: 200 by 60 cells,
-// a menu bar, two framed panels of film rows side by side and a key bar, in the built-in sheet,
-// monochrome like the skin twa was measured with.
+// The measurements of talcite.next's acceptance (E3e), and of the views over a large model (E4d).
+// They run only when `TAL_BENCH` is set; in an ordinary run each passes at once. As in twa's
+// test/benching.cpp, each measured stretch prints `BENCH <name> <milliseconds per repetition>`, and
+// under callgrind (started with `--instr-atstart=no`) it is the only instrumented code, dumped as
+// `<name>/<repetitions>`. The tree is built like twa's screen of panels on the terminal of twa's
+// measurement: 200 by 60 cells, a menu bar, two framed panels of film rows side by side and a key
+// bar, in the built-in sheet, monochrome like the skin twa was measured with.
 
 namespace {
 
 using tal::Area;
 using tal::Canvas;
+using tal::Code;
 using tal::Document;
 using tal::Limits;
 using tal::Look;
 using tal::Node;
 using tal::Size;
+using tal::Spot;
 using tal::State;
 
 // Whether the run is a measurement.
@@ -229,6 +235,188 @@ struct Measured {
     }
 };
 
+// Films numbered from `first`, `many` of them, in three columns (name, size, date) made when asked,
+// counting what a view asks for.
+class Films : public tal::Model {
+public:
+    Films(std::size_t many, std::size_t first) : many_(many), first_(first) {}
+
+    std::shared_ptr<std::size_t> asked = std::make_shared<std::size_t>(0);
+
+    // How many films there are.
+    std::size_t rows() const override { return many_; }
+
+    // A film's name, size or date.
+    tal::Entry entry(std::size_t row, std::size_t column) const override {
+        const std::size_t number = first_ + row;
+        tal::Entry made;
+
+        ++*asked;
+
+        if (column == 0) made.text = "Film number " + std::to_string(number) + " (19" + std::to_string(10 + number % 90) + ")";
+        else if (column == 1) made.text = std::to_string(1 + number % 7) + "." + std::to_string(number % 10) + " GB";
+        else made.text = "2026-0" + std::to_string(1 + number % 9) + "-1" + std::to_string(number % 10);
+
+        return made;
+    }
+
+    // A film more at `at`.
+    void inserted(std::size_t at) {
+        ++many_;
+        told(tal::Changes{tal::Changes::Kind::inserted, at, 1});
+    }
+
+    // The film at `at` changed.
+    void touched(std::size_t at) { told(tal::Changes{tal::Changes::Kind::changed, at, 1}); }
+
+private:
+    std::size_t many_;
+    std::size_t first_;
+};
+
+// An application on the terminal of the measurement showing two framed tables of 20 000 films side
+// by side, each with its bar, between the menu bar and the key bar; the left table has the focus
+// and its cursor stands in the middle.
+struct Viewed {
+    std::shared_ptr<tal::ScriptedConsole> line = std::make_shared<tal::ScriptedConsole>();
+    std::shared_ptr<tal::ManualClock> clock = std::make_shared<tal::ManualClock>();
+    Document document{tal::Port<tal::Clock>{clock}};
+    std::shared_ptr<Films> films = std::make_shared<Films>(20000, 0);
+    tal::Table* left = nullptr;
+    std::unique_ptr<tal::App> app;
+
+    // Builds the screen, shows it and turns until it settles.
+    Viewed() {
+        document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "frame", "style": {"border": "thin"}}], "glyphs": {}})"));
+
+        Screen& screen = document.children().add<Screen>();
+
+        (void)screen.children().add<Line>(std::vector<std::string>{"menubar"}, " Left   Files   Commands   Options   Right", std::string{});
+
+        Split& split = screen.children().add<Split>();
+        const std::vector<tal::Heading> columns{{"Name", tal::Share{1, 0}, tal::Edge::start},
+                                                {"Size", tal::Share{0, 8}, tal::Edge::end},
+                                                {"Date", tal::Share{0, 10}, tal::Edge::start}};
+
+        for (const std::shared_ptr<Films>& one : {films, std::make_shared<Films>(20000, 20000)}) {
+            tal::Row& panel = split.children().add<tal::Row>();
+
+            panel.classes({"frame"});
+
+            tal::Table& table = panel.children().add<tal::Table>(one, columns);
+
+            table.share(tal::Share{1, 0});
+            (void)panel.children().add<tal::Scroll>(table);
+
+            if (left == nullptr) left = &table;
+        }
+
+        (void)screen.children().add<Line>(std::vector<std::string>{"keybar"}, "1 Help  2 Menu  3 View  4 Edit  5 Copy  6 Move  10 Quit",
+                                          std::string{"text"});
+
+        line->window = Size{200, 60};
+        line->environment["COLORTERM"] = "truecolor";
+
+        tal::Setup wish;
+
+        wish.colors = tal::Colors::rgb;
+        wish.unicode = true;
+
+        app = std::make_unique<tal::App>(wish, tal::Port<tal::Console>{line}, tal::Port<tal::Clock>{clock});
+        app->show(document);
+
+        for (int at = 0; at < 3; ++at) (void)app->turn();
+
+        left->focus();
+        left->current = 10000;
+        left->top(9980);
+
+        for (int at = 0; at < 2; ++at) (void)app->turn();
+    }
+
+    // Does `work`, turns once and gives what the turn's frame touched (nothing without a frame) and
+    // how many entries it asked for.
+    template <typename Work>
+    std::pair<tal::Tally, std::size_t> turned(Work&& work) {
+        const std::uint64_t before = document.framed();
+
+        *films->asked = 0;
+        work();
+        (void)app->turn();
+
+        return {document.framed() == before ? tal::Tally{} : document.tally(), *films->asked};
+    }
+};
+
+}
+
+// Views over 20 000 films (E4d): a step of the cursor asks the model for the two rows it lights and
+// lays nothing out; a page and the wheel ask for one window and lay nothing out; a change out of
+// view and a film added above it ask for nothing and paint nothing, the thumb standing where it
+// stood. Outside a measurement the trial checks these.
+TRIAL("Bench: views of 20 000 rows") {
+    Viewed viewed;
+    tal::Table& left = *viewed.left;
+    const std::size_t window = left.window();
+    const auto pressed = [&viewed](Code code) { return [&viewed, code] { viewed.document.key(tal::Key{code}); }; };
+
+    SAME(window, std::size_t{55});
+
+    const auto [down, down_asked] = viewed.turned(pressed(Code::down));
+
+    SAME(down_asked, std::size_t{6});
+    SAME(down.measured, std::uint64_t{0});
+    SAME(down.arranged, std::uint64_t{0});
+
+    const auto [page, page_asked] = viewed.turned(pressed(Code::pagedown));
+
+    SAME(page_asked, 3 * window);
+    SAME(page.arranged, std::uint64_t{0});
+
+    const auto [wheel, wheel_asked] = viewed.turned([&viewed] { viewed.document.mouse(tal::Press::wheel, tal::MouseButton::none, Spot{20, 20}, {}, -1); });
+
+    SAME(wheel_asked, 3 * window);
+    SAME(wheel.arranged, std::uint64_t{0});
+
+    const auto [far, far_asked] = viewed.turned([&viewed] { viewed.films->touched(5); });
+
+    SAME(far_asked, std::size_t{0});
+    SAME(far.painted, std::uint64_t{0});
+
+    viewed.line->written.clear();
+
+    const auto [above, above_asked] = viewed.turned([&viewed] { viewed.films->inserted(5); });
+
+    SAME(above_asked, std::size_t{0});
+    SAME(above.painted, std::uint64_t{0});
+
+    if (!benching()) return;
+
+    std::printf("TALLY view-down measured=%llu arranged=%llu painted=%llu asked=%zu\n", static_cast<unsigned long long>(down.measured),
+                static_cast<unsigned long long>(down.arranged), static_cast<unsigned long long>(down.painted), down_asked);
+    std::printf("TALLY view-above painted=%llu bytes=%zu\n", static_cast<unsigned long long>(above.painted), viewed.line->written.size());
+
+    bool back = false;
+
+    measured("view-still", 200, [&viewed] { (void)viewed.app->turn(); });
+    measured("view-down", 200, [&viewed, &back] {
+        back = !back;
+        viewed.document.key(tal::Key{back ? Code::up : Code::down});
+        (void)viewed.app->turn();
+    });
+    measured("view-page", 100, [&viewed, &back] {
+        back = !back;
+        viewed.document.key(tal::Key{back ? Code::pageup : Code::pagedown});
+        (void)viewed.app->turn();
+    });
+    measured("view-hidden", 200, [&viewed] {
+        viewed.films->touched(5);
+        (void)viewed.app->turn();
+    });
+    measured("view-above", 200, [&viewed] {
+        viewed.films->inserted(5);
+        (void)viewed.app->turn();
+    });
 }
 
 // A turn of the application in which nothing changed, and a turn after the cursor moved one row:

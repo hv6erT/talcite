@@ -175,7 +175,8 @@ TRIAL("Label: a long line cut at its end, its start or its middle") {
 }
 
 // What lies under a mark is in the look of its part, and a mark with an address is a link; marks
-// cut by elision keep their look on what is left.
+// cut by elision keep their look on what is left, on both sides of the glyph, and nothing written
+// past a piece of the text covers the glyph.
 TRIAL("Label: marks give parts of the text their look and their links") {
     Stage stage{Size{9, 1}};
     Label& label = stage.document.children().add<Label>("go to x");
@@ -200,6 +201,18 @@ TRIAL("Label: marks give parts of the text their look and their links") {
 
     OUGHT(ink(scene, {4, 0}) == (std::optional<Color>{Color{0, 0, 255}}));
     SAME(scene.row(0), std::string{"go to xx\xe2\x80\xa6"});
+
+    label.text = "abcdefghijklm";
+    label.elide = Elide::middle;
+    label.marks = std::vector<Mark>{Mark{1, 11, "link", {}}};
+    stage.scene.wait(0ms);
+
+    SAME(scene.row(0), std::string{"abcd\xe2\x80\xa6" "jklm"});
+    OUGHT(ink(scene, {1, 0}) == (std::optional<Color>{Color{0, 0, 255}}));
+    OUGHT(ink(scene, {5, 0}) == (std::optional<Color>{Color{0, 0, 255}}));
+    OUGHT(!ink(scene, {7, 0}).has_value());
+    SAME(scene.at({1, 0}).link, std::uint32_t{0});
+    SAME(scene.at({3, 0}).link, std::uint32_t{0});
 }
 
 // A status line wants one row over its whole width, and its line is cut at the end.

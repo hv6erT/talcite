@@ -164,6 +164,7 @@ public:
 private:
     friend class Node;
     friend class Action;
+    friend class Model;
 
     explicit Hook(std::weak_ptr<detail::Slot> slot) : slot_(std::move(slot)) {}
 

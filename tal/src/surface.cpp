@@ -208,6 +208,12 @@ Canvas Canvas::within(Area part) const {
     return Canvas{*onto_, origin, part.size, Area{origin, part.size}.common(clip_)};
 }
 
+// The part of the canvas, in its own coordinates, where drawing reaches the surface: what this
+// frame paints of it. A view that draws many rows draws only those.
+Area Canvas::seen() const {
+    return Area{{clip_.at.x - origin_.x, clip_.at.y - origin_.y}, clip_.size};
+}
+
 // The cells of `part` (in the canvas's coordinates) that lie inside the clip, in the surface's
 // coordinates.
 Area Canvas::cut(Area part) const {
