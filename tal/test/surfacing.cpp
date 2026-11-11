@@ -305,4 +305,39 @@ TRIAL("Surface: a frame draws its eight glyphs around the edge and leaves the in
     SAME(row(one, 2), std::string{"|3- | "});
 }
 
+// A clipped frame writes the cells of its edges inside the clip and nothing else, whether the clip
+// cuts a band of rows, a band of columns or the corner of a canvas that hangs off the surface.
+TRIAL("Surface: a clipped frame writes only the stretches of its edges inside the clip") {
+    const Lines lines{"1", "2", "3", "4", "-", "|", "<", ">"};
+
+    Surface rows{{6, 5}};
+    Canvas band = rows.canvas({{0, 2}, {6, 1}});
+
+    band.frame({{0, -2}, {5, 5}}, lines, Look{});
+
+    SAME(row(rows, 1), std::string{"      "});
+    SAME(row(rows, 2), std::string{"|   | "});
+    SAME(row(rows, 3), std::string{"      "});
+    SAME(rows.damaged().size(), std::size_t{2});
+
+    Surface columns{{6, 5}};
+    Canvas strip = columns.canvas({{2, 0}, {1, 5}});
+
+    strip.frame({{-2, 0}, {5, 5}}, lines, Look{});
+
+    SAME(row(columns, 0), std::string{"  -   "});
+    SAME(row(columns, 2), std::string{"      "});
+    SAME(row(columns, 4), std::string{"  -   "});
+
+    Surface corner{{4, 4}};
+    Canvas hanging = corner.canvas({{-1, -1}, {4, 4}});
+
+    hanging.frame({{0, 0}, {4, 4}}, lines, Look{});
+
+    SAME(row(corner, 0), std::string{"  | "});
+    SAME(row(corner, 1), std::string{"  | "});
+    SAME(row(corner, 2), std::string{"--4 "});
+    SAME(row(corner, 3), std::string{"    "});
+}
+
 }

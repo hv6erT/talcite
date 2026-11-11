@@ -272,7 +272,9 @@ void Canvas::fill(Area part, const Look& look) {
 }
 
 // Draws the lines of a frame around the edge of `part`, with `lines` and in `look`; the inside is
-// left as it is. A part narrower or lower than two cells has no frame.
+// left as it is. A part narrower or lower than two cells has no frame. Only the stretches of the
+// edges inside the clip are walked: a frame repainted for the damage of one row writes the two
+// cells of that row, not its whole edge.
 void Canvas::frame(Area part, const Lines& lines, const Look& look) {
     if (part.size.wide < 2 || part.size.high < 2) return;
 
@@ -281,20 +283,29 @@ void Canvas::frame(Area part, const Lines& lines, const Look& look) {
     const int right = part.at.x + part.size.wide - 1;
     const int bottom = part.at.y + part.size.high - 1;
 
+    const int seen_left = clip_.at.x - origin_.x;
+    const int seen_top = clip_.at.y - origin_.y;
+    const int seen_right = seen_left + clip_.size.wide - 1;
+    const int seen_bottom = seen_top + clip_.size.high - 1;
+
     (void)put({left, top}, lines.upper_left, look);
     (void)put({right, top}, lines.upper_right, look);
     (void)put({left, bottom}, lines.lower_left, look);
     (void)put({right, bottom}, lines.lower_right, look);
 
-    for (int x = left + 1; x < right; ++x) {
-        (void)put({x, top}, lines.across, look);
-        (void)put({x, bottom}, lines.across, look);
-    }
+    const int from_x = std::max(left + 1, seen_left);
+    const int to_x = std::min(right - 1, seen_right);
 
-    for (int y = top + 1; y < bottom; ++y) {
-        (void)put({left, y}, lines.upright, look);
-        (void)put({right, y}, lines.upright, look);
-    }
+    for (const int y : {top, bottom})
+        if (y >= seen_top && y <= seen_bottom)
+            for (int x = from_x; x <= to_x; ++x) (void)put({x, y}, lines.across, look);
+
+    const int from_y = std::max(top + 1, seen_top);
+    const int to_y = std::min(bottom - 1, seen_bottom);
+
+    for (const int x : {left, right})
+        if (x >= seen_left && x <= seen_right)
+            for (int y = from_y; y <= to_y; ++y) (void)put({x, y}, lines.upright, look);
 }
 
 // Marks the cells of `part` as showing the picture `id` (0 for none); their letters stay for a
