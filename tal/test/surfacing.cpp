@@ -280,6 +280,30 @@ TRIAL("Surface: a picture marks its cells and writing takes it away") {
     SAME(one.at({1, 1}).picture, std::uint32_t{7});
 }
 
+// A shade changes the look of the cells it covers and leaves their letters; only the cells whose
+// look changed are damaged, and what lies outside the clip stays.
+TRIAL("Surface: a shade gives cells a look and keeps their letters") {
+    Surface one{{6, 2}};
+    Canvas all = one.canvas({{0, 0}, {6, 2}});
+
+    (void)all.put({0, 0}, "abc", inked(red));
+    one.forget();
+
+    Canvas part = one.canvas({{1, 0}, {5, 2}});
+
+    part.shade({{-1, 0}, {3, 1}}, inked(red));
+
+    OUGHT(one.damaged().empty());
+
+    part.shade({{0, 0}, {3, 2}}, Look{});
+
+    SAME(row(one, 0), std::string{"abc   "});
+    OUGHT(one.at({0, 0}).look == inked(red));
+    OUGHT(one.at({1, 0}).look == Look{});
+    OUGHT(one.at({2, 0}).look == Look{});
+    SAME(damage(one), (std::vector<Area>{{{1, 0}, {2, 1}}}));
+}
+
 TRIAL("Surface: a frame draws its eight glyphs around the edge and leaves the inside") {
     Surface one{{6, 4}};
     Canvas all = one.canvas({{0, 0}, {6, 4}});

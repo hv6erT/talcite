@@ -257,6 +257,29 @@ int Canvas::put(Spot at, std::string_view text, const Look& look) {
     return taken;
 }
 
+// Gives the cells of `part` the look `look` and leaves their letters, links and pictures: a shadow
+// dims what lies beneath it without hiding it.
+void Canvas::shade(Area part, const Look& look) {
+    const Area cut_part = cut(part);
+
+    for (int y = cut_part.at.y; y < cut_part.at.y + cut_part.size.high; ++y) {
+        int from = onto_->size_.wide;
+        int to = -1;
+
+        for (int x = cut_part.at.x; x < cut_part.at.x + cut_part.size.wide; ++x) {
+            Cell& one = onto_->cell({x, y});
+
+            if (one.look == look) continue;
+
+            one.look = look;
+            from = std::min(from, x);
+            to = std::max(to, x);
+        }
+
+        if (to >= from) onto_->spoiled(Area{{from, y}, {to - from + 1, 1}});
+    }
+}
+
 // Fills `part` with blanks in `look`, mending the wide characters it cuts.
 void Canvas::fill(Area part, const Look& look) {
     const Area cut_part = cut(part);

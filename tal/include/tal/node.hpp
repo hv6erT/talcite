@@ -189,11 +189,15 @@ protected:
 
     virtual void paint(Canvas& onto) const;
 
+    virtual void outline(Canvas& box) const;
+
     [[nodiscard]] virtual std::optional<Caret> caret() const;
 
     void relayout();
 
     void repaint();
+
+    void notified(Event& one);
 
 private:
     friend class Children;
@@ -209,8 +213,6 @@ private:
     [[nodiscard]] std::vector<std::shared_ptr<detail::Slot>> slots(const Event& one, bool fallback, Phase phase) const;
 
     bool called(Event& one, bool fallback, Phase phase);
-
-    void notified(Event& one);
 
     void changed(const void* source);
 

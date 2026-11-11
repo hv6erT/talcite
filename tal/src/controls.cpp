@@ -10,6 +10,8 @@
 #include "tal/style.hpp"
 #include "tal/text.hpp"
 
+#include "lettering.hpp"
+
 namespace tal {
 
 namespace {
@@ -24,16 +26,10 @@ constexpr int unbounded = 1 << 20;
 // Whether `cluster` is the letter `letter`, the same character or, for ASCII, the same letter in
 // the other case.
 bool lettered(std::string_view cluster, std::optional<char32_t> letter) {
-    if (!letter) return false;
-
     std::size_t at = 0;
     const std::optional<char32_t> first = text::decoded(cluster, at);
 
-    if (!first) return false;
-
-    const auto lowered = [](char32_t one) { return one >= U'A' && one <= U'Z' ? one - U'A' + U'a' : one; };
-
-    return lowered(*first) == lowered(*letter);
+    return first && lettering::same(*first, letter);
 }
 
 // Writes `said` at `at`, its first cluster that is `letter` in `marked` and the rest in `plain`;
@@ -62,19 +58,6 @@ bool pressing(Key key) {
 
 // Whether the mouse event is a click of the left button.
 bool clicking(const MouseEvent& one) { return one.press == Press::click && one.button == MouseButton::left; }
-
-// Where `screen` lies inside `one`, from the places of the node and those above it; nothing when
-// the node is not placed in a document.
-std::optional<Spot> local(const Node& one, Spot screen) {
-    if (one.document() == nullptr) return std::nullopt;
-
-    Spot at = one.area().at;
-
-    for (const Node* above = one.parent(); above != nullptr; above = above->parent())
-        at = Spot{at.x + above->area().at.x, at.y + above->area().at.y};
-
-    return Spot{screen.x - at.x, screen.y - at.y};
-}
 
 // The name of a line's kind in the glyphs of a sheet; no border draws the thin lines.
 std::string_view lined(Border kind) {
@@ -431,12 +414,10 @@ Choice::Choice(std::vector<std::string> options, std::size_t which)
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
         if (!clicking(what)) return;
 
-        const std::optional<Spot> at = local(*this, what.screen);
-
-        if (!at || at->y < 0 || static_cast<std::size_t>(at->y) >= options_.size()) return;
+        if (what.at.y < 0 || static_cast<std::size_t>(what.at.y) >= options_.size()) return;
 
         what.take();
-        chosen = static_cast<std::size_t>(at->y);
+        chosen = static_cast<std::size_t>(what.at.y);
     }));
 }
 

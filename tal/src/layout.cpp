@@ -67,8 +67,10 @@ Size sized(int much, int other, Axis axis) { return axis == Axis::horizontal ? S
 // The empty cells between `count` children `gap` apart; a negative gap counts as none.
 int gaps(std::size_t count, int gap) { return count < 2 ? 0 : static_cast<int>(count - 1) * std::max(gap, 0); }
 
-// What a line of children along `axis` wants in `room`: those with weight 0 their own size, those
-// with a weight their `least`, with the gaps between them; across, the largest child.
+// What a line of children along `axis` wants in `room`: each child its own size, one with a weight
+// at least its `least`, with the gaps between them; across, the largest child. A weighted child
+// wants its content too, so that a line whose size its content decides (a window in the middle of
+// the screen) shows it; where the line is given more, the weights share the rest.
 Size lined(const Node& owner, Limits room, Axis axis, int gap) {
     std::size_t count = 0;
     int length = 0;
@@ -77,7 +79,7 @@ Size lined(const Node& owner, Limits room, Axis axis, int gap) {
     for (Node& one : owner.children()) {
         const Size wanted = one.measured(Limits{{0, 0}, room.most});
 
-        length += one.share().weight == 0 ? along(wanted, axis) : one.share().least;
+        length += std::max(along(wanted, axis), one.share().least);
         thickness = std::max(thickness, across(wanted, axis));
         ++count;
     }
@@ -116,7 +118,7 @@ void laid(Node& owner, Area inside, Axis axis, int gap) {
 // A row with `gap` empty columns between its children; a negative gap is none.
 Row::Row(int gap) : gap_(gap) {}
 
-// The children side by side: those with weight 0 as wide as they want, the others their least.
+// The children side by side, each as wide as it wants, a weighted one at least its least.
 Size Row::measure(Limits room) const { return lined(*this, room, Axis::horizontal, gap_); }
 
 // The children left to right, each over the full height; the widths as `Share` says.
@@ -125,7 +127,7 @@ void Row::arrange(Area inside) { laid(*this, inside, Axis::horizontal, gap_); }
 // A column with `gap` empty rows between its children; a negative gap is none.
 Column::Column(int gap) : gap_(gap) {}
 
-// The children one under another: those with weight 0 as high as they want, the others their least.
+// The children one under another, each as high as it wants, a weighted one at least its least.
 Size Column::measure(Limits room) const { return lined(*this, room, Axis::vertical, gap_); }
 
 // The children top to bottom, each over the full width; the heights as `Share` says.
@@ -219,8 +221,8 @@ std::vector<std::pair<Node*, Area>> Grid::cells() const {
     return made;
 }
 
-// The tracks side by side: those with weight 0 as large as their largest child that stands in them
-// alone, the others their least; the gaps between them.
+// The tracks side by side, each as large as its largest child that stands in it alone, and a
+// weighted one at least its least; the gaps between them.
 Size Grid::measure(Limits room) const {
     std::vector<int> widths(columns_.size(), 0);
     std::vector<int> heights(rows_.size(), 0);
@@ -236,9 +238,9 @@ Size Grid::measure(Limits room) const {
     int wide = gaps(columns_.size(), gap_);
     int high = gaps(rows_.size(), gap_);
 
-    for (std::size_t at = 0; at < columns_.size(); ++at) wide += columns_[at].weight == 0 ? widths[at] : columns_[at].least;
+    for (std::size_t at = 0; at < columns_.size(); ++at) wide += std::max(widths[at], columns_[at].least);
 
-    for (std::size_t at = 0; at < rows_.size(); ++at) high += rows_[at].weight == 0 ? heights[at] : rows_[at].least;
+    for (std::size_t at = 0; at < rows_.size(); ++at) high += std::max(heights[at], rows_[at].least);
 
     return Size{wide, high};
 }

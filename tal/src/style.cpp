@@ -44,6 +44,7 @@ struct Partial {
     std::optional<Border> border;
     std::optional<Sides> padding;
     std::optional<Sides> margin;
+    std::optional<bool> shadow;
 };
 
 // A rule of a sheet: its selector taken apart, its weight and what it says at each level.
@@ -291,6 +292,10 @@ Partial partial(const Value& one) {
             made.padding = sided(given);
         } else if (name == "margin") {
             made.margin = sided(given);
+        } else if (name == "shadow") {
+            if (given.kind != reading::Kind::boolean) reading::refused(given, "\"shadow\" is true or false");
+
+            made.shadow = given.boolean;
         } else {
             reading::refused(given, "unknown field \"" + name + "\"");
         }
@@ -448,6 +453,7 @@ void laid(Style& made, const Partial& over) {
     if (over.border) made.border = *over.border;
     if (over.padding) made.padding = *over.padding;
     if (over.margin) made.margin = *over.margin;
+    if (over.shadow) made.shadow = *over.shadow;
 }
 
 }

@@ -96,7 +96,10 @@ constexpr std::string_view built_sheet =
 {"select":"title","style":{"ink":"default","paper":"default","bold":false,"faint":false,"italic":false,"under":false,"reverse":false,"crossed":false}},
 {"select":"viewer","style":{"ink":"default","paper":"default","bold":false,"faint":false,"italic":false,"under":false,"reverse":false,"crossed":false}},
 {"select":"viewer:focus:mark","style":{"ink":"default","paper":"default","bold":false,"faint":false,"italic":false,"under":true,"reverse":true,"crossed":false}},
-{"select":"viewer:mark","style":{"ink":"default","paper":"default","bold":false,"faint":false,"italic":false,"under":false,"reverse":true,"crossed":false}}
+{"select":"viewer:mark","style":{"ink":"default","paper":"default","bold":false,"faint":false,"italic":false,"under":false,"reverse":true,"crossed":false}},
+{"select":"window","style":{"border":"thin"}},
+{"select":"dialog","style":{"border":"twin","shadow":true}},
+{"select":"window.screen","style":{"border":"none","shadow":false}}
 ],"glyphs":{
 "choice.dot":"•",
 "diff.closed":"▸",
@@ -124,14 +127,14 @@ constexpr std::string_view built_sheet =
 "line.thin.upper.right":"┐",
 "line.thin.upright":"│",
 "line.twin.across":"═",
-"line.twin.left.joint":"╠",
+)json"
+    R"json("line.twin.left.joint":"╠",
 "line.twin.lower.left":"╚",
 "line.twin.lower.right":"╝",
 "line.twin.right.joint":"╣",
 "line.twin.upper.left":"╔",
 "line.twin.upper.right":"╗",
-)json"
-    R"json("line.twin.upright":"║",
+"line.twin.upright":"║",
 "menu.more":{"ascii":">","unicode":"▸"},
 "scroll.thumb":"█",
 "scroll.track.across":"─",

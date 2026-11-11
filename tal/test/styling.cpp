@@ -207,6 +207,16 @@ TRIAL("Sheet: the box of a style, with sides as one number or four") {
     SAME(one.border, Border::twin);
     SAME(one.padding, (Sides{1, 1, 1, 1}));
     SAME(one.margin, (Sides{0, 2, 3, 4}));
+    OUGHT(!one.shadow);
+}
+
+// A shadow is said with a boolean, and a later rule may take it away.
+TRIAL("Sheet: a style casts a shadow when its rule says so") {
+    const StyleSheet sheet = sheeted({{"pane", R"({"shadow": true})"}, {"pane.flat", R"({"shadow": false})"}});
+
+    OUGHT(styled(sheet, {{"pane"}}).shadow);
+    OUGHT(!styled(sheet, {{"pane", "flat"}}).shadow);
+    OUGHT(refusal(R"({"rules": [{"select": "pane", "style": {"shadow": 1}}]})").ends_with("\"shadow\" is true or false"));
 }
 
 TRIAL("Sheet: numbers in every form JSON allows, read exactly where they are whole") {
@@ -245,6 +255,10 @@ TRIAL("Sheet: a sheet lies over the built-in one, which gives what it does not s
     OUGHT(styled(built, {{"input"}}, {State::disabled}).look.faint);
     OUGHT(styled(sheet, {{"menu"}}, {State::focus}).look.bold);
     OUGHT(styled(sheet, {{"menu"}}, {State::focus}).look.reverse);
+    SAME(styled(built, {{"window"}}).border, Border::thin);
+    SAME(styled(built, {{"window", "dialog"}}).border, Border::twin);
+    OUGHT(styled(built, {{"window", "dialog"}}).shadow);
+    SAME(styled(built, {{"window", "screen"}}).border, Border::none);
 }
 
 TRIAL("Sheet: glyphs by level, from the sheet, else the built-in one, else a question mark") {

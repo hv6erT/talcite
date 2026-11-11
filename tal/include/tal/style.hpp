@@ -43,6 +43,7 @@ struct Style {
     Border border = Border::none;
     Sides padding;
     Sides margin;
+    bool shadow = false;
 
     friend bool operator==(const Style&, const Style&) = default;
 };

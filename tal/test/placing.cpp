@@ -102,8 +102,8 @@ TRIAL("Row: fixed children first, then the weighted share the rest by their weig
     OUGHT(last.area() == (Area{{25, 0}, {5, 3}}));
 }
 
-// A row wants its fixed children's widths, its weighted children's least and the gaps; across, its
-// tallest child. A negative gap counts as none, and an empty row wants the least of its room.
+// A row wants its children's widths (a weighted child at least its least) and the gaps; across,
+// its tallest child. A negative gap counts as none, and an empty row wants the least of its room.
 TRIAL("Row: what a row wants, with gaps, and an empty one") {
     Laid<Row> laid{Size{30, 5}, 2};
 
@@ -111,7 +111,13 @@ TRIAL("Row: what a row wants, with gaps, and an empty one") {
     (void)laid.block({9, 3}, Share{1, 2});
     (void)laid.block({5, 2});
 
-    OUGHT(laid.layout->measured(Limits{{0, 0}, {30, 5}}) == (Size{4 + 2 + 5 + 2 * 2, 3}));
+    OUGHT(laid.layout->measured(Limits{{0, 0}, {30, 5}}) == (Size{4 + 9 + 5 + 2 * 2, 3}));
+
+    Laid<Row> reserved{Size{30, 5}};
+
+    (void)reserved.block({2, 1}, Share{1, 6});
+
+    OUGHT(reserved.layout->measured(Limits{{0, 0}, {30, 5}}) == (Size{6, 1}));
 
     Laid<Row> tight{Size{30, 5}, -3};
 
@@ -164,7 +170,7 @@ TRIAL("Column: children down by the same rule, the content over its bars") {
     OUGHT(content.area() == (Area{{0, 0}, {20, 8}}));
     OUGHT(rule.area() == (Area{{0, 8}, {20, 1}}));
     OUGHT(status.area() == (Area{{0, 9}, {20, 1}}));
-    OUGHT(laid.layout->measured(Limits{{0, 0}, {20, 10}}) == (Size{20, 2}));
+    OUGHT(laid.layout->measured(Limits{{0, 0}, {20, 60}}) == (Size{20, 52}));
 }
 
 // The share is the child's; a new one lays the parent out again, and a negative weight or least
@@ -268,7 +274,7 @@ TRIAL("Grid: what it wants, and cells outside it or a stranger throw") {
 
     laid.layout->at(three, Spot{1, 1});
 
-    OUGHT(laid.layout->measured(Limits{{0, 0}, {20, 6}}) == (Size{4 + 1 + 3, 2 + 1 + 3}));
+    OUGHT(laid.layout->measured(Limits{{0, 0}, {20, 6}}) == (Size{4 + 1 + 7, 2 + 1 + 3}));
     OUGHT(throws<std::out_of_range>([&] { laid.layout->at(one, Spot{1, 1}, Size{2, 1}); }));
     OUGHT(throws<std::out_of_range>([&] { laid.layout->at(one, Spot{0, 2}); }));
     OUGHT(throws<std::out_of_range>([&] { laid.layout->at(one, Spot{-1, 0}); }));

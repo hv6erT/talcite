@@ -74,6 +74,10 @@ public:
 
     [[nodiscard]] Node* focused() const { return focus_; }
 
+    void confine(Node* within);
+
+    [[nodiscard]] Node* confined() const { return confined_; }
+
     [[nodiscard]] std::optional<Caret> caret() const override;
 
     [[nodiscard]] Timer after(std::chrono::milliseconds wait, Fn<Timer> what);
@@ -99,6 +103,10 @@ private:
     [[nodiscard]] Node& under(Spot screen);
 
     [[nodiscard]] Node& reachable(Node& one);
+
+    [[nodiscard]] Node& keyed();
+
+    void drawn(Node& one, Area box, Area seen, Area clip, Area part);
 
     void moved(Node* to);
 
@@ -132,6 +140,8 @@ private:
     std::vector<std::shared_ptr<Node>> arranged_;
     Node* focus_ = nullptr;
     Node* captured_ = nullptr;
+    Node* confined_ = nullptr;
+    std::weak_ptr<Node> deferred_;
     std::vector<Node*> hover_;
     Spot began_;
     MouseButton pressing_ = MouseButton::none;

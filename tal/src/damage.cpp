@@ -68,4 +68,12 @@ void added(std::vector<Area>& into, Area part, std::size_t most) {
     into.assign(1, all);
 }
 
+// Where the shadow of `box` falls, as in Midnight Commander: two columns to the right from the
+// second row down, and a row below from the third column on, so that it does not read as a second
+// border.
+std::array<Area, 2> shadowed(Area box) {
+    return {Area{{box.at.x + box.size.wide, box.at.y + 1}, {2, std::max(box.size.high - 1, 0)}},
+            Area{{box.at.x + 2, box.at.y + box.size.high}, {box.size.wide, 1}}};
+}
+
 }

@@ -87,6 +87,8 @@ public:
 
     void link(Area part, std::string_view address);
 
+    void shade(Area part, const Look& look);
+
 private:
     friend class Surface;
 

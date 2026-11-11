@@ -6,6 +6,8 @@
 #include <utility>
 
 #include "tal/document.hpp"
+#include "damage.hpp"
+
 
 namespace tal {
 
@@ -257,9 +259,19 @@ void Node::share(Share how) {
     if (parent_ != nullptr) parent_->relayout();
 }
 
-// Takes the focus, when the node can take it (`focusable`); otherwise nothing happens.
+// Takes the focus, when the node can take it (`focusable`); otherwise nothing happens. While the
+// document confines the focus elsewhere (`Document::confine`), the request waits and is granted
+// once the confinement lets the node in.
 void Node::focus() {
-    if (focusable()) document_->moved(this);
+    if (!focusable()) return;
+
+    if (document_->confined_ != nullptr && !document_->confined_->holds(*this)) {
+        document_->deferred_ = weak_from_this();
+
+        return;
+    }
+
+    document_->moved(this);
 }
 
 // Whether the node has the focus of its document.
@@ -340,6 +352,10 @@ void Node::arrange(Area inside) {
 // Paints the content; a plain node has none, only the background and border the document paints.
 void Node::paint(Canvas& onto) const { (void)onto; }
 
+// Draws on the node's box, its border included, after the border and before the content; a plain
+// node draws nothing there. A window puts its title on its top border this way.
+void Node::outline(Canvas& box) const { (void)box; }
+
 // Where the node's caret stands, in the coordinates of its content, and how it looks; a plain node
 // has none. The document asks the node that has the focus.
 std::optional<Caret> Node::caret() const { return std::nullopt; }
@@ -365,7 +381,14 @@ void Node::repaint() {
     if (document_->stage_ == Document::Stage::painting) throw std::logic_error{"tal::Node: repainted while painting"};
 #endif
 
-    if (const std::optional<Area> where = absolute()) document_->damaged(*where);
+    const std::optional<Area> where = absolute();
+
+    if (!where) return;
+
+    document_->damaged(*where);
+
+    if (style_.shadow)
+        for (const Area one : damage::shadowed(*where)) document_->damaged(one);
 }
 
 // The first node named `id`, in the whole document (or the tree, outside one), or none.

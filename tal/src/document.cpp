@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -231,7 +232,11 @@ void Document::styled(Node& one) {
 
         ++tally_.styled;
 
-        if (made.border != one.style_.border || made.padding != one.style_.padding || made.margin != one.style_.margin) {
+        if (made.border != one.style_.border || made.padding != one.style_.padding || made.margin != one.style_.margin ||
+            made.shadow != one.style_.shadow) {
+            // The shadow lies outside the box, so where it fell before is painted again too.
+            if (made.shadow != one.style_.shadow) one.repaint();
+
             one.style_ = made;
             one.relayout();
         } else if (made.look != one.style_.look) {
@@ -248,15 +253,30 @@ void Document::styled(Node& one) {
 // Paints `one`, whose parent stands at `origin` on the screen, where it meets `clip` (what its
 // parent shows) and `part` (the damage being painted): its background and border, its content,
 // then its children in order, the later on top. A node that does not meet them is skipped with
-// everything under it, since children show only inside their parent.
+// everything under it, since children show only inside their parent. What `outline` draws goes on
+// the box after the border. A node whose style casts a shadow casts it last, over what lies before
+// it and inside its parent, also where the damage meets only the shadow.
 void Document::painted(Node& one, Spot origin, Area clip, Area part) {
     if (!one.placed_) return;
 
     const Area box{{origin.x + one.area_.at.x, origin.y + one.area_.at.y}, one.area_.size};
     const Area seen = box.common(clip).common(part);
 
-    if (seen.size.wide <= 0 || seen.size.high <= 0) return;
+    if (seen.size.wide > 0 && seen.size.high > 0) drawn(one, box, seen, clip, part);
 
+    if (!one.style_.shadow) return;
+
+    const Area shown = clip.common(part);
+    Canvas over = surface_.canvas(shown);
+    const std::vector<std::vector<std::string>> shade{{"shade"}};
+    const Look dark = sheet_.style(Selection{shade, {}, {}}, colors_).look;
+
+    for (const Area cast : damage::shadowed(box)) over.shade(Area{{cast.at.x - shown.at.x, cast.at.y - shown.at.y}, cast.size}, dark);
+}
+
+// Paints `one`, standing at `box` on the screen, where it shows (`seen`): its background, border
+// and outline, its content, then its children.
+void Document::drawn(Node& one, Area box, Area seen, Area clip, Area part) {
     Canvas whole = surface_.canvas(seen).within(Area{{box.at.x - seen.at.x, box.at.y - seen.at.y}, box.size});
     const Style& style = one.style_;
     const Area all{{0, 0}, box.size};
@@ -265,6 +285,8 @@ void Document::painted(Node& one, Spot origin, Area clip, Area part) {
     whole.fill(all, style.look);
 
     if (line != 0) whole.frame(all, sheet_.lines(style.border, unicode_), style.look);
+
+    one.outline(whole);
 
     Canvas inside = whole.within(all.inner(Sides{style.padding.top + line, style.padding.right + line,
                                                  style.padding.bottom + line, style.padding.left + line}));
@@ -278,9 +300,10 @@ void Document::painted(Node& one, Spot origin, Area clip, Area part) {
 
 // The caret of the node with the focus, on the screen: where the node says it stands inside its
 // content, as long as that lies inside the content and on the screen. Nothing without a focus, a
-// placed focus or a caret; the document itself has no caret of its own.
+// placed focus or a caret, nor for a focus the confinement leaves outside; the document itself has
+// no caret of its own.
 std::optional<Caret> Document::caret() const {
-    if (focus_ == nullptr || focus_ == this) return std::nullopt;
+    if (focus_ == nullptr || focus_ == this || (confined_ != nullptr && !confined_->holds(*focus_))) return std::nullopt;
 
     std::optional<Caret> made = focus_->caret();
     const std::optional<Area> where = focus_->absolute();
@@ -321,7 +344,7 @@ void Document::key(Key one) {
 
     KeyEvent made{one};
 
-    delivered(made, focus_ != nullptr ? *focus_ : *this);
+    delivered(made, keyed());
 }
 
 // Delivers what the mouse did at `screen` (for the wheel, `steps` along `axis`): to the node that
@@ -335,6 +358,16 @@ void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, in
     if (press == Press::down) captured_ = nullptr;
 
     Node& below = under(screen);
+
+    // While the focus is confined, the mouse outside reaches nothing: no hover, no click, no
+    // capture.
+    if (confined_ != nullptr && !confined_->holds(captured_ != nullptr ? *captured_ : below)) {
+        hovered(nullptr);
+
+        if (press == Press::up) captured_ = nullptr;
+
+        return;
+    }
 
     hovered(&below);
 
@@ -356,7 +389,7 @@ void Document::paste(std::string text) {
 
     PasteEvent made{std::move(text)};
 
-    delivered(made, focus_ != nullptr ? *focus_ : *this);
+    delivered(made, keyed());
 }
 
 // When the next timer rings, or nothing when none waits.
@@ -464,6 +497,44 @@ Node& Document::reachable(Node& one) {
     return *made;
 }
 
+// Confines the focus and the mouse to `within` and what lies under it, or frees them (nothing): Tab
+// goes round inside, the mouse outside reaches nothing, and keys go to `within` while nothing in it
+// has the focus. The focus itself does not move here; whoever confines it decides where it goes. A
+// node outside that asks for the focus meanwhile waits (`Node::focus`) and gets it once the
+// confinement lets it in, the last one to ask winning. A node outside the document throws
+// std::logic_error.
+void Document::confine(Node* within) {
+    changing();
+
+    if (within != nullptr && within->document_ != this) throw std::logic_error{"tal::Document::confine: the node is not in this document"};
+
+    confined_ = within;
+
+    if (confined_ != nullptr && captured_ != nullptr && !confined_->holds(*captured_)) captured_ = nullptr;
+
+    const std::shared_ptr<Node> waiting = deferred_.lock();
+
+    if (waiting == nullptr || waiting->document_ != this) {
+        deferred_.reset();
+
+        return;
+    }
+
+    if (confined_ != nullptr && !confined_->holds(*waiting)) return;
+
+    deferred_.reset();
+
+    if (waiting->focusable()) moved(waiting.get());
+}
+
+// Where keys and pastes go: the node with the focus, unless it lies outside the confinement; then
+// the node the focus is confined to; without either, the document.
+Node& Document::keyed() {
+    if (focus_ != nullptr && (confined_ == nullptr || confined_->holds(*focus_))) return *focus_;
+
+    return confined_ != nullptr ? *confined_ : *this;
+}
+
 // Moves the focus to `to` (nothing for none): `Blurred` to the node that had it, `Focused` to the
 // new one, and the state `focus` with it.
 void Document::moved(Node* to) {
@@ -515,7 +586,8 @@ Node* Document::following(const Node* from, bool back, const Node* skipped) {
     for (std::size_t step = 0; step < order.size(); ++step) {
         Node* one = order[(first + step) % order.size()];
 
-        if (one->focusable() && (skipped == nullptr || !skipped->holds(*one))) return one;
+        if (one->focusable() && (skipped == nullptr || !skipped->holds(*one)) && (confined_ == nullptr || confined_->holds(*one)))
+            return one;
     }
 
     return nullptr;
@@ -524,6 +596,8 @@ Node* Document::following(const Node* from, bool back, const Node* skipped) {
 // Lets go of `gone`, which leaves the tree: a focus inside moves on as Tab moves it, a capture
 // inside ends, and the nodes inside are no longer hovered.
 void Document::forgotten(Node& gone) {
+    if (confined_ != nullptr && gone.holds(*confined_)) confined_ = nullptr;
+
     if (focus_ != nullptr && gone.holds(*focus_)) moved(following(focus_, false, &gone));
 
     if (captured_ != nullptr && gone.holds(*captured_)) captured_ = nullptr;
