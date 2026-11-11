@@ -23,6 +23,13 @@ inline constexpr int endless = std::numeric_limits<int>::max();
 
 enum class Effect { none, paint, layout };
 
+struct Share {
+    int weight = 0;
+    int least = 0;
+
+    friend bool operator==(const Share&, const Share&) = default;
+};
+
 struct Caret {
     enum class Form { usual, block, underline, bar };
 
@@ -128,6 +135,10 @@ public:
     void placed(Area outer);
 
     [[nodiscard]] Area area() const { return area_; }
+
+    void share(Share how);
+
+    [[nodiscard]] Share share() const { return share_; }
 
     template <typename E>
     [[nodiscard]] Hook on(Fn<E> what, Phase phase = Phase::bubble) {
@@ -240,6 +251,7 @@ private:
     std::vector<std::pair<std::type_index, std::shared_ptr<detail::Slot>>> slots_;
     bool enabled_ = true;
     bool focusable_ = false;
+    Share share_;
 };
 
 template <typename T>

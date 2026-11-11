@@ -27,7 +27,7 @@ namespace {
 using namespace std::chrono_literals;
 
 using tal::Area;
-using tal::Button;
+using tal::MouseButton;
 using tal::Changed;
 using tal::Code;
 using tal::Colors;
@@ -321,12 +321,12 @@ TRIAL("Mouse: the deepest active node under the pointer, a later sibling on top,
             if (&event.target() == one && event.press == Press::move) got.emplace_back(one, event.at);
         }));
 
-    stage.document.mouse(Press::move, Button::none, Spot{5, 0});
-    stage.document.mouse(Press::move, Button::none, Spot{2, 1});
-    stage.document.mouse(Press::move, Button::none, Spot{15, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{5, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{2, 1});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{15, 0});
 
     stage.middle->enable(false);
-    stage.document.mouse(Press::move, Button::none, Spot{6, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{6, 0});
 
     SAME(got.size(), std::size_t{4});
     OUGHT(got[0].first == stage.middle);
@@ -342,7 +342,7 @@ TRIAL("Mouse: the deepest active node under the pointer, a later sibling on top,
     (void)stage.document.frame();
     got.clear();
     stage.hooks.add(above.on<MouseEvent>([&got, &above](MouseEvent& event) { got.emplace_back(&above, event.at); }));
-    stage.document.mouse(Press::move, Button::none, Spot{1, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{1, 0});
 
     SAME(got.size(), std::size_t{1});
     OUGHT(got[0].first == &above);
@@ -354,16 +354,16 @@ TRIAL("Mouse: a press gives the focus to the deepest node on the way that takes 
 
     (void)stage.document.frame();
 
-    stage.document.mouse(Press::down, Button::left, Spot{9, 0});
+    stage.document.mouse(Press::down, MouseButton::left, Spot{9, 0});
     OUGHT(stage.last->focused());
 
-    stage.document.mouse(Press::down, Button::left, Spot{5, 0});
+    stage.document.mouse(Press::down, MouseButton::left, Spot{5, 0});
     OUGHT(stage.last->focused());
 
-    stage.document.mouse(Press::down, Button::back, Spot{1, 0});
+    stage.document.mouse(Press::down, MouseButton::back, Spot{1, 0});
     OUGHT(stage.last->focused());
 
-    stage.document.mouse(Press::down, Button::right, Spot{1, 0});
+    stage.document.mouse(Press::down, MouseButton::right, Spot{1, 0});
     OUGHT(stage.first->focused());
     OUGHT(inside.parent() == stage.last);
 }
@@ -378,10 +378,10 @@ TRIAL("Mouse: a capture keeps the mouse until the button is released") {
         if (&one.target() == stage.first) first.push_back(one.press);
     }));
 
-    stage.document.mouse(Press::down, Button::left, Spot{1, 0});
-    stage.document.mouse(Press::move, Button::left, Spot{15, 1});
-    stage.document.mouse(Press::up, Button::left, Spot{15, 1});
-    stage.document.mouse(Press::move, Button::none, Spot{15, 1});
+    stage.document.mouse(Press::down, MouseButton::left, Spot{1, 0});
+    stage.document.mouse(Press::move, MouseButton::left, Spot{15, 1});
+    stage.document.mouse(Press::up, MouseButton::left, Spot{15, 1});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{15, 1});
 
     SAME(first, (std::vector<Press>{Press::down, Press::move, Press::up}));
 }
@@ -394,7 +394,7 @@ TRIAL("Mouse: a release where the press was is a click, a second one soon a doub
         if (one.press == Press::click || one.press == Press::double_click) got.emplace_back(one.press, &one.target());
     }));
 
-    const auto clicked = [&stage](Spot where, Button which = Button::left) {
+    const auto clicked = [&stage](Spot where, MouseButton which = MouseButton::left) {
         stage.document.mouse(Press::down, which, where);
         stage.document.mouse(Press::up, which, where);
     };
@@ -406,11 +406,11 @@ TRIAL("Mouse: a release where the press was is a click, a second one soon a doub
     stage.clock->advance(401ms);
     clicked(Spot{1, 0});
     clicked(Spot{2, 0});
-    clicked(Spot{2, 0}, Button::right);
-    clicked(Spot{2, 0}, Button::forward);
+    clicked(Spot{2, 0}, MouseButton::right);
+    clicked(Spot{2, 0}, MouseButton::forward);
 
-    stage.document.mouse(Press::down, Button::left, Spot{9, 0});
-    stage.document.mouse(Press::up, Button::left, Spot{10, 0});
+    stage.document.mouse(Press::down, MouseButton::left, Spot{9, 0});
+    stage.document.mouse(Press::up, MouseButton::left, Spot{10, 0});
 
     using P = Press;
     SAME(got, (std::vector<std::pair<Press, Node*>>{{P::click, stage.first},
@@ -424,21 +424,21 @@ TRIAL("Mouse: a release where the press was is a click, a second one soon a doub
 TRIAL("Hover: the node under the pointer and the nodes above it, short of the document") {
     Stage stage;
 
-    stage.document.mouse(Press::move, Button::none, Spot{1, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{1, 0});
     OUGHT(stage.first->states().has(State::hover));
     OUGHT(stage.strip->states().has(State::hover));
     OUGHT(!stage.document.states().has(State::hover));
     OUGHT(!stage.first->focused());
 
-    stage.document.mouse(Press::move, Button::none, Spot{9, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{9, 0});
     OUGHT(!stage.first->states().has(State::hover));
     OUGHT(stage.last->states().has(State::hover));
 
-    stage.document.mouse(Press::move, Button::none, Spot{19, 1});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{19, 1});
     OUGHT(!stage.last->states().has(State::hover));
     OUGHT(stage.strip->states().has(State::hover));
 
-    stage.document.mouse(Press::move, Button::none, Spot{9, 0});
+    stage.document.mouse(Press::move, MouseButton::none, Spot{9, 0});
 
     const std::shared_ptr<Node> gone = stage.strip->children().remove(*stage.last);
 

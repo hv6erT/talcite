@@ -80,7 +80,7 @@ public:
 
     void key(Key one);
 
-    void mouse(Press press, Button button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical);
+    void mouse(Press press, MouseButton button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical);
 
     void paste(std::string text);
 
@@ -108,7 +108,7 @@ private:
 
     void hovered(Node* now);
 
-    void clicked(Press press, Button button, Spot screen, Mods mods);
+    void clicked(Press press, MouseButton button, Spot screen, Mods mods);
 
     void damaged(Area part);
 
@@ -134,10 +134,10 @@ private:
     Node* captured_ = nullptr;
     std::vector<Node*> hover_;
     Spot began_;
-    Button pressing_ = Button::none;
+    MouseButton pressing_ = MouseButton::none;
     std::optional<std::chrono::steady_clock::time_point> first_click_;
     Spot waiting_;
-    Button clicked_ = Button::none;
+    MouseButton clicked_ = MouseButton::none;
     std::vector<std::weak_ptr<Timer::State>> timers_;
     std::uint64_t timed_ = 0;
     Hooks own_;

@@ -40,9 +40,9 @@ public:
 
     void paste(std::string text);
 
-    void click(Spot at, Button button = Button::left);
+    void click(Spot at, MouseButton button = MouseButton::left);
 
-    void click(Node& one, Button button = Button::left);
+    void click(Node& one, MouseButton button = MouseButton::left);
 
     void twice(Spot at);
 

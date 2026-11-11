@@ -171,7 +171,7 @@ struct Decoder::Held {
     vt::Reader reader;
 
     // The button that went down last, for the encodings whose release does not name it.
-    Button pressed = Button::none;
+    MouseButton pressed = MouseButton::none;
 
     std::vector<Heard> heard(const std::vector<vt::Token>& tokens);
 
@@ -239,21 +239,21 @@ std::optional<Heard> Decoder::Held::pointed(int mask, int x, int y, std::optiona
         return Wheeled{where, low % 2 == 0 ? 1 : -1, axis, mods};
     }
 
-    Button button = Button::none;
+    MouseButton button = MouseButton::none;
 
     if (extra) {
         if (low > 1) return std::nullopt;
 
-        button = low == 0 ? Button::back : Button::forward;
+        button = low == 0 ? MouseButton::back : MouseButton::forward;
     } else if (low < 3) {
-        button = low == 0 ? Button::left : low == 1 ? Button::middle : Button::right;
+        button = low == 0 ? MouseButton::left : low == 1 ? MouseButton::middle : MouseButton::right;
     }
 
     if (moving) return Moused{where, Press::move, button, mods};
 
     if (released.has_value()) {
         if (*released) {
-            pressed = Button::none;
+            pressed = MouseButton::none;
 
             return Moused{where, Press::up, button, mods};
         }
@@ -263,10 +263,10 @@ std::optional<Heard> Decoder::Held::pointed(int mask, int x, int y, std::optiona
         return Moused{where, Press::down, button, mods};
     }
 
-    if (button == Button::none) {
-        const Button was = pressed;
+    if (button == MouseButton::none) {
+        const MouseButton was = pressed;
 
-        pressed = Button::none;
+        pressed = MouseButton::none;
 
         return Moused{where, Press::up, was, mods};
     }
@@ -455,7 +455,7 @@ bool dispatched(const Heard& one, Document& onto) {
     }
 
     if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
-        onto.mouse(Press::wheel, Button::none, wheeled->where, wheeled->mods, wheeled->steps, wheeled->axis);
+        onto.mouse(Press::wheel, MouseButton::none, wheeled->where, wheeled->mods, wheeled->steps, wheeled->axis);
 
         return true;
     }

@@ -70,7 +70,7 @@ void Scene::paste(std::string text) {
 }
 
 // The button `button` pressed and released in the cell `at`, a click where nothing moved.
-void Scene::click(Spot at, Button button) {
+void Scene::click(Spot at, MouseButton button) {
     Document& onto = shown();
 
     onto.mouse(Press::down, button, at);
@@ -81,7 +81,7 @@ void Scene::click(Spot at, Button button) {
 
 // A click in the middle of `one` as it stands on the screen. A node that is not placed on the
 // screen of the document shown throws std::logic_error: nobody could click it.
-void Scene::click(Node& one, Button button) {
+void Scene::click(Node& one, MouseButton button) {
     if (one.document() != &shown()) throw std::logic_error{"tal::testing::Scene::click: the node is not in the document shown"};
 
     Spot at = one.area().at;
@@ -106,14 +106,14 @@ void Scene::twice(Spot at) {
 
 // The pointer moved to the cell `at` with no button down, which hovers what lies there.
 void Scene::point(Spot at) {
-    shown().mouse(Press::move, Button::none, at);
+    shown().mouse(Press::move, MouseButton::none, at);
 
     settled();
 }
 
 // The wheel turned by `steps` along `axis` with the pointer in the cell `at`.
 void Scene::wheel(Spot at, int steps, Axis axis) {
-    shown().mouse(Press::wheel, Button::none, at, {}, steps, axis);
+    shown().mouse(Press::wheel, MouseButton::none, at, {}, steps, axis);
 
     settled();
 }

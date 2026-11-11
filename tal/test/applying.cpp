@@ -1337,8 +1337,8 @@ TRIAL("App: the document's double-click time bounds the wait between clicks") {
     (void)rig.document.frame();
 
     const auto clicked = [&rig] {
-        rig.document.mouse(Press::down, tal::Button::left, Spot{0, 0});
-        rig.document.mouse(Press::up, tal::Button::left, Spot{0, 0});
+        rig.document.mouse(Press::down, tal::MouseButton::left, Spot{0, 0});
+        rig.document.mouse(Press::up, tal::MouseButton::left, Spot{0, 0});
     };
 
     rig.document.double_click(100ms);

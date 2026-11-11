@@ -36,14 +36,14 @@ std::string prefixed(Mods mods) {
 }
 
 // The name of a mouse button, or "none".
-std::string named(Button button) {
+std::string named(MouseButton button) {
     switch (button) {
-        case Button::left: return "left";
-        case Button::middle: return "middle";
-        case Button::right: return "right";
-        case Button::back: return "back";
-        case Button::forward: return "forward";
-        case Button::none: break;
+        case MouseButton::left: return "left";
+        case MouseButton::middle: return "middle";
+        case MouseButton::right: return "right";
+        case MouseButton::back: return "back";
+        case MouseButton::forward: return "forward";
+        case MouseButton::none: break;
     }
 
     return "none";

@@ -22,7 +22,7 @@ struct Struck {
 struct Moused {
     Spot where;
     Press press = Press::move;
-    Button button = Button::none;
+    MouseButton button = MouseButton::none;
     Mods mods;
 
     friend bool operator==(const Moused&, const Moused&) = default;

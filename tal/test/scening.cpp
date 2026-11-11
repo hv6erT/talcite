@@ -28,7 +28,7 @@ using namespace std::chrono_literals;
 using tal::Area;
 using tal::Arranged;
 using tal::Axis;
-using tal::Button;
+using tal::MouseButton;
 using tal::Canvas;
 using tal::Caret;
 using tal::Code;
@@ -271,7 +271,7 @@ TRIAL("Scene: clicks, a double click, pointing and the wheel reach the document"
     scene.show(document);
 
     scene.click({1, 2});
-    scene.click({4, 0}, Button::right);
+    scene.click({4, 0}, MouseButton::right);
     scene.twice({2, 1});
     scene.point({5, 1});
     scene.wheel({3, 2}, -2);

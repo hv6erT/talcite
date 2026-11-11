@@ -14,6 +14,7 @@ namespace tal {
 
 class Node;
 class Document;
+class Action;
 
 template <typename T>
 class Property;
@@ -79,7 +80,7 @@ private:
 
 enum class Phase { capture, bubble };
 
-enum class Button { none, left, middle, right, back, forward };
+enum class MouseButton { none, left, middle, right, back, forward };
 
 enum class Press { down, up, move, wheel, click, double_click };
 
@@ -90,11 +91,11 @@ struct KeyEvent : Event {
 };
 
 struct MouseEvent : Event {
-    MouseEvent(Press made, Button which, Mods with, Spot screened, int stepped, Axis along = Axis::vertical)
+    MouseEvent(Press made, MouseButton which, Mods with, Spot screened, int stepped, Axis along = Axis::vertical)
         : press(made), button(which), mods(with), screen(screened), steps(stepped), axis(along) {}
 
     Press press;
-    Button button;
+    MouseButton button;
     Mods mods;
     Spot at;
     Spot screen;
@@ -162,6 +163,7 @@ public:
 
 private:
     friend class Node;
+    friend class Action;
 
     explicit Hook(std::weak_ptr<detail::Slot> slot) : slot_(std::move(slot)) {}
 

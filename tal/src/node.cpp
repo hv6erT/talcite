@@ -242,6 +242,21 @@ bool Node::focusable() const {
     return where && where->size.wide > 0 && where->size.high > 0;
 }
 
+// Sets how the node takes room in a row, a column or a grid: with weight 0 as much as it wants,
+// otherwise `least` and a part of what is left in proportion to its weight. A negative weight or
+// least counts as zero. The parent lays its children out again.
+void Node::share(Share how) {
+    how = Share{std::max(how.weight, 0), std::max(how.least, 0)};
+
+    if (how == share_) return;
+
+    changing();
+
+    share_ = how;
+
+    if (parent_ != nullptr) parent_->relayout();
+}
+
 // Takes the focus, when the node can take it (`focusable`); otherwise nothing happens.
 void Node::focus() {
     if (focusable()) document_->moved(this);

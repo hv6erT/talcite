@@ -89,7 +89,7 @@ Document::Document(Port<Clock> time) : time_(std::move(time)) {
     }));
 
     own_.add(otherwise<MouseEvent>([this](MouseEvent& one) {
-        if (one.press != Press::down || one.button == Button::back || one.button == Button::forward) return;
+        if (one.press != Press::down || one.button == MouseButton::back || one.button == MouseButton::forward) return;
 
         for (Node* at = &one.target(); at != nullptr; at = at->parent_)
             if (at->focusable()) {
@@ -329,7 +329,7 @@ void Document::key(Key one) {
 // is hovered. A press ends any capture before it is aimed and a release after it is delivered. A
 // release where the press was, with the same button, adds a click, or a double click when it is the
 // second one there within the double-click time; the back and forward buttons make no clicks.
-void Document::mouse(Press press, Button button, Spot screen, Mods mods, int steps, Axis axis) {
+void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis) {
     changing();
 
     if (press == Press::down) captured_ = nullptr;
@@ -560,8 +560,8 @@ void Document::hovered(Node* now) {
 // Turns a press and a release in the same cell with the same button into a click for the node under
 // the pointer, or a double click when a click with that button in that cell came no longer than the
 // double-click time before by the document's clock. A release elsewhere is a drag, not a click.
-void Document::clicked(Press press, Button button, Spot screen, Mods mods) {
-    if (button == Button::back || button == Button::forward) return;
+void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods) {
+    if (button == MouseButton::back || button == MouseButton::forward) return;
 
     if (press == Press::down) {
         began_ = screen;
@@ -570,11 +570,11 @@ void Document::clicked(Press press, Button button, Spot screen, Mods mods) {
         return;
     }
 
-    const Button which = pressing_;
+    const MouseButton which = pressing_;
 
-    pressing_ = Button::none;
+    pressing_ = MouseButton::none;
 
-    if (which == Button::none || which != button || began_ != screen) return;
+    if (which == MouseButton::none || which != button || began_ != screen) return;
 
     const auto now = time_->now();
     const bool twice = first_click_ && clicked_ == button && waiting_ == screen && now - *first_click_ <= double_click_;
