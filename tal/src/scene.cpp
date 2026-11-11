@@ -7,6 +7,13 @@
 
 namespace tal::testing {
 
+namespace {
+
+// How many frames in a row may leave the document due before the scene says it never settles.
+constexpr int restless = 16;
+
+}
+
 // A scene of `screen` cells for a terminal of `colors`, with or without Unicode, drawing emoji
 // `how`; its clock stands still until the scene moves it.
 Scene::Scene(Size screen, Colors colors, bool unicode, text::Rendering how)
@@ -197,14 +204,22 @@ Document& Scene::shown() const {
     return *shown_;
 }
 
-// Ends a step as an application ends its turn: the document's timers that are due ring, and a frame
-// is made when anything changed, or when none was made yet.
+// Ends a step as an application ends its turns: the document's timers that are due ring, and frames
+// are made while anything changed (a frame may leave the next one due, as a window opened does when
+// it takes the focus), or one when none was made yet. A document still due after `restless` frames
+// throws std::logic_error: it would never settle.
 void Scene::settled() {
     Document& onto = shown();
 
     onto.ring();
 
-    if (last_ == nullptr || onto.due()) last_ = &onto.frame();
+    if (last_ == nullptr) last_ = &onto.frame();
+
+    for (int made = 0; onto.due(); ++made) {
+        if (made == restless) throw std::logic_error{"tal::testing::Scene: the document never settles"};
+
+        last_ = &onto.frame();
+    }
 }
 
 }

@@ -357,17 +357,14 @@ void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, in
 
     if (press == Press::down) captured_ = nullptr;
 
-    Node& below = under(screen);
+    Node& found = under(screen);
 
-    // While the focus is confined, the mouse outside reaches nothing: no hover, no click, no
-    // capture.
-    if (confined_ != nullptr && !confined_->holds(captured_ != nullptr ? *captured_ : below)) {
-        hovered(nullptr);
-
-        if (press == Press::up) captured_ = nullptr;
-
-        return;
-    }
+    // While the focus is confined, the mouse outside goes to the confinement itself, as to a
+    // curtain over everything else: nothing outside is hovered, clicked or captured. A capture lies
+    // inside, since confining ends one outside. A press on the curtain that takes the curtain away
+    // (a menu closing) makes no click: the click would land on what was beneath.
+    Node& below = confined_ != nullptr && !confined_->holds(found) ? *confined_ : found;
+    const std::shared_ptr<Node> curtain = press == Press::down && &below != &found ? below.shared_from_this() : nullptr;
 
     hovered(&below);
 
@@ -381,6 +378,8 @@ void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, in
     if (press == Press::up) captured_ = nullptr;
 
     if (press == Press::down || press == Press::up) clicked(press, button, screen, mods);
+
+    if (curtain != nullptr && confined_ != curtain.get()) pressing_ = MouseButton::none;
 }
 
 // Delivers pasted text to the node with the focus, or to the document.
@@ -498,11 +497,11 @@ Node& Document::reachable(Node& one) {
 }
 
 // Confines the focus and the mouse to `within` and what lies under it, or frees them (nothing): Tab
-// goes round inside, the mouse outside reaches nothing, and keys go to `within` while nothing in it
-// has the focus. The focus itself does not move here; whoever confines it decides where it goes. A
-// node outside that asks for the focus meanwhile waits (`Node::focus`) and gets it once the
-// confinement lets it in, the last one to ask winning. A node outside the document throws
-// std::logic_error.
+// goes round inside, the mouse outside goes to `within` itself, as to a curtain, and keys go to
+// `within` while nothing in it has the focus. The focus itself does not move here; whoever confines
+// it decides where it goes. A node outside that asks for the focus meanwhile waits (`Node::focus`)
+// and gets it once the confinement lets it in, the last one to ask winning. A node outside the
+// document throws std::logic_error.
 void Document::confine(Node* within) {
     changing();
 
@@ -615,12 +614,14 @@ void Document::forgotten(Node& gone) {
     hover_ = std::move(kept);
 }
 
-// Makes `now` and the nodes above it, short of the document, the hovered ones: the state `hover`
-// goes from the nodes that leave the set and comes to those that join it.
+// Makes `now` and the nodes above it, short of the document, the hovered ones, all but those that
+// take no hover (`Node::hoverable`): the state `hover` goes from the nodes that leave the set and
+// comes to those that join it.
 void Document::hovered(Node* now) {
     std::vector<Node*> made;
 
-    for (Node* at = now; at != nullptr && at != this; at = at->parent_) made.push_back(at);
+    for (Node* at = now; at != nullptr && at != this; at = at->parent_)
+        if (at->hoverable_) made.push_back(at);
 
     for (Node* one : hover_)
         if (std::find(made.begin(), made.end(), one) == made.end()) one->state(State::hover, false);
@@ -632,8 +633,9 @@ void Document::hovered(Node* now) {
 }
 
 // Turns a press and a release in the same cell with the same button into a click for the node under
-// the pointer, or a double click when a click with that button in that cell came no longer than the
-// double-click time before by the document's clock. A release elsewhere is a drag, not a click.
+// the pointer (the confinement for one outside it, as `mouse` does), or a double click when a click
+// with that button in that cell came no longer than the double-click time before by the document's
+// clock. A release elsewhere is a drag, not a click.
 void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods) {
     if (button == MouseButton::back || button == MouseButton::forward) return;
 
@@ -661,7 +663,8 @@ void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods) 
         clicked_ = button;
     }
 
-    Node& aimed = under(screen);
+    Node& found = under(screen);
+    Node& aimed = confined_ != nullptr && !confined_->holds(found) ? *confined_ : found;
     MouseEvent made{twice ? Press::double_click : Press::click, button, mods, screen, 0};
 
     if (const std::optional<Area> where = aimed.absolute()) made.at = Spot{screen.x - where->at.x, screen.y - where->at.y};

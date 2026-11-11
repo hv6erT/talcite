@@ -1014,6 +1014,32 @@ TRIAL("App: with no reason it waits without a limit, and the loop interrupts the
     SAME(rig.line->interrupted, before + 5);
 }
 
+// A frame that leaves the document due, because a handler of `Arranged` changed the layout, does
+// not wait for input: the next frame follows in the same turn, and then the wait has no limit.
+TRIAL("App: a frame left due is followed at once, without waiting") {
+    Rig rig;
+    App app{Setup{}, rig.console(), rig.time()};
+    Node& one = rig.document.children().add<Node>();
+    int heard = 0;
+
+    rig.hooks.add(one.on<Arranged>([&one, &heard](Arranged&) {
+        if (++heard == 1) one.share(tal::Share{1, 0});
+    }));
+
+    app.show(rig.document);
+
+    (void)app.turn();
+
+    OUGHT(rig.line->patience.back() == std::optional{0ms});
+    SAME(rig.document.framed(), std::uint64_t{2});
+    OUGHT(!rig.document.due());
+
+    (void)app.turn();
+
+    OUGHT(!rig.line->patience.back().has_value());
+    SAME(rig.document.framed(), std::uint64_t{2});
+}
+
 // The nearest of the loop's timers and the document's timers bounds the wait for the console. A
 // timer withdrawn from the loop no longer counts.
 TRIAL("App: the nearest timer of the loop or the document goes to the console as patience") {

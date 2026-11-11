@@ -346,6 +346,39 @@ TRIAL("Scene: waiting rings the timers that fall due and draws what they changed
     SAME(scene.row(0), std::string{"late  "});
 }
 
+// A frame that leaves the document due is followed by the next one in the same step, as an
+// application follows it at once; a document that never settles throws after sixteen more frames.
+TRIAL("Scene: frames follow while the document is due, and one never settling throws") {
+    Scene scene{Size{6, 1}};
+    Document document{scene.time()};
+    Worded& worded = document.children().add<Worded>();
+    int heard = 0;
+    Hooks hooks;
+
+    hooks.add(document.on<Arranged>([&worded, &heard](Arranged&) {
+        if (++heard == 3) return;
+
+        worded.text = std::string(static_cast<std::size_t>(heard), 'x');
+        worded.share(tal::Share{heard, 0});
+    }));
+
+    scene.show(document);
+
+    SAME(heard, 3);
+    SAME(scene.row(0), std::string{"xx    "});
+    OUGHT(!document.due());
+
+    Scene other{Size{6, 1}};
+    Document restless{other.time()};
+    Worded& again = restless.children().add<Worded>();
+    Hooks more;
+
+    more.add(restless.on<Arranged>([&again](Arranged&) { again.share(tal::Share{again.share().weight == 1 ? 2 : 1, 0}); }));
+
+    OUGHT(throws<std::logic_error>([&other, &restless] { other.show(restless); }));
+    SAME(restless.framed(), std::uint64_t{17});
+}
+
 // A new size lays the document out again and the screen takes the new size.
 TRIAL("Scene: resizing lays the document out again on a screen of the new size") {
     Scene scene{Size{6, 2}};

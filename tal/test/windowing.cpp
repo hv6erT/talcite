@@ -182,14 +182,19 @@ TRIAL("Layers: a modal window takes the focus in and gives it back when it close
     OUGHT(program.ran.empty());
 }
 
-// Tab goes round inside a modal window; the mouse outside it reaches nothing, neither hovering nor
-// clicking.
+// Tab goes round inside a modal window; the mouse outside it goes to the window itself, as to a
+// curtain: the press, the release and the click, and the hover, while nothing beneath hears it.
 TRIAL("Layers: a modal window keeps Tab and the mouse inside") {
     Program program;
     auto yes = program.action("Yes");
     auto no = program.action("No");
 
-    (void)program.form("Ask", {yes, no});
+    Form& form = program.form("Ask", {yes, no});
+    std::vector<tal::Press> curtain;
+
+    program.hooks.add(form.on<tal::MouseEvent>([&curtain, &form](tal::MouseEvent& what) {
+        if (&what.target() == &form) curtain.push_back(what.press);
+    }));
 
     const Node* start = program.document.focused();
 
@@ -207,6 +212,8 @@ TRIAL("Layers: a modal window keeps Tab and the mouse inside") {
 
     OUGHT(program.ran.empty());
     OUGHT(!program.first->states().has(tal::State::hover));
+    OUGHT(form.states().has(tal::State::hover));
+    OUGHT(curtain == (std::vector<tal::Press>{tal::Press::down, tal::Press::up, tal::Press::click, tal::Press::move}));
 
     program.scene.press(Key{Code::enter});
 

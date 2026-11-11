@@ -171,6 +171,8 @@ protected:
 
     void focusable(bool on);
 
+    void hoverable(bool on);
+
     void capture();
 
     void state(State one, bool on);
@@ -253,6 +255,7 @@ private:
     std::vector<std::pair<std::type_index, std::shared_ptr<detail::Slot>>> slots_;
     bool enabled_ = true;
     bool focusable_ = false;
+    bool hoverable_ = true;
     Share share_;
 };
 

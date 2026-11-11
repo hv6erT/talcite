@@ -277,6 +277,17 @@ void Node::focus() {
 // Whether the node has the focus of its document.
 bool Node::focused() const { return document_ != nullptr && document_->focus_ == this; }
 
+// Says whether the node takes the state `hover` while the mouse is over it or over a node under it.
+// A node that is only the ground under its children does not, so that a sheet's hover look meant
+// for them does not cover it whole; turned off, it loses the state at once.
+void Node::hoverable(bool on) {
+    if (hoverable_ == on) return;
+
+    hoverable_ = on;
+
+    if (!on) state(State::hover, false);
+}
+
 // Says whether the node wants the focus. A node that has it and stops wanting it passes it on.
 void Node::focusable(bool on) {
     if (focusable_ == on) return;

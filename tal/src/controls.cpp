@@ -10,6 +10,7 @@
 #include "tal/style.hpp"
 #include "tal/text.hpp"
 
+#include "controlling.hpp"
 #include "lettering.hpp"
 
 namespace tal {
@@ -22,6 +23,10 @@ constexpr std::chrono::milliseconds beat{100};
 
 // The widest text that never needs a second line: what a label measures without wrapping against.
 constexpr int unbounded = 1 << 20;
+
+}
+
+namespace controlling {
 
 // Whether `cluster` is the letter `letter`, the same character or, for ASCII, the same letter in
 // the other case.
@@ -72,6 +77,11 @@ std::string_view lined(Border kind) {
 }
 
 }
+
+using controlling::clicking;
+using controlling::lined;
+using controlling::pressing;
+using controlling::spelled;
 
 // A label showing `said`, in the class "label".
 Label::Label(std::string said) : text(*this, Effect::layout, std::move(said)) { classes({"label"}); }

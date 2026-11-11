@@ -968,6 +968,10 @@ bool App::turn() {
     for (const auto& one : {held.onto->alarm(), held.loop.next()})
         if (one && (!until || *one < *until)) until = one;
 
+    // A frame can leave the document due, when a handler of `Arranged` laid something out again for
+    // the next frame (the focus going into a window just opened); that frame comes at once.
+    if (held.onto->due()) until = clock.now();
+
     std::optional<std::chrono::milliseconds> patience;
 
     if (until) patience = std::max(std::chrono::ceil<std::chrono::milliseconds>(*until - clock.now()), std::chrono::milliseconds{0});

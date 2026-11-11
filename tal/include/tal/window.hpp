@@ -31,6 +31,10 @@ public:
 
     [[nodiscard]] std::optional<Area> seat() const { return seat_; }
 
+    void anchor(std::optional<Spot> at);
+
+    [[nodiscard]] std::optional<Spot> anchor() const { return anchor_; }
+
     [[nodiscard]] Modal modal() const { return modal_; }
 
     void bind(std::shared_ptr<Action> one);
@@ -45,6 +49,7 @@ protected:
 private:
     Modal modal_;
     std::optional<Area> seat_;
+    std::optional<Spot> anchor_;
     std::vector<std::shared_ptr<Action>> bound_;
     Hooks hooks_;
 };
@@ -56,6 +61,8 @@ public:
     Window& open(std::shared_ptr<Window> one);
 
     [[nodiscard]] Window* top() const;
+
+    [[nodiscard]] Spot local(Spot screen) const;
 
     void raise(Window& one);
 

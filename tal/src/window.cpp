@@ -10,30 +10,12 @@
 #include "tal/text.hpp"
 
 #include "lettering.hpp"
+#include "tree.hpp"
 
 namespace tal {
 
-namespace {
-
-// Whether `one` is `outer` or lies under it.
-bool under(const Node& outer, const Node& one) {
-    for (const Node* at = &one; at != nullptr; at = at->parent())
-        if (at == &outer) return true;
-
-    return false;
-}
-
-// The first node in `root`, itself included, that can take the focus now, in the order of the tree.
-Node* taking(Node& root) {
-    if (root.focusable()) return &root;
-
-    for (Node& one : root.children())
-        if (Node* found = taking(one)) return found;
-
-    return nullptr;
-}
-
-}
+using tree::taking;
+using tree::under;
 
 // A window titled `named`, in the class "window", and a modal one in the class "dialog" too: the
 // sheet gives them their frames and shadows. Its bound actions run on their shortcuts and letters,
@@ -70,12 +52,22 @@ Window::Window(std::string named, Modal modal) : title(*this, Effect::layout, st
     }));
 }
 
-// Stands the window at `where` in its layers, or, with nothing, in the middle in the size of its
-// content.
+// Stands the window at `where` in its layers, or, with nothing, at its anchor or in the middle in
+// the size of its content.
 void Window::seat(std::optional<Area> where) {
     if (where == seat_) return;
 
     seat_ = where;
+
+    relayout();
+}
+
+// Stands the window with its corner at `at` in its layers, in the size of its content, moved left
+// and up as far as it must to fit; with nothing, as `seat` says.
+void Window::anchor(std::optional<Spot> at) {
+    if (at == anchor_) return;
+
+    anchor_ = at;
 
     relayout();
 }
@@ -189,6 +181,18 @@ Window* Layers::top() const {
     return dynamic_cast<Window*>(last);
 }
 
+// Where the spot `screen` of the screen lies for the seats and anchors of these layers: counted
+// from the corner of their inside, past their border and padding.
+Spot Layers::local(Spot screen) const {
+    Spot at = area().at;
+
+    for (const Node* above = parent(); above != nullptr; above = above->parent()) at = Spot{at.x + above->area().at.x, at.y + above->area().at.y};
+
+    const int line = style().border == Border::none ? 0 : 1;
+
+    return Spot{screen.x - at.x - line - style().padding.left, screen.y - at.y - line - style().padding.top};
+}
+
 // Raises the modeless window `one` above the other modeless ones; under an open modal window it
 // stays under it, without the focus. Taken out of the tree and put back, it is laid out anew, and
 // the focus goes into it then, as on opening. A window that is not one of these layers' modeless
@@ -214,8 +218,9 @@ void Layers::next() { stepped(false); }
 void Layers::previous() { stepped(true); }
 
 // Places every window: a full one over the whole inside, a seated one at its seat (from the
-// inside's corner), the others in the middle in the size of their content, no larger than the
-// inside without two columns on each side and a row above and below.
+// inside's corner), an anchored one at its anchor in the size of its content, moved back inside
+// where it would stick out, the others in the middle in the size of their content, no larger than
+// the inside without two columns on each side and a row above and below.
 void Layers::arrange(Area inside) {
     for (Node& one : children()) {
         auto* window = dynamic_cast<Window*>(&one);
@@ -230,6 +235,17 @@ void Layers::arrange(Area inside) {
             const Area seat = *window->seat();
 
             one.placed(Area{{inside.at.x + seat.at.x, inside.at.y + seat.at.y}, seat.size});
+
+            continue;
+        }
+
+        if (window != nullptr && window->anchor()) {
+            const Spot at = *window->anchor();
+            const Size size = one.measured(Limits{{0, 0}, inside.size});
+            const int x = std::max(std::min(at.x, inside.size.wide - size.wide), 0);
+            const int y = std::max(std::min(at.y, inside.size.high - size.high), 0);
+
+            one.placed(Area{{inside.at.x + x, inside.at.y + y}, size});
 
             continue;
         }
