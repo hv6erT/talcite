@@ -4,10 +4,12 @@
 #include <iterator>
 #include <utility>
 
-// A spool: a byte document presented as lines. It goes forward and back through a document that
-// cannot be held whole, and never indexes it: it remembers a window of bytes, the place where it
-// stands (`here_`), a handful of anchors (a line and the byte where it starts) and the extents of
-// the lines it walked last.
+// A spool presents a document as lines of bytes, to a page that draws it. There are two of them.
+//
+// A reel holds a byte document. It goes forward and back through a document that cannot be held
+// whole, and never indexes it: it remembers a window of bytes, the place where it stands (`here_`),
+// a handful of anchors (a line and the byte where it starts) and the extents of the lines it walked
+// last.
 //
 // It hands out bytes and the bounds of lines, never the text of a whole line. A line may be a
 // gigabyte long; whoever draws shows a few dozen characters of it, so it reads those (`read`) and
@@ -19,6 +21,12 @@
 // (`ordered`), answers with what it has, and `stalled` says that the answer is not whole; the owner
 // reads the window and gives it back (`arrived`) and asks again. A document given whole never
 // stalls.
+//
+// Lines show a text being edited. Every line ends with a \n, the last one too, so that an empty
+// last line has a row of its own for the cursor to stand on. The starts of the lines are sums of
+// their lengths, kept in a Fenwick tree: a change inside a line costs a few steps, not a pass over
+// the text, and only a change of the number of lines builds the tree anew, as the text moves its
+// lines then anyway.
 namespace tal::spooling {
 
 namespace {
@@ -52,9 +60,12 @@ std::string_view viewed(const Bytes& got, std::size_t from, std::size_t much) {
 
 }
 
+// A spool goes with nothing to let go of.
+Spool::~Spool() = default;
+
 // A document given whole: the window is the document, nothing is read and nothing ordered, and
 // the lines are counted at once.
-Spool::Spool(Bytes whole) : held_(true), whole_(whole.size()), chunk_(std::move(whole)) {
+Reel::Reel(Bytes whole) : held_(true), whole_(whole.size()), chunk_(std::move(whole)) {
     anchors_.push_back({0, 0});
 
     Offset at = 0;
@@ -71,18 +82,18 @@ Spool::Spool(Bytes whole) : held_(true), whole_(whole.size()), chunk_(std::move(
 
 // A document of `whole` bytes read in windows, the first bytes of it already at hand in `head`, so
 // that the first question has an answer without an order.
-Spool::Spool(Offset whole, Bytes head) : whole_(whole), chunk_(std::move(head)) {
+Reel::Reel(Offset whole, Bytes head) : whole_(whole), chunk_(std::move(head)) {
     anchors_.push_back({0, 0});
 
     if (whole_ == 0) counted_ = 0;
 }
 
 // Whether the bytes from `at` up to `upto` are all in the window.
-bool Spool::cached(Offset at, Offset upto) const { return at >= chunked_ && upto <= chunked_ + chunk_.size(); }
+bool Reel::cached(Offset at, Offset upto) const { return at >= chunked_ && upto <= chunked_ + chunk_.size(); }
 
 // Whether the `much` bytes from `at`, a place in the document, are in the window, as many as the
 // document has; when not, the spool stalls and orders them.
-bool Spool::ranged(Offset at, std::size_t much) {
+bool Reel::ranged(Offset at, std::size_t much) {
     const Offset upto = std::min<Offset>(at + much, whole_);
 
     if (cached(at, upto)) return true;
@@ -97,7 +108,7 @@ bool Spool::ranged(Offset at, std::size_t much) {
 // Orders a window from where the bytes up to `upto` are missing: when the start is in the window
 // already, from its end, so that the window grows instead of starting over. One order goes at a
 // time; a question that finds one on its way asks again when it came.
-void Spool::ask(Offset at, Offset upto) {
+void Reel::ask(Offset at, Offset upto) {
     if (held_ || busy_ || order_) return;
 
     const Offset end = chunked_ + chunk_.size();
@@ -108,7 +119,7 @@ void Spool::ask(Offset at, Offset upto) {
 
 // The window to read, when there is one: from then on it is on its way, and nothing more is ordered
 // until it comes.
-std::optional<Spool::Order> Spool::ordered() {
+std::optional<Reel::Order> Reel::ordered() {
     const std::optional<Order> made = order_;
 
     if (made) busy_ = true;
@@ -122,7 +133,7 @@ std::optional<Spool::Order> Spool::ordered() {
 // it takes its place; past two stocks the window is cut to one, so that its bytes are moved once
 // per stock read, not at every window. An empty window before the end means the document is shorter
 // than it said (it shrank, or reading failed): it ends there. A walk counting the lines goes on.
-void Spool::arrived(Offset from, Bytes got) {
+void Reel::arrived(Offset from, Bytes got) {
     busy_ = false;
 
     if (got.empty()) {
@@ -146,7 +157,7 @@ void Spool::arrived(Offset from, Bytes got) {
 
 // Orders the next window before anyone asks for it, when what was just used, at `from` in the
 // window, lies less than half a window before its end: reading on then goes without a stop.
-void Spool::ahead(Offset from) {
+void Reel::ahead(Offset from) {
     if (held_ || busy_ || order_) return;
 
     const Offset end = chunked_ + chunk_.size();
@@ -155,14 +166,14 @@ void Spool::ahead(Offset from) {
 }
 
 // The byte at `at` of the document, which lies in the window.
-char Spool::sign(Offset at) const { return static_cast<char>(chunk_[static_cast<std::size_t>(at - chunked_)]); }
+char Reel::sign(Offset at) const { return static_cast<char>(chunk_[static_cast<std::size_t>(at - chunked_)]); }
 
 // Walks the line starting at `from` forward to its \n, looking at the bytes before `limit` only:
 // `line` when its end was found (the extent is then kept), `short_of` when no line end lies before
 // `limit`, `waiting` when a window was ordered. A walk of the same line goes on from where the last
 // one stopped. The content ends before the \n and before a \r right in front of it, and the last
 // line ends at the end of the document, without a \r there too.
-Spool::Step Spool::forth(Anchor from, Offset limit) {
+Reel::Step Reel::forth(Anchor from, Offset limit) {
     if (const Known* got = known(from.line)) return Step{Ended::line, got->extent};
 
     Offset go = from.at;
@@ -222,7 +233,7 @@ Spool::Step Spool::forth(Anchor from, Offset limit) {
 // Backwards a line cannot be counted, only sought: the last \n before the one ending the line
 // before, looked for in what the window holds and then in the window before it, the search going
 // on where it stopped when a window was missing.
-std::optional<Offset> Spool::back(Offset at) {
+std::optional<Offset> Reel::back(Offset at) {
     if (at == 0) return 0;
 
     if (const Known* got = holding(at - 1)) return got->extent.at;
@@ -253,7 +264,7 @@ std::optional<Offset> Spool::back(Offset at) {
 // spool reached last and the line after the last extent kept before it, the latest not past it.
 // Anchors may lie far apart, and the lines walked since one may be kept no longer, so that walking
 // from the anchor would read them again.
-Spool::Anchor Spool::start_for(std::size_t which) const {
+Reel::Anchor Reel::start_for(std::size_t which) const {
     const auto past = std::upper_bound(anchors_.begin(), anchors_.end(), which, [](std::size_t want, const Anchor& one) { return want < one.line; });
     Anchor made = *std::prev(past);
 
@@ -272,7 +283,7 @@ Spool::Anchor Spool::start_for(std::size_t which) const {
 
 // The best start known for walking forward to the line holding the byte `byte`: the latest start
 // of a line not past it among the same.
-Spool::Anchor Spool::start_at(Offset byte) const {
+Reel::Anchor Reel::start_at(Offset byte) const {
     const auto past = std::upper_bound(anchors_.begin(), anchors_.end(), byte, [](Offset want, const Anchor& one) { return want < one.at; });
     Anchor made = *std::prev(past);
 
@@ -291,7 +302,7 @@ Spool::Anchor Spool::start_at(Offset byte) const {
 
 // Keeps that the line `which` starts at `at`, when the line falls on the stride past the last
 // anchor; with too many anchors every other one goes and the stride doubles.
-void Spool::anchored(std::size_t which, Offset at) {
+void Reel::anchored(std::size_t which, Offset at) {
     if (which % stride_ != 0 || anchors_.back().line >= which) return;
 
     anchors_.push_back({which, at});
@@ -311,7 +322,7 @@ void Spool::anchored(std::size_t which, Offset at) {
 // Keeps the whole extent of the line `which`, found by a walk: the next line's start becomes an
 // anchor, and the count of lines is known when this one ends the document. Past twice the extents
 // kept, only those nearest this line stay, since the next questions come from around it.
-void Spool::remember(std::size_t which, Line extent) {
+void Reel::remember(std::size_t which, Line extent) {
     anchored(which + 1, extent.next);
 
     if (extent.next >= whole_) counted_ = which + 1;
@@ -337,14 +348,14 @@ void Spool::remember(std::size_t which, Line extent) {
 }
 
 // The extent kept of the line `which`, or none.
-const Spool::Known* Spool::known(std::size_t which) const {
+const Reel::Known* Reel::known(std::size_t which) const {
     const auto at = std::lower_bound(known_.begin(), known_.end(), which, [](const Known& one, std::size_t want) { return one.line < want; });
 
     return at != known_.end() && at->line == which ? &*at : nullptr;
 }
 
 // The line kept that holds the byte `byte`, from its start up to its \n, or none.
-const Spool::Known* Spool::holding(Offset byte) const {
+const Reel::Known* Reel::holding(Offset byte) const {
     const auto after = std::upper_bound(known_.begin(), known_.end(), byte, [](Offset want, const Known& one) { return want < one.extent.at; });
 
     if (after == known_.begin()) return nullptr;
@@ -356,12 +367,12 @@ const Spool::Known* Spool::holding(Offset byte) const {
 
 // Sets the stride of the anchors from the height of the screen, since a jump is mostly a page,
 // Home, End or the thumb dragged; it never shrinks, as anchors thinned cannot grow dense again.
-void Spool::screen(int high) { stride_ = std::max({stride_, least, static_cast<std::size_t>(std::max(high, 0))}); }
+void Reel::screen(int high) { stride_ = std::max({stride_, least, static_cast<std::size_t>(std::max(high, 0))}); }
 
 // The byte where the line `which` starts: none past the end, or while a window is on its way
 // (`stalled`). Of walking forward from the best start known and stepping back from where the spool
 // stands the shorter way is taken: for the up arrow one step back.
-std::optional<Offset> Spool::at(std::size_t which) {
+std::optional<Offset> Reel::at(std::size_t which) {
     stalled_ = false;
 
     if (counted_ && which >= *counted_) return std::nullopt;
@@ -403,7 +414,7 @@ std::optional<Offset> Spool::at(std::size_t which) {
 
 // The whole extent of the line `which`; none past the end or while a window is on its way. The line
 // is walked to its end once and kept.
-std::optional<Spool::Line> Spool::line(std::size_t which) {
+std::optional<Reel::Line> Reel::line(std::size_t which) {
     stalled_ = false;
 
     if (const Known* got = known(which); got != nullptr) return got->extent;
@@ -422,7 +433,7 @@ std::optional<Spool::Line> Spool::line(std::size_t which) {
 // The line holding the byte `byte` (the last line for a byte past the end): walked from the latest
 // start known not past it, looking for line ends only up to the byte. While a window is on its way,
 // the last line reached; the caller asks again.
-std::size_t Spool::found(Offset byte) {
+std::size_t Reel::found(Offset byte) {
     stalled_ = false;
 
     if (whole_ == 0) return 0;
@@ -450,7 +461,7 @@ std::size_t Spool::found(Offset byte) {
 // while the window is on its way. With `least`, fewer are enough when that many are at hand, so
 // that the head of a file shows before the rest comes. The view lies in the spool's window and
 // holds until the next call to the spool.
-std::optional<std::string_view> Spool::read(Offset at, std::size_t much, std::size_t least) {
+std::optional<std::string_view> Reel::read(Offset at, std::size_t much, std::size_t least) {
     stalled_ = false;
 
     if (at >= whole_) return std::string_view{};
@@ -467,7 +478,7 @@ std::optional<std::string_view> Spool::read(Offset at, std::size_t much, std::si
 
 // Walks to the end to count the lines: at once for a document at hand, window by window otherwise,
 // each window that comes taking the walk further.
-void Spool::counting() {
+void Reel::counting() {
     counting_ = true;
 
     (void)at(SIZE_MAX);
@@ -475,8 +486,149 @@ void Spool::counting() {
 
 // Learns the count of lines from whoever read the document to its end from a known line, as a page
 // does when its last row ends the document.
-void Spool::counted(std::size_t lines) {
+void Reel::counted(std::size_t lines) {
     if (!counted_) counted_ = lines;
+}
+
+// The lines of `text`, all of them at hand.
+Lines::Lines(std::shared_ptr<const Text> text) : text_(std::move(text)) { built(); }
+
+// The byte where the line `which` starts; none past the last line.
+std::optional<Offset> Lines::at(std::size_t which) {
+    if (which >= text_->lines()) return std::nullopt;
+
+    return before(which);
+}
+
+// The extent of the line `which`: its text, then its \n; none past the last line.
+std::optional<Spool::Line> Lines::line(std::size_t which) {
+    if (which >= text_->lines()) return std::nullopt;
+
+    const Offset from = before(which);
+    const Offset upto = from + text_->line(which).size();
+
+    return Line{from, upto, upto + 1};
+}
+
+// The line holding the byte `byte`, its \n included; the last line for a byte past the end. The
+// tree is walked down from its widest sums.
+std::size_t Lines::found(Offset byte) {
+    const std::size_t many = text_->lines();
+    std::size_t made = 0;
+    Offset left = byte;
+    std::size_t step = 1;
+
+    while (step * 2 <= many) step *= 2;
+
+    for (; step > 0; step /= 2) {
+        if (made + step > many || tree_[made + step] > left) continue;
+
+        made += step;
+        left -= tree_[made];
+    }
+
+    return std::min(made, many - 1);
+}
+
+// Up to `much` bytes from `at`, across the ends of lines; fewer at the end, an empty view past it.
+// Everything is at hand, so `least` does not matter. The view holds until the next call.
+std::optional<std::string_view> Lines::read(Offset at, std::size_t much, std::size_t least) {
+    (void)least;
+
+    piece_.clear();
+
+    if (at >= whole_) return std::string_view{};
+
+    const auto take = static_cast<std::size_t>(std::min<Offset>(much, whole_ - at));
+    std::size_t which = found(at);
+    auto off = static_cast<std::size_t>(at - before(which));
+
+    while (piece_.size() < take) {
+        const std::string_view one = text_->line(which);
+
+        if (off < one.size()) {
+            const std::size_t part = std::min(one.size() - off, take - piece_.size());
+
+            piece_.append(one.substr(off, part));
+            off += part;
+
+            continue;
+        }
+
+        piece_.push_back('\n');
+        off = 0;
+        ++which;
+    }
+
+    return std::string_view{piece_};
+}
+
+// Nothing: the text counts its lines.
+void Lines::counted(std::size_t lines) { (void)lines; }
+
+// Nothing: the text counts its lines.
+void Lines::counting() {}
+
+// Nothing: no window is read, so anchors are not spaced.
+void Lines::screen(int high) { (void)high; }
+
+// None: the text is at hand.
+std::optional<Spool::Order> Lines::ordered() { return std::nullopt; }
+
+// Nothing: no window is ordered, so none comes.
+void Lines::arrived(Offset from, Bytes got) {
+    (void)from;
+    (void)got;
+}
+
+// Follows a change of the text: the lines from `from` to `upto` became those from `from` to `end`.
+// The same number of lines changes their lengths in the tree; another number builds it anew.
+void Lines::edited(std::size_t from, std::size_t upto, std::size_t end) {
+    if (upto != end) {
+        built();
+
+        return;
+    }
+
+    for (std::size_t which = from; which <= end; ++which) {
+        const Offset was = before(which + 1) - before(which);
+        const Offset now = text_->line(which).size() + 1;
+
+        grown(which, static_cast<std::int64_t>(now) - static_cast<std::int64_t>(was));
+    }
+}
+
+// Builds the tree of the lengths of the lines, each with its \n, in one pass.
+void Lines::built() {
+    const std::size_t many = text_->lines();
+
+    tree_.assign(many + 1, 0);
+    whole_ = 0;
+
+    for (std::size_t which = 1; which <= many; ++which) {
+        const Offset one = text_->line(which - 1).size() + 1;
+
+        tree_[which] += one;
+        whole_ += one;
+
+        if (const std::size_t up = which + (which & (~which + 1)); up <= many) tree_[up] += tree_[which];
+    }
+}
+
+// The bytes of the lines before the line `which`, where that line starts.
+Offset Lines::before(std::size_t which) const {
+    Offset made = 0;
+
+    for (std::size_t at = which; at > 0; at -= at & (~at + 1)) made += tree_[at];
+
+    return made;
+}
+
+// Makes the line `which` longer by `by` bytes, shorter when negative.
+void Lines::grown(std::size_t which, std::int64_t by) {
+    for (std::size_t at = which + 1; at < tree_.size(); at += at & (~at + 1)) tree_[at] = static_cast<Offset>(static_cast<std::int64_t>(tree_[at]) + by);
+
+    whole_ = static_cast<Offset>(static_cast<std::int64_t>(whole_) + by);
 }
 
 }

@@ -40,6 +40,10 @@ public:
 
     void clear();
 
+    void saved();
+
+    [[nodiscard]] bool changed() const;
+
     [[nodiscard]] std::optional<std::string> undoing() const;
 
     [[nodiscard]] std::optional<std::string> redoing() const;
@@ -49,6 +53,7 @@ private:
     std::vector<std::unique_ptr<Step>> done_;
     std::vector<std::unique_ptr<Step>> undone_;
     bool sealed_ = true;
+    std::optional<std::size_t> saved_ = 0;
 };
 
 }

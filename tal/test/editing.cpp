@@ -19,6 +19,7 @@ namespace {
 
 using tal::Changes;
 using tal::Comb;
+using tal::Edited;
 using tal::Hit;
 using tal::Place;
 using tal::Sift;
@@ -120,6 +121,33 @@ TRIAL("Text: erasing joins lines and removes those between") {
 
     SAME(text.whole(), std::string{"oneefour"});
     SAME(text.lines(), std::size_t{1});
+}
+
+// After the views, a change tells where it was: the stretch it replaced and where what came ends,
+// once, the lines it inserted or removed told already. A hook that went hears nothing, nor does an
+// empty erasing tell anything; an empty insertion tells where it was.
+TRIAL("Text: a change tells where it was") {
+    Text text{"one\ntwo"};
+    std::vector<std::tuple<Place, Place, Place, std::size_t>> heard;
+    tal::Hook hook = text.on<Edited>([&heard, &text](Edited& what) { heard.emplace_back(what.from, what.upto, what.end, text.lines()); });
+    tal::Hook other = text.on<Changes>([](Changes& what) { (void)what; });
+
+    (void)text.insert(Place{0, 3}, "!");
+    (void)text.insert(Place{1, 1}, "x\ny\nz");
+    text.erase(Place{0, 2}, Place{2, 1});
+    text.erase(Place{0, 1}, Place{0, 1});
+    (void)text.insert(Place{0, 0}, "");
+
+    SAME(text.whole(), std::string{"on\nzwo"});
+    OUGHT(heard == (std::vector<std::tuple<Place, Place, Place, std::size_t>>{{Place{0, 3}, Place{0, 3}, Place{0, 4}, 2},
+                                                                            {Place{1, 1}, Place{1, 1}, Place{3, 1}, 4},
+                                                                            {Place{0, 2}, Place{2, 1}, Place{0, 2}, 2},
+                                                                            {Place{0, 0}, Place{0, 0}, Place{0, 0}, 2}}));
+
+    hook = tal::Hook{};
+    (void)text.insert(Place{0, 0}, "a");
+
+    SAME(heard.size(), std::size_t{4});
 }
 
 // Plain text is found character by character, with letter case or folded (Unicode too), as a whole
@@ -319,4 +347,83 @@ TRIAL("Undo: a limit on the steps kept") {
     OUGHT(!one.undo());
 }
 
+}
+
+// A new history counts as saved. A step makes it changed and undoing it saved again; a save marks
+// the place and seals it, so that typing on stands apart. A save undone past and replaced by a new
+// step can no longer be reached; the oldest steps falling off keep a save after them, but one
+// before them goes with them. Clearing saves.
+TRIAL("Undo: the saved place") {
+    std::string text;
+    Undo undo{3};
+
+    OUGHT(!undo.changed());
+
+    undo.push(std::make_unique<Typed>(text, 'a'));
+
+    OUGHT(undo.changed());
+    OUGHT(undo.undo());
+    OUGHT(!undo.changed());
+    OUGHT(undo.redo());
+    OUGHT(undo.changed());
+
+    undo.saved();
+
+    OUGHT(!undo.changed());
+
+    undo.push(std::make_unique<Typed>(text, 'b'));
+
+    SAME(*undo.undoing(), std::string{"Typing b"});
+    OUGHT(undo.changed());
+    OUGHT(undo.undo());
+    OUGHT(!undo.changed());
+    SAME(text, std::string{"a"});
+
+    OUGHT(undo.undo());
+
+    undo.push(std::make_unique<Typed>(text, 'c'));
+    undo.push(std::make_unique<Typed>(text, ' '));
+
+    OUGHT(undo.changed());
+    OUGHT(undo.undo());
+    OUGHT(undo.changed());
+
+    undo.saved();
+
+    for (const char one : std::string{"def"}) {
+        undo.push(std::make_unique<Typed>(text, one));
+        undo.seal();
+    }
+
+    OUGHT(undo.undo());
+    OUGHT(undo.undo());
+    OUGHT(undo.changed());
+    OUGHT(undo.undo());
+    OUGHT(!undo.changed());
+    OUGHT(!undo.undo());
+
+    undo.clear();
+
+    for (const char one : std::string{"ghij"}) {
+        undo.push(std::make_unique<Typed>(text, one));
+        undo.seal();
+    }
+
+    OUGHT(undo.undo());
+    OUGHT(undo.undo());
+    OUGHT(undo.undo());
+    OUGHT(!undo.undo());
+    OUGHT(undo.changed());
+
+    undo.clear();
+
+    OUGHT(!undo.changed());
+
+    undo.push(std::make_unique<Typed>(text, 'k'));
+    undo.saved();
+    undo.push(std::make_unique<Typed>(text, 'l'));
+
+    OUGHT(undo.changed());
+    OUGHT(undo.undo());
+    OUGHT(!undo.changed());
 }

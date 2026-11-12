@@ -563,6 +563,32 @@ struct Paged {
     }
 };
 
+// An editor of a text filling a screen of 200 by 60 cells, its cursor in the middle line.
+struct Composed {
+    tal::testing::Scene scene{Size{200, 60}};
+    tal::Document document{scene.time()};
+    tal::Editor* editor = nullptr;
+
+    // An editor of `lines` lines of 80 letters.
+    explicit Composed(std::size_t lines) {
+        std::string doc;
+
+        for (std::size_t one = 0; one < lines; ++one) doc += std::string(80, 'a') + "\n";
+
+        editor = &document.children().add<tal::Editor>(std::make_shared<tal::Text>(doc));
+        scene.show(document);
+        editor->focus();
+        editor->line(lines / 2);
+        scene.wait(std::chrono::milliseconds{0});
+    }
+
+    // Types `key` and draws.
+    void typed(tal::Key key) {
+        scene.press(key);
+        scene.wait(std::chrono::milliseconds{0});
+    }
+};
+
 }
 
 // A frame of a pager over a line of 100 MB costs what one over short lines filling the same cells
@@ -596,4 +622,31 @@ TRIAL("Bench: a pager over a line of 100 MB") {
         back = !back;
         cut.stepped(back);
     });
+}
+
+// A letter typed in an editor of 200 000 lines costs a frame what one in an editor of a hundred
+// lines does: the spool follows the change of a line in a few steps of its tree. A line end costs a
+// pass over the starts of the lines, as the text moves its lines then anyway.
+TRIAL("Bench: typing in an editor of 200 000 lines") {
+    tal::Loop loop;
+    Composed small{100};
+    Composed big{200000};
+
+    small.typed(tal::Key{U'x'});
+    big.typed(tal::Key{U'x'});
+
+    SAME(small.editor->cursor->byte, std::size_t{1});
+    SAME(big.editor->cursor->line, std::size_t{100000});
+
+    if (!benching()) return;
+
+    bool back = false;
+    const auto step = [&back](Composed& one, tal::Key key) {
+        back = !back;
+        one.typed(back ? tal::Key{Code::backspace} : key);
+    };
+
+    measured("editor-small", 200, [&small, &step] { step(small, tal::Key{U'x'}); });
+    measured("editor-big", 200, [&big, &step] { step(big, tal::Key{U'x'}); });
+    measured("editor-big-enter", 20, [&big, &step] { step(big, tal::Key{Code::enter}); });
 }

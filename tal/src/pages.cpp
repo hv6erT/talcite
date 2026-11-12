@@ -415,6 +415,10 @@ struct Page::Kept {
     bool fresh = true;
 
     std::vector<Stretch> marks;
+    std::vector<Range> lit;
+
+    // Whether the document changed since the view was last kept from going past its end.
+    bool settling = false;
 
     // The memories of long lines, by line; the rows for the width `rowed`.
     std::unordered_map<std::size_t, Rows> rows;
@@ -657,41 +661,79 @@ struct Page::Kept {
         return true;
     }
 
-    // One row up from the top; false at the start or while a window is on its way.
-    bool up() {
-        if (!placed()) return false;
+    // Where the row before the one starting at `at` in `line` (which starts at `line_at`) starts:
+    // its line, the line's start and its own; none at the start of the document or while a window
+    // is on its way.
+    std::optional<Next> earlier(std::size_t line, Offset line_at, Offset at) {
+        if (cutting() && at > line_at) {
+            const std::optional<Offset> went = row_before(line, line_at, at);
 
-        if (cutting() && row_at > *top_at) {
-            const std::optional<Offset> went = row_before(top, *top_at, row_at);
+            if (!went) return std::nullopt;
 
-            if (!went) return false;
-
-            row_at = *went;
-
-            return true;
+            return Next{line, line_at, *went, false};
         }
 
-        if (top == 0) return false;
+        if (line == 0) return std::nullopt;
 
-        const std::optional<Offset> before = spool->at(top - 1);
+        const std::optional<Offset> before = spool->at(line - 1);
 
-        if (!before) return false;
+        if (!before) return std::nullopt;
 
         Offset start = *before;
 
         if (cutting()) {
-            const std::optional<Offset> last = last_row(top - 1, *before);
+            const std::optional<Offset> last = last_row(line - 1, *before);
 
-            if (!last) return false;
+            if (!last) return std::nullopt;
 
             start = *last;
         }
 
-        --top;
-        top_at = *before;
-        row_at = start;
+        return Next{line - 1, *before, start, false};
+    }
+
+    // One row up from the top; false at the start or while a window is on its way.
+    bool up() {
+        if (!placed()) return false;
+
+        const std::optional<Next> went = earlier(top, *top_at, row_at);
+
+        if (!went) return false;
+
+        top = went->line;
+        top_at = went->line_at;
+        row_at = went->at;
 
         return true;
+    }
+
+    // The byte at the column `column` of the row starting at `at` in `line` (which starts at
+    // `line_at`): the start of the character standing there; past the row its end when the row ends
+    // its line, otherwise the start of its last character, since the end of a row cut by wrapping
+    // shows on the next one. None while a window is on its way.
+    std::optional<Offset> at_column(std::size_t line, Offset line_at, Offset at, std::size_t column) {
+        if (!cutting()) {
+            const auto got = boundary_at(line, line_at, column);
+
+            if (!got) return std::nullopt;
+
+            return got->second;
+        }
+
+        Builder builder;
+
+        builder.line_at = line_at;
+
+        const Walked row = wrapped_row(*spool, at, wide(), tabbing(), how(), builder);
+        const std::vector<std::size_t>& bytes = builder.made.bytes;
+
+        if (row.waiting) return std::nullopt;
+
+        if (column < bytes.size()) return line_at + bytes[column];
+
+        if (row.last) return row.end;
+
+        return line_at + bytes.back();
     }
 
     // How many rows there are from the top on, counting `most` at most; none while a window is on
@@ -729,11 +771,12 @@ struct Page::Kept {
 };
 
 
-// A page with no document yet, in the class "page". The arrows, the page keys, Home and End move
-// the view, and without wrapping the arrows to the sides move it sideways; Enter tells `Followed`
-// for the current mark when it has an address, as a click on such a mark does (a click with Ctrl is
-// the terminal's, which opens the link itself). The wheel moves the view three rows a step,
-// sideways when tilted and not wrapping. Keys with Ctrl or Alt are left to the nodes above.
+// A page with no document yet, in the class "page". The keys nobody took go to `keyed`: for a
+// page the arrows, the page keys, Home and End move the view, and without wrapping the arrows to
+// the sides move it sideways; Enter tells `Followed` for the current mark when it has an address,
+// as a click on such a mark does (a click with Ctrl is the terminal's, which opens the link
+// itself). The wheel moves the view three rows a step, sideways when tilted and not wrapping. Keys
+// with Ctrl or Alt are left to the nodes above.
 // Wrapping, the shift and the width of a tab lay the rows out again; wrapping turned goes back to
 // the start of the top line and the first column, since the same byte means another row in the
 // other mode.
@@ -764,41 +807,7 @@ Page::Page() : kept_(std::make_unique<Kept>(*this)) {
         scrolled();
     }));
 
-    hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) {
-        if (what.key.mods().ctrl || what.key.mods().alt) return;
-
-        const int page = std::max(kept_->sized.high, 1);
-
-        switch (what.key.code()) {
-            case Code::up: (void)slid(-1); break;
-            case Code::down: (void)slid(1); break;
-            case Code::pageup: (void)slid(-page); break;
-            case Code::pagedown: (void)slid(page); break;
-            case Code::home:
-                shift = 0;
-                first(0);
-                break;
-            case Code::end: end(); break;
-            case Code::left:
-                if (*wrap) return;
-
-                if (*shift > 0) shift = *shift - 1;
-                break;
-            case Code::right:
-                if (*wrap) return;
-
-                shift = *shift + 1;
-                break;
-            case Code::enter:
-                if (!*current || kept_->marks.at(**current).address.empty()) return;
-
-                followed(**current);
-                break;
-            default: return;
-        }
-
-        what.take();
-    }));
+    hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) { keyed(what); }));
 
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
         if (what.press == Press::wheel) {
@@ -837,6 +846,46 @@ Page::Page() : kept_(std::make_unique<Kept>(*this)) {
     }));
 }
 
+// The keys of a page that nobody took, without Ctrl or Alt: the arrows, the page keys, Home and
+// End move the view, the arrows to the sides sideways without wrapping, and Enter follows the
+// current mark when it has an address.
+void Page::keyed(KeyEvent& what) {
+    if (what.key.mods().ctrl || what.key.mods().alt) return;
+
+    const int page = std::max(kept_->sized.high, 1);
+
+    switch (what.key.code()) {
+        case Code::up: (void)slid(-1); break;
+        case Code::down: (void)slid(1); break;
+        case Code::pageup: (void)slid(-page); break;
+        case Code::pagedown: (void)slid(page); break;
+        case Code::home:
+            shift = 0;
+            first(0);
+            break;
+        case Code::end: end(); break;
+        case Code::left:
+            if (*wrap) return;
+
+            if (*shift > 0) shift = *shift - 1;
+            break;
+        case Code::right:
+            if (*wrap) return;
+
+            shift = *shift + 1;
+            break;
+        case Code::enter:
+            if (!*current || kept_->marks.at(**current).address.empty()) return;
+
+            followed(**current);
+            break;
+        default: return;
+    }
+
+    what.take();
+}
+
+// A page goes with its memories.
 Page::~Page() = default;
 
 // The number of lines: none without a document, or until a document read in windows was walked to
@@ -1137,16 +1186,202 @@ void Page::arrived(std::uint64_t from, Bytes got) {
     scrolled();
 }
 
+// The document changed from the line `line` on, at once and whole, as an editor tells after its
+// spool followed the text: the memories of those lines go, the top line stays where it was (the
+// last when fewer are left) and so does its top row, found again in the line, and the rows are laid
+// out with the next frame. Laying out at every change would cost a frame per change when many come
+// at once.
+void Page::edited(std::size_t line) {
+    Kept& kept = *kept_;
+
+    if (!kept.spool) return;
+
+    std::erase_if(kept.rows, [line](const auto& one) { return one.first >= line; });
+    std::erase_if(kept.columns, [line](const auto& one) { return one.first >= line; });
+
+    Offset inside = kept.top_at ? kept.row_at - *kept.top_at : 0;
+
+    if (const std::optional<std::size_t> many = lines(); many && *many > 0 && kept.top >= *many) {
+        kept.top = *many - 1;
+        inside = 0;
+    }
+
+    if (kept.top >= line) {
+        kept.top_at.reset();
+
+        if (kept.placed() && kept.cutting())
+            if (const std::optional<Offset> row = kept.row_holding(kept.top, *kept.top_at, *kept.top_at + inside)) kept.row_at = *row;
+    }
+
+    kept.fresh = true;
+    kept.settling = true;
+
+    relayout();
+}
+
+// Moves the view as little as shows the place `where`, as `reach` does for a mark.
+void Page::show(Place where) {
+    if (!revealed(where)) return;
+
+    refreshed();
+    served();
+    scrolled();
+}
+
+// Paints the stretches `all` over the rows and the marks in the look of the page in the state
+// `select`, as an editor shows its selection and its block.
+void Page::lit(std::vector<Range> all) {
+    if (all == kept_->lit) return;
+
+    kept_->lit = std::move(all);
+
+    repaint();
+}
+
+// The place of the document under `at` (in the box): the line and byte of the character in that
+// cell, past the end of a row the end of the row; none off the rows. Rows changed since the last
+// frame are laid out first.
+std::optional<Place> Page::under(Spot at) {
+    const Style& style = this->style();
+    const int line = style.border == Border::none ? 0 : 1;
+    const int x = at.x - line - style.padding.left;
+    const int y = at.y - line - style.padding.top;
+    Kept& kept = *kept_;
+
+    if (kept.fresh) spread();
+
+    if (x < 0 || y < 0 || static_cast<std::size_t>(y) >= kept.shown.size()) return std::nullopt;
+
+    const Cut& cut = kept.shown[static_cast<std::size_t>(y)];
+
+    if (static_cast<std::size_t>(x) >= cut.bytes.size()) return Place{cut.line, cut.upto};
+
+    return Place{cut.line, cut.bytes[static_cast<std::size_t>(x)]};
+}
+
+// The cell of the content where the place `where` shows, as laid out: the first column of the
+// character starting there, or the one after the row when it ends its line there; none when it
+// does not show.
+std::optional<Spot> Page::spot(Place where) const {
+    const Kept& kept = *kept_;
+
+    for (std::size_t row = 0; row < kept.shown.size(); ++row) {
+        const Cut& cut = kept.shown[row];
+
+        if (!showing(cut, where)) continue;
+
+        std::size_t x = 0;
+
+        while (x < cut.bytes.size() && cut.bytes[x] < where.byte) ++x;
+
+        return Spot{static_cast<int>(x), static_cast<int>(row)};
+    }
+
+    return std::nullopt;
+}
+
+// The column where the place `where` stands in its row: from the row's start with wrapping, from
+// the line's start without it; none without a document or while a window is on its way.
+std::optional<std::size_t> Page::across(Place where) {
+    Kept& kept = *kept_;
+
+    if (!kept.spool) return std::nullopt;
+
+    const std::optional<Offset> from = kept.spool->at(where.line);
+
+    if (!from) return std::nullopt;
+
+    const Offset byte = *from + where.byte;
+
+    if (!kept.cutting()) return kept.column_at(where.line, *from, byte);
+
+    const std::optional<Offset> row = kept.row_holding(where.line, *from, byte);
+
+    if (!row) return std::nullopt;
+
+    Builder builder;
+
+    builder.line_at = *from;
+
+    if (wrapped_row(*kept.spool, *row, kept.wide(), kept.tabbing(), kept.how(), builder).waiting) return std::nullopt;
+
+    const std::vector<std::size_t>& bytes = builder.made.bytes;
+    const auto at = std::find_if(bytes.begin(), bytes.end(), [&where](std::size_t one) { return one >= where.byte; });
+
+    return static_cast<std::size_t>(at - bytes.begin());
+}
+
+// The place at the column `column` of the row `rows` rows of the screen below the one showing
+// `from` (above when negative), as `across` counts columns: a character's start, the end of a row
+// that ends its line, or the last character of a row that wrapping cut. Near the start or the end
+// of the document it goes as far as there is; none when it cannot move a row, without a document or
+// while a window is on its way.
+std::optional<Place> Page::beyond(Place from, int rows, std::size_t column) {
+    Kept& kept = *kept_;
+
+    if (!kept.spool) return std::nullopt;
+
+    const std::optional<Offset> start = kept.spool->at(from.line);
+
+    if (!start) return std::nullopt;
+
+    Kept::Next here{from.line, *start, *start, false};
+
+    if (kept.cutting()) {
+        const std::optional<Offset> row = kept.row_holding(from.line, *start, *start + from.byte);
+
+        if (!row) return std::nullopt;
+
+        here.at = *row;
+    }
+
+    int went = 0;
+
+    for (; went < rows; ++went) {
+        bool waiting = false;
+        const auto next = kept.after(here.line, here.at, waiting);
+
+        if (!next) break;
+
+        if (next->first != here.line) here.line_at = next->second;
+
+        here = Kept::Next{next->first, here.line_at, next->second, false};
+    }
+
+    for (; went > rows; --went) {
+        const std::optional<Kept::Next> before = kept.earlier(here.line, here.line_at, here.at);
+
+        if (!before) break;
+
+        here = *before;
+    }
+
+    if (went == 0) return std::nullopt;
+
+    const std::optional<Offset> byte = kept.at_column(here.line, here.line_at, here.at, column);
+
+    if (!byte) return std::nullopt;
+
+    return Place{here.line, static_cast<std::size_t>(*byte - here.line_at)};
+}
+
 // The least room: the layout sizes a page, not its document.
 Size Page::measure(Limits room) const { return room.least; }
 
-// Lays out the rows the inside shows, and a place waiting for a size is shown.
+// Lays out the rows the inside shows: after a change of the document the view first goes no
+// further down than the last row stays at the bottom, and a place waiting for a size is shown.
 void Page::arrange(Area inside) {
     Kept& kept = *kept_;
 
     if (kept.sized != inside.size) kept.fresh = true;
 
     kept.sized = inside.size;
+
+    if (kept.settling) {
+        kept.settling = false;
+
+        (void)moved(0);
+    }
 
     if (kept.wish) {
         const Place where = *kept.wish;
@@ -1162,8 +1397,9 @@ void Page::arrange(Area inside) {
 }
 
 // The rows, the marks over them in the looks of their parts (the current one in the state
-// `current`, and `focus` too while the page has the focus), and the links of the marks with an
-// address.
+// `current`, and `focus` too while the page has the focus), the links of the marks with an
+// address, and the stretches lit over all of it in the state `select`, with the cell after a line
+// lit too when they go on past its end.
 void Page::paint(Canvas& onto) const {
     const Kept& kept = *kept_;
     const Look plain = look();
@@ -1201,6 +1437,28 @@ void Page::paint(Canvas& onto) const {
                 onto.link(cell, one.address);
             }
         }
+    }
+
+    if (kept.lit.empty()) return;
+
+    States chosen = states();
+
+    chosen.set(State::select, true);
+
+    const Look selected = look({}, chosen);
+    const auto inside = [&kept](Place where) {
+        return std::any_of(kept.lit.begin(), kept.lit.end(), [where](const Range& one) { return one.from <= where && where < one.upto; });
+    };
+
+    for (std::size_t row = 0; row < kept.shown.size(); ++row) {
+        const Cut& cut = kept.shown[row];
+        const int y = static_cast<int>(row);
+
+        for (std::size_t x = 0; x < cut.bytes.size(); ++x)
+            if (inside(Place{cut.line, cut.bytes[x]})) onto.shade(Area{{static_cast<int>(x), y}, {1, 1}}, selected);
+
+        if (cut.last && inside(Place{cut.line, cut.upto}))
+            onto.shade(Area{{static_cast<int>(cut.bytes.size()), y}, {1, 1}}, selected);
     }
 }
 
@@ -1409,24 +1667,6 @@ bool Page::revealed(Place where) {
     return true;
 }
 
-// The place of the document under `at` (in the box): the line and byte of the character in that
-// cell, past the end of a row the end of the row; none off the rows.
-std::optional<Place> Page::under(Spot at) const {
-    const Style& style = this->style();
-    const int line = style.border == Border::none ? 0 : 1;
-    const int x = at.x - line - style.padding.left;
-    const int y = at.y - line - style.padding.top;
-    const Kept& kept = *kept_;
-
-    if (x < 0 || y < 0 || static_cast<std::size_t>(y) >= kept.shown.size()) return std::nullopt;
-
-    const Cut& cut = kept.shown[static_cast<std::size_t>(y)];
-
-    if (static_cast<std::size_t>(x) >= cut.bytes.size()) return Place{cut.line, cut.upto};
-
-    return Place{cut.line, cut.bytes[static_cast<std::size_t>(x)]};
-}
-
 // Hands the spool's order of a window to `order`.
 void Page::served() {
     if (!kept_->spool) return;
@@ -1501,7 +1741,7 @@ Task<void> Pager::opened(Bytes head) {
         trouble = why;
     }
 
-    hold(std::make_shared<Spool>(much, std::move(head)));
+    hold(std::make_shared<spooling::Reel>(much, std::move(head)));
 
     if (!trouble) co_return;
 
@@ -1532,6 +1772,6 @@ Task<void> Pager::fetched(std::uint64_t from, std::size_t most) {
 }
 
 // Shows the text as it is now.
-void Pager::reread() { hold(std::make_shared<Spool>(bytes(text_->whole()))); }
+void Pager::reread() { hold(std::make_shared<spooling::Reel>(bytes(text_->whole()))); }
 
 }

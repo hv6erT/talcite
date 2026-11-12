@@ -21,18 +21,26 @@ bool Step::merged(const Step& later) {
 Undo::Undo(std::size_t most) : most_(std::max<std::size_t>(most, 1)) {}
 
 // Takes `one`, a step just done: what waited to be redone is gone, and the step joins the last one
-// when that one takes it in and nothing sealed it. No step throws std::invalid_argument.
+// when that one takes it in and nothing sealed it. A saved place among what went, or one that falls
+// off the front with the oldest step, can no longer be reached. No step throws
+// std::invalid_argument.
 void Undo::push(std::unique_ptr<Step> one) {
     if (one == nullptr) throw std::invalid_argument{"tal::Undo::push: no step"};
 
     undone_.clear();
+
+    if (saved_ && *saved_ > done_.size()) saved_.reset();
 
     if (!sealed_ && !done_.empty() && done_.back()->merged(*one)) return;
 
     sealed_ = false;
     done_.push_back(std::move(one));
 
-    if (done_.size() > most_) done_.erase(done_.begin());
+    if (done_.size() <= most_) return;
+
+    done_.erase(done_.begin());
+
+    if (saved_) saved_ = *saved_ == 0 ? std::nullopt : std::optional<std::size_t>{*saved_ - 1};
 }
 
 // Undoes the last step; false when there is none. The next step does not join it.
@@ -66,11 +74,23 @@ bool Undo::redo() {
 // Keeps the next step from joining the last one, as a move of the cursor does to typing.
 void Undo::seal() { sealed_ = true; }
 
-// Forgets every step, as after a file was loaded anew.
+// Forgets every step, as after a file was loaded anew: what there is now counts as saved.
 void Undo::clear() {
     done_.clear();
     undone_.clear();
+    saved_ = 0;
 }
+
+// Marks the place in the history as the one saved, and seals it, so that typing on does not join
+// the step before the save.
+void Undo::saved() {
+    saved_ = done_.size();
+    sealed_ = true;
+}
+
+// Whether the history stands elsewhere than where it was saved: undoing back to the save gives
+// false again. A new history counts as saved.
+bool Undo::changed() const { return saved_ != done_.size(); }
 
 // What undoing would undo, for a menu ("Undo typing"); nothing without a step.
 std::optional<std::string> Undo::undoing() const {

@@ -127,8 +127,8 @@ std::string Text::between(Place from, Place to) const {
 }
 
 // Puts `what` at `at`, its line ends (\n or \r\n) breaking the line; gives where it ends. The views
-// hear the line changed and the lines that came after it. A place outside the text or inside a
-// character throws std::out_of_range.
+// hear the line changed and the lines that came after it, then `Edited` with where it ends. A place
+// outside the text or inside a character throws std::out_of_range.
 Place Text::insert(Place at, std::string_view what) {
     checked(at);
 
@@ -144,6 +144,7 @@ Place Text::insert(Place at, std::string_view what) {
 
         here += tail;
         told(Changes{Changes::Kind::changed, at.line, 1});
+        edited(Edited{at, at, end});
 
         return end;
     }
@@ -155,13 +156,15 @@ Place Text::insert(Place at, std::string_view what) {
     lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(at.line + 1), added.begin(), added.end());
     told(Changes{Changes::Kind::changed, at.line, 1});
     told(Changes{Changes::Kind::inserted, at.line + 1, added.size()});
+    edited(Edited{at, at, end});
 
     return end;
 }
 
 // Takes away the text from `from` to `to`, joining their lines. The views hear the line changed and
-// the lines that went after it. A place outside the text or inside a character throws
-// std::out_of_range, and `to` before `from` std::invalid_argument.
+// the lines that went after it, then `Edited`; taking nothing away tells nothing. A place outside
+// the text or inside a character throws std::out_of_range, and `to` before `from`
+// std::invalid_argument.
 void Text::erase(Place from, Place to) {
     checked(from);
     checked(to);
@@ -178,6 +181,8 @@ void Text::erase(Place from, Place to) {
     told(Changes{Changes::Kind::changed, from.line, 1});
 
     if (gone > 0) told(Changes{Changes::Kind::removed, from.line + 1, gone});
+
+    edited(Edited{from, to, from});
 }
 
 // A line as an entry of the model: its text, in any column.
@@ -189,6 +194,26 @@ Entry Text::entry(std::size_t row, std::size_t column) const {
     made.text = std::string{line(row)};
 
     return made;
+}
+
+// Keeps the handler `slot` of `Edited`; the hook returned removes it.
+Hook Text::heard(std::shared_ptr<detail::Slot> slot) {
+    std::erase_if(edits_, [](const std::shared_ptr<detail::Slot>& one) { return !one->live; });
+
+    std::weak_ptr<detail::Slot> held = slot;
+
+    edits_.push_back(std::move(slot));
+
+    return Hook{std::move(held)};
+}
+
+// Tells every handler of `Edited` about `what`, in the order they started listening, as `told` does
+// with `Changes`: from a copy, skipping one whose hook went meanwhile.
+void Text::edited(Edited what) {
+    const std::vector<std::shared_ptr<detail::Slot>> called = edits_;
+
+    for (const std::shared_ptr<detail::Slot>& slot : called)
+        if (slot->live) slot->called(what);
 }
 
 // Throws std::out_of_range for a place outside the text or inside a character.

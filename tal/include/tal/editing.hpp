@@ -1,11 +1,14 @@
 #pragma once
 
 #include <compare>
+#include <concepts>
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <regex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "tal/model.hpp"
@@ -19,9 +22,24 @@ struct Place {
     friend auto operator<=>(const Place&, const Place&) = default;
 };
 
+struct Edited : Event {
+    Edited(Place a, Place b, Place c) : from(a), upto(b), end(c) {}
+
+    Place from;
+    Place upto;
+    Place end;
+};
+
 class Text : public Model {
 public:
     explicit Text(std::string_view whole = {});
+
+    template <typename E>
+        requires(std::same_as<E, Changes> || std::same_as<E, Edited>)
+    [[nodiscard]] Hook on(Fn<E> what) {
+        if constexpr (std::same_as<E, Changes>) return Model::on<E>(std::move(what));
+        else return heard(std::make_shared<detail::Typed<E>>(std::move(what)));
+    }
 
     [[nodiscard]] std::size_t lines() const { return lines_.size(); }
 
@@ -42,7 +60,12 @@ public:
 private:
     void checked(Place at) const;
 
+    [[nodiscard]] Hook heard(std::shared_ptr<detail::Slot> slot);
+
+    void edited(Edited what);
+
     std::vector<std::string> lines_;
+    std::vector<std::shared_ptr<detail::Slot>> edits_;
 };
 
 struct Sift {

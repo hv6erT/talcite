@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <random>
 #include <string>
@@ -8,17 +9,23 @@
 #include <vector>
 
 #include "tal/bytes.hpp"
+#include "tal/editing.hpp"
 
 #include "spooling.hpp"
 #include "tal/testing.hpp"
 
 // The spool: a byte document as lines, given whole or read in windows that its owner fetches when
-// it orders them; here a tape plays the owner.
+// it orders them; here a tape plays the owner. And the lines of a text, following its changes.
 
 namespace {
 
 using tal::Bytes;
+using tal::Edited;
+using tal::Place;
+using tal::Text;
+using tal::spooling::Lines;
 using tal::spooling::Offset;
+using tal::spooling::Reel;
 using tal::spooling::Spool;
 
 // A document read in windows: it fetches what the spool orders, `give` bytes at most at a time, and
@@ -143,7 +150,7 @@ Offset started(const std::string& doc, std::size_t line) {
 // A document given whole is counted at once: its lines without their ends (\n, \r\n), no empty line
 // after a final \n, none in an empty document.
 TRIAL("Spool: a document at hand, its lines and their starts") {
-    Spool one{tal::bytes("a\nbb\r\nccc")};
+    Reel one{tal::bytes("a\nbb\r\nccc")};
 
     SAME(one.counted(), std::optional<std::size_t>{3});
     SAME(one.whole(), Offset{9});
@@ -154,11 +161,11 @@ TRIAL("Spool: a document at hand, its lines and their starts") {
     OUGHT(one.line(1) == (Spool::Line{2, 4, 6}));
     OUGHT(!one.ordered());
 
-    Spool ended{tal::bytes("a\nb\n")};
+    Reel ended{tal::bytes("a\nb\n")};
 
     SAME(ended.counted(), std::optional<std::size_t>{2});
 
-    Spool empty{Bytes{}};
+    Reel empty{Bytes{}};
 
     SAME(empty.counted(), std::optional<std::size_t>{0});
     OUGHT(texts(empty, 0, 5)->empty());
@@ -170,7 +177,7 @@ TRIAL("Spool: a document at hand, its lines and their starts") {
 // rest.
 TRIAL("Spool: one line of megabytes") {
     const std::string said(3U * 1024 * 1024 + 7, 'z');
-    Spool one{tal::bytes(said)};
+    Reel one{tal::bytes(said)};
 
     SAME(one.counted(), std::optional<std::size_t>{1});
     OUGHT(one.line(0) == (Spool::Line{0, said.size(), said.size()}));
@@ -183,7 +190,7 @@ TRIAL("Spool: one line of megabytes") {
 
 // The line holding a byte, the last line past the end; both ways agree along the document.
 TRIAL("Spool: the line of a byte") {
-    Spool one{tal::bytes("a\nbb\nccc")};
+    Reel one{tal::bytes("a\nbb\nccc")};
 
     SAME(one.found(0), std::size_t{0});
     SAME(one.found(1), std::size_t{0});
@@ -192,7 +199,7 @@ TRIAL("Spool: the line of a byte") {
     SAME(one.found(5), std::size_t{2});
     SAME(one.found(1000), std::size_t{2});
 
-    Spool long_one{tal::bytes(many(5000))};
+    Reel long_one{tal::bytes(many(5000))};
 
     for (std::size_t which = 0; which < 5000; which += 137) SAME(long_one.found(*long_one.at(which)), which);
 }
@@ -201,7 +208,7 @@ TRIAL("Spool: the line of a byte") {
 // orders a window and waits; one window goes at a time, and a second question orders nothing more.
 TRIAL("Spool: the first question orders a window") {
     Tape tape{many(50)};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     OUGHT(!one.counted());
     OUGHT(!texts(one, 0, 5));
@@ -227,7 +234,7 @@ TRIAL("Spool: the first question orders a window") {
 TRIAL("Spool: a head at hand") {
     const std::string doc = many(5000);
     Tape tape{doc};
-    Spool one{tape.whole(), tal::bytes(doc.substr(0, 100))};
+    Reel one{tape.whole(), tal::bytes(doc.substr(0, 100))};
 
     SAME(*one.read(0, 10, 1), std::string_view{"line 0\nlin"});
     SAME(*one.read(95, 1000, 1), std::string_view{doc.substr(95, 5)});
@@ -237,7 +244,7 @@ TRIAL("Spool: a head at hand") {
     OUGHT(one.stalled());
     OUGHT(!one.ordered());
 
-    Spool cut{3, tal::bytes("abcdef")};
+    Reel cut{3, tal::bytes("abcdef")};
 
     SAME(*cut.read(0, 10), std::string_view{"abc"});
     SAME(cut.counted(), std::optional<std::size_t>{});
@@ -247,7 +254,7 @@ TRIAL("Spool: a head at hand") {
 // at hand without a window more.
 TRIAL("Spool: counting to the end") {
     Tape tape{many(30000)};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     one.counting();
 
@@ -272,8 +279,8 @@ TRIAL("Spool: counting to the end") {
 TRIAL("Spool: jumps and steps back as in a document at hand") {
     const std::string said = many(20000);
     Tape tape{said};
-    Spool one{tape.whole(), {}};
-    Spool known{tal::bytes(said)};
+    Reel one{tape.whole(), {}};
+    Reel known{tal::bytes(said)};
 
     one.screen(40);
 
@@ -283,7 +290,7 @@ TRIAL("Spool: jumps and steps back as in a document at hand") {
     }
 
     Tape short_tape{many(3000, "")};
-    Spool steps{short_tape.whole(), {}};
+    Reel steps{short_tape.whole(), {}};
 
     (void)rolled(short_tape, steps, 2999, 1);
 
@@ -294,14 +301,14 @@ TRIAL("Spool: jumps and steps back as in a document at hand") {
 // next one before anyone asks, so that a row in it then answers at once.
 TRIAL("Spool: the window serves the lines around, and the next one comes ahead") {
     Tape near{many(100)};
-    Spool few{near.whole(), {}};
+    Reel few{near.whole(), {}};
 
     for (std::size_t which = 0; which < 100; ++which) (void)rolled(near, few, which, 1);
 
     SAME(near.calls(), 1);
 
     Tape tape{many(20000)};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     (void)rolled(tape, one, 0, 40);
 
@@ -324,7 +331,7 @@ TRIAL("Spool: the window serves the lines around, and the next one comes ahead")
 // A source giving less than asked, a hundred bytes at a time, does not break stepping back.
 TRIAL("Spool: a source giving little at a time") {
     Tape tape{many(4000), 100};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     (void)rolled(tape, one, 3999, 1);
 
@@ -334,7 +341,7 @@ TRIAL("Spool: a source giving little at a time") {
 // A source that gives nothing ends the document where it got, and nothing is ordered after.
 TRIAL("Spool: a source that fails ends the document") {
     Tape tape{many(20000)};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     tape.refuse(1);
 
@@ -356,7 +363,7 @@ TRIAL("Spool: a source that fails ends the document") {
 TRIAL("Spool: a far jump from the nearest anchor") {
     const std::string doc = many(60000);
     Tape tape{doc};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     OUGHT(placed(tape, one, 59000).has_value());
 
@@ -378,7 +385,7 @@ TRIAL("Spool: a far jump from the nearest anchor") {
 TRIAL("Spool: lines longer than the window") {
     const std::size_t mega = 2U * 1024 * 1024;
     Tape tape{std::string(mega, 'x') + "\nend\n"};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
     const std::optional<Spool::Line> first = settled(tape, one, [&] { return one.line(0); });
 
     OUGHT(first == (Spool::Line{0, mega, mega + 1}));
@@ -386,7 +393,7 @@ TRIAL("Spool: lines longer than the window") {
     SAME(rolled(tape, one, 1, 1), (std::vector<std::string>{"end"}));
 
     Tape back{"a\n" + std::string(mega, 'y') + "\nb\n"};
-    Spool behind{back.whole(), {}};
+    Reel behind{back.whole(), {}};
 
     SAME(*placed(back, behind, 2), Offset{mega + 3});
 
@@ -398,13 +405,13 @@ TRIAL("Spool: lines longer than the window") {
     OUGHT(back.calls() - was <= 2 * 1024 / 64 + 4);
 
     Tape deep{"a\n" + std::string(2 * mega, 'y') + "\nb\n"};
-    Spool far{deep.whole(), {}};
+    Reel far{deep.whole(), {}};
 
     SAME(settled(deep, far, [&] { return far.found(2 + mega / 2); }), std::size_t{1});
     OUGHT(deep.calls() <= 1024 / 64 + 3);
 
     Tape piece{std::string(3 * mega / 2, 'q') + "!"};
-    Spool apart{piece.whole(), {}};
+    Reel apart{piece.whole(), {}};
     const std::optional<std::string_view> got = settled(piece, apart, [&] { return apart.read(3 * mega / 2 - 2, 10); });
 
     SAME(std::string{*got}, std::string{"qq!"});
@@ -490,8 +497,8 @@ TRIAL("Spool: the document as it is, whatever is asked in whatever order") {
 
         for (const std::size_t give : {std::size_t{0}, SIZE_MAX, std::size_t{100}, std::size_t{5000}}) {
             Tape tape{doc, give};
-            Spool held{tal::bytes(doc)};
-            Spool read{tape.whole(), {}};
+            Reel held{tal::bytes(doc)};
+            Reel read{tape.whole(), {}};
             Spool& one = give == 0 ? held : read;
 
             SAME(held.counted(), std::optional<std::size_t>{known.lines.size()});
@@ -551,7 +558,7 @@ TRIAL("Spool: the windows a walk reads") {
         const Reference known{doc};
         const std::size_t lines = known.lines.size();
         Tape tape{doc};
-        Spool one{tape.whole(), {}};
+        Reel one{tape.whole(), {}};
 
         one.screen(40);
 
@@ -579,13 +586,13 @@ TRIAL("Spool: the windows a walk reads") {
 // megabytes is walked once, and the lines are counted from it.
 TRIAL("Spool: a line end across windows, and a long last line kept") {
     Tape tape{std::string(64 * 1024 - 1, 'a') + "\r\nb"};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     OUGHT(settled(tape, one, [&] { return one.line(0); }) == (Spool::Line{0, 64 * 1024 - 1, 64 * 1024 + 1}));
 
     const std::size_t mega = 4U * 1024 * 1024;
     Tape last{"a\n" + std::string(mega, 'z')};
-    Spool longer{last.whole(), {}};
+    Reel longer{last.whole(), {}};
 
     OUGHT(settled(last, longer, [&] { return longer.line(1); }) == (Spool::Line{2, mega + 2, mega + 2}));
     SAME(longer.counted(), std::optional<std::size_t>{2});
@@ -605,7 +612,7 @@ TRIAL("Spool: stepping back over a long line") {
     const std::string doc = "a\n" + std::string(mega, 'y') + "\n" + many(5000);
     const Reference known{doc};
     Tape tape{doc};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     SAME(*placed(tape, one, 2), Offset{mega + 3});
 
@@ -626,7 +633,7 @@ TRIAL("Spool: stepping back over a long line") {
     const std::string far = many(5000) + std::string(mega, 'q') + "\nend\n";
     const Reference known_far{far};
     Tape back{far};
-    Spool steps{back.whole(), {}};
+    Reel steps{back.whole(), {}};
 
     steps.screen(10000);
 
@@ -640,7 +647,7 @@ TRIAL("Spool: stepping back over a long line") {
     const std::string middle = many(5000) + std::string(mega, 'm') + "\n" + many(5000);
     const Reference known_middle{middle};
     Tape up{middle};
-    Spool over{up.whole(), {}};
+    Reel over{up.whole(), {}};
 
     over.screen(1000000);
 
@@ -664,7 +671,7 @@ TRIAL("Spool: the windows a walk through a large document reads") {
         const Reference known{doc};
         const std::size_t lines = known.lines.size();
         Tape tape{doc};
-        Spool one{tape.whole(), {}};
+        Reel one{tape.whole(), {}};
 
         one.screen(lines > 1000 ? 1000 : 3);
 
@@ -692,7 +699,7 @@ TRIAL("Spool: going on from where it got") {
     const std::string doc = many(100000) + std::string(2U * 1024 * 1024, 'q') + "\nend\n";
     const Reference known{doc};
     Tape tape{doc};
-    Spool one{tape.whole(), {}};
+    Reel one{tape.whole(), {}};
 
     one.screen(1000000);
 
@@ -721,4 +728,87 @@ TRIAL("Spool: going on from where it got") {
 
     SAME(placed(tape, one, 5000), known.at(5000));
     OUGHT(tape.calls() - calls <= 2);
+}
+
+// The lines of a text each end with a \n, the last one too, so that an empty last line is a line;
+// the bytes are read across the ends of lines. Everything is at hand: nothing is ordered, nothing
+// stalls, and the count of lines is the text's.
+TRIAL("Lines: the lines of a text, each with its end") {
+    const auto text = std::make_shared<Text>("a\nbb\n");
+    Lines one{text};
+
+    SAME(one.whole(), Offset{6});
+    SAME(one.counted(), std::optional<std::size_t>{3});
+    SAME(one.at(0), std::optional<Offset>{0});
+    SAME(one.at(2), std::optional<Offset>{5});
+    OUGHT(!one.at(3).has_value());
+    OUGHT(one.line(1) == (Spool::Line{2, 4, 5}));
+    OUGHT(one.line(2) == (Spool::Line{5, 5, 6}));
+    OUGHT(!one.line(3).has_value());
+    SAME(one.found(0), std::size_t{0});
+    SAME(one.found(1), std::size_t{0});
+    SAME(one.found(2), std::size_t{1});
+    SAME(one.found(5), std::size_t{2});
+    SAME(one.found(99), std::size_t{2});
+    SAME(std::string{*one.read(0, 100)}, std::string{"a\nbb\n\n"});
+    SAME(std::string{*one.read(3, 2, 1)}, std::string{"b\n"});
+    SAME(std::string{*one.read(6, 5)}, std::string{});
+    SAME(std::string{*one.read(9, 5)}, std::string{});
+    OUGHT(!one.stalled());
+    OUGHT(!one.ordered().has_value());
+
+    one.counted(7);
+    one.counting();
+    one.screen(50);
+    one.arrived(0, tal::bytes("x"));
+
+    SAME(one.counted(), std::optional<std::size_t>{3});
+    SAME(one.whole(), Offset{6});
+
+    Lines empty{std::make_shared<Text>()};
+
+    SAME(empty.whole(), Offset{1});
+    SAME(empty.found(0), std::size_t{0});
+    OUGHT(empty.line(0) == (Spool::Line{0, 0, 1}));
+}
+
+// Changes inside lines and changes of their number, at random, leave the lines telling what a
+// document of the text's lines, each with its \n, tells.
+TRIAL("Lines: following the changes of a text") {
+    const auto text = std::make_shared<Text>("first\nsecond line\n\nlast");
+    Lines one{text};
+    tal::Hook hook = text->on<Edited>([&one](Edited& what) { one.edited(what.from.line, what.upto.line, what.end.line); });
+    std::mt19937 random{7};
+    const std::vector<std::string> pieces{"x", "yz", "\n", "a\nb", "", "\n\n", "long piece of text"};
+
+    for (int step = 0; step < 300; ++step) {
+        const auto pick = [&random](std::size_t much) { return static_cast<std::size_t>(random() % much); };
+        const std::size_t line = pick(text->lines());
+        const Place from{line, pick(text->line(line).size() + 1)};
+
+        if (random() % 2 == 0) {
+            (void)text->insert(from, pieces[pick(pieces.size())]);
+        } else {
+            const std::size_t last = std::min(text->lines() - 1, line + pick(3));
+            Place upto{last, pick(text->line(last).size() + 1)};
+
+            if (upto < from) upto = from;
+
+            text->erase(from, upto);
+        }
+
+        const std::string whole = text->whole() + "\n";
+        Reel known{tal::bytes(whole)};
+
+        SAME(one.whole(), Offset{whole.size()});
+
+        for (std::size_t which = 0; which < text->lines(); ++which) {
+            OUGHT(one.line(which) == known.line(which));
+            SAME(one.at(which), known.at(which));
+        }
+
+        for (Offset byte = 0; byte < whole.size(); byte += 3) SAME(one.found(byte), known.found(byte));
+
+        SAME(std::string{*one.read(0, whole.size())}, whole);
+    }
 }
