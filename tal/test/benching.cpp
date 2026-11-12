@@ -18,6 +18,7 @@
 #include "tal/executor.hpp"
 #include "tal/fs.hpp"
 #include "tal/geometry.hpp"
+#include "tal/json.hpp"
 #include "tal/key.hpp"
 #include "tal/layout.hpp"
 #include "tal/model.hpp"
@@ -649,4 +650,42 @@ TRIAL("Bench: typing in an editor of 200 000 lines") {
     measured("editor-small", 200, [&small, &step] { step(small, tal::Key{U'x'}); });
     measured("editor-big", 200, [&big, &step] { step(big, tal::Key{U'x'}); });
     measured("editor-big-enter", 20, [&big, &step] { step(big, tal::Key{Code::enter}); });
+}
+
+// The hostile texts the JSON reader is built against cost in proportion to their size: an object of
+// half a million names, half a million values in one array, arrays at the limit of depth over and
+// over, and numbers of the most digits.
+TRIAL("Bench: hostile JSON") {
+    std::string names = "{";
+    std::string values = "[";
+    std::string deep = "[";
+    std::string digits = "[";
+
+    for (int one = 0; one < 500000; ++one) {
+        names += (one > 0 ? ",\"" : "\"") + std::to_string(static_cast<std::int64_t>(one) * 7919 % 500009) + "\":0";
+        values += one > 0 ? ",0" : "0";
+    }
+
+    names += "}";
+    values += "]";
+
+    for (int one = 0; one < 10000; ++one) deep += (one > 0 ? "," : "") + std::string(63, '[') + std::string(63, ']');
+
+    deep += "]";
+
+    for (int one = 0; one < 10000; ++one) digits += (one > 0 ? ",0." : "0.") + std::string(399, '7');
+
+    digits += "]";
+
+    SAME(tal::json::parsed(names).size(), std::size_t{500000});
+    SAME(tal::json::parsed(values).size(), std::size_t{500000});
+    SAME(tal::json::parsed(deep).size(), std::size_t{10000});
+    SAME(tal::json::parsed(digits).size(), std::size_t{10000});
+
+    if (!benching()) return;
+
+    measured("json-names", 3, [&names] { (void)tal::json::parsed(names); });
+    measured("json-values", 3, [&values] { (void)tal::json::parsed(values); });
+    measured("json-deep", 3, [&deep] { (void)tal::json::parsed(deep); });
+    measured("json-digits", 3, [&digits] { (void)tal::json::parsed(digits); });
 }

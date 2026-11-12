@@ -10,8 +10,9 @@
 #include <utility>
 
 #include "palette.hpp"
-#include "reading.hpp"
+#include "tal/json.hpp"
 #include "tal/text.hpp"
+#include "tal/trouble.hpp"
 
 namespace tal {
 
@@ -19,7 +20,7 @@ namespace {
 
 #include "built.inc"
 
-using reading::Value;
+using json::Value;
 
 constexpr std::array<std::string_view, 4> levels{"mono", "16", "256", "rgb"};
 
@@ -28,6 +29,11 @@ constexpr std::array<std::string_view, 6> flag_names{"bold", "faint", "italic", 
 constexpr std::array<std::string_view, 7> state_names{"focus", "disabled", "select", "current", "mark", "drag", "hover"};
 
 constexpr std::array<std::string_view, 4> border_names{"none", "thin", "twin", "thick"};
+
+// Throws `Trouble` of kind `malformed` for a mistake in the sheet at the place of `where`.
+[[noreturn]] void refused(const Value& where, std::string_view why) {
+    throw Trouble{Kind::malformed, "line " + std::to_string(where.line()) + ", column " + std::to_string(where.column()) + ": " + std::string{why}};
+}
 
 constexpr std::array<std::string_view, 16> basics{
     "black", "red", "green", "brown", "blue", "magenta", "cyan", "lightgray",
@@ -190,15 +196,15 @@ std::vector<std::string_view> split(std::string_view said, std::string_view by) 
 // Takes the selector `[ancestor ]class(.class)*(:state)*(::part)?` apart into `into`, with its
 // weight: states and part, then classes of the node, then the ancestor.
 void selected(const Value& where, Rule& into) {
-    if (where.kind != reading::Kind::string) reading::refused(where, "\"select\" is not a string");
+    if (where.kind() != json::Kind::string) refused(where, "\"select\" is not a string");
 
-    std::string_view said = where.text;
+    std::string_view said = where.string();
     const std::vector<std::string_view> spaced = split(said, " ");
 
-    if (spaced.size() > 2) reading::refused(where, "a selector has at most one ancestor");
+    if (spaced.size() > 2) refused(where, "a selector has at most one ancestor");
 
     if (spaced.size() == 2) {
-        if (!named(spaced[0])) reading::refused(where, "the ancestor is not a class name");
+        if (!named(spaced[0])) refused(where, "the ancestor is not a class name");
 
         into.ancestor = std::string{spaced[0]};
         said = spaced[1];
@@ -206,10 +212,10 @@ void selected(const Value& where, Rule& into) {
 
     const std::vector<std::string_view> parted = split(said, "::");
 
-    if (parted.size() > 2) reading::refused(where, "a selector has at most one part");
+    if (parted.size() > 2) refused(where, "a selector has at most one part");
 
     if (parted.size() == 2) {
-        if (!named(parted[1])) reading::refused(where, "the part is not a name");
+        if (!named(parted[1])) refused(where, "the part is not a name");
 
         into.part = std::string{parted[1]};
     }
@@ -220,7 +226,7 @@ void selected(const Value& where, Rule& into) {
     for (std::size_t at = 1; at < stated.size(); ++at) {
         const std::optional<std::size_t> which = found(state_names, stated[at]);
 
-        if (!which) reading::refused(where, "unknown state \"" + std::string{stated[at]} + "\"");
+        if (!which) refused(where, "unknown state \"" + std::string{stated[at]} + "\"");
 
         if (!into.states.has(static_cast<State>(*which))) ++many_states;
 
@@ -228,7 +234,7 @@ void selected(const Value& where, Rule& into) {
     }
 
     for (const std::string_view one : split(stated[0], ".")) {
-        if (!named(one)) reading::refused(where, "the selector needs class names");
+        if (!named(one)) refused(where, "the selector needs class names");
 
         into.classes.emplace_back(one);
     }
@@ -239,53 +245,53 @@ void selected(const Value& where, Rule& into) {
 
 // A whole non-negative number of cells, at most a thousand.
 int counted(const Value& one) {
-    if (one.kind != reading::Kind::number || one.number < 0 || one.number > 1000 || std::floor(one.number) != one.number)
-        reading::refused(one, "a size is a whole number from 0 to 1000");
+    if ((one.kind() != json::Kind::integer && one.kind() != json::Kind::number) || one.number() < 0 || one.number() > 1000 || std::floor(one.number()) != one.number())
+        refused(one, "a size is a whole number from 0 to 1000");
 
-    return static_cast<int>(one.number);
+    return static_cast<int>(one.number());
 }
 
 // Sides from a number (all four) or from an array [top, right, bottom, left].
 Sides sided(const Value& one) {
-    if (one.kind == reading::Kind::number) {
+    if (one.kind() == json::Kind::integer || one.kind() == json::Kind::number) {
         const int all = counted(one);
 
         return Sides{all, all, all, all};
     }
 
-    if (one.kind != reading::Kind::array || one.items.size() != 4)
-        reading::refused(one, "sides are a number or [top, right, bottom, left]");
+    if (one.kind() != json::Kind::array || one.size() != 4)
+        refused(one, "sides are a number or [top, right, bottom, left]");
 
-    return Sides{counted(one.items[0]), counted(one.items[1]), counted(one.items[2]), counted(one.items[3])};
+    return Sides{counted(one.at(0)), counted(one.at(1)), counted(one.at(2)), counted(one.at(3))};
 }
 
 // What a style object says at one level. An unknown field is a mistake, since this format is ours.
 Partial partial(const Value& one) {
-    if (one.kind != reading::Kind::object) reading::refused(one, "a style is an object");
+    if (one.kind() != json::Kind::object) refused(one, "a style is an object");
 
     Partial made;
 
-    for (std::size_t at = 0; at < one.names.size(); ++at) {
-        const std::string& name = one.names[at];
-        const Value& given = one.items[at];
+    for (std::size_t at = 0; at < one.names().size(); ++at) {
+        const std::string& name = one.names()[at];
+        const Value& given = one.at(at);
 
         if (name == "ink" || name == "paper") {
-            if (given.kind != reading::Kind::string) reading::refused(given, "a color is a string");
+            if (given.kind() != json::Kind::string) refused(given, "a color is a string");
 
-            const std::optional<std::optional<Color>> color = colored(given.text);
+            const std::optional<std::optional<Color>> color = colored(given.string());
 
-            if (!color) reading::refused(given, "unknown color \"" + given.text + "\"");
+            if (!color) refused(given, "unknown color \"" + given.string() + "\"");
 
             (name == "ink" ? made.ink : made.paper) = *color;
         } else if (const std::optional<std::size_t> flag = found(flag_names, name)) {
-            if (given.kind != reading::Kind::boolean) reading::refused(given, "\"" + name + "\" is true or false");
+            if (given.kind() != json::Kind::boolean) refused(given, "\"" + name + "\" is true or false");
 
-            made.flags[*flag] = given.boolean;
+            made.flags[*flag] = given.boolean();
         } else if (name == "border") {
-            const std::optional<std::size_t> kind = given.kind == reading::Kind::string ? found(border_names, given.text)
+            const std::optional<std::size_t> kind = given.kind() == json::Kind::string ? found(border_names, given.string())
                                                                                         : std::nullopt;
 
-            if (!kind) reading::refused(given, "a border is none, thin, twin or thick");
+            if (!kind) refused(given, "a border is none, thin, twin or thick");
 
             made.border = static_cast<Border>(*kind);
         } else if (name == "padding") {
@@ -293,11 +299,11 @@ Partial partial(const Value& one) {
         } else if (name == "margin") {
             made.margin = sided(given);
         } else if (name == "shadow") {
-            if (given.kind != reading::Kind::boolean) reading::refused(given, "\"shadow\" is true or false");
+            if (given.kind() != json::Kind::boolean) refused(given, "\"shadow\" is true or false");
 
-            made.shadow = given.boolean;
+            made.shadow = given.boolean();
         } else {
-            reading::refused(given, "unknown field \"" + name + "\"");
+            refused(given, "unknown field \"" + name + "\"");
         }
     }
 
@@ -307,10 +313,10 @@ Partial partial(const Value& one) {
 // The levels of a style: one flat style for every level, or an object of levels, each the style
 // from that level up to the next one given.
 std::array<std::optional<Partial>, 4> leveled(const Value& one) {
-    if (one.kind != reading::Kind::object) reading::refused(one, "a style is an object");
+    if (one.kind() != json::Kind::object) refused(one, "a style is an object");
 
     std::array<std::optional<Partial>, 4> made;
-    const bool by_level = std::any_of(one.names.begin(), one.names.end(),
+    const bool by_level = std::any_of(one.names().begin(), one.names().end(),
                                       [](const std::string& name) { return found(levels, name).has_value(); });
 
     if (!by_level) {
@@ -319,12 +325,12 @@ std::array<std::optional<Partial>, 4> leveled(const Value& one) {
         return made;
     }
 
-    for (std::size_t at = 0; at < one.names.size(); ++at) {
-        const std::optional<std::size_t> level = found(levels, one.names[at]);
+    for (std::size_t at = 0; at < one.names().size(); ++at) {
+        const std::optional<std::size_t> level = found(levels, one.names()[at]);
 
-        if (!level) reading::refused(one.items[at], "a style by levels holds only mono, 16, 256 and rgb");
+        if (!level) refused(one.at(at), "a style by levels holds only mono, 16, 256 and rgb");
 
-        made[*level] = partial(one.items[at]);
+        made[*level] = partial(one.at(at));
     }
 
     return made;
@@ -332,32 +338,32 @@ std::array<std::optional<Partial>, 4> leveled(const Value& one) {
 
 // One glyph string: exactly one cluster of letters.
 std::string lettered(const Value& one) {
-    if (one.kind != reading::Kind::string || text::clusters(one.text).size() != 1)
-        reading::refused(one, "a glyph is one character");
+    if (one.kind() != json::Kind::string || text::clusters(one.string()).size() != 1)
+        refused(one, "a glyph is one character");
 
-    return one.text;
+    return one.string();
 }
 
 // A glyph: one string for both levels, or an object with "ascii" and "unicode".
 Sign glyphed(const Value& one) {
-    if (one.kind == reading::Kind::string) {
+    if (one.kind() == json::Kind::string) {
         const std::string same = lettered(one);
 
         return Sign{same, same};
     }
 
-    if (one.kind != reading::Kind::object || one.names.empty())
-        reading::refused(one, "a glyph is a string or an object with ascii and unicode");
+    if (one.kind() != json::Kind::object || one.names().empty())
+        refused(one, "a glyph is a string or an object with ascii and unicode");
 
     Sign made;
 
-    for (std::size_t at = 0; at < one.names.size(); ++at) {
-        if (one.names[at] == "ascii") {
-            made.ascii = lettered(one.items[at]);
-        } else if (one.names[at] == "unicode") {
-            made.unicode = lettered(one.items[at]);
+    for (std::size_t at = 0; at < one.names().size(); ++at) {
+        if (one.names()[at] == "ascii") {
+            made.ascii = lettered(one.at(at));
+        } else if (one.names()[at] == "unicode") {
+            made.unicode = lettered(one.at(at));
         } else {
-            reading::refused(one.items[at], "a glyph holds only ascii and unicode");
+            refused(one.at(at), "a glyph holds only ascii and unicode");
         }
     }
 
@@ -365,30 +371,32 @@ Sign glyphed(const Value& one) {
 }
 
 // The layer a sheet's text describes.
-Kept kept(std::string_view json) {
-    const Value doc = reading::parsed(json);
+Kept kept(std::string_view said) {
+    const Value doc = json::parsed(said);
 
-    if (doc.kind != reading::Kind::object) reading::refused(doc, "a style sheet is an object");
+    if (doc.kind() != json::Kind::object) refused(doc, "a style sheet is an object");
 
     Kept made;
 
-    for (std::size_t at = 0; at < doc.names.size(); ++at) {
-        const std::string& name = doc.names[at];
-        const Value& one = doc.items[at];
+    for (std::size_t at = 0; at < doc.names().size(); ++at) {
+        const std::string& name = doc.names()[at];
+        const Value& one = doc.at(at);
 
         if (name == "description") {
-            if (one.kind != reading::Kind::string) reading::refused(one, "the description is a string");
+            if (one.kind() != json::Kind::string) refused(one, "the description is a string");
         } else if (name == "rules") {
-            if (one.kind != reading::Kind::array) reading::refused(one, "the rules are an array");
+            if (one.kind() != json::Kind::array) refused(one, "the rules are an array");
 
-            for (const Value& given : one.items) {
-                if (given.kind != reading::Kind::object) reading::refused(given, "a rule is an object");
+            for (std::size_t item = 0; item < one.size(); ++item) {
+                const Value& given = one.at(item);
 
-                const Value* select = given.member("select");
-                const Value* style = given.member("style");
+                if (given.kind() != json::Kind::object) refused(given, "a rule is an object");
 
-                if (select == nullptr || style == nullptr || given.names.size() != 2)
-                    reading::refused(given, "a rule holds \"select\" and \"style\"");
+                const Value* select = given.find("select");
+                const Value* style = given.find("style");
+
+                if (select == nullptr || style == nullptr || given.names().size() != 2)
+                    refused(given, "a rule holds \"select\" and \"style\"");
 
                 Rule rule;
 
@@ -399,12 +407,12 @@ Kept kept(std::string_view json) {
                 made.rules.push_back(std::move(rule));
             }
         } else if (name == "glyphs") {
-            if (one.kind != reading::Kind::object) reading::refused(one, "the glyphs are an object");
+            if (one.kind() != json::Kind::object) refused(one, "the glyphs are an object");
 
-            for (std::size_t sign = 0; sign < one.names.size(); ++sign)
-                made.glyphs.emplace(one.names[sign], glyphed(one.items[sign]));
+            for (std::size_t sign = 0; sign < one.names().size(); ++sign)
+                made.glyphs.emplace(one.names()[sign], glyphed(one.at(sign)));
         } else {
-            reading::refused(one, "unknown member \"" + name + "\"");
+            refused(one, "unknown member \"" + name + "\"");
         }
     }
 

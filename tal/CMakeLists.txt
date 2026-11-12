@@ -1,12 +1,26 @@
+# Fuzz targets for the readers of hostile text, for whoever works on them: libFuzzer drives them,
+# AddressSanitizer and UBSan watch them. Everything in tal is instrumented, so that the fuzzer sees
+# the coverage of all the code a text reaches. Clang only, and a build directory of its own.
+option(TAL_FUZZ "Build the fuzz targets of tal (Clang only; instruments the whole build)" OFF)
+
+if(TAL_FUZZ)
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "TAL_FUZZ needs Clang, for libFuzzer.")
+  endif()
+
+  add_compile_options(-fsanitize=fuzzer-no-link,address,undefined -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=address,undefined)
+endif()
+
 # tal::core of talcite.next: tasks and their owners, executors, the clock, troubles, ports, the
 # log, paths, the files port with its memory adapter, streams, the processes port with its
-# scripted adapter, text (UTF-8, terminal cells, letter case, collation and the rules of
+# scripted adapter, JSON, text (UTF-8, terminal cells, letter case, collation and the rules of
 # languages), and in platform/ the system's adapters of the ports, built in as their defaults. It
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
 add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp
-  src/collate.cpp src/language.cpp src/text.cpp src/unicode.cpp
+  src/collate.cpp src/json.cpp src/language.cpp src/text.cpp src/unicode.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
@@ -25,7 +39,7 @@ endif()
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed.
 add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/document.cpp src/editing.cpp src/event.cpp src/fields.cpp
-  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/spooling.cpp src/node.cpp src/reading.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
+  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/spooling.cpp src/node.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-core)
 
@@ -60,4 +74,8 @@ if(TALCITE_TESTS)
   # Some trials check internal parts (the console translation without VT) through their headers.
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
   add_test(NAME tal COMMAND tal-test)
+endif()
+
+if(TAL_FUZZ)
+  add_subdirectory(fuzz)
 endif()

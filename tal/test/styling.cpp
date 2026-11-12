@@ -299,9 +299,9 @@ TRIAL("Sheet: a copy gives what the original gives, also after the original is g
 TRIAL("Sheet: a text that is not JSON is refused at its line and column") {
     SAME(refusal("{\n  \"rules\": [,]\n}"), std::string{"line 2, column 13: a value is expected"});
     SAME(refusal("{\"rules\": []} x"), std::string{"line 1, column 15: something follows the value"});
-    SAME(refusal("{\"rules\": [], \"rules\": []}"), std::string{"line 1, column 15: the name \"rules\" is repeated"});
+    SAME(refusal("{\"rules\": [], \"rules\": []}"), std::string{"line 1, column 15: a name is repeated"});
     SAME(refusal("{\"glyphs\": {\"a\": \"\\ud800\"}}"), std::string{"line 1, column 25: a high surrogate stands alone"});
-    SAME(refusal("[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]"), std::string{"line 1, column 65: the values nest too deep"});
+    SAME(refusal("[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]"), std::string{"line 1, column 65: the values nest deeper than the limit"});
     SAME(refusal("{\"x\": \"a\x01\"}"), std::string{"line 1, column 9: a control character stands in a string"});
     SAME(refusal("{\"x\": 01}"), std::string{"line 1, column 8: '}' is expected"});
     SAME(refusal("{\"x\": \xff}"), std::string{"line 1, column 1: the text is not UTF-8"});
