@@ -10,18 +10,24 @@
 #include <vector>
 
 #include "tal/app.hpp"
+#include "tal/bytes.hpp"
 #include "tal/capabilities.hpp"
 #include "tal/clock.hpp"
 #include "tal/console.hpp"
 #include "tal/document.hpp"
+#include "tal/executor.hpp"
+#include "tal/fs.hpp"
 #include "tal/geometry.hpp"
 #include "tal/key.hpp"
 #include "tal/layout.hpp"
 #include "tal/model.hpp"
 #include "tal/node.hpp"
+#include "tal/pages.hpp"
 #include "tal/port.hpp"
+#include "tal/scene.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
+#include "tal/task.hpp"
 #include "tal/text.hpp"
 #include "tal/views.hpp"
 
@@ -32,13 +38,14 @@
 #define TAL_CALLGRIND 1
 #endif
 
-// The measurements of talcite.next's acceptance (E3e), and of the views over a large model (E4d).
-// They run only when `TAL_BENCH` is set; in an ordinary run each passes at once. As in twa's
-// test/benching.cpp, each measured stretch prints `BENCH <name> <milliseconds per repetition>`, and
-// under callgrind (started with `--instr-atstart=no`) it is the only instrumented code, dumped as
-// `<name>/<repetitions>`. The tree is built like twa's screen of panels on the terminal of twa's
-// measurement: 200 by 60 cells, a menu bar, two framed panels of film rows side by side and a key
-// bar, in the built-in sheet, monochrome like the skin twa was measured with.
+// The measurements of talcite.next's acceptance (E3e), of the views over a large model (E4d) and of
+// a pager over a line of 100 MB (E4e2). They run only when `TAL_BENCH` is set; in an ordinary run
+// each passes at once. As in twa's test/benching.cpp, each measured stretch prints `BENCH <name>
+// <milliseconds per repetition>`, and under callgrind (started with `--instr-atstart=no`) it is the
+// only instrumented code, dumped as `<name>/<repetitions>`. The tree is built like twa's screen of
+// panels on the terminal of twa's measurement: 200 by 60 cells, a menu bar, two framed panels of
+// film rows side by side and a key bar, in the built-in sheet, monochrome like the skin twa was
+// measured with.
 
 namespace {
 
@@ -490,5 +497,103 @@ TRIAL("Bench: the first frame and a new size") {
         measured_app.line->written.clear();
 
         (void)measured_app.app->turn();
+    });
+}
+
+namespace {
+
+// A file in memory whose reads come at once.
+class Memory : public tal::fs::Opened {
+public:
+    explicit Memory(std::string what) : raw_(tal::bytes(what)) {}
+
+    // The bytes from `at`, `most` at most.
+    tal::Task<tal::Bytes> read(std::uint64_t at, std::size_t most) override {
+        const auto from = static_cast<std::ptrdiff_t>(std::min<std::uint64_t>(at, raw_.size()));
+        const auto upto = static_cast<std::ptrdiff_t>(std::min<std::uint64_t>(at + most, raw_.size()));
+
+        co_return tal::Bytes(raw_.begin() + from, raw_.begin() + upto);
+    }
+
+    // Nothing is written.
+    tal::Task<void> write(std::uint64_t at, tal::Bytes what) override {
+        (void)at;
+        (void)what;
+
+        co_return;
+    }
+
+    // The size.
+    tal::Task<std::uint64_t> size() override { co_return raw_.size(); }
+
+    // Nothing.
+    tal::Task<void> flush() override { co_return; }
+
+private:
+    tal::Bytes raw_;
+};
+
+// A pager of a file filling a screen of 200 by 60 cells, its reads come on the program's loop.
+struct Paged {
+    tal::testing::Scene scene{Size{200, 60}};
+    tal::Document document{scene.time()};
+    tal::Pager* pager = nullptr;
+
+    // A pager of `doc`, wrapping or not.
+    Paged(std::string doc, bool wrapping) {
+        pager = &document.children().add<tal::Pager>(tal::fs::File{std::make_shared<Memory>(std::move(doc))});
+        pager->wrap = wrapping;
+        scene.show(document);
+        pager->focus();
+        settled();
+    }
+
+    // Lets the reads come, and draws.
+    void settled() {
+        while (tal::loop().turn()) {
+        }
+
+        scene.wait(std::chrono::milliseconds{0});
+    }
+
+    // A step down or up and its frame.
+    void stepped(bool back) {
+        scene.press(tal::Key{back ? Code::up : Code::down});
+        settled();
+    }
+};
+
+}
+
+// A frame of a pager over a line of 100 MB costs what one over short lines filling the same cells
+// does: each row reads only what it shows. Stepping down and up, wrapped and not.
+TRIAL("Bench: a pager over a line of 100 MB") {
+    std::string lines;
+
+    while (lines.size() < 1024 * 1024) lines += std::string(200, 'a') + "\n";
+
+    tal::Loop loop;
+    Paged short_one{lines, true};
+    Paged long_one{std::string(100U * 1024 * 1024, 'b'), true};
+    Paged cut{std::string(100U * 1024 * 1024, 'c'), false};
+
+    SAME(long_one.scene.row(59), std::string(200, 'b'));
+    SAME(cut.scene.row(0), std::string(200, 'c'));
+
+    if (!benching()) return;
+
+    bool back = false;
+
+    measured("pager-short", 200, [&short_one, &back] {
+        back = !back;
+        short_one.stepped(back);
+    });
+    measured("pager-long", 200, [&long_one, &back] {
+        back = !back;
+        long_one.stepped(back);
+    });
+    measured("pager-cut", 200, [&cut, &back] {
+        back = !back;
+        cut.stepped(back);
     });
 }
