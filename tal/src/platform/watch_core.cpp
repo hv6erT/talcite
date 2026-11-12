@@ -260,9 +260,12 @@ private:
     }
 
     // The loop of the reading thread: waits up to a second for events and passes each batch to
-    // `take`.
+    // `take`. The kernel queues the two halves of a move one after the other, and a read can come
+    // between them; read apart they would be a removal and a creation, so a batch with a half
+    // alone waits a little for the other.
     void serve() {
-        std::vector<char> room(64 * 1024);
+        constexpr std::size_t piece = 64 * 1024;
+        std::vector<char> room(piece);
 
         while (true) {
             pollfd told{};
@@ -274,8 +277,36 @@ private:
             const ssize_t given = ::read(fd_, room.data(), room.size());
             if (given <= 0) continue;
 
-            take(room.data(), static_cast<std::size_t>(given));
+            auto held = static_cast<std::size_t>(given);
+
+            for (int round = 0; round < 3 && halved(room.data(), held) && ::poll(&told, 1, 20) > 0; ++round) {
+                if (room.size() - held < piece) room.resize(held + piece);
+
+                const ssize_t more = ::read(fd_, room.data() + held, room.size() - held);
+                if (more <= 0) break;
+
+                held += static_cast<std::size_t>(more);
+            }
+
+            take(room.data(), held);
         }
+    }
+
+    // Whether a batch of `much` bytes of inotify events holds a move out of a folder without the
+    // move in that shares its cookie.
+    static bool halved(const char* room, std::size_t much) {
+        std::vector<std::uint32_t> open;
+
+        for (std::size_t at = 0; at + sizeof(inotify_event) <= much;) {
+            const auto* told = reinterpret_cast<const inotify_event*>(room + at);
+            at += sizeof(inotify_event) + told->len;
+
+            if ((told->mask & IN_MOVED_FROM) != 0) open.push_back(told->cookie);
+
+            if ((told->mask & IN_MOVED_TO) != 0) open.erase(std::remove(open.begin(), open.end(), told->cookie), open.end());
+        }
+
+        return !open.empty();
     }
 
     // Whether `where` is the root of the watch `which`. The root has its own rules: only for it

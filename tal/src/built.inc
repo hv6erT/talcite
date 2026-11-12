@@ -101,7 +101,8 @@ constexpr std::string_view built_sheet =
 {"select":"dialog","style":{"border":"twin","shadow":true}},
 {"select":"window.screen","style":{"border":"none","shadow":false}},
 {"select":"window.popup","style":{"border":"none","shadow":true}},
-{"select":"menu.box","style":{"border":"thin"}}
+{"select":"menu.box","style":{"border":"thin"}},
+{"select":"history","style":{"border":"thin"}}
 ],"glyphs":{
 "choice.dot":"•",
 "diff.closed":"▸",
@@ -124,9 +125,9 @@ constexpr std::string_view built_sheet =
 "line.thin.left.joint":"├",
 "line.thin.lower.left":"└",
 "line.thin.lower.right":"┘",
-"line.thin.right.joint":"┤",
 )json"
-    R"json("line.thin.upper.left":"┌",
+    R"json("line.thin.right.joint":"┤",
+"line.thin.upper.left":"┌",
 "line.thin.upper.right":"┐",
 "line.thin.upright":"│",
 "line.twin.across":"═",
