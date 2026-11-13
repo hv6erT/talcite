@@ -128,6 +128,27 @@ TRIAL("Task: to() moves the task to the pool and back to the loop's thread") {
     OUGHT(back == mine);
 }
 
+TRIAL("wait: a task that ends on the pool with a value, a failure or nothing still wakes the loop") {
+    tal::Loop loop;
+
+    for (int round = 0; round < 200; ++round) {
+        SAME(tal::wait(loop, []() -> tal::Task<int> {
+                 co_await tal::to(tal::pool());
+
+                 co_return 7;
+             }()),
+             7);
+
+        tal::wait(loop, []() -> tal::Task<void> { co_await tal::to(tal::pool()); }());
+
+        THREW(tal::wait(loop, []() -> tal::Task<int> {
+            co_await tal::to(tal::pool());
+
+            throw std::logic_error{"na puli"};
+        }()));
+    }
+}
+
 TRIAL("Pending: a result settled on another thread resumes the task on its own executor") {
     tal::Loop loop;
     tal::Pending<int> pending;

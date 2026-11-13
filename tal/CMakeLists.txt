@@ -15,12 +15,12 @@ endif()
 # tal::core of talcite.next: tasks and their owners, executors, the clock, troubles, ports, the
 # log, paths, the files port with its memory adapter, streams, the processes port with its
 # scripted adapter, JSON, text (UTF-8, terminal cells, letter case, collation and the rules of
-# languages), and in platform/ the system's adapters of the ports, built in as their defaults. It
+# languages), the dictionary of a program's texts, and in platform/ the system's adapters of the ports, built in as their defaults. It
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
 add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp
-  src/collate.cpp src/json.cpp src/language.cpp src/text.cpp src/unicode.cpp
+  src/collate.cpp src/json.cpp src/language.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
@@ -33,6 +33,58 @@ target_compile_features(tal-core PUBLIC cxx_std_20)
 if(WIN32)
   target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32)
 endif()
+
+# tal-texts, the generator of a program's texts, run while the program is built: out of the
+# English texts it makes C++ functions, one for each text, and it checks every other language
+# against English. A cross build cannot run what it builds, so there TAL_TEXTS names tal-texts
+# built for the host.
+add_executable(tal-texts tools/texts.cpp tools/generating.cpp)
+target_include_directories(tal-texts PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(tal-texts PRIVATE tal-core)
+
+set(TAL_TEXTS "" CACHE FILEPATH "tal-texts built for the host, for a cross build")
+
+# tal_texts(<target> <en-US.json> <namespace>): the texts of <target>. The functions go into
+# <namespace>.hpp and .cpp in the build directory, made again when English changes; every language
+# beside English is checked whenever one of them changes, and a problem stops the build with its
+# file, line and column.
+function(tal_texts target english space)
+  get_filename_component(english "${english}" ABSOLUTE)
+  get_filename_component(folder "${english}" DIRECTORY)
+  string(REPLACE "::" ";" parts "${space}")
+  list(GET parts -1 name)
+  set(out "${CMAKE_CURRENT_BINARY_DIR}/tal-texts/${target}")
+
+  if(CMAKE_CROSSCOMPILING)
+    if(NOT TAL_TEXTS)
+      message(FATAL_ERROR "A cross build runs the generator of texts on the host: set TAL_TEXTS to tal-texts built for it.")
+    endif()
+
+    set(generator "${TAL_TEXTS}")
+  else()
+    set(generator tal-texts)
+  endif()
+
+  file(GLOB languages CONFIGURE_DEPENDS "${folder}/*.json")
+
+  add_custom_command(OUTPUT "${out}/${name}.hpp" "${out}/${name}.cpp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${out}"
+    COMMAND ${generator} generate "${english}" "${space}" "${out}/${name}.hpp" "${out}/${name}.cpp"
+    DEPENDS "${english}" ${generator}
+    COMMENT "Making the texts of ${target}"
+    VERBATIM)
+
+  add_custom_command(OUTPUT "${out}/checked"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${out}"
+    COMMAND ${generator} check "${out}/checked" "${english}" ${languages}
+    DEPENDS ${languages} ${generator}
+    COMMENT "Checking the languages of ${target}"
+    VERBATIM)
+
+  target_sources(${target} PRIVATE "${out}/${name}.hpp" "${out}/${name}.cpp" "${out}/checked")
+  target_include_directories(${target} PUBLIC "${out}")
+  target_link_libraries(${target} PUBLIC tal-core)
+endfunction()
 
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
@@ -69,10 +121,14 @@ target_link_libraries(tal-scene PUBLIC tal-ui)
 if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
-  add_executable(tal-test ${TAL_TEST_SOURCES})
+  add_executable(tal-test ${TAL_TEST_SOURCES} tools/generating.cpp)
   target_link_libraries(tal-test PRIVATE tal-testing tal-scene)
-  # Some trials check internal parts (the console translation without VT) through their headers.
-  target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  # Some trials check internal parts (the console translation without VT, the generator of texts)
+  # through their headers.
+  target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools")
+  # The texts of the trials, made and checked as a program's are.
+  tal_texts(tal-test test/texts/en-US.json spoken)
+  target_compile_definitions(tal-test PRIVATE TAL_TEST_TEXTS="${CMAKE_CURRENT_SOURCE_DIR}/test/texts")
   add_test(NAME tal COMMAND tal-test)
 endif()
 

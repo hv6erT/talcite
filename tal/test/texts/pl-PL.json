@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "name": "Polski"
+  },
+  "title": "Próby",
+  "menu": {
+    "left": {
+      "text": "Lewy",
+      "key": "L"
+    },
+    "quit": "Wyjście",
+    "no-library": "Najpierw załóż bibliotekę",
+    "delete": "Usuń",
+    "near": "Blisko"
+  },
+  "panel": {
+    "marked": {
+      "one": "{} plik zaznaczony",
+      "few": "{} pliki zaznaczone",
+      "many": "{} plików zaznaczonych"
+    },
+    "moved": "Przeniesiono {} do {}",
+    "key": "Klucz:",
+    "copied": {
+      "one": "Skopiowano {} plik do {}",
+      "few": "Skopiowano {} pliki do {}",
+      "many": "Skopiowano {} plików do {}"
+    }
+  },
+  "letters": {
+    "accent": {
+      "text": "Ąbc",
+      "key": "Ą"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "meta": {
+    "name": "English"
+  },
+  "title": "Trials",
+  "menu": {
+    "left": {
+      "text": "Left",
+      "key": "L"
+    },
+    "quit": "Quit",
+    "no-library": "Make a library first",
+    "delete": "Delete",
+    "near": "Near"
+  },
+  "panel": {
+    "marked": {
+      "one": "{} file marked",
+      "other": "{} files marked"
+    },
+    "moved": "Moved {} to {}",
+    "key": "Key:",
+    "copied": {
+      "one": "Copied {} file to {}",
+      "other": "Copied {} files to {}"
+    }
+  },
+  "letters": {
+    "accent": {
+      "text": "Ångström",
+      "key": "Å"
+    }
+  }
+}

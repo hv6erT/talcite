@@ -794,10 +794,35 @@ Task<T> within(std::chrono::milliseconds most, Task<T> work) {
     co_return co_await done->task();
 }
 
+namespace detail {
+
+template <typename T>
+Task<T> homed(Executor& home, Task<T> work) {
+    Outcome<T> outcome;
+
+    try {
+        if constexpr (std::is_void_v<T>) {
+            co_await std::move(work);
+            outcome.put();
+        } else {
+            outcome.put(co_await std::move(work));
+        }
+    } catch (...) {
+        outcome.failed = std::current_exception();
+    }
+
+    co_await to(home);
+
+    co_return outcome.take();
+}
+
+}
+
 template <typename T>
 T wait(Loop& on, Task<T> work) {
     const auto outcome = std::make_shared<detail::Outcome<T>>();
-    const auto chain = detail::launched(on, std::move(work), [outcome](detail::Outcome<T>&& got) { *outcome = std::move(got); });
+    const auto chain =
+        detail::launched(on, detail::homed(on, std::move(work)), [outcome](detail::Outcome<T>&& got) { *outcome = std::move(got); });
 
     chain->start();
 
