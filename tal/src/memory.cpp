@@ -493,7 +493,8 @@ Task<Bytes> Memory::read(const Path& file, Range part) {
     });
 }
 
-// Writes a file whole; a link is written through, a read-only file refuses to be replaced.
+// Writes a file whole; a link is written through, a read-only file refuses to be replaced, and
+// the rights asked for become the file's.
 Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
     return locked(state_, [file, what = std::move(what), how](State& state) mutable {
         const Path actual = state.resolved(file, true);
@@ -511,6 +512,8 @@ Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
         if (old != nullptr && how.conflict == Conflict::replace) {
             old->data = std::move(what);
             old->modified = state.now();
+
+            if (how.rights) old->rights = *how.rights;
             state.noted(Change::Kind::modified, target);
 
             return;
@@ -520,7 +523,11 @@ Task<void> Memory::write(const Path& file, Bytes what, Writing how) {
 
         if (!into) return;
 
-        state.nodes[std::string{into->stored()}] = Node{Type::file, std::move(what), state.now(), {}, {}};
+        Node made{Type::file, std::move(what), state.now(), {}, {}};
+
+        if (how.rights) made.rights = *how.rights;
+
+        state.nodes[std::string{into->stored()}] = std::move(made);
         state.noted(Change::Kind::created, *into);
     });
 }

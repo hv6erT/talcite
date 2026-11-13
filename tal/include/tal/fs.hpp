@@ -54,6 +54,7 @@ struct Range {
 struct Writing {
     Conflict conflict = Conflict::replace;
     bool atomic = true;
+    std::optional<std::uint16_t> rights;
 };
 
 struct Copying {

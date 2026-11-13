@@ -228,9 +228,9 @@ bool poured_at(const path& to, Placing placing, std::optional<Instant> when, Fil
 // Writing in installments through our own buffer, when the content is already at hand or when the
 // system cannot copy on its own.
 template <typename Pour>
-bool poured_at(const path& to, bool durable, Pour pour) {
+bool poured_at(const path& to, bool durable, Pour pour, std::optional<std::uint16_t> rights = std::nullopt) {
     const auto fill = [&](const path& into, bool& made) -> std::shared_ptr<Handle> {
-        std::shared_ptr<Handle> yours = open_at(into, Mode::exclusive);
+        std::shared_ptr<Handle> yours = open_at(into, Mode::exclusive, rights);
 
         made = true;
 
@@ -1045,8 +1045,9 @@ Bytes read_whole(const path& where) {
 
 // Writes a whole file. Writing over an existing file goes beside it and renames onto the target
 // (`poured_at`), so an interrupted write leaves no stub under the real name; false when the
-// conflict says to skip. A cancelled write stops between installments.
-bool write_whole(const path& where, const Bytes& what, Conflict how) {
+// conflict says to skip. A cancelled write stops between installments. The file made, beside or
+// in place, has `rights` from its creation when they are given (`open_at`).
+bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights) {
     const path at_all = settled_on(where, how);
 
     if (at_all.empty()) return false;
@@ -1063,7 +1064,7 @@ bool write_whole(const path& where, const Bytes& what, Conflict how) {
         }
 
         return true;
-    });
+    }, rights);
 
     if (!whole) throw Cancelled{};
 

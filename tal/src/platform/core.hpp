@@ -156,7 +156,7 @@ void trashed_at(const path& where);
 
 [[nodiscard]] Bytes read_whole(const path& where);
 
-[[nodiscard]] bool write_whole(const path& where, const Bytes& what, Conflict how);
+[[nodiscard]] bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights = std::nullopt);
 
 void copy_whole(const path& from, const path& to, Progress* progress, Conflict how);
 
@@ -214,7 +214,7 @@ using Instant = std::chrono::sys_time<std::chrono::nanoseconds>;
 
 void stamp_on(const Handle& held, Instant when);
 
-[[nodiscard]] std::shared_ptr<Handle> open_at(const path& where, Mode how);
+[[nodiscard]] std::shared_ptr<Handle> open_at(const path& where, Mode how, std::optional<std::uint16_t> rights = std::nullopt);
 
 [[nodiscard]] Bytes read_at(const Handle& held, std::uintmax_t at, std::size_t much);
 

@@ -1,0 +1,32 @@
+{
+  "appearance": {
+    "skin": "twilight-dark",
+    "language": "auto"
+  },
+  "panel": {
+    "columns": ["name", "size", "written"],
+    "hidden": false,
+    "guard": 750
+  },
+  "shortcuts": {
+    "panels": {
+      "delete": "F8",
+      "open-with": "Shift+Enter"
+    },
+    "editor": {
+      "near": ""
+    }
+  },
+  "mailboxes": [],
+  "keys": {
+    "tmdb": ""
+  },
+  "share": {
+    "port": 0,
+    "limit": -1,
+    "blocked": []
+  },
+  "revision": {
+    "number": 0
+  }
+}

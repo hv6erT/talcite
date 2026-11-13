@@ -1,6 +1,7 @@
 #include "generating.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -167,14 +168,14 @@ std::string body(const wording::Entry& entry, std::size_t index, std::string_vie
     return "{ return ::tal::filled(" + text + ", {" + values + "}); }";
 }
 
-// The functions of `entries`, named `names`, in blocks of their namespaces under `space`: the
-// declarations, or the definitions when `defined` is true.
-std::string functions(const std::vector<wording::Entry>& entries, const std::vector<std::vector<std::string>>& names, std::string_view space,
-                      bool defined) {
+// One line for each of `names` (`line` makes the line of the one at a place), in blocks of their
+// namespaces under `space`: a run of names of one namespace shares one block.
+template <typename Line>
+std::string blocks(const std::vector<std::vector<std::string>>& names, std::string_view space, Line line) {
     std::string made;
     std::string open;
 
-    for (std::size_t at = 0; at < entries.size(); ++at) {
+    for (std::size_t at = 0; at < names.size(); ++at) {
         std::string scope{space};
 
         for (std::size_t part = 0; part + 1 < names[at].size(); ++part) scope += "::" + names[at][part];
@@ -186,8 +187,7 @@ std::string functions(const std::vector<wording::Entry>& entries, const std::vec
             open = scope;
         }
 
-        made += declared(entries[at], names[at].back());
-        made += defined ? " " + body(entries[at], at, space) + "\n" : ";\n";
+        made += line(at);
     }
 
     if (!open.empty()) made += "\n}\n";
@@ -195,12 +195,21 @@ std::string functions(const std::vector<wording::Entry>& entries, const std::vec
     return made;
 }
 
-// The English document of `english`, or none, with the reader's refusal among `problems`.
-bool read(const Source& english, json::Value& into, std::vector<std::string>& problems) {
+// The functions of `entries`, named `names`, in blocks of their namespaces under `space`: the
+// declarations, or the definitions when `defined` is true.
+std::string functions(const std::vector<wording::Entry>& entries, const std::vector<std::vector<std::string>>& names, std::string_view space,
+                      bool defined) {
+    return blocks(names, space, [&](std::size_t at) {
+        return declared(entries[at], names[at].back()) + (defined ? " " + body(entries[at], at, space) + "\n" : std::string{";\n"});
+    });
+}
+
+// The document of `source` in `into`, or false, with the reader's refusal among `problems`.
+bool read(const Source& source, json::Value& into, std::vector<std::string>& problems) {
     try {
-        into = json::parsed(english.text);
+        into = json::parsed(source.text);
     } catch (const Trouble& why) {
-        problems.push_back(refused(english.name, why));
+        problems.push_back(refused(source.name, why));
 
         return false;
     }
@@ -208,6 +217,123 @@ bool read(const Source& english, json::Value& into, std::vector<std::string>& pr
     return true;
 }
 
+
+// The C++ names of `roads` in `document`, the text of `source`, each part by `mangled`: a part must
+// be usable, no two may become one C++ name (`a-b` and `a_b`), and none at the top may take the
+// place of the function `reserved` of `space`. Each problem is told once, at the value of the
+// first road it hit.
+std::vector<std::vector<std::string>> named(const Source& source, const json::Value& document, const std::vector<std::vector<std::string>>& roads,
+                                            std::string_view space, std::string_view reserved, std::vector<std::string>& problems) {
+    std::map<std::pair<std::string, std::string>, std::string> taken{{{"", std::string{reserved}}, ""}};
+    std::set<std::string> told;
+    std::vector<std::vector<std::string>> names(roads.size());
+
+    for (std::size_t at = 0; at < roads.size(); ++at) {
+        std::vector<std::string> road;
+        std::string scope;
+
+        for (const std::string& part : roads[at]) {
+            road.push_back(part);
+
+            const std::string whole = wording::joined(road);
+            const json::Value& value = *wording::found(document, road);
+            const std::string name = mangled(part);
+            const auto problem = [&](std::string why) {
+                if (told.insert(whole).second) problems.push_back(located(source.name, value.line(), value.column(), why));
+            };
+
+            if (!usable(part)) problem("\"" + whole + "\": a name is small letters, digits, _ and -, from a letter");
+            else if (name.find("__") != std::string::npos) problem("\"" + whole + "\": the name becomes " + name + ", which C++ keeps for itself");
+
+            const auto [held, fresh] = taken.emplace(std::pair{scope, name}, whole);
+
+            if (!fresh && held->second != whole) {
+                if (held->second.empty()) problem("\"" + whole + "\" would hide " + std::string{space} + "::" + std::string{reserved} + "()");
+                else problem("\"" + held->second + "\" and \"" + whole + "\" are both " + (scope.empty() ? "" : scope + "::") + name + " in C++");
+            }
+
+            names[at].push_back(name);
+            scope += (scope.empty() ? "" : "::") + name;
+        }
+    }
+
+    return names;
+}
+
+// `text` as the elements of an array of bytes, 24 to a line, which no compiler limits as it does
+// string literals.
+std::string byted(std::string_view text) {
+    std::string made;
+
+    for (std::size_t at = 0; at < text.size(); ++at) {
+        made += std::to_string(static_cast<unsigned char>(text[at]));
+        made += at + 1 == text.size() ? "\n" : at % 24 == 23 ? ",\n" : ",";
+    }
+
+    return made;
+}
+
+// A setting of the built-in values: its road and the C++ type of its handle.
+struct Kept {
+    std::vector<std::string> road;
+    std::string type;
+};
+
+// The settings under the object `node` at `road`, in the order of the text, with the problems of
+// their values. At the top every value is a section: an object of settings, or a list of records
+// (objects of texts), which is one setting; deeper a value is a boolean, a whole number within
+// `int`, a text, a list of texts or an object of more settings.
+void kept(const Source& source, const json::Value& node, std::vector<std::string>& road, std::vector<Kept>& made, std::vector<std::string>& problems) {
+    for (std::size_t at = 0; at < node.size(); ++at) {
+        const json::Value& value = node.at(at);
+
+        road.push_back(node.names()[at]);
+
+        const std::string quoted = "\"" + wording::joined(road) + "\"";
+        const auto problem = [&](std::string why) { problems.push_back(located(source.name, value.line(), value.column(), quoted + why)); };
+        const bool top = road.size() == 1;
+
+        if (value.kind() == json::Kind::object) {
+            if (value.size() == 0) problem(" holds no settings");
+            else kept(source, value, road, made, problems);
+        } else if (top && value.kind() == json::Kind::array) {
+            bool records = true;
+
+            for (std::size_t item = 0; item < value.size(); ++item) {
+                const json::Value& one = value.at(item);
+
+                if (one.kind() != json::Kind::object) records = false;
+                else
+                    for (std::size_t field = 0; field < one.size(); ++field) records = records && one.at(field).kind() == json::Kind::string;
+            }
+
+            if (records) made.push_back(Kept{road, "::tal::Records"});
+            else problem(" is a list of records, which are objects of texts");
+        } else if (top) {
+            problem(" is a section: an object of settings, or a list of records");
+        } else if (value.kind() == json::Kind::boolean) {
+            made.push_back(Kept{road, "bool"});
+        } else if (value.kind() == json::Kind::integer) {
+            if (value.integer() >= std::numeric_limits<int>::min() && value.integer() <= std::numeric_limits<int>::max()) made.push_back(Kept{road, "int"});
+            else problem(" does not fit an int");
+        } else if (value.kind() == json::Kind::number) {
+            problem(" has a fraction; a setting holds whole numbers");
+        } else if (value.kind() == json::Kind::string) {
+            made.push_back(Kept{road, "::std::string"});
+        } else if (value.kind() == json::Kind::array) {
+            bool texts = true;
+
+            for (std::size_t item = 0; item < value.size(); ++item) texts = texts && value.at(item).kind() == json::Kind::string;
+
+            if (texts) made.push_back(Kept{road, "::std::vector<::std::string>"});
+            else problem(" is a list of something else than texts");
+        } else {
+            problem(" is null, which has no type");
+        }
+
+        road.pop_back();
+    }
+}
 }
 
 // The header and the source of the texts of `english` in the namespace `space`, the source
@@ -235,38 +361,13 @@ Made generated(const Source& english, std::string_view space, std::string_view h
 
     for (const wording::Problem& one : shape) problems.push_back(located(english.name, one.line, one.column, one.why));
 
-    std::map<std::pair<std::string, std::string>, std::string> taken{{{"", "dictionary"}, ""}};
-    std::set<std::string> told;
-    std::vector<std::vector<std::string>> names(entries.size());
+    std::vector<std::vector<std::string>> roads;
+
+    for (const wording::Entry& one : entries) roads.push_back(one.road);
+
+    const std::vector<std::vector<std::string>> names = named(english, document, roads, space, "dictionary", problems);
 
     for (std::size_t at = 0; at < entries.size(); ++at) {
-        std::vector<std::string> road;
-        std::string scope;
-
-        for (const std::string& part : entries[at].road) {
-            road.push_back(part);
-
-            const std::string whole = wording::joined(road);
-            const json::Value& value = *wording::found(document, road);
-            const std::string name = mangled(part);
-            const auto problem = [&](std::string why) {
-                if (told.insert(whole).second) problems.push_back(located(english.name, value.line(), value.column(), why));
-            };
-
-            if (!usable(part)) problem("\"" + whole + "\": a name is small letters, digits, _ and -, from a letter");
-            else if (name.find("__") != std::string::npos) problem("\"" + whole + "\": the name becomes " + name + ", which C++ keeps for itself");
-
-            const auto [held, fresh] = taken.emplace(std::pair{scope, name}, whole);
-
-            if (!fresh && held->second != whole) {
-                if (held->second.empty()) problem("\"" + whole + "\" would hide " + std::string{space} + "::dictionary()");
-                else problem("\"" + held->second + "\" and \"" + whole + "\" are both " + (scope.empty() ? "" : scope + "::") + name + " in C++");
-            }
-
-            names[at].push_back(name);
-            scope += (scope.empty() ? "" : "::") + name;
-        }
-
         if (entries[at].slots > static_cast<int>(std::size(ordinals))) {
             const json::Value& value = *entries[at].english;
 
@@ -282,14 +383,7 @@ Made generated(const Source& english, std::string_view space, std::string_view h
     made.header = "#pragma once\n\n#include <cstdint>\n#include <string>\n#include <string_view>\n\n#include \"tal/texts.hpp\"\n\nnamespace " +
                   std::string{space} + " {\n\n[[nodiscard]] ::tal::Texts& dictionary();\n\n}\n" + functions(entries, names, space, false);
 
-    const std::string compact = json::written(document);
-    std::string bytes;
-
-    for (std::size_t at = 0; at < compact.size(); ++at) {
-        bytes += std::to_string(static_cast<unsigned char>(compact[at]));
-        bytes += at + 1 == compact.size() ? "\n" : at % 24 == 23 ? ",\n" : ",";
-    }
-
+    const std::string bytes = byted(json::written(document));
     std::string keys;
 
     for (const wording::Entry& one : entries) keys += "    \"" + wording::joined(one.road) + "\",\n";
@@ -339,6 +433,58 @@ std::vector<std::string> checked(const Source& english, const std::vector<Source
     }
 
     return problems;
+}
+
+// The header and the source of the settings of `defaults`, the built-in values, in the namespace
+// `space`, the source including the header by the name `header`: a handle with its type for each
+// setting (`kept`), named as the texts are (`named`), and the function `builtin()`, which gives the
+// built-in values, compact. With any problem nothing is made.
+Made settled(const Source& defaults, std::string_view space, std::string_view header, std::vector<std::string>& problems) {
+    const std::size_t before = problems.size();
+    std::vector<std::string> parts;
+
+    if (!spaced(space, parts)) {
+        problems.push_back("tal-settings: \"" + std::string{space} + "\" cannot be the namespace of the settings");
+
+        return {};
+    }
+
+    json::Value document;
+
+    if (!read(defaults, document, problems)) return {};
+
+    if (document.kind() != json::Kind::object) {
+        problems.push_back(located(defaults.name, document.line(), document.column(), "the settings are not an object"));
+
+        return {};
+    }
+
+    std::vector<Kept> settings;
+    std::vector<std::string> road;
+
+    kept(defaults, document, road, settings, problems);
+
+    std::vector<std::vector<std::string>> roads;
+
+    for (const Kept& one : settings) roads.push_back(one.road);
+
+    const std::vector<std::vector<std::string>> names = named(defaults, document, roads, space, "builtin", problems);
+
+    if (problems.size() != before) return {};
+
+    Made made;
+
+    made.header = "#pragma once\n\n#include <string>\n#include <string_view>\n#include <vector>\n\n#include \"tal/settings.hpp\"\n\nnamespace " +
+                  std::string{space} + " {\n\n[[nodiscard]] ::std::string_view builtin();\n\n}\n" + blocks(names, space, [&](std::size_t at) {
+                      return "inline constexpr ::tal::Setting<" + settings[at].type + "> " + names[at].back() + "{\"" + wording::joined(settings[at].road) +
+                             "\"};\n";
+                  });
+
+    made.code = "#include \"" + std::string{header} + "\"\n\nnamespace {\n\nconstexpr unsigned char tal_settings_builtin[] = {\n" +
+                byted(json::written(document)) + "};\n\n}\n\nnamespace " + std::string{space} +
+                " {\n\n::std::string_view builtin() { return {reinterpret_cast<const char*>(::tal_settings_builtin), sizeof ::tal_settings_builtin}; }\n\n}\n";
+
+    return made;
 }
 
 }

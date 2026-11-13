@@ -57,13 +57,16 @@ namespace core {
 
 // Opens or creates the file in the given mode and returns its shared handle; throws "The file
 // already exists." for an exclusive create of an existing file and "Cannot open the file." for any
-// other failure.
-std::shared_ptr<Handle> open_at(const path& where, Mode how) {
+// other failure. A file it creates gets the POSIX `rights` before its first byte, exactly, whatever
+// the umask; Windows has no such rights, and a file there takes its folder's access list.
+std::shared_ptr<Handle> open_at(const path& where, Mode how, std::optional<std::uint16_t> rights) {
     auto made = std::make_shared<Handle>();
     made->where = where;
     made->mode = how;
 
 #ifdef _WIN32
+    (void)rights;
+
     // Truncation goes through OPEN_ALWAYS and `SetEndOfFile`, not through CREATE_ALWAYS. The
     // latter, with the normal attribute, denies access to an existing hidden or system file, so
     // overwriting a hidden `.nfo` would fail. FILE_SHARE_DELETE allows renaming or deleting a file
@@ -94,13 +97,15 @@ std::shared_ptr<Handle> open_at(const path& where, Mode how) {
 
     // Closed when a child program is started; otherwise the child inherits every file we have open
     // at that moment and keeps it after our `close()`.
-    made->handle = ::open(where.c_str(), flags | O_CLOEXEC, 0644);
+    made->handle = ::open(where.c_str(), flags | O_CLOEXEC, rights ? static_cast<mode_t>(*rights) : 0644);
 
     if (made->handle < 0) {
         if (how == Mode::exclusive && errno == EEXIST) amiss("The file already exists.", where, ::tal::Kind::exists);
 
         amiss("Cannot open the file.", where);
     }
+
+    if (rights && how == Mode::exclusive && ::fchmod(made->handle, static_cast<mode_t>(*rights)) != 0) amiss("Cannot set the rights of the file.", where);
 #endif
 
     return made;

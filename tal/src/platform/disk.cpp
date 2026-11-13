@@ -273,7 +273,7 @@ public:
             if (how.conflict == fs::Conflict::replace && core::kind_at(where) == platform::Kind::file && core::attributes_at(where).readonly)
                 amiss("The file is read-only.", where, ::tal::Kind::denied);
 
-            (void)core::write_whole(where, what, conflicted(how.conflict));
+            (void)core::write_whole(where, what, conflicted(how.conflict), how.rights);
         });
     }
 

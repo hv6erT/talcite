@@ -15,12 +15,12 @@ endif()
 # tal::core of talcite.next: tasks and their owners, executors, the clock, troubles, ports, the
 # log, paths, the files port with its memory adapter, streams, the processes port with its
 # scripted adapter, JSON, text (UTF-8, terminal cells, letter case, collation and the rules of
-# languages), the dictionary of a program's texts, and in platform/ the system's adapters of the ports, built in as their defaults. It
+# languages), the dictionary of a program's texts, its settings, and in platform/ the system's adapters of the ports, built in as their defaults. It
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
 add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp
-  src/collate.cpp src/json.cpp src/language.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
+  src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
@@ -38,11 +38,20 @@ endif()
 # English texts it makes C++ functions, one for each text, and it checks every other language
 # against English. A cross build cannot run what it builds, so there TAL_TEXTS names tal-texts
 # built for the host.
-add_executable(tal-texts tools/texts.cpp tools/generating.cpp)
+add_executable(tal-texts tools/texts.cpp tools/files.cpp tools/generating.cpp)
 target_include_directories(tal-texts PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_link_libraries(tal-texts PRIVATE tal-core)
 
 set(TAL_TEXTS "" CACHE FILEPATH "tal-texts built for the host, for a cross build")
+
+# tal-settings, the generator of a program's settings, run while the program is built: out of the
+# built-in values it makes a handle with its type for each setting, and the function that gives
+# the values. In a cross build TAL_SETTINGS names it built for the host.
+add_executable(tal-settings tools/settings.cpp tools/files.cpp tools/generating.cpp)
+target_include_directories(tal-settings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(tal-settings PRIVATE tal-core)
+
+set(TAL_SETTINGS "" CACHE FILEPATH "tal-settings built for the host, for a cross build")
 
 # tal_texts(<target> <en-US.json> <namespace>): the texts of <target>. The functions go into
 # <namespace>.hpp and .cpp in the build directory, made again when English changes; every language
@@ -82,6 +91,37 @@ function(tal_texts target english space)
     VERBATIM)
 
   target_sources(${target} PRIVATE "${out}/${name}.hpp" "${out}/${name}.cpp" "${out}/checked")
+  target_include_directories(${target} PUBLIC "${out}")
+  target_link_libraries(${target} PUBLIC tal-core)
+endfunction()
+
+# tal_settings(<target> <defaults.json> <namespace>): the settings of <target>. The handles and
+# the built-in values go into <namespace>.hpp and .cpp in the build directory, made again when the
+# built-in values change; a problem stops the build with its file, line and column.
+function(tal_settings target defaults space)
+  get_filename_component(defaults "${defaults}" ABSOLUTE)
+  string(REPLACE "::" ";" parts "${space}")
+  list(GET parts -1 name)
+  set(out "${CMAKE_CURRENT_BINARY_DIR}/tal-settings/${target}")
+
+  if(CMAKE_CROSSCOMPILING)
+    if(NOT TAL_SETTINGS)
+      message(FATAL_ERROR "A cross build runs the generator of settings on the host: set TAL_SETTINGS to tal-settings built for it.")
+    endif()
+
+    set(generator "${TAL_SETTINGS}")
+  else()
+    set(generator tal-settings)
+  endif()
+
+  add_custom_command(OUTPUT "${out}/${name}.hpp" "${out}/${name}.cpp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${out}"
+    COMMAND ${generator} generate "${defaults}" "${space}" "${out}/${name}.hpp" "${out}/${name}.cpp"
+    DEPENDS "${defaults}" ${generator}
+    COMMENT "Making the settings of ${target}"
+    VERBATIM)
+
+  target_sources(${target} PRIVATE "${out}/${name}.hpp" "${out}/${name}.cpp")
   target_include_directories(${target} PUBLIC "${out}")
   target_link_libraries(${target} PUBLIC tal-core)
 endfunction()
@@ -128,6 +168,7 @@ if(TALCITE_TESTS)
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools")
   # The texts of the trials, made and checked as a program's are.
   tal_texts(tal-test test/texts/en-US.json spoken)
+  tal_settings(tal-test test/settings/defaults.json preset)
   target_compile_definitions(tal-test PRIVATE TAL_TEST_TEXTS="${CMAKE_CURRENT_SOURCE_DIR}/test/texts")
   add_test(NAME tal COMMAND tal-test)
 endif()
