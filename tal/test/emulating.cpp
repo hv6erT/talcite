@@ -702,9 +702,16 @@ TRIAL("Emulator: the stages of a shell's prompt") {
 
     OUGHT(one.prompt() == std::optional<int>{1});
 
+    SAME(one.scrolled(), std::uint64_t{1});
+
     (void)fed(one, "\x1b[3J");
 
     OUGHT(one.prompt() == std::optional<int>{1});
+    SAME(one.scrolled(), std::uint64_t{1});
+
+    (void)fed(one, "\r\n");
+
+    SAME(one.scrolled(), std::uint64_t{2});
 }
 
 TRIAL("Emulator: a mark joins the character printed last, only where the cursor stands after it") {

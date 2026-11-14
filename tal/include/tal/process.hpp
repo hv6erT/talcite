@@ -71,6 +71,8 @@ public:
 
     virtual void kill() = 0;
 
+    virtual void hang_up() = 0;
+
     virtual void resize(int columns, int rows) = 0;
 };
 
@@ -99,6 +101,8 @@ public:
     void stop() const;
 
     void kill() const;
+
+    void hang_up() const;
 
     void resize(int columns, int rows) const;
 

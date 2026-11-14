@@ -74,6 +74,12 @@ void Process::kill() const {
     if (held_) held_->kill();
 }
 
+// Hangs up the terminal of a process in one, as closing a terminal window does; a process on pipes
+// has none.
+void Process::hang_up() const {
+    if (held_) held_->hang_up();
+}
+
 // Tells a process in a terminal its new size.
 void Process::resize(int columns, int rows) const {
     if (held_) held_->resize(columns, rows);
@@ -82,6 +88,7 @@ void Process::resize(int columns, int rows) const {
 namespace {
 
 // The signals a scripted program is said to end by.
+constexpr int hanging_signal = 1;
 constexpr int stopping_signal = 15;
 constexpr int killing_signal = 9;
 
@@ -123,6 +130,9 @@ struct Acting : Spawned {
 
     // Ends the program by force.
     void kill() override { ended_by(killing_signal); }
+
+    // A scripted program hung up ends at once, as by SIGHUP.
+    void hang_up() override { ended_by(hanging_signal); }
 
     // The program sees the new size of its terminal.
     void resize(int columns, int rows) override {

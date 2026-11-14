@@ -274,6 +274,26 @@ TRIAL("Process: kill() and stop() end a waiting program, destroy its frames and 
     UNTIL(loop, alive.load() == 0);
 }
 
+TRIAL("Process: hang_up() ends a scripted program as SIGHUP does, and ends its streams") {
+    tal::Loop loop;
+    tal::Scripted scripted{loop};
+    std::atomic<int> alive{0};
+
+    scripted.add("wait", [&alive](tal::Running& with) { return waiting(with, alive); });
+
+    const tal::Process hung = tal::wait(loop, scripted.start(command("wait", {}, tal::Mode::terminal)));
+
+    UNTIL(loop, alive.load() == 1);
+
+    hung.hang_up();
+
+    OUGHT(tal::wait(loop, hung.ended()) == (Exit{Exit::Ended::killed, 0, 1}));
+    SAME(tal::wait(loop, tal::drained(hung.output())).size(), std::size_t{0});
+    UNTIL(loop, alive.load() == 0);
+
+    tal::Process{}.hang_up();
+}
+
 TRIAL("Process: a program in a terminal sees its size change; letting the process go does not end it") {
     tal::Loop loop;
     tal::Scripted scripted{loop};
@@ -590,6 +610,53 @@ TRIAL("System: a program in a terminal sees one, of the size given and then of t
 
     tal::wait(loop, child.input().write(tal::bytes("quit\r\n")));
     OUGHT(tal::wait(loop, tal::within(5000ms, child.ended())).ended == Exit::Ended::normal);
+}
+
+// Hanging up a terminal ends its program, also one that ignores SIGTERM, and well before stop()
+// would kill it; a program on pipes has no terminal, and hanging it up does nothing.
+TRIAL("System: hang_up() ends a program in a terminal that ignores SIGTERM; one on pipes it leaves") {
+    tal::Loop loop;
+    const tal::Process child = started(loop, pretended({"stubborn", "20000"}, tal::Mode::terminal));
+    std::string heard;
+
+    while (heard.find("ready") == std::string::npos) {
+        const tal::Bytes more = tal::wait(loop, tal::within(5000ms, child.output().read(4096)));
+
+        if (more.empty()) break;
+
+        heard += tal::text::of(more);
+    }
+
+    OUGHT(heard.find("ready") != std::string::npos);
+
+    const auto since = std::chrono::steady_clock::now();
+
+    child.hang_up();
+
+    const Exit ended = tal::wait(loop, tal::within(5000ms, child.ended()));
+
+    OUGHT(std::chrono::steady_clock::now() - since < 2500ms);
+#ifdef _WIN32
+    OUGHT(ended.ended != Exit::Ended::lost);
+#else
+    OUGHT(ended == (Exit{Exit::Ended::killed, 0, 1}));
+#endif
+
+    const tal::Process piped = started(loop, pretended({"stubborn", "20000"}));
+
+    SAME(tal::text::of(tal::wait(loop, tal::within(5000ms, piped.output().read(6)))), std::string{"ready\n"});
+
+    piped.hang_up();
+
+    std::this_thread::sleep_for(300ms);
+
+    piped.kill();
+
+#ifndef _WIN32
+    OUGHT(tal::wait(loop, piped.ended()) == (Exit{Exit::Ended::killed, 0, 9}));
+#else
+    (void)tal::wait(loop, piped.ended());
+#endif
 }
 
 // A program let loose is nobody's child: lost to us at once, with a number of its own.

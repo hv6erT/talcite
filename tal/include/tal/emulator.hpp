@@ -82,6 +82,8 @@ public:
 
     [[nodiscard]] std::size_t history() const;
 
+    [[nodiscard]] std::uint64_t scrolled() const;
+
     [[nodiscard]] Row row(int at) const;
 
     [[nodiscard]] Spot cursor() const;

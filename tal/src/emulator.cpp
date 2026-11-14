@@ -1866,6 +1866,12 @@ Size Emulator::size() const { return held_->size; }
 // program draws its whole picture itself.
 std::size_t Emulator::history() const { return held_->modes.alternate ? 0 : held_->history.size(); }
 
+// How many rows have left the top of the primary screen since the start, those the history holds
+// and those gone from it: the number of the screen's first row, counted from the first row there
+// ever was. A row keeps its number while output scrolls it up; a new size, which lays the text out
+// anew, numbers it anew.
+std::uint64_t Emulator::scrolled() const { return held_->first(); }
+
 // A row of the screen, from 0 at the top, or of the history above it, from -1 for the newest, as
 // many cells as the screen is wide. A row outside both is a row of vacant cells.
 Emulator::Row Emulator::row(int at) const {

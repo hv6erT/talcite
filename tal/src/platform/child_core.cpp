@@ -2205,6 +2205,23 @@ void stopped(const std::shared_ptr<Grave>& grave) {
 #endif
 }
 
+// Hangs up the terminal of the program, as closing a terminal window does: SIGHUP to its whole
+// group on POSIX, and SIGCONT after it, so that a shell stopped meanwhile hears it too, hands it to
+// its jobs and ends; on Windows the pseudoconsole closes, which tells its programs the console is
+// gone. Does nothing once the program is buried.
+void hung(const std::shared_ptr<Grave>& grave) {
+#ifdef _WIN32
+    grave->unconsoled();
+#else
+    const std::lock_guard<std::mutex> kept{grave->guard};
+
+    if (grave->gone) return;
+
+    (void)::kill(-static_cast<pid_t>(grave->which), SIGHUP);
+    (void)::kill(-static_cast<pid_t>(grave->which), SIGCONT);
+#endif
+}
+
 // Kills the program at once: SIGKILL to its whole group on POSIX, the whole job (or the process
 // alone) on Windows. Does nothing once the program is buried.
 void killed(const std::shared_ptr<Grave>& grave) {
@@ -2330,6 +2347,11 @@ public:
     // Kills it at once, with all it started.
     void kill() override { killed(grave_); }
 
+    // Hangs up its terminal; a program on pipes has none.
+    void hang_up() override {
+        if (held_->terminal) hung(grave_);
+    }
+
     // Tells a program in a terminal its new size.
     void resize(int columns, int rows) override { resized(held_, Size{columns, rows}); }
 
@@ -2358,6 +2380,9 @@ public:
 
     // Nor to kill.
     void kill() override {}
+
+    // Nor to hang up.
+    void hang_up() override {}
 
     // Nor has it a terminal.
     void resize(int, int) override {}
