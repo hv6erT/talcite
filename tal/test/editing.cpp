@@ -257,7 +257,7 @@ public:
 
 // Steps done one after another join while the last takes them; undo and redo go back and forth, and
 // a new step cuts off what waited to be redone. After an undo, a redo or a seal the next step
-// stands alone.
+// stands alone. The last step is the one undo would take back, and it lives on after it.
 TRIAL("Undo: steps joined, undone, redone and cut off") {
     std::string text;
     Undo undo;
@@ -265,6 +265,7 @@ TRIAL("Undo: steps joined, undone, redone and cut off") {
     OUGHT(!undo.undo());
     OUGHT(!undo.redo());
     OUGHT(!undo.undoing().has_value());
+    OUGHT(undo.last() == nullptr);
 
     undo.push(std::make_unique<Typed>(text, 'a'));
     undo.push(std::make_unique<Typed>(text, 'b'));
@@ -274,9 +275,15 @@ TRIAL("Undo: steps joined, undone, redone and cut off") {
     SAME(text, std::string{"ab c"});
     SAME(*undo.undoing(), std::string{"Typing  c"});
 
+    const tal::Step* top = undo.last();
+
+    OUGHT(top != nullptr);
+    SAME(top->said(), std::string{"Typing  c"});
     OUGHT(undo.undo());
 
     SAME(text, std::string{"ab"});
+    SAME(top->said(), std::string{"Typing  c"});
+    SAME(undo.last()->said(), std::string{"Typing ab"});
     SAME(*undo.redoing(), std::string{"Typing  c"});
 
     OUGHT(undo.redo());

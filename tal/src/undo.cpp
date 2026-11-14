@@ -99,6 +99,10 @@ std::optional<std::string> Undo::undoing() const {
     return done_.back()->said();
 }
 
+// The step that undoing would take back, as it stands after joining; none without one. It lives on
+// in the history after it is undone.
+const Step* Undo::last() const { return done_.empty() ? nullptr : done_.back().get(); }
+
 // What redoing would do again; nothing without a step.
 std::optional<std::string> Undo::redoing() const {
     if (undone_.empty()) return std::nullopt;

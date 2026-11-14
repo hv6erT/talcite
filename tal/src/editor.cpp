@@ -7,6 +7,7 @@
 #include "tal/key.hpp"
 #include "tal/text.hpp"
 
+#include "lining.hpp"
 #include "spooling.hpp"
 
 // An editor is a page over a text it changes. Its cursor, the anchor of its selection and the ends
@@ -18,18 +19,9 @@ namespace tal {
 
 namespace {
 
-// What a change is, for joining the steps that come after it: typing, erasing back as Backspace
-// does, erasing forth as Delete does, or anything else, which joins nothing.
-enum class Doing { typing, back, forth, other };
-
-// The place where `what`, standing at `at`, ends: its lines are broken at \n.
-Place ended(Place at, std::string_view what) {
-    const std::size_t last = what.rfind('\n');
-
-    if (last == std::string_view::npos) return Place{at.line, at.byte + what.size()};
-
-    return Place{at.line + static_cast<std::size_t>(std::count(what.begin(), what.end(), '\n')), what.size() - last - 1};
-}
+using lining::Doing;
+using lining::ended;
+using lining::lettered;
 
 // `what` with \r\n turned into \n, as a text takes it, so that what goes in is what stands there.
 std::string unified(std::string_view what) {
@@ -60,14 +52,6 @@ bool bordered(std::string_view line, std::size_t at) {
     return at >= line.size() || (static_cast<unsigned char>(line[at]) & 0xC0) != 0x80;
 }
 
-// Whether the cluster at the byte `at` of `line` starts with a character of a word.
-bool lettered(std::string_view line, std::size_t at) {
-    std::size_t next = at;
-    const std::optional<char32_t> one = text::decoded(line, next);
-
-    return one && text::in_word(*one);
-}
-
 }
 
 // The editor's own state: its text, history and clipboard, the spool its page reads, the block,
@@ -91,24 +75,24 @@ struct Editor::Held {
 };
 
 // One change of a text by an editor, as a step of the history: pieces done one after another, each
-// putting `came` where `gone` stood at `from`; undoing takes them back the other way round. A step
-// done right after it joins it while typing or erasing goes on: typing without a space, a tab or a
-// line end where the last typing ended, as in a field, or erasing the character before or at the
-// place of the last erasing, inside a line. A piece that no longer finds its text there, since the
-// text was changed past the history, does nothing and stops the rest.
+// putting `came` where `gone` stood at `from`; undoing takes them back the other way round, and
+// `before` keeps where the cursor stood before the change. A step done right after it joins it
+// while typing or erasing goes on, by the rules a field keeps too (`lining::joined`). A piece that
+// no longer finds its text there, since the text was changed past the history, does nothing and
+// stops the rest.
 struct Editor::Change : Step {
-    struct Piece {
-        Place from;
-        std::string gone;
-        std::string came;
-    };
+    using Piece = lining::Piece<Place>;
 
     Change(std::shared_ptr<Text> given, Doing made, std::string named) : text(std::move(given)), kind(made), name(std::move(named)) {}
 
-    // Takes the pieces back, the last first.
+    // Takes the pieces back, the last first; `whole` says whether every one found its text.
     void undo() override {
+        whole = false;
+
         for (auto one = pieces.rbegin(); one != pieces.rend(); ++one)
             if (!swapped(one->from, one->came, one->gone)) return;
+
+        whole = true;
     }
 
     // Does the pieces, the first first.
@@ -120,39 +104,12 @@ struct Editor::Change : Step {
     // What the change was, for a menu.
     [[nodiscard]] std::string said() const override { return name; }
 
-    // Takes in `later` while typing or erasing goes on; a change of either holds one piece.
+    // Takes in `later` of the same text while typing or erasing goes on; a change of either holds
+    // one piece, and the cursor before stays the one before the first.
     bool merged(const Step& later) override {
         const auto* next = dynamic_cast<const Change*>(&later);
 
-        if (next == nullptr || next->kind != kind || next->text != text) return false;
-
-        Piece& last = pieces.front();
-        const Piece& one = next->pieces.front();
-
-        switch (kind) {
-            case Doing::typing:
-                if (!one.gone.empty() || one.came.find_first_of(" \t\n") != std::string::npos || one.from != ended(last.from, last.came)) return false;
-
-                last.came += one.came;
-
-                return true;
-            case Doing::back:
-                if ((one.gone + last.gone).find('\n') != std::string::npos || ended(one.from, one.gone) != last.from) return false;
-
-                last.from = one.from;
-                last.gone = one.gone + last.gone;
-
-                return true;
-            case Doing::forth:
-                if ((last.gone + one.gone).find('\n') != std::string::npos || one.from != last.from) return false;
-
-                last.gone += one.gone;
-
-                return true;
-            case Doing::other: return false;
-        }
-
-        return false;
+        return next != nullptr && next->text == text && lining::joined(kind, pieces.front(), next->kind, next->pieces.front());
     }
 
     // Puts `now` where `was` stands at `from`; false, changing nothing, when `was` does not stand
@@ -176,6 +133,8 @@ struct Editor::Change : Step {
     Doing kind;
     std::string name;
     std::vector<Piece> pieces;
+    Place before;
+    bool whole = false;
 };
 
 // An editor of `text`, in the class "editor" too, with the history `undo` and the clipboard
@@ -322,18 +281,22 @@ void Editor::insert(std::string_view what) {
     (void)made(std::move(one), true);
 }
 
-// Undoes the last step of the history; the cursor goes after what came back, with nothing selected.
-// False while read-only or without a step.
+// Undoes the last step of the history, with nothing selected: the cursor goes where it stood
+// before the change, when the step is an editor's and all of it came back, and otherwise after
+// what came back. False while read-only or without a step.
 bool Editor::undo() {
     Held& held = *held_;
 
     if (!editable()) return false;
 
+    const auto* step = dynamic_cast<const Change*>(held.undo->last());
+
     held.landing.reset();
 
     if (!held.undo->undo()) return false;
 
-    if (held.landing) stood(*held.landing, std::nullopt);
+    if (step != nullptr && step->whole) stood(step->before, std::nullopt);
+    else if (held.landing) stood(*held.landing, std::nullopt);
 
     settled();
 
@@ -691,12 +654,13 @@ void Editor::heard(const Edited& what) {
     lighted();
 }
 
-// Does the change `one` and, when the text changed, keeps it in the history; with `landing` the
-// cursor goes to the end of what it did last, otherwise it stays where the change moved it, and
-// nothing is selected. Gives whether the text changed.
+// Does the change `one` and, when the text changed, keeps it in the history with the cursor as it
+// stood before; with `landing` the cursor goes to the end of what it did last, otherwise it stays
+// where the change moved it, and nothing is selected. Gives whether the text changed.
 bool Editor::made(std::unique_ptr<Change> one, bool landing) {
     Held& held = *held_;
 
+    one->before = *cursor;
     held.landing.reset();
 
     one->redo();
@@ -893,27 +857,14 @@ Place Editor::stepped(Place at, bool forth) const {
 }
 
 // The end of the word after `at` (`forth`) or the start of the word before it, past what is not a
-// word first, as in a field; at the end or the start of a line, the line after or before it.
+// word first, as in a field (`lining::worded`); at the end or the start of a line, the line after
+// or before it.
 Place Editor::word(Place at, bool forth) const {
     const std::string_view line = held_->text->line(at.line);
-    const text::Rendering how = rendering();
-    std::size_t to = at.byte;
 
-    if (forth) {
-        if (to >= line.size()) return stepped(at, true);
+    if (forth ? at.byte >= line.size() : at.byte == 0) return stepped(at, forth);
 
-        while (to < line.size() && !lettered(line, to)) to = text::after(line, to, how);
-        while (to < line.size() && lettered(line, to)) to = text::after(line, to, how);
-
-        return Place{at.line, to};
-    }
-
-    if (to == 0) return stepped(at, false);
-
-    while (to > 0 && !lettered(line, text::before(line, to, how))) to = text::before(line, to, how);
-    while (to > 0 && lettered(line, text::before(line, to, how))) to = text::before(line, to, how);
-
-    return Place{at.line, to};
+    return Place{at.line, lining::worded(line, at.byte, forth, rendering())};
 }
 
 // The rows of the content, one at least: a page key moves the cursor so many rows.

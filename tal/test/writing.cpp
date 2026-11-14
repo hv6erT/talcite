@@ -392,7 +392,8 @@ TRIAL("Editor: moving by rows of wrapped lines") {
 
 // Moves with Shift select from where the cursor stood, lit in the state select, the end of a line
 // too when the selection goes past it; typing puts the letter in place of the selection, and a
-// move without Shift selects nothing.
+// move without Shift selects nothing. Undoing an erased selection puts the cursor back where it
+// stood, at its start when it was made backwards.
 TRIAL("Editor: selecting by keys and typing over it") {
     Written shown{"hello world", {12, 2}};
     Editor& editor = *shown.editor;
@@ -422,6 +423,10 @@ TRIAL("Editor: selecting by keys and typing over it") {
     shown.press(Key{Code::backspace});
 
     SAME(shown.text->whole(), std::string{"X d"});
+    OUGHT(editor.undo());
+    SAME(shown.text->whole(), std::string{"X world"});
+    OUGHT(*editor.cursor == (Place{0, 2}));
+    OUGHT(!editor.selected().has_value());
 
     Written lines{"ab\ncd", {4, 2}};
 
@@ -516,8 +521,9 @@ TRIAL("Editor: the mouse puts the cursor, selects and moves the view") {
 }
 
 // Typing joins one step up to a space, a tab or a line end, as in a field; Backspace and Delete
-// held join their own steps inside a line. Undo puts the cursor after what came back, redo after
-// what it did again; a move seals. The saved place tells whether the text differs from the save.
+// held join their own steps inside a line. Undo puts the cursor where it stood before the step,
+// redo after what it did again; a move seals. The saved place tells whether the text differs from
+// the save.
 TRIAL("Editor: the history of typing and erasing") {
     Written shown{"", {12, 2}};
     Editor& editor = *shown.editor;
@@ -557,7 +563,9 @@ TRIAL("Editor: the history of typing and erasing") {
     SAME(shown.text->whole(), std::string{" cd"});
     OUGHT(editor.undo());
     SAME(shown.text->whole(), std::string{"ab cd"});
-    OUGHT(*editor.cursor == (Place{0, 2}));
+    OUGHT(*editor.cursor == (Place{0, 0}));
+
+    shown.press(Key{Code::right}, 2);
 
     shown.scene.type("x");
     shown.press(Key{Code::left});
@@ -1361,7 +1369,8 @@ TRIAL("Editor: a long line edited") {
 // Which steps join: typing goes on where it ended without a space, a tab or a line end, and not
 // over a selection; erasing goes on next to where it was, not across a line end; nothing joins a
 // step of another kind or of another text, nor a step at another place. A step whose piece no
-// longer finds its text stops there.
+// longer finds its text stops there, and the cursor stays where it was, even when the step was
+// undone whole once before.
 TRIAL("Editor: steps that join and steps that do not") {
     Written shown{"XY", {12, 3}};
     Editor& editor = *shown.editor;
@@ -1458,13 +1467,17 @@ TRIAL("Editor: steps that join and steps that do not") {
     OUGHT(*stale.editor->cursor == (Place{0, 7}));
     OUGHT(stale.editor->undo());
     SAME(stale.editor->replace_all(Comb{"a", Sift{}}, "b"), std::size_t{2});
+    OUGHT(stale.editor->undo());
+    OUGHT(stale.editor->redo());
 
     away.anchor = Place{0, 0};
     away.cursor = Place{0, 1};
     away.insert("Q");
+    stale.press(Key{Code::home});
 
     OUGHT(stale.editor->undo());
     SAME(stale.text->whole(), std::string{"Q b"});
+    OUGHT(*stale.editor->cursor == (Place{0, 0}));
 }
 
 // A press takes the focus from another node.

@@ -242,6 +242,41 @@ TRIAL("Field: undo and redo of typing and erasing") {
     SAME(*field.text, std::string{"new1"});
 }
 
+// Backspace and Delete are steps of their own kinds, so they do not join; Delete held joins. Undo
+// puts the cursor where it stood, redo after what it did again.
+TRIAL("Field: Backspace and Delete stand apart in the history") {
+    Typed typed{"abcd"};
+    Field& field = *typed.field;
+
+    typed.pressed({Key{Code::home}, Key{Code::right}, Key{Code::right}, Key{Code::backspace}, Key{Code::remove}});
+
+    SAME(*field.text, std::string{"ad"});
+
+    typed.pressed({Key{U'z', ctrl}});
+
+    SAME(*field.text, std::string{"acd"});
+    SAME(*field.cursor, std::size_t{1});
+
+    typed.pressed({Key{U'z', ctrl}});
+
+    SAME(*field.text, std::string{"abcd"});
+    SAME(*field.cursor, std::size_t{2});
+
+    typed.pressed({Key{U'y', ctrl}});
+
+    SAME(*field.text, std::string{"acd"});
+    SAME(*field.cursor, std::size_t{1});
+
+    typed.pressed({Key{Code::remove}, Key{Code::remove}});
+
+    SAME(*field.text, std::string{"a"});
+
+    typed.pressed({Key{U'z', ctrl}});
+
+    SAME(*field.text, std::string{"acd"});
+    SAME(*field.cursor, std::size_t{1});
+}
+
 // A text longer than the field shifts so that the cursor shows; while it fits it stands as
 // `justify` says. A left click puts the cursor before the character it hits.
 TRIAL("Field: a long text shifted, a short one justified, a click") {
@@ -476,7 +511,8 @@ TRIAL("HistoryField: walking and remembering") {
 }
 
 // Each entry walked to is a step of its own to undo, joining neither the erasing before it nor the
-// erasing after it.
+// erasing or typing after it. Walking to the text that stands moves the cursor to its end, and
+// undoing that puts the cursor back.
 TRIAL("HistoryField: entries walked to undone on their own") {
     Remembering shown{{"two", "one"}};
     HistoryField& field = *shown.field;
@@ -492,6 +528,29 @@ TRIAL("HistoryField: entries walked to undone on their own") {
     shown.scene.press(Key{U'z', ctrl});
 
     SAME(*field.text, std::string{"a"});
+
+    shown.scene.press(Key{Code::up});
+    shown.scene.type("x");
+
+    SAME(*field.text, std::string{"twox"});
+
+    shown.scene.press(Key{U'z', ctrl});
+
+    SAME(*field.text, std::string{"two"});
+
+    Remembering same{{"one"}};
+
+    same.scene.type("one");
+    same.scene.press(Key{Code::home});
+    same.scene.press(Key{Code::up});
+
+    SAME(*same.field->text, std::string{"one"});
+    SAME(*same.field->cursor, std::size_t{3});
+
+    same.scene.press(Key{U'z', ctrl});
+
+    SAME(*same.field->text, std::string{"one"});
+    SAME(*same.field->cursor, std::size_t{0});
 }
 
 // The history opens as a framed list under the field; Enter takes the entry, a click takes the one

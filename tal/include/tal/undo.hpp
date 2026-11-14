@@ -46,6 +46,8 @@ public:
 
     [[nodiscard]] std::optional<std::string> undoing() const;
 
+    [[nodiscard]] const Step* last() const;
+
     [[nodiscard]] std::optional<std::string> redoing() const;
 
 private:

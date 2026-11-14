@@ -11,17 +11,11 @@
 #include "tal/window.hpp"
 
 #include "lettering.hpp"
+#include "lining.hpp"
 
 namespace tal {
 
 namespace {
-
-// The first character of the cluster at the byte `at` of `said`, or none past its end.
-std::optional<char32_t> leading(std::string_view said, std::size_t at) {
-    if (at >= said.size()) return std::nullopt;
-
-    return text::decoded(said, at);
-}
 
 // `said` with its line ends turned into spaces, as one line of a field takes a pasted text.
 std::string flattened(std::string_view said) {
@@ -38,42 +32,58 @@ std::string flattened(std::string_view said) {
 
 }
 
-// An edit of a field: its text and cursor before and after. Typing joins the next typing until a
-// space, erasing the next erasing. The field seals its history when the cursor moves or the text
-// changes otherwise, so an edit that is not sealed off goes on where the last one ended.
+// An edit of a field: one piece of its line, of the kind `kind`, with the cursor before it. Undoing
+// puts back what was gone and the cursor where it stood; redoing puts what came and the cursor
+// after it. The edit right after it joins it by the rules an editor keeps too (`lining::joined`):
+// typing goes on where it ended until a space, erasing next to where it was in one direction. The
+// field seals its history when the cursor moves or the text changes otherwise.
 struct Field::Edit : Step {
-    Edit(Field& owner, std::string old, std::size_t was, std::string made, std::size_t now, bool typing)
-        : field(owner), before(std::move(old)), from(was), after(std::move(made)), to(now), typed(typing) {}
+    Edit(Field& owner, lining::Doing made, lining::Piece<std::size_t> one, std::size_t was) : field(owner), kind(made), piece(std::move(one)), before(was) {}
 
-    // Puts back the text and cursor before.
-    void undo() override { field.restored(before, from); }
+    // Puts back what was gone and the cursor where it stood.
+    void undo() override {
+        const std::string& said = *field.text;
 
-    // Puts the text and cursor after again.
-    void redo() override { field.restored(after, to); }
+        field.restored(said.substr(0, piece.from) + piece.gone + said.substr(lining::ended(piece.from, piece.came)), before);
+    }
+
+    // Puts what came again, the cursor after it.
+    void redo() override {
+        const std::string& said = *field.text;
+
+        field.restored(said.substr(0, piece.from) + piece.came + said.substr(lining::ended(piece.from, piece.gone)), lining::ended(piece.from, piece.came));
+    }
 
     // What the edit was, for a menu.
-    [[nodiscard]] std::string said() const override { return typed ? "Typing" : "Erasing"; }
+    [[nodiscard]] std::string said() const override {
+        return kind == lining::Doing::typing ? "Typing" : kind == lining::Doing::other ? "Replace" : "Erasing";
+    }
 
-    // Takes in `later` when it is the same kind of edit and, for typing, did not type a space.
+    // Takes in `later` while typing or erasing goes on; the field's history holds only its edits.
     bool merged(const Step& later) override {
-        const auto* next = dynamic_cast<const Edit*>(&later);
+        const auto& next = static_cast<const Edit&>(later);
 
-        if (next == nullptr || next->typed != typed) return false;
+        return lining::joined(kind, piece, next.kind, next.piece);
+    }
 
-        if (typed && next->to > next->from && next->after.substr(next->from, next->to - next->from).find(' ') != std::string::npos) return false;
+    // Puts `one` into the line of `field` with the cursor after it, as a step of the field's
+    // history of the kind `kind`; nothing when neither the text nor the cursor would change, as
+    // Backspace at the start.
+    static void made(Field& field, lining::Doing kind, lining::Piece<std::size_t> one) {
+        const std::size_t was = field.at();
 
-        after = next->after;
-        to = next->to;
+        if (one.gone == one.came && lining::ended(one.from, one.came) == was) return;
 
-        return true;
+        auto step = std::make_unique<Edit>(field, kind, std::move(one), was);
+
+        step->redo();
+        field.undo_.push(std::move(step));
     }
 
     Field& field;
-    std::string before;
-    std::size_t from;
-    std::string after;
-    std::size_t to;
-    bool typed;
+    lining::Doing kind;
+    lining::Piece<std::size_t> piece;
+    std::size_t before;
 };
 
 // A field holding `said`, its cursor at the end, in the class "input": one line of text to type.
@@ -191,15 +201,9 @@ void Field::paint(Canvas& onto) const {
 // The cursor's cell.
 std::optional<Caret> Field::caret() const { return Caret{Spot{origin() + column(at()), 0}}; }
 
-// Sets the text to `said` with the cursor at its end, as an edit to undo on its own: a history
-// walked, a guess taken in by the program.
-void Field::put(std::string said) {
-    const std::size_t end = said.size();
-
-    undo_.seal();
-    edited(std::move(said), end, false);
-    undo_.seal();
-}
+// Sets the text to `said` with the cursor at its end, as an edit to undo on its own, since an edit
+// of another kind joins nothing: a history walked, a guess taken in by the program.
+void Field::put(std::string said) { Edit::made(*this, lining::Doing::other, lining::Piece<std::size_t>{0, *text, std::move(said)}); }
 
 // The cursor as it stands: on the border of a cluster, not past the end.
 std::size_t Field::at() const {
@@ -251,28 +255,8 @@ std::size_t Field::under(int x) const {
 }
 
 // The start of the word before the cursor, or the end of the word after it (`forth`): past what is
-// not a word, then past the word.
-std::size_t Field::word(bool forth) const {
-    const std::string& said = *text;
-    const text::Rendering how = rendering();
-    std::size_t made = at();
-
-    const auto inside = [&said](std::size_t from) {
-        const std::optional<char32_t> one = leading(said, from);
-
-        return one && text::in_word(*one);
-    };
-
-    if (forth) {
-        while (made < said.size() && !inside(made)) made = text::after(said, made, how);
-        while (made < said.size() && inside(made)) made = text::after(said, made, how);
-    } else {
-        while (made > 0 && !inside(text::before(said, made, how))) made = text::before(said, made, how);
-        while (made > 0 && inside(text::before(said, made, how))) made = text::before(said, made, how);
-    }
-
-    return made;
-}
+// not a word, then past the word, as in an editor (`lining::worded`).
+std::size_t Field::word(bool forth) const { return lining::worded(*text, at(), forth, rendering()); }
 
 // Types `what` at the cursor: each character the field is told about (`Typing`), the refused ones
 // left out.
@@ -292,29 +276,15 @@ void Field::typed(std::string_view what) {
         if (!asked.taken()) kept.append(what.substr(from, at - from));
     }
 
-    const std::size_t here = at();
-    const std::string& said = *text;
-
-    edited(said.substr(0, here) + kept + said.substr(here), here + kept.size(), true);
+    Edit::made(*this, lining::Doing::typing, lining::Piece<std::size_t>{at(), {}, std::move(kept)});
 }
 
-// Erases the bytes from `from` to `upto`.
+// Erases the bytes from `from` to `upto`: back, as Backspace does, when they end at the cursor, and
+// otherwise forth, as Delete does.
 void Field::erased(std::size_t from, std::size_t upto) {
-    const std::string& said = *text;
+    const lining::Doing kind = upto == at() ? lining::Doing::back : lining::Doing::forth;
 
-    edited(said.substr(0, from) + said.substr(upto), from, false);
-}
-
-// The text becomes `made` with the cursor at `now`, as a step of the field's history; nothing when
-// both stay as they are, as Backspace at the start.
-void Field::edited(std::string made, std::size_t now, bool typing) {
-    const std::string before = *text;
-    const std::size_t was = at();
-
-    if (made == before && now == was) return;
-
-    restored(made, now);
-    undo_.push(std::make_unique<Edit>(*this, before, was, std::move(made), now, typing));
+    Edit::made(*this, kind, lining::Piece<std::size_t>{from, text->substr(from, upto - from), {}});
 }
 
 // Sets the text and the cursor from an edit, keeps the cursor in view and asks for a guess.

@@ -213,8 +213,6 @@ private:
 
     void erased(std::size_t from, std::size_t upto);
 
-    void edited(std::string made, std::size_t now, bool typing);
-
     void restored(const std::string& made, std::size_t now);
 
     void moved(std::size_t to);
