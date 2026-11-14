@@ -1,7 +1,10 @@
 #include "tal/node.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
@@ -628,6 +631,76 @@ void Node::detached() {
 
         for (const std::shared_ptr<Node>& child : one->children_.held_) waiting.push_back(child.get());
     }
+}
+
+
+namespace {
+
+// A color as #rrggbb, or "default" for none.
+std::string spelled(const std::optional<Color>& one) {
+    if (!one) return "default";
+
+    constexpr std::string_view digits = "0123456789abcdef";
+    std::string made = "#";
+
+    for (const std::uint8_t part : {one->red, one->green, one->blue}) {
+        made += digits[part >> 4];
+        made += digits[part & 0x0F];
+    }
+
+    return made;
+}
+
+}
+
+// The node and those under it as text, a line each, indented two spaces by depth: its id ("-" for
+// none), its classes after dots, its states in brackets, its place on its parent and its size, and
+// its style: the ink and the paper, the looks it has on, the border and the padding.
+std::string Node::described() const {
+    constexpr std::array<std::pair<State, std::string_view>, 7> named{{{State::focus, "focus"},
+                                                                       {State::disabled, "disabled"},
+                                                                       {State::select, "select"},
+                                                                       {State::current, "current"},
+                                                                       {State::mark, "mark"},
+                                                                       {State::drag, "drag"},
+                                                                       {State::hover, "hover"}}};
+    constexpr std::array<std::string_view, 4> borders{"none", "thin", "twin", "thick"};
+    std::string made;
+
+    const auto line = [&](const auto& self, const Node& one, int depth) -> void {
+        made.append(static_cast<std::size_t>(2 * depth), ' ');
+        made += one.id_.empty() ? "-" : one.id_;
+
+        for (const std::string& name : one.classes_) made += "." + name;
+
+        std::string states;
+
+        for (const auto& [state, name] : named)
+            if (one.states_.has(state)) states += (states.empty() ? "" : " ") + std::string{name};
+
+        if (!states.empty()) made += " [" + states + "]";
+
+        const Look& look = one.style_.look;
+        const Sides& padding = one.style_.padding;
+
+        made += " " + std::to_string(one.area_.at.x) + "," + std::to_string(one.area_.at.y) + " " + std::to_string(one.area_.size.wide) + "x" +
+                std::to_string(one.area_.size.high);
+        made += " ink " + spelled(look.ink) + " paper " + spelled(look.paper);
+
+        for (const auto& [on, name] : {std::pair{look.bold, "bold"}, std::pair{look.faint, "faint"}, std::pair{look.italic, "italic"},
+                                       std::pair{look.under, "under"}, std::pair{look.reverse, "reverse"}, std::pair{look.crossed, "crossed"}})
+            if (on) made += std::string{" "} + name;
+
+        made += " border " + std::string{borders[static_cast<std::size_t>(one.style_.border)]};
+        made += " padding " + std::to_string(padding.top) + " " + std::to_string(padding.right) + " " + std::to_string(padding.bottom) + " " +
+                std::to_string(padding.left) + "\n";
+
+        for (const Node& child : one.children_) self(self, child, depth + 1);
+    };
+
+    line(line, *this, 0);
+
+    return made;
 }
 
 }

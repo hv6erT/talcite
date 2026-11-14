@@ -8,6 +8,10 @@
 #include <utility>
 #include <vector>
 
+#include "tal/editing.hpp"
+#include "tal/pages.hpp"
+#include "tal/window.hpp"
+
 #include "damage.hpp"
 
 namespace tal {
@@ -70,11 +74,25 @@ void Timer::again(std::chrono::milliseconds wait) {
 bool Timer::waiting() const { return state_ != nullptr && state_->waiting; }
 
 // The root of a tree of nodes, with the built-in sheet and a screen of no size until `display`.
-// The clock serves the timers that come with events.
+// The clock serves the timers that come with events, the processes open the addresses followed.
 // Its own default actions: Tab and Shift+Tab move the focus, a press of a pointing button gives it
-// to the deepest node on the way that can take it.
-Document::Document(Port<Clock> time) : time_(std::move(time)) {
+// to the deepest node on the way that can take it. In a debug build Ctrl+F12 opens the view of the
+// tree (`inspected`) before anything else hears it.
+Document::Document(Port<Clock> time, Port<Processes> processes) : time_(std::move(time)), processes_(std::move(processes)) {
     document_ = this;
+
+#ifndef NDEBUG
+    own_.add(on<KeyEvent>(
+        [this](KeyEvent& one) {
+            const Mods mods = one.key.mods();
+
+            if (one.key.code() != Code::f12 || !mods.ctrl || mods.alt || mods.shift) return;
+
+            one.take();
+            inspected();
+        },
+        Phase::capture));
+#endif
 
     own_.add(otherwise<KeyEvent>([this](KeyEvent& one) {
         const Mods mods = one.key.mods();
@@ -389,6 +407,82 @@ void Document::paste(std::string text) {
     PasteEvent made{std::move(text)};
 
     delivered(made, keyed());
+}
+
+// Opens `address` with the program the system has for it, through the document's port of processes,
+// in the document's scope on the program's loop; a failure, no loop running among them, tells
+// `Unfollowed` at the document. A node tells `Followed` first and comes here when nobody took it.
+void Document::follow(std::string address) {
+    if (address.empty()) return;
+
+    if (!scope_) {
+        try {
+            scope_.emplace();
+        } catch (const Trouble& why) {
+            Unfollowed one{address, why};
+
+            notified(one);
+
+            return;
+        }
+    }
+
+    scope_->run(opened(std::move(address)));
+}
+
+// The opening itself, and what failed of it.
+Task<void> Document::opened(std::string address) {
+    Command what;
+
+    what.arguments = {address};
+    what.mode = Mode::opened;
+
+    std::optional<Trouble> failed;
+
+    try {
+        (void)co_await processes_->start(std::move(what));
+    } catch (const Trouble& why) {
+        failed = why;
+    } catch (const std::exception& why) {
+        failed = Trouble{Kind::other, why.what(), address};
+    }
+
+    if (!failed) co_return;
+
+    Unfollowed one{address, *failed};
+
+    notified(one);
+}
+
+// The view of the tree: a window over the uppermost layers (the last children are looked at first,
+// as they lie on top), its text the node with the focus on top and then the whole tree
+// (`described`), modal, so that the person scrolls it and leaves it with Escape. Without layers
+// there is nowhere to open it.
+void Document::inspected() {
+    Layers* layers = nullptr;
+    std::vector<Node*> waiting{this};
+
+    while (layers == nullptr && !waiting.empty()) {
+        Node* one = waiting.back();
+
+        waiting.pop_back();
+        layers = dynamic_cast<Layers*>(one);
+
+        for (Node& child : one->children()) waiting.push_back(&child);
+    }
+
+    if (layers == nullptr) return;
+
+    std::string said = focus_ != nullptr ? focus_->described() : std::string{};
+
+    said = said.substr(0, said.find('\n')) + "\n\n" + described();
+
+    auto window = std::make_shared<Window>(std::string{}, Modal::yes);
+
+    window->id("inspector");
+    window->full = true;
+    window->children().add<Pager>(std::make_shared<Text>(said));
+    (void)layers->open(window);
 }
 
 // When the next timer rings, or nothing when none waits.

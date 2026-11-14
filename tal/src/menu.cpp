@@ -19,6 +19,7 @@
 
 namespace tal {
 
+using controlling::boxed;
 using controlling::clicking;
 using controlling::lined;
 using controlling::pressing;
@@ -72,14 +73,6 @@ std::string cut(std::string_view said, int wide, std::string_view dots, text::Re
     }
 
     return made + std::string{dots};
-}
-
-// The border and padding of a node on each side: how far its inside lies from the edges of its box.
-Sides inset(const Style& style) {
-    const int line = style.border == Border::none ? 0 : 1;
-    const Sides& padding = style.padding;
-
-    return Sides{padding.top + line, padding.right + line, padding.bottom + line, padding.left + line};
 }
 
 }
@@ -845,7 +838,7 @@ Tabs::Tabs() {
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
         if (!clicking(what) || &what.target() != this) return;
 
-        const Sides in = inset(style());
+        const Sides in = boxed(style());
         const int wide = area().size.wide - in.left - in.right;
         const int x = what.at.x - in.left;
 
@@ -936,7 +929,7 @@ void Tabs::paint(Canvas& onto) const {
 
         if (!names_.empty()) {
             const Area name = names_[shown()]->area();
-            const int from = name.at.x - inset(style()).left;
+            const int from = name.at.x - boxed(style()).left;
 
             for (int x = std::max(from, 0); x < std::min(from + name.size.wide, wide); ++x) (void)onto.put({x, 1}, thick, plain);
         }

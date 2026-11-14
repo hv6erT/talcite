@@ -45,12 +45,6 @@ struct Range {
     friend bool operator==(const Range&, const Range&) = default;
 };
 
-struct Followed : Event {
-    explicit Followed(std::string given) : address(std::move(given)) {}
-
-    std::string address;
-};
-
 struct Unread : Event {
     explicit Unread(Trouble given) : why(std::move(given)) {}
 

@@ -119,6 +119,8 @@ public:
 
     [[nodiscard]] Node* parent() const { return parent_; }
 
+    [[nodiscard]] std::string described() const;
+
     [[nodiscard]] Document* document() const { return document_; }
 
     [[nodiscard]] Children& children() { return children_; }

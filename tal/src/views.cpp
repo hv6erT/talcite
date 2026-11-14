@@ -28,22 +28,14 @@ std::size_t stepped(std::size_t at, long long by) {
     return made < 0 ? 0 : static_cast<std::size_t>(made);
 }
 
-// The border and padding of a node of style `style` on each side: how far its inside lies from the
-// edges of its box.
-Sides boxed(const Style& style) {
-    const int line = style.border == Border::none ? 0 : 1;
-    const Sides& padding = style.padding;
-
-    return Sides{padding.top + line, padding.right + line, padding.bottom + line, padding.left + line};
-}
-
 }
 
 // A list of the rows of `model`, in the class "list": the first column of each, one row of the
 // screen to a row. The arrows, the page keys, Home and End move the current row, Enter tells
 // `Picked`; these are default actions, so the program may take the key first. A click makes a row
-// current (the press gave the list the focus), a double click tells `Picked`, and the wheel moves
-// the view only.
+// current (the press gave the list the focus), and a click on a mark with an address tells
+// `Followed` too, which the document opens when nobody takes it; a double click tells `Picked`, and
+// the wheel moves the view only.
 List::List(std::shared_ptr<Model> model) : model_(std::move(model)) {
     if (model_ == nullptr) throw std::invalid_argument{"tal::List: no model"};
 
@@ -116,6 +108,21 @@ List::List(std::shared_ptr<Model> model) : model_(std::move(model)) {
 
         current = *row;
         clicked(*row, what.at.x - inset().left);
+
+        const Sides in = inset();
+        const int wide = area().size.wide - in.left - in.right;
+        const std::size_t at = *row;
+
+        if (at >= extent()) return;
+
+        std::string address = controlling::addressed(wide, what.at.x - in.left, rendering(), [this, at](Canvas& onto) { drawn(onto, at, States{}); });
+
+        if (address.empty()) return;
+
+        Followed one{std::move(address)};
+
+        notified(one);
+        controlling::unheeded(*this, one);
     }));
 }
 
@@ -254,7 +261,7 @@ std::size_t List::shown() const {
 }
 
 // The border and padding: how far the inside lies from the edges of the box.
-Sides List::inset() const { return boxed(style()); }
+Sides List::inset() const { return controlling::boxed(style()); }
 
 // Paints again the rows from `from` on, `count` of them, where they stand in the view.
 void List::redrawn(std::size_t from, std::size_t count) {
@@ -580,7 +587,7 @@ Scroll::Scroll(Scrollable& one) : view_(one.weak_from_this()) {
             return;
         }
 
-        const int y = what.at.y - boxed(style()).top;
+        const int y = what.at.y - controlling::boxed(style()).top;
 
         if (grip_) {
             what.take();
@@ -643,7 +650,7 @@ Scrollable* Scroll::view() const { return dynamic_cast<Scrollable*>(view_.lock()
 
 // How many rows the track has: the inside of the bar.
 int Scroll::track() const {
-    const Sides in = boxed(style());
+    const Sides in = controlling::boxed(style());
 
     return area().size.high - in.top - in.bottom;
 }

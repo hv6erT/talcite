@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "tal/document.hpp"
 #include "tal/key.hpp"
 #include "tal/style.hpp"
 #include "tal/text.hpp"
@@ -188,6 +189,20 @@ int line(Canvas& onto, Spot at, int wide, std::string_view whole, std::size_t fr
     return x - at.x;
 }
 
+// The border and padding of a node of style `style` on each side: how far its content lies from the
+// edges of its box.
+Sides boxed(const Style& style) {
+    const int line = style.border == Border::none ? 0 : 1;
+
+    return Sides{style.padding.top + line, style.padding.right + line, style.padding.bottom + line, style.padding.left + line};
+}
+
+// The default of `told`, which `from` told: when nobody took it, the document of `from` opens its
+// address (`Document::follow`).
+void unheeded(const Node& from, const Followed& told) {
+    if (!told.taken() && from.document() != nullptr) from.document()->follow(told.address);
+}
+
 }
 
 using controlling::clicking;
@@ -195,8 +210,43 @@ using controlling::lined;
 using controlling::pressing;
 using controlling::spelled;
 
-// A label showing `said`, in the class "label".
-Label::Label(std::string said) : text(*this, Effect::layout, std::move(said)) { classes({"label"}); }
+// A label showing `said`, in the class "label". A click on a mark with an address tells `Followed`,
+// and the document opens it when nobody takes it.
+Label::Label(std::string said) : text(*this, Effect::layout, std::move(said)) {
+    classes({"label"});
+
+    hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
+        if (what.press != Press::click || what.button != MouseButton::left || what.mods.ctrl) return;
+
+        std::string address = linked(what.at);
+
+        if (address.empty()) return;
+
+        Followed one{std::move(address)};
+
+        what.take();
+        notified(one);
+        controlling::unheeded(*this, one);
+    }));
+}
+
+// The address of the mark drawn at `at` of the label, drawn again as `paint` draws it; none where
+// no mark with an address stands.
+std::string Label::linked(Spot at) const {
+    const Sides in = controlling::boxed(style());
+    const int wide = area().size.wide - in.left - in.right;
+    const int y = at.y - in.top;
+    const std::vector<Stretch> shown = lines(wide);
+
+    if (y < 0 || static_cast<std::size_t>(y) >= shown.size()) return {};
+
+    const std::vector<Look> marked(marks->size(), look());
+
+    return controlling::addressed(wide, at.x - in.left, rendering(), [&](Canvas& onto) {
+        (void)controlling::line(onto, {0, 0}, wide, *text, shown[static_cast<std::size_t>(y)].from, shown[static_cast<std::size_t>(y)].upto, *marks, marked,
+                                *elide, *justify, look(), glyph("elide"), rendering());
+    });
+}
 
 // As wide as its widest line and as high as its lines, wrapped to the room when it wraps.
 Size Label::measure(Limits room) const {

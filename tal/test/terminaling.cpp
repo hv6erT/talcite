@@ -90,6 +90,7 @@ public:
     explicit Hands(tal::Loop& on) : loop_(on), scope_(on) {}
 
     std::vector<Command> started;
+    std::vector<std::string> opened;
     std::shared_ptr<Hand> hand;
     Stream screen;
     std::string typed;
@@ -103,6 +104,12 @@ public:
 
     // Starts the program: a pipe each way, and what comes to the program gathered.
     Task<Process> start(Command what) override {
+        if (what.mode == tal::Mode::opened) {
+            opened.push_back(what.arguments.at(0));
+
+            co_return Process{};
+        }
+
         started.push_back(what);
 
         if (refusing) throw tal::Trouble{tal::Kind::missing, "There is no such program."};
@@ -197,7 +204,7 @@ struct Shown {
     tal::Loop loop{scene.time()};
     std::shared_ptr<Hands> hands = std::make_shared<Hands>(loop);
     std::shared_ptr<Board> board = std::make_shared<Board>();
-    Document document{scene.time()};
+    Document document{scene.time(), tal::Port<tal::Processes>{hands}};
     Catcher* catcher = nullptr;
     Terminal* terminal = nullptr;
     Other* other = nullptr;
@@ -983,4 +990,30 @@ TRIAL("Terminal: the terminal's own colors under the program's defaults, links o
     SAME(shown.scene.at({3, 0}).link, shown.scene.at({2, 0}).link);
     OUGHT(shown.scene.caret().has_value() && !shown.scene.caret()->blink);
     OUGHT(shown.scene.caret()->form == tal::Caret::Form::block);
+}
+
+TRIAL("Terminal: Ctrl with a click on a link follows it; a plain click selects") {
+    Shown shown;
+
+    std::vector<std::string> told;
+    tal::Hooks hooks;
+
+    hooks.add(shown.terminal->on<tal::Followed>([&told](tal::Followed& one) { told.push_back(one.address); }));
+    shown.shows("\x1b]8;;https://x.pl/\x07link\x1b]8;;\x07 text");
+    shown.scene.click({1, 0});
+
+    OUGHT(shown.hands->opened.empty());
+
+    shown.scene.wait(1s);
+    shown.mouse(Press::down, MouseButton::left, {1, 0}, Mods{.ctrl = true});
+    shown.mouse(Press::up, MouseButton::left, {1, 0}, Mods{.ctrl = true});
+
+    OUGHT(shown.hands->opened == (std::vector<std::string>{"https://x.pl/"}));
+    OUGHT(shown.terminal->selected().empty());
+
+    shown.mouse(Press::down, MouseButton::left, {6, 0}, Mods{.ctrl = true});
+    shown.mouse(Press::up, MouseButton::left, {6, 0}, Mods{.ctrl = true});
+
+    SAME(shown.hands->opened.size(), std::size_t{1});
+    OUGHT(told == (std::vector<std::string>{"https://x.pl/"}));
 }

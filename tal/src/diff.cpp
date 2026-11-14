@@ -361,13 +361,6 @@ constexpr int tabbing = 8;
 // one side of a row whose sides differ.
 enum class Face { title, both, left, right };
 
-// The border and padding of a node of style `style` on each side.
-Sides boxed(const Style& style) {
-    const int line = style.border == Border::none ? 0 : 1;
-
-    return Sides{style.padding.top + line, style.padding.right + line, style.padding.bottom + line, style.padding.left + line};
-}
-
 // Whether both sides of `one` stand and are equal, with nothing marked: such a row shows once.
 bool same(const Pair& one) { return one.left && one.right && one.left->marks.empty() && one.right->marks.empty() && one.left->text == one.right->text; }
 
@@ -960,7 +953,7 @@ void Diff::steadied() {
 }
 
 // The border and padding: how far the inside lies from the edges of the box.
-Sides Diff::inset() const { return boxed(style()); }
+Sides Diff::inset() const { return controlling::boxed(style()); }
 
 // Keeps the view from going past the end: when fewer rows than the view has stand from its first
 // row to the end, it moves back until the last row stands at the bottom.

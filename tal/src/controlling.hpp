@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -28,5 +29,21 @@ int spelled(Canvas& onto, Spot at, std::string_view said, std::optional<char32_t
 
 int line(Canvas& onto, Spot at, int wide, std::string_view whole, std::size_t from, std::size_t upto, const std::vector<Mark>& marks,
          const std::vector<Look>& marked, Elide elide, Edge justify, const Look& plain, std::string_view dots, text::Rendering how);
+
+[[nodiscard]] Sides boxed(const Style& style);
+
+void unheeded(const Node& from, const Followed& told);
+
+template <typename Draw>
+[[nodiscard]] std::string addressed(int wide, int x, text::Rendering how, Draw draw) {
+    if (wide <= 0 || x < 0 || x >= wide) return {};
+
+    Surface row{Size{wide, 1}, how};
+    Canvas onto = row.canvas(Area{{0, 0}, {wide, 1}});
+
+    draw(onto);
+
+    return std::string{row.address(row.at({x, 0}).link)};
+}
 
 }

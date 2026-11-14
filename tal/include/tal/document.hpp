@@ -12,8 +12,10 @@
 #include "tal/geometry.hpp"
 #include "tal/node.hpp"
 #include "tal/port.hpp"
+#include "tal/process.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
+#include "tal/task.hpp"
 #include "tal/text.hpp"
 
 namespace tal {
@@ -54,7 +56,7 @@ private:
 
 class Document : public Node {
 public:
-    explicit Document(Port<Clock> time = {});
+    explicit Document(Port<Clock> time = {}, Port<Processes> processes = {});
 
     void sheet(StyleSheet given);
 
@@ -87,6 +89,8 @@ public:
     void mouse(Press press, MouseButton button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical);
 
     void paste(std::string text);
+
+    void follow(std::string address);
 
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> alarm() const;
 
@@ -124,7 +128,13 @@ private:
 
     void painted(Node& one, Spot origin, Area clip, Area part);
 
+    [[nodiscard]] Task<void> opened(std::string address);
+
+    void inspected();
+
     Port<Clock> time_;
+    Port<Processes> processes_;
+    std::optional<Scope> scope_;
     StyleSheet sheet_;
     Size screen_;
     Colors colors_ = Colors::mono;

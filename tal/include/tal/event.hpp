@@ -9,6 +9,7 @@
 
 #include "tal/geometry.hpp"
 #include "tal/key.hpp"
+#include "tal/trouble.hpp"
 
 namespace tal {
 
@@ -114,6 +115,19 @@ struct Focused : Event {};
 struct Blurred : Event {};
 
 struct Arranged : Event {};
+
+struct Followed : Event {
+    explicit Followed(std::string given) : address(std::move(given)) {}
+
+    std::string address;
+};
+
+struct Unfollowed : Event {
+    Unfollowed(std::string given, Trouble reason) : address(std::move(given)), why(std::move(reason)) {}
+
+    std::string address;
+    Trouble why;
+};
 
 struct Changed : Event {
     explicit Changed(const void* source) : source_(source) {}

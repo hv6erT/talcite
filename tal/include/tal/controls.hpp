@@ -52,6 +52,10 @@ private:
     };
 
     [[nodiscard]] std::vector<Stretch> lines(int wide) const;
+
+    [[nodiscard]] std::string linked(Spot at) const;
+
+    Hooks hooks_;
 };
 
 class Status : public Label {

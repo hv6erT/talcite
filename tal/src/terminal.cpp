@@ -14,6 +14,7 @@
 
 #include "tal/text.hpp"
 
+#include "controlling.hpp"
 #include "xterming.hpp"
 
 // A terminal in a node: a program in a pseudoterminal, started through the port of processes, its
@@ -508,7 +509,8 @@ void Terminal::slid(long long rows) {
 
 // The mouse. A program that asked for it gets it (`reported`), but with Shift held it is the
 // screen's, as in xterm. The screen's mouse selects: a press begins, a drag extends, a double click
-// takes a word; any press takes the focus. The wheel goes to a program that asked for the mouse, as
+// takes a word; any press takes the focus. Ctrl with a click on a link tells `Followed`, which the
+// document opens when nobody takes it. The wheel goes to a program that asked for the mouse, as
 // the arrow keys to a full-screen program that did not, and otherwise walks the history.
 void Terminal::moused(MouseEvent& what) {
     const Modes& modes = emulator_.modes();
@@ -565,6 +567,24 @@ void Terminal::moused(MouseEvent& what) {
     if (what.button != MouseButton::left) return;
 
     what.take();
+
+    if (what.press == Press::click && what.mods.ctrl) {
+        const Emulator::Row row = emulator_.row(first() + what.at.y);
+        const std::size_t x = static_cast<std::size_t>(std::max(what.at.x, 0));
+        const std::string_view address = x < row.cells.size() ? emulator_.address(row.cells[x].link) : std::string_view{};
+
+        unselect();
+
+        if (address.empty()) return;
+
+        Followed one{std::string{address}};
+
+        notified(one);
+
+        controlling::unheeded(*this, one);
+
+        return;
+    }
 
     if (what.press == Press::down) {
         anchor_ = head_ = placed(what.at);

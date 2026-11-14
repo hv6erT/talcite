@@ -9,6 +9,7 @@
 #include "tal/key.hpp"
 #include "tal/text.hpp"
 
+#include "controlling.hpp"
 #include "spooling.hpp"
 
 // A page draws a byte document a screen at a time and never holds a whole line. A row of the screen
@@ -1681,11 +1682,13 @@ void Page::scrolled() {
     notified(one);
 }
 
-// Tells `Followed` with the address of the mark `mark`.
+// Tells `Followed` with the address of the mark `mark`; when nobody takes it, the document opens
+// the address (`Document::follow`).
 void Page::followed(std::size_t mark) {
     Followed one{kept_->marks.at(mark).address};
 
     notified(one);
+    controlling::unheeded(*this, one);
 }
 
 // A pager of `text`, in the class "pager", wrapping, following its changes with the view on its
