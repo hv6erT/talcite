@@ -141,6 +141,30 @@ if(WIN32)
   target_link_libraries(tal-ui PUBLIC user32 normaliz)
 endif()
 
+# tal::net of talcite.next: addresses and names, TCP as a stream, listeners and UDP, waited for by
+# one reactor thread for the whole program: epoll on Linux, kqueue on macOS and the BSDs, IOCP on
+# Windows, poll elsewhere. TAL_NET_KQUEUE takes kqueue where the system has another, as Linux has
+# through libkqueue, so that its backend is tried there too.
+option(TAL_NET_KQUEUE "Wait for sockets through kqueue (libkqueue on Linux)" OFF)
+
+add_library(tal-net STATIC src/net.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp)
+target_link_libraries(tal-net PUBLIC tal-core)
+
+if(WIN32)
+  target_link_libraries(tal-net PUBLIC ws2_32 mswsock)
+endif()
+
+if(TAL_NET_KQUEUE)
+  target_compile_definitions(tal-net PUBLIC TAL_NET_KQUEUE)
+
+  if(NOT CMAKE_SYSTEM_NAME MATCHES "BSD|Darwin")
+    find_path(TAL_KQUEUE_INCLUDE sys/event.h PATH_SUFFIXES kqueue REQUIRED)
+    find_library(TAL_KQUEUE_LIBRARY kqueue REQUIRED)
+    target_include_directories(tal-net PRIVATE "${TAL_KQUEUE_INCLUDE}")
+    target_link_libraries(tal-net PUBLIC "${TAL_KQUEUE_LIBRARY}")
+  endif()
+endif()
+
 # tal::testing: the runner of the trials with its watch, which writes the stacks of a hung run's
 # threads (dbghelp on Windows; on Linux the trial binaries export their symbols, so that the
 # stacks name the functions of the trials too).
@@ -162,7 +186,7 @@ if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES} tools/generating.cpp)
-  target_link_libraries(tal-test PRIVATE tal-testing tal-scene)
+  target_link_libraries(tal-test PRIVATE tal-testing tal-scene tal-net)
   # Some trials check internal parts (the console translation without VT, the generator of texts)
   # through their headers.
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools")
