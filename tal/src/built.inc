@@ -109,7 +109,7 @@ constexpr std::string_view built_sheet =
 {"select":"window.screen","style":{"border":"none","shadow":false}},
 {"select":"window.popup","style":{"border":"none","shadow":true}},
 {"select":"menu.box","style":{"border":"thin"}},
-{"select":"history","style":{"border":"thin"}}
+{"select":"drop","style":{"border":"thin"}}
 ],"glyphs":{
 "choice.dot":"•",
 "diff.closed":"▸",

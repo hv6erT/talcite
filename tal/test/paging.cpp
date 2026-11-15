@@ -991,7 +991,7 @@ TRIAL("Pager: marks clicked, and the wheel at the edges") {
     SAME(catcher.wheeled, 2);
 
     pager.first(0);
-    pager.add_class("history");
+    pager.add_class("drop");
     scene.wait(0ms);
     scene.click({0, 0});
     scene.click({7, 1});

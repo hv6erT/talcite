@@ -31,9 +31,11 @@ public:
 
     [[nodiscard]] std::optional<Area> seat() const { return seat_; }
 
-    void anchor(std::optional<Spot> at);
+    void anchor(std::optional<Spot> at, int above = 0);
 
     [[nodiscard]] std::optional<Spot> anchor() const { return anchor_; }
+
+    [[nodiscard]] int above() const { return above_; }
 
     [[nodiscard]] Modal modal() const { return modal_; }
 
@@ -50,6 +52,7 @@ private:
     Modal modal_;
     std::optional<Area> seat_;
     std::optional<Spot> anchor_;
+    int above_ = 0;
     std::vector<std::shared_ptr<Action>> bound_;
     Hooks hooks_;
 };

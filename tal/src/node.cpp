@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "tal/document.hpp"
 #include "damage.hpp"
@@ -220,7 +222,9 @@ void Node::placed(Area outer) {
 
 // Makes the node active or not. An inactive node is greyed out (the state `disabled`), and it and
 // everything under it take no events and no focus: a focus inside moves on as Tab moves it, and a
-// capture inside ends.
+// capture inside ends. Then every node whose activity changed hears `Enabled` or `Disabled`: the
+// node and those under it, but not under a node inactive on its own, and none while a node above
+// is inactive, since then nothing changes.
 void Node::enable(bool on) {
     if (enabled_ == on) return;
 
@@ -230,11 +234,45 @@ void Node::enable(bool on) {
 
     state(State::disabled, !on);
 
-    if (on || document_ == nullptr) return;
+    if (!on && document_ != nullptr) {
+        if (document_->captured_ != nullptr && holds(*document_->captured_)) document_->captured_ = nullptr;
 
-    if (document_->captured_ != nullptr && holds(*document_->captured_)) document_->captured_ = nullptr;
+        if (document_->focus_ != nullptr && holds(*document_->focus_)) document_->moved(document_->following(document_->focus_, false, this));
+    }
 
-    if (document_->focus_ != nullptr && holds(*document_->focus_)) document_->moved(document_->following(document_->focus_, false, this));
+    for (const Node* above = parent_; above != nullptr; above = above->parent_)
+        if (!above->enabled_) return;
+
+    std::vector<std::weak_ptr<Node>> under;
+    std::vector<Node*> waiting{this};
+
+    while (!waiting.empty()) {
+        Node* one = waiting.back();
+
+        waiting.pop_back();
+
+        if (one != this) under.push_back(one->weak_from_this());
+
+        for (auto at = one->children_.held_.rbegin(); at != one->children_.held_.rend(); ++at)
+            if ((*at)->enabled_) waiting.push_back(at->get());
+    }
+
+    const auto told = [on](Node& one) {
+        if (on) {
+            Enabled made;
+
+            one.notified(made);
+        } else {
+            Disabled made;
+
+            one.notified(made);
+        }
+    };
+
+    told(*this);
+
+    for (const std::weak_ptr<Node>& one : under)
+        if (const std::shared_ptr<Node> held = one.lock()) told(*held);
 }
 
 // Whether the node can take the focus now: it asks for it, it and every node above it are active,

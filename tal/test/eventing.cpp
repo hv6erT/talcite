@@ -289,6 +289,56 @@ TRIAL("Focus: an inactive node takes none, and making it inactive passes the foc
     OUGHT(stage.last->focused());
 }
 
+// Making a node inactive tells `Disabled` to it and to every node under it, in order and after the
+// focus moved on; making it active again tells `Enabled`. A node inactive on its own, with what is
+// under it, hears nothing, nor does anything while a node above is inactive, and a change to what
+// already is tells nothing.
+TRIAL("Focus: Enabled and Disabled told to every node whose activity changes") {
+    Stage stage;
+    Strip& deep = stage.middle->children().add<Strip>();
+    std::vector<std::string> told;
+
+    const auto heard = [&told, &stage](Node& one, std::string name) {
+        stage.hooks.add(one.on<tal::Disabled>([&told, &stage, name](tal::Disabled&) {
+            told.push_back(name + " off" + (stage.last->focused() ? " last" : ""));
+        }));
+        stage.hooks.add(one.on<tal::Enabled>([&told, name](tal::Enabled&) { told.push_back(name + " on"); }));
+    };
+
+    heard(*stage.strip, "strip");
+    heard(*stage.first, "first");
+    heard(*stage.middle, "middle");
+    heard(deep, "deep");
+    heard(*stage.last, "last");
+
+    stage.first->focus();
+    stage.first->enable(false);
+
+    SAME(told, (std::vector<std::string>{"first off last"}));
+
+    told.clear();
+    stage.strip->enable(false);
+
+    SAME(told, (std::vector<std::string>{"strip off", "middle off", "deep off", "last off"}));
+
+    told.clear();
+    stage.middle->enable(false);
+    stage.middle->enable(false);
+    stage.middle->enable(true);
+
+    OUGHT(told.empty());
+
+    stage.strip->enable(true);
+
+    SAME(told, (std::vector<std::string>{"strip on", "middle on", "deep on", "last on"}));
+
+    told.clear();
+    stage.first->enable(true);
+    stage.first->enable(true);
+
+    SAME(told, (std::vector<std::string>{"first on"}));
+}
+
 TRIAL("Focus: removing the node that has it passes it on, and keys go to the document without one") {
     Stage stage;
     std::vector<std::string> got;

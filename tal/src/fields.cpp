@@ -10,6 +10,7 @@
 #include "tal/views.hpp"
 #include "tal/window.hpp"
 
+#include "dropping.hpp"
 #include "lettering.hpp"
 #include "lining.hpp"
 
@@ -344,91 +345,30 @@ void Field::guessing() {
     repaint();
 }
 
-// The window the history opens in under its field: modal, in the class "popup" too, holding the
-// list of entries in a holder of the class "history", which the sheet frames. Enter, a click or a
-// double click on an entry puts it in the field and closes the window; Esc and a press outside it
-// close it.
-class HistoryField::Drop : public Window {
+// The list of the history under its field, ten entries at most, in a holder of the class "history"
+// too (`dropping::Drop`): the entry taken goes in the field.
+class HistoryField::Drop : public dropping::Drop {
 public:
-    Drop(HistoryField& owner, Size size);
+    explicit Drop(HistoryField& owner) : dropping::Drop(owner, owner.history_, 0, 10, "history") {}
 
-private:
-    // The list of entries, which takes an entry at a click.
-    class Entries : public List {
-    public:
-        Entries(std::shared_ptr<Text> lines, Drop& drop) : List(std::move(lines)), drop_(drop) {}
+protected:
+    // Puts the entry `row` in the field.
+    void taken(Node& owner, std::size_t row) override {
+        auto& field = static_cast<HistoryField&>(owner);
+        const std::string chosen = field.history_.at(row);
 
-    protected:
-        // Takes the entry clicked.
-        void clicked(std::size_t row, int x) override {
-            (void)x;
-
-            drop_.taken(row);
-        }
-
-    private:
-        Drop& drop_;
-    };
-
-    // A holder of a fixed size, so that the window has the size of the list it shows.
-    class Holder : public Node {
-    public:
-        explicit Holder(Size size) : size_(size) { classes({"history"}); }
-
-    protected:
-        // The size it was made with.
-        [[nodiscard]] Size measure(Limits room) const override {
-            (void)room;
-
-            return size_;
-        }
-
-    private:
-        Size size_;
-    };
-
-    void taken(std::size_t row);
-
-    HistoryField& field_;
-    Hooks heard_;
+        field.walked_.reset();
+        field.put(chosen);
+    }
 };
-
-// A window for `owner`'s history showing a list of `size`.
-HistoryField::Drop::Drop(HistoryField& owner, Size size) : Window({}, Modal::yes), field_(owner) {
-    add_class("popup");
-
-    std::string all;
-
-    for (const std::string& one : owner.history_) all += (all.empty() ? "" : "\n") + one;
-
-    Holder& holder = children().add<Holder>(size);
-    Entries& entries = holder.children().add<Entries>(std::make_shared<Text>(all), *this);
-
-    heard_.add(entries.on<Picked>([this](Picked& what) { taken(what.row); }));
-
-    heard_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
-        if (&what.target() != this || what.press != Press::down) return;
-
-        what.take();
-        close();
-    }));
-}
-
-// Puts the entry `row` in the field and closes.
-void HistoryField::Drop::taken(std::size_t row) {
-    HistoryField& field = field_;
-    const std::string chosen = field.history_.at(row);
-
-    close();
-    field.walked_.reset();
-    field.put(chosen);
-}
 
 // A field with the entries `earlier`, the newest first, in the class "input". Up
 // and down walk through the history, the text typed coming back below the newest entry; typing
-// leaves the walk. `open` shows the history in a list under the field.
+// leaves the walk. `open` shows the history in a list under the field, and disabling closes it.
 HistoryField::HistoryField(std::vector<std::string> earlier) : history_(std::move(earlier)) {
     kept();
+
+    heard_.add(on<Disabled>([this](Disabled&) { close(); }));
 
     heard_.add(on<Changed>([this](Changed& what) {
         if (what.of(text)) walked_.reset();
@@ -468,27 +408,14 @@ void HistoryField::remember(std::string one) {
     kept();
 }
 
-// Shows the history as a list under the field, in the nearest layers above it, as wide as the field
-// and as high as the entries, ten at most. Nothing without entries or layers, or while it shows.
+// Shows the history as a list under the field, or over it when there is no room under it
+// (`dropping::Drop`). Nothing without entries or layers, or while it shows.
 void HistoryField::open() {
     if (history_.empty() || opened()) return;
 
-    Layers* layers = nullptr;
+    auto drop = std::make_shared<Drop>(*this);
 
-    for (Node* at = parent(); at != nullptr && layers == nullptr; at = at->parent()) layers = dynamic_cast<Layers*>(at);
-
-    if (layers == nullptr) return;
-
-    Spot at = area().at;
-
-    for (const Node* above = parent(); above != nullptr; above = above->parent()) at = Spot{at.x + above->area().at.x, at.y + above->area().at.y};
-
-    auto drop = std::make_shared<Drop>(*this, Size{std::max(area().size.wide, 1), static_cast<int>(std::min<std::size_t>(history_.size(), 10))});
-
-    drop->anchor(layers->local(Spot{at.x, at.y + area().size.high}));
-    drop_ = drop;
-
-    (void)layers->open(drop);
+    if (drop->dropped()) drop_ = drop;
 }
 
 // Closes the list of the history, when it shows.

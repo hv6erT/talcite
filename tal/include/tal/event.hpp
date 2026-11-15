@@ -114,6 +114,10 @@ struct Focused : Event {};
 
 struct Blurred : Event {};
 
+struct Enabled : Event {};
+
+struct Disabled : Event {};
+
 struct Arranged : Event {};
 
 struct Followed : Event {

@@ -12,6 +12,7 @@
 #include "tal/text.hpp"
 
 #include "controlling.hpp"
+#include "dropping.hpp"
 #include "lettering.hpp"
 
 namespace tal {
@@ -526,6 +527,117 @@ std::optional<Caret> Choice::caret() const {
     if (*chosen >= options_.size()) return std::nullopt;
 
     return Caret{{1, static_cast<int>(*chosen)}};
+}
+
+// The list of a selection's options, `rows` of them at most, in a holder of the class "options" too
+// (`dropping::Drop`), the chosen one current: the option taken is chosen.
+class Select::Drop : public dropping::Drop {
+public:
+    explicit Drop(Select& owner)
+        : dropping::Drop(owner, owner.options_, std::min(*owner.chosen, owner.options_.size() - 1), *owner.rows, "options") {}
+
+protected:
+    // Chooses the option `row`.
+    void taken(Node& owner, std::size_t row) override { static_cast<Select&>(owner).chosen = row; }
+};
+
+// A selection of one of `options`, the option `which` chosen (the last when it is past the end), in
+// the class "select": the chosen option on one row with the sheet's mark at its right edge. Enter,
+// the space bar and a click drop the list of the options; the side arrows, Home and End choose at
+// once, and at an end of the options leave the key to the nodes above, as up and down are left for
+// going between the fields. These are default actions, so the program may take the key first. A
+// selection without options takes the focus, since it shows, but drops nothing and chooses nothing.
+// Disabled, it closes its list.
+Select::Select(std::vector<std::string> options, std::size_t which)
+    : chosen(*this, Effect::paint, options.empty() ? 0 : std::min(which, options.size() - 1)), options_(std::move(options)) {
+    classes({"select"});
+    focusable(true);
+
+    hooks_.add(on<Disabled>([this](Disabled&) { close(); }));
+
+    hooks_.add(otherwise<KeyEvent>([this](KeyEvent& what) {
+        if (options_.empty()) return;
+
+        if (pressing(what.key)) {
+            what.take();
+            open();
+
+            return;
+        }
+
+        if (what.key.mods() != Mods{}) return;
+
+        const std::size_t now = std::min(*chosen, options_.size() - 1);
+        const std::size_t last = options_.size() - 1;
+        std::size_t next = now;
+
+        switch (what.key.code()) {
+            case Code::left: next = now == 0 ? now : now - 1; break;
+            case Code::right: next = std::min(now + 1, last); break;
+            case Code::home: next = 0; break;
+            case Code::end: next = last; break;
+            default: return;
+        }
+
+        if (next == now) return;
+
+        what.take();
+        chosen = next;
+    }));
+
+    hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
+        if (!clicking(what)) return;
+
+        what.take();
+        open();
+    }));
+}
+
+// Drops the list of the options under the selection, or over it when there is no room under it
+// (`dropping::Drop`). Nothing without options or layers, while it shows, or while the selection
+// cannot take the focus, being disabled.
+void Select::open() {
+    if (options_.empty() || opened()) return;
+
+    auto drop = std::make_shared<Drop>(*this);
+
+    if (drop->dropped()) drop_ = drop;
+}
+
+// Closes the list of the options, when it shows.
+void Select::close() {
+    if (const std::shared_ptr<Node> drop = drop_.lock()) static_cast<Drop&>(*drop).close();
+}
+
+// Whether the list of the options shows.
+bool Select::opened() const { return !drop_.expired(); }
+
+// One row, as wide as the widest option with the space and the mark after it.
+Size Select::measure(Limits room) const {
+    (void)room;
+
+    int wide = 0;
+
+    for (const std::string& one : options_) wide = std::max(wide, text::width(one, rendering()));
+
+    return Size{wide + 2, 1};
+}
+
+// The chosen option cut at its end where it does not fit (`elide`), and the glyph `select.mark` at
+// the right edge.
+void Select::paint(Canvas& onto) const {
+    const Look plain = look();
+    const int wide = onto.size().wide;
+
+    if (wide <= 0) return;
+
+    (void)onto.put({wide - 1, 0}, glyph("select.mark"), plain);
+
+    if (*chosen >= options_.size()) return;
+
+    const std::string& shown = options_[*chosen];
+
+    (void)controlling::line(onto, {0, 0}, wide - 2, shown, 0, shown.size(), {}, {}, Elide::end, Edge::start, plain, glyph("elide"), rendering());
 }
 
 // A progress bar in the class "gauge", empty and showing its percentage.

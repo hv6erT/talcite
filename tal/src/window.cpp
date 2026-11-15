@@ -63,11 +63,16 @@ void Window::seat(std::optional<Area> where) {
 }
 
 // Stands the window with its corner at `at` in its layers, in the size of its content, moved left
-// and up as far as it must to fit; with nothing, as `seat` says.
-void Window::anchor(std::optional<Spot> at) {
-    if (at == anchor_) return;
+// as far as it must to fit. The `above` rows over `at` belong to the one it opens for, as a field
+// over its list: a window that does not fit under them stands over them when it fits there, and
+// otherwise moves up as far as it must. With nothing, as `seat` says.
+void Window::anchor(std::optional<Spot> at, int above) {
+    above = std::max(above, 0);
+
+    if (at == anchor_ && above == above_) return;
 
     anchor_ = at;
+    above_ = above;
 
     relayout();
 }
@@ -219,8 +224,9 @@ void Layers::previous() { stepped(true); }
 
 // Places every window: a full one over the whole inside, a seated one at its seat (from the
 // inside's corner), an anchored one at its anchor in the size of its content, moved back inside
-// where it would stick out, the others in the middle in the size of their content, no larger than
-// the inside without two columns on each side and a row above and below.
+// where it would stick out or over the rows above its anchor (`Window::anchor`), the others in the
+// middle in the size of their content, no larger than the inside without two columns on each side
+// and a row above and below.
 void Layers::arrange(Area inside) {
     for (Node& one : children()) {
         auto* window = dynamic_cast<Window*>(&one);
@@ -243,7 +249,9 @@ void Layers::arrange(Area inside) {
             const Spot at = *window->anchor();
             const Size size = one.measured(Limits{{0, 0}, inside.size});
             const int x = std::max(std::min(at.x, inside.size.wide - size.wide), 0);
-            const int y = std::max(std::min(at.y, inside.size.high - size.high), 0);
+            const int over = at.y - window->above() - size.high;
+            const bool lifted = at.y + size.high > inside.size.high && window->above() > 0 && over >= 0;
+            const int y = lifted ? over : std::max(std::min(at.y, inside.size.high - size.high), 0);
 
             one.placed(Area{{inside.at.x + x, inside.at.y + y}, size});
 

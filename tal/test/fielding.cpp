@@ -388,7 +388,7 @@ TRIAL("Field: a cursor inside a character, a hidden wide text, a framed field") 
 
     Typed framed{"abcd"};
 
-    framed.field->add_class("history");
+    framed.field->add_class("drop");
     framed.scene.wait(0ms);
     framed.scene.click({3, 1});
 
@@ -429,8 +429,9 @@ struct Remembering {
     tal::Layers* layers = nullptr;
     HistoryField* field = nullptr;
 
-    // Builds it with `earlier` in the history, on a screen `high` rows high.
-    explicit Remembering(std::vector<std::string> earlier, int high = 8) : scene(Size{20, high}) {
+    // Builds it with `earlier` in the history, on a screen `high` rows high, `down` rows from its
+    // top.
+    explicit Remembering(std::vector<std::string> earlier, int high = 8, int down = 0) : scene(Size{20, high}) {
         layers = &document.children().add<tal::Layers>();
 
         auto made = std::make_shared<tal::Window>();
@@ -440,6 +441,9 @@ struct Remembering {
 
         tal::Window& screen = layers->open(made);
         tal::Column& column = screen.children().add<tal::Column>();
+
+        for (int at = 0; at < down; ++at) (void)column.children().add<tal::Label>(".");
+
         tal::Row& row = column.children().add<tal::Row>();
 
         (void)row.children().add<tal::Label>("> ");
@@ -553,9 +557,10 @@ TRIAL("HistoryField: entries walked to undone on their own") {
     SAME(*same.field->cursor, std::size_t{0});
 }
 
-// The history opens as a framed list under the field; Enter takes the entry, a click takes the one
-// under it, Esc and a press outside close it, the focus back in the field. It shows ten entries at
-// most.
+// The history opens as a framed list under the field, as wide as the field; Enter takes the entry,
+// a click takes the one under it, Esc and a press outside close it, the focus back in the field. It
+// shows ten entries at most, with a bar beside them when there are more, and stands over the field
+// when there is no room under it. Disabling the field closes it.
 TRIAL("HistoryField: the list of the history under the field") {
     Remembering shown{{"alpha", "beta", "gamma"}};
     HistoryField& field = *shown.field;
@@ -564,8 +569,9 @@ TRIAL("HistoryField: the list of the history under the field") {
     shown.scene.wait(0ms);
 
     OUGHT(field.opened());
-    OUGHT(shown.scene.row(1).starts_with("\xe2\x94\x8c"));
-    OUGHT(shown.scene.row(2).starts_with("\xe2\x94\x82" "alpha "));
+    OUGHT(shown.scene.row(1).starts_with("  \xe2\x94\x8c"));
+    OUGHT(shown.scene.row(1).ends_with("\xe2\x94\x90"));
+    OUGHT(shown.scene.row(2).starts_with("  \xe2\x94\x82" "alpha "));
 
     shown.scene.press(Key{Code::down});
     shown.scene.press(Key{Code::enter});
@@ -615,7 +621,23 @@ TRIAL("HistoryField: the list of the history under the field") {
     many.field->open();
     many.scene.wait(0ms);
 
-    OUGHT(many.scene.row(12).starts_with("\xe2\x94\x94"));
+    OUGHT(many.scene.row(12).starts_with("  \xe2\x94\x94"));
+    OUGHT(many.scene.row(11).starts_with("  \xe2\x94\x82" "10 "));
+    SAME(many.scene.at({18, 2}).cluster, std::string{"\xe2\x96\x88"});
+    SAME(many.scene.at({18, 11}).cluster, std::string{"\xe2\x94\x82"});
+
+    Remembering low{{"alpha", "beta", "gamma"}, 8, 6};
+
+    low.field->open();
+    low.scene.wait(0ms);
+
+    SAME(low.scene.at({2, 1}).cluster, std::string{"\xe2\x94\x8c"});
+    SAME(low.scene.at({2, 5}).cluster, std::string{"\xe2\x94\x94"});
+    OUGHT(low.scene.row(6).starts_with("> "));
+
+    low.field->enable(false);
+
+    OUGHT(!low.field->opened());
 }
 
 }

@@ -698,8 +698,10 @@ TRIAL("Node: a node that takes no hover loses it at once") {
 }
 
 // A window anchored stands at its anchor in the size of its content, moved left and up as far as it
-// must to fit, and never past the corner; a seat goes before the anchor, a full window before
-// both. The spot of the screen for an anchor is counted inside the layers' border and padding.
+// must to fit, and never past the corner; one that does not fit under its anchor stands over the
+// rows above it that belong to its owner, when it fits there. A seat goes before the anchor, a full
+// window before both. The spot of the screen for an anchor is counted inside the layers' border and
+// padding.
 TRIAL("Window: an anchor, moved back to fit, after a seat; Layers: the screen counted inside") {
     Scene scene{Size{20, 10}};
     Document document{scene.time()};
@@ -729,6 +731,31 @@ TRIAL("Window: an anchor, moved back to fit, after a seat; Layers: the screen co
     OUGHT(window.area() == (Area{{3, 2}, {6, 3}}));
 
     window.anchor(Spot{17, 9});
+    scene.wait(0ms);
+
+    OUGHT(window.area() == (Area{{14, 5}, {6, 3}}));
+    SAME(window.above(), 0);
+
+    window.anchor(Spot{17, 7});
+    scene.wait(0ms);
+    window.anchor(Spot{17, 7}, 2);
+    scene.wait(0ms);
+
+    OUGHT(window.area() == (Area{{14, 2}, {6, 3}}));
+    SAME(window.above(), 2);
+
+    window.anchor(Spot{17, 7}, -4);
+    scene.wait(0ms);
+
+    OUGHT(window.area() == (Area{{14, 5}, {6, 3}}));
+    SAME(window.above(), 0);
+
+    window.anchor(Spot{17, 4}, 2);
+    scene.wait(0ms);
+
+    OUGHT(window.area() == (Area{{14, 4}, {6, 3}}));
+
+    window.anchor(Spot{17, 7}, 6);
     scene.wait(0ms);
 
     OUGHT(window.area() == (Area{{14, 5}, {6, 3}}));

@@ -140,6 +140,34 @@ private:
     Hooks hooks_;
 };
 
+class Select : public Node {
+public:
+    explicit Select(std::vector<std::string> options, std::size_t chosen = 0);
+
+    Property<std::size_t> chosen;
+    Property<std::size_t> rows{*this, Effect::none, 8};
+
+    [[nodiscard]] const std::vector<std::string>& options() const { return options_; }
+
+    void open();
+
+    void close();
+
+    [[nodiscard]] bool opened() const;
+
+protected:
+    [[nodiscard]] Size measure(Limits room) const override;
+
+    void paint(Canvas& onto) const override;
+
+private:
+    class Drop;
+
+    std::vector<std::string> options_;
+    std::weak_ptr<Node> drop_;
+    Hooks hooks_;
+};
+
 class Gauge : public Node {
 public:
     Gauge();
