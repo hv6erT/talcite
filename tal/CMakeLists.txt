@@ -159,14 +159,15 @@ endif()
 # tal::net of talcite.next: addresses and names, TCP as a stream, listeners and UDP, waited for by
 # one reactor thread for the whole program: epoll on Linux, kqueue on macOS and the BSDs, IOCP on
 # Windows, poll elsewhere. TAL_NET_KQUEUE takes kqueue where the system has another, as Linux has
-# through libkqueue, so that its backend is tried there too.
+# through libkqueue, so that its backend is tried there too. TLS over any stream, and an HTTP client
+# with the proxy of the environment or, on Windows, of WinHTTP's setting.
 option(TAL_NET_KQUEUE "Wait for sockets through kqueue (libkqueue on Linux)" OFF)
 
-add_library(tal-net STATIC src/net.cpp src/tls.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp src/platform/tls_core.cpp)
+add_library(tal-net STATIC src/net.cpp src/tls.cpp src/http.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp src/platform/tls_core.cpp src/platform/proxy_core.cpp)
 target_link_libraries(tal-net PUBLIC tal-core)
 
 if(WIN32)
-  target_link_libraries(tal-net PUBLIC ws2_32 mswsock secur32 crypt32 ncrypt)
+  target_link_libraries(tal-net PUBLIC ws2_32 mswsock secur32 crypt32 ncrypt winhttp)
 endif()
 
 if(TAL_NET_KQUEUE)

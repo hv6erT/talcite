@@ -94,6 +94,8 @@ public:
 
     [[nodiscard]] T* operator->() const { return held_.get(); }
 
+    [[nodiscard]] const std::shared_ptr<T>& shared() const { return held_; }
+
 private:
     std::shared_ptr<T> held_;
 };
