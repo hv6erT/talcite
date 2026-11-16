@@ -36,10 +36,12 @@ if(WIN32)
 endif()
 
 # What weakens security is built in only on the programmer's word: our own digests as the spare
-# where the system gives none (TAL_OWN_SUMS), and MD5 and SHA-1, broken for collisions
-# (TAL_WEAK_SUMS). Without them that code is not in the program.
+# where the system gives none (TAL_OWN_SUMS), MD5 and SHA-1, broken for collisions
+# (TAL_WEAK_SUMS), and our own arithmetic of curve 25519, which CPace needs and no system gives
+# (TAL_OWN_CURVE). Without them that code is not in the program.
 option(TAL_OWN_SUMS "Our own digests where the system gives none" OFF)
 option(TAL_WEAK_SUMS "The digests MD5 and SHA-1" OFF)
+option(TAL_OWN_CURVE "Our own arithmetic of curve 25519, for CPace" OFF)
 
 if(TAL_OWN_SUMS)
   target_compile_definitions(tal-core PUBLIC TAL_OWN_SUMS)
@@ -159,15 +161,21 @@ endif()
 # tal::net of talcite.next: addresses and names, TCP as a stream, listeners and UDP, waited for by
 # one reactor thread for the whole program: epoll on Linux, kqueue on macOS and the BSDs, IOCP on
 # Windows, poll elsewhere. TAL_NET_KQUEUE takes kqueue where the system has another, as Linux has
-# through libkqueue, so that its backend is tried there too. TLS over any stream, and an HTTP client
-# with the proxy of the environment or, on Windows, of WinHTTP's setting.
+# through libkqueue, so that its backend is tried there too. TLS over any stream, an HTTP client with
+# the proxy of the environment or, on Windows, of WinHTTP's setting, and what connects users: STUN,
+# a beacon in the local network, ports opened on the router, and key agreements with the channel
+# of sealed messages they open.
 option(TAL_NET_KQUEUE "Wait for sockets through kqueue (libkqueue on Linux)" OFF)
 
-add_library(tal-net STATIC src/net.cpp src/tls.cpp src/http.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp src/platform/tls_core.cpp src/platform/proxy_core.cpp)
+add_library(tal-net STATIC src/net.cpp src/tls.cpp src/http.cpp src/stun.cpp src/beacon.cpp src/router.cpp src/handshake.cpp src/cpace.cpp src/curving.cpp src/sealed.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp src/platform/tls_core.cpp src/platform/proxy_core.cpp)
 target_link_libraries(tal-net PUBLIC tal-core)
 
+if(TAL_OWN_CURVE)
+  target_compile_definitions(tal-net PUBLIC TAL_OWN_CURVE)
+endif()
+
 if(WIN32)
-  target_link_libraries(tal-net PUBLIC ws2_32 mswsock secur32 crypt32 ncrypt winhttp)
+  target_link_libraries(tal-net PUBLIC ws2_32 mswsock secur32 crypt32 ncrypt winhttp iphlpapi)
 endif()
 
 if(TAL_NET_KQUEUE)

@@ -492,6 +492,13 @@ Task<Datagram> Udp::received(std::size_t most) const {
 // The address it is bound to, with the port the system chose for port 0.
 Address Udp::mine() const { return held_ == nullptr ? Address{} : held_->mine; }
 
+// Lets it send to the broadcast address, or not (`given`); it may not until told so.
+void Udp::broadcast(bool given) {
+    if (held_ == nullptr) return;
+
+    if (const Handle one = held_->socket->now(); one != nothing) netting::broadcasting(one, given);
+}
+
 // Closes it: what waits on it is refused.
 void Udp::close() {
     if (held_ != nullptr) held_->socket->close();

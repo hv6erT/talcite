@@ -120,6 +120,8 @@ public:
 
     [[nodiscard]] Address mine() const;
 
+    void broadcast(bool given);
+
     void close();
 
     struct Held;
