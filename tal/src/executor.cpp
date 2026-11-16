@@ -15,22 +15,45 @@ namespace {
 // after another, and each becomes the program's loop for its lifetime.
 std::atomic<Loop*> program_loop{nullptr};
 
+// Held while the program's loop changes and while a timer takes the life of that loop, so that a
+// loop going away cannot be taken halfway.
+std::mutex program_guard;
+
 }
 
+// What outlives a loop of it: whether the loop still is, for the timers that withdraw themselves
+// later than the loop went.
+struct Loop::Life {
+    std::mutex guard;
+    Loop* loop = nullptr;
+};
+
 // A loop on the given clock; it becomes the program's loop when there is none.
-Loop::Loop(Port<Clock> time) : time_(std::move(time)) {
+Loop::Loop(Port<Clock> time) : time_(std::move(time)), life_(std::make_shared<Life>()) {
+    life_->loop = this;
+
     Loop* none = nullptr;
+    const std::lock_guard<std::mutex> kept{program_guard};
 
     (void)program_loop.compare_exchange_strong(none, this);
 }
 
-// Stops being the program's loop. Work still queued and timers still waiting are dropped first,
-// while the loop is whole: dropping them may destroy frames of cancelled tasks, whose timers then
-// withdraw themselves from this loop. A frame waiting on this loop never resumes.
+// Stops being the program's loop, and tells the timers that outlive it that it is gone. Work still
+// queued and timers still waiting are dropped then: dropping them may destroy frames of cancelled
+// tasks, whose timers then withdraw nothing. A frame waiting on this loop never resumes.
 Loop::~Loop() {
-    Loop* self = this;
+    {
+        Loop* self = this;
+        const std::lock_guard<std::mutex> kept{program_guard};
 
-    (void)program_loop.compare_exchange_strong(self, nullptr);
+        (void)program_loop.compare_exchange_strong(self, nullptr);
+    }
+
+    {
+        const std::lock_guard<std::mutex> kept{life_->guard};
+
+        life_->loop = nullptr;
+    }
 
     for (;;) {
         std::deque<Work> left;
@@ -181,17 +204,21 @@ std::uint64_t Loop::wake(std::chrono::steady_clock::time_point when, Work what) 
 }
 
 // Withdraws a timer that has not fired; its place in the order of deadlines goes when it is due.
-void Loop::unwake(std::uint64_t which) {
-    Work dropped;
+void Loop::unwake(std::uint64_t which) { const Work dropped = withdrawn(which); }
 
-    {
-        const std::lock_guard<std::mutex> kept{guard_};
+// The work of the timer `which`, taken out unless it fired; the caller drops it outside the lock.
+Work Loop::withdrawn(std::uint64_t which) {
+    const std::lock_guard<std::mutex> kept{guard_};
 
-        if (const auto found = timers_.find(which); found != timers_.end()) {
-            dropped = std::move(found->second);
-            timers_.erase(found);
-        }
+    if (const auto found = timers_.find(which); found != timers_.end()) {
+        Work taken = std::move(found->second);
+
+        timers_.erase(found);
+
+        return taken;
     }
+
+    return {};
 }
 
 // When the earliest timer that has not been withdrawn falls due, or nothing when none waits.
@@ -292,12 +319,43 @@ Executor& io() {
 
 namespace detail {
 
-// The loop whose clock times a wait: the executor itself when it is a loop, the program's loop
-// otherwise.
-Loop& timing(Executor& where) {
-    if (auto* const own = dynamic_cast<Loop*>(&where); own != nullptr) return *own;
+// A timer of a wait, set on a loop that may go before it: the loop's life and the timer's number.
+struct Alarm {
+    std::shared_ptr<Loop::Life> life;
+    std::uint64_t which = 0;
+};
 
-    return loop();
+// Runs `what` after `wait` on the loop of `where`: the executor itself when it is a loop, the
+// program's loop otherwise, which may go first, even while the timer is set; then it never fires.
+// The timer is set under the loop's life, so that the loop waits for it before it goes.
+std::shared_ptr<Alarm> alarmed(Executor& where, std::chrono::milliseconds wait, Work what) {
+    auto made = std::make_shared<Alarm>();
+
+    if (auto* const own = dynamic_cast<Loop*>(&where); own != nullptr) {
+        made->life = own->life_;
+    } else {
+        const std::lock_guard<std::mutex> kept{program_guard};
+        Loop* const found = program_loop.load();
+
+        if (found == nullptr) throw Trouble{Kind::missing, "No loop is running."};
+
+        made->life = found->life_;
+    }
+
+    const std::lock_guard<std::mutex> kept{made->life->guard};
+
+    if (Loop* const on = made->life->loop; on != nullptr) made->which = on->wake(on->clock().now() + wait, std::move(what));
+
+    return made;
+}
+
+// Withdraws the timer `which` from its loop, unless the loop is gone; its work is dropped outside
+// both locks, since dropping it may destroy frames whose own timers withdraw themselves.
+void unalarmed(Alarm& which) {
+    Work dropped;
+    const std::lock_guard<std::mutex> kept{which.life->guard};
+
+    if (which.life->loop != nullptr) dropped = which.life->loop->withdrawn(which.which);
 }
 
 }

@@ -1,6 +1,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -87,6 +88,13 @@ tal::Task<int> late(std::chrono::milliseconds wait, int value) {
     co_await tal::after(wait);
 
     co_return value;
+}
+
+// Sleeps an hour on the clock of the program's loop, keeping a sentinel in its frame.
+tal::Task<void> sleeping(std::atomic<int>& alive) {
+    const Sentinel kept{alive};
+
+    co_await tal::after(1h);
 }
 
 }
@@ -229,6 +237,27 @@ TRIAL("after(): on a manual clock the task waits until the clock is moved past t
     UNTIL(loop, done.load() == 5);
 
     OUGHT(!scope.busy());
+}
+
+TRIAL("after(): a task on the pool that outlives the program's loop leaves the gone loop alone") {
+    std::atomic<int> alive{0};
+    std::optional<tal::Scope> scope;
+
+    {
+        tal::Loop first;
+
+        scope.emplace(tal::pool());
+        scope->run(sleeping(alive));
+
+        UNTIL(first, alive.load() == 1 && first.next().has_value());
+    }
+
+    tal::Loop second;
+
+    scope.reset();
+
+    UNTIL(second, alive.load() == 0);
+    OUGHT(!second.next().has_value());
 }
 
 TRIAL("Scope: a scope destroyed while its task waits destroys the task's frames without resuming them") {

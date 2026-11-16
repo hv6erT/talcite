@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -14,6 +15,18 @@
 #include "tal/work.hpp"
 
 namespace tal {
+
+class Executor;
+
+namespace detail {
+
+struct Alarm;
+
+[[nodiscard]] std::shared_ptr<Alarm> alarmed(Executor& where, std::chrono::milliseconds wait, Work what);
+
+void unalarmed(Alarm& which);
+
+}
 
 class Executor {
 public:
@@ -57,7 +70,16 @@ protected:
     virtual void stirred();
 
 private:
+    friend struct detail::Alarm;
+    friend std::shared_ptr<detail::Alarm> detail::alarmed(Executor& where, std::chrono::milliseconds wait, Work what);
+    friend void detail::unalarmed(detail::Alarm& which);
+
+    struct Life;
+
+    [[nodiscard]] Work withdrawn(std::uint64_t which);
+
     Port<Clock> time_;
+    std::shared_ptr<Life> life_;
     mutable std::mutex guard_;
     std::condition_variable stirred_;
     std::deque<Work> ready_;

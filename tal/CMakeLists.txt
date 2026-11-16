@@ -19,9 +19,9 @@ endif()
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/basics.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/task.cpp
+add_library(tal-core STATIC src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/sums.cpp src/task.cpp
   src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
-  src/platform/bell.cpp src/platform/child_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
+  src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
 target_include_directories(tal-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -29,9 +29,24 @@ target_link_libraries(tal-core PUBLIC Threads::Threads)
 target_compile_features(tal-core PUBLIC cxx_std_20)
 
 # Windows: the network connections of mapped drives (mpr), the shell's known folders and recycle
-# bin (shell32, ole32) and the rights of files (advapi32), for platform/.
+# bin (shell32, ole32), the rights of files (advapi32) and the digests and randomness of CNG
+# (bcrypt), for platform/.
 if(WIN32)
-  target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32)
+  target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32 bcrypt)
+endif()
+
+# What weakens security is built in only on the programmer's word: our own digests as the spare
+# where the system gives none (TAL_OWN_SUMS), and MD5 and SHA-1, broken for collisions
+# (TAL_WEAK_SUMS). Without them that code is not in the program.
+option(TAL_OWN_SUMS "Our own digests where the system gives none" OFF)
+option(TAL_WEAK_SUMS "The digests MD5 and SHA-1" OFF)
+
+if(TAL_OWN_SUMS)
+  target_compile_definitions(tal-core PUBLIC TAL_OWN_SUMS)
+endif()
+
+if(TAL_WEAK_SUMS)
+  target_compile_definitions(tal-core PUBLIC TAL_WEAK_SUMS)
 endif()
 
 # tal-texts, the generator of a program's texts, run while the program is built: out of the
@@ -147,11 +162,11 @@ endif()
 # through libkqueue, so that its backend is tried there too.
 option(TAL_NET_KQUEUE "Wait for sockets through kqueue (libkqueue on Linux)" OFF)
 
-add_library(tal-net STATIC src/net.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp)
+add_library(tal-net STATIC src/net.cpp src/tls.cpp src/platform/iocp_core.cpp src/platform/reactor_core.cpp src/platform/sockets_core.cpp src/platform/tls_core.cpp)
 target_link_libraries(tal-net PUBLIC tal-core)
 
 if(WIN32)
-  target_link_libraries(tal-net PUBLIC ws2_32 mswsock)
+  target_link_libraries(tal-net PUBLIC ws2_32 mswsock secur32 crypt32 ncrypt)
 endif()
 
 if(TAL_NET_KQUEUE)

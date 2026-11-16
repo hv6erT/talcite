@@ -346,13 +346,10 @@ struct Checking {
     void await_resume() const noexcept {}
 };
 
-[[nodiscard]] Loop& timing(Executor& where);
-
 struct Sleeping {
     std::chrono::milliseconds wait;
     std::shared_ptr<Leaf> leaf = std::make_shared<Leaf>();
-    Loop* on = nullptr;
-    std::uint64_t timer = 0;
+    std::shared_ptr<Alarm> alarm;
 
     explicit Sleeping(std::chrono::milliseconds given) : wait(given) {}
 
@@ -362,7 +359,7 @@ struct Sleeping {
     ~Sleeping() {
         leaf->bury();
 
-        if (on != nullptr) on->unwake(timer);
+        if (alarm != nullptr) unalarmed(*alarm);
     }
 
     [[nodiscard]] bool await_ready() const noexcept { return wait.count() <= 0; }
@@ -374,8 +371,7 @@ struct Sleeping {
 
         leaf->chain = chain;
         leaf->handle = handle;
-        on = &timing(chain->where());
-        timer = on->wake(on->clock().now() + wait, [held = leaf] { held->fire(); });
+        alarm = alarmed(chain->where(), wait, [held = leaf] { held->fire(); });
         chain->suspended();
         leaf->armed = true;
     }
