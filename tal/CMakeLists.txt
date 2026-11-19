@@ -20,7 +20,7 @@ endif()
 find_package(Threads REQUIRED)
 
 add_library(tal-core STATIC src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/task.cpp
-  src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
+  src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)

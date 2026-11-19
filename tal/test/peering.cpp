@@ -9,9 +9,11 @@
 
 #include "tal/bytes.hpp"
 #include "tal/executor.hpp"
+#include "tal/http.hpp"
 #include "tal/net.hpp"
 #include "tal/peer.hpp"
 #include "tal/task.hpp"
+#include "tal/text.hpp"
 #include "tal/trouble.hpp"
 
 #include "tal/testing.hpp"
@@ -183,9 +185,156 @@ Fake::Script old_router(unsigned port) {
     };
 }
 
-// The routing of the router `fake`, as seen from the loopback, with `turn` for each way.
+// The routing of the router `fake`, as seen from the loopback, with `turn` for each way; SSDP asks
+// the discard port of the loopback, where nobody answers, and UPnP has no time after the UDP ways.
 tal::net::Routing routing_of(const Fake& fake, std::chrono::milliseconds turn = 1000ms) {
-    return tal::net::Routing{fake.mine(), Address::loopback(Family::four, 0), turn};
+    return tal::net::Routing{fake.mine(), Address::loopback(Family::four, 0), turn, Address::loopback(Family::four, 9), "tal", turn};
+}
+
+// The value of the element `name` in the SOAP request `heard`, or "none".
+std::string argument(const std::string& heard, const std::string& name) {
+    const std::size_t from = heard.find("<" + name + ">");
+
+    if (from == std::string::npos) return "none";
+
+    const std::size_t start = from + name.size() + 2;
+
+    return heard.substr(start, heard.find("</" + name + ">", start) - start);
+}
+
+// A plain HTTP answer with `status` and `body`.
+std::string answer(int status, const std::string& body = {}) {
+    return "HTTP/1.1 " + std::to_string(status) + " X\r\nContent-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
+}
+
+// A web server on the loopback that answers each request, read whole with its body, by its script
+// and closes; it keeps what it heard.
+class Web {
+public:
+    using Script = std::function<std::string(const std::string& request)>;
+
+    // Listens on the loopback of `loop` and answers by `script`.
+    Web(tal::Loop& loop, Script script)
+        : script_(std::move(script)), listener_(tal::wait(loop, tal::net::Listener::opened(Address::loopback(Family::four, 0)))), scope_(loop) {
+        scope_.run(accepting());
+    }
+
+    // Stops listening.
+    ~Web() { listener_.close(); }
+
+    Web(const Web&) = delete;
+    Web& operator=(const Web&) = delete;
+
+    // The address of `target` on it.
+    [[nodiscard]] std::string url(const std::string& target) const { return "http://127.0.0.1:" + std::to_string(listener_.mine().port()) + target; }
+
+    std::vector<std::string> heard;
+
+private:
+    // Takes the connections as they come.
+    tal::Task<void> accepting() {
+        try {
+            for (;;) {
+                const tal::net::Connection one = co_await listener_.accepted();
+
+                scope_.run(talking(one.stream));
+            }
+        } catch (const tal::Trouble&) {
+        }
+    }
+
+    // One request and its answer.
+    tal::Task<void> talking(tal::Stream stream) {
+        try {
+            std::string request;
+
+            while (request.find("\r\n\r\n") == std::string::npos) {
+                const Bytes got = co_await stream.read(4096);
+
+                if (got.empty()) co_return;
+
+                request += tal::text::of(got);
+            }
+
+            const std::size_t head = request.find("\r\n\r\n") + 4;
+            const std::size_t at = request.find("Content-Length: ");
+            const std::size_t length = at == std::string::npos || at > head ? 0 : std::stoul(request.substr(at + 16));
+
+            while (request.size() < head + length) {
+                const Bytes got = co_await stream.read(4096);
+
+                if (got.empty()) co_return;
+
+                request += tal::text::of(got);
+            }
+
+            heard.push_back(request);
+            co_await stream.write(tal::bytes(script_(request)));
+            stream.close();
+        } catch (const tal::Trouble&) {
+        }
+    }
+
+    Script script_;
+    tal::net::Listener listener_;
+    tal::Scope scope_;
+};
+
+// SSDP that answers every question with `answers`, as they are.
+Fake::Script answering(std::vector<std::string> answers) {
+    return [answers](const Bytes&, const Address&) {
+        std::vector<Bytes> made;
+
+        for (const std::string& one : answers) made.push_back(tal::bytes(one));
+
+        return made;
+    };
+}
+
+// The address `url` with the host 127.0.0.1 named localhost.
+std::string named_local(std::string url) { return url.replace(url.find("127.0.0.1"), 9, "localhost"); }
+
+// An SSDP answer that points to `location`.
+Fake::Script pointing(std::vector<std::string> locations) {
+    return [locations](const Bytes&, const Address&) {
+        std::vector<Bytes> made;
+
+        for (const std::string& one : locations) made.push_back(tal::bytes("HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=120\r\nLocation: " + one + "\r\n\r\n"));
+
+        return made;
+    };
+}
+
+// A description with the services `services`, each a type and its control address, and `base` as
+// URLBase when it is not empty.
+std::string described(const std::vector<std::pair<std::string, std::string>>& services, const std::string& base = {}) {
+    std::string made = "<?xml version=\"1.0\"?><root xmlns=\"urn:schemas-upnp-org:device-1-0\">";
+
+    if (!base.empty()) made += "<URLBase>" + base + "</URLBase>";
+
+    made += "<device><deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType><deviceList><device><serviceList>";
+
+    for (const auto& [type, control] : services) made += "<service><serviceType> " + type + " </serviceType><controlURL>" + control + "</controlURL></service>";
+
+    return made + "</serviceList></device></deviceList></device></root>";
+}
+
+// A SOAP answer of `action` with `inside`.
+std::string soaped(const std::string& action, const std::string& inside = {}) {
+    return "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:" + action +
+           "Response xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">" + inside + "</u:" + action + "Response></s:Body></s:Envelope>";
+}
+
+// A UPnP refusal with `code` and `description`.
+std::string upnp_error(int code, const std::string& description) {
+    return answer(500, "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><s:Fault><detail><UPnPError "
+                       "xmlns=\"urn:schemas-upnp-org:control-1-0\"><errorCode>" +
+                           std::to_string(code) + "</errorCode><errorDescription>" + description + "</errorDescription></UPnPError></detail></s:Fault></s:Body></s:Envelope>");
+}
+
+// The routing of a router silent to PCP behind `silent`, whose SSDP is `ssdp`.
+tal::net::Routing upnp_routing(const Fake& silent, const Fake& ssdp) {
+    return tal::net::Routing{silent.mine(), Address::loopback(Family::four, 0), 300ms, ssdp.mine(), "twa \"<&>\"", 5000ms};
 }
 
 }
@@ -550,4 +699,190 @@ TRIAL("Router: the way toward an address and the default gateway, as the system 
     } catch (const tal::Trouble& why) {
         OUGHT(why.kind() == tal::Kind::missing || why.kind() == tal::Kind::unsupported);
     }
+}
+
+TRIAL("Router: UPnP after a silent PCP: SSDP finds the router's description, SOAP opens, asks the address, closes") {
+    tal::Loop loop;
+    Fake silent{loop, [](const Bytes&, const Address&) { return std::vector<Bytes>{}; }};
+    std::unique_ptr<Web> web;
+
+    web = std::make_unique<Web>(loop, [&web](const std::string& request) {
+        if (request.starts_with("GET /desc.xml "))
+            return answer(200, described({{"urn:schemas-upnp-org:service:WANPPPConnection:1", "/ppp"},
+                                          {"urn:schemas-upnp-org:service:WANIPConnection:1", "/ctl"},
+                                          {"urn:schemas-upnp-org:service:Layer3Forwarding:1", "/l3"}}));
+
+        if (request.find("#GetExternalIPAddress\"") != std::string::npos)
+            return answer(200, soaped("GetExternalIPAddress", "<m:NewExternalIPAddress xmlns:m=\"x\"> 198.51.100.9 </m:NewExternalIPAddress>"));
+
+        return answer(200, soaped("AddPortMapping"));
+    });
+
+    const auto serving = [](const std::string&) { return answer(200, described({{"urn:schemas-upnp-org:service:WANIPConnection:1", "/other"}})); };
+    Web decoy{loop, serving};
+    Web stranger{loop, serving};
+    const std::string ok = "HTTP/1.1 200 OK\r\n";
+    Fake ssdp{loop, answering({"HTTP/1.1 404 Not Found\r\nLocation: " + decoy.url("/desc.xml") + "\r\n\r\n",
+                               ok + "Location: " + decoy.url("/desc.xml") + "\r\nX-Padding: " + std::string(5000, 'x') + "\r\n\r\n",
+                               ok + "Location: " + named_local(stranger.url("/desc.xml")) + "\r\n\r\n", ok + "Location: https://127.0.0.1:1/secure.xml\r\n\r\n",
+                               ok + "Location\r\nSERVER: x\r\nLOCATION:  " + web->url("/desc.xml") + " \r\n\r\n"})};
+    const tal::net::Router router{upnp_routing(silent, ssdp)};
+    const tal::net::Opening opened = tal::wait(loop, router.open(tal::net::Carrier::tcp, 4000, 3600s));
+
+    OUGHT(opened.by == tal::net::Opener::upnp);
+    OUGHT(opened.carrier == tal::net::Carrier::tcp);
+    SAME(opened.inside, std::uint16_t{4000});
+    SAME(opened.outside.spelled(), std::string{"198.51.100.9:4000"});
+    SAME(opened.lasting, 3600s);
+    OUGHT(!silent.heard.empty());
+    SAME(ssdp.heard.size(), std::size_t{3});
+    SAME(tal::text::of(ssdp.heard[0]),
+         std::string{"M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n"});
+    SAME(web->heard.size(), std::size_t{3});
+    OUGHT(web->heard[1].starts_with("POST /ctl HTTP/1.1\r\n"));
+    OUGHT(web->heard[1].find("\r\nSOAPAction: \"urn:schemas-upnp-org:service:WANIPConnection:1#AddPortMapping\"\r\n") != std::string::npos);
+    SAME(argument(web->heard[1], "NewExternalPort"), std::string{"4000"});
+    SAME(argument(web->heard[1], "NewProtocol"), std::string{"TCP"});
+    SAME(argument(web->heard[1], "NewInternalPort"), std::string{"4000"});
+    SAME(argument(web->heard[1], "NewInternalClient"), std::string{"127.0.0.1"});
+    SAME(argument(web->heard[1], "NewPortMappingDescription"), std::string{"twa &quot;&lt;&amp;&gt;&quot;"});
+    SAME(argument(web->heard[1], "NewLeaseDuration"), std::string{"3600"});
+    SAME(argument(web->heard[1], "NewRemoteHost"), std::string{});
+    OUGHT(decoy.heard.empty());
+    OUGHT(stranger.heard.empty());
+
+    const std::size_t asked_before = silent.heard.size();
+    const tal::net::Opening again = tal::wait(loop, router.open(tal::net::Carrier::udp, 4001, 900000s));
+
+    OUGHT(again.by == tal::net::Opener::upnp);
+    SAME(again.lasting, 604800s);
+    SAME(silent.heard.size(), asked_before);
+    SAME(ssdp.heard.size(), std::size_t{3});
+    SAME(argument(web->heard[3], "NewProtocol"), std::string{"UDP"});
+    SAME(argument(web->heard[3], "NewLeaseDuration"), std::string{"604800"});
+
+    tal::wait(loop, router.close(opened));
+
+    OUGHT(web->heard.back().find("#DeletePortMapping\"") != std::string::npos);
+    SAME(argument(web->heard.back(), "NewExternalPort"), std::string{"4000"});
+    SAME(argument(web->heard.back(), "NewProtocol"), std::string{"TCP"});
+
+    tal::wait(loop, router.close(again));
+
+    SAME(argument(web->heard.back(), "NewProtocol"), std::string{"UDP"});
+
+    const tal::net::Router another{upnp_routing(silent, ssdp)};
+
+    SAME(kind_of(loop, another.close(opened)), named(tal::Kind::missing));
+}
+
+TRIAL("Router: UPnP: only lasting mappings, a taken port, refusals by their kind, URLBase, and no service at all") {
+    tal::Loop loop;
+    Fake silent{loop, [](const Bytes&, const Address&) { return std::vector<Bytes>{}; }};
+    std::vector<std::string> replies;
+    std::unique_ptr<Web> web;
+
+    web = std::make_unique<Web>(loop, [&replies](const std::string& request) {
+        if (request.starts_with("GET ")) return answer(200, described({{"urn:schemas-upnp-org:service:WANIPConnection:1", "https://127.0.0.1/x"},
+                                                                       {"urn:schemas-upnp-org:service:WANPPPConnection:1", "ctl"}},
+                                                                      "http://127.0.0.1:" + request.substr(request.find("Host: 127.0.0.1:") + 16, 5) + "/base/"));
+
+        if (replies.empty()) return answer(200, soaped("AddPortMapping"));
+
+        std::string one = replies.front();
+
+        replies.erase(replies.begin());
+
+        return one;
+    });
+
+    Fake ssdp{loop, pointing({web->url("/desc.xml")})};
+
+    {
+        const tal::net::Router router{upnp_routing(silent, ssdp)};
+
+        replies = {upnp_error(725, "OnlyPermanentLeasesSupported"), answer(200, soaped("AddPortMapping")), answer(404)};
+
+        const tal::net::Opening one = tal::wait(loop, router.open(tal::net::Carrier::tcp, 4000, 60s));
+
+        SAME(one.lasting, 0s);
+        SAME(one.outside.spelled(), std::string{"0.0.0.0:4000"});
+        OUGHT(web->heard[1].starts_with("POST /base/ctl HTTP/1.1\r\n"));
+        OUGHT(web->heard[1].find("WANPPPConnection:1#AddPortMapping") != std::string::npos);
+        SAME(argument(web->heard[1], "NewLeaseDuration"), std::string{"60"});
+        SAME(argument(web->heard[2], "NewLeaseDuration"), std::string{"0"});
+
+        replies = {upnp_error(718, "ConflictInMappingEntry"), upnp_error(718, "ConflictInMappingEntry")};
+
+        const tal::net::Opening two = tal::wait(loop, router.open(tal::net::Carrier::tcp, 4000, 60s));
+        const std::size_t last = web->heard.size() - 2;
+
+        SAME(argument(web->heard[last - 2], "NewExternalPort"), std::string{"4000"});
+        OUGHT(argument(web->heard[last - 1], "NewExternalPort") != "4000");
+        OUGHT(argument(web->heard[last], "NewExternalPort") != argument(web->heard[last - 1], "NewExternalPort"));
+        SAME(std::to_string(two.outside.port()), argument(web->heard[last], "NewExternalPort"));
+        OUGHT(two.outside.port() >= 1024);
+        SAME(two.inside, std::uint16_t{4000});
+
+        tal::wait(loop, router.close(two));
+
+        OUGHT(web->heard.back().find("#DeletePortMapping\"") != std::string::npos);
+        SAME(argument(web->heard.back(), "NewExternalPort"), std::to_string(two.outside.port()));
+
+        replies = {upnp_error(725, "OnlyPermanentLeasesSupported"), upnp_error(725, "OnlyPermanentLeasesSupported")};
+
+        const std::size_t before = web->heard.size();
+
+        try {
+            (void)tal::wait(loop, router.open(tal::net::Carrier::tcp, 4000, 60s));
+            OUGHT(false);
+        } catch (const tal::Trouble& why) {
+            SAME(why.code(), 725);
+        }
+
+        SAME(web->heard.size(), before + 2);
+
+        replies = {upnp_error(606, "Action not authorized")};
+
+        SAME(kind_of(loop, router.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::denied));
+
+        replies = {upnp_error(501, "ActionFailed")};
+
+        try {
+            (void)tal::wait(loop, router.open(tal::net::Carrier::tcp, 4000, 60s));
+            OUGHT(false);
+        } catch (const tal::Trouble& why) {
+            SAME(named(why.kind()), named(tal::Kind::refused));
+            SAME(why.code(), 501);
+            SAME(std::string{why.what()}, std::string{"The router refused the port (UPnP: ActionFailed)."});
+        }
+
+        replies = {answer(403)};
+
+        SAME(kind_of(loop, router.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::refused));
+
+        replies = {answer(500, "<a>")};
+
+        SAME(kind_of(loop, router.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::malformed));
+    }
+
+    Web bare{loop, [](const std::string&) { return answer(200, described({{"urn:schemas-upnp-org:service:Layer3Forwarding:1", "/l3"}})); }};
+    Fake pointing_bare{loop, pointing({named_local(bare.url("/desc.xml"))})};
+    const auto started = std::chrono::steady_clock::now();
+
+    SAME(kind_of(loop, tal::net::Router{upnp_routing(silent, pointing_bare)}.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::unsupported));
+    SAME(bare.heard.size(), std::size_t{1});
+    OUGHT(std::chrono::steady_clock::now() - started < 3500ms);
+
+    Web missing{loop, [](const std::string&) { return answer(404, described({{"urn:schemas-upnp-org:service:WANIPConnection:1", "/ctl"}})); }};
+    Fake pointing_missing{loop, pointing({missing.url("/desc.xml")})};
+
+    SAME(kind_of(loop, tal::net::Router{upnp_routing(silent, pointing_missing)}.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::unsupported));
+    SAME(missing.heard.size(), std::size_t{1});
+
+    Web broken{loop, [](const std::string&) { return answer(200, "<root><service>"); }};
+    Fake pointing_broken{loop, pointing({broken.url("/desc.xml"), "https://127.0.0.1:1/secure.xml", "not a url"})};
+
+    SAME(kind_of(loop, tal::net::Router{upnp_routing(silent, pointing_broken)}.open(tal::net::Carrier::tcp, 4000, 60s)), named(tal::Kind::unsupported));
+    SAME(broken.heard.size(), std::size_t{1});
 }

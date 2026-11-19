@@ -1,5 +1,5 @@
-# The fuzz targets of the JSON reader, of a program's texts and settings, of the diff, of the
-# emulator of a terminal and of the answers of the HTTP client. Run one with the dictionary and a
+# The fuzz targets of the JSON and XML readers, of a program's texts and settings, of the diff, of
+# the emulator of a terminal and of the answers of the HTTP client. Run one with the dictionary and a
 # directory for the corpus, for example:
 #
 #   ./tal-json-fuzz -dict=json.dict -max_len=4096 corpus/
@@ -10,6 +10,14 @@ target_link_libraries(tal-json-fuzz PRIVATE tal-core)
 target_link_options(tal-json-fuzz PRIVATE -fsanitize=fuzzer)
 
 configure_file(json.dict json.dict COPYONLY)
+
+add_executable(tal-xml-fuzz xml.cpp)
+
+target_link_libraries(tal-xml-fuzz PRIVATE tal-core)
+
+target_link_options(tal-xml-fuzz PRIVATE -fsanitize=fuzzer)
+
+configure_file(xml.dict xml.dict COPYONLY)
 
 add_executable(tal-texts-fuzz texts.cpp ../tools/generating.cpp)
 

@@ -15,6 +15,7 @@
 #include "tal/bytes.hpp"
 #include "tal/executor.hpp"
 #include "tal/net.hpp"
+#include "tal/process.hpp"
 #include "tal/stream.hpp"
 #include "tal/task.hpp"
 #include "tal/trouble.hpp"
@@ -975,3 +976,27 @@ TRIAL("Reactor: a socket the system says is over, whose step cannot go on, fails
     SAME(code, EPIPE);
 }
 #endif
+
+TRIAL("Reactor: a program starts while the reactor waits for a socket, which libkqueue's fork handler once held up") {
+    tal::Loop loop;
+    const Listener listener = tal::wait(loop, Listener::opened(Address::loopback(Family::four, 0)));
+    tal::Command what;
+
+    what.program = tal::testing::mine();
+    what.arguments = {"--pretending", "code", "7"};
+
+    const auto ran = [](tal::Command one, Address to) -> tal::Task<int> {
+        const tal::Output out = co_await tal::Process::run(std::move(one));
+        const Connection near = co_await tal::net::connect(to);
+
+        (void)near;
+
+        co_return out.exit.code;
+    };
+
+    auto [far, code] = tal::wait(loop, tal::within(20s, tal::all(listener.accepted(), ran(std::move(what), listener.mine()))));
+
+    (void)far;
+
+    SAME(code, 7);
+}

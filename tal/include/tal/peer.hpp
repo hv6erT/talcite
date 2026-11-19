@@ -74,7 +74,7 @@ private:
 
 enum class Carrier { tcp, udp };
 
-enum class Opener { pcp, pmp };
+enum class Opener { pcp, pmp, upnp };
 
 struct Opening {
     Opener by = Opener::pcp;
@@ -88,6 +88,9 @@ struct Routing {
     Address gateway;
     Address mine;
     std::chrono::milliseconds turn{1750};
+    Address discovery{"239.255.255.250", 1900};
+    std::string label = "tal";
+    std::chrono::milliseconds patience{10000};
 };
 
 class Router {

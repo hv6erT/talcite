@@ -228,7 +228,11 @@ void untuned(Reactor& held, Handle one) {
     held.changes.push_back(Reactor::Change{one, false, false});
 }
 
-// Opens the queue with the wake-up in it, sealed from child programs.
+// Opens the queue with the wake-up in it, sealed from child programs. libkqueue (kqueue on Linux)
+// cleans its queues up in a child after fork, and to do it its fork handler takes the lock of
+// every queue, which `kevent` holds while it waits: a program started while the reactor waits
+// would wait with it, for good. A child of ours runs another program at once and uses no queue, so
+// the clean-up is turned off.
 void founded(Reactor& held) {
     held.rings = ::kqueue();
 
@@ -239,6 +243,14 @@ void founded(Reactor& held) {
     EV_SET(&wanted, held.waking.heard(), EVFILT_READ, EV_ADD, 0, 0, nullptr);
 
     (void)::kevent(held.rings, &wanted, 1, nullptr, 0, nullptr);
+
+#ifdef EVFILT_LIBKQUEUE
+    struct kevent unclean;
+
+    EV_SET(&unclean, 0, EVFILT_LIBKQUEUE, EV_ADD, NOTE_FORK_CLEANUP, 0, nullptr);
+
+    (void)::kevent(held.rings, &unclean, 1, nullptr, 0, nullptr);
+#endif
 }
 
 // Makes the changes that wait, one a call, since libkqueue refuses two without room for their
