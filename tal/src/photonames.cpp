@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -556,6 +557,32 @@ std::string_view space_prefix(std::string_view uri) {
     const auto at = std::ranges::lower_bound(spaces, uri, {}, &Spaced::uri);
 
     return at != spaces.end() && at->uri == uri ? at->prefix : std::string_view{};
+}
+
+// The number of the tag exiv2 names `name` in the directory `group`, or none.
+std::optional<std::uint16_t> tag_number(std::string_view group, std::string_view name) {
+    const std::span<const Named> table = group == "Photo" ? std::span<const Named>{photo_tags} : group == "GPSInfo" ? std::span<const Named>{gps_tags}
+                                         : group == "Iop"   ? std::span<const Named>{iop_tags}
+                                                            : std::span<const Named>{image_tags};
+    const auto at = std::ranges::find(table, name, &Named::name);
+
+    return at == table.end() ? std::nullopt : std::optional<std::uint16_t>{at->number};
+}
+
+// The number of the dataset exiv2 names `name` in IPTC record `record` (1 or 2), or none.
+std::optional<std::uint8_t> dataset_number(std::uint8_t record, std::string_view name) {
+    const std::span<const Named> table = record == 1 ? std::span<const Named>{envelope_sets} : std::span<const Named>{application_sets};
+    const auto at = std::ranges::find(table, name, &Named::name);
+
+    return at == table.end() ? std::nullopt : std::optional<std::uint8_t>{static_cast<std::uint8_t>(at->number)};
+}
+
+// The namespace of XMP to which exiv2 gives the prefix `prefix`, or nothing for one it does not
+// know.
+std::string_view space_uri(std::string_view prefix) {
+    const auto at = std::ranges::find(spaces, prefix, &Spaced::prefix);
+
+    return at == spaces.end() ? std::string_view{} : at->uri;
 }
 
 }

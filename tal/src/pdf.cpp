@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -87,6 +88,9 @@ constexpr std::size_t first_window = 4096;
 
 // How many objects one file may make us read.
 constexpr std::size_t most_resolved = std::size_t{1} << 18;
+
+// The steps of work of every file read so far (`pdf_looks`), each file's added once it is done.
+std::atomic<std::uint64_t> looks_made{0};
 
 // How many cross-reference sections we follow through `/Prev`.
 constexpr std::size_t most_sections = 512;
@@ -352,6 +356,12 @@ public:
         : from_(from), size_(size), out_(out),
           budget_(size > (unbounded - read_extra) / read_times ? unbounded : size * read_times + read_extra) {}
 
+    // Adds the steps this file took to those of every file (`pdf_looks`).
+    ~File() { looks_made.fetch_add(looks_, std::memory_order_relaxed); }
+
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+
     [[nodiscard]] Task<void> read();
 
 private:
@@ -445,6 +455,7 @@ private:
     std::set<std::uint32_t> fonts_;
     std::set<const Array*> annotated_;
     std::size_t spent_ = 0;
+    std::uint64_t looks_ = 0;
     bool rebuilt_ = false;
     bool settled_ = false;
     const Object none_{Null{}};
@@ -635,6 +646,8 @@ Task<std::optional<Section>> File::tabled(std::uint64_t at) {
             }
 
             for (std::int64_t one = 0; one < *count && !broken; ++one) {
+                ++looks_;
+
                 const std::optional<std::int64_t> offset = syntax.integer();
                 const std::optional<std::int64_t> generation = offset ? syntax.integer() : std::nullopt;
 
@@ -705,6 +718,8 @@ Task<std::optional<Section>> File::streamed(std::uint64_t at) {
         if (pairs == nullptr) co_return std::nullopt;
 
         for (std::size_t one = 0; one + 1 < pairs->size(); one += 2) {
+            ++looks_;
+
             const std::optional<std::int64_t> start = pdf::integer_of((*pairs)[one]);
             const std::optional<std::int64_t> count = pdf::integer_of((*pairs)[one + 1]);
 
@@ -761,6 +776,8 @@ Task<std::optional<Section>> File::streamed(std::uint64_t at) {
         bool short_of = false;
 
         for (std::int64_t one = 0; one < count; ++one) {
+            ++looks_;
+
             if (used + entry > data->size()) {
                 short_of = true;
 
@@ -798,10 +815,18 @@ void File::placed(const std::vector<std::pair<std::uint32_t, Place>>& entries) {
 
 // Takes the keys of an older trailer that the newer ones did not have, of `trailer_keys` only: a
 // trailer of a quarter of a million keys, merged key by key into one that keeps them all, would
-// make tens of billions of comparisons.
+// make tens of billions of comparisons. Each key is a step, and so is each comparison with a key
+// kept.
 void File::merged(const Dict& older) {
-    for (const Entry& one : older.entries)
-        if (std::ranges::find(trailer_keys, one.key) != trailer_keys.end() && trailer_.find(one.key) == nullptr) trailer_.entries.push_back(one);
+    for (const Entry& one : older.entries) {
+        ++looks_;
+
+        if (std::ranges::find(trailer_keys, one.key) == trailer_keys.end()) continue;
+
+        looks_ += trailer_.entries.size();
+
+        if (trailer_.find(one.key) == nullptr) trailer_.entries.push_back(one);
+    }
 }
 
 // Scans the whole file for objects and trailers, the way readers repair a file whose
@@ -941,6 +966,8 @@ void File::scanned(const Bytes& text, std::uint64_t at, std::size_t to, Scan& in
     const std::size_t from = at == 0 ? 0 : scan_overlap / 2;
 
     for (std::optional<std::size_t> word = found(text, "trailer", from); word && *word < to; word = found(text, "trailer", *word + 1)) {
+        ++looks_;
+
         if (regular(byte_at(text, *word + 7)) || (*word > 0 && regular(byte_at(text, *word - 1)))) continue;
 
         into.trailers.insert(at + *word + 7);
@@ -949,6 +976,8 @@ void File::scanned(const Bytes& text, std::uint64_t at, std::size_t to, Scan& in
     }
 
     for (std::optional<std::size_t> word = found(text, "obj", from); word && *word < to; word = found(text, "obj", *word + 1)) {
+        ++looks_;
+
         if (regular(byte_at(text, *word + 3))) continue;
 
         const std::size_t floor = *word - std::min(*word, scan_overlap / 2);
@@ -1108,6 +1137,7 @@ Task<const Object*> File::numbered(std::uint32_t number) {
     if (resolving_.contains(number) || spent_ >= most_resolved) co_return &none_;
 
     ++spent_;
+    ++looks_;
     resolving_.insert(number);
 
     Loaded made = co_await loaded(number);
@@ -1410,6 +1440,8 @@ Task<void> File::paged(const Object& root) {
     std::set<const Array*> walked;
 
     while (!steps.empty() && document_.pages < most_pages) {
+        ++looks_;
+
         const Step step = steps.back();
 
         steps.pop_back();
@@ -1468,6 +1500,8 @@ Task<void> File::paged(const Object& root) {
         }
 
         for (auto kid = list->rbegin(); kid != list->rend(); ++kid) {
+            ++looks_;
+
             const std::optional<Ref> child = pdf::ref_of(*kid);
 
             if (child && visited.contains(child->number)) out_.damaged();
@@ -1516,6 +1550,8 @@ Task<void> File::page(const Dict& leaf, const Inherited& from) {
     if (annotations == nullptr || !annotated_.insert(annotations).second) co_return;
 
     for (std::size_t at = 0; at < std::min(annotations->size(), most_annotations); ++at) {
+        ++looks_;
+
         const Object* one = co_await resolved(&(*annotations)[at]);
         const Dict* annotation = pdf::dict_of(*one);
 
@@ -1556,7 +1592,11 @@ Task<bool> File::lettered(const Object* resources, std::size_t depth) {
     bool made = fonts != nullptr && !fonts->entries.empty();
 
     if (fonts != nullptr && named_.insert(fonts).second)
-        for (const Entry& one : fonts->entries) co_await font(one.value);
+        for (const Entry& one : fonts->entries) {
+            ++looks_;
+
+            co_await font(one.value);
+        }
 
     if (depth < form_depth) {
         const Object* listed = co_await resolved(dict->find("XObject"));
@@ -1581,6 +1621,8 @@ Task<bool> File::drew(const Dict* objects, std::size_t depth) {
     bool made = false;
 
     for (const Entry& one : objects->entries) {
+        ++looks_;
+
         const bool lettering = co_await formed(one.value, depth);
 
         if (lettering) made = true;
@@ -1679,6 +1721,8 @@ Task<void> File::bookmarked(const Dict& catalog) {
     if (const Object* first = outlines->find("First")) items.push_back(first);
 
     while (!items.empty() && document_.bookmarks < most_pages) {
+        ++looks_;
+
         const Object* item = items.back();
 
         items.pop_back();
@@ -1712,6 +1756,8 @@ Task<void> File::informed() {
     if (info == nullptr) co_return;
 
     for (const Entry& one : info->entries) {
+        ++looks_;
+
         const Object* value = co_await resolved(&one.value);
 
         if (const std::string* text = pdf::string_of(*value)) out_.field(Scheme::pdf, cleaned(one.key), pdf::text_of(*text));
@@ -1804,6 +1850,12 @@ Task<void> File::read() {
 }
 
 }
+
+// The steps of work every PDF read so far took: an object read, an entry of a table, a dictionary
+// or an array gone through, a word found in a scan, a node of a tree. It grows by each file's
+// steps once the file is done, and tells the trials that a file built to multiply the work does
+// not.
+std::uint64_t pdf_looks() { return looks_made.load(std::memory_order_relaxed); }
 
 // Whether the file of `size` bytes is PDF: "%PDF-" among its first bytes, where readers look for
 // it.

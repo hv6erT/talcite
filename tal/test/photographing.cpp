@@ -1,13 +1,20 @@
+#include <algorithm>
 #include <cmath>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "tal/bytes.hpp"
+#include "tal/crypto.hpp"
+#include "tal/fs.hpp"
+#include "tal/path.hpp"
+#include "tal/port.hpp"
 #include "tal/executor.hpp"
 #include "tal/meta.hpp"
 #include "tal/task.hpp"
@@ -712,13 +719,26 @@ struct Directory {
            "</rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end=\"w\"?>";
 }
 
-// A chunk of PNG: the length, the type, the data and a check that the reader does not look at.
+// The CRC-32 of bytes, as PNG checks its chunks, computed here bit by bit.
+[[nodiscard]] std::uint32_t checked(std::span<const std::byte> given) {
+    std::uint32_t made = 0xFFFFFFFF;
+
+    for (const std::byte one : given) {
+        made ^= std::to_integer<std::uint32_t>(one);
+
+        for (int bit = 0; bit < 8; ++bit) made = (made >> 1) ^ (0xEDB88320u & (0u - (made & 1u)));
+    }
+
+    return ~made;
+}
+
+// A chunk of PNG: the length, the type, the data and its check.
 [[nodiscard]] Bytes chunk(std::string_view type, const Bytes& data) {
     Bytes made = big(data.size(), 4);
 
     append(made, bytes_of(type));
     append(made, data);
-    append(made, big(0, 4));
+    append(made, big(checked(std::span<const std::byte>{made}.subspan(4)), 4));
 
     return made;
 }
@@ -793,6 +813,207 @@ struct Directory {
     made.push_back(std::byte{0});
 
     return made;
+}
+
+// The payload of the first APP1 segment of a JPEG that starts with the mark, or nothing.
+[[nodiscard]] std::optional<Bytes> app1_of(const Bytes& file, std::string_view mark) {
+    std::size_t at = 2;
+
+    while (at + 4 <= file.size() && std::to_integer<int>(file[at]) == 0xFF) {
+        const int marker = std::to_integer<int>(file[at + 1]);
+        const std::size_t length = (std::to_integer<std::size_t>(file[at + 2]) << 8) | std::to_integer<std::size_t>(file[at + 3]);
+
+        if (marker == 0xDA) break;
+
+        const Bytes payload(file.begin() + static_cast<std::ptrdiff_t>(at + 4), file.begin() + static_cast<std::ptrdiff_t>(at + 2 + length));
+
+        if (marker == 0xE1 && payload.size() >= mark.size() && std::equal(mark.begin(), mark.end(), payload.begin(), [](char one, std::byte other) { return static_cast<std::byte>(one) == other; }))
+            return Bytes(payload.begin() + static_cast<std::ptrdiff_t>(mark.size()), payload.end());
+
+        at += 2 + length;
+    }
+
+    return std::nullopt;
+}
+
+// Where the scan of a JPEG starts: its SOS segment, found by the lengths of the segments before.
+[[nodiscard]] std::size_t scan_of(const Bytes& file) {
+    std::size_t at = 2;
+
+    while (at + 4 <= file.size() && std::to_integer<int>(file[at + 1]) != 0xDA)
+        at += 2 + ((std::to_integer<std::size_t>(file[at + 2]) << 8) | std::to_integer<std::size_t>(file[at + 3]));
+
+    return at;
+}
+
+// The markers of the segments of a JPEG before its scan, in order.
+[[nodiscard]] std::vector<int> markers_of(const Bytes& file) {
+    std::vector<int> made;
+    std::size_t at = 2;
+
+    while (at + 4 <= file.size()) {
+        const int marker = std::to_integer<int>(file[at + 1]);
+
+        made.push_back(marker);
+
+        if (marker == 0xDA) break;
+
+        at += 2 + ((std::to_integer<std::size_t>(file[at + 2]) << 8) | std::to_integer<std::size_t>(file[at + 3]));
+    }
+
+    return made;
+}
+
+// A WebP of the chunks given, each padded to an even length unless `padded` is false for the last.
+[[nodiscard]] Bytes webped(const std::vector<std::pair<std::string_view, Bytes>>& chunks, bool padded = true) {
+    Bytes body = bytes_of("WEBP");
+
+    for (std::size_t index = 0; index < chunks.size(); ++index) {
+        const auto& [type, data] = chunks[index];
+
+        append(body, bytes_of(type));
+        append(body, little(data.size(), 4));
+        append(body, data);
+
+        if (data.size() % 2 != 0 && (padded || index + 1 < chunks.size())) body.push_back(std::byte{0});
+    }
+
+    Bytes made = bytes_of("RIFF");
+
+    append(made, little(body.size(), 4));
+    append(made, body);
+
+    return made;
+}
+
+// The types of the chunks of a WebP walked as RIFF orders them, each padded to an even length;
+// stops at a chunk that does not fit.
+[[nodiscard]] std::vector<std::string> chunks_of(const Bytes& webp) {
+    std::vector<std::string> made;
+
+    for (std::size_t at = 12; at + 8 <= webp.size();) {
+        const std::size_t length = std::to_integer<std::size_t>(webp[at + 4]) | (std::to_integer<std::size_t>(webp[at + 5]) << 8) |
+                                   (std::to_integer<std::size_t>(webp[at + 6]) << 16) | (std::to_integer<std::size_t>(webp[at + 7]) << 24);
+
+        if (length > webp.size() - at - 8) break;
+
+        made.emplace_back(reinterpret_cast<const char*>(webp.data() + at), 4);
+        at += 8 + length + (length % 2);
+    }
+
+    return made;
+}
+
+// Photoshop's resources: each one's signature, number, empty name, size and data, padded.
+[[nodiscard]] Bytes resourced(const std::vector<std::pair<std::uint16_t, Bytes>>& resources) {
+    Bytes made;
+
+    for (const auto& [number, data] : resources) {
+        append(made, bytes_of("8BIM"));
+        append(made, big(number, 2));
+        append(made, lump("0000"));
+        append(made, big(data.size(), 4));
+        append(made, data);
+
+        if (data.size() % 2 != 0) made.push_back(std::byte{0});
+    }
+
+    return made;
+}
+
+// Files in memory that change the file being written as soon as the new file is opened beside
+// it, as another program might.
+class Meddling final : public tal::fs::Memory {
+public:
+    // Opens as memory does; opening a file only to create it first adds a byte to the photo.
+    tal::Task<tal::fs::File> open(const tal::Path& file, tal::fs::Mode how) override {
+        if (how == tal::fs::Mode::exclusive) {
+            Bytes grown = co_await read(tal::Path{"/photos/photo"});
+
+            grown.push_back(std::byte{0});
+            co_await write(tal::Path{"/photos/photo"}, std::move(grown));
+        }
+
+        co_return co_await Memory::open(file, how);
+    }
+};
+
+// The program's files in memory while it lives.
+struct Remembering {
+    // Puts files in memory in place.
+    explicit Remembering(std::shared_ptr<tal::fs::Files> files = std::make_shared<tal::fs::Memory>()) { tal::defaults().set<tal::fs::Files>(std::move(files)); }
+
+    // Gives the disk back.
+    ~Remembering() { tal::defaults().clear<tal::fs::Files>(); }
+
+    Remembering(const Remembering&) = delete;
+    Remembering& operator=(const Remembering&) = delete;
+};
+
+// What writing gave: the file after it, the trouble it threw as its kind and message (empty when
+// none), and the names in the folder after it.
+struct Wrote {
+    Bytes file;
+    std::string said;
+    std::size_t names = 0;
+};
+
+// Writes the edit and the changes into a file of the given bytes on a disk in memory, through
+// `meta::written`, as twa does.
+[[nodiscard]] Wrote writing(const Bytes& given, const meta::Edit& edit, const std::vector<meta::Change>& changes = {},
+                            std::shared_ptr<tal::fs::Files> files = std::make_shared<tal::fs::Memory>()) {
+    const Remembering memory{std::move(files)};
+    tal::Loop loop;
+    const tal::Path folder{"/photos"};
+    const tal::Path file = folder / "photo";
+    Wrote made;
+
+    tal::wait(loop, tal::fs::make(folder));
+    tal::wait(loop, tal::fs::write(file, given));
+
+    try {
+        tal::wait(loop, meta::written(file, edit, changes));
+    } catch (const tal::Trouble& why) {
+        made.said = std::string{tal::spoken(why.kind())} + ": " + why.what();
+    }
+
+    made.file = tal::wait(loop, tal::fs::read(file));
+    made.names = tal::wait(loop, tal::fs::list(folder)).size();
+
+    return made;
+}
+
+// The values of the fields of a key, in order.
+[[nodiscard]] std::vector<meta::Value> values_of(const meta::Description& one, std::string_view key) {
+    std::vector<meta::Value> made;
+
+    for (const meta::Field& field : one.fields)
+        if (field.key == key) made.push_back(field.value);
+
+    return made;
+}
+
+// Whether every chunk of a PNG carries the right check.
+[[nodiscard]] bool checks_hold(const Bytes& png) {
+    std::size_t at = 8;
+
+    while (at + 12 <= png.size()) {
+        std::size_t length = 0;
+
+        for (std::size_t one = 0; one < 4; ++one) length = (length << 8) | std::to_integer<std::size_t>(png[at + one]);
+
+        if (at + 12 + length > png.size()) return false;
+
+        std::uint32_t check = 0;
+
+        for (std::size_t one = 0; one < 4; ++one) check = (check << 8) | std::to_integer<std::uint32_t>(png[at + 8 + length + one]);
+
+        if (check != checked(std::span<const std::byte>{png}.subspan(at + 4, length + 4))) return false;
+
+        at += 12 + length;
+    }
+
+    return at == png.size();
 }
 
 }
@@ -1654,4 +1875,708 @@ TRIAL("Photo: EXIF before XMP before IPTC") {
     OUGHT(near(without.place.value_or(meta::Place{}).latitude, 30));
 
     SAME(photo_of(described(jpegged({app13}))).taken, std::string{"2022-03-03"});
+}
+
+// An edit of every field of a JPEG from exiftool that has EXIF, IPTC and XMP: each goes to all
+// three as the Metadata Working Group pairs them; the photo read back says what was written; the
+// thumbnail and everything from the scan on stay byte for byte; the IPTC is UTF-8 and says so.
+TRIAL("Photo writing: an edit of a JPEG goes to EXIF, XMP and IPTC; the rest stays") {
+    const Bytes file = lump(full_jpg);
+    meta::Edit edit;
+
+    edit.orientation = 3;
+    edit.taken = "2025-06-07T08:09:10+02:00";
+    edit.description = "Opis żółwia";
+    edit.keywords = std::vector<std::string>{"a", "b"};
+    edit.rating = 5;
+    edit.creator = "Hubert";
+    edit.copyright = "CC0";
+
+    const Wrote wrote = writing(file, edit);
+
+    SAME(wrote.said, std::string{});
+    SAME(wrote.names, std::size_t{1});
+
+    const meta::Description made = described(wrote.file);
+    const meta::Photo photo = photo_of(made);
+
+    OUGHT(!made.damaged);
+    SAME(static_cast<int>(photo.orientation), 3);
+    SAME(photo.taken, std::string{"2025-06-07T08:09:10+02:00"});
+    SAME(photo.make, std::string{"Canon"});
+    OUGHT(values_of(made, "Exif.Image.Orientation") == std::vector<meta::Value>{std::int64_t{3}});
+    OUGHT(values_of(made, "Exif.Photo.DateTimeOriginal") == std::vector<meta::Value>{std::string{"2025:06:07 08:09:10"}});
+    OUGHT(values_of(made, "Exif.Photo.OffsetTimeOriginal") == std::vector<meta::Value>{std::string{"+02:00"}});
+    OUGHT(values_of(made, "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Opis żółwia"}});
+    OUGHT(values_of(made, "Exif.Image.Artist") == std::vector<meta::Value>{std::string{"Hubert"}});
+    OUGHT(values_of(made, "Exif.Image.Copyright") == std::vector<meta::Value>{std::string{"CC0"}});
+    OUGHT(values_of(made, "Xmp.tiff.Orientation") == std::vector<meta::Value>{std::string{"3"}});
+    OUGHT(values_of(made, "Xmp.photoshop.DateCreated") == std::vector<meta::Value>{std::string{"2025-06-07T08:09:10+02:00"}});
+    OUGHT(values_of(made, "Xmp.dc.description") == std::vector<meta::Value>{std::string{"Opis żółwia"}});
+    OUGHT(values_of(made, "Xmp.dc.subject") == (std::vector<meta::Value>{std::string{"a"}, std::string{"b"}}));
+    OUGHT(values_of(made, "Xmp.xmp.Rating") == std::vector<meta::Value>{std::string{"5"}});
+    OUGHT(values_of(made, "Xmp.dc.creator") == std::vector<meta::Value>{std::string{"Hubert"}});
+    OUGHT(values_of(made, "Xmp.dc.rights") == std::vector<meta::Value>{std::string{"CC0"}});
+    OUGHT(values_of(made, "Xmp.dc.title") == std::vector<meta::Value>{std::string{"Zażółć gęślą jaźń"}});
+    OUGHT(values_of(made, "Iptc.Envelope.CharacterSet") == std::vector<meta::Value>{std::string{"\x1B%G"}});
+    OUGHT(values_of(made, "Iptc.Application2.Caption") == std::vector<meta::Value>{std::string{"Opis żółwia"}});
+    OUGHT(values_of(made, "Iptc.Application2.Keywords") == (std::vector<meta::Value>{std::string{"a"}, std::string{"b"}}));
+    OUGHT(values_of(made, "Iptc.Application2.DateCreated") == std::vector<meta::Value>{std::string{"20250607"}});
+    OUGHT(values_of(made, "Iptc.Application2.TimeCreated") == std::vector<meta::Value>{std::string{"080910+0200"}});
+    OUGHT(values_of(made, "Iptc.Application2.Byline") == std::vector<meta::Value>{std::string{"Hubert"}});
+    OUGHT(values_of(made, "Iptc.Application2.Copyright") == std::vector<meta::Value>{std::string{"CC0"}});
+    OUGHT(picture_of(wrote.file, 0) == lump(thumb_jpg));
+    SAME(markers_of(wrote.file), markers_of(file));
+
+    const std::size_t scan = scan_of(file);
+    const std::size_t new_scan = scan_of(wrote.file);
+
+    SAME(wrote.file.size() - new_scan, file.size() - scan);
+
+    OUGHT(std::equal(file.begin() + static_cast<std::ptrdiff_t>(scan), file.end(), wrote.file.begin() + static_cast<std::ptrdiff_t>(new_scan)));
+}
+
+// EXIF that grows is added to: a longer description goes after the end, and IFD0, which gets a
+// pointer to a new GPS directory with its version, too; the EXIF directory, which loses a field,
+// is written where it stood, the room of the entry it lost cleared. The maker's note stands where
+// it stood, untouched.
+TRIAL("Photo writing: EXIF — the maker's note where it was, a new GPS directory, a field removed") {
+    const Bytes note = lump("4e696b6f6e0002100000000000000000ffeeddccbbaa99887766554433221100");
+    const Bytes tiff = tiffed({{{ascii(0x010e, "Stary opis"), ascii(0x010f, "Nikon"), pointer(0x8769, {1})}, std::nullopt},
+                               {{{0x927c, 7, static_cast<std::uint32_t>(note.size()), note, {}}, ascii(0x9003, "2020:01:01 00:00:00")}, std::nullopt}});
+    const Bytes file = jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, tiff))});
+    const Wrote wrote = writing(file, {}, {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"Nowy, dłuższy opis"}}},
+                                            {Scheme::exif, "Exif.GPSInfo.GPSLatitudeRef", {std::string{"N"}}},
+                                            {Scheme::exif, "Exif.GPSInfo.GPSLatitude", {std::string{"54/1 21/1 36/5"}}},
+                                            {Scheme::exif, "Exif.Photo.DateTimeOriginal", {}}});
+
+    SAME(wrote.said, std::string{});
+
+    const std::optional<Bytes> rewritten = app1_of(wrote.file, std::string_view{"Exif\0\0", 6});
+
+    OUGHT(rewritten.has_value());
+
+    const Bytes after = rewritten.value_or(Bytes{});
+
+    const auto note_at = std::search(tiff.begin(), tiff.end(), note.begin(), note.end()) - tiff.begin();
+
+    OUGHT(after.size() > tiff.size());
+    OUGHT(std::equal(tiff.begin(), tiff.begin() + 4, after.begin()));
+    OUGHT(std::equal(note.begin(), note.end(), after.begin() + note_at));
+    OUGHT(after.size() >= 80 && std::to_integer<int>(after[50]) == 1 && std::to_integer<int>(after[51]) == 0);
+    OUGHT(after.size() >= 80 && std::all_of(after.begin() + 68, after.begin() + 80, [](std::byte one) { return one == std::byte{0}; }));
+
+    const meta::Description made = described(wrote.file);
+
+    OUGHT(!made.damaged);
+    OUGHT(values_of(made, "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Nowy, dłuższy opis"}});
+    OUGHT(values_of(made, "Exif.Image.Make") == std::vector<meta::Value>{std::string{"Nikon"}});
+    OUGHT(values_of(made, "Exif.GPSInfo.GPSVersionID") == std::vector<meta::Value>{std::string{"2 3 0 0"}});
+    OUGHT(values_of(made, "Exif.GPSInfo.GPSLatitude") == std::vector<meta::Value>{std::string{"54/1 21/1 36/5"}});
+    OUGHT(values_of(made, "Exif.Photo.DateTimeOriginal").empty());
+}
+
+// A JPEG without metadata after its JFIF segment: EXIF and XMP come after JFIF, in that order; a
+// change of IPTC makes Photoshop's resources after them; the frame and the scan stay. The entries
+// of a new directory come in the order of their tags.
+TRIAL("Photo writing: a JPEG without metadata gets EXIF, XMP and IPTC after JFIF") {
+    const Bytes file = jpegged({segment(0xE0, bytes_of(std::string_view{"JFIF\0\x01\x02\0\0\x01\0\x01\0\0", 14}))});
+    meta::Edit edit;
+
+    edit.orientation = 6;
+    edit.description = "Kot";
+
+    const Wrote wrote = writing(file, edit, {{Scheme::iptc, "Iptc.Application2.Keywords", {std::string{"kot"}, std::string{"Milusia"}}}});
+
+    SAME(wrote.said, std::string{});
+    SAME(markers_of(wrote.file), (std::vector<int>{0xE0, 0xE1, 0xE1, 0xED, 0xC0, 0xDA}));
+
+    const meta::Description made = described(wrote.file);
+
+    OUGHT(!made.damaged);
+    SAME(made.fields, (std::vector<meta::Field>{
+                          text(Scheme::exif, "Exif.Image.ImageDescription", "Kot"),
+                          number(Scheme::exif, "Exif.Image.Orientation", 6),
+                          text(Scheme::xmp, "Xmp.tiff.Orientation", "6"),
+                          text(Scheme::xmp, "Xmp.dc.description", "Kot"),
+                          text(Scheme::iptc, "Iptc.Envelope.CharacterSet", "\x1B%G"),
+                          number(Scheme::iptc, "Iptc.Application2.RecordVersion", 4),
+                          text(Scheme::iptc, "Iptc.Application2.Keywords", "kot"),
+                          text(Scheme::iptc, "Iptc.Application2.Keywords", "Milusia"),
+                      }));
+}
+
+// A PNG from Pillow with eXIf and XMP: both are written anew where they stood, the XMP without
+// compression, every chunk with its check. A PNG whose EXIF and XMP are ImageMagick's raw profiles
+// gets eXIf and XMP after IHDR, and the raw profiles go. IPTC is not written in PNG, and the file
+// stays as it was, with no file left beside it.
+TRIAL("Photo writing: PNG — eXIf and XMP where they stood, raw profiles replaced, no IPTC") {
+    const Bytes file = lump(meta_png);
+    meta::Edit edit;
+
+    edit.description = "Opis";
+    edit.orientation = 2;
+
+    const Wrote wrote = writing(file, edit);
+
+    SAME(wrote.said, std::string{});
+    OUGHT(checks_hold(wrote.file));
+
+    const meta::Description made = described(wrote.file);
+
+    OUGHT(!made.damaged);
+    SAME(static_cast<int>(photo_of(made).orientation), 2);
+    OUGHT(values_of(made, "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Opis"}});
+    OUGHT(values_of(made, "Xmp.dc.description") == std::vector<meta::Value>{std::string{"Opis"}});
+    OUGHT(values_of(made, "Xmp.dc.title") == std::vector<meta::Value>{std::string{"PNG"}});
+    OUGHT(values_of(made, "Exif.Photo.DateTimeOriginal") == std::vector<meta::Value>{std::string{"2026:01:02 03:04:05"}});
+
+    const auto profile = [](std::string_view name, const Bytes& data) {
+        std::string made_text = "\n" + std::string{name} + "\n      " + std::to_string(data.size()) + "\n";
+        const char* digits = "0123456789abcdef";
+
+        for (const std::byte one : data) {
+            made_text += digits[std::to_integer<int>(one) >> 4];
+            made_text += digits[std::to_integer<int>(one) & 15];
+        }
+
+        Bytes chunk_data = bytes_of("Raw profile type " + std::string{name});
+
+        chunk_data.push_back(std::byte{0});
+        append(chunk_data, bytes_of(made_text + "\n"));
+
+        return chunk("tEXt", chunk_data);
+    };
+
+    const Bytes old = pnged({profile("exif", marked(std::string_view{"Exif\0\0", 6}, tiffed({{{ascii(0x010f, "Pentax")}, std::nullopt}}))),
+                             profile("xmp", bytes_of(packet("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"", "<dc:format>image/png</dc:format>")))});
+    const Wrote profiles = writing(old, edit);
+    const meta::Description read_back = described(profiles.file);
+
+    SAME(profiles.said, std::string{});
+    OUGHT(checks_hold(profiles.file));
+    SAME(read_back.fields, (std::vector<meta::Field>{
+                               text(Scheme::exif, "Exif.Image.ImageDescription", "Opis"),
+                               text(Scheme::exif, "Exif.Image.Make", "Pentax"),
+                               number(Scheme::exif, "Exif.Image.Orientation", 2),
+                               text(Scheme::xmp, "Xmp.dc.format", "image/png"),
+                               text(Scheme::xmp, "Xmp.tiff.Orientation", "2"),
+                               text(Scheme::xmp, "Xmp.dc.description", "Opis"),
+                           }));
+
+    const Wrote refused = writing(file, {}, {{Scheme::iptc, "Iptc.Application2.Keywords", {std::string{"kot"}}}});
+
+    SAME(refused.said, std::string{"unsupported: IPTC is not written in PNG; its carrier there is XMP."});
+    OUGHT(refused.file == file);
+    SAME(refused.names, std::size_t{1});
+}
+
+// WebP: a simple lossless file with alpha gets VP8X first (the size of its frame, the flags of
+// alpha, EXIF and XMP), EXIF and XMP after the frame, and RIFF's size counted again; a WebP with
+// VP8X keeps its flags and gets EXIF written anew where it stood.
+TRIAL("Photo writing: WebP — VP8X made for a simple file, EXIF and XMP after the frame") {
+    const auto riffed = [](const std::vector<std::pair<std::string_view, Bytes>>& chunks) {
+        Bytes body = bytes_of("WEBP");
+
+        for (const auto& [type, data] : chunks) {
+            append(body, bytes_of(type));
+            append(body, little(data.size(), 4));
+            append(body, data);
+
+            if (data.size() % 2 != 0) body.push_back(std::byte{0});
+        }
+
+        Bytes made = bytes_of("RIFF");
+
+        append(made, little(body.size(), 4));
+        append(made, body);
+
+        return made;
+    };
+
+    meta::Edit edit;
+
+    edit.description = "Opis";
+
+    const Bytes simple = riffed({{"VP8L", Bytes{std::byte{0x2F}, std::byte{0x63}, std::byte{0x40}, std::byte{0x0C}, std::byte{0x10}, std::byte{0}}}});
+    const Wrote wrote = writing(simple, edit);
+
+    SAME(wrote.said, std::string{});
+    OUGHT(std::equal(wrote.file.begin() + 4, wrote.file.begin() + 8, little(wrote.file.size() - 8, 4).begin()));
+    OUGHT(std::equal(wrote.file.begin() + 12, wrote.file.begin() + 30, lump("565038580a0000001c000000630000310000").begin()));
+
+    const meta::Description made = described(wrote.file);
+
+    OUGHT(!made.damaged);
+    OUGHT(photo_of(made) == (meta::Photo{100, 50, 1, "", "", "", std::nullopt}));
+    SAME(made.fields, (std::vector<meta::Field>{text(Scheme::exif, "Exif.Image.ImageDescription", "Opis"), text(Scheme::xmp, "Xmp.dc.description", "Opis")}));
+
+    const Bytes extended = lump(meta_webp);
+    const Wrote again = writing(extended, edit);
+    const meta::Description changed = described(again.file);
+
+    SAME(again.said, std::string{});
+    OUGHT(!changed.damaged);
+    OUGHT(values_of(changed, "Exif.Image.Make") == std::vector<meta::Value>{std::string{"Nikon"}});
+    OUGHT(values_of(changed, "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Opis"}});
+    SAME(std::to_integer<int>(again.file[20]), std::to_integer<int>(extended[20]) | 0x0C);
+}
+
+// What is not written is refused, and the file stays as it was with no file left beside it: a tag
+// of EXIF outside those we write, a value not of its form, a time not of ISO 8601, a structure of
+// XMP, a prefix no one knows, the envelope of IPTC, a format we do not write (TIFF).
+TRIAL("Photo writing: what is not written is refused and leaves the file as it was") {
+    const Bytes file = lump(full_jpg);
+    const auto refused = [&file](const meta::Edit& edit, const std::vector<meta::Change>& changes, const Bytes& given) {
+        const Wrote wrote = writing(given.empty() ? file : given, edit, changes);
+
+        OUGHT(wrote.file == (given.empty() ? file : given));
+        SAME(wrote.names, std::size_t{1});
+
+        return wrote.said;
+    };
+
+    meta::Edit bad_time;
+
+    bad_time.taken = "2025-06-07";
+
+    meta::Edit bad_turn;
+
+    bad_turn.orientation = 9;
+
+    SAME(refused({}, {{Scheme::exif, "Exif.Image.Make", {std::string{"Leica"}}}}, {}), std::string{"unsupported: This field of EXIF is not written."});
+    SAME(refused({}, {{Scheme::exif, "Exif.Image.Orientation", {std::string{"x"}}}}, {}), std::string{"malformed: A value of EXIF is not a number: x"});
+    SAME(refused({}, {{Scheme::exif, "Exif.GPSInfo.GPSLatitude", {std::string{"1/1 2/1"}}}}, {}), std::string{"malformed: A value of EXIF has 2 parts, not 3."});
+    SAME(refused(bad_time, {}, {}), std::string{"malformed: A time is written as 2024-07-08T09:10:11, with an offset or without."});
+    SAME(refused(bad_turn, {}, {}), std::string{"malformed: An orientation is 1 to 8."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.iptcExt.LocationShown[1]/Iptc4xmpExt:City", {std::string{"Sopot"}}}}, {}),
+         std::string{"unsupported: Only simple properties and arrays of XMP are written."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.nikt.Nic", {std::string{"x"}}}}, {}), std::string{"unsupported: The namespace of the prefix nikt is not known."});
+    SAME(refused({}, {{Scheme::iptc, "Iptc.Envelope.Destination", {std::string{"x"}}}}, {}), std::string{"unsupported: The key Iptc.Envelope.Destination is not of a field we write."});
+    SAME(refused({}, {{Scheme::id3v2, "TIT2", {std::string{"x"}}}}, {}), std::string{"unsupported: The key TIT2 is not of a field we write."});
+    SAME(refused({}, {{Scheme::exif, "Exif.Image.Orientation", {std::int64_t{1}}}}, lump(meta_tif)), std::string{"unsupported: The metadata of this format is not written."});
+
+    meta::Edit bad_rating;
+
+    bad_rating.rating = 42;
+
+    meta::Edit bad_text;
+
+    bad_text.description = "a\x01b";
+
+    SAME(refused(bad_rating, {}, {}), std::string{"malformed: A rating is -1 (rejected) to 5."});
+    SAME(refused(bad_text, {}, {}), std::string{"malformed: A value of XMP holds a character XML does not allow."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.dc.source", {std::string{"a\xEF\xBF\xBE"}}}}, {}), std::string{"malformed: A value of XMP holds a character XML does not allow."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.dc.source", {std::string{"a\xEF\xBF\xBF"}}}}, {}), std::string{"malformed: A value of XMP holds a character XML does not allow."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.dc.a:b", {std::string{"x"}}}}, {}), std::string{"malformed: The key Xmp.dc.a:b does not name a property of XML."});
+    SAME(refused({}, {{Scheme::xmp, "Xmp.dc.a b", {std::string{"x"}}}}, {}), std::string{"malformed: The key Xmp.dc.a b does not name a property of XML."});
+    SAME(refused({}, {{Scheme::exif, "Exif.GPSInfo.GPSLatitude", {std::string{"54/0 1/1 1/1"}}}}, {}), std::string{"malformed: A fraction of EXIF has nothing below the line: 54/0"});
+    SAME(refused({}, {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"\xFF"}}}}, {}), std::string{"malformed: A value is not text of UTF-8."});
+    SAME(refused({}, {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"a\0b", 3}}}}, {}),
+         std::string{"malformed: A text of EXIF ends at its first zero byte and cannot hold one."});
+}
+
+// A file that changes while it is written (another program adds a byte as soon as the new file is
+// opened beside it) is not replaced: the writing gives up, busy, and removes its own file.
+TRIAL("Photo writing: a file changed meanwhile is not replaced") {
+    meta::Edit edit;
+
+    edit.description = "Opis";
+
+    const Bytes file = lump(full_jpg);
+    const Wrote wrote = writing(file, edit, {}, std::make_shared<Meddling>());
+    Bytes grown = file;
+
+    grown.push_back(std::byte{0});
+    SAME(wrote.said, std::string{"busy: The file changed while it was being written."});
+    OUGHT(wrote.file == grown);
+    SAME(wrote.names, std::size_t{1});
+}
+
+// IPTC rewritten keeps the digest of Photoshop (0x0425) true: with weak sums built in it is the
+// MD5 of the new IPTC; without them it goes. The other resources stay, and so do the datasets of
+// other numbers; text in Latin-1 is written again in UTF-8.
+TRIAL("Photo writing: the digest of IPTC computed again or removed, Latin-1 made UTF-8") {
+    const Bytes iim = lump("1c020000020004" "1c02780004" "4d61f161" "1c02190003" "6b6f74");
+    Bytes resources = bytes_of("8BIM");
+
+    append(resources, lump("03ed000000000010"));
+    append(resources, Bytes(16, std::byte{7}));
+    append(resources, bytes_of("8BIM"));
+    append(resources, lump("04040000"));
+    append(resources, big(iim.size(), 4));
+    append(resources, iim);
+
+    if (resources.size() % 2 != 0) resources.push_back(std::byte{0});
+
+    append(resources, bytes_of("8BIM"));
+    append(resources, lump("04250000"));
+    append(resources, big(16, 4));
+    append(resources, Bytes(16, std::byte{0}));
+
+    const Bytes file = jpegged({segment(0xED, marked(std::string_view{"Photoshop 3.0\0", 14}, resources))});
+    const Wrote wrote = writing(file, {}, {{Scheme::iptc, "Iptc.Application2.Keywords", {std::string{"pies"}}}});
+    const meta::Description made = described(wrote.file);
+
+    SAME(wrote.said, std::string{});
+    SAME(made.fields, (std::vector<meta::Field>{
+                          text(Scheme::iptc, "Iptc.Envelope.CharacterSet", "\x1B%G"),
+                          number(Scheme::iptc, "Iptc.Application2.RecordVersion", 4),
+                          text(Scheme::iptc, "Iptc.Application2.Keywords", "pies"),
+                          text(Scheme::iptc, "Iptc.Application2.Caption", "Ma\u00f1a"),
+                      }));
+
+    const std::string text{reinterpret_cast<const char*>(wrote.file.data()), wrote.file.size()};
+    const std::size_t digest = text.find(std::string_view{"8BIM\x04\x25", 6});
+
+    OUGHT(text.find(std::string_view{"8BIM\x03\xed", 6}) != std::string::npos);
+
+#ifdef TAL_WEAK_SUMS
+    const std::size_t iptc_at = text.find(std::string_view{"8BIM\x04\x04", 6});
+
+    OUGHT(digest != std::string::npos && iptc_at != std::string::npos);
+
+    if (digest != std::string::npos && iptc_at != std::string::npos) {
+        std::size_t size = 0;
+
+        for (std::size_t one = 0; one < 4; ++one) size = (size << 8) | std::to_integer<std::size_t>(wrote.file[iptc_at + 8 + one]);
+
+        tal::crypto::Summing sum{tal::crypto::Sum::md5};
+
+        sum.feed(std::span<const std::byte>{wrote.file}.subspan(iptc_at + 12, size));
+
+        const Bytes expected = sum.done();
+
+        OUGHT(std::equal(expected.begin(), expected.end(), wrote.file.begin() + static_cast<std::ptrdiff_t>(digest + 12)));
+    }
+#else
+    OUGHT(digest == std::string::npos);
+#endif
+}
+
+// XMP rewritten: a property written as an attribute goes and comes back as an element, once; a
+// namespace the packet did not declare is declared on its description; the packet carries no XML
+// declaration and keeps its wrapper with padding before its end. A property that lies in the
+// extended packet is not written.
+TRIAL("Photo writing: XMP — an attribute replaced, a namespace declared, the wrapper kept, the extension left") {
+    const std::string xmp = packet("xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"", "", "xmp:Rating=\"2\"");
+    meta::Edit edit;
+
+    edit.rating = 4;
+    edit.creator = "Hubert";
+
+    const Bytes file = jpegged({segment(0xE1, marked(std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}, bytes_of(xmp)))});
+    const Wrote wrote = writing(file, edit);
+    const std::optional<Bytes> packet_after = app1_of(wrote.file, std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29});
+    const std::string after = packet_after ? std::string{reinterpret_cast<const char*>(packet_after->data()), packet_after->size()} : std::string{};
+
+    SAME(wrote.said, std::string{});
+    OUGHT(after.starts_with("<?xpacket begin="));
+    OUGHT(after.find("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"") != std::string::npos);
+    OUGHT(after.find(std::string(100, ' ') + "\n<?xpacket end=") != std::string::npos);
+    SAME(described(wrote.file).fields, (std::vector<meta::Field>{
+                                           text(Scheme::exif, "Exif.Image.Artist", "Hubert"),
+                                           text(Scheme::xmp, "Xmp.xmp.Rating", "4"),
+                                           text(Scheme::xmp, "Xmp.dc.creator", "Hubert"),
+                                       }));
+
+    const std::string guid = "00112233445566778899AABBCCDDEEFF";
+    const std::string main = packet("xmlns:xmpNote=\"http://ns.adobe.com/xmp/note/\"", "", "xmpNote:HasExtendedXMP=\"" + guid + "\"");
+    const std::string extension = packet("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"", "<dc:creator><rdf:Seq><rdf:li>Ktos</rdf:li></rdf:Seq></dc:creator>");
+    Bytes piece = bytes_of(guid);
+
+    append(piece, big(extension.size(), 4));
+    append(piece, big(0, 4));
+    append(piece, bytes_of(extension));
+
+    const Bytes extended = jpegged({segment(0xE1, marked(std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}, bytes_of(main))),
+                                    segment(0xE1, marked(std::string_view{"http://ns.adobe.com/xmp/extension/\0", 35}, piece))});
+    const Wrote left = writing(extended, {}, {{Scheme::xmp, "Xmp.dc.creator", {std::string{"Hubert"}}}});
+
+    SAME(left.said, std::string{"unsupported: The property lies in the extended XMP, which is not written."});
+    OUGHT(left.file == extended);
+}
+
+// EXIF edited again and again is written in place: the description, which fits where the old one
+// stood, takes its place; the time and its offset take theirs; the directories, which get no more
+// entries, are written where they stood; the fraction of a second of the old time goes. So the
+// structure keeps its size, and the file grows only by what XMP, written anew, says longer.
+TRIAL("Photo writing: EXIF in place — edited thirty times it does not grow") {
+    const Bytes note = lump("4e696b6f6e0002100000000000000000ffeeddccbbaa99887766554433221100");
+    const Bytes tiff = tiffed({{{ascii(0x010e, "Opis, który był długi"), short_of(0x0112, 1), pointer(0x8769, {1})}, std::nullopt},
+                               {{{0x927c, 7, static_cast<std::uint32_t>(note.size()), note, {}},
+                                 ascii(0x9003, "2020:01:01 00:00:00"),
+                                 ascii(0x9011, "+01:00"),
+                                 ascii(0x9291, "25")},
+                                std::nullopt}});
+    const auto note_at = std::search(tiff.begin(), tiff.end(), note.begin(), note.end()) - tiff.begin();
+    Bytes file = jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, tiff))});
+    std::size_t first = 0;
+
+    for (int round = 0; round < 30; ++round) {
+        meta::Edit edit;
+        const std::string second = std::to_string(10 + round);
+
+        edit.description = "Opis " + std::to_string(round);
+        edit.orientation = 1 + round % 8;
+        edit.taken = "2024-07-08T09:10:" + second + "+02:00";
+
+        const Wrote wrote = writing(file, edit);
+        const Bytes after = app1_of(wrote.file, std::string_view{"Exif\0\0", 6}).value_or(Bytes{});
+
+        SAME(wrote.said, std::string{});
+        SAME(after.size(), tiff.size());
+        OUGHT(std::equal(note.begin(), note.end(), after.begin() + note_at));
+
+        if (round == 0) first = wrote.file.size();
+
+        SAME(wrote.file.size(), first + (round >= 10 ? 1 : 0));
+        file = wrote.file;
+    }
+
+    const meta::Description made = described(file);
+
+    OUGHT(!made.damaged);
+    OUGHT(values_of(made, "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Opis 29"}});
+    OUGHT(values_of(made, "Exif.Image.Orientation") == std::vector<meta::Value>{std::int64_t{6}});
+    OUGHT(values_of(made, "Exif.Photo.DateTimeOriginal") == std::vector<meta::Value>{std::string{"2024:07:08 09:10:39"}});
+    OUGHT(values_of(made, "Exif.Photo.OffsetTimeOriginal") == std::vector<meta::Value>{std::string{"+02:00"}});
+    OUGHT(values_of(made, "Exif.Photo.SubSecTimeOriginal").empty());
+}
+
+// A big-endian structure is written in place in its own order: the orientation, a SHORT, in the
+// first two bytes of its entry; a shorter description where the old one stood, counting the whole
+// place, the rest zeros, and read back without them.
+TRIAL("Photo writing: EXIF in place — big-endian, a SHORT in its entry, a shorter text") {
+    const Bytes tiff = lump("4d4d002a00000008" "0002" "010e0002" "0000000c" "00000026" "01120003" "00000001" "00010000" "00000000" "4f7069732077202020" "4d4d00");
+    meta::Edit edit;
+
+    edit.orientation = 6;
+
+    const Bytes file = jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, tiff))});
+    const Wrote wrote = writing(file, edit, {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"Nowy w MM"}}}});
+
+    SAME(wrote.said, std::string{});
+    OUGHT(app1_of(wrote.file, std::string_view{"Exif\0\0", 6}) ==
+          std::optional<Bytes>{lump("4d4d002a00000008" "0002" "010e0002" "0000000c" "00000026" "01120003" "00000001" "00060000" "00000000" "4e6f77792077204d4d00" "0000")});
+    OUGHT(values_of(described(wrote.file), "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Nowy w MM"}});
+}
+
+// A place is taken again only when nothing else lies in it: a description whose bytes the
+// thumbnail of IFD1 shares goes after the end, and the thumbnail stays; a structure with a type of
+// unknown width, which cannot be seen whole, is only added to, and taking away what it does not
+// have leaves it as it was; one with a directory of interoperability, seen whole, is written in
+// place.
+TRIAL("Photo writing: EXIF — a place shared or not seen whole is not taken again") {
+    const Bytes shared = tiffed({{{ascii(0x010e, "Opis dzielony"), short_of(0x0112, 1)}, 1}, {{long_of(0x0201, 68), long_of(0x0202, 14)}, std::nullopt}});
+    const Wrote wrote = writing(jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, shared))}), {},
+                                {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"Inny opis"}}}});
+    const Bytes after = app1_of(wrote.file, std::string_view{"Exif\0\0", 6}).value_or(Bytes{});
+
+    SAME(wrote.said, std::string{});
+    OUGHT(after.size() > shared.size());
+    OUGHT(after.size() >= 82 && std::equal(shared.begin() + 68, shared.begin() + 82, after.begin() + 68));
+    OUGHT(values_of(described(wrote.file), "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Inny opis"}});
+
+    const Bytes strange = tiffed({{{ascii(0x010e, "Stary opis, długi"), {0x9999, 99, 1, little(5, 4), {}}}, std::nullopt}});
+    const Wrote added = writing(jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, strange))}), {},
+                                {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"Krótszy"}}}});
+    const Bytes grown = app1_of(added.file, std::string_view{"Exif\0\0", 6}).value_or(Bytes{});
+
+    SAME(added.said, std::string{});
+    OUGHT(grown.size() > strange.size());
+    OUGHT(std::equal(strange.begin() + 8, strange.end(), grown.begin() + 8));
+
+    const Bytes strange_file = jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, strange))});
+    const Wrote untouched = writing(strange_file, {}, {{Scheme::exif, "Exif.Image.Artist", {}}});
+
+    SAME(untouched.said, std::string{});
+    OUGHT(untouched.file == strange_file);
+
+    const Bytes interoperable = tiffed({{{ascii(0x010e, "Opis, który był długi"), pointer(0x8769, {1})}, std::nullopt},
+                                        {{pointer(0xa005, {2})}, std::nullopt},
+                                        {{ascii(0x0001, "R98")}, std::nullopt}});
+    const Wrote placed = writing(jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, interoperable))}), {},
+                                 {{Scheme::exif, "Exif.Image.ImageDescription", {std::string{"Krótszy"}}}});
+
+    SAME(placed.said, std::string{});
+    SAME(app1_of(placed.file, std::string_view{"Exif\0\0", 6}).value_or(Bytes{}).size(), interoperable.size());
+}
+
+// Taking away what a file does not have changes nothing: no EXIF, GPS directory or XMP is made
+// to hold nothing, and the file stays as it was.
+TRIAL("Photo writing: taking away what is not there leaves the file as it was") {
+    const Bytes bare = jpegged({segment(0xE0, bytes_of(std::string_view{"JFIF\0\x01\x02\0\0\x01\0\x01\0\0", 14}))});
+    const std::vector<meta::Change> away{{Scheme::exif, "Exif.GPSInfo.GPSLatitude", {}}, {Scheme::xmp, "Xmp.dc.creator", {}}, {Scheme::iptc, "Iptc.Application2.Byline", {}}};
+    const Wrote nothing = writing(bare, {}, away);
+
+    SAME(nothing.said, std::string{});
+    OUGHT(nothing.file == bare);
+
+    const Bytes tiff = tiffed({{{ascii(0x010e, "Opis")}, std::nullopt}});
+    const Bytes with_exif = jpegged({segment(0xE1, marked(std::string_view{"Exif\0\0", 6}, tiff))});
+    const Wrote kept = writing(with_exif, {}, {{Scheme::exif, "Exif.GPSInfo.GPSLatitude", {}}, {Scheme::exif, "Exif.Image.Artist", {}}});
+
+    SAME(kept.said, std::string{});
+    OUGHT(kept.file == with_exif);
+}
+
+// IPTC rewritten keeps what is not text as bytes: the preview (2:202) and the objects of record
+// 3; only text of records 1 and 2 is made UTF-8.
+TRIAL("Photo writing: IPTC — a preview and an object stay bytes") {
+    const Bytes iim = lump("1c020000020004" "1c02780004" "4d61f161" "1c02ca0004" "ffd8ffe0" "1c03780002" "e9e9");
+    const Bytes file = jpegged({segment(0xED, marked(std::string_view{"Photoshop 3.0\0", 14}, resourced({{0x0404, iim}})))});
+    const Wrote wrote = writing(file, {}, {{Scheme::iptc, "Iptc.Application2.Keywords", {std::string{"pies"}}}});
+    const std::string text{reinterpret_cast<const char*>(wrote.file.data()), wrote.file.size()};
+
+    SAME(wrote.said, std::string{});
+    OUGHT(text.find(std::string_view{"\x1c\x02\xca\x00\x04\xff\xd8\xff\xe0", 9}) != std::string::npos);
+    OUGHT(text.find(std::string_view{"\x1c\x03\x78\x00\x02\xe9\xe9", 7}) != std::string::npos);
+    OUGHT(text.find(std::string_view{"\x1c\x02\x78\x00\x05Ma\xc3\xb1" "a", 10}) != std::string::npos);
+}
+
+// Photoshop's resources longer than a segment holds go into as many segments as they need, one
+// after another, and are read back whole.
+TRIAL("Photo writing: Photoshop's resources across segments") {
+    Bytes large(70000, std::byte{0x5A});
+    const Bytes resources = resourced({{0x0FA0, large}, {0x0404, lump("1c020000020004" "1c02780003" "6b6f74")}});
+    std::vector<Bytes> segments;
+
+    for (std::size_t from = 0; from < resources.size(); from += 65519) {
+        const Bytes part(resources.begin() + static_cast<std::ptrdiff_t>(from), resources.begin() + static_cast<std::ptrdiff_t>(std::min(resources.size(), from + 65519)));
+
+        segments.push_back(segment(0xED, marked(std::string_view{"Photoshop 3.0\0", 14}, part)));
+    }
+
+    const Wrote wrote = writing(jpegged(segments), {}, {{Scheme::iptc, "Iptc.Application2.Keywords", {std::string{"pies"}}}});
+    const std::vector<int> markers = markers_of(wrote.file);
+
+    SAME(wrote.said, std::string{});
+    SAME(std::ranges::count(markers, 0xED), std::ptrdiff_t{2});
+    OUGHT(values_of(described(wrote.file), "Iptc.Application2.Keywords") == std::vector<meta::Value>{std::string{"pies"}});
+    OUGHT(values_of(described(wrote.file), "Iptc.Application2.Caption") == std::vector<meta::Value>{std::string{"kot"}});
+}
+
+// WebP: a last chunk cut before its pad byte gets it, so what comes after stands at an even
+// offset; EXIF made for a file with XMP comes before it, as the format orders them.
+TRIAL("Photo writing: WebP — a pad byte given, EXIF before XMP") {
+    meta::Edit edit;
+
+    edit.description = "Opis";
+
+    const Bytes frame{std::byte{0x2F}, std::byte{0x63}, std::byte{0x40}, std::byte{0x0C}, std::byte{0x00}};
+    const Wrote odd = writing(webped({{"VP8L", frame}}, false), edit);
+
+    SAME(odd.said, std::string{});
+    SAME(chunks_of(odd.file), (std::vector<std::string>{"VP8X", "VP8L", "EXIF", "XMP "}));
+    OUGHT(values_of(described(odd.file), "Exif.Image.ImageDescription") == std::vector<meta::Value>{std::string{"Opis"}});
+
+    const std::string xmp = packet("xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"", "", "xmp:Rating=\"2\"");
+    const Wrote ordered = writing(webped({{"VP8X", lump("04000000630000310000")}, {"VP8L", frame}, {"XMP ", bytes_of(xmp)}}), edit);
+
+    SAME(ordered.said, std::string{});
+    SAME(chunks_of(ordered.file), (std::vector<std::string>{"VP8X", "VP8L", "EXIF", "XMP "}));
+    SAME(std::to_integer<int>(ordered.file[20]), 0x0C);
+}
+
+// A link is followed: the file it leads to is written, and the link stays a link. A folder is not
+// written.
+TRIAL("Photo writing: a link is followed to the file it leads to") {
+    const auto files = std::make_shared<tal::fs::Memory>();
+    const Remembering memory{files};
+    tal::Loop loop;
+    const tal::Path folder{"/photos"};
+    const Bytes file = jpegged({segment(0xE0, bytes_of(std::string_view{"JFIF\0\x01\x02\0\0\x01\0\x01\0\0", 14}))});
+    meta::Edit edit;
+
+    edit.description = "Opis";
+    tal::wait(loop, tal::fs::make(folder));
+    tal::wait(loop, tal::fs::write(folder / "real.jpg", file));
+    tal::wait(loop, files->link(folder / "photo.jpg", folder / "real.jpg"));
+    tal::wait(loop, meta::written(folder / "photo.jpg", edit));
+
+    SAME(tal::wait(loop, files->look(folder / "photo.jpg")).type, tal::fs::Type::link);
+    SAME(tal::wait(loop, tal::fs::list(folder)).size(), std::size_t{2});
+    OUGHT(values_of(described(tal::wait(loop, tal::fs::read(folder / "real.jpg"))), "Xmp.dc.description") == std::vector<meta::Value>{std::string{"Opis"}});
+
+    std::string said;
+
+    try {
+        tal::wait(loop, meta::written(folder, edit));
+    } catch (const tal::Trouble& why) {
+        said = std::string{tal::spoken(why.kind())} + ": " + why.what();
+    }
+
+    SAME(said, std::string{"unsupported: Only a file is written: /photos"});
+}
+
+// XMP keeps the other languages of an alternative when its default changes, the default first;
+// a packet near the size of a segment gets less padding, so that it still fits.
+TRIAL("Photo writing: XMP — other languages kept, padding that fits") {
+    const std::string xmp = packet("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"",
+                                   "<dc:description><rdf:Alt><rdf:li xml:lang=\"pl-PL\">Opis</rdf:li><rdf:li xml:lang=\"x-default\">Stary</rdf:li>"
+                                   "<rdf:li xml:lang=\"de\">Alt</rdf:li></rdf:Alt></dc:description>");
+    meta::Edit edit;
+
+    edit.description = "Nowy";
+
+    const Wrote wrote = writing(jpegged({segment(0xE1, marked(std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}, bytes_of(xmp)))}), edit);
+    const Bytes packet_after = app1_of(wrote.file, std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}).value_or(Bytes{});
+    const std::string after{reinterpret_cast<const char*>(packet_after.data()), packet_after.size()};
+
+    SAME(wrote.said, std::string{});
+    const std::size_t fresh = after.find("<rdf:li xml:lang=\"x-default\">Nowy</rdf:li>");
+    const std::size_t polish = after.find("<rdf:li xml:lang=\"pl-PL\">Opis</rdf:li>");
+    const std::size_t german = after.find("<rdf:li xml:lang=\"de\">Alt</rdf:li>");
+
+    OUGHT(fresh != std::string::npos && polish != std::string::npos && german != std::string::npos);
+    OUGHT(fresh < polish && polish < german);
+    OUGHT(after.find("Stary") == std::string::npos);
+
+    const std::string long_text(65000, 'a');
+    const std::string near = packet("xmlns:dc=\"http://purl.org/dc/elements/1.1/\"", "<dc:source>" + long_text + "</dc:source>");
+    meta::Edit rated;
+
+    rated.rating = 3;
+
+    const Bytes full_file = jpegged({segment(0xE1, marked(std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}, bytes_of(near)))});
+    const Wrote fitted = writing(full_file, rated);
+    const Bytes fitted_packet = app1_of(fitted.file, std::string_view{"http://ns.adobe.com/xap/1.0/\0", 29}).value_or(Bytes{});
+
+    SAME(fitted.said, std::string{});
+    OUGHT(fitted_packet.size() + 29 <= 65533);
+    OUGHT(values_of(described(fitted.file), "Xmp.xmp.Rating") == std::vector<meta::Value>{std::string{"3"}});
+}
+
+// A chunk of metadata too large to read is not rewritten: a PNG with such an eXIf is refused
+// rather than given a second EXIF. Of a frame of WebP only its size is read, so a large one does
+// not stop the writing.
+TRIAL("Photo writing: a PNG with too large an eXIf is refused, a large frame of WebP is not") {
+    Bytes huge((std::size_t{16} << 20) + 2, std::byte{0});
+
+    huge[0] = std::byte{'I'};
+    huge[1] = std::byte{'I'};
+    huge[2] = std::byte{42};
+    huge[4] = std::byte{8};
+
+    meta::Edit edit;
+
+    edit.description = "Opis";
+
+    const Bytes png = pnged({chunk("eXIf", huge)});
+    const Wrote refused = writing(png, edit);
+
+    SAME(refused.said, std::string{"unsupported: A chunk of metadata of the PNG is too large to rewrite."});
+    OUGHT(refused.file == png);
+    SAME(refused.names, std::size_t{1});
+
+    Bytes frame((std::size_t{16} << 20) + 6, std::byte{0});
+    const Bytes start{std::byte{0x2F}, std::byte{0x63}, std::byte{0x40}, std::byte{0x0C}, std::byte{0x00}};
+
+    std::ranges::copy(start, frame.begin());
+
+    const Wrote large = writing(webped({{"VP8L", frame}}), edit);
+
+    SAME(large.said, std::string{});
+    SAME(chunks_of(large.file), (std::vector<std::string>{"VP8X", "VP8L", "EXIF", "XMP "}));
 }

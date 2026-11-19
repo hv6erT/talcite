@@ -11,6 +11,12 @@
 #include <tuple>
 #include <vector>
 
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
 #include "tal/bytes.hpp"
 #include "tal/clock.hpp"
 #include "tal/executor.hpp"
@@ -938,3 +944,43 @@ TRIAL("Disk: remove() into the trash keeps the entry there and tells where it wa
     OUGHT(told.starts_with("[Trash Info]\nPath=" + std::string{desk.at("/a").stored()} + "\nDeletionDate="));
 #endif
 }
+
+// A time finer than a second is kept whole: change() sets it, look() tells it, and copy() carries
+// it over. 123 457 microseconds are a whole number of the ticks of every system and library (a
+// microsecond, a hundred nanoseconds, a nanosecond), so the comparison is exact everywhere.
+FILES_TRIAL("change(), look() and copy() keep a time finer than a second", files_trial_15) {
+    Desk desk;
+    const std::chrono::system_clock::time_point then = std::chrono::floor<std::chrono::seconds>(desk.now() - 24h) + std::chrono::microseconds{123457};
+
+    desk.put("/a.txt", "Hastings");
+    desk.run(desk.files.change(desk.at("/a.txt"), {{}, then, {}}));
+
+    OUGHT(desk.run(desk.files.look(desk.at("/a.txt"))).modified == then);
+
+    desk.run(desk.files.copy(desk.at("/a.txt"), desk.at("/b.txt")));
+
+    OUGHT(desk.run(desk.files.look(desk.at("/b.txt"))).modified == then);
+    OUGHT(desk.run(desk.files.list(desk.at("/"))).front().modified == then);
+}
+
+#ifndef _WIN32
+
+// A time a file system keeps past what nanoseconds reach (2262) is held at the last second we
+// count, in 2261, rather than wrapped around into the past: a file of the year 2400.
+TRIAL("Disk: a time past the year 2262 is held, not wrapped") {
+    const std::filesystem::path where = std::filesystem::temp_directory_path() / ("tal-far-" + std::to_string(::getpid()));
+
+    std::ofstream{where} << "x";
+
+    const timespec times[2]{{0, UTIME_OMIT}, {13569465600, 0}};
+
+    OUGHT(::utimensat(AT_FDCWD, where.c_str(), times, 0) == 0);
+
+    tal::Loop loop;
+    const tal::fs::Entry entry = tal::wait(loop, tal::fs::Files::builtin()->look(tal::Path{where.string()}));
+
+    std::filesystem::remove(where);
+    OUGHT(entry.modified == std::chrono::system_clock::time_point{std::chrono::seconds{9'200'000'000LL}});
+}
+
+#endif

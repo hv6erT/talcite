@@ -563,11 +563,11 @@ std::optional<path> placed_at(const path& from, const path& to, Tally tally, Con
 
 // The folder's time with full precision, or the one from the listing when the folder has vanished
 // in the meantime.
-Instant instant_or(const path& where, std::chrono::sys_seconds otherwise) {
+Instant instant_or(const path& where, Instant otherwise) {
     try {
         return instant_at(where);
     } catch (const Trouble&) {
-        return Instant{otherwise};
+        return otherwise;
     }
 }
 
@@ -579,7 +579,7 @@ struct Laid {
     path to;
     Kind kind = Kind::none;
     std::uintmax_t size = 0;
-    std::chrono::sys_seconds modified{};
+    Instant modified{};
     bool counted = true;
 };
 

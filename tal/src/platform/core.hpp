@@ -60,14 +60,16 @@ struct Attributes {
     bool stale = false;
 };
 
+using Instant = std::chrono::sys_time<std::chrono::nanoseconds>;
+
 struct Entry {
     path where;
     std::optional<path> target;
     Kind kind = Kind::none;
     Kind reach = Kind::none;
     std::uintmax_t size = 0;
-    std::chrono::sys_seconds modified{};
-    std::chrono::sys_seconds accessed{};
+    Instant modified{};
+    Instant accessed{};
     Attributes attributes;
     std::filesystem::perms rights = std::filesystem::perms::unknown;
     std::uintmax_t links = 1;
@@ -207,8 +209,6 @@ void make_folder_at(const path& where);
 void unmade_at(const path& where);
 
 [[nodiscard]] std::chrono::sys_seconds modified_at(const path& where);
-
-using Instant = std::chrono::sys_time<std::chrono::nanoseconds>;
 
 [[nodiscard]] Instant instant_at(const path& where);
 

@@ -267,8 +267,15 @@ void linking_at(const path& where, const path& onto, bool hard) {
 constexpr std::int64_t epochs_apart = 11644473600LL * 10000000LL;
 
 // A Windows file time in its 100 ns ticks as a nanosecond instant since the Unix epoch; also for
-// the times an open handle tells (`file.cpp`).
-Instant ticked(std::uint64_t much) { return Instant{std::chrono::nanoseconds{(static_cast<std::int64_t>(much) - epochs_apart) * 100}}; }
+// the times an open handle tells (`file.cpp`). Nanoseconds reach only from 1678 to 2262, so a time
+// beyond (a file time of zero is the year 1601) is held at 9 200 000 000 seconds from the epoch, in
+// 2261, or as far before it.
+Instant ticked(std::uint64_t much) {
+    constexpr std::int64_t furthest = 9'200'000'000LL * 10000000LL;
+    const std::int64_t since = std::clamp(static_cast<std::int64_t>(much) - epochs_apart, -furthest, furthest);
+
+    return Instant{std::chrono::nanoseconds{since * 100}};
+}
 
 // An instant as the ticks of a Windows file time, rounded down to the 100 ns tick.
 std::uint64_t ticks_of(Instant when) {
@@ -290,6 +297,20 @@ FILETIME filetime_of(Instant when) {
     made.dwHighDateTime = static_cast<DWORD>(much >> 32);
 
     return made;
+}
+
+#endif
+
+#ifndef _WIN32
+
+// A time of POSIX as a nanosecond instant since the epoch. Nanoseconds reach only from 1678 to
+// 2262, so a time beyond, which some file systems keep, is held at 9 200 000 000 seconds from the
+// epoch, in 2261, or as far before it.
+Instant instant_of(const timespec& when) {
+    constexpr std::int64_t furthest = 9'200'000'000LL;
+    const std::int64_t seconds = std::clamp(static_cast<std::int64_t>(when.tv_sec), -furthest, furthest);
+
+    return Instant{std::chrono::seconds{seconds} + std::chrono::nanoseconds{when.tv_nsec}};
 }
 
 #endif
@@ -316,7 +337,7 @@ Instant instant_at(const path& where) {
     const timespec& when = told.st_mtim;
 #endif
 
-    return Instant{std::chrono::seconds{when.tv_sec} + std::chrono::nanoseconds{when.tv_nsec}};
+    return instant_of(when);
 #endif
 }
 
@@ -817,8 +838,13 @@ Entry noted(const stood::directory_entry& one) {
 
     if (made.kind == Kind::file) made.size = static_cast<std::uintmax_t>(told.st_size);
 
-    made.modified = std::chrono::sys_seconds{std::chrono::seconds{told.st_mtime}};
-    made.accessed = std::chrono::sys_seconds{std::chrono::seconds{told.st_atime}};
+#ifdef __APPLE__
+    made.modified = instant_of(told.st_mtimespec);
+    made.accessed = instant_of(told.st_atimespec);
+#else
+    made.modified = instant_of(told.st_mtim);
+    made.accessed = instant_of(told.st_atim);
+#endif
     made.rights = static_cast<stood::perms>(told.st_mode & 07777);
     made.links = told.st_nlink;
     made.owner = static_cast<std::uint32_t>(told.st_uid);
@@ -931,11 +957,6 @@ void sorted_in(std::vector<Entry>& among) {
 
 #ifdef _WIN32
 
-// A Windows file time rounded down to whole seconds.
-std::chrono::sys_seconds stamped(FILETIME told) {
-    return std::chrono::floor<std::chrono::seconds>(instant_of(told));
-}
-
 // The extensions Windows runs directly. PATHEXT has more, but these four are what a person calls a
 // "program"; the rest (.vbs, .js, .msc) are scripts for some other engine.
 bool runnable(const path& where) {
@@ -984,8 +1005,8 @@ Entry noted(const WIN32_FIND_DATAW& told, const path& here) {
     if (made.kind == Kind::file)
         made.size = (static_cast<std::uintmax_t>(told.nFileSizeHigh) << 32) | told.nFileSizeLow;
 
-    made.modified = stamped(told.ftLastWriteTime);
-    made.accessed = stamped(told.ftLastAccessTime);
+    made.modified = instant_of(told.ftLastWriteTime);
+    made.accessed = instant_of(told.ftLastAccessTime);
 
     made.attributes.hidden = (told.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
     made.attributes.readonly = (told.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;

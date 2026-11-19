@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "tal/bytes.hpp"
 #include "tal/meta.hpp"
@@ -219,6 +220,8 @@ struct Box {
 
 [[nodiscard]] Task<void> pdf_document(Reader& from, std::uint64_t size, Gathered& out);
 
+[[nodiscard]] std::uint64_t pdf_looks();
+
 [[nodiscard]] std::string_view tag_name(std::string_view group, std::uint16_t number);
 
 [[nodiscard]] std::string_view dataset_name(std::uint8_t record, std::uint8_t number);
@@ -244,6 +247,39 @@ void resources(std::span<const std::byte> data, Gathered& out, Shot& shot);
 [[nodiscard]] Task<void> tiff(Reader& from, std::uint64_t size, Gathered& out);
 
 [[nodiscard]] Task<void> heif(Reader& from, std::uint64_t size, bool avif, Gathered& out);
+
+struct ExifChange {
+    std::string_view group;
+    std::uint16_t tag = 0;
+    std::vector<Value> values;
+};
+
+struct IptcChange {
+    std::uint8_t number = 0;
+    std::vector<Value> values;
+};
+
+struct Piece {
+    std::uint64_t from = 0;
+    std::uint64_t much = 0;
+    Bytes made;
+};
+
+[[nodiscard]] std::optional<std::uint16_t> tag_number(std::string_view group, std::string_view name);
+
+[[nodiscard]] std::optional<std::uint8_t> dataset_number(std::uint8_t record, std::string_view name);
+
+[[nodiscard]] std::string_view space_uri(std::string_view prefix);
+
+[[nodiscard]] Bytes exif_rewritten(std::span<const std::byte> given, const std::vector<ExifChange>& changes);
+
+[[nodiscard]] std::string xmp_rewritten(std::string_view given, const std::vector<Change>& changes, std::string_view extension, std::size_t most);
+
+[[nodiscard]] Bytes iim_rewritten(std::span<const std::byte> given, const std::vector<IptcChange>& changes);
+
+[[nodiscard]] Bytes resources_rewritten(std::span<const std::byte> given, const Bytes& iim);
+
+[[nodiscard]] Task<std::vector<Piece>> planned(Reader& from, const Edit& edit, const std::vector<Change>& changes);
 
 [[nodiscard]] Task<void> gathered(Reader& from, Gathered& out);
 

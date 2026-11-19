@@ -113,6 +113,26 @@ struct Photo {
     friend bool operator==(const Photo&, const Photo&) = default;
 };
 
+struct Change {
+    Scheme scheme = Scheme::exif;
+    std::string key;
+    std::vector<Value> values;
+
+    friend bool operator==(const Change&, const Change&) = default;
+};
+
+struct Edit {
+    std::optional<std::uint8_t> orientation;
+    std::optional<std::string> taken;
+    std::optional<std::string> description;
+    std::optional<std::vector<std::string>> keywords;
+    std::optional<std::int64_t> rating;
+    std::optional<std::string> creator;
+    std::optional<std::string> copyright;
+
+    friend bool operator==(const Edit&, const Edit&) = default;
+};
+
 struct Description {
     std::string type;
     Properties properties;
@@ -154,5 +174,7 @@ private:
 [[nodiscard]] Task<Bytes> pictured(Reader& from, std::size_t which);
 
 [[nodiscard]] Task<Bytes> pictured(Path where, std::size_t which, Port<fs::Files> files = {});
+
+[[nodiscard]] Task<void> written(Path where, Edit edit, std::vector<Change> changes = {}, Port<fs::Files> files = {});
 
 }

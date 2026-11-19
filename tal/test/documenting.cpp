@@ -177,13 +177,50 @@ namespace meta = tal::meta;
     return tal::wait(loop, meta::described(from));
 }
 
-// A file described, and whether that took less than five seconds: a file made to blow up the
-// costs of a reader must be read quickly, even by a debug build on a busy machine.
-[[nodiscard]] std::pair<meta::Description, bool> quickly(const Bytes& given) {
-    const auto began = std::chrono::steady_clock::now();
-    meta::Description made = described(given);
+// Bytes held in memory, those read counted.
+class Tallied final : public meta::Reader {
+public:
+    // Over `given`.
+    explicit Tallied(Bytes given) : held_(std::move(given)) {}
 
-    return {std::move(made), std::chrono::steady_clock::now() - began < std::chrono::seconds{5}};
+    // The size of the bytes.
+    tal::Task<std::uint64_t> size() override { return held_.size(); }
+
+    // What the bytes have of `much` from `at`, its length counted.
+    tal::Task<Bytes> read(std::uint64_t at, std::size_t much) override {
+        Bytes made = co_await held_.read(at, much);
+
+        read_ += made.size();
+        co_return made;
+    }
+
+    // The bytes read so far.
+    [[nodiscard]] std::uint64_t bytes_read() const { return read_; }
+
+private:
+    meta::Held held_;
+    std::uint64_t read_ = 0;
+};
+
+// What describing a file cost: the steps of work of the PDF reader (`pdf_looks`), the bytes read,
+// and whether it hung (two minutes). A file made to blow up the costs of a reader is held to
+// bounds of work, which no busy machine stretches, not to a time.
+struct Cost {
+    meta::Description made;
+    std::uint64_t looks = 0;
+    std::uint64_t read = 0;
+    bool hung = false;
+};
+
+// A file described, with what that cost.
+[[nodiscard]] Cost costed(const Bytes& given) {
+    tal::Loop loop;
+    Tallied from{given};
+    const std::uint64_t before = meta::tagging::pdf_looks();
+    const auto began = std::chrono::steady_clock::now();
+    meta::Description made = tal::wait(loop, meta::described(from));
+
+    return {std::move(made), meta::tagging::pdf_looks() - before, from.bytes_read(), std::chrono::steady_clock::now() - began > std::chrono::minutes{2}};
 }
 
 // The least a `need` loads set to `least` bytes while it lives.
@@ -1260,7 +1297,8 @@ TRIAL("PDF: deep nesting, a deep tree, huge counts, bad streams and lying length
     SAME(document.bookmarks, std::uint32_t{0});
 }
 
-// Files made to blow up the costs of a repair, none with a cross-reference, each read quickly. A
+// Files made to blow up the costs of a repair, none with a cross-reference, each read within
+// bounds of bytes. A
 // hundred thousand words "trailer", each 64 KiB before the end, where reading them all would be six
 // gigabytes, then two catalogs and a trailer that names the one of one page: the scan keeps the
 // newest `most_sections` trailers (in `pdf.cpp`), the real one among them. A hundred thousand
@@ -1288,11 +1326,12 @@ TRIAL("PDF: repairs of files made to blow them up — trailers, streams, searche
     trailers.object(10, "<< /Type /Pages /Kids [3 0 R 11 0 R] >>");
     trailers.object(11, "<< /Type /Page /MediaBox [0 0 300 400] >>");
 
-    const auto [newest, newest_quick] = quickly(bytes_of(trailers.text() + "trailer\n<< /Root 1 0 R >>\n%%EOF\n"));
+    const Cost newest = costed(bytes_of(trailers.text() + "trailer\n<< /Root 1 0 R >>\n%%EOF\n"));
 
-    OUGHT(newest_quick);
-    OUGHT(newest.damaged);
-    SAME(document_of(newest).sheets, (std::vector<meta::Sheet>{{300, 400, 1}}));
+    OUGHT(!newest.hung);
+    OUGHT(newest.read <= std::uint64_t{64} << 20);
+    OUGHT(newest.made.damaged);
+    SAME(document_of(newest.made).sheets, (std::vector<meta::Sheet>{{300, 400, 1}}));
 
     Assembly streams;
 
@@ -1302,12 +1341,13 @@ TRIAL("PDF: repairs of files made to blow them up — trailers, streams, searche
 
     for (std::uint32_t number = 10; number < 100010; ++number) streams.object(number, "<< /Type /XRef >>");
 
-    const auto [looked, looked_quick] = quickly(bytes_of(streams.text() + "%%EOF\n"));
+    const Cost looked = costed(bytes_of(streams.text() + "%%EOF\n"));
 
-    OUGHT(looked_quick);
-    OUGHT(looked.damaged);
-    SAME(document_of(looked).sheets, (std::vector<meta::Sheet>{{300, 400, 1}}));
-    OUGHT(looked.fields.empty());
+    OUGHT(!looked.hung);
+    OUGHT(looked.read <= std::uint64_t{64} << 20);
+    OUGHT(looked.made.damaged);
+    SAME(document_of(looked.made).sheets, (std::vector<meta::Sheet>{{300, 400, 1}}));
+    OUGHT(looked.made.fields.empty());
 
     Assembly endless;
 
@@ -1315,18 +1355,21 @@ TRIAL("PDF: repairs of files made to blow them up — trailers, streams, searche
 
     endless.text() += "%" + std::string(std::size_t{8} << 20, 'x') + "\n";
 
-    const auto [searched, searched_quick] = quickly(endless.bytes());
+    const Bytes endless_bytes = endless.bytes();
+    const Cost searched = costed(endless_bytes);
 
-    OUGHT(searched_quick);
-    OUGHT(searched.damaged);
+    OUGHT(!searched.hung);
+    OUGHT(searched.read <= 5 * endless_bytes.size() + (std::uint64_t{320} << 20));
+    OUGHT(searched.made.damaged);
 }
 
 // A cross-reference stream whose `/Index` names numbers twice, as an update of the classic file:
 // two ranges over the same numbers, and a thousand numbers given again sixty-five thousand times
 // over eight megabytes of entries, which would make two million of them. A range that overlaps
 // one before it ends the entries and the file is damaged; the first range counts, the document is
-// whole, and it is read quickly; so is a range that starts inside the one before it. Ranges in
-// descending order that do not overlap are taken, and so is an empty range inside another.
+// whole, and its steps stay far below those two million; a range that starts inside the one before
+// it is damage too. Ranges in descending order that do not overlap are taken, and so is an empty
+// range inside another.
 TRIAL("PDF: cross-reference streams — ranges of /Index that overlap are damage, in any order they are not") {
     const auto updated = [](std::string_view index, const std::vector<std::array<std::uint64_t, 3>>& entries, std::size_t padding) {
         Assembly one{"1.5"};
@@ -1342,40 +1385,41 @@ TRIAL("PDF: cross-reference streams — ranges of /Index that overlap are damage
         (void)one.xref_given(62, " /W [0 4 0] /Index [" + std::string{index} + "] /Size 63 /Root 1 0 R /Info 61 0 R /Filter /FlateDecode",
                              zlibbed(fielded(rows, {0, 4, 0}) + std::string(padding, ' ')));
 
-        return quickly(one.bytes());
+        return costed(one.bytes());
     };
 
-    const auto [twice, twice_quick] = updated("61 2 61 2", {{0, 61, 0}, {0, 62, 0}, {0, 61, 0}, {0, 62, 0}}, 0);
+    const Cost twice = updated("61 2 61 2", {{0, 61, 0}, {0, 62, 0}, {0, 61, 0}, {0, 62, 0}}, 0);
 
-    OUGHT(twice.damaged);
-    SAME(document_of(twice), filled_later());
-    SAME(twice.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
+    OUGHT(twice.made.damaged);
+    SAME(document_of(twice.made), filled_later());
+    SAME(twice.made.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
 
     std::string many = "61 2";
 
     for (int one = 0; one < 65535; ++one) many += " 100000 1000";
 
-    const auto [repeated, repeated_quick] = updated(many, {{0, 61, 0}, {0, 62, 0}}, std::size_t{8} << 20);
+    const Cost repeated = updated(many, {{0, 61, 0}, {0, 62, 0}}, std::size_t{8} << 20);
 
-    OUGHT(repeated_quick);
-    OUGHT(repeated.damaged);
-    SAME(document_of(repeated), filled_later());
+    OUGHT(!repeated.hung);
+    OUGHT(repeated.looks <= 300000);
+    OUGHT(repeated.made.damaged);
+    SAME(document_of(repeated.made), filled_later());
 
-    const auto [inside, inside_quick] = updated("61 2 62 1", {{0, 61, 0}, {0, 62, 0}, {0, 62, 0}}, 0);
+    const Cost inside = updated("61 2 62 1", {{0, 61, 0}, {0, 62, 0}, {0, 62, 0}}, 0);
 
-    OUGHT(inside.damaged);
-    SAME(document_of(inside), filled_later());
+    OUGHT(inside.made.damaged);
+    SAME(document_of(inside.made), filled_later());
 
-    const auto [empty, empty_quick] = updated("61 2 62 0", {{0, 61, 0}, {0, 62, 0}}, 0);
+    const Cost empty = updated("61 2 62 0", {{0, 61, 0}, {0, 62, 0}}, 0);
 
-    OUGHT(!empty.damaged);
-    SAME(empty.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
+    OUGHT(!empty.made.damaged);
+    SAME(empty.made.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
 
-    const auto [descending, descending_quick] = updated("62 1 61 1", {{0, 62, 0}, {0, 61, 0}}, 0);
+    const Cost descending = updated("62 1 61 1", {{0, 62, 0}, {0, 61, 0}}, 0);
 
-    OUGHT(!descending.damaged);
-    SAME(document_of(descending), filled_later());
-    SAME(descending.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
+    OUGHT(!descending.made.damaged);
+    SAME(document_of(descending.made), filled_later());
+    SAME(descending.made.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
 }
 
 // Pages that share what they should not, each read once. Three hundred nodes of a page tree share
@@ -1404,11 +1448,12 @@ TRIAL("PDF: shared kids, shared resources and shared annotations are looked at o
 
     (void)kids.table(" /Root 1 0 R");
 
-    const auto [walked, walked_quick] = quickly(kids.bytes());
+    const Cost walked = costed(kids.bytes());
 
-    OUGHT(walked_quick);
-    OUGHT(walked.damaged);
-    SAME(document_of(walked).pages, std::uint32_t{1});
+    OUGHT(!walked.hung);
+    OUGHT(walked.looks <= 1000000);
+    OUGHT(walked.made.damaged);
+    SAME(document_of(walked.made).pages, std::uint32_t{1});
 
     constexpr std::uint32_t many = 200;
 
@@ -1442,11 +1487,12 @@ TRIAL("PDF: shared kids, shared resources and shared annotations are looked at o
 
     (void)shared.table(" /Root 1 0 R");
 
-    const auto [once, once_quick] = quickly(shared.bytes());
-    const meta::Document document = document_of(once);
+    const Cost once = costed(shared.bytes());
+    const meta::Document document = document_of(once.made);
 
-    OUGHT(once_quick);
-    OUGHT(!once.damaged);
+    OUGHT(!once.hung);
+    OUGHT(once.looks <= 20000);
+    OUGHT(!once.made.damaged);
     SAME(document.pages, many);
     SAME(document.sheets, (std::vector<meta::Sheet>{{100, 100, many}}));
     SAME(document.with_text, many);
@@ -1935,9 +1981,10 @@ TRIAL("PDF: the /XRefStm that sections name again is read once") {
 }
 
 // A trailer of a hundred and twenty thousand keys besides its catalog and information dictionary,
-// and an update after it: only the keys the reading needs are kept, so merging the trailers is
-// quick, where keeping them all would make seven billion comparisons; the file is whole.
-TRIAL("PDF: a trailer of a hundred and twenty thousand keys is merged quickly") {
+// and an update after it: only the keys the reading needs are kept, so merging the trailers takes
+// a step for each key and for each comparison with a key kept, where keeping them all would make
+// seven billion comparisons; the file is whole.
+TRIAL("PDF: a trailer of a hundred and twenty thousand keys is merged in linear steps") {
     Assembly one;
     std::string keys;
 
@@ -1949,12 +1996,13 @@ TRIAL("PDF: a trailer of a hundred and twenty thousand keys is merged quickly") 
     one.object(60, "<< /Title (Nowy) >>");
     (void)one.table(" /Info 60 0 R");
 
-    const auto [made, quick] = quickly(one.bytes());
+    const Cost merged = costed(one.bytes());
 
-    OUGHT(quick);
-    OUGHT(!made.damaged);
-    SAME(document_of(made), filled_document());
-    SAME(made.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
+    OUGHT(!merged.hung);
+    OUGHT(merged.looks <= 250000);
+    OUGHT(!merged.made.damaged);
+    SAME(document_of(merged.made), filled_document());
+    SAME(merged.made.fields, (std::vector<meta::Field>{info("Title", "Nowy")}));
 }
 
 // Repairs by the scan. An incremental update whose last "startxref" lies: the newer trailer wins.

@@ -49,7 +49,7 @@ fs::Entry entered(const Entry& one, const Path& shown) {
     made.type = typed(one.kind);
     made.reach = one.attributes.stale ? fs::Type::other : typed(one.reach == platform::Kind::none ? one.kind : one.reach);
     made.size = one.kind == platform::Kind::file ? one.size : 0;
-    made.modified = std::chrono::system_clock::time_point{one.modified.time_since_epoch()};
+    made.modified = std::chrono::floor<std::chrono::system_clock::duration>(one.modified);
     made.attributes = fs::Attributes{one.attributes.hidden, one.attributes.readonly, one.attributes.system, one.attributes.executable};
 
     if (one.target) made.target = core::told(*one.target);

@@ -835,7 +835,7 @@ namespace core {
 // renames here: the old name disappears, a new one appears, and that is all that can honestly be
 // said without the system's help.
 //
-// A listing carries times in seconds, and a write of the same length within the same second as
+// A look keeps times in whole seconds, and a write of the same length within the same second as
 // the previous look changes neither the second nor the size, so the change would be lost. That is
 // why a file modified within the last minute (`fresh`) is asked separately for its exact time.
 // Older ones are not: an extra question for every file on a network share would cost as much
@@ -939,7 +939,9 @@ Look looked(const path& where, bool deep) {
         }
 
         for (const Entry& one : among) {
-            made.seen[one.where] = Sight{one.kind, one.size, one.modified, finely(one.where, one.kind, one.modified, now)};
+            const auto second = std::chrono::floor<std::chrono::seconds>(one.modified);
+
+            made.seen[one.where] = Sight{one.kind, one.size, second, finely(one.where, one.kind, second, now)};
 
             if (deep && one.kind == Kind::folder) waiting.push_back(one.where);
         }

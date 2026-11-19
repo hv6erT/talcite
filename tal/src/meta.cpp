@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -47,6 +48,25 @@ public:
 private:
     fs::File file_;
 };
+
+// A file opened elsewhere, read through a reference, so that its owner can close it.
+class Borrowed final : public Reader {
+public:
+    // A reader of `file`, which must outlive it.
+    explicit Borrowed(const fs::File& file) : file_(file) {}
+
+    // The size, as the file says it now.
+    Task<std::uint64_t> size() override { co_return co_await file_.size(); }
+
+    // Up to `much` bytes from `at`.
+    Task<Bytes> read(std::uint64_t at, std::size_t much) override { co_return co_await file_.read(at, much); }
+
+private:
+    const fs::File& file_;
+};
+
+// How many bytes of the file are copied at a time when it is written again.
+constexpr std::size_t copied_piece = std::size_t{1} << 20;
 
 // Whether `head` holds the magic bytes at offset `at`.
 bool starts(const Bytes& head, std::string_view magic, std::size_t at = 0) {
@@ -333,6 +353,91 @@ Task<Bytes> pictured(Path where, std::size_t which, Port<fs::Files> files) {
     Bytes made = co_await pictured(from, which);
 
     co_return made;
+}
+
+// Writes the edit and the changes into the file `where` (JPEG, PNG or WebP), through `files`: a
+// link is followed to the file it leads to, which is written; the new file is written beside that
+// one under a hidden name, the pieces the plan keeps copied from the file, the rest written anew;
+// then, when the file has kept its size and its time of change, the new one takes its rights and
+// its place. What goes wrong on the way removes the new file and leaves the old one as it was.
+// Throws `Trouble`: the plan's (unsupported, malformed), unsupported for what is not a file, busy
+// when the file changed meanwhile, and the files' own.
+Task<void> written(Path where, Edit edit, std::vector<Change> changes, Port<fs::Files> files) {
+    where = co_await files->canonical(where);
+
+    const fs::Entry before = co_await files->look(where);
+
+    if (before.type != fs::Type::file) throw Trouble{Kind::unsupported, "Only a file is written: " + where.text()};
+
+    fs::File source = co_await files->open(where);
+    Borrowed from{source};
+    const std::vector<tagging::Piece> plan = co_await tagging::planned(from, edit, changes);
+    std::optional<Path> temporary;
+    fs::File out;
+
+    for (int attempt = 0; attempt < 16 && !temporary; ++attempt) {
+        const Path candidate = where.parent() / ("." + std::string{where.name()} + ".tal-" + std::to_string(attempt));
+
+        try {
+            out = co_await files->open(candidate, fs::Mode::exclusive);
+            temporary = candidate;
+        } catch (const Trouble& why) {
+            if (why.kind() != Kind::exists) throw;
+        }
+    }
+
+    if (!temporary) throw Trouble{Kind::exists, "No free name for the new file beside " + where.text() + "."};
+
+    std::exception_ptr failed;
+
+    try {
+        std::uint64_t at = 0;
+
+        for (const tagging::Piece& one : plan) {
+            if (!one.made.empty()) {
+                co_await out.write(at, one.made);
+                at += one.made.size();
+
+                continue;
+            }
+
+            for (std::uint64_t done = 0; done < one.much;) {
+                const auto much = static_cast<std::size_t>(std::min<std::uint64_t>(copied_piece, one.much - done));
+                Bytes part = co_await source.read(one.from + done, much);
+
+                if (part.size() < much) throw Trouble{Kind::busy, "The file shrank while it was being written."};
+
+                co_await out.write(at, std::move(part));
+                at += much;
+                done += much;
+            }
+        }
+
+        co_await out.flush();
+        out.close();
+        source.close();
+
+        const fs::Entry now = co_await files->look(where);
+
+        if (now.size != before.size || now.modified != before.modified) throw Trouble{Kind::busy, "The file changed while it was being written."};
+
+        if (before.rights) co_await files->change(*temporary, fs::Changing{.rights = before.rights});
+
+        co_await files->move(*temporary, where, fs::Conflict::replace);
+    } catch (...) {
+        failed = std::current_exception();
+    }
+
+    if (!failed) co_return;
+
+    out.close();
+
+    try {
+        co_await files->remove(*temporary);
+    } catch (const Trouble&) {
+    }
+
+    std::rethrow_exception(failed);
 }
 
 }
