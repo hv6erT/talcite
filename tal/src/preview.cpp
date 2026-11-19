@@ -14,13 +14,57 @@
 // the smallest such first, and the image itself decoded otherwise, reduced while it decodes as far
 // as it may be (`decoded`). Either way the result fits what is wanted, keeps its proportions, is
 // never enlarged, and is turned as the orientation of EXIF says. A file that does not start as an
-// image tal knows, or of more than `most_file` bytes, is not read whole.
+// image tal knows, or of more than `most_file` bytes, is not read whole. The head of the file is
+// read once, for the description, the picture and the format alike.
 namespace tal::media {
 
 namespace {
 
 constexpr std::uint64_t most_file = std::uint64_t{256} << 20;
 constexpr std::size_t head_size = std::size_t{64} << 10;
+
+// A reader of the file that keeps its head (`head_size` bytes) once read: a read that lies in it
+// comes from there, any other from the file.
+class Headed final : public meta::Reader {
+public:
+    // A reader of `file`, which it keeps open while it lives.
+    explicit Headed(fs::File file) : file_(std::move(file)) {}
+
+    // The size, as the file says it now.
+    Task<std::uint64_t> size() override { co_return co_await file_.size(); }
+
+    // Up to `much` bytes from `at`, from the head when they lie in it.
+    Task<Bytes> read(std::uint64_t at, std::size_t much) override {
+        co_await loaded();
+
+        if (at <= head_.size() && much <= head_.size() - at) {
+            const auto from = static_cast<std::ptrdiff_t>(at);
+
+            co_return Bytes(head_.begin() + from, head_.begin() + from + static_cast<std::ptrdiff_t>(much));
+        }
+
+        co_return co_await file_.read(at, much);
+    }
+
+    // The head of the file, read the first time it is asked for.
+    [[nodiscard]] Task<Bytes> head() {
+        co_await loaded();
+        co_return head_;
+    }
+
+private:
+    // Reads the head, once.
+    Task<void> loaded() {
+        if (read_) co_return;
+
+        head_ = co_await file_.read(0, head_size);
+        read_ = true;
+    }
+
+    fs::File file_;
+    Bytes head_;
+    bool read_ = false;
+};
 
 // Whether `one` has the proportions of `whole`, within two in a hundred.
 [[nodiscard]] bool alike(Size one, Size whole) {
@@ -49,7 +93,9 @@ constexpr std::size_t head_size = std::size_t{64} << 10;
 // decoded whole, its first frame. Throws `Trouble`: unsupported for a file that is no image tal
 // knows, full for one over `most_file`, and what reading the file and decoding throw.
 Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
-    const meta::Description told = co_await meta::described(where, files);
+    fs::File file = co_await files->open(where);
+    Headed from{std::move(file)};
+    const meta::Description told = co_await meta::described(from);
     const std::uint8_t orientation = told.photo ? told.photo->orientation : 1;
     const Size box = orientation >= 5 && orientation <= 8 ? Size{most.height, most.width} : most;
     const std::optional<Size> whole = told.photo && told.photo->width != 0 && told.photo->height != 0 ? std::optional<Size>{Size{told.photo->width, told.photo->height}} : std::nullopt;
@@ -64,7 +110,7 @@ Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
         std::optional<Bytes> bytes;
 
         try {
-            bytes = co_await meta::pictured(where, one, files);
+            bytes = co_await meta::pictured(from, one);
         } catch (const Trouble&) {
             continue;
         }
@@ -82,7 +128,7 @@ Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
         co_return made.oriented(orientation);
     }
 
-    const Bytes head = co_await files->read(where, fs::Range{0, head_size});
+    const Bytes head = co_await from.head();
 
     if (format_of(head) == Format::none) throw Trouble{Kind::unsupported, "Not an image tal knows."};
 

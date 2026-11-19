@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -92,6 +93,76 @@ public:
     }
 
     std::size_t most = 0;
+};
+
+// A file opened through `Tallying`: what is read from it is counted in `tally`.
+class Tallied final : public tal::fs::Opened {
+public:
+    // Over the file in memory.
+    Tallied(tal::fs::File given, std::uint64_t& counted) : inner_(std::move(given)), tally_(counted) {}
+
+    // Reads as the file does, and counts it.
+    tal::Task<Bytes> read(std::uint64_t at, std::size_t most) override {
+        Bytes made = co_await inner_.read(at, most);
+
+        tally_ += made.size();
+        co_return made;
+    }
+
+    // Writes as the file does.
+    tal::Task<void> write(std::uint64_t at, Bytes what) override { co_await inner_.write(at, std::move(what)); }
+
+    // The size of the file.
+    tal::Task<std::uint64_t> size() override { co_return co_await inner_.size(); }
+
+    // Flushes as the file does.
+    tal::Task<void> flush() override { co_await inner_.flush(); }
+
+private:
+    tal::fs::File inner_;
+    std::uint64_t& tally_;
+};
+
+// Files in memory that count the bytes read from each file, whole or through the file opened.
+class Tallying final : public tal::fs::Memory {
+public:
+    std::map<std::string, std::uint64_t> read_from;
+
+    // Reads as memory does, and counts it.
+    tal::Task<Bytes> read(const tal::Path& file, tal::fs::Range part) override {
+        Bytes made = co_await Memory::read(file, part);
+
+        read_from[file.text()] += made.size();
+        co_return made;
+    }
+
+    // Opens as memory does; what is read through the file is counted.
+    tal::Task<tal::fs::File> open(const tal::Path& file, tal::fs::Mode how) override {
+        tal::fs::File made = co_await Memory::open(file, how);
+
+        co_return tal::fs::File{std::make_shared<Tallied>(std::move(made), read_from[file.text()])};
+    }
+};
+
+// A decoder that remembers how many bytes each image it was given had, and decodes as tal does.
+class Counting final : public tal::media::Decoding {
+public:
+    std::vector<std::size_t> given;
+
+    // The adapter's name.
+    [[nodiscard]] std::string_view name() const override { return "counting"; }
+
+    // Remembers the size and decodes.
+    void decoded(std::span<const std::byte> image, const tal::media::Taking& each) override {
+        given.push_back(image.size());
+        tal::media::Decoding::builtin()->decoded(image, each);
+    }
+
+    // Remembers the size and decodes, reduced toward `most`.
+    void decoded(std::span<const std::byte> image, const tal::media::Taking& each, Size most) override {
+        given.push_back(image.size());
+        tal::media::Decoding::builtin()->decoded(image, each, most);
+    }
 };
 
 // The one frame a decoder gives, with its size; none when it gives no frame.
@@ -2426,6 +2497,58 @@ TRIAL("Previews: the thumbnail when it is enough, the image otherwise, turned an
     SAME(refusal([&] { (void)shown("notes.txt", Size{8, 8}); }), std::string{"unsupported: Not an image tal knows."});
     OUGHT(files->most <= std::size_t{64} << 10);
     OUGHT(shown("long.png", Size{8, 8}).size() == (Size{8, 1}));
+}
+
+// A thousand photos get their previews and none is decoded whole: each is the JPEG turned by EXIF
+// with 96 KiB after its end (where cameras put more pictures), wanted within 6 by 8. The decoder
+// is given the thumbnail of each, and nothing larger; of each file only the head (64 KiB), which
+// holds the thumbnail, is read, and once. A photo shorter than the head is read once, whole; one
+// wanted larger than its thumbnail is read whole besides its head, for the decoder.
+TRIAL("Previews: a thousand photos, none decoded whole") {
+    const auto files = std::make_shared<Tallying>();
+    const auto counting = std::make_shared<Counting>();
+    tal::Loop loop;
+    const tal::Path folder{"/photos"};
+    Bytes photo = lump(turned_jpeg);
+    tal::meta::Held whole{photo};
+    const std::size_t thumbnail = tal::wait(loop, tal::meta::pictured(whole, 0)).size();
+
+    photo.resize(photo.size() + (std::size_t{96} << 10), std::byte{0x5A});
+    tal::wait(loop, files->make(folder));
+
+    for (int one = 0; one < 1000; ++one) tal::wait(loop, files->write(folder / ("photo" + std::to_string(one) + ".jpg"), photo));
+
+    tal::defaults().set<tal::media::Decoding>(counting);
+
+    int fitted = 0;
+
+    for (int one = 0; one < 1000; ++one) {
+        const Pixels made = tal::wait(loop, tal::media::previewed(folder / ("photo" + std::to_string(one) + ".jpg"), Size{6, 8},
+                                                                  tal::Port<tal::fs::Files>{std::shared_ptr<tal::fs::Files>{files}}));
+
+        if (made.size() == (Size{6, 8})) ++fitted;
+    }
+
+    tal::defaults().clear<tal::media::Decoding>();
+
+    SAME(fitted, 1000);
+    SAME(counting->given.size(), std::size_t{1000});
+    OUGHT(std::ranges::all_of(counting->given, [thumbnail](std::size_t one) { return one == thumbnail; }));
+    SAME(files->read_from.size(), std::size_t{1000});
+    OUGHT(std::ranges::all_of(files->read_from, [](const auto& one) { return one.second == (std::size_t{64} << 10); }));
+
+    const tal::Path small = folder / "small.jpg";
+
+    tal::wait(loop, files->write(small, lump(turned_jpeg)));
+
+    OUGHT(tal::wait(loop, tal::media::previewed(small, Size{6, 8}, tal::Port<tal::fs::Files>{std::shared_ptr<tal::fs::Files>{files}})).size() == (Size{6, 8}));
+    SAME(files->read_from[small.text()], std::uint64_t{lump(turned_jpeg).size()});
+
+    const tal::Path large = folder / "photo0.jpg";
+    const std::uint64_t before = files->read_from[large.text()];
+
+    OUGHT(tal::wait(loop, tal::media::previewed(large, Size{32, 32}, tal::Port<tal::fs::Files>{std::shared_ptr<tal::fs::Files>{files}})).size() == (Size{24, 32}));
+    SAME(files->read_from[large.text()] - before, (std::uint64_t{64} << 10) + photo.size());
 }
 
 // Thumbnails kept, through files in memory. With no folder of caches, or with no SHA-256 (a build

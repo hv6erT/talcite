@@ -938,6 +938,133 @@ public:
     }
 };
 
+// A file opened beside the photo through `Failing`: its writes reach the file in memory until
+// `budget` bytes are spent, the part that fits first, and then the disk is full; a flush is full
+// when `flushing`.
+class Cut final : public tal::fs::Opened {
+public:
+    // Over the file in memory.
+    Cut(tal::fs::File given, std::uint64_t much, bool flush_fails) : inner_(std::move(given)), budget_(much), flushing_(flush_fails) {}
+
+    // Reads as the file does.
+    tal::Task<Bytes> read(std::uint64_t at, std::size_t most) override { co_return co_await inner_.read(at, most); }
+
+    // Writes what fits in the budget, and is full past it.
+    tal::Task<void> write(std::uint64_t at, Bytes what) override {
+        const std::uint64_t left = budget_ - std::min(budget_, written_);
+
+        if (what.size() <= left) {
+            written_ += what.size();
+            co_await inner_.write(at, std::move(what));
+
+            co_return;
+        }
+
+        what.resize(static_cast<std::size_t>(left));
+        written_ = budget_;
+
+        if (!what.empty()) co_await inner_.write(at, std::move(what));
+
+        throw tal::Trouble{tal::Kind::full, "The disk is full."};
+    }
+
+    // The size of the file.
+    tal::Task<std::uint64_t> size() override { co_return co_await inner_.size(); }
+
+    // Flushes, or is full.
+    tal::Task<void> flush() override {
+        if (flushing_) throw tal::Trouble{tal::Kind::full, "The disk is full."};
+
+        co_await inner_.flush();
+    }
+
+private:
+    tal::fs::File inner_;
+    std::uint64_t budget_;
+    std::uint64_t written_ = 0;
+    bool flushing_;
+};
+
+// Files in memory whose new file beside the photo fails on the way, as a disk that fills up:
+// while it is written (past `budget` bytes), at its flush, at the change of its rights or at its
+// move into the photo's place.
+class Failing final : public tal::fs::Memory {
+public:
+    enum class At { writing, flushing, rights, moving };
+
+    // Failing at `where`, a writing after `much` bytes.
+    explicit Failing(At where, std::uint64_t much = 0) : at_(where), budget_(much) {}
+
+    // Opens as memory does; a file made anew is cut.
+    tal::Task<tal::fs::File> open(const tal::Path& file, tal::fs::Mode how) override {
+        tal::fs::File made = co_await Memory::open(file, how);
+
+        if (how != tal::fs::Mode::exclusive) co_return made;
+
+        const std::uint64_t budget = at_ == At::writing ? budget_ : ~std::uint64_t{0};
+
+        co_return tal::fs::File{std::make_shared<Cut>(std::move(made), budget, at_ == At::flushing)};
+    }
+
+    // Changes as memory does, or is full.
+    tal::Task<void> change(const tal::Path& what, tal::fs::Changing how) override {
+        if (at_ == At::rights) throw tal::Trouble{tal::Kind::full, "The disk is full."};
+
+        co_await Memory::change(what, how);
+    }
+
+    // Moves as memory does, or is full.
+    tal::Task<void> move(const tal::Path& from, const tal::Path& to, tal::fs::Conflict how) override {
+        if (at_ == At::moving) throw tal::Trouble{tal::Kind::full, "The disk is full."};
+
+        co_await Memory::move(from, to, how);
+    }
+
+private:
+    At at_;
+    std::uint64_t budget_;
+};
+
+// The bytes of the image itself in a PNG: the data of its IDAT chunks, one after another.
+[[nodiscard]] Bytes idat_of(const Bytes& png) {
+    Bytes made;
+
+    for (std::size_t at = 8; at + 12 <= png.size();) {
+        std::size_t length = 0;
+
+        for (std::size_t one = 0; one < 4; ++one) length = (length << 8) | std::to_integer<std::size_t>(png[at + one]);
+
+        if (std::string_view{reinterpret_cast<const char*>(png.data() + at + 4), 4} == "IDAT")
+            made.insert(made.end(), png.begin() + static_cast<std::ptrdiff_t>(at + 8), png.begin() + static_cast<std::ptrdiff_t>(at + 8 + length));
+
+        at += 12 + length;
+    }
+
+    return made;
+}
+
+// The bytes of the image itself in a WebP: its chunks of frames and of alpha (VP8, VP8L, ALPH,
+// ANMF), whole, one after another.
+[[nodiscard]] Bytes frames_of(const Bytes& webp) {
+    Bytes made;
+
+    for (std::size_t at = 12; at + 8 <= webp.size();) {
+        std::size_t length = 0;
+
+        for (std::size_t one = 4; one-- > 0;) length = (length << 8) | std::to_integer<std::size_t>(webp[at + 4 + one]);
+
+        const std::string_view type{reinterpret_cast<const char*>(webp.data() + at), 4};
+        const std::size_t whole = 8 + length + length % 2;
+
+        if (type == "VP8 " || type == "VP8L" || type == "ALPH" || type == "ANMF")
+            made.insert(made.end(), webp.begin() + static_cast<std::ptrdiff_t>(at), webp.begin() + static_cast<std::ptrdiff_t>(std::min(at + whole, webp.size())));
+
+        at += whole;
+    }
+
+    return made;
+}
+
 // The program's files in memory while it lives.
 struct Remembering {
     // Puts files in memory in place.
@@ -2227,6 +2354,56 @@ TRIAL("Photo writing: a file changed meanwhile is not replaced") {
     SAME(wrote.said, std::string{"busy: The file changed while it was being written."});
     OUGHT(wrote.file == grown);
     SAME(wrote.names, std::size_t{1});
+}
+
+// A write cut off anywhere, as by a disk that fills up, leaves the photo as it was and nothing
+// beside it, and says why: in JPEG, PNG and WebP, while the new file is written (before its first
+// byte, after one, after a hundred, halfway), at its flush, at the change of its rights and at its
+// move into place.
+TRIAL("Photo writing: a write cut off anywhere leaves the file as it was") {
+    meta::Edit edit;
+
+    edit.description = "Opis";
+
+    for (const std::string_view sample : {full_jpg, meta_png, meta_webp}) {
+        const Bytes file = lump(sample);
+        std::vector<std::shared_ptr<Failing>> failings;
+
+        for (const std::uint64_t budget : {std::uint64_t{0}, std::uint64_t{1}, std::uint64_t{100}, std::uint64_t{file.size() / 2}})
+            failings.push_back(std::make_shared<Failing>(Failing::At::writing, budget));
+
+        for (const Failing::At at : {Failing::At::flushing, Failing::At::rights, Failing::At::moving}) failings.push_back(std::make_shared<Failing>(at));
+
+        for (const std::shared_ptr<Failing>& failing : failings) {
+            const Wrote wrote = writing(file, edit, {}, failing);
+
+            SAME(wrote.said, std::string{"full: The disk is full."});
+            OUGHT(wrote.file == file);
+            SAME(wrote.names, std::size_t{1});
+        }
+    }
+}
+
+// The image's own bytes stay as they were in PNG and WebP, as they do in JPEG: the data of IDAT,
+// and the chunks of the frame.
+TRIAL("Photo writing: the bytes of the image stay in PNG and WebP") {
+    meta::Edit edit;
+
+    edit.description = "Opis";
+    edit.orientation = 6;
+    edit.keywords = std::vector<std::string>{"a", "b"};
+
+    const Bytes png = lump(meta_png);
+    const Wrote png_wrote = writing(png, edit);
+    const Bytes webp = lump(meta_webp);
+    const Wrote webp_wrote = writing(webp, edit);
+
+    SAME(png_wrote.said, std::string{});
+    OUGHT(!idat_of(png).empty());
+    OUGHT(idat_of(png_wrote.file) == idat_of(png));
+    SAME(webp_wrote.said, std::string{});
+    OUGHT(!frames_of(webp).empty());
+    OUGHT(frames_of(webp_wrote.file) == frames_of(webp));
 }
 
 // IPTC rewritten keeps the digest of Photoshop (0x0425) true: with weak sums built in it is the
