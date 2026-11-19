@@ -10,7 +10,7 @@
 
 namespace tal::inflating {
 
-enum class Wrapping { raw, gzip };
+enum class Wrapping { raw, gzip, zlib };
 
 [[nodiscard]] std::uint32_t crc32(std::uint32_t crc, std::span<const std::byte> bytes);
 
@@ -63,6 +63,7 @@ private:
     Bytes history_;
     std::uint32_t crc_ = 0;
     std::uint32_t size_ = 0;
+    std::uint32_t adler_ = 1;
     std::size_t emitted_ = 0;
 };
 

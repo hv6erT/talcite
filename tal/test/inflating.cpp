@@ -13,9 +13,9 @@
 
 #include "inflating.hpp"
 
-// Inflate and gzip: streams that zlib made, read whole and in pieces down to a byte; streams
+// Inflate, gzip and zlib: streams that zlib made, read whole and in pieces down to a byte; streams
 // written bit by bit here for each mistake the reader must find; gzip's header fields, trailer and
-// members. Compared against zlib itself by the fuzzer.
+// members, zlib's two bytes and Adler-32. Compared against zlib itself by the fuzzer.
 
 namespace {
 
@@ -65,6 +65,14 @@ const std::string_view stored_vector =
     "6c6974746c6520677265792063656c6c732e20506f69726f743a20746865206c6974746c6520677265792063656c6c732e20506f69726f743a20746865206c6974746c652067726579206365"
     "6c6c732e20506f69726f743a20746865206c6974746c6520677265792063656c6c732e20506f69726f743a20746865206c6974746c6520677265792063656c6c732e20506f69726f743a2074"
     "6865206c6974746c6520677265792063656c6c732e20506f69726f743a20746865206c6974746c6520677265792063656c6c732e20506f69726f743a20746865206c6974746c65206772";
+
+// `cells()` in zlib's wrapping (RFC 1950), as zlib made it at level 9.
+const std::string_view zlib_vector =
+    "78da0bc8cf2cca2fb15228c94855c8c92c29c94955482f4aad54484ecdc929d6530818951e951e951e951e6ad20c8c4ccc2cac6cec1c9c5cdc3cbc7cfc028242c222a262e2129252d232b2"
+    "72f20a8a4aca2aaa6aea1a9a5ada3aba7afa068646c626a666e6169656d636b676f60e8e4ece2eae6eee1e9e5ede3ebe7efe018141c121a161e1119151d131b171f1098949c929a969e919"
+    "9959d939b979f9058545c525a565e5159555d535b575f50d8d4dcd2dad6ded1d9d5ddd3dbd7dfd13264e9a3c65eab4e93366ce9a3d67eebcf90b162e5abc64e9b2e52b56ae5abd66edbaf5"
+    "1b366edabc65ebb6ed3b76eedabd67efbefd070e1e3a7ce4e8b1e3274e9e3a7de6ecb9f3172e5eba7ce5eab5eb376edeba7de7eebdfb0f1e3e7afce4e9b3e72f5ebe7afde6edbbf71f3e7e"
+    "fafce5ebb7ef3f7efefafde7efbfff005a323c4f";
 
 // `cells()` in the fixed code, as zlib made it with Z_FIXED.
 const std::string_view fixed_vector =
@@ -482,4 +490,50 @@ TRIAL("Inflate: gzip's extra field of more than a byte, and a trailer after a bl
     made = joined(joined(joined(made, body), little(tal::inflating::crc32(0, tal::bytes("Hi")))), little(2));
 
     SAME(inflated(made, Wrapping::gzip), std::string{"Hi"});
+}
+
+// zlib's wrapping, as PDF streams and compressed ID3 frames carry it: its two bytes checked
+// (deflate, a window of at most 32 KiB, the check by 31, no preset dictionary), the Adler-32 after
+// the last block, and nothing after it.
+TRIAL("Inflate: zlib checks its two bytes and its Adler-32, whole and byte by byte, and nothing after") {
+    const auto said = [](const Bytes& given) {
+        try {
+            Inflater one{Wrapping::zlib};
+            const Bytes made = one.fed(given);
+
+            return std::string{one.ended() ? "ended " : "open "} + std::to_string(made.size());
+        } catch (const tal::Trouble& why) {
+            return std::string{tal::spoken(why.kind())} + ": " + why.what();
+        }
+    };
+    const Bytes whole = unhexed(zlib_vector);
+    Inflater piecemeal{Wrapping::zlib};
+    Bytes pieces;
+
+    for (const std::byte one : whole) {
+        const Bytes got = piecemeal.fed(std::span<const std::byte>{&one, 1});
+
+        pieces.insert(pieces.end(), got.begin(), got.end());
+    }
+
+    OUGHT(piecemeal.ended());
+    OUGHT(pieces == cells());
+    SAME(said(whole), "ended " + std::to_string(cells().size()));
+    SAME(said(Bytes(whole.begin(), whole.end() - 1)), "open " + std::to_string(cells().size()));
+
+    Bytes checked = whole;
+    Bytes summed = whole;
+    Bytes after = whole;
+
+    checked[1] = std::byte{0xDB};
+    summed.back() = std::byte{0x50};
+    after.push_back(std::byte{0});
+
+    SAME(said(checked), std::string{"malformed: The compressed data is damaged: the check of a zlib header differs."});
+    SAME(said(summed), std::string{"malformed: The compressed data is damaged: the Adler-32 of a zlib stream differs."});
+    SAME(said(after), std::string{"malformed: The compressed data is damaged: something follows the end."});
+    SAME(said(unhexed("7918")), std::string{"malformed: The compressed data is damaged: not zlib deflate."});
+    SAME(said(unhexed("881c")), std::string{"malformed: The compressed data is damaged: not zlib deflate."});
+    SAME(said(unhexed("782000000000")), std::string{"malformed: The compressed data is damaged: a zlib preset dictionary."});
+    SAME(said(unhexed("78")), std::string{"open 0"});
 }

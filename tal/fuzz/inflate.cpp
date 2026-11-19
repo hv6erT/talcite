@@ -13,18 +13,18 @@
 #include <zlib.h>
 #endif
 
-// One input of libFuzzer as deflate or gzip, by its first byte, fed in pieces of a size the second
-// byte gives. The inflater may refuse with `Trouble` and nothing else, and never crash, hang, read
-// out of bounds or leak. Where the fuzz build has zlib, raw deflate is checked against it: what
-// both finish they finish alike, what zlib refuses ours refuses or waits on, and what zlib makes of
-// the input packed again comes back whole.
+// One input of libFuzzer as raw deflate, gzip or zlib, by its first byte, fed in pieces of a size
+// the second byte gives. The inflater may refuse with `Trouble` and nothing else, and never crash,
+// hang, read out of bounds or leak. Where the fuzz build has zlib, raw deflate and zlib's wrapping
+// are checked against it: what both finish they finish alike, what zlib refuses ours refuses or
+// waits on, and what zlib makes of the input packed again comes back whole.
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     if (size < 2) return 0;
 
-    const bool gzip = (data[0] & 1U) != 0;
+    const auto how = static_cast<tal::inflating::Wrapping>(data[0] % 3);
     const std::size_t piece = 1 + data[1];
     const std::span<const std::byte> given{reinterpret_cast<const std::byte*>(data + 2), size - 2};
-    tal::inflating::Inflater one{gzip ? tal::inflating::Wrapping::gzip : tal::inflating::Wrapping::raw};
+    tal::inflating::Inflater one{how};
     tal::Bytes made;
     bool refused = false;
 
@@ -41,11 +41,11 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     }
 
 #ifdef TAL_FUZZ_ZLIB
-    if (!gzip) {
+    if (how != tal::inflating::Wrapping::gzip) {
         z_stream stream{};
         tal::Bytes theirs(std::min(std::size_t{4} << 20, given.size() * 1100 + 1024));
 
-        inflateInit2(&stream, -15);
+        inflateInit2(&stream, how == tal::inflating::Wrapping::zlib ? 15 : -15);
         stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(given.data()));
         stream.avail_in = static_cast<uInt>(given.size());
         stream.next_out = reinterpret_cast<Bytef*>(theirs.data());
@@ -71,7 +71,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         z_stream stream{};
         tal::Bytes packed(compressBound(static_cast<uLong>(given.size())) + 64);
 
-        deflateInit2(&stream, data[1] % 10, Z_DEFLATED, gzip ? 31 : -15, 8, (data[0] >> 1) % 5);
+        deflateInit2(&stream, data[1] % 10, Z_DEFLATED, how == tal::inflating::Wrapping::gzip ? 31 : how == tal::inflating::Wrapping::zlib ? 15 : -15, 8, (data[0] >> 2) % 5);
         stream.next_in = reinterpret_cast<Bytef*>(const_cast<std::byte*>(given.data()));
         stream.avail_in = static_cast<uInt>(given.size());
         stream.next_out = reinterpret_cast<Bytef*>(packed.data());
@@ -80,7 +80,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         packed.resize(stream.total_out);
         deflateEnd(&stream);
 
-        tal::inflating::Inflater again{gzip ? tal::inflating::Wrapping::gzip : tal::inflating::Wrapping::raw};
+        tal::inflating::Inflater again{how};
         const tal::Bytes back = again.fed(packed);
 
         if (!again.ended() || !std::equal(back.begin(), back.end(), given.begin(), given.end())) std::terminate();

@@ -111,11 +111,12 @@ int built(std::array<std::uint16_t, 16>& counts, std::vector<std::uint16_t>& sym
 
 }
 
-// An inflater of raw deflate or of gzip.
-Inflater::Inflater(Wrapping how) : how_(how), stage_(how == Wrapping::gzip ? Stage::header : Stage::block) {}
+// An inflater of raw deflate, of gzip or of zlib.
+Inflater::Inflater(Wrapping how) : how_(how), stage_(how == Wrapping::raw ? Stage::block : Stage::header) {}
 
 // What `given` decodes to, after what came before. Throws `Trouble` (malformed) for damage and for
-// anything after the end; the inflater is of no use then.
+// anything after the end, where only gzip may go on with another member; the inflater is of no use
+// then.
 Bytes Inflater::fed(std::span<const std::byte> given) {
     Bytes out;
 
@@ -217,9 +218,30 @@ int Inflater::decoded(const Table& table) {
 }
 
 // A gzip member's header: its magic, deflate as the method, no reserved flags, and the extra
-// field, the name, the comment and the header's CRC skipped when there.
+// field, the name, the comment and the header's CRC skipped when there. A zlib stream's two bytes
+// (RFC 1950): deflate with a window of at most 32 KiB, a check that divides by 31, and no preset
+// dictionary, which nobody gives us.
 void Inflater::headed() {
     const auto byte = [this] { return bits(8); };
+
+    history_.clear();
+    emitted_ = 0;
+    last_ = false;
+
+    if (how_ == Wrapping::zlib) {
+        const std::uint32_t method = byte();
+        const std::uint32_t flags = byte();
+
+        if ((method & 0x0FU) != 8 || (method >> 4) > 7) broken("not zlib deflate");
+
+        if ((method * 256 + flags) % 31 != 0) broken("the check of a zlib header differs");
+
+        if ((flags & 0x20U) != 0) broken("a zlib preset dictionary");
+
+        stage_ = Stage::block;
+
+        return;
+    }
 
     if (byte() != 0x1F || byte() != 0x8B) broken("not gzip");
 
@@ -249,11 +271,8 @@ void Inflater::headed() {
     if ((flags & 0x02U) != 0) (void)bits(16);
 
     stage_ = Stage::block;
-    history_.clear();
-    emitted_ = 0;
     crc_ = 0xFFFFFFFFU;
     size_ = 0;
-    last_ = false;
 }
 
 // A block's header: stored with its length checked, or the fixed code, or the dynamic code read
@@ -357,7 +376,7 @@ void Inflater::blocked() {
 // The bytes of a stored block that the input holds, or its end.
 void Inflater::stored(Bytes& out) {
     if (left_ == 0) {
-        stage_ = last_ ? (how_ == Wrapping::gzip ? Stage::trailer : Stage::done) : Stage::block;
+        stage_ = last_ ? (how_ == Wrapping::raw ? Stage::done : Stage::trailer) : Stage::block;
 
         return;
     }
@@ -385,7 +404,7 @@ void Inflater::coded(Bytes& out) {
     }
 
     if (symbol == 256) {
-        stage_ = last_ ? (how_ == Wrapping::gzip ? Stage::trailer : Stage::done) : Stage::block;
+        stage_ = last_ ? (how_ == Wrapping::raw ? Stage::done : Stage::trailer) : Stage::block;
 
         return;
     }
@@ -408,11 +427,24 @@ void Inflater::coded(Bytes& out) {
     kept(out);
 }
 
-// A gzip member's trailer, from the next whole byte: its CRC-32 and size must be what came.
+// A gzip member's trailer, from the next whole byte: its CRC-32 and size must be what came. A zlib
+// stream's: its Adler-32, high byte first.
 void Inflater::trailed() {
     if (bit_ != 0) {
         bit_ = 0;
         ++at_;
+    }
+
+    if (how_ == Wrapping::zlib) {
+        std::uint32_t adler = 0;
+
+        for (int one = 0; one < 4; ++one) adler = (adler << 8) | bits(8);
+
+        if (adler != adler_) broken("the Adler-32 of a zlib stream differs");
+
+        stage_ = Stage::done;
+
+        return;
     }
 
     // Each half read in its own statement: the two halves of one expression have no order, and a
@@ -430,7 +462,8 @@ void Inflater::trailed() {
 }
 
 // Moves what the last step added to the history into `out`, counts it into the CRC-32 and the
-// size of gzip, and keeps of the history the window alone, cut when it is twice that.
+// size of gzip or the Adler-32 of zlib, and keeps of the history the window alone, cut when it is
+// twice that.
 void Inflater::kept(Bytes& out) {
     const std::span<const std::byte> fresh = std::span<const std::byte>{history_}.subspan(emitted_);
 
@@ -442,6 +475,18 @@ void Inflater::kept(Bytes& out) {
         for (const std::byte one : fresh) crc_ = table[(crc_ ^ std::to_integer<std::uint32_t>(one)) & 0xFFU] ^ (crc_ >> 8);
 
         size_ += static_cast<std::uint32_t>(fresh.size());
+    }
+
+    if (how_ == Wrapping::zlib) {
+        std::uint32_t low = adler_ & 0xFFFFU;
+        std::uint32_t high = adler_ >> 16;
+
+        for (const std::byte one : fresh) {
+            low = (low + std::to_integer<std::uint32_t>(one)) % 65521U;
+            high = (high + low) % 65521U;
+        }
+
+        adler_ = (high << 16) | low;
     }
 
     emitted_ = history_.size();
