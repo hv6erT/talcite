@@ -13,14 +13,15 @@ if(TAL_FUZZ)
 endif()
 
 # tal::core of talcite.next: tasks and their owners, executors, the clock, troubles, ports, the
-# log, paths, the files port with its memory adapter, streams, the processes port with its
-# scripted adapter, JSON, text (UTF-8, terminal cells, letter case, collation and the rules of
+# log, paths, the files port with its memory adapter, network shares, streams, the processes port
+# with its scripted adapter, JSON, XML, archives (zip and tar, plain or through gzip, with our own
+# inflate), text (UTF-8, terminal cells, letter case, collation and the rules of
 # languages), the dictionary of a program's texts, its settings, and in platform/ the system's adapters of the ports, built in as their defaults. It
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/task.cpp
-  src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp
+add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/inflate.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/tar.cpp src/task.cpp
+  src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp src/zip.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
   src/platform/trash_core.cpp src/platform/watch_core.cpp)
