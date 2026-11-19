@@ -111,15 +111,26 @@ int built(std::array<std::uint16_t, 16>& counts, std::vector<std::uint16_t>& sym
 
 }
 
-// An inflater of raw deflate, of gzip or of zlib.
-Inflater::Inflater(Wrapping how) : how_(how), stage_(how == Wrapping::raw ? Stage::block : Stage::header) {}
+// An inflater of raw deflate, of gzip or of zlib. With `Rest::left` what follows the end of a raw
+// or zlib stream is left unread instead of refused: PDF writers count an end of line into a
+// stream's length.
+Inflater::Inflater(Wrapping how, Rest rest)
+    : how_(how), rest_(rest), stage_(how == Wrapping::raw ? Stage::block : Stage::header) {}
 
 // What `given` decodes to, after what came before. Throws `Trouble` (malformed) for damage and for
-// anything after the end, where only gzip may go on with another member; the inflater is of no use
-// then.
+// anything after the end, where only gzip may go on with another member, unless the rest is to be
+// left; the inflater is of no use then.
 Bytes Inflater::fed(std::span<const std::byte> given) {
     Bytes out;
 
+    fed(given, out);
+
+    return out;
+}
+
+// As `fed`, appending to `out`, which keeps what was decoded before a damage when it throws: a
+// reader that takes what there is of a damaged stream (PDF) loses nothing of it.
+void Inflater::fed(std::span<const std::byte> given, Bytes& out) {
     in_.insert(in_.end(), given.begin(), given.end());
 
     for (;;) {
@@ -130,6 +141,8 @@ Bytes Inflater::fed(std::span<const std::byte> given) {
             }
 
             if (at_ >= in_.size()) break;
+
+            if (how_ != Wrapping::gzip && rest_ == Rest::left) break;
 
             if (how_ != Wrapping::gzip) broken("something follows the end");
 
@@ -153,8 +166,6 @@ Bytes Inflater::fed(std::span<const std::byte> given) {
         in_.erase(in_.begin(), in_.begin() + static_cast<std::ptrdiff_t>(at_));
         at_ = 0;
     }
-
-    return out;
 }
 
 // Whether the stream has ended: the last block of raw deflate, or a gzip member's trailer.

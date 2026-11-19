@@ -84,17 +84,23 @@ constexpr std::size_t inflated_piece = 1024;
 }
 
 // The content of a compressed frame (a zlib stream) inflated; none when the stream is damaged or
-// cut short, or when it would come out over `most_block`. It is fed in pieces of `inflated_piece`
-// bytes, so that a stream made to inflate without end stops at the limit, not after it.
-[[nodiscard]] std::optional<Bytes> inflated(std::span<const std::byte> given) {
+// cut short, or when it would come out over `most_block` or over what is left of the file's budget
+// of unpacking (`unpackable`), against which it is counted. It is fed in pieces of
+// `inflated_piece` bytes, so that a stream made to inflate without end stops at the limit, not
+// after it.
+[[nodiscard]] std::optional<Bytes> inflated(std::span<const std::byte> given, Gathered& out) {
     inflating::Inflater inflater{inflating::Wrapping::zlib};
     Bytes made;
+
+    const std::uint64_t most = std::min<std::uint64_t>(most_block, out.unpackable());
 
     try {
         for (std::size_t at = 0; at < given.size(); at += inflated_piece) {
             const Bytes more = inflater.fed(given.subspan(at, std::min(inflated_piece, given.size() - at)));
 
-            if (more.size() > most_block - made.size()) return std::nullopt;
+            out.unpacked(more.size());
+
+            if (more.size() > most - made.size()) return std::nullopt;
 
             made.insert(made.end(), more.begin(), more.end());
         }
@@ -460,7 +466,7 @@ Task<void> frames(Walk& body, std::uint8_t version, bool resync_all, Gathered& o
             if (frame.resync) content = resynced(content);
 
             if (compressed) {
-                std::optional<Bytes> made = inflated(content);
+                std::optional<Bytes> made = inflated(content, out);
 
                 if (!made) {
                     out.damaged();
@@ -608,7 +614,7 @@ Task<std::uint64_t> id3v1(Reader& from, std::uint64_t size, std::uint64_t end, G
     };
 
     const auto put = [&](std::string_view key, std::string value) {
-        if (!value.empty()) out.field(Scheme::id3v1, std::string{key}, std::move(value));
+        if (!value.empty()) out.field(Scheme::id3v1, key, std::move(value));
     };
 
     put("title", text(3, 30));

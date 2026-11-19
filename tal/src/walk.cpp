@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -19,6 +20,13 @@
 // megabyte is not a title but garbage or an embedded image (`most_text`); a comment block over
 // 16 MB is skipped (`most_block`); an Ogg packet is assembled up to 64 MB at most (`most_packet`,
 // since Ogg comments carry images in base64); a picture over 64 MB is refused (`most_picture`).
+// Those limits hold for one thing at a time; a file of many such things has limits of its own,
+// which the collector keeps for the whole file in `Spent`, shared with the collectors aside: what
+// the description holds, `most_held` bytes of keys, values, streams and pictures counted with their
+// own size, so that a file of a million empty values or of one long key repeated for each value
+// cannot fill memory; and what its compressed parts unpack to together (`unpack_times` the size of
+// the file and `unpack_extra` more), so that many small compressed frames, each under its limit,
+// cannot make the reading last for hours. Past either the rest is left out and the file is damaged.
 //
 // The cursor (`Walk`) has a single spoil flag, like the reader of the GIF decoder: a read past the
 // bound sets `spoiled`, returns zeros and never clears, so a parser checks one bit once per
@@ -47,6 +55,15 @@ constexpr std::uint32_t sample(std::byte one) { return std::to_integer<std::uint
 
 // The least a `need` loads: `window`, unless the trials shrank it.
 std::atomic<std::size_t> loaded{window};
+
+// Whether `cost` more bytes fit in what a description may hold (`most_held`); counted when they do.
+bool held(Spent& spent, std::uint64_t cost) {
+    if (cost > most_held - spent.held) return false;
+
+    spent.held += cost;
+
+    return true;
+}
 
 }
 
@@ -287,15 +304,34 @@ Walk Walk::part(std::uint64_t much) {
 
 // --- Gathered ------------------------------------------------------------------------------------
 
-// Appends one field to the description.
-void Gathered::field(Scheme scheme, std::string key, Value value) {
-    into.fields.push_back({scheme, std::move(key), std::move(value)});
+// Appends one field to the description, while what the description holds stays within
+// `most_held`; past it the field is left out and the file is damaged. The key is copied only once
+// the field is taken.
+void Gathered::field(Scheme scheme, std::string_view key, Value value) {
+    const std::string* text = std::get_if<std::string>(&value);
+
+    if (!held(*spent, sizeof(Field) + key.size() + (text == nullptr ? 0 : text->size()))) return damaged();
+
+    into.fields.push_back({scheme, std::string{key}, std::move(value)});
+}
+
+// Appends one stream to the description, within `most_held` as a field is.
+void Gathered::stream(Stream one) {
+    if (!held(*spent, sizeof(Stream) + one.codec.size() + one.language.size() + one.name.size())) return damaged();
+
+    into.streams.push_back(std::move(one));
 }
 
 // Enters a picture into the list; true when its bytes are the ones asked for, and the parser is to
 // hand them over. A picture over the limit is refused only when someone asks for its bytes; the
 // description lists it as usual, with its real size.
 bool Gathered::pictured(Picture one) {
+    if (!held(*spent, sizeof(Picture) + one.type.size() + one.said.size())) {
+        damaged();
+
+        return false;
+    }
+
     const std::size_t size = one.size;
     const bool mine = wanting();
 
@@ -311,6 +347,19 @@ bool Gathered::pictured(Picture one) {
 
     return true;
 }
+
+// What is left of the budget of unpacking: `unpack_times` the size of the file and `unpack_extra`
+// more, less what was unpacked so far; a budget that would not fit in 64 bits has no end.
+std::uint64_t Gathered::unpackable() const {
+    constexpr std::uint64_t unbounded = std::numeric_limits<std::uint64_t>::max();
+
+    const std::uint64_t budget = spent->size > (unbounded - unpack_extra) / unpack_times ? unbounded : spent->size * unpack_times + unpack_extra;
+
+    return budget - std::min(budget, spent->unpacked);
+}
+
+// Counts bytes unpacked against the budget of the file.
+void Gathered::unpacked(std::uint64_t much) { spent->unpacked += std::min(much, unpackable()); }
 
 // Hands over the bytes of the wanted picture, when the caller gave a place for them, and marks the
 // search as finished.

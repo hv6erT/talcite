@@ -455,6 +455,10 @@ TRIAL("STUN: alike when two servers see one socket at one place, symmetric when 
     OUGHT(tal::wait(loop, tal::net::Stun({}).mapping()) == tal::net::Mapping::unknown);
 }
 
+// A question sent to the beacon's address is answered once. A broadcast reaches it by every way a
+// machine with several interfaces sends it (Wi-Fi, a VPN, Tailscale), each a sender of its own, so
+// it is answered at least once, and every answer is the beacon's; any other is shown with its
+// address.
 TRIAL("Beacon: a question about an offered tag, broadcast or sent, is answered once per sender; one withdrawn or unknown is not") {
     tal::Loop loop;
     tal::net::Beacon beacon = tal::wait(loop, tal::net::Beacon::opened(0));
@@ -473,9 +477,14 @@ TRIAL("Beacon: a question about an offered tag, broadcast or sent, is answered o
     OUGHT(tal::wait(loop, tal::net::Beacon::sought(port, tal::bytes("music"), 300ms, here)).empty());
 
     const std::vector<tal::net::Sighting> broadcast = tal::wait(loop, tal::net::Beacon::sought(port, tal::bytes("films"), 300ms));
+    std::string foreign;
 
-    SAME(broadcast.size(), std::size_t{1});
-    SAME(tal::text::of(broadcast.at(0).payload), std::string{"port 9000"});
+    for (const tal::net::Sighting& one : broadcast)
+        if (one.from.port() != port || tal::text::of(one.payload) != "port 9000")
+            foreign += one.from.text() + ":" + std::to_string(one.from.port()) + " " + tal::text::of(one.payload) + "; ";
+
+    OUGHT(!broadcast.empty());
+    SAME(foreign, std::string{});
 
     beacon.withdraw(tal::bytes("films"));
 

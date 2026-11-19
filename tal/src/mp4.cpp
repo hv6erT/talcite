@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <chrono>
 #include <cstddef>
@@ -372,18 +373,21 @@ struct Track {
     }
 }
 
-// Reads a trak atom into `track`, descending through mdia, minf and stbl: whether it is enabled
-// from tkhd, the duration and the language from mdhd, the handler ("soun", "vide", "sbtl"…) from
-// hdlr and from the first sample entry in stsd the codec and, for a sound or a picture, what its
-// entry tells.
-[[nodiscard]] Task<void> track_read(Walk& body, Track& track, Gathered& out) {
+// Reads a trak atom into `track`, descending through mdia, minf and stbl, each inside the one
+// before as the standard nests them (`level` counts the steps taken), so that a file of atoms
+// nested a million deep, eight bytes each, is not followed: whether it is enabled from tkhd, the
+// duration and the language from mdhd, the handler ("soun", "vide", "sbtl"…) from hdlr and from
+// the first sample entry in stsd the codec and, for a sound or a picture, what its entry tells.
+[[nodiscard]] Task<void> track_read(Walk& body, Track& track, Gathered& out, std::size_t level = 0) {
+    constexpr std::array<std::string_view, 3> nested{"mdia", "minf", "stbl"};
+
     while (true) {
         std::optional<Box> box = co_await next(body, out);
 
         if (!box) break;
 
-        if (box->type == "mdia" || box->type == "minf" || box->type == "stbl") {
-            co_await track_read(box->body, track, out);
+        if (level < nested.size() && box->type == nested[level]) {
+            co_await track_read(box->body, track, out, level + 1);
         } else if (box->type == "tkhd") {
             co_await box->body.need(1 + 3);
             box->body.skip(1);
@@ -613,7 +617,7 @@ Task<void> mp4(Reader& from, std::uint64_t size, Gathered& out) {
 
                 if (track.handler == "vide") video = true;
 
-                if (std::optional<Stream> stream = streamed(track)) out.into.streams.push_back(std::move(*stream));
+                if (std::optional<Stream> stream = streamed(track)) out.stream(std::move(*stream));
 
                 if (track.handler == "soun" && !sound) sound = std::move(track);
             } else if (box->type == "udta") {

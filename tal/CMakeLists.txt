@@ -182,8 +182,8 @@ endfunction()
 # tal::media of talcite.next: images as RGBA frames, their format and size read from the header,
 # scaling in linear light, and decoding frame by frame: GIF by our own decoder, other formats by
 # the adapter of the port `Decoding`; and the metadata of sound and video files, the tags and the
-# properties (tal::meta), read by our own readers.
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp)
+# properties (tal::meta), and the structure of PDF documents, read by our own readers.
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors

@@ -12,13 +12,17 @@ namespace tal::inflating {
 
 enum class Wrapping { raw, gzip, zlib };
 
+enum class Rest { refused, left };
+
 [[nodiscard]] std::uint32_t crc32(std::uint32_t crc, std::span<const std::byte> bytes);
 
 class Inflater {
 public:
-    explicit Inflater(Wrapping how);
+    explicit Inflater(Wrapping how, Rest rest = Rest::refused);
 
     [[nodiscard]] Bytes fed(std::span<const std::byte> given);
+
+    void fed(std::span<const std::byte> given, Bytes& out);
 
     [[nodiscard]] bool ended() const;
 
@@ -52,6 +56,7 @@ private:
     void kept(Bytes& out);
 
     Wrapping how_;
+    Rest rest_;
     Stage stage_;
     Bytes in_;
     std::size_t at_ = 0;

@@ -21,6 +21,7 @@ namespace {
 
 using tal::Bytes;
 using tal::inflating::Inflater;
+using tal::inflating::Rest;
 using tal::inflating::Wrapping;
 
 // The bytes of the hexadecimal text `hex`.
@@ -536,4 +537,61 @@ TRIAL("Inflate: zlib checks its two bytes and its Adler-32, whole and byte by by
     SAME(said(unhexed("881c")), std::string{"malformed: The compressed data is damaged: not zlib deflate."});
     SAME(said(unhexed("782000000000")), std::string{"malformed: The compressed data is damaged: a zlib preset dictionary."});
     SAME(said(unhexed("78")), std::string{"open 0"});
+}
+
+// With the rest left, as PDF needs it, what follows the end of a zlib stream (an end of line some
+// writers count into the length) is neither read nor refused, whether it comes with the stream or
+// after it; damage before the end is refused all the same, and what came out before it stays in a
+// buffer of the caller's.
+TRIAL("Inflate: zlib with the rest left ends at its Adler-32 and leaves what follows") {
+    Bytes after = unhexed(zlib_vector);
+
+    after.push_back(std::byte{'\r'});
+    after.push_back(std::byte{'\n'});
+
+    Inflater lenient{Wrapping::zlib, Rest::left};
+
+    OUGHT(lenient.fed(after) == cells());
+    OUGHT(lenient.ended());
+    OUGHT(lenient.fed(tal::bytes("more")).empty());
+    OUGHT(lenient.ended());
+
+    Bytes summed = unhexed(zlib_vector);
+
+    summed.back() = std::byte{0x50};
+
+    Inflater checked{Wrapping::zlib, Rest::left};
+
+    THREW((void)checked.fed(summed));
+
+    // Fed into a buffer of the caller's, what was decoded before the damage stays there.
+    Inflater appending{Wrapping::zlib};
+    Bytes kept;
+
+    THREW(appending.fed(summed, kept));
+    OUGHT(kept == cells());
+}
+
+// With the rest left, raw deflate too ends at its last block and leaves what follows; and the
+// appending `fed` adds to what the caller's buffer held, piece after piece.
+TRIAL("Inflate: raw deflate with the rest left, and the appending fed keeps what the buffer held") {
+    Bytes after = unhexed(fixed_vector);
+
+    after.push_back(std::byte{'\r'});
+    after.push_back(std::byte{'\n'});
+
+    Inflater raw{Wrapping::raw, Rest::left};
+
+    OUGHT(raw.fed(after) == cells());
+    OUGHT(raw.ended());
+
+    const Bytes whole = unhexed(zlib_vector);
+    Inflater appending{Wrapping::zlib};
+    Bytes kept = tal::bytes("kept ");
+
+    appending.fed(std::span<const std::byte>{whole}.subspan(0, whole.size() / 2), kept);
+    appending.fed(std::span<const std::byte>{whole}.subspan(whole.size() / 2), kept);
+
+    OUGHT(appending.ended());
+    OUGHT(kept == joined(tal::bytes("kept "), cells()));
 }

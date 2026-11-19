@@ -949,11 +949,15 @@ constexpr std::string_view flac_coverart =
     "8a4717f4971b0c9b304c929dda839bd6611206019c563d1d1d4d92bb224b933cb17ba6eaf0160421746716cfe535c5ca"
     "85fe5ab99a5c906adc3ae4f3c8ba320c02296d9d42957695a6697e47aff5e600102a";
 
-// A 2.4 tag with TIT2 compressed into a zlib stream that inflates past `most_block` from about
-// 100 KiB, and TPE1 "B" after it. One block of fixed Huffman codes holds the text encoding byte and
-// an "a", then matches of 258 bytes at distance 1 until the output passes the limit; the Adler-32
-// is true, so that only the limit stops it.
-[[nodiscard]] Bytes bombed() {
+// Appends a size as the four synchsafe bytes of ID3v2.4, seven bits in each.
+void safe(Bytes& into, std::size_t size) {
+    for (const int shift : {21, 14, 7, 0}) into.push_back(std::byte{static_cast<std::uint8_t>((size >> shift) & 0x7F)});
+}
+
+// A frame of ID3v2.4 named `id`, compressed: one block of fixed Huffman codes holding the text
+// encoding byte and an "a", then `matches` matches of 258 bytes at distance 1, so a few bytes for
+// each 258 of output; the Adler-32 is true and the data length indicator says the inflated size.
+[[nodiscard]] Bytes squeezed(std::string_view id, std::size_t matches) {
     Bytes packed{std::byte{0x78}, std::byte{0x01}};
     unsigned held = 0;
     int count = 0;
@@ -972,8 +976,6 @@ constexpr std::string_view flac_coverart =
     const auto code = [&](unsigned value, int many) {
         for (int at = many - 1; at >= 0; --at) put((value >> at) & 1U, 1);
     };
-
-    const std::size_t matches = meta::tagging::most_block / 258 + 1;
 
     put(1, 1);
     put(1, 2);
@@ -999,26 +1001,93 @@ constexpr std::string_view flac_coverart =
 
     for (const std::uint32_t part : {high >> 8, high, low >> 8, low}) packed.push_back(std::byte{static_cast<std::uint8_t>(part)});
 
-    const auto safe = [](Bytes& into, std::size_t size) {
-        for (const int shift : {21, 14, 7, 0}) into.push_back(std::byte{static_cast<std::uint8_t>((size >> shift) & 0x7F)});
-    };
+    Bytes frame;
 
-    Bytes frames{std::byte{'T'}, std::byte{'I'}, std::byte{'T'}, std::byte{'2'}};
+    for (const char one : id) frame.push_back(static_cast<std::byte>(one));
 
-    safe(frames, 4 + packed.size());
-    frames.push_back(std::byte{0x00});
-    frames.push_back(std::byte{0x09});
-    safe(frames, 2 + matches * 258);
-    frames.insert(frames.end(), packed.begin(), packed.end());
+    safe(frame, 4 + packed.size());
+    frame.push_back(std::byte{0x00});
+    frame.push_back(std::byte{0x09});
+    safe(frame, 2 + matches * 258);
+    frame.insert(frame.end(), packed.begin(), packed.end());
 
+    return frame;
+}
+
+// A frame of ID3v2.4 named `id`, compressed without compressing: zlib of stored DEFLATE blocks
+// holding the text encoding byte and `much` bytes "a", with a true Adler-32 and the data length
+// indicator, so the frame is as large as its content.
+[[nodiscard]] Bytes stored(std::string_view id, std::size_t much) {
+    Bytes content{std::byte{0x03}};
+
+    content.insert(content.end(), much, std::byte{'a'});
+
+    Bytes packed{std::byte{0x78}, std::byte{0x01}};
+
+    for (std::size_t at = 0; at < content.size(); at += 65535) {
+        const std::size_t piece = std::min<std::size_t>(65535, content.size() - at);
+
+        packed.push_back(std::byte{static_cast<std::uint8_t>(at + piece == content.size() ? 1 : 0)});
+
+        for (const std::size_t half : {piece, ~piece}) {
+            packed.push_back(std::byte{static_cast<std::uint8_t>(half & 0xFF)});
+            packed.push_back(std::byte{static_cast<std::uint8_t>((half >> 8) & 0xFF)});
+        }
+
+        packed.insert(packed.end(), content.begin() + static_cast<std::ptrdiff_t>(at), content.begin() + static_cast<std::ptrdiff_t>(at + piece));
+    }
+
+    std::uint32_t low = 1;
+    std::uint32_t high = 0;
+
+    for (const std::byte one : content) {
+        low = (low + std::to_integer<std::uint32_t>(one)) % 65521;
+        high = (high + low) % 65521;
+    }
+
+    for (const std::uint32_t part : {high >> 8, high, low >> 8, low}) packed.push_back(std::byte{static_cast<std::uint8_t>(part)});
+
+    Bytes frame;
+
+    for (const char one : id) frame.push_back(static_cast<std::byte>(one));
+
+    safe(frame, 4 + packed.size());
+    frame.push_back(std::byte{0x00});
+    frame.push_back(std::byte{0x09});
+    safe(frame, content.size());
+    frame.insert(frame.end(), packed.begin(), packed.end());
+
+    return frame;
+}
+
+// A 2.4 tag of the frames, and a plain TPE1 "B" after them.
+[[nodiscard]] Bytes tagged_with(const Bytes& frames) {
+    Bytes all = frames;
     const Bytes after = lump("545045310000000200000342");
 
-    frames.insert(frames.end(), after.begin(), after.end());
+    all.insert(all.end(), after.begin(), after.end());
 
     Bytes made = lump("494433040000");
 
-    safe(made, frames.size());
-    made.insert(made.end(), frames.begin(), frames.end());
+    safe(made, all.size());
+    made.insert(made.end(), all.begin(), all.end());
+
+    return made;
+}
+
+// A 2.4 tag with TIT2 compressed into a zlib stream that inflates past `most_block` from about
+// 100 KiB, and TPE1 "B" after it: only the limit stops it.
+[[nodiscard]] Bytes bombed() { return tagged_with(squeezed("TIT2", meta::tagging::most_block / 258 + 1)); }
+
+// An atom of MP4: its size, its type and its body.
+[[nodiscard]] Bytes atom(std::string_view type, const Bytes& body) {
+    Bytes made;
+
+    for (const int shift : {24, 16, 8, 0}) made.push_back(std::byte{static_cast<std::uint8_t>(((8 + body.size()) >> shift) & 0xFF)});
+
+    for (const char one : type) made.push_back(static_cast<std::byte>(one));
+
+    made.insert(made.end(), body.begin(), body.end());
 
     return made;
 }
@@ -1342,6 +1411,190 @@ TRIAL("Meta: a compressed frame cut short, without its length, or inflating past
         OUGHT(got.damaged);
         OUGHT(got.fields == left);
     }
+}
+
+// What the compressed frames of a file inflate to together has a budget (`unpack_times` and
+// `unpack_extra`, four times the file and `most_packet` more). Frames that inflate to twelve
+// megabytes each, too long for a field and so skipped, then TPE1 "B": five of them fit and the
+// file is whole; of six the last gives no data and the file is damaged, where a file of a thousand
+// such frames would have the reader inflate twelve gigabytes. The frame after them is read. Six
+// frames of twelve megabytes stored without compressing make a file of seventy-two megabytes,
+// whose budget is four times its size and more: with six of the compressed frames besides, a
+// hundred and forty-four megabytes come out, and the file is whole.
+TRIAL("Meta: what the compressed frames of a file inflate to together has a budget") {
+    const Bytes frame = squeezed("TIT2", (std::size_t{12} << 20) / 258);
+
+    const auto framed = [&frame](int many) {
+        Bytes frames;
+
+        for (int one = 0; one < many; ++one) frames.insert(frames.end(), frame.begin(), frame.end());
+
+        return described(tagged_with(frames));
+    };
+
+    const std::vector<meta::Field> left{text(Scheme::id3v2, "TPE1", "B")};
+
+    const meta::Description five = framed(5);
+
+    OUGHT(!five.damaged);
+    OUGHT(five.fields == left);
+
+    const meta::Description six = framed(6);
+
+    OUGHT(six.damaged);
+    OUGHT(six.fields == left);
+
+    Bytes large;
+
+    for (int one = 0; one < 6; ++one) {
+        const Bytes frame_stored = stored("TIT2", std::size_t{12} << 20);
+
+        large.insert(large.end(), frame_stored.begin(), frame_stored.end());
+        large.insert(large.end(), frame.begin(), frame.end());
+    }
+
+    const meta::Description grown = described(tagged_with(large));
+
+    OUGHT(!grown.damaged);
+    OUGHT(grown.fields == left);
+}
+
+// What a description holds has a budget (`most_held`), each field counted with its own size and
+// its key's. A TXXX frame whose description is about sixty thousand bytes long, with four thousand
+// empty values and an "x" after it, then TPE1 "B": every value is a field with the same long key,
+// and as many as fit are kept, the rest left out and the file damaged, where a frame of a megabyte
+// made the same way would hold half a terabyte of keys. TPE1 is kept when it fits in what is left:
+// a field is left out only when it does not fit. Alone in its tag, with a description whose
+// length leaves less room than another field needs and with exactly as many values as fit, the
+// frame fills the budget whole; the ID3v1 tag at the end of the file, collected aside within the
+// same budget, is left out, and its damage comes along.
+TRIAL("Meta: what a description holds has a budget, a long key counted with every value") {
+    const auto described_by = [](std::size_t length, std::size_t empty, bool alone) {
+        const std::string said(length, 'k');
+        Bytes content{std::byte{0x00}};
+
+        for (const char one : said) content.push_back(static_cast<std::byte>(one));
+
+        content.insert(content.end(), 1 + empty, std::byte{0x00});
+        content.push_back(std::byte{'x'});
+
+        Bytes frame = lump("54585858");
+
+        safe(frame, content.size());
+        frame.push_back(std::byte{0x00});
+        frame.push_back(std::byte{0x00});
+        frame.insert(frame.end(), content.begin(), content.end());
+
+        if (!alone) return described(tagged_with(frame));
+
+        Bytes file = lump("494433040000");
+        Bytes old(128, std::byte{0x00});
+
+        safe(file, frame.size());
+        file.insert(file.end(), frame.begin(), frame.end());
+
+        for (const auto& [at, one] : std::vector<std::pair<std::size_t, std::string_view>>{{0, "TAG"}, {3, "Tytul"}})
+            for (std::size_t letter = 0; letter < one.size(); ++letter) old[at + letter] = static_cast<std::byte>(one[letter]);
+
+        old[127] = std::byte{0xFF};
+        file.insert(file.end(), old.begin(), old.end());
+
+        return described(file);
+    };
+
+    const auto each = [](std::size_t length) { return sizeof(meta::Field) + 5 + length; };
+    const std::size_t room = sizeof(meta::Field) + 5;
+    const std::size_t many = meta::tagging::most_held / each(60000);
+    const meta::Description roomy = described_by(60000, 4000, false);
+
+    OUGHT(roomy.damaged);
+    OUGHT(meta::tagging::most_held - many * each(60000) >= room);
+    SAME(roomy.fields.size(), many + 1);
+    OUGHT(roomy.fields.front() == text(Scheme::id3v2, "TXXX:" + std::string(60000, 'k'), ""));
+    OUGHT(roomy.fields.back() == text(Scheme::id3v2, "TPE1", "B"));
+
+    std::size_t tight = 60000;
+
+    while (meta::tagging::most_held % each(tight) == 0 || meta::tagging::most_held % each(tight) >= room) ++tight;
+
+    const std::size_t fit = meta::tagging::most_held / each(tight);
+    const meta::Description full = described_by(tight, fit - 1, true);
+
+    OUGHT(full.damaged);
+    SAME(full.fields.size(), fit);
+    OUGHT(full.fields.back() == text(Scheme::id3v2, "TXXX:" + std::string(tight, 'k'), "x"));
+}
+
+// The collector keeps what fits in `most_held` and leaves out the rest, the file then damaged:
+// streams counted with their texts, pictures with theirs, fields with their keys and values. A
+// collector aside, for tags joined later, spends the same budget: once the first is full, a field
+// for the one aside does not fit either.
+TRIAL("Meta: the collector holds streams, pictures and fields within one budget, shared aside") {
+    const auto filled = [](const auto& one, std::size_t each) {
+        meta::Description into;
+        meta::tagging::Gathered out{into};
+        const std::size_t many = meta::tagging::most_held / each;
+
+        for (std::size_t at = 0; at <= many; ++at) one(out);
+
+        return std::pair{std::move(into), many};
+    };
+
+    const meta::Stream sound = stream(meta::Stream::Kind::audio, std::string(1000, 'c'), "pol");
+    const auto [streamed, streams] = filled([&sound](meta::tagging::Gathered& out) { out.stream(sound); }, sizeof(meta::Stream) + 1003);
+
+    OUGHT(streamed.damaged);
+    SAME(streamed.streams.size(), streams);
+
+    const meta::Picture cover{meta::Role::front, "image/png", std::string(1000, 's'), 1};
+    const auto [shown, pictures] = filled([&cover](meta::tagging::Gathered& out) { (void)out.pictured(cover); }, sizeof(meta::Picture) + 1009);
+
+    OUGHT(shown.damaged);
+    SAME(shown.pictures.size(), pictures);
+
+    meta::Description into;
+    meta::tagging::Gathered out{into};
+    meta::Description seen;
+    meta::tagging::Gathered aside{seen, out};
+
+    for (std::size_t at = 0; at < meta::tagging::most_held / (sizeof(meta::Field) + 1000); ++at) out.field(Scheme::id3v2, std::string(1000, 'k'), std::string{});
+
+    aside.field(Scheme::id3v1, "TITLE", std::string(1000, 'v'));
+
+    OUGHT(seen.fields.empty());
+    OUGHT(seen.damaged);
+    OUGHT(!into.damaged);
+}
+
+// MP4 of one track of sound, its handler in mdia, after `nesting` (atoms of size zero, each
+// reaching to the end of the one around it). A track as the standard nests it is a stream of
+// sound; mdia inside mdia is not followed, and a hundred thousand of them, eight bytes each, are
+// not followed a hundred thousand levels deep: the track has no handler and is no stream.
+TRIAL("Meta: MP4 — mdia, minf and stbl are followed only as the standard nests them") {
+    const auto nested = [](std::size_t many) {
+        Bytes body;
+
+        for (std::size_t one = 0; one < many; ++one) {
+            const Bytes head = lump("000000006d646961");
+
+            body.insert(body.end(), head.begin(), head.end());
+        }
+
+        const Bytes handler = atom("hdlr", lump("0000000000000000736f756e"));
+
+        body.insert(body.end(), handler.begin(), handler.end());
+
+        Bytes file = atom("ftyp", lump("4d344120"));
+        const Bytes movie = atom("moov", atom("trak", atom("mdia", body)));
+
+        file.insert(file.end(), movie.begin(), movie.end());
+
+        return described(file);
+    };
+
+    SAME(nested(0).streams, (std::vector<meta::Stream>{stream(meta::Stream::Kind::audio, "")}));
+    OUGHT(nested(1).streams.empty());
+    OUGHT(nested(100000).streams.empty());
 }
 
 // The header promises 100 bytes, but the file ends in the middle of the second frame: the first

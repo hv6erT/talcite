@@ -185,7 +185,7 @@ void stream_read(Walk& body, Heard& heard) {
         } else if (one->id == "LIST" && one->form == "strl") {
             std::optional<Stream> stream = co_await listed_stream(one->body, heard, out);
 
-            if (stream) out.into.streams.push_back(std::move(*stream));
+            if (stream) out.stream(std::move(*stream));
         } else if (one->id == "LIST" && one->form == "odml") {
             while (true) {
                 std::optional<Chunk> inner = co_await next(one->body, out);

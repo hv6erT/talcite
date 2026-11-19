@@ -392,7 +392,7 @@ struct Seen {
 
         if (one->kind == Stream::Kind::audio) seen.audio = true;
 
-        out.into.streams.push_back(std::move(*one));
+        out.stream(std::move(*one));
     }
 }
 

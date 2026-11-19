@@ -90,6 +90,18 @@ tal::Task<int> late(std::chrono::milliseconds wait, int value) {
     co_return value;
 }
 
+// One more than `given`, at once, without waiting for anything.
+tal::Task<int> next_of(int given) { co_return given + 1; }
+
+// Counts to `many` by awaiting `next_of` that many times in a loop.
+tal::Task<int> counted(int many) {
+    int made = 0;
+
+    for (int one = 0; one < many; ++one) made = co_await next_of(made);
+
+    co_return made;
+}
+
 // Sleeps an hour on the clock of the program's loop, keeping a sentinel in its frame.
 tal::Task<void> sleeping(std::atomic<int>& alive) {
     const Sentinel kept{alive};
@@ -103,6 +115,15 @@ TRIAL("Task: a value comes out of a chain of tasks awaited one after another") {
     tal::Loop loop;
 
     SAME(tal::wait(loop, summed(2, 3)), 10);
+}
+
+// A task that ends at once gives its value back without the awaiting one being suspended, so a
+// loop of a million of them keeps the stack as it was, also in a build without optimization,
+// where the compiler makes no tail call of the transfer from one coroutine to another.
+TRIAL("Task: a million tasks that end at once, awaited in a loop, do not grow the stack") {
+    tal::Loop loop;
+
+    SAME(tal::wait(loop, counted(1000000)), 1000000);
 }
 
 TRIAL("Task: a failure passes through the awaiting task unchanged") {

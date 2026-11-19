@@ -19,6 +19,9 @@ inline constexpr std::size_t most_block = std::size_t{16} << 20;
 inline constexpr std::size_t most_packet = std::size_t{64} << 20;
 inline constexpr std::size_t most_picture = std::size_t{64} << 20;
 inline constexpr std::size_t window = std::size_t{64} << 10;
+inline constexpr std::size_t most_held = std::size_t{64} << 20;
+inline constexpr std::uint64_t unpack_times = 4;
+inline constexpr std::uint64_t unpack_extra = most_packet;
 
 [[nodiscard]] std::size_t windowed();
 
@@ -89,9 +92,17 @@ private:
     std::uint64_t window_at_ = 0;
 };
 
+struct Spent {
+    std::uint64_t size = 0;
+    std::uint64_t held = 0;
+    std::uint64_t unpacked = 0;
+};
+
 struct Gathered {
     explicit Gathered(Description& given, std::optional<std::size_t> picked = std::nullopt, Bytes* taken = nullptr)
         : into(given), wanted(picked), bytes(taken) {}
+
+    Gathered(Description& given, const Gathered& beside) : into(given), wanted(beside.wanted), bytes(beside.bytes), spent(beside.spent) {}
 
     Description& into;
     std::optional<std::size_t> wanted;
@@ -99,10 +110,17 @@ struct Gathered {
     bool found = false;
     std::string refused;
     std::string codec;
+    std::shared_ptr<Spent> spent = std::make_shared<Spent>();
 
-    void field(Scheme scheme, std::string key, Value value);
+    void field(Scheme scheme, std::string_view key, Value value);
+
+    void stream(Stream one);
 
     [[nodiscard]] bool pictured(Picture one);
+
+    [[nodiscard]] std::uint64_t unpackable() const;
+
+    void unpacked(std::uint64_t much);
 
     void took(Bytes data);
 
@@ -168,6 +186,10 @@ struct Gathered {
 [[nodiscard]] Task<void> matroska(Reader& from, std::uint64_t size, Gathered& out);
 
 [[nodiscard]] Task<void> avi(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] Task<bool> pdf_at(Reader& from, std::uint64_t size);
+
+[[nodiscard]] Task<void> pdf_document(Reader& from, std::uint64_t size, Gathered& out);
 
 [[nodiscard]] Task<void> gathered(Reader& from, Gathered& out);
 

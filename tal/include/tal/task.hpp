@@ -138,6 +138,13 @@ struct Outcome<void> {
     [[nodiscard]] bool held() const { return value || failed != nullptr; }
 };
 
+struct Started {
+    std::coroutine_handle<> task;
+    bool finished = false;
+};
+
+inline thread_local Started* started = nullptr;
+
 struct Base {
     std::shared_ptr<Chain> chain;
     std::coroutine_handle<> next;
@@ -148,6 +155,12 @@ struct Base {
 
         template <typename P>
         std::coroutine_handle<> await_suspend(std::coroutine_handle<P> done) noexcept {
+            if (started != nullptr && started->task == done) {
+                started->finished = true;
+
+                return std::noop_coroutine();
+            }
+
             const std::coroutine_handle<> next = done.promise().next;
 
             return next ? next : std::noop_coroutine();
@@ -415,11 +428,19 @@ public:
         [[nodiscard]] bool await_ready() const noexcept { return false; }
 
         template <typename P>
-        std::coroutine_handle<> await_suspend(std::coroutine_handle<P> parent) noexcept {
-            handle.promise().chain = detail::chain_of(parent);
-            handle.promise().next = parent;
+        bool await_suspend(std::coroutine_handle<P> parent) noexcept {
+            const std::coroutine_handle<promise_type> child = handle;
 
-            return handle;
+            child.promise().chain = detail::chain_of(parent);
+            child.promise().next = parent;
+
+            detail::Started mine{child};
+            detail::Started* const outer = std::exchange(detail::started, &mine);
+
+            child.resume();
+            detail::started = outer;
+
+            return !mine.finished;
         }
 
         T await_resume() { return handle.promise().taken(); }

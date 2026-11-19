@@ -13,11 +13,13 @@
 #include "tagging.hpp"
 
 // Embedded metadata, ported from talcite-adapters' tags: the readers are our own, in tal-media,
-// and run on the pool as coroutines that wait only where they reach into the file (`Walk::need`).
+// and run on the pool as coroutines that wait only where they reach into the file (`Walk::need`,
+// and the windows the PDF reader reads by itself).
 // This file recognizes the container by its magic bytes (never by the file name: a file manager
 // looks at other people's disks, where the extension may not match the content) and sets the order
 // of the readers, which is the order in the file: ID3v2 at the start (MP3, sometimes FLAC), then
-// the container, and APE and ID3v1 at the end.
+// the container, and APE and ID3v1 at the end. A PDF document is recognized by "%PDF-" among its
+// first bytes, where readers look for it, since writers may put junk before it.
 //
 // Trailing tags are read only for the families in which they occur: MPEG audio, WavPack, Monkey's
 // Audio, Musepack. They are not looked for in FLAC, Ogg and MP4: "TAG" in the last 128 bytes of a
@@ -53,14 +55,17 @@ bool starts(const Bytes& head, std::string_view magic, std::size_t at = 0) {
 
 // APE and ID3v1 from the end, in file order: first APE, then ID3v1, although they have to be read
 // from the back, because only the end of ID3v1 tells where APE ends. Returns the end of the stream
-// before the tags.
+// before the tags. ID3v1 is collected aside, within the budgets of the whole file (`Spent`), and
+// the damage of what did not fit in them comes along.
 Task<std::uint64_t> trailing(Reader& from, std::uint64_t size, tagging::Gathered& out) {
     Description last;
-    tagging::Gathered aside{last};
+    tagging::Gathered aside{last, out};
     const std::uint64_t before = co_await tagging::id3v1(from, size, size, aside);
     const std::uint64_t made = co_await tagging::ape(from, size, before, out);
 
     for (Field& one : last.fields) out.into.fields.push_back(std::move(one));
+
+    if (last.damaged) out.damaged();
 
     co_return made;
 }
@@ -102,10 +107,14 @@ Task<Bytes> Held::read(std::uint64_t at, std::size_t much) {
 
 // Reads the whole file into `out`: ID3v2 and a leading APE tag first, then the container recognized
 // by its magic bytes, which decides whether the trailing tags are read and where the stream ends.
-// Describing a file and handing out a picture both go through here.
+// Describing a file and handing out a picture both go through here. The size of the file sets the
+// budget of unpacking (`unpackable`).
 Task<void> tagging::gathered(Reader& from, Gathered& out) {
     Walk walk = co_await Walk::over(from);
     const std::uint64_t size = walk.size();
+
+    out.spent->size = size;
+
     const bool tagged = co_await id3v2_at(walk);
     std::uint64_t audio = co_await id3v2(walk, out);
 
@@ -174,13 +183,23 @@ Task<void> tagging::gathered(Reader& from, Gathered& out) {
         co_return;
     }
 
+    if (!tagged) {
+        const bool document = co_await pdf_at(from, size);
+
+        if (document) {
+            co_await pdf_document(from, size, out);
+
+            co_return;
+        }
+    }
+
     // MPEG audio has no signature, so we look for frames, and only when there are some (or an ID3v2
     // tag stood before the content) do the trailing tags belong to this file. They have to be read
     // earlier, though, because they mark the end of the stream, so they are collected aside and
     // joined only after recognition. The aside picture list starts with the pictures already
     // gathered, so that picture numbers from APE continue after those from ID3v2.
     Description trail;
-    Gathered after{trail, out.wanted, out.bytes};
+    Gathered after{trail, out};
 
     trail.pictures = out.into.pictures;
 
