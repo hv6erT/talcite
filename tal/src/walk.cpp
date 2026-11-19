@@ -9,6 +9,9 @@
 #include <utility>
 
 #include "tal/text.hpp"
+#include "tal/trouble.hpp"
+
+#include "inflating.hpp"
 
 // Shared tools of the tag readers, ported from talcite-adapters' tags: a cursor over the file,
 // the collector of results, text decoding and image recognition. Each format has its own file
@@ -55,6 +58,10 @@ constexpr std::uint32_t sample(std::byte one) { return std::to_integer<std::uint
 
 // The least a `need` loads: `window`, unless the trials shrank it.
 std::atomic<std::size_t> loaded{window};
+
+// How many compressed bytes the inflater is fed at a time: deflate expands a byte at most about a
+// thousand times, so one piece cannot go far past a limit before it is checked.
+constexpr std::size_t inflated_piece = 1024;
 
 // Whether `cost` more bytes fit in what a description may hold (`most_held`); counted when they do.
 bool held(Spent& spent, std::uint64_t cost) {
@@ -369,7 +376,75 @@ void Gathered::took(Bytes data) {
     found = true;
 }
 
+// The bytes of a zlib stream inflated by our `Inflater`, at most `most` of them and at most what
+// is left of the file's budget of unpacking (`unpackable`), against which they are counted; none
+// when the stream is damaged, cut short, or would come out over either. It is fed in pieces of
+// `inflated_piece` bytes, so that a stream made to inflate without end stops at the limit, not
+// after it.
+std::optional<Bytes> inflated(std::span<const std::byte> given, std::size_t most, Gathered& out) {
+    inflating::Inflater inflater{inflating::Wrapping::zlib};
+    Bytes made;
+
+    const std::uint64_t limit = std::min<std::uint64_t>(most, out.unpackable());
+
+    try {
+        for (std::size_t at = 0; at < given.size(); at += inflated_piece) {
+            const Bytes more = inflater.fed(given.subspan(at, std::min(inflated_piece, given.size() - at)));
+
+            out.unpacked(more.size());
+
+            if (more.size() > limit - made.size()) return std::nullopt;
+
+            made.insert(made.end(), more.begin(), more.end());
+        }
+    } catch (const Trouble&) {
+        return std::nullopt;
+    }
+
+    if (!inflater.ended()) return std::nullopt;
+
+    return made;
+}
+
 // --- Text ----------------------------------------------------------------------------------------
+
+// Whether the bytes are valid UTF-8 (RFC 3629): every lead byte followed by as many continuation
+// bytes as it announces, with no overlong form, no surrogate and nothing past U+10FFFF; the second
+// byte's range depends on the lead (E0 and F0 exclude overlong forms, ED the surrogates, F4 the
+// code points past the last).
+bool valid_utf8(std::span<const std::byte> given) {
+    std::size_t at = 0;
+
+    while (at < given.size()) {
+        const std::uint32_t lead = sample(given[at]);
+        std::size_t more = 0;
+        std::uint32_t low = 0x80;
+        std::uint32_t high = 0xBF;
+
+        if (lead < 0x80) more = 0;
+        else if (lead >= 0xC2 && lead <= 0xDF) more = 1;
+        else if (lead >= 0xE0 && lead <= 0xEF) more = 2;
+        else if (lead >= 0xF0 && lead <= 0xF4) more = 3;
+        else return false;
+
+        if (lead == 0xE0) low = 0xA0;
+        else if (lead == 0xED) high = 0x9F;
+        else if (lead == 0xF0) low = 0x90;
+        else if (lead == 0xF4) high = 0x8F;
+
+        if (more > given.size() - at - 1) return false;
+
+        for (std::size_t one = 1; one <= more; ++one) {
+            const std::uint32_t next = sample(given[at + one]);
+
+            if (next < (one == 1 ? low : 0x80) || next > (one == 1 ? high : 0xBF)) return false;
+        }
+
+        at += more + 1;
+    }
+
+    return true;
+}
 
 // Latin-1 into UTF-8, byte by byte, up to the first zero.
 std::string latin1(std::span<const std::byte> given) {

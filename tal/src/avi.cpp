@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,6 +23,11 @@
 // size and the codec's four characters), for a sound WAVEFORMATEX (the format tag, channels,
 // sample rate, average bytes a second and bits a sample); strn names the stream. AVI keeps no
 // language.
+//
+// Fields: the list INFO of the first RIFF piece, wherever it stands among the top chunks, each of
+// its chunks (INAM the title, IART the artist, ICMT a comment, ICRD the date and the rest of RIFF's
+// vocabulary) a field keyed by its four characters, the text up to its first zero and without the
+// spaces that pad it, in UTF-8 when it is valid UTF-8, otherwise in Latin-1.
 namespace tal::meta::tagging {
 
 namespace {
@@ -170,6 +176,29 @@ void stream_read(Walk& body, Heard& heard) {
     co_return made;
 }
 
+// The list INFO: a field for each of its chunks with text, at most `most_text` long, whose four
+// characters are printable ASCII, since they become the key.
+[[nodiscard]] Task<void> info_read(Walk& body, Gathered& out) {
+    while (true) {
+        std::optional<Chunk> one = co_await next(body, out);
+
+        if (!one) break;
+
+        const bool printable = std::ranges::all_of(one->id, [](char letter) { return letter >= 0x20 && letter <= 0x7E; });
+
+        if (one->body.left() > most_text || !printable) continue;
+
+        const Bytes raw = co_await one->body.take(static_cast<std::size_t>(one->body.left()));
+        const std::span<const std::byte> given{raw};
+        const auto zero = static_cast<std::size_t>(std::ranges::find(given, std::byte{0}) - given.begin());
+        std::string text = valid_utf8(given.first(zero)) ? std::string(reinterpret_cast<const char*>(given.data()), zero) : latin1(given.first(zero));
+
+        while (!text.empty() && text.back() == ' ') text.pop_back();
+
+        if (!text.empty()) out.field(Scheme::riff, one->id, std::move(text));
+    }
+}
+
 // The headers list: avih, the stream lists and the OpenDML list.
 [[nodiscard]] Task<void> headers_read(Walk& body, Heard& heard, Gathered& out) {
     while (true) {
@@ -206,8 +235,8 @@ void stream_read(Walk& body, Heard& heard) {
 
 }
 
-// Parses an AVI file of `size` bytes: the headers list of the first RIFF piece. Sets the type and
-// the duration; a file without the headers list is marked damaged.
+// Parses an AVI file of `size` bytes: the headers list and the list INFO of the first RIFF piece.
+// Sets the type, the duration and the fields; a file without the headers list is marked damaged.
 Task<void> avi(Reader& from, std::uint64_t size, Gathered& out) {
     Walk file{from, size, 0, size};
 
@@ -230,12 +259,12 @@ Task<void> avi(Reader& from, std::uint64_t size, Gathered& out) {
 
         if (!one) break;
 
-        if (one->id != "LIST" || one->form != "hdrl") continue;
+        if (one->id == "LIST" && one->form == "INFO") co_await info_read(one->body, out);
+
+        if (one->id != "LIST" || one->form != "hdrl" || found) continue;
 
         found = true;
         co_await headers_read(one->body, heard, out);
-
-        break;
     }
 
     if (!found) {

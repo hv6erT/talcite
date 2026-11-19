@@ -92,6 +92,23 @@ private:
     std::uint64_t window_at_ = 0;
 };
 
+struct Said {
+    std::optional<std::uint8_t> orientation;
+    std::string make;
+    std::string model;
+    std::string taken;
+    std::optional<Place> place;
+};
+
+struct Shot {
+    Said exif;
+    Said xmp;
+    Said iptc;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::string extended;
+};
+
 struct Spent {
     std::uint64_t size = 0;
     std::uint64_t held = 0;
@@ -130,6 +147,17 @@ struct Gathered {
 
     void damaged() { into.damaged = true; }
 };
+
+struct Box {
+    std::string type;
+    Walk body;
+};
+
+[[nodiscard]] Task<std::optional<Box>> boxed(Walk& parent, Gathered& out);
+
+[[nodiscard]] std::optional<Bytes> inflated(std::span<const std::byte> given, std::size_t most, Gathered& out);
+
+[[nodiscard]] bool valid_utf8(std::span<const std::byte> given);
 
 [[nodiscard]] std::string latin1(std::span<const std::byte> given);
 
@@ -190,6 +218,32 @@ struct Gathered {
 [[nodiscard]] Task<bool> pdf_at(Reader& from, std::uint64_t size);
 
 [[nodiscard]] Task<void> pdf_document(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] std::string_view tag_name(std::string_view group, std::uint16_t number);
+
+[[nodiscard]] std::string_view dataset_name(std::uint8_t record, std::uint8_t number);
+
+[[nodiscard]] std::string_view space_prefix(std::string_view uri);
+
+[[nodiscard]] Task<bool> exif(Reader& from, std::uint64_t size, std::uint64_t base, std::uint64_t end, bool whole, Gathered& out, Shot& shot);
+
+void xmp(std::string_view packet, Gathered& out, Shot& shot);
+
+void iim(std::span<const std::byte> data, Gathered& out, Shot& shot);
+
+void resources(std::span<const std::byte> data, Gathered& out, Shot& shot);
+
+[[nodiscard]] Photo photo_of(const Shot& shot);
+
+[[nodiscard]] Task<void> jpeg(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] Task<void> png(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] Task<void> webp(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] Task<void> tiff(Reader& from, std::uint64_t size, Gathered& out);
+
+[[nodiscard]] Task<void> heif(Reader& from, std::uint64_t size, bool avif, Gathered& out);
 
 [[nodiscard]] Task<void> gathered(Reader& from, Gathered& out);
 

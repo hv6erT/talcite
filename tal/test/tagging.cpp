@@ -1079,6 +1079,21 @@ void safe(Bytes& into, std::size_t size) {
 // 100 KiB, and TPE1 "B" after it: only the limit stops it.
 [[nodiscard]] Bytes bombed() { return tagged_with(squeezed("TIT2", meta::tagging::most_block / 258 + 1)); }
 
+// A chunk of RIFF: four characters, a little-endian size and the body, padded to an even length.
+[[nodiscard]] Bytes riffed(std::string_view id, const Bytes& body) {
+    Bytes made;
+
+    for (const char one : id) made.push_back(static_cast<std::byte>(one));
+
+    for (const int shift : {0, 8, 16, 24}) made.push_back(std::byte{static_cast<std::uint8_t>((body.size() >> shift) & 0xFF)});
+
+    made.insert(made.end(), body.begin(), body.end());
+
+    if (body.size() % 2 != 0) made.push_back(std::byte{0});
+
+    return made;
+}
+
 // An atom of MP4: its size, its type and its body.
 [[nodiscard]] Bytes atom(std::string_view type, const Bytes& body) {
     Bytes made;
@@ -1894,6 +1909,42 @@ TRIAL("Meta: AVI streams — the formats of strf and the names of strn") {
 
 // A file of one sound has no track list: its one stream has the codec its format names and the
 // properties of the file.
+// AVI with its headers (forty milliseconds a frame, twenty-five frames) and the list INFO after
+// them: the title in UTF-8, the artist in Latin-1 padded with spaces, a comment of spaces only,
+// which is no field, a chunk whose four characters are not printable, no field either, and a list
+// movi after it, not read.
+TRIAL("Meta: AVI — the fields of the list INFO, in UTF-8 or Latin-1") {
+    const auto listed = [](std::string_view form, const std::vector<Bytes>& chunks) {
+        Bytes body;
+
+        for (const char one : form) body.push_back(static_cast<std::byte>(one));
+
+        for (const Bytes& one : chunks) body.insert(body.end(), one.begin(), one.end());
+
+        return riffed("LIST", body);
+    };
+
+    Bytes header(56, std::byte{0});
+
+    header[0] = std::byte{0x40};
+    header[1] = std::byte{0x9C};
+    header[16] = std::byte{25};
+
+    Bytes inside{std::byte{'A'}, std::byte{'V'}, std::byte{'I'}, std::byte{' '}};
+
+    for (const Bytes& one : {listed("hdrl", {riffed("avih", header)}),
+                             listed("INFO", {riffed("INAM", lump("54797475c58200")), riffed("IART", lump("4b6f74f3772020")),
+                                             riffed("ICMT", lump("202000")), riffed(std::string_view{"\x01\x02\x03\x04", 4}, lump("41"))}),
+                             listed("movi", {})})
+        inside.insert(inside.end(), one.begin(), one.end());
+
+    const meta::Description got = described(riffed("RIFF", inside));
+
+    OUGHT(!got.damaged);
+    SAME(got.fields, (std::vector<meta::Field>{text(Scheme::riff, "INAM", "Tytu\u0142"), text(Scheme::riff, "IART", "Kot\u00f3w")}));
+    OUGHT(got.properties.duration == std::chrono::milliseconds{1000});
+}
+
 TRIAL("Meta: a file of one sound has one stream, with the codec of its format") {
     for (const auto& [hex, codec] : std::vector<std::pair<std::string_view, std::string>>{
              {mp3_v24, "mp3"}, {flac_file, "flac"}, {opus_file, "opus"}, {wavpack_file, "wavpack"}, {mac_ape, "ape"}, {m4a_file, "aac"}}) {

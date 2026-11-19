@@ -140,7 +140,42 @@ Task<void> tagging::gathered(Reader& from, Gathered& out) {
         co_return;
     }
 
+    if (!tagged && starts(head, "\xFF\xD8\xFF")) {
+        co_await jpeg(from, size, out);
+
+        co_return;
+    }
+
+    if (!tagged && starts(head, "\x89PNG\r\n\x1A\n")) {
+        co_await png(from, size, out);
+
+        co_return;
+    }
+
+    if (!tagged && starts(head, "RIFF") && starts(head, "WEBP", 8)) {
+        co_await webp(from, size, out);
+
+        co_return;
+    }
+
+    if (!tagged && (starts(head, std::string_view{"II*\0", 4}) || starts(head, std::string_view{"MM\0*", 4}) || starts(head, "IIRO") ||
+                    starts(head, "IIRS") || starts(head, "MMOR") || starts(head, std::string_view{"IIU\0", 4}))) {
+        co_await tiff(from, size, out);
+
+        co_return;
+    }
+
     if (!tagged && starts(head, "ftyp", 4)) {
+        const std::string_view brand = head.size() >= 12 ? std::string_view{reinterpret_cast<const char*>(head.data()) + 8, 4} : std::string_view{};
+        const bool avif = brand == "avif" || brand == "avis";
+
+        if (avif || brand == "heic" || brand == "heix" || brand == "heim" || brand == "heis" || brand == "hevc" || brand == "hevx" || brand == "mif1" ||
+            brand == "msf1") {
+            co_await heif(from, size, avif, out);
+
+            co_return;
+        }
+
         co_await mp4(from, size, out);
 
         co_return;

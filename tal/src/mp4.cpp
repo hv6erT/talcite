@@ -40,18 +40,11 @@
 // piece, each structure loading the bytes it reads.
 namespace tal::meta::tagging {
 
-namespace {
-
-struct Box {
-    std::string type;
-    Walk body;
-};
-
 // The next atom from the parent's cursor, or none when the parent has ended. Size 1 means a 64-bit
 // size right after the type; size 0 means up to the end of the parent. An atom shorter than its own
 // header means a broken file. A body that fits in the window is loaded right after the header, so
 // that the part holds it in memory.
-[[nodiscard]] Task<std::optional<Box>> next(Walk& parent, Gathered& out) {
+Task<std::optional<Box>> boxed(Walk& parent, Gathered& out) {
     if (parent.left() < 8) co_return std::nullopt;
 
     co_await parent.need(4 + 4 + 8);
@@ -80,6 +73,8 @@ struct Box {
 
     co_return Box{std::move(type), parent.part(size - header)};
 }
+
+namespace {
 
 // The duration from an mvhd or mdhd atom: a 32-bit time scale and a duration that is 32-bit in
 // version 0 and 64-bit in version 1. None when the atom is truncated, the scale is zero or the
@@ -220,7 +215,7 @@ struct Track {
 // for a picture hvcC and av1C (the bit depth) and colr (the transfer).
 [[nodiscard]] Task<void> configured(Walk& body, Track& track, Gathered& out) {
     while (true) {
-        std::optional<Box> inner = co_await next(body, out);
+        std::optional<Box> inner = co_await boxed(body, out);
 
         if (!inner) break;
 
@@ -311,7 +306,7 @@ struct Track {
     if (channels > 0 && channels < 0x10000) track.sound.channels = static_cast<std::uint16_t>(channels);
 
     while (true) {
-        std::optional<Box> inner = co_await next(body, out);
+        std::optional<Box> inner = co_await boxed(body, out);
 
         if (!inner) break;
 
@@ -382,7 +377,7 @@ struct Track {
     constexpr std::array<std::string_view, 3> nested{"mdia", "minf", "stbl"};
 
     while (true) {
-        std::optional<Box> box = co_await next(body, out);
+        std::optional<Box> box = co_await boxed(body, out);
 
         if (!box) break;
 
@@ -409,7 +404,7 @@ struct Track {
         } else if (box->type == "stsd") {
             box->body.skip(8);
 
-            std::optional<Box> entry = co_await next(box->body, out);
+            std::optional<Box> entry = co_await boxed(box->body, out);
 
             if (!entry) continue;
 
@@ -466,7 +461,7 @@ struct Track {
     std::string name;
 
     while (true) {
-        std::optional<Box> inner = co_await next(box.body, out);
+        std::optional<Box> inner = co_await boxed(box.body, out);
 
         if (!inner) break;
 
@@ -541,7 +536,7 @@ struct Track {
 // The fields of an ilst atom, one child atom per field, until the search is done.
 [[nodiscard]] Task<void> listed(Walk& body, Gathered& out) {
     while (true) {
-        std::optional<Box> box = co_await next(body, out);
+        std::optional<Box> box = co_await boxed(body, out);
 
         if (!box) break;
 
@@ -560,7 +555,7 @@ struct Track {
     if (!(head.size() == 8 && std::memcmp(head.data() + 4, "hdlr", 4) == 0)) body.skip(4);
 
     while (true) {
-        std::optional<Box> box = co_await next(body, out);
+        std::optional<Box> box = co_await boxed(body, out);
 
         if (!box) break;
 
@@ -587,7 +582,7 @@ Task<void> mp4(Reader& from, std::uint64_t size, Gathered& out) {
     std::optional<Track> sound;
 
     while (true) {
-        std::optional<Box> top = co_await next(file, out);
+        std::optional<Box> top = co_await boxed(file, out);
 
         if (!top) break;
 
@@ -603,7 +598,7 @@ Task<void> mp4(Reader& from, std::uint64_t size, Gathered& out) {
         moov = true;
 
         while (true) {
-            std::optional<Box> box = co_await next(top->body, out);
+            std::optional<Box> box = co_await boxed(top->body, out);
 
             if (!box) break;
 
@@ -622,7 +617,7 @@ Task<void> mp4(Reader& from, std::uint64_t size, Gathered& out) {
                 if (track.handler == "soun" && !sound) sound = std::move(track);
             } else if (box->type == "udta") {
                 while (true) {
-                    std::optional<Box> inner = co_await next(box->body, out);
+                    std::optional<Box> inner = co_await boxed(box->body, out);
 
                     if (!inner) break;
 
