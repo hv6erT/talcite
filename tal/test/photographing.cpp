@@ -1182,6 +1182,42 @@ TRIAL("Photo: DNG — the size of the full image among the sub-images") {
                                                  number(Scheme::exif, "Exif.Image.ImageLength", 171), text(Scheme::exif, "Exif.Image.Make", "Leica")}));
 }
 
+// The previews in JPEG of a raw file: a reduced IFD0 in JPEG (7) at JPEGInterchangeFormat, a
+// reduced sub-image in one strip; a full sub-image, even in old JPEG (6), is no preview, and
+// neither is an IFD0 that is the full image in lossless JPEG (7, not reduced); a reduced one whose
+// JPEG lies past the end is damage. Each preview is a picture after
+// the thumbnail's place, and its bytes come when asked.
+TRIAL("Photo: raw — previews in JPEG of IFD0 and of the reduced sub-images") {
+    const Bytes jpeg = lump("ffd8ffe000104a4649460001010000010001000000ffd9000000000000");
+    const std::uint32_t end = 8 + 78 + 54 + 54 + 54;
+    const Bytes file = tiffed({
+        {{{0x9999, 7, static_cast<std::uint32_t>(jpeg.size()), jpeg, {}}, long_of(0x00fe, 1), short_of(0x0103, 7), long_of(0x0201, end),
+          long_of(0x0202, static_cast<std::uint32_t>(jpeg.size())), pointer(0x014a, {1, 2, 3})},
+         std::nullopt},
+        {{long_of(0x00fe, 1), short_of(0x0103, 7), long_of(0x0111, end), long_of(0x0117, 10)}, std::nullopt},
+        {{long_of(0x00fe, 0), short_of(0x0103, 6), long_of(0x0111, end), long_of(0x0117, 20)}, std::nullopt},
+        {{long_of(0x00fe, 1), short_of(0x0103, 7), long_of(0x0201, 100000), long_of(0x0202, 10)}, std::nullopt},
+    });
+    const meta::Description made = described(file);
+    const meta::Description raw = described(tiffed({{{long_of(0x00fe, 0), short_of(0x0103, 7), long_of(0x0111, 8), long_of(0x0117, 10)}, std::nullopt}}));
+
+    SAME(raw.pictures.size(), std::size_t{0});
+
+    OUGHT(made.damaged);
+    SAME(made.pictures.size(), std::size_t{2});
+
+    if (made.pictures.size() != 2) return;
+
+    SAME(made.pictures[0].said, std::string{"preview"});
+    SAME(made.pictures[0].size, jpeg.size());
+    SAME(made.pictures[1].size, std::size_t{10});
+
+    tal::Loop loop;
+    meta::Held from{file};
+
+    OUGHT(tal::wait(loop, meta::pictured(from, 1)) == Bytes(jpeg.begin(), jpeg.begin() + 10));
+}
+
 // TIFF made to break a reader: IFD1 is IFD0 again, which is read once and the file is whole; a
 // directory that claims sixty thousand entries is damage and gives nothing; a text whose offset is
 // past the end is damage and no field, and the rest is read.

@@ -61,8 +61,18 @@ constexpr std::string_view leaving =
     "0002002c060004000700060081000000ff000000000000000008190001080420a0e0408206050658186020c3"
     "0005053c8cf83020003b";
 
-// The header of a PNG of 40 by 40, which no decoder here reads unless a trial sets one.
+// The header of a PNG of 40 by 40 without its data: the trials read it through a decoder they set.
 constexpr std::string_view png = "89504e470d0a1a0a0000000d49484452000000280000002808060000";
+
+// A JPEG of gray, 8 by 8, made by Pillow.
+constexpr std::string_view jpeg =
+    "ffd8ffe000104a46494600010100000100010000ffdb004300100b0c0e0c0a100e0d0e1211101318281a181616183123"
+    "251d283a333d3c3933383740485c4e404457453738506d51575f626768673e4d71797064785c656763ffc0000b080008"
+    "000801011100ffc4001f0000010501010101010100000000000000000102030405060708090a0bffc400b51000020103"
+    "03020403050504040000017d01020300041105122131410613516107227114328191a1082342b1c11552d1f024336272"
+    "82090a161718191a25262728292a3435363738393a434445464748494a535455565758595a636465666768696a737475"
+    "767778797a838485868788898a92939495969798999aa2a3a4a5a6a7a8a9aab2b3b4b5b6b7b8b9bac2c3c4c5c6c7c8c9"
+    "cad2d3d4d5d6d7d8d9dae1e2e3e4e5e6e7e8e9eaf1f2f3f4f5f6f7f8f9faffda0008010100003f00ccafffd9";
 
 // Opaque pixels of `width` by `height` in one red, with `stills` frames of `after` each.
 Pixels square(std::uint32_t width, std::uint32_t height, std::uint8_t red, int stills = 1, std::chrono::milliseconds after = 0ms) {
@@ -211,17 +221,32 @@ TRIAL("Image: bytes give the format and size at once, the frames once decoded") 
     OUGHT(shown.drawn(2).empty());
 }
 
-// A format with no decoder set leaves the image without a size, its format known; with one, the
-// image decodes through it; a decoder's refusal empties the image and leaves the format.
-TRIAL("Image: without a decoder a PNG stays empty, with one it decodes, a refusal empties it") {
+// A format no decoder takes (BMP: ours decode PNG and JPEG) ends empty, its format known; with a
+// decoder set, the image decodes through it; a decoder's refusal empties the image and leaves the
+// format.
+// A JPEG decodes with no decoder set: ours are the port's default.
+TRIAL("Image: a JPEG decodes by our own decoder, with no decoder set") {
+    Shown shown;
+
+    shown.image.hold(lump(jpeg));
+    shown.show();
+    shown.settled();
+
+    OUGHT(shown.image.held());
+    SAME(shown.image.frames(), std::size_t{1});
+    OUGHT(!shown.drawn(2).empty());
+}
+
+TRIAL("Image: a format no decoder takes ends empty, with a decoder it decodes, a refusal empties it") {
     {
         Shown shown;
 
-        shown.image.hold(lump(png));
+        shown.image.hold(lump("424d3a0000000000000036000000280000000100000001000000"));
         shown.show();
+        shown.settled();
 
         OUGHT(!shown.image.held());
-        SAME(static_cast<int>(shown.image.format()), static_cast<int>(Format::png));
+        SAME(static_cast<int>(shown.image.format()), static_cast<int>(Format::bmp));
         OUGHT(!shown.image.busy());
     }
 

@@ -33,7 +33,9 @@
 // What a photo is: the orientation, the camera, the time it was taken and the place, with the
 // dimensions of the image itself when the TIFF is the image (a TIFF file, a raw file built on TIFF;
 // for DNG the full-size image of a sub-directory when IFD0 holds a reduced one). The thumbnail of
-// IFD1 goes to the picture list.
+// IFD1 goes to the picture list, and after it, in a TIFF that is the image, every preview in JPEG
+// of IFD0 and of its sub-images: old JPEG (Compression 6) anywhere, JPEG (7) where the image says
+// it is reduced, as the lossless JPEG of a raw image is no picture.
 //
 // Limits: a directory of more than `most_entries` entries is damage and is not read; a directory
 // met again (a loop of offsets) is not read again; a value longer than `most_text` is skipped; the
@@ -245,6 +247,10 @@ private:
 
     [[nodiscard]] Task<void> thumbnail(const std::vector<Entry>& entries);
 
+    void previewing(const std::vector<Entry>& entries, bool sub);
+
+    [[nodiscard]] Task<void> jpeg_at(std::uint64_t offset, std::uint64_t length, std::string_view said);
+
     [[nodiscard]] std::uint32_t number(const Entry& entry) const;
 
     [[nodiscard]] static const Entry* found(const std::vector<Entry>& entries, std::uint16_t tag);
@@ -257,6 +263,7 @@ private:
     std::uint64_t first_ = 0;
     std::set<std::uint64_t> seen_;
     std::vector<std::pair<std::uint16_t, Bytes>> blocks_;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> previews_;
     std::uint64_t read_ = 0;
 };
 
@@ -500,7 +507,8 @@ Task<void> Tiff::fields(std::string_view group, const std::vector<Entry>& entrie
 }
 
 // The dimensions of the image a TIFF file holds: IFD0's, unless IFD0 says it is a reduced image
-// (bit 0 of NewSubfileType), as DNG's preview is; then the first sub-image that is not reduced.
+// (bit 0 of NewSubfileType), as DNG's preview is; then the first sub-image that is not reduced. On
+// the way the previews of IFD0 and of the sub-images are noted (`previewing`).
 Task<void> Tiff::dimensions(const std::vector<Entry>& entries) {
     const auto sized = [this](const std::vector<Entry>& those) {
         const Entry* wide = found(those, 0x0100);
@@ -514,12 +522,17 @@ Task<void> Tiff::dimensions(const std::vector<Entry>& entries) {
 
     const Entry* kind = found(entries, 0x00fe);
     const Entry* subs = found(entries, 0x014a);
+    const bool reduced = kind != nullptr && (number(*kind) & 1) != 0;
+    bool full = false;
 
-    if (kind == nullptr || (number(*kind) & 1) == 0 || subs == nullptr || (subs->type != 4 && subs->type != 13)) {
+    previewing(entries, false);
+
+    if (!reduced) {
         sized(entries);
-
-        co_return;
+        full = true;
     }
+
+    if (subs == nullptr || (subs->type != 4 && subs->type != 13)) co_return;
 
     const std::optional<Bytes> offsets = co_await data(*subs);
 
@@ -532,12 +545,38 @@ Task<void> Tiff::dimensions(const std::vector<Entry>& entries) {
 
         const Entry* sub_kind = found(*sub, 0x00fe);
 
-        if (sub_kind == nullptr || (number(*sub_kind) & 1) == 0) {
-            sized(*sub);
+        previewing(*sub, true);
 
-            co_return;
+        if (!full && (sub_kind == nullptr || (number(*sub_kind) & 1) == 0)) {
+            sized(*sub);
+            full = true;
         }
     }
+}
+
+// Notes the preview in JPEG of a directory, when it holds one: old JPEG (Compression 6), or JPEG
+// (7) of an image that says it is reduced (NewSubfileType), at JPEGInterchangeFormat or in a single
+// strip. `sub` says the directory is a sub-image, which must say it is reduced in any case.
+void Tiff::previewing(const std::vector<Entry>& entries, bool sub) {
+    const Entry* compression = found(entries, 0x0103);
+    const Entry* kind = found(entries, 0x00fe);
+    const bool reduced = kind != nullptr && (number(*kind) & 1) != 0;
+
+    if (compression == nullptr || (sub && !reduced)) return;
+
+    if (number(*compression) != 6 && !(number(*compression) == 7 && reduced)) return;
+
+    const Entry* at = found(entries, 0x0201);
+    const Entry* long_ = found(entries, 0x0202);
+
+    if (at == nullptr || long_ == nullptr) {
+        at = found(entries, 0x0111);
+        long_ = found(entries, 0x0117);
+
+        if (at == nullptr || long_ == nullptr || at->count != 1 || long_->count != 1) return;
+    }
+
+    previews_.emplace_back(number(*at), number(*long_));
 }
 
 // The thumbnail of IFD1: a JPEG at JPEGInterchangeFormat, as long as JPEGInterchangeFormatLength,
@@ -548,16 +587,19 @@ Task<void> Tiff::thumbnail(const std::vector<Entry>& entries) {
 
     if (at == nullptr || long_ == nullptr) co_return;
 
-    const std::uint64_t offset = number(*at);
-    const std::uint64_t length = number(*long_);
+    co_await jpeg_at(number(*at), number(*long_), "thumbnail");
+}
 
+// A JPEG of `length` bytes at `offset` of the structure, entered as a picture said `said` and
+// handed over when its bytes are wanted; one that does not lie within the structure is damage.
+Task<void> Tiff::jpeg_at(std::uint64_t offset, std::uint64_t length, std::string_view said) {
     if (length == 0 || offset > walk_.end() - base_ || length > walk_.end() - base_ - offset) {
         out_.damaged();
 
         co_return;
     }
 
-    if (!out_.pictured(Picture{Role::other, "image/jpeg", "thumbnail", static_cast<std::size_t>(length)})) co_return;
+    if (!out_.pictured(Picture{Role::other, "image/jpeg", std::string{said}, static_cast<std::size_t>(length)})) co_return;
 
     walk_.seek(base_ + offset);
 
@@ -595,6 +637,8 @@ Task<void> Tiff::read(bool whole) {
         co_await fields("Thumbnail", *one);
         co_await thumbnail(*one);
     }
+
+    for (const auto& [offset, length] : previews_) co_await jpeg_at(offset, length, "preview");
 
     for (const auto& [tag, given] : blocks_) {
         if (tag == 0x02bc) xmp(std::string_view{reinterpret_cast<const char*>(given.data()), given.size()}, out_, shot_);

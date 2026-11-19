@@ -1,6 +1,7 @@
-# The fuzz targets of the JSON and XML readers, of inflate and the archives, of GIF and the tags,
-# of a program's texts and settings, of the diff, of the emulator of a terminal and of the answers
-# of the HTTP client. Inflate is checked against the system's zlib where the fuzz build finds one.
+# The fuzz targets of the JSON and XML readers, of inflate, deflate and the archives, of GIF, PNG
+# (with our encoder) and JPEG, of the tags, of a program's texts and settings, of the diff, of the
+# emulator of a terminal and of the answers of the HTTP client. Inflate is checked against the
+# system's zlib where the fuzz build finds one.
 # Run one with the dictionary and a directory for the corpus, for example:
 #
 #   ./tal-json-fuzz -dict=json.dict -max_len=4096 corpus/
@@ -40,6 +41,30 @@ add_executable(tal-archive-fuzz archive.cpp)
 target_link_libraries(tal-archive-fuzz PRIVATE tal-core)
 
 target_link_options(tal-archive-fuzz PRIVATE -fsanitize=fuzzer)
+
+add_executable(tal-png-fuzz png.cpp)
+
+target_include_directories(tal-png-fuzz PRIVATE ../src)
+
+target_link_libraries(tal-png-fuzz PRIVATE tal-media)
+
+target_link_options(tal-png-fuzz PRIVATE -fsanitize=fuzzer)
+
+add_executable(tal-jpeg-fuzz jpeg.cpp)
+
+target_include_directories(tal-jpeg-fuzz PRIVATE ../src)
+
+target_link_libraries(tal-jpeg-fuzz PRIVATE tal-media)
+
+target_link_options(tal-jpeg-fuzz PRIVATE -fsanitize=fuzzer)
+
+add_executable(tal-deflate-fuzz deflate.cpp)
+
+target_include_directories(tal-deflate-fuzz PRIVATE ../src)
+
+target_link_libraries(tal-deflate-fuzz PRIVATE tal-core)
+
+target_link_options(tal-deflate-fuzz PRIVATE -fsanitize=fuzzer)
 
 add_executable(tal-gif-fuzz gif.cpp)
 

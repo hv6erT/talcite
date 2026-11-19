@@ -20,7 +20,7 @@ endif()
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/inflate.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/tar.cpp src/task.cpp
+add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/executor.cpp src/deflate.cpp src/fs.cpp src/inflate.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/tar.cpp src/task.cpp
   src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp src/zip.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
@@ -183,7 +183,7 @@ endfunction()
 # scaling in linear light, and decoding frame by frame: GIF by our own decoder, other formats by
 # the adapter of the port `Decoding`; and the metadata of sound and video files, the tags and the
 # properties (tal::meta), and the structure of PDF documents, read by our own readers.
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors

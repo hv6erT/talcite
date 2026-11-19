@@ -181,19 +181,22 @@ private:
 // How a file is put in place. `durable` waits until the data is on the medium before it says
 // "done", as a move does before the source goes. `fresh` says that the target lies in a folder the
 // operation has just created itself, where nothing can stand under the name, so the target is not
-// asked about.
+// asked about. `atomic` writes a new file beside its name too and puts it there whole, so that no
+// one ever sees it half written.
 struct Placing {
     bool durable = false;
     bool fresh = false;
+    bool atomic = false;
 };
 
 // Three kinds of writing to a file: a new one is created exclusively (`Mode::exclusive`) and
-// written directly, so a file that someone else put under the name in the meantime is refused, not
-// overwritten; a replacement writes beside it and renames, so an interrupted or failed one does not
-// touch the old target, and a second hard link to the old file keeps the old content; and a durable
-// one (`Placing`) additionally waits until the data is on the medium. A replacement is always made
-// durable: without that, a power loss right after the rename could leave an empty file in place of
-// the target. A fresh target is not asked about.
+// written directly, or, when atomic, written beside and put under its name in one step that never
+// goes over anything (`placed_at`), so a file that someone else put under the name in the meantime
+// is refused, not overwritten; a replacement writes beside it and renames, so an interrupted or
+// failed one does not touch the old target, and a second hard link to the old file keeps the old
+// content; and a durable one (`Placing`) additionally waits until the data is on the medium. A
+// replacement is always made durable: without that, a power loss right after the rename could leave
+// an empty file in place of the target. A fresh target is not asked about.
 //
 // `fill` gets the path where the content is to appear and a flag to raise once it has created the
 // file there, and returns an open handle to it, or nothing when the task was cancelled halfway;
@@ -202,7 +205,8 @@ struct Placing {
 template <typename Fill>
 bool poured_at(const path& to, Placing placing, std::optional<Instant> when, Fill fill) {
     const bool there = !placing.fresh && kind_at(to) != Kind::none;
-    const path into = there ? aside_of(to) : to;
+    const bool aside = there || placing.atomic;
+    const path into = aside ? aside_of(to) : to;
 
     bool made = false;
 
@@ -215,10 +219,12 @@ bool poured_at(const path& to, Placing placing, std::optional<Instant> when, Fil
 
         if (when) stamp_on(*yours, *when);
 
-        if (there || placing.durable) sync_at(*yours);
+        if (aside || placing.durable) sync_at(*yours);
     }
 
     if (there && !replaced_at(into, to)) amiss("Cannot replace the file.", to);
+
+    if (!there && placing.atomic && !placed_at(into, to)) amiss("The file is there already.", to, ::tal::Kind::exists);
 
     sweeping.keep();
 
@@ -226,9 +232,9 @@ bool poured_at(const path& to, Placing placing, std::optional<Instant> when, Fil
 }
 
 // Writing in installments through our own buffer, when the content is already at hand or when the
-// system cannot copy on its own.
+// system cannot copy on its own; a new file atomically when asked (`Placing`).
 template <typename Pour>
-bool poured_at(const path& to, bool durable, Pour pour, std::optional<std::uint16_t> rights = std::nullopt) {
+bool poured_at(const path& to, bool durable, Pour pour, std::optional<std::uint16_t> rights = std::nullopt, bool atomic = false) {
     const auto fill = [&](const path& into, bool& made) -> std::shared_ptr<Handle> {
         std::shared_ptr<Handle> yours = open_at(into, Mode::exclusive, rights);
 
@@ -239,7 +245,7 @@ bool poured_at(const path& to, bool durable, Pour pour, std::optional<std::uint1
         return yours;
     };
 
-    return poured_at(to, Placing{.durable = durable}, std::nullopt, fill);
+    return poured_at(to, Placing{.durable = durable, .atomic = atomic}, std::nullopt, fill);
 }
 
 }
@@ -1044,10 +1050,11 @@ Bytes read_whole(const path& where) {
 }
 
 // Writes a whole file. Writing over an existing file goes beside it and renames onto the target
-// (`poured_at`), so an interrupted write leaves no stub under the real name; false when the
-// conflict says to skip. A cancelled write stops between installments. The file made, beside or
-// in place, has `rights` from its creation when they are given (`open_at`).
-bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights) {
+// (`poured_at`), so an interrupted write leaves no stub under the real name, and so does a new file
+// written `atomic`; false when the conflict says to skip. A cancelled write stops between
+// installments. The file made, beside or in place, has `rights` from its creation when they are
+// given (`open_at`).
+bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights, bool atomic) {
     const path at_all = settled_on(where, how);
 
     if (at_all.empty()) return false;
@@ -1064,7 +1071,7 @@ bool write_whole(const path& where, const Bytes& what, Conflict how, std::option
         }
 
         return true;
-    }, rights);
+    }, rights, atomic);
 
     if (!whole) throw Cancelled{};
 

@@ -260,8 +260,8 @@ public:
         });
     }
 
-    // Writes a file whole, beside it and renamed over it when it is there; a read-only file refuses
-    // to be replaced, whoever runs the program.
+    // Writes a file whole, beside it and renamed over it when it is there, or put under its name
+    // whole when atomic; a read-only file refuses to be replaced, whoever runs the program.
     Task<void> write(const Path& file, Bytes what, fs::Writing how) override {
         return offloaded([file, what = std::move(what), how] {
             const path where = absolute(file);
@@ -273,7 +273,7 @@ public:
             if (how.conflict == fs::Conflict::replace && core::kind_at(where) == platform::Kind::file && core::attributes_at(where).readonly)
                 amiss("The file is read-only.", where, ::tal::Kind::denied);
 
-            (void)core::write_whole(where, what, conflicted(how.conflict), how.rights);
+            (void)core::write_whole(where, what, conflicted(how.conflict), how.rights, how.atomic);
         });
     }
 

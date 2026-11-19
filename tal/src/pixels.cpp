@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <exception>
 #include <optional>
@@ -12,7 +13,10 @@
 #include "tal/trouble.hpp"
 
 #include "gifting.hpp"
+#include "jpeging.hpp"
 #include "lighting.hpp"
+#include "pnging.hpp"
+#include "reducing.hpp"
 
 // Pixels: an image as RGBA frames with their delays, ported from talcite's pixels.cpp and
 // picture.cpp. The format and the size come from the header, never from a name: a file manager
@@ -142,6 +146,26 @@ std::string named(Format format) {
     return "an unknown format";
 }
 
+// Our own decoders as the port: PNG and JPEG; any other format is left to an adapter of its own.
+class Own final : public Decoding {
+public:
+    // The name of the decoders.
+    [[nodiscard]] std::string_view name() const override { return "tal"; }
+
+    // Hands the frame of a PNG or a JPEG, whole, to `each`.
+    void decoded(std::span<const std::byte> given, const Taking& each) override { decoded(given, each, Size{}); }
+
+    // Hands the frame of a PNG or a JPEG to `each`, reduced as far as it still covers `most`
+    // (`reduction`); throws `Trouble` unsupported for another format, and the decoder's own.
+    void decoded(std::span<const std::byte> given, const Taking& each, Size most) override {
+        switch (format_of(given)) {
+        case Format::png: pnging::pnged(given, each, most); return;
+        case Format::jpeg: jpeging::jpeged(given, each, most); return;
+        default: throw Trouble{Kind::unsupported, "No decoder of " + named(format_of(given)) + "."};
+        }
+    }
+};
+
 }
 
 // An image of `size` made of the RGBA frames `stills`; throws `Trouble` (other) for frames without
@@ -175,6 +199,48 @@ Pixels Pixels::scaled(Size to) const {
     made.reserve(stills_.size());
 
     for (const Still& one : stills_) made.push_back(resampled(one.rgba, size_, to, one.after));
+
+    return Pixels{to, std::move(made)};
+}
+
+// The image turned as an orientation of EXIF says it is to be shown (1 to 8: as it is, mirrored
+// across, turned half round, mirrored down, mirrored along its diagonal, turned a quarter right,
+// mirrored along the other diagonal, turned a quarter left), every frame alike; any other value
+// leaves it as it is. Each pixel of the result is taken from where the orientation puts it.
+Pixels Pixels::oriented(std::uint8_t orientation) const {
+    if (!held() || orientation < 2 || orientation > 8) return *this;
+
+    const std::uint32_t w = size_.width;
+    const std::uint32_t h = size_.height;
+    const bool turned = orientation >= 5;
+    const Size to = turned ? Size{h, w} : size_;
+    const auto from = [&](std::uint32_t x, std::uint32_t y) -> std::pair<std::uint32_t, std::uint32_t> {
+        switch (orientation) {
+        case 2: return {w - 1 - x, y};
+        case 3: return {w - 1 - x, h - 1 - y};
+        case 4: return {x, h - 1 - y};
+        case 5: return {y, x};
+        case 6: return {y, h - 1 - x};
+        case 7: return {w - 1 - y, h - 1 - x};
+        default: return {w - 1 - y, x};
+        }
+    };
+    std::vector<Still> made;
+
+    for (const Still& one : stills_) {
+        Still fresh{Bytes(one.rgba.size()), one.after};
+
+        for (std::uint32_t y = 0; y < to.height; ++y)
+            for (std::uint32_t x = 0; x < to.width; ++x) {
+                const auto [sx, sy] = from(x, y);
+                const std::size_t source = (std::size_t{sy} * w + sx) * bands;
+                const std::size_t target = (std::size_t{y} * to.width + x) * bands;
+
+                std::copy_n(one.rgba.begin() + static_cast<std::ptrdiff_t>(source), bands, fresh.rgba.begin() + static_cast<std::ptrdiff_t>(target));
+            }
+
+        made.push_back(std::move(fresh));
+    }
 
     return Pixels{to, std::move(made)};
 }
@@ -258,10 +324,11 @@ std::optional<Size> size_of(std::span<const std::byte> head) {
 }
 
 // The frames of the image `given` handed to `each`: a GIF by our own decoder, the rest by
-// `decoding`. A frame without pixels or over `ceiling` stops the stream before it reaches `each`.
-// Throws `Trouble`: unsupported for no image tal knows or a format with no decoder, and the
-// decoder's own (malformed for damage, full for a canvas over the ceiling).
-void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding) {
+// `decoding`, which may give them reduced as far as they still cover `most` (zero: whole). A frame
+// without pixels or over `ceiling` stops the stream before it reaches `each`. Throws `Trouble`:
+// unsupported for no image tal knows or a format with no decoder, and the decoder's own (malformed
+// for damage, full for a canvas over the ceiling).
+void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding, Size most) {
     const Format format = format_of(given);
 
     if (format == Format::none) throw Trouble{Kind::unsupported, "Not an image tal knows."};
@@ -284,11 +351,12 @@ void decoded(std::span<const std::byte> given, const Taking& each, Optional<Deco
 
     if (!decoding) throw Trouble{Kind::unsupported, "No decoder of " + named(format) + "."};
 
-    decoding->decoded(given, guarded);
+    decoding->decoded(given, guarded, most);
 }
 
-// The image `given` decoded on the pool, each frame shrunk (or grown) to `want` at once, or kept
-// whole when `want` is empty, when a later frame of another size takes the first's; at most `most`
+// The image `given` decoded on the pool, each frame shrunk (or grown) to `want` at once (the
+// decoder told of `want`, so that it may give a frame already reduced towards it), or kept whole
+// when `want` is empty, when a later frame of another size takes the first's; at most `most`
 // frames, all of them when zero. The frames kept share one budget of `ceiling` pixels, spent on
 // size or on time: the first always fits, and the stream stops before one that would not. Throws
 // `Trouble` (other) for `want` over the ceiling, and what the streaming `decoded` throws.
@@ -323,7 +391,7 @@ Task<Pixels> decoded(Bytes given, Size want, Optional<Decoding> decoding, std::s
 
                 return most == 0 || made.size() < most;
             },
-            std::move(decoding));
+            std::move(decoding), want);
     } catch (...) {
         failed = std::current_exception();
     }
@@ -334,5 +402,63 @@ Task<Pixels> decoded(Bytes given, Size want, Optional<Decoding> decoding, std::s
 
     co_return Pixels{size, std::move(made)};
 }
+
+// Our own decoders of PNG and JPEG, the port's answer when no adapter is set.
+std::shared_ptr<Decoding> Decoding::builtin() {
+    static const std::shared_ptr<Decoding> made = std::make_shared<Own>();
+
+    return made;
+}
+
+// The dHash of an image's first frame, by which near copies are found: the frame brought down to
+// nine by eight (in linear light, as `scaled` does), the luminance of each pixel (Rec. 709 in
+// linear light), and for each of the eight rows the eight comparisons of a pixel with the one on
+// its left, a bit set where it is brighter, the first comparison the highest bit. Throws `Trouble`
+// (other) for an image without pixels.
+std::uint64_t hashed(const Pixels& pixels) {
+    if (!pixels.held()) throw Trouble{Kind::other, "No pixels to hash."};
+
+    const Pixels small = Pixels{pixels.size(), {pixels.stills().front()}}.scaled(Size{9, 8});
+    const Bytes& rgba = small.stills().front().rgba;
+    const std::array<double, 256>& tone = lighting::straight();
+    const auto light = [&](std::size_t x, std::size_t y) {
+        const std::size_t at = (y * 9 + x) * bands;
+
+        return 0.2126 * tone[sample(rgba[at])] + 0.7152 * tone[sample(rgba[at + 1])] + 0.0722 * tone[sample(rgba[at + 2])];
+    };
+    std::uint64_t made = 0;
+
+    for (std::size_t y = 0; y < 8; ++y)
+        for (std::size_t x = 0; x < 8; ++x) made = (made << 1) | (light(x + 1, y) > light(x, y) ? 1u : 0u);
+
+    return made;
+}
+
+// How many bits two hashes differ in: the distance of Hamming, small for near copies.
+int apart(std::uint64_t one, std::uint64_t other) { return std::popcount(one ^ other); }
+
+// How many times to reduce an image of `source` each way, 1, 2, 4 or 8: the most for which the
+// image still covers `most` on both sides (1 for a `most` without size), and at least as many as
+// bring it within `ceiling`. Throws `Trouble` (full) for a source over `most_source` pixels, or one
+// that an eighth does not bring within the ceiling.
+std::uint32_t reduction(Size source, Size most) {
+    const std::uint64_t whole = std::uint64_t{source.width} * source.height;
+
+    if (whole > most_source) throw Trouble{Kind::full, "The image is over the ceiling."};
+
+    std::uint32_t made = 1;
+
+    if (most.width != 0 && most.height != 0)
+        while (made < 8 && reduced(source, made * 2).width >= most.width && reduced(source, made * 2).height >= most.height) made *= 2;
+
+    while (made < 8 && std::uint64_t{reduced(source, made).width} * reduced(source, made).height > ceiling) made *= 2;
+
+    if (std::uint64_t{reduced(source, made).width} * reduced(source, made).height > ceiling) throw Trouble{Kind::full, "The image is over the ceiling."};
+
+    return made;
+}
+
+// The size of an image of `source` reduced `by` times each way, a part of a pixel counting whole.
+Size reduced(Size source, std::uint32_t by) { return Size{(source.width + by - 1) / by, (source.height + by - 1) / by}; }
 
 }

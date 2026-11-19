@@ -237,6 +237,10 @@ FILES_TRIAL("walk() gives the whole tree, each folder before what it holds", fil
     for (const tal::fs::Entry& one : desk.run(desk.files.walk(desk.at("/f")))) found.emplace_back(one.where.stored());
 
     SAME(found, desk.stored({"/f/a", "/f/a/x", "/f/a/x/y.txt", "/f/a.txt"}));
+
+    for (int one = 0; one < 40; ++one) desk.run(desk.files.make(desk.at("/g/d" + std::to_string(one) + "/e")));
+
+    SAME(desk.run(desk.files.walk(desk.at("/g"))).size(), std::size_t{80});
 }
 
 FILES_TRIAL("make() makes every missing folder; a file in the way or a missing folder refuses", files_trial_4) {
@@ -816,10 +820,12 @@ std::vector<Change> awaited(DiskDesk& desk, const tal::fs::Watch& watch, Change:
 }
 
 // The system tells more than the memory does, and in its own words: a new file is created and then
-// modified, a file written beside and renamed over shows as a rename. So the trials of the disk ask
-// whether the change they made is among what the system told.
+// modified, a file written beside and renamed over shows as a rename, and so does a new file
+// written whole (`Writing::atomic`, the default). So the trials of the disk ask whether the change
+// they made is among what the system told; those that ask for a creation write in place.
 // A reader that gives up at its deadline (`within`) leaves the watch: the next reader is not
-// refused, and the change that comes after hears it.
+// refused, and the change that comes after hears it. A file written whole is heard coming in by a
+// rename, and nothing is left beside it.
 TRIAL("Disk: a reader that gives up at its deadline leaves the watch to the next one") {
     DiskDesk desk;
 
@@ -827,9 +833,14 @@ TRIAL("Disk: a reader that gives up at its deadline leaves the watch to the next
 
     OUGHT(heard(desk, watch).empty());
 
-    desk.put("/after.txt", "1");
+    desk.run(desk.files.write(desk.at("/after.txt"), tal::bytes("1"), tal::fs::Writing{.atomic = false}));
 
     OUGHT(among(awaited(desk, watch, Change::Kind::created, desk.at("/after.txt")), Change::Kind::created, desk.at("/after.txt")));
+
+    desk.put("/whole.txt", "2");
+
+    OUGHT(among(awaited(desk, watch, Change::Kind::renamed, desk.at("/whole.txt")), Change::Kind::renamed, desk.at("/whole.txt")));
+    SAME(desk.names("/"), (std::vector<std::string>{"after.txt", "whole.txt"}));
 }
 
 TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a deep one also below") {
@@ -840,7 +851,7 @@ TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a de
     const tal::fs::Watch shallow = desk.files.watch(desk.at("/f"));
     const tal::fs::Watch deep = desk.files.watch(desk.at("/f"), true);
 
-    desk.put("/f/a.txt", "1");
+    desk.run(desk.files.write(desk.at("/f/a.txt"), tal::bytes("1"), tal::fs::Writing{.atomic = false}));
     OUGHT(among(awaited(desk, shallow, Change::Kind::created, desk.at("/f/a.txt")), Change::Kind::created, desk.at("/f/a.txt")));
 
     desk.run(desk.files.move(desk.at("/f/a.txt"), desk.at("/f/c.txt")));
@@ -853,7 +864,7 @@ TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a de
     desk.run(desk.files.remove(desk.at("/f/c.txt")));
     OUGHT(among(awaited(desk, shallow, Change::Kind::removed, desk.at("/f/c.txt")), Change::Kind::removed, desk.at("/f/c.txt")));
 
-    desk.put("/f/inner/b.txt", "2");
+    desk.run(desk.files.write(desk.at("/f/inner/b.txt"), tal::bytes("2"), tal::fs::Writing{.atomic = false}));
 
     OUGHT(among(awaited(desk, deep, Change::Kind::created, desk.at("/f/inner/b.txt")), Change::Kind::created, desk.at("/f/inner/b.txt")));
     OUGHT(!among(heard(desk, shallow), Change::Kind::created, desk.at("/f/inner/b.txt")));
@@ -984,3 +995,38 @@ TRIAL("Disk: a time past the year 2262 is held, not wrapped") {
 }
 
 #endif
+
+// The folder of caches is known: in memory "/home/.cache" once it is there; on the disk of POSIX
+// `XDG_CACHE_HOME` when it is absolute and there, ".cache" in the home otherwise, and nothing
+// when that is not there.
+TRIAL("Known folders: the cache in memory and from XDG_CACHE_HOME") {
+    tal::Loop loop;
+    tal::fs::Memory memory;
+
+    OUGHT(!tal::wait(loop, memory.known(tal::fs::Known::cache)).has_value());
+
+    tal::wait(loop, memory.make(tal::Path{"/home/.cache"}));
+
+    OUGHT(tal::wait(loop, memory.known(tal::fs::Known::cache)) == std::optional<tal::Path>{tal::Path{"/home/.cache"}});
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+    const std::filesystem::path where = std::filesystem::temp_directory_path() / ("tal-cache-" + std::to_string(::getpid()));
+    const char* before = std::getenv("XDG_CACHE_HOME");
+    const std::string kept = before != nullptr ? before : "";
+
+    std::filesystem::create_directories(where);
+    ::setenv("XDG_CACHE_HOME", where.c_str(), 1);
+
+    const std::optional<tal::Path> found = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::cache));
+
+    std::filesystem::remove(where);
+
+    const std::optional<tal::Path> gone = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::cache));
+
+    if (before != nullptr) ::setenv("XDG_CACHE_HOME", kept.c_str(), 1);
+    else ::unsetenv("XDG_CACHE_HOME");
+
+    OUGHT(found == std::optional<tal::Path>{tal::Path{where.string()}});
+    OUGHT(!gone.has_value());
+#endif
+}

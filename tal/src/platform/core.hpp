@@ -158,7 +158,7 @@ void trashed_at(const path& where);
 
 [[nodiscard]] Bytes read_whole(const path& where);
 
-[[nodiscard]] bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights = std::nullopt);
+[[nodiscard]] bool write_whole(const path& where, const Bytes& what, Conflict how, std::optional<std::uint16_t> rights = std::nullopt, bool atomic = false);
 
 void copy_whole(const path& from, const path& to, Progress* progress, Conflict how);
 
@@ -240,6 +240,8 @@ struct Shift {
                                    const std::function<bool(const path&)>& exact);
 
 [[nodiscard]] bool replaced_at(const path& from, const path& to);
+
+[[nodiscard]] bool placed_at(const path& from, const path& to);
 
 [[nodiscard]] path aside_of(const path& to);
 

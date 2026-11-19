@@ -4,12 +4,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include "tal/bytes.hpp"
+#include "tal/fs.hpp"
+#include "tal/path.hpp"
 #include "tal/port.hpp"
 #include "tal/task.hpp"
 
@@ -41,6 +44,8 @@ public:
 
     [[nodiscard]] Pixels scaled(Size to) const;
 
+    [[nodiscard]] Pixels oriented(std::uint8_t orientation) const;
+
 private:
     Size size_;
     std::vector<Still> stills_;
@@ -60,11 +65,25 @@ class Decoding : public Adapter {
 public:
     static constexpr std::string_view kind = "decoding";
 
+    [[nodiscard]] static std::shared_ptr<Decoding> builtin();
+
     virtual void decoded(std::span<const std::byte> given, const Taking& each) = 0;
+
+    virtual void decoded(std::span<const std::byte> given, const Taking& each, [[maybe_unused]] Size most) { decoded(given, each); }
 };
 
-void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding = Optional<Decoding>{defaults().get<Decoding>()});
+void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding = Optional<Decoding>{defaults().get<Decoding>()}, Size most = {});
 
 [[nodiscard]] Task<Pixels> decoded(Bytes given, Size want = {}, Optional<Decoding> decoding = Optional<Decoding>{defaults().get<Decoding>()}, std::size_t most = 0);
+
+[[nodiscard]] Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files = {});
+
+[[nodiscard]] Task<Pixels> thumbnailed(Path where, std::uint32_t side, Port<fs::Files> files = {});
+
+[[nodiscard]] Task<void> trimmed(std::uint64_t most = std::uint64_t{256} << 20, Port<fs::Files> files = {});
+
+[[nodiscard]] std::uint64_t hashed(const Pixels& pixels);
+
+[[nodiscard]] int apart(std::uint64_t one, std::uint64_t other);
 
 }

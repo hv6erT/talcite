@@ -229,12 +229,17 @@ struct Memory::State {
     }
 
     // Appends the entries below the resolved folder `actual`, shown below `shown`, each folder
-    // before what it holds.
+    // before what it holds. The place of a folder goes down by copy: a reference into `found`
+    // would dangle once the list grows.
     void walked(const Path& shown, const Path& actual, std::vector<Entry>& found) {
         for (const Path& child : children(actual)) {
             found.push_back(entry(shown / child.name(), child));
 
-            if (found.back().type == Type::folder) walked(found.back().where, child, found);
+            if (found.back().type == Type::folder) {
+                const Path inner = found.back().where;
+
+                walked(inner, child, found);
+            }
         }
     }
 
@@ -729,7 +734,8 @@ Task<std::vector<Volume>> Memory::volumes() {
     });
 }
 
-// A known folder at its usual place below "/home", or "/tmp", when that folder is there.
+// A known folder at its usual place below "/home" (the cache in "/home/.cache"), or "/tmp", when
+// that folder is there.
 Task<std::optional<Path>> Memory::known(Known which) {
     return locked(state_, [which](State& state) -> std::optional<Path> {
         const char* place = "/tmp";
@@ -743,6 +749,7 @@ Task<std::optional<Path>> Memory::known(Known which) {
             case Known::pictures: place = "/home/Pictures"; break;
             case Known::videos: place = "/home/Videos"; break;
             case Known::temp: place = "/tmp"; break;
+            case Known::cache: place = "/home/.cache"; break;
         }
 
         const Path found{place};

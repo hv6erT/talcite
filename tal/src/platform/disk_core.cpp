@@ -1670,6 +1670,19 @@ Shift shifted(const path& from, const path& to, Conflict how) {
 // Replaces the target with a rename, durably; false when the system refused.
 bool replaced_at(const path& from, const path& to) { return replaced(from, to) == Push::done; }
 
+// Puts `from` under the name `to` in one step that never goes over what stands there (`pushed`);
+// false when the name is taken. Throws `Trouble` for any other refusal.
+bool placed_at(const path& from, const path& to) {
+    switch (pushed(from, to)) {
+        case Push::done: return true;
+        case Push::taken: return false;
+        case Push::away:
+        case Push::refused: break;
+    }
+
+    amiss("Cannot put the file in its place.", to);
+}
+
 }
 
 namespace core {
@@ -2263,7 +2276,8 @@ namespace {
 
 // The known folder IDs are written here, not taken from knownfolders.h: there they are declarations
 // whose definitions MinGW keeps in a separate uuid library. The values are Windows constants; they
-// do not change between releases, because programs from years ago depend on them.
+// do not change between releases, because programs from years ago depend on them. The cache is
+// the local application data, which roaming profiles leave on the machine.
 GUID known_of(fs::Known which) {
     switch (which) {
         case fs::Known::home: return {0x5e6c858f, 0x0e22, 0x4760, {0x9a, 0xfe, 0xea, 0x33, 0x17, 0xb6, 0x71, 0x73}};
@@ -2274,6 +2288,7 @@ GUID known_of(fs::Known which) {
         case fs::Known::pictures: return {0x33e28130, 0x4e1e, 0x4676, {0x83, 0x5a, 0x98, 0x39, 0x5c, 0x3b, 0xc3, 0xbb}};
         case fs::Known::temp: break;
         case fs::Known::videos: return {0x18989b1d, 0x99b5, 0x455b, {0x84, 0x1c, 0xab, 0x7c, 0x74, 0xe4, 0xdd, 0xfc}};
+        case fs::Known::cache: return {0xf1b32785, 0x6fba, 0x4fcf, {0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91}};
     }
 
     return {};
@@ -2297,8 +2312,8 @@ std::optional<path> asked_folder(fs::Known which) {
 #else
 
 // The variable name in user-dirs.dirs and the directory in the home directory used when the file or
-// the entry is missing. macOS names videos its own way; the temporary folder has neither, since
-// the caller takes it from `temp()`.
+// the entry is missing. macOS names videos its own way; the temporary folder and the cache have
+// neither, since the caller takes the one from `temp()` and the other from `XDG_CACHE_HOME`.
 std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
     switch (which) {
         case fs::Known::home: return {"", ""};
@@ -2312,7 +2327,8 @@ std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
 #else
         case fs::Known::videos: return {"XDG_VIDEOS_DIR", "Videos"};
 #endif
-        case fs::Known::temp: break;
+        case fs::Known::temp:
+        case fs::Known::cache: break;
     }
 
     return {"", ""};
@@ -2363,13 +2379,25 @@ std::optional<std::optional<path>> configured(std::string_view key, const path& 
 }
 
 // The known folder from user-dirs.dirs, or the customary name in the home directory when the file
-// says nothing; nothing when the folder is disabled or there is no home directory.
+// says nothing; nothing when the folder is disabled or there is no home directory. The cache is
+// `XDG_CACHE_HOME` when it is absolute, otherwise ".cache" in the home directory (on macOS
+// "Library/Caches").
 std::optional<path> asked_folder(fs::Known which) {
     const path house = home();
 
     if (house.empty()) return std::nullopt;
 
     if (which == fs::Known::home) return house;
+
+    if (which == fs::Known::cache) {
+#ifdef __APPLE__
+        return house / "Library" / "Caches";
+#else
+        const char* given = std::getenv("XDG_CACHE_HOME");
+
+        return given != nullptr && *given == '/' ? path{given} : house / ".cache";
+#endif
+    }
 
     const auto [key, fallback] = xdg_of(which);
 
