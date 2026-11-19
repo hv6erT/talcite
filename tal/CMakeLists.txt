@@ -19,7 +19,7 @@ endif()
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/stream.cpp src/sums.cpp src/task.cpp
+add_library(tal-core STATIC src/basics.cpp src/crypto.cpp src/executor.cpp src/fs.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/task.cpp
   src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
@@ -28,20 +28,22 @@ target_include_directories(tal-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
 target_link_libraries(tal-core PUBLIC Threads::Threads)
 target_compile_features(tal-core PUBLIC cxx_std_20)
 
-# Windows: the network connections of mapped drives (mpr), the shell's known folders and recycle
-# bin (shell32, ole32), the rights of files (advapi32) and the digests and randomness of CNG
-# (bcrypt), for platform/.
+# Windows: the network connections of mapped drives and shares (mpr), the shares of a server
+# (netapi32), the shell's known folders and recycle bin (shell32, ole32), the rights of files and
+# the stored logins (advapi32) and the digests and randomness of CNG (bcrypt).
 if(WIN32)
-  target_link_libraries(tal-core PUBLIC mpr shell32 ole32 advapi32 bcrypt)
+  target_link_libraries(tal-core PUBLIC mpr netapi32 shell32 ole32 advapi32 bcrypt)
 endif()
 
 # What weakens security is built in only on the programmer's word: our own digests as the spare
 # where the system gives none (TAL_OWN_SUMS), MD5 and SHA-1, broken for collisions
 # (TAL_WEAK_SUMS), and our own arithmetic of curve 25519, which CPace needs and no system gives
-# (TAL_OWN_CURVE). Without them that code is not in the program.
+# (TAL_OWN_CURVE), and the logins of shares kept by Windows's Credential Manager
+# (TAL_REMEMBER_LOGINS). Without them that code is not in the program.
 option(TAL_OWN_SUMS "Our own digests where the system gives none" OFF)
 option(TAL_WEAK_SUMS "The digests MD5 and SHA-1" OFF)
 option(TAL_OWN_CURVE "Our own arithmetic of curve 25519, for CPace" OFF)
+option(TAL_REMEMBER_LOGINS "Logins of shares remembered by the system (Windows)" OFF)
 
 if(TAL_OWN_SUMS)
   target_compile_definitions(tal-core PUBLIC TAL_OWN_SUMS)
@@ -49,6 +51,10 @@ endif()
 
 if(TAL_WEAK_SUMS)
   target_compile_definitions(tal-core PUBLIC TAL_WEAK_SUMS)
+endif()
+
+if(TAL_REMEMBER_LOGINS)
+  target_compile_definitions(tal-core PUBLIC TAL_REMEMBER_LOGINS)
 endif()
 
 # tal-texts, the generator of a program's texts, run while the program is built: out of the
