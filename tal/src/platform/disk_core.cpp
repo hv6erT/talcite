@@ -2240,7 +2240,8 @@ std::optional<path> asked_folder(fs::Known which) {
 #else
 
 // The variable name in user-dirs.dirs and the directory in the home directory used when the file or
-// the entry is missing. macOS names videos its own way.
+// the entry is missing. macOS names videos its own way; the temporary folder has neither, since
+// the caller takes it from `temp()`.
 std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
     switch (which) {
         case fs::Known::home: return {"", ""};
@@ -2254,6 +2255,7 @@ std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
 #else
         case fs::Known::videos: return {"XDG_VIDEOS_DIR", "Videos"};
 #endif
+        case fs::Known::temp: break;
     }
 
     return {"", ""};

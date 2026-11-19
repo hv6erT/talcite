@@ -228,10 +228,11 @@ struct Told {
 };
 
 // Writes every other thread of the program with its stack as module and offset, at once, and
-// stops the threads for it; they stay stopped, as the program ends right after. Then it writes the
-// same frames with the names of functions through dbghelp, which may itself wait for the loader's
-// lock, and so comes second (`threads_named`).
-std::vector<Told> threads_told() {
+// stops the threads for it; they stay stopped, as the program ends right after. The watching
+// thread `watching` is left running: it waits for this one and then ends the program, which it
+// could never do stopped. Then it writes the same frames with the names of functions through
+// dbghelp, which may itself wait for the loader's lock, and so comes second (`threads_named`).
+std::vector<Told> threads_told(DWORD watching) {
     const DWORD process = GetCurrentProcessId();
     const DWORD mine = GetCurrentThreadId();
     const std::vector<Loaded> modules = loaded();
@@ -247,7 +248,7 @@ std::vector<Told> threads_told() {
     entry.dwSize = sizeof(entry);
 
     for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry)) {
-        if (entry.th32OwnerProcessID != process || entry.th32ThreadID == mine) continue;
+        if (entry.th32OwnerProcessID != process || entry.th32ThreadID == mine || entry.th32ThreadID == watching) continue;
 
         const HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, entry.th32ThreadID);
 
@@ -370,10 +371,10 @@ void threads_named(const std::vector<Told>& all) {
     }
 }
 
-// The thread that writes the stacks, bare and then named, so that the watch can stop waiting for
-// it.
-DWORD WINAPI told_apart(LPVOID) {
-    const std::vector<Told> all = threads_told();
+// The thread that writes the stacks, bare and then named, leaving the thread `watching` running,
+// so that the watch can stop waiting for it.
+DWORD WINAPI told_apart(LPVOID watching) {
+    const std::vector<Told> all = threads_told(static_cast<DWORD>(reinterpret_cast<std::uintptr_t>(watching)));
 
     threads_named(all);
 
@@ -745,7 +746,9 @@ void Watch::watched() {
         std::fflush(stdout);
 
 #if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__) || defined(_M_IX86) || defined(__i386__))
-        if (const HANDLE telling = CreateThread(nullptr, 0, told_apart, nullptr, 0, nullptr); telling != nullptr) {
+        const auto watching = reinterpret_cast<LPVOID>(static_cast<std::uintptr_t>(GetCurrentThreadId()));
+
+        if (const HANDLE telling = CreateThread(nullptr, 0, told_apart, watching, 0, nullptr); telling != nullptr) {
             (void)WaitForSingleObject(telling, 20000);
             CloseHandle(telling);
         }

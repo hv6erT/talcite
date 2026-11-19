@@ -1,7 +1,7 @@
-# The fuzz targets of the JSON and XML readers, of inflate and the archives, of a program's texts
-# and settings, of the diff, of the emulator of a terminal and of the answers of the HTTP client.
-# Inflate is checked against the system's zlib where the fuzz build finds one. Run one with the dictionary and a
-# directory for the corpus, for example:
+# The fuzz targets of the JSON and XML readers, of inflate and the archives, of GIF, of a
+# program's texts and settings, of the diff, of the emulator of a terminal and of the answers of
+# the HTTP client. Inflate is checked against the system's zlib where the fuzz build finds one.
+# Run one with the dictionary and a directory for the corpus, for example:
 #
 #   ./tal-json-fuzz -dict=json.dict -max_len=4096 corpus/
 add_executable(tal-json-fuzz json.cpp)
@@ -40,6 +40,14 @@ add_executable(tal-archive-fuzz archive.cpp)
 target_link_libraries(tal-archive-fuzz PRIVATE tal-core)
 
 target_link_options(tal-archive-fuzz PRIVATE -fsanitize=fuzzer)
+
+add_executable(tal-gif-fuzz gif.cpp)
+
+target_include_directories(tal-gif-fuzz PRIVATE ../src)
+
+target_link_libraries(tal-gif-fuzz PRIVATE tal-media)
+
+target_link_options(tal-gif-fuzz PRIVATE -fsanitize=fuzzer)
 
 add_executable(tal-texts-fuzz texts.cpp ../tools/generating.cpp)
 

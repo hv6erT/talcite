@@ -150,6 +150,12 @@ function(tal_settings target defaults space)
   target_link_libraries(${target} PUBLIC tal-core)
 endfunction()
 
+# tal::media of talcite.next: images as RGBA frames, their format and size read from the header,
+# scaling in linear light, and decoding frame by frame: GIF by our own decoder, other formats by
+# the adapter of the port `Decoding`.
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp)
+target_link_libraries(tal-media PUBLIC tal-core)
+
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
@@ -217,7 +223,7 @@ if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES} tools/generating.cpp)
-  target_link_libraries(tal-test PRIVATE tal-testing tal-scene tal-net)
+  target_link_libraries(tal-test PRIVATE tal-testing tal-scene tal-net tal-media)
   # Some trials check internal parts (the console translation without VT, the generator of texts)
   # through their headers.
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools")
