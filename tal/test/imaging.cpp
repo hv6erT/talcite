@@ -18,6 +18,7 @@
 #include "tal/scene.hpp"
 #include "tal/trouble.hpp"
 
+#include "foreign.hpp"
 #include "tal/testing.hpp"
 
 // The widget Image on a scene with a loop: bytes decoded on the pool at the size of its room,
@@ -84,12 +85,15 @@ Pixels square(std::uint32_t width, std::uint32_t height, std::uint8_t red, int s
     return Pixels{{width, height}, std::vector<Still>(static_cast<std::size_t>(stills), Still{one, after})};
 }
 
-// A decoder that gives one frame of 8 by 8 in red, or throws `fails` when it is set.
+// A decoder that takes every image tal knows and gives one frame of 8 by 8 in red, or throws
+// `fails` when it is set.
 class Faking : public tal::media::Decoding {
 public:
     explicit Faking(std::optional<tal::Trouble> fails = std::nullopt) : fails_(std::move(fails)) {}
 
     std::string_view name() const override { return "fake"; }
+
+    bool takes(std::span<const std::byte> head) const override { return tal::media::format_of(head) != Format::none; }
 
     void decoded(std::span<const std::byte>, const tal::media::Taking& each) override {
         if (fails_) throw *fails_;
@@ -221,9 +225,6 @@ TRIAL("Image: bytes give the format and size at once, the frames once decoded") 
     OUGHT(shown.drawn(2).empty());
 }
 
-// A format no decoder takes (BMP: ours decode PNG and JPEG) ends empty, its format known; with a
-// decoder set, the image decodes through it; a decoder's refusal empties the image and leaves the
-// format.
 // A JPEG decodes with no decoder set: ours are the port's default.
 TRIAL("Image: a JPEG decodes by our own decoder, with no decoder set") {
     Shown shown;
@@ -237,6 +238,9 @@ TRIAL("Image: a JPEG decodes by our own decoder, with no decoder set") {
     OUGHT(!shown.drawn(2).empty());
 }
 
+// A format no decoder takes (BMP: ours decode PNG, JPEG and GIF) ends empty, its format known;
+// with a decoder set, the image decodes through it; a decoder's refusal empties the image and
+// leaves the format.
 TRIAL("Image: a format no decoder takes ends empty, with a decoder it decodes, a refusal empties it") {
     {
         Shown shown;
@@ -275,6 +279,41 @@ TRIAL("Image: a format no decoder takes ends empty, with a decoder it decodes, a
         SAME(shown.image.frames(), std::size_t{0});
         SAME(static_cast<int>(shown.image.format()), static_cast<int>(Format::png));
         OUGHT(shown.drawn(2).empty());
+    }
+}
+
+// A format tal does not know takes its size from the adapter that takes it, before decoding, and
+// decodes through it; with ours alone it ends empty, of no format.
+TRIAL("Image: a format tal does not know is sized and decoded by its adapter") {
+    const Bytes image = tal::testing::foreign_image(tal::media::Size{16, 16}, 200);
+
+    {
+        Shown shown;
+
+        shown.image.hold(image);
+        shown.show();
+        shown.settled();
+
+        OUGHT(!shown.image.held());
+        SAME(static_cast<int>(shown.image.format()), static_cast<int>(Format::none));
+        OUGHT(shown.drawn(2).empty());
+    }
+
+    {
+        const Decoding set{std::make_shared<tal::media::Chain>(std::vector<std::shared_ptr<tal::media::Decoding>>{tal::media::Decoding::builtin(), tal::testing::foreign()})};
+        Shown shown;
+
+        shown.image.hold(image);
+
+        OUGHT(shown.image.held());
+
+        shown.show();
+        shown.settled();
+
+        OUGHT(shown.image.held());
+        SAME(shown.image.frames(), std::size_t{1});
+        SAME(static_cast<int>(shown.image.format()), static_cast<int>(Format::none));
+        OUGHT(!shown.drawn(2).empty());
     }
 }
 

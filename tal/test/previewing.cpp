@@ -21,6 +21,7 @@
 #include "tal/testing.hpp"
 
 #include "deflating.hpp"
+#include "foreign.hpp"
 #include "inflating.hpp"
 #include "jpeging.hpp"
 #include "lighting.hpp"
@@ -151,6 +152,9 @@ public:
 
     // The adapter's name.
     [[nodiscard]] std::string_view name() const override { return "counting"; }
+
+    // Whether our decoders take the image starting with `head`.
+    [[nodiscard]] bool takes(std::span<const std::byte> head) const override { return tal::media::Decoding::builtin()->takes(head); }
 
     // Remembers the size and decodes.
     void decoded(std::span<const std::byte> image, const tal::media::Taking& each) override {
@@ -2551,11 +2555,36 @@ TRIAL("Previews: a thousand photos, none decoded whole") {
     SAME(files->read_from[large.text()] - before, (std::uint64_t{64} << 10) + photo.size());
 }
 
+// A file of a format tal does not know gets its preview through the adapter that takes it, fitted
+// by the size the adapter tells; with ours alone it is refused as no image.
+TRIAL("Previews: a format tal does not know, through the adapter that takes it") {
+    const auto files = std::make_shared<tal::fs::Memory>();
+    const tal::Port<tal::fs::Files> port{std::shared_ptr<tal::fs::Files>{files}};
+    tal::Loop loop;
+    const tal::Path picture{"/photos/picture.talx"};
+
+    tal::wait(loop, files->make(tal::Path{"/photos"}));
+    tal::wait(loop, files->write(picture, tal::testing::foreign_image(Size{30, 20}, 90)));
+
+    SAME(refusal([&] { (void)tal::wait(loop, tal::media::previewed(picture, Size{15, 15}, port)); }), std::string{"unsupported: Not an image tal knows."});
+
+    tal::defaults().set<tal::media::Decoding>(
+        std::make_shared<tal::media::Chain>(std::vector<std::shared_ptr<tal::media::Decoding>>{tal::media::Decoding::builtin(), tal::testing::foreign()}));
+
+    const Pixels made = tal::wait(loop, tal::media::previewed(picture, Size{15, 15}, port));
+
+    tal::defaults().clear<tal::media::Decoding>();
+
+    OUGHT(made.size() == (Size{15, 10}));
+    OUGHT(pixel(made.stills().front().rgba, made.size(), 7, 5) == (std::array<int, 4>{90, 90, 90, 255}));
+}
+
 // Thumbnails kept, through files in memory. With no folder of caches, or with no SHA-256 (a build
 // without `TAL_OWN_SUMS` where the system gives none), the preview comes and nothing is kept. With
 // one, the thumbnail is kept as a PNG of the user's alone, under a name of 64 hexadecimal digits in
 // a folder for its side, and the next time it comes from there: a stored one changed by hand is
-// what comes. A file changed (another size) gets a thumbnail of its own.
+// what comes, read by our decoder of PNG even when the decoder set takes no PNG. A file changed
+// (another size) gets a thumbnail of its own.
 TRIAL("Thumbnails: kept in the folder of caches, the user's alone, taken from there, new for a changed file") {
     const auto files = std::make_shared<tal::fs::Memory>();
     const tal::Port<tal::fs::Files> port{std::shared_ptr<tal::fs::Files>{files}};
@@ -2612,6 +2641,14 @@ TRIAL("Thumbnails: kept in the folder of caches, the user's alone, taken from th
     const Pixels again = tal::wait(loop, tal::media::thumbnailed(photo, 8, port));
 
     OUGHT(pixel(again.stills().front().rgba, again.size(), 3, 4) == (std::array<int, 4>{0, 200, 0, 255}));
+
+    tal::defaults().set<tal::media::Decoding>(tal::testing::foreign());
+
+    const Pixels foreign = tal::wait(loop, tal::media::thumbnailed(photo, 8, port));
+
+    tal::defaults().clear<tal::media::Decoding>();
+
+    OUGHT(pixel(foreign.stills().front().rgba, foreign.size(), 3, 4) == (std::array<int, 4>{0, 200, 0, 255}));
 
     tal::wait(loop, files->write(photo, lump(previewed_tiff)));
 

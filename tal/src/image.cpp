@@ -88,18 +88,18 @@ Image::Image() { classes({"image"}); }
 Image::~Image() = default;
 
 // The image of the bytes `given`: the format and the size come from the header at once, so that
-// layout can ask for room before anything is decoded; the frames come once a room is known. With
-// no decoder at all (`media::Decoding`, whose default is ours) a format other than GIF leaves the
-// image without a size, and so does a header without one; a format the decoder refuses empties
-// the image when it is decoded. The number of frames is known after the first
-// decoding.
+// layout can ask for room before anything is decoded; the frames come once a room is known. The
+// size is the decoder's (`media::Decoding`, whose default is ours): bytes it does not take leave
+// the image without a size, and so does a header without one; an image the decoder fails on
+// empties the image when it is decoded. The number of frames is known after the first decoding.
 void Image::hold(Bytes given) {
     reset();
 
     format_ = media::format_of(given);
 
-    if (format_ == media::Format::gif || (format_ != media::Format::none && defaults().get<media::Decoding>() != nullptr))
-        size_ = media::size_of(given).value_or(media::Size{});
+    const std::shared_ptr<media::Decoding> decoding = defaults().get<media::Decoding>();
+
+    if (decoding != nullptr && decoding->takes(given)) size_ = decoding->sized(given).value_or(media::Size{});
 
     bytes_ = std::move(given);
 

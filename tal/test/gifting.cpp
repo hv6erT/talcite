@@ -14,8 +14,8 @@
 
 #include "gifting.hpp"
 
-// GIF: our own decoder in tal-media, through `tal::media::decoded` like any caller, and directly
-// where only the decoder can be asked.
+// GIF: our own decoder in tal-media, as the port's adapter `Decoding::gif` through
+// `tal::media::decoded` like any caller, and directly where only the decoder can be asked.
 //
 // The sample files are kept here as bytes, not as a description, and that is deliberate: they were
 // written by someone else's encoder, not ours. As a description, a trial would check our decoder
@@ -62,11 +62,12 @@ Tone at(const Pixels& one, std::uint32_t x, std::uint32_t y, std::size_t still =
             std::to_integer<std::uint8_t>(bytes[where + 2]), std::to_integer<std::uint8_t>(bytes[where + 3])};
 }
 
-// The image `given` decoded whole, at most `most` frames (all when zero), with no adapter.
+// The image `given` decoded whole, at most `most` frames (all when zero), by our decoder of GIF
+// alone.
 Pixels pixels(const Bytes& given, std::size_t most = 0) {
     tal::Loop loop;
 
-    return tal::wait(loop, tal::media::decoded(given, Size{}, tal::Optional<tal::media::Decoding>{}, most));
+    return tal::wait(loop, tal::media::decoded(given, Size{}, tal::Optional<tal::media::Decoding>{tal::media::Decoding::gif()}, most));
 }
 
 // What decoding `given` threw: its kind and message, or "none".
@@ -460,13 +461,13 @@ TRIAL("GIF: the stream can be interrupted at any moment, and without an action d
 
             return seen < 2;
         },
-        tal::Optional<tal::media::Decoding>{});
+        tal::Optional<tal::media::Decoding>{tal::media::Decoding::gif()});
 
     SAME(seen, std::size_t{2});
     OUGHT(size == (Size{16, 12}));
     SAME(length, std::size_t{16 * 12 * 4});
 
-    tal::media::decoded(lump(leaving), tal::media::Taking{}, tal::Optional<tal::media::Decoding>{});
+    tal::media::decoded(lump(leaving), tal::media::Taking{}, tal::Optional<tal::media::Decoding>{tal::media::Decoding::gif()});
 }
 
 // --- Refusals ----------------------------------------------------------------------------------
@@ -558,7 +559,7 @@ TRIAL("GIF: selected pixels of a real file") {
 // of the ceiling.
 TRIAL("GIF: frames shrunk while decoding keep their count and delays") {
     tal::Loop loop;
-    const Pixels one = tal::wait(loop, tal::media::decoded(lump(proof), Size{12, 8}, tal::Optional<tal::media::Decoding>{}));
+    const Pixels one = tal::wait(loop, tal::media::decoded(lump(proof), Size{12, 8}, tal::Optional<tal::media::Decoding>{tal::media::Decoding::gif()}));
 
     OUGHT(one.size() == (Size{12, 8}));
     SAME(one.stills().size(), std::size_t{16});

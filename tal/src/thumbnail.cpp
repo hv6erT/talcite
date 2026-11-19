@@ -67,8 +67,9 @@ constexpr std::uint16_t folder_rights = 0700;
 }
 
 // The thumbnail of the image at `where` within a square of `side`: the one kept for it, or the
-// preview (`previewed`) computed and kept. Throws `Trouble`: what finding the file and computing
-// the preview throw; the store's own troubles are left out.
+// preview (`previewed`) computed and kept. The one kept is read by our own decoder of PNG
+// (`Decoding::png`), whatever decoder is set, since the store wrote it. Throws `Trouble`: what
+// finding the file and computing the preview throw; the store's own troubles are left out.
 Task<Pixels> thumbnailed(Path where, std::uint32_t side, Port<fs::Files> files) {
     const Path real = co_await files->canonical(where);
     const fs::Entry entry = co_await files->look(real);
@@ -84,7 +85,7 @@ Task<Pixels> thumbnailed(Path where, std::uint32_t side, Port<fs::Files> files) 
     if (kept) {
         try {
             Bytes bytes = co_await files->read(*kept);
-            Pixels found = co_await decoded(std::move(bytes), Size{}, Optional<Decoding>{Decoding::builtin()}, 1);
+            Pixels found = co_await decoded(std::move(bytes), Size{}, Optional<Decoding>{Decoding::png()}, 1);
 
             if (found.held()) co_return found;
         } catch (const Trouble&) {

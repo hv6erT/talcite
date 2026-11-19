@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -12,8 +13,10 @@
 
 #include "tal/executor.hpp"
 #include "tal/pixels.hpp"
+#include "tal/port.hpp"
 #include "tal/trouble.hpp"
 
+#include "foreign.hpp"
 #include "tal/testing.hpp"
 
 // Pixels: the format and the size from the header, frames and their scaling in linear light, and
@@ -82,14 +85,17 @@ struct Frame {
     std::size_t length = 0;
 };
 
-// A decoder that hands out the frames it was given, whatever the bytes, or throws `fails` when it
-// is set; it remembers how many frames the caller took and the thread it ran on.
+// A decoder that takes every image tal knows and hands out the frames it was given, whatever the
+// bytes, or throws `fails` when it is set; it remembers how many frames the caller took and the
+// thread it ran on.
 class Faking : public tal::media::Decoding {
 public:
     explicit Faking(std::vector<Frame> frames, std::optional<tal::Trouble> fails = std::nullopt)
         : frames_(std::move(frames)), fails_(std::move(fails)) {}
 
     std::string_view name() const override { return "fake"; }
+
+    bool takes(std::span<const std::byte> head) const override { return tal::media::format_of(head) != Format::none; }
 
     void decoded(std::span<const std::byte>, const tal::media::Taking& each) override {
         ran = std::this_thread::get_id();
@@ -486,4 +492,171 @@ TRIAL("Pixels: the frames kept share the budget of the ceiling") {
 
     OUGHT(refused);
     SAME(pixels(exact, {4000, 2000}, 1).stills().size(), std::size_t{1});
+}
+
+// --- Chains --------------------------------------------------------------------------------------
+
+namespace {
+
+using tal::media::Chain;
+using tal::media::Decoding;
+
+constexpr std::string_view jpeg = "ffd8ffe000104a464946";
+constexpr std::string_view gif = "474946383961040004000000003b";
+constexpr std::string_view bmp = "424d3a0000000000000036000000280000000100000001000000";
+constexpr std::string_view dot = "47494638396101000100800000000000ffffff2c00000000010001000002024401003b";
+
+// A decoder of the formats `formats` that tells the size `size` for every header it takes and
+// gives one frame of 1 by 1 in `tone`; it counts the images it decoded.
+class Marked final : public Decoding {
+public:
+    Marked(std::vector<Format> formats, std::uint8_t tone, Size size = {7, 3}) : formats_(std::move(formats)), tone_(tone), size_(size) {}
+
+    std::string_view name() const override { return "marked"; }
+
+    bool takes(std::span<const std::byte> head) const override { return std::ranges::find(formats_, tal::media::format_of(head)) != formats_.end(); }
+
+    std::optional<Size> sized(std::span<const std::byte>) const override { return size_; }
+
+    void decoded(std::span<const std::byte>, const tal::media::Taking& each) override {
+        const Bytes one{std::byte{tone_}, std::byte{tone_}, std::byte{tone_}, std::byte{255}};
+
+        ++asked;
+        (void)each(one, Size{1, 1}, 0ms);
+    }
+
+    std::size_t asked = 0;
+
+private:
+    std::vector<Format> formats_;
+    std::uint8_t tone_;
+    Size size_;
+};
+
+// The red of the first pixel of `given` decoded by `decoding`, as a number, or the trouble as its
+// kind and message.
+std::string toned(const std::shared_ptr<Decoding>& decoding, const Bytes& given) {
+    try {
+        tal::Loop loop;
+        const Pixels made = tal::wait(loop, tal::media::decoded(given, Size{}, tal::Optional<Decoding>{decoding}));
+
+        return std::to_string(band(made, 0, 0, 0));
+    } catch (const tal::Trouble& why) {
+        return std::string{tal::spoken(why.kind())} + ": " + why.what();
+    }
+}
+
+// The trouble `call` throws as its kind and message, or "none".
+template <typename Call>
+std::string refusal(Call call) {
+    try {
+        call();
+    } catch (const tal::Trouble& why) {
+        return std::string{tal::spoken(why.kind())} + ": " + why.what();
+    }
+
+    return "none";
+}
+
+}
+
+// A chain asks its links in their order: the first that takes the image decodes it and tells its
+// size; none taking it is unsupported, by the format's name when tal knows it. Chains nest, a
+// chain keeps the name it is given, and a link of no decoder is the caller's mistake.
+TRIAL("Decoding: a chain asks its links in order, the first that takes the image decodes it") {
+    const auto first = std::make_shared<Marked>(std::vector<Format>{Format::jpeg}, 10, Size{5, 4});
+    const auto second = std::make_shared<Marked>(std::vector<Format>{Format::jpeg, Format::png}, 20, Size{6, 2});
+    const auto chain = std::make_shared<Chain>(std::vector<std::shared_ptr<Decoding>>{first, second});
+
+    SAME(chain->name(), std::string_view{"chain"});
+    SAME(toned(chain, lump(jpeg)), std::string{"10"});
+    SAME(toned(chain, lump(png)), std::string{"20"});
+    SAME(first->asked, std::size_t{1});
+    SAME(second->asked, std::size_t{1});
+    OUGHT(chain->takes(lump(jpeg)));
+    OUGHT(chain->takes(lump(png)));
+    OUGHT(!chain->takes(lump(gif)));
+    OUGHT(chain->sized(lump(jpeg)) == (Size{5, 4}));
+    OUGHT(chain->sized(lump(png)) == (Size{6, 2}));
+    OUGHT(!chain->sized(lump(gif)).has_value());
+    SAME(toned(chain, lump(gif)), std::string{"unsupported: No decoder of GIF."});
+    SAME(toned(chain, lump("0102")), std::string{"unsupported: Not an image tal knows."});
+    SAME(refusal([&] { chain->decoded(lump(gif), [](std::span<const std::byte>, Size, std::chrono::milliseconds) { return true; }); }),
+         std::string{"unsupported: No decoder of GIF."});
+    SAME(refusal([&] { chain->decoded(lump(png), [](std::span<const std::byte>, Size, std::chrono::milliseconds) { return true; }); }),
+         std::string{"none"});
+    SAME(second->asked, std::size_t{2});
+
+    const auto last = std::make_shared<Marked>(std::vector<Format>{Format::gif, Format::jpeg}, 30);
+    const auto outer = std::make_shared<Chain>(std::vector<std::shared_ptr<Decoding>>{chain, last}, "outer");
+
+    SAME(outer->name(), std::string_view{"outer"});
+    SAME(toned(outer, lump(gif)), std::string{"30"});
+    SAME(toned(outer, lump(jpeg)), std::string{"10"});
+    SAME(last->asked, std::size_t{1});
+    SAME(refusal([] { (void)Chain{std::vector<std::shared_ptr<Decoding>>{nullptr}}; }), std::string{"other: A link of no decoder."});
+}
+
+// Our decoders are three adapters, each taking its own format alone, and the default is their
+// chain, named "tal", which takes no BMP. One of them replaced alone leaves the others ours: a
+// JPEG goes to the adapter put before the chain, a GIF and its size still to ours.
+TRIAL("Decoding: our decoders one by one, chained as the default, one replaceable alone") {
+    const std::vector<std::pair<std::shared_ptr<Decoding>, std::string_view>> ours{
+        {Decoding::png(), png}, {Decoding::jpeg(), jpeg}, {Decoding::gif(), gif}};
+
+    SAME(Decoding::png()->name(), std::string_view{"png"});
+    SAME(Decoding::jpeg()->name(), std::string_view{"jpeg"});
+    SAME(Decoding::gif()->name(), std::string_view{"gif"});
+    SAME(Decoding::builtin()->name(), std::string_view{"tal"});
+
+    for (const auto& [decoding, own] : ours) {
+        for (const std::string_view one : {png, jpeg, gif, bmp}) SAME(decoding->takes(lump(one)), one == own);
+
+        OUGHT(Decoding::builtin()->takes(lump(own)));
+    }
+
+    OUGHT(!Decoding::builtin()->takes(lump(bmp)));
+    OUGHT(Decoding::builtin()->sized(lump(png)) == (Size{640, 352}));
+    OUGHT(Decoding::builtin()->sized(lump(gif)) == (Size{4, 4}));
+    SAME(refusal([] { Decoding::png()->decoded(lump(gif), [](std::span<const std::byte>, Size, std::chrono::milliseconds) { return true; }); }),
+         std::string{"unsupported: No decoder of GIF."});
+    SAME(toned(Decoding::png(), lump(dot)), std::string{"unsupported: No decoder of GIF."});
+    SAME(toned(nullptr, lump(dot)), std::string{"unsupported: No decoder of GIF."});
+
+    const auto mine = std::make_shared<Marked>(std::vector<Format>{Format::jpeg}, 40);
+    const auto chain = std::make_shared<Chain>(std::vector<std::shared_ptr<Decoding>>{mine, Decoding::builtin()});
+    tal::Loop loop;
+    const Pixels dotted = tal::wait(loop, tal::media::decoded(lump(dot), Size{}, tal::Optional<Decoding>{chain}));
+
+    SAME(toned(chain, lump(jpeg)), std::string{"40"});
+    OUGHT(dotted.size() == (Size{1, 1}));
+    OUGHT(chain->sized(lump(gif)) == (Size{4, 4}));
+    OUGHT(chain->sized(lump(jpeg)) == (Size{7, 3}));
+    SAME(mine->asked, std::size_t{1});
+}
+
+// A format no decoder of tal knows reaches the adapter that takes it: tal neither recognizes it nor
+// reads its size, ours refuse it, and a chain with its adapter decodes it, set as the default too.
+TRIAL("Decoding: a format tal does not know reaches the adapter that takes it") {
+    const Bytes image = tal::testing::foreign_image(Size{3, 2}, 77);
+    const auto chain = std::make_shared<Chain>(std::vector<std::shared_ptr<Decoding>>{Decoding::builtin(), tal::testing::foreign()});
+    tal::Loop loop;
+
+    SAME(static_cast<int>(tal::media::format_of(image)), static_cast<int>(Format::none));
+    OUGHT(!tal::media::size_of(image).has_value());
+    SAME(toned(Decoding::builtin(), image), std::string{"unsupported: Not an image tal knows."});
+    OUGHT(chain->sized(image) == (Size{3, 2}));
+
+    const Pixels made = tal::wait(loop, tal::media::decoded(image, Size{}, tal::Optional<Decoding>{chain}));
+
+    OUGHT(made.size() == (Size{3, 2}));
+    SAME(band(made, 2, 1, 0), 77);
+
+    tal::defaults().set<Decoding>(chain);
+
+    const Pixels set = tal::wait(loop, tal::media::decoded(image));
+
+    tal::defaults().clear<Decoding>();
+
+    OUGHT(set.size() == (Size{3, 2}));
 }

@@ -7,11 +7,12 @@
 
 #include "tal/trouble.hpp"
 
-// Our own GIF decoder, ported from talcite-adapters, built into tal-media: it always decodes, with
-// no port. A file that is no GIF, a broken header and a canvas over `ceiling` are refused before
-// anything is allocated (GIF allows 65535 by 65535, seventeen terabytes of RGBA); a truncated file
-// or an unknown block ends the stream quietly, since the top half of a picture is a better answer
-// than nothing, and a file manager also looks at files that are still being copied.
+// Our own GIF decoder, ported from talcite-adapters, built into tal-media as the port's adapter
+// `Decoding::gif`, one of the default chain. A file that is no GIF, a broken header and a canvas
+// over `ceiling` are refused before anything is allocated (GIF allows 65535 by 65535, seventeen
+// terabytes of RGBA); a truncated file or an unknown block ends the stream quietly, since the top
+// half of a picture is a better answer than nothing, and a file manager also looks at files that
+// are still being copied.
 namespace tal::media::gifting {
 
 namespace {

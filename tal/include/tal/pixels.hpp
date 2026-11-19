@@ -7,6 +7,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -67,9 +68,40 @@ public:
 
     [[nodiscard]] static std::shared_ptr<Decoding> builtin();
 
+    [[nodiscard]] static std::shared_ptr<Decoding> png();
+
+    [[nodiscard]] static std::shared_ptr<Decoding> jpeg();
+
+    [[nodiscard]] static std::shared_ptr<Decoding> gif();
+
+    [[nodiscard]] virtual bool takes(std::span<const std::byte> head) const = 0;
+
+    [[nodiscard]] virtual std::optional<Size> sized(std::span<const std::byte> head) const;
+
     virtual void decoded(std::span<const std::byte> given, const Taking& each) = 0;
 
     virtual void decoded(std::span<const std::byte> given, const Taking& each, [[maybe_unused]] Size most) { decoded(given, each); }
+};
+
+class Chain final : public Decoding {
+public:
+    explicit Chain(std::vector<std::shared_ptr<Decoding>> links, std::string name = "chain");
+
+    [[nodiscard]] std::string_view name() const override { return name_; }
+
+    [[nodiscard]] bool takes(std::span<const std::byte> head) const override;
+
+    [[nodiscard]] std::optional<Size> sized(std::span<const std::byte> head) const override;
+
+    void decoded(std::span<const std::byte> given, const Taking& each) override;
+
+    void decoded(std::span<const std::byte> given, const Taking& each, Size most) override;
+
+private:
+    [[nodiscard]] Decoding* taking(std::span<const std::byte> head) const;
+
+    std::vector<std::shared_ptr<Decoding>> links_;
+    std::string name_;
 };
 
 void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding = Optional<Decoding>{defaults().get<Decoding>()}, Size most = {});

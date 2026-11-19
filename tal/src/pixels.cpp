@@ -21,10 +21,11 @@
 // Pixels: an image as RGBA frames with their delays, ported from talcite's pixels.cpp and
 // picture.cpp. The format and the size come from the header, never from a name: a file manager
 // looks at other people's disks, where the extension is sometimes something other than the
-// content. Decoding streams frame by frame: GIF through our own decoder, the rest through the port
-// `Decoding`, and every frame passes the ceiling here, so every adapter is subject to it alike; a
-// frame lives for a moment and is gone once shrunk, so an animation never sits in memory at the
-// size of its file.
+// content. Decoding streams frame by frame through the port `Decoding`, whose adapters each take
+// the formats they know by the header: our own decoders of PNG, JPEG and GIF are three of them,
+// chained as the default, so that any one may be replaced alone (`Chain`). Every frame passes the
+// ceiling here, so every adapter is subject to it alike; a frame lives for a moment and is gone
+// once shrunk, so an animation never sits in memory at the size of its file.
 //
 // Scaling averages in linear light (`lighting`): a byte of sRGB is not a brightness, and averaging
 // raw bytes darkens every edge into the gray mud by which a downscaled image is known.
@@ -146,24 +147,48 @@ std::string named(Format format) {
     return "an unknown format";
 }
 
-// Our own decoders as the port: PNG and JPEG; any other format is left to an adapter of its own.
+// The refusal of an image that no decoder takes: unsupported, naming the format when tal knows it.
+Trouble refused(std::span<const std::byte> head) {
+    const Format format = format_of(head);
+
+    if (format == Format::none) return Trouble{Kind::unsupported, "Not an image tal knows."};
+
+    return Trouble{Kind::unsupported, "No decoder of " + named(format) + "."};
+}
+
+// A GIF decoded whole, whatever is wanted: its frames are shrunk as they come (`decoded`).
+void whole_gif(std::span<const std::byte> given, const Taking& each, Size) { gifting::gifted(given, each); }
+
+// One of our own decoders as an adapter of the port: the one format it takes, by its header.
 class Own final : public Decoding {
 public:
-    // The name of the decoders.
-    [[nodiscard]] std::string_view name() const override { return "tal"; }
+    using Decoder = void (*)(std::span<const std::byte>, const Taking&, Size);
 
-    // Hands the frame of a PNG or a JPEG, whole, to `each`.
+    // The decoder `decoder` of `format`, named `name`.
+    Own(Format format, Decoder decoder, std::string_view name) : format_(format), decoder_(decoder), name_(name) {}
+
+    // The name of the decoder.
+    [[nodiscard]] std::string_view name() const override { return name_; }
+
+    // Whether `head` starts an image of its format.
+    [[nodiscard]] bool takes(std::span<const std::byte> head) const override { return format_of(head) == format_; }
+
+    // Hands the frames of `given`, whole, to `each`.
     void decoded(std::span<const std::byte> given, const Taking& each) override { decoded(given, each, Size{}); }
 
-    // Hands the frame of a PNG or a JPEG to `each`, reduced as far as it still covers `most`
-    // (`reduction`); throws `Trouble` unsupported for another format, and the decoder's own.
+    // Hands the frames of `given` to `each`, reduced as far as they still cover `most` where the
+    // format allows it (`reduction`); throws `Trouble` unsupported for an image of another format,
+    // and the decoder's own.
     void decoded(std::span<const std::byte> given, const Taking& each, Size most) override {
-        switch (format_of(given)) {
-        case Format::png: pnging::pnged(given, each, most); return;
-        case Format::jpeg: jpeging::jpeged(given, each, most); return;
-        default: throw Trouble{Kind::unsupported, "No decoder of " + named(format_of(given)) + "."};
-        }
+        if (!takes(given)) throw refused(given);
+
+        decoder_(given, each, most);
     }
+
+private:
+    Format format_;
+    Decoder decoder_;
+    std::string_view name_;
 };
 
 }
@@ -323,15 +348,13 @@ std::optional<Size> size_of(std::span<const std::byte> head) {
     return std::nullopt;
 }
 
-// The frames of the image `given` handed to `each`: a GIF by our own decoder, the rest by
-// `decoding`, which may give them reduced as far as they still cover `most` (zero: whole). A frame
-// without pixels or over `ceiling` stops the stream before it reaches `each`. Throws `Trouble`:
-// unsupported for no image tal knows or a format with no decoder, and the decoder's own (malformed
-// for damage, full for a canvas over the ceiling).
+// The frames of the image `given` handed to `each` by `decoding`, which may give them reduced as
+// far as they still cover `most` (zero: whole). A frame without pixels or over `ceiling` stops the
+// stream before it reaches `each`. Throws `Trouble`: unsupported when there is no decoder or it
+// does not take the image (`takes`), and the decoder's own (malformed for damage, full for a canvas
+// over the ceiling).
 void decoded(std::span<const std::byte> given, const Taking& each, Optional<Decoding> decoding, Size most) {
-    const Format format = format_of(given);
-
-    if (format == Format::none) throw Trouble{Kind::unsupported, "Not an image tal knows."};
+    if (!decoding || !decoding->takes(given)) throw refused(given);
 
     if (!each) return;
 
@@ -342,14 +365,6 @@ void decoded(std::span<const std::byte> given, const Taking& each, Optional<Deco
 
         return each(rgba, size, after);
     };
-
-    if (format == Format::gif) {
-        gifting::gifted(given, guarded);
-
-        return;
-    }
-
-    if (!decoding) throw Trouble{Kind::unsupported, "No decoder of " + named(format) + "."};
 
     decoding->decoded(given, guarded, most);
 }
@@ -403,11 +418,77 @@ Task<Pixels> decoded(Bytes given, Size want, Optional<Decoding> decoding, std::s
     co_return Pixels{size, std::move(made)};
 }
 
-// Our own decoders of PNG and JPEG, the port's answer when no adapter is set.
+// Our own decoders, PNG, JPEG and GIF in a chain named "tal", the port's answer when no adapter
+// is set.
 std::shared_ptr<Decoding> Decoding::builtin() {
-    static const std::shared_ptr<Decoding> made = std::make_shared<Own>();
+    static const std::shared_ptr<Decoding> made = std::make_shared<Chain>(std::vector<std::shared_ptr<Decoding>>{png(), jpeg(), gif()}, "tal");
 
     return made;
+}
+
+// Our own decoder of PNG alone.
+std::shared_ptr<Decoding> Decoding::png() {
+    static const std::shared_ptr<Decoding> made = std::make_shared<Own>(Format::png, &pnging::pnged, "png");
+
+    return made;
+}
+
+// Our own decoder of JPEG alone.
+std::shared_ptr<Decoding> Decoding::jpeg() {
+    static const std::shared_ptr<Decoding> made = std::make_shared<Own>(Format::jpeg, &jpeging::jpeged, "jpeg");
+
+    return made;
+}
+
+// Our own decoder of GIF alone.
+std::shared_ptr<Decoding> Decoding::gif() {
+    static const std::shared_ptr<Decoding> made = std::make_shared<Own>(Format::gif, &whole_gif, "gif");
+
+    return made;
+}
+
+// The size of the image from its header `head` as tal reads the headers it knows (`size_of`); an
+// adapter of another format tells its own.
+std::optional<Size> Decoding::sized(std::span<const std::byte> head) const { return size_of(head); }
+
+// A chain of the decoders `links`, asked in their order, under `name`. Throws `Trouble` (other)
+// for a link of no decoder.
+Chain::Chain(std::vector<std::shared_ptr<Decoding>> links, std::string name) : links_(std::move(links)), name_(std::move(name)) {
+    for (const std::shared_ptr<Decoding>& one : links_)
+        if (one == nullptr) throw Trouble{Kind::other, "A link of no decoder."};
+}
+
+// The first link that takes the image starting with `head`, or none.
+Decoding* Chain::taking(std::span<const std::byte> head) const {
+    for (const std::shared_ptr<Decoding>& one : links_)
+        if (one->takes(head)) return one.get();
+
+    return nullptr;
+}
+
+// Whether a link takes the image starting with `head`.
+bool Chain::takes(std::span<const std::byte> head) const { return taking(head) != nullptr; }
+
+// The size from the header `head` as the first link that takes it tells it, or nothing.
+std::optional<Size> Chain::sized(std::span<const std::byte> head) const {
+    const Decoding* one = taking(head);
+
+    if (one == nullptr) return std::nullopt;
+
+    return one->sized(head);
+}
+
+// The frames of `given`, whole, from the first link that takes it.
+void Chain::decoded(std::span<const std::byte> given, const Taking& each) { decoded(given, each, Size{}); }
+
+// The frames of `given`, reduced toward `most`, from the first link that takes it; throws
+// `Trouble` unsupported when none does, and the link's own.
+void Chain::decoded(std::span<const std::byte> given, const Taking& each, Size most) {
+    Decoding* one = taking(given);
+
+    if (one == nullptr) throw refused(given);
+
+    one->decoded(given, each, most);
 }
 
 // The dHash of an image's first frame, by which near copies are found: the frame brought down to

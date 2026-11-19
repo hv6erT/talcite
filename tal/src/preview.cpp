@@ -14,8 +14,8 @@
 // the smallest such first, and the image itself decoded otherwise, reduced while it decodes as far
 // as it may be (`decoded`). Either way the result fits what is wanted, keeps its proportions, is
 // never enlarged, and is turned as the orientation of EXIF says. A file that does not start as an
-// image tal knows, or of more than `most_file` bytes, is not read whole. The head of the file is
-// read once, for the description, the picture and the format alike.
+// image the decoder takes, or of more than `most_file` bytes, is not read whole. The head of the
+// file is read once, for the description, the picture and the format alike.
 namespace tal::media {
 
 namespace {
@@ -90,9 +90,11 @@ private:
 // The preview of the image at `where` within `most` (see above): the pictures in JPEG said
 // "thumbnail" or "preview" are tried from the smallest, and the first of the image's proportions
 // that is at least as large as the image brought within `most` is taken; otherwise the file is
-// decoded whole, its first frame. Throws `Trouble`: unsupported for a file that is no image tal
-// knows, full for one over `most_file`, and what reading the file and decoding throw.
+// decoded whole, its first frame, by the decoder set (`Decoding`), which also tells the sizes.
+// Throws `Trouble`: unsupported for a file the decoder does not take, full for one over
+// `most_file`, and what reading the file and decoding throw.
 Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
+    const std::shared_ptr<Decoding> decoding = defaults().get<Decoding>();
     fs::File file = co_await files->open(where);
     Headed from{std::move(file)};
     const meta::Description told = co_await meta::described(from);
@@ -115,7 +117,7 @@ Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
             continue;
         }
 
-        const std::optional<Size> size = size_of(*bytes);
+        const std::optional<Size> size = decoding != nullptr && decoding->takes(*bytes) ? decoding->sized(*bytes) : std::nullopt;
 
         if (!size) continue;
 
@@ -123,22 +125,22 @@ Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files) {
 
         if (size->width < needed.width || size->height < needed.height || (whole && !alike(*size, *whole))) continue;
 
-        const Pixels made = co_await decoded(std::move(*bytes), fitted(*size, box), Optional<Decoding>{defaults().get<Decoding>()}, 1);
+        const Pixels made = co_await decoded(std::move(*bytes), fitted(*size, box), Optional<Decoding>{decoding}, 1);
 
         co_return made.oriented(orientation);
     }
 
     const Bytes head = co_await from.head();
 
-    if (format_of(head) == Format::none) throw Trouble{Kind::unsupported, "Not an image tal knows."};
+    if (decoding == nullptr || !decoding->takes(head)) throw Trouble{Kind::unsupported, "Not an image tal knows."};
 
     const fs::Entry entry = co_await files->look(where);
 
     if (entry.size > most_file) throw Trouble{Kind::full, "The image is over the ceiling."};
 
     Bytes all = co_await files->read(where);
-    const std::optional<Size> size = size_of(all);
-    const Pixels made = co_await decoded(std::move(all), size ? fitted(*size, box) : Size{}, Optional<Decoding>{defaults().get<Decoding>()}, 1);
+    const std::optional<Size> size = decoding->sized(all);
+    const Pixels made = co_await decoded(std::move(all), size ? fitted(*size, box) : Size{}, Optional<Decoding>{decoding}, 1);
 
     co_return (size ? made : made.scaled(fitted(made.size(), box))).oriented(orientation);
 }

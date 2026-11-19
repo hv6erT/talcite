@@ -181,9 +181,9 @@ function(tal_embedded target space)
 endfunction()
 
 # tal::media of talcite.next: images as RGBA frames, their format and size read from the header,
-# scaling in linear light, and decoding frame by frame: GIF by our own decoder, other formats by
-# the adapter of the port `Decoding`; and the metadata of sound and video files, the tags and the
-# properties (tal::meta), and the structure of PDF documents, read by our own readers.
+# scaling in linear light, and decoding frame by frame through the port `Decoding`, whose default
+# is a chain of our own PNG, JPEG and GIF; and the metadata of sound and video files, the tags and
+# the properties (tal::meta), and the structure of PDF documents, read by our own readers.
 add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 
