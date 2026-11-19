@@ -121,7 +121,9 @@ Bytes keyed(Key key, const Modes& modes) {
 // A terminal for the program `program`, in the class "terminal", with `kept` lines of history; the
 // screen takes the size the command gives until the layout gives its own. It does not start the
 // program: `run` does. Keys, pastes and the mouse are its default actions, so a program's own
-// bindings above it come first; the focus coming and going is told to a program that asked.
+// bindings above it come first; the focus coming and going is told to a program that asked. Files
+// dropped on it while its program runs reach the program as the paste the outer terminal wrote,
+// before the nodes above see the drop.
 Terminal::Terminal(Command program, std::size_t kept, Port<Processes> processes, Port<Clipboard> clipboard)
     : command_(std::move(program)),
       emulator_(Size{command_.columns, command_.rows}, kept),
@@ -146,6 +148,13 @@ Terminal::Terminal(Command program, std::size_t kept, Port<Processes> processes,
             (void)paste(what.text);
             what.take();
         }
+    }));
+
+    hooks_.add(on<DropEvent>([this](DropEvent& what) {
+        if (&what.target() != this || !running_) return;
+
+        (void)paste(what.text);
+        what.take();
     }));
 
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) { moused(what); }));

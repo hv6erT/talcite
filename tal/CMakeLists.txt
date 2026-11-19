@@ -20,7 +20,7 @@ endif()
 # depends on nothing but the standard library and the system's own libraries.
 find_package(Threads REQUIRED)
 
-add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/executor.cpp src/deflate.cpp src/fs.cpp src/inflate.cpp src/memory.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/tar.cpp src/task.cpp
+add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/executor.cpp src/deflate.cpp src/fs.cpp src/inflate.cpp src/memory.cpp src/notify.cpp src/path.cpp src/process.cpp src/share.cpp src/stream.cpp src/sums.cpp src/tar.cpp src/task.cpp
   src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp src/zip.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
@@ -30,10 +30,11 @@ target_link_libraries(tal-core PUBLIC Threads::Threads)
 target_compile_features(tal-core PUBLIC cxx_std_20)
 
 # Windows: the network connections of mapped drives and shares (mpr), the shares of a server
-# (netapi32), the shell's known folders and recycle bin (shell32, ole32), the rights of files and
-# the stored logins (advapi32) and the digests and randomness of CNG (bcrypt).
+# (netapi32), the shell's known folders, recycle bin and notification area (shell32, ole32), the
+# window that hears the notification area (user32), the rights of files and the stored logins
+# (advapi32) and the digests and randomness of CNG (bcrypt).
 if(WIN32)
-  target_link_libraries(tal-core PUBLIC mpr netapi32 shell32 ole32 advapi32 bcrypt)
+  target_link_libraries(tal-core PUBLIC mpr netapi32 shell32 ole32 user32 advapi32 bcrypt)
 endif()
 
 # What weakens security is built in only on the programmer's word: our own digests as the spare
@@ -191,7 +192,7 @@ target_link_libraries(tal-media PUBLIC tal-core)
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
 # sent to the terminal as sixel or kitty pixels.
-add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
+add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
   src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-media)

@@ -9,6 +9,7 @@
 
 #include "tal/geometry.hpp"
 #include "tal/key.hpp"
+#include "tal/path.hpp"
 #include "tal/trouble.hpp"
 
 namespace tal {
@@ -109,6 +110,17 @@ struct PasteEvent : Event {
 
     std::string text;
 };
+
+struct DropEvent : Event {
+    DropEvent(std::vector<Path> given, std::string pasted) : paths(std::move(given)), text(std::move(pasted)) {}
+
+    std::vector<Path> paths;
+    std::string text;
+};
+
+struct WindowFocused : Event {};
+
+struct WindowBlurred : Event {};
 
 struct Focused : Event {};
 

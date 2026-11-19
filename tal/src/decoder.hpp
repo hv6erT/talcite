@@ -75,6 +75,6 @@ private:
     std::unique_ptr<Held> held_;
 };
 
-bool dispatched(const Heard& one, Document& onto);
+void dispatched(const Heard& one, Document& onto);
 
 }

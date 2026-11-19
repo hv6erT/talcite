@@ -9,16 +9,34 @@
 #include <vector>
 
 #include "tal/editing.hpp"
+#include "tal/fs.hpp"
 #include "tal/pages.hpp"
 #include "tal/window.hpp"
 
 #include "damage.hpp"
+#include "locating.hpp"
 
 namespace tal {
 
 namespace {
 
+using namespace std::chrono_literals;
+
 constexpr std::size_t most_damaged = 64;
+constexpr std::chrono::milliseconds checked_within = 1500ms;
+
+// Whether every one of the paths is there, as the files of the defaults see it.
+Task<bool> present(std::vector<Path> paths) {
+    for (const Path& one : paths) {
+        try {
+            (void)co_await fs::look(one);
+        } catch (const Trouble&) {
+            co_return false;
+        }
+    }
+
+    co_return true;
+}
 
 }
 
@@ -353,8 +371,11 @@ Timer Document::after(std::chrono::milliseconds wait, Fn<Timer> what) {
     return Timer{std::move(made)};
 }
 
-// Delivers the key `one` to the node with the focus, or to the document when none has it.
+// Delivers the key `one` to the node with the focus, or to the document when none has it; while a
+// drop is checked it waits for it (`waited`).
 void Document::key(Key one) {
+    if (waited([this, one] { key(one); })) return;
+
     changing();
 
     KeyEvent made{one};
@@ -367,7 +388,17 @@ void Document::key(Key one) {
 // is hovered. A press ends any capture before it is aimed and a release after it is delivered. A
 // release where the press was, with the same button, adds a click, or a double click when it is the
 // second one there within the double-click time; the back and forward buttons make no clicks.
+// While a drop is checked it waits for it (`waited`), and comes after it at the moment it came.
 void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis) {
+    const auto now = time_->now();
+
+    if (waited([=, this] { moused(press, button, screen, mods, steps, axis, now); })) return;
+
+    moused(press, button, screen, mods, steps, axis, now);
+}
+
+// What the mouse did at `now` by the document's clock (see `mouse`).
+void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now) {
     changing();
 
     if (press == Press::down) captured_ = nullptr;
@@ -392,18 +423,176 @@ void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, in
 
     if (press == Press::up) captured_ = nullptr;
 
-    if (press == Press::down || press == Press::up) clicked(press, button, screen, mods);
+    if (press == Press::down || press == Press::up) clicked(press, button, screen, mods, now);
 
     if (curtain != nullptr && confined_ != curtain.get()) pressing_ = MouseButton::none;
 }
 
-// Delivers pasted text to the node with the focus, or to the document.
+// Delivers pasted text to the node with the focus, or to the document; text that names files
+// (`locating::dropped`, what a terminal pastes when files are dropped on it) is a drop when they
+// are all there. Whether they are is asked of the files on the loop of the application that shows
+// the document, or on the program's loop, and what comes meanwhile waits for the answer
+// (`waited`). Without a loop to ask on, the text is a paste.
 void Document::paste(std::string text) {
+    if (waited([this, text]() mutable { paste(std::move(text)); })) return;
+
+    std::optional<std::vector<Path>> paths = locating::dropped(text);
+    Executor* home = home_;
+
+    if (paths && home == nullptr) {
+        try {
+            home = &loop();
+        } catch (const Trouble&) {
+            paths.reset();
+        }
+    }
+
+    if (!paths) {
+        pasted(std::move(text));
+
+        return;
+    }
+
+    checking_ = true;
+    dropped_ = text;
+    ticket_ = std::make_shared<int>(0);
+    drops_.emplace(*home);
+    drops_->run(dropping(std::move(*paths), std::move(text), ticket_));
+}
+
+// Keeps `again` to come after the drop being checked, and after what waits already, and says
+// whether it kept it. With no check running, what waits goes first, and `again` with it; while
+// that goes (`releasing_`) and no check runs, each comes at once.
+bool Document::waited(Work again) {
+    if (!checking_ && (releasing_ || held_.empty())) return false;
+
+    held_.push_back(std::move(again));
+
+    if (!checking_) released();
+
+    return true;
+}
+
+// Delivers the text as a paste, to the node with the focus, or to the document.
+void Document::pasted(std::string text) {
     changing();
 
     PasteEvent made{std::move(text)};
 
     delivered(made, keyed());
+}
+
+// Asks whether every one of `paths` is there, for at most `checked_within`, and hands the answer
+// back on the loop it was started on as work of its own (`landed`), so that no handler runs inside
+// this task and a handler may even destroy the document; the work does nothing when the document
+// is gone or gave the check up (`ticket`). Any failure of the files is an answer: no.
+Task<void> Document::dropping(std::vector<Path> paths, std::string text, std::weak_ptr<int> ticket) {
+    Executor& back = co_await detail::Here{};
+    bool there = false;
+
+    try {
+        there = co_await within(checked_within, present(paths));
+    } catch (const Cancelled&) {
+        throw;
+    } catch (...) {
+        there = false;
+    }
+
+    co_await to(back);
+
+    back.post([this, ticket = std::move(ticket), there, paths = std::move(paths), text = std::move(text)]() mutable {
+        if (ticket.expired()) return;
+
+        landed(there, std::move(paths), std::move(text));
+    });
+}
+
+// Delivers the drop to the node with the focus when the files are `there`, or the text as a paste
+// when one is missing, the files did not answer in time, or no node took the drop; then lets what
+// waited go. The delivery goes first among what waited, so that what its handlers do comes at once.
+void Document::landed(bool there, std::vector<Path> paths, std::string text) {
+    checking_ = false;
+    dropped_.clear();
+    ticket_.reset();
+
+    held_.emplace_front([this, there, paths = std::move(paths), text = std::move(text)]() mutable {
+        if (there) {
+            changing();
+
+            DropEvent made{std::move(paths), text};
+
+            delivered(made, keyed());
+
+            if (made.taken()) return;
+        }
+
+        pasted(std::move(text));
+    });
+
+    released();
+}
+
+// Does what waited for a drop, in its order, until it is done or one of it starts another check,
+// after which the rest waits again. A handler that throws leaves the rest waiting for the next
+// input, which lets it go first.
+void Document::released() {
+    // The mark of the release, taken away however it ends.
+    struct Releasing {
+        bool& on;
+
+        // Marks the release.
+        explicit Releasing(bool& given) : on(given) { on = true; }
+
+        // Ends it.
+        ~Releasing() { on = false; }
+
+        Releasing(const Releasing&) = delete;
+        Releasing& operator=(const Releasing&) = delete;
+    };
+
+    if (releasing_) return;
+
+    const Releasing marked{releasing_};
+
+    while (!checking_ && !held_.empty()) {
+        Work next = std::move(held_.front());
+
+        held_.pop_front();
+        next();
+    }
+}
+
+// Takes `home` as the loop the document's drops are checked on: the application's that shows it,
+// or none. A check running on another loop is given up, and its text waits to come first as a
+// paste, so that a loop that goes leaves no check behind.
+void Document::homed(Executor* home) {
+    if (home == home_) return;
+
+    home_ = home;
+
+    if (!checking_) return;
+
+    drops_.reset();
+    ticket_.reset();
+    checking_ = false;
+    held_.emplace_front([this, text = std::exchange(dropped_, {})]() mutable { pasted(std::move(text)); });
+}
+
+// Tells the document that the terminal's window gained the focus or lost it (`WindowFocused`,
+// `WindowBlurred`), at the document itself: the window is the whole document's, not a node's.
+// While a drop is checked it waits for it (`waited`).
+void Document::window(bool focused) {
+    if (waited([this, focused] { window(focused); })) return;
+
+    if (focused) {
+        WindowFocused made;
+
+        delivered(made, *this);
+    } else {
+        WindowBlurred made;
+
+        delivered(made, *this);
+    }
 }
 
 // Opens `address` with the program the system has for it, through the document's port of processes,
@@ -726,8 +915,8 @@ void Document::hovered(Node* now) {
 // Turns a press and a release in the same cell with the same button into a click for the node under
 // the pointer (the confinement for one outside it, as `mouse` does), or a double click when a click
 // with that button in that cell came no longer than the double-click time before by the document's
-// clock. A release elsewhere is a drag, not a click.
-void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods) {
+// clock, the press and the release taken at `now`. A release elsewhere is a drag, not a click.
+void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now) {
     if (button == MouseButton::back || button == MouseButton::forward) return;
 
     if (press == Press::down) {
@@ -743,7 +932,6 @@ void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods) 
 
     if (which == MouseButton::none || which != button || began_ != screen) return;
 
-    const auto now = time_->now();
     const bool twice = first_click_ && clicked_ == button && waiting_ == screen && now - *first_click_ <= double_click_;
 
     if (twice) {

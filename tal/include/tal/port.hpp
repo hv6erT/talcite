@@ -36,13 +36,17 @@ public:
     }
 
     template <std::derived_from<Adapter> T>
-    [[nodiscard]] std::shared_ptr<T> get() {
-        {
-            const std::lock_guard<std::mutex> kept{guard_};
+    [[nodiscard]] std::shared_ptr<T> held() {
+        const std::lock_guard<std::mutex> kept{guard_};
 
-            if (const auto at = held_.find(std::type_index{typeid(T)}); at != held_.end())
-                return std::static_pointer_cast<T>(at->second);
-        }
+        if (const auto at = held_.find(std::type_index{typeid(T)}); at != held_.end()) return std::static_pointer_cast<T>(at->second);
+
+        return nullptr;
+    }
+
+    template <std::derived_from<Adapter> T>
+    [[nodiscard]] std::shared_ptr<T> get() {
+        if (std::shared_ptr<T> made = held<T>()) return made;
 
         if constexpr (requires { T::builtin(); }) {
             return T::builtin();

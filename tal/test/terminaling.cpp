@@ -12,6 +12,7 @@
 #include "tal/document.hpp"
 #include "tal/emulator.hpp"
 #include "tal/executor.hpp"
+#include "tal/fs.hpp"
 #include "tal/key.hpp"
 #include "tal/layout.hpp"
 #include "tal/process.hpp"
@@ -490,6 +491,55 @@ TRIAL("Terminal: a paste goes without escapes, in brackets when asked, and only 
     SAME(shown.typed(), std::string{});
     OUGHT(shown.terminal->paste("z"));
     SAME(shown.typed(), std::string{"\x1b[200~z\x1b[201~"});
+}
+
+// Files dropped on the outer terminal reach the program inside as the paste the outer one wrote,
+// before the node around it sees the drop; with no program running the drop goes on up. The path
+// is in double quotes, which terminals write alike on every system (on Windows a single quote is
+// a letter of the name).
+TRIAL("Terminal: files dropped reach the program as their paste") {
+    Shown shown;
+    auto files = std::make_shared<tal::fs::Memory>(shown.scene.time());
+    int caught = 0;
+
+    tal::wait(shown.loop, files->write(tal::Path{"/c.txt"}, tal::bytes("c")));
+    tal::defaults().set<tal::fs::Files>(files);
+    shown.hooks.add(shown.catcher->on<tal::DropEvent>([&caught](tal::DropEvent& one) {
+        ++caught;
+        one.take();
+    }));
+    shown.scene.paste("\"/c.txt\" ");
+
+    QUIETED(shown.loop);
+
+    SAME(shown.typed(), std::string{"\"/c.txt\" "});
+    SAME(caught, 0);
+    SAME(shown.catcher->pastes, 0);
+
+    tal::defaults().clear<tal::fs::Files>();
+}
+
+// A terminal whose program does not run leaves a drop to the nodes above it.
+TRIAL("Terminal: files dropped with no program go on up") {
+    Shown idle{{20, 5}, 100, false, false};
+    auto files = std::make_shared<tal::fs::Memory>(idle.scene.time());
+    int caught = 0;
+
+    tal::wait(idle.loop, files->write(tal::Path{"/c.txt"}, tal::bytes("c")));
+    tal::defaults().set<tal::fs::Files>(files);
+    idle.hooks.add(idle.catcher->on<tal::DropEvent>([&caught](tal::DropEvent& one) {
+        ++caught;
+        one.take();
+    }));
+    idle.scene.paste("\"/c.txt\" ");
+
+    QUIETED(idle.loop);
+
+    SAME(idle.catcher->pastes, 0);
+    SAME(caught, 1);
+    SAME(idle.hands->typed, std::string{});
+
+    tal::defaults().clear<tal::fs::Files>();
 }
 
 TRIAL("Terminal: the mouse goes to a program that asked for it, in xterm's SGR encoding") {

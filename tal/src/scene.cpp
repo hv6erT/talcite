@@ -78,7 +78,8 @@ void Scene::type(std::string_view text) {
     }
 }
 
-// The text pasted at once.
+// The text pasted at once. Text that names files is a drop the document checks first on the
+// program's loop when one runs (`Document::paste`): a trial with a loop turns it before it looks.
 void Scene::paste(std::string text) {
     shown().paste(std::move(text));
 

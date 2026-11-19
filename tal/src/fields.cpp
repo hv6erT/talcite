@@ -93,7 +93,8 @@ struct Field::Edit : Step {
 // the field tells `Typing`, and taking it refuses the letter; after every change it tells
 // `Guessing`, and what a handler puts in `ahead` stands after the cursor at the end in the part
 // "guess": the right arrow there takes one letter of it, End all of it. Tab and Enter are left to
-// the nodes above. A click puts the cursor where it was.
+// the nodes above. A click puts the cursor where it was. Files dropped on it type the text the
+// terminal wrote for them, before the nodes above see the drop.
 Field::Field(std::string said) : text(*this, Effect::paint, std::move(said)) {
     classes({"input"});
     focusable(true);
@@ -159,6 +160,13 @@ Field::Field(std::string said) : text(*this, Effect::paint, std::move(said)) {
     }));
 
     hooks_.add(otherwise<PasteEvent>([this](PasteEvent& what) {
+        what.take();
+        typed(flattened(what.text));
+    }));
+
+    hooks_.add(on<DropEvent>([this](DropEvent& what) {
+        if (&what.target() != this) return;
+
         what.take();
         typed(flattened(what.text));
     }));

@@ -8,12 +8,14 @@
 #include <utility>
 #include <vector>
 
+#include "tal/bytes.hpp"
 #include "tal/clipboard.hpp"
 #include "tal/controls.hpp"
 #include "tal/document.hpp"
 #include "tal/editing.hpp"
 #include "tal/event.hpp"
 #include "tal/executor.hpp"
+#include "tal/fs.hpp"
 #include "tal/geometry.hpp"
 #include "tal/key.hpp"
 #include "tal/layout.hpp"
@@ -818,6 +820,31 @@ TRIAL("Editor: copying, cutting and pasting") {
     SAME(shown.catcher->pasted, 0);
     OUGHT(editor.undo());
     SAME(shown.text->whole(), std::string{"twoXne "});
+}
+
+// Files dropped on the terminal go into the editor as the text the terminal wrote for them, before
+// the catcher around it sees the drop.
+TRIAL("Editor: files dropped go in as their text") {
+    Written shown{"ab", {10, 2}};
+    auto files = std::make_shared<tal::fs::Memory>(shown.scene.time());
+    int caught = 0;
+    tal::Hooks hooks;
+
+    tal::wait(shown.loop, files->write(tal::Path{"/c.txt"}, tal::bytes("c")));
+    tal::defaults().set<tal::fs::Files>(files);
+    hooks.add(shown.catcher->on<tal::DropEvent>([&caught](tal::DropEvent& one) {
+        ++caught;
+        one.take();
+    }));
+    shown.scene.paste("/c.txt");
+
+    QUIETED(shown.loop);
+
+    SAME(shown.text->whole(), std::string{"/c.txtab"});
+    SAME(caught, 0);
+    SAME(shown.catcher->pasted, 0);
+
+    tal::defaults().clear<tal::fs::Files>();
 }
 
 // A clipboard that answers when let through.

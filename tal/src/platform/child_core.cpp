@@ -2416,8 +2416,8 @@ Command ordered(const ::tal::Command& what) {
     return made;
 }
 
-// Opens a file or an address with the program the system has for it: the shell on Windows,
-// xdg-open elsewhere, let loose either way.
+// Opens a file or an address with the program the system has for it: the shell on Windows, open on
+// macOS, xdg-open elsewhere, let loose either way.
 std::int64_t opened(const ::tal::Command& what) {
     const std::string address = what.arguments.empty() ? std::string{what.program.stored()} : what.arguments.front();
 
@@ -2438,7 +2438,11 @@ std::int64_t opened(const ::tal::Command& what) {
 #else
     Command loose;
 
+#ifdef __APPLE__
+    loose.program = "open";
+#else
     loose.program = "xdg-open";
+#endif
     loose.arguments = {address};
 
     return loosed(loose);

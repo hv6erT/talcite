@@ -15,10 +15,13 @@
 #include <vector>
 
 #include "tal/crypto.hpp"
+#include "tal/notify.hpp"
+#include "tal/port.hpp"
 
 #include "decoder.hpp"
 #include "hexing.hpp"
 #include "palette.hpp"
+#include "telling.hpp"
 #include "unicode.hpp"
 
 namespace tal {
@@ -465,13 +468,14 @@ struct Sending {
     Mouse mouse = Mouse::none;
     bool hover = false;
     bool bracketed_paste = false;
+    bool focus = false;
 };
 
-// The effective screen, mouse, hover and bracketed-paste settings. Tracking motion without a
+// The effective screen, mouse, hover, bracketed-paste and focus settings. Tracking motion without a
 // pressed button has nothing to measure in the terminal: no reply says whether ?1003 is understood.
 // So the wish alone decides, and the default is off, because when on, it makes the terminal report
 // every twitch of the pointer, even when nobody cares, and over ssh that is real traffic on the
-// link.
+// link. The window's focus (?1004) is reported whenever the terminal says it knows how.
 Sending sending(const Capabilities& compat, const Setup& wish) {
     Sending made;
 
@@ -479,6 +483,7 @@ Sending sending(const Capabilities& compat, const Setup& wish) {
     made.mouse = wish.mouse.value_or(compat.mouse());
     made.hover = wish.hover.value_or(false);
     made.bracketed_paste = wish.bracketed_paste.value_or(compat.bracketed_paste());
+    made.focus = compat.focus_events();
 
     return made;
 }
@@ -594,10 +599,11 @@ void unshaped(Console& out, std::optional<Caret>& shaped) {
     shaped.reset();
 }
 
-// Dressing the terminal: the screen, a hidden cursor, no autowrap, a cleared screen, the mouse and
-// bracketed paste. Dressing and undressing are two halves of one thing, so they stand side by side
-// and have one place: the constructor, the destructor and stepping aside for another program all
-// use them. Written out in three places, they would drift apart at the first change.
+// Dressing the terminal: the screen, a hidden cursor, no autowrap, a cleared screen, the mouse,
+// bracketed paste and the window's focus. Dressing and undressing are two halves of one thing, so
+// they stand side by side and have one place: the constructor, the destructor and stepping aside
+// for another program all use them. Written out in three places, they would drift apart at the
+// first change.
 void dressed(Console& out, const Sending& now) {
     screened(out, now.screen);
 
@@ -606,10 +612,14 @@ void dressed(Console& out, const Sending& now) {
     mousing(out, now.mouse, now.hover);
 
     if (now.bracketed_paste) out.write("\x1b[?2004h");
+
+    if (now.focus) out.write("\x1b[?1004h");
 }
 
 // Undressing the terminal, in the reverse order of `dressed`.
 void undressed(Console& out, const Sending& now) {
+    if (now.focus) out.write("\x1b[?1004l");
+
     if (now.bracketed_paste) out.write("\x1b[?2004l");
 
     unmoused(out, now.mouse, now.hover);
@@ -854,6 +864,14 @@ struct App::Held {
     std::vector<Placement> placed;
     std::vector<std::pair<std::uint32_t, std::weak_ptr<const media::Pixels>>> sent;
 
+    // The notifier the application puts among the defaults for its lifetime, which shows notices
+    // through this terminal when it knows a way, through the system otherwise.
+    std::shared_ptr<telling::Terminal> notifier;
+
+    // The notifier set among the defaults before the application, or none, which stands again at
+    // its end.
+    std::shared_ptr<Notifier> before;
+
     // How many times we have stepped out of the terminal's way. A counter, not a flag, because
     // nested stepping aside is allowed and means one thing: the first one leaves, the last one
     // returns.
@@ -889,7 +907,8 @@ struct App::Held {
 
 // Takes over the terminal: raw mode, the probe of its capabilities, then the dressing (alternate
 // screen, hidden cursor, mouse) according to the wish. The application's loop is made here and,
-// when it is the first loop, it is the program's loop that tasks run on.
+// when it is the first loop, it is the program's loop that tasks run on. Notices go through the
+// terminal while the application lives (`telling::Terminal` among the defaults).
 App::App(Setup wish, Port<Console> console, Port<Clock> time) : held_(std::make_unique<Held>(std::move(console), std::move(time))) {
     Held& held = *held_;
 
@@ -914,13 +933,29 @@ App::App(Setup wish, Port<Console> console, Port<Clock> time) : held_(std::make_
     (void)measured(out, held.size);
 
     held.able = effective(held.compat, held.wish, held.size);
+
+    // Last, so that a constructor that throws leaves no notifier on a loop that is gone.
+    held.before = defaults().held<Notifier>();
+    held.notifier = std::make_shared<telling::Terminal>(held.console, telling::way(held.compat.named()), defaults().get<Notifier>(), held.loop);
+    defaults().set<Notifier>(held.notifier);
 }
 
 // Gives the terminal back, in reverse order, however we got here. A terminal left in raw mode
 // without a cursor is unusable, and the user has no way to undo it. When the terminal is handed
-// to someone else right now there is nothing to undo: `Pause` did it on entry.
+// to someone else right now there is nothing to undo: `Pause` did it on entry. Notices waiting are
+// written first, the notifier set before the application stands again (none when none was set,
+// unless another was set meanwhile), and the document shown lets go of the loop.
 App::~App() {
     Held& held = *held_;
+
+    held.notifier->closed();
+
+    if (defaults().held<Notifier>() == held.notifier) {
+        if (held.before != nullptr) defaults().set<Notifier>(held.before);
+        else defaults().clear<Notifier>();
+    }
+
+    if (held.onto != nullptr) held.onto->homed(nullptr);
 
     if (held.away > 0) return;
 
@@ -963,11 +998,15 @@ const Abilities& App::abilities() const { return held_->able; }
 
 // Shows `one`: it is told the terminal's size, colors, Unicode, rendering and the console's
 // double-click time, and drawn whole at the next turn. Documents can be switched while running, as
-// screens switch.
+// screens switch. The document checks its drops on the application's loop; one shown before lets
+// go of it.
 void App::show(Document& one) {
     Held& held = *held_;
 
+    if (held.onto != nullptr && held.onto != &one) held.onto->homed(nullptr);
+
     held.onto = &one;
+    one.homed(&held.loop);
 
     one.double_click(held.console->double_click());
 
@@ -1201,7 +1240,7 @@ bool App::turn() {
 
         held.spare.clear();
 
-        for (const Heard& one : held.decoder.fed(given, clock.now())) (void)dispatched(one, *held.onto);
+        for (const Heard& one : held.decoder.fed(given, clock.now())) dispatched(one, *held.onto);
     }
 
     // The first frame is drawn before waiting, because the wait may have no limit.
@@ -1246,7 +1285,7 @@ bool App::turn() {
     const auto now = clock.now();
 
     if (!given.empty())
-        for (const Heard& one : held.decoder.fed(given, now)) (void)dispatched(one, *held.onto);
+        for (const Heard& one : held.decoder.fed(given, now)) dispatched(one, *held.onto);
 
     // The size is checked at every turn: the window may have changed just now.
     if (measured(console, held.size)) {
@@ -1257,7 +1296,7 @@ bool App::turn() {
 
     // The decoder's time has come: the Esc was alone, or the paste lost its end.
     if (const auto settling = held.decoder.due(); settling && now >= *settling)
-        for (const Heard& one : held.decoder.lapsed(now)) (void)dispatched(one, *held.onto);
+        for (const Heard& one : held.decoder.lapsed(now)) dispatched(one, *held.onto);
 
     held.onto->ring();
 
@@ -1269,13 +1308,14 @@ bool App::turn() {
 }
 
 // Steps out of the terminal's way: we undo exactly what the constructor set up, in reverse order.
-// The program that runs meanwhile finds the terminal as we found it. Nested pauses are one: the
-// first leaves, the last returns.
+// The program that runs meanwhile finds the terminal as we found it, and no notice of ours. Nested
+// pauses are one: the first leaves, the last returns.
 App::Pause::Pause(App& one) : app_(one) {
     Held& held = *app_.held_;
 
     if (held.away++ > 0) return;
 
+    held.notifier->away(true);
     held.forgotten();
 
     if (held.entered) {
@@ -1288,7 +1328,8 @@ App::Pause::Pause(App& one) : app_(one) {
 }
 
 // Takes the terminal back: raw mode and the dressing again, and a full repaint at the next turn,
-// with the cursor shown and placed anew. The size may have changed while we were away.
+// with the cursor shown and placed anew. The size may have changed while we were away. Notices told
+// meanwhile are written last.
 App::Pause::~Pause() {
     Held& held = *app_.held_;
 
@@ -1310,6 +1351,8 @@ App::Pause::~Pause() {
 
         held.displayed();
     }
+
+    held.notifier->away(false);
 }
 
 }

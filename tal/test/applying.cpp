@@ -371,6 +371,37 @@ TRIAL("App: dressing and undressing go in opposite order") {
     OUGHT(holds(off, "\x1b[?25h"));
 }
 
+// A terminal that reports the focus of its window (?1004 in its answers) is asked to, inside the
+// alternate screen, and told to stop before leaving it; one that does not know it is never asked.
+TRIAL("App: the window's focus is asked for where the terminal knows it") {
+    Rig rig;
+    std::string on;
+
+    rig.line = scripted("\x1b[?1004;2$y\x1b[?62;1;22c");
+
+    {
+        const App app{dressy(), rig.console(), rig.time()};
+
+        on = rig.line->written;
+
+        rig.line->written.clear();
+    }
+
+    const std::string& off = rig.line->written;
+
+    OUGHT(on.find("\x1b[?1049h") < on.find("\x1b[?1004h"));
+    OUGHT(off.find("\x1b[?1004l") < off.find("\x1b[?1049l"));
+
+    Rig plain;
+
+    {
+        const App app{dressy(), plain.console(), plain.time()};
+    }
+
+    OUGHT(!holds(plain.line->written, "\x1b[?1004h"));
+    OUGHT(!holds(plain.line->written, "\x1b[?1004l"));
+}
+
 // A terminal without SGR gets drags and the urxvt encoding too, and loses them in reverse order;
 // hovering adds ?1003 on top and takes it off first.
 TRIAL("App: the mouse without SGR asks for drags and the decimal encoding, hovering on top") {

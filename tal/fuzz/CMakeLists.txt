@@ -119,3 +119,11 @@ target_link_libraries(tal-http-fuzz PRIVATE tal-net)
 target_link_options(tal-http-fuzz PRIVATE -fsanitize=fuzzer)
 
 configure_file(http.dict http.dict COPYONLY)
+
+add_executable(tal-dropped-fuzz dropped.cpp)
+
+target_include_directories(tal-dropped-fuzz PRIVATE ../src)
+
+target_link_libraries(tal-dropped-fuzz PRIVATE tal-ui)
+
+target_link_options(tal-dropped-fuzz PRIVATE -fsanitize=fuzzer)

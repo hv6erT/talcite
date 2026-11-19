@@ -439,34 +439,22 @@ std::vector<Heard> Decoder::lapsed(std::chrono::steady_clock::time_point now) {
     return held_->heard(tokens);
 }
 
-// Delivers a value to the document: a key, the mouse, the wheel (along its axis) or a paste.
-// Returns whether it went anywhere; the terminal's own focus has no event yet and goes nowhere.
-bool dispatched(const Heard& one, Document& onto) {
+// Delivers a value to the document: a key, the mouse, the wheel (along its axis), a paste or the
+// focus of the terminal's window, the last of the values a decoder gives.
+void dispatched(const Heard& one, Document& onto) {
+    static_assert(std::variant_size_v<Heard> == 5, "every value a decoder gives is delivered here");
+
     if (const auto* struck = std::get_if<Struck>(&one)) {
         onto.key(struck->key);
-
-        return true;
-    }
-
-    if (const auto* moused = std::get_if<Moused>(&one)) {
+    } else if (const auto* moused = std::get_if<Moused>(&one)) {
         onto.mouse(moused->press, moused->button, moused->where, moused->mods);
-
-        return true;
-    }
-
-    if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
+    } else if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
         onto.mouse(Press::wheel, MouseButton::none, wheeled->where, wheeled->mods, wheeled->steps, wheeled->axis);
-
-        return true;
-    }
-
-    if (const auto* pasted = std::get_if<Pasted>(&one)) {
+    } else if (const auto* pasted = std::get_if<Pasted>(&one)) {
         onto.paste(pasted->text);
-
-        return true;
+    } else {
+        onto.window(std::get<Windowed>(one).in);
     }
-
-    return false;
 }
 
 }

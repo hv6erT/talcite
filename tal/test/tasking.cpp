@@ -501,7 +501,7 @@ TRIAL("Shared: two waiters get the same result of one run") {
     SAME(tal::wait(loop, shared.get()), 12);
 }
 
-TRIAL("Port: without an adapter a port refuses at construction; the program's default and the built-in clock are taken") {
+TRIAL("Port: without an adapter a port refuses at construction; the program's default and the built-in clock are taken; held is only what was set") {
     try {
         const tal::Port<Speaker> none;
         OUGHT(false);
@@ -509,17 +509,25 @@ TRIAL("Port: without an adapter a port refuses at construction; the program's de
         OUGHT(why.kind() == tal::Kind::missing);
     }
 
-    tal::defaults().set<Speaker>(std::make_shared<Speaker>());
+    OUGHT(tal::defaults().held<Speaker>() == nullptr);
+
+    const auto speaker = std::make_shared<Speaker>();
+
+    tal::defaults().set<Speaker>(speaker);
 
     const tal::Port<Speaker> given;
 
     SAME(std::string{given->name()}, std::string{"test"});
+    OUGHT(tal::defaults().held<Speaker>() == speaker);
 
     tal::defaults().clear<Speaker>();
+
+    OUGHT(tal::defaults().held<Speaker>() == nullptr);
 
     const tal::Port<tal::Clock> time;
 
     SAME(std::string{time->name()}, std::string{"system"});
+    OUGHT(tal::defaults().held<tal::Clock>() == nullptr);
 
     const tal::Optional<Speaker> empty;
 

@@ -144,8 +144,9 @@ struct Editor::Change : Step {
 // every key with Alt or with Ctrl otherwise are left to the program, which binds the history, the
 // block and the clipboard to keys of its own. A press puts the cursor and takes the focus, a drag
 // selects (going past the edge moves the view a row a step), Shift with a press stretches the
-// selection and a double click selects a word. A text or a history that is none throws
-// std::invalid_argument.
+// selection and a double click selects a word. Files dropped on it go in as the text the terminal
+// wrote for them, before the nodes above see the drop, as into any field of text. A text or a
+// history that is none throws std::invalid_argument.
 Editor::Editor(std::shared_ptr<Text> text, std::shared_ptr<Undo> undo, Port<Clipboard> clipboard)
     : held_(std::make_unique<Held>(std::move(text), std::move(undo), std::move(clipboard))) {
     Held& held = *held_;
@@ -226,6 +227,13 @@ Editor::Editor(std::shared_ptr<Text> text, std::shared_ptr<Undo> undo, Port<Clip
     }));
 
     hooks_.add(otherwise<PasteEvent>([this](PasteEvent& what) {
+        what.take();
+        insert(what.text);
+    }));
+
+    hooks_.add(on<DropEvent>([this](DropEvent& what) {
+        if (&what.target() != this) return;
+
         what.take();
         insert(what.text);
     }));

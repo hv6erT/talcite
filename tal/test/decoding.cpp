@@ -585,11 +585,13 @@ TRIAL("Decoder: every value reaches the document as its event") {
         }
     }));
     hooks.add(sheet.on<PasteEvent>([&among](PasteEvent& what) { among.push_back(spoken(Pasted{what.text})); }));
+    hooks.add(sheet.on<tal::WindowFocused>([&among](tal::WindowFocused&) { among.push_back("window focused"); }));
+    hooks.add(sheet.on<tal::WindowBlurred>([&among](tal::WindowBlurred&) { among.push_back("window blurred"); }));
 
-    const std::vector<Heard> all = ear.decoder.fed("q\x1b[1;5A\x1b[<2;4;3M\x1b[<67;1;1M\x1b[200~x\x1b[201~\x1b[I", ear.now);
+    const std::vector<Heard> all = ear.decoder.fed("q\x1b[1;5A\x1b[<2;4;3M\x1b[<67;1;1M\x1b[200~x\x1b[201~\x1b[I\x1b[O", ear.now);
 
-    for (const Heard& one : all) (void)dispatched(one, sheet);
+    for (const Heard& one : all) dispatched(one, sheet);
 
-    OUGHT(among == std::vector<std::string>{"'q'", "Ctrl+Up", "down right at 3,2", "wheel -1 horizontal at 0,0", "paste 'x'"});
-    OUGHT(!dispatched(Windowed{true}, sheet));
+    OUGHT(among == std::vector<std::string>{"'q'", "Ctrl+Up", "down right at 3,2", "wheel -1 horizontal at 0,0", "paste 'x'", "window focused",
+                                            "window blurred"});
 }

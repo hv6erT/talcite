@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,12 +13,14 @@
 #include "tal/event.hpp"
 #include "tal/geometry.hpp"
 #include "tal/node.hpp"
+#include "tal/path.hpp"
 #include "tal/port.hpp"
 #include "tal/process.hpp"
 #include "tal/style.hpp"
 #include "tal/surface.hpp"
 #include "tal/task.hpp"
 #include "tal/text.hpp"
+#include "tal/work.hpp"
 
 namespace tal {
 
@@ -103,6 +106,8 @@ public:
 
     void paste(std::string text);
 
+    void window(bool focused);
+
     void follow(std::string address);
 
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> alarm() const;
@@ -110,6 +115,7 @@ public:
     void ring();
 
 private:
+    friend class App;
     friend class Node;
     friend class Children;
 
@@ -133,7 +139,9 @@ private:
 
     void hovered(Node* now);
 
-    void clicked(Press press, MouseButton button, Spot screen, Mods mods);
+    void clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now);
+
+    void moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now);
 
     void damaged(Area part);
 
@@ -142,6 +150,18 @@ private:
     void painted(Node& one, Spot origin, Area clip, Area part);
 
     [[nodiscard]] Task<void> opened(std::string address);
+
+    [[nodiscard]] bool waited(Work again);
+
+    void pasted(std::string text);
+
+    [[nodiscard]] Task<void> dropping(std::vector<Path> paths, std::string text, std::weak_ptr<int> ticket);
+
+    void landed(bool there, std::vector<Path> paths, std::string text);
+
+    void released();
+
+    void homed(Executor* home);
 
     void inspected();
 
@@ -171,6 +191,13 @@ private:
     std::vector<std::weak_ptr<Timer::State>> timers_;
     std::uint64_t timed_ = 0;
     Hooks own_;
+    Executor* home_ = nullptr;
+    std::optional<Scope> drops_;
+    std::string dropped_;
+    bool checking_ = false;
+    bool releasing_ = false;
+    std::deque<Work> held_;
+    std::shared_ptr<int> ticket_;
 };
 
 }

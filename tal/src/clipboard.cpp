@@ -13,6 +13,7 @@
 #include "tal/trouble.hpp"
 
 #include "clipboarding.hpp"
+#include "locating.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -156,103 +157,11 @@ std::string reader(const Console& from, const std::string& type) {
     return line + "exit " + std::to_string(lacking);
 }
 
-// Whether a byte goes into a file URI as it is: the unreserved characters of RFC 3986 and the
-// slash.
-bool plain(unsigned char one) {
-    return (one >= 'a' && one <= 'z') || (one >= 'A' && one <= 'Z') || (one >= '0' && one <= '9') || one == '-' || one == '.' ||
-           one == '_' || one == '~' || one == '/';
-}
-
-// An absolute path as a file URI with an empty host, every other byte as %XX.
-std::string located(const Path& where) {
-    constexpr std::string_view hex = "0123456789ABCDEF";
-    std::string made = "file://";
-
-    for (const char each : where.stored()) {
-        const auto one = static_cast<unsigned char>(each);
-
-        if (plain(one)) {
-            made.push_back(each);
-
-            continue;
-        }
-
-        made += {'%', hex[one >> 4], hex[one & 0x0F]};
-    }
-
-    return made;
-}
-
-// The value of a hexadecimal digit, or -1.
-int digit(char one) {
-    if (one >= '0' && one <= '9') return one - '0';
-    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
-    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
-
-    return -1;
-}
-
-// The local path of a file URI (file:///path or file://localhost/path), its escapes decoded;
-// nothing for another host or scheme, a broken escape or an escaped NUL.
-std::optional<Path> unlocated(std::string_view uri) {
-    constexpr std::string_view scheme = "file://";
-    constexpr std::string_view local = "localhost";
-
-    if (!uri.starts_with(scheme)) return std::nullopt;
-
-    uri.remove_prefix(scheme.size());
-
-    if (uri.starts_with(local)) uri.remove_prefix(local.size());
-
-    if (uri.empty() || uri.front() != '/') return std::nullopt;
-
-    std::string made;
-
-    for (std::size_t at = 0; at < uri.size(); ++at) {
-        if (uri[at] != '%') {
-            made.push_back(uri[at]);
-
-            continue;
-        }
-
-        if (at + 2 >= uri.size()) return std::nullopt;
-
-        const int high = digit(uri[at + 1]);
-        const int low = digit(uri[at + 2]);
-
-        if (high < 0 || low < 0 || (high == 0 && low == 0)) return std::nullopt;
-
-        made.push_back(static_cast<char>((high << 4) | low));
-        at += 2;
-    }
-
-    return Path::restored(made);
-}
-
-// The local files of a text/uri-list (RFC 2483): a URI to a line ended by CR LF or LF; lines naming
-// no local file, comments after # among them, are left out.
-std::vector<Path> listed(std::string_view text) {
-    std::vector<Path> made;
-
-    while (!text.empty()) {
-        const std::size_t end = std::min(text.find('\n'), text.size());
-        std::string_view line = text.substr(0, end);
-
-        text.remove_prefix(std::min(end + 1, text.size()));
-
-        while (!line.empty() && (line.back() == '\r' || line.back() == '\0')) line.remove_suffix(1);
-
-        if (std::optional<Path> one = unlocated(line)) made.push_back(std::move(*one));
-    }
-
-    return made;
-}
-
 // The URIs of the files, each line ended by CR LF.
 std::string uris(const Handed& what) {
     std::string made;
 
-    for (const Path& one : what.paths) made += located(one) + "\r\n";
+    for (const Path& one : what.paths) made += locating::located(one) + "\r\n";
 
     return made;
 }
@@ -744,7 +653,7 @@ Task<std::optional<Handed>> taking(std::shared_ptr<Kept> kept) {
         const std::string_view verb = std::string_view{*marked.text}.substr(0, end);
         Handed made;
 
-        made.paths = listed(std::string_view{*marked.text}.substr(std::min(end + 1, marked.text->size())));
+        made.paths = locating::listed(std::string_view{*marked.text}.substr(std::min(end + 1, marked.text->size())));
         made.how = verb == "cut" ? Handing::cut : Handing::copy;
 
         if ((verb == "cut" || verb == "copy") && !made.paths.empty()) co_return made;
@@ -756,7 +665,7 @@ Task<std::optional<Handed>> taking(std::shared_ptr<Kept> kept) {
 
     Handed made;
 
-    made.paths = listed(*plain.text);
+    made.paths = locating::listed(*plain.text);
 
     if (made.paths.empty()) co_return std::nullopt;
 
