@@ -160,7 +160,7 @@ std::unique_ptr<Document> documented(int wide, int high, std::string_view sheet 
     auto made = std::make_unique<Document>();
 
     made->sheet(StyleSheet::parsed(sheet));
-    made->display(Size{wide, high}, Colors::rgb, true);
+    made->display({.screen = {wide, high}, .colors = Colors::rgb, .unicode = true});
 
     return made;
 }
@@ -448,7 +448,7 @@ TRIAL("Display: a new size or level makes the whole screen again") {
     (void)top->frame();
     OUGHT(top->frame().at({0, 0}).look.ink.has_value());
 
-    top->display(Size{8, 2}, Colors::mono, true);
+    top->display({.screen = {8, 2}, .colors = Colors::mono, .unicode = true});
     OUGHT(top->due());
 
     const Surface& screen = top->frame();

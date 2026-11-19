@@ -573,7 +573,7 @@ TRIAL("Decoder: every value reaches the document as its event") {
     std::vector<std::string> among;
     Hooks hooks;
 
-    sheet.display(Size{20, 5}, Colors::mono, false);
+    sheet.display({.screen = {20, 5}, .colors = Colors::mono, .unicode = false});
     (void)sheet.frame();
 
     hooks.add(sheet.on<KeyEvent>([&among](KeyEvent& what) { among.push_back(spoken(Struck{what.key})); }));

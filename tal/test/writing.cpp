@@ -110,7 +110,7 @@ struct Written {
         : Written(std::make_shared<Text>(said), size, std::move(undo)) {}
 
     // An editor of `given`, with the history `undo`.
-    Written(std::shared_ptr<Text> given, Size size, std::shared_ptr<Undo> undo) : scene(size), text(std::move(given)) {
+    Written(std::shared_ptr<Text> given, Size size, std::shared_ptr<Undo> undo) : scene({.screen = size}), text(std::move(given)) {
         catcher = &document.children().add<Catcher>();
         editor = &catcher->children().add<Editor>(text, std::move(undo), tal::Port<tal::Clipboard>{board});
         editor->share(tal::Share{1, 0});
@@ -869,7 +869,7 @@ tal::Task<void> into(tal::Task<bool> work, std::optional<bool>& made) { made = c
 // neither a cut nor a paste touches the text when its editor went meanwhile.
 TRIAL("Editor: the clipboard answers later") {
     tal::Loop loop;
-    Scene scene{{10, 2}};
+    Scene scene{{.screen = {10, 2}}};
     Document document{scene.time()};
     const auto text = std::make_shared<Text>("one two");
     const auto slow = std::make_shared<Slow>();
@@ -1146,7 +1146,7 @@ TRIAL("Editor: the program's cursor, jumps and insertions") {
 // the left of it the cursor goes to the start of the row.
 TRIAL("Editor: dragging out of it") {
     tal::Loop loop;
-    Scene scene{{10, 5}};
+    Scene scene{{.screen = {10, 5}}};
     Document document{scene.time()};
     tal::Column& column = document.children().add<tal::Column>();
     (void)column.children().add<tal::Label>("top");
@@ -1483,7 +1483,7 @@ TRIAL("Editor: steps that join and steps that do not") {
 // A press takes the focus from another node.
 TRIAL("Editor: a press takes the focus") {
     tal::Loop loop;
-    Scene scene{{10, 3}};
+    Scene scene{{.screen = {10, 3}}};
     Document document{scene.time()};
     tal::Column& column = document.children().add<tal::Column>();
     tal::Field& field = column.children().add<tal::Field>("f");

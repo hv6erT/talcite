@@ -364,7 +364,7 @@ Look Node::look(std::string_view part) const {
 
     const std::vector<std::vector<std::string>> classes = lineage();
 
-    return document_->sheet_.style(Selection{classes, states_, part}, document_->colors_).look;
+    return document_->sheet_.style(Selection{classes, states_, part}, document_->display_.colors).look;
 }
 
 // The look the node's part `part` (none for the node itself) would have in the states `states`
@@ -375,7 +375,7 @@ Look Node::look(std::string_view part, States states) const {
 
     const std::vector<std::vector<std::string>> classes = lineage();
 
-    return document_->sheet_.style(Selection{classes, states, part}, document_->colors_).look;
+    return document_->sheet_.style(Selection{classes, states, part}, document_->display_.colors).look;
 }
 
 // The glyph `name` from the sheet of the document, for its terminal; outside a document from the
@@ -383,7 +383,7 @@ Look Node::look(std::string_view part, States states) const {
 std::string_view Node::glyph(std::string_view name) const {
     if (document_ == nullptr) return StyleSheet{}.glyph(name, false);
 
-    return document_->sheet_.glyph(name, document_->unicode_);
+    return document_->sheet_.glyph(name, document_->display_.unicode);
 }
 
 // How the terminal of the document draws emoji sequences, so that the node measures text as the
@@ -391,7 +391,15 @@ std::string_view Node::glyph(std::string_view name) const {
 text::Rendering Node::rendering() const {
     if (document_ == nullptr) return {};
 
-    return document_->rendering_;
+    return document_->display_.rendering;
+}
+
+// What the document is shown on (`Document::display`); outside a document what a terminal that
+// answers nothing gives: full color, Unicode, block characters and a cell of unknown size.
+const Display& Node::display() const {
+    static const Display silent;
+
+    return document_ == nullptr ? silent : document_->display_;
 }
 
 // What the content needs: by default as much as the largest child, and at least the least room.

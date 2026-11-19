@@ -166,7 +166,7 @@ bool throws(F what) {
 }
 
 TRIAL("Scene: show makes the first frame on the scene's screen, read as rows and as text") {
-    Scene scene{Size{6, 2}};
+    Scene scene{{.screen = {6, 2}}};
     Document document{scene.time()};
     Worded& worded = document.children().add<Worded>();
 
@@ -185,7 +185,7 @@ TRIAL("Scene: show makes the first frame on the scene's screen, read as rows and
     OUGHT(throws<std::out_of_range>([&scene] { (void)scene.row(-1); }));
     OUGHT(throws<std::out_of_range>([&scene] { (void)scene.at({6, 0}); }));
 
-    Scene narrow{Size{0, 2}};
+    Scene narrow{{.screen = {0, 2}}};
     Document empty{narrow.time()};
 
     narrow.show(empty);
@@ -216,7 +216,7 @@ TRIAL("Scene: before show every step and every reading throws") {
 // The scene hands the document its colors, Unicode and rendering: the look comes at the color
 // level asked for, and an emoji sequence takes as many cells as that rendering counts.
 TRIAL("Scene: the document gets the scene's colors, Unicode and rendering") {
-    Scene scene{Size{8, 2}, Colors::palette, false, tal::text::Rendering{false, false}};
+    Scene scene{{.screen = {8, 2}, .colors = Colors::palette, .unicode = false, .rendering = tal::text::Rendering{false, false}}};
     Document document{scene.time()};
 
     document.sheet(tal::StyleSheet::parsed(
@@ -237,7 +237,7 @@ TRIAL("Scene: the document gets the scene's colors, Unicode and rendering") {
 
 // Every input ends as an application's turn does: a frame when anything changed, none otherwise.
 TRIAL("Scene: keys, text and paste reach the document, and the frame follows the change") {
-    Scene scene{Size{10, 1}};
+    Scene scene{{.screen = {10, 1}}};
     Document document{scene.time()};
     Heard heard{document};
     Worded& worded = document.children().add<Worded>();
@@ -263,7 +263,7 @@ TRIAL("Scene: keys, text and paste reach the document, and the frame follows the
 // A click is a press and a release in one cell, which the document makes a click; two of them with
 // no time between are a double click; the pointer alone hovers; the wheel goes along its axis.
 TRIAL("Scene: clicks, a double click, pointing and the wheel reach the document") {
-    Scene scene{Size{10, 3}};
+    Scene scene{{.screen = {10, 3}}};
     Document document{scene.time()};
     Heard heard{document};
     Worded& worded = document.children().add<Worded>();
@@ -286,7 +286,7 @@ TRIAL("Scene: clicks, a double click, pointing and the wheel reach the document"
 // A click on a node goes to the middle of where it stands on the screen, its parents' places added
 // up. A node not on that screen throws: outside the document shown, or without room.
 TRIAL("Scene: a click on a node goes to its middle, and a node off the screen throws") {
-    Scene scene{Size{10, 4}};
+    Scene scene{{.screen = {10, 4}}};
     Document document{scene.time()};
     Heard heard{document};
     Stack& frame = document.children().add<Stack>();
@@ -300,7 +300,7 @@ TRIAL("Scene: a click on a node goes to its middle, and a node off the screen th
     Worded& elsewhere = other.children().add<Worded>();
     Worded loose;
 
-    other.display(Size{10, 4}, Colors::rgb, true);
+    other.display({.screen = {10, 4}, .colors = Colors::rgb, .unicode = true});
 
     (void)other.frame();
 
@@ -321,7 +321,7 @@ TRIAL("Scene: a click on a node goes to its middle, and a node off the screen th
 // Waiting moves the scene's clock: the document's timers due by then ring, and what they changed is
 // on the screen; one not yet due waits.
 TRIAL("Scene: waiting rings the timers that fall due and draws what they changed") {
-    Scene scene{Size{6, 1}};
+    Scene scene{{.screen = {6, 1}}};
     Document document{scene.time()};
     Worded& worded = document.children().add<Worded>();
 
@@ -349,7 +349,7 @@ TRIAL("Scene: waiting rings the timers that fall due and draws what they changed
 // A frame that leaves the document due is followed by the next one in the same step, as an
 // application follows it at once; a document that never settles throws after sixteen more frames.
 TRIAL("Scene: frames follow while the document is due, and one never settling throws") {
-    Scene scene{Size{6, 1}};
+    Scene scene{{.screen = {6, 1}}};
     Document document{scene.time()};
     Worded& worded = document.children().add<Worded>();
     int heard = 0;
@@ -368,7 +368,7 @@ TRIAL("Scene: frames follow while the document is due, and one never settling th
     SAME(scene.row(0), std::string{"xx    "});
     OUGHT(!document.due());
 
-    Scene other{Size{6, 1}};
+    Scene other{{.screen = {6, 1}}};
     Document restless{other.time()};
     Worded& again = restless.children().add<Worded>();
     Hooks more;
@@ -381,7 +381,7 @@ TRIAL("Scene: frames follow while the document is due, and one never settling th
 
 // A new size lays the document out again and the screen takes the new size.
 TRIAL("Scene: resizing lays the document out again on a screen of the new size") {
-    Scene scene{Size{6, 2}};
+    Scene scene{{.screen = {6, 2}}};
     Document document{scene.time()};
     Heard heard{document};
 
@@ -398,7 +398,7 @@ TRIAL("Scene: resizing lays the document out again on a screen of the new size")
 // The first start of the text, in rows from the top and in each from the left, counted in cells; a
 // match starting inside a cell's cluster does not count, and neither does empty text.
 TRIAL("Scene: where finds the cell the text starts in") {
-    Scene scene{Size{14, 3}};
+    Scene scene{{.screen = {14, 3}}};
     Document document{scene.time()};
     Stack& stack = document.children().add<Stack>();
     Worded& top = stack.children().add<Worded>();
@@ -420,7 +420,7 @@ TRIAL("Scene: where finds the cell the text starts in") {
 }
 
 TRIAL("Scene: the caret is the document's, on the screen") {
-    Scene scene{Size{10, 2}};
+    Scene scene{{.screen = {10, 2}}};
     Document document{scene.time()};
     Worded& worded = document.children().add<Worded>(true);
 
@@ -438,7 +438,7 @@ TRIAL("Scene: the caret is the document's, on the screen") {
 
 // Showing another document starts over: its first frame is made though nothing in it waits.
 TRIAL("Scene: showing another document makes its first frame") {
-    Scene scene{Size{4, 1}};
+    Scene scene{{.screen = {4, 1}}};
     Document one{scene.time()};
     Document two{scene.time()};
 

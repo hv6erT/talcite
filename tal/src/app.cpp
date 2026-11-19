@@ -6,12 +6,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+#include "tal/crypto.hpp"
 
 #include "decoder.hpp"
 #include "hexing.hpp"
@@ -21,6 +24,122 @@
 namespace tal {
 
 namespace {
+
+// A picture seen whole at `at`, with what it shows.
+struct Placement {
+    Spot at;
+    Picture picture;
+};
+
+// Whether two placements are the same picture at the same cell.
+bool same_place(const Placement& one, const Placement& two) { return one.picture.mark == two.picture.mark && one.at == two.at; }
+
+// A frame as it goes to the terminal: the document's surface, with the pictures it shows whole in
+// pixels. A picture is seen whole when every cell of its rectangle carries its mark and no cell
+// elsewhere does, and the rectangle lies within `room`; its cells then go out blank, with the paper
+// they had and the picture's mark, so that they never equal an ordinary cell and comparing frames
+// sees every change between the picture and characters. A picture covered in even one cell (by a
+// window, a menu, a shadow, the edge of a scroll) stays in characters, and its cells lose the mark,
+// for the same reason. Without pictures in pixels every cell goes out as it is, without a mark.
+class Frame {
+public:
+    Frame(const Surface& made, Graphics kind, Area room) : made_(made), bare_(cells(made.size())) {
+        if (kind == Graphics::none) return;
+
+        struct Found {
+            Area bounds;
+            std::size_t many = 0;
+        };
+
+        std::vector<std::pair<std::uint32_t, Found>> found;
+        const Size size = made.size();
+
+        for (int y = 0; y < size.high; ++y)
+            for (int x = 0; x < size.wide; ++x) {
+                const std::uint32_t mark = made.at({x, y}).picture;
+
+                if (mark == 0) continue;
+
+                auto one = std::find_if(found.begin(), found.end(), [mark](const auto& known) { return known.first == mark; });
+
+                if (one == found.end()) one = found.insert(found.end(), {mark, Found{Area{{x, y}, {1, 1}}, 0}});
+
+                Area& bounds = one->second.bounds;
+                const int right = std::max(bounds.at.x + bounds.size.wide, x + 1);
+                const int left = std::min(bounds.at.x, x);
+
+                bounds = Area{{left, bounds.at.y}, {right - left, y + 1 - bounds.at.y}};
+                ++one->second.many;
+            }
+
+        pictured_ = !found.empty();
+
+        for (const auto& [mark, one] : found) {
+            const Picture* const shown = made.picture(mark);
+
+            if (shown == nullptr || one.bounds.size != shown->size) continue;
+
+            if (one.many != static_cast<std::size_t>(shown->size.wide) * static_cast<std::size_t>(shown->size.high)) continue;
+
+            if (one.bounds.common(room) != one.bounds) continue;
+
+            if (kind == Graphics::kitty && (!shown->pixels || shown->still >= shown->pixels->stills().size())) continue;
+
+            for (int y = one.bounds.at.y; y < one.bounds.at.y + one.bounds.size.high; ++y)
+                for (int x = one.bounds.at.x; x < one.bounds.at.x + one.bounds.size.wide; ++x) bare_[index({x, y})] = mark;
+
+            placed_.push_back(Placement{one.bounds.at, *shown});
+        }
+    }
+
+    // The size.
+    [[nodiscard]] Size size() const { return made_.size(); }
+
+    // The cell at `where` as it goes out: blank with its paper and the mark where a picture shows
+    // whole, otherwise the surface's cell without a picture.
+    [[nodiscard]] Cell at(Spot where) const {
+        const Cell& one = made_.at(where);
+
+        if (const std::uint32_t mark = bare_[index(where)]; mark != 0) {
+            Cell made{" ", Look{}, mark, 0};
+
+            made.look.paper = one.look.paper;
+
+            return made;
+        }
+
+        if (one.picture == 0) return one;
+
+        Cell made = one;
+
+        made.picture = 0;
+
+        return made;
+    }
+
+    // The address of the link `link`.
+    [[nodiscard]] std::string_view address(std::uint32_t link) const { return made_.address(link); }
+
+    // Whether a cell shows a picture, seen whole or not, where pictures go in pixels.
+    [[nodiscard]] bool pictured() const { return pictured_; }
+
+    // The pictures seen whole, in the order their first cells come.
+    [[nodiscard]] const std::vector<Placement>& placed() const { return placed_; }
+
+private:
+    // Room for a mark per cell of `size`.
+    static std::vector<std::uint32_t> cells(Size size) { return std::vector<std::uint32_t>(static_cast<std::size_t>(size.wide) * static_cast<std::size_t>(size.high), 0); }
+
+    // The place of the cell `where` among them.
+    [[nodiscard]] std::size_t index(Spot where) const {
+        return static_cast<std::size_t>(where.y) * static_cast<std::size_t>(made_.size().wide) + static_cast<std::size_t>(where.x);
+    }
+
+    const Surface& made_;
+    std::vector<std::uint32_t> bare_;
+    std::vector<Placement> placed_;
+    bool pictured_ = false;
+};
 
 // What the terminal shows after the last frame, cell by cell, with the address of each link it
 // shows. A frame compares with it the rows the document changed and takes those rows in; the others
@@ -46,7 +165,7 @@ public:
 
     // Whether the screen shows at `where` what the frame `made` has there, its link's address
     // included.
-    [[nodiscard]] bool shows(const Surface& made, Spot where) const {
+    [[nodiscard]] bool shows(const Frame& made, Spot where) const {
         const Cell one = made.at(where);
 
         if (!(one == at(where))) return false;
@@ -59,7 +178,7 @@ public:
     }
 
     // Row `y` of a frame of the same size, as it now stands on the screen.
-    void took(const Surface& made, int y) {
+    void took(const Frame& made, int y) {
         if (y < 0 || y >= size_.high) return;
 
         for (int x = 0; x < size_.wide; ++x) {
@@ -181,6 +300,49 @@ void placed(Spot where, std::string& into) {
     into += "\x1b[" + std::to_string(where.y + 1) + ";" + std::to_string(where.x + 1) + "H";
 }
 
+// The kitty graphics protocol: appends the sending of one picture's frame. A frame goes to the
+// terminal once, under the picture's mark, and after that it is only placed and taken away. Raw
+// pixels (f=32, RGBA) in base64, in pieces of 4096 characters, the pieces after the first carrying
+// only m and q; q=2 silences the answers that would otherwise come as keys.
+void kitty(const Picture& one, std::string& into) {
+    const media::Pixels& pixels = *one.pixels;
+    const std::string coded = crypto::base64(pixels.stills()[one.still].rgba);
+    constexpr std::size_t piece = 4096;
+
+    for (std::size_t at = 0;; at += piece) {
+        const bool more = at + piece < coded.size();
+
+        into += "\x1b_G";
+
+        if (at == 0)
+            into += "a=t,f=32,s=" + std::to_string(pixels.size().width) + ",v=" + std::to_string(pixels.size().height) + ",i=" + std::to_string(one.mark) + ",";
+
+        into += more ? "q=2,m=1;" : "q=2,m=0;";
+        into.append(coded, at, piece);
+        into += "\x1b\\";
+
+        if (!more) return;
+    }
+}
+
+// Appends the placing of a picture sent before, over its rectangle of cells: in columns and rows
+// (c, r), so that the terminal fits it into them even where we know the cell's size wrong, and C=1
+// leaves the cursor where it is, which is why with kitty the last row may hold a picture.
+void stood(const Placement& one, std::string& into) {
+    placed(one.at, into);
+
+    into += "\x1b_Ga=p,i=" + std::to_string(one.picture.mark) + ",c=" + std::to_string(one.picture.size.wide) + ",r=" +
+            std::to_string(one.picture.size.high) + ",C=1,q=2\x1b\\";
+}
+
+// Appends the taking away of the picture `mark` from the screen (d=i, the terminal keeps its
+// pixels) or its forgetting (d=I, the pixels go too).
+void unstood(std::uint32_t mark, bool forget, std::string& into) {
+    into += "\x1b_Ga=d,d=";
+    into += forget ? 'I' : 'i';
+    into += ",i=" + std::to_string(mark) + ",q=2\x1b\\";
+}
+
 // The longest address that goes to the terminal as a hyperlink, in bytes once escaped. Terminals
 // keep a link's address in their own limits and cut or drop a longer one without a word; this is
 // the limit of the strictest of them (VTE), and what is longer stays plain text.
@@ -215,7 +377,7 @@ std::optional<std::string> addressed(std::string_view address) {
 // links.
 class Addresses {
 public:
-    Addresses(const Surface& made, bool linking) : made_(made), linking_(linking) {}
+    Addresses(const Frame& made, bool linking) : made_(made), linking_(linking) {}
 
     // The number the cell is written under: its link when the terminal gets it, otherwise none.
     [[nodiscard]] std::uint32_t of(const Cell& one) {
@@ -232,7 +394,7 @@ public:
     [[nodiscard]] const std::string& at(std::uint32_t mark) const { return *known_.at(mark); }
 
 private:
-    const Surface& made_;
+    const Frame& made_;
     bool linking_;
     std::map<std::uint32_t, std::optional<std::string>> known_;
 };
@@ -270,7 +432,7 @@ constexpr int nearby = 4;
 
 // The end of the stretch of row `y` that starts at `x`: a space alone, or a word, the cells up to
 // the next space. The terminal joins and shapes characters only within a word.
-int worded(const Surface& made, int y, int x) {
+int worded(const Frame& made, int y, int x) {
     if (made.at({x, y}).cluster == " ") return x + 1;
 
     int end = x + 1;
@@ -281,7 +443,7 @@ int worded(const Surface& made, int y, int x) {
 }
 
 // Whether a cell in [from, upto) of row `y` has a cluster the terminal may count otherwise.
-bool unsure(const Surface& made, int y, int from, int upto) {
+bool unsure(const Frame& made, int y, int from, int upto) {
     for (int x = from; x < upto; ++x)
         if (uncertain(made.at({x, y}).cluster)) return true;
 
@@ -289,7 +451,7 @@ bool unsure(const Surface& made, int y, int from, int upto) {
 }
 
 // Whether a cell in [from, upto) of row `y` differs from what the terminal has.
-bool altered(const Surface& made, const Standing& standing, int y, int from, int upto) {
+bool altered(const Frame& made, const Standing& standing, int y, int from, int upto) {
     for (int x = from; x < upto; ++x)
         if (!standing.shows(made, {x, y})) return true;
 
@@ -493,7 +655,7 @@ bool measured(const Console& from, Size& size) {
 // The writing of one frame's cells (`made`) into `into`, keeping the terminal's look, cursor and
 // open link (`now`, `at`, `linked`) as they go; links the terminal is not given stay plain text.
 struct Pen {
-    const Surface& made;
+    const Frame& made;
     Addresses& known;
     const Colors& palette;
     std::string& into;
@@ -571,8 +733,9 @@ struct Pen {
     // nothing of the previous picture stays where the terminal draws it narrower, and after it the
     // cursor jumps to the next cell instead of trusting the terminal's count. A terminal that drew
     // it wider covered the cells after it, so once such a word went out, the rest of the row goes
-    // out again too. Elsewhere only the cells that differ from what stands go.
-    void rowed(int y, const Standing& standing) {
+    // out again too, and `covered` says from which column. Elsewhere only the cells that differ
+    // from what stands go.
+    void rowed(int y, const Standing& standing, int& covered) {
         bool covering = false;
 
         for (int x = 0; x < made.size().wide;) {
@@ -590,6 +753,8 @@ struct Pen {
 
                     for (int on = x; on < end; ++on)
                         if (!made.at({on, y}).cluster.empty()) lettered(on, y);
+
+                    if (!covering) covered = x;
 
                     covering = true;
                 }
@@ -684,6 +849,11 @@ struct App::Held {
 
     Size size{80, 25};
 
+    // The kitty pictures standing after the last frame, and the frames whose pixels the terminal
+    // holds under their marks, as long as someone here still holds them too.
+    std::vector<Placement> placed;
+    std::vector<std::pair<std::uint32_t, std::weak_ptr<const media::Pixels>>> sent;
+
     // How many times we have stepped out of the terminal's way. A counter, not a flag, because
     // nested stepping aside is allowed and means one thing: the first one leaves, the last one
     // returns.
@@ -691,7 +861,18 @@ struct App::Held {
 
     // Tells the document shown what the terminal is.
     void displayed() const {
-        if (onto != nullptr) onto->display(able.size, able.colors, able.unicode, able.rendering);
+        if (onto != nullptr) onto->display(Display{able.size, able.colors, able.unicode, able.rendering, able.graphics, able.blocks, able.cell});
+    }
+
+    // Takes away and forgets every kitty picture, on leaving and when handing the terminal over:
+    // the other program gets a clean screen, and our marks could meet its own.
+    void forgotten() {
+        if (placed.empty() && sent.empty()) return;
+
+        console->write("\x1b_Ga=d,d=A,q=2\x1b\\");
+
+        placed.clear();
+        sent.clear();
     }
 
     // Writes the frame in a single write, held whole by the terminal if it can (mode 2026).
@@ -742,6 +923,8 @@ App::~App() {
     Held& held = *held_;
 
     if (held.away > 0) return;
+
+    held.forgotten();
 
     if (held.entered) {
         unshaped(*held.console, held.shaped);
@@ -826,20 +1009,37 @@ void App::title(std::string_view said) {
 
 // Draws a frame of the document shown, which `turn` has checked: the document makes it, and only
 // the difference from the screen goes to the terminal, in a single write.
+//
+// Pictures go after the cells. A sixel lies on the cells under it and goes when one of its cells
+// changed (it is new, moved, another frame of an animation, uncovered, the screen cleared) or went
+// out again with the rest of its row: writing a cell erases the pixels under it, so the cells go
+// first and the picture over them. Its rectangle keeps off the last row, since after a sixel the
+// terminal moves the cursor below it, and below the last row there is only scrolling. A kitty
+// picture is no part of the text, so what decides is what stands: one gone or moved is taken away
+// before the cells, one new placed after them, its frame sent first when the terminal does not
+// hold it yet, and the terminal forgets a frame once nobody here holds its pixels.
 void App::draw() {
     Held& held = *held_;
 
     const std::uint64_t before = held.framed;
-    const Surface& made = held.onto->frame();
+    const Surface& surface = held.onto->frame();
+    const Size size = surface.size();
+    const Graphics kind = held.able.graphics == Graphics::sixel && (held.able.cell.wide <= 0 || held.able.cell.high <= 0) ? Graphics::none : held.able.graphics;
+    const Frame made{surface, kind, Area{{0, 0}, {size.wide, kind == Graphics::sixel ? size.high - 1 : size.high}}};
     std::string into;
 
     held.framed = held.onto->framed();
 
     // A size change or a fresh configuration invalidates the previous frame: we compare with a
-    // blank screen, so everything comes out anew.
+    // blank screen, so everything comes out anew. Clearing the screen leaves kitty pictures, which
+    // are no text, so they go too; their pixels stay, and the frame places them again.
     const bool reset = held.shifted || !(held.standing.size() == made.size());
 
     if (reset) {
+        if (!held.placed.empty()) into += "\x1b_Ga=d,d=a,q=2\x1b\\";
+
+        held.placed.clear();
+
         into += "\x1b[0m\x1b[2J";
 
         held.standing = Standing{made.size()};
@@ -848,22 +1048,33 @@ void App::draw() {
         held.shifted = false;
     }
 
+    std::vector<Placement> sixels;
+    std::vector<Placement> kitties;
+
+    for (const Placement& one : made.placed()) (kind == Graphics::sixel ? sixels : kitties).push_back(one);
+
+    // Whether a picture shows whole depends on all its rows, and so do the cells made blank for it,
+    // whichever rows were painted; with pictures every row is compared.
     std::vector<int> rows;
 
-    if (reset || held.framed != before + 1) {
+    if (reset || held.framed != before + 1 || made.pictured()) {
         for (int y = 0; y < made.size().high; ++y) rows.push_back(y);
     } else {
-        for (const Area& one : made.damaged())
+        for (const Area& one : surface.damaged())
             for (int y = one.at.y; y < one.at.y + one.size.high; ++y) rows.push_back(y);
 
         std::sort(rows.begin(), rows.end());
         rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
     }
 
+    for (const Placement& one : held.placed)
+        if (std::none_of(kitties.begin(), kitties.end(), [&one](const Placement& kept) { return same_place(one, kept); })) unstood(one.picture.mark, false, into);
+
     Addresses known{made, held.able.links};
     Pen pen{made, known, held.able.colors, into, held.now, held.at, held.linked};
+    std::vector<int> covered(static_cast<std::size_t>(std::max(size.high, 0)), size.wide);
 
-    for (const int y : rows) pen.rowed(y, held.standing);
+    for (const int y : rows) pen.rowed(y, held.standing, covered[static_cast<std::size_t>(y)]);
 
     // No link stays open past the frame: whatever reaches the terminal outside a frame must not
     // land inside one.
@@ -872,6 +1083,39 @@ void App::draw() {
 
         held.linked = 0;
     }
+
+    std::erase_if(sixels, [&](const Placement& one) {
+        for (int y = one.at.y; y < one.at.y + one.picture.size.high; ++y)
+            for (int x = one.at.x; x < one.at.x + one.picture.size.wide; ++x)
+                if (!held.standing.shows(made, {x, y}) || x >= covered[static_cast<std::size_t>(y)]) return false;
+
+        return true;
+    });
+
+    for (const Placement& one : sixels) {
+        if (!one.picture.sixel) continue;
+
+        placed(one.at, into);
+
+        into += *one.picture.sixel;
+        held.at = Spot{-1, -1};
+    }
+
+    for (const Placement& one : kitties) {
+        if (std::any_of(held.placed.begin(), held.placed.end(), [&one](const Placement& was) { return same_place(was, one); })) continue;
+
+        if (std::none_of(held.sent.begin(), held.sent.end(), [&one](const auto& was) { return was.first == one.picture.mark; })) {
+            kitty(one.picture, into);
+
+            held.sent.emplace_back(one.picture.mark, one.picture.pixels);
+        }
+
+        stood(one, into);
+
+        held.at = Spot{-1, -1};
+    }
+
+    held.placed = std::move(kitties);
 
     // The cursor comes from the document: where the node with the focus wants it, in its shape,
     // shown; hidden when there is none. The shape goes before the cursor shows.
@@ -898,6 +1142,16 @@ void App::draw() {
     }
 
     for (const int y : rows) held.standing.took(made, y);
+
+    // The terminal forgets a frame whose pixels nobody here holds any more: last, once the memory
+    // of this frame (`placed`) holds what stands.
+    std::erase_if(held.sent, [&into](const auto& one) {
+        if (!one.second.expired()) return false;
+
+        unstood(one.first, true, into);
+
+        return true;
+    });
 
     held.delivered(into);
 }
@@ -1021,6 +1275,8 @@ App::Pause::Pause(App& one) : app_(one) {
     Held& held = *app_.held_;
 
     if (held.away++ > 0) return;
+
+    held.forgotten();
 
     if (held.entered) {
         unshaped(*held.console, held.shaped);

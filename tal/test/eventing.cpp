@@ -119,7 +119,7 @@ struct Stage {
     Hooks hooks;
 
     Stage() {
-        document.display(Size{20, 2}, Colors::rgb, true);
+        document.display({.screen = {20, 2}, .colors = Colors::rgb, .unicode = true});
 
         strip = &document.children().add<Strip>();
         first = &strip->children().add<Knob>(4);

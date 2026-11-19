@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -264,20 +265,49 @@ TRIAL("Surface: a link numbers its address, which goes when no cell holds it") {
     SAME(one.address(first + 1), std::string_view{});
 }
 
-TRIAL("Surface: a picture marks its cells and writing takes it away") {
+// A picture is held while a cell shows it: writing over its cells takes them away one by one, and
+// with the last one the surface forgets it; a shadow takes it too, since pixels cannot be dimmed.
+// The same mark given again takes the new picture into every cell showing it.
+TRIAL("Surface: a picture marks its cells, is held while one shows it, and goes under a shadow") {
     Surface one{{4, 2}};
     Canvas all = one.canvas({{0, 0}, {4, 2}});
+    const auto sixel = std::make_shared<const std::string>("seven");
 
-    all.picture({{1, 0}, {2, 2}}, 7);
+    all.picture({{1, 0}, {2, 2}}, tal::Picture{.mark = 7, .size = {2, 2}, .sixel = sixel});
 
     SAME(one.at({1, 1}).picture, std::uint32_t{7});
     SAME(one.at({0, 1}).picture, std::uint32_t{0});
     SAME(damage(one), (std::vector<Area>{{{1, 0}, {2, 2}}}));
+    OUGHT(one.picture(7) != nullptr && one.picture(7)->sixel == sixel && one.picture(7)->size == (Size{2, 2}));
+    OUGHT(one.picture(0) == nullptr && one.picture(8) == nullptr);
 
     (void)all.put({2, 1}, "x", Look{});
 
     SAME(one.at({2, 1}).picture, std::uint32_t{0});
     SAME(one.at({1, 1}).picture, std::uint32_t{7});
+
+    all.picture({{1, 0}, {1, 1}}, tal::Picture{.mark = 7, .size = {2, 2}});
+
+    OUGHT(one.picture(7) != nullptr && one.picture(7)->sixel == nullptr);
+
+    all.fill({{1, 0}, {2, 1}}, Look{});
+
+    OUGHT(one.picture(7) != nullptr);
+
+    all.shade({{0, 1}, {4, 1}}, Look{});
+
+    SAME(one.at({1, 1}).picture, std::uint32_t{0});
+    OUGHT(one.picture(7) == nullptr);
+
+    all.picture({{0, 0}, {1, 1}}, tal::Picture{.mark = 9, .size = {1, 1}});
+    all.picture({{0, 0}, {1, 1}}, tal::Picture{});
+
+    SAME(one.at({0, 0}).picture, std::uint32_t{0});
+    OUGHT(one.picture(9) == nullptr);
+
+    one.canvas({{3, 1}, {1, 1}}).picture({{1, 0}, {1, 1}}, tal::Picture{.mark = 10, .size = {1, 1}});
+
+    OUGHT(one.picture(10) == nullptr);
 }
 
 // A shade changes the look of the cells it covers and leaves their letters; only the cells whose

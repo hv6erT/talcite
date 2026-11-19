@@ -65,7 +65,7 @@ struct Typed {
     Hooks hooks;
 
     // Builds it with `said` in the field.
-    explicit Typed(std::string said = {}, int wide = 10) : scene(Size{wide, 3}) {
+    explicit Typed(std::string said = {}, int wide = 10) : scene({.screen = {wide, 3}}) {
         catcher = &document.children().add<Catcher>();
         field = &catcher->children().add<Field>(std::move(said));
         scene.show(document);
@@ -431,7 +431,7 @@ struct Remembering {
 
     // Builds it with `earlier` in the history, on a screen `high` rows high, `down` rows from its
     // top.
-    explicit Remembering(std::vector<std::string> earlier, int high = 8, int down = 0) : scene(Size{20, high}) {
+    explicit Remembering(std::vector<std::string> earlier, int high = 8, int down = 0) : scene({.screen = {20, high}}) {
         layers = &document.children().add<tal::Layers>();
 
         auto made = std::make_shared<tal::Window>();

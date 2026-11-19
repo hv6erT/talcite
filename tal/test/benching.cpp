@@ -536,7 +536,7 @@ private:
 
 // A pager of a file filling a screen of 200 by 60 cells, its reads come on the program's loop.
 struct Paged {
-    tal::testing::Scene scene{Size{200, 60}};
+    tal::testing::Scene scene{{.screen = {200, 60}}};
     tal::Document document{scene.time()};
     tal::Pager* pager = nullptr;
 
@@ -566,7 +566,7 @@ struct Paged {
 
 // An editor of a text filling a screen of 200 by 60 cells, its cursor in the middle line.
 struct Composed {
-    tal::testing::Scene scene{Size{200, 60}};
+    tal::testing::Scene scene{{.screen = {200, 60}}};
     tal::Document document{scene.time()};
     tal::Editor* editor = nullptr;
 

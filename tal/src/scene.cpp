@@ -14,10 +14,9 @@ constexpr int restless = 16;
 
 }
 
-// A scene of `screen` cells for a terminal of `colors`, with or without Unicode, drawing emoji
-// `how`; its clock stands still until the scene moves it.
-Scene::Scene(Size screen, Colors colors, bool unicode, text::Rendering how)
-    : clock_(std::make_shared<ManualClock>()), screen_(screen), colors_(colors), unicode_(unicode), how_(how) {}
+// A scene of a terminal as `given` describes it (`Document::display`); its clock stands still
+// until the scene moves it.
+Scene::Scene(Display given) : clock_(std::make_shared<ManualClock>()), display_(given) {}
 
 // The scene's clock as a document takes it. A document shown in the scene has to be made on it, or
 // its timers would not ring when the scene waits.
@@ -31,16 +30,26 @@ void Scene::show(Document& one) {
     shown_ = &one;
     last_ = nullptr;
 
-    one.display(screen_, colors_, unicode_, how_);
+    one.display(display_);
 
     settled();
 }
 
 // A window of `screen` cells now: the document is laid out in it and drawn again.
 void Scene::resize(Size screen) {
-    screen_ = screen;
+    display_.screen = screen;
 
-    shown().display(screen_, colors_, unicode_, how_);
+    shown().display(display_);
+
+    settled();
+}
+
+// A terminal as `given` describes it now, as after the application's `reconfigure`: the document
+// takes it and is drawn again.
+void Scene::display(Display given) {
+    display_ = given;
+
+    shown().display(display_);
 
     settled();
 }
@@ -99,7 +108,7 @@ void Scene::click(Node& one, MouseButton button) {
     const Size size = one.area().size;
     const Spot middle{at.x + size.wide / 2, at.y + size.high / 2};
 
-    if (size.wide <= 0 || size.high <= 0 || !Area{{0, 0}, screen_}.contains(middle))
+    if (size.wide <= 0 || size.high <= 0 || !Area{{0, 0}, display_.screen}.contains(middle))
         throw std::logic_error{"tal::testing::Scene::click: the node does not stand on the screen"};
 
     click(middle, button);

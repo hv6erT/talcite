@@ -104,7 +104,7 @@ struct Program {
     Hooks hooks;
 
     // Builds the screen, shows it and focuses its first button.
-    explicit Program(Size size = {30, 10}) : scene(size) {
+    explicit Program(Size size = {30, 10}) : scene({.screen = size}) {
         layers = &document.children().add<Layers>();
 
         auto made = std::make_shared<Window>();
@@ -622,7 +622,7 @@ TRIAL("Window: no title without a frame, and the room it may take") {
 
 // Seats and the full window count from the inside of the layers, which may have padding.
 TRIAL("Layers: seats count from the inside of the layers") {
-    Scene scene{Size{30, 10}};
+    Scene scene{{.screen = {30, 10}}};
     Document document{scene.time()};
 
     document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "layers", "style": {"padding": 1}}], "glyphs": {}})"));
@@ -753,7 +753,7 @@ private:
 // Confining the focus ends a capture outside, so that the mouse reaches the confinement again; a
 // confined node leaving the tree frees the focus.
 TRIAL("Document: confining ends a capture outside, and a confinement leaving frees it") {
-    Scene scene{Size{20, 4}};
+    Scene scene{{.screen = {20, 4}}};
     Document document{scene.time()};
     tal::Row& row = document.children().add<tal::Row>();
     Grabber& outside = row.children().add<Grabber>();

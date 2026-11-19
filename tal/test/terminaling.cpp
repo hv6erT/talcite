@@ -218,7 +218,7 @@ struct Shown {
     Hooks hooks;
 
     // Builds, shows and starts it.
-    explicit Shown(Size size = {20, 5}, std::size_t kept = 100, bool refusing = false, bool starting = true, bool sharing = false) : scene(size) {
+    explicit Shown(Size size = {20, 5}, std::size_t kept = 100, bool refusing = false, bool starting = true, bool sharing = false) : scene({.screen = size}) {
         Command what;
 
         what.program = tal::Path{"sh"};

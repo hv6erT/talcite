@@ -87,6 +87,14 @@ std::string_view Surface::address(std::uint32_t link) const {
     return addresses_[link - 1];
 }
 
+// The picture `mark` as the cells showing it were given it, or nothing for 0 or a picture no cell
+// shows.
+const Picture* Surface::picture(std::uint32_t mark) const {
+    const auto found = pictures_.find(mark);
+
+    return found == pictures_.end() ? nullptr : &found->second.first;
+}
+
 // The cell at `one`, which the caller has checked lies inside.
 Cell& Surface::cell(Spot one) {
     return cells_[static_cast<std::size_t>(one.y) * static_cast<std::size_t>(size_.wide) + static_cast<std::size_t>(one.x)];
@@ -123,9 +131,9 @@ void Surface::placed(Spot here, std::string_view cluster, int wide, const Look& 
         if (one.cluster == letters && one.look == made && one.picture == 0 && one.link == 0) continue;
 
         relinked(one, 0);
+        repictured(one, 0);
         one.cluster = std::string{letters};
         one.look = made;
-        one.picture = 0;
 
         from = std::min(from, column);
         to = std::max(to, column);
@@ -141,6 +149,22 @@ void Surface::blanked(Spot one, int& from, int& to) {
 
     from = std::min(from, one.x);
     to = std::max(to, one.x);
+}
+
+// Gives the cell `one` the picture `mark`, holding the new one and letting go of the old, which
+// the surface forgets once no cell shows it.
+void Surface::repictured(Cell& one, std::uint32_t mark) {
+    if (one.picture == mark) return;
+
+    if (mark != 0) ++pictures_.at(mark).second;
+
+    const std::uint32_t old = one.picture;
+
+    one.picture = mark;
+
+    if (old == 0) return;
+
+    if (const auto found = pictures_.find(old); found != pictures_.end() && --found->second.second == 0) pictures_.erase(found);
 }
 
 // Gives the cell `one` the link `link`, holding the new one and letting go of the old.
@@ -263,8 +287,9 @@ int Canvas::put(Spot at, std::string_view text, const Look& look) {
     return taken;
 }
 
-// Gives the cells of `part` the look `look` and leaves their letters, links and pictures: a shadow
-// dims what lies beneath it without hiding it.
+// Gives the cells of `part` the look `look` and leaves their letters and links: a shadow dims what
+// lies beneath it without hiding it. Pictures go, since their pixels cannot be dimmed; the letters
+// under them stand for them dimmed.
 void Canvas::shade(Area part, const Look& look) {
     const Area cut_part = cut(part);
 
@@ -275,9 +300,10 @@ void Canvas::shade(Area part, const Look& look) {
         for (int x = cut_part.at.x; x < cut_part.at.x + cut_part.size.wide; ++x) {
             Cell& one = onto_->cell({x, y});
 
-            if (one.look == look) continue;
+            if (one.look == look && one.picture == 0) continue;
 
             one.look = look;
+            onto_->repictured(one, 0);
             from = std::min(from, x);
             to = std::max(to, x);
         }
@@ -337,27 +363,37 @@ void Canvas::frame(Area part, const Lines& lines, const Look& look) {
             for (int y = from_y; y <= to_y; ++y) (void)put({x, y}, lines.upright, look);
 }
 
-// Marks the cells of `part` as showing the picture `id` (0 for none); their letters stay for a
-// terminal that shows no pictures.
-void Canvas::picture(Area part, std::uint32_t id) {
+// Marks the cells of `part` as showing the picture `one` (none for a mark of 0); their letters
+// stay for a terminal that shows no pictures, and for the picture while it is not seen whole. A
+// picture of a mark already shown takes its place in every cell showing it.
+void Canvas::picture(Area part, Picture one) {
     const Area cut_part = cut(part);
+    const std::uint32_t mark = one.mark;
+
+    if (mark != 0) {
+        auto& held = onto_->pictures_[mark];
+
+        held.first = std::move(one);
+    }
 
     for (int y = cut_part.at.y; y < cut_part.at.y + cut_part.size.high; ++y) {
         int from = onto_->size_.wide;
         int to = -1;
 
         for (int x = cut_part.at.x; x < cut_part.at.x + cut_part.size.wide; ++x) {
-            Cell& one = onto_->cell({x, y});
+            Cell& held = onto_->cell({x, y});
 
-            if (one.picture == id) continue;
+            if (held.picture == mark) continue;
 
-            one.picture = id;
+            onto_->repictured(held, mark);
             from = std::min(from, x);
             to = std::max(to, x);
         }
 
         if (to >= from) onto_->spoiled(Area{{from, y}, {to - from + 1, 1}});
     }
+
+    if (const auto found = onto_->pictures_.find(mark); found != onto_->pictures_.end() && found->second.second == 0) onto_->pictures_.erase(found);
 }
 
 // Makes the cells of `part` a link to `address`; an empty address takes the link away.

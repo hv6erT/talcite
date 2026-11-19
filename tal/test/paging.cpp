@@ -150,10 +150,10 @@ struct Paged {
     Hooks hooks;
 
     // A pager of the text `said`.
-    Paged(std::string said, Size size) : scene(size) { shown(document.children().add<Pager>(std::make_shared<Text>(said))); }
+    Paged(std::string said, Size size) : scene({.screen = size}) { shown(document.children().add<Pager>(std::make_shared<Text>(said))); }
 
     // A pager of the file `file`, its first bytes `head` at hand.
-    Paged(const std::shared_ptr<Held>& file, Size size, std::string head = {}) : scene(size) {
+    Paged(const std::shared_ptr<Held>& file, Size size, std::string head = {}) : scene({.screen = size}) {
         shown(document.children().add<Pager>(tal::fs::File{file}, tal::bytes(head)));
     }
 
@@ -418,7 +418,7 @@ TRIAL("Pager: a jump to a byte, and the view in lines or bytes") {
 // A scrollbar beside a pager shows its view and moves it: a press under the thumb goes a page, the
 // wheel three lines.
 TRIAL("Pager: a scrollbar beside it") {
-    Scene scene{{5, 4}};
+    Scene scene{{.screen = {5, 4}}};
     Document document{scene.time()};
     tal::Row& row = document.children().add<tal::Row>();
     Pager& pager = row.children().add<Pager>(std::make_shared<Text>(many(40)));
@@ -611,7 +611,7 @@ TRIAL("Pager: a file that fails") {
 // shorter; one not shown yet takes its line from the program and shows it once laid out.
 TRIAL("Pager: a text that changes, and a view before layout") {
     const auto text = std::make_shared<Text>(many(10));
-    Scene scene{{4, 2}};
+    Scene scene{{.screen = {4, 2}}};
     Document document{scene.time()};
     Pager& pager = document.children().add<Pager>(text);
 
@@ -781,7 +781,7 @@ TRIAL("Pager: without wrapping, at the edges") {
 // does.
 TRIAL("Pager: rows of a long wrapped line kept and forgotten") {
     const auto text = std::make_shared<Text>("\t" + std::string(1000, 'y') + "\nend");
-    Scene scene{{10, 2}};
+    Scene scene{{.screen = {10, 2}}};
     Document document{scene.time()};
     Pager& pager = document.children().add<Pager>(text);
 
@@ -947,7 +947,7 @@ private:
 // address follows it, also in a framed pager. The wheel that moves the view is the page's, and the
 // wheel at an edge is left to the nodes above.
 TRIAL("Pager: marks clicked, and the wheel at the edges") {
-    Scene scene{{10, 4}};
+    Scene scene{{.screen = {10, 4}}};
     Document document{scene.time()};
     Catcher& catcher = document.children().add<Catcher>();
     Pager& pager = catcher.children().add<Pager>(std::make_shared<Text>("one two\nthree\n" + many(10)));
@@ -1034,7 +1034,7 @@ TRIAL("Pager: reaching marks in long lines") {
     SAME(ends.pager->first(), std::size_t{10});
 
     const auto text = std::make_shared<Text>(many(50));
-    Scene scene{{6, 3}};
+    Scene scene{{.screen = {6, 3}}};
     Document document{scene.time()};
     Pager& later = document.children().add<Pager>(text);
 

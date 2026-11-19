@@ -127,29 +127,32 @@ void Document::sheet(StyleSheet given) {
     sheet_ = std::move(given);
 
     restyle();
-    damaged(Area{{0, 0}, screen_});
+    damaged(Area{{0, 0}, display_.screen});
 }
 
 // Says what the document is shown on: the size of the screen in cells, its color level, whether
-// it shows Unicode and how it renders clusters (whether it joins emoji sequences and presents
-// pictographs as emoji). A new size is a new surface, laid out and painted whole; a new rendering
-// changes the width of text, so every node is measured again on a new surface; a new level styles
-// every node again; Unicode changes the glyphs, so everything is painted again.
-void Document::display(Size screen, Colors colors, bool unicode, text::Rendering how) {
-    if (screen == screen_ && colors == colors_ && unicode == unicode_ && how == rendering_) return;
+// it shows Unicode, how it renders clusters (whether it joins emoji sequences and presents
+// pictographs as emoji), and how it shows pictures: graphics, block characters and the size of a
+// cell in pixels. A new size is a new surface, laid out and painted whole; a new rendering changes
+// the width of text, and new pictures change what a picture asks for, so every node is measured
+// again; a new level styles every node again; Unicode changes the glyphs, so everything is painted
+// again.
+void Document::display(Display shown) {
+    if (shown == display_) return;
 
     changing();
 
-    if (screen != screen_ || how != rendering_) {
-        screen_ = screen;
-        surface_ = Surface{screen, how};
+    const Display was = display_;
+
+    display_ = shown;
+
+    if (shown.screen != was.screen || shown.rendering != was.rendering) {
+        surface_ = Surface{shown.screen, shown.rendering};
 
         relayout();
     }
 
-    if (how != rendering_) {
-        rendering_ = how;
-
+    if (shown.rendering != was.rendering || shown.graphics != was.graphics || shown.blocks != was.blocks || shown.cell != was.cell) {
         std::vector<Node*> waiting{this};
 
         while (!waiting.empty()) {
@@ -164,15 +167,9 @@ void Document::display(Size screen, Colors colors, bool unicode, text::Rendering
         }
     }
 
-    if (colors != colors_) {
-        colors_ = colors;
+    if (shown.colors != was.colors) restyle();
 
-        restyle();
-    }
-
-    unicode_ = unicode;
-
-    damaged(Area{{0, 0}, screen_});
+    damaged(Area{{0, 0}, display_.screen});
 }
 
 // Whether a frame would change anything: a node to style, measure or arrange, or a place to paint.
@@ -202,8 +199,8 @@ const Surface& Document::frame() {
     stage_ = Stage::laying;
 
     if (sizing_ || arranging_) {
-        (void)measured(Limits{screen_, screen_});
-        placed(Area{{0, 0}, screen_});
+        (void)measured(Limits{display_.screen, display_.screen});
+        placed(Area{{0, 0}, display_.screen});
     }
 
     stage_ = Stage::settling;
@@ -229,7 +226,7 @@ const Surface& Document::frame() {
     stage_ = Stage::painting;
 
     const std::vector<Area> parts = std::move(damage_);
-    const Area screen{{0, 0}, screen_};
+    const Area screen{{0, 0}, display_.screen};
 
     damage_.clear();
 
@@ -246,7 +243,7 @@ void Document::damaged(Area part) { damage::added(damage_, part, most_damaged); 
 void Document::styled(Node& one) {
     if (!one.styled_) {
         const std::vector<std::vector<std::string>> classes = one.lineage();
-        const Style made = sheet_.style(Selection{classes, one.states_, {}}, colors_);
+        const Style made = sheet_.style(Selection{classes, one.states_, {}}, display_.colors);
 
         ++tally_.styled;
 
@@ -287,7 +284,7 @@ void Document::painted(Node& one, Spot origin, Area clip, Area part) {
     const Area shown = clip.common(part);
     Canvas over = surface_.canvas(shown);
     const std::vector<std::vector<std::string>> shade{{"shade"}};
-    const Look dark = sheet_.style(Selection{shade, {}, {}}, colors_).look;
+    const Look dark = sheet_.style(Selection{shade, {}, {}}, display_.colors).look;
 
     for (const Area cast : damage::shadowed(box)) over.shade(Area{{cast.at.x - shown.at.x, cast.at.y - shown.at.y}, cast.size}, dark);
 }
@@ -302,7 +299,7 @@ void Document::drawn(Node& one, Area box, Area seen, Area clip, Area part) {
 
     whole.fill(all, style.look);
 
-    if (line != 0) whole.frame(all, sheet_.lines(style.border, unicode_), style.look);
+    if (line != 0) whole.frame(all, sheet_.lines(style.border, display_.unicode), style.look);
 
     one.outline(whole);
 
@@ -334,7 +331,7 @@ std::optional<Caret> Document::caret() const {
                                                                    style.padding.bottom + line, style.padding.left + line});
     const Spot at{content.at.x + made->at.x, content.at.y + made->at.y};
 
-    if (!content.contains(at) || !Area{{0, 0}, screen_}.contains(at)) return std::nullopt;
+    if (!content.contains(at) || !Area{{0, 0}, display_.screen}.contains(at)) return std::nullopt;
 
     made->at = at;
 

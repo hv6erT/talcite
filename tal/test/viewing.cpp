@@ -155,7 +155,7 @@ struct Shown {
     Hooks hooks;
 
     // Builds and shows it.
-    explicit Shown(std::size_t many, Size size = {12, 5}, bool focused = true) : scene(size), rows(std::make_shared<Rows>(many)) {
+    explicit Shown(std::size_t many, Size size = {12, 5}, bool focused = true) : scene({.screen = size}), rows(std::make_shared<Rows>(many)) {
         list = &document.children().add<List>(rows);
         hooks.add(list->on<Picked>([this](Picked& what) { picked.push_back(what.row); }));
         scene.show(document);
@@ -484,7 +484,7 @@ TRIAL("List: an entry's part, marks and elision") {
 // titles. A click on a title or the gap after it tells `Sorted` with its column; under the rows or
 // without the titles nothing does, and without them the rows begin at the top.
 TRIAL("Table: columns under their titles, a spanning cell, sorting asked by a click") {
-    Scene scene{Size{20, 4}};
+    Scene scene{{.screen = {20, 4}}};
     Document document{scene.time()};
     auto rows = std::make_shared<Rows>(2, 3);
     Table& table = document.children().add<Table>(
@@ -611,7 +611,7 @@ TRIAL("Tree: indents and marks, opened and closed by keys and clicks") {
         }
     };
 
-    Scene scene{Size{12, 6}};
+    Scene scene{{.screen = {12, 6}}};
     Document document{scene.time()};
     auto model = std::make_shared<Nested>();
     Tree& tree = document.children().add<Tree>(model);
@@ -701,7 +701,7 @@ TRIAL("Tree: indents and marks, opened and closed by keys and clicks") {
 // the view a window, dragging moves it along, the wheel as over the view. It shows the focus of the
 // view; a view gone leaves it empty, and one no one holds throws.
 TRIAL("Scroll: the thumb shows and moves the view") {
-    Scene scene{Size{8, 10}};
+    Scene scene{{.screen = {8, 10}}};
     Document document{scene.time()};
     auto rows = std::make_shared<Rows>(40);
     tal::Column& column = document.children().add<tal::Column>();
@@ -824,7 +824,7 @@ TRIAL("Scroll: the thumb shows and moves the view") {
 // A new size of the bar takes where the thumb stands then, so that a later move back to that place
 // paints it again.
 TRIAL("Scroll: a new size, then the view moving back") {
-    Scene scene{Size{8, 10}};
+    Scene scene{{.screen = {8, 10}}};
     Document document{scene.time()};
     auto rows = std::make_shared<Rows>(40);
     Row& row = document.children().add<Row>();
@@ -867,7 +867,7 @@ TRIAL("List: what it leaves to the nodes above") {
         Hooks hooks_;
     };
 
-    Scene scene{Size{12, 6}};
+    Scene scene{{.screen = {12, 6}}};
     Document document{scene.time()};
     Catcher& catcher = document.children().add<Catcher>();
     tal::Button& other = catcher.children().add<tal::Button>(std::make_shared<tal::Action>("x"));
@@ -1033,7 +1033,7 @@ TRIAL("Model and Node: a hook gone hears nothing, a part painted stays in the bo
 
     SAME(heard, 1);
 
-    Scene scene{Size{10, 3}};
+    Scene scene{{.screen = {10, 3}}};
     Document document{scene.time()};
     tal::Column& column = document.children().add<tal::Column>();
     Patch& first = column.children().add<Patch>();
@@ -1073,7 +1073,7 @@ TRIAL("List: a new size keeps the view in the rows and the current row in the vi
 
     SAME(list.top(), std::size_t{4});
 
-    Scene scene{Size{8, 10}};
+    Scene scene{{.screen = {8, 10}}};
     Document document{scene.time()};
     Row& row = document.children().add<Row>();
     tal::Column& column = row.children().add<tal::Column>();
@@ -1098,7 +1098,7 @@ TRIAL("List: a new size keeps the view in the rows and the current row in the vi
 // A new size of the bar takes where the thumb stands then: rows coming later that bring the thumb
 // back to where it stood before the new size paint it there.
 TRIAL("Scroll: a new size, then rows bringing the thumb back") {
-    Scene scene{Size{8, 9}};
+    Scene scene{{.screen = {8, 9}}};
     Document document{scene.time()};
     auto rows = std::make_shared<Rows>(40);
     Row& row = document.children().add<Row>();

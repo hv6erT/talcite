@@ -195,7 +195,7 @@ struct Shown {
     Hooks hooks;
 
     // Builds and shows it.
-    explicit Shown(std::vector<Hunk> given, Size size = {70, 8}) : scene(size), hunks(std::make_shared<Fixed>(std::move(given))) {
+    explicit Shown(std::vector<Hunk> given, Size size = {70, 8}) : scene({.screen = size}), hunks(std::make_shared<Fixed>(std::move(given))) {
         diff = &document.children().add<Diff>(hunks);
         hooks.add(diff->on<tal::Ticked>([this](tal::Ticked& what) { ticked.emplace_back(what.hunk, what.on); }));
         hooks.add(diff->on<tal::Scrolled>([this](tal::Scrolled&) { ++scrolled; }));

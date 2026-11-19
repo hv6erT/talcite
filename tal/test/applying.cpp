@@ -595,7 +595,7 @@ TRIAL("App: the cursor's shape goes once, comes again after stepping aside, and 
 TRIAL("App: the document's caret stands on the screen, inside the content of its node") {
     Rig rig;
 
-    rig.document.display(Size{10, 3}, Colors::rgb, true);
+    rig.document.display({.screen = {10, 3}, .colors = Colors::rgb, .unicode = true});
 
     Corner& corner = rig.document.children().add<Corner>();
     Pointed& pointed = corner.children().add<Pointed>();
@@ -1355,7 +1355,7 @@ TRIAL("App: the document's double-click time bounds the wait between clicks") {
     Rig rig;
     std::vector<Press> heard;
 
-    rig.document.display(Size{4, 1}, Colors::rgb, true);
+    rig.document.display({.screen = {4, 1}, .colors = Colors::rgb, .unicode = true});
     rig.hooks.add(rig.document.on<MouseEvent>([&heard](MouseEvent& what) {
         if (what.press == Press::click || what.press == Press::double_click) heard.push_back(what.press);
     }));
@@ -1411,7 +1411,7 @@ TRIAL("App: nodes measure with the document's rendering") {
     OUGHT(*measured.seen == (tal::text::Rendering{false, false}));
     SAME(measured.measured(tal::Limits{{0, 0}, {80, 25}}).wide, 4);
 
-    rig.document.display(Size{80, 25}, Colors::palette, true, tal::text::Rendering{});
+    rig.document.display({.screen = {80, 25}, .colors = Colors::palette, .unicode = true, .rendering = tal::text::Rendering{}});
 
     OUGHT(rig.document.due());
 

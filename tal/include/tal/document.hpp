@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "tal/capabilities.hpp"
 #include "tal/clock.hpp"
 #include "tal/event.hpp"
 #include "tal/geometry.hpp"
@@ -19,6 +20,18 @@
 #include "tal/text.hpp"
 
 namespace tal {
+
+struct Display {
+    Size screen{};
+    Colors colors = Colors::rgb;
+    bool unicode = true;
+    text::Rendering rendering{};
+    Graphics graphics = Graphics::none;
+    Blocks blocks = Blocks::basic;
+    Size cell{};
+
+    friend bool operator==(const Display&, const Display&) = default;
+};
 
 struct Tally {
     std::uint64_t styled = 0;
@@ -62,7 +75,7 @@ public:
 
     [[nodiscard]] const StyleSheet& sheet() const { return sheet_; }
 
-    void display(Size screen, Colors colors, bool unicode, text::Rendering how = {});
+    void display(Display shown);
 
     [[nodiscard]] bool due() const;
 
@@ -136,10 +149,7 @@ private:
     Port<Processes> processes_;
     std::optional<Scope> scope_;
     StyleSheet sheet_;
-    Size screen_;
-    Colors colors_ = Colors::mono;
-    bool unicode_ = false;
-    text::Rendering rendering_;
+    Display display_{.colors = Colors::mono, .unicode = false};
     Surface surface_{{0, 0}};
     std::vector<Area> damage_;
     bool restyling_ = true;

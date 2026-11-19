@@ -74,7 +74,7 @@ struct Stage {
     Document document{scene.time()};
 
     // Makes the scene and gives the document the sheet.
-    explicit Stage(Size screen) : scene(screen) { document.sheet(sheet()); }
+    explicit Stage(Size screen) : scene({.screen = screen}) { document.sheet(sheet()); }
 
     // Shows the document.
     void shown() { scene.show(document); }

@@ -67,7 +67,7 @@ struct Laid {
     // Makes the layout and its document.
     template <typename... Given>
     explicit Laid(Size screen, Given&&... given) {
-        document.display(screen, Colors::rgb, true);
+        document.display({.screen = screen, .colors = Colors::rgb, .unicode = true});
         layout = &document.children().template add<T>(std::forward<Given>(given)...);
     }
 

@@ -151,7 +151,7 @@ struct Shown {
     // A document of `size` whose addresses open through the scripted port, or through a refusing
     // one.
     explicit Shown(Size size = {30, 6}, bool refusing = false)
-        : scene(size),
+        : scene({.screen = size}),
           document(scene.time(), refusing ? tal::Port<tal::Processes>{std::make_shared<Refusing>()} : tal::Port<tal::Processes>{scripted}) {
         hooks.add(document.on<Unfollowed>([this](Unfollowed& one) {
             failed.push_back(one.address + ": " + one.why.what());
@@ -267,7 +267,7 @@ TRIAL("Following: a click on an address in a label tells Followed, and the docum
     }
 
     {
-        Scene scene{{30, 2}};
+        Scene scene{{.screen = {30, 2}}};
         Document alone{scene.time(), tal::Port<tal::Processes>{std::make_shared<Refusing>()}};
         tal::Label& label = alone.children().add<tal::Label>("https://x.pl");
         std::vector<std::string> failed;

@@ -21,7 +21,7 @@ namespace tal::testing {
 
 class Scene {
 public:
-    explicit Scene(Size screen = {80, 24}, Colors colors = Colors::rgb, bool unicode = true, text::Rendering how = {});
+    explicit Scene(Display given = {.screen = {80, 24}});
 
     Scene(const Scene&) = delete;
     Scene& operator=(const Scene&) = delete;
@@ -33,6 +33,8 @@ public:
     void show(Document& one);
 
     void resize(Size screen);
+
+    void display(Display given);
 
     void press(Key key);
 
@@ -70,10 +72,7 @@ private:
     void settled();
 
     std::shared_ptr<ManualClock> clock_;
-    Size screen_;
-    Colors colors_;
-    bool unicode_;
-    text::Rendering how_;
+    Display display_;
     Document* shown_ = nullptr;
     const Surface* last_ = nullptr;
 };

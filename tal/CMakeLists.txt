@@ -159,11 +159,12 @@ target_link_libraries(tal-media PUBLIC tal-core)
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
-# styles, lays out and paints what changed.
+# styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
+# sent to the terminal as sixel or kitty pixels.
 add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
-  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/node.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
+  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
-target_link_libraries(tal-ui PUBLIC tal-core)
+target_link_libraries(tal-ui PUBLIC tal-media)
 
 # Windows: the double-click time (user32) and NormalizeString (normaliz), which composes a letter
 # with its marks for the console without VT, whose cell holds one UTF-16 unit.

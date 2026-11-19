@@ -729,7 +729,8 @@ Proxy Proxy::parsed(std::string_view plain, std::string_view secure, std::string
 
 // The variables as curl reads them, lowercase before uppercase, ALL_PROXY for a scheme without its
 // own; uppercase HTTP_PROXY never, since under CGI the Proxy header of someone else's request sets
-// it (httpoxy). Without any of them, the system's setting, or no proxy.
+// it (httpoxy), though on Windows, whose names have no case, it is http_proxy itself. Without any
+// of them, the system's setting, or no proxy.
 Proxy Proxy::from_environment() {
     std::string plain = environment("http_proxy", nullptr);
     std::string secure = environment("https_proxy", "HTTPS_PROXY");

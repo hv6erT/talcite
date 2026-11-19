@@ -250,6 +250,9 @@ struct Remembering {
 // Whether the file `where` is there.
 bool there(tal::Loop& loop, const Path& where) { return kind_of(loop, tal::fs::look(where)) == "none"; }
 
+// The host of the proxy `one`, or "none".
+std::string host_of(const std::optional<tal::net::Gateway>& one) { return one ? one->url.host : std::string{"none"}; }
+
 // A variable of the environment set for a trial, and put back as it was after.
 class Variable {
 public:
@@ -354,20 +357,22 @@ TRIAL("Proxy: logins, schemes, and the exceptions of no_proxy and of Windows") {
     SAME(mixed.secure->url.host, std::string{"p2"});
 }
 
-TRIAL("Proxy: the environment as curl reads it, never the uppercase HTTP_PROXY") {
+TRIAL("Proxy: the environment as curl reads it, without the uppercase HTTP_PROXY where names have case") {
     const Variable a{"http_proxy", ""};
-    const Variable b{"HTTP_PROXY", "http://bad:1"};
     const Variable c{"https_proxy", ""};
-    const Variable d{"HTTPS_PROXY", ""};
     const Variable e{"all_proxy", "http://all:2"};
-    const Variable f{"ALL_PROXY", ""};
     const Variable g{"no_proxy", "a.test"};
+#ifndef _WIN32
+    const Variable b{"HTTP_PROXY", "http://bad:1"};
+    const Variable d{"HTTPS_PROXY", ""};
+    const Variable f{"ALL_PROXY", ""};
     const Variable h{"NO_PROXY", ""};
+#endif
 
     Proxy found = Proxy::from_environment();
 
-    SAME(found.plain->url.host, std::string{"all"});
-    SAME(found.secure->url.host, std::string{"all"});
+    SAME(host_of(found.plain), std::string{"all"});
+    SAME(host_of(found.secure), std::string{"all"});
     OUGHT(found.bypass == std::vector<std::string>{"a.test"});
 
     {
@@ -375,15 +380,15 @@ TRIAL("Proxy: the environment as curl reads it, never the uppercase HTTP_PROXY")
 
         found = Proxy::from_environment();
 
-        SAME(found.secure->url.host, std::string{"x"});
-        SAME(found.plain->url.host, std::string{"all"});
+        SAME(host_of(found.secure), std::string{"x"});
+        SAME(host_of(found.plain), std::string{"all"});
     }
 
     const Variable j{"all_proxy", ""};
 
     found = Proxy::from_environment();
 
-    OUGHT(!found.plain.has_value() || found.plain->url.host != "bad");
+    OUGHT(host_of(found.plain) != "bad");
 }
 
 TRIAL("HTTP: a GET brings the status, the headers and a body of its length; tal writes Host and the coding itself") {

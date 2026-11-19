@@ -117,7 +117,7 @@ struct Program {
     std::shared_ptr<Action> press = action("Press");
 
     // Builds the screen and shows it.
-    explicit Program(Size size = {40, 12}) : scene(size) {
+    explicit Program(Size size = {40, 12}) : scene({.screen = size}) {
         layers = &document.children().add<Layers>();
 
         auto made = std::make_shared<Window>();
@@ -599,7 +599,7 @@ TRIAL("Menu: the frame in the look of its part, and lines without a frame") {
 // A menu standing by itself in more room than it fills, without a frame, leaves the rest blank; a
 // menu of a bar shown elsewhere by hand opens no submenu, since no menu of the bar is open.
 TRIAL("Menu: standing by itself, it draws no frame it has not, and opens no submenu") {
-    Scene scene{Size{10, 3}};
+    Scene scene{{.screen = {10, 3}}};
     Document document{scene.time()};
     MenuBar bar;
     Menu& menu = bar.add("Bar");
@@ -671,7 +671,7 @@ TRIAL("MenuBar: layers gone under an open menu, and the bar in new layers") {
 // A node that takes no hover loses it at once, and takes it again only when the mouse moves after
 // it is allowed to.
 TRIAL("Node: a node that takes no hover loses it at once") {
-    Scene scene{Size{10, 2}};
+    Scene scene{{.screen = {10, 2}}};
     Document document{scene.time()};
     Ground& ground = document.children().add<Ground>();
 
@@ -703,7 +703,7 @@ TRIAL("Node: a node that takes no hover loses it at once") {
 // window before both. The spot of the screen for an anchor is counted inside the layers' border and
 // padding.
 TRIAL("Window: an anchor, moved back to fit, after a seat; Layers: the screen counted inside") {
-    Scene scene{Size{20, 10}};
+    Scene scene{{.screen = {20, 10}}};
     Document document{scene.time()};
     Column& column = document.children().add<Column>();
 
@@ -893,7 +893,7 @@ TRIAL("KeyBar: a long text is cut, an empty bar takes no row") {
 // pages stand without room, and the focus moves from a page leaving to the first node of the new
 // one; a page with nothing to take it leaves the focus.
 TRIAL("Tabs: names over the line, switching pages by keys and clicks, the focus following") {
-    Scene scene{Size{30, 8}};
+    Scene scene{{.screen = {30, 8}}};
     Document document{scene.time()};
     Tabs& tabs = document.children().add<Tabs>();
     auto first = std::make_shared<Action>("A");
@@ -952,7 +952,7 @@ TRIAL("Tabs: names over the line, switching pages by keys and clicks, the focus 
 // The focus stays on its page while the page shows, also when the tabs are laid out again, and a
 // page left for one with nothing to focus finds it where it was when it comes back.
 TRIAL("Tabs: the focus stays where it was on a page that shows") {
-    Scene scene{Size{30, 8}};
+    Scene scene{{.screen = {30, 8}}};
     Document document{scene.time()};
     Tabs& tabs = document.children().add<Tabs>();
     auto act = std::make_shared<Action>("A");
@@ -1000,7 +1000,7 @@ TRIAL("Tabs: the size of the largest page, and a current past the end") {
 
     OUGHT(named.measured(tal::Limits{{0, 0}, {40, 10}}) == (Size{13, 3}));
 
-    Scene scene{Size{20, 4}};
+    Scene scene{{.screen = {20, 4}}};
     Document shown{scene.time()};
     Tabs& more = shown.children().add<Tabs>();
     (void)more.add("A").children().add<Label>("first");
@@ -1015,7 +1015,7 @@ TRIAL("Tabs: the size of the largest page, and a current past the end") {
 // Names that do not fit leave only the shown one, between the arrows, cut to the room between
 // them; a click on an arrow steps, a click elsewhere on the names' row or under an arrow does not.
 TRIAL("Tabs: crowded names show the current one between arrows") {
-    Scene scene{Size{12, 4}};
+    Scene scene{{.screen = {12, 4}}};
     Document document{scene.time()};
     Tabs& tabs = document.children().add<Tabs>();
 
@@ -1049,7 +1049,7 @@ TRIAL("Tabs: crowded names show the current one between arrows") {
 
     SAME(*tabs.current, std::size_t{2});
 
-    Scene framed{Size{14, 5}};
+    Scene framed{{.screen = {14, 5}}};
     Document boxed{framed.time()};
     Tabs& inside = boxed.children().add<Tabs>();
 
@@ -1066,7 +1066,7 @@ TRIAL("Tabs: crowded names show the current one between arrows") {
 
     SAME(*inside.current, std::size_t{1});
 
-    Scene narrow{Size{6, 3}};
+    Scene narrow{{.screen = {6, 3}}};
     Document lone{narrow.time()};
 
     (void)lone.children().add<Tabs>().add("Three");

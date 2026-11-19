@@ -21,6 +21,8 @@ namespace tal {
 
 inline constexpr int endless = std::numeric_limits<int>::max();
 
+struct Display;
+
 enum class Effect { none, paint, layout };
 
 struct Share {
@@ -188,6 +190,8 @@ protected:
     [[nodiscard]] std::string_view glyph(std::string_view name) const;
 
     [[nodiscard]] text::Rendering rendering() const;
+
+    [[nodiscard]] const Display& display() const;
 
     [[nodiscard]] virtual Size measure(Limits room) const;
 

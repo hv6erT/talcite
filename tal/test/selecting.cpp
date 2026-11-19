@@ -55,7 +55,7 @@ struct Shown {
     std::size_t changes = 0;
     Hooks hooks;
 
-    explicit Shown(std::vector<std::string> options, Size size = {20, 8}, int down = 0, std::size_t chosen = 0) : scene(size) {
+    explicit Shown(std::vector<std::string> options, Size size = {20, 8}, int down = 0, std::size_t chosen = 0) : scene({.screen = size}) {
         layers = &document.children().add<tal::Layers>();
 
         auto made = std::make_shared<tal::Window>();
