@@ -19,6 +19,7 @@
 
 #include "generating.hpp"
 #include "spoken.hpp"
+#include "texts_of.hpp"
 #include "wording.hpp"
 
 #include "tal/testing.hpp"
@@ -103,8 +104,10 @@ int values(const std::string& said) { return tal::wording::slots(said); }
 
 }
 
+// The files of test/texts, carried in the binary (`texts_of`), are read from the program's folder
+// on a disk in memory, so that the trial reads them wherever the binary runs.
 TRIAL("texts: the generated functions speak English from the start, Polish after it is read") {
-    tal::Loop loop;
+    Desk desk;
 
     SAME(spoken::dictionary().code(), std::string{"en-US"});
     SAME(spoken::title(), std::string{"Trials"});
@@ -120,9 +123,12 @@ TRIAL("texts: the generated functions speak English from the start, Polish after
     SAME(spoken::panel::copied(2, "2", "/b"), std::string{"Copied 2 files to /b"});
     SAME(spoken::letters::accent::key(), U'Å');
 
-    const std::vector<Path> folders{Path{TAL_TEST_TEXTS}};
+    desk.put("/program/en-US.json", texts_of::en_US);
+    desk.put("/program/pl-PL.json", texts_of::pl_PL);
 
-    tal::wait(loop, spoken::dictionary().read(folders, "pl-PL"));
+    const std::vector<Path> folders{Path{"/program"}};
+
+    tal::wait(desk.loop, spoken::dictionary().read(folders, "pl-PL"));
 
     SAME(spoken::dictionary().code(), std::string{"pl-PL"});
     SAME(spoken::title(), std::string{"Próby"});
@@ -133,12 +139,12 @@ TRIAL("texts: the generated functions speak English from the start, Polish after
     SAME(spoken::panel::copied(5, "5", "/b"), std::string{"Skopiowano 5 plików do /b"});
     SAME(spoken::letters::accent::key(), U'Ą');
 
-    const std::vector<tal::Spoken> languages = tal::wait(loop, spoken::dictionary().languages(folders));
+    const std::vector<tal::Spoken> languages = tal::wait(desk.loop, spoken::dictionary().languages(folders));
 
     SAME(languages.size(), std::size_t{2});
     OUGHT(languages.size() == 2 && languages[0] == tal::Spoken{"en-US", "English"} && languages[1] == tal::Spoken{"pl-PL", "Polski"});
 
-    tal::wait(loop, spoken::dictionary().read(folders, "en-US"));
+    tal::wait(desk.loop, spoken::dictionary().read(folders, "en-US"));
 
     SAME(spoken::dictionary().code(), std::string{"en-US"});
     SAME(spoken::title(), std::string{"Trials"});

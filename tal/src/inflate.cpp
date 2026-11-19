@@ -232,7 +232,9 @@ void Inflater::headed() {
     for (int skip = 0; skip < 6; ++skip) (void)byte();
 
     if ((flags & 0x04U) != 0) {
-        const std::uint32_t much = byte() | (byte() << 8);
+        // Two reads in two statements: the halves of one expression have no order.
+        const std::uint32_t low = byte();
+        const std::uint32_t much = low | (byte() << 8);
 
         for (std::uint32_t skip = 0; skip < much; ++skip) (void)byte();
     }
@@ -413,8 +415,12 @@ void Inflater::trailed() {
         ++at_;
     }
 
-    const std::uint32_t crc = bits(16) | (bits(16) << 16);
-    const std::uint32_t size = bits(16) | (bits(16) << 16);
+    // Each half read in its own statement: the two halves of one expression have no order, and a
+    // compiler may read the high one first.
+    const std::uint32_t crc_low = bits(16);
+    const std::uint32_t crc = crc_low | (bits(16) << 16);
+    const std::uint32_t size_low = bits(16);
+    const std::uint32_t size = size_low | (bits(16) << 16);
 
     if (crc != ~crc_) broken("the CRC-32 of a gzip member differs");
 

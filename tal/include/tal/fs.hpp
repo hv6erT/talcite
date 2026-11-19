@@ -48,13 +48,13 @@ struct Entry {
 
 struct Range {
     std::uint64_t from = 0;
-    std::optional<std::uint64_t> much;
+    std::optional<std::uint64_t> much{};
 };
 
 struct Writing {
     Conflict conflict = Conflict::replace;
     bool atomic = true;
-    std::optional<std::uint16_t> rights;
+    std::optional<std::uint16_t> rights{};
 };
 
 struct Copying {
@@ -68,9 +68,9 @@ struct Removing {
 };
 
 struct Changing {
-    std::optional<Attributes> attributes;
-    std::optional<std::chrono::system_clock::time_point> modified;
-    std::optional<std::uint16_t> rights;
+    std::optional<Attributes> attributes{};
+    std::optional<std::chrono::system_clock::time_point> modified{};
+    std::optional<std::uint16_t> rights{};
 };
 
 struct Volume {

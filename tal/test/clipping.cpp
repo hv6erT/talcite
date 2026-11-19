@@ -17,12 +17,14 @@
 #include "tal/stream.hpp"
 #include "tal/task.hpp"
 
+#include "clipboarding.hpp"
 #include "quieting.hpp"
 #include "tal/testing.hpp"
 
 // The clipboard of the machine the user sits at, on scripted programs: the session's clipboard
 // programs first, the terminal's OSC 52 after them, the program's own copy for pasting, and lists
-// of files as text/uri-list.
+// of files as text/uri-list. The system's own clipboard (Windows') is a scripted one too, so that
+// both ways run on every system and no trial touches the real clipboard.
 
 namespace {
 
@@ -136,10 +138,13 @@ struct Desk {
     std::shared_ptr<tal::ScriptedConsole> console = std::make_shared<tal::ScriptedConsole>();
     std::shared_ptr<tal::Scripted> processes = std::make_shared<tal::Scripted>(loop);
     Session session;
-    tal::Port<tal::Clipboard> clipboard = tal::clipboard(tal::Port<tal::Console>{console}, tal::Port<tal::Processes>{processes});
+    std::shared_ptr<tal::clipboarding::Board> board;
+    tal::Port<tal::Clipboard> clipboard = tal::clipboarding::clipboard(tal::Port<tal::Console>{console}, tal::Port<tal::Processes>{processes}, board);
 
-    // A session with `variables` set and `programs` installed.
-    Desk(std::map<std::string, std::string> variables, std::set<std::string> programs) {
+    // A session with `variables` set and `programs` installed, and with `own` as the system's own
+    // clipboard, as Windows has one, or with none, as on POSIX, whatever system runs the trial.
+    Desk(std::map<std::string, std::string> variables, std::set<std::string> programs, std::shared_ptr<tal::clipboarding::Board> own = nullptr)
+        : board(std::move(own)) {
         for (auto& [name, value] : variables) console->environment[name] = value;
 
         session.present = std::move(programs);
@@ -368,6 +373,109 @@ TRIAL("Clipboard: files kept in the own copy where no program carries them") {
     OUGHT(x.given(one));
     OUGHT(x.session.ran.back() == "xclip -selection clipboard -t text/uri-list -in");
     OUGHT(x.taken() == std::optional<Handed>{one});
+}
+
+// The system's own clipboard, as Windows has one: what it holds, whether it opens, and how often
+// it was asked.
+class Shelf final : public tal::clipboarding::Board {
+public:
+    std::optional<std::string> text;
+    std::optional<Handed> files;
+    bool opens = true;
+    int asked = 0;
+
+    // Takes the text when it opens; it then holds no files.
+    bool copy(std::string_view what) override {
+        ++asked;
+
+        if (!opens) return false;
+
+        text = std::string{what};
+        files.reset();
+
+        return true;
+    }
+
+    // Its text, an empty one when it holds none; nothing when it does not open.
+    std::optional<std::optional<std::string>> paste() override {
+        ++asked;
+
+        if (!opens) return std::nullopt;
+
+        return std::optional<std::optional<std::string>>{text};
+    }
+
+    // Takes the files when it opens.
+    bool give(const Handed& what) override {
+        ++asked;
+
+        if (!opens) return false;
+
+        files = what;
+
+        return true;
+    }
+
+    // Its files, an empty one when it holds none; nothing when it does not open.
+    std::optional<std::optional<Handed>> take() override {
+        ++asked;
+
+        if (!opens) return std::nullopt;
+
+        return std::optional<std::optional<Handed>>{files};
+    }
+};
+
+// A system with a clipboard of its own (Windows) copies and pastes through it, and runs no
+// clipboard program; what it holds from elsewhere is what a paste gives, and when it holds
+// something else a paste gives nothing. When it does not open, a paste gives the own copy; over
+// ssh it is not the user's, so the terminal takes the copy and the own copy answers.
+TRIAL("Clipboard: the system's own clipboard takes the copy and gives the paste, locally") {
+    const auto shelf = std::make_shared<Shelf>();
+    Desk local{{{"WAYLAND_DISPLAY", "wayland-0"}}, {"wl-copy"}, shelf};
+    const Handed one{{Path{"/one"}}, Handing::cut};
+
+    OUGHT(local.copied("Poirot"));
+    OUGHT(shelf->text == std::optional<std::string>{"Poirot"});
+    OUGHT(local.processes->started().empty());
+    SAME(local.console->written, std::string{});
+
+    shelf->text = "Hastings";
+
+    OUGHT(local.pasted() == std::optional<std::string>{"Hastings"});
+
+    shelf->text.reset();
+
+    OUGHT(!local.pasted().has_value());
+
+    shelf->opens = false;
+
+    OUGHT(!local.copied("Japp"));
+    OUGHT(local.pasted() == std::optional<std::string>{"Japp"});
+
+    shelf->opens = true;
+
+    OUGHT(local.given(one));
+    OUGHT(shelf->files == std::optional<Handed>{one});
+    OUGHT(local.taken() == std::optional<Handed>{one});
+
+    shelf->files.reset();
+
+    OUGHT(!local.taken().has_value());
+
+    shelf->opens = false;
+
+    OUGHT(local.taken() == std::optional<Handed>{one});
+
+    const auto far_shelf = std::make_shared<Shelf>();
+    Desk far{{{"SSH_CONNECTION", "1 2 3 4"}}, {}, far_shelf};
+
+    OUGHT(far.copied("abc"));
+    SAME(far.console->written, std::string{"\x1b]52;c;YWJj\x07"});
+    OUGHT(far.pasted() == std::optional<std::string>{"abc"});
+    OUGHT(!far.given(one));
+    OUGHT(far.taken() == std::optional<Handed>{one});
+    SAME(far_shelf->asked, 0);
 }
 
 // A scripted clipboard keeps what it is given while it takes it; a clipboard of its own kind

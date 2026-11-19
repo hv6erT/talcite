@@ -325,11 +325,47 @@ std::chrono::sys_seconds modified_at(const path& where) {
     return std::chrono::floor<std::chrono::seconds>(instant_at(where));
 }
 
+namespace {
+
+// The space of the volume under `where`, a path in the long form. On Windows it comes straight from
+// GetDiskFreeSpaceExW: the space of MinGW's library refuses the \\?\ form with ERROR_INVALID_NAME
+// (under Wine and on Windows, 17.11), and every path here goes in that form. The function wants a
+// folder with a backslash at its end, so a file is asked about through its folder.
+stood::space_info spaced(const path& where, std::error_code& trouble) {
+#ifdef _WIN32
+    std::error_code ignored;
+    const path folder = !stood::is_directory(where, ignored) && where.has_parent_path() ? where.parent_path() : where;
+    std::wstring asked = folder.wstring();
+
+    if (!asked.empty() && asked.back() != L'\\') asked += L'\\';
+
+    ULARGE_INTEGER available{};
+    ULARGE_INTEGER total{};
+    ULARGE_INTEGER left{};
+
+    if (GetDiskFreeSpaceExW(asked.c_str(), &available, &total, &left) == 0) {
+        trouble = std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+
+        constexpr auto unknown = static_cast<std::uintmax_t>(-1);
+
+        return stood::space_info{unknown, unknown, unknown};
+    }
+
+    trouble.clear();
+
+    return stood::space_info{total.QuadPart, left.QuadPart, available.QuadPart};
+#else
+    return stood::space(where, trouble);
+#endif
+}
+
+}
+
 // The total and available space of the volume under the path; throws when it cannot be read.
 Space space_at(const path& where) {
     std::error_code trouble;
 
-    const stood::space_info told = stood::space(long_form(where), trouble);
+    const stood::space_info told = spaced(long_form(where), trouble);
     if (trouble) amiss("Cannot check the free space.", where, trouble);
 
     return Space{told.capacity, told.available};
@@ -629,7 +665,7 @@ bool together_at(const path& one, const path& two) {
 std::optional<std::uintmax_t> room_at(const path& where) {
     std::error_code trouble;
 
-    const stood::space_info told = stood::space(long_form(present_at(where)), trouble);
+    const stood::space_info told = spaced(long_form(present_at(where)), trouble);
 
     if (trouble || told.available == static_cast<std::uintmax_t>(-1)) return std::nullopt;
 
@@ -1669,7 +1705,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(long_form(one.where), ignored);
+    const stood::space_info told = spaced(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -1930,7 +1966,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(long_form(one.where), ignored);
+    const stood::space_info told = spaced(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -2012,7 +2048,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(long_form(one.where), ignored);
+    const stood::space_info told = spaced(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;
@@ -2040,7 +2076,7 @@ Volume volume_at(const path& where) {
 
     std::error_code ignored;
 
-    const stood::space_info told = stood::space(long_form(one.where), ignored);
+    const stood::space_info told = spaced(long_form(one.where), ignored);
 
     if (!ignored) {
         one.space.total = told.capacity;

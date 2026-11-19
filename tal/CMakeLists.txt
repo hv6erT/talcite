@@ -150,6 +150,35 @@ function(tal_settings target defaults space)
   target_link_libraries(${target} PUBLIC tal-core)
 endfunction()
 
+# tal_embedded(<target> <namespace> <file>...): files carried inside <target>, each a constant
+# std::string_view named after the file in <namespace>.hpp and .cpp in the build directory, made
+# again when a file changes. A program that is copied elsewhere, as the trials are to Windows,
+# keeps them.
+function(tal_embedded target space)
+  set(files "")
+
+  foreach(file IN LISTS ARGN)
+    get_filename_component(file "${file}" ABSOLUTE)
+    list(APPEND files "${file}")
+  endforeach()
+
+  string(REPLACE "::" ";" parts "${space}")
+  list(GET parts -1 name)
+  set(out "${CMAKE_CURRENT_BINARY_DIR}/tal-embedded/${target}")
+  string(REPLACE ";" "|" joined "${files}")
+
+  add_custom_command(OUTPUT "${out}/${name}.hpp" "${out}/${name}.cpp"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${out}"
+    COMMAND "${CMAKE_COMMAND}" "-DSPACE=${space}" "-DHEADER=${out}/${name}.hpp" "-DSOURCE=${out}/${name}.cpp"
+            "-DFILES=${joined}" -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tools/embedded.cmake"
+    DEPENDS ${files} "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tools/embedded.cmake"
+    COMMENT "Embedding the files of ${target}"
+    VERBATIM)
+
+  target_sources(${target} PRIVATE "${out}/${name}.hpp" "${out}/${name}.cpp")
+  target_include_directories(${target} PRIVATE "${out}")
+endfunction()
+
 # tal::media of talcite.next: images as RGBA frames, their format and size read from the header,
 # scaling in linear light, and decoding frame by frame: GIF by our own decoder, other formats by
 # the adapter of the port `Decoding`.
@@ -231,7 +260,9 @@ if(TALCITE_TESTS)
   # The texts of the trials, made and checked as a program's are.
   tal_texts(tal-test test/texts/en-US.json spoken)
   tal_settings(tal-test test/settings/defaults.json preset)
-  target_compile_definitions(tal-test PRIVATE TAL_TEST_TEXTS="${CMAKE_CURRENT_SOURCE_DIR}/test/texts")
+  # The files of those texts travel inside the binary, which the trials on Windows run far from
+  # the sources.
+  tal_embedded(tal-test texts_of test/texts/en-US.json test/texts/pl-PL.json)
   add_test(NAME tal COMMAND tal-test)
 endif()
 

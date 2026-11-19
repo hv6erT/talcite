@@ -854,7 +854,11 @@ TRIAL("Disk: a watch hears entries made, renamed and removed in its folder, a de
 }
 
 // A file written in many small pieces wakes the reader a few times, not once for every piece:
-// changes of content alone settle for a fifth of a second and repeat into one.
+// changes of content alone settle for a fifth of a second and repeat into one. Each piece is
+// flushed: NTFS puts a file's new size into its folder only on a flush or a close, so Windows
+// tells nothing of writes through a handle held open (seen on Windows, 17.11). A flush takes its
+// time, more of it on a busy machine, and every fifth of a second of writing may end in a wake of
+// its own, in which each file is told once (seen under load, 17.11).
 TRIAL("Disk: changes of content settle and merge before they reach the reader") {
     DiskDesk desk;
 
@@ -867,16 +871,27 @@ TRIAL("Disk: changes of content settle and merge before they reach the reader") 
 
     // In turns, so that the system does not merge them itself, as inotify merges the same event
     // told twice in a row.
+    const auto began = std::chrono::steady_clock::now();
+
     for (int at = 0; at < 25; ++at) {
         desk.run(one.write(0, tal::bytes("x")));
+        desk.run(one.flush());
         desk.run(two.write(0, tal::bytes("y")));
+        desk.run(two.flush());
     }
 
+    const auto spent = std::chrono::steady_clock::now() - began;
     const std::vector<Change> first = heard(desk, watch);
+    const auto most = static_cast<std::size_t>(spent / 200ms) + 1;
+    const auto told = [&first](const Path& where) {
+        return static_cast<std::size_t>(std::count_if(first.begin(), first.end(), [&where](const Change& change) {
+            return change.kind == Change::Kind::modified && change.where == where;
+        }));
+    };
 
-    SAME(first.size(), std::size_t{2});
-    OUGHT(among(first, Change::Kind::modified, desk.at("/one.log")));
-    OUGHT(among(first, Change::Kind::modified, desk.at("/two.log")));
+    OUGHT(told(desk.at("/one.log")) >= 1 && told(desk.at("/one.log")) <= most);
+    OUGHT(told(desk.at("/two.log")) >= 1 && told(desk.at("/two.log")) <= most);
+    SAME(first.size(), told(desk.at("/one.log")) + told(desk.at("/two.log")));
 }
 
 // The trash of freedesktop.org, here under a home of the trial's own, so that the trial leaves

@@ -12,6 +12,8 @@
 #include "tal/text.hpp"
 #include "tal/trouble.hpp"
 
+#include "clipboarding.hpp"
+
 #ifdef _WIN32
 #include <windows.h>
 
@@ -634,20 +636,38 @@ std::optional<std::optional<Handed>> dragged() {
     return std::optional<Handed>{std::move(made)};
 }
 
+// The clipboard of Windows itself, as `Kept` reaches it.
+class Native final : public clipboarding::Board {
+public:
+    // As `copied`.
+    [[nodiscard]] bool copy(std::string_view what) override { return copied(what); }
+
+    // As `pasted`.
+    [[nodiscard]] std::optional<std::optional<std::string>> paste() override { return pasted(); }
+
+    // As `dropped`.
+    [[nodiscard]] bool give(const Handed& what) override { return dropped(what); }
+
+    // As `dragged`.
+    [[nodiscard]] std::optional<std::optional<Handed>> take() override { return dragged(); }
+};
+
 #endif
 
-// What the system clipboard keeps between calls: its ports and the program's own copy, which
-// answers when the system's clipboard is out of reach, so that cutting and pasting inside the
-// program always works.
+// What the system clipboard keeps between calls: its ports, the clipboard of the system itself
+// when it has one (`board`, Windows'; none on POSIX, where the session's clipboard programs stand
+// for it), and the program's own copy, which answers when the system's clipboard is out of reach,
+// so that cutting and pasting inside the program always works.
 struct Kept {
     Port<Console> console;
     Port<Processes> processes;
+    std::shared_ptr<clipboarding::Board> board;
     std::optional<std::string> mine;
     std::optional<Handed> files;
 };
 
-// Copies `what`: keeps it as the own copy, then hands it to the system clipboard (on Windows,
-// locally) or the session's clipboard program, else asks the terminal. Whether it reached one.
+// Copies `what`: keeps it as the own copy, then, locally, hands it to the system's clipboard
+// (`board`) or the session's clipboard program, else asks the terminal. Whether it reached one.
 Task<bool> copying(std::shared_ptr<Kept> kept, std::string what) {
     kept->mine = what;
     kept->files.reset();
@@ -655,31 +675,27 @@ Task<bool> copying(std::shared_ptr<Kept> kept, std::string what) {
     Console& out = *kept->console;
 
     if (!remote(out)) {
-#ifdef _WIN32
-        co_return copied(what);
-#else
+        if (kept->board) co_return kept->board->copy(what);
+
         if (const std::optional<std::string> line = copier(out); line && co_await handed(kept->processes.shared(), *line, what))
             co_return true;
-#endif
     }
 
     co_return sent(out, what);
 }
 
-// The text to paste: on Windows, locally, the system clipboard's; otherwise the own copy. The
-// terminal is not asked: its answer would pour into the program as keys, and a paste from outside
-// comes from the terminal's own key as a paste event.
+// The text to paste: locally the system clipboard's (`board`), where it opens; otherwise the own
+// copy. The terminal is not asked: its answer would pour into the program as keys, and a paste from
+// outside comes from the terminal's own key as a paste event.
 Task<std::optional<std::string>> pasting(std::shared_ptr<Kept> kept) {
-#ifdef _WIN32
-    if (!remote(*kept->console))
-        if (std::optional<std::optional<std::string>> got = pasted(); got) co_return std::move(*got);
-#endif
+    if (kept->board && !remote(*kept->console))
+        if (std::optional<std::optional<std::string>> got = kept->board->paste(); got) co_return std::move(*got);
 
     co_return kept->mine;
 }
 
-// Gives the files as copied or cut, their paths also as text: on Windows, locally, to the system
-// clipboard, on POSIX to a clipboard program that carries types, and to the own copy always. True
+// Gives the files as copied or cut, their paths also as text: locally to the system's clipboard
+// (`board`) or to a clipboard program that carries types, and to the own copy always. True
 // when they reached the system's clipboard. A relative path refuses the whole list and changes
 // nothing. An empty list takes away files given before, and only files.
 Task<bool> giving(std::shared_ptr<Kept> kept, Handed what) {
@@ -698,28 +714,27 @@ Task<bool> giving(std::shared_ptr<Kept> kept, Handed what) {
 
     if (remote(out)) co_return false;
 
-#ifdef _WIN32
-    co_return dropped(what);
-#else
+    if (kept->board) co_return kept->board->give(what);
+
     co_return co_await handed(kept->processes.shared(), giver(out, what.paths.empty()), uris(what));
-#endif
 }
 
-// The files to paste and how. Locally the system's clipboard answers: on Windows its CF_HDROP, on
-// POSIX what the typed clipboard program reads, GNOME's mark of a cut first, then the plain list (a
-// copy, unless it is exactly the list the program cut itself). A system clipboard that holds
-// something else gives nothing: an older own copy must not paste over what was copied since. The
-// own copy answers only when the system's clipboard is out of reach.
+// The files to paste and how. Locally the system's clipboard answers: `board` (on Windows its
+// CF_HDROP), else what the typed clipboard program reads, GNOME's mark of a cut first, then the
+// plain list (a copy, unless it is exactly the list the program cut itself). A system clipboard
+// that holds something else gives nothing: an older own copy must not paste over what was copied
+// since. The own copy answers only when the system's clipboard is out of reach.
 Task<std::optional<Handed>> taking(std::shared_ptr<Kept> kept) {
     Console& out = *kept->console;
 
     if (remote(out)) co_return kept->files;
 
-#ifdef _WIN32
-    if (std::optional<std::optional<Handed>> got = dragged(); got) co_return std::move(*got);
+    if (kept->board) {
+        if (std::optional<std::optional<Handed>> got = kept->board->take(); got) co_return std::move(*got);
 
-    co_return kept->files;
-#else
+        co_return kept->files;
+    }
+
     const Fetched marked = co_await fetched(kept->processes.shared(), reader(out, "x-special/gnome-copied-files"));
 
     if (!marked.present) co_return kept->files;
@@ -748,14 +763,13 @@ Task<std::optional<Handed>> taking(std::shared_ptr<Kept> kept) {
     if (kept->files && kept->files->paths == made.paths) made.how = kept->files->how;
 
     co_return made;
-#endif
 }
 
 // The clipboard of the machine the user sits at, through `Kept`.
 class System final : public Clipboard {
 public:
-    System(Port<Console> console, Port<Processes> processes)
-        : kept_(std::make_shared<Kept>(Kept{std::move(console), std::move(processes), std::nullopt, std::nullopt})) {}
+    System(Port<Console> console, Port<Processes> processes, std::shared_ptr<clipboarding::Board> board)
+        : kept_(std::make_shared<Kept>(Kept{std::move(console), std::move(processes), std::move(board), std::nullopt, std::nullopt})) {}
 
     // Its name in messages.
     [[nodiscard]] std::string_view name() const override { return "system"; }
@@ -779,7 +793,7 @@ private:
 }
 
 // The system clipboard over the default console and processes.
-std::shared_ptr<Clipboard> Clipboard::builtin() { return std::make_shared<System>(Port<Console>{}, Port<Processes>{}); }
+std::shared_ptr<Clipboard> Clipboard::builtin() { return std::make_shared<System>(Port<Console>{}, Port<Processes>{}, clipboarding::native()); }
 
 // A clipboard that carries no files: giving them fails.
 Task<bool> Clipboard::give(Handed what) {
@@ -795,7 +809,24 @@ Task<std::optional<Handed>> Clipboard::taken() { co_return std::nullopt; }
 // program on POSIX, the terminal through `console` as the last way to copy, and the program's own
 // copy for pasting inside it. Programs run through `processes`.
 Port<Clipboard> clipboard(Port<Console> console, Port<Processes> processes) {
-    return Port<Clipboard>{std::make_shared<System>(std::move(console), std::move(processes))};
+    return clipboarding::clipboard(std::move(console), std::move(processes), clipboarding::native());
+}
+
+// The clipboard of Windows itself; none elsewhere, where the session's clipboard programs stand for
+// it.
+std::shared_ptr<clipboarding::Board> clipboarding::native() {
+#ifdef _WIN32
+    return std::make_shared<Native>();
+#else
+    return nullptr;
+#endif
+}
+
+// The clipboard of the machine the user sits at with `board` as the system's own clipboard, or
+// with none: the trials give the logic of both systems a board of their own, and never the real
+// one.
+Port<Clipboard> clipboarding::clipboard(Port<Console> console, Port<Processes> processes, std::shared_ptr<Board> board) {
+    return Port<Clipboard>{std::make_shared<System>(std::move(console), std::move(processes), std::move(board))};
 }
 
 // Keeps `what` as copied and, when it takes copies, as what a paste gives.

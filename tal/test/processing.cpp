@@ -4,15 +4,19 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <thread>
 #include <vector>
 
 #include "tal/bytes.hpp"
+#include "tal/emulator.hpp"
 #include "tal/executor.hpp"
+#include "tal/geometry.hpp"
 #include "tal/port.hpp"
 #include "tal/process.hpp"
 #include "tal/stream.hpp"
+#include "tal/surface.hpp"
 #include "tal/task.hpp"
 
 #include "tal/testing.hpp"
@@ -45,6 +49,25 @@ struct Sentinel {
     Sentinel(const Sentinel&) = delete;
     Sentinel& operator=(const Sentinel&) = delete;
 };
+
+// The row `at` of an emulated screen as text, without the spaces at its end.
+std::string row(const tal::Emulator& screen, int at) {
+    std::string made;
+
+    for (const tal::Cell& each : screen.row(at).cells) made += each.cluster;
+
+    while (!made.empty() && made.back() == ' ') made.pop_back();
+
+    return made;
+}
+
+// Whether a row of an emulated screen holds `wanted`.
+bool shown(const tal::Emulator& screen, std::string_view wanted) {
+    for (int at = 0; at < screen.size().high; ++at)
+        if (row(screen, at).find(wanted) != std::string::npos) return true;
+
+    return false;
+}
 
 // A command for a program with the given arguments.
 Command command(std::string_view program, std::vector<std::string> arguments = {}, tal::Mode mode = tal::Mode::piped) {
@@ -579,7 +602,10 @@ TRIAL("System: cancelling a task that waits for a silent program's output ends t
     (void)tal::wait(loop, silent.ended());
 }
 
-// A program in a terminal of its own sees a terminal of the size given, and its new size.
+// A program in a terminal of its own sees a terminal of the size given, and its new size. Its
+// output is read as a terminal reads it, through our emulator, which also answers what it is asked:
+// a pseudoconsole on Windows does not pass the program's bytes on but repaints its screen, and put
+// a window title between the first two letters of "tty" (seen on Windows, 17.11).
 TRIAL("System: a program in a terminal sees one, of the size given and then of the new one") {
     tal::Loop loop;
     Command typed = pretended({"tty"}, tal::Mode::terminal);
@@ -588,46 +614,52 @@ TRIAL("System: a program in a terminal sees one, of the size given and then of t
     typed.rows = 40;
 
     const tal::Process child = started(loop, typed);
-    std::string heard;
+    tal::Emulator screen{tal::Size{120, 40}};
 
     const auto until = [&](std::string_view wanted) {
-        while (heard.find(wanted) == std::string::npos) {
+        while (!shown(screen, wanted)) {
             const tal::Bytes more = tal::wait(loop, tal::within(5000ms, child.output().read(4096)));
 
             if (more.empty()) return;
 
-            heard += tal::text::of(more);
+            const tal::Fed fed = screen.feed(more);
+
+            if (!fed.replies.empty()) tal::wait(loop, child.input().write(fed.replies));
         }
     };
 
     until("tty 1 120x40");
-    OUGHT(heard.find("tty 1 120x40") != std::string::npos);
+    OUGHT(shown(screen, "tty 1 120x40"));
 
     child.resize(100, 30);
+    screen.resize(tal::Size{100, 30});
     tal::wait(loop, child.input().write(tal::bytes("size\r\n")));
     until("size 100x30");
-    OUGHT(heard.find("size 100x30") != std::string::npos);
+    OUGHT(shown(screen, "size 100x30"));
 
     tal::wait(loop, child.input().write(tal::bytes("quit\r\n")));
     OUGHT(tal::wait(loop, tal::within(5000ms, child.ended())).ended == Exit::Ended::normal);
 }
 
 // Hanging up a terminal ends its program, also one that ignores SIGTERM, and well before stop()
-// would kill it; a program on pipes has no terminal, and hanging it up does nothing.
+// would kill it; a program on pipes has no terminal, and hanging it up does nothing. Its output is
+// read through the emulator, as above.
 TRIAL("System: hang_up() ends a program in a terminal that ignores SIGTERM; one on pipes it leaves") {
     tal::Loop loop;
     const tal::Process child = started(loop, pretended({"stubborn", "20000"}, tal::Mode::terminal));
-    std::string heard;
+    tal::Emulator screen{tal::Size{80, 24}};
 
-    while (heard.find("ready") == std::string::npos) {
+    while (!shown(screen, "ready")) {
         const tal::Bytes more = tal::wait(loop, tal::within(5000ms, child.output().read(4096)));
 
         if (more.empty()) break;
 
-        heard += tal::text::of(more);
+        const tal::Fed fed = screen.feed(more);
+
+        if (!fed.replies.empty()) tal::wait(loop, child.input().write(fed.replies));
     }
 
-    OUGHT(heard.find("ready") != std::string::npos);
+    OUGHT(shown(screen, "ready"));
 
     const auto since = std::chrono::steady_clock::now();
 

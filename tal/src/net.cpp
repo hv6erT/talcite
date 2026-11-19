@@ -1,10 +1,13 @@
 #include "tal/net.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <exception>
 #include <mutex>
 #include <utility>
+#include <vector>
 
+#include "tal/task.hpp"
 #include "tal/trouble.hpp"
 
 #include "netting.hpp"
@@ -132,22 +135,63 @@ std::vector<Address> ordered(std::vector<Address> all) {
     return made;
 }
 
-// Connects to the first of `all` that answers, in the order of `ordered`; the trouble of the last
-// one when none does.
-Task<Connection> tried(std::vector<Address> all) {
-    std::exception_ptr last;
+// How long an attempt to connect has to itself before the next address is tried as well: the
+// "connection attempt delay" of RFC 8305.
+constexpr std::chrono::milliseconds stagger{250};
 
-    for (Address& one : ordered(std::move(all))) {
-        try {
-            co_return co_await connect(std::move(one));
-        } catch (const Trouble&) {
-            last = std::current_exception();
-        }
+// One attempt of `tried`: it starts once the attempt before it has started and either failed or
+// had `stagger` to itself, then connects to `where`. A failure lets the next one start at once.
+Task<Connection> attempted(Address where, Pending<void> before_began, Pending<void> before_failed, Pending<void> began,
+                           Pending<void> failed) {
+    co_await before_began.task();
+
+    std::vector<Task<void>> gates;
+
+    gates.push_back([]() -> Task<void> { co_await after(stagger); }());
+    gates.push_back(before_failed.task());
+
+    co_await first(std::move(gates));
+
+    began.settle();
+
+    try {
+        co_return co_await connect(std::move(where));
+    } catch (...) {
+        failed.settle();
+
+        throw;
+    }
+}
+
+// Connects to the first of `all` that answers, in the order of `ordered`, as Happy Eyeballs does
+// (RFC 8305): each attempt starts `stagger` after the one before it, or at once when that one
+// fails; the first connection wins, and the attempts still running are dropped. Tried one after
+// another, an address that does not answer would hold back all the rest: a dead IPv6 route, or ::1
+// where a service listens on 127.0.0.1 only, which Windows retries for two seconds (seen on
+// Windows, 17.11). The trouble of the last attempt to fail when none answers.
+Task<Connection> tried(std::vector<Address> all) {
+    std::vector<Address> order = ordered(std::move(all));
+
+    if (order.empty()) throw Trouble{Kind::missing, "There is no address to connect to."};
+
+    std::vector<Task<Connection>> attempts;
+    Pending<void> began;
+    Pending<void> failed;
+
+    began.settle();
+    failed.settle();
+
+    for (Address& one : order) {
+        Pending<void> mine_began;
+        Pending<void> mine_failed;
+
+        attempts.push_back(attempted(std::move(one), began, failed, mine_began, mine_failed));
+
+        began = mine_began;
+        failed = mine_failed;
     }
 
-    if (last) std::rethrow_exception(last);
-
-    throw Trouble{Kind::missing, "There is no address to connect to."};
+    co_return co_await first(std::move(attempts));
 }
 
 }

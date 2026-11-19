@@ -456,6 +456,100 @@ TRIAL("TCP: a port nobody listens at refuses, and a side that went away breaks t
     OUGHT(why == tal::Kind::broken);
 }
 
+// The addresses of a name are tried as Happy Eyeballs tries them: one that refuses holds the next
+// back for the stagger of 250 ms at most (Windows takes two seconds to give up on a refused
+// connection), and not at all where the refusal comes at once; the first that answers ends the
+// trying, so a later address is never asked.
+TRIAL("TCP: of several addresses a refusing one holds the next back briefly, and the first to answer wins") {
+    tal::Loop loop;
+    Address gone;
+
+    {
+        Listener listener = listening(loop);
+
+        gone = listener.mine();
+        listener.close();
+    }
+
+    Listener asked = listening(loop);
+    Listener spare = listening(loop);
+    const auto refusing = std::chrono::steady_clock::now();
+
+    OUGHT(refused(loop, tal::net::connect(gone)) == tal::Kind::refused);
+
+    const auto refusal = std::chrono::steady_clock::now() - refusing;
+    const auto started = std::chrono::steady_clock::now();
+    const Connection made = tal::wait(loop, tal::net::netting::tried({gone, asked.mine()}));
+    const auto took = std::chrono::steady_clock::now() - started;
+
+    OUGHT(took < 1500ms);
+    OUGHT(made.peer == asked.mine());
+
+    // Where a refusal comes at once, the next address does not wait out the stagger.
+    if (refusal < 50ms) OUGHT(took < 200ms);
+
+    const Connection again = tal::wait(loop, tal::net::netting::tried({asked.mine(), spare.mine()}));
+    bool waited_out = false;
+
+    OUGHT(again.peer == asked.mine());
+
+    try {
+        (void)tal::wait(loop, tal::within(400ms, spare.accepted()));
+    } catch (const tal::Overdue&) {
+        waited_out = true;
+    }
+
+    OUGHT(waited_out);
+
+    std::string said;
+
+    try {
+        (void)tal::wait(loop, tal::net::netting::tried({}));
+    } catch (const tal::Trouble& why) {
+        said = why.what();
+    }
+
+    SAME(said, std::string{"There is no address to connect to."});
+}
+
+#ifdef __linux__
+// An address that does not answer at all, a listener whose queue is full (Linux drops the requests
+// over it, and the one asking waits), holds the next address back for the stagger and no longer;
+// two of them hold it back for two staggers, each counted from the start of the one before.
+TRIAL("TCP: an address that does not answer gives way to the next after the stagger, each in turn") {
+    tal::Loop loop;
+    const Listener full = tal::wait(loop, Listener::opened(Address::loopback(Family::four, 0), 0));
+    std::vector<Connection> filling;
+    bool hangs = false;
+
+    for (int one = 0; one < 4 && !hangs; ++one) {
+        try {
+            filling.push_back(tal::wait(loop, tal::within(200ms, tal::net::connect(full.mine()))));
+        } catch (const tal::Overdue&) {
+            hangs = true;
+        }
+    }
+
+    OUGHT(hangs);
+
+    const Listener asked = listening(loop);
+    auto started = std::chrono::steady_clock::now();
+    const Connection one = tal::wait(loop, tal::net::netting::tried({full.mine(), asked.mine()}));
+    const auto first = std::chrono::steady_clock::now() - started;
+
+    OUGHT(one.peer == asked.mine());
+    OUGHT(first >= 250ms && first < 1500ms);
+
+    started = std::chrono::steady_clock::now();
+
+    const Connection two = tal::wait(loop, tal::net::netting::tried({full.mine(), full.mine(), asked.mine()}));
+    const auto second = std::chrono::steady_clock::now() - started;
+
+    OUGHT(two.peer == asked.mine());
+    OUGHT(second >= 500ms && second < 1500ms);
+}
+#endif
+
 TRIAL("TCP: a read cut by within() is taken back; the connection works on, the bytes come to the next") {
     tal::Loop loop;
     const Listener listener = listening(loop);
