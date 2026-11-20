@@ -37,6 +37,7 @@ struct Command {
     bool merged = false;
     int columns = 80;
     int rows = 24;
+    std::uint64_t memory = 0;
 };
 
 struct Exit {

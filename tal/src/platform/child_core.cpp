@@ -38,6 +38,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/ioctl.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -140,6 +141,7 @@ struct Command {
     std::vector<Variable> environment;
     bool inherit = true;
     bool merge = false;
+    std::uint64_t memory = 0;
 };
 
 // How a program ended, once it has: any number of tasks may wait for it, and the burial tells
@@ -1525,6 +1527,19 @@ HANDLE jobbed(HANDLE process) {
     return job;
 }
 
+// Holds every process of `job` to `memory` bytes of committed memory each. False when there is no
+// job or the system refuses the limit.
+bool limited(HANDLE job, std::uint64_t memory) {
+    if (job == nullptr) return false;
+
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limit{};
+
+    limit.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+    limit.ProcessMemoryLimit = static_cast<SIZE_T>(memory);
+
+    return SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limit, sizeof limit) != 0;
+}
+
 #else
 
 // The descriptors a start puts together: the three pipes, the start pipe (`starting`) and the two
@@ -1604,14 +1619,16 @@ void plumbed(Plumbing& ends, const Command& what, bool ahead, const std::optiona
 struct Startup {
     std::string program;
     std::string where;
+    std::uint64_t memory = 0;
     std::vector<std::string> among;
     std::vector<std::string> words;
     std::vector<char*> argv;
     std::vector<char*> envp;
 
-    // The program found on the PATH, the folder, the environment and the words of the command.
+    // The program found on the PATH, the folder, the limit of memory, the environment and the
+    // words of the command.
     explicit Startup(const Command& what)
-        : program(found(what.program)), where(what.where.empty() ? std::string{} : what.where.string()),
+        : program(found(what.program)), where(what.where.empty() ? std::string{} : what.where.string()), memory(what.memory),
           among(surrounded(what)) {
         words.push_back(what.program.string());
 
@@ -1632,8 +1649,8 @@ struct Startup {
 
 // The child's side of the fork, up to `execve`, for a program in a pseudoterminal (`terminal`), one
 // that gets our terminal (`ahead`) or one on pipes. It runs between `fork` and `exec`, so it calls
-// only what is async-signal-safe. A failed `chdir` or `execve` tells the parent its errno through
-// the start pipe and ends with 127.
+// only what is async-signal-safe. A failed `chdir`, limit of memory or `execve` tells the parent
+// its errno through the start pipe and ends with 127.
 [[noreturn]] void begun(const Plumbing& ends, const Startup& start, bool merge, bool ahead, bool terminal) {
     // The reason of a failed start, for the parent. No memory allocation.
     const auto say = [&ends](int why) { (void)!::write(ends.starting[1], &why, sizeof why); };
@@ -1701,6 +1718,20 @@ struct Startup {
         say(errno);
 
         ::_exit(127);
+    }
+
+    // A limit of memory, on the data the program may take (not on its addresses, which engines
+    // like WebKit reserve by the gigabyte without using them). It holds from the program's first
+    // instruction; `setrlimit` is a plain system call, safe here.
+    if (start.memory != 0) {
+        const auto most = static_cast<rlim_t>(start.memory);
+        const rlimit limit{most, most};
+
+        if (::setrlimit(RLIMIT_DATA, &limit) != 0) {
+            say(errno);
+
+            ::_exit(127);
+        }
     }
 
     ::execve(start.program.c_str(), start.argv.data(), start.envp.data());
@@ -1832,6 +1863,20 @@ std::shared_ptr<Living> reared(const Command& what, bool ahead, std::optional<Si
     }
 
     const HANDLE job = jobbed(told.hProcess);
+
+    // A limit of memory holds from the program's first instruction, set while it is still
+    // suspended; a program that cannot be held to it is not let run.
+    if (what.memory != 0 && !limited(job, what.memory)) {
+        TerminateProcess(told.hProcess, 1);
+        CloseHandle(told.hThread);
+        CloseHandle(told.hProcess);
+
+        if (job != nullptr) CloseHandle(job);
+
+        ends.undone();
+        ends.unconsoled();
+        amiss("Cannot limit the memory of the program.", what.program);
+    }
 
     ResumeThread(told.hThread);
     CloseHandle(told.hThread);
@@ -2412,6 +2457,7 @@ Command ordered(const ::tal::Command& what) {
     made.where = what.folder.empty() ? path{} : core::native(what.folder);
     made.environment = what.environment;
     made.merge = what.merged;
+    made.memory = what.memory;
 
     return made;
 }
