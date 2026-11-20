@@ -214,6 +214,14 @@ Trouble failure(std::span<const std::byte> payload) {
 // The payload of a failed frame for `trouble`.
 Bytes failed_with(const Trouble& trouble) { return Writing().u8(static_cast<std::uint8_t>(trouble.kind())).text(trouble.what()).done(); }
 
+// The trouble of a document that needs a password, when `none` was given, or another one; the
+// words of every engine of tal and of the scripted renderer.
+Trouble locked(bool none) {
+    if (none) return Trouble{Kind::denied, "The document needs a password."};
+
+    return Trouble{Kind::denied, "The password does not open the document."};
+}
+
 // The picture of `size` in `from`, as the process sent it: the width, the height, RGBA, straight
 // alpha. Throws `Trouble` malformed for another size than asked or a length that is not the
 // size's.

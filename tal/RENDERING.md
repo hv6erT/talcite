@@ -68,11 +68,16 @@ adapters goes on to the next one.
 
 ## Documents
 
-    open:   u32 document, u64 size
-    done:   u32 count, then for each page f64 width, f64 height (in points, 1/72 inch, both > 0)
+    open:   u32 document, u64 size, text password (empty for none)
+    done:   u32 count, then for each page f64 width, f64 height (in points, 1/72 inch, both > 0,
+            as the page is shown, turned by its rotation)
 
 The program chooses the number of the document; it stays the program's name for it in every later
-frame. While opening (and later, while rendering), the process reads the document only by asking:
+frame. A document that needs a password fails as denied, with "The document needs a password." when
+none was given and "The password does not open the document." for another one. The process should
+keep the password no longer than it needs it.
+
+While opening (and later, while rendering), the process reads the document only by asking:
 
     read:   u32 document, u64 at, u32 much (at most 1 MiB)
     block:  the bytes (fewer than asked at the end of the document)

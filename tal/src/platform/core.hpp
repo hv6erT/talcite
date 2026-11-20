@@ -128,6 +128,8 @@ namespace core {
 
 [[nodiscard]] path native(const Path& given);
 
+[[nodiscard]] path own_program();
+
 void halted(const std::atomic<bool>* flag);
 
 [[nodiscard]] Bell* ringing();

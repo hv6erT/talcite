@@ -189,6 +189,109 @@ endfunction()
 add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 
+# PDF rendered by PDFium (tal-render-pdfium), only on the programmer's word: configuring it fetches
+# PDFium, the build of bblanchon/pdfium-binaries without V8 (so no JavaScript or XFA in PDF), and
+# checks it by its SHA-256. The pinned build has the sums of Linux and Windows on x64; for any other
+# system, or a build without the network, the programmer gives the archive (TAL_PDFIUM_ARCHIVE) and,
+# for another one than pinned, its sum (TAL_PDFIUM_SHA256). The program and the library land
+# beside the programs of the build, the licenses of PDFium and what it holds in licenses/pdfium.
+option(TAL_PDFIUM "Render PDF through PDFium in a process of its own (fetches PDFium)" OFF)
+set(TAL_PDFIUM_ARCHIVE "" CACHE FILEPATH "PDFium's archive, fetched already (pdfium-<system>.tgz)")
+set(TAL_PDFIUM_SHA256 "" CACHE STRING "The SHA-256 of PDFium's archive for another system than pinned")
+
+if(TAL_PDFIUM)
+  set(pdfium_release "chromium/8165")
+
+  if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "ARM|arm|aarch64")
+    set(pdfium_system "win-x64")
+    set(pdfium_sum "ca7338ae7779b8b1b82f4580305c4d762d214f8df1d54b47647fe3cc75989ded")
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    set(pdfium_system "linux-x64")
+    set(pdfium_sum "ba7865e16c0271daab75256790be06c26272190afe6e2a70eae0bb39bb99089c")
+  else()
+    set(pdfium_system "")
+    set(pdfium_sum "")
+  endif()
+
+  if(TAL_PDFIUM_SHA256)
+    set(pdfium_sum "${TAL_PDFIUM_SHA256}")
+  endif()
+
+  if(NOT pdfium_sum)
+    message(FATAL_ERROR "TAL_PDFIUM: no build of PDFium is pinned for this system; give TAL_PDFIUM_ARCHIVE and TAL_PDFIUM_SHA256.")
+  endif()
+
+  string(TOLOWER "${pdfium_sum}" pdfium_sum)
+  set(pdfium_home "${CMAKE_CURRENT_BINARY_DIR}/pdfium")
+
+  if(TAL_PDFIUM_ARCHIVE)
+    set(pdfium_archive "${TAL_PDFIUM_ARCHIVE}")
+  else()
+    if(NOT pdfium_system)
+      message(FATAL_ERROR "TAL_PDFIUM: give TAL_PDFIUM_ARCHIVE for this system.")
+    endif()
+
+    set(pdfium_archive "${CMAKE_CURRENT_BINARY_DIR}/pdfium-${pdfium_system}.tgz")
+    file(DOWNLOAD "https://github.com/bblanchon/pdfium-binaries/releases/download/${pdfium_release}/pdfium-${pdfium_system}.tgz" "${pdfium_archive}"
+         EXPECTED_HASH SHA256=${pdfium_sum} TLS_VERIFY ON STATUS pdfium_fetched)
+    list(GET pdfium_fetched 0 pdfium_failed)
+
+    if(pdfium_failed)
+      list(GET pdfium_fetched 1 pdfium_said)
+      message(FATAL_ERROR "TAL_PDFIUM: PDFium could not be fetched: ${pdfium_said}")
+    endif()
+  endif()
+
+  file(SHA256 "${pdfium_archive}" pdfium_found)
+
+  if(NOT pdfium_found STREQUAL pdfium_sum)
+    message(FATAL_ERROR "TAL_PDFIUM: ${pdfium_archive} has the SHA-256 ${pdfium_found}, not ${pdfium_sum}.")
+  endif()
+
+  if(NOT EXISTS "${pdfium_home}/${pdfium_found}")
+    file(REMOVE_RECURSE "${pdfium_home}")
+    file(ARCHIVE_EXTRACT INPUT "${pdfium_archive}" DESTINATION "${pdfium_home}")
+    file(TOUCH "${pdfium_home}/${pdfium_found}")
+  endif()
+
+  file(STRINGS "${pdfium_home}/VERSION" pdfium_parts)
+  set(pdfium_version "")
+
+  foreach(part IN LISTS pdfium_parts)
+    string(REGEX REPLACE "^[A-Z]+=" "" number "${part}")
+    string(APPEND pdfium_version ".${number}")
+  endforeach()
+
+  string(SUBSTRING "${pdfium_version}" 1 -1 pdfium_version)
+
+  add_library(tal-pdfium SHARED IMPORTED)
+  set_target_properties(tal-pdfium PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${pdfium_home}/include")
+
+  if(WIN32)
+    set(pdfium_library "${pdfium_home}/bin/pdfium.dll")
+
+    if(MSVC)
+      set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_IMPLIB "${pdfium_home}/lib/pdfium.dll.lib")
+    else()
+      set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_IMPLIB "${pdfium_library}")
+    endif()
+  else()
+    set(pdfium_library "${pdfium_home}/lib/libpdfium${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    set_target_properties(tal-pdfium PROPERTIES IMPORTED_LOCATION "${pdfium_library}" IMPORTED_NO_SONAME TRUE)
+  endif()
+
+  add_executable(tal-render-pdfium engines/pdfium.cpp)
+  target_link_libraries(tal-render-pdfium PRIVATE tal-media tal-pdfium)
+  target_include_directories(tal-render-pdfium PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  target_compile_definitions(tal-render-pdfium PRIVATE TAL_PDFIUM_VERSION="${pdfium_version}")
+  set_target_properties(tal-render-pdfium PROPERTIES BUILD_RPATH "\$ORIGIN" INSTALL_RPATH "\$ORIGIN")
+  add_custom_command(TARGET tal-render-pdfium POST_BUILD
+                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${pdfium_library}" "$<TARGET_FILE_DIR:tal-render-pdfium>"
+                     COMMAND ${CMAKE_COMMAND} -E copy_directory "${pdfium_home}/licenses" "$<TARGET_FILE_DIR:tal-render-pdfium>/licenses/pdfium"
+                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${pdfium_home}/LICENSE" "$<TARGET_FILE_DIR:tal-render-pdfium>/licenses/pdfium/LICENSE")
+  target_compile_definitions(tal-media PRIVATE TAL_PDFIUM)
+endif()
+
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
@@ -267,6 +370,13 @@ if(TALCITE_TESTS)
   # The files of those texts travel inside the binary, which the trials on Windows run far from
   # the sources.
   tal_embedded(tal-test texts_of test/texts/en-US.json test/texts/pl-PL.json)
+
+  if(TAL_PDFIUM)
+    # The trials of PDFium run tal-render-pdfium beside them.
+    add_dependencies(tal-test tal-render-pdfium)
+    target_compile_definitions(tal-test PRIVATE TAL_PDFIUM)
+  endif()
+
   add_test(NAME tal COMMAND tal-test)
 endif()
 

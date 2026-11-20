@@ -7,9 +7,11 @@
 #include <optional>
 #include <utility>
 
+#include "tal/crypto.hpp"
 #include "tal/executor.hpp"
 #include "tal/trouble.hpp"
 
+#include "platform/core.hpp"
 #include "rendering.hpp"
 
 // Documents and pages rendered by another process: the ports `Renderer` and `Browser`, their
@@ -44,15 +46,19 @@ constexpr std::size_t read_at_once = std::size_t{64} << 10;
 Trouble ended(const std::string& engine, const std::string& why) { return Trouble{Kind::broken, "The renderer " + engine + " ended: " + why}; }
 
 // The bytes of the frame of `sort` asking `id` with `payload`; apart from the coroutines, which
-// take no braced lists.
-Bytes framed_as(Sort sort, std::uint32_t id, Bytes payload) {
+// take no braced lists. The payload is wiped once framed when it is `secret`.
+Bytes framed_as(Sort sort, std::uint32_t id, Bytes payload, bool secret = false) {
     Frame made;
 
     made.sort = sort;
     made.id = id;
     made.payload = std::move(payload);
 
-    return rendering::framed(made);
+    Bytes bytes = rendering::framed(made);
+
+    if (secret) crypto::wiped(made.payload);
+
+    return bytes;
 }
 
 // Throws `Trouble` (other) for a size of no pixels or over the ceiling.
@@ -104,6 +110,18 @@ struct Ending {
 
     // Tells the end.
     ~Ending() { mine->settle(); }
+};
+
+// Something secret, bytes or a text, wiped when it goes out of scope, however the scope ends.
+template <typename Held>
+struct Wiping {
+    Held& held;
+    bool secret = false;
+
+    // Wipes what is held when it is secret.
+    ~Wiping() {
+        if (secret) crypto::wiped(held);
+    }
 };
 
 // Writes `bytes` to `run`'s process in its place `turn`, after the write before it. Throws
@@ -161,13 +179,36 @@ Task<void> served(std::shared_ptr<Run> run, std::uint32_t id, std::shared_ptr<me
     co_await quietly(std::move(run), std::move(turn), framed_as(sort, id, std::move(answer)));
 }
 
+// Whether `head` is the head of a PDF: its header within it.
+bool pdf_head(std::span<const std::byte> head) {
+    const std::string_view text{reinterpret_cast<const char*>(head.data()), std::min<std::size_t>(head.size(), 1024)};
+
+    return text.find("%PDF-") != std::string_view::npos;
+}
+
+// The program `name` beside our own, as a whole path: never one looked for in PATH, where anyone
+// could put one of that name. Empty when the system cannot tell where our own program is.
+Path beside_us(std::string_view name) {
+    try {
+        platform::path made = platform::core::own_program().parent_path() / platform::path{std::string{name}};
+
+#ifdef _WIN32
+        made += ".exe";
+#endif
+
+        return platform::core::told(made);
+    } catch (const Trouble&) {
+        return {};
+    }
+}
+
 class Engine : public std::enable_shared_from_this<Engine> {
 public:
-    // An engine on `program`, started through `processes`, held to `limits`; its work runs on the
-    // pool of io.
-    Engine(Command program, Limits limits, Port<Processes> processes)
-        : program_(std::move(program)), limits_(limits), processes_(std::move(processes)), name_(program_.program.name()),
-          scope_(std::make_unique<Scope>(io())) {}
+    // An engine on `program`, started through `processes`, held to `limits`, called `name` (by
+    // default the name of the program); its work runs on the pool of io.
+    Engine(Command program, Limits limits, Port<Processes> processes, std::string name = {})
+        : program_(std::move(program)), limits_(limits), processes_(std::move(processes)),
+          name_(name.empty() ? std::string{program_.program.name()} : std::move(name)), scope_(std::make_unique<Scope>(io())) {}
 
     // Kills the process, if one runs; the work around it is cancelled with the scope.
     ~Engine() {
@@ -217,12 +258,15 @@ public:
     }
 
     // The answer of the process to the question of `sort` with `payload`, within `limit`: of the
-    // process `generation`, which must still run, or of any (zero), started when none runs.
+    // process `generation`, which must still run, or of any (zero), started when none runs. A
+    // `secret` payload is wiped once framed.
     // Throws `Trouble`: what `greeted` throws; broken when the process `generation` has ended,
     // and what was open in it with it; the trouble the process answered with; overdue for no
     // answer within the limit (the process is killed); broken when the process ends meanwhile;
     // malformed when it breaks the protocol.
-    Task<Frame> asked(Sort sort, Bytes payload, std::chrono::milliseconds limit, std::uint64_t generation = 0) {
+    Task<Frame> asked(Sort sort, Bytes payload, std::chrono::milliseconds limit, std::uint64_t generation = 0, bool secret = false) {
+        const Wiping<Bytes> wiping{payload, secret};
+
         if (generation == 0) (void)co_await greeted();
 
         Pending<Frame> answer;
@@ -233,7 +277,7 @@ public:
         Frame got;
 
         try {
-            co_await sent(run, framed_as(sort, id, std::move(payload)));
+            co_await sent(run, framed_as(sort, id, std::move(payload), secret));
 
             got = co_await within(limit, answer.task());
         } catch (const Overdue&) {
@@ -682,20 +726,23 @@ private:
 // The adapter of `Renderer` on a program that speaks the protocol.
 class Rendering final : public Renderer {
 public:
-    // The program `program`, which takes what `takes` recognizes, held to `limits`.
-    Rendering(Command program, Recognizing takes, Limits limits, Port<Processes> processes)
-        : engine_(std::make_shared<Engine>(std::move(program), limits, std::move(processes))), takes_(std::move(takes)) {}
+    // The program `program`, which takes what `takes` recognizes, held to `limits`, called `name`
+    // (by default the name of the program).
+    Rendering(Command program, Recognizing takes, Limits limits, Port<Processes> processes, std::string name = {})
+        : engine_(std::make_shared<Engine>(std::move(program), limits, std::move(processes), std::move(name))), takes_(std::move(takes)) {}
 
-    // The name of the program.
+    // The name of the engine.
     [[nodiscard]] std::string_view name() const override { return engine_->name(); }
 
     // Whether the program takes a document that starts with `head`.
     [[nodiscard]] bool takes(std::span<const std::byte> head) const override { return takes_ && takes_(head); }
 
-    // The document read through `from`, opened in the process. Throws `Trouble`: unsupported when
-    // the engine is not there or renders no documents; what reading the size and `Engine::asked`
-    // throw.
-    Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from) override {
+    // The document read through `from`, opened in the process with `password` (none when empty),
+    // which is wiped once sent. Throws `Trouble`: unsupported when the engine is not there or
+    // renders no documents; what reading the size and `Engine::asked` throw, denied among it for
+    // a document that needs a password or another one.
+    Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) override {
+        const Wiping<std::string> wiping{password, true};
         const std::uint64_t size = co_await from->size();
         const rendering::Hello hello = co_await engine_->greeted();
 
@@ -706,7 +753,11 @@ public:
         std::vector<Page> pages;
 
         try {
-            const Frame got = co_await engine_->asked(Sort::open, rendering::Writing().u32(number).u64(size).done(), engine_->limits().answer, generation);
+            Bytes payload = rendering::Writing().u32(number).u64(size).text(password).done();
+
+            crypto::wiped(password);
+
+            const Frame got = co_await engine_->asked(Sort::open, std::move(payload), engine_->limits().answer, generation, true);
 
             pages = engine_->believed(generation, [&got] { return rendering::paged(got.payload); });
         } catch (...) {
@@ -902,14 +953,15 @@ bool Renderers::takes(std::span<const std::byte> head) const {
     return false;
 }
 
-// The document read through `from`, opened by the first link that takes its head. Throws
-// `Trouble`: unsupported when none does; what that link throws.
-Task<std::shared_ptr<Document>> Renderers::opened(std::shared_ptr<meta::Reader> from) {
+// The document read through `from`, opened with `password` by the first link that takes its
+// head. Throws `Trouble`: unsupported when none does; what that link throws.
+Task<std::shared_ptr<Document>> Renderers::opened(std::shared_ptr<meta::Reader> from, std::string password) {
+    const Wiping<std::string> wiping{password, true};
     const std::uint64_t size = co_await from->size();
     const Bytes head = co_await from->read(0, static_cast<std::size_t>(std::min<std::uint64_t>(size, 1024)));
 
     for (const std::shared_ptr<Renderer>& one : links_)
-        if (one->takes(head)) co_return co_await one->opened(std::move(from));
+        if (one->takes(head)) co_return co_await one->opened(std::move(from), std::move(password));
 
     throw Trouble{Kind::unsupported, "No renderer takes the document."};
 }
@@ -941,7 +993,7 @@ Task<std::shared_ptr<Browsed>> Browsers::opened(std::string address, Browsing ho
 }
 
 // The adapter of `Renderer` on `program`, a program that speaks the protocol of tal's renderers
-// (see rendering.cpp), for the documents `takes` recognizes, held to `limits`.
+// (described in RENDERING.md), for the documents `takes` recognizes, held to `limits`.
 std::shared_ptr<Renderer> renderer(Command program, Recognizing takes, Limits limits, Port<Processes> processes) {
     return std::make_shared<Rendering>(std::move(program), std::move(takes), limits, std::move(processes));
 }
@@ -952,15 +1004,44 @@ std::shared_ptr<Browser> browser(Command program, Limits limits, Port<Processes>
     return std::make_shared<Showing>(std::move(program), limits, std::move(processes));
 }
 
+// The renderers built into tal, as a chain called "tal": PDFium when tal is built with it
+// (TAL_PDFIUM), otherwise none, so that the chain takes nothing.
+std::shared_ptr<Renderer> Renderer::builtin() {
+    std::vector<std::shared_ptr<Renderer>> links;
+
+#ifdef TAL_PDFIUM
+    links.push_back(pdfium());
+#endif
+
+    return std::make_shared<Renderers>(std::move(links), "tal");
+}
+
+// The adapter on tal-render-pdfium beside our own program, called "pdfium", for PDF (its header
+// within the first 1024 bytes, as readers of PDF accept it), held to `limits` and to 1 GiB of
+// memory. Where the program is missing (tal built without TAL_PDFIUM), its engine is not there.
+std::shared_ptr<Renderer> pdfium(Limits limits, Port<Processes> processes) {
+    Command program;
+
+    program.program = beside_us("tal-render-pdfium");
+    program.memory = std::uint64_t{1} << 30;
+
+    return std::make_shared<Rendering>(std::move(program), pdf_head, limits, std::move(processes), "pdfium");
+}
+
 // A scripted renderer whose documents have the pages `given`.
 ScriptedRenderer::ScriptedRenderer(std::vector<Page> given) : pages(std::move(given)) {}
 
 // Whether it takes the document: any.
 bool ScriptedRenderer::takes(std::span<const std::byte>) const { return true; }
 
-// A document of the scripted pages, whatever `from` holds; counted in `opening`.
-Task<std::shared_ptr<Document>> ScriptedRenderer::opened(std::shared_ptr<meta::Reader>) {
+// A document of the scripted pages, whatever `from` holds, counted in `opening`; the documents are
+// locked by `password` when it is not empty. Throws `Trouble` denied for another password than
+// that.
+Task<std::shared_ptr<Document>> ScriptedRenderer::opened(std::shared_ptr<meta::Reader>, std::string given) {
     ++opening;
+
+    if (given != password) throw rendering::locked(given.empty());
+
     co_return std::make_shared<Played>(pages);
 }
 

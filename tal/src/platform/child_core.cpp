@@ -44,6 +44,10 @@
 #include <termios.h>
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 extern char** environ;
 
 #endif
@@ -1045,13 +1049,9 @@ std::wstring sought(const path& program) {
     if (named.find_first_of(L"\\/:") != std::wstring::npos) {
         places.emplace_back();
     } else {
-        std::wstring own(32768, L'\0');
-
-        const DWORD much = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
-
-        if (much > 0 && much < own.size()) {
-            own.resize(much);
-            places.push_back(path{own}.parent_path().wstring());
+        try {
+            places.push_back(core::own_program().parent_path().wstring());
+        } catch (const Trouble&) {
         }
 
         std::wstring listed(32767, L'\0');
@@ -2524,6 +2524,52 @@ public:
         });
     }
 };
+
+}
+
+namespace core {
+
+// The file of our own program, as the system knows it. Throws `Trouble` unsupported where the
+// system cannot tell.
+path own_program() {
+#ifdef _WIN32
+    std::wstring own(32768, L'\0');
+
+    const DWORD much = GetModuleFileNameW(nullptr, own.data(), static_cast<DWORD>(own.size()));
+
+    if (much == 0 || much >= own.size()) throw Trouble{::tal::Kind::unsupported, "The file of this program is not known."};
+
+    own.resize(much);
+
+    return path{own};
+#elif defined(__APPLE__)
+    std::uint32_t much = 0;
+
+    (void)_NSGetExecutablePath(nullptr, &much);
+
+    std::string own(much, '\0');
+
+    if (much == 0 || _NSGetExecutablePath(own.data(), &much) != 0) throw Trouble{::tal::Kind::unsupported, "The file of this program is not known."};
+
+    own.resize(std::strlen(own.c_str()));
+
+    std::error_code why;
+    const path made = stood::canonical(path{own}, why);
+
+    if (why) throw Trouble{::tal::Kind::unsupported, "The file of this program is not known."};
+
+    return made;
+#elif defined(__linux__)
+    std::error_code why;
+    const path made = stood::read_symlink("/proc/self/exe", why);
+
+    if (why) throw Trouble{::tal::Kind::unsupported, "The file of this program is not known."};
+
+    return made;
+#else
+    throw Trouble{::tal::Kind::unsupported, "The file of this program is not known on this system."};
+#endif
+}
 
 }
 

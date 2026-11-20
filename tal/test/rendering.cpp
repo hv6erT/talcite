@@ -192,7 +192,8 @@ public:
 // a pixel wider or higher than asked), short
 // (too few bytes), garbage (a frame of no sort), orphan (an answer to no question), huge (a frame
 // too long), fail (a trouble), oddity (a trouble of no kind), reversed (answers two renders in the
-// reverse order), hog (takes 512 MiB). As a real process alone: "deaf" (after its first opening it
+// reverse order), hog (takes 512 MiB); "password=<word>" (its documents open only with that
+// password). As a real process alone: "deaf" (after its first opening it
 // listens no more, not even for its input closing) and "pidfile=<path>" (writes its number there).
 struct Told {
     bool silent = false;
@@ -204,6 +205,7 @@ struct Told {
     bool early = false;
     bool deaf = false;
     std::string pidfile;
+    std::string password;
     std::string render = "answer";
     std::string open = "answer";
 
@@ -219,6 +221,7 @@ struct Told {
             if (one == "early") early = true;
             if (one == "deaf") deaf = true;
             if (one.starts_with("pidfile=")) pidfile = one.substr(8);
+            if (one.starts_with("password=")) password = one.substr(9);
             if (one.starts_with("render=")) render = one.substr(7);
             if (one.starts_with("open=")) open = one.substr(5);
         }
@@ -306,8 +309,14 @@ Task<int> toy(Wire& wire, Told told) {
         if (got->sort == Sort::open) {
             const std::uint32_t document = from.u32();
             const std::uint64_t size = from.u64();
+            const std::string password = from.text();
             Bytes content;
             std::optional<Bytes> refused;
+
+            if (password != told.password) {
+                co_await wire.sent(tal::rendering::framed(frame_of(Sort::failed, got->id, tal::rendering::failed_with(tal::rendering::locked(password.empty())))));
+                continue;
+            }
 
             if (told.open == "greedy") {
                 co_await wire.sent(tal::rendering::framed(
@@ -554,9 +563,10 @@ struct Bench {
         return tal::docs::browser(program, limits, tal::Port<tal::Processes>{processes});
     }
 
-    // The document `text` opened by `renderer`.
-    std::shared_ptr<tal::docs::Document> opened(const std::shared_ptr<tal::docs::Renderer>& renderer, std::string_view text = "pages:3") {
-        return tal::wait(loop, renderer->opened(std::make_shared<tal::meta::Held>(bytes_of(text))));
+    // The document `text` opened by `renderer` with `password`.
+    std::shared_ptr<tal::docs::Document> opened(const std::shared_ptr<tal::docs::Renderer>& renderer, std::string_view text = "pages:3",
+                                                std::string password = {}) {
+        return tal::wait(loop, renderer->opened(std::make_shared<tal::meta::Held>(bytes_of(text)), password));
     }
 
     // Page `page` of `document` at `size` of `region`.
@@ -738,7 +748,7 @@ TRIAL("Rendering: troubles answered, blocks unread, questions out of range") {
     const auto document = bench.opened(failing);
 
     SAME(refusal([&] { (void)bench.rendered(document, 0); }), std::string{"unsupported: No such feature."});
-    SAME(refusal([&] { (void)tal::wait(bench.loop, failing->opened(std::make_shared<Gone>())); }), std::string{"missing: The file went away."});
+    SAME(refusal([&] { (void)tal::wait(bench.loop, failing->opened(std::make_shared<Gone>(), {})); }), std::string{"missing: The file went away."});
     SAME(refusal([&] { (void)bench.rendered(document, 3); }), std::string{"other: No such page."});
     SAME(refusal([&] { (void)bench.rendered(document, 0, Size{0, 4}); }), std::string{"other: A size of no pixels or over the ceiling."});
     SAME(refusal([&] { (void)bench.rendered(document, 0, Size{4000, 2001}); }), std::string{"other: A size of no pixels or over the ceiling."});
@@ -841,7 +851,7 @@ TRIAL("Rendering: an engine that does not greet is not there, and not started ag
 
         scope.run([](std::shared_ptr<tal::docs::Renderer> one, std::optional<std::optional<Kind>>& into) -> Task<void> {
             try {
-                (void)co_await one->opened(std::make_shared<tal::meta::Held>(bytes_of("pages:1")));
+                (void)co_await one->opened(std::make_shared<tal::meta::Held>(bytes_of("pages:1")), {});
                 into = std::optional<Kind>{};
             } catch (const tal::Trouble& why) {
                 into = why.kind();
@@ -976,6 +986,28 @@ TRIAL("Chains: browsers past those that cannot, renderers by the head") {
     SAME(refusal([] { (void)tal::docs::Renderers{std::vector<std::shared_ptr<tal::docs::Renderer>>{nullptr}}; }), std::string{"other: A link of no renderer."});
 }
 
+// A password goes to the process with the opening: none, or another one than the document's, is
+// denied in the process's words, and the process lives on to open the document with the right
+// one. A chain hands the password to the link that takes the document.
+TRIAL("Rendering: a password opens a document, none or another is denied") {
+    Bench bench;
+
+    const auto locked = bench.renderer({"password=secret"});
+
+    SAME(refusal([&] { (void)bench.opened(locked, "pages:2"); }), std::string{"denied: The document needs a password."});
+    SAME(refusal([&] { (void)bench.opened(locked, "pages:2", "guess"); }), std::string{"denied: The password does not open the document."});
+    SAME(bench.opened(locked, "pages:2", "secret")->pages().size(), std::size_t{2});
+
+    const auto scripted = std::make_shared<tal::docs::ScriptedRenderer>();
+
+    scripted->password = "other";
+
+    const auto chain = std::make_shared<tal::docs::Renderers>(std::vector<std::shared_ptr<tal::docs::Renderer>>{scripted});
+
+    SAME(refusal([&] { (void)bench.opened(chain, "plain", "secret"); }), std::string{"denied: The password does not open the document."});
+    SAME(bench.opened(chain, "plain", "other")->pages().size(), std::size_t{1});
+}
+
 // An engine let go kills its process at once: the toy behind it is gone, whatever it was doing.
 TRIAL("Rendering: an engine let go kills its process") {
     Bench bench;
@@ -1001,17 +1033,25 @@ TRIAL("Rendering: an engine let go kills its process") {
 }
 
 // The scripted adapters of the trials: pages in the tone of their number, a page at the size
-// asked, the addresses and ways a browser was asked for.
+// asked, documents locked by a password, the addresses and ways a browser was asked for.
 TRIAL("Scripted renderer and browser") {
     tal::Loop loop;
     tal::docs::ScriptedRenderer renderer;
     tal::docs::ScriptedBrowser browser;
-    const auto document = tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{})));
+    const auto document = tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), {}));
     const Pixels page = tal::wait(loop, document->rendered(0, Size{2, 2}, Region{}));
 
     OUGHT(document->pages() == (std::vector<Page>{{612, 792}}));
     OUGHT(first_pixel(page) == (std::vector<int>{0, 0, 0, 255}));
     SAME(renderer.opening, std::size_t{1});
+
+    renderer.password = "secret";
+    SAME(refusal([&] { (void)tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), {})); }),
+         std::string{"denied: The document needs a password."});
+    SAME(refusal([&] { (void)tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), "guess")); }),
+         std::string{"denied: The password does not open the document."});
+    SAME(tal::wait(loop, renderer.opened(std::make_shared<tal::meta::Held>(Bytes{}), "secret"))->pages().size(), std::size_t{1});
+    SAME(renderer.opening, std::size_t{4});
 
     const auto shown = tal::wait(loop, browser.opened("file:///b", Browsing{true, false}, Size{2, 1}));
 
@@ -1041,7 +1081,7 @@ TRIAL("Rendering: a real process rendered, killed, started anew, held to its mem
         return tal::docs::renderer(program, [](std::span<const std::byte>) { return true; }, limits);
     };
     const auto opened = [&loop](const std::shared_ptr<tal::docs::Renderer>& renderer) {
-        return tal::wait(loop, renderer->opened(std::make_shared<tal::meta::Held>(bytes_of("pages:2"))));
+        return tal::wait(loop, renderer->opened(std::make_shared<tal::meta::Held>(bytes_of("pages:2")), {}));
     };
 
     const auto fine = opened(real({}));

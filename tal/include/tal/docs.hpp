@@ -50,9 +50,11 @@ class Renderer : public Adapter {
 public:
     static constexpr std::string_view kind = "renderer";
 
+    [[nodiscard]] static std::shared_ptr<Renderer> builtin();
+
     [[nodiscard]] virtual bool takes(std::span<const std::byte> head) const = 0;
 
-    [[nodiscard]] virtual Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from) = 0;
+    [[nodiscard]] virtual Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) = 0;
 };
 
 struct Browsing {
@@ -94,7 +96,7 @@ public:
 
     [[nodiscard]] bool takes(std::span<const std::byte> head) const override;
 
-    [[nodiscard]] Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from) override;
+    [[nodiscard]] Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) override;
 
 private:
     std::vector<std::shared_ptr<Renderer>> links_;
@@ -126,6 +128,8 @@ using Recognizing = std::function<bool(std::span<const std::byte> head)>;
 
 [[nodiscard]] std::shared_ptr<Browser> browser(Command program, Limits limits = {}, Port<Processes> processes = {});
 
+[[nodiscard]] std::shared_ptr<Renderer> pdfium(Limits limits = {}, Port<Processes> processes = {});
+
 class ScriptedRenderer : public Renderer {
 public:
     explicit ScriptedRenderer(std::vector<Page> pages = {Page{612, 792}});
@@ -134,9 +138,10 @@ public:
 
     [[nodiscard]] bool takes(std::span<const std::byte> head) const override;
 
-    [[nodiscard]] Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from) override;
+    [[nodiscard]] Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) override;
 
     std::vector<Page> pages;
+    std::string password;
     std::size_t opening = 0;
 };
 

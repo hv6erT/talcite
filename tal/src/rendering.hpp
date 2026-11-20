@@ -127,6 +127,8 @@ struct Hello {
 
 [[nodiscard]] Bytes failed_with(const Trouble& trouble);
 
+[[nodiscard]] Trouble locked(bool none);
+
 [[nodiscard]] media::Pixels pictured(Reading& from, media::Size size);
 
 [[nodiscard]] std::vector<docs::Page> paged(std::span<const std::byte> payload);
