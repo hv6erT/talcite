@@ -10,10 +10,13 @@
 
 #include "tal/bytes.hpp"
 #include "tal/docs.hpp"
+#include "tal/document.hpp"
 #include "tal/executor.hpp"
+#include "tal/leaves.hpp"
 #include "tal/meta.hpp"
 #include "tal/pixels.hpp"
 #include "tal/process.hpp"
+#include "tal/scene.hpp"
 #include "tal/task.hpp"
 #include "tal/trouble.hpp"
 
@@ -555,4 +558,51 @@ TRIAL("PDFium: five hundred pages, documents side by side") {
     OUGHT(pixel(tal::wait(loop, book->rendered(0, Size{20, 10}, Region{})), 17, 5) == blue);
 }
 
+// Five hundred pages leafed through in tal-ui on a terminal that takes pixels: the first page in
+// the view as PDFium renders it (its white strip above, its red half), the last one after the end
+// key, the tiles kept within a limit of 8 MiB on the way.
+TRIAL("PDFium: five hundred pages leafed through in tal-ui, within the limit") {
+    tal::testing::Scene scene{tal::Display{.screen = {80, 24}, .graphics = tal::Graphics::kitty, .blocks = tal::Blocks::sextants, .cell = {10, 20}}};
+    tal::Loop loop{scene.time()};
+    tal::Document document{scene.time()};
+    const auto book = opened(loop, engine(), paper(std::vector<Sheet>(500)));
+    tal::Leaves& leaves = document.children().add<tal::Leaves>(book);
+    const auto settled = [&] {
+        for (int round = 0; round < 50; ++round) {
+            scene.wait(std::chrono::milliseconds{0});
+            UNTIL(loop, !leaves.busy());
+            scene.wait(std::chrono::milliseconds{0});
+
+            if (!leaves.busy()) break;
+        }
+    };
+    const auto picture = [&scene](tal::Spot at) -> const Pixels* {
+        const std::uint32_t mark = scene.at(at).picture;
+        const tal::Picture* shown = mark == 0 ? nullptr : scene.screen().picture(mark);
+
+        return shown == nullptr || shown->pixels == nullptr ? nullptr : shown->pixels.get();
+    };
+
+    leaves.most = std::uint64_t{8} << 20;
+    scene.show(document);
+    leaves.focus();
+    settled();
+
+    const Pixels* first = picture({0, 0});
+
+    OUGHT(first != nullptr);
+    OUGHT(pixel(*first, 10, 10) == white);
+    OUGHT(pixel(*first, 10, 200) == red);
+    OUGHT(pixel(*first, 790, 200) == blue);
+
+    scene.press(tal::Key{tal::Code::end});
+    settled();
+
+    SAME(leaves.page(), std::size_t{499});
+    OUGHT(picture({0, 23}) != nullptr);
+    OUGHT(leaves.held() <= *leaves.most);
+    UNTIL(loop, !leaves.busy());
+}
+
 #endif
+

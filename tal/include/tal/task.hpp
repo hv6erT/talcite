@@ -329,14 +329,15 @@ struct Moving {
     template <typename P>
     void await_suspend(std::coroutine_handle<P> handle) {
         const std::shared_ptr<Chain>& chain = chain_of(handle);
-        const std::lock_guard<std::mutex> kept{leaf->guard};
+        const std::shared_ptr<Leaf> mine = leaf;
+        const std::lock_guard<std::mutex> kept{mine->guard};
 
-        leaf->chain = chain;
-        leaf->handle = handle;
+        mine->chain = chain;
+        mine->handle = handle;
         chain->moved(*to);
         chain->suspended();
-        leaf->armed = true;
-        to->post([held = leaf] { held->fire(); });
+        mine->armed = true;
+        to->post([held = mine] { held->fire(); });
     }
 
     void await_resume() const noexcept {}
@@ -380,13 +381,14 @@ struct Sleeping {
     template <typename P>
     void await_suspend(std::coroutine_handle<P> handle) {
         const std::shared_ptr<Chain>& chain = chain_of(handle);
-        const std::lock_guard<std::mutex> kept{leaf->guard};
+        const std::shared_ptr<Leaf> mine = leaf;
+        const std::lock_guard<std::mutex> kept{mine->guard};
 
-        leaf->chain = chain;
-        leaf->handle = handle;
-        alarm = alarmed(chain->where(), wait, [held = leaf] { held->fire(); });
+        mine->chain = chain;
+        mine->handle = handle;
+        alarm = alarmed(chain->where(), wait, [held = mine] { held->fire(); });
         chain->suspended();
-        leaf->armed = true;
+        mine->armed = true;
     }
 
     void await_resume() const noexcept {}
@@ -511,17 +513,19 @@ private:
 
         template <typename P>
         bool await_suspend(std::coroutine_handle<P> handle) {
-            const std::lock_guard<std::mutex> kept{state->guard};
+            const std::shared_ptr<State> held = state;
+            const std::shared_ptr<detail::Leaf> mine = leaf;
+            const std::lock_guard<std::mutex> kept{held->guard};
 
-            if (state->outcome.held()) return false;
+            if (held->outcome.held()) return false;
 
-            const std::lock_guard<std::mutex> armed{leaf->guard};
+            const std::lock_guard<std::mutex> armed{mine->guard};
 
-            leaf->chain = detail::chain_of(handle);
-            leaf->handle = handle;
-            state->waiter = leaf;
-            leaf->chain->suspended();
-            leaf->armed = true;
+            mine->chain = detail::chain_of(handle);
+            mine->handle = handle;
+            held->waiter = mine;
+            mine->chain->suspended();
+            mine->armed = true;
 
             return true;
         }
