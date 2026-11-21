@@ -907,6 +907,28 @@ private:
     std::vector<Page> pages_;
 };
 
+// The place of PDFium in the chain of tal built without it: it takes PDF, and refuses every one
+// (`Trouble` unsupported) with the sentence that says why, which a viewer shows over the text
+// version.
+class Unbuilt final : public Renderer {
+public:
+    // Its name.
+    [[nodiscard]] std::string_view name() const override { return "pdfium"; }
+
+    // Whether `head` is the start of a PDF.
+    [[nodiscard]] bool takes(std::span<const std::byte> head) const override { return pdf_head(head); }
+
+    // Throws `Trouble` unsupported when awaited, always; the password is wiped.
+    Task<std::shared_ptr<Document>> opened(std::shared_ptr<meta::Reader> from, std::string password) override {
+        (void)from;
+        crypto::wiped(password);
+
+        throw Trouble{Kind::unsupported, "This program was built without a PDF engine."};
+
+        co_return nullptr;
+    }
+};
+
 // A view of the scripted browser: its address as its title, in white.
 class Shown final : public Browsed {
 public:
@@ -1005,12 +1027,14 @@ std::shared_ptr<Browser> browser(Command program, Limits limits, Port<Processes>
 }
 
 // The renderers built into tal, as a chain called "tal": PDFium when tal is built with it
-// (TAL_PDFIUM), otherwise none, so that the chain takes nothing.
+// (TAL_PDFIUM), otherwise a link that takes PDF only to say that the program has no engine for it.
 std::shared_ptr<Renderer> Renderer::builtin() {
     std::vector<std::shared_ptr<Renderer>> links;
 
 #ifdef TAL_PDFIUM
     links.push_back(pdfium());
+#else
+    links.push_back(std::make_shared<Unbuilt>());
 #endif
 
     return std::make_shared<Renderers>(std::move(links), "tal");

@@ -173,4 +173,8 @@ private:
     Hooks hooks_;
 };
 
+[[nodiscard]] std::shared_ptr<Node> transcript(const docs::Plain& plain, std::string why);
+
+[[nodiscard]] Task<std::shared_ptr<Node>> previewed(std::shared_ptr<docs::Renderer> renderer, std::shared_ptr<meta::Reader> from, std::string password = {});
+
 }

@@ -20,6 +20,7 @@
 #include "tal/trouble.hpp"
 
 #include "inflating.hpp"
+#include "pdffile.hpp"
 #include "pdfing.hpp"
 #include "tagging.hpp"
 
@@ -80,8 +81,36 @@ using pdf::Name;
 using pdf::Null;
 using pdf::Object;
 using pdf::Ref;
+using pdf::Box;
+using pdf::File;
+using pdf::Inherited;
+using pdf::Leaf;
+using pdf::Loaded;
+using pdf::Packed;
+using pdf::Place;
+using pdf::Scan;
+using pdf::Section;
+using pdf::Slot;
 using pdf::Stream;
 using pdf::Syntax;
+
+// The parts of the reading (pdffile.hpp). `Place`: where an object lives: nowhere (free), at an
+// offset of the file, or inside an object stream as its `index`-th object. `Slot`: one object of
+// an object stream: its number and where its text lies, from `at` up to `end`, counted from the
+// start of the objects. `Packed`: a decoded object stream: its bytes, its objects in the order of
+// its table, the objects' indexes in `table` sorted by number (`numbers`), and where the objects
+// start (`first`). `Section`: one cross-reference section: its trailer and its entries in file
+// order. `Scan`: what the scan of a damaged file notes besides the places: where the newest
+// `most_sections` trailers start, which objects look like cross-reference streams, which like
+// object streams, and which like the catalog. `Loaded`: an object read from where the
+// cross-reference places it, or none; a missing one was free or unknown, which makes it the null
+// object; one that is none without being missing was not where its place said. `Box`: a rectangle
+// as the four numbers PDF writes, lower left and upper right. `Inherited`: what a page takes from
+// the nodes above it in the tree (ISO 32000-2, 7.7.3.4). `Leaf`: a page of the tree and what it
+// inherits. `File`: the reader of one file, for one description or one text version; it holds what
+// was learned on the way: the places of objects, the objects already read, the decoded object
+// streams. Besides the description (`read`) it opens the file (`opened`), lists the pages
+// (`leaves`) and hands out objects and decoded streams, for the text version of PDF.
 
 // The first read for one object; a larger one follows when the object goes on past it.
 constexpr std::size_t first_window = 4096;
@@ -148,67 +177,6 @@ static_assert(scan_overlap / 2 >= scan_head && scan_overlap < scan_chunk);
 constexpr std::size_t most_filters = 8;
 constexpr std::size_t most_row = std::size_t{1} << 20;
 
-// Where an object lives: nowhere (free), at an offset of the file, or inside an object stream as
-// its `index`-th object.
-struct Place {
-    enum class Kind : std::uint8_t { free, direct, packed };
-
-    Kind kind = Kind::free;
-    std::uint64_t at = 0;
-    std::uint32_t index = 0;
-};
-
-// One object of an object stream: its number and where its text lies, from `at` up to `end`,
-// counted from the start of the objects.
-struct Slot {
-    std::uint32_t number = 0;
-    std::uint32_t at = 0;
-    std::uint32_t end = 0;
-};
-
-// A decoded object stream: its bytes, its objects in the order of its table, the objects' indexes
-// in `table` sorted by number (`numbers`), and where the objects start (`first`).
-struct Packed {
-    Bytes data;
-    std::vector<Slot> table;
-    std::vector<std::uint32_t> numbers;
-    std::size_t first = 0;
-};
-
-// One cross-reference section: its trailer and its entries in file order.
-struct Section {
-    Dict trailer;
-    std::vector<std::pair<std::uint32_t, Place>> entries;
-};
-
-// What the scan of a damaged file notes besides the places: where the newest `most_sections`
-// trailers start, which objects look like cross-reference streams, which like object streams, and
-// which like the catalog.
-struct Scan {
-    std::set<std::uint64_t> trailers;
-    std::set<std::uint32_t> streams;
-    std::set<std::uint32_t> packs;
-    std::set<std::uint32_t> catalogs;
-};
-
-// An object read from where the cross-reference places it, or none. A missing one was free or
-// unknown, which makes it the null object; one that is none without being missing was not where
-// its place said.
-struct Loaded {
-    std::optional<Object> object;
-    bool missing = false;
-};
-
-// A rectangle as the four numbers PDF writes, lower left and upper right.
-using Box = std::array<double, 4>;
-
-// What a page takes from the nodes above it in the tree (ISO 32000-2, 7.7.3.4).
-struct Inherited {
-    const Object* resources = nullptr;
-    Box media{0, 0, 612, 792};
-    std::optional<Box> crop;
-    std::int64_t rotate = 0;
-};
 
 // A view of bytes as a span.
 [[nodiscard]] std::span<const std::byte> spanned(const Bytes& bytes) { return {bytes.data(), bytes.size()}; }
@@ -346,120 +314,221 @@ struct Inherited {
 // Whether the character is a decimal digit.
 [[nodiscard]] bool digit(int one) { return one >= '0' && one <= '9'; }
 
-// The reader of one file. It lives for one description and holds what was learned on the way: the
-// places of objects, the objects already read, the decoded object streams.
-class File {
-public:
-    // A reader of `size` bytes of `from`, describing into `out`; what it may read in all is counted
-    // from the size (`read_times`, `read_extra`), without overflow for any size.
-    File(Reader& from, std::uint64_t size, Gathered& out)
-        : from_(from), size_(size), out_(out),
-          budget_(size > (unbounded - read_extra) / read_times ? unbounded : size * read_times + read_extra) {}
+// The value of the hexadecimal digit `one`, or -1.
+[[nodiscard]] int nibble(int one) {
+    if (one >= '0' && one <= '9') return one - '0';
+    if (one >= 'a' && one <= 'f') return one - 'a' + 10;
+    if (one >= 'A' && one <= 'F') return one - 'A' + 10;
 
-    // Adds the steps this file took to those of every file (`pdf_looks`).
-    ~File() { looks_made.fetch_add(looks_, std::memory_order_relaxed); }
+    return -1;
+}
 
-    File(const File&) = delete;
-    File& operator=(const File&) = delete;
+// ASCIIHexDecode (ISO 32000-2, 7.4.2): pairs of hexadecimal digits up to '>', white space
+// skipped, an odd last digit followed by 0; any other character is damage, and there is no data.
+[[nodiscard]] std::optional<Bytes> unhexed(const Bytes& given) {
+    Bytes made;
+    int high = -1;
 
-    [[nodiscard]] Task<void> read();
+    made.reserve(given.size() / 2);
 
-private:
-    [[nodiscard]] Task<Bytes> fetched(std::uint64_t at, std::size_t much);
+    for (const std::byte one : given) {
+        const int code = std::to_integer<int>(one);
 
-    [[nodiscard]] std::optional<std::uint64_t> shifted(std::uint64_t at) const;
+        if (code == '>') break;
 
-    [[nodiscard]] Task<void> headed();
+        if (pdf::spacing(code)) continue;
 
-    [[nodiscard]] Task<std::optional<std::uint64_t>> started();
+        const int value = nibble(code);
 
-    [[nodiscard]] Task<bool> chained(std::uint64_t first);
+        if (value < 0) return std::nullopt;
 
-    [[nodiscard]] Task<std::optional<Section>> section(std::uint64_t at);
+        if (high < 0) {
+            high = value;
+        } else {
+            made.push_back(static_cast<std::byte>(high * 16 + value));
+            high = -1;
+        }
+    }
 
-    [[nodiscard]] Task<std::optional<Section>> tabled(std::uint64_t at);
+    if (high >= 0) made.push_back(static_cast<std::byte>(high * 16));
 
-    [[nodiscard]] Task<std::optional<Section>> streamed(std::uint64_t at);
+    return made;
+}
 
-    void placed(const std::vector<std::pair<std::uint32_t, Place>>& entries);
+// ASCII85Decode (7.4.3): groups of five characters from '!' to 'u' for four bytes, 'z' for four
+// zeros, up to "~>"; a short last group stands for one byte fewer than its characters. Any other
+// character, or a group that overflows 32 bits, is damage, and there is no data.
+[[nodiscard]] std::optional<Bytes> unbased(const Bytes& given) {
+    Bytes made;
+    std::uint64_t group = 0;
+    int count = 0;
 
-    void merged(const Dict& older);
+    made.reserve(given.size() * 4 / 5);
 
-    [[nodiscard]] Task<void> rebuild();
+    for (const std::byte one : given) {
+        const int code = std::to_integer<int>(one);
 
-    [[nodiscard]] Task<bool> catalogued(std::uint32_t number);
+        if (code == '~') break;
 
-    void scanned(const Bytes& text, std::uint64_t at, std::size_t to, Scan& into);
+        if (pdf::spacing(code)) continue;
 
-    [[nodiscard]] Task<std::optional<Object>> indirect(std::uint64_t at, std::optional<std::uint32_t> number);
+        if (code == 'z' && count == 0) {
+            made.insert(made.end(), 4, std::byte{0});
 
-    [[nodiscard]] Task<std::optional<Object>> located(std::uint64_t at, std::uint32_t number);
+            continue;
+        }
 
-    [[nodiscard]] Task<Loaded> loaded(std::uint32_t number);
+        if (code < '!' || code > 'u') return std::nullopt;
 
-    [[nodiscard]] Task<const Object*> numbered(std::uint32_t number);
+        group = group * 85 + static_cast<std::uint64_t>(code - '!');
 
-    [[nodiscard]] Task<const Object*> resolved(const Object* one);
+        if (++count == 5) {
+            if (group > 0xFFFFFFFFU) return std::nullopt;
 
-    [[nodiscard]] Task<const Packed*> unpacked(std::uint32_t number);
+            for (int shift = 24; shift >= 0; shift -= 8) made.push_back(static_cast<std::byte>((group >> shift) & 0xFFU));
 
-    [[nodiscard]] Task<std::optional<Bytes>> data_of(const Stream& one);
+            group = 0;
+            count = 0;
+        }
+    }
 
-    [[nodiscard]] Task<std::optional<Bytes>> ended(std::uint64_t at);
+    if (count == 1) return std::nullopt;
 
-    [[nodiscard]] Task<std::optional<Bytes>> decoded(const Stream& one);
+    if (count > 0) {
+        for (int pad = count; pad < 5; ++pad) group = group * 85 + 84;
 
-    [[nodiscard]] std::optional<Bytes> inflated(const Bytes& packed);
+        if (group > 0xFFFFFFFFU) return std::nullopt;
 
-    // Whether the file is encrypted: its trailer names an encryption dictionary. The trailer holds
-    // only `trailer_keys`, so the look is short however many keys the file gave.
-    [[nodiscard]] bool sealed() const { return trailer_.find("Encrypt") != nullptr; }
+        for (int at = 0; at < count - 1; ++at) made.push_back(static_cast<std::byte>((group >> (24 - 8 * at)) & 0xFFU));
+    }
 
-    [[nodiscard]] Task<void> paged(const Object& root);
+    return made;
+}
 
-    [[nodiscard]] Task<void> page(const Dict& leaf, const Inherited& from);
+// LZWDecode (7.4.4): codes of 9 to 12 bits, most significant first, 256 clearing the table and 257
+// ending the data; with `early` (EarlyChange 1, the default) the width grows one code sooner. At
+// most `most` bytes come out; past them, or at a code that is not in the table, there is no data.
+[[nodiscard]] std::optional<Bytes> unwoven(const Bytes& given, bool early, std::uint64_t most) {
+    struct Word {
+        std::int32_t prefix = -1;
+        std::byte last{};
+        std::uint32_t size = 0;
+    };
 
-    void sheet(double width, double height);
+    std::vector<Word> table;
+    Bytes made;
+    std::uint32_t width = 9;
+    std::int32_t previous = -1;
+    std::uint64_t bits = 0;
+    std::uint32_t held = 0;
+    std::vector<std::byte> spelled;
 
-    [[nodiscard]] Task<bool> lettered(const Object* resources, std::size_t depth);
+    const auto reset = [&] {
+        table.assign(258, Word{});
 
-    [[nodiscard]] Task<bool> drew(const Dict* objects, std::size_t depth);
+        for (std::uint32_t code = 0; code < 256; ++code) table[code] = Word{-1, static_cast<std::byte>(code), 1};
 
-    [[nodiscard]] Task<bool> formed(const Object& value, std::size_t depth);
+        width = 9;
+        previous = -1;
+    };
 
-    [[nodiscard]] Task<void> font(const Object& value);
+    const auto spell = [&](std::uint32_t code) {
+        spelled.clear();
 
-    [[nodiscard]] Task<bool> embedded(const Dict* font);
+        for (std::int32_t at = static_cast<std::int32_t>(code); at >= 0; at = table[static_cast<std::size_t>(at)].prefix)
+            spelled.push_back(table[static_cast<std::size_t>(at)].last);
 
-    [[nodiscard]] Task<void> bookmarked(const Dict& catalog);
+        std::reverse(spelled.begin(), spelled.end());
+    };
 
-    [[nodiscard]] Task<void> informed();
+    reset();
 
-    Reader& from_;
-    std::uint64_t size_;
-    Gathered& out_;
-    std::uint64_t budget_;
-    std::uint64_t fetched_ = 0;
-    Document document_;
-    std::uint64_t shift_ = 0;
-    std::string version_;
-    Dict trailer_;
-    std::map<std::uint32_t, Place> places_;
-    std::map<std::uint32_t, Object> cache_;
-    std::deque<Packed> packs_;
-    std::map<std::uint32_t, const Packed*> packed_;
-    std::set<std::uint32_t> resolving_;
-    std::map<const Dict*, bool> drawn_;
-    std::map<std::uint32_t, bool> forms_;
-    std::set<const Dict*> named_;
-    std::set<std::uint32_t> fonts_;
-    std::set<const Array*> annotated_;
-    std::size_t spent_ = 0;
-    std::uint64_t looks_ = 0;
-    bool rebuilt_ = false;
-    bool settled_ = false;
-    const Object none_{Null{}};
-};
+    for (const std::byte one : given) {
+        bits = (bits << 8U) | std::to_integer<std::uint64_t>(one);
+        held += 8;
+
+        while (held >= width) {
+            const auto code = static_cast<std::uint32_t>((bits >> (held - width)) & ((1U << width) - 1));
+
+            held -= width;
+
+            if (code == 256) {
+                reset();
+
+                continue;
+            }
+
+            if (code == 257) return made;
+
+            if (code < table.size() && table[code].size > 0) {
+                spell(code);
+
+                if (previous >= 0 && table.size() < 4096) table.push_back(Word{previous, spelled.front(), table[static_cast<std::size_t>(previous)].size + 1});
+            } else if (code == table.size() && previous >= 0 && table.size() < 4096) {
+                spell(static_cast<std::uint32_t>(previous));
+                spelled.push_back(spelled.front());
+                table.push_back(Word{previous, spelled.front(), table[static_cast<std::size_t>(previous)].size + 1});
+            } else {
+                return std::nullopt;
+            }
+
+            if (made.size() + spelled.size() > most) return std::nullopt;
+
+            made.insert(made.end(), spelled.begin(), spelled.end());
+            previous = static_cast<std::int32_t>(code);
+
+            const std::size_t next = table.size() + (early ? 1 : 0);
+
+            if (next >= 2048) width = 12;
+            else if (next >= 1024) width = 11;
+            else if (next >= 512) width = 10;
+        }
+    }
+
+    return made;
+}
+
+// RunLengthDecode (7.4.5): a length byte 0 to 127 copies that many plus one bytes, 129 to 255
+// repeats the next byte 257 minus it times, 128 ends the data. At most `most` bytes come out; past
+// them there is no data.
+[[nodiscard]] std::optional<Bytes> unrun(const Bytes& given, std::uint64_t most) {
+    Bytes made;
+    std::size_t at = 0;
+
+    while (at < given.size()) {
+        const int length = std::to_integer<int>(given[at++]);
+
+        if (length == 128) break;
+
+        const std::size_t much = length < 128 ? static_cast<std::size_t>(length) + 1 : static_cast<std::size_t>(257 - length);
+
+        if (made.size() + much > most) return std::nullopt;
+
+        if (length < 128) {
+            const std::size_t take = std::min(much, given.size() - at);
+
+            made.insert(made.end(), given.begin() + static_cast<std::ptrdiff_t>(at), given.begin() + static_cast<std::ptrdiff_t>(at + take));
+            at += take;
+        } else if (at < given.size()) {
+            made.insert(made.end(), much, given[at++]);
+        }
+    }
+
+    return made;
+}
+
+
+}
+
+namespace pdf {
+
+// A reader of `size` bytes of `from`, describing into `out`; what it may read in all is counted
+// from the size (`read_times`, `read_extra`), without overflow for any size.
+File::File(Reader& from, std::uint64_t size, Gathered& out)
+    : from_(from), size_(size), out_(out), budget_(size > (unbounded - read_extra) / read_times ? unbounded : size * read_times + read_extra) {}
+
+// Adds the steps this file took to those of every file (`pdf_looks`).
+File::~File() { looks_made.fetch_add(looks_, std::memory_order_relaxed); }
 
 // The bytes from the offset, at most `much` and none past the size the file claims. Every read of
 // the file goes through here, and every read larger than a first window is counted, so that no
@@ -1334,8 +1403,10 @@ Task<std::optional<Bytes>> File::ended(std::uint64_t at) {
     co_return std::nullopt;
 }
 
-// The decoded data of a stream through its filters. Only FlateDecode is needed for the streams we
-// read (cross-reference and object streams), so any other filter means there is no data for us.
+// The decoded data of a stream through its filters: FlateDecode, which the structure of the file
+// uses, and for the content of pages, which the text version reads, also LZWDecode (with its
+// predictor), ASCIIHexDecode, ASCII85Decode and RunLengthDecode. Any other filter (those of
+// pictures) means there is no data for us.
 Task<std::optional<Bytes>> File::decoded(const Stream& one) {
     std::optional<Bytes> data = co_await data_of(one);
 
@@ -1374,13 +1445,26 @@ Task<std::optional<Bytes>> File::decoded(const Stream& one) {
     if (filters.size() > most_filters) co_return std::nullopt;
 
     for (const auto& [name, given] : filters) {
-        if (name != "FlateDecode" && name != "Fl") co_return std::nullopt;
+        if (name == "FlateDecode" || name == "Fl") {
+            data = inflated(*data);
 
-        data = inflated(*data);
+            if (data) data = predicted(std::move(*data), given);
+        } else if (name == "LZWDecode" || name == "LZW") {
+            const Object* early = given == nullptr ? nullptr : given->find("EarlyChange");
+            const std::optional<std::int64_t> change = early == nullptr ? std::nullopt : pdf::integer_of(*early);
 
-        if (!data) co_return std::nullopt;
+            data = charged(unwoven(*data, change.value_or(1) != 0, std::min<std::uint64_t>(most_packet, out_.unpackable())));
 
-        data = predicted(std::move(*data), given);
+            if (data) data = predicted(std::move(*data), given);
+        } else if (name == "ASCIIHexDecode" || name == "AHx") {
+            data = charged(unhexed(*data));
+        } else if (name == "ASCII85Decode" || name == "A85") {
+            data = charged(unbased(*data));
+        } else if (name == "RunLengthDecode" || name == "RL") {
+            data = charged(unrun(*data, std::min<std::uint64_t>(most_packet, out_.unpackable())));
+        } else {
+            co_return std::nullopt;
+        }
 
         if (!data) co_return std::nullopt;
     }
@@ -1423,12 +1507,26 @@ std::optional<Bytes> File::inflated(const Bytes& packed) {
     return made;
 }
 
-// Walks the page tree from its root, depth first in document order, carrying down what pages
-// inherit. A node met twice is a loop and marks the file damaged, and so does an array of kids met
-// twice (nodes sharing it): its kids are not taken again, and a kid already met is not taken at
-// all, so that the walk costs no more than the arrays it reads. A node with neither kids nor a
-// type is taken as a page, as readers do.
-Task<void> File::paged(const Object& root) {
+// `data`, what a filter other than Flate made, counted against the file's budget of unpacking
+// (`unpackable`); nothing when it would go past what is left of it or past `most_packet`.
+std::optional<Bytes> File::charged(std::optional<Bytes> data) {
+    if (!data) return std::nullopt;
+
+    const std::uint64_t left = out_.unpackable();
+
+    out_.unpacked(data->size());
+
+    if (data->size() > most_packet || data->size() > left) return std::nullopt;
+
+    return data;
+}
+
+// The pages of the tree from its root, in document order (a walk depth first), each with what it
+// inherits, at most `most_pages`. A node met twice is a loop and marks the file damaged, and so
+// does an array of kids met twice (nodes sharing it): its kids are not taken again, and a kid
+// already met is not taken at all, so that the walk costs no more than the arrays it reads. A node
+// with neither kids nor a type is taken as a page, as readers do.
+Task<std::vector<Leaf>> File::paged(const Object& root) {
     struct Step {
         const Object* node;
         Inherited from;
@@ -1438,8 +1536,9 @@ Task<void> File::paged(const Object& root) {
     std::vector<Step> steps{Step{&root, Inherited{}, 0}};
     std::set<std::uint32_t> visited;
     std::set<const Array*> walked;
+    std::vector<Leaf> made;
 
-    while (!steps.empty() && document_.pages < most_pages) {
+    while (!steps.empty() && made.size() < most_pages) {
         ++looks_;
 
         const Step step = steps.back();
@@ -1483,7 +1582,7 @@ Task<void> File::paged(const Object& root) {
         const Object* type = dict->find("Type");
 
         if (pdf::named(type, "Page") || (kids == nullptr && !pdf::named(type, "Pages"))) {
-            co_await page(*dict, here);
+            made.push_back(Leaf{dict, here});
 
             continue;
         }
@@ -1508,6 +1607,17 @@ Task<void> File::paged(const Object& root) {
             else steps.push_back(Step{&*kid, here, step.depth + 1});
         }
     }
+
+    co_return made;
+}
+
+// The pages of the document whose catalog is `catalog`, as `paged` finds them.
+Task<std::vector<Leaf>> File::leaves(const Dict& catalog) {
+    const Object* pages = catalog.find("Pages");
+
+    if (pages == nullptr) co_return std::vector<Leaf>{};
+
+    co_return co_await paged(*pages);
 }
 
 // One page: its size as shown (the crop box within the media box, times the user unit, turned by
@@ -1765,14 +1875,12 @@ Task<void> File::informed() {
     }
 }
 
-// The whole reading: the header, the cross-reference (repaired when it fails), then for an
-// encrypted file only that it is, otherwise the catalog, the pages, the bookmarks, the form and the
-// information dictionary. A catalog that cannot be read sends the file to `rebuild`, unless it has
+// The file opened: the header, the cross-reference (repaired when it fails), then, unless it is
+// encrypted, the catalog. A catalog that cannot be read sends the file to `rebuild`, unless it has
 // been repaired already, and then the root is looked for again: also when the repair began while
-// the root itself was being read, which found the catalog that the trailer now names.
-Task<void> File::read() {
-    out_.into.type = "application/pdf";
-
+// the root itself was being read, which found the catalog that the trailer now names. Gives the
+// catalog, or nothing for an encrypted file or one without a catalog.
+Task<const Dict*> File::opened() {
     co_await headed();
 
     const std::optional<std::uint64_t> start = co_await started();
@@ -1783,14 +1891,7 @@ Task<void> File::read() {
 
     if (!whole) co_await rebuild();
 
-    document_.version = version_;
-
-    if (sealed()) {
-        document_.encrypted = true;
-        out_.into.document = std::move(document_);
-
-        co_return;
-    }
+    if (sealed()) co_return nullptr;
 
     const Object* root = co_await resolved(trailer_.find("Root"));
     const Dict* catalog = pdf::dict_of(*root);
@@ -1805,6 +1906,26 @@ Task<void> File::read() {
 
     settled_ = true;
 
+    co_return catalog;
+}
+
+// The whole description: the file opened, then for an encrypted file only that it is, otherwise
+// the version the catalog may raise, the pages, the bookmarks, the form and the information
+// dictionary.
+Task<void> File::read() {
+    out_.into.type = "application/pdf";
+
+    const Dict* catalog = co_await opened();
+
+    document_.version = version_;
+
+    if (sealed()) {
+        document_.encrypted = true;
+        out_.into.document = std::move(document_);
+
+        co_return;
+    }
+
     if (catalog != nullptr) {
         const Object* versioned = co_await resolved(catalog->find("Version"));
 
@@ -1813,9 +1934,9 @@ Task<void> File::read() {
         if (said != nullptr && said->text.size() == 3 && digit(said->text[0]) && said->text[1] == '.' && digit(said->text[2]) && said->text > document_.version)
             document_.version = said->text;
 
-        const Object* pages = catalog->find("Pages");
+        const std::vector<Leaf> pages = co_await leaves(*catalog);
 
-        if (pages != nullptr) co_await paged(*pages);
+        for (const Leaf& one : pages) co_await page(*one.page, one.from);
 
         if (document_.pages == 0) {
             const Object* tree = co_await resolved(catalog->find("Pages"));

@@ -186,7 +186,7 @@ endfunction()
 # the properties (tal::meta), and the structure of PDF documents, read by our own readers.
 # Documents and pages rendered by another process (tal::docs): the ports `Renderer` and
 # `Browser`, their chains, and their adapters on any program that speaks tal's protocol.
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 
 # PDF rendered by PDFium (tal-render-pdfium), only on the programmer's word: configuring it fetches
@@ -298,7 +298,7 @@ endif()
 # styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
 # sent to the terminal as sixel or kitty pixels.
 add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
-  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/leaves.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
+  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/leaves.cpp src/previewed.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-media)
 
@@ -370,6 +370,9 @@ if(TALCITE_TESTS)
   # The files of those texts travel inside the binary, which the trials on Windows run far from
   # the sources.
   tal_embedded(tal-test texts_of test/texts/en-US.json test/texts/pl-PL.json)
+  # The documents of the trials of the text version of PDF and the texts they are to give.
+  tal_embedded(tal-test documents_of test/documents/lmodern.pdf test/documents/ot1.pdf test/documents/bitmap.pdf)
+  tal_embedded(tal-test expected_of test/documents/lmodern.txt test/documents/ot1.txt test/documents/bitmap.txt)
 
   if(TAL_PDFIUM)
     # The trials of PDFium run tal-render-pdfium beside them.

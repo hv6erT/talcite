@@ -6,7 +6,10 @@ Commander. It is the foundation of twa, a terminal file manager for film and mus
 
 The library has no third-party code and no required dependencies beyond the C++ standard library
 and threads. Its character tables (widths, grapheme clusters) are generated from the Unicode
-Character Database; see `LICENSE-UNICODE`. Everything that needs an outside implementation (TLS, ciphers, image decoders, parsers,
+Character Database; see `LICENSE-UNICODE`. The names of glyphs that the text version of PDF reads
+come from the Adobe Glyph List; see `LICENSE-AGL`. The named character references of the text
+version of HTML are those of the WHATWG HTML Living Standard (© WHATWG, CC BY 4.0), taken from
+Python's `html.entities`. Everything that needs an outside implementation (TLS, ciphers, image decoders, parsers,
 embedded tags) is plugged in through small interfaces; ready implementations live in the
 sibling project talcite-adapters.
 

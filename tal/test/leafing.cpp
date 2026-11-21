@@ -25,9 +25,10 @@
 #include "assembling.hpp"
 #include "rendering.hpp"
 
-// Trials of the renderers built into tal. Without PDFium (TAL_PDFIUM) the built-in chain takes
-// nothing; with it, the chain takes PDF and gives it to tal-render-pdfium, the program beside the
-// trials, which renders through PDFium in a process of its own.
+// Trials of the renderers built into tal. Without PDFium (TAL_PDFIUM) the built-in chain takes PDF
+// only to refuse it with the sentence that says why; with it, the chain takes PDF and gives it to
+// tal-render-pdfium, the program beside the trials, which renders through PDFium in a process of
+// its own.
 //
 // The documents are assembled in the trials, object by object (`Assembly`): pages of known sizes
 // and turns, each red on its left half and blue on its right, with a green square in a known
@@ -62,20 +63,22 @@ Bytes bytes_of(std::string_view text) { return Bytes(reinterpret_cast<const std:
 }
 
 // The built-in chain is called "tal"; it takes PDF by its header (within the first 1024 bytes,
-// after junk too) when tal is built with PDFium, and nothing otherwise.
-TRIAL("Renderers built in: PDF when tal has PDFium, nothing otherwise") {
+// after junk too), and when tal is built without PDFium it refuses every one, saying so.
+TRIAL("Renderers built in: PDF by its header; without PDFium refused with the reason") {
     const std::shared_ptr<Renderer> builtin = Renderer::builtin();
 
     SAME(builtin->name(), std::string_view{"tal"});
-
-#ifdef TAL_PDFIUM
     OUGHT(builtin->takes(bytes_of("%PDF-1.7\n")));
     OUGHT(builtin->takes(bytes_of(std::string(1000, ' ') + "%PDF-1.4")));
     OUGHT(!builtin->takes(bytes_of(std::string(1024, ' ') + "%PDF-1.4")));
     OUGHT(!builtin->takes(bytes_of("PK\x03\x04")));
     SAME(tal::docs::pdfium()->name(), std::string_view{"pdfium"});
-#else
-    OUGHT(!builtin->takes(bytes_of("%PDF-1.7\n")));
+
+#ifndef TAL_PDFIUM
+    tal::Loop loop;
+
+    SAME(refusal([&] { (void)tal::wait(loop, builtin->opened(std::make_shared<tal::meta::Held>(bytes_of("%PDF-1.7\n")), "secret")); }),
+         std::string{"unsupported: This program was built without a PDF engine."});
 #endif
 }
 

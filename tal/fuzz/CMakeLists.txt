@@ -1,7 +1,8 @@
 # The fuzz targets of the JSON and XML readers, of inflate, deflate and the archives, of GIF, PNG
 # (with our encoder) and JPEG, of the tags, of a program's texts and settings, of the diff, of the
-# emulator of a terminal, of the answers of the HTTP client and of what a renderer's process
-# says. Inflate is checked against the system's zlib where the fuzz build finds one.
+# emulator of a terminal, of the answers of the HTTP client, of what a renderer's process says and
+# of the text versions of HTML and of PDF. Inflate is checked against the system's zlib where the fuzz build
+# finds one.
 # Run one with the dictionary and a directory for the corpus, for example:
 #
 #   ./tal-json-fuzz -dict=json.dict -max_len=4096 corpus/
@@ -135,3 +136,19 @@ target_include_directories(tal-rendered-fuzz PRIVATE ../src)
 target_link_libraries(tal-rendered-fuzz PRIVATE tal-media)
 
 target_link_options(tal-rendered-fuzz PRIVATE -fsanitize=fuzzer)
+
+add_executable(tal-htmltext-fuzz htmltext.cpp)
+
+target_link_libraries(tal-htmltext-fuzz PRIVATE tal-ui tal-media)
+
+target_link_options(tal-htmltext-fuzz PRIVATE -fsanitize=fuzzer)
+
+configure_file(html.dict html.dict COPYONLY)
+
+add_executable(tal-pdftext-fuzz pdftext.cpp)
+
+target_link_libraries(tal-pdftext-fuzz PRIVATE tal-ui tal-media)
+
+target_link_options(tal-pdftext-fuzz PRIVATE -fsanitize=fuzzer)
+
+configure_file(pdf.dict pdf.dict COPYONLY)

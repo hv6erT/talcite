@@ -10,6 +10,7 @@
 
 #include "tal/bytes.hpp"
 #include "tal/clipboard.hpp"
+#include "tal/docs.hpp"
 #include "tal/editing.hpp"
 #include "tal/event.hpp"
 #include "tal/fs.hpp"
@@ -44,6 +45,13 @@ struct Range {
 
     friend bool operator==(const Range&, const Range&) = default;
 };
+
+struct Written {
+    std::string text;
+    std::vector<Stretch> marks;
+};
+
+[[nodiscard]] Written written(const docs::Plain& plain);
 
 struct Unread : Event {
     explicit Unread(Trouble given) : why(std::move(given)) {}

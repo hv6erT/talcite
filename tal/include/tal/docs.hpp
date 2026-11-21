@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <span>
@@ -129,6 +130,63 @@ using Recognizing = std::function<bool(std::span<const std::byte> head)>;
 [[nodiscard]] std::shared_ptr<Browser> browser(Command program, Limits limits = {}, Port<Processes> processes = {});
 
 [[nodiscard]] std::shared_ptr<Renderer> pdfium(Limits limits = {}, Port<Processes> processes = {});
+
+enum class Encoding : std::uint8_t { windows_1252, windows_1250, iso_8859_2 };
+
+struct Anchor {
+    std::size_t cell = 0;
+    std::size_t from = 0;
+    std::size_t upto = 0;
+    std::string address;
+
+    friend bool operator==(const Anchor&, const Anchor&) = default;
+};
+
+struct Block {
+    enum class Kind : std::uint8_t { paragraph, heading, item, quote, preformatted, row, rule, page };
+
+    Kind kind = Kind::paragraph;
+    int level = 0;
+    std::string mark;
+    std::string text;
+    std::vector<std::string> cells;
+    std::vector<Anchor> anchors;
+
+    friend bool operator==(const Block&, const Block&) = default;
+};
+
+struct Plain {
+    std::string title;
+    std::vector<Block> blocks;
+    bool cut = false;
+
+    friend bool operator==(const Plain&, const Plain&) = default;
+};
+
+struct Bounds {
+    std::size_t bytes = std::size_t{16} << 20;
+    std::size_t text = std::size_t{16} << 20;
+    std::size_t blocks = 100000;
+    std::size_t anchors = 100000;
+    std::size_t depth = 256;
+};
+
+[[nodiscard]] Plain plain(std::span<const std::byte> html, std::string_view address = {}, Encoding fallback = Encoding::windows_1252, Bounds bounds = {});
+
+class Prose {
+public:
+    Prose() = default;
+    virtual ~Prose() = default;
+
+    Prose(const Prose&) = delete;
+    Prose& operator=(const Prose&) = delete;
+
+    [[nodiscard]] virtual std::size_t pages() const = 0;
+
+    [[nodiscard]] virtual Task<Plain> page(std::size_t which) = 0;
+};
+
+[[nodiscard]] Task<std::shared_ptr<Prose>> prose(std::shared_ptr<meta::Reader> from);
 
 class ScriptedRenderer : public Renderer {
 public:
