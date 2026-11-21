@@ -231,12 +231,13 @@ void Capabilities::ground() const {
         held.titles = true;
     }
 
-    // Hyperlinks (OSC 8) have no question a terminal answers, so the floor decides alone. A terminal
-    // that does not know them skips the whole control string, as it skips every OSC it does not
-    // know, and the text stays plain; inside tmux and screen the multiplexer does the same, unless
-    // it passes them on. The one known exception is the Linux console: after `Esc ]` it waits only
-    // for its palette commands and prints whatever else follows. On Windows only a console that
-    // takes escape sequences gets them; the old one never sees a control string at all.
+    // Hyperlinks (OSC 8) have no question a terminal answers, so the floor decides alone. A
+    // terminal that does not know them skips the whole control string, as it skips every OSC it
+    // does not know, and the text stays plain; inside tmux and screen the multiplexer does the
+    // same, unless it passes them on. The one known exception is the Linux console: after `Esc ]`
+    // it waits only for its palette commands and prints whatever else follows. On Windows only a
+    // console that takes escape sequences gets them; the old one never sees a control string at
+    // all.
 #ifdef _WIN32
     held.links = console && from.vt();
 #else

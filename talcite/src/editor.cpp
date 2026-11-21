@@ -1403,8 +1403,8 @@ bool Editor::handle(KeyEvent& what) {
             const std::size_t column = kept.column;
 
             // There is nowhere to go above the first row or below the last one. The key is then
-            // handed to an ancestor instead of being eaten: a tab or a list above may use it. A page
-            // key near an edge goes as far as there is.
+            // handed to an ancestor instead of being eaten: a tab or a list above may use it. A
+            // page key near an edge goes as far as there is.
             const std::optional<Place> to = rows_away(Place{which, kept.cursor - *began}, upwards ? -much : much, column);
 
             if (!to.has_value()) return false;

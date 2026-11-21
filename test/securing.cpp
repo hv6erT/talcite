@@ -375,8 +375,8 @@ TRIAL("Seam: a guard that gives nothing refuses with a reason") {
     OUGHT(amiss);
 }
 
-// Rejections from `TlsStream` come out as trouble, not as a bare string: `Settle::fail` would wrap a
-// string in `Rejected`, which `catch (const Trouble&)` does not catch. The rest of the library
+// Rejections from `TlsStream` come out as trouble, not as a bare string: `Settle::fail` would wrap
+// a string in `Rejected`, which `catch (const Trouble&)` does not catch. The rest of the library
 // rejects with trouble, and these four places must do the same.
 TRIAL("Seam: rejections come out as trouble, not as a bare string") {
     const net::Listener gate = standing();

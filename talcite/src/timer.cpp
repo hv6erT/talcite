@@ -25,8 +25,8 @@ struct detail::Timers {
 
 namespace {
 
-// Takes appointment `number` out of the schedule, if it is still there; what it would have called goes
-// after the lock, since its captures may hold timers of their own.
+// Takes appointment `number` out of the schedule, if it is still there; what it would have called
+// goes after the lock, since its captures may hold timers of their own.
 void dropped(detail::Timers& timers, std::uint64_t number) {
     std::optional<talcite::detail::Deadlines<detail::Timers::Appointment>::Entry> gone;
 
@@ -40,8 +40,8 @@ void dropped(detail::Timers& timers, std::uint64_t number) {
 }
 
 // A timer is the appointment it stands for: the appointment lasts exactly as long as whoever keeps
-// the timer, and dropping the timer takes it back. The timer reaches the schedule only weakly, so one
-// that outlives its root has nothing to take back. Moving hands the appointment over; the timer
+// the timer, and dropping the timer takes it back. The timer reaches the schedule only weakly, so
+// one that outlives its root has nothing to take back. Moving hands the appointment over; the timer
 // moved from is empty.
 Timer::Timer(Timer&& other) noexcept : timers_(std::move(other.timers_)), number_(std::exchange(other.number_, 0)) {}
 

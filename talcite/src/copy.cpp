@@ -243,8 +243,8 @@ bool copied_at(const path& from, const path& to, Tally tally, Placing placing) {
         const DWORD why = GetLastError();
         const bool foreign = why == ERROR_FILE_EXISTS || why == ERROR_ALREADY_EXISTS;
 
-        // Unless the name was taken before it began, whatever the system's copy left under it is its
-        // own, and so the copy's.
+        // Unless the name was taken before it began, whatever the system's copy left under it is
+        // its own, and so the copy's.
         if (!foreign) made = true;
 
         if (why == ERROR_REQUEST_ABORTED || stopped()) return nullptr;
@@ -332,9 +332,9 @@ bool file_at(const path& from, const path& to, Tally tally, Placing placing = {}
 }
 
 // Copies one file into a folder entry, settling a conflict by `how`. A fresh target (`Placing`) is
-// not asked about first, since nothing should stand there; only when
-// the exclusive creation finds the name taken all the same (`Taken`) is the conflict settled, as
-// anywhere else. Returns where the file went, empty when it was skipped, and nothing when cancelled.
+// not asked about first, since nothing should stand there; only when the exclusive creation finds
+// the name taken all the same (`Taken`) is the conflict settled, as anywhere else. Returns where
+// the file went, empty when it was skipped, and nothing when cancelled.
 std::optional<path> placed_at(const path& from, const path& to, Tally tally, Conflict how, Placing placing) {
     if (placing.fresh) {
         try {
@@ -364,9 +364,9 @@ Instant instant_or(const path& where, std::chrono::sys_seconds otherwise) {
     }
 }
 
-// One entry of a tree to copy, worked out before the first byte: where it comes from (for a followed
-// link, what it points to), where it goes, what it is, and whether its bytes count in the total
-// (what lies behind a followed link does not).
+// One entry of a tree to copy, worked out before the first byte: where it comes from (for a
+// followed link, what it points to), where it goes, what it is, and whether its bytes count in the
+// total (what lies behind a followed link does not).
 struct Laid {
     path from;
     path to;

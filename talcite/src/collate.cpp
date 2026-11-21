@@ -27,24 +27,24 @@ namespace talcite {
 // comparison gives the order, so a sort computes the key of every text once and compares strings.
 //
 // Primaries come in groups, one after another: spaces and punctuation, digits, Latin letters,
-// Greek, Cyrillic, and everything else by code point (Hangul syllables are in their order there, Han
-// characters are not; their order needs readings, which no table here holds). A letter with marks
-// is its base letter with the marks as its secondary weight, from the canonical decomposition of
-// Latin-1, Latin Extended-A and -B, Latin Extended Additional, Greek with Greek Extended, and
+// Greek, Cyrillic, and everything else by code point (Hangul syllables are in their order there,
+// Han characters are not; their order needs readings, which no table here holds). A letter with
+// marks is its base letter with the marks as its secondary weight, from the canonical decomposition
+// of Latin-1, Latin Extended-A and -B, Latin Extended Additional, Greek with Greek Extended, and
 // Cyrillic (`letters`, generated from the Unicode 15.1 data). Letters without a decomposition that
-// still read as a base letter with a stroke (ł, ø, đ) are that letter with a stroke as a mark;
-// ß, æ, œ and ĳ are two letters. Cyrillic goes by its alphabet (`cyrillic`), in which й, ї, ґ and є
+// still read as a base letter with a stroke (ł, ø, đ) are that letter with a stroke as a mark; ß,
+// æ, œ and ĳ are two letters. Cyrillic goes by its alphabet (`cyrillic`), in which й, ї, ґ and є
 // are letters of their own, as Russian and Ukrainian dictionaries have them, while ё is е with a
 // mark.
 //
-// Numbers are read as numbers (`CollationShape::numeric`, on by default): a run of digits weighs as a
-// mark of a number, then its length without leading zeros, then its digits, so "Part 2" stands
+// Numbers are read as numbers (`CollationShape::numeric`, on by default): a run of digits weighs as
+// a mark of a number, then its length without leading zeros, then its digits, so "Part 2" stands
 // before "Part 10" and "1999" before "2001". Leading zeros tell texts apart only on the last level:
 // "007" and "7" are the same number.
 //
-// An exact collation (`CollationShape::exact`) compares the code points themselves, uppercase before
-// lowercase as the bytes of UTF-8 have them, and only numbers are read as numbers; it serves sorting
-// that cares about case, where letters must not meet.
+// An exact collation (`CollationShape::exact`) compares the code points themselves, uppercase
+// before lowercase as the bytes of UTF-8 have them, and only numbers are read as numbers; it serves
+// sorting that cares about case, where letters must not meet.
 //
 // A language may place a letter with marks after its base as a letter of its own, or read two
 // letters as one (`Tailoring`, chosen by the constructor): in Polish ą comes after a and ż after ź,
@@ -1256,9 +1256,9 @@ std::size_t run(std::string_view text, std::size_t from) {
     return from;
 }
 
-// The units of a number: its mark (`sign`, one weight for every number), its length without
-// leading zeros, then its digits from `zero` up, so that a shorter number comes first and numbers of
-// one length go digit by digit. The number zero keeps one digit.
+// The units of a number: its mark (`sign`, one weight for every number), its length without leading
+// zeros, then its digits from `zero` up, so that a shorter number comes first and numbers of one
+// length go digit by digit. The number zero keeps one digit.
 void numbered(std::vector<Unit>& into, std::string_view digits, std::uint32_t sign, std::uint32_t zero) {
     std::size_t first = 0;
 
@@ -1272,8 +1272,8 @@ void numbered(std::vector<Unit>& into, std::string_view digits, std::uint32_t si
     for (const char one : significant) into.push_back(Unit{zero + static_cast<std::uint32_t>(one - '0'), {}, 0x02});
 }
 
-// The units of an exact collation: every code point weighs as itself, twice over so that the mark of
-// a number fits between "/" and ":", where the digits stand among the bytes.
+// The units of an exact collation: every code point weighs as itself, twice over so that the mark
+// of a number fits between "/" and ":", where the digits stand among the bytes.
 std::vector<Unit> exacted(std::string_view text, bool numeric) {
     std::vector<Unit> made;
 

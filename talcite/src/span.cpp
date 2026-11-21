@@ -17,9 +17,10 @@
 // role over a stretch of the text, counted as a page counts them: the line is the paragraph (the
 // text between hard line breaks) and the bytes count from its start. A mark with an address is a
 // link: its cells carry the hyperlink (`Canvas::link`, OSC 8 in a terminal that takes it), and a
-// click on it follows the address the way every widget follows one (`FollowingMixin`). A label takes
-// no focus, so a key does not reach its links; a click does, and a terminal with hyperlinks opens
-// them itself on Ctrl+click, which is why a click with Ctrl is left to it, as on a link (`Link`).
+// click on it follows the address the way every widget follows one (`FollowingMixin`). A label
+// takes no focus, so a key does not reach its links; a click does, and a terminal with hyperlinks
+// opens them itself on Ctrl+click, which is why a click with Ctrl is left to it, as on a link
+// (`Link`).
 //
 // To lay marks over the rows, every row knows where each of its bytes came from in the text.
 // Wrapping joins words with one space wherever the text had several, and eliding drops what does

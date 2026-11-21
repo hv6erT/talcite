@@ -443,9 +443,9 @@ bool reusable(const Head& head, Framing how, const Wire& wire) {
 }
 
 // Where the body of a download goes (`HttpClient::save`): the file and the counters of the
-// promise's progress (the bytes written, and the whole from Content-Length, zero when unknown). Once
-// the head of a 2xx answer has come, the connection with the body still on it waits here, with the
-// head and the framing, for the download's pool task to read the body (`poured`).
+// promise's progress (the bytes written, and the whole from Content-Length, zero when unknown).
+// Once the head of a 2xx answer has come, the connection with the body still on it waits here, with
+// the head and the framing, for the download's pool task to read the body (`poured`).
 struct Spilling {
     fs::File file;
     const Work* work = nullptr;
@@ -907,9 +907,9 @@ Promise<Wire> dialed(const Kept& held, const Url& url) {
 
 // One exchange on the given connection: the request, the head (skipping 1xx responses), the body.
 // At the end the connection goes back to the pool if it can be used again, otherwise it is closed.
-// With a spill (a download), the exchange ends at the head of a 2xx answer and leaves its body on the
-// connection for the download (`poured`); any other answer (a redirect, an error page) is read into
-// memory as usual.
+// With a spill (a download), the exchange ends at the head of a 2xx answer and leaves its body on
+// the connection for the download (`poured`); any other answer (a redirect, an error page) is read
+// into memory as usual.
 Promise<Response> exchanged(const Kept& held, Request request, Wire wire, Spill spill) {
     const Patience patience = held->limits.patience;
     const Place where = place_of(request.url);
@@ -999,7 +999,8 @@ bool redirecting(int status) {
 }
 
 // Sends the request and follows redirects up to the limit, refusing a downgrade from HTTPS to HTTP.
-// A download keeps its spill through the redirects, so the body of the last answer lands in the file.
+// A download keeps its spill through the redirects, so the body of the last answer lands in the
+// file.
 Promise<Response> fetched(const Kept& held, Request request, int hops, Spill spill = nullptr) {
     checked(request);
 
@@ -1090,9 +1091,9 @@ void spilled(Spilling& spill, Bytes part, std::uint64_t& written) {
 
 // Reads the body of a download from its connection into the file, in the download's own pool task:
 // one read and one write at a time, each awaited and gone before the next, so a body of gigabytes
-// costs one piece of memory, and every wait hears a cancellation. A chain of promises, as for a body
-// in memory, would grow with every piece until the last one came. At the end the connection goes
-// back to the pool if it can be used again, otherwise it is closed.
+// costs one piece of memory, and every wait hears a cancellation. A chain of promises, as for a
+// body in memory, would grow with every piece until the last one came. At the end the connection
+// goes back to the pool if it can be used again, otherwise it is closed.
 void poured(const Kept& held, Spilling& spill, const Url& url) {
     const Patience patience = held->limits.patience;
     const Wire wire = spill.wire;

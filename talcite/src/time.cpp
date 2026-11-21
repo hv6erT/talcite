@@ -57,9 +57,9 @@ public:
         return which;
     }
 
-    // Withdraws the entry `which`, if it is still waiting; whether it was. The entry is destroyed only
-    // after the lock is released. The thread is not woken: if it sleeps until this entry, it wakes,
-    // finds nothing due and sleeps until the next one.
+    // Withdraws the entry `which`, if it is still waiting; whether it was. The entry is destroyed
+    // only after the lock is released. The thread is not woken: if it sleeps until this entry, it
+    // wakes, finds nothing due and sleeps until the next one.
     [[nodiscard]] bool unscheduled(std::uint64_t which) override {
         std::optional<Waiting::Entry> taken;
 
@@ -75,9 +75,9 @@ public:
 private:
     using Waiting = detail::Deadlines<std::function<void()>>;
 
-    // The loop of the timer thread: sleeps until the nearest deadline, then runs every entry that is
-    // due, outside the lock. The callbacks are the library's own and only hand the ending over to
-    // the io lane; anything they throw is swallowed so that the rest still run.
+    // The loop of the timer thread: sleeps until the nearest deadline, then runs every entry that
+    // is due, outside the lock. The callbacks are the library's own and only hand the ending over
+    // to the io lane; anything they throw is swallowed so that the rest still run.
     void serve() {
         while (true) {
             std::vector<Waiting::Entry> due;

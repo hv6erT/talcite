@@ -576,9 +576,9 @@ TRIAL("Viewer: movement within a window does not go back to the source") {
     SAME(calls, was);
 }
 
-// A frame reads only what it shows. A line of four megabytes, wrapped, shows its first rows, and the
-// source is asked for one window, not for the line; scrolling down through it asks for the windows
-// it passes, no more.
+// A frame reads only what it shows. A line of four megabytes, wrapped, shows its first rows, and
+// the source is asked for one window, not for the line; scrolling down through it asks for the
+// windows it passes, no more.
 TRIAL("Viewer: a frame of a very long line reads only what it shows") {
     const Bytes raw = bytes(std::string(4u * 1024 * 1024, 'x'));
 
@@ -1214,8 +1214,8 @@ TRIAL("Viewer: marks are ordered by place, not by the order of adding") {
     SAME(counted, std::size_t{3});
 }
 
-// `MarkedMixin` is a base, not just a field of the page. A foreign document widget gets both the set
-// of marks and the walk cursor with its lazy dropping, without writing a single line.
+// `MarkedMixin` is a base, not just a field of the page. A foreign document widget gets both the
+// set of marks and the walk cursor with its lazy dropping, without writing a single line.
 TRIAL("MarkedMixin: a foreign widget gets marks and a cursor without writing anything") {
     class Mine : public ui::MarkedMixin<ui::Node> {
     public:
@@ -1328,8 +1328,8 @@ TRIAL("Viewer: a source with a head paints rows at once, and the source is asked
     OUGHT(!one->lines().has_value());
     SAME(*one->whole(), raw.size());
 
-    // Past the head: scrolling row by row stops at the end of the head until the window arrives from
-    // the loop, and every question to the source starts past the head.
+    // Past the head: scrolling row by row stops at the end of the head until the window arrives
+    // from the loop, and every question to the source starts past the head.
     turned(loop, sheet, {40, 2}, [&] {
         one->slide(1);
 
@@ -1407,8 +1407,8 @@ TRIAL("Viewer: a jump by byte on an asynchronous source finishes from the handle
 }
 
 // The scrollbar of a page counted in bytes: a document from a source whose rows nobody has counted
-// yet has a byte scrollbar, and a thumb dragged to the end jumps to a byte, not to the row with that
-// number.
+// yet has a byte scrollbar, and a thumb dragged to the end jumps to a byte, not to the row with
+// that number.
 TRIAL("Viewer: the thumb of a byte scrollbar jumps to a byte") {
     Loop loop;
     Sheet sheet;

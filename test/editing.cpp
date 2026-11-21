@@ -1640,8 +1640,8 @@ TRIAL("Editor: two editors on one clipboard exchange text") {
 }
 
 // Ctrl with a letter is not the editor's business: the editor binds no clipboard key at all. In raw
-// mode Ctrl+C is not an interrupt but an ordinary key, so an editor that took it whenever it had the
-// focus would hide it from an application that wants it for quitting, with no way for the
+// mode Ctrl+C is not an interrupt but an ordinary key, so an editor that took it whenever it had
+// the focus would hide it from an application that wants it for quitting, with no way for the
 // application to undo that.
 TRIAL("Editor: ctrl with a letter goes up and leaves the clipboard alone") {
     Sheet sheet;

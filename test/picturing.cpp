@@ -245,7 +245,7 @@ TRIAL("Image: a frame above the ceiling does not reach the caller") {
     OUGHT(!images.decoded(lump("474946383961ffffffff000000" "21f9040400000000" "3b")).held());
 }
 
-// --- Image as a source ----------------------------------------------------------------------------
+// --- Image as a source ---------------------------------------------------------------------------
 
 // `figured` ties the bytes and the seam into a source: the kind and shape at once, from the header,
 // and the pixels on request in the size the caller asks for, already reduced, never at the file's
@@ -286,8 +286,8 @@ TRIAL("Image: figured rejects the promise when the provider refuses") {
     OUGHT(amiss);
 }
 
-// Without a provider there is nothing to promise: the shape is empty, so that the layout asks for no
-// room, and the source rejects with `Unbound` instead of pretending to have something.
+// Without a provider there is nothing to promise: the shape is empty, so that the layout asks for
+// no room, and the source rejects with `Unbound` instead of pretending to have something.
 TRIAL("Image: figured without a provider has no shape and rejects with Unbound") {
     const Figure one = figured(lump(leaving), Seam<ImageProvider>{});
 

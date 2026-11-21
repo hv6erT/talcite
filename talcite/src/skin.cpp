@@ -37,8 +37,8 @@ Style lined() {
     return made;
 }
 
-// Bold as the mark of a marked item. In Midnight Commander a marked file is yellow, but the built-in
-// skin has no colors, and bold shows even on a monochrome terminal.
+// Bold as the mark of a marked item. In Midnight Commander a marked file is yellow, but the
+// built-in skin has no colors, and bold shows even on a monochrome terminal.
 Style bolded() {
     Style made{};
 
@@ -135,9 +135,9 @@ Styles building() {
         {"talcite.message.button.disabled", faded()},
 
         // An error is the same widget with a different stem, so its family of roles is the same
-        // too. Without colors it differs in nothing, and that is intended: Midnight Commander's mono
-        // skin does not tell an error box from an ordinary window either. The palette makes the
-        // difference, not the code.
+        // too. Without colors it differs in nothing, and that is intended: Midnight Commander's
+        // mono skin does not tell an error box from an ordinary window either. The palette makes
+        // the difference, not the code.
         {"talcite.error", Style{}},
         {"talcite.error.title", Style{}},
         {"talcite.error.text", Style{}},
@@ -306,8 +306,8 @@ Lines gathered(const Glyphs& among, const Glyphs& spare, std::string_view named,
             glyphed(among, spare, prefix + ".right.joint", unicode)};
 }
 
-// The built-in glyph table, built once; frame sets fall back to it when the skin has no glyph at the
-// current level.
+// The built-in glyph table, built once; frame sets fall back to it when the skin has no glyph at
+// the current level.
 const Glyphs& glyphed() {
     static const Glyphs one = glyphing();
 

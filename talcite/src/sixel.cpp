@@ -189,8 +189,8 @@ std::size_t nearest(Tone one, const std::vector<Tone>& palette) {
 // Appends the number in decimal.
 void number(std::size_t value, std::string& into) { into += std::to_string(value); }
 
-// Writes one run within a color's pass: the character repeated `run` times; from four repetitions on
-// the repeat introducer ! is cheaper.
+// Writes one run within a color's pass: the character repeated `run` times; from four repetitions
+// on the repeat introducer ! is cheaper.
 void flushed(char sign, std::size_t run, std::string& into) {
     if (run == 0) return;
 
@@ -208,8 +208,8 @@ void flushed(char sign, std::size_t run, std::string& into) {
 }
 
 // Encodes frame `still` of the image as a complete sixel sequence (DCS to ST) with at most `colors`
-// colors (clamped to 1-256). Returns an empty string when there is no such frame, the image is empty
-// or its bytes are too few for its size.
+// colors (clamped to 1-256). Returns an empty string when there is no such frame, the image is
+// empty or its bytes are too few for its size.
 std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
     if (!one.held() || still >= one.stills().size()) return {};
 
@@ -273,8 +273,8 @@ std::string sixel(const Pixels& one, std::size_t still, std::size_t colors) {
                                                         palette.begin());
     } else {
         // A photo: colors go into 5x5x5-bit buckets with channel sums, so median cut splits at most
-        // 32768 buckets rather than hundreds of thousands of colors, and a box's mean still comes out
-        // exact. A bucket gets its nearest palette color once, for its own mean.
+        // 32768 buckets rather than hundreds of thousands of colors, and a box's mean still comes
+        // out exact. A bucket gets its nearest palette color once, for its own mean.
         struct Bin {
             std::size_t many = 0;
             std::uint64_t sums[3] = {};

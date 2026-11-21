@@ -57,9 +57,10 @@ namespace talcite::net {
 // router object remembers which way worked and starts from it at renewal; it also remembers the
 // PCP nonce and the UPnP service, without which a mapping can be neither renewed nor closed.
 //
-// One UDP way (PCP, NAT-PMP) is given `Routing::turn`, by default 250 + 500 + 1000 ms: a home router
-// answers within milliseconds, and one that stays silent for almost two seconds does not know this
-// way. The trials give their fake router more, since a busy machine may not run it for that long.
+// One UDP way (PCP, NAT-PMP) is given `Routing::turn`, by default 250 + 500 + 1000 ms: a home
+// router answers within milliseconds, and one that stays silent for almost two seconds does not
+// know this way. The trials give their fake router more, since a busy machine may not run it for
+// that long.
 //
 // Nothing here sets anything permanently without the caller knowing: a mapping has a lifetime and
 // expires by itself, unless a UPnP router knows only permanent mappings; then `lasting` comes back
@@ -377,7 +378,7 @@ Address aimed(const Routing& routing) {
 // The earlier of two moments.
 Clock::time_point sooner(Clock::time_point one, Clock::time_point two) { return std::min(one, two); }
 
-// --- PCP ------------------------------------------------------------------------------------------
+// --- PCP -----------------------------------------------------------------------------------------
 
 struct PcpOutcome {
     std::optional<Opening> opened;
@@ -462,7 +463,7 @@ PcpOutcome pcp(const Kept& held, const Address& mine, Carrier carrier, std::uint
     return made;
 }
 
-// --- NAT-PMP --------------------------------------------------------------------------------------
+// --- NAT-PMP -------------------------------------------------------------------------------------
 
 // One NAT-PMP mapping request (RFC 6886, section 3.3), followed, when opening, by a question for
 // the external address; a lifetime of zero deletes the mapping. Returns nothing when the router
@@ -526,7 +527,7 @@ std::optional<Opening> pmp(const Kept& held, Carrier carrier, std::uint16_t insi
     return made;
 }
 
-// --- UPnP IGD -------------------------------------------------------------------------------------
+// --- UPnP IGD ------------------------------------------------------------------------------------
 
 // The services that open ports, best first.
 constexpr std::array<std::string_view, 3> services{"urn:schemas-upnp-org:service:WANIPConnection:2",
@@ -874,7 +875,7 @@ std::optional<Opening> upnp(const Kept& held, const Address& mine, Carrier carri
     return Opening{Opener::upnp, carrier, inside, seen, std::chrono::seconds{lease}};
 }
 
-// --- The whole ------------------------------------------------------------------------------------
+// --- The whole -----------------------------------------------------------------------------------
 
 // Our address in the home network: the one given in the settings, or the one leading to the
 // router.

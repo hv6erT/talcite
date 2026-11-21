@@ -389,11 +389,11 @@ std::wstring longly(const path& where) {
 #endif
 
 // The path as a call into `std::filesystem` should get it. On Windows that is the \\?\ form
-// (`longly`): the standard library hands the path to the system as it is, and without the prefix the
-// system refuses anything longer than 260 characters unless the program's manifest and the registry
-// both allow long paths, which neither the tests nor every program on the library can promise.
-// Elsewhere it is the path itself. Every such call in the shared code of `fs` goes through here,
-// which a trial checks; an empty path stays empty, since the prefix would make it the current
+// (`longly`): the standard library hands the path to the system as it is, and without the prefix
+// the system refuses anything longer than 260 characters unless the program's manifest and the
+// registry both allow long paths, which neither the tests nor every program on the library can
+// promise. Elsewhere it is the path itself. Every such call in the shared code of `fs` goes through
+// here, which a trial checks; an empty path stays empty, since the prefix would make it the current
 // folder.
 path long_form(const path& where) {
 #ifdef _WIN32
@@ -407,8 +407,8 @@ path long_form(const path& where) {
 
 // A path the system handed back for one given through `long_form`, as the caller wrote it:
 // \\?\C:\... becomes C:\..., and \\?\UNC\server\share becomes \\server\share, so that paths in
-// entries and answers look the same whichever way they were asked. Any other prefixed path (a volume
-// by its GUID) has no plain form and stays as it is.
+// entries and answers look the same whichever way they were asked. Any other prefixed path (a
+// volume by its GUID) has no plain form and stays as it is.
 path plain_form(const path& where) {
 #ifdef _WIN32
     const std::wstring& named = where.native();

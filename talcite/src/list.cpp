@@ -351,8 +351,8 @@ bool List::handle(FocusEvent& what) {
 void List::layout(Size given) {
     const int much = static_cast<int>(children().many());
 
-    // Items may have disappeared behind the list's back: `Children::remove` is not virtual, so the row
-    // number does not fix itself. It is cut here, because everything is recomputed here anyway.
+    // Items may have disappeared behind the list's back: `Children::remove` is not virtual, so the
+    // row number does not fix itself. It is cut here, because everything is recomputed here anyway.
     if (which_ >= much) which_ = much - 1;
 
     // A scrollbar shown "when needed" (`needed`) appears only for a list longer than the window.

@@ -17,9 +17,9 @@ namespace {
 // Which scrollbars to show, as {column on the right, row at the bottom}: always, or only when
 // needed (`needed`). A bar "when needed" appears on an axis where the content does not fit in the
 // window. The content is first asked without bars; once one bar appears, the other axis is checked
-// again, because a vertical bar takes a column, so wrapped content may grow and only then fail to fit
-// horizontally (and the other way around). Two passes are enough: there are two bars and neither
-// disappears once it has appeared.
+// again, because a vertical bar takes a column, so wrapped content may grow and only then fail to
+// fit horizontally (and the other way around). Two passes are enough: there are two bars and
+// neither disappears once it has appeared.
 std::pair<int, int> bars(const ScrollShape& shape, bool across, bool down, const Node& child, Size room) {
     if (!shape.scrollbar) return {0, 0};
 

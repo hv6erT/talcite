@@ -55,7 +55,8 @@ struct Read {
     [[nodiscard]] int at(int x, int y) const { return picked[static_cast<std::size_t>(y * wide + x)]; }
 };
 
-// Decodes `text` into a `Read`; `whole` is set only when the text ends with ST right after the data.
+// Decodes `text` into a `Read`; `whole` is set only when the text ends with ST right after the
+// data.
 Read decoded(const std::string& text) {
     Read made;
     std::size_t at = 0;

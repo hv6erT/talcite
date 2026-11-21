@@ -406,8 +406,8 @@ Reached connected_at(const Share& one, std::string& user, std::string& password,
     const DWORD code = joined(one, who.c_str(), secret.c_str());
 
     // Into the Credential Manager only after a successful connection, so a wrong password does not
-    // stay in the system. A failed write does not spoil the existing connection; at worst the system
-    // asks again next time.
+    // stay in the system. A failed write does not spoil the existing connection; at worst the
+    // system asks again next time.
     if (code == NO_ERROR && remember) {
         std::wstring target = to_wstring(one.server);
 

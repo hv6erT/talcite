@@ -99,7 +99,8 @@ std::optional<std::uint64_t> gathered(const Bytes& one) {
 
 class Agreeing : public Agreement {
 public:
-    // Takes the private exponent from the first eight bytes of `secret`, kept within [2, prime − 2].
+    // Takes the private exponent from the first eight bytes of `secret`, kept within [2, prime −
+    // 2].
     explicit Agreeing(const Bytes& secret) {
         for (std::size_t at = 0; at < 8 && at < secret.size(); ++at)
             secret_ |= std::to_integer<std::uint64_t>(secret[at]) << (8 * at);
@@ -182,7 +183,8 @@ private:
         if (key.size() != 32 || nonce.size() != 12) throw Trouble{"fake ciphers want a 32-byte key and a 12-byte nonce"};
     }
 
-    // The bytes XOR-ed with a key stream derived from the key and the nonce; the same call undoes it.
+    // The bytes XOR-ed with a key stream derived from the key and the nonce; the same call undoes
+    // it.
     static Bytes streamed(const Bytes& key, const Bytes& nonce, const Bytes& what) {
         sized(key, nonce);
 
@@ -242,8 +244,9 @@ Seam<CipherProvider> fixed(int secret) {
     return Seam<CipherProvider>{std::make_shared<Fixed>(static_cast<std::byte>(secret))};
 }
 
-// A fake handshake: the caller asks "talcite?", the answerer replies "talcite!", the keys are fixed.
-// Anything else is a refusal; that is how we check that a failed handshake closes the channel.
+// A fake handshake: the caller asks "talcite?", the answerer replies "talcite!", the keys are
+// fixed. Anything else is a refusal; that is how we check that a failed handshake closes the
+// channel.
 const Bytes calling_key(32, std::byte{'c'});
 const Bytes answering_key(32, std::byte{'a'});
 

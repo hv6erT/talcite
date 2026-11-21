@@ -504,9 +504,9 @@ void mouse(ui::Root& top, ui::Spot where, ui::Press press, ui::Mouse which = ui:
 }
 
 // A press on the top row grabs the position, and the window follows the cursor at the same grab
-// point. A cursor beyond the limit pulls the window up to the limit, and when it comes back, back to
-// where it holds it; the mouse reaches the window from outside it too, because the window asks for a
-// hold.
+// point. A cursor beyond the limit pulls the window up to the limit, and when it comes back, back
+// to where it holds it; the mouse reaches the window from outside it too, because the window asks
+// for a hold.
 TRIAL("Window: dragging by the top row moves the window, and the grab stays in place") {
     Stage stage;
 

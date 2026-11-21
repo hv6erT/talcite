@@ -85,8 +85,8 @@ void Bell::ring() {
 }
 
 // Silences the bell by draining the pipe. A read interrupted by a signal is retried: leaving the
-// loop with a byte still in the pipe would wake the next task's waits on the bell at once, as though
-// its work had been stopped.
+// loop with a byte still in the pipe would wake the next task's waits on the bell at once, as
+// though its work had been stopped.
 void Bell::clear() {
     rang_.store(false);
 

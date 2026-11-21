@@ -36,8 +36,8 @@ namespace talcite::fs::core {
 
 namespace stood = std::filesystem;
 
-// Read chunk sizes by medium: local disk, network share, everything else. A share takes as much as a
-// disk: each installment written there is a round trip, and with 64 KiB a link of a millisecond
+// Read chunk sizes by medium: local disk, network share, everything else. A share takes as much as
+// a disk: each installment written there is a round trip, and with 64 KiB a link of a millisecond
 // carried no more than 64 MB/s; cancellation still waits for one installment at most.
 inline constexpr std::size_t on_disk = 1024 * 1024;
 inline constexpr std::size_t afar = 1024 * 1024;

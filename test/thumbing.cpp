@@ -545,8 +545,8 @@ TRIAL("Scrollbar: a scroller in both axes, each scrollbar with its own axis") {
     (void)top.render({{0, 0}, {20, 10}});
     clicked(top, {0, 9});
 
-    // A row scrolled under the horizontal scrollbar does not catch the click: the scrollbar gets it,
-    // and the vertical view stays.
+    // A row scrolled under the horizontal scrollbar does not catch the click: the scrollbar gets
+    // it, and the vertical view stays.
     SAME(one->shift().x, 0);
     SAME(one->shift().y, 9);
 

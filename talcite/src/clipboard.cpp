@@ -768,8 +768,8 @@ public:
     // Windows, locally, the system clipboard; on POSIX the session's clipboard program when it
     // carries content types (`typed`); our own copy in any case. True when the files reached the
     // system clipboard, false when only our copy holds them. A relative path refuses the whole list
-    // and changes nothing (`portable`). An empty list takes away files given before, and only files:
-    // text copied since then stays.
+    // and changes nothing (`portable`). An empty list takes away files given before, and only
+    // files: text copied since then stays.
     [[nodiscard]] bool give(const Files& what) override {
         if (!portable(what)) return false;
 
@@ -804,8 +804,9 @@ public:
     // The files to paste and how. Locally the system clipboard answers: on Windows its CF_HDROP,
     // cut when Explorer's effect says move; on POSIX what the clipboard program reads (`gathered`).
     // A system clipboard that holds something else gives nothing, because our older copy must not
-    // paste over what the user has copied since. Our own copy answers only when the system clipboard
-    // is out of reach: over ssh, without a typed clipboard program, or when Windows will not open it.
+    // paste over what the user has copied since. Our own copy answers only when the system
+    // clipboard is out of reach: over ssh, without a typed clipboard program, or when Windows will
+    // not open it.
     [[nodiscard]] std::optional<Files> taken() override {
         Console& out = console_.provider();
 
@@ -838,7 +839,8 @@ private:
     std::string mine_;
 
     // Our own last list of files, which `taken` gives when the system clipboard is out of reach. On
-    // POSIX it also tells our own cut from a copy, which the uri-list on the clipboard cannot carry.
+    // POSIX it also tells our own cut from a copy, which the uri-list on the clipboard cannot
+    // carry.
     std::optional<Files> files_;
 };
 

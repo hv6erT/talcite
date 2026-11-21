@@ -526,8 +526,8 @@ void Spool::screen(int high) {
     stride_ = std::max(stride_, std::max(least, want));
 }
 
-// A change in one place: `gone` bytes from `at` replaced by `came`. Anchors past the changed stretch
-// move by the difference in bytes and lines: a line that started there still starts, just
+// A change in one place: `gone` bytes from `at` replaced by `came`. Anchors past the changed
+// stretch move by the difference in bytes and lines: a line that started there still starts, just
 // elsewhere. Dropping every anchor past the change would make each key pressed at a block far into
 // the file recount the lines from the change to the block, megabytes per key in a large file. Only
 // anchors inside the deleted stretch die (after its start, up to and including its end): their line

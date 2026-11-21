@@ -352,8 +352,8 @@ TRIAL("DiffViewer: a scroll bar only when the plan does not fit") {
 
 // A header with the sides' titles, a section title in its own row, check boxes at the hunks that
 // have them, and "+N" with the closed fold sign at a folded hunk with several rows; unfolded, the
-// hunk carries the open sign instead, and a hunk of one row carries none. The cursor stands on the first hunk with
-// rows, not on a section heading.
+// hunk carries the open sign instead, and a hunk of one row carries none. The cursor stands on the
+// first hunk with rows, not on a section heading.
 TRIAL("DiffViewer: two sides, sections, check boxes and folding") {
     Sheet sheet;
 

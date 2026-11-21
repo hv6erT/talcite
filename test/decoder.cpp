@@ -320,8 +320,8 @@ TRIAL("Decoder: Esc after Esc is two presses") {
     SAME(ear.after(50ms), std::string{"Esc"});
 }
 
-// `Esc [` and `Esc O` with nothing after them are what a terminal sends for Alt+[ and Alt+O, not Esc
-// and a letter; an unfinished sequence is Alt with its second byte and the rest typed after it.
+// `Esc [` and `Esc O` with nothing after them are what a terminal sends for Alt+[ and Alt+O, not
+// Esc and a letter; an unfinished sequence is Alt with its second byte and the rest typed after it.
 TRIAL("Decoder: an unfinished escape is Alt with its second byte") {
     Ear ear;
 
@@ -342,8 +342,8 @@ TRIAL("Decoder: Alt+O before a space is not a single shift") {
     SAME(ear.heard("\x1bO x"), std::string{"Alt+'O' | ' ' | 'x'"});
 }
 
-// A single shift with more digits than any key has is given up: no key comes of it, and what follows
-// the given-up part is typed text.
+// A single shift with more digits than any key has is given up: no key comes of it, and what
+// follows the given-up part is typed text.
 TRIAL("Decoder: a single shift that runs too long is no key") {
     Ear ear;
 

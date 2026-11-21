@@ -99,8 +99,8 @@ TRIAL("Storage: bytes outside UTF-8 are escaped and come back byte for byte") {
     SAME(fs::restored_bytes(made), latin);
 
     // Every kind of damage: a continuation byte without a lead, a truncated character, an overlong
-    // encoding, half of a surrogate pair written in UTF-8, above U+10FFFF, bytes that never occur in
-    // UTF-8.
+    // encoding, half of a surrogate pair written in UTF-8, above U+10FFFF, bytes that never occur
+    // in UTF-8.
     for (const std::string broken : {std::string{"\x80"}, std::string{"a\xC3"}, std::string{"\xC0\x80"},
                                      std::string{"\xE0\x80\xAF"}, std::string{"\xED\xA0\x80"},
                                      std::string{"\xF4\x90\x80\x80"}, std::string{"\xF5\x80\x80\x80"},

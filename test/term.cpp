@@ -244,9 +244,9 @@ TRIAL("Term: Pause takes off once and puts on once") {
     OUGHT(back.find("\x1b[?1049h") == back.rfind("\x1b[?1049h"));
 }
 
-// The dressing hides the cursor. Coming back from another program, or resuming after Ctrl+Z, dresses
-// the terminal again, so the next frame has to show the cursor again; an editor would otherwise go
-// on without one.
+// The dressing hides the cursor. Coming back from another program, or resuming after Ctrl+Z,
+// dresses the terminal again, so the next frame has to show the cursor again; an editor would
+// otherwise go on without one.
 TRIAL("Term: the cursor shows again after stepping aside") {
     auto line = faking::terminal();
 
@@ -474,7 +474,8 @@ TRIAL("Term: a title forbidden in Setup does not go out") {
     SAME(line->written, std::string{});
 }
 
-// The change goes through the loop, so only a turn carries it out, and it sends just the difference.
+// The change goes through the loop, so only a turn carries it out, and it sends just the
+// difference.
 TRIAL("Term: reconfigure sends just the difference") {
     auto line = faking::terminal();
 
@@ -661,7 +662,8 @@ TRIAL("Term: with no reason it waits without a limit, but with the bell") {
 }
 
 // The nearest appointment with the root's schedule bounds the wait for the console; the tree itself
-// is not asked. The root stands on a manual clock, so the wait is exact however long the turn takes.
+// is not asked. The root stands on a manual clock, so the wait is exact however long the turn
+// takes.
 TRIAL("Term: an appointment with the root's schedule goes to the console as patience") {
     auto line = faking::terminal();
 
@@ -911,8 +913,9 @@ std::string linked(const std::shared_ptr<faking::Terminal>& line, Linking& root,
 
 }
 
-// The link opens right before its first cell, with its mark as the id, and ends right after its last
-// one, before the plain text; an address goes out in printable ASCII, every other byte escaped.
+// The link opens right before its first cell, with its mark as the id, and ends right after its
+// last one, before the plain text; an address goes out in printable ASCII, every other byte
+// escaped.
 TRIAL("Term: a hyperlink goes out as OSC 8 around its cells, its address escaped") {
     Linking root{"https://example.org/a b/\xc3\xbc"};
 

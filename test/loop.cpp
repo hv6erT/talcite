@@ -184,10 +184,10 @@ TRIAL("then: on a settled promise with here, waits for the turn instead of runni
     UNTIL(loop, ran.load());
 }
 
-// Pool work that finishes after the loop is gone does not reach it. In trials the loop dies with the
-// trial, so the `here` link must not keep a bare pointer to it. The new loop takes the same memory
-// as the dead one, so a stale pointer would reach it and the continuation promised to the dead loop
-// would run on another.
+// Pool work that finishes after the loop is gone does not reach it. In trials the loop dies with
+// the trial, so the `here` link must not keep a bare pointer to it. The new loop takes the same
+// memory as the dead one, so a stale pointer would reach it and the continuation promised to the
+// dead loop would run on another.
 TRIAL("Loop: a continuation promised to a dead loop is dropped, not sent to the next one") {
     std::atomic<bool> go{false};
     std::atomic<bool> ran{false};

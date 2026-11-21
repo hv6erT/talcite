@@ -57,7 +57,8 @@ void program(const stdfs::path& where, const std::string& body) {
 
 #endif
 
-// An empty temporary folder with the given name, wiped first if it is left over from an earlier run.
+// An empty temporary folder with the given name, wiped first if it is left over from an earlier
+// run.
 stdfs::path folder(const std::string& name) {
     const stdfs::path made = stdfs::temp_directory_path() / name;
 
@@ -86,7 +87,8 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
 
     stdfs::create_directories(bin);
 
-    // A ClamAV daemon that does not work, and a scanner that looks for the text in its last argument.
+    // A ClamAV daemon that does not work, and a scanner that looks for the text in its last
+    // argument.
     program(bin / "clamdscan", "echo 'ERROR: Could not connect'\nexit 2\n");
     program(bin / "clamscan", "if grep -q ZARAZA \"$3\"; then echo \"$3: Zaraza FOUND\"; exit 1; fi\nexit 0\n");
 
@@ -114,9 +116,9 @@ TRIAL("Scan: clean, threat and missing scanner give different answers") {
 
         OUGHT(scan::scanned(root / "film.mkv").get().verdict == scan::Verdict::unknown);
 
-        // A scanner killed by a signal said nothing, even if the signal number looks like a threat code.
-        // Under nohup SIGHUP is ignored, and every program started from here inherits that, so the
-        // scanner would not die and the check would be about nothing.
+        // A scanner killed by a signal said nothing, even if the signal number looks like a threat
+        // code. Under nohup SIGHUP is ignored, and every program started from here inherits that,
+        // so the scanner would not die and the check would be about nothing.
         struct sigaction hangup{};
 
         if (::sigaction(SIGHUP, nullptr, &hangup) == 0 && hangup.sa_handler != SIG_IGN) {

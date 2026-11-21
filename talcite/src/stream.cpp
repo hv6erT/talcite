@@ -178,8 +178,8 @@ struct ReadPromise : Handing<Bytes> {
         (void)settle->value(std::move(buffer));
     }
 
-    // A deadline with empty hands rejects with `Overdue`. If it resolved with nothing, silence could
-    // not be told from the other side closing, and those are two entirely different messages.
+    // A deadline with empty hands rejects with `Overdue`. If it resolved with nothing, silence
+    // could not be told from the other side closing, and those are two entirely different messages.
     void late() override {
         yielded();
 

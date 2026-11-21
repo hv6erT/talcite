@@ -11,21 +11,21 @@
 
 namespace talcite::ui {
 
-// Handlers live in a map from the event type to a vector of number-hand pairs. The function in a hand
-// is held through a pointer to void, because the map cannot know types that do not exist yet; the
-// map key is the type itself, though, so recovering it on the other side is not guesswork. The lock
-// guards the map: a hook may be dropped on another thread than the one the events run on (with the
-// object that held it), and dropping it changes the map.
+// Handlers live in a map from the event type to a vector of number-hand pairs. The function in a
+// hand is held through a pointer to void, because the map cannot know types that do not exist yet;
+// the map key is the type itself, though, so recovering it on the other side is not guesswork. The
+// lock guards the map: a hook may be dropped on another thread than the one the events run on (with
+// the object that held it), and dropping it changes the map.
 struct detail::Hands {
     std::mutex guard;
     std::unordered_map<std::type_index, std::vector<std::pair<std::uint64_t, std::shared_ptr<Hand>>>> held;
     std::uint64_t next = 0;
 };
 
-// A hook unhooks itself: the listener lasts exactly as long as whoever keeps the hook, and a callback
-// that captured its keeper can never outlive it. The hook reaches the handler's hands only weakly,
-// so a hook that outlives its handler has nothing left to unhook. Moving hands the listener over; the
-// hook moved from is empty.
+// A hook unhooks itself: the listener lasts exactly as long as whoever keeps the hook, and a
+// callback that captured its keeper can never outlive it. The hook reaches the handler's hands only
+// weakly, so a hook that outlives its handler has nothing left to unhook. Moving hands the listener
+// over; the hook moved from is empty.
 Hook::Hook(Hook&& other) noexcept
     : hands_(std::move(other.hands_)), type_(other.type_), number_(std::exchange(other.number_, 0)) {}
 
@@ -50,8 +50,8 @@ Hook::~Hook() { unhooked(); }
 bool Hook::empty() const { return number_ == 0 || hands_.expired(); }
 
 // Takes the listener off its handler. A dispatch under way holds its own copy of the hands, so the
-// hand is also marked as dead: the dispatch skips it rather than call a listener whose keeper may be
-// gone. The listener being called just now finishes its call, since the dispatch keeps it alive.
+// hand is also marked as dead: the dispatch skips it rather than call a listener whose keeper may
+// be gone. The listener being called just now finishes its call, since the dispatch keeps it alive.
 void Hook::unhooked() {
     const std::uint64_t gone = std::exchange(number_, 0);
 
@@ -90,8 +90,8 @@ void Hook::unhooked() {
 Handler::Handler() = default;
 
 // A handler that goes marks its listeners dead. A dispatch under way holds them in its own copy
-// (`among`), and a handler destroyed by one of its own listeners must not call the others: what they
-// captured may have gone with it. Their hooks find the hands gone and have nothing to unhook.
+// (`among`), and a handler destroyed by one of its own listeners must not call the others: what
+// they captured may have gone with it. Their hooks find the hands gone and have nothing to unhook.
 Handler::~Handler() {
     if (!hands_) return;
 

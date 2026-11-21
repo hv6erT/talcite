@@ -110,8 +110,8 @@ struct Term::Held {
     // screen.
     std::uint64_t framed = 0;
 
-    // Kitty images: what stands on screen after the last frame, and which images the terminal holds.
-    // The terminal keeps an image as long as someone on our side holds its pixels.
+    // Kitty images: what stands on screen after the last frame, and which images the terminal
+    // holds. The terminal keeps an image as long as someone on our side holds its pixels.
     std::vector<Placement> placed;
     std::vector<std::pair<std::uint32_t, std::weak_ptr<const Pixels>>> sent;
 
@@ -466,10 +466,11 @@ struct Sending {
     bool bracketed_paste = false;
 };
 
-// The effective screen, mouse, hover and bracketed-paste settings. Tracking motion without a pressed
-// button has nothing to measure in the terminal: no reply says whether ?1003 is understood. So the
-// wish alone decides, and the default is off, because when on, it makes the terminal report every
-// twitch of the pointer, even when nobody cares, and over ssh that is real traffic on the link.
+// The effective screen, mouse, hover and bracketed-paste settings. Tracking motion without a
+// pressed button has nothing to measure in the terminal: no reply says whether ?1003 is understood.
+// So the wish alone decides, and the default is off, because when on, it makes the terminal report
+// every twitch of the pointer, even when nobody cares, and over ssh that is real traffic on the
+// link.
 Sending sending(const Capabilities& compat, const Setup& wish) {
     Sending made;
 
@@ -482,9 +483,9 @@ Sending sending(const Capabilities& compat, const Setup& wish) {
 }
 
 // The effective block-glyph density. The only field where the wish does not win outright:
-// `Capabilities::blocks()` returns a ceiling, the density the terminal does not yet break up. A glyph
-// wider than a cell breaks `Sheet`, mouse hits and writing the difference, so the smaller of the
-// two is taken.
+// `Capabilities::blocks()` returns a ceiling, the density the terminal does not yet break up. A
+// glyph wider than a cell breaks `Sheet`, mouse hits and writing the difference, so the smaller of
+// the two is taken.
 ui::Blocks blocked(const Capabilities& compat, const Setup& wish) {
     const ui::Blocks want = wish.blocks.value_or(ui::Blocks::basic);
     const ui::Blocks most = compat.blocks();
@@ -880,8 +881,8 @@ Term::~Term() {
 // A class rather than a pair of public methods, because a pair of methods is a contract the
 // compiler does not enforce: one could return without leaving, or leave and never return. Here
 // leaving and returning are one thing, so the return happens even when an exception flies on the
-// way. The nested class reaches `Held` without any friend, and the public surface of `Term` grows by
-// one notion, not two verbs.
+// way. The nested class reaches `Held` without any friend, and the public surface of `Term` grows
+// by one notion, not two verbs.
 Term::Pause::Pause(Term& given) : term_(given) {
     Held& held = *term_.held_;
 
@@ -911,10 +912,10 @@ Term::Pause::~Pause() {
     if (held.entered) dressed(console, sending(held.compat, held.wish));
 
     // After the other program nothing of our frame is left on screen, and with `Screen::none` there
-    // is no alternate screen that could have kept it. To `draw()`, `shifted` means exactly what a size change
-    // means: compare with a blank sheet, that is, repaint everything. The dressing hid the cursor
-    // and nobody knows where the other program left it, so the next frame shows it and places it
-    // anew; otherwise the editor would go on without a visible cursor.
+    // is no alternate screen that could have kept it. To `draw()`, `shifted` means exactly what a
+    // size change means: compare with a blank sheet, that is, repaint everything. The dressing hid
+    // the cursor and nobody knows where the other program left it, so the next frame shows it and
+    // places it anew; otherwise the editor would go on without a visible cursor.
     held.shifted = true;
     held.fresh = true;
     held.showing = false;
@@ -1289,10 +1290,10 @@ bool Term::turn() {
     }
 
     // No limit while there is nothing to settle. The decoder says when it wants to settle what it
-    // holds (a lone Esc, a paste without its end); the wait is rounded up, so the turn does not wake
-    // a fraction of a millisecond too early and go round once more for nothing. A click waiting for
-    // its second one does not wake the loop: the root settles it by the time of the second when
-    // that comes, and when it does not come, there is nothing to settle.
+    // holds (a lone Esc, a paste without its end); the wait is rounded up, so the turn does not
+    // wake a fraction of a millisecond too early and go round once more for nothing. A click
+    // waiting for its second one does not wake the loop: the root settles it by the time of the
+    // second when that comes, and when it does not come, there is nothing to settle.
     std::optional<std::chrono::milliseconds> patience;
 
     if (const std::optional<Clock::Moment> settling = held.decoder.due()) {
@@ -1301,8 +1302,8 @@ bool Term::turn() {
         patience = std::max(left, std::chrono::milliseconds{0});
     }
 
-    // The root's schedule may have an appointment, the nearest of which bounds the wait as well; the
-    // tree is not asked, because whoever needs time has made an appointment with the schedule
+    // The root's schedule may have an appointment, the nearest of which bounds the wait as well;
+    // the tree is not asked, because whoever needs time has made an appointment with the schedule
     // (`ui::Schedule::after`, `ui::Schedule::every`). The wait is measured by the schedule's own
     // time.
     if (const std::optional<Clock::Moment> next = held.onto->schedule().next()) {

@@ -155,7 +155,8 @@ public:
     // The double-click interval set in `twice`.
     [[nodiscard]] std::chrono::milliseconds double_click() const override { return twice; }
 
-    // Counts raw-mode nesting in `depth` and every entry in `entered`; leaving below zero is ignored.
+    // Counts raw-mode nesting in `depth` and every entry in `entered`; leaving below zero is
+    // ignored.
     void raw(bool on) override {
         if (on) {
             ++depth;

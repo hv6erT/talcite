@@ -2811,9 +2811,9 @@ std::string told(const std::vector<fs::Change>& given) {
 
 // Whether the batches the watch reports satisfy `done` in time (ten seconds, or the patience given:
 // a polling watch pauses ten times as long as a look takes, so on a loaded machine it can take many
-// seconds). Batches before the awaited one, of earlier work, are passed over. Each request waits for
-// the rest of the time and none is given up before the end: a request given up may still take the
-// next batch with it.
+// seconds). Batches before the awaited one, of earlier work, are passed over. Each request waits
+// for the rest of the time and none is given up before the end: a request given up may still take
+// the next batch with it.
 template <typename Done>
 bool reported(fs::Watch& watch, Done done, std::chrono::milliseconds patience = 10000ms) {
     const auto latest = std::chrono::steady_clock::now() + patience;

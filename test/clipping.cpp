@@ -171,8 +171,8 @@ TRIAL("Clipboard: a clipboard that knows only text takes no files") {
 }
 
 // Over ssh the system clipboard is not the user's, so files stay in our own copy: `give` says they
-// did not reach the system, yet a paste in the same program gets them back, cut included, and a text
-// paste gets their paths.
+// did not reach the system, yet a paste in the same program gets them back, cut included, and a
+// text paste gets their paths.
 TRIAL("Clipboard: over ssh files stay in our own copy, with their paths as text") {
     Wired one;
 
@@ -370,9 +370,9 @@ TRIAL("Clipboard: locally the copy goes through the session's clipboard program"
 
 namespace {
 
-// A pretend Wayland session: wl-copy and wl-paste at the front of PATH. wl-copy saves its
-// arguments and its input; wl-paste prints the offer of the asked type, a file named after the type,
-// and fails like the real one when there is none. PATH and the directory go back as they were.
+// A pretend Wayland session: wl-copy and wl-paste at the front of PATH. wl-copy saves its arguments
+// and its input; wl-paste prints the offer of the asked type, a file named after the type, and
+// fails like the real one when there is none. PATH and the directory go back as they were.
 class Session {
 public:
     // Writes both scripts; with `stuck`, wl-paste sleeps five seconds first.
@@ -463,7 +463,8 @@ private:
 }
 
 // Files go to the session's clipboard as text/uri-list, the type file managers read: file URIs with
-// every byte outside the unreserved characters escaped, multibyte letters too, lines ended by CR LF.
+// every byte outside the unreserved characters escaped, multibyte letters too, lines ended by CR
+// LF.
 TRIAL("Clipboard: files go to the session's clipboard program as a uri-list") {
     const Session one;
 

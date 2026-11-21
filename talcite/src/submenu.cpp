@@ -13,12 +13,12 @@
 // sparingly, where a group of commands would otherwise make a menu too tall for the screen.
 //
 // The list is an ordinary `Menu`, built with items and separators like any other. When it opens,
-// the bar attaches it on top of the open menu, beside the item (`Menubar::placement`), so a key from
-// one of its items bubbles item → list → bar, the same way as in a menu of the bar. The right
-// arrow, Enter, the item's letter or a click open the list; the left arrow or Esc close it and
-// give the focus back to the item; the right arrow inside the list goes on to the next menu of
-// the bar, as everywhere else. Moving to another item of the menu closes the list, and closing the
-// menu closes it first (`Menu::shut`).
+// the bar attaches it on top of the open menu, beside the item (`Menubar::placement`), so a key
+// from one of its items bubbles item → list → bar, the same way as in a menu of the bar. The right
+// arrow, Enter, the item's letter or a click open the list; the left arrow or Esc close it and give
+// the focus back to the item; the right arrow inside the list goes on to the next menu of the bar,
+// as everywhere else. Moving to another item of the menu closes the list, and closing the menu
+// closes it first (`Menu::shut`).
 //
 // The item holds its list, and the list knows the item by a raw pointer (`Menu::owner_`), the same
 // way a menu of the bar knows its title. The item lives in the menu that holds it, while an open

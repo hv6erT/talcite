@@ -24,8 +24,8 @@
 using namespace talcite;
 
 // Images in pixels: the cells of an image carry its mark, what is painted over them later takes it
-// away, and `Term` gets pixels only for an image that is visible as a whole. The fake terminal shows every
-// byte, so one can see when a sixel goes out and when it does not.
+// away, and `Term` gets pixels only for an image that is visible as a whole. The fake terminal
+// shows every byte, so one can see when a sixel goes out and when it does not.
 
 namespace {
 

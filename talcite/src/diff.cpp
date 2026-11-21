@@ -1118,7 +1118,8 @@ bool DiffViewer::handle(KeyEvent& what) {
         return true;
     }
 
-    // `+` and `-` set the whole section of the cursor: from the header before it to the next header.
+    // `+` and `-` set the whole section of the cursor: from the header before it to the next
+    // header.
     if (letter == U'+' || letter == U'-') {
         std::size_t start = at;
 

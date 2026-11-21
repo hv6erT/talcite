@@ -124,8 +124,8 @@ TRIAL("Skin: an unknown glyph is never zero") {
     OUGHT(ui::Skin::plain().glyph("nie.ma.takiego") != 0);
 }
 
-// This is `Store(spare, held)`: the caller gives its own entries and the library adds the rest, only
-// merged once, at construction, not on every read.
+// This is `Store(spare, held)`: the caller gives its own entries and the library adds the rest,
+// only merged once, at construction, not on every read.
 TRIAL("Skin: given entries override, the rest stays built in") {
     const ui::Skin one{{{"talcite.list.focus", tinted(10, 20, 30)}}};
 
@@ -281,8 +281,8 @@ TRIAL("Skin: custom glyphs are added the same way as custom roles") {
 }
 
 // A role nobody set gives the terminal's default colors, and that cannot be told apart from a role
-// set to the defaults on purpose. A widget from outside the library that wants its own fallback look
-// has to seed it into the skin itself, when the skin is built.
+// set to the defaults on purpose. A widget from outside the library that wants its own fallback
+// look has to seed it into the skin itself, when the skin is built.
 TRIAL("Skin: a foreign role without an entry gives the terminal defaults") {
     const ui::Skin one;
 
@@ -628,8 +628,8 @@ TRIAL("Role: the hotkey letter also follows the stem") {
 // Commander skins give `.key` a foreground and background pair, and MC has a separate role for the
 // letter in a highlighted position, which we do not have. Taking the background from `.key` would
 // punch a hole into the highlight: an orange `L` on the bar's background and eft on purple. The
-// trial puts a background into `.key` that differs from the focus background and checks the letter's
-// cell.
+// trial puts a background into `.key` that differs from the focus background and checks the
+// letter's cell.
 TRIAL("Role: the hotkey letter takes the background beneath it and the foreground from .key") {
     ui::Root top;
 
@@ -687,8 +687,8 @@ TRIAL("Skin: the built-in skin knows the message and error families") {
         OUGHT(one.style(stem + ".button.key").under);
         OUGHT(one.style(stem + ".button.disabled").faint);
 
-        // The rest of the family is empty on purpose: without colors an error box looks no different
-        // from a plain window, just as in Midnight Commander's mono skin.
+        // The rest of the family is empty on purpose: without colors an error box looks no
+        // different from a plain window, just as in Midnight Commander's mono skin.
         SAME(one.style(stem), Style{});
         SAME(one.style(stem + ".title"), Style{});
         SAME(one.style(stem + ".text"), Style{});

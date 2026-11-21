@@ -114,8 +114,8 @@ TRIAL("Stack: a child the container lays in one spot stands there") {
 }
 
 // The stack is transparent where no child lies; otherwise it would paint spaces over everything
-// standing below it in its parent. That shows only when the stack is itself an overlay, so the trial
-// puts something under it, giving `clear` something to paint over.
+// standing below it in its parent. That shows only when the stack is itself an overlay, so the
+// trial puts something under it, giving `clear` something to paint over.
 TRIAL("Stack: outside its children it lets through what lies below") {
     ui::Stack outer;
 
@@ -344,7 +344,8 @@ TRIAL("screen_area: assembles the place on the screen through the levels and see
 
     (void)top.render({{0, 0}, {6, 4}});
 
-    // The own rectangle says "second row of the inner column"; the place on the screen says "third".
+    // The own rectangle says "second row of the inner column"; the place on the screen says
+    // "third".
     SAME(second->area().at, (ui::Spot{0, 1}));
 
     const std::optional<ui::Area> where = second->screen_area();

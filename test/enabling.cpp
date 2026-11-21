@@ -12,9 +12,9 @@
 
 using namespace talcite;
 
-// Being enabled is one mixin, and a change of it is an event. `EnabledMixin` holds the flag, derives
-// `focusable()` from it and gives up the focus when disabled. Whoever wants to react to the change
-// (a widget through `handle`, a caller through `on<>`) listens for `EnableEvent` and
+// Being enabled is one mixin, and a change of it is an event. `EnabledMixin` holds the flag,
+// derives `focusable()` from it and gives up the focus when disabled. Whoever wants to react to the
+// change (a widget through `handle`, a caller through `on<>`) listens for `EnableEvent` and
 // `DisableEvent`.
 
 namespace {

@@ -958,8 +958,8 @@ namespace {
 
 // What a preprocessor condition is on Windows: true, false, or not known (nothing). Only the names
 // the shared code of `fs` asks about are known: `_WIN32` is defined there, the POSIX file system
-// paths (`TALCITE_LINUX_FS`, `TALCITE_BSD_FS`) and the POSIX systems are not. A condition of several
-// parts joined by `&&` or `||` is worked out from its parts.
+// paths (`TALCITE_LINUX_FS`, `TALCITE_BSD_FS`) and the POSIX systems are not. A condition of
+// several parts joined by `&&` or `||` is worked out from its parts.
 std::optional<bool> windowed(std::string_view condition) {
     const auto trimmed = [](std::string_view one) {
         while (!one.empty() && std::isspace(static_cast<unsigned char>(one.front())) != 0) one.remove_prefix(1);
@@ -1125,11 +1125,11 @@ std::vector<std::size_t> reaching(std::string_view name, std::size_t many) {
 }
 
 // The shared code of `fs` hands every path to `std::filesystem` through `long_form`, so that on
-// Windows a path beyond 260 characters works whatever the manifest and the registry say. A call that
-// reaches the system with a path given as it is passes on Linux and on a short path, and breaks only
-// deep in a real tree on Windows; this trial finds it where it is written. Code that is never
-// compiled on Windows (the POSIX branches) is left out, and so are calls that do not reach the
-// system.
+// Windows a path beyond 260 characters works whatever the manifest and the registry say. A call
+// that reaches the system with a path given as it is passes on Linux and on a short path, and
+// breaks only deep in a real tree on Windows; this trial finds it where it is written. Code that is
+// never compiled on Windows (the POSIX branches) is left out, and so are calls that do not reach
+// the system.
 TRIAL("Names: on Windows the shared fs code gives std::filesystem every path through long_form") {
     std::vector<std::string> bad;
 

@@ -452,9 +452,9 @@ std::size_t cluster_after(std::string_view text, std::size_t at) { return ended(
 
 // The start of the cluster that ends at `at` (or holds the byte before it): where the cursor goes
 // to the left, and what Backspace takes. It walks back to a character that surely starts a cluster
-// (not a joining one, not after a ZWJ, not inside a run of flags or of Hangul jamo) and comes forward
-// from there. A pathological run of thousands of marks stops the walk after 512 characters, and the
-// answer is then counted from there.
+// (not a joining one, not after a ZWJ, not inside a run of flags or of Hangul jamo) and comes
+// forward from there. A pathological run of thousands of marks stops the walk after 512 characters,
+// and the answer is then counted from there.
 std::size_t cluster_before(std::string_view text, std::size_t at) {
     at = std::min(at, text.size());
 

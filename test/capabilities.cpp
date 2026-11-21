@@ -322,8 +322,8 @@ TRIAL("Capabilities: TERM dumb means nothing") {
     OUGHT(!told.titles());
 }
 
-// Hyperlinks have no question a terminal answers, so the floor decides: every terminal that skips an
-// OSC it does not know takes them, and dumb takes nothing. The Linux console prints what follows
+// Hyperlinks have no question a terminal answers, so the floor decides: every terminal that skips
+// an OSC it does not know takes them, and dumb takes nothing. The Linux console prints what follows
 // `Esc ]` unless it is a palette command, so there they would come out as text. On Windows the
 // console decides: only one that takes escape sequences gets them.
 TRIAL("Capabilities: hyperlinks wherever an unknown OSC is skipped, not on the Linux console") {

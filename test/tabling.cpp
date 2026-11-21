@@ -788,8 +788,8 @@ TRIAL("Table: Insert passes up and leaves the selection alone") {
     SAME(*one->which(), std::size_t{0});
 }
 
-// Whoever wants that habit from file panels hangs a handler and calls `mark` themselves, and then it
-// works, because the handler sees the key regardless of what `handle` does.
+// Whoever wants that habit from file panels hangs a handler and calls `mark` themselves, and then
+// it works, because the handler sees the key regardless of what `handle` does.
 TRIAL("Table: marking with Insert can be added through a handler") {
     Sheet sheet;
 

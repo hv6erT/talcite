@@ -133,13 +133,12 @@ void Table::source(TableSource given, std::size_t rows) {
     Node::changed();
 }
 
-// Follows rows replaced in the middle of the source: the rows [at, at + gone) give way to `came` new
-// ones. The current row, the first visible row and the selection stay with the rows they stood on,
-// so a list whose part opens or folds keeps its place on the screen. A current row among the
+// Follows rows replaced in the middle of the source: the rows [at, at + gone) give way to `came`
+// new ones. The current row, the first visible row and the selection stay with the rows they stood
+// on, so a list whose part opens or folds keeps its place on the screen. A current row among the
 // replaced ones goes to `at` (or to the last row), and an empty table that gets rows stands on the
 // first; only then a `ScrollEvent` is sent, because only then the cursor stands on another row than
-// before. The visible rows are fetched again on the
-// next frame.
+// before. The visible rows are fetched again on the next frame.
 void Table::changed(std::size_t at, std::size_t gone, std::size_t came) {
     Kept& kept = *kept_;
 

@@ -36,8 +36,8 @@ bool Rolled::handle(KeyEvent& what) {
 
 // A click beside the rolled-out list rolls it up, as a click beside an open menu does: the list is
 // a part of the widget below, not a window waiting for an answer, so the click is not an answer
-// either and goes no further. A click on the list hits its rows or its frame, and only one beside it
-// lands on the veil itself. The veil closes itself, so this holds also after the widget is gone.
+// either and goes no further. A click on the list hits its rows or its frame, and only one beside
+// it lands on the veil itself. The veil closes itself, so this holds also after the widget is gone.
 bool Rolled::handle(ClickEvent& what) {
     if (what.target() == this) {
         close();

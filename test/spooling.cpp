@@ -68,8 +68,9 @@ private:
 // through a weak handle.
 std::shared_ptr<Spool> spooled(const Feed& feed, std::size_t whole) { return std::make_shared<Spool>(feed, whole); }
 
-// Up to `most` lines from `which`, read the way a page reads them: the extent of each line, then its
-// bytes in pieces. Nothing while a window is on its way; fewer lines at the end of the document.
+// Up to `most` lines from `which`, read the way a page reads them: the extent of each line, then
+// its bytes in pieces. Nothing while a window is on its way; fewer lines at the end of the
+// document.
 std::optional<std::vector<std::string>> texts(Spool& one, std::size_t which, std::size_t most) {
     std::vector<std::string> made;
 
@@ -191,8 +192,8 @@ TRIAL("Spool: a carriage return disappears from the end of a row") {
     SAME(got[1], std::string{"y"});
 }
 
-// A binary file has not a single `\n`, and the spool has no limit on a line: it is one line, however
-// long, and any piece of it can be read without the rest.
+// A binary file has not a single `\n`, and the spool has no limit on a line: it is one line,
+// however long, and any piece of it can be read without the rest.
 TRIAL("Spool: a document without line ends is one line, however long") {
     const std::string said(3u * 1024 * 1024 + 7, 'z');
 
@@ -272,8 +273,8 @@ TRIAL("Spool: the row count appears after reaching the end") {
     SAME(*one->counted(), std::size_t{2000});
 }
 
-// `counting()` goes to the end by itself, window by window, with nobody asking in the meantime; when
-// it is done, it wakes the handle so that `End` can finish.
+// `counting()` goes to the end by itself, window by window, with nobody asking in the meantime;
+// when it is done, it wakes the handle so that `End` can finish.
 TRIAL("Spool: counting reaches the end window by window and wakes the handle") {
     Loop loop;
     Taped tape{many(30000)};
@@ -373,8 +374,8 @@ TRIAL("Spool: the window is on its way before scrolling reaches it") {
 
     SAME(tape.calls(), 1);
 
-    // Row 3100 lies about 40 KB from the start: in the first window, but closer to its end than half
-    // a window, which is enough for the second window to set off without being asked.
+    // Row 3100 lies about 40 KB from the start: in the first window, but closer to its end than
+    // half a window, which is enough for the second window to set off without being asked.
     (void)rolled(loop, *one, 3100, 40);
 
     SAME(tape.calls(), 2);
@@ -474,8 +475,8 @@ TRIAL("Spool: byte and row agree both ways along the whole length") {
 }
 
 // After a change the anchors move instead of vanishing. The spool once reached a far row and knows
-// the anchors along the way. A change at the start (an insertion with new rows, then deleting a line
-// end) moves them, so jumping back to the same place reads the neighborhood of an anchor, not
+// the anchors along the way. A change at the start (an insertion with new rows, then deleting a
+// line end) moves them, so jumping back to the same place reads the neighborhood of an anchor, not
 // everything from the place of the change. The result agrees with counting from zero.
 TRIAL("Spool: after a change the anchors move, and a far jump does not read again") {
     std::string doc;

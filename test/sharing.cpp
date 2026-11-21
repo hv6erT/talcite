@@ -400,7 +400,8 @@ TRIAL("Share: without XDG_RUNTIME_DIR there is no GVfs and gio is not called") {
     for (const char* value : {"", "pusty"}) {
         const Planted runtime{"XDG_RUNTIME_DIR", "x"};
 
-        // An empty value also means absent. `Planted` removes an empty value, so we set it directly.
+        // An empty value also means absent. `Planted` removes an empty value, so we set it
+        // directly.
         if (*value == '\0') ::setenv("XDG_RUNTIME_DIR", "", 1);
         else ::unsetenv("XDG_RUNTIME_DIR");
 

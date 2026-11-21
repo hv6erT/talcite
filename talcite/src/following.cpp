@@ -22,8 +22,8 @@
 // Following again before the answer came waits for the new answer only; the address already went
 // its way either way.
 //
-// The mixin lives in its header, as every mixin of the library does (`EnabledMixin`, `MarkedMixin`),
-// and so do the two events: they belong to following, not to the event loop.
+// The mixin lives in its header, as every mixin of the library does (`EnabledMixin`,
+// `MarkedMixin`), and so do the two events: they belong to following, not to the event loop.
 //
 // Here lives what text needs to have its addresses found (`addressed`).
 namespace talcite::ui {

@@ -112,8 +112,8 @@ void Select::paint(Canvas& onto) const {
 // someone who only wanted to go past it to the next row.
 //
 // At either end a side arrow goes up the tree too. Letters, Tab and function keys are always passed
-// on: if the selection swallowed them, a "Cancel" button would stop answering to its letter whenever
-// the focus is here.
+// on: if the selection swallowed them, a "Cancel" button would stop answering to its letter
+// whenever the focus is here.
 bool Select::handle(KeyEvent& what) {
     if (!enabled() || options().empty()) return false;
 

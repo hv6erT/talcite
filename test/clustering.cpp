@@ -132,7 +132,7 @@ TRIAL("Clusters: the width of a single character") {
     SAME(width(U'\U0001F3FD'), 2);
 }
 
-// --- Boundaries ------------------------------------------------------------------------------------
+// --- Boundaries ----------------------------------------------------------------------------------
 
 // A letter keeps its accents, whatever came before them, and a mark after a control has nothing to
 // sit on.
@@ -235,7 +235,7 @@ TRIAL("Clusters: walking back agrees with walking forward") {
     }
 }
 
-// --- Glyphs ----------------------------------------------------------------------------------------
+// --- Glyphs --------------------------------------------------------------------------------------
 
 TRIAL("Clusters: a glyph is the character itself, or a handle that gives the cluster back") {
     SAME(static_cast<std::uint32_t>(glyph("a")), static_cast<std::uint32_t>(U'a'));
@@ -276,7 +276,7 @@ TRIAL("Clusters: a glyph remembers the rendering it was measured in") {
     SAME(width(narrow), 1);
 }
 
-// --- Drawing ---------------------------------------------------------------------------------------
+// --- Drawing -------------------------------------------------------------------------------------
 
 TRIAL("Clusters: a canvas puts a letter with its accent in one cell") {
     detail::Sheet one{{10, 1}};
@@ -364,7 +364,7 @@ TRIAL("Clusters: Term takes the rendering from the probe and gives it back") {
     SAME(rendering().presented, false);
 }
 
-// --- Editing ---------------------------------------------------------------------------------------
+// --- Editing -------------------------------------------------------------------------------------
 
 namespace {
 
@@ -430,7 +430,7 @@ TRIAL("Clusters: a field takes a character whole and counts it as one") {
     SAME(one->text(), std::string{"Zo"});
 }
 
-// --- The old Windows console ------------------------------------------------------------------------
+// --- The old Windows console ---------------------------------------------------------------------
 
 // The old console's cell holds one character, so the screen keeps the cluster in one cell, and the
 // glue sends its composed form; the cursor does not move for the accent.

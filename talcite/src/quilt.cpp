@@ -51,10 +51,10 @@ Quilt::Quilt(Bytes given) : held_(std::move(given)), whole_(held_.size()) {
     if (whole_ > 0) patches_.push_back(Patch{{Piece{false, 0, whole_}}, whole_});
 }
 
-// The piece in which byte `at` lies, before the end of the document: the patch by binary search over
-// the patch starts, then the piece by a walk in it, with the byte where the piece starts. The starts
-// are computed lazily: a change marks them stale and the first question after it computes them
-// again, once for many reads.
+// The piece in which byte `at` lies, before the end of the document: the patch by binary search
+// over the patch starts, then the piece by a walk in it, with the byte where the piece starts. The
+// starts are computed lazily: a change marks them stale and the first question after it computes
+// them again, once for many reads.
 Quilt::Spot Quilt::located(std::size_t at) {
     if (stale_) {
         starts_.resize(patches_.size());
@@ -139,9 +139,9 @@ bool Quilt::sewn(Spot left) {
 }
 
 // Mends the patches around `patch` after a change there: from the one after it down to the one
-// before it, so that what happens to a later patch does not move an earlier one. An empty patch goes,
-// one grown past `fullest` is divided into patches of at most `half`, and one below `thinnest` takes
-// in the next one when both fit in a patch.
+// before it, so that what happens to a later patch does not move an earlier one. An empty patch
+// goes, one grown past `fullest` is divided into patches of at most `half`, and one below
+// `thinnest` takes in the next one when both fit in a patch.
 void Quilt::mended(std::size_t patch) {
     const std::size_t lowest = patch > 0 ? patch - 1 : 0;
 

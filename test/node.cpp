@@ -207,7 +207,7 @@ TRIAL("Node: remove of another's node gives nothing") {
     OUGHT(down->parent() == &apart);
 }
 
-// --- Children in bulk -----------------------------------------------------------------------------
+// --- Children in bulk ----------------------------------------------------------------------------
 
 // Putting a window together usually means several children in a row, so they go in with one call,
 // and the order stays as given.

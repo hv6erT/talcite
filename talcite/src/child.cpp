@@ -343,8 +343,8 @@ Bytes sipped(Child::Held& held, bool errors, std::size_t most) {
 
     if (one == nullptr) return made;
 
-    // Our end of the pipe is overlapped (`reared`), so the read waits for its completion and for the
-    // worker's bell at once, the same shape as `poll` on POSIX: a cancelled read wakes at once,
+    // Our end of the pipe is overlapped (`reared`), so the read waits for its completion and for
+    // the worker's bell at once, the same shape as `poll` on POSIX: a cancelled read wakes at once,
     // and an idle one costs nothing while it waits.
     const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
 
@@ -1798,10 +1798,10 @@ std::shared_ptr<Child::Held> reared(const Command& what, bool ahead, std::option
     const std::shared_ptr<Grave> grave = held->grave;
     const fs::path program_named = what.program;
 
-    // The burial runs on its own, let go (`detach`), and only reports to the shared promise that the
-    // callers of `wait` look at. A child whose end nobody ever asks about is still buried and leaves
-    // no zombie in the process table, and the right to let go of the handle without asking anything
-    // is exactly what `close()` promises.
+    // The burial runs on its own, let go (`detach`), and only reports to the shared promise that
+    // the callers of `wait` look at. A child whose end nobody ever asks about is still buried and
+    // leaves no zombie in the process table, and the right to let go of the handle without asking
+    // anything is exactly what `close()` promises.
     //
     // On Windows a pseudoconsole outlives its program: the output pipe ends only when it is closed.
     // So the burial closes it, after the end is reported, because closing may wait until what is
