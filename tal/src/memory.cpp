@@ -734,8 +734,8 @@ Task<std::vector<Volume>> Memory::volumes() {
     });
 }
 
-// A known folder at its usual place below "/home" (the cache in "/home/.cache"), or "/tmp", when
-// that folder is there.
+// A known folder at its usual place below "/home" (the cache in "/home/.cache", the settings in
+// "/home/.config"), or "/tmp", when that folder is there.
 Task<std::optional<Path>> Memory::known(Known which) {
     return locked(state_, [which](State& state) -> std::optional<Path> {
         const char* place = "/tmp";
@@ -750,6 +750,7 @@ Task<std::optional<Path>> Memory::known(Known which) {
             case Known::videos: place = "/home/Videos"; break;
             case Known::temp: place = "/tmp"; break;
             case Known::cache: place = "/home/.cache"; break;
+            case Known::settings: place = "/home/.config"; break;
         }
 
         const Path found{place};

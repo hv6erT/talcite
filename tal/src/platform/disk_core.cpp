@@ -2277,7 +2277,8 @@ namespace {
 // The known folder IDs are written here, not taken from knownfolders.h: there they are declarations
 // whose definitions MinGW keeps in a separate uuid library. The values are Windows constants; they
 // do not change between releases, because programs from years ago depend on them. The cache is
-// the local application data, which roaming profiles leave on the machine.
+// the local application data, which roaming profiles leave on the machine; the settings are the
+// roaming application data, which goes with the user.
 GUID known_of(fs::Known which) {
     switch (which) {
         case fs::Known::home: return {0x5e6c858f, 0x0e22, 0x4760, {0x9a, 0xfe, 0xea, 0x33, 0x17, 0xb6, 0x71, 0x73}};
@@ -2289,6 +2290,7 @@ GUID known_of(fs::Known which) {
         case fs::Known::temp: break;
         case fs::Known::videos: return {0x18989b1d, 0x99b5, 0x455b, {0x84, 0x1c, 0xab, 0x7c, 0x74, 0xe4, 0xdd, 0xfc}};
         case fs::Known::cache: return {0xf1b32785, 0x6fba, 0x4fcf, {0x9d, 0x55, 0x7b, 0x8e, 0x7f, 0x15, 0x70, 0x91}};
+        case fs::Known::settings: return {0x3eb685db, 0x65f9, 0x4cf6, {0xa0, 0x3a, 0xe3, 0xef, 0x65, 0x72, 0x9f, 0x3d}};
     }
 
     return {};
@@ -2313,7 +2315,8 @@ std::optional<path> asked_folder(fs::Known which) {
 
 // The variable name in user-dirs.dirs and the directory in the home directory used when the file or
 // the entry is missing. macOS names videos its own way; the temporary folder and the cache have
-// neither, since the caller takes the one from `temp()` and the other from `XDG_CACHE_HOME`.
+// neither, since the caller takes the one from `temp()` and the other from `XDG_CACHE_HOME`, nor
+// have the settings, from `XDG_CONFIG_HOME`.
 std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
     switch (which) {
         case fs::Known::home: return {"", ""};
@@ -2328,7 +2331,8 @@ std::pair<std::string_view, std::string_view> xdg_of(fs::Known which) {
         case fs::Known::videos: return {"XDG_VIDEOS_DIR", "Videos"};
 #endif
         case fs::Known::temp:
-        case fs::Known::cache: break;
+        case fs::Known::cache:
+        case fs::Known::settings: break;
     }
 
     return {"", ""};
@@ -2381,7 +2385,8 @@ std::optional<std::optional<path>> configured(std::string_view key, const path& 
 // The known folder from user-dirs.dirs, or the customary name in the home directory when the file
 // says nothing; nothing when the folder is disabled or there is no home directory. The cache is
 // `XDG_CACHE_HOME` when it is absolute, otherwise ".cache" in the home directory (on macOS
-// "Library/Caches").
+// "Library/Caches"); the settings `XDG_CONFIG_HOME` when it is absolute, otherwise ".config" (on
+// macOS "Library/Application Support").
 std::optional<path> asked_folder(fs::Known which) {
     const path house = home();
 
@@ -2396,6 +2401,16 @@ std::optional<path> asked_folder(fs::Known which) {
         const char* given = std::getenv("XDG_CACHE_HOME");
 
         return given != nullptr && *given == '/' ? path{given} : house / ".cache";
+#endif
+    }
+
+    if (which == fs::Known::settings) {
+#ifdef __APPLE__
+        return house / "Library" / "Application Support";
+#else
+        const char* given = std::getenv("XDG_CONFIG_HOME");
+
+        return given != nullptr && *given == '/' ? path{given} : house / ".config";
 #endif
     }
 

@@ -19,6 +19,7 @@
 #include "tal/drawn.hpp"
 #include "tal/event.hpp"
 #include "tal/fonts.hpp"
+#include "tal/fs.hpp"
 #include "tal/key.hpp"
 #include "tal/path.hpp"
 #include "tal/plotting.hpp"
@@ -45,8 +46,9 @@
 // Esc lets them go; the wheel draws the time in or out about the cursor of plots held still (of
 // plots going on, the stretch of time they show), and a drag moves it. What a click holds (plots,
 // both or none, f goes round them), how long the traces keep their samples (seconds) and the step
-// of the wheel (in per cent) are settings, read from tal-pendulum.json in the working folder (or
-// the file after --settings); a mode changed with f is written back when the program ends.
+// of the wheel (in per cent) are settings, read from talcite/tal-pendulum.json in the user's folder
+// of settings (in the working folder where there is none, or the file after --settings); a mode
+// changed with f is written back when the program ends.
 namespace {
 
 using tal::drawing::Color;
@@ -365,13 +367,27 @@ int main(int count, char** given) {
     wish.hover = true;
 
     tal::App app{wish};
-    std::string file = "tal-pendulum.json";
+    std::optional<std::string> asked;
 
     for (int at = 1; at + 1 < count; ++at)
-        if (std::string{given[at]} == "--settings") file = given[at + 1];
+        if (std::string{given[at]} == "--settings") asked = given[at + 1];
 
-    const std::u8string whole = std::filesystem::absolute(std::filesystem::path{std::u8string{file.begin(), file.end()}}).u8string();
-    tal::Settings settings{pendulum_settings::builtin(), tal::Path{std::string{whole.begin(), whole.end()}}};
+    const auto absolute = [](const std::string& file) {
+        const std::u8string whole = std::filesystem::absolute(std::filesystem::path{std::u8string{file.begin(), file.end()}}).u8string();
+
+        return tal::Path{std::string{whole.begin(), whole.end()}};
+    };
+    std::optional<tal::Path> folder;
+
+    if (!asked) {
+        try {
+            folder = tal::wait(app.loop(), tal::fs::known(tal::fs::Known::settings));
+        } catch (const tal::Trouble&) {
+        }
+    }
+
+    const tal::Path where = asked ? absolute(*asked) : folder ? *folder / "talcite" / "tal-pendulum.json" : absolute("tal-pendulum.json");
+    tal::Settings settings{pendulum_settings::builtin(), where};
 
     try {
         tal::wait(app.loop(), settings.read());
@@ -611,6 +627,7 @@ int main(int count, char** given) {
         settings.set(pendulum_settings::plots::freeze, worded(freeze));
 
         try {
+            tal::wait(app.loop(), tal::fs::make(where.parent()));
             tal::wait(app.loop(), settings.write());
         } catch (const tal::Trouble&) {
         }

@@ -22,7 +22,7 @@ enum class Type { file, folder, link, device, other };
 
 enum class Conflict { fail, replace, skip, rename };
 
-enum class Known { home, desktop, documents, downloads, music, pictures, videos, temp, cache };
+enum class Known { home, desktop, documents, downloads, music, pictures, videos, temp, cache, settings };
 
 enum class Mode { read, write, truncate, exclusive, append };
 

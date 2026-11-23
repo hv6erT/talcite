@@ -597,6 +597,11 @@ TRIAL("Memory: known folders are given when they are there; the volumes are its 
 
     OUGHT(desk.run(desk.memory.known(tal::fs::Known::music)) == Path{"/home/Music"});
     OUGHT(desk.run(desk.memory.known(tal::fs::Known::home)) == Path{"/home"});
+    OUGHT(!desk.run(desk.memory.known(tal::fs::Known::settings)).has_value());
+
+    desk.run(desk.memory.make(Path{"/home/.config"}));
+
+    OUGHT(desk.run(desk.memory.known(tal::fs::Known::settings)) == Path{"/home/.config"});
 
     const std::vector<tal::fs::Volume> volumes = desk.run(desk.memory.volumes());
 
@@ -1028,5 +1033,45 @@ TRIAL("Known folders: the cache in memory and from XDG_CACHE_HOME") {
 
     OUGHT(found == std::optional<tal::Path>{tal::Path{where.string()}});
     OUGHT(!gone.has_value());
+#endif
+}
+
+// The folder of settings is known: on the disk of POSIX `XDG_CONFIG_HOME` when it is absolute and
+// there, ".config" in the home when it is relative, and nothing when the folder is not there; on
+// Windows the roaming application data, which is always there.
+TRIAL("Known folders: the settings from XDG_CONFIG_HOME, or the roaming application data") {
+    tal::Loop loop;
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+    const std::filesystem::path where = std::filesystem::temp_directory_path() / ("tal-config-" + std::to_string(::getpid()));
+    const char* before = std::getenv("XDG_CONFIG_HOME");
+    const std::string kept = before != nullptr ? before : "";
+    const char* home = std::getenv("HOME");
+
+    std::filesystem::create_directories(where);
+    ::setenv("XDG_CONFIG_HOME", where.c_str(), 1);
+
+    const std::optional<tal::Path> found = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::settings));
+
+    std::filesystem::remove(where);
+
+    const std::optional<tal::Path> gone = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::settings));
+
+    ::setenv("XDG_CONFIG_HOME", "relative/config", 1);
+
+    const std::optional<tal::Path> beside = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::settings));
+
+    if (before != nullptr) ::setenv("XDG_CONFIG_HOME", kept.c_str(), 1);
+    else ::unsetenv("XDG_CONFIG_HOME");
+
+    OUGHT(found == std::optional<tal::Path>{tal::Path{where.string()}});
+    OUGHT(!gone.has_value());
+
+    if (home != nullptr && std::filesystem::is_directory(std::filesystem::path{home} / ".config")) OUGHT(beside == std::optional<tal::Path>{tal::Path{(std::filesystem::path{home} / ".config").string()}});
+    else OUGHT(!beside.has_value());
+#elif defined(_WIN32)
+    const std::optional<tal::Path> found = tal::wait(loop, tal::fs::Files::builtin()->known(tal::fs::Known::settings));
+
+    OUGHT(found.has_value() && found->text().find("AppData") != std::string::npos && found->text().find("Roaming") != std::string::npos);
 #endif
 }
