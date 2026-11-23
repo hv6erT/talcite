@@ -639,7 +639,7 @@ void Pen::stroke(const Path& path, const Paint& paint, const Stroke& style) {
     const double near = tolerance / stretch;
     const Box open = opened(onto_, state_->clip.get());
     const std::optional<flattening::Bounds> view = reached(state_->matrix, viewed(open), style);
-    Lines outline{stroking::outlined(flattening::flattened(path, Matrix{}, near, view, turning(style, near), dashes(style, near)), style, near, view)};
+    Lines outline{stroking::outlined(flattening::flattened(path, Matrix{}, near, view, turning(style, near), dashes(style, near)), style, near, view, viewed(open), state_->matrix)};
 
     for (flattening::Line& line : outline.all)
         for (Point& one : line.points) one = state_->matrix.applied(one);
@@ -786,7 +786,7 @@ bool Pen::on(const Path& path, Point one, const Stroke& style) const {
 
     const double near = tolerance / stretch;
     const std::optional<flattening::Bounds> view = reached(state_->matrix, around(one), style);
-    std::vector<flattening::Line> outline = stroking::outlined(flattening::flattened(path, Matrix{}, near, view, turning(style, near), dashes(style, near)), style, near, view);
+    std::vector<flattening::Line> outline = stroking::outlined(flattening::flattened(path, Matrix{}, near, view, turning(style, near), dashes(style, near)), style, near, view, around(one), state_->matrix);
 
     for (flattening::Line& line : outline)
         for (Point& point : line.points) point = state_->matrix.applied(point);

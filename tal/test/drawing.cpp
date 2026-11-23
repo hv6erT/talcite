@@ -1351,6 +1351,126 @@ TRIAL("Drawing: a curve or an arc of any length passing through the view costs t
     OUGHT(covers_alike(stroked(48, 32, ring, quarters), pieces.pixels(), 30));
 }
 
+// Round caps and joins of a stroke far wider than the view: each pixel covered as the stroke's true
+// shape covers it (the points within half the width of the path, sampled sixteen by sixteen),
+// within the tolerance (and the numbers' own spacing there, half a pixel at 4·10¹⁵), for half
+// widths from a thousand to four quadrillion pixels, reaching the view from each side, and through
+// matrices that turn and scale either way; and the outline keeps only the steps of the arcs the
+// view shows, a few hundred points where the whole arcs would take millions. A round part the
+// matrix carries past the range of numbers is malformed.
+TRIAL("Drawing: round caps and joins far wider than the view cover as the true shape and cost the arcs seen") {
+    using tal::drawing::flattening::Bounds;
+    using tal::drawing::flattening::Line;
+
+    const auto shape = [](const std::vector<Point>& points, double half, int x, int y) {
+        int inside = 0;
+
+        for (int sy = 0; sy < 16; ++sy)
+            for (int sx = 0; sx < 16; ++sx) {
+                const Point sample{x + (sx + 0.5) / 16, y + (sy + 0.5) / 16};
+                double nearest = std::numeric_limits<double>::infinity();
+
+                for (std::size_t at = 0; at + 1 < points.size(); ++at) {
+                    const Point from = points[at];
+                    const Point d{points[at + 1].x - from.x, points[at + 1].y - from.y};
+                    const double along = std::clamp(((sample.x - from.x) * d.x + (sample.y - from.y) * d.y) / (d.x * d.x + d.y * d.y), 0.0, 1.0);
+
+                    nearest = std::min(nearest, std::hypot(sample.x - (from.x + along * d.x), sample.y - (from.y + along * d.y)));
+                }
+
+                inside += nearest <= half ? 1 : 0;
+            }
+
+        return inside / 256.0;
+    };
+
+    const auto turned = [](const std::vector<Point>& offsets, int quarter) {
+        std::vector<Point> made;
+
+        for (Point one : offsets) {
+            for (int turn = 0; turn < quarter; ++turn) one = Point{-one.y, one.x};
+
+            made.push_back(Point{32 + one.x, 24 + one.y});
+        }
+
+        return made;
+    };
+
+    for (const double half : {1e3, 1e9, 1e13, 4e15})
+        for (int quarter = 0; quarter < 4; ++quarter) {
+            const double room = half > 1e15 ? 0.62 : 0.12;
+            const std::vector<Point> capped = turned({Point{-half - half / 10 + 8, 0}, Point{-half + 8, 0}}, quarter);
+            const std::vector<Point> turning = turned({Point{-half + 8, -half / 10}, Point{-half + 8, 0}, Point{-half - half / 10 + 8, 0}}, quarter);
+
+            for (const std::vector<Point>& points : {capped, turning}) {
+                Path path;
+                Stroke round;
+
+                path.move(points.front());
+
+                for (std::size_t at = 1; at < points.size(); ++at) path.line(points[at]);
+
+                round.width = 2 * half;
+                round.cap = Cap::round;
+                round.join = Join::round;
+
+                const tal::media::Pixels drawn = stroked(64, 48, path, round);
+                double most = 0;
+
+                for (int y = 0; y < 48; ++y)
+                    for (int x = 0; x < 64; ++x) most = std::max(most, std::abs(alpha(drawn, x, y) - shape(points, half, x, y)));
+
+                OUGHT(most < room);
+
+                Line line;
+
+                line.points = points;
+                line.corners.assign(points.size(), true);
+
+                std::size_t count = 0;
+
+                for (const Line& piece : tal::drawing::stroking::outlined({line}, round, 0.1, Bounds{-half - 64, -half - 48, half + 128, half + 96}, Bounds{0, 0, 64, 48})) count += piece.points.size();
+
+                OUGHT(count < 2000);
+            }
+        }
+
+    for (const double half : {1e3, 1e9, 1e13})
+        for (const Matrix& matrix : {Matrix::turned(0.3).then(Matrix::scaled(1e6, 1e6)), Matrix::turned(-1.1).then(Matrix::scaled(1e-6, 1e-6))}) {
+            const std::optional<Matrix> back = matrix.inverted();
+            const double scale = std::hypot(matrix.a, matrix.b);
+            const std::vector<Point> capped = turned({Point{-half - half / 10 + 8, 0}, Point{-half + 8, 0}}, 1);
+            const std::vector<Point> turning = turned({Point{-half + 8, -half / 10}, Point{-half + 8, 0}, Point{-half - half / 10 + 8, 0}}, 3);
+
+            for (const std::vector<Point>& points : {capped, turning}) {
+                Path path;
+                Stroke round;
+
+                path.move(back->applied(points.front()));
+
+                for (std::size_t at = 1; at < points.size(); ++at) path.line(back->applied(points[at]));
+
+                round.width = 2 * half / scale;
+                round.cap = Cap::round;
+                round.join = Join::round;
+
+                const tal::media::Pixels drawn = stroked(64, 48, path, round, matrix);
+                double most = 0;
+
+                for (int y = 0; y < 48; ++y)
+                    for (int x = 0; x < 64; ++x) most = std::max(most, std::abs(alpha(drawn, x, y) - shape(points, half, x, y)));
+
+                OUGHT(most < 0.12);
+            }
+        }
+
+    Stroke vast;
+
+    vast.width = 2e160;
+    vast.cap = Cap::round;
+    SAME(trouble_of([&] { (void)stroked(64, 48, segment(Point{0, 0}, Point{1, 0}), vast, Matrix::turned(0.3).then(Matrix::scaled(1e150, 1e150))); }), std::optional<Kind>{Kind::malformed});
+}
+
 TRIAL("Drawing: matrices compose in order; an odd dash list from an offset past its first round, a negative length drawn whole; images held at their edges, clips within clips; red as green; a stroke flattened in the pen's own scale") {
     for (const auto& [first, second] : {std::pair{Matrix::turned(0.3), Matrix::scaled(2, 3)}, std::pair{Matrix::scaled(2, 3), Matrix::turned(0.4)}, std::pair{Matrix{1, 0.5, -0.25, 1, 3, 4}, Matrix{2, -1, 0.5, 1.5, -2, 1}}}) {
         const Point mapped = first.then(second).applied(Point{1, 2});

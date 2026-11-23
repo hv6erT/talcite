@@ -12,6 +12,7 @@ namespace tal::drawing::stroking {
 [[nodiscard]] std::vector<double> pattern(const Stroke& style);
 
 [[nodiscard]] std::vector<flattening::Line> outlined(const std::vector<flattening::Line>& lines, const Stroke& style, double tolerance,
-                                                     const std::optional<flattening::Bounds>& view = std::nullopt);
+                                                     const std::optional<flattening::Bounds>& view = std::nullopt, const std::optional<flattening::Bounds>& seen = std::nullopt,
+                                                     const Matrix& matrix = {});
 
 }

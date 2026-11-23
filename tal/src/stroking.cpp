@@ -111,12 +111,15 @@ void deduplicated(Run& run) {
     run.lengths = std::move(lengths);
 }
 
-// The making of the pieces of one stroke: its style, the tolerance of its round parts and the
-// polygons made.
+// The making of the pieces of one stroke: its style, the tolerance of its round parts, the view
+// they are seen in (in pixels, through the matrix) and the polygons made.
 class Outlining {
 public:
-    Outlining(const Stroke& style, double tolerance) : style_(style), half_(style.width / 2), tolerance_(tolerance) {
-        const double step = half_ > tolerance_ ? 2 * std::acos(1 - tolerance_ / half_) : std::numbers::pi / 2;
+    // The step of a round part's angle is the arc whose chord strays `tolerance` from it at the
+    // middle, 4·asin(√(tolerance/2r)) for a radius r of half the width (the form by the cosine,
+    // 2·acos(1 - tolerance/r), loses the step to rounding once r is some 10¹⁵ tolerances).
+    Outlining(const Stroke& style, double tolerance, const std::optional<flattening::Bounds>& view, const Matrix& matrix) : style_(style), half_(style.width / 2), tolerance_(tolerance), view_(view), matrix_(matrix) {
+        const double step = half_ > tolerance_ ? 4 * std::asin(std::sqrt(tolerance_ / (2 * half_))) : std::numbers::pi / 2;
 
         step_ = step > 0 ? step : std::numbers::pi / 2;
     }
@@ -212,18 +215,71 @@ private:
         capped(at, times(along, -1));
     }
 
+    // The point of the arc of radius half the width around `center`, from the direction `from`
+    // turned by `turn`.
+    [[nodiscard]] Point turned(Point center, Point from, double turn) const {
+        const double cosine = std::cos(turn);
+        const double sine = std::sin(turn);
+
+        return plus(center, times(Point{from.x * cosine - from.y * sine, from.x * sine + from.y * cosine}, half_));
+    }
+
     // The points within the arc of radius half the width around `center`, from the direction
-    // `from` turning by `angle`.
+    // `from` turning by `angle` (no more than a half turn): at even steps without a view, else in
+    // halves, a part that lies wholly beyond the view going as its chord, so that a stroke far
+    // wider than the view costs the steps of the arc it shows; the coverage within the view stays
+    // within the tolerance.
     void arced(Point center, Point from, double angle, std::vector<Point>& into) const {
-        const auto steps = static_cast<std::size_t>(std::ceil(std::abs(angle) / step_));
+        if (!view_) {
+            evened(center, from, 0, angle, into);
 
-        for (std::size_t one = 1; one < steps; ++one) {
-            const double turn = angle * static_cast<double>(one) / static_cast<double>(steps);
-            const double cosine = std::cos(turn);
-            const double sine = std::sin(turn);
-
-            into.push_back(plus(center, times(Point{from.x * cosine - from.y * sine, from.x * sine + from.y * cosine}, half_)));
+            return;
         }
+
+        halved(center, from, 0, angle, into);
+    }
+
+    // The points within the arc around `center` from the turn `first` to `last`, at even steps.
+    void evened(Point center, Point from, double first, double last, std::vector<Point>& into) const {
+        const auto steps = static_cast<std::size_t>(std::ceil(std::abs(last - first) / step_));
+
+        for (std::size_t one = 1; one < steps; ++one) into.push_back(turned(center, from, first + (last - first) * static_cast<double>(one) / static_cast<double>(steps)));
+    }
+
+    // The points within the arc around `center` from the turn `first` to `last`: at even steps
+    // where it takes `reach` steps or fewer, else in halves, the points of each half with the point
+    // between them, and none for a half that lies beyond the view (the box of its ends and of where
+    // the tangents at them meet, which holds the part and its chord, misses the view once the
+    // matrix has carried them to pixels; for a half turn they meet beyond the numbers' reach, and
+    // the part is halved again). Throws Trouble malformed where the matrix carries an end past the
+    // range of numbers, as it would the stroke's points.
+    void halved(Point center, Point from, double first, double last, std::vector<Point>& into) const {
+        const double angle = std::abs(last - first);
+
+        if (std::ceil(angle / step_) <= reach) {
+            evened(center, from, first, last, into);
+
+            return;
+        }
+
+        const Point start = matrix_.applied(turned(center, from, first));
+        const Point end = matrix_.applied(turned(center, from, last));
+        const Point apex = matrix_.applied(plus(center, times(minus(turned(center, from, (first + last) / 2), center), 1 / std::cos(angle / 2))));
+
+        if (!std::isfinite(start.x) || !std::isfinite(start.y) || !std::isfinite(end.x) || !std::isfinite(end.y)) throw Trouble{Kind::malformed, "A round part of a stroke carried past the range of numbers."};
+
+        const double x0 = std::min({start.x, end.x, apex.x});
+        const double x1 = std::max({start.x, end.x, apex.x});
+        const double y0 = std::min({start.y, end.y, apex.y});
+        const double y1 = std::max({start.y, end.y, apex.y});
+
+        if (x1 < view_->x0 || x0 > view_->x1 || y1 < view_->y0 || y0 > view_->y1) return;
+
+        const double middle = (first + last) / 2;
+
+        halved(center, from, first, middle, into);
+        into.push_back(turned(center, from, middle));
+        halved(center, from, middle, last, into);
     }
 
     // `polygon` kept as a closed line, turned so that it winds as every other piece does (the
@@ -254,9 +310,13 @@ private:
         made_.push_back(std::move(line));
     }
 
+    static constexpr double reach = 64;
+
     const Stroke& style_;
     double half_;
     double tolerance_;
+    const std::optional<flattening::Bounds>& view_;
+    const Matrix& matrix_;
     double step_ = 0;
     std::vector<Line> made_;
     std::size_t points_ = 0;
@@ -485,16 +545,19 @@ std::vector<double> pattern(const Stroke& style) {
 
 // The pieces of `lines` (flattened, in the path's coordinates) stroked with `style`, its round
 // parts within `tolerance`, the dashes laid only where `view` (in the same coordinates, the
-// stroke's reach included; none: everywhere) may see them: closed polygons that all wind one way,
-// for the nonzero rule. Throws Trouble full, before any dash is made, when the dashes would come
-// to more than `most_dashes`: dashes of no length with butt caps leave nothing, so the points
-// alone would not stop them. A width of zero draws nothing.
-std::vector<Line> outlined(const std::vector<Line>& lines, const Stroke& style, double tolerance, const std::optional<flattening::Bounds>& view) {
+// stroke's reach included; none: everywhere) may see them, the round parts of caps and joins cut to
+// what `seen` (the view itself in pixels, without the reach, where `matrix` carries the path; none:
+// all of them) shows: closed polygons that all wind one way, for the nonzero rule. Throws Trouble
+// full, before any dash is made, when the dashes would come to more than `most_dashes`: dashes of
+// no length with butt caps leave nothing, so the points alone would not stop them. A width of zero
+// draws nothing.
+std::vector<Line> outlined(const std::vector<Line>& lines, const Stroke& style, double tolerance, const std::optional<flattening::Bounds>& view, const std::optional<flattening::Bounds>& seen,
+                           const Matrix& matrix) {
     if (!(style.width > 0)) return {};
 
     const std::vector<double> dashes = pattern(style);
     double expected = 0;
-    Outlining outlining{style, tolerance};
+    Outlining outlining{style, tolerance, seen, matrix};
 
     for (const Line& line : lines) {
         Run run{.points = line.points, .corners = line.corners, .lengths = line.lengths, .closed = line.closed};
