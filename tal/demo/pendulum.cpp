@@ -3,11 +3,14 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "tal/app.hpp"
 #include "tal/document.hpp"
@@ -16,14 +19,19 @@
 #include "tal/event.hpp"
 #include "tal/fonts.hpp"
 #include "tal/key.hpp"
+#include "tal/plotting.hpp"
 #include "tal/simulation.hpp"
 
 // A double pendulum (E7e), the program that shows a simulation in the terminal: two rods of a
 // metre and two bodies of a kilogram, integrated by RK4 at steps of a millisecond on the
 // simulation's own thread, drawn sixty times a second with the path of the second body behind it
 // and its total energy above, which RK4 keeps nearly still (a drift there is the integrator's, not
-// the physics'). A body can be dragged with the mouse, the simulation holding it where the pointer
-// is. Space pauses, s takes one step, + and - double and halve the pace, q quits.
+// the physics'). Beside it (below it, in a window taller than wide) three plots (E8) of the last
+// ten seconds, sampled every ten steps on the simulation's thread into traces: the drift of the
+// energy from where it started or the pendulum was last let go, both angles in time, and the
+// phase portrait of the second rod, its angle against its rate. A body can be dragged with the
+// mouse, the simulation holding it where the pointer is. Space pauses, s takes one step, + and -
+// double and halve the pace, q quits.
 namespace {
 
 using tal::drawing::Color;
@@ -31,20 +39,27 @@ using tal::drawing::Matrix;
 using tal::drawing::Path;
 using tal::drawing::Pen;
 using tal::drawing::Point;
+using tal::drawing::Rect;
 
 constexpr double g = 9.81;
 constexpr double length = 1.0;
 constexpr double mass = 1.0;
 constexpr std::size_t trail = 600;
+constexpr double window = 10;
+constexpr int every = 10;
+constexpr double pi = std::numbers::pi;
 
-// The state of the pendulum: both angles from the vertical, their rates, and the path of the
-// second body.
+// The state of the pendulum: both angles from the vertical, their rates, the path of the second
+// body, the time and steps so far, and the energy the drift is measured from.
 struct Pendulum {
     double first = 2.0;
     double second = 2.6;
     double first_rate = 0;
     double second_rate = 0;
     std::deque<Point> path;
+    double time = 0;
+    std::uint64_t steps = 0;
+    double reference = 0;
 };
 
 // The angular accelerations of the state (θ1, θ2, ω1, ω2), from the equations of Lagrange.
@@ -80,6 +95,8 @@ void stepped(Pendulum& state, double dt) {
     state.second = next[1];
     state.first_rate = next[2];
     state.second_rate = next[3];
+    state.time += dt;
+    ++state.steps;
 
     if (state.path.empty() || std::hypot(tip(state).x - state.path.back().x, tip(state).y - state.path.back().y) > 0.01) state.path.push_back(tip(state));
 
@@ -95,12 +112,174 @@ double energy(const Pendulum& s) {
     return kinetic + potential;
 }
 
-// The matrix from metres to the pixels of a drawing of `size`: the pivot a third down the middle,
-// the whole reach of the pendulum within the smaller side.
-Matrix placed(tal::media::Size size) {
-    const double scale = std::min(size.width, size.height) / (2.4 * 2 * length);
+// Where the parts go in a drawing of `size`: the pendulum, and the three plots beside it in a
+// column, or below it where the drawing is taller than wide.
+struct Areas {
+    Rect swing;
+    std::array<Rect, 3> plots;
+};
 
-    return Matrix::scaled(scale, scale).then(Matrix::moved(size.width / 2.0, size.height / 2.0));
+// The areas of a drawing of `size`: the pendulum in a square of the height at the left, at most
+// half the width, the plots in the rest one above another; or, taller than wide, the pendulum in a
+// square of the width above, at most half the height, and the plots below.
+Areas divided(tal::media::Size size) {
+    const auto wide = static_cast<double>(size.width);
+    const auto high = static_cast<double>(size.height);
+    Areas made;
+
+    if (wide >= high) {
+        const double side = std::min(high, wide / 2);
+
+        made.swing = Rect{Point{0, 0}, side, high};
+
+        for (std::size_t at = 0; at < 3; ++at) made.plots[at] = Rect{Point{side, high * static_cast<double>(at) / 3}, wide - side, high / 3};
+    } else {
+        const double side = std::min(wide, high / 2);
+
+        made.swing = Rect{Point{0, 0}, wide, side};
+
+        for (std::size_t at = 0; at < 3; ++at) made.plots[at] = Rect{Point{0, side + (high - side) * static_cast<double>(at) / 3}, wide, (high - side) / 3};
+    }
+
+    return made;
+}
+
+// The matrix from metres to the pixels of `area`: the pivot in its middle, the whole reach of the
+// pendulum within its smaller side.
+Matrix placed(const Rect& area) {
+    const double scale = std::min(area.wide, area.high) / (2.4 * 2 * length);
+
+    return Matrix::scaled(scale, scale).then(Matrix::moved(area.at.x + area.wide / 2, area.at.y + area.high / 2));
+}
+
+// The angle `value` brought to -π to π.
+double around(double value) { return std::remainder(value, 2 * pi); }
+
+// The samples of `points` with their angles brought to -π to π, a gap (a point that is not a
+// number) where an angle goes round.
+std::vector<Point> wrapped(const std::vector<Point>& points) {
+    std::vector<Point> made;
+
+    for (const Point& one : points) {
+        const double value = around(one.y);
+
+        if (!made.empty() && std::abs(value - made.back().y) > pi) made.push_back(Point{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()});
+
+        made.push_back(Point{one.x, value});
+    }
+
+    return made;
+}
+
+// The phase portrait from the samples of an angle `angles` and its rate `rates`, taken at the same
+// times: the angle brought to -π to π across, the rate up, a gap where the angle goes round. The
+// traces are read one after the other, so one may hold a sample the other does not have yet.
+std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates) {
+    while (!angles.empty() && !rates.empty() && angles.back().x > rates.back().x) angles.pop_back();
+
+    while (!angles.empty() && !rates.empty() && rates.back().x > angles.back().x) rates.pop_back();
+
+    const std::size_t many = std::min(angles.size(), rates.size());
+    std::vector<Point> made;
+
+    for (std::size_t at = 0; at < many; ++at) {
+        const double angle = around(angles[angles.size() - many + at].y);
+        const double rate = rates[rates.size() - many + at].y;
+
+        if (!made.empty() && std::abs(angle - made.back().x) > pi) made.push_back(Point{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()});
+
+        made.push_back(Point{angle, rate});
+    }
+
+    return made;
+}
+
+// The traces the simulation samples into: the drift of the energy, both angles and the rate of
+// the second.
+struct Traces {
+    tal::plotting::Trace drift{window};
+    tal::plotting::Trace first{window};
+    tal::plotting::Trace second{window};
+    tal::plotting::Trace second_rate{window};
+};
+
+// The samples of `state` into `traces`, every so many steps.
+void sampled(const Pendulum& state, Traces& traces) {
+    if (state.steps % every != 0) return;
+
+    traces.drift.add(state.time, energy(state) - state.reference);
+    traces.first.add(state.time, state.first);
+    traces.second.add(state.time, state.second);
+    traces.second_rate.add(state.time, state.second_rate);
+}
+
+// The three plots of `traces` drawn with `pen` in `areas`, their letters of `letters`.
+void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters) {
+    using tal::plotting::Plot;
+    using tal::plotting::Scale;
+    using tal::plotting::Series;
+
+    const Scale angles{-pi, pi};
+    Plot drift;
+    Series drifting;
+
+    drift.title = "Energy drift";
+    drift.x.title = "t [s]";
+    drift.y.title = "ΔE [J]";
+    drift.x.scale = traces.drift.span();
+    drift.legend = tal::plotting::Corner::none;
+    drift.letters = letters;
+    drifting.points = traces.drift.points();
+    drift.series.push_back(std::move(drifting));
+    (void)drift.drawn(pen, font, areas.plots[0]);
+
+    Plot turns;
+    Series one;
+    Series two;
+
+    turns.title = "Angles";
+    turns.x.title = "t [s]";
+    turns.y.title = "θ [rad]";
+    turns.x.scale = traces.second.span();
+    turns.y.scale = angles;
+    turns.y.grid = true;
+    turns.letters = letters;
+    one.name = "θ₁";
+    one.points = wrapped(traces.first.points());
+    two.name = "θ₂";
+    two.points = wrapped(traces.second.points());
+    turns.series.push_back(std::move(one));
+    turns.series.push_back(std::move(two));
+    (void)turns.drawn(pen, font, areas.plots[1]);
+
+    Plot phase;
+    Series portrait;
+    Series now;
+
+    phase.title = "Phase of the second rod";
+    phase.x.title = "θ₂ [rad]";
+    phase.y.title = "ω₂ [rad/s]";
+    phase.x.scale = angles;
+    phase.legend = tal::plotting::Corner::none;
+    phase.letters = letters;
+    portrait.points = phased(traces.second.points(), traces.second_rate.points());
+    portrait.width = 1;
+    portrait.color = Color{0.34F, 0.71F, 0.91F, 0.7F};
+
+    for (auto at = portrait.points.rbegin(); at != portrait.points.rend(); ++at)
+        if (std::isfinite(at->x)) {
+            now.points.push_back(*at);
+
+            break;
+        }
+
+    now.line = false;
+    now.mark = tal::plotting::Mark::circle;
+    now.size = letters * 0.6;
+    now.color = Color{0.95F, 0.55F, 0.2F, 1};
+    phase.series.push_back(std::move(portrait));
+    phase.series.push_back(std::move(now));
+    (void)phase.drawn(pen, font, areas.plots[2]);
 }
 
 // The angle from `pivot` to `at`, from the vertical down, as the pendulum counts it.
@@ -111,7 +290,17 @@ double angle(Point pivot, Point at) { return std::atan2(at.x - pivot.x, at.y - p
 int main() {
     tal::App app;
     tal::Document document;
-    tal::Simulation<Pendulum> pendulum{Pendulum{}, stepped, 0.001};
+    Traces traces;
+    Pendulum start;
+
+    start.reference = energy(start);
+
+    tal::Simulation<Pendulum> pendulum{start,
+                                       [&traces](Pendulum& state, double dt) {
+                                           stepped(state, dt);
+                                           sampled(state, traces);
+                                       },
+                                       0.001};
     std::optional<std::chrono::nanoseconds> last;
     std::optional<int> held;
     const tal::drawing::Font font = tal::drawing::Font::builtin();
@@ -121,12 +310,13 @@ int main() {
         last = since;
 
         const Pendulum state = pendulum.latest();
-        const Matrix world = placed(size);
+        const Areas areas = divided(size);
+        const Matrix world = placed(areas.swing);
         const Point first{length * std::sin(state.first), length * std::cos(state.first)};
         const Point second = tip(state);
         Path all;
 
-        all.rectangle(tal::drawing::Rect{Point{0, 0}, static_cast<double>(size.width), static_cast<double>(size.height)});
+        all.rectangle(Rect{Point{0, 0}, static_cast<double>(size.width), static_cast<double>(size.height)});
         pen.fill(all, Color{0.07F, 0.08F, 0.11F, 1});
         pen.save();
         pen.place(world);
@@ -169,9 +359,10 @@ int main() {
 
         std::snprintf(said, sizeof said, "E = %.6f J   t = %.2f s   pace %.2g%s", energy(state), pendulum.time(), pendulum.pace(), pendulum.running() ? "" : "   paused");
 
-        const double letters = std::max(10.0, size.height / 24.0);
+        const double letters = std::max(10.0, std::min(areas.swing.high / 24, areas.swing.wide * 0.95 / std::max(1.0, font.measured(said, 1).wide)));
 
         pen.fill(font.outlined(said, letters, Point{letters / 2, letters / 2}, tal::drawing::Align::left, tal::drawing::Baseline::top), Color{0.9F, 0.9F, 0.9F, 1});
+        plotted(pen, font, areas, traces, std::clamp(size.height / 48.0, 10.0, 16.0));
     });
 
     const tal::Hook mouse = drawing.on<tal::MouseEvent>([&](tal::MouseEvent& event) {
@@ -179,7 +370,7 @@ int main() {
 
         if (!pointed) return;
 
-        const std::optional<Matrix> back = placed(drawing.pixels()).inverted();
+        const std::optional<Matrix> back = placed(divided(drawing.pixels()).swing).inverted();
 
         if (!back) return;
 
@@ -206,6 +397,7 @@ int main() {
 
                 s.first_rate = 0;
                 s.second_rate = 0;
+                s.reference = energy(s);
             });
         }
 
