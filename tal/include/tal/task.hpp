@@ -161,9 +161,9 @@ struct Base {
                 return std::noop_coroutine();
             }
 
-            const std::coroutine_handle<> next = done.promise().next;
+            const std::coroutine_handle<> resumed = done.promise().next;
 
-            return next ? next : std::noop_coroutine();
+            return resumed ? resumed : std::noop_coroutine();
         }
 
         void await_resume() const noexcept {}
