@@ -386,6 +386,10 @@ endif()
 # read with the mouse (E9), the phase or a histogram of the second angle (E10), its settings out of
 # demo/pendulum.json.
 if(TALCITE_DEMOS)
+  # The smallest program, the example of the README (scripts/readme.py checks that they agree).
+  add_executable(tal-hello demo/hello.cpp)
+  target_link_libraries(tal-hello PRIVATE tal-ui)
+
   add_executable(tal-pendulum demo/pendulum.cpp)
   target_link_libraries(tal-pendulum PRIVATE tal-ui tal-plotting)
   tal_settings(tal-pendulum demo/pendulum.json pendulum_settings)
