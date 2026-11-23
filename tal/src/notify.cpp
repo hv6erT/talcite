@@ -307,12 +307,12 @@ private:
             if (much < file.size()) {
                 file.resize(much);
 
-                HICON small = nullptr;
+                HICON icon = nullptr;
 
-                if (ExtractIconExW(file.c_str(), 0, nullptr, &small, 1) > 0 && small != nullptr) {
+                if (ExtractIconExW(file.c_str(), 0, nullptr, &icon, 1) > 0 && icon != nullptr) {
                     own_icon_ = true;
 
-                    return small;
+                    return icon;
                 }
 
                 break;
