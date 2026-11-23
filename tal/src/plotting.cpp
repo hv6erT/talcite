@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <numbers>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 #include "tal/trouble.hpp"
@@ -315,6 +317,290 @@ Series histogram(const Bins& bins, Tally tally) {
 
 namespace {
 
+// The most nodes a field may have: 2²⁶, half a gigabyte of values.
+constexpr std::size_t most_nodes = std::size_t{1} << 26;
+
+// Throws Trouble malformed unless `field` has two columns and two rows of nodes at least and a
+// value for each, and Trouble full past `most_nodes` nodes.
+void shaped(const Field& field) {
+    if (field.columns < 2 || field.rows < 2) throw Trouble{tal::Kind::malformed, "A field of fewer than two columns or two rows."};
+
+    if (field.columns > most_nodes / field.rows) throw Trouble{tal::Kind::full, "A field of more than " + std::to_string(most_nodes) + " nodes."};
+
+    if (field.values.size() != field.columns * field.rows) throw Trouble{tal::Kind::malformed, "A field without a value for each of its nodes."};
+}
+
+// The value of `field` (shaped) at the column `across` and the row `up` counted in nodes, both
+// within the field: that of the nearest node (not a number where it has no finite value), or,
+// `smooth`, weighed between the four nodes around them (those with finite values, their weights
+// made whole again), within the least and the greatest of them.
+double sample(const Field& field, double across, double up, bool smooth) {
+    const auto column = static_cast<std::size_t>(std::round(across));
+    const auto row = static_cast<std::size_t>(std::round(up));
+    const double nearest = field.values[row * field.columns + column];
+
+    if (!std::isfinite(nearest)) return std::numeric_limits<double>::quiet_NaN();
+
+    if (!smooth) return nearest;
+
+    const std::size_t left = std::min(static_cast<std::size_t>(across), field.columns - 2);
+    const std::size_t low = std::min(static_cast<std::size_t>(up), field.rows - 2);
+    const double right_part = across - static_cast<double>(left);
+    const double up_part = up - static_cast<double>(low);
+    double sum = 0;
+    double weight = 0;
+    double least = nearest;
+    double most = nearest;
+
+    for (std::size_t over = 0; over < 2; ++over)
+        for (std::size_t along = 0; along < 2; ++along) {
+            const double one = field.values[(low + over) * field.columns + left + along];
+            const double share = (along == 1 ? right_part : 1 - right_part) * (over == 1 ? up_part : 1 - up_part);
+
+            if (!std::isfinite(one) || !(share > 0)) continue;
+
+            sum += share * one;
+            weight += share;
+            least = std::min(least, one);
+            most = std::max(most, one);
+        }
+
+    return std::clamp(sum / weight, least, most);
+}
+
+// A color in Oklab, Ottosson's space of perceived lightness and hue.
+struct Lab {
+    double l = 0;
+    double a = 0;
+    double b = 0;
+};
+
+// `color` (sRGB, clamped to 0 to 1) in Oklab.
+Lab oklab(const Color& color) {
+    const auto linear = [](float one) {
+        const double c = std::clamp(static_cast<double>(one), 0.0, 1.0);
+
+        return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    };
+    const double r = linear(color.r);
+    const double g = linear(color.g);
+    const double b = linear(color.b);
+    const double l = std::cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const double m = std::cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const double s = std::cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+
+    return Lab{0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+               0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s};
+}
+
+// The color `lab` in sRGB (clamped to 0 to 1) with `alpha`.
+Color srgb(const Lab& lab, float alpha) {
+    const double l = std::pow(lab.l + 0.3963377774 * lab.a + 0.2158037573 * lab.b, 3);
+    const double m = std::pow(lab.l - 0.1055613458 * lab.a - 0.0638541728 * lab.b, 3);
+    const double s = std::pow(lab.l - 0.0894841775 * lab.a - 1.2914855480 * lab.b, 3);
+    const auto encoded = [](double one) {
+        const double c = std::clamp(one, 0.0, 1.0);
+
+        return static_cast<float>(c <= 0.0031308 ? c * 12.92 : 1.055 * std::pow(c, 1 / 2.4) - 0.055);
+    };
+
+    return Color{encoded(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s), encoded(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+                 encoded(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s), alpha};
+}
+
+// The color of the bytes `red`, `green` and `blue` (sRGB).
+Color hex(int red, int green, int blue) { return Color{static_cast<float>(red) / 255.0F, static_cast<float>(green) / 255.0F, static_cast<float>(blue) / 255.0F, 1}; }
+
+// The point between `low` and `high` at the share `part` of the way, the ends weighed by it, so
+// that no difference of them overflows.
+double between_ends(double low, double high, double part) { return low * (1 - part) + high * part; }
+
+}
+
+// The place of the node in `column` and `row`: the columns spread over x from its low end to its
+// high end, the rows over y from its low end up, evenly (by the logarithm, on a logarithmic scale);
+// the last of each exactly at the high end. Throws Trouble malformed for a field of fewer than two
+// columns or rows, or a node it does not have.
+Point Field::node(std::size_t column, std::size_t row) const {
+    if (columns < 2 || rows < 2 || column >= columns || row >= rows) throw Trouble{tal::Kind::malformed, "A node the field does not have."};
+
+    const double last_column = static_cast<double>(columns - 1);
+    const double last_row = static_cast<double>(rows - 1);
+
+    return Point{column + 1 == columns ? x.high() : x.valued(static_cast<double>(column), 0, last_column), row + 1 == rows ? y.high() : y.valued(static_cast<double>(row), 0, last_row)};
+}
+
+// The value of the field at `at` (x and y): that of the nearest node, or, `smooth`, weighed
+// between the four around it (bilinearly, as their places lie along each scale); not a number
+// outside the field or where the nearest node has no finite value. Throws as `shaped`.
+double Field::value(Point at, bool smooth) const {
+    shaped(*this);
+
+    const double across = x.placed(at.x, 0, static_cast<double>(columns - 1));
+    const double up = y.placed(at.y, 0, static_cast<double>(rows - 1));
+
+    if (!(across >= 0 && across <= static_cast<double>(columns - 1) && up >= 0 && up <= static_cast<double>(rows - 1))) return std::numeric_limits<double>::quiet_NaN();
+
+    return sample(*this, across, up, smooth);
+}
+
+// The lines of `field` at `level`, in its values, by marching squares: a cell of four nodes with
+// finite values is crossed on each side whose nodes lie one at or above the level and one below,
+// at the place between them where the level falls (weighed by the values, as the nodes lie along
+// each scale); a cell crossed on all four sides (a saddle) joins its sides so as to cut off the
+// corners on the other side of the level from the mean of its four values. The pieces are joined
+// where they meet into lines: open ones from an edge of the field or a node without a value, then
+// closed ones, whose last point is their first. None for a level that is not a number or is
+// endless, since every node then lies on one side of it. Throws as `shaped`.
+std::vector<std::vector<Point>> contoured(const Field& field, double level) {
+    shaped(field);
+
+    std::vector<std::vector<Point>> made;
+    const std::size_t columns = field.columns;
+    const double last_column = static_cast<double>(columns - 1);
+    const double last_row = static_cast<double>(field.rows - 1);
+    const auto value = [&](std::size_t column, std::size_t row) { return field.values[row * columns + column]; };
+    std::unordered_map<std::size_t, Point> crossed;
+    std::vector<std::array<std::size_t, 2>> pieces;
+
+    // The side from the node (column, row) to the right is numbered 2(row·columns + column), the
+    // one up from it one more; its crossing is found once.
+    const auto side = [&](std::size_t column, std::size_t row, bool upward) {
+        const std::size_t number = 2 * (row * columns + column) + (upward ? 1 : 0);
+
+        if (!crossed.contains(number)) {
+            const std::size_t to_column = upward ? column : column + 1;
+            const std::size_t to_row = upward ? row + 1 : row;
+            const double from = value(column, row);
+            const double to = value(to_column, to_row);
+            const double span = to - from;
+            double part = std::isfinite(span) ? (level - from) / span : (level / 2 - from / 2) / (to / 2 - from / 2);
+
+            part = std::isfinite(part) ? std::clamp(part, 0.0, 1.0) : 0.5;
+            const double across = upward ? static_cast<double>(column) : static_cast<double>(column) + part;
+            const double up = upward ? static_cast<double>(row) + part : static_cast<double>(row);
+
+            crossed.emplace(number, Point{field.x.valued(across, 0, last_column), field.y.valued(up, 0, last_row)});
+        }
+
+        return number;
+    };
+
+    for (std::size_t row = 0; row + 1 < field.rows; ++row)
+        for (std::size_t column = 0; column + 1 < columns; ++column) {
+            const std::array<double, 4> corners{value(column, row), value(column + 1, row), value(column + 1, row + 1), value(column, row + 1)};
+
+            if (!std::all_of(corners.begin(), corners.end(), [](double one) { return std::isfinite(one); })) continue;
+
+            std::array<bool, 4> above{};
+
+            for (std::size_t at = 0; at < 4; ++at) above[at] = corners[at] >= level;
+
+            // The sides of the cell, each between the corners `at` and `at + 1`: below, right, top
+            // and left.
+            const std::array<bool, 4> cut{above[0] != above[1], above[1] != above[2], above[2] != above[3], above[3] != above[0]};
+            const auto numbered = [&](std::size_t at) {
+                switch (at) {
+                case 0: return side(column, row, false);
+                case 1: return side(column + 1, row, true);
+                case 2: return side(column, row + 1, false);
+                default: return side(column, row, true);
+                }
+            };
+            const auto count = static_cast<std::size_t>(std::count(cut.begin(), cut.end(), true));
+
+            if (count == 2) {
+                std::array<std::size_t, 2> ends{};
+                std::size_t found = 0;
+
+                for (std::size_t at = 0; at < 4; ++at)
+                    if (cut[at]) ends[found++] = numbered(at);
+
+                pieces.push_back(ends);
+            } else if (count == 4) {
+                const bool middle = corners[0] / 4 + corners[1] / 4 + corners[2] / 4 + corners[3] / 4 >= level;
+
+                // A corner on the other side from the middle is cut off by the sides meeting at it:
+                // the corner `at` lies between the sides `at - 1` and `at`.
+                for (std::size_t at = 0; at < 4; ++at)
+                    if (above[at] != middle) pieces.push_back({numbered((at + 3) % 4), numbered(at)});
+            }
+        }
+
+    std::unordered_map<std::size_t, std::array<std::size_t, 2>> meeting;
+    std::unordered_map<std::size_t, std::size_t> meetings;
+
+    for (std::size_t at = 0; at < pieces.size(); ++at)
+        for (const std::size_t end : pieces[at]) meeting[end][meetings[end]++ % 2] = at;
+
+    std::vector<bool> taken(pieces.size(), false);
+
+    // The line from the side `start` along the piece `first`, piece by piece while one not taken
+    // meets the side it reached.
+    const auto walked = [&](std::size_t start, std::size_t first) {
+        std::vector<Point> line{crossed.at(start)};
+        std::size_t at = start;
+        std::optional<std::size_t> piece = first;
+
+        while (piece) {
+            taken[*piece] = true;
+            at = pieces[*piece][0] == at ? pieces[*piece][1] : pieces[*piece][0];
+            line.push_back(crossed.at(at));
+            piece.reset();
+
+            for (std::size_t one = 0; one < std::min<std::size_t>(meetings.at(at), 2); ++one)
+                if (!taken[meeting.at(at)[one]]) piece = meeting.at(at)[one];
+        }
+
+        return line;
+    };
+
+    for (std::size_t at = 0; at < pieces.size(); ++at)
+        for (const std::size_t end : pieces[at])
+            if (!taken[at] && meetings.at(end) == 1) made.push_back(walked(end, at));
+
+    for (std::size_t at = 0; at < pieces.size(); ++at)
+        if (!taken[at]) made.push_back(walked(pieces[at][0], at));
+
+    return made;
+}
+
+// The color at `share` (0 to 1, clamped) of the way through the palette, its colors spread evenly
+// and mixed in Oklab, so that equal steps look equally far; clear for a share that is not a
+// number. Throws Trouble malformed for a palette of no colors.
+Color Palette::at(double share) const {
+    if (colors.empty()) throw Trouble{tal::Kind::malformed, "A palette of no colors."};
+
+    if (std::isnan(share)) return Color{0, 0, 0, 0};
+
+    if (colors.size() == 1) return colors.front();
+
+    const double place = std::clamp(share, 0.0, 1.0) * static_cast<double>(colors.size() - 1);
+    const std::size_t below = std::min(static_cast<std::size_t>(place), colors.size() - 2);
+    const double part = place - static_cast<double>(below);
+    const Lab from = oklab(colors[below]);
+    const Lab to = oklab(colors[below + 1]);
+
+    return srgb(Lab{between_ends(from.l, to.l, part), between_ends(from.a, to.a, part), between_ends(from.b, to.b, part)},
+                static_cast<float>(between_ends(colors[below].a, colors[below + 1].a, part)));
+}
+
+// Viridis (van der Walt and Smith), dark violet to yellow, its lightness rising all the way: read
+// alike in colour, in grey and by most who see colours otherwise; nine of its colors.
+Palette viridis() {
+    return Palette{{hex(0x44, 0x01, 0x54), hex(0x47, 0x2d, 0x7b), hex(0x3b, 0x52, 0x8b), hex(0x2c, 0x72, 0x8e), hex(0x21, 0x90, 0x8c), hex(0x27, 0xad, 0x81),
+                    hex(0x5d, 0xc8, 0x63), hex(0xaa, 0xdc, 0x32), hex(0xfd, 0xe7, 0x25)}};
+}
+
+// Blue through nearly white to red (Brewer's RdBu turned round), for values on either side of a
+// middle.
+Palette diverging() {
+    return Palette{{hex(0x21, 0x66, 0xac), hex(0x67, 0xa9, 0xcf), hex(0xd1, 0xe5, 0xf0), hex(0xf7, 0xf7, 0xf7), hex(0xfd, 0xdb, 0xc7), hex(0xef, 0x8a, 0x62),
+                    hex(0xb2, 0x18, 0x2b)}};
+}
+
+namespace {
+
 // The finite values of `series` along x (`across`) or y, positive only for a logarithmic
 // `spacing`.
 std::vector<double> gathered(const std::vector<Series>& series, bool across, Spacing spacing) {
@@ -499,8 +785,68 @@ void marked(Pen& pen, Mark mark, double size, Point at, const Color& ink) {
     }
 }
 
+// The field under `plot`: that of its heat, or else of its first contours; none without either.
+const Field* ground(const Plot& plot) {
+    if (plot.heat) return &plot.heat->field;
+
+    return plot.contours.empty() ? nullptr : &plot.contours.front().field;
+}
+
+// The values of `field` that are finite numbers.
+std::vector<double> finite_of(const Field& field) {
+    std::vector<double> made;
+
+    for (const double one : field.values)
+        if (std::isfinite(one)) made.push_back(one);
+
+    return made;
+}
+
+// The scale the values of the field of `plot` are read on, for colors and readouts: the range of
+// its heat, or from the least of the field's finite values to the greatest, so that the map spans
+// the whole palette; about the middle of the heat where one is asked, as far each way as the
+// farthest value (halved, so that the distances do not overflow). Values all one, or none, take a
+// scale fitted around them.
+Scale ranged(const Plot& plot) {
+    if (plot.heat && plot.heat->range) return *plot.heat->range;
+
+    const std::vector<double> kept = finite_of(*ground(plot));
+    double low = std::numeric_limits<double>::infinity();
+    double high = -std::numeric_limits<double>::infinity();
+
+    for (const double one : kept) {
+        low = std::min(low, one);
+        high = std::max(high, one);
+    }
+
+    if (plot.heat && plot.heat->middle && std::isfinite(*plot.heat->middle) && !kept.empty()) {
+        const double middle = *plot.heat->middle;
+        const double reach = std::max(std::abs(low / 2 - middle / 2), std::abs(high / 2 - middle / 2));
+
+        low = std::max(std::numeric_limits<double>::lowest(), (middle / 2 - reach) * 2);
+        high = std::min(std::numeric_limits<double>::max(), (middle / 2 + reach) * 2);
+    }
+
+    return low < high ? Scale{low, high} : Scale::fitted(kept);
+}
+
+// The levels of `contours`: those asked for, or else the major ticks (ten at most) strictly within
+// a scale fitted to the finite values of its field.
+std::vector<double> leveled(const Contours& contours) {
+    if (!contours.levels.empty()) return contours.levels;
+
+    const Scale fitted = Scale::fitted(finite_of(contours.field));
+    std::vector<double> made;
+
+    for (const double one : fitted.ticks(10))
+        if (one > fitted.low() && one < fitted.high()) made.push_back(one);
+
+    return made;
+}
+
 // What the layout found: the scales, their ticks and labels, the margins and the rectangle of the
-// data.
+// data; for a plot over a field the scale its values are read on, and the ticks and labels of that
+// scale (those of the bar of colors, or of six at most without one).
 struct Laid {
     Layout layout;
     std::vector<double> x_ticks;
@@ -510,6 +856,9 @@ struct Laid {
     Labels x_labels;
     Labels y_labels;
     Rect box;
+    Scale range;
+    std::vector<double> value_ticks;
+    Labels value_labels;
 };
 
 // The least distance in pixels between neighbouring `ticks` of `scale` across `room`, endless for
@@ -577,7 +926,11 @@ Spread spread(const Scale& scale, double room, double least) {
 // ticks of x as far apart as their widest label and a letter, of y two and a half letters, at
 // least two each. The labels of x depend on its ticks and the room for them on the margins, so the
 // layout is sought again until a round changes nothing, the least distance only growing and the
-// room the ticks are spread over only shrinking, so that it cannot swing between two.
+// room the ticks are spread over only shrinking, so that it cannot swing between two. Over a field
+// the axes not given take its scales as they are, so that a heat map fills the data; the bar of
+// colors of a heat stands right of the data, as high, its ticks as far apart as those of y, the
+// right margin wide enough for it, its labels and the title of the heat. Throws as `shaped` for a
+// field of the heat or of contours.
 Laid laying(const Plot& plot, const Font& font, Rect area) {
     const double letters = plot.letters;
     const double gap = letters * 0.4;
@@ -596,8 +949,22 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
             if (std::isfinite(one) && (plot.y.spacing == Spacing::linear || one > 0)) y_values.push_back(one);
     }
 
-    made.layout.x = plot.x.scale.value_or(Scale::fitted(x_values, plot.x.spacing));
-    made.layout.y = plot.y.scale.value_or(Scale::fitted(y_values, plot.y.spacing));
+    const Field* field = ground(plot);
+
+    if (plot.heat) shaped(plot.heat->field);
+
+    for (const Contours& one : plot.contours) shaped(one.field);
+
+    const bool bar = plot.heat && plot.heat->bar;
+
+    if (field) {
+        made.range = ranged(plot);
+        made.value_ticks = made.range.ticks(6);
+        made.value_labels = labelled(made.range, made.value_ticks, language);
+    }
+
+    made.layout.x = plot.x.scale.value_or(field ? field->x : Scale::fitted(x_values, plot.x.spacing));
+    made.layout.y = plot.y.scale.value_or(field ? field->y : Scale::fitted(y_values, plot.y.spacing));
 
     const Scale& xs = made.layout.x;
     const Scale& ys = made.layout.y;
@@ -610,6 +977,7 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
     double least = letters * 2;
     std::vector<double> x_before;
     std::vector<double> y_before;
+    std::vector<double> values_before;
     double width_before = -1;
 
     for (int round = 0; round < 6; ++round) {
@@ -623,8 +991,24 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
 
         for (const std::string& one : made.y_labels.said) widest = std::max(widest, wide(font, one, letters));
 
+        double beside = 0;
+
+        if (bar) {
+            const Spread colors = spread(made.range, std::max(0.0, area.high - top - bottom), 2.5 * letters);
+            double longest_value = 0;
+
+            made.value_ticks = colors.ticks;
+            made.value_labels = labelled(made.range, made.value_ticks, language);
+
+            for (const std::string& one : made.value_labels.said) longest_value = std::max(longest_value, wide(font, one, letters));
+
+            beside = gap * 2 + letters + tick + gap + longest_value + gap + (plot.heat->title.empty() ? 0 : letters * 1.2 + gap);
+        }
+
+        const bool powered = made.y_labels.power != 0 || (bar && made.value_labels.power != 0);
+
         left = gap + (plot.y.title.empty() ? 0 : letters * 1.2 + gap) + widest + gap + tick;
-        top = gap + (plot.title.empty() ? letters * 0.5 : letters * 1.3 + gap) + (made.y_labels.power != 0 ? letters + gap : 0);
+        top = gap + (plot.title.empty() ? letters * 0.5 : letters * 1.3 + gap) + (powered ? letters + gap : 0);
 
         const Spread across = spread(xs, room, least);
 
@@ -639,14 +1023,15 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
         const std::string power = made.x_labels.power != 0 ? "×10" + raised(made.x_labels.power) : std::string{};
         const double last = made.x_labels.said.empty() ? 0 : wide(font, made.x_labels.said.back(), letters) / 2;
 
-        right = std::max(gap * 2, last + gap) + (power.empty() ? 0 : wide(font, power, letters) + gap);
+        right = std::max(std::max(gap * 2, last + gap) + (power.empty() ? 0 : wide(font, power, letters) + gap), beside);
         bottom = tick + gap + letters + (plot.x.title.empty() ? 0 : gap + letters * 1.2) + gap;
         width = std::max(0.0, area.wide - left - right);
 
-        if (made.x_ticks == x_before && made.y_ticks == y_before && width == width_before) break;
+        if (made.x_ticks == x_before && made.y_ticks == y_before && made.value_ticks == values_before && width == width_before) break;
 
         x_before = made.x_ticks;
         y_before = made.y_ticks;
+        values_before = made.value_ticks;
         width_before = width;
         room = std::min(room, width);
         least = std::max(least, longest + letters);
@@ -655,6 +1040,8 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
     made.layout.data = Rect{Point{area.at.x + left, area.at.y + top}, width, std::max(0.0, area.high - top - bottom)};
     made.layout.x_ticks = made.x_ticks;
     made.layout.y_ticks = made.y_ticks;
+
+    if (bar) made.layout.bar = Rect{Point{made.layout.data.at.x + made.layout.data.wide + gap * 2, made.layout.data.at.y}, letters, made.layout.data.high};
 
     return made;
 }
@@ -795,6 +1182,268 @@ std::optional<std::pair<std::size_t, double>> nearest_of(const Layout& layout, c
     return made;
 }
 
+// The most pixels a side of the image of a heat map has; a larger area takes it stretched.
+constexpr double most_side = 1024;
+
+// The steps the palette of a heat map is read through.
+constexpr std::size_t shades = 1024;
+
+// The heat `heat` drawn with `pen` over the data of `layout`, its values read on `range`: an image
+// of the pixels of the data (on whole pixels, so that it goes onto them one for one, where a side
+// measures no more than `most_side`; else of `most_side` stretched over it), each the color of the
+// field's value at its middle, from the nearest node or smoothed as the heat asks; clear outside
+// the field and where it has no value. Values beyond the range take the color of its end.
+void heated(Pen& pen, const Heat& heat, const Scale& range, const Layout& layout) {
+    const Rect& data = layout.data;
+    const Field& field = heat.field;
+    double left = std::floor(data.at.x);
+    double top = std::floor(data.at.y);
+    double wide_ = std::ceil(data.at.x + data.wide) - left;
+    double high_ = std::ceil(data.at.y + data.high) - top;
+
+    if (!(wide_ <= most_side)) {
+        left = data.at.x;
+        wide_ = data.wide;
+    }
+
+    if (!(high_ <= most_side)) {
+        top = data.at.y;
+        high_ = data.high;
+    }
+
+    if (!std::isfinite(left) || !std::isfinite(top) || !std::isfinite(wide_) || !std::isfinite(high_) || !(wide_ > 0) || !(high_ > 0)) return;
+
+    const auto columns = static_cast<std::uint32_t>(std::clamp(std::ceil(wide_), 1.0, most_side));
+    const auto rows = static_cast<std::uint32_t>(std::clamp(std::ceil(high_), 1.0, most_side));
+    const double last_column = static_cast<double>(field.columns - 1);
+    const double last_row = static_cast<double>(field.rows - 1);
+    std::vector<double> across(columns);
+    std::vector<double> up(rows);
+
+    for (std::uint32_t at = 0; at < columns; ++at) {
+        const double pixel = left + (at + 0.5) * wide_ / columns;
+
+        across[at] = field.x.placed(layout.x.valued(pixel, data.at.x, data.at.x + data.wide), 0, last_column);
+    }
+
+    for (std::uint32_t at = 0; at < rows; ++at) {
+        const double pixel = top + (at + 0.5) * high_ / rows;
+
+        up[at] = field.y.placed(layout.y.valued(pixel, data.at.y + data.high, data.at.y), 0, last_row);
+    }
+
+    std::vector<std::array<std::byte, 4>> colors(shades);
+
+    for (std::size_t at = 0; at < shades; ++at) {
+        const Color one = heat.palette.at(static_cast<double>(at) / static_cast<double>(shades - 1));
+        const auto byte = [](float channel) { return static_cast<std::byte>(std::lround(std::clamp(static_cast<double>(channel), 0.0, 1.0) * 255)); };
+
+        colors[at] = {byte(one.r), byte(one.g), byte(one.b), byte(one.a)};
+    }
+
+    Bytes rgba(static_cast<std::size_t>(columns) * rows * 4, std::byte{0});
+
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        if (!(up[row] >= 0 && up[row] <= last_row)) continue;
+
+        for (std::uint32_t column = 0; column < columns; ++column) {
+            if (!(across[column] >= 0 && across[column] <= last_column)) continue;
+
+            const double share = range.placed(sample(field, across[column], up[row], heat.smooth), 0, 1);
+
+            if (std::isnan(share)) continue;
+
+            const auto shade = static_cast<std::size_t>(std::lround(std::clamp(share, 0.0, 1.0) * static_cast<double>(shades - 1)));
+
+            std::copy(colors[shade].begin(), colors[shade].end(), rgba.begin() + static_cast<std::ptrdiff_t>((static_cast<std::size_t>(row) * columns + column) * 4));
+        }
+    }
+
+    pen.draw(media::Pixels{media::Size{columns, rows}, {media::Still{std::move(rgba), {}}}}, Rect{Point{left, top}, wide_, high_});
+}
+
+// The label of the contour at `level` among `levels`, in `language`: with the decimals of the
+// step between the first two levels and their common power, or, for a level alone, three digits
+// that count.
+std::string level_text(double level, std::vector<double> levels, const text::Language& language) {
+    std::sort(levels.begin(), levels.end());
+    levels.erase(std::unique(levels.begin(), levels.end()), levels.end());
+
+    return levels.size() >= 2 ? read_out(Scale{}, levels, level, 0, language) : read_out(Scale{1, 10, Spacing::logarithmic}, levels, level, 0, language);
+}
+
+// The contours of `plot` drawn with `pen` over the data of `laid` (the caller clips to it): the
+// lines of each set at its levels in its color (the ink, partly seen through, by default), no
+// wider than `reach`, thinned as series are; labelled, where asked, with the level in the middle of
+// each line long enough to hold three of its label, where the label lies within the data and clear
+// of the others (64 at most), the lines broken around the labels.
+void contoured_lines(Pen& pen, const Font& font, const Plot& plot, const Laid& laid, double reach) {
+    constexpr std::size_t most_labels = 64;
+    const Rect& data = laid.layout.data;
+    const double size = plot.letters * 0.85;
+    const double gap = plot.letters * 0.4;
+    const text::Language language = plot.language.value_or(text::current());
+
+    struct Set {
+        Path lines;
+        Color color;
+        double width = 1;
+    };
+
+    struct Label {
+        Rect box;
+        std::string text;
+        Color color;
+    };
+
+    std::vector<Set> sets;
+    std::vector<Label> labels;
+
+    for (const Contours& contours : plot.contours) {
+        const std::vector<double> levels = leveled(contours);
+        Set set;
+
+        set.color = contours.color.value_or(Color{plot.theme.ink.r, plot.theme.ink.g, plot.theme.ink.b, plot.theme.ink.a * 0.7F});
+        set.width = std::min(contours.width, reach);
+
+        for (const double level : levels) {
+            const std::string text = contours.labels ? level_text(level, levels, language) : std::string{};
+            const double box_wide = text.empty() ? 0 : wide(font, text, size) + gap;
+            const double box_high = size * 1.2;
+
+            for (const std::vector<Point>& line : contoured(contours.field, level)) {
+                std::vector<Point> run;
+                const auto ended = [&] {
+                    const std::vector<Point> kept = thinned(run, thinning);
+                    double length = 0;
+
+                    for (std::size_t at = 0; at < kept.size(); ++at) {
+                        if (at == 0) set.lines.move(kept[at]);
+                        else set.lines.line(kept[at]);
+
+                        if (at > 0) length += std::hypot(kept[at].x - kept[at - 1].x, kept[at].y - kept[at - 1].y);
+                    }
+
+                    if (!text.empty() && labels.size() < most_labels && length >= 3 * box_wide) {
+                        double walked = 0;
+
+                        for (std::size_t at = 1; at < kept.size(); ++at) {
+                            const double piece = std::hypot(kept[at].x - kept[at - 1].x, kept[at].y - kept[at - 1].y);
+
+                            if (walked + piece >= length / 2 && piece > 0) {
+                                const double part = (length / 2 - walked) / piece;
+                                const Point middle{kept[at - 1].x + (kept[at].x - kept[at - 1].x) * part, kept[at - 1].y + (kept[at].y - kept[at - 1].y) * part};
+                                const Rect box{Point{middle.x - box_wide / 2, middle.y - box_high / 2}, box_wide, box_high};
+                                const bool within = box.at.x >= data.at.x && box.at.y >= data.at.y && box.at.x + box.wide <= data.at.x + data.wide && box.at.y + box.high <= data.at.y + data.high;
+                                const bool clear = std::none_of(labels.begin(), labels.end(), [&](const Label& other) {
+                                    return box.at.x < other.box.at.x + other.box.wide && other.box.at.x < box.at.x + box.wide && box.at.y < other.box.at.y + other.box.high && other.box.at.y < box.at.y + box.high;
+                                });
+
+                                if (within && clear) labels.push_back(Label{box, text, Color{set.color.r, set.color.g, set.color.b, 1}});
+
+                                break;
+                            }
+
+                            walked += piece;
+                        }
+                    }
+
+                    run.clear();
+                };
+
+                for (const Point& value : line) {
+                    const Point pixel{at(laid.layout.x, value.x, data, true), at(laid.layout.y, value.y, data, false)};
+
+                    if (std::isfinite(pixel.x) && std::isfinite(pixel.y)) run.push_back(pixel);
+                    else ended();
+                }
+
+                ended();
+            }
+        }
+
+        sets.push_back(std::move(set));
+    }
+
+    pen.save();
+
+    if (!labels.empty()) {
+        Path around;
+
+        around.rectangle(data);
+
+        for (const Label& label : labels) around.rectangle(label.box);
+
+        pen.clip(around, drawing::Rule::evenodd);
+    }
+
+    for (const Set& set : sets) {
+        Stroke style;
+
+        style.width = set.width;
+        style.join = drawing::Join::round;
+        style.cap = drawing::Cap::round;
+        pen.stroke(set.lines, set.color, style);
+    }
+
+    pen.restore();
+
+    for (const Label& label : labels)
+        written(pen, font, label.text, size, Point{label.box.at.x + label.box.wide / 2, label.box.at.y + label.box.high / 2}, Align::center, Baseline::middle, label.color);
+}
+
+// The bar of colors of the heat of `plot` drawn with `pen` at the bar of `laid`: the palette from
+// the bottom up, a frame, the ticks of the values on its right with their labels, their common
+// power above it, and the title of the heat at the right of `area`, turned to read upward.
+void barred(Pen& pen, const Font& font, const Plot& plot, const Laid& laid, Rect area) {
+    const Rect& bar = *laid.layout.bar;
+    const double letters = plot.letters;
+    const double gap = letters * 0.4;
+    const double tick = letters * 0.4;
+    const Color& ink = plot.theme.ink;
+    const auto rows = static_cast<std::uint32_t>(std::clamp(std::ceil(bar.high), 1.0, most_side));
+    Bytes rgba(static_cast<std::size_t>(rows) * 4);
+
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        const Color one = plot.heat->palette.at(1 - (row + 0.5) / rows);
+        const auto byte = [](float channel) { return static_cast<std::byte>(std::lround(std::clamp(static_cast<double>(channel), 0.0, 1.0) * 255)); };
+
+        rgba[row * 4] = byte(one.r);
+        rgba[row * 4 + 1] = byte(one.g);
+        rgba[row * 4 + 2] = byte(one.b);
+        rgba[row * 4 + 3] = byte(one.a);
+    }
+
+    pen.draw(media::Pixels{media::Size{1, rows}, {media::Still{std::move(rgba), {}}}}, bar);
+
+    const double left = std::round(bar.at.x) + 0.5;
+    const double right = std::round(bar.at.x + bar.wide) - 0.5;
+    const double top = std::round(bar.at.y) + 0.5;
+    const double bottom = std::round(bar.at.y + bar.high) - 0.5;
+    Path frame;
+    Stroke thin;
+
+    thin.width = 1;
+    frame.rectangle(Rect{Point{left, top}, right - left, bottom - top});
+    pen.stroke(frame, ink, thin);
+
+    for (std::size_t index = 0; index < laid.value_ticks.size(); ++index) {
+        const double where = std::round(laid.range.placed(laid.value_ticks[index], bar.at.y + bar.high, bar.at.y) - 0.5) + 0.5;
+
+        ruled(pen, Point{right, where}, Point{right + tick, where}, 1, ink);
+        written(pen, font, laid.value_labels.said[index], letters, Point{right + tick + gap, where}, Align::left, Baseline::middle, ink);
+    }
+
+    if (laid.value_labels.power != 0) written(pen, font, "×10" + raised(laid.value_labels.power), letters, Point{left, top - gap}, Align::left, Baseline::bottom, ink);
+
+    if (!plot.heat->title.empty()) {
+        pen.save();
+        pen.place(Matrix::turned(-std::numbers::pi / 2).then(Matrix::moved(area.at.x + area.wide - gap, (top + bottom) / 2)).then(pen.placed()));
+        written(pen, font, plot.heat->title, letters, Point{0, 0}, Align::center, Baseline::bottom, ink);
+        pen.restore();
+    }
+}
+
 // The readout of `plot` at its cursor, drawn with `pen` over `laid`: a line across the data at the
 // cursor (unless not wanted), a ring around each point read and a box of their values beside the
 // cursor, on the side where it fits. As `Plot::readout` asks: the point of each series nearest the
@@ -802,7 +1451,9 @@ std::optional<std::pair<std::size_t, double>> nearest_of(const Layout& layout, c
 // point nearest the cursor of any other series with both its values, or only the one point of all
 // nearest the cursor (`Readout::nearest`); a series of bars, unless `Readout::nearest`, the bar
 // under the cursor's x with its stretch and its value. A series along x heads the box with the
-// cursor's x. A cursor outside the data reads nothing.
+// cursor's x. Over a field (of the heat, or of the first contours) the value of the field under
+// the cursor follows, in the color it has on the map, the box headed by both values of the cursor
+// unless a series headed it. A cursor outside the data reads nothing.
 void read(const Plot& plot, Pen& pen, const Font& font, const Laid& laid) {
     if (!plot.cursor) return;
 
@@ -875,6 +1526,19 @@ void read(const Plot& plot, Pen& pen, const Font& font, const Laid& laid) {
             }
 
             shown(index, *found, !across);
+        }
+    }
+
+    if (const Field* field = ground(plot)) {
+        const double here = field->value(*value, !plot.heat || plot.heat->smooth);
+
+        if (std::isfinite(here)) {
+            if (!headed) rows.insert(rows.begin(), Row{across_text(value->x) + "; " + up_text(value->y), std::nullopt});
+
+            const std::string named = plot.heat && !plot.heat->title.empty() ? plot.heat->title + "  " : std::string{};
+            const std::optional<Color> shade = plot.heat ? std::optional<Color>{plot.heat->palette.at(laid.range.placed(here, 0, 1))} : std::nullopt;
+
+            rows.push_back(Row{named + read_out(laid.range, laid.value_ticks, here, more, language), shade});
         }
     }
 
@@ -1154,13 +1818,14 @@ Layout Plot::laid(const Font& font, Rect area) const {
     return made.layout;
 }
 
-// The plot drawn with `pen` in `area`, in `font`: the paper, the grid, the series clipped to the
-// data (the bars of each series first, as one shape so that bars meeting leave no seam between
-// them, half seen through when `Grouping::over`; then lines, steps as lines turning square at each
-// point, thinned to the points they need within `thinning`, and marks; lines and marks no wider
-// than twice the diagonal of the data, past which they only bury the plot, so that a stroke of any
-// width costs no more than that), the frame with its ticks and labels, the common powers, the
-// titles, the legend (its samples no wider than half a letter, their marks than a letter, bars as a
+// The plot drawn with `pen` in `area`, in `font`: the paper, the grid, clipped to the data the heat
+// map and the contours (`heated`, `contoured_lines`), then the series (the bars of each first, as
+// one shape so that bars meeting leave no seam between them, half seen through when
+// `Grouping::over`; then lines, steps as lines turning square at each point, thinned to the points
+// they need within `thinning`, and marks; lines and marks no wider than twice the diagonal of the
+// data, past which they only bury the plot, so that a stroke of any width costs no more than that),
+// the frame with its ticks and labels, the common powers, the titles, the bar of colors of the
+// heat, the legend (its samples no wider than half a letter, their marks than a letter, bars as a
 // square) and the readout. Lines of one pixel stand on the middles of pixels, so that they come out
 // sharp. Returns the layout.
 Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
@@ -1202,6 +1867,10 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
 
     inside.rectangle(data);
     pen.clip(inside);
+
+    if (heat) heated(pen, *heat, laid.range, laid.layout);
+
+    if (!contours.empty()) contoured_lines(pen, font, *this, laid, reach);
 
     const std::vector<Block> blocks = blocked(*this, laid.layout.y.spacing() == Spacing::linear ? 0 : laid.layout.y.low());
 
@@ -1327,6 +1996,8 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
     }
 
     if (!title.empty()) written(pen, font, title, letters * 1.1, Point{(left + right) / 2, area.at.y + gap}, Align::center, Baseline::top, ink);
+
+    if (laid.layout.bar) barred(pen, font, *this, laid, area);
 
     if (laid.layout.legend == Corner::none) {
         read(*this, pen, font, laid);

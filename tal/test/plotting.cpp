@@ -1079,3 +1079,400 @@ TRIAL("Plotting: bars on their feet side by side, stacked or over one another; s
     OUGHT(between.stills().front().rgba == drawn(plot).stills().front().rgba);
     OUGHT(narrow > 40);
 }
+
+// A field places its nodes along its scales (by the logarithm on a logarithmic one), the last at
+// the high end; its value is that of a node at the node, bilinear between nodes (exact for a plane
+// and for x·y), the nearest node's when not smooth, none outside or where the nearest node has
+// none, the nodes around without a value left out. Contours by marching squares: a circle of r²
+// closed, a straight one of a plane open and straight, every one of the sixteen kinds of cell and
+// both ways a saddle goes, lines ending at a node without a value, none for a level that is not a
+// number. Palettes mixed in Oklab: viridis from violet to yellow, its luminance rising, the
+// diverging one nearly white in the middle; clear for a share that is not a number.
+TRIAL("Plotting: fields at nodes and between them; contours of known shapes by marching squares; palettes") {
+    using tal::plotting::Field;
+    using tal::plotting::Palette;
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const Field plane = tal::plotting::sampled([](double x, double y) { return x + 2 * y; }, Scale(0, 4), Scale(0, 2), 5, 3);
+
+    SAME(plane.values.size(), std::size_t{15});
+    SAME(plane.node(4, 2).x, 4.0);
+    SAME(plane.node(4, 2).y, 2.0);
+    SAME(plane.node(1, 1).x, 1.0);
+    SAME(plane.value(Point{3, 1}), 5.0);
+    OUGHT(std::abs(plane.value(Point{2.25, 0.5}) - 3.25) < 1e-12);
+    SAME(plane.value(Point{2.25, 0.5}, false), 4.0);
+    SAME(plane.value(Point{4, 2}), 8.0);
+    SAME((Field{Scale(0, 1), Scale(0, 1), 2, 2, {0, 1, 2, 3}}.value(Point{1, 1})), 3.0);
+    OUGHT(std::abs(plane.value(Point{4, 0.5}) - 5) < 1e-12);
+    OUGHT(std::isnan(plane.value(Point{4.5, 1})));
+    OUGHT(std::isnan(plane.value(Point{1, -0.1})));
+    OUGHT(std::isnan(plane.value(Point{nan, 1})));
+
+    const Field product = tal::plotting::sampled([](double x, double y) { return x * y; }, Scale(-1, 3), Scale(0, 2), 3, 3);
+
+    OUGHT(std::abs(product.value(Point{0.5, 0.5}) - 0.25) < 1e-12);
+
+    const Field logarithmic = tal::plotting::sampled([](double x, double) { return std::log10(x); }, Scale(1, 100, Spacing::logarithmic), Scale(0, 1), 3, 2);
+
+    OUGHT(std::abs(logarithmic.node(1, 0).x - 10) < 1e-12);
+    SAME(tal::plotting::sampled([](double, double) { return 0.0; }, Scale(1, 30, Spacing::logarithmic), Scale(0, 0.3), 3, 2).node(2, 1), (Point{30, 0.3}));
+    OUGHT(std::abs(logarithmic.value(Point{std::sqrt(10.0), 0.5}) - 0.5) < 1e-12);
+
+    Field holed = plane;
+
+    holed.values[1 * 5 + 2] = nan;
+    OUGHT(std::isnan(holed.value(Point{2.2, 0.9})));
+
+    const double beside = holed.value(Point{1.4, 0.6});
+
+    OUGHT(std::abs(beside - (0.24 * 1 + 0.16 * 2 + 0.36 * 3) / 0.76) < 1e-12);
+
+    Field ragged = plane;
+
+    ragged.values.pop_back();
+    SAME(trouble_of([&] { (void)ragged.value(Point{1, 1}); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([&] { (void)plane.node(5, 0); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)tal::plotting::contoured(Field{Scale(0, 1), Scale(0, 1), 1, 2, {0, 0}}, 0); }), std::optional<Kind>{Kind::malformed});
+    SAME(tal::plotting::sampled([](double, double) { return 0.0; }, Scale(0, 1), Scale(0, 1), 1, 5).values.size(), std::size_t{0});
+
+    const Field round = tal::plotting::sampled([](double x, double y) { return x * x + y * y; }, Scale(-2, 2), Scale(-2, 2), 81, 81);
+    const std::vector<std::vector<Point>> circle = tal::plotting::contoured(round, 1);
+
+    SAME(circle.size(), std::size_t{1});
+    OUGHT(circle.front().size() > 100);
+    SAME(circle.front().front().x, circle.front().back().x);
+    SAME(circle.front().front().y, circle.front().back().y);
+
+    for (const Point& one : circle.front()) OUGHT(std::abs(std::hypot(one.x, one.y) - 1) < 0.002);
+
+    const std::vector<std::vector<Point>> straight = tal::plotting::contoured(tal::plotting::sampled([](double x, double) { return x; }, Scale(0, 4), Scale(0, 1), 9, 5), 1.5);
+
+    SAME(straight.size(), std::size_t{1});
+    SAME(straight.front().size(), std::size_t{5});
+
+    for (const Point& one : straight.front()) OUGHT(std::abs(one.x - 1.5) < 1e-12);
+
+    OUGHT(std::abs(straight.front().front().y - straight.front().back().y) == 1);
+    SAME(tal::plotting::contoured(round, nan).size(), std::size_t{0});
+    SAME(tal::plotting::contoured(round, std::numeric_limits<double>::infinity()).size(), std::size_t{0});
+    SAME(tal::plotting::contoured(round, -std::numeric_limits<double>::infinity()).size(), std::size_t{0});
+
+    const std::vector<std::vector<Point>> level = tal::plotting::contoured(Field{Scale(0, 2), Scale(0, 1), 3, 2, {0, 1, 1, 0, 1, 1}}, 1);
+
+    SAME(level.size(), std::size_t{1});
+    SAME(level.front().front().x, 1.0);
+    SAME(level.front().back().x, 1.0);
+
+    const std::vector<std::vector<Point>> cup = tal::plotting::contoured(tal::plotting::sampled([](double x, double y) { return y - (x - 2) * (x - 2); }, Scale(0, 4), Scale(0, 4), 9, 9), 1);
+
+    SAME(cup.size(), std::size_t{1});
+    SAME(cup.front().front().y, 4.0);
+    SAME(cup.front().back().y, 4.0);
+    SAME(tal::plotting::contoured(round, 100).size(), std::size_t{0});
+
+    // The corners of a cell go round from its lower left: the lower right, the upper right and
+    // the upper left; a bit for each above the level.
+    for (int kind = 0; kind < 16; ++kind) {
+        const auto bit = [&](int at) { return (kind >> at & 1) != 0 ? 1.0 : 0.0; };
+        const Field cell{Scale(0, 1), Scale(0, 1), 2, 2, {bit(0), bit(1), bit(3), bit(2)}};
+        const std::vector<std::vector<Point>> lines = tal::plotting::contoured(cell, 0.5);
+        const std::size_t expected = kind == 0 || kind == 15 ? 0 : kind == 5 || kind == 10 ? 2 : 1;
+
+        SAME(lines.size(), expected);
+
+        for (const std::vector<Point>& line : lines) {
+            SAME(line.size(), std::size_t{2});
+
+            for (const Point& one : line) OUGHT((one.x == 0.5 && (one.y == 0 || one.y == 1)) || (one.y == 0.5 && (one.x == 0 || one.x == 1)));
+        }
+    }
+
+    const Field saddle{Scale(0, 1), Scale(0, 1), 2, 2, {1, 0, 0, 1}};
+    const auto joins = [](const std::vector<std::vector<Point>>& lines, Point from, Point to) {
+        return std::any_of(lines.begin(), lines.end(), [&](const std::vector<Point>& line) {
+            const auto near = [](Point one, Point other) { return std::abs(one.x - other.x) < 1e-12 && std::abs(one.y - other.y) < 1e-12; };
+
+            return (near(line.front(), from) && near(line.back(), to)) || (near(line.front(), to) && near(line.back(), from));
+        });
+    };
+    const std::vector<std::vector<Point>> joined = tal::plotting::contoured(saddle, 0.5);
+    const std::vector<std::vector<Point>> parted = tal::plotting::contoured(saddle, 0.6);
+
+    OUGHT(joins(joined, Point{0.5, 0}, Point{1, 0.5}) && joins(joined, Point{0.5, 1}, Point{0, 0.5}));
+    OUGHT(joins(parted, Point{0.4, 0}, Point{0, 0.4}) && joins(parted, Point{0.6, 1}, Point{1, 0.6}));
+
+    Field broken = tal::plotting::sampled([](double x, double) { return x; }, Scale(0, 2), Scale(0, 4), 3, 5);
+
+    broken.values[2 * 3 + 1] = nan;
+
+    const std::vector<std::vector<Point>> ended = tal::plotting::contoured(broken, 0.5);
+
+    SAME(ended.size(), std::size_t{2});
+
+    for (const std::vector<Point>& line : ended) SAME(line.size(), std::size_t{2});
+
+    const Palette viridis = tal::plotting::viridis();
+    const Color violet = viridis.at(0);
+    const Color yellow = viridis.at(1);
+    const auto byte = [](float one) { return static_cast<int>(std::lround(one * 255)); };
+
+    SAME(byte(violet.r), 0x44);
+    SAME(byte(violet.g), 0x01);
+    SAME(byte(violet.b), 0x54);
+    SAME(byte(yellow.r), 0xfd);
+    SAME(byte(yellow.g), 0xe7);
+    SAME(byte(yellow.b), 0x25);
+    OUGHT(viridis.at(-3) == violet && viridis.at(7) == yellow);
+    SAME(viridis.at(nan).a, 0.0F);
+
+    const auto lightness = [](const Color& one) {
+        const auto linear = [](float channel) { return channel <= 0.04045F ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4); };
+        const double r = linear(one.r);
+        const double g = linear(one.g);
+        const double b = linear(one.b);
+
+        return 0.2104542553 * std::cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) + 0.7936177850 * std::cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) -
+               0.0040720468 * std::cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    };
+
+    for (int step = 1; step <= 100; ++step) OUGHT(lightness(viridis.at(step / 100.0)) > lightness(viridis.at((step - 1) / 100.0)));
+
+    const Color white = tal::plotting::diverging().at(0.5);
+
+    SAME(byte(white.r), 0xf7);
+    SAME(byte(white.g), 0xf7);
+    SAME(byte(white.b), 0xf7);
+    OUGHT(tal::plotting::diverging().at(0).b > tal::plotting::diverging().at(0).r && tal::plotting::diverging().at(1).r > tal::plotting::diverging().at(1).b);
+    OUGHT((Palette{{Color{0.2F, 0.4F, 0.6F, 1}}}.at(0.7) == Color{0.2F, 0.4F, 0.6F, 1}));
+    SAME(trouble_of([] { (void)Palette{}.at(0.5); }), std::optional<Kind>{Kind::malformed});
+}
+
+// A heat map fills the data with the color of its field's value under each pixel: between nodes
+// smoothed or the nearest node's, along a logarithmic axis by the logarithm, clear where the field
+// has no value; its colors from the least value to the greatest, or as far each way about a middle
+// where one is asked. The axes take the field's scales; the bar of colors stands right of the
+// data, as high, within the area at every width. Contours are drawn in their color, at the ticks
+// within their values unless levels are given, broken around their labels; the value of the field
+// under the cursor is read in the box beside it. A field without two columns makes the layout
+// malformed.
+TRIAL("Plotting: a heat map in the colors of its field with its bar; contours over it, labelled; the value under the cursor read") {
+    using tal::plotting::Contours;
+    using tal::plotting::Field;
+    using tal::plotting::Heat;
+
+    const Font font = Font::builtin();
+    const Rect area{Point{0, 0}, 400, 300};
+    const auto drawn = [&](const Plot& made) {
+        Raster raster{tal::media::Size{400, 300}};
+        Pen pen{raster};
+
+        (void)made.drawn(pen, font, area);
+
+        return raster.pixels();
+    };
+    const auto near = [](const tal::media::Pixels& pixels, int x, int y, const Color& color) {
+        return std::abs(tone(pixels, x, y, 0) - color.r) < 3.0 / 255 && std::abs(tone(pixels, x, y, 1) - color.g) < 3.0 / 255 && std::abs(tone(pixels, x, y, 2) - color.b) < 3.0 / 255;
+    };
+    Plot plot;
+    Heat heat;
+
+    heat.field = tal::plotting::sampled([](double x, double) { return x; }, Scale(0, 10), Scale(0, 10), 11, 11);
+    heat.range = Scale(0, 10);
+    heat.title = "f [1]";
+    plot.heat = heat;
+    plot.legend = Corner::none;
+
+    const Layout laid = plot.laid(font, area);
+    const auto pixel = [&](const Layout& layout, double x, double y) {
+        return std::pair{static_cast<int>(layout.x.placed(x, layout.data.at.x, layout.data.at.x + layout.data.wide)), static_cast<int>(layout.y.placed(y, layout.data.at.y + layout.data.high, layout.data.at.y))};
+    };
+
+    SAME(laid.x, Scale(0, 10));
+    SAME(laid.y, Scale(0, 10));
+    OUGHT(laid.bar.has_value());
+    OUGHT(laid.bar->at.x > laid.data.at.x + laid.data.wide && laid.bar->at.x + laid.bar->wide < area.wide);
+    SAME(laid.bar->at.y, laid.data.at.y);
+    SAME(laid.bar->high, laid.data.high);
+
+    const tal::media::Pixels heated = drawn(plot);
+    const tal::plotting::Palette viridis = tal::plotting::viridis();
+
+    for (const double x : {1.0, 2.5, 5.0, 7.5, 9.0}) {
+        const auto [px, py] = pixel(laid, x, 5);
+        const double middle = laid.x.valued(px + 0.5, laid.data.at.x, laid.data.at.x + laid.data.wide);
+
+        OUGHT(near(heated, px, py, viridis.at(middle / 10)));
+    }
+
+    OUGHT(near(heated, static_cast<int>(laid.bar->at.x + laid.bar->wide / 2), static_cast<int>(laid.bar->at.y + laid.bar->high / 2), viridis.at(0.5)));
+    OUGHT(tone(heated, static_cast<int>(laid.bar->at.x + laid.bar->wide / 2), static_cast<int>(laid.bar->at.y + 2), 1) > 0.8);
+    OUGHT(tone(heated, static_cast<int>(laid.bar->at.x + laid.bar->wide / 2), static_cast<int>(laid.bar->at.y + laid.bar->high - 3), 1) < 0.15);
+
+    for (double width = 150; width <= 700; width += 25) {
+        const Layout swept = plot.laid(font, Rect{Point{0, 0}, width, 300});
+
+        OUGHT(!swept.bar || swept.bar->at.x + swept.bar->wide <= width);
+        OUGHT(!swept.bar || swept.bar->at.x > swept.data.at.x + swept.data.wide);
+    }
+
+    Plot coarse = plot;
+
+    coarse.heat->field = Field{Scale(0, 10), Scale(0, 10), 2, 2, {0, 10, 0, 10}};
+
+    const tal::media::Pixels smooth = drawn(coarse);
+
+    coarse.heat->smooth = false;
+
+    const tal::media::Pixels cells = drawn(coarse);
+    const auto [quarter_x, quarter_y] = pixel(laid, 2.5, 5);
+    const double quarter = laid.x.valued(quarter_x + 0.5, laid.data.at.x, laid.data.at.x + laid.data.wide);
+
+    OUGHT(near(smooth, quarter_x, quarter_y, viridis.at(quarter / 10)));
+    OUGHT(near(cells, quarter_x, quarter_y, viridis.at(0)));
+
+    int mixed = 0;
+
+    for (int x = static_cast<int>(laid.data.at.x) + 2; x < static_cast<int>(laid.data.at.x + laid.data.wide) - 2; ++x) mixed += near(cells, x, quarter_y, viridis.at(0)) || near(cells, x, quarter_y, viridis.at(1)) ? 0 : 1;
+
+    SAME(mixed, 0);
+
+    Plot wider = coarse;
+
+    wider.x.scale = Scale(-5, 15);
+    wider.y.scale = Scale(-5, 15);
+
+    const Layout wider_laid = wider.laid(font, area);
+    const tal::media::Pixels outside = drawn(wider);
+
+    SAME(alpha(outside, pixel(wider_laid, 5, -2).first, pixel(wider_laid, 5, -2).second), 0.0);
+    SAME(alpha(outside, pixel(wider_laid, 12, 5).first, pixel(wider_laid, 12, 5).second), 0.0);
+    OUGHT(alpha(outside, pixel(wider_laid, 5, 5).first, pixel(wider_laid, 5, 5).second) > 0.99);
+
+    coarse.heat->field.values[0] = std::numeric_limits<double>::quiet_NaN();
+    coarse.heat->field.values[2] = std::numeric_limits<double>::quiet_NaN();
+    SAME(alpha(drawn(coarse), quarter_x, quarter_y), 0.0);
+
+    Plot logarithmic;
+
+    logarithmic.heat = Heat{tal::plotting::sampled([](double x, double) { return std::log10(x); }, Scale(1, 100, Spacing::logarithmic), Scale(0, 1), 41, 2), viridis, Scale(0, 2)};
+    logarithmic.heat->bar = false;
+
+    const Layout log_laid = logarithmic.laid(font, area);
+    const auto [ten_x, ten_y] = pixel(log_laid, 10, 0.5);
+    const double ten = log_laid.x.valued(ten_x + 0.5, log_laid.data.at.x, log_laid.data.at.x + log_laid.data.wide);
+
+    OUGHT(!log_laid.bar.has_value());
+    OUGHT(near(drawn(logarithmic), ten_x, ten_y, viridis.at(std::log10(ten) / 2)));
+
+    Plot balanced;
+
+    balanced.heat = Heat{tal::plotting::sampled([](double x, double) { return x; }, Scale(-1, 3), Scale(0, 1), 41, 2), tal::plotting::diverging()};
+    balanced.heat->middle = 0;
+
+    const Layout balanced_laid = balanced.laid(font, area);
+    const auto [zero_x, zero_y] = pixel(balanced_laid, 0, 0.5);
+    const double zero = balanced_laid.x.valued(zero_x + 0.5, balanced_laid.data.at.x, balanced_laid.data.at.x + balanced_laid.data.wide);
+
+    OUGHT(near(drawn(balanced), zero_x, zero_y, tal::plotting::diverging().at(0.5 + zero / 6)));
+
+    balanced.heat->middle.reset();
+
+    const Layout plain_laid = balanced.laid(font, area);
+    const auto [one_x, one_y] = pixel(plain_laid, 1, 0.5);
+    const double one = plain_laid.x.valued(one_x + 0.5, plain_laid.data.at.x, plain_laid.data.at.x + plain_laid.data.wide);
+
+    OUGHT(near(drawn(balanced), one_x, one_y, tal::plotting::diverging().at((one + 1) / 4)));
+
+    balanced.heat->middle = 2;
+
+    const Layout far_laid = balanced.laid(font, area);
+    const auto [low_x, low_y] = pixel(far_laid, 0, 0.5);
+    const double low = far_laid.x.valued(low_x + 0.5, far_laid.data.at.x, far_laid.data.at.x + far_laid.data.wide);
+
+    OUGHT(near(drawn(balanced), low_x, low_y, tal::plotting::diverging().at((low + 1) / 6)));
+
+    Plot lines;
+    Contours set;
+
+    set.field = heat.field;
+    set.levels = {5};
+    set.color = Color{1, 0, 0, 1};
+    set.width = 2;
+    set.labels = false;
+    lines.contours = {set};
+    lines.legend = Corner::none;
+
+    const Layout lines_laid = lines.laid(font, area);
+    const auto [five_x, five_y] = pixel(lines_laid, 5, 5);
+    const tal::media::Pixels unlabelled = drawn(lines);
+
+    SAME(lines_laid.x, Scale(0, 10));
+    OUGHT(!lines_laid.bar.has_value());
+    OUGHT(tone(unlabelled, five_x, five_y, 0) > 0.9 && alpha(unlabelled, five_x, five_y) > 0.9);
+    SAME(alpha(unlabelled, pixel(lines_laid, 3, 5).first, five_y), 0.0);
+
+    lines.contours.front().labels = true;
+
+    const tal::media::Pixels labelled = drawn(lines);
+
+    SAME(alpha(labelled, five_x, five_y - 5), 0.0);
+    OUGHT(alpha(unlabelled, five_x, five_y - 5) > 0.9);
+    OUGHT(alpha(labelled, five_x, five_y - 30) > 0.9);
+    OUGHT(inked_columns(labelled, five_x - 12, five_x + 12, five_y - 4, five_y + 4) > inked_columns(unlabelled, five_x - 12, five_x + 12, five_y - 4, five_y + 4));
+
+    Plot automatic = lines;
+
+    automatic.contours.front().levels.clear();
+    automatic.contours.front().labels = false;
+
+    const tal::media::Pixels levelled = drawn(automatic);
+
+    for (const double x : {2.0, 4.0, 6.0, 8.0}) OUGHT(alpha(levelled, pixel(lines_laid, x, 5).first, five_y) > 0.5);
+
+    SAME(alpha(levelled, pixel(lines_laid, 5, 5).first, five_y), 0.0);
+    OUGHT(alpha(levelled, static_cast<int>(lines_laid.data.at.x + lines_laid.data.wide) - 1, five_y) < 0.1);
+
+    Plot crossing = lines;
+    Contours across;
+
+    crossing.language = tal::text::Language{"pl-PL"};
+    across.field = tal::plotting::sampled([](double, double y) { return y; }, Scale(0, 10), Scale(0, 10), 11, 11);
+    across.levels = {5};
+    across.color = Color{0, 0, 1, 1};
+    across.labels = false;
+    crossing.contours.push_back(across);
+
+    const tal::media::Pixels one_label = drawn(crossing);
+
+    crossing.contours.back().labels = true;
+    OUGHT(drawn(crossing).stills().front().rgba == one_label.stills().front().rgba);
+
+    Plot flat = lines;
+
+    flat.language = tal::text::Language{"pl-PL"};
+    flat.contours = {across};
+    flat.contours.front().labels = true;
+
+    const tal::media::Pixels flat_pixels = drawn(flat);
+    const double label_half = font.measured("5,00", 12 * 0.85).wide / 2;
+
+    SAME(alpha(flat_pixels, static_cast<int>(lines_laid.x.placed(5, lines_laid.data.at.x, lines_laid.data.at.x + lines_laid.data.wide) + label_half + 1.2), five_y), 0.0);
+    OUGHT(alpha(flat_pixels, static_cast<int>(lines_laid.x.placed(5, lines_laid.data.at.x, lines_laid.data.at.x + lines_laid.data.wide) + label_half + 5), five_y) > 0.5);
+
+    plot.cursor = Point{static_cast<double>(pixel(laid, 2, 5).first), laid.data.at.y + 10};
+    plot.cursor_line = false;
+
+    const tal::media::Pixels read = drawn(plot);
+    const int box_x = static_cast<int>(plot.cursor->x) + 12;
+    const int box_y = static_cast<int>(laid.data.at.y) + 8;
+
+    OUGHT(std::abs(tone(read, box_x, box_y, 1) - tone(heated, box_x, box_y, 1)) > 0.1);
+    OUGHT(std::abs(tone(read, box_x, box_y + 30, 1) - tone(heated, box_x, box_y + 30, 1)) > 0.1);
+    SAME(tone(read, static_cast<int>(plot.cursor->x) - 12, box_y, 1), tone(heated, static_cast<int>(plot.cursor->x) - 12, box_y, 1));
+
+    Plot thin = plot;
+
+    thin.heat->field.columns = 1;
+    SAME(trouble_of([&] { (void)thin.laid(font, area); }), std::optional<Kind>{Kind::malformed});
+}

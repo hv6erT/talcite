@@ -50,7 +50,9 @@
 // of settings (in the working folder where there is none, or the file after --settings); a mode
 // changed with f is written back when the program ends. The key h turns the phase portrait into the
 // histogram of the second angle over the time shown (E10), the bin of the angle now marked, and
-// back.
+// back; the key m turns it into the map of the potential energy over both angles (E11), its
+// contours, the path of the angles over the time shown and where they are now, and in orange the
+// contour of the whole energy now: the pendulum cannot leave the region it bounds.
 namespace {
 
 using tal::drawing::Color;
@@ -122,13 +124,23 @@ void stepped(Pendulum& state, double dt) {
     while (state.path.size() > trail) state.path.pop_front();
 }
 
+// The potential energy of the pendulum at the angles `first` and `second`, in joules, the pivot at
+// zero height.
+double potential(double first, double second) { return -(mass + mass) * g * length * std::cos(first) - mass * g * length * std::cos(second); }
+
 // The total energy of the state, in joules, the pivot at zero height.
 double energy(const Pendulum& s) {
     const double d = s.first - s.second;
     const double kinetic = mass * length * length * s.first_rate * s.first_rate / 2 + mass / 2 * (length * length * s.first_rate * s.first_rate + length * length * s.second_rate * s.second_rate + 2 * length * length * s.first_rate * s.second_rate * std::cos(d));
-    const double potential = -(mass + mass) * g * length * std::cos(s.first) - mass * g * length * std::cos(s.second);
 
-    return kinetic + potential;
+    return kinetic + potential(s.first, s.second);
+}
+
+// The potential energy over both angles from -π to π, at 65 nodes a side, made once.
+const tal::plotting::Field& landscape() {
+    static const tal::plotting::Field made = tal::plotting::sampled([](double first, double second) { return potential(first, second); }, tal::plotting::Scale{-pi, pi}, tal::plotting::Scale{-pi, pi}, 65, 65);
+
+    return made;
 }
 
 // Where the parts go in a drawing of `size`: the pendulum, and the three plots beside it in a
@@ -190,16 +202,16 @@ std::vector<Point> wrapped(const std::vector<Point>& points) {
     return made;
 }
 
-// The phase portrait from the samples of an angle `angles` and its rate `rates`, taken at the same
-// times, of those within `time` (all, without it): the angle brought to -π to π across, the rate
-// up, a gap where the angle goes round. The traces are read one after the other, so one may hold
-// a sample the other does not have yet.
-std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates, const std::optional<tal::plotting::Scale>& time) {
-    while (!angles.empty() && !rates.empty() && angles.back().x > rates.back().x) angles.pop_back();
+// The samples of an angle `angles` against those of `others` (a rate, or a second angle when
+// `turning`), taken at the same times, of those within `time` (all, without it): the angle brought
+// to -π to π across, the other up (brought so too when `turning`), a gap where an angle goes round.
+// The traces are read one after the other, so one may hold a sample the other does not have yet.
+std::vector<Point> paired(std::vector<Point> angles, std::vector<Point> others, const std::optional<tal::plotting::Scale>& time, bool turning) {
+    while (!angles.empty() && !others.empty() && angles.back().x > others.back().x) angles.pop_back();
 
-    while (!angles.empty() && !rates.empty() && rates.back().x > angles.back().x) rates.pop_back();
+    while (!angles.empty() && !others.empty() && others.back().x > angles.back().x) others.pop_back();
 
-    const std::size_t many = std::min(angles.size(), rates.size());
+    const std::size_t many = std::min(angles.size(), others.size());
     std::vector<Point> made;
 
     for (std::size_t at = 0; at < many; ++at) {
@@ -208,11 +220,12 @@ std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates, c
         if (time && (sample.x < time->low() || sample.x > time->high())) continue;
 
         const double angle = around(sample.y);
-        const double rate = rates[rates.size() - many + at].y;
+        const double other = turning ? around(others[others.size() - many + at].y) : others[others.size() - many + at].y;
 
-        if (!made.empty() && std::abs(angle - made.back().x) > pi) made.push_back(Point{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()});
+        if (!made.empty() && (std::abs(angle - made.back().x) > pi || (turning && std::abs(other - made.back().y) > pi)))
+            made.push_back(Point{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()});
 
-        made.push_back(Point{angle, rate});
+        made.push_back(Point{angle, other});
     }
 
     return made;
@@ -237,9 +250,14 @@ std::string worded(Freeze one) { return one == Freeze::both ? "both" : one == Fr
 
 Freeze freezing(const std::string& word) { return word == "both" ? Freeze::both : word == "none" ? Freeze::none : Freeze::plots; }
 
+// What the third plot shows: the phase portrait, the histogram of the second angle, or the map of
+// the potential energy.
+enum class Third { phase, spread, map };
+
 // How the plots are looked at: the plot under the mouse and the pixel it points at, the time held
 // still (none while the plots go on), the seconds shown while they go on and the time they last
-// showed, where a press began and whether it moved since, and the layouts last drawn.
+// showed, where a press began and whether it moved since, what the third plot shows, and the
+// layouts last drawn.
 struct View {
     std::optional<std::size_t> over;
     std::optional<Point> cursor;
@@ -249,7 +267,7 @@ struct View {
     std::optional<double> pressed;
     bool moved = false;
     bool stopped = false;
-    bool spread = false;
+    Third third = Third::phase;
     std::array<tal::plotting::Layout, 3> laid;
 };
 
@@ -275,9 +293,11 @@ void sampled(const Pendulum& state, Traces& traces) {
 
 // The three plots of `traces` drawn with `pen` in `areas`, their letters of `letters`, over the
 // time `view` holds or the last seconds it shows, the plot under the mouse with its cursor; the
-// third the phase portrait, or the histogram of the second angle (its density, the bin of the
-// angle now marked) when `view` spreads it; the layouts and the time shown kept in `view`.
-void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters, View& view) {
+// third as `view` asks: the phase portrait, the histogram of the second angle (its density, the
+// bin of the angle now marked), or the map of the potential energy with its contours, the path of
+// both angles, where they are now and the contour of the whole energy `total` (J); the layouts and
+// the time shown kept in `view`.
+void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters, double total, View& view) {
     using tal::plotting::Plot;
     using tal::plotting::Scale;
     using tal::plotting::Series;
@@ -325,7 +345,54 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     pointing(turns, 1);
     view.laid[1] = turns.drawn(pen, font, areas.plots[1]);
 
-    if (view.spread) {
+    if (view.third == Third::map) {
+        Plot map;
+        tal::plotting::Heat heat;
+        tal::plotting::Contours levels;
+        tal::plotting::Contours reach;
+        Series path;
+        Series here;
+
+        map.title = "Potential energy";
+        map.x.title = "θ₁ [rad]";
+        map.y.title = "θ₂ [rad]";
+        map.legend = tal::plotting::Corner::none;
+        map.letters = letters;
+        map.readout = tal::plotting::Readout::nearest;
+        map.cursor_line = false;
+        heat.field = landscape();
+        heat.title = "V [J]";
+        map.heat = std::move(heat);
+        levels.field = landscape();
+        reach.field = landscape();
+        reach.levels = {total};
+        reach.color = Color{0.95F, 0.55F, 0.2F, 1};
+        reach.width = 2;
+        map.contours = {std::move(levels), std::move(reach)};
+        path.points = paired(traces.first.points(), traces.second.points(), time, true);
+        path.width = 1;
+        path.color = Color{1, 1, 1, 0.6F};
+
+        for (auto at = path.points.rbegin(); at != path.points.rend(); ++at)
+            if (std::isfinite(at->x)) {
+                here.points.push_back(*at);
+
+                break;
+            }
+
+        here.line = false;
+        here.mark = tal::plotting::Mark::circle;
+        here.size = letters * 0.6;
+        here.color = Color{0.95F, 0.55F, 0.2F, 1};
+        map.series.push_back(std::move(path));
+        map.series.push_back(std::move(here));
+        pointing(map, 2);
+        view.laid[2] = map.drawn(pen, font, areas.plots[2]);
+
+        return;
+    }
+
+    if (view.third == Third::spread) {
         std::vector<double> angles_seen;
 
         for (const Point& one : traces.second.points())
@@ -374,7 +441,7 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     phase.legend = tal::plotting::Corner::none;
     phase.letters = letters;
     phase.readout = tal::plotting::Readout::nearest;
-    portrait.points = phased(traces.second.points(), traces.second_rate.points(), time);
+    portrait.points = paired(traces.second.points(), traces.second_rate.points(), time, false);
     portrait.width = 1;
     portrait.color = Color{0.34F, 0.71F, 0.91F, 0.7F};
 
@@ -513,7 +580,7 @@ int main(int count, char** given) {
         const double letters = std::max(10.0, std::min(areas.swing.high / 24, areas.swing.wide * 0.95 / std::max(1.0, font.measured(said, 1).wide)));
 
         pen.fill(font.outlined(said, letters, Point{letters / 2, letters / 2}, tal::drawing::Align::left, tal::drawing::Baseline::top), Color{0.9F, 0.9F, 0.9F, 1});
-        plotted(pen, font, areas, traces, std::clamp(size.height / 48.0, 10.0, 16.0), view);
+        plotted(pen, font, areas, traces, std::clamp(size.height / 48.0, 10.0, 16.0), energy(state), view);
     });
 
     const auto hold = [&](bool on) {
@@ -655,7 +722,9 @@ int main(int count, char** given) {
 
         if (key == tal::Key{tal::Code::escape}) hold(false);
 
-        if (key == tal::Key{U'h'}) view.spread = !view.spread;
+        if (key == tal::Key{U'h'}) view.third = view.third == Third::spread ? Third::phase : Third::spread;
+
+        if (key == tal::Key{U'm'}) view.third = view.third == Third::map ? Third::phase : Third::map;
 
         drawing.redraw();
     });

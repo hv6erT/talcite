@@ -94,6 +94,64 @@ enum class Tally { count, share, density };
 
 [[nodiscard]] Series histogram(const Bins& bins, Tally tally = Tally::count);
 
+struct Field {
+    Scale x;
+    Scale y;
+    std::size_t columns = 0;
+    std::size_t rows = 0;
+    std::vector<double> values;
+
+    [[nodiscard]] drawing::Point node(std::size_t column, std::size_t row) const;
+
+    [[nodiscard]] double value(drawing::Point at, bool smooth = true) const;
+};
+
+template <class Function>
+[[nodiscard]] Field sampled(Function&& function, const Scale& x, const Scale& y, std::size_t columns, std::size_t rows) {
+    Field made{x, y, columns, rows, {}};
+
+    if (columns < 2 || rows < 2) return made;
+
+    for (std::size_t row = 0; row < rows; ++row)
+        for (std::size_t column = 0; column < columns; ++column) {
+            const drawing::Point at = made.node(column, row);
+
+            made.values.push_back(function(at.x, at.y));
+        }
+
+    return made;
+}
+
+[[nodiscard]] std::vector<std::vector<drawing::Point>> contoured(const Field& field, double level);
+
+struct Palette {
+    std::vector<drawing::Color> colors;
+
+    [[nodiscard]] drawing::Color at(double share) const;
+};
+
+[[nodiscard]] Palette viridis();
+
+[[nodiscard]] Palette diverging();
+
+struct Heat {
+    Field field;
+    Palette palette = viridis();
+    std::optional<Scale> range;
+    std::optional<double> middle;
+    bool smooth = true;
+    bool bar = true;
+    std::string title;
+};
+
+struct Contours {
+    Field field;
+    std::vector<double> levels;
+    std::optional<drawing::Color> color;
+    double width = 1;
+    bool labels = true;
+};
+
 struct Axis {
     std::string title;
     std::optional<Scale> scale;
@@ -134,6 +192,7 @@ struct Layout {
     std::vector<double> x_ticks;
     std::vector<double> y_ticks;
     Corner legend = Corner::none;
+    std::optional<drawing::Rect> bar;
 
     [[nodiscard]] std::optional<drawing::Point> at(drawing::Point pixel) const;
 
@@ -155,6 +214,8 @@ public:
     bool cursor_line = true;
     int readout_digits = 1;
     Grouping bars = Grouping::side;
+    std::optional<Heat> heat;
+    std::vector<Contours> contours;
 
     [[nodiscard]] Layout laid(const drawing::Font& font, drawing::Rect area) const;
 
