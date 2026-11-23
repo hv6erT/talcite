@@ -82,6 +82,9 @@ std::string spoken(const Heard& one) {
 
     if (const auto* focused = std::get_if<Windowed>(&one)) return focused->in ? "focus in" : "focus out";
 
+    if (const auto* measured = std::get_if<Measured>(&one))
+        return "cell " + std::to_string(measured->cell.wide) + "x" + std::to_string(measured->cell.high);
+
     return "?";
 }
 
@@ -588,10 +591,76 @@ TRIAL("Decoder: every value reaches the document as its event") {
     hooks.add(sheet.on<tal::WindowFocused>([&among](tal::WindowFocused&) { among.push_back("window focused"); }));
     hooks.add(sheet.on<tal::WindowBlurred>([&among](tal::WindowBlurred&) { among.push_back("window blurred"); }));
 
-    const std::vector<Heard> all = ear.decoder.fed("q\x1b[1;5A\x1b[<2;4;3M\x1b[<67;1;1M\x1b[200~x\x1b[201~\x1b[I\x1b[O", ear.now);
+    const std::vector<Heard> all = ear.decoder.fed("q\x1b[1;5A\x1b[<2;4;3M\x1b[<67;1;1M\x1b[6;20;10t\x1b[200~x\x1b[201~\x1b[I\x1b[O", ear.now);
+
+    SAME(all.size(), std::size_t{8});
 
     for (const Heard& one : all) dispatched(one, sheet);
 
     OUGHT(among == std::vector<std::string>{"'q'", "Ctrl+Up", "down right at 3,2", "wheel -1 horizontal at 0,0", "paste 'x'", "window focused",
                                             "window blurred"});
+}
+
+TRIAL("Decoder: SGR reports in pixels (1016) give the cell of the pixel and the pixel itself, the wheel too; in cells again without") {
+    Ear ear;
+
+    ear.decoder.pixels(Size{10, 20});
+
+    const std::vector<Heard> all = ear.decoder.fed("\x1b[<0;35;41M\x1b[<64;1;1M\x1b[<0;0;5M", ear.now);
+
+    SAME(all.size(), std::size_t{2});
+
+    const auto* moused = std::get_if<Moused>(&all[0]);
+    const auto* wheeled = std::get_if<Wheeled>(&all[1]);
+
+    OUGHT(moused != nullptr && wheeled != nullptr);
+    SAME(moused->where, (Spot{3, 2}));
+    SAME(moused->pixel, (std::optional<Spot>{Spot{34, 40}}));
+    SAME(wheeled->where, (Spot{0, 0}));
+    SAME(wheeled->pixel, (std::optional<Spot>{Spot{0, 0}}));
+
+    ear.decoder.pixels(std::nullopt);
+    SAME(ear.heard("\x1b[<0;35;41m"), std::string{"up left at 34,40"});
+
+    ear.decoder.pixels(Size{0, 20});
+
+    const std::vector<Heard> cells = ear.decoder.fed("\x1b[<0;5;6M", ear.now);
+
+    SAME(std::get<Moused>(cells.front()).where, (Spot{4, 5}));
+    SAME(std::get<Moused>(cells.front()).pixel, std::optional<Spot>{});
+}
+
+// The cell in pixels comes in two reports, the answer to `CSI 16 t` (height, then width) and the
+// size in-band of mode 2048 (rows, columns, height, width), which gives the cell by dividing, the
+// remainder dropped. A report with a zero, a missing number or fewer pixels than cells measures
+// nothing, and the other window reports are not ours; none of them is a key.
+TRIAL("Decoder: the cell in pixels from the answer to 16t and from the size in-band (2048); malformed reports measure nothing") {
+    Ear ear;
+
+    SAME(ear.heard("\x1b[6;20;10t"), std::string{"cell 10x20"});
+    SAME(ear.heard("\x1b[48;25;80;500;800t"), std::string{"cell 10x20"});
+    SAME(ear.heard("\x1b[48;24;80;515;1279t"), std::string{"cell 15x21"});
+    SAME(ear.heard("\x1b[6;0;10t\x1b[6;20;0t\x1b[6;20t\x1b[48;25;80;500t\x1b[48;0;80;500;800t\x1b[48;25;0;500;800t"), std::string{});
+    SAME(ear.heard("\x1b[48;25;80;20;800t\x1b[48;25;80;500;40t\x1b[8;25;80t\x1b[4;500;800t\x1b[?6;20;10tx"), std::string{"'x'"});
+    OUGHT(!ear.waiting());
+}
+
+// A measurement in the same read as a pixel report counts for the report behind it while the
+// decoder follows measurements, and not otherwise; with reports in cells there is nothing to
+// follow.
+TRIAL("Decoder: following measurements, a new cell counts at once for the pixel reports behind it") {
+    Ear ear;
+
+    ear.decoder.pixels(Size{10, 20});
+
+    SAME(ear.heard("\x1b[6;10;5t\x1b[<0;12;25M"), std::string{"cell 5x10 | down left at 1,1"});
+
+    ear.decoder.following(true);
+
+    SAME(ear.heard("\x1b[6;10;5t\x1b[<0;12;25M"), std::string{"cell 5x10 | down left at 2,2"});
+    SAME(ear.heard("\x1b[<0;12;25m"), std::string{"up left at 2,2"});
+
+    ear.decoder.pixels(std::nullopt);
+
+    SAME(ear.heard("\x1b[6;20;10t\x1b[<0;12;25M"), std::string{"cell 10x20 | down left at 11,24"});
 }

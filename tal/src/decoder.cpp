@@ -41,7 +41,10 @@
 // Answers that come late (after the capability probe, over SSH) are not keys: CSI with a private
 // marker (DA, DECRPM, the kitty flags), a cursor position report and control strings are
 // swallowed. A position report has the shape of F3 with a modifier, but F3 always has a one in
-// front.
+// front. Two reports are kept, for the application rather than the document: the cell in pixels
+// (`CSI 6 ; height ; width t`, the answer to `CSI 16 t`) and the size in-band (`CSI 48 ; rows ;
+// columns ; height ; width t`, which a terminal in mode 2048 sends at every change), both as a
+// measurement of the cell.
 namespace tal {
 
 namespace {
@@ -173,6 +176,12 @@ struct Decoder::Held {
     // The button that went down last, for the encodings whose release does not name it.
     MouseButton pressed = MouseButton::none;
 
+    // The cell in pixels while SGR reports count pixels (1016), none while they count cells.
+    std::optional<Size> cell;
+
+    // Whether a measurement of the cell takes its place at once, for the reports right behind it.
+    bool following = false;
+
     std::vector<Heard> heard(const std::vector<vt::Token>& tokens);
 
     std::optional<Heard> heard(const vt::Csi& one);
@@ -208,7 +217,11 @@ std::vector<Heard> Decoder::Held::heard(const std::vector<vt::Token>& tokens) {
             told = Pasted{glued->text, glued->whole};
         }
 
-        if (told.has_value()) made.push_back(std::move(*told));
+        if (!told.has_value()) continue;
+
+        if (const auto* measured = std::get_if<Measured>(&*told); measured != nullptr && following && cell) cell = measured->cell;
+
+        made.push_back(std::move(*told));
     }
 
     return made;
@@ -281,7 +294,20 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
     if (one.lead == '<') {
         if ((one.last != 'M' && one.last != 'm') || one.params.size() < 3) return std::nullopt;
 
-        return pointed(one.at(0), one.at(1), one.at(2), one.last == 'm');
+        if (!cell) return pointed(one.at(0), one.at(1), one.at(2), one.last == 'm');
+
+        if (one.at(1) < 1 || one.at(2) < 1) return std::nullopt;
+
+        const Spot pixel{one.at(1) - 1, one.at(2) - 1};
+        std::optional<Heard> made = pointed(one.at(0), pixel.x / cell->wide + 1, pixel.y / cell->high + 1, one.last == 'm');
+
+        if (made) {
+            if (auto* moused = std::get_if<Moused>(&*made)) moused->pixel = pixel;
+
+            if (auto* wheeled = std::get_if<Wheeled>(&*made)) wheeled->pixel = pixel;
+        }
+
+        return made;
     }
 
     if (one.lead == '[') {
@@ -303,6 +329,18 @@ std::optional<Heard> Decoder::Held::heard(const vt::Csi& one) {
             if (one.params.size() < 3) return std::nullopt;
 
             return pointed(one.at(0) - 32, one.at(1), one.at(2), std::nullopt);
+
+        case 't': {
+            if (one.at(0) == 6 && one.params.size() >= 3 && one.at(1) > 0 && one.at(2) > 0) return Measured{Size{one.at(2), one.at(1)}};
+
+            const int rows = one.at(1);
+            const int columns = one.at(2);
+
+            if (one.at(0) == 48 && one.params.size() >= 5 && rows > 0 && columns > 0 && one.at(3) >= rows && one.at(4) >= columns)
+                return Measured{Size{one.at(4) / columns, one.at(3) / rows}};
+
+            return std::nullopt;
+        }
 
         case 'I':
             if (!one.params.empty()) return std::nullopt;
@@ -413,6 +451,16 @@ std::optional<Heard> Decoder::Held::heard(const vt::Ss3& one) const {
 
 Decoder::Decoder() : held_(std::make_unique<Held>()) {}
 
+// SGR reports read as pixels of `cell`, which the terminal was asked for (1016), or as cells again
+// with none. A report then gives its cell and the pixel itself.
+void Decoder::pixels(std::optional<Size> cell) { held_->cell = cell && cell->wide > 0 && cell->high > 0 ? cell : std::nullopt; }
+
+// While on, a measurement of the cell (`Measured`) becomes the cell of the SGR pixel reports at
+// once, so that a report in the same read right behind it counts by the new cell already. The
+// application turns it on when it takes measurements itself and tells the decoder the same cell
+// afterwards.
+void Decoder::following(bool on) { held_->following = on; }
+
 Decoder::~Decoder() = default;
 
 // The meanings of the bytes that came at `now`. What is unfinished waits for more bytes or for
@@ -440,20 +488,20 @@ std::vector<Heard> Decoder::lapsed(std::chrono::steady_clock::time_point now) {
 }
 
 // Delivers a value to the document: a key, the mouse, the wheel (along its axis), a paste or the
-// focus of the terminal's window, the last of the values a decoder gives.
+// focus of the terminal's window. A measurement is the application's, and the document gets none.
 void dispatched(const Heard& one, Document& onto) {
-    static_assert(std::variant_size_v<Heard> == 5, "every value a decoder gives is delivered here");
+    static_assert(std::variant_size_v<Heard> == 6, "every value a decoder gives is delivered here");
 
     if (const auto* struck = std::get_if<Struck>(&one)) {
         onto.key(struck->key);
     } else if (const auto* moused = std::get_if<Moused>(&one)) {
-        onto.mouse(moused->press, moused->button, moused->where, moused->mods);
+        onto.mouse(moused->press, moused->button, moused->where, moused->mods, 0, Axis::vertical, moused->pixel);
     } else if (const auto* wheeled = std::get_if<Wheeled>(&one)) {
-        onto.mouse(Press::wheel, MouseButton::none, wheeled->where, wheeled->mods, wheeled->steps, wheeled->axis);
+        onto.mouse(Press::wheel, MouseButton::none, wheeled->where, wheeled->mods, wheeled->steps, wheeled->axis, wheeled->pixel);
     } else if (const auto* pasted = std::get_if<Pasted>(&one)) {
         onto.paste(pasted->text);
-    } else {
-        onto.window(std::get<Windowed>(one).in);
+    } else if (const auto* windowed = std::get_if<Windowed>(&one)) {
+        onto.window(windowed->in);
     }
 }
 

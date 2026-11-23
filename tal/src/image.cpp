@@ -10,6 +10,7 @@
 #include "tal/port.hpp"
 #include "tal/trouble.hpp"
 
+#include "marking.hpp"
 #include "mosaicking.hpp"
 #include "sixeling.hpp"
 
@@ -23,14 +24,6 @@
 namespace tal {
 
 namespace {
-
-// A picture's mark: unique in the whole program, since the cells of different images meet in one
-// frame; zero means no picture.
-std::uint32_t marked() {
-    static std::atomic<std::uint32_t> next{0};
-
-    return ++next;
-}
 
 // Whether the terminal takes pixels: it speaks sixel or kitty, and the cell has a known size,
 // without which there is no telling how many pixels to order. Otherwise characters.
@@ -79,6 +72,14 @@ media::Size pixelled(Size room, Size step) {
     return {static_cast<std::uint32_t>(room.wide * step.wide), static_cast<std::uint32_t>(room.high * step.high)};
 }
 
+}
+
+// A picture's mark: unique in the whole program, since the cells of different images and drawings
+// meet in one frame; zero means no picture.
+std::uint32_t marked() {
+    static std::atomic<std::uint32_t> next{0};
+
+    return ++next;
 }
 
 // An empty image in the class "image", playing once it has frames.

@@ -304,24 +304,27 @@ void placed(Spot where, std::string& into) {
 }
 
 // The kitty graphics protocol: appends the sending of one picture's frame. A frame goes to the
-// terminal once, under the picture's mark, and after that it is only placed and taken away. Raw
-// pixels (f=32, RGBA) in base64, in pieces of 4096 characters, the pieces after the first carrying
-// only m and q; q=2 silences the answers that would otherwise come as keys.
+// terminal once, under the picture's mark, and after that it is only placed and taken away. Pixels
+// (f=32, RGBA) in base64, in pieces of 4096 characters, the pieces after the first carrying only m
+// and q; q=2 silences the answers that would otherwise come as keys. A picture that comes coded
+// already (a drawing codes its bands on the pool) goes as it is, zlib in base64 (o=z); any other
+// goes raw.
 void kitty(const Picture& one, std::string& into) {
     const media::Pixels& pixels = *one.pixels;
-    const std::string coded = crypto::base64(pixels.stills()[one.still].rgba);
+    const std::string coded = one.coded ? std::string{} : crypto::base64(pixels.stills()[one.still].rgba);
+    const std::string& sent = one.coded ? *one.coded : coded;
     constexpr std::size_t piece = 4096;
 
     for (std::size_t at = 0;; at += piece) {
-        const bool more = at + piece < coded.size();
+        const bool more = at + piece < sent.size();
 
         into += "\x1b_G";
 
         if (at == 0)
-            into += "a=t,f=32,s=" + std::to_string(pixels.size().width) + ",v=" + std::to_string(pixels.size().height) + ",i=" + std::to_string(one.mark) + ",";
+            into += "a=t,f=32," + std::string{one.coded ? "o=z," : ""} + "s=" + std::to_string(pixels.size().width) + ",v=" + std::to_string(pixels.size().height) + ",i=" + std::to_string(one.mark) + ",";
 
         into += more ? "q=2,m=1;" : "q=2,m=0;";
-        into.append(coded, at, piece);
+        into.append(sent, at, piece);
         into += "\x1b\\";
 
         if (!more) return;
@@ -469,6 +472,7 @@ struct Sending {
     bool hover = false;
     bool bracketed_paste = false;
     bool focus = false;
+    bool measuring = false;
 };
 
 // The effective screen, mouse, hover, bracketed-paste and focus settings. Tracking motion without a
@@ -476,16 +480,34 @@ struct Sending {
 // So the wish alone decides, and the default is off, because when on, it makes the terminal report
 // every twitch of the pointer, even when nobody cares, and over ssh that is real traffic on the
 // link. The window's focus (?1004) is reported whenever the terminal says it knows how.
-Sending sending(const Capabilities& compat, const Setup& wish) {
+//
+// The cell is measured anew (`measuring`) on a terminal that told its cell in pixels when the
+// application did not fix one: zooming changes it while the program runs. Mode 2048 asks for the
+// size in-band with pixels at every change; a terminal that does not know it ignores it, and gets
+// `CSI 16 t` at every change of the size instead. `cell` is the cell as last measured.
+Sending sending(const Capabilities& compat, const Setup& wish, Size cell) {
     Sending made;
 
     made.screen = wish.screen.value_or(compat.screen());
     made.mouse = wish.mouse.value_or(compat.mouse());
     made.hover = wish.hover.value_or(false);
+
+    const Size used = wish.cell.value_or(cell);
+
+    if (made.mouse == Mouse::pixels && (used.wide <= 0 || used.high <= 0)) made.mouse = Mouse::sgr;
     made.bracketed_paste = wish.bracketed_paste.value_or(compat.bracketed_paste());
     made.focus = compat.focus_events();
+    made.measuring = !wish.cell.has_value() && compat.cell().wide > 0 && compat.cell().high > 0;
 
     return made;
+}
+
+// The cell in pixels while the mouse reports pixels (`Mouse::pixels`), for the decoder to turn
+// them into cells; none while it reports cells. `cell` is the cell as last measured.
+std::optional<Size> pixelled(const Capabilities& compat, const Setup& wish, Size cell) {
+    if (sending(compat, wish, cell).mouse != Mouse::pixels) return std::nullopt;
+
+    return wish.cell.value_or(cell);
 }
 
 // The effective block-glyph density. The only field where the wish does not win outright:
@@ -513,8 +535,8 @@ text::Rendering drawn(const Capabilities& compat) {
 }
 
 // What holds for this terminal: the wish where it says something, otherwise the measurement, and
-// the size as last measured.
-Abilities effective(const Capabilities& compat, const Setup& wish, Size size) {
+// the size and the cell as last measured.
+Abilities effective(const Capabilities& compat, const Setup& wish, Size size, Size cell) {
     Abilities made;
 
     made.size = size;
@@ -524,7 +546,7 @@ Abilities effective(const Capabilities& compat, const Setup& wish, Size size) {
     made.shade = wish.shade.value_or(compat.shade());
     made.graphics = wish.graphics.value_or(compat.graphics());
     made.blocks = blocked(compat, wish);
-    made.cell = wish.cell.value_or(compat.cell());
+    made.cell = wish.cell.value_or(cell);
     made.unicode = wish.unicode.value_or(compat.unicode());
     made.rendering = drawn(compat);
     made.links = wish.links.value_or(compat.links());
@@ -542,9 +564,11 @@ Abilities effective(const Capabilities& compat, const Setup& wish, Size size) {
 //
 // A terminal without SGR (1006) gets drags (1002) too, or selecting with the mouse would not work
 // at all, and the urxvt encoding (1015), which writes cells in decimal: one that knows it reports
-// past the 223rd column, where X10 cannot, and one that does not ignores the request.
+// past the 223rd column, where X10 cannot, and one that does not ignores the request. Pixels
+// (1016) are SGR whose numbers count pixels instead of cells.
 void mousing(Console& out, Mouse given, bool hover) {
-    if (given == Mouse::sgr) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+    if (given == Mouse::pixels) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1016h");
+    else if (given == Mouse::sgr) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
     else if (given == Mouse::basic) out.write("\x1b[?1000h\x1b[?1002h\x1b[?1015h");
 
     if (given != Mouse::none && hover) out.write("\x1b[?1003h");
@@ -554,7 +578,8 @@ void mousing(Console& out, Mouse given, bool hover) {
 void unmoused(Console& out, Mouse given, bool hover) {
     if (given != Mouse::none && hover) out.write("\x1b[?1003l");
 
-    if (given == Mouse::sgr) out.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+    if (given == Mouse::pixels) out.write("\x1b[?1016l\x1b[?1002l\x1b[?1000l");
+    else if (given == Mouse::sgr) out.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
     else if (given == Mouse::basic) out.write("\x1b[?1015l\x1b[?1002l\x1b[?1000l");
 }
 
@@ -600,10 +625,10 @@ void unshaped(Console& out, std::optional<Caret>& shaped) {
 }
 
 // Dressing the terminal: the screen, a hidden cursor, no autowrap, a cleared screen, the mouse,
-// bracketed paste and the window's focus. Dressing and undressing are two halves of one thing, so
-// they stand side by side and have one place: the constructor, the destructor and stepping aside
-// for another program all use them. Written out in three places, they would drift apart at the
-// first change.
+// bracketed paste, the window's focus and the size in-band. Dressing and undressing are two halves
+// of one thing, so they stand side by side and have one place: the constructor, the destructor and
+// stepping aside for another program all use them. Written out in three places, they would drift
+// apart at the first change.
 void dressed(Console& out, const Sending& now) {
     screened(out, now.screen);
 
@@ -614,10 +639,14 @@ void dressed(Console& out, const Sending& now) {
     if (now.bracketed_paste) out.write("\x1b[?2004h");
 
     if (now.focus) out.write("\x1b[?1004h");
+
+    if (now.measuring) out.write("\x1b[?2048h");
 }
 
 // Undressing the terminal, in the reverse order of `dressed`.
 void undressed(Console& out, const Sending& now) {
+    if (now.measuring) out.write("\x1b[?2048l");
+
     if (now.focus) out.write("\x1b[?1004l");
 
     if (now.bracketed_paste) out.write("\x1b[?2004l");
@@ -633,6 +662,8 @@ void undressed(Console& out, const Sending& now) {
 // unconditionally on a terminal already on the alternate screen would cost a flicker, and for the
 // mouse it would lose the intermediate state.
 void shifting(Console& out, const Sending& was, const Sending& now) {
+    if (was.measuring != now.measuring) out.write(now.measuring ? "\x1b[?2048h" : "\x1b[?2048l");
+
     if (was.bracketed_paste != now.bracketed_paste) out.write(now.bracketed_paste ? "\x1b[?2004h" : "\x1b[?2004l");
 
     if (was.mouse != now.mouse || was.hover != now.hover) {
@@ -829,6 +860,10 @@ struct App::Held {
     Setup wish;
     Abilities able;
 
+    // The cell in pixels as last measured: the probe's at the start, then each new measurement
+    // the terminal sends (`Measured`). Zero in either dimension while the terminal has not said.
+    Size cell;
+
     // A fresh configuration invalidates the screen image just as a change of the window size does.
     bool shifted = false;
 
@@ -877,6 +912,47 @@ struct App::Held {
     // returns.
     int away = 0;
 
+    // The settings the terminal is dressed with now.
+    [[nodiscard]] Sending dressing() const { return sending(compat, wish, cell); }
+
+    // Tells the decoder the cell its pixel reports count by, and whether it follows measurements.
+    void tuned() {
+        decoder.pixels(pixelled(compat, wish, cell));
+        decoder.following(dressing().measuring);
+    }
+
+    // Asks the terminal for its cell in pixels again, when the cell is measured anew: after a
+    // change of the size and after the terminal was someone else's. A terminal in mode 2048 tells
+    // it by itself too, and the second answer, the same, changes nothing.
+    void asked() {
+        if (dressing().measuring) console->write("\x1b[16t");
+    }
+
+    // Takes a new measurement of the cell: the mouse in pixels, the abilities and the document
+    // follow it, and the screen is drawn whole again, because the pictures on it stand in the old
+    // pixels. The application's own cell (`Setup::cell`) leaves measurements nothing to change.
+    void remeasured(const Measured& one) {
+        if (!dressing().measuring || one.cell == cell) return;
+
+        cell = one.cell;
+
+        tuned();
+
+        able = effective(compat, wish, size, cell);
+        shifted = true;
+
+        displayed();
+    }
+
+    // Hands what the decoder heard to its place: measurements to the application, the rest to the
+    // document shown, which a handler may switch on the way.
+    void heard(const std::vector<Heard>& given) {
+        for (const Heard& one : given) {
+            if (const auto* measurement = std::get_if<Measured>(&one)) remeasured(*measurement);
+            else dispatched(one, *onto);
+        }
+    }
+
     // Tells the document shown what the terminal is.
     void displayed() const {
         if (onto != nullptr) onto->display(Display{able.size, able.colors, able.unicode, able.rendering, able.graphics, able.blocks, able.cell});
@@ -923,8 +999,10 @@ App::App(Setup wish, Port<Console> console, Port<Clock> time) : held_(std::make_
     (void)held.compat.colors();
 
     held.spare = held.compat.rest();
+    held.cell = held.compat.cell();
 
-    dressed(out, sending(held.compat, held.wish));
+    dressed(out, held.dressing());
+    held.tuned();
 
     held.entered = true;
 
@@ -932,7 +1010,7 @@ App::App(Setup wish, Port<Console> console, Port<Clock> time) : held_(std::make_
     // we measure the one we draw on.
     (void)measured(out, held.size);
 
-    held.able = effective(held.compat, held.wish, held.size);
+    held.able = effective(held.compat, held.wish, held.size, held.cell);
 
     // Last, so that a constructor that throws leaves no notifier on a loop that is gone.
     held.before = defaults().held<Notifier>();
@@ -964,7 +1042,7 @@ App::~App() {
     if (held.entered) {
         unshaped(*held.console, held.shaped);
 
-        undressed(*held.console, sending(held.compat, held.wish));
+        undressed(*held.console, held.dressing());
     }
 
     held.console->raw(false);
@@ -977,16 +1055,17 @@ Loop& App::loop() { return held_->loop; }
 // on the application's thread, wherever it was asked.
 void App::reconfigure(Setup wish) {
     held_->loop.post([held = held_.get(), wish = std::move(wish)]() mutable {
-        const Sending was = sending(held->compat, held->wish);
+        const Sending was = held->dressing();
 
         held->wish = std::move(wish);
 
-        shifting(*held->console, was, sending(held->compat, held->wish));
+        shifting(*held->console, was, held->dressing());
+        held->tuned();
 
         // Another screen hides the cursor; the next frame shows and places it again.
         held->showing = false;
         held->at = Spot{-1, -1};
-        held->able = effective(held->compat, held->wish, held->size);
+        held->able = effective(held->compat, held->wish, held->size, held->cell);
         held->shifted = true;
 
         held->displayed();
@@ -1240,7 +1319,7 @@ bool App::turn() {
 
         held.spare.clear();
 
-        for (const Heard& one : held.decoder.fed(given, clock.now())) dispatched(one, *held.onto);
+        held.heard(held.decoder.fed(given, clock.now()));
     }
 
     // The first frame is drawn before waiting, because the wait may have no limit.
@@ -1272,9 +1351,12 @@ bool App::turn() {
     const std::string given = console.hear(patience);
 
     // Resumed after a stop: meanwhile the terminal belonged to the shell, which removed our
-    // dressing and wrote on the screen. We dress it again and redraw everything, cursor included.
+    // dressing and wrote on the screen. We dress it again and redraw everything, cursor included;
+    // the cell may have changed meanwhile.
     if (console.resumed()) {
-        if (held.entered) dressed(console, sending(held.compat, held.wish));
+        if (held.entered) dressed(console, held.dressing());
+
+        held.asked();
 
         held.shifted = true;
         held.showing = false;
@@ -1284,19 +1366,19 @@ bool App::turn() {
 
     const auto now = clock.now();
 
-    if (!given.empty())
-        for (const Heard& one : held.decoder.fed(given, now)) dispatched(one, *held.onto);
+    if (!given.empty()) held.heard(held.decoder.fed(given, now));
 
-    // The size is checked at every turn: the window may have changed just now.
+    // The size is checked at every turn: the window may have changed just now, and with it the
+    // cell, when the terminal zoomed.
     if (measured(console, held.size)) {
         held.able.size = held.size;
 
+        held.asked();
         held.displayed();
     }
 
     // The decoder's time has come: the Esc was alone, or the paste lost its end.
-    if (const auto settling = held.decoder.due(); settling && now >= *settling)
-        for (const Heard& one : held.decoder.lapsed(now)) dispatched(one, *held.onto);
+    if (const auto settling = held.decoder.due(); settling && now >= *settling) held.heard(held.decoder.lapsed(now));
 
     held.onto->ring();
 
@@ -1321,15 +1403,15 @@ App::Pause::Pause(App& one) : app_(one) {
     if (held.entered) {
         unshaped(*held.console, held.shaped);
 
-        undressed(*held.console, sending(held.compat, held.wish));
+        undressed(*held.console, held.dressing());
     }
 
     held.console->raw(false);
 }
 
 // Takes the terminal back: raw mode and the dressing again, and a full repaint at the next turn,
-// with the cursor shown and placed anew. The size may have changed while we were away. Notices told
-// meanwhile are written last.
+// with the cursor shown and placed anew. The size and the cell may have changed while we were away.
+// Notices told meanwhile are written last.
 App::Pause::~Pause() {
     Held& held = *app_.held_;
 
@@ -1339,7 +1421,9 @@ App::Pause::~Pause() {
 
     console.raw(true);
 
-    if (held.entered) dressed(console, sending(held.compat, held.wish));
+    if (held.entered) dressed(console, held.dressing());
+
+    held.asked();
 
     held.shifted = true;
     held.fresh = true;

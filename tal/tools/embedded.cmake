@@ -19,15 +19,20 @@ foreach(file IN LISTS files)
   string(LENGTH "${hex}" digits)
   math(EXPR size "${digits} / 2")
 
-  set(lines "")
-  set(at 0)
+  # Two passes over the whole file rather than a loop over its lines, which would copy the file
+  # once a line: every byte as an escape, then sixteen escapes (64 characters) to a line, and the
+  # last, shorter line closed by hand.
+  string(REGEX REPLACE "([0-9a-f][0-9a-f])" "\\\\x\\1" escaped "${hex}")
+  string(REGEX REPLACE "(................................................................)" "    \"\\1\"\n" lines "${escaped}")
+  string(REGEX MATCH "[^\n]*$" tail "${lines}")
 
-  while(at LESS digits)
-    string(SUBSTRING "${hex}" ${at} 32 piece)
-    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "\\\\x\\1" piece "${piece}")
-    string(APPEND lines "    \"${piece}\"\n")
-    math(EXPR at "${at} + 32")
-  endwhile()
+  if(NOT tail STREQUAL "")
+    string(LENGTH "${lines}" whole)
+    string(LENGTH "${tail}" short)
+    math(EXPR kept "${whole} - ${short}")
+    string(SUBSTRING "${lines}" 0 ${kept} lines)
+    string(APPEND lines "    \"${tail}\"\n")
+  endif()
 
   if(lines STREQUAL "")
     set(lines "    \"\"\n")

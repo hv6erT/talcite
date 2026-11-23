@@ -337,9 +337,13 @@ public:
         return made;
     }
 
-    // The window has a new size. The own buffer follows it, so that no scroll bars appear.
+    // The window has a new size. The own buffer follows it, so that no scroll bars appear. Zooming
+    // with Ctrl and the wheel changes the font and with it the size, so the cell in pixels is read
+    // again.
     void resized(Size size) {
         if (size == screen_.size()) return;
+
+        celled();
 
         if (own_ != nullptr)
             SetConsoleScreenBufferSize(own_, COORD{static_cast<SHORT>(size.wide), static_cast<SHORT>(size.high)});
@@ -378,6 +382,11 @@ public:
             if (!truetyped(original_)) unfonted();
         }
 
+        celled();
+    }
+
+    // The cell in pixels, from the console's font, for the answer to `CSI 16 t`.
+    void celled() {
         CONSOLE_FONT_INFO font{};
 
         if (GetCurrentConsoleFont(original_, FALSE, &font) != 0 && font.dwFontSize.X > 0 && font.dwFontSize.Y > 0)

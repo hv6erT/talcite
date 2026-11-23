@@ -24,6 +24,7 @@ struct Moused {
     Press press = Press::move;
     MouseButton button = MouseButton::none;
     Mods mods;
+    std::optional<Spot> pixel;
 
     friend bool operator==(const Moused&, const Moused&) = default;
 };
@@ -33,6 +34,7 @@ struct Wheeled {
     int steps = 0;
     Axis axis = Axis::vertical;
     Mods mods;
+    std::optional<Spot> pixel;
 
     friend bool operator==(const Wheeled&, const Wheeled&) = default;
 };
@@ -50,7 +52,13 @@ struct Windowed {
     friend bool operator==(const Windowed&, const Windowed&) = default;
 };
 
-using Heard = std::variant<Struck, Moused, Wheeled, Pasted, Windowed>;
+struct Measured {
+    Size cell;
+
+    friend bool operator==(const Measured&, const Measured&) = default;
+};
+
+using Heard = std::variant<Struck, Moused, Wheeled, Pasted, Windowed, Measured>;
 
 class Decoder {
 public:
@@ -68,6 +76,10 @@ public:
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> due() const;
 
     [[nodiscard]] std::vector<Heard> lapsed(std::chrono::steady_clock::time_point now);
+
+    void pixels(std::optional<Size> cell);
+
+    void following(bool on);
 
 private:
     struct Held;

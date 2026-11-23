@@ -24,7 +24,7 @@ add_library(tal-core STATIC src/archive.cpp src/basics.cpp src/crypto.cpp src/ex
   src/collate.cpp src/json.cpp src/language.cpp src/mending.cpp src/settings.cpp src/text.cpp src/texts.cpp src/unicode.cpp src/wording.cpp src/xml.cpp src/zip.cpp
   src/platform/bell.cpp src/platform/child_core.cpp src/platform/cipher_core.cpp src/platform/crypto_core.cpp src/platform/copy_core.cpp src/platform/disk.cpp src/platform/disk_core.cpp src/platform/file_core.cpp
   src/platform/language_core.cpp
-  src/platform/trash_core.cpp src/platform/watch_core.cpp)
+  src/platform/trash_core.cpp src/platform/watch_core.cpp src/simulation.cpp)
 target_include_directories(tal-core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(tal-core PUBLIC Threads::Threads)
 target_compile_features(tal-core PUBLIC cxx_std_20)
@@ -185,9 +185,13 @@ endfunction()
 # is a chain of our own PNG, JPEG and GIF; and the metadata of sound and video files, the tags and
 # the properties (tal::meta), and the structure of PDF documents, read by our own readers.
 # Documents and pages rendered by another process (tal::docs): the ports `Renderer` and
-# `Browser`, their chains, and their adapters on any program that speaks tal's protocol.
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp)
+# `Browser`, their chains, and their adapters on any program that speaks tal's protocol. Drawing
+# (tal::drawing): paths, strokes, paints and clips rasterized into pixels by our own rasterizer,
+# and text from fonts read by our own reader of TrueType; DejaVu Sans built in (fonts/, its own
+# object, linked only into programs that use it).
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp src/paths.cpp src/flattening.cpp src/stroking.cpp src/rasterizing.cpp src/raster.cpp src/fonts.cpp src/dejavu.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
+tal_embedded(tal-media fonts_of fonts/DejaVuSans.ttf)
 
 # PDF rendered by PDFium (tal-render-pdfium), only on the programmer's word: configuring it fetches
 # PDFium, the build of bblanchon/pdfium-binaries without V8 (so no JavaScript or XFA in PDF), and
@@ -361,7 +365,7 @@ endif()
 # styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
 # sent to the terminal as sixel or kitty pixels.
 add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
-  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/leaves.cpp src/previewed.cpp src/webview.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
+  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/drawn.cpp src/leaves.cpp src/previewed.cpp src/webview.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-media)
 
@@ -369,6 +373,13 @@ target_link_libraries(tal-ui PUBLIC tal-media)
 # with its marks for the console without VT, whose cell holds one UTF-16 unit.
 if(WIN32)
   target_link_libraries(tal-ui PUBLIC user32 normaliz)
+endif()
+
+# The program that shows a simulation (E7e), among the demos: a double pendulum drawn in the
+# terminal, its bodies dragged with the mouse.
+if(TALCITE_DEMOS)
+  add_executable(tal-pendulum demo/pendulum.cpp)
+  target_link_libraries(tal-pendulum PRIVATE tal-ui)
 endif()
 
 # tal::net of talcite.next: addresses and names, TCP as a stream, listeners and UDP, waited for by

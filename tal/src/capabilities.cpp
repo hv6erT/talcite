@@ -63,6 +63,7 @@ std::string asking() {
 
     made += "\x1b[>c";
     made += "\x1b[?1006$p";
+    made += "\x1b[?1016$p";
     made += "\x1b[?1000$p";
     made += "\x1b[?2004$p";
     made += "\x1b[?1004$p";
@@ -118,6 +119,7 @@ struct Capabilities::Held {
     bool colorless = false;
 
     Mouse mouse = Mouse::none;
+    bool pixel_mouse = false;
     Screen screen = Screen::none;
     Shade shade = Shade::neutral;
 
@@ -414,6 +416,7 @@ bool Capabilities::Held::answered(const vt::Csi& one) {
     if (one.last == 'y' && one.lead == '?') {
         if (one.params.size() >= 2 && knowing(one.at(1))) switch (one.at(0)) {
                 case 1006: mouse = Mouse::sgr; break;
+                case 1016: pixel_mouse = true; break;
                 case 1000:
                     if (mouse == Mouse::none) mouse = Mouse::basic;
                     break;
@@ -510,9 +513,12 @@ Colors Capabilities::colors() const {
     return held_->colorless ? Colors::mono : held_->colors;
 }
 
-// Which mouse reporting the terminal supports.
+// Which mouse reporting the terminal supports: in pixels (SGR-Pixels, 1016) where it knows SGR and
+// that mode and says the size of its cell, without which pixels could not be turned into cells.
 Mouse Capabilities::mouse() const {
     ready();
+
+    if (held_->mouse == Mouse::sgr && held_->pixel_mouse && held_->cell.wide > 0 && held_->cell.high > 0) return Mouse::pixels;
 
     return held_->mouse;
 }

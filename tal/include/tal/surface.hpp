@@ -32,6 +32,7 @@ struct Picture {
     std::shared_ptr<const std::string> sixel{};
     std::shared_ptr<const media::Pixels> pixels{};
     std::size_t still = 0;
+    std::shared_ptr<const std::string> coded{};
 };
 
 class Canvas;

@@ -712,3 +712,15 @@ TRIAL("Capabilities: over SSH the probe waits longer") {
     OUGHT(!tty->patience.empty() && tty->patience.front().has_value() &&
           *tty->patience.front() > std::chrono::milliseconds{900});
 }
+
+TRIAL("Capabilities: a terminal that knows SGR in pixels (1016) and tells its cell reports the mouse in pixels; without the cell in cells") {
+    const std::string pixels = "\x1b[>0;280;0c\x1b[?1006;2$y\x1b[?1016;2$y\x1b[?1000;2$y\x1b[6;20;10t\x1b[?62;1;2;6;9;15;22;29c";
+    const std::string cellless = "\x1b[>0;280;0c\x1b[?1006;2$y\x1b[?1016;2$y\x1b[?1000;2$y\x1b[?62;1;2;6;9;15;22;29c";
+    const Taped one{pixels};
+    const Taped other{cellless};
+
+    SAME(static_cast<int>(one.mouse()), static_cast<int>(Mouse::pixels));
+    SAME(one.cell(), (Size{10, 20}));
+    SAME(static_cast<int>(other.mouse()), static_cast<int>(Mouse::sgr));
+    OUGHT(one.asked().find("\x1b[?1016$p") != std::string::npos);
+}

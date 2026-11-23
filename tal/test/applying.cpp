@@ -1452,6 +1452,161 @@ TRIAL("App: nodes measure with the document's rendering") {
     SAME(measured.measured(tal::Limits{{0, 0}, {80, 25}}).wide, 2);
 }
 
+// A red node that tells the cell in pixels its document was given.
+class Celled : public Red {
+public:
+    // The cell of the last display.
+    [[nodiscard]] Size cell() const { return display().cell; }
+};
+
+// The probe's answers of a terminal that knows SGR in pixels (1016) and tells its cell, 10x20.
+const std::string pixelled = "\x1b[?1006;2$y\x1b[?1016;2$y\x1b[?1000;2$y\x1b[6;20;10t\x1b[?62;1;22c";
+
+// Zooming changes the cell while the program runs. A terminal that told its cell is asked for the
+// size in-band (2048) and, at every change of the size, for the cell again (16t); a new cell
+// reaches the abilities, the mouse in pixels and the document, and the screen is drawn whole. The
+// same cell again changes nothing; stepping aside and a resume ask again, and the application's own
+// cell turns measuring off until it is taken back.
+TRIAL("App: a terminal that told its cell is measured anew at every change of the size and in-band (2048)") {
+    Rig rig;
+    std::vector<Spot> pointed;
+
+    rig.line = scripted(pixelled);
+    rig.line->window = Size{20, 5};
+    rig.hooks.add(rig.document.on<MouseEvent>([&pointed](MouseEvent& what) {
+        if (what.press == Press::down) pointed.push_back(what.screen);
+    }));
+
+    Celled& celled = rig.document.children().add<Celled>();
+
+    {
+        App app{Setup{}, rig.console(), rig.time()};
+
+        OUGHT(holds(rig.line->written, "\x1b[?2048h"));
+        OUGHT(holds(rig.line->written, "\x1b[?1016h"));
+
+        app.show(rig.document);
+
+        (void)app.turn();
+
+        SAME(app.abilities().cell, (Size{10, 20}));
+        SAME(celled.cell(), (Size{10, 20}));
+
+        rig.line->written.clear();
+        (void)app.turn();
+        OUGHT(!holds(rig.line->written, "\x1b[16t"));
+
+        rig.line->window = Size{40, 10};
+        (void)app.turn();
+        OUGHT(holds(rig.line->written, "\x1b[16t"));
+
+        rig.line->written.clear();
+        rig.line->replies.push_back("\x1b[6;10;5t\x1b[<0;12;25M");
+        (void)app.turn();
+
+        SAME(app.abilities().cell, (Size{5, 10}));
+        SAME(celled.cell(), (Size{5, 10}));
+        OUGHT(holds(rig.line->written, "\x1b[2J"));
+        OUGHT(pointed == std::vector<Spot>{Spot{2, 2}});
+
+        rig.line->replies.push_back("\x1b[48;10;40;200;320t");
+        (void)app.turn();
+
+        SAME(app.abilities().cell, (Size{8, 20}));
+        SAME(celled.cell(), (Size{8, 20}));
+
+        rig.line->written.clear();
+        rig.line->replies.push_back("\x1b[6;20;8t");
+        (void)app.turn();
+        OUGHT(!holds(rig.line->written, "\x1b[2J"));
+
+        {
+            const App::Pause away{app};
+        }
+
+        OUGHT(holds(rig.line->written, "\x1b[16t"));
+
+        rig.line->written.clear();
+        rig.line->comeback = true;
+        (void)app.turn();
+        OUGHT(holds(rig.line->written, "\x1b[16t"));
+
+        Setup fixed;
+
+        fixed.cell = Size{7, 14};
+        rig.line->written.clear();
+        app.reconfigure(fixed);
+        (void)app.turn();
+
+        OUGHT(holds(rig.line->written, "\x1b[?2048l"));
+        SAME(app.abilities().cell, (Size{7, 14}));
+
+        rig.line->written.clear();
+        app.reconfigure(Setup{});
+        (void)app.turn();
+
+        OUGHT(holds(rig.line->written, "\x1b[?2048h"));
+        SAME(app.abilities().cell, (Size{8, 20}));
+
+        rig.line->written.clear();
+    }
+
+    OUGHT(holds(rig.line->written, "\x1b[?2048l"));
+}
+
+// The application's own cell (`Setup::cell`) is never measured: no size in-band, no question at a
+// change of the size, and a report changes nothing. A terminal that did not tell its cell is not
+// asked either.
+TRIAL("App: the wished cell and a terminal without one are not measured anew") {
+    Rig rig;
+    Setup wish;
+
+    wish.cell = Size{7, 14};
+    rig.line = scripted(pixelled);
+    rig.line->window = Size{20, 5};
+
+    {
+        App app{wish, rig.console(), rig.time()};
+
+        app.show(rig.document);
+
+        (void)app.turn();
+
+        rig.line->written.clear();
+        rig.line->window = Size{40, 10};
+        rig.line->replies.push_back("\x1b[6;10;5t");
+        (void)app.turn();
+
+        SAME(app.abilities().cell, (Size{7, 14}));
+        OUGHT(!holds(rig.line->written, "\x1b[16t"));
+    }
+
+    OUGHT(!holds(rig.line->written, "\x1b[?2048"));
+
+    Rig plain;
+
+    plain.line = scripted("\x1b[?62;1;22c");
+    plain.line->window = Size{20, 5};
+
+    {
+        App app{Setup{}, plain.console(), plain.time()};
+
+        app.show(plain.document);
+
+        (void)app.turn();
+
+        plain.line->written.clear();
+        plain.line->window = Size{40, 10};
+        plain.line->replies.push_back("\x1b[6;10;5t");
+        (void)app.turn();
+
+        SAME(app.abilities().cell, (Size{0, 0}));
+        OUGHT(!holds(plain.line->written, "\x1b[16t"));
+    }
+
+    OUGHT(!holds(plain.line->written, "\x1b[?2048"));
+}
+
 // --- Hyperlinks ----------------------------------------------------------------------------------
 
 // What `App` writes for the first frame of the node, after the probe.

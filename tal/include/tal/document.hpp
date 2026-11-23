@@ -100,9 +100,11 @@ public:
 
     [[nodiscard]] Timer after(std::chrono::milliseconds wait, Fn<Timer> what);
 
+    [[nodiscard]] std::chrono::steady_clock::time_point now() const;
+
     void key(Key one);
 
-    void mouse(Press press, MouseButton button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical);
+    void mouse(Press press, MouseButton button, Spot screen, Mods mods = {}, int steps = 0, Axis axis = Axis::vertical, std::optional<Spot> pixel = std::nullopt);
 
     void paste(std::string text);
 
@@ -139,9 +141,9 @@ private:
 
     void hovered(Node* now);
 
-    void clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now);
+    void clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now, std::optional<Spot> pixel);
 
-    void moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now);
+    void moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now, std::optional<Spot> pixel);
 
     void damaged(Area part);
 

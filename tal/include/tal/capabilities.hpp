@@ -13,7 +13,7 @@
 
 namespace tal {
 
-enum class Mouse : std::uint8_t { none, basic, sgr };
+enum class Mouse : std::uint8_t { none, basic, sgr, pixels };
 
 enum class Screen : std::uint8_t { none, older, apart };
 

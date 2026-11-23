@@ -2,6 +2,7 @@
 
 #include <concepts>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -103,6 +104,7 @@ struct MouseEvent : Event {
     Spot screen;
     int steps = 0;
     Axis axis = Axis::vertical;
+    std::optional<Spot> pixel;
 };
 
 struct PasteEvent : Event {

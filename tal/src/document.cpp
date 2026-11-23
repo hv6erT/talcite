@@ -356,6 +356,9 @@ std::optional<Caret> Document::caret() const {
     return made;
 }
 
+// The time now by the document's clock, the one its timers keep.
+std::chrono::steady_clock::time_point Document::now() const { return time_->now(); }
+
 // Starts the timer `what`, to ring once `wait` from now by the document's clock (`ring`). The
 // handle it returns owns it: gone, it never rings. `what` gets the handle and may set it `again`.
 Timer Document::after(std::chrono::milliseconds wait, Fn<Timer> what) {
@@ -389,16 +392,18 @@ void Document::key(Key one) {
 // release where the press was, with the same button, adds a click, or a double click when it is the
 // second one there within the double-click time; the back and forward buttons make no clicks.
 // While a drop is checked it waits for it (`waited`), and comes after it at the moment it came.
-void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis) {
+// `pixel`, where the terminal tells it, is the pixel of the screen under the pointer, and goes
+// with every event the action makes.
+void Document::mouse(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::optional<Spot> pixel) {
     const auto now = time_->now();
 
-    if (waited([=, this] { moused(press, button, screen, mods, steps, axis, now); })) return;
+    if (waited([=, this] { moused(press, button, screen, mods, steps, axis, now, pixel); })) return;
 
-    moused(press, button, screen, mods, steps, axis, now);
+    moused(press, button, screen, mods, steps, axis, now, pixel);
 }
 
 // What the mouse did at `now` by the document's clock (see `mouse`).
-void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now) {
+void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, int steps, Axis axis, std::chrono::steady_clock::time_point now, std::optional<Spot> pixel) {
     changing();
 
     if (press == Press::down) captured_ = nullptr;
@@ -417,13 +422,15 @@ void Document::moused(Press press, MouseButton button, Spot screen, Mods mods, i
     Node& aimed = captured_ != nullptr ? *captured_ : below;
     MouseEvent made{press, button, mods, screen, steps, axis};
 
+    made.pixel = pixel;
+
     if (const std::optional<Area> where = aimed.absolute()) made.at = Spot{screen.x - where->at.x, screen.y - where->at.y};
 
     delivered(made, aimed);
 
     if (press == Press::up) captured_ = nullptr;
 
-    if (press == Press::down || press == Press::up) clicked(press, button, screen, mods, now);
+    if (press == Press::down || press == Press::up) clicked(press, button, screen, mods, now, pixel);
 
     if (curtain != nullptr && confined_ != curtain.get()) pressing_ = MouseButton::none;
 }
@@ -916,7 +923,7 @@ void Document::hovered(Node* now) {
 // the pointer (the confinement for one outside it, as `mouse` does), or a double click when a click
 // with that button in that cell came no longer than the double-click time before by the document's
 // clock, the press and the release taken at `now`. A release elsewhere is a drag, not a click.
-void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now) {
+void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods, std::chrono::steady_clock::time_point now, std::optional<Spot> pixel) {
     if (button == MouseButton::back || button == MouseButton::forward) return;
 
     if (press == Press::down) {
@@ -945,6 +952,8 @@ void Document::clicked(Press press, MouseButton button, Spot screen, Mods mods, 
     Node& found = under(screen);
     Node& aimed = confined_ != nullptr && !confined_->holds(found) ? *confined_ : found;
     MouseEvent made{twice ? Press::double_click : Press::click, button, mods, screen, 0};
+
+    made.pixel = pixel;
 
     if (const std::optional<Area> where = aimed.absolute()) made.at = Spot{screen.x - where->at.x, screen.y - where->at.y};
 
