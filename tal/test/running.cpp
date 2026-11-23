@@ -1,7 +1,9 @@
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include "tal/bytes.hpp"
 #include "tal/clock.hpp"
@@ -28,6 +30,65 @@ tal::Output again(std::vector<std::string> arguments) {
     return tal::wait(loop, tal::Process::run(made));
 }
 
+// Work that counts in `dropped` when it goes and, while it holds a pool, posts another such work to
+// it as it goes, as a doomed chain destroyed unrun wakes the chains it held.
+struct Posting {
+    std::shared_ptr<std::atomic<int>> dropped;
+    tal::Pool* pool = nullptr;
+    bool live = true;
+
+    // Counts in `counted`, posting to `onto` as it goes when given.
+    Posting(std::shared_ptr<std::atomic<int>> counted, tal::Pool* onto) : dropped(std::move(counted)), pool(onto) {}
+
+    // Takes the counting over from `other`, which then counts nothing.
+    Posting(Posting&& other) noexcept : dropped(other.dropped), pool(std::exchange(other.pool, nullptr)), live(std::exchange(other.live, false)) {}
+
+    Posting(const Posting&) = delete;
+    Posting& operator=(const Posting&) = delete;
+    Posting& operator=(Posting&&) = delete;
+
+    // Counts, and posts the next work when it holds a pool.
+    ~Posting() {
+        if (!live) return;
+
+        ++*dropped;
+
+        if (pool != nullptr) pool->post(Posting{dropped, nullptr});
+    }
+
+    // Does nothing; the trial is about going unrun.
+    void operator()() {}
+};
+
+}
+
+// A pool stopped while work waits drops it, and drops too the work that dropping it posts.
+TRIAL("Running: a pool stopped with work queued drops it and the work posted as it goes") {
+    const auto dropped = std::make_shared<std::atomic<int>>(0);
+    std::atomic<bool> started{false};
+    std::atomic<bool> go{false};
+    std::thread releasing;
+
+    {
+        tal::Pool pool{1};
+
+        pool.post([&] {
+            started = true;
+
+            while (!go) std::this_thread::sleep_for(1ms);
+        });
+
+        while (!started) std::this_thread::sleep_for(1ms);
+
+        pool.post(Posting{dropped, &pool});
+        releasing = std::thread{[&] {
+            std::this_thread::sleep_for(200ms);
+            go = true;
+        }};
+    }
+
+    releasing.join();
+    SAME(dropped->load(), 2);
 }
 
 // With nothing to do the turn waits until the deadline and says that no work ran.

@@ -292,13 +292,76 @@ if(TAL_PDFIUM)
   target_compile_definitions(tal-media PRIVATE TAL_PDFIUM)
 endif()
 
+# Web pages shown by WebKitGTK 6 (tal-render-gtk) on Linux, only on the programmer's word: it
+# needs webkitgtk-6.0 through pkg-config at build time, and gtk4-broadwayd when it runs.
+option(TAL_WEBKITGTK "Show web pages through WebKitGTK 6 in a process of its own (Linux)" OFF)
+
+if(TAL_WEBKITGTK)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(TAL_WEBKIT REQUIRED IMPORTED_TARGET webkitgtk-6.0 gtk4)
+  add_executable(tal-render-gtk engines/gtk.cpp)
+  target_link_libraries(tal-render-gtk PRIVATE tal-media PkgConfig::TAL_WEBKIT)
+  target_include_directories(tal-render-gtk PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  tal_embedded(tal-render-gtk helper_of engines/helper.js)
+  target_compile_definitions(tal-media PRIVATE TAL_WEBKITGTK)
+endif()
+
+# Web pages shown by WebView2 (tal-render-webview2) on Windows, only on the programmer's word. Its
+# SDK is the NuGet package Microsoft.Web.WebView2 1.0.4314.35: given unpacked (TAL_WEBVIEW2_SDK),
+# or fetched from NuGet and checked against its SHA-256 (TAL_WEBVIEW2_SHA256, pinned here as
+# certutil -hashfile <package> SHA256 told it). WebView2Loader.dll lands beside the program, and
+# MinGW gets the header EventToken.h through a shim.
+option(TAL_WEBVIEW2 "Show web pages through WebView2 in a process of its own (Windows)" OFF)
+set(TAL_WEBVIEW2_SDK "" CACHE PATH "The NuGet package of WebView2, unpacked")
+set(TAL_WEBVIEW2_SHA256 "90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4" CACHE STRING "The SHA-256 of the NuGet package of WebView2 1.0.4314.35")
+
+if(TAL_WEBVIEW2)
+  if(NOT WIN32)
+    message(FATAL_ERROR "TAL_WEBVIEW2: WebView2 is for Windows.")
+  endif()
+
+  if(TAL_WEBVIEW2_SDK)
+    set(webview2_home "${TAL_WEBVIEW2_SDK}")
+  else()
+    if(NOT TAL_WEBVIEW2_SHA256)
+      message(FATAL_ERROR "TAL_WEBVIEW2: give TAL_WEBVIEW2_SDK, or TAL_WEBVIEW2_SHA256 to fetch the package from NuGet.")
+    endif()
+
+    set(webview2_package "${CMAKE_CURRENT_BINARY_DIR}/webview2.nupkg")
+    file(DOWNLOAD "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.4314.35" "${webview2_package}"
+         EXPECTED_HASH "SHA256=${TAL_WEBVIEW2_SHA256}" STATUS webview2_status)
+    list(GET webview2_status 0 webview2_code)
+
+    if(NOT webview2_code EQUAL 0)
+      message(FATAL_ERROR "TAL_WEBVIEW2: the package could not be fetched: ${webview2_status}")
+    endif()
+
+    set(webview2_home "${CMAKE_CURRENT_BINARY_DIR}/webview2")
+    file(ARCHIVE_EXTRACT INPUT "${webview2_package}" DESTINATION "${webview2_home}")
+  endif()
+
+  add_executable(tal-render-webview2 engines/webview2.cpp)
+  target_link_libraries(tal-render-webview2 PRIVATE tal-media "${webview2_home}/build/native/x64/WebView2Loader.dll.lib" ole32 shlwapi user32)
+  target_include_directories(tal-render-webview2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${webview2_home}/build/native/include")
+
+  if(NOT MSVC)
+    target_include_directories(tal-render-webview2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/engines/shim")
+  endif()
+
+  tal_embedded(tal-render-webview2 helper_of engines/helper.js)
+  add_custom_command(TARGET tal-render-webview2 POST_BUILD
+                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${webview2_home}/build/native/x64/WebView2Loader.dll" "$<TARGET_FILE_DIR:tal-render-webview2>"
+                     COMMAND ${CMAKE_COMMAND} -E copy_if_different "${webview2_home}/LICENSE.txt" "$<TARGET_FILE_DIR:tal-render-webview2>/licenses/webview2/LICENSE.txt")
+  target_compile_definitions(tal-media PRIVATE TAL_WEBVIEW2)
+endif()
+
 # tal::ui of talcite.next: the geometry of cells, looks and style sheets with their selectors
 # and the built-in sheet, the surface of cells a frame is painted on, keys and events, and the
 # tree of nodes with its document, which delivers events, keeps the focus and the timers, and
 # styles, lays out and paints what changed. Pictures come from tal-media: drawn in characters, or
 # sent to the terminal as sixel or kitty pixels.
 add_library(tal-ui STATIC src/action.cpp src/app.cpp src/capabilities.cpp src/clipboard.cpp src/conhost.cpp src/locating.cpp src/telling.cpp src/console.cpp src/damage.cpp src/decoder.cpp src/diff.cpp src/document.cpp src/emulator.cpp src/terminal.cpp src/editing.cpp src/event.cpp src/fields.cpp
-  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/leaves.cpp src/previewed.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
+  src/controls.cpp src/geometry.cpp src/key.cpp src/layout.cpp src/menu.cpp src/model.cpp src/pages.cpp src/editor.cpp src/lining.cpp src/dropping.cpp src/spooling.cpp src/image.cpp src/leaves.cpp src/previewed.cpp src/webview.cpp src/written.cpp src/mosaic.cpp src/node.cpp src/sixel.cpp src/style.cpp src/surface.cpp src/undo.cpp src/views.cpp src/vt.cpp src/window.cpp
   src/platform/console_core.cpp)
 target_link_libraries(tal-ui PUBLIC tal-media)
 
@@ -378,6 +441,16 @@ if(TALCITE_TESTS)
     # The trials of PDFium run tal-render-pdfium beside them.
     add_dependencies(tal-test tal-render-pdfium)
     target_compile_definitions(tal-test PRIVATE TAL_PDFIUM)
+  endif()
+
+  if(TAL_WEBKITGTK)
+    add_dependencies(tal-test tal-render-gtk)
+    target_compile_definitions(tal-test PRIVATE TAL_WEBKITGTK)
+  endif()
+
+  if(TAL_WEBVIEW2)
+    add_dependencies(tal-test tal-render-webview2)
+    target_compile_definitions(tal-test PRIVATE TAL_WEBVIEW2)
   endif()
 
   add_test(NAME tal COMMAND tal-test)

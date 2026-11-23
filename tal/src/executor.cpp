@@ -249,7 +249,8 @@ Pool::Pool(unsigned threads) {
 }
 
 // Stops taking work, lets every thread finish the work it holds and joins them. Work still queued
-// is dropped.
+// is dropped, round after round, since dropping it may post more (a doomed chain destroyed unrun
+// wakes the chains it held) until none is left.
 Pool::~Pool() {
     {
         const std::lock_guard<std::mutex> kept{guard_};
@@ -260,6 +261,18 @@ Pool::~Pool() {
     stirred_.notify_all();
 
     for (std::thread& one : threads_) one.join();
+
+    for (;;) {
+        std::deque<Work> left;
+
+        {
+            const std::lock_guard<std::mutex> kept{guard_};
+
+            left.swap(ready_);
+        }
+
+        if (left.empty()) break;
+    }
 }
 
 // Queues work for the first free thread; from any thread.

@@ -184,8 +184,12 @@ public:
 };
 
 // What the toy is told to do, from the words of its command: "silent" (no hello), "die-first"
-// (ends before its hello), "old" (greets in version 2), "early" (an answer before its hello, which
-// carries what a hello would),
+// (ends before its hello), "old" (greets in version 1), "early" (an answer before its hello, which
+// carries what a hello would), "unavailable=<sentence>" (says its engine is not there, before any
+// hello, and ends), "flood" (twenty refusals after opening a view), "stranger" (a change of a view
+// it never had, after opening one), "long" (a change with a title over 64 KiB), "flag" (a change
+// with a flag of 2), "reason" (a refusal of no reason), "numbered" (a change with an id), "lose" (a
+// click loses the view),
 // "pages-only" (no documents), "scripts" and "network" (it can allow them); "open=<how>" for what
 // an opening does: many (claims four billion pages), flat (a page of no width), greedy (asks for
 // more than a block); "render=<how>" for what a render does: hang, die, wide and tall (a picture
@@ -204,6 +208,14 @@ struct Told {
     bool network = false;
     bool early = false;
     bool deaf = false;
+    bool flood = false;
+    bool stranger = false;
+    bool long_title = false;
+    bool bad_flag = false;
+    bool bad_reason = false;
+    bool numbered = false;
+    bool lose = false;
+    std::string unavailable;
     std::string pidfile;
     std::string password;
     std::string render = "answer";
@@ -220,6 +232,14 @@ struct Told {
             if (one == "network") network = true;
             if (one == "early") early = true;
             if (one == "deaf") deaf = true;
+            if (one == "flood") flood = true;
+            if (one == "stranger") stranger = true;
+            if (one == "long") long_title = true;
+            if (one == "flag") bad_flag = true;
+            if (one == "reason") bad_reason = true;
+            if (one == "numbered") numbered = true;
+            if (one == "lose") lose = true;
+            if (one.starts_with("unavailable=")) unavailable = one.substr(12);
             if (one.starts_with("pidfile=")) pidfile = one.substr(8);
             if (one.starts_with("password=")) password = one.substr(9);
             if (one.starts_with("render=")) render = one.substr(7);
@@ -261,6 +281,19 @@ Bytes rendered_payload(std::uint32_t page, Size size, double left, double width)
     return made.done();
 }
 
+// The payload of a change of the view `view`: its title `title` and address `address`, loaded,
+// with a way back.
+Bytes changed_payload(std::uint32_t view, std::string title, std::string address) {
+    tal::rendering::Changed made;
+
+    made.view = view;
+    made.title = std::move(title);
+    made.address = std::move(address);
+    made.back = true;
+
+    return tal::rendering::changed_with(made);
+}
+
 // The pages of a toy document whose bytes say "pages:N": N pages, 100 wide and 100 + 10 * i high.
 Bytes pages_payload(const Bytes& content) {
     const std::string text{reinterpret_cast<const char*>(content.data()), content.size()};
@@ -283,7 +316,12 @@ Task<int> toy(Wire& wire, Told told) {
 
     tal::rendering::Hello hello;
 
-    hello.version = told.old ? 2 : tal::rendering::version;
+    if (!told.unavailable.empty()) {
+        co_await wire.sent(tal::rendering::framed(frame_of(Sort::failed, 0, failed_payload(Kind::unsupported, told.unavailable))));
+        co_return 6;
+    }
+
+    hello.version = told.old ? 1 : tal::rendering::version;
     hello.engine = "toy";
     hello.abilities = static_cast<std::uint8_t>((told.documents ? tal::rendering::documents : 0) | tal::rendering::pages |
                                                 (told.scripts ? tal::rendering::scripts : 0) | (told.network ? tal::rendering::network : 0));
@@ -428,13 +466,81 @@ Task<int> toy(Wire& wire, Told told) {
                 co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, got->id, rendered_payload(page, size, left, width))));
             }
         } else if (got->sort == Sort::navigate) {
-            (void)from.u32();
+            const std::uint32_t number = from.u32();
+
             address = from.text();
             scripts = from.u8() != 0;
             network = from.u8() != 0;
             view.width = from.u32();
             view.height = from.u32();
             co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, got->id)));
+            co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 0, changed_payload(number, address, address))));
+
+            for (int one = 0; told.flood && one < 20; ++one)
+                co_await wire.sent(tal::rendering::framed(
+                    frame_of(Sort::refused, 0, tal::rendering::refused_with(tal::rendering::Refused{number, 1, "https://example.test/" + std::to_string(one)}))));
+
+            if (told.stranger) co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 0, changed_payload(number + 1000, "who", "?"))));
+
+            if (told.bad_flag) {
+                Bytes flagged = changed_payload(number, "flag", address);
+
+                flagged.back() = std::byte{2};
+                co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 0, std::move(flagged))));
+            }
+
+            if (told.bad_reason)
+                co_await wire.sent(tal::rendering::framed(frame_of(Sort::refused, 0, tal::rendering::refused_with(tal::rendering::Refused{number, 9, "x"}))));
+
+            if (told.numbered) co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 7, changed_payload(number, "numbered", address))));
+
+            if (told.long_title) co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 0, changed_payload(number, std::string((64 << 10) + 1, 'x'), "?"))));
+        } else if (got->sort == Sort::go || got->sort == Sort::click || got->sort == Sort::wheel || got->sort == Sort::key || got->sort == Sort::type ||
+                   got->sort == Sort::zoom) {
+            const std::uint32_t number = from.u32();
+            std::string heard;
+
+            if (got->sort == Sort::go) {
+                const std::uint8_t how = from.u8();
+
+                heard = "go " + std::to_string(how);
+
+                if (how == 0) {
+                    const std::string to = from.text();
+
+                    if (to.starts_with("http") && !network) {
+                        co_await wire.sent(tal::rendering::framed(frame_of(Sort::failed, got->id, failed_payload(Kind::refused, "The view may not go there."))));
+                        continue;
+                    }
+
+                    address = to;
+                    heard += " " + to;
+                }
+            } else if (got->sort == Sort::click || got->sort == Sort::wheel) {
+                const double x = from.f64();
+                const double y = from.f64();
+
+                heard = std::string{got->sort == Sort::click ? "click " : "wheel "} + std::to_string(x) + " " + std::to_string(y);
+            } else if (got->sort == Sort::key) {
+                const std::uint8_t name = from.u8();
+                const std::uint32_t letter = from.u32();
+                const std::uint8_t mods = from.u8();
+
+                heard = "key " + std::to_string(name) + " " + std::to_string(letter) + " " + std::to_string(mods);
+            } else if (got->sort == Sort::type) {
+                heard = "type " + from.text();
+            } else {
+                heard = "zoom " + std::to_string(from.f64());
+            }
+
+            co_await wire.sent(tal::rendering::framed(frame_of(Sort::done, got->id)));
+
+            if (told.lose && got->sort == Sort::click) {
+                co_await wire.sent(tal::rendering::framed(frame_of(Sort::lost, 0, tal::rendering::Writing().u32(number).done())));
+                continue;
+            }
+
+            co_await wire.sent(tal::rendering::framed(frame_of(Sort::changed, 0, changed_payload(number, heard, address))));
         } else if (got->sort == Sort::shot) {
             tal::rendering::Writing made;
             const std::string title = std::string{"scripts="} + (scripts ? "1" : "0") + " network=" + (network ? "1" : "0");
@@ -824,7 +930,7 @@ TRIAL("Rendering: a hang is overdue, a death breaks, and the process starts anew
     OUGHT(!said.has_value());
     bench.clock->advance(1ms);
     UNTIL(bench.loop, said.has_value());
-    SAME(*said, std::string{"overdue: The renderer toy did not answer in time."});
+    SAME(*said, std::string{"overdue: The renderer toy did not answer in time (render)."});
     SAME(bench.opened(hanging)->pages().size(), std::size_t{3});
     SAME(bench.started(), std::size_t{2});
 
@@ -935,7 +1041,128 @@ TRIAL("Browsing: a page with scripts and network as asked, shot and resized") {
     SAME(tal::wait(bench.loop, tal::wait(bench.loop, careful->opened("a", Browsing{}, Size{1, 1}))->shot()).title, std::string{"scripts=0 network=0"});
 }
 
-// A chain of browsers passes over an engine that is not there and one that refuses what is asked,
+// Version 2: a view goes where it is told, back and forward, takes clicks, the wheel, keys
+// (letters as typed text), text and zoom, each answered once the process has taken it; what the
+// process tells of the view unasked comes as changes, numbered, to everyone who waits.
+TRIAL("Browsing: a view taken around, clicked, scrolled, typed into and zoomed; its changes told to all who wait") {
+    Bench bench;
+    const auto browser = bench.browser();
+    const auto view = tal::wait(bench.loop, browser->opened("file:///a.html", Browsing{}, Size{40, 30}));
+    tal::docs::Change seen = tal::wait(bench.loop, view->changed(0));
+
+    SAME(seen.address, std::string{"file:///a.html"});
+    OUGHT(seen.back && !seen.loading && !seen.lost && seen.refusals.empty());
+
+    const auto heard = [&](auto work) {
+        tal::wait(bench.loop, work());
+        seen = tal::wait(bench.loop, view->changed(seen.sequence));
+
+        return seen.title;
+    };
+
+    SAME(heard([&] { return view->went("file:///b.html"); }), std::string{"go 0 file:///b.html"});
+    SAME(seen.address, std::string{"file:///b.html"});
+    SAME(heard([&] { return view->stepped(tal::docs::Step::back); }), std::string{"go 1"});
+    SAME(heard([&] { return view->stepped(tal::docs::Step::stop); }), std::string{"go 4"});
+    SAME(heard([&] { return view->clicked(1.5, 29.5); }), std::string{"click 1.500000 29.500000"});
+    SAME(heard([&] { return view->wheeled(0, -48); }), std::string{"wheel 0.000000 -48.000000"});
+    SAME(heard([&] { return view->keyed(tal::Key{U'\u017C'}); }), std::string{"type \xC5\xBC"});
+    SAME(heard([&] { return view->keyed(tal::Key{tal::Code::enter, tal::Mods{.shift = true}}); }), std::string{"key 1 0 1"});
+    SAME(heard([&] { return view->keyed(tal::Key{U'a', tal::Mods{.ctrl = true}}); }), std::string{"key 0 97 2"});
+    SAME(heard([&] { return view->keyed(tal::Key{U'a', tal::Mods{.alt = true}}); }), std::string{"key 0 97 4"});
+    SAME(refusal([&] { tal::wait(bench.loop, view->clicked(1, 30)); }), std::string{"other: A point outside the view."});
+    SAME(heard([&] { return view->typed("za\xC5\xBC\xC3\xB3\xC5\x82\xC4\x87"); }), std::string{"type za\xC5\xBC\xC3\xB3\xC5\x82\xC4\x87"});
+    SAME(heard([&] { return view->zoomed(1.5); }), std::string{"zoom 1.500000"});
+    SAME(refusal([&] { tal::wait(bench.loop, view->went("https://example.org/")); }), std::string{"refused: The view may not go there."});
+    SAME(refusal([&] { tal::wait(bench.loop, view->clicked(40, 1)); }), std::string{"other: A point outside the view."});
+    SAME(refusal([&] { tal::wait(bench.loop, view->keyed(tal::Key{tal::Code::f5})); }), std::string{"other: A key a page does not take."});
+    SAME(refusal([&] { tal::wait(bench.loop, view->typed(std::string{"\xFF"})); }), std::string{"other: Text that is not UTF-8."});
+    SAME(refusal([&] { tal::wait(bench.loop, view->zoomed(6)); }), std::string{"other: A zoom out of range."});
+
+    const auto later = [&]() -> tal::Task<void> { co_await view->typed("x"); };
+    const auto [one, two, done] = tal::wait(bench.loop, tal::all(view->changed(seen.sequence), view->changed(seen.sequence), [&]() -> tal::Task<int> {
+                                                co_await later();
+                                                co_return 0;
+                                            }()));
+
+    SAME(one.title, std::string{"type x"});
+    SAME(two, one);
+    (void)done;
+}
+
+// What a process tells unasked is held to the protocol too: twenty refusals keep the last sixteen
+// and count the rest; a change of a view the process never had, or a title over 64 KiB, kills the
+// process, and whoever waits for a change gets broken; a view lost says so; a view closed ends
+// the waiting for its changes.
+TRIAL("Browsing: refusals kept and counted, events of strangers and of excess kill the process, a view lost or closed") {
+    Bench bench;
+    const auto flooded = tal::wait(bench.loop, bench.browser({"flood"})->opened("file:///a", Browsing{}, Size{4, 4}));
+    tal::docs::Change seen = tal::wait(bench.loop, flooded->changed(0));
+
+    while (seen.sequence < 21) seen = tal::wait(bench.loop, flooded->changed(seen.sequence));
+
+    seen = tal::wait(bench.loop, flooded->changed(0));
+
+    SAME(seen.sequence, std::uint64_t{21});
+    SAME(seen.refusals.size(), std::size_t{16});
+    SAME(seen.skipped, std::uint64_t{4});
+    OUGHT(seen.refusals.front() == (tal::docs::Refusal{tal::docs::Refusal::Reason::outside, "https://example.test/4"}));
+    OUGHT(seen.refusals.back() == (tal::docs::Refusal{tal::docs::Refusal::Reason::outside, "https://example.test/19"}));
+    SAME(tal::wait(bench.loop, flooded->changed(seen.sequence - 1)).refusals.size(), std::size_t{1});
+
+    for (const std::string word : {"stranger", "long", "flag", "reason", "numbered"}) {
+        const auto view = tal::wait(bench.loop, bench.browser({word})->opened("file:///a", Browsing{}, Size{4, 4}));
+
+        SAME(kind_of([&] {
+                 for (std::uint64_t after = 0;; after = tal::wait(bench.loop, view->changed(after)).sequence) {}
+             }),
+             std::optional<Kind>{Kind::broken});
+    }
+
+    const auto lost = tal::wait(bench.loop, bench.browser({"lose"})->opened("file:///a", Browsing{}, Size{4, 4}));
+    const std::uint64_t first = tal::wait(bench.loop, lost->changed(0)).sequence;
+
+    tal::wait(bench.loop, lost->clicked(1, 1));
+    OUGHT(tal::wait(bench.loop, lost->changed(first)).lost);
+
+    std::shared_ptr<tal::docs::Browsed> closing = tal::wait(bench.loop, bench.browser()->opened("file:///a", Browsing{}, Size{4, 4}));
+    tal::docs::Browsed* held = closing.get();
+    const std::uint64_t now = tal::wait(bench.loop, held->changed(0)).sequence;
+
+    SAME(refusal([&] {
+             const auto [change, done] = tal::wait(bench.loop, tal::all(held->changed(now), [&]() -> tal::Task<int> {
+                                                        closing.reset();
+                                                        co_return 0;
+                                                    }()));
+
+             (void)change;
+             (void)done;
+         }),
+         std::string{"broken: The view was closed."});
+}
+
+// An engine that says before its hello that it is not there gives its reason, which a chain of
+// browsers puts in its sentence with the reasons of the others; one that speaks version 1 is not
+// there either.
+TRIAL("Browsing: an engine not there says why, and a chain says the reasons of all") {
+    Bench bench;
+
+    SAME(refusal([&] { (void)tal::wait(bench.loop, bench.browser({"unavailable=WebView2 Runtime is not installed."})->opened("a", Browsing{}, Size{1, 1})); }),
+         std::string{"unsupported: WebView2 Runtime is not installed."});
+    SAME(refusal([&] { (void)tal::wait(bench.loop, bench.browser({"old"})->opened("a", Browsing{}, Size{1, 1})); }),
+         std::string{"unsupported: The renderer toy did not greet: it speaks version 1."});
+
+    const auto chain = std::make_shared<tal::docs::Browsers>(
+        std::vector<std::shared_ptr<tal::docs::Browser>>{bench.browser({"unavailable=WebKitGTK 6 is not installed."}), bench.browser()});
+
+    SAME(refusal([&] { (void)tal::wait(bench.loop, chain->opened("a", Browsing{true, false}, Size{1, 1})); }),
+         std::string{"unsupported: WebKitGTK 6 is not installed. The renderer toy runs no scripts."});
+#if !defined(TAL_WEBKITGTK) && !defined(TAL_WEBVIEW2)
+    SAME(refusal([&] { (void)tal::wait(bench.loop, tal::docs::Browser::builtin()->opened("a", Browsing{}, Size{1, 1})); }),
+         std::string{"unsupported: This program was built without a web engine."});
+#endif
+}
+
 // and opens the page in the first that can; when none can, unsupported; any other trouble of a
 // link ends the search with it. A chain of renderers opens a document by the first link that
 // takes its head.
@@ -953,6 +1180,8 @@ TRIAL("Chains: browsers past those that cannot, renderers by the head") {
 
     SAME(tal::wait(bench.loop, page->shot()).title, std::string{"scripts=1 network=0"});
     SAME(refusal([&] { (void)tal::wait(bench.loop, chain->opened("a", Browsing{true, true}, Size{1, 1})); }),
+         std::string{"unsupported: The renderer toy is not there. The renderer toy runs no scripts. The renderer toy has no network."});
+    SAME(refusal([&] { (void)tal::wait(bench.loop, tal::docs::Browsers{{}}.opened("a", Browsing{}, Size{1, 1})); }),
          std::string{"unsupported: No browser can open the page."});
     SAME(refusal([] { (void)tal::docs::Browsers{std::vector<std::shared_ptr<tal::docs::Browser>>{nullptr}}; }), std::string{"other: A link of no browser."});
 

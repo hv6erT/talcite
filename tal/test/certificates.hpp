@@ -22,4 +22,6 @@ extern const std::string_view foreign_hex;
 
 extern const std::string_view stranger_bare_hex;
 
+extern const std::string_view kept_hex;
+
 }

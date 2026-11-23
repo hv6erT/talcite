@@ -8,13 +8,15 @@
 #include "tal/text.hpp"
 #include "tal/trouble.hpp"
 
-// The protocol between a program and a process that renders documents or pages for it (version 1),
+// The protocol between a program and a process that renders documents or pages for it (version 2),
 // described for the makers of engines in RENDERING.md at the root of tal: frames over the process's
 // standard streams, each its length, sort, number and payload, little-endian.
 //
 // Everything a frame says is checked as the words of a stranger: a frame is at most `widest` long
 // (a picture at the ceiling of pixels and some), a text at most a frame, and a frame read to its
-// end leaves nothing behind.
+// end leaves nothing behind. What a process tells of its views unasked (changed, refused, lost)
+// is held to the same: a title or an address at most `widest_said` bytes, a reason of refusal
+// that the protocol names.
 namespace tal::rendering {
 
 namespace {
@@ -262,6 +264,120 @@ std::vector<docs::Page> paged(std::span<const std::byte> payload) {
     from.ended();
 
     return made;
+}
+
+namespace {
+
+// A text of what a process said of a view, at most `widest_said` bytes. Throws `Trouble`
+// malformed for a longer one.
+std::string said(Reading& from) {
+    std::string made = from.text();
+
+    if (made.size() > widest_said) throw broken("a title or an address longer than 64 KiB.");
+
+    return made;
+}
+
+}
+
+// The change of a view a process told: the view, its title and address, whether it is loading and
+// whether it can go back and forward. Throws `Trouble` malformed for one of another shape, a text
+// over `widest_said` bytes or a flag other than 0 and 1.
+Changed changing(std::span<const std::byte> payload) {
+    Reading from{payload};
+    Changed made;
+
+    const auto flag = [&from] {
+        const std::uint8_t one = from.u8();
+
+        if (one > 1) throw broken("a flag other than 0 and 1.");
+
+        return one == 1;
+    };
+
+    made.view = from.u32();
+    made.title = said(from);
+    made.address = said(from);
+    made.loading = flag();
+    made.back = flag();
+    made.forward = flag();
+    from.ended();
+
+    return made;
+}
+
+// The payload of a changed frame for `changed`.
+Bytes changed_with(const Changed& changed) {
+    return Writing{}
+        .u32(changed.view)
+        .text(changed.title)
+        .text(changed.address)
+        .u8(changed.loading ? 1 : 0)
+        .u8(changed.back ? 1 : 0)
+        .u8(changed.forward ? 1 : 0)
+        .done();
+}
+
+// What a view refused, as a process told it: the view, the reason and the address. Throws
+// `Trouble` malformed for one of another shape, a reason the protocol does not name or an address
+// over `widest_said` bytes.
+Refused refusing(std::span<const std::byte> payload) {
+    Reading from{payload};
+    Refused made;
+
+    made.view = from.u32();
+    made.reason = from.u8();
+    made.address = said(from);
+    from.ended();
+
+    if (made.reason > last_refusal) throw broken("a refusal of no reason.");
+
+    return made;
+}
+
+// The payload of a refused frame for `refused`.
+Bytes refused_with(const Refused& refused) { return Writing{}.u32(refused.view).u8(refused.reason).text(refused.address).done(); }
+
+// The view a process lost, out of the payload of a lost frame. Throws `Trouble` malformed for one
+// of another shape.
+std::uint32_t losing(std::span<const std::byte> payload) {
+    Reading from{payload};
+    const std::uint32_t made = from.u32();
+
+    from.ended();
+
+    return made;
+}
+
+// The name of `sort` as RENDERING.md writes it, for messages; "unknown" for a number it does not
+// name.
+std::string_view named(Sort sort) {
+    switch (sort) {
+        case Sort::hello: return "hello";
+        case Sort::done: return "done";
+        case Sort::failed: return "failed";
+        case Sort::read: return "read";
+        case Sort::changed: return "changed";
+        case Sort::refused: return "refused";
+        case Sort::lost: return "lost";
+        case Sort::open: return "open";
+        case Sort::render: return "render";
+        case Sort::close: return "close";
+        case Sort::navigate: return "navigate";
+        case Sort::shot: return "shot";
+        case Sort::resize: return "resize";
+        case Sort::dismiss: return "dismiss";
+        case Sort::block: return "block";
+        case Sort::unread: return "unread";
+        case Sort::go: return "go";
+        case Sort::click: return "click";
+        case Sort::wheel: return "wheel";
+        case Sort::key: return "key";
+        case Sort::type: return "type";
+        case Sort::zoom: return "zoom";
+    }
+
+    return "unknown";
 }
 
 }

@@ -747,12 +747,16 @@ std::string looked_amiss(int code) {
 #endif
 }
 
-// The kind of trouble a code of getaddrinfo means: a name nobody knows is missing.
+// The kind of trouble a code of getaddrinfo means: a name nobody knows is missing, and a server
+// of names that failed for now, to be asked again later, is busy.
 ::tal::Kind looked_kind(int code) {
 #ifdef _WIN32
+    if (code == WSATRY_AGAIN) return ::tal::Kind::busy;
+
     return kind_of(code);
 #else
     switch (code) {
+        case EAI_AGAIN: return ::tal::Kind::busy;
         case EAI_NONAME:
 #ifdef EAI_NODATA
         case EAI_NODATA:

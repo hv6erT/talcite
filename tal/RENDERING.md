@@ -3,7 +3,7 @@
 tal renders documents (PDF and the like) and web pages in a separate process, so that a hostile file
 or page can at worst bring down that process, never the program. `tal::docs::renderer` and
 `tal::docs::browser` turn any program that speaks this protocol into an adapter of the ports
-`Renderer` and `Browser`; this file is the contract such a program keeps. It describes version 1.
+`Renderer` and `Browser`; this file is the contract such a program keeps. It describes version 2; the program speaks no other.
 
 ## Frames
 
@@ -32,6 +32,9 @@ and 8 bytes; `f64` is an IEEE 754 double in 8 bytes, little-endian, and always f
 | done | 2 | process | a question answered |
 | failed | 3 | process | a question that could not be answered |
 | read | 4 | process | a question for bytes of a document |
+| changed | 5 | process | a view changed (unasked, id 0) |
+| refused | 6 | process | a view refused something (unasked, id 0) |
+| lost | 7 | process | a view lost its page (unasked, id 0) |
 | open | 10 | program | open a document |
 | render | 11 | program | render a page of an open document |
 | close | 12 | program | close a document |
@@ -41,9 +44,17 @@ and 8 bytes; `f64` is an IEEE 754 double in 8 bytes, little-endian, and always f
 | dismiss | 16 | program | close a view |
 | block | 20 | program | bytes of a document, answering a read |
 | unread | 21 | program | a read that could not be answered |
+| go | 30 | program | take a view to an address, back, forward, again, or stop it |
+| click | 31 | program | a click in a view |
+| wheel | 32 | program | scroll a view |
+| key | 33 | program | a key pressed in a view |
+| type | 34 | program | text typed into a view |
+| zoom | 35 | program | zoom a view |
 
 The two sides number their own questions independently: the program numbers open, render, close,
-navigate, shot, resize and dismiss; the process numbers its reads. An answer carries the id of the
+navigate, shot, resize, dismiss, go, click, wheel, key, type and zoom; the process numbers its reads.
+What the process tells of its views unasked (changed, refused, lost) carries id 0 and is answered
+by nothing. An answer carries the id of the
 question it answers. The program may ask several questions before the first is answered, and the
 process may answer them in any order.
 
@@ -51,7 +62,7 @@ process may answer them in any order.
 
 The process speaks first, before it reads anything:
 
-    hello (id 0): u32 version (1), text engine, u8 abilities
+    hello (id 0): u32 version (2), text engine, u8 abilities
 
 `engine` names the engine and its version, for people. `abilities` is the sum of:
 
@@ -61,6 +72,12 @@ The process speaks first, before it reads anything:
 | pages (navigate, shot, resize, dismiss) | 2 |
 | scripts in pages | 4 |
 | network in pages | 8 |
+
+A process whose engine cannot work here (a library or a runtime missing) says so before its hello,
+and ends:
+
+    failed (id 0): u8 kind (unsupported, 8), text sentence (for people, as "WebView2 Runtime is not
+                   installed.")
 
 A process that ends or keeps silent before its hello, or greets with another version, is taken as an
 engine that is not there: the program does not start it again while it lives, and a chain of
@@ -111,6 +128,39 @@ the ability, and the program then refuses to open such a view.
     dismiss:  u32 view
     done:     empty
 
+The views are numbered by the program apart from the documents. A view goes on by itself only where
+its Browsing allows (with the network off, nowhere but `file:` addresses of no host or of localhost;
+`javascript:` never; `data:` and `blob:` never as the page itself); anything else is refused and told.
+New windows, downloads, dialogs of scripts, choosing files and asking for permissions are always
+refused. Pages from `file:` reach no other files from scripts.
+
+    go:       u32 view, u8 how (0 address, 1 back, 2 forward, 3 again, 4 stop), text address (for 0
+              only)
+    done:     empty, once the process has taken the way (a way within the same document too); the
+              page loads after, and says so as changes. A go not yet answered when the next one
+              comes fails at once. An address the view may not reach fails as refused.
+    click:    u32 view, f64 x, f64 y (pixels of the view)
+    wheel:    u32 view, f64 dx, f64 dy (pixels)
+    key:      u32 view, u8 key, u32 letter (0 for a named key), u8 modifiers (Shift 1, Ctrl 2, Alt 4)
+    type:     u32 view, text (UTF-8)
+    zoom:     u32 view, f64 factor (0.25 to 5)
+    done:     empty, for each of them
+
+The named keys are: Enter 1, Tab 2, Backspace 3, Delete 4, Escape 5, Up 6, Down 7, Left 8, Right 9,
+Home 10, End 11, Page Up 12, Page Down 13. Letters without Ctrl and Alt come as type, not as key.
+
+What the process tells of a view unasked, with id 0:
+
+    changed:  u32 view, text title, text address, u8 loading, u8 can go back, u8 can go forward
+              (each 0 or 1; the title and the address at most 64 KiB)
+    refused:  u32 view, u8 reason (a new window 0, an address outside what the view may reach 1, a
+              download 2, a dialog 3, a permission 4, a file to send 5), text address (at most 64 KiB)
+    lost:     u32 view: the process of the page ended (its memory, a crash); the view shows nothing
+              and must be opened again
+
+The program keeps the last change of each view, at most 16 refusals (the older counted) and whether
+it is lost, so a process cannot flood its memory.
+
 ## Troubles
 
     failed: u8 kind, text sentence
@@ -123,7 +173,9 @@ broken 6, malformed 7, unsupported 8, overdue 9, other 10. The sentence is shown
 Everything the process says is checked as the words of a stranger. The process is killed, and every
 question waiting on it fails as malformed, for: a frame longer than `ceiling` × 4 + 4096 bytes
 (`media::ceiling` pixels) or shorter than 5; a frame of an unknown sort, or anything before the hello;
-an answer to no question; a payload shorter or longer than its sort says; a number that is not
+an answer to no question; a payload shorter or longer than its sort says; something told of a view
+the process was never asked to open in this run, or told with an id; a title or an address over 64
+KiB, a flag other than 0 and 1, a refusal of no reason; a number that is not
 finite; a picture of another size than asked; more pages than the frame holds or a page of no area; a
 read of more than 1 MiB; a trouble of an unknown kind.
 

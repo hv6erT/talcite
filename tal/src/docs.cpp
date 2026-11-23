@@ -1,14 +1,20 @@
 #include "tal/docs.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <deque>
 #include <exception>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <utility>
+#include <vector>
 
 #include "tal/crypto.hpp"
 #include "tal/executor.hpp"
+#include "tal/text.hpp"
 #include "tal/trouble.hpp"
 
 #include "platform/core.hpp"
@@ -68,10 +74,123 @@ void sized(media::Size size) {
     if (much == 0 || much > media::ceiling) throw Trouble{Kind::other, "A size of no pixels or over the ceiling."};
 }
 
+// What a view has told of itself unasked: its last change, the refusals kept (the last
+// `most_refusals`, those before let go and counted), whether it is lost; and those waiting for its
+// next change, every one woken by it, so that one waiter cancelled loses nothing for the others.
+// A view that ends (dismissed, or its process ended) fails them.
+class Watched {
+public:
+    // The change of `self` after the number `after`: at once when the view has told one since,
+    // else when it does; `self` held meanwhile, so that the view may be closed under the waiting.
+    // Throws `Trouble` broken once the view has ended.
+    static Task<Change> after(std::shared_ptr<Watched> self, std::uint64_t after) {
+        Pending<void> waiting;
+
+        {
+            const std::lock_guard<std::mutex> kept{self->guard_};
+
+            if (self->ended_) throw *self->ended_;
+
+            if (self->current_.sequence > after) co_return self->made(after);
+
+            self->waiters_.push_back(waiting);
+        }
+
+        co_await waiting.task();
+
+        const std::lock_guard<std::mutex> kept{self->guard_};
+
+        if (self->ended_) throw *self->ended_;
+
+        co_return self->made(after);
+    }
+
+    // The view's title, address and state as `told`.
+    void told(const rendering::Changed& told) {
+        wake([&] {
+            current_.title = told.title;
+            current_.address = told.address;
+            current_.loading = told.loading;
+            current_.back = told.back;
+            current_.forward = told.forward;
+        });
+    }
+
+    // A refusal of the view.
+    void refused(Refusal refusal) {
+        wake([&] {
+            refusals_.emplace_back(current_.sequence + 1, std::move(refusal));
+
+            if (refusals_.size() > most_refusals) {
+                refusals_.pop_front();
+                ++current_.skipped;
+            }
+        });
+    }
+
+    // The view lost: its page is gone with the process that showed it.
+    void lost() {
+        wake([&] { current_.lost = true; });
+    }
+
+    // The view ended with `why`: those waiting and those who ask later get it.
+    void ended(const Trouble& why) {
+        std::vector<Pending<void>> woken;
+
+        {
+            const std::lock_guard<std::mutex> kept{guard_};
+
+            if (ended_) return;
+
+            ended_ = why;
+            woken.swap(waiters_);
+        }
+
+        for (Pending<void>& one : woken) one.settle();
+    }
+
+private:
+    static constexpr std::size_t most_refusals = 16;
+
+    // The change as one who saw the number `after` sees it: the state now, with the refusals since.
+    [[nodiscard]] Change made(std::uint64_t after) const {
+        Change one = current_;
+
+        for (const auto& [sequence, refusal] : refusals_)
+            if (sequence > after) one.refusals.push_back(refusal);
+
+        return one;
+    }
+
+    // What `change` does to the state, as the next change, and everyone waiting woken.
+    template <typename Changing>
+    void wake(Changing change) {
+        std::vector<Pending<void>> woken;
+
+        {
+            const std::lock_guard<std::mutex> kept{guard_};
+
+            if (ended_) return;
+
+            change();
+            ++current_.sequence;
+            woken.swap(waiters_);
+        }
+
+        for (Pending<void>& one : woken) one.settle();
+    }
+
+    mutable std::mutex guard_;
+    Change current_;
+    std::deque<std::pair<std::uint64_t, Refusal>> refusals_;
+    std::vector<Pending<void>> waiters_;
+    std::optional<Trouble> ended_;
+};
+
 // One process of an engine as its tasks see it: the engine's name, the process's streams, the
-// hello, the questions waiting for an answer and the last write, after which the next one goes
-// (under `writing`). The tasks hold the run, and the engine only for a moment, never the process
-// itself.
+// hello, the questions waiting for an answer, the views it was ever asked to open and those still
+// watched, and the last write, after which the next one goes (under `writing`). The tasks hold the
+// run, and the engine only for a moment, never the process itself.
 struct Run {
     std::string name;
     std::uint64_t generation = 0;
@@ -80,9 +199,12 @@ struct Run {
     Stream errors;
     std::shared_ptr<Shared<rendering::Hello>> greeting;
     Pending<rendering::Hello> hello;
+    std::optional<Trouble> unavailable;
     bool greeted = false;
     bool ended = false;
     std::map<std::uint32_t, Pending<Frame>> waiting;
+    std::set<std::uint32_t> views;
+    std::map<std::uint32_t, std::weak_ptr<Watched>> watched;
     std::mutex writing;
     std::shared_ptr<Pending<void>> written;
 };
@@ -262,8 +384,8 @@ public:
     // `secret` payload is wiped once framed.
     // Throws `Trouble`: what `greeted` throws; broken when the process `generation` has ended,
     // and what was open in it with it; the trouble the process answered with; overdue for no
-    // answer within the limit (the process is killed); broken when the process ends meanwhile;
-    // malformed when it breaks the protocol.
+    // answer within the limit (the process is killed; the message names the question); broken when
+    // the process ends meanwhile; malformed when it breaks the protocol.
     Task<Frame> asked(Sort sort, Bytes payload, std::chrono::milliseconds limit, std::uint64_t generation = 0, bool secret = false) {
         const Wiping<Bytes> wiping{payload, secret};
 
@@ -281,7 +403,7 @@ public:
 
             got = co_await within(limit, answer.task());
         } catch (const Overdue&) {
-            const Trouble late(Kind::overdue, "The renderer " + name_ + " did not answer in time.");
+            const Trouble late(Kind::overdue, "The renderer " + name_ + " did not answer in time (" + std::string{rendering::named(sort)} + ").");
 
             forget(run, id);
             killed(run, late);
@@ -359,11 +481,28 @@ public:
         return numbers_;
     }
 
-    // A number for a view, which reads nothing.
-    std::uint32_t numbered() {
+    // A number for a view of the process `generation`, numbered apart from documents, with what
+    // the process will tell of it watched from now on, before it is even asked to open it. Throws
+    // `Trouble` broken when that process has ended.
+    std::pair<std::uint32_t, std::shared_ptr<Watched>> watching(std::uint64_t generation) {
         const std::lock_guard<std::mutex> kept{guard_};
 
-        return ++numbers_;
+        if (!run_ || run_->ended || run_->generation != generation) throw ended(name_, "before it was asked.");
+
+        auto watched = std::make_shared<Watched>();
+        const std::uint32_t number = ++views_;
+
+        run_->views.insert(number);
+        run_->watched[number] = watched;
+
+        return {number, watched};
+    }
+
+    // What the process `generation` tells of the view `number` no longer watched.
+    void unwatched(std::uint64_t generation, std::uint32_t number) {
+        const std::lock_guard<std::mutex> kept{guard_};
+
+        if (run_ && run_->generation == generation) run_->watched.erase(number);
     }
 
     // Lets go of the reader of the document `number`.
@@ -472,6 +611,8 @@ private:
         if (refused) {
             engine->lose(run, *refused);
 
+            if (run->unavailable) throw *run->unavailable;
+
             throw Trouble{Kind::unsupported, "The renderer " + name + " did not greet: " + refused->what()};
         }
 
@@ -532,6 +673,15 @@ private:
     // Throws `Trouble` malformed for anything else, a second hello, a frame before the hello or
     // an answer to no question.
     void heard(const std::shared_ptr<Run>& run, Frame frame) {
+        if (!run->greeted && frame.sort == Sort::failed && frame.id == 0) {
+            const Trouble why = rendering::failure(frame.payload);
+
+            run->unavailable = Trouble{Kind::unsupported, why.what()};
+            run->hello.fail(std::make_exception_ptr(*run->unavailable));
+
+            return;
+        }
+
         if (!run->greeted) {
             if (frame.sort != Sort::hello) throw Trouble{Kind::malformed, "The renderer broke the protocol: no hello first."};
 
@@ -554,7 +704,9 @@ private:
                 }
             }
 
-            if (!answer) throw Trouble{Kind::malformed, "The renderer broke the protocol: an answer to no question."};
+            if (!answer)
+                throw Trouble{Kind::malformed, std::string{"The renderer broke the protocol: an answer to no question (number "} + std::to_string(frame.id) +
+                                                   (frame.sort == Sort::done ? ", done)." : ", failed).")};
 
             answer->settle(std::move(frame));
 
@@ -585,7 +737,54 @@ private:
             return;
         }
 
+        if (frame.sort == Sort::changed || frame.sort == Sort::refused || frame.sort == Sort::lost) {
+            if (frame.id != 0) throw Trouble{Kind::malformed, "The renderer broke the protocol: an event with a number."};
+
+            told_of(run, frame);
+
+            return;
+        }
+
         throw Trouble{Kind::malformed, "The renderer broke the protocol: a frame of an unknown sort."};
+    }
+
+    // What `run`'s process told of a view unasked, `frame`, handed to whoever watches the view;
+    // nothing when nobody does any longer. Throws `Trouble` malformed for a frame of another shape
+    // or a view that process was never asked to open.
+    void told_of(const std::shared_ptr<Run>& run, const Frame& frame) {
+        std::optional<rendering::Changed> changed;
+        std::optional<rendering::Refused> refused;
+        std::uint32_t view = 0;
+
+        if (frame.sort == Sort::changed) {
+            changed = rendering::changing(frame.payload);
+            view = changed->view;
+        } else if (frame.sort == Sort::refused) {
+            refused = rendering::refusing(frame.payload);
+            view = refused->view;
+        } else {
+            view = rendering::losing(frame.payload);
+        }
+
+        std::shared_ptr<Watched> watched;
+
+        {
+            const std::lock_guard<std::mutex> kept{guard_};
+
+            if (!run->views.contains(view)) throw Trouble{Kind::malformed, "The renderer broke the protocol: an event of a view it never had."};
+
+            if (const auto found = run->watched.find(view); found != run->watched.end()) watched = found->second.lock();
+        }
+
+        if (!watched) return;
+
+        if (changed) {
+            watched->told(*changed);
+        } else if (refused) {
+            watched->refused(Refusal{static_cast<Refusal::Reason>(refused->reason), std::move(refused->address)});
+        } else {
+            watched->lost();
+        }
     }
 
     // The process `started` is `run`'s: its streams go to the run, the process to the engine.
@@ -626,6 +825,7 @@ private:
     // question waiting failed with `why`.
     void killed(const std::shared_ptr<Run>& run, const Trouble& why) {
         std::map<std::uint32_t, Pending<Frame>> waiting;
+        std::map<std::uint32_t, std::weak_ptr<Watched>> watched;
         Process process;
 
         {
@@ -635,6 +835,7 @@ private:
 
             run->ended = true;
             waiting.swap(run->waiting);
+            watched.swap(run->watched);
 
             if (run_ == run) process = process_;
         }
@@ -646,6 +847,11 @@ private:
         run->hello.fail(failed);
 
         for (auto& [id, answer] : waiting) answer.fail(failed);
+
+        const Trouble gone = why.kind() == Kind::broken ? why : ended(name_, why.what());
+
+        for (auto& [view, weak] : watched)
+            if (const std::shared_ptr<Watched> one = weak.lock()) one->ended(gone);
     }
 
     Command program_;
@@ -659,6 +865,7 @@ private:
     std::uint64_t generations_ = 0;
     std::uint32_t questions_ = 0;
     std::uint32_t numbers_ = 0;
+    std::uint32_t views_ = 0;
     std::map<std::uint32_t, std::shared_ptr<meta::Reader>> readers_;
     bool lost_ = false;
 };
@@ -774,15 +981,124 @@ private:
     Recognizing takes_;
 };
 
+// The number of a named key in the protocol, for `code`, or none for a key it does not name.
+std::optional<rendering::Named> named(Code code) {
+    switch (code) {
+        case Code::enter: return rendering::Named::enter;
+        case Code::tab: return rendering::Named::tab;
+        case Code::backspace: return rendering::Named::backspace;
+        case Code::remove: return rendering::Named::remove;
+        case Code::escape: return rendering::Named::escape;
+        case Code::up: return rendering::Named::up;
+        case Code::down: return rendering::Named::down;
+        case Code::left: return rendering::Named::left;
+        case Code::right: return rendering::Named::right;
+        case Code::home: return rendering::Named::home;
+        case Code::end: return rendering::Named::end;
+        case Code::pageup: return rendering::Named::pageup;
+        case Code::pagedown: return rendering::Named::pagedown;
+        default: return std::nullopt;
+    }
+}
+
 // A view open in a process.
 class Viewed final : public Browsed {
 public:
-    // The view `number` of the process `generation` of `engine`, at `size`.
-    Viewed(std::shared_ptr<Engine> engine, std::uint32_t number, std::uint64_t generation, media::Size size)
-        : engine_(std::move(engine)), number_(number), generation_(generation), size_(size) {}
+    // The view `number` of the process `generation` of `engine`, at `size`, what the process
+    // tells of it `watched`.
+    Viewed(std::shared_ptr<Engine> engine, std::uint32_t number, std::uint64_t generation, media::Size size, std::shared_ptr<Watched> watched)
+        : engine_(std::move(engine)), number_(number), generation_(generation), size_(size), watched_(std::move(watched)) {}
 
-    // Dismisses the view in its process.
-    ~Viewed() override { engine_->told(generation_, Sort::dismiss, rendering::Writing().u32(number_).done()); }
+    // Dismisses the view in its process; whoever waits for a change of it gets `Trouble` broken.
+    ~Viewed() override {
+        engine_->unwatched(generation_, number_);
+        watched_->ended(Trouble{Kind::broken, "The view was closed."});
+        engine_->told(generation_, Sort::dismiss, rendering::Writing().u32(number_).done());
+    }
+
+    // The view taken to `address`, once the process has taken the way there (the page loads
+    // after, and tells so as changes). Throws what `Engine::asked` throws: refused among it for an
+    // address the view may not go to.
+    Task<void> went(std::string address) override {
+        (void)co_await engine_->asked(Sort::go, rendering::Writing().u32(number_).u8(static_cast<std::uint8_t>(rendering::Going::address)).text(address).done(),
+                                      engine_->limits().answer, generation_);
+    }
+
+    // The view taken back, forward, loaded again or stopped, as `step` says. Throws what
+    // `Engine::asked` throws.
+    Task<void> stepped(Step step) override {
+        const auto going = static_cast<rendering::Going>(static_cast<std::uint8_t>(step) + 1);
+
+        (void)co_await engine_->asked(Sort::go, rendering::Writing().u32(number_).u8(static_cast<std::uint8_t>(going)).done(), engine_->limits().answer,
+                                      generation_);
+    }
+
+    // A click at (`x`, `y`) in pixels of the view. Throws `Trouble` other for a point outside the
+    // view; what `Engine::asked` throws.
+    Task<void> clicked(double x, double y) override {
+        const media::Size size = current();
+
+        if (!(x >= 0 && y >= 0 && x < size.width && y < size.height)) throw Trouble{Kind::other, "A point outside the view."};
+
+        (void)co_await engine_->asked(Sort::click, rendering::Writing().u32(number_).f64(x).f64(y).done(), engine_->limits().answer, generation_);
+    }
+
+    // The view scrolled by (`dx`, `dy`) pixels. Throws `Trouble` other for a distance that is not
+    // finite; what `Engine::asked` throws.
+    Task<void> wheeled(double dx, double dy) override {
+        if (!std::isfinite(dx) || !std::isfinite(dy)) throw Trouble{Kind::other, "A distance that is not finite."};
+
+        (void)co_await engine_->asked(Sort::wheel, rendering::Writing().u32(number_).f64(dx).f64(dy).done(), engine_->limits().answer, generation_);
+    }
+
+    // The key `key` pressed in the view: a letter without Ctrl and Alt as typed text, a named key
+    // or a letter with them as a key. Throws `Trouble` other for a key the protocol does not name
+    // (F1 and the like) or none; what `Engine::asked` throws.
+    Task<void> keyed(Key key) override {
+        const Mods mods = key.mods();
+
+        if (key.letter() != 0 && !mods.ctrl && !mods.alt) {
+            std::string text;
+
+            text::encoded(text, key.letter());
+            co_await typed(std::move(text));
+            co_return;
+        }
+
+        const std::optional<rendering::Named> name = named(key.code());
+
+        if (key.letter() == 0 && !name) throw Trouble{Kind::other, "A key a page does not take."};
+
+        const std::uint8_t with = (mods.shift ? rendering::shift : 0) | (mods.ctrl ? rendering::ctrl : 0) | (mods.alt ? rendering::alt : 0);
+        Bytes payload = rendering::Writing()
+                            .u32(number_)
+                            .u8(static_cast<std::uint8_t>(name.value_or(rendering::Named::none)))
+                            .u32(static_cast<std::uint32_t>(key.letter()))
+                            .u8(with)
+                            .done();
+
+        (void)co_await engine_->asked(Sort::key, std::move(payload), engine_->limits().answer, generation_);
+    }
+
+    // `text` typed into the view where its focus is. Throws `Trouble` other for text that is not
+    // UTF-8; what `Engine::asked` throws.
+    Task<void> typed(std::string text) override {
+        if (!text::valid(text)) throw Trouble{Kind::other, "Text that is not UTF-8."};
+
+        (void)co_await engine_->asked(Sort::type, rendering::Writing().u32(number_).text(text).done(), engine_->limits().answer, generation_);
+    }
+
+    // The view zoomed to `factor` (0.25 to 5). Throws `Trouble` other for a factor out of that
+    // range; what `Engine::asked` throws.
+    Task<void> zoomed(double factor) override {
+        if (!(factor >= 0.25 && factor <= 5)) throw Trouble{Kind::other, "A zoom out of range."};
+
+        (void)co_await engine_->asked(Sort::zoom, rendering::Writing().u32(number_).f64(factor).done(), engine_->limits().answer, generation_);
+    }
+
+    // The change of the view after the number `after`, at once or when it comes. Throws `Trouble`
+    // broken when the view was closed or its process ended.
+    Task<Change> changed(std::uint64_t after) override { return Watched::after(watched_, after); }
 
     // The picture of the view, its title and address. Throws what `Engine::asked` throws, broken
     // among it when the process of the view has ended.
@@ -828,13 +1144,15 @@ private:
     std::uint64_t generation_;
     mutable std::mutex guard_;
     media::Size size_;
+    std::shared_ptr<Watched> watched_;
 };
 
 // The adapter of `Browser` on a program that speaks the protocol.
 class Showing final : public Browser {
 public:
-    // The program `program`, held to `limits`.
-    Showing(Command program, Limits limits, Port<Processes> processes) : engine_(std::make_shared<Engine>(std::move(program), limits, std::move(processes))) {}
+    // The program `program`, held to `limits`, called `name` (by default the name of the program).
+    Showing(Command program, Limits limits, Port<Processes> processes, std::string name = {})
+        : engine_(std::make_shared<Engine>(std::move(program), limits, std::move(processes), std::move(name))) {}
 
     // The name of the program.
     [[nodiscard]] std::string_view name() const override { return engine_->name(); }
@@ -855,7 +1173,8 @@ public:
         if (how.network && (hello.abilities & rendering::network) == 0) throw Trouble{Kind::unsupported, "The renderer " + engine_->name() + " has no network."};
 
         const std::uint64_t generation = engine_->generation();
-        const std::uint32_t number = engine_->numbered();
+        const std::pair<std::uint32_t, std::shared_ptr<Watched>> watching = engine_->watching(generation);
+        const std::uint32_t number = watching.first;
         Bytes payload = rendering::Writing()
                             .u32(number)
                             .text(address)
@@ -865,9 +1184,22 @@ public:
                             .u32(size.height)
                             .done();
 
-        (void)co_await engine_->asked(Sort::navigate, std::move(payload), engine_->limits().browsing, generation);
+        std::optional<Trouble> refused;
 
-        co_return std::make_shared<Viewed>(engine_, number, generation, size);
+        try {
+            (void)co_await engine_->asked(Sort::navigate, std::move(payload), engine_->limits().browsing, generation);
+        } catch (const Trouble& why) {
+            refused = why;
+        }
+
+        if (refused) {
+            engine_->unwatched(generation, number);
+            engine_->told(generation, Sort::dismiss, rendering::Writing().u32(number).done());
+
+            throw *refused;
+        }
+
+        co_return std::make_shared<Viewed>(engine_, number, generation, size, watching.second);
     }
 
 private:
@@ -929,14 +1261,42 @@ public:
     }
 };
 
-// A view of the scripted browser: its address as its title, in white.
+// The place of a web engine in the chain of tal built without one: it refuses every page
+// (`Trouble` unsupported) with the sentence that says why.
+class Unshown final : public Browser {
+public:
+    // Its name.
+    [[nodiscard]] std::string_view name() const override { return "none"; }
+
+    // Throws `Trouble` unsupported when awaited, always.
+    Task<std::shared_ptr<Browsed>> opened(std::string address, Browsing how, media::Size size) override {
+        (void)address;
+        (void)how;
+        (void)size;
+
+        throw Trouble{Kind::unsupported, "This program was built without a web engine."};
+
+        co_return nullptr;
+    }
+};
+
+// A view of the scripted browser: its address as its title, in white; what it is asked to do
+// written down in `browser`'s `heard`, which must outlive it, and what the browser tells of it
+// watched.
 class Shown final : public Browsed {
 public:
-    // The view of `address` at `size`.
-    Shown(std::string address, media::Size size) : address_(std::move(address)), size_(size) {}
+    // The view of `address` at `size`, of `browser`.
+    Shown(ScriptedBrowser& browser, std::string address, media::Size size) : browser_(browser), address_(std::move(address)), size_(size) {}
 
-    // The view in white, titled with its address.
+    // Closes the view: whoever waits for a change of it gets `Trouble` broken.
+    ~Shown() override { watched->ended(Trouble{Kind::broken, "The view was closed."}); }
+
+    // The view in white, titled with its address, counted in the browser's `shots`. Throws what the
+    // browser is to throw.
     Task<Shot> shot() override {
+        refusing();
+        ++browser_.shots;
+
         Shot made;
 
         made.pixels = Played::toned(size_, 255);
@@ -946,14 +1306,97 @@ public:
         co_return made;
     }
 
-    // The view at `size`. Throws `Trouble` other for a size of no pixels or over the ceiling.
+    // The view at `size`. Throws `Trouble` other for a size of no pixels or over the ceiling;
+    // what the browser is to throw.
     Task<void> resized(media::Size size) override {
         sized(size);
+        heard("resize " + std::to_string(size.width) + "x" + std::to_string(size.height));
         size_ = size;
         co_return;
     }
 
+    // Written down as "go" and the address, which the view then shows.
+    Task<void> went(std::string address) override {
+        heard("go " + address);
+        address_ = std::move(address);
+        co_return;
+    }
+
+    // Written down as the name of the step.
+    Task<void> stepped(Step step) override {
+        constexpr std::string_view names[] = {"back", "forward", "reload", "stop"};
+
+        heard(std::string{names[static_cast<std::size_t>(step)]});
+        co_return;
+    }
+
+    // Written down as "click" and the point.
+    Task<void> clicked(double x, double y) override {
+        heard("click " + spelled(x) + " " + spelled(y));
+        co_return;
+    }
+
+    // Written down as "wheel" and the distance.
+    Task<void> wheeled(double dx, double dy) override {
+        heard("wheel " + spelled(dx) + " " + spelled(dy));
+        co_return;
+    }
+
+    // Written down as "key", its modifiers ("ctrl+", "alt+", "shift+") and the letter or the
+    // number of its code.
+    Task<void> keyed(Key key) override {
+        const Mods mods = key.mods();
+        std::string made = "key ";
+
+        if (mods.ctrl) made += "ctrl+";
+        if (mods.alt) made += "alt+";
+        if (mods.shift) made += "shift+";
+
+        if (key.letter() != 0) text::encoded(made, key.letter());
+        else made += std::to_string(static_cast<int>(key.code()));
+
+        heard(std::move(made));
+        co_return;
+    }
+
+    // Written down as "type" and the text.
+    Task<void> typed(std::string text) override {
+        heard("type " + text);
+        co_return;
+    }
+
+    // Written down as "zoom" and the factor.
+    Task<void> zoomed(double factor) override {
+        heard("zoom " + spelled(factor));
+        co_return;
+    }
+
+    // The change after `after`, as the browser tells them.
+    Task<Change> changed(std::uint64_t after) override { return Watched::after(watched, after); }
+
+    std::shared_ptr<Watched> watched = std::make_shared<Watched>();
+
 private:
+    // `what` written down, unless the browser is to throw, which it does then.
+    void heard(std::string what) {
+        refusing();
+        browser_.heard.push_back(std::move(what));
+    }
+
+    // Throws what the browser is to throw, if anything.
+    void refusing() const {
+        if (browser_.failing) throw *browser_.failing;
+    }
+
+    // `value` as the shortest decimal that reads back as it.
+    static std::string spelled(double value) {
+        char made[32];
+        const auto end = std::to_chars(made, made + sizeof made, value).ptr;
+
+        return std::string{made, end};
+    }
+
+    ScriptedBrowser& browser_;
     std::string address_;
     media::Size size_;
 };
@@ -997,21 +1440,29 @@ Browsers::Browsers(std::vector<std::shared_ptr<Browser>> links, std::string name
 
 // The page at `address`, opened by the first link that can: a link that refuses (`Trouble`
 // unsupported: its engine is not there, or cannot allow what `how` asks for) passes it to the
-// next. Throws `Trouble`: unsupported when every link refuses; what a link throws otherwise.
+// next. Throws `Trouble`: unsupported when every link refuses, its sentence the reasons of them
+// all, one after another; what a link throws otherwise.
 Task<std::shared_ptr<Browsed>> Browsers::opened(std::string address, Browsing how, media::Size size) {
+    std::string reasons;
+
     for (const std::shared_ptr<Browser>& one : links_) {
         std::shared_ptr<Browsed> made;
+        std::optional<Trouble> refused;
 
         try {
             made = co_await one->opened(address, how, size);
         } catch (const Trouble& why) {
             if (why.kind() != Kind::unsupported) throw;
+
+            refused = why;
         }
 
         if (made) co_return made;
+
+        if (refused) reasons += (reasons.empty() ? "" : " ") + std::string{refused->what()};
     }
 
-    throw Trouble{Kind::unsupported, "No browser can open the page."};
+    throw Trouble{Kind::unsupported, reasons.empty() ? std::string{"No browser can open the page."} : reasons};
 }
 
 // The adapter of `Renderer` on `program`, a program that speaks the protocol of tal's renderers
@@ -1024,6 +1475,45 @@ std::shared_ptr<Renderer> renderer(Command program, Recognizing takes, Limits li
 // held to `limits`.
 std::shared_ptr<Browser> browser(Command program, Limits limits, Port<Processes> processes) {
     return std::make_shared<Showing>(std::move(program), limits, std::move(processes));
+}
+
+// The browsers built into tal, as a chain called "tal": WebView2 on Windows when tal is built with
+// it (TAL_WEBVIEW2), WebKitGTK elsewhere when built with it (TAL_WEBKITGTK), otherwise a link that
+// only says that the program has no web engine.
+std::shared_ptr<Browser> Browser::builtin() {
+    std::vector<std::shared_ptr<Browser>> links;
+
+#if defined(TAL_WEBVIEW2)
+    links.push_back(webview2());
+#elif defined(TAL_WEBKITGTK)
+    links.push_back(webkitgtk());
+#else
+    links.push_back(std::make_shared<Unshown>());
+#endif
+
+    return std::make_shared<Browsers>(std::move(links), "tal");
+}
+
+// The adapter on tal-render-gtk beside our own program, called "gtk": WebKitGTK 6 on a private
+// Broadway display, held to `limits` and to 1 GiB of memory.
+std::shared_ptr<Browser> webkitgtk(Limits limits, Port<Processes> processes) {
+    Command program;
+
+    program.program = beside_us("tal-render-gtk");
+    program.memory = std::uint64_t{1} << 30;
+
+    return std::make_shared<Showing>(std::move(program), limits, std::move(processes), "gtk");
+}
+
+// The adapter on tal-render-webview2 beside our own program, called "webview2", held to `limits`
+// and to 1 GiB of memory.
+std::shared_ptr<Browser> webview2(Limits limits, Port<Processes> processes) {
+    Command program;
+
+    program.program = beside_us("tal-render-webview2");
+    program.memory = std::uint64_t{1} << 30;
+
+    return std::make_shared<Showing>(std::move(program), limits, std::move(processes), "webview2");
 }
 
 // The renderers built into tal, as a chain called "tal": PDFium when tal is built with it
@@ -1073,9 +1563,45 @@ Task<std::shared_ptr<Document>> ScriptedRenderer::opened(std::shared_ptr<meta::R
 // size of no pixels or over the ceiling.
 Task<std::shared_ptr<Browsed>> ScriptedBrowser::opened(std::string address, Browsing how, media::Size size) {
     sized(size);
+
+    if (failing) throw *failing;
+
     addresses.push_back(address);
     ways.push_back(how);
-    co_return std::make_shared<Shown>(std::move(address), size);
+
+    auto made = std::make_shared<Shown>(*this, std::move(address), size);
+
+    views_.push_back(made);
+
+    co_return made;
 }
+
+// The last view opened, still open, told a change: `title`, `address`, whether it is `loading` and
+// can go `back` and `forward`. Nothing when there is none.
+void ScriptedBrowser::changed(std::string title, std::string address, bool loading, bool back, bool forward) {
+    if (const auto view = last()) {
+        rendering::Changed told;
+
+        told.title = std::move(title);
+        told.address = std::move(address);
+        told.loading = loading;
+        told.back = back;
+        told.forward = forward;
+        std::static_pointer_cast<Shown>(view)->watched->told(told);
+    }
+}
+
+// The last view opened, still open, told that it refused something.
+void ScriptedBrowser::refused(Refusal refusal) {
+    if (const auto view = last()) std::static_pointer_cast<Shown>(view)->watched->refused(std::move(refusal));
+}
+
+// The last view opened, still open, told that it is lost.
+void ScriptedBrowser::lost() {
+    if (const auto view = last()) std::static_pointer_cast<Shown>(view)->watched->lost();
+}
+
+// The last view opened, if it is still open.
+std::shared_ptr<Browsed> ScriptedBrowser::last() const { return views_.empty() ? nullptr : views_.back().lock(); }
 
 }

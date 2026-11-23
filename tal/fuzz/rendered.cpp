@@ -6,16 +6,19 @@
 #include <span>
 #include <vector>
 
+#include "tal/text.hpp"
 #include "tal/trouble.hpp"
 
 #include "rendering.hpp"
 
 // What a renderer's process says, from libFuzzer: the input, cut into pieces of the sizes its first
 // byte gives, read as frames and every frame read as each of the protocol's answers (a hello, a
-// trouble, the pages of a document, a picture of the size its first bytes claim). Nothing may
-// crash, hang or read out of bounds; a frame breaks the protocol only as `Trouble` malformed; a
-// frame is never longer than the most allowed; a picture read has exactly the size asked and the
-// bytes of it, and a page has an area.
+// trouble, the pages of a document, a picture of the size its first bytes claim) and as each of
+// what a process tells unasked (a change, a refusal, a view lost). Nothing may crash, hang or read
+// out of bounds; a frame breaks the protocol only as `Trouble` malformed; a frame is never longer
+// than the most allowed; a picture read has exactly the size asked and the bytes of it, a page has
+// an area, a title or an address is at most 64 KiB of UTF-8 and a refusal has a reason the
+// protocol names; what is read is written back the same.
 namespace {
 
 // Reads `frame` as every answer of the protocol, checking what comes out.
@@ -39,6 +42,34 @@ void read_as_answers(const tal::rendering::Frame& frame) {
     try {
         for (const tal::docs::Page& one : tal::rendering::paged(payload))
             if (!(one.width > 0) || !(one.height > 0)) std::terminate();
+    } catch (const tal::Trouble& why) {
+        if (why.kind() != tal::Kind::malformed) std::terminate();
+    }
+
+    try {
+        const tal::rendering::Changed made = tal::rendering::changing(payload);
+
+        if (made.title.size() > tal::rendering::widest_said || made.address.size() > tal::rendering::widest_said) std::terminate();
+
+        if (!tal::text::valid(made.title) || !tal::text::valid(made.address)) std::terminate();
+
+        if (tal::rendering::changing(tal::rendering::changed_with(made)).title != made.title) std::terminate();
+    } catch (const tal::Trouble& why) {
+        if (why.kind() != tal::Kind::malformed) std::terminate();
+    }
+
+    try {
+        const tal::rendering::Refused made = tal::rendering::refusing(payload);
+
+        if (made.reason > tal::rendering::last_refusal || made.address.size() > tal::rendering::widest_said) std::terminate();
+
+        if (tal::rendering::refusing(tal::rendering::refused_with(made)).address != made.address) std::terminate();
+    } catch (const tal::Trouble& why) {
+        if (why.kind() != tal::Kind::malformed) std::terminate();
+    }
+
+    try {
+        (void)tal::rendering::losing(payload);
     } catch (const tal::Trouble& why) {
         if (why.kind() != tal::Kind::malformed) std::terminate();
     }

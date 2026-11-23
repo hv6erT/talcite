@@ -15,13 +15,16 @@
 
 namespace tal::rendering {
 
-inline constexpr std::uint32_t version = 1;
+inline constexpr std::uint32_t version = 2;
 
 enum class Sort : std::uint8_t {
     hello = 1,
     done = 2,
     failed = 3,
     read = 4,
+    changed = 5,
+    refused = 6,
+    lost = 7,
     open = 10,
     render = 11,
     close = 12,
@@ -31,7 +34,38 @@ enum class Sort : std::uint8_t {
     dismiss = 16,
     block = 20,
     unread = 21,
+    go = 30,
+    click = 31,
+    wheel = 32,
+    key = 33,
+    type = 34,
+    zoom = 35,
 };
+
+[[nodiscard]] std::string_view named(Sort sort);
+
+enum class Going : std::uint8_t { address = 0, back = 1, forward = 2, reload = 3, stop = 4 };
+
+enum class Named : std::uint8_t {
+    none = 0,
+    enter = 1,
+    tab = 2,
+    backspace = 3,
+    remove = 4,
+    escape = 5,
+    up = 6,
+    down = 7,
+    left = 8,
+    right = 9,
+    home = 10,
+    end = 11,
+    pageup = 12,
+    pagedown = 13,
+};
+
+inline constexpr std::uint8_t shift = 1;
+inline constexpr std::uint8_t ctrl = 2;
+inline constexpr std::uint8_t alt = 4;
 
 inline constexpr std::uint8_t documents = 1;
 inline constexpr std::uint8_t pages = 2;
@@ -41,6 +75,8 @@ inline constexpr std::uint8_t network = 8;
 inline constexpr std::size_t head = 9;
 inline constexpr std::size_t widest = media::ceiling * 4 + 4096;
 inline constexpr std::uint32_t widest_block = std::uint32_t{1} << 20;
+inline constexpr std::uint32_t widest_said = std::uint32_t{64} << 10;
+inline constexpr std::uint8_t last_refusal = 5;
 
 struct Frame {
     Sort sort = Sort::done;
@@ -132,5 +168,30 @@ struct Hello {
 [[nodiscard]] media::Pixels pictured(Reading& from, media::Size size);
 
 [[nodiscard]] std::vector<docs::Page> paged(std::span<const std::byte> payload);
+
+struct Changed {
+    std::uint32_t view = 0;
+    std::string title;
+    std::string address;
+    bool loading = false;
+    bool back = false;
+    bool forward = false;
+};
+
+struct Refused {
+    std::uint32_t view = 0;
+    std::uint8_t reason = 0;
+    std::string address;
+};
+
+[[nodiscard]] Changed changing(std::span<const std::byte> payload);
+
+[[nodiscard]] Bytes changed_with(const Changed& changed);
+
+[[nodiscard]] Refused refusing(std::span<const std::byte> payload);
+
+[[nodiscard]] Bytes refused_with(const Refused& refused);
+
+[[nodiscard]] std::uint32_t losing(std::span<const std::byte> payload);
 
 }

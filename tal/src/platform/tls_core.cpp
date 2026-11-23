@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -51,8 +53,8 @@
 // for roots given: a chain to a trusted root, fit for server authentication, for the name (or
 // address) asked for; revocation only with the store, leniently, rejecting only what is revoked.
 // A server sends the intermediate authorities of its identity only from the stores of Windows, so
-// those of the bundle wait in the user's store of intermediate authorities while the adapter lives;
-// that store makes nobody trusted.
+// those of the bundle wait in the user's store of intermediate authorities while an adapter of any
+// program of the user's session needs them, marked as tal's; that store makes nobody trusted.
 namespace tal::net {
 
 namespace {
@@ -117,11 +119,92 @@ struct Certificate {
     }
 };
 
-// The intermediate authorities this program put in the user's store, by their encoding, with how
-// many adapters need each; those that were there already are not counted and stay.
+// The mark tal puts on an authority it lends to the user's store: a property of its own, kept with
+// the certificate in the store. A certificate without it was there before and is never taken out.
+constexpr DWORD lent_mark = CERT_FIRST_USER_PROP_ID + 0x7A1;
+
+// A handle of Windows, closed with its holder.
+struct Handle {
+    HANDLE held = nullptr;
+
+    // Closes the handle.
+    ~Handle() {
+        if (held != nullptr) (void)CloseHandle(held);
+    }
+
+    Handle() = default;
+    explicit Handle(HANDLE given) : held(given) {}
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+
+    Handle(Handle&& other) noexcept : held(std::exchange(other.held, nullptr)) {}
+
+    // Takes the handle of `other`, closing its own.
+    Handle& operator=(Handle&& other) noexcept {
+        if (this != &other) {
+            if (held != nullptr) (void)CloseHandle(held);
+
+            held = std::exchange(other.held, nullptr);
+        }
+
+        return *this;
+    }
+};
+
+// The lock every program of this user's session takes around the store of intermediate
+// authorities, while it lends, gives back and tells who still holds what.
+class Locked {
+public:
+    // Takes the lock, waiting for it; a holder that ended without letting it go leaves it taken
+    // over, abandoned, and that counts as having it.
+    Locked() : mutex_(CreateMutexW(nullptr, FALSE, L"Local\\tal-tls-lent")) {
+        if (mutex_.held == nullptr) return;
+
+        const DWORD waited = WaitForSingleObject(mutex_.held, INFINITE);
+
+        owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
+    }
+
+    // Lets the lock go.
+    ~Locked() {
+        if (owned_) (void)ReleaseMutex(mutex_.held);
+    }
+
+    Locked(const Locked&) = delete;
+    Locked& operator=(const Locked&) = delete;
+
+    // Whether the lock is had; without it nothing is lent.
+    [[nodiscard]] bool owned() const { return owned_; }
+
+private:
+    Handle mutex_;
+    bool owned_ = false;
+};
+
+// The name of the kernel object that tells that a program holds the authority of the encoding
+// `key`: one per program and authority, for the user's session, after the SHA-256 of the encoding.
+std::wstring held_name(const std::string& key) {
+    crypto::Summing sum{crypto::Sum::sha256};
+
+    sum.feed(std::span<const std::byte>{reinterpret_cast<const std::byte*>(key.data()), key.size()});
+
+    std::wstring made = L"Local\\tal-tls-lent-";
+
+    for (const std::byte one : sum.done()) {
+        constexpr std::wstring_view digits = L"0123456789abcdef";
+
+        made += digits[static_cast<unsigned>(one) >> 4];
+        made += digits[static_cast<unsigned>(one) & 15];
+    }
+
+    return made;
+}
+
+// The intermediate authorities this program holds in the user's store, by their encoding, with
+// how many adapters need each and the kernel object that tells the other programs so.
 struct Lent {
     std::mutex guard;
-    std::map<std::string, int> held;
+    std::map<std::string, std::pair<int, Handle>> held;
 };
 
 // The authorities lent, for all the adapters of the program.
@@ -139,18 +222,32 @@ HCERTSTORE authorities() {
 // The encoding of `one` as a key.
 std::string encoded(PCCERT_CONTEXT one) { return std::string{reinterpret_cast<const char*>(one->pbCertEncoded), one->cbCertEncoded}; }
 
-// Puts `one` in the user's store of intermediate authorities, unless it is there; whether it is
-// counted as ours.
+// Whether `one`, a certificate of the store, carries tal's mark.
+bool marked(PCCERT_CONTEXT one) {
+    DWORD size = 0;
+
+    return CertGetCertificateContextProperty(one, lent_mark, nullptr, &size) != FALSE;
+}
+
+// Puts `one` in the user's store of intermediate authorities, unless it is there, with tal's mark;
+// whether this program holds it. One that was there without the mark is the user's and is not
+// held. Several programs share an authority: each holds it by a kernel object of its own name,
+// and the last to give it back takes it out (`returned`). A marked one nobody holds was left by a
+// program that ended without giving it back; it is held as lent.
 bool lending(PCCERT_CONTEXT one) {
     Lent& all = lent();
     const std::lock_guard<std::mutex> kept{all.guard};
     const std::string key = encoded(one);
 
     if (const auto found = all.held.find(key); found != all.held.end()) {
-        ++found->second;
+        ++found->second.first;
 
         return true;
     }
+
+    const Locked locked;
+
+    if (!locked.owned()) return false;
 
     Store store;
 
@@ -158,23 +255,53 @@ bool lending(PCCERT_CONTEXT one) {
 
     if (store.held == nullptr) return false;
 
-    if (!CertAddEncodedCertificateToStore(store.held, X509_ASN_ENCODING, one->pbCertEncoded, one->cbCertEncoded, CERT_STORE_ADD_NEW, nullptr)) return false;
+    Certificate there;
 
-    all.held.emplace(key, 1);
+    there.held = CertFindCertificateInStore(store.held, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, one, nullptr);
+
+    if (there.held != nullptr && !marked(there.held)) return false;
+
+    if (there.held == nullptr) {
+        if (!CertAddCertificateContextToStore(store.held, one, CERT_STORE_ADD_NEW, &there.held)) return false;
+
+        const BYTE sign = 1;
+        CRYPT_DATA_BLOB mark{1, const_cast<BYTE*>(&sign)};
+
+        if (!CertSetCertificateContextProperty(there.held, lent_mark, 0, &mark)) {
+            (void)CertDeleteCertificateFromStore(CertDuplicateCertificateContext(there.held));
+
+            return false;
+        }
+    }
+
+    Handle holding{CreateEventW(nullptr, TRUE, FALSE, held_name(key).c_str())};
+
+    if (holding.held == nullptr) return false;
+
+    all.held.emplace(key, std::pair<int, Handle>{1, std::move(holding)});
 
     return true;
 }
 
-// Gives back the authority of the encoding `key` that `lending` counted; the last adapter that
-// needed it takes it out of the user's store.
+// Gives back the authority of the encoding `key` that `lending` counted. The last adapter of the
+// program lets its kernel object go, and when no other program holds one, the marked authority
+// leaves the user's store.
 void returned(const std::string& key) {
     Lent& all = lent();
     const std::lock_guard<std::mutex> kept{all.guard};
     const auto found = all.held.find(key);
 
-    if (found == all.held.end() || --found->second > 0) return;
+    if (found == all.held.end() || --found->second.first > 0) return;
+
+    const Locked locked;
 
     all.held.erase(found);
+
+    if (!locked.owned()) return;
+
+    const std::wstring name = held_name(key);
+
+    if (const Handle other{OpenEventW(SYNCHRONIZE, FALSE, name.c_str())}; other.held != nullptr) return;
 
     Store store;
 
@@ -189,8 +316,10 @@ void returned(const std::string& key) {
 
     if (wanted.held == nullptr) return;
 
-    if (PCCERT_CONTEXT there = CertFindCertificateInStore(store.held, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, wanted.held, nullptr); there != nullptr)
-        (void)CertDeleteCertificateFromStore(there);
+    if (PCCERT_CONTEXT there = CertFindCertificateInStore(store.held, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, wanted.held, nullptr); there != nullptr) {
+        if (marked(there)) (void)CertDeleteCertificateFromStore(there);
+        else (void)CertFreeCertificateContext(there);
+    }
 }
 
 // Whether `one` signed itself: a root, which a server does not send.
@@ -350,6 +479,122 @@ void forgotten(PCCERT_CONTEXT one) {
     (void)NCryptFreeObject(provider);
 }
 
+// The bytes of `drawn` as letters, a to p, two for each byte.
+std::wstring lettered(const Bytes& drawn) {
+    std::wstring made;
+
+    for (const std::byte at : drawn) {
+        made += static_cast<wchar_t>(L'a' + (static_cast<unsigned>(at) & 15));
+        made += static_cast<wchar_t>(L'a' + (static_cast<unsigned>(at) >> 4));
+    }
+
+    return made;
+}
+
+// The key of the identity `one`, read from its bundle into memory only, moved to the user's store
+// of keys (the Software Key Storage Provider) under a name of its own, which the certificate then
+// names. Schannel runs in a process of the system and reaches only a stored key; stored where
+// Windows itself would put it, under the bundle's friendly name, it would be shared by every
+// identity of that name, and two adapters, in one program or in two, would sign with each other's
+// key and take it away from each other. The key travels between the two as PKCS#8 under a random
+// password of its own, which no one else sees and which is wiped at once; the copy in memory,
+// which only the certificate's cached handle reaches (it has no name to be found by), goes with
+// that handle. Trouble broken when a step fails.
+std::optional<Trouble> homed(PCCERT_CONTEXT one) {
+    NCRYPT_KEY_HANDLE fleeting = 0;
+    DWORD spec = 0;
+    BOOL owned = FALSE;
+
+    if (!CryptAcquireCertificatePrivateKey(one, CRYPT_ACQUIRE_SILENT_FLAG | CRYPT_ACQUIRE_ONLY_NCRYPT_KEY_FLAG | CRYPT_ACQUIRE_CACHE_FLAG, nullptr, &fleeting, &spec, &owned))
+        return described(Kind::broken, "The identity's key cannot be had", static_cast<SECURITY_STATUS>(GetLastError()));
+
+    Bytes drawn = crypto::random(16);
+    std::wstring secret = lettered(drawn);
+
+    crypto::wiped(drawn);
+
+    struct {
+        CRYPT_PKCS12_PBE_PARAMS params;
+        BYTE salt[16];
+    } pbe{};
+
+    const Bytes salt = crypto::random(sizeof pbe.salt);
+
+    pbe.params.iIterations = 2048;
+    pbe.params.cbSalt = sizeof pbe.salt;
+    std::memcpy(pbe.salt, salt.data(), sizeof pbe.salt);
+
+    char oid[] = szOID_PKCS_12_pbeWithSHA1And3KeyTripleDES;
+    NCryptBuffer outward[3] = {{static_cast<ULONG>((secret.size() + 1) * sizeof(wchar_t)), NCRYPTBUFFER_PKCS_SECRET, secret.data()},
+                               {static_cast<ULONG>(sizeof oid), NCRYPTBUFFER_PKCS_ALG_OID, oid},
+                               {static_cast<ULONG>(sizeof pbe), NCRYPTBUFFER_PKCS_ALG_PARAM, &pbe}};
+    NCryptBufferDesc out{NCRYPTBUFFER_VERSION, 3, outward};
+    DWORD size = 0;
+    SECURITY_STATUS status = NCryptExportKey(fleeting, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &out, nullptr, 0, &size, 0);
+    std::vector<BYTE> sealed(status == ERROR_SUCCESS ? size : 0);
+
+    if (status == ERROR_SUCCESS) status = NCryptExportKey(fleeting, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &out, sealed.data(), size, &size, 0);
+
+    if (owned) (void)NCryptFreeObject(fleeting);
+
+    const auto wipe = [&] {
+        std::fill(secret.begin(), secret.end(), L'\0');
+        std::fill(sealed.begin(), sealed.end(), BYTE{0});
+    };
+
+    if (status != ERROR_SUCCESS) {
+        wipe();
+
+        return described(Kind::broken, "The identity's key cannot be moved", status);
+    }
+
+    std::wstring name = L"tal-" + lettered(crypto::random(16));
+
+    NCryptBuffer inward[2] = {{static_cast<ULONG>((secret.size() + 1) * sizeof(wchar_t)), NCRYPTBUFFER_PKCS_SECRET, secret.data()},
+                              {static_cast<ULONG>((name.size() + 1) * sizeof(wchar_t)), NCRYPTBUFFER_PKCS_KEY_NAME, name.data()}};
+    NCryptBufferDesc in{NCRYPTBUFFER_VERSION, 2, inward};
+    NCRYPT_PROV_HANDLE provider = 0;
+    NCRYPT_KEY_HANDLE stored = 0;
+
+    status = NCryptOpenStorageProvider(&provider, MS_KEY_STORAGE_PROVIDER, 0);
+
+    if (status == ERROR_SUCCESS) status = NCryptImportKey(provider, 0, NCRYPT_PKCS8_PRIVATE_KEY_BLOB, &in, &stored, sealed.data(), static_cast<DWORD>(sealed.size()), NCRYPT_DO_NOT_FINALIZE_FLAG);
+
+    if (status == ERROR_SUCCESS) status = NCryptFinalizeKey(stored, 0);
+
+    wipe();
+
+    if (stored != 0 && status != ERROR_SUCCESS) (void)NCryptDeleteKey(stored, 0);
+    else if (stored != 0) (void)NCryptFreeObject(stored);
+
+    if (provider != 0) (void)NCryptFreeObject(provider);
+
+    if (status != ERROR_SUCCESS) return described(Kind::broken, "The identity's key cannot be stored", status);
+
+    CRYPT_KEY_PROV_INFO info{};
+
+    info.pwszContainerName = name.data();
+    info.pwszProvName = const_cast<LPWSTR>(MS_KEY_STORAGE_PROVIDER);
+    info.dwKeySpec = spec == CERT_NCRYPT_KEY_SPEC ? 0 : spec;
+
+    (void)CertSetCertificateContextProperty(one, CERT_NCRYPT_KEY_HANDLE_PROP_ID, 0, nullptr);
+    (void)CertSetCertificateContextProperty(one, CERT_KEY_CONTEXT_PROP_ID, 0, nullptr);
+
+    if (!CertSetCertificateContextProperty(one, CERT_KEY_PROV_INFO_PROP_ID, 0, &info)) {
+        const auto why = static_cast<SECURITY_STATUS>(GetLastError());
+
+        if (NCryptOpenStorageProvider(&provider, MS_KEY_STORAGE_PROVIDER, 0) == ERROR_SUCCESS) {
+            if (NCryptOpenKey(provider, &stored, name.c_str(), 0, 0) == ERROR_SUCCESS) (void)NCryptDeleteKey(stored, 0);
+
+            (void)NCryptFreeObject(provider);
+        }
+
+        return described(Kind::broken, "The identity's key cannot be named", why);
+    }
+
+    return std::nullopt;
+}
+
 // What the connections of one adapter share: the credentials of both sides, the roots given with
 // their own chain engine, and the server's identity. What cannot be set up is kept as the trouble
 // of the side it concerns, and every session of that side reports it at once.
@@ -434,8 +679,9 @@ private:
         if (!CertCreateCertificateChainEngine(&config, &engine)) client_amiss = described(Kind::broken, "The trusted certificates cannot be used", static_cast<SECURITY_STATUS>(GetLastError()));
     }
 
-    // The identity of the PKCS#12 bundle `given` opened with `password`. Its key goes to the user's
-    // store of keys, since Schannel runs in a process of the system and cannot reach a key kept in
+    // The identity of the PKCS#12 bundle `given` opened with `password`. Its key is read into
+    // memory only, then goes to the user's store of keys under a name of this adapter's own
+    // (`homed`), since Schannel runs in a process of the system and cannot reach a key kept in
     // memory alone, and leaves it with the adapter.
     void identifying(const Bytes& given, const std::string& password) {
         CRYPT_DATA_BLOB blob{};
@@ -445,7 +691,7 @@ private:
 
         std::wstring spoken = widened(password);
 
-        identities.held = PFXImportCertStore(&blob, spoken.c_str(), CRYPT_USER_KEYSET);
+        identities.held = PFXImportCertStore(&blob, spoken.c_str(), PKCS12_NO_PERSIST_KEY | PKCS12_ALWAYS_CNG_KSP | CRYPT_EXPORTABLE);
 
         const DWORD why = GetLastError();
 
@@ -462,6 +708,12 @@ private:
 
         if (identity.held == nullptr) {
             server_amiss = Trouble{Kind::malformed, "The identity has no certificate with its key."};
+
+            return;
+        }
+
+        if (std::optional<Trouble> why = homed(identity.held)) {
+            server_amiss = std::move(why);
 
             return;
         }

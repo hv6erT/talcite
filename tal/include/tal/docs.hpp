@@ -5,16 +5,19 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "tal/key.hpp"
 #include "tal/meta.hpp"
 #include "tal/pixels.hpp"
 #include "tal/port.hpp"
 #include "tal/process.hpp"
 #include "tal/task.hpp"
+#include "tal/trouble.hpp"
 
 namespace tal::docs {
 
@@ -69,6 +72,31 @@ struct Shot {
     std::string address;
 };
 
+enum class Step : std::uint8_t { back, forward, reload, stop };
+
+struct Refusal {
+    enum class Reason : std::uint8_t { window, outside, download, dialog, permission, upload };
+
+    Reason reason = Reason::outside;
+    std::string address;
+
+    friend bool operator==(const Refusal&, const Refusal&) = default;
+};
+
+struct Change {
+    std::uint64_t sequence = 0;
+    std::string title;
+    std::string address;
+    bool loading = false;
+    bool back = false;
+    bool forward = false;
+    std::vector<Refusal> refusals;
+    std::uint64_t skipped = 0;
+    bool lost = false;
+
+    friend bool operator==(const Change&, const Change&) = default;
+};
+
 class Browsed {
 public:
     Browsed() = default;
@@ -80,11 +108,29 @@ public:
     [[nodiscard]] virtual Task<Shot> shot() = 0;
 
     [[nodiscard]] virtual Task<void> resized(media::Size size) = 0;
+
+    [[nodiscard]] virtual Task<void> went(std::string address) = 0;
+
+    [[nodiscard]] virtual Task<void> stepped(Step step) = 0;
+
+    [[nodiscard]] virtual Task<void> clicked(double x, double y) = 0;
+
+    [[nodiscard]] virtual Task<void> wheeled(double dx, double dy) = 0;
+
+    [[nodiscard]] virtual Task<void> keyed(Key key) = 0;
+
+    [[nodiscard]] virtual Task<void> typed(std::string text) = 0;
+
+    [[nodiscard]] virtual Task<void> zoomed(double factor) = 0;
+
+    [[nodiscard]] virtual Task<Change> changed(std::uint64_t after) = 0;
 };
 
 class Browser : public Adapter {
 public:
     static constexpr std::string_view kind = "browser";
+
+    [[nodiscard]] static std::shared_ptr<Browser> builtin();
 
     [[nodiscard]] virtual Task<std::shared_ptr<Browsed>> opened(std::string address, Browsing how, media::Size size) = 0;
 };
@@ -130,6 +176,10 @@ using Recognizing = std::function<bool(std::span<const std::byte> head)>;
 [[nodiscard]] std::shared_ptr<Browser> browser(Command program, Limits limits = {}, Port<Processes> processes = {});
 
 [[nodiscard]] std::shared_ptr<Renderer> pdfium(Limits limits = {}, Port<Processes> processes = {});
+
+[[nodiscard]] std::shared_ptr<Browser> webkitgtk(Limits limits = {}, Port<Processes> processes = {});
+
+[[nodiscard]] std::shared_ptr<Browser> webview2(Limits limits = {}, Port<Processes> processes = {});
 
 enum class Encoding : std::uint8_t { windows_1252, windows_1250, iso_8859_2 };
 
@@ -209,8 +259,22 @@ public:
 
     [[nodiscard]] Task<std::shared_ptr<Browsed>> opened(std::string address, Browsing how, media::Size size) override;
 
+    void changed(std::string title, std::string address, bool loading = false, bool back = false, bool forward = false);
+
+    void refused(Refusal refusal);
+
+    void lost();
+
     std::vector<std::string> addresses;
     std::vector<Browsing> ways;
+    std::vector<std::string> heard;
+    std::size_t shots = 0;
+    std::optional<Trouble> failing;
+
+private:
+    [[nodiscard]] std::shared_ptr<Browsed> last() const;
+
+    std::vector<std::weak_ptr<Browsed>> views_;
 };
 
 }

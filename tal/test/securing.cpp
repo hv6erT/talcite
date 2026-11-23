@@ -4,11 +4,13 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 
 #include "tal/bytes.hpp"
+#include "tal/crypto.hpp"
 #include "tal/executor.hpp"
 #include "tal/net.hpp"
 #include "tal/task.hpp"
@@ -328,20 +330,6 @@ TRIAL("TLS: the built-in one passes the trials of the port; a build without one 
 
 namespace {
 
-// How many certificates the user's store of intermediate authorities holds.
-int authorities() {
-    const HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
-    int many = 0;
-
-    if (store == nullptr) return -1;
-
-    for (PCCERT_CONTEXT one = CertEnumCertificatesInStore(store, nullptr); one != nullptr; one = CertEnumCertificatesInStore(store, one)) ++many;
-
-    (void)CertCloseStore(store, 0);
-
-    return many;
-}
-
 // The bytes of the hexadecimal digits `text`.
 Bytes unhexed(std::string_view text) {
     Bytes made;
@@ -351,30 +339,234 @@ Bytes unhexed(std::string_view text) {
     return made;
 }
 
+// A named mutex of the user's session, taken for as long as this object lives; an abandoned one
+// counts as taken.
+class Taken {
+public:
+    // Takes the mutex of the name `name`, waiting for it.
+    explicit Taken(const wchar_t* name) : mutex_(CreateMutexW(nullptr, FALSE, name)) {
+        if (mutex_ == nullptr) return;
+
+        const DWORD waited = WaitForSingleObject(mutex_, INFINITE);
+
+        owned_ = waited == WAIT_OBJECT_0 || waited == WAIT_ABANDONED;
+    }
+
+    // Lets the mutex go.
+    ~Taken() {
+        if (owned_) (void)ReleaseMutex(mutex_);
+        if (mutex_ != nullptr) (void)CloseHandle(mutex_);
+    }
+
+    Taken(const Taken&) = delete;
+    Taken& operator=(const Taken&) = delete;
+
+    // Whether it is had.
+    [[nodiscard]] bool owned() const { return owned_; }
+
+private:
+    HANDLE mutex_ = nullptr;
+    bool owned_ = false;
+};
+
+// The mark of an authority tal lent, as the adapter puts it.
+constexpr DWORD lent_mark = CERT_FIRST_USER_PROP_ID + 0x7A1;
+
+// The intermediate authority of the bundle `hex`, by its encoding: the certificate that is neither
+// talcite.test nor signed by itself. Empty when the bundle does not open.
+std::string intermediate(std::string_view hex) {
+    Bytes given = unhexed(hex);
+    CRYPT_DATA_BLOB blob{static_cast<DWORD>(given.size()), reinterpret_cast<BYTE*>(given.data())};
+    const HCERTSTORE store = PFXImportCertStore(&blob, L"talcite", PKCS12_NO_PERSIST_KEY);
+    std::string made;
+
+    if (store == nullptr) return made;
+
+    for (PCCERT_CONTEXT one = CertEnumCertificatesInStore(store, nullptr); one != nullptr; one = CertEnumCertificatesInStore(store, one)) {
+        wchar_t name[128]{};
+
+        (void)CertGetNameStringW(one, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, name, 128);
+
+        if (std::wstring_view{name} == L"talcite.test") continue;
+
+        if (CertCompareCertificateName(X509_ASN_ENCODING, &one->pCertInfo->Subject, &one->pCertInfo->Issuer)) continue;
+
+        made.assign(reinterpret_cast<const char*>(one->pbCertEncoded), one->cbCertEncoded);
+    }
+
+    (void)CertCloseStore(store, 0);
+
+    return made;
 }
 
-TRIAL("TLS: Schannel lends an identity's intermediate authority to the user's store while it lives") {
-    const int before = authorities();
+// The name of the kernel object by which a program holds the authority of the encoding `key`.
+std::wstring held_name(const std::string& key) {
+    tal::crypto::Summing sum{tal::crypto::Sum::sha256};
+
+    sum.feed(std::span<const std::byte>{reinterpret_cast<const std::byte*>(key.data()), key.size()});
+
+    std::wstring made = L"Local\\tal-tls-lent-";
+
+    for (const std::byte one : sum.done()) {
+        constexpr std::wstring_view digits = L"0123456789abcdef";
+
+        made += digits[static_cast<unsigned>(one) >> 4];
+        made += digits[static_cast<unsigned>(one) & 15];
+    }
+
+    return made;
+}
+
+// How the user's store of intermediate authorities holds a certificate.
+enum class Kept { absent, plain, marked };
+
+// What the user's store and the programs show of the authority of the encoding `key`, seen under
+// the adapters' lock, so that no program changes it meanwhile: how the store keeps it, and whether
+// some program holds it.
+std::pair<Kept, bool> seen(const std::string& key) {
+    const Taken lock{L"Local\\tal-tls-lent"};
+    const HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
+    Kept made = Kept::absent;
+
+    if (store != nullptr) {
+        const PCCERT_CONTEXT wanted = CertCreateCertificateContext(X509_ASN_ENCODING, reinterpret_cast<const BYTE*>(key.data()), static_cast<DWORD>(key.size()));
+
+        if (wanted != nullptr) {
+            if (const PCCERT_CONTEXT there = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, wanted, nullptr); there != nullptr) {
+                DWORD size = 0;
+
+                made = CertGetCertificateContextProperty(there, lent_mark, nullptr, &size) ? Kept::marked : Kept::plain;
+
+                (void)CertFreeCertificateContext(there);
+            }
+
+            (void)CertFreeCertificateContext(wanted);
+        }
+
+        (void)CertCloseStore(store, 0);
+    }
+
+    const HANDLE held = OpenEventW(SYNCHRONIZE, FALSE, held_name(key).c_str());
+
+    if (held != nullptr) (void)CloseHandle(held);
+
+    return {made, held != nullptr};
+}
+
+// Puts the authority of the encoding `key` in the user's store without tal's mark, as the user
+// would, or takes it out again; under the adapters' lock. Whether it was done.
+bool kept(const std::string& key, bool in) {
+    const Taken lock{L"Local\\tal-tls-lent"};
+    const HCERTSTORE store = CertOpenStore(CERT_STORE_PROV_SYSTEM_W, 0, 0, CERT_SYSTEM_STORE_CURRENT_USER, L"CA");
+    bool made = false;
+
+    if (store == nullptr) return false;
+
+    const auto* bytes = reinterpret_cast<const BYTE*>(key.data());
+
+    if (in) {
+        made = CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, bytes, static_cast<DWORD>(key.size()), CERT_STORE_ADD_NEW, nullptr) != FALSE;
+    } else if (const PCCERT_CONTEXT wanted = CertCreateCertificateContext(X509_ASN_ENCODING, bytes, static_cast<DWORD>(key.size())); wanted != nullptr) {
+        if (const PCCERT_CONTEXT there = CertFindCertificateInStore(store, X509_ASN_ENCODING, 0, CERT_FIND_EXISTING, wanted, nullptr); there != nullptr)
+            made = CertDeleteCertificateFromStore(there) != FALSE;
+
+        (void)CertFreeCertificateContext(wanted);
+    }
+
+    (void)CertCloseStore(store, 0);
+
+    return made;
+}
+
+}
+
+// The intermediate of a bundle goes to the user's store, with tal's mark, while an adapter of any
+// program needs it. Other programs of the user may run the same trial at the same time, so the
+// store is only read under the adapters' lock, and after the last adapter here the authority is
+// either gone or held by another program. A program holding it meanwhile, here a kernel object of
+// the same name, keeps it in the store when the adapters here end; the authority then stays marked
+// with nobody holding it, as after a program that ended without giving it back (unless another
+// program running the trial has meanwhile swept it), and the next adapter takes it out at its end.
+TRIAL("TLS: Schannel lends an identity's intermediate authority to the user's store while any program needs it") {
+    const std::string middle = intermediate(tal::testing::certificates::chained_hex);
     const tal::net::Credentials chained{unhexed(tal::testing::certificates::chained_hex), "talcite", {}};
 
-    OUGHT(before >= 0);
+    OUGHT(!middle.empty());
+
+    const auto gone = [&middle] {
+        const auto [how, held] = seen(middle);
+
+        return how == Kept::absent || (how == Kept::marked && held);
+    };
+
+    // An unmarked copy is the user's, or one an older tal left; nothing here can be said then.
+    OUGHT(seen(middle).first != Kept::plain);
+
+    if (seen(middle).first == Kept::plain) return;
 
     {
         const auto one = tal::net::Tls::builtin(chained);
-        const int during = authorities();
 
-        OUGHT(during == before || during == before + 1);
+        SAME(seen(middle), (std::pair{Kept::marked, true}));
 
         {
             const auto two = tal::net::Tls::builtin(chained);
 
-            SAME(authorities(), during);
+            SAME(seen(middle), (std::pair{Kept::marked, true}));
         }
 
-        SAME(authorities(), during);
+        SAME(seen(middle), (std::pair{Kept::marked, true}));
     }
 
-    SAME(authorities(), before);
+    OUGHT(gone());
+
+    {
+        const HANDLE other = CreateEventW(nullptr, TRUE, FALSE, held_name(middle).c_str());
+
+        OUGHT(other != nullptr);
+
+        {
+            const auto one = tal::net::Tls::builtin(chained);
+        }
+
+        SAME(seen(middle), (std::pair{Kept::marked, true}));
+
+        (void)CloseHandle(other);
+    }
+
+    OUGHT(seen(middle).first != Kept::plain);
+
+    {
+        const auto one = tal::net::Tls::builtin(chained);
+    }
+
+    OUGHT(gone());
+}
+
+// An authority the user keeps in the store, without tal's mark, is the user's: an adapter neither
+// marks nor holds it, and it stays after the adapter. The trial puts it there itself, so two
+// programs running it at once take turns, by a lock of the trial's own.
+TRIAL("TLS: an intermediate authority the user keeps stays the user's") {
+    const Taken turn{L"Local\\tal-test-kept-authority"};
+    const std::string middle = intermediate(tal::testing::certificates::kept_hex);
+    const tal::net::Credentials given{unhexed(tal::testing::certificates::kept_hex), "talcite", {}};
+
+    OUGHT(turn.owned());
+    OUGHT(!middle.empty());
+
+    const bool added = seen(middle).first == Kept::absent && kept(middle, true);
+
+    SAME(seen(middle), (std::pair{Kept::plain, false}));
+
+    {
+        const auto one = tal::net::Tls::builtin(given);
+
+        SAME(seen(middle), (std::pair{Kept::plain, false}));
+    }
+
+    SAME(seen(middle), (std::pair{Kept::plain, false}));
+
+    if (added) OUGHT(kept(middle, false));
 }
 
 #endif

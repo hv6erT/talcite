@@ -447,7 +447,7 @@ TRIAL("PDFium: the program spoken to directly") {
 
     const tal::rendering::Hello greeting = tal::rendering::greeting(hello.payload);
 
-    SAME(greeting.version, std::uint32_t{1});
+    SAME(greeting.version, std::uint32_t{2});
     OUGHT(greeting.engine.starts_with("PDFium 160."));
     OUGHT(greeting.abilities == tal::rendering::documents);
 

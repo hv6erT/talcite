@@ -292,12 +292,38 @@ TRIAL("Address: a local one is its path; names, garbage and what has no meaning 
           }) == tal::Kind::other);
 }
 
+// A name nobody knows is missing. The answer comes from the system's server of names, which may
+// fail for now when many ask at once; that is busy, and it is asked again, a little later each
+// time. A server that still cannot answer has said all it can, and busy is then the answer. A
+// wrong answer is told with the system's words and code.
 TRIAL("Names: a number is its own address, a name nobody knows is missing, families by turns") {
     tal::Loop loop;
 
+    const auto unknown = [&loop] {
+        std::string made = "found";
+
+        for (int round = 1; round <= 5; ++round) {
+            try {
+                (void)tal::wait(loop, tal::net::resolve("nosuch.invalid", 80));
+
+                return std::string{"found"};
+            } catch (const tal::Trouble& why) {
+                made = std::string{tal::spoken(why.kind())};
+
+                if (why.kind() == tal::Kind::missing) return made;
+
+                if (why.kind() != tal::Kind::busy) return made + ": " + why.what() + " (" + std::to_string(why.code()) + ")";
+            }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds{200 * round});
+        }
+
+        return made;
+    };
+
     SAME(tal::wait(loop, tal::net::resolve("127.0.0.1", 80)), std::vector<Address>{Address("127.0.0.1", 80)});
     SAME(tal::wait(loop, tal::net::resolve("127.0.0.1", 80, Family::four)), std::vector<Address>{Address("127.0.0.1", 80)});
-    OUGHT(refused(loop, tal::net::resolve("nosuch.invalid", 80)) == tal::Kind::missing);
+    if (const std::string answer = unknown(); answer != tal::spoken(tal::Kind::busy)) SAME(answer, std::string{tal::spoken(tal::Kind::missing)});
     OUGHT(refused(loop, tal::net::resolve("localhost", 80, Family::local)) == tal::Kind::unsupported);
 
     for (const Address& one : tal::wait(loop, tal::net::resolve("localhost", 81))) SAME(one.port(), std::uint16_t{81});
@@ -585,6 +611,8 @@ TRIAL("TCP: a task waits on the loop it runs on, and comes back to it") {
     OUGHT(same);
 }
 
+// The server counts a conversation after its own write, which may end after the client has its
+// echo; both counts are waited for.
 TRIAL("Listener: many connections at once, each with its own conversation") {
     tal::Loop loop;
     const Listener listener = listening(loop);
@@ -613,8 +641,7 @@ TRIAL("Listener: many connections at once, each with its own conversation") {
             if (tal::text::of(co_await gathered(one.stream, said.size())) == said) ++into;
         }(listener.mine(), at, answered));
 
-    UNTIL(loop, answered.load() == many);
-    SAME(served.load(), many);
+    UNTIL(loop, answered.load() == many && served.load() == many);
 }
 
 TRIAL("Listener: a close refuses the waiting accept and frees the port; a taken port is busy; one accept at a time") {

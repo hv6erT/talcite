@@ -55,11 +55,9 @@ bool carried(net::Session& from, net::Session& to) {
     return true;
 }
 
-// A client of `host` with `client` and a server with `server`, after their handshake, which ends
-// when both are ready, either fails, or nothing moves any more.
-Pair shook(const Making& made, net::Credentials client, net::Credentials server, const std::string& host = "talcite.test") {
-    Pair one{made(std::move(client))->client(host), made(std::move(server))->server()};
-
+// `one` after its handshake, which ends when both are ready, either fails, or nothing moves any
+// more.
+Pair driven(Pair one) {
     for (int turn = 0; turn < 50; ++turn) {
         const bool there = carried(*one.client, *one.server);
         const bool back = carried(*one.server, *one.client);
@@ -70,6 +68,11 @@ Pair shook(const Making& made, net::Credentials client, net::Credentials server,
     }
 
     return one;
+}
+
+// A client of `host` with `client` and a server with `server`, after their handshake.
+Pair shook(const Making& made, net::Credentials client, net::Credentials server, const std::string& host = "talcite.test") {
+    return driven(Pair{made(std::move(client))->client(host), made(std::move(server))->server()});
 }
 
 // The kind of trouble of `session`, if any.
@@ -157,6 +160,17 @@ void handshaken(const Making& made) {
     }
 
     SAME(shaken(shook(made, trusting(), showing(given::chained_hex))), std::string{});
+
+    // Two identities whose bundles bear the same friendly name, alive at once: each server signs
+    // with its own key, whichever was read last.
+    {
+        const auto first = made(showing(given::identity_hex));
+        const auto second = made(showing(given::chained_hex));
+        const auto asking = made(trusting());
+
+        SAME(shaken(driven(Pair{asking->client("talcite.test"), first->server()})), std::string{});
+        SAME(shaken(driven(Pair{asking->client("talcite.test"), second->server()})), std::string{});
+    }
     SAME(shaken(shook(made, trusting(std::string{given::stranger_pem} + std::string{given::authority_pem}), showing(given::identity_hex))), std::string{});
 
     SAME(refused(*shook(made, trusting(), showing(given::expired_hex)).client, Kind::denied), std::string{});
