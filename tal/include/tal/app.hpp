@@ -79,9 +79,13 @@ public:
     };
 
 private:
+    friend class Document;
+
     struct Held;
 
     void draw();
+
+    void forget();
 
     std::unique_ptr<Held> held_;
 };

@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "tal/app.hpp"
 #include "tal/editing.hpp"
 #include "tal/fs.hpp"
 #include "tal/pages.hpp"
@@ -567,6 +568,12 @@ void Document::released() {
         held_.pop_front();
         next();
     }
+}
+
+// A document that goes lets go of the application that shows it, which then shows none: the
+// application may well outlive it, as one made before the document does.
+Document::~Document() {
+    if (app_ != nullptr) app_->forget();
 }
 
 // Takes `home` as the loop the document's drops are checked on: the application's that shows it,

@@ -49,6 +49,7 @@ using tal::Colors;
 using tal::Console;
 using tal::Document;
 using tal::Effect;
+using tal::Hook;
 using tal::Hooks;
 using tal::KeyEvent;
 using tal::Look;
@@ -1993,4 +1994,130 @@ TRIAL("App: after a word the terminal counts otherwise, the columns stay in plac
     }
 }
 
+}
+
+// A document may go before the application that shows it, as one made after the application does:
+// the application then shows none, and a turn throws as without one. A document no longer shown
+// changes nothing when it goes; another application showing the document takes it from the first;
+// work on the loop that lets the document go ends the turn after it, and the application, made
+// first, goes last without touching the document.
+TRIAL("App: a document that goes before the application showing it is let go of") {
+    Rig rig;
+    App app{Setup{}, rig.console(), rig.time()};
+    const auto throws = [](App& one) {
+        try {
+            (void)one.turn();
+        } catch (const std::logic_error&) {
+            return true;
+        }
+
+        return false;
+    };
+
+    {
+        Document gone{rig.time()};
+
+        app.show(gone);
+        SAME(app.shown(), &gone);
+    }
+
+    SAME(app.shown(), static_cast<Document*>(nullptr));
+    OUGHT(throws(app));
+
+    {
+        Document before{rig.time()};
+
+        app.show(before);
+        app.show(rig.document);
+    }
+
+    SAME(app.shown(), &rig.document);
+
+    Rig other;
+    App second{Setup{}, other.console(), other.time()};
+
+    second.show(rig.document);
+    SAME(app.shown(), static_cast<Document*>(nullptr));
+    SAME(second.shown(), &rig.document);
+
+    auto doomed = std::make_unique<Document>(rig.time());
+
+    app.show(*doomed);
+    app.loop().post([&doomed] { doomed.reset(); });
+    OUGHT(app.turn());
+    SAME(app.shown(), static_cast<Document*>(nullptr));
+    OUGHT(throws(app));
+
+    {
+        Rig outer;
+        App first{Setup{}, outer.console(), outer.time()};
+        Document after{outer.time()};
+
+        first.show(after);
+        (void)first.turn();
+    }
+}
+
+// A handler may hand the document to another application on the way: the keys after it go to
+// nobody, nothing is drawn, rung or waited for with it, whether the keys came during the probe or
+// later; work a handler leaves on the loop that lets the document go ends the turn before its
+// frame.
+TRIAL("App: a document handed away or let go of during a turn is touched no more") {
+    std::u32string keys;
+    const auto handing = [&keys](Document& document, App& to) {
+        return document.on<KeyEvent>([&keys, &document, &to](KeyEvent& what) {
+            keys += what.key.letter();
+            to.show(document);
+            what.take();
+        });
+    };
+
+    {
+        Rig rig;
+        Rig other;
+
+        rig.line = scripted("ab\x1b[?62;1c");
+
+        App app{Setup{}, rig.console(), rig.time()};
+        App second{Setup{}, other.console(), other.time()};
+        const Hook hook = handing(rig.document, second);
+
+        app.show(rig.document);
+        OUGHT(app.turn());
+        SAME(app.shown(), static_cast<Document*>(nullptr));
+        SAME(keys, std::u32string{U"a"});
+    }
+
+    keys.clear();
+
+    {
+        Rig rig;
+        Rig other;
+        App app{Setup{}, rig.console(), rig.time()};
+        App second{Setup{}, other.console(), other.time()};
+        const Hook hook = handing(rig.document, second);
+
+        app.show(rig.document);
+        (void)app.turn();
+        rig.line->replies.push_back("cd");
+        OUGHT(app.turn());
+        SAME(app.shown(), static_cast<Document*>(nullptr));
+        SAME(keys, std::u32string{U"c"});
+    }
+
+    {
+        Rig rig;
+        App app{Setup{}, rig.console(), rig.time()};
+        auto doomed = std::make_unique<Document>(rig.time());
+        const Hook hook = doomed->on<KeyEvent>([&](KeyEvent& what) {
+            app.loop().post([&doomed] { doomed.reset(); });
+            what.take();
+        });
+
+        app.show(*doomed);
+        (void)app.turn();
+        rig.line->replies.push_back("e");
+        OUGHT(app.turn());
+        SAME(app.shown(), static_cast<Document*>(nullptr));
+    }
 }

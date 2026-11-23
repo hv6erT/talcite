@@ -945,11 +945,11 @@ struct App::Held {
     }
 
     // Hands what the decoder heard to its place: measurements to the application, the rest to the
-    // document shown, which a handler may switch on the way.
+    // document shown, which a handler may switch on the way, or let go (then the rest go nowhere).
     void heard(const std::vector<Heard>& given) {
         for (const Heard& one : given) {
             if (const auto* measurement = std::get_if<Measured>(&one)) remeasured(*measurement);
-            else dispatched(one, *onto);
+            else if (onto != nullptr) dispatched(one, *onto);
         }
     }
 
@@ -1033,7 +1033,10 @@ App::~App() {
         else defaults().clear<Notifier>();
     }
 
-    if (held.onto != nullptr) held.onto->homed(nullptr);
+    if (held.onto != nullptr) {
+        held.onto->homed(nullptr);
+        held.onto->app_ = nullptr;
+    }
 
     if (held.away > 0) return;
 
@@ -1078,13 +1081,20 @@ const Abilities& App::abilities() const { return held_->able; }
 // Shows `one`: it is told the terminal's size, colors, Unicode, rendering and the console's
 // double-click time, and drawn whole at the next turn. Documents can be switched while running, as
 // screens switch. The document checks its drops on the application's loop; one shown before lets
-// go of it.
+// go of it, and so does another application that showed this one. A document that goes is let
+// go of (`forget`).
 void App::show(Document& one) {
     Held& held = *held_;
 
-    if (held.onto != nullptr && held.onto != &one) held.onto->homed(nullptr);
+    if (held.onto != nullptr && held.onto != &one) {
+        held.onto->homed(nullptr);
+        held.onto->app_ = nullptr;
+    }
+
+    if (one.app_ != nullptr && one.app_ != this) one.app_->forget();
 
     held.onto = &one;
+    one.app_ = this;
     one.homed(&held.loop);
 
     one.double_click(held.console->double_click());
@@ -1096,6 +1106,11 @@ void App::show(Document& one) {
 
 // The document shown, or nothing before `show`.
 Document* App::shown() const { return held_->onto; }
+
+// Lets go of the document shown, which goes or is shown by another application: none is shown
+// now (a document knows the application only while it is shown there). A turn under way ends after
+// what it delivered, and the next one throws, as without one.
+void App::forget() { held_->onto = nullptr; }
 
 // Sets the window title (OSC 0), when titles are enabled. A title often comes from a file name or
 // another program, so its control characters (C0, DEL and C1 as UTF-8) are left out: an escape or a
@@ -1293,7 +1308,7 @@ int App::run() {
 // One turn: the loop's work, then waiting for input, the loop's work, a timer or the decoder's
 // deadline, whichever comes first; delivers what came, rings the document's timers and draws when
 // the document changed. Returns false once `stop` was called. Throws std::logic_error when no
-// document is shown.
+// document is shown; a document let go of during the turn ends it after what it delivered.
 bool App::turn() {
     Held& held = *held_;
 
@@ -1323,13 +1338,13 @@ bool App::turn() {
     }
 
     // The first frame is drawn before waiting, because the wait may have no limit.
-    if (held.fresh) {
+    if (held.fresh && held.onto != nullptr) {
         held.fresh = false;
 
         draw();
     }
 
-    if (!held.running) return false;
+    if (!held.running || held.onto == nullptr) return held.running;
 
     // The wait ends at the nearest of the decoder's deadline (a lone Esc, a paste without its
     // end), the document's timer and the loop's timer, or without a limit; work posted meanwhile
@@ -1380,11 +1395,13 @@ bool App::turn() {
     // The decoder's time has come: the Esc was alone, or the paste lost its end.
     if (const auto settling = held.decoder.due(); settling && now >= *settling) held.heard(held.decoder.lapsed(now));
 
+    if (held.onto == nullptr) return held.running;
+
     held.onto->ring();
 
     (void)held.loop.turn();
 
-    if (held.onto->due() || held.shifted) draw();
+    if (held.onto != nullptr && (held.onto->due() || held.shifted)) draw();
 
     return held.running;
 }

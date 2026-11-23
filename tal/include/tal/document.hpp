@@ -24,6 +24,8 @@
 
 namespace tal {
 
+class App;
+
 struct Display {
     Size screen{};
     Colors colors = Colors::rgb;
@@ -73,6 +75,8 @@ private:
 class Document : public Node {
 public:
     explicit Document(Port<Clock> time = {}, Port<Processes> processes = {});
+
+    ~Document() override;
 
     void sheet(StyleSheet given);
 
@@ -194,6 +198,7 @@ private:
     std::uint64_t timed_ = 0;
     Hooks own_;
     Executor* home_ = nullptr;
+    App* app_ = nullptr;
     std::optional<Scope> drops_;
     std::string dropped_;
     bool checking_ = false;
