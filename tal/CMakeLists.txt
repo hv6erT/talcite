@@ -188,11 +188,16 @@ endfunction()
 # `Browser`, their chains, and their adapters on any program that speaks tal's protocol. Drawing
 # (tal::drawing): paths, strokes, paints and clips rasterized into pixels by our own rasterizer,
 # and text from fonts read by our own reader of TrueType; DejaVu Sans built in (fonts/, its own
-# object, linked only into programs that use it). Plots (tal::plotting): scales, ticks and their
-# labels, the layout of a plot and its series drawn with the pen, and traces of samples in time.
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp src/paths.cpp src/flattening.cpp src/stroking.cpp src/rasterizing.cpp src/raster.cpp src/fonts.cpp src/dejavu.cpp src/plotting.cpp)
+# object, linked only into programs that use it).
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp src/paths.cpp src/flattening.cpp src/stroking.cpp src/rasterizing.cpp src/raster.cpp src/fonts.cpp src/dejavu.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 tal_embedded(tal-media fonts_of fonts/DejaVuSans.ttf)
+
+# tal::plotting, a module of its own over the drawing of tal-media: scales, ticks and their labels,
+# the layout of a plot, its series as lines, marks, bars and steps drawn with the pen on anything
+# that has one, histograms of values, the readout under the cursor, and traces of samples in time.
+add_library(tal-plotting STATIC src/plotting.cpp)
+target_link_libraries(tal-plotting PUBLIC tal-media)
 
 # PDF rendered by PDFium (tal-render-pdfium), only on the programmer's word: configuring it fetches
 # PDFium, the build of bblanchon/pdfium-binaries without V8 (so no JavaScript or XFA in PDF), and
@@ -378,10 +383,11 @@ endif()
 
 # The program that shows a simulation (E7e), among the demos: a double pendulum drawn in the
 # terminal, its bodies dragged with the mouse, beside plots of its energy, angles and phase (E8),
-# read with the mouse (E9), its settings out of demo/pendulum.json.
+# read with the mouse (E9), the phase or a histogram of the second angle (E10), its settings out of
+# demo/pendulum.json.
 if(TALCITE_DEMOS)
   add_executable(tal-pendulum demo/pendulum.cpp)
-  target_link_libraries(tal-pendulum PRIVATE tal-ui)
+  target_link_libraries(tal-pendulum PRIVATE tal-ui tal-plotting)
   tal_settings(tal-pendulum demo/pendulum.json pendulum_settings)
 endif()
 
@@ -437,7 +443,7 @@ if(TALCITE_TESTS)
   # The programs the trial binaries pretend to be (pretending.cpp) are shared by every suite.
   file(GLOB TAL_TEST_SOURCES CONFIGURE_DEPENDS "test/*.cpp")
   add_executable(tal-test ${TAL_TEST_SOURCES} tools/generating.cpp)
-  target_link_libraries(tal-test PRIVATE tal-testing tal-scene tal-net tal-media)
+  target_link_libraries(tal-test PRIVATE tal-testing tal-scene tal-net tal-media tal-plotting)
   # Some trials check internal parts (the console translation without VT, the generator of texts)
   # through their headers.
   target_include_directories(tal-test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tools")

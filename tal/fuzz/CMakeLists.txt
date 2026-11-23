@@ -167,6 +167,6 @@ target_link_options(tal-fonts-fuzz PRIVATE -fsanitize=fuzzer)
 
 add_executable(tal-plotting-fuzz plotting.cpp)
 
-target_link_libraries(tal-plotting-fuzz PRIVATE tal-media)
+target_link_libraries(tal-plotting-fuzz PRIVATE tal-plotting)
 
 target_link_options(tal-plotting-fuzz PRIVATE -fsanitize=fuzzer)
