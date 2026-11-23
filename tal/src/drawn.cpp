@@ -2,10 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
+#include <exception>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "tal/crypto.hpp"
@@ -25,15 +30,17 @@
 //
 // A frame is cut into bands of four rows of cells, each a picture of its own. A sixel is six pixels
 // high, so a sixel band goes on down past its cells to whole sixels with the pixels of the band
-// below (painted again by that band as it stands, and part of this band's hash, so that it is
-// sent anew when they change), and the last band, with none below, with clear pixels. For sixel
-// the last row of the drawing is a band of its own: a sixel on the screen's last row would scroll
-// it, so the program shows none there, and only that row then shows the mosaic. A band whose pixels
-// did not change (by a hash of them) keeps its picture and its mark, so the terminal is not sent it
-// again: of an animation where only a part moves, only that part travels. Bands are coded on the
-// pool, for kitty as zlib (o=z) in base64, for sixel by our encoder, with the mosaic beneath them
-// for whenever the pictures are not seen whole; while a frame is being coded the next one is not
-// made but owed, so that a slow terminal gets fewer frames, never a queue of old ones. In
+// below (painted again by that band as it stands, and part of this band's hash, so that it is sent
+// anew when they change), and the last band, with none below, with clear pixels. For sixel the last
+// row of the drawing is a band of its own: a sixel on the screen's last row would scroll it, so the
+// program shows none there, and only that row then shows the mosaic. A band whose pixels did not
+// change (by a hash of them) keeps its picture and its mark, so the terminal is not sent it again:
+// of an animation where only a part moves, only that part travels. Bands are coded on the pool,
+// side by side, for kitty as zlib (o=z) in base64, for sixel by our encoder, with the mosaic
+// beneath them for whenever the pictures are not seen whole. The first frame of a new size shows
+// its mosaic at once, made on the loop, so that a window being resized shows the drawing in
+// characters rather than nothing until the pictures come. While a frame is being coded the next one
+// is not made but owed, so that a slow terminal gets fewer frames, never a queue of old ones. In
 // characters a frame goes to the cells at once, and the output sends only cells that changed.
 //
 // A painter's Trouble is shown in place of the drawing, and the next frame tries again.
@@ -64,6 +71,70 @@ media::Pixels cut(const media::Pixels& frame, std::uint32_t top, std::uint32_t h
     stills.push_back(media::Still{std::move(part), std::chrono::milliseconds{0}});
 
     return media::Pixels{media::Size{frame.size().width, high}, std::move(stills)};
+}
+
+// The jobs 0 to `count` - 1 done by `job`, on this thread and on as many threads of the pool as
+// take part: each takes the next job not yet taken, until none is left. This thread does all of
+// them when the pool has no thread to spare, so it never waits on work nobody runs; it waits
+// only for the jobs other threads have taken, which run. The first trouble of a job is thrown
+// once all are done; the jobs after it are not begun.
+template <typename Job>
+void shared(std::size_t count, const Job& job) {
+    struct Sharing {
+        std::mutex guard;
+        std::condition_variable done;
+        std::size_t next = 0;
+        std::size_t finished = 0;
+        std::size_t count = 0;
+        std::exception_ptr trouble;
+        std::function<void(std::size_t)> job;
+    };
+
+    const auto sharing = std::make_shared<Sharing>();
+
+    sharing->count = count;
+    sharing->job = [&job](std::size_t at) { job(at); };
+
+    const auto working = [](Sharing& one) {
+        for (;;) {
+            std::size_t at = 0;
+
+            {
+                const std::lock_guard<std::mutex> kept{one.guard};
+
+                if (one.next >= one.count || one.trouble) return;
+
+                at = one.next++;
+            }
+
+            std::exception_ptr why;
+
+            try {
+                one.job(at);
+            } catch (...) {
+                why = std::current_exception();
+            }
+
+            const std::lock_guard<std::mutex> kept{one.guard};
+
+            if (why && !one.trouble) one.trouble = why;
+
+            ++one.finished;
+            one.done.notify_all();
+        }
+    };
+
+    const std::size_t helpers = std::min<std::size_t>(count > 0 ? count - 1 : 0, std::max(1U, std::thread::hardware_concurrency()) - 1);
+
+    for (std::size_t one = 0; one < helpers; ++one) pool().post([sharing, working] { working(*sharing); });
+
+    working(*sharing);
+
+    std::unique_lock<std::mutex> held{sharing->guard};
+
+    sharing->done.wait(held, [&] { return sharing->finished == sharing->next; });
+
+    if (sharing->trouble) std::rethrow_exception(sharing->trouble);
 }
 
 // A hash of the bytes of `frame` (FNV-1a), to tell a band that changed from one that did not.
@@ -232,6 +303,15 @@ void Drawing::drawn() {
         return;
     }
 
+    // The first frame of a size has no pictures yet: its mosaic stands at once while they are
+    // coded.
+    if (bands_.empty()) {
+        const Size grain = mosaicking::grain(blocks_, unicode_);
+
+        coarse_ = frame.scaled(media::Size{static_cast<std::uint32_t>(room_.wide * grain.wide), static_cast<std::uint32_t>(room_.high * grain.high)});
+        repaint();
+    }
+
     if (!scope_) {
         try {
             scope_.emplace();
@@ -295,29 +375,44 @@ Task<void> Drawing::encoding(std::uint64_t order, media::Pixels frame) {
 
 // The bands of `frame` (a room of `room` cells of `cell` pixels) coded for `fine` (for sixel down
 // to whole sixels, the last row alone), those whose pixels match the bands `before` kept as they
-// were, and the mosaic of the frame at `grain`.
+// were, and the mosaic of the frame at `grain`. Each band and the mosaic is a job of its own,
+// shared with the pool (`shared`); the new bands take their marks afterwards, in order.
 Drawing::Encoded Drawing::encoded(const media::Pixels& frame, Graphics fine, Size cell, Size room, Size grain, const std::vector<Band>& before) {
-    Encoded made;
-
     const bool sixel = fine == Graphics::sixel;
     const int body = sixel && room.high > 1 ? room.high - 1 : room.high;
+    std::vector<std::pair<int, int>> spans;
 
-    for (int top = 0, index = 0; top < room.high; ++index) {
+    for (int top = 0; top < room.high;) {
         const int rows = top < body ? std::min(band_rows, body - top) : room.high - top;
+
+        spans.emplace_back(top, rows);
+        top += rows;
+    }
+
+    std::vector<Band> bands(spans.size());
+    std::vector<char> kept(spans.size(), 0);
+    Encoded made;
+
+    shared(spans.size() + 1, [&](std::size_t at) {
+        if (at == spans.size()) {
+            made.coarse = frame.scaled(media::Size{static_cast<std::uint32_t>(room.wide * grain.wide), static_cast<std::uint32_t>(room.high * grain.high)});
+
+            return;
+        }
+
+        const auto [top, rows] = spans[at];
         const int high = rows * cell.high;
         const media::Pixels part = cut(frame, static_cast<std::uint32_t>(top * cell.high), static_cast<std::uint32_t>(sixel ? (high + 5) / 6 * 6 : high));
         const std::uint64_t hash = fingerprint(part);
-        const auto at = static_cast<std::size_t>(index);
-
-        top += rows;
 
         if (at < before.size() && before[at].hash == hash && before[at].rows == rows) {
-            made.bands.push_back(before[at]);
+            bands[at] = before[at];
+            kept[at] = 1;
 
-            continue;
+            return;
         }
 
-        Picture picture{marked(), Size{room.wide, rows}, nullptr, nullptr, 0};
+        Picture picture{0, Size{room.wide, rows}, nullptr, nullptr, 0};
 
         if (fine == Graphics::kitty) {
             picture.pixels = std::make_shared<const media::Pixels>(part);
@@ -326,12 +421,14 @@ Drawing::Encoded Drawing::encoded(const media::Pixels& frame, Graphics fine, Siz
             picture.sixel = std::make_shared<const std::string>(sixeling::sixel(part, 0));
         }
 
-        made.bands.push_back(Band{hash, rows, std::move(picture)});
-    }
+        bands[at] = Band{hash, rows, std::move(picture)};
+    });
 
-    made.coarse = frame.scaled(media::Size{static_cast<std::uint32_t>(room.wide * grain.wide), static_cast<std::uint32_t>(room.high * grain.high)});
+    for (std::size_t at = 0; at < bands.size(); ++at)
+        if (kept[at] == 0) bands[at].picture.mark = marked();
+
+    made.bands = std::move(bands);
 
     return made;
 }
-
 }

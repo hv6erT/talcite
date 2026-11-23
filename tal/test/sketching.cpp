@@ -18,6 +18,7 @@
 #include "tal/trouble.hpp"
 
 #include "inflating.hpp"
+#include "sixeling.hpp"
 #include "quieting.hpp"
 #include "tal/testing.hpp"
 
@@ -260,6 +261,71 @@ TRIAL("Drawing: sixel pictures in bands down to whole sixels, the last row alone
     troubled.settled();
     OUGHT(!troubled.drawing.trouble().has_value());
     SAME(troubled.scene.row(0).substr(0, 3), std::string{"   "});
+}
+
+// A painter of stripes and a ramp, the same at every frame, so that each band differs.
+Drawing::Painter striped() {
+    return [](Pen& pen, tal::media::Size size, std::chrono::nanoseconds) {
+        for (std::uint32_t y = 0; y < size.height; y += 7) {
+            Path stripe;
+
+            stripe.rectangle(Rect{Point{0, static_cast<double>(y)}, static_cast<double>(size.width) * (y % 3 + 1) / 3, 3});
+            pen.fill(stripe, Color{static_cast<float>(y % 255) / 255.0F, 0.5F, 1 - static_cast<float>(y % 255) / 255.0F, 1});
+        }
+    };
+}
+
+// The first frame of a new size shows its mosaic at once, made on the loop, while the pictures are
+// coded on the pool; a resize does not leave the drawing blank until they come. The bands, coded
+// side by side on the pool, are those coded one by one from the same frame (the last row of a
+// sixel drawing its own band), and new bands take their marks in order down the drawing.
+TRIAL("Drawing: a new size shows its mosaic at once, the pictures after it; bands coded side by side as one by one, marked in order") {
+    Sketched sketched{striped(), shown(Graphics::sixel, Size{20, 30})};
+
+    OUGHT(sketched.picture(Spot{0, 0}) != nullptr);
+
+    sketched.document.display(shown(Graphics::sixel, Size{24, 30}));
+
+    const tal::Surface& first = sketched.document.frame();
+
+    OUGHT(!(first.at(Spot{23, 0}) == tal::Cell{}));
+    SAME(first.at(Spot{23, 0}).picture, std::uint32_t{0});
+
+    sketched.settled();
+    sketched.scene.resize(Size{24, 30});
+
+    const tal::media::Size size{240, 600};
+    tal::drawing::Raster raster{size, tal::drawing::Blending::srgb};
+    Pen pen{raster};
+
+    striped()(pen, size, std::chrono::nanoseconds{0});
+
+    const tal::media::Pixels whole = raster.pixels();
+    std::uint32_t last = 0;
+
+    for (int top = 0; top < 30;) {
+        const int rows = top < 29 ? std::min(4, 29 - top) : 1;
+        const std::uint32_t high = static_cast<std::uint32_t>(rows * 20 + 5) / 6 * 6;
+        tal::Bytes rgba(std::size_t{240} * high * 4, std::byte{0});
+        const tal::Bytes& all = whole.stills().front().rgba;
+        const std::size_t from = std::size_t{240} * 4 * static_cast<std::size_t>(top * 20);
+        const std::size_t much = std::min(rgba.size(), all.size() - from);
+
+        std::copy(all.begin() + static_cast<std::ptrdiff_t>(from), all.begin() + static_cast<std::ptrdiff_t>(from + much), rgba.begin());
+
+        std::vector<tal::media::Still> stills;
+
+        stills.push_back(tal::media::Still{std::move(rgba), std::chrono::milliseconds{0}});
+
+        const tal::Picture* shown_there = sketched.picture(Spot{0, top});
+
+        OUGHT(shown_there != nullptr && shown_there->sixel != nullptr);
+        SAME(*shown_there->sixel, tal::sixeling::sixel(tal::media::Pixels{tal::media::Size{240, high}, std::move(stills)}, 0));
+        OUGHT(shown_there->mark > last);
+
+        last = shown_there->mark;
+        top += rows;
+    }
 }
 
 TRIAL("Drawing: the point under the mouse, in the middle of its cell or at the pixel the terminal tells; a new size draws anew") {
