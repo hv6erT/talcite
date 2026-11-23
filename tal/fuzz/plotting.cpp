@@ -15,12 +15,13 @@
 
 // One input of libFuzzer as scales, data and a plot: the ends of a scale and its kind, how many
 // ticks are asked for, the values a scale is fitted to, the series of a plot with their marks, the
-// size of its letters and its rectangle, drawn on a raster of 64 by 48 pixels, and the samples of a
-// trace. Numbers are small (a byte) or whole (eight bytes, any double, NaN and the infinities among
-// them). Troubles may come; nothing may crash, hang or touch memory out of bounds. Ticks are no
-// more than asked (two at least) and lie within their scale; labels are as many as ticks; the
-// layout keeps the data within its rectangle; a trace's span ends at its last sample. The input is
-// read in a fixed order, so that it means the same to every compiler.
+// size of its letters and its rectangle, a cursor over it and how it reads (E9), drawn on a raster
+// of 64 by 48 pixels, the samples of a trace, and scales placed and read back, zoomed and shifted.
+// Numbers are small (a byte) or whole (eight bytes, any double, NaN and the infinities among them).
+// Troubles may come; nothing may crash, hang or touch memory out of bounds. Ticks are no more than
+// asked (two at least) and lie within their scale; labels are as many as ticks; the layout keeps
+// the data within its rectangle; a trace's span ends at its last sample. The input is read in a
+// fixed order, so that it means the same to every compiler.
 namespace {
 
 using namespace tal::drawing;
@@ -107,7 +108,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     for (int operations = 0; reading.left() && operations < 64; ++operations) {
         try {
-            switch (reading.byte() % 10) {
+            switch (reading.byte() % 12) {
             case 0: {
                 const std::optional<Scale> one = scale(reading);
 
@@ -157,6 +158,15 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
                 if (std::isfinite(area.at.x) && std::isfinite(area.wide) && laid.data.wide > std::max(0.0, area.wide) + 1e-6 * std::abs(area.wide)) std::terminate();
 
+                const Point asked = reading.point();
+                const std::optional<Point> under = laid.at(asked);
+
+                if (under && (!std::isfinite(asked.x) || !std::isfinite(asked.y))) std::terminate();
+
+                const double within = reading.number();
+
+                (void)laid.nearest(plot, asked, within);
+
                 break;
             }
             case 7: trace.emplace(reading.number(), reading.byte()); break;
@@ -171,6 +181,28 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                     if (span && span->high() != trace->points().back().x) std::terminate();
                 }
 
+                break;
+            case 10: {
+                const std::optional<Scale> one = scale(reading);
+
+                if (one) {
+                    const double from = reading.number();
+                    const double to = reading.number();
+                    const double pixel = reading.number();
+                    const double back = one->valued(one->placed(pixel, from, to), from, to);
+
+                    (void)back;
+                    (void)one->zoomed(reading.number(), reading.number());
+                    (void)one->shifted(reading.number(), from, to);
+                }
+
+                break;
+            }
+            case 11:
+                plot.cursor = reading.point();
+                plot.readout = static_cast<Readout>(reading.byte() % 3);
+                plot.cursor_line = reading.byte() % 2 == 0;
+                plot.readout_digits = static_cast<int>(reading.byte()) - 128;
                 break;
             default: values.clear(); break;
             }

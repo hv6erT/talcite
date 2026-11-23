@@ -32,6 +32,12 @@ public:
 
     [[nodiscard]] double placed(double value, double from, double to) const;
 
+    [[nodiscard]] double valued(double pixel, double from, double to) const;
+
+    [[nodiscard]] Scale zoomed(double about, double factor) const;
+
+    [[nodiscard]] Scale shifted(double pixels, double from, double to) const;
+
     [[nodiscard]] std::vector<double> ticks(std::size_t most) const;
 
     [[nodiscard]] std::vector<double> minor(std::size_t most) const;
@@ -84,6 +90,18 @@ struct Theme {
 
 [[nodiscard]] Theme light();
 
+enum class Readout { automatic, across, nearest };
+
+struct Nearest {
+    std::size_t series = 0;
+    std::size_t point = 0;
+    double distance = 0;
+
+    friend bool operator==(const Nearest&, const Nearest&) = default;
+};
+
+class Plot;
+
 struct Layout {
     drawing::Rect data;
     Scale x;
@@ -91,6 +109,10 @@ struct Layout {
     std::vector<double> x_ticks;
     std::vector<double> y_ticks;
     Corner legend = Corner::none;
+
+    [[nodiscard]] std::optional<drawing::Point> at(drawing::Point pixel) const;
+
+    [[nodiscard]] std::optional<Nearest> nearest(const Plot& plot, drawing::Point pixel, double within) const;
 };
 
 class Plot {
@@ -103,6 +125,10 @@ public:
     Theme theme = dark();
     double letters = 12;
     std::optional<text::Language> language;
+    std::optional<drawing::Point> cursor;
+    Readout readout = Readout::automatic;
+    bool cursor_line = true;
+    int readout_digits = 1;
 
     [[nodiscard]] Layout laid(const drawing::Font& font, drawing::Rect area) const;
 

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <filesystem>
 #include <limits>
 #include <numbers>
 #include <optional>
@@ -19,19 +20,33 @@
 #include "tal/event.hpp"
 #include "tal/fonts.hpp"
 #include "tal/key.hpp"
+#include "tal/path.hpp"
 #include "tal/plotting.hpp"
+#include "tal/settings.hpp"
 #include "tal/simulation.hpp"
+#include "tal/task.hpp"
+#include "tal/trouble.hpp"
 
-// A double pendulum (E7e), the program that shows a simulation in the terminal: two rods of a
-// metre and two bodies of a kilogram, integrated by RK4 at steps of a millisecond on the
-// simulation's own thread, drawn sixty times a second with the path of the second body behind it
-// and its total energy above, which RK4 keeps nearly still (a drift there is the integrator's, not
-// the physics'). Beside it (below it, in a window taller than wide) three plots (E8) of the last
-// ten seconds, sampled every ten steps on the simulation's thread into traces: the drift of the
-// energy from where it started or the pendulum was last let go, both angles in time, and the
-// phase portrait of the second rod, its angle against its rate. A body can be dragged with the
-// mouse, the simulation holding it where the pointer is. Space pauses, s takes one step, + and -
-// double and halve the pace, q quits.
+#include "pendulum_settings.hpp"
+
+// A double pendulum (E7e), the program that shows a simulation in the terminal: two rods of a metre
+// and two bodies of a kilogram, integrated by RK4 at steps of a millisecond on the simulation's own
+// thread, drawn sixty times a second with the path of the second body behind it and its total
+// energy above, which RK4 keeps nearly still (a drift there is the integrator's, not the physics').
+// Beside it (below it, in a window taller than wide) three plots (E8) of the last ten seconds,
+// sampled every ten steps on the simulation's thread into traces: the drift of the energy from
+// where it started or the pendulum was last let go, both angles in time, and the phase portrait of
+// the second rod, its angle against its rate. A body can be dragged with the mouse, the simulation
+// holding it where the pointer is. Space pauses, s takes one step, + and - double and halve the
+// pace, q quits.
+//
+// The plots are read with the mouse (E9): over a plot a cursor reads the values under it; a click
+// holds the plots still at the time they show (and, as set, the simulation too), a second click or
+// Esc lets them go; the wheel draws the time in or out about the cursor of plots held still (of
+// plots going on, the stretch of time they show), and a drag moves it. What a click holds (plots,
+// both or none, f goes round them), how long the traces keep their samples (seconds) and the step
+// of the wheel (in per cent) are settings, read from tal-pendulum.json in the working folder (or
+// the file after --settings); a mode changed with f is written back when the program ends.
 namespace {
 
 using tal::drawing::Color;
@@ -45,7 +60,7 @@ constexpr double g = 9.81;
 constexpr double length = 1.0;
 constexpr double mass = 1.0;
 constexpr std::size_t trail = 600;
-constexpr double window = 10;
+constexpr double shown_at_first = 10;
 constexpr int every = 10;
 constexpr double pi = std::numbers::pi;
 
@@ -172,9 +187,10 @@ std::vector<Point> wrapped(const std::vector<Point>& points) {
 }
 
 // The phase portrait from the samples of an angle `angles` and its rate `rates`, taken at the same
-// times: the angle brought to -π to π across, the rate up, a gap where the angle goes round. The
-// traces are read one after the other, so one may hold a sample the other does not have yet.
-std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates) {
+// times, of those within `time` (all, without it): the angle brought to -π to π across, the rate
+// up, a gap where the angle goes round. The traces are read one after the other, so one may hold
+// a sample the other does not have yet.
+std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates, const std::optional<tal::plotting::Scale>& time) {
     while (!angles.empty() && !rates.empty() && angles.back().x > rates.back().x) angles.pop_back();
 
     while (!angles.empty() && !rates.empty() && rates.back().x > angles.back().x) rates.pop_back();
@@ -183,7 +199,11 @@ std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates) {
     std::vector<Point> made;
 
     for (std::size_t at = 0; at < many; ++at) {
-        const double angle = around(angles[angles.size() - many + at].y);
+        const Point& sample = angles[angles.size() - many + at];
+
+        if (time && (sample.x < time->low() || sample.x > time->high())) continue;
+
+        const double angle = around(sample.y);
         const double rate = rates[rates.size() - many + at].y;
 
         if (!made.empty() && std::abs(angle - made.back().x) > pi) made.push_back(Point{std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::quiet_NaN()});
@@ -194,14 +214,49 @@ std::vector<Point> phased(std::vector<Point> angles, std::vector<Point> rates) {
     return made;
 }
 
-// The traces the simulation samples into: the drift of the energy, both angles and the rate of
-// the second.
+// The traces the simulation samples into, keeping the last `kept` seconds: the drift of the
+// energy, both angles and the rate of the second.
 struct Traces {
-    tal::plotting::Trace drift{window};
-    tal::plotting::Trace first{window};
-    tal::plotting::Trace second{window};
-    tal::plotting::Trace second_rate{window};
+    explicit Traces(double kept) : drift{kept}, first{kept}, second{kept}, second_rate{kept} {}
+
+    tal::plotting::Trace drift;
+    tal::plotting::Trace first;
+    tal::plotting::Trace second;
+    tal::plotting::Trace second_rate;
 };
+
+// What a click on a plot holds still: the plots alone, the simulation with them, or nothing.
+enum class Freeze { plots, both, none };
+
+// The setting's word for `one`, and the mode a word names (the plots alone for any other).
+std::string worded(Freeze one) { return one == Freeze::both ? "both" : one == Freeze::none ? "none" : "plots"; }
+
+Freeze freezing(const std::string& word) { return word == "both" ? Freeze::both : word == "none" ? Freeze::none : Freeze::plots; }
+
+// How the plots are looked at: the plot under the mouse and the pixel it points at, the time held
+// still (none while the plots go on), the seconds shown while they go on and the time they last
+// showed, where a press began and whether it moved since, and the layouts last drawn.
+struct View {
+    std::optional<std::size_t> over;
+    std::optional<Point> cursor;
+    std::optional<tal::plotting::Scale> held;
+    double shown = shown_at_first;
+    std::optional<tal::plotting::Scale> live;
+    std::optional<double> pressed;
+    bool moved = false;
+    bool stopped = false;
+    std::array<tal::plotting::Layout, 3> laid;
+};
+
+// The last `shown` seconds up to the last of `points`, none before the first; within the numbers.
+std::optional<tal::plotting::Scale> latest(const std::vector<Point>& points, double shown) {
+    if (points.empty()) return std::nullopt;
+
+    const double last = points.back().x;
+    const double first = std::max(std::numeric_limits<double>::lowest(), last - shown);
+
+    return first < last ? tal::plotting::Scale{first, last} : tal::plotting::Scale{std::nextafter(last, -std::numeric_limits<double>::infinity()), last};
+}
 
 // The samples of `state` into `traces`, every so many steps.
 void sampled(const Pendulum& state, Traces& traces) {
@@ -213,25 +268,36 @@ void sampled(const Pendulum& state, Traces& traces) {
     traces.second_rate.add(state.time, state.second_rate);
 }
 
-// The three plots of `traces` drawn with `pen` in `areas`, their letters of `letters`.
-void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters) {
+// The three plots of `traces` drawn with `pen` in `areas`, their letters of `letters`, over the
+// time `view` holds or the last seconds it shows, the plot under the mouse with its cursor; the
+// layouts and the time shown kept in `view`.
+void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters, View& view) {
     using tal::plotting::Plot;
     using tal::plotting::Scale;
     using tal::plotting::Series;
 
     const Scale angles{-pi, pi};
+    std::vector<Point> drifted = traces.drift.points();
+
+    view.live = latest(drifted, view.shown);
+
+    const std::optional<Scale> time = view.held ? view.held : view.live;
+    const auto pointing = [&](Plot& plot, std::size_t index) {
+        if (view.over == index) plot.cursor = view.cursor;
+    };
     Plot drift;
     Series drifting;
 
     drift.title = "Energy drift";
     drift.x.title = "t [s]";
     drift.y.title = "ΔE [J]";
-    drift.x.scale = traces.drift.span();
+    drift.x.scale = time;
     drift.legend = tal::plotting::Corner::none;
     drift.letters = letters;
-    drifting.points = traces.drift.points();
+    drifting.points = std::move(drifted);
     drift.series.push_back(std::move(drifting));
-    (void)drift.drawn(pen, font, areas.plots[0]);
+    pointing(drift, 0);
+    view.laid[0] = drift.drawn(pen, font, areas.plots[0]);
 
     Plot turns;
     Series one;
@@ -240,7 +306,7 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     turns.title = "Angles";
     turns.x.title = "t [s]";
     turns.y.title = "θ [rad]";
-    turns.x.scale = traces.second.span();
+    turns.x.scale = time;
     turns.y.scale = angles;
     turns.y.grid = true;
     turns.letters = letters;
@@ -250,7 +316,8 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     two.points = wrapped(traces.second.points());
     turns.series.push_back(std::move(one));
     turns.series.push_back(std::move(two));
-    (void)turns.drawn(pen, font, areas.plots[1]);
+    pointing(turns, 1);
+    view.laid[1] = turns.drawn(pen, font, areas.plots[1]);
 
     Plot phase;
     Series portrait;
@@ -262,7 +329,8 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     phase.x.scale = angles;
     phase.legend = tal::plotting::Corner::none;
     phase.letters = letters;
-    portrait.points = phased(traces.second.points(), traces.second_rate.points());
+    phase.readout = tal::plotting::Readout::nearest;
+    portrait.points = phased(traces.second.points(), traces.second_rate.points(), time);
     portrait.width = 1;
     portrait.color = Color{0.34F, 0.71F, 0.91F, 0.7F};
 
@@ -279,18 +347,43 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     now.color = Color{0.95F, 0.55F, 0.2F, 1};
     phase.series.push_back(std::move(portrait));
     phase.series.push_back(std::move(now));
-    (void)phase.drawn(pen, font, areas.plots[2]);
+    pointing(phase, 2);
+    view.laid[2] = phase.drawn(pen, font, areas.plots[2]);
 }
+
+// Whether `point` lies within `area`.
+bool inside(const Rect& area, Point point) { return point.x >= area.at.x && point.x < area.at.x + area.wide && point.y >= area.at.y && point.y < area.at.y + area.high; }
 
 // The angle from `pivot` to `at`, from the vertical down, as the pendulum counts it.
 double angle(Point pivot, Point at) { return std::atan2(at.x - pivot.x, at.y - pivot.y); }
 
 }
 
-int main() {
-    tal::App app;
+int main(int count, char** given) {
+    tal::Setup wish;
+
+    wish.hover = true;
+
+    tal::App app{wish};
+    std::string file = "tal-pendulum.json";
+
+    for (int at = 1; at + 1 < count; ++at)
+        if (std::string{given[at]} == "--settings") file = given[at + 1];
+
+    const std::u8string whole = std::filesystem::absolute(std::filesystem::path{std::u8string{file.begin(), file.end()}}).u8string();
+    tal::Settings settings{pendulum_settings::builtin(), tal::Path{std::string{whole.begin(), whole.end()}}};
+
+    try {
+        tal::wait(app.loop(), settings.read());
+    } catch (const tal::Trouble&) {
+    }
+
+    Freeze freeze = freezing(settings.get(pendulum_settings::plots::freeze));
+    const double kept = std::clamp(static_cast<double>(settings.get(pendulum_settings::plots::window)), 10.0, 3600.0);
+    const double zoom = std::clamp(static_cast<double>(settings.get(pendulum_settings::plots::zoom)) / 100, 1.01, 10.0);
     tal::Document document;
-    Traces traces;
+    Traces traces{kept};
+    View view;
     Pendulum start;
 
     start.reference = energy(start);
@@ -355,22 +448,102 @@ int main() {
 
         pen.restore();
 
-        char said[96];
+        char said[160];
 
-        std::snprintf(said, sizeof said, "E = %.6f J   t = %.2f s   pace %.2g%s", energy(state), pendulum.time(), pendulum.pace(), pendulum.running() ? "" : "   paused");
+        std::snprintf(said, sizeof said, "E = %.6f J   t = %.2f s   pace %.2g%s%s   click holds %s", energy(state), pendulum.time(), pendulum.pace(), pendulum.running() ? "" : "   paused", view.held ? "   plots held" : "", worded(freeze).c_str());
 
         const double letters = std::max(10.0, std::min(areas.swing.high / 24, areas.swing.wide * 0.95 / std::max(1.0, font.measured(said, 1).wide)));
 
         pen.fill(font.outlined(said, letters, Point{letters / 2, letters / 2}, tal::drawing::Align::left, tal::drawing::Baseline::top), Color{0.9F, 0.9F, 0.9F, 1});
-        plotted(pen, font, areas, traces, std::clamp(size.height / 48.0, 10.0, 16.0));
+        plotted(pen, font, areas, traces, std::clamp(size.height / 48.0, 10.0, 16.0), view);
     });
+
+    const auto hold = [&](bool on) {
+        if (freeze == Freeze::none || on == view.held.has_value()) return;
+
+        if (on) {
+            view.held = view.live;
+
+            if (freeze == Freeze::both && pendulum.running()) {
+                pendulum.run(false);
+                view.stopped = true;
+            }
+        } else {
+            view.held.reset();
+
+            if (view.stopped) pendulum.run(true);
+
+            view.stopped = false;
+        }
+    };
+
+    // The mouse over a plot: the cursor, a click that holds or lets go, the wheel and a drag along
+    // the time of the first two plots.
+    const auto looked = [&](const tal::MouseEvent& event, Point pointed, std::size_t index) {
+        const tal::plotting::Layout& laid = view.laid[index];
+        const bool timed = index < 2;
+
+        view.over = index;
+        view.cursor = pointed;
+
+        if (event.press == tal::Press::down && event.button == tal::MouseButton::left) {
+            view.pressed = pointed.x;
+            view.moved = false;
+        } else if (event.press == tal::Press::move && view.pressed) {
+            if (std::abs(pointed.x - *view.pressed) > 2) view.moved = true;
+
+            if (view.moved && view.held && timed) {
+                try {
+                    view.held = view.held->shifted(pointed.x - *view.pressed, laid.data.at.x, laid.data.at.x + laid.data.wide);
+                } catch (const tal::Trouble&) {
+                }
+
+                view.pressed = pointed.x;
+            }
+        } else if (event.press == tal::Press::up && view.pressed) {
+            if (!view.moved) hold(!view.held);
+
+            view.pressed.reset();
+        } else if (event.press == tal::Press::wheel && timed && event.axis == tal::Axis::vertical) {
+            const double factor = std::pow(zoom, event.steps);
+            const std::optional<Point> value = laid.at(pointed);
+
+            if (view.held && value) {
+                try {
+                    view.held = view.held->zoomed(value->x, factor);
+                } catch (const tal::Trouble&) {
+                }
+            } else if (!view.held) {
+                view.shown = std::clamp(view.shown / factor, 0.1, kept);
+            }
+        }
+    };
 
     const tal::Hook mouse = drawing.on<tal::MouseEvent>([&](tal::MouseEvent& event) {
         const std::optional<Point> pointed = drawing.pointed(event);
 
         if (!pointed) return;
 
-        const std::optional<Matrix> back = placed(divided(drawing.pixels()).swing).inverted();
+        const Areas areas = divided(drawing.pixels());
+
+        if (!held && !inside(areas.swing, *pointed)) {
+            view.over.reset();
+            view.cursor.reset();
+
+            for (std::size_t index = 0; index < areas.plots.size(); ++index)
+                if (inside(areas.plots[index], *pointed)) looked(event, *pointed, index);
+
+            if (event.press == tal::Press::up) view.pressed.reset();
+
+            drawing.redraw();
+
+            return;
+        }
+
+        view.over.reset();
+        view.cursor.reset();
+
+        const std::optional<Matrix> back = placed(areas.swing).inverted();
 
         if (!back) return;
 
@@ -417,6 +590,13 @@ int main() {
 
         if (key == tal::Key{U'-'}) pendulum.pace(std::max(1.0 / 64, pendulum.pace() / 2));
 
+        if (key == tal::Key{U'f'}) {
+            hold(false);
+            freeze = freeze == Freeze::plots ? Freeze::both : freeze == Freeze::both ? Freeze::none : Freeze::plots;
+        }
+
+        if (key == tal::Key{tal::Code::escape}) hold(false);
+
         drawing.redraw();
     });
 
@@ -424,5 +604,17 @@ int main() {
     app.title("Double pendulum");
     app.show(document);
 
-    return app.run();
+    const Freeze read = freezing(settings.get(pendulum_settings::plots::freeze));
+    const int code = app.run();
+
+    if (freeze != read) {
+        settings.set(pendulum_settings::plots::freeze, worded(freeze));
+
+        try {
+            tal::wait(app.loop(), settings.write());
+        } catch (const tal::Trouble&) {
+        }
+    }
+
+    return code;
 }

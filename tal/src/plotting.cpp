@@ -128,11 +128,39 @@ std::string signed_(std::string written) {
 
 }
 
+namespace {
+
+// How the numbers of a straight axis are written: the power of ten common to them (0 for none)
+// and the decimals after it.
+struct Written {
+    int power = 0;
+    int decimals = 0;
+};
+
+// How the numbers of a straight axis with `ticks` are written: divided by a power of ten common
+// to them where the largest is 10⁵ or more or below 10⁻³ (a multiple of three, as engineers write
+// it), with the decimals of the step between ticks (none where it is not a number).
+Written written_as(std::span<const double> ticks) {
+    Written made;
+    double largest = 0;
+
+    for (const double one : ticks) largest = std::max(largest, std::abs(one));
+
+    if (largest >= 1e5 || (largest > 0 && largest < 1e-3)) made.power = 3 * static_cast<int>(std::floor(std::log10(largest) / 3));
+
+    const double step = ticks.size() > 1 ? (ticks[1] - ticks[0]) / std::pow(10.0, made.power) : 1;
+    const double shown = -std::floor(std::log10(std::abs(step)) + 1e-9);
+
+    made.decimals = std::isfinite(shown) ? static_cast<int>(std::clamp(shown, 0.0, 17.0)) : 0;
+
+    return made;
+}
+
+}
+
 // The labels of `ticks` on `scale` in `language`, and the power of ten common to them (0 for
 // none): on a logarithmic scale a power of ten as 10 with its exponent raised, anything else as a
-// number with as many decimals as the scale shows; on a straight one numbers with the decimals of
-// the step between ticks, divided by the common power where the largest is 10⁵ or more or below
-// 10⁻³ (a multiple of three, as engineers write it).
+// number with as many decimals as the scale shows; on a straight one as `written_as` tells.
 Labels labelled(const Scale& scale, std::span<const double> ticks, const text::Language& language) {
     Labels made;
 
@@ -148,18 +176,12 @@ Labels labelled(const Scale& scale, std::span<const double> ticks, const text::L
         return made;
     }
 
-    double largest = 0;
+    const Written form = written_as(ticks);
+    const double unit = std::pow(10.0, form.power);
 
-    for (const double one : ticks) largest = std::max(largest, std::abs(one));
+    made.power = form.power;
 
-    if (largest >= 1e5 || (largest > 0 && largest < 1e-3)) made.power = 3 * static_cast<int>(std::floor(std::log10(largest) / 3));
-
-    const double unit = std::pow(10.0, made.power);
-    const double step = ticks.size() > 1 ? (ticks[1] - ticks[0]) / unit : 1;
-    const double shown = -std::floor(std::log10(std::abs(step)) + 1e-9);
-    const int decimals = std::isfinite(shown) ? static_cast<int>(std::clamp(shown, 0.0, 17.0)) : 0;
-
-    for (const double one : ticks) made.said.push_back(signed_(text::number(one / unit, decimals, language)));
+    for (const double one : ticks) made.said.push_back(signed_(text::number(one / unit, form.decimals, language)));
 
     return made;
 }
@@ -493,6 +515,219 @@ void legended(const Plot& plot, const Font& font, Laid& laid) {
     laid.box = Rect{Point{rightward ? data.at.x + data.wide - gap - box_wide : data.at.x + gap, upward ? data.at.y + gap : data.at.y + data.high - gap - box_high}, box_wide, box_high};
 }
 
+// The color of the series `index` of `plot`: its own, or the theme's palette in turn.
+Color colored(const Plot& plot, std::size_t index) {
+    return plot.series[index].color.value_or(plot.theme.palette.empty() ? plot.theme.ink : plot.theme.palette[index % plot.theme.palette.size()]);
+}
+
+// `value` on the axis of `scale` with `ticks` in `language` for a readout, `more` decimals beyond
+// its labels: on a straight axis by its common power, written after the number; on a logarithmic
+// one with three digits that count, and `more` beyond them.
+std::string read_out(const Scale& scale, std::span<const double> ticks, double value, int more, const text::Language& language) {
+    if (scale.spacing() == Spacing::logarithmic) {
+        const double shown = 2 + more - std::floor(std::log10(std::abs(value)));
+
+        return signed_(text::number(value, std::isfinite(shown) ? static_cast<int>(std::clamp(shown, 0.0, 17.0)) : 0, language));
+    }
+
+    const Written form = written_as(ticks);
+    const std::string number = signed_(text::number(value / std::pow(10.0, form.power), std::min(form.decimals + more, 17), language));
+
+    return form.power != 0 ? number + "×10" + raised(form.power) : number;
+}
+
+// Whether the finite points of `series` go along x without turning back, as samples in time do.
+bool ordered(const Series& series) {
+    std::optional<double> last;
+
+    for (const Point& one : series.points) {
+        if (!std::isfinite(one.x) || !std::isfinite(one.y)) continue;
+
+        if (last && one.x < *last) return false;
+
+        last = one.x;
+    }
+
+    return true;
+}
+
+// The finite point of `series` whose x is nearest `x`, the first of equals; none without one.
+std::optional<std::size_t> along(const Series& series, double x) {
+    std::optional<std::size_t> made;
+    double least = std::numeric_limits<double>::infinity();
+
+    for (std::size_t at = 0; at < series.points.size(); ++at) {
+        const Point& one = series.points[at];
+        const double away = std::abs(one.x - x);
+
+        if (std::isfinite(one.x) && std::isfinite(one.y) && (!made || away < least)) {
+            made = at;
+            least = away;
+        }
+    }
+
+    return made;
+}
+
+// The finite point of `series` nearest the pixel `pixel` as `layout` places it, and how far it is
+// in pixels; the first of equals; none without a finite point.
+std::optional<std::pair<std::size_t, double>> nearest_of(const Layout& layout, const Series& series, Point pixel) {
+    std::optional<std::pair<std::size_t, double>> made;
+
+    for (std::size_t point = 0; point < series.points.size(); ++point) {
+        const Point& one = series.points[point];
+        const double away = std::hypot(at(layout.x, one.x, layout.data, true) - pixel.x, at(layout.y, one.y, layout.data, false) - pixel.y);
+
+        if (std::isfinite(away) && (!made || away < made->second)) made = std::pair{point, away};
+    }
+
+    return made;
+}
+
+// The readout of `plot` at its cursor, drawn with `pen` over `laid`: a line across the data at the
+// cursor (unless not wanted), a ring around each point read and a box of their values beside the
+// cursor, on the side where it fits. As `Plot::readout` asks: the point of each series nearest the
+// cursor's x with its value (for a series along x, or every series when `Readout::across`), the
+// point nearest the cursor of any other series with both its values, or only the one point of all
+// nearest the cursor (`Readout::nearest`). A series along x heads the box with the cursor's x. A
+// cursor outside the data reads nothing.
+void read(const Plot& plot, Pen& pen, const Font& font, const Laid& laid) {
+    if (!plot.cursor) return;
+
+    const std::optional<Point> value = laid.layout.at(*plot.cursor);
+
+    if (!value) return;
+
+    const Rect& data = laid.layout.data;
+    const double letters = plot.letters;
+    const double gap = letters * 0.4;
+    const double swatch = letters * 1.2;
+    const text::Language language = plot.language.value_or(text::current());
+    const int more = std::clamp(plot.readout_digits, 0, 17);
+    const auto across_text = [&](double one) { return read_out(laid.layout.x, laid.x_ticks, one, more, language); };
+    const auto up_text = [&](double one) { return read_out(laid.layout.y, laid.y_ticks, one, more, language); };
+
+    struct Row {
+        std::string text;
+        std::optional<Color> color;
+    };
+
+    std::vector<Row> rows;
+    std::vector<std::pair<Point, Color>> rings;
+    bool headed = false;
+
+    const auto shown = [&](std::size_t index, std::size_t point, bool both) {
+        const Series& one = plot.series[index];
+        const Point& read_point = one.points[point];
+        std::string text = one.name.empty() ? std::string{} : one.name + "  ";
+
+        text += both ? across_text(read_point.x) + "; " + up_text(read_point.y) : up_text(read_point.y);
+        rows.push_back(Row{std::move(text), colored(plot, index)});
+        rings.emplace_back(Point{at(laid.layout.x, read_point.x, data, true), at(laid.layout.y, read_point.y, data, false)}, colored(plot, index));
+    };
+
+    if (plot.readout == Readout::nearest) {
+        if (const std::optional<Nearest> near = laid.layout.nearest(plot, *plot.cursor, std::numeric_limits<double>::infinity())) shown(near->series, near->point, true);
+    } else {
+        for (std::size_t index = 0; index < plot.series.size(); ++index) {
+            const Series& one = plot.series[index];
+            const bool across = plot.readout == Readout::across || ordered(one);
+            std::optional<std::size_t> found;
+
+            if (across) {
+                found = along(one, value->x);
+            } else if (const auto near = nearest_of(laid.layout, one, *plot.cursor)) {
+                found = near->first;
+            }
+
+            if (!found) continue;
+
+            if (across && !headed) {
+                rows.insert(rows.begin(), Row{(plot.x.title.empty() ? std::string{} : plot.x.title + "  ") + across_text(value->x), std::nullopt});
+                headed = true;
+            }
+
+            shown(index, *found, !across);
+        }
+    }
+
+    const Color& ink = plot.theme.ink;
+
+    if (plot.cursor_line) {
+        const double where = std::round(plot.cursor->x - 0.5) + 0.5;
+
+        ruled(pen, Point{where, std::round(data.at.y) + 0.5}, Point{where, std::round(data.at.y + data.high) - 0.5}, 1, Color{ink.r, ink.g, ink.b, ink.a * 0.5F});
+    }
+
+    Stroke ring;
+
+    ring.width = 1.5;
+
+    for (const auto& [where, color] : rings) {
+        if (!std::isfinite(where.x) || !std::isfinite(where.y)) continue;
+
+        Path circle;
+
+        circle.arc(where, letters * 0.35, 0, 2 * std::numbers::pi);
+        circle.close();
+        pen.stroke(circle, color, ring);
+    }
+
+    if (rows.empty()) return;
+
+    const double row = letters * 1.3;
+    double widest = 0;
+
+    for (const Row& one : rows) widest = std::max(widest, wide(font, one.text, letters) + (one.color ? swatch + gap : 0));
+
+    const double box_wide = gap + widest + gap;
+    const double box_high = gap + row * static_cast<double>(rows.size()) + gap / 2;
+    const bool rightward = plot.cursor->x + gap * 2 + box_wide <= data.at.x + data.wide;
+    const Rect box{Point{rightward ? plot.cursor->x + gap * 2 : std::max(data.at.x, plot.cursor->x - gap * 2 - box_wide), data.at.y + gap}, box_wide, box_high};
+    Path backing;
+    Stroke thin;
+
+    thin.width = 1;
+    backing.rectangle(box);
+    pen.fill(backing, plot.theme.backing);
+    pen.stroke(backing, plot.theme.grid, thin);
+
+    for (std::size_t index = 0; index < rows.size(); ++index) {
+        const Row& one = rows[index];
+        const double middle = box.at.y + gap + row * (static_cast<double>(index) + 0.5);
+        double left = box.at.x + gap;
+
+        if (one.color) {
+            ruled(pen, Point{left, middle}, Point{left + swatch, middle}, 2, *one.color);
+            left += swatch + gap;
+        }
+
+        written(pen, font, one.text, letters, Point{left, middle}, Align::left, Baseline::middle, ink);
+    }
+}
+
+}
+
+// The values under the pixel `pixel`, x and y, or none where it lies outside the data.
+std::optional<Point> Layout::at(Point pixel) const {
+    if (!(pixel.x >= data.at.x && pixel.x <= data.at.x + data.wide && pixel.y >= data.at.y && pixel.y <= data.at.y + data.high)) return std::nullopt;
+
+    return Point{x.valued(pixel.x, data.at.x, data.at.x + data.wide), y.valued(pixel.y, data.at.y + data.high, data.at.y)};
+}
+
+// The point of the series of `plot` nearest the pixel `pixel` as this layout places it, within
+// `within` pixels: the series, the point and the distance; the first of equals; none where no
+// finite point lies so near.
+std::optional<Nearest> Layout::nearest(const Plot& plot, Point pixel, double within) const {
+    std::optional<Nearest> made;
+
+    for (std::size_t index = 0; index < plot.series.size(); ++index) {
+        const auto near = nearest_of(*this, plot.series[index], pixel);
+
+        if (near && near->second <= within && (!made || near->second < made->distance)) made = Nearest{index, near->first, near->second};
+    }
+
+    return made;
 }
 
 // A scale from `low` to `high`, straight or by the logarithm. Throws Trouble malformed for ends
@@ -564,6 +799,39 @@ double Scale::placed(double value, double from, double to) const {
     }
 
     return from + (value / 2 - low_ / 2) / (high_ / 2 - low_ / 2) * (to - from);
+}
+
+// The value at the pixel `pixel` between `from` (the low end) and `to` (the high end), the
+// reverse of `placed`: the ends weighed by where the pixel lies, so that no difference of them
+// overflows; beyond the ends as far as the numbers go (endless past them).
+double Scale::valued(double pixel, double from, double to) const {
+    const double share = (pixel - from) / (to - from);
+
+    if (spacing_ == Spacing::logarithmic) return std::pow(10.0, std::log10(low_) * (1 - share) + std::log10(high_) * share);
+
+    return low_ * (1 - share) + high_ * share;
+}
+
+// The scale `factor` times nearer around `about`: each end drawn towards it to a `factor`th of its
+// distance (away from it, for a factor below one), on a logarithmic scale by the logarithms. Throws
+// Trouble malformed where the ends come out as no scale: leaving the numbers, meeting (an endless
+// factor), out of order (a factor not above zero) or not numbers (an `about` that is not a finite
+// number, or not above zero on a logarithmic scale).
+Scale Scale::zoomed(double about, double factor) const {
+    if (spacing_ == Spacing::logarithmic) {
+        const double middle = std::log10(about);
+
+        return Scale{std::pow(10.0, middle - (middle - std::log10(low_)) / factor), std::pow(10.0, middle + (std::log10(high_) - middle) / factor), spacing_};
+    }
+
+    return Scale{about - (about / 2 - low_ / 2) / factor * 2, about + (high_ / 2 - about / 2) / factor * 2, spacing_};
+}
+
+// The scale whose values lie `pixels` further along between the pixels `from` and `to` (a drag of
+// the plot by so many pixels): its ends the values that were that many pixels before them. Throws
+// Trouble malformed where they leave the numbers.
+Scale Scale::shifted(double pixels, double from, double to) const {
+    return Scale{valued(from - pixels, from, to), valued(to - pixels, from, to), spacing_};
 }
 
 // The major ticks, at most `most` (at least two): round values of the steps 1, 2, 5 times a power
@@ -791,7 +1059,11 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
 
     if (!title.empty()) written(pen, font, title, letters * 1.1, Point{(left + right) / 2, area.at.y + gap}, Align::center, Baseline::top, ink);
 
-    if (laid.layout.legend == Corner::none) return laid.layout;
+    if (laid.layout.legend == Corner::none) {
+        read(*this, pen, font, laid);
+
+        return laid.layout;
+    }
 
     const Point origin = laid.box.at;
     const double sample = letters * 2;
@@ -818,6 +1090,8 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
         written(pen, font, one.name, letters, Point{origin.x + gap + sample + gap, middle}, Align::left, Baseline::middle, ink);
         ++index;
     }
+
+    read(*this, pen, font, laid);
 
     return laid.layout;
 }

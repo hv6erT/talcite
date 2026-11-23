@@ -37,7 +37,9 @@ using tal::drawing::Raster;
 using tal::drawing::Rect;
 using tal::plotting::Corner;
 using tal::plotting::Layout;
+using tal::plotting::Nearest;
 using tal::plotting::Plot;
+using tal::plotting::Readout;
 using tal::plotting::Scale;
 using tal::plotting::Series;
 using tal::plotting::Spacing;
@@ -69,6 +71,29 @@ double alpha(const tal::media::Pixels& pixels, int x, int y) {
     const std::size_t at = (static_cast<std::size_t>(y) * pixels.size().width + static_cast<std::size_t>(x)) * 4 + 3;
 
     return std::to_integer<int>(pixels.stills().front().rgba[at]) / 255.0;
+}
+
+// The channel `channel` (0 red, 1 green, 2 blue) of the pixel (`x`, `y`) of `pixels`, 0 to 1.
+double tone(const tal::media::Pixels& pixels, int x, int y, int channel) {
+    const std::size_t at = (static_cast<std::size_t>(y) * pixels.size().width + static_cast<std::size_t>(x)) * 4 + static_cast<std::size_t>(channel);
+
+    return std::to_integer<int>(pixels.stills().front().rgba[at]) / 255.0;
+}
+
+// The columns of `pixels` from `from` to `to` (exclusive) in which any pixel of the rows from
+// `top` to `bottom` (exclusive) is inked.
+int inked_columns(const tal::media::Pixels& pixels, int from, int to, int top, int bottom) {
+    int made = 0;
+
+    for (int x = from; x < to; ++x) {
+        bool any = false;
+
+        for (int y = top; y < bottom && !any; ++y) any = alpha(pixels, x, y) > 0.1;
+
+        made += any ? 1 : 0;
+    }
+
+    return made;
 }
 
 }
@@ -593,4 +618,197 @@ TRIAL("Plotting: a trace keeps the last window, within its room, anew after time
     SAME(trouble_of([] { Trace{0}; }), std::optional<Kind>{Kind::malformed});
     SAME(trouble_of([] { Trace{1, 1}; }), std::optional<Kind>{Kind::malformed});
     SAME(trouble_of([] { Trace{std::numeric_limits<double>::infinity()}; }), std::optional<Kind>{Kind::malformed});
+}
+
+// A pixel gives back the value placed there, on straight, logarithmic and the widest scales, and
+// beyond the ends as far as the numbers go. A zoom draws both ends towards a value by its factor
+// (by the logarithms on a logarithmic scale), out for a factor below one; a shift moves the values
+// by so many pixels, either way along the axis. Factors and values that are not numbers, and ends
+// that leave the numbers or meet, are malformed.
+TRIAL("Plotting: values under pixels as the reverse of placing them; scales zoomed about a value and shifted by pixels") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const Scale straight(-3, 7);
+    const Scale logarithmic(0.01, 1000, Spacing::logarithmic);
+    const Scale widest(-1.7e308, 1.7e308);
+
+    for (const double value : {-3.0, -1.25, 0.0, 2.5, 7.0})
+        OUGHT(std::abs(straight.valued(straight.placed(value, 40, 340), 40, 340) - value) < 1e-12);
+
+    for (const double value : {0.01, 0.5, 3.0, 1000.0})
+        OUGHT(std::abs(logarithmic.valued(logarithmic.placed(value, 200, 0), 200, 0) / value - 1) < 1e-12);
+
+    SAME(straight.valued(40, 40, 340), -3.0);
+    SAME(straight.valued(340, 40, 340), 7.0);
+    SAME(straight.valued(640, 40, 340), 17.0);
+    SAME(widest.valued(0, 0, 100), -1.7e308);
+    SAME(widest.valued(50, 0, 100), 0.0);
+    SAME(widest.valued(100, 0, 100), 1.7e308);
+    OUGHT(std::isinf(widest.valued(200, 0, 100)));
+
+    SAME(Scale(0, 10).zoomed(5, 2), Scale(2.5, 7.5));
+    SAME(Scale(0, 10).zoomed(0, 4), Scale(0, 2.5));
+    SAME(Scale(0, 10).zoomed(5, 0.5), Scale(-5, 15));
+    OUGHT(std::abs(Scale(1, 100, Spacing::logarithmic).zoomed(10, 2).low() - std::sqrt(10.0)) < 1e-12);
+    OUGHT(std::abs(Scale(1, 100, Spacing::logarithmic).zoomed(10, 2).high() - std::pow(10.0, 1.5)) < 1e-9);
+    SAME(Scale(-1.7e308, 1.7e308).zoomed(0, 2), Scale(-0.85e308, 0.85e308));
+    SAME(Scale(-1.7e308, 1.7e308).zoomed(1.7e308, 2), Scale(0, 1.7e308));
+    SAME(Scale(0, 10).shifted(30, 0, 300), Scale(-1, 9));
+    SAME(Scale(0, 10).shifted(10, 100, 0), Scale(1, 11));
+    OUGHT(std::abs(Scale(1, 100, Spacing::logarithmic).shifted(50, 0, 100).low() - 0.1) < 1e-12);
+
+    for (const double factor : {0.0, -2.0, nan, std::numeric_limits<double>::infinity()})
+        SAME(trouble_of([&] { (void)Scale(0, 10).zoomed(5, factor); }), std::optional<Kind>{Kind::malformed});
+
+    SAME(trouble_of([&] { (void)Scale(0, 10).zoomed(nan, 2); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)Scale(1, 10, Spacing::logarithmic).zoomed(0, 2); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)Scale(-1e308, 1e308).zoomed(0, 0.1); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)Scale(0, 1).zoomed(0.5, 1e300); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)Scale(0, 1e308).shifted(-200, 0, 100); }), std::optional<Kind>{Kind::malformed});
+}
+
+// The values under a pixel of the data, none outside it, the ends exact on its edges. The point
+// nearest a pixel among all series, as the layout places them: points that are not numbers left
+// out (a series may begin with one), none farther than asked, the first of equals.
+TRIAL("Plotting: the values under a pixel of the data and the point of the series nearest it") {
+    const Font font = Font::builtin();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    Plot plot;
+    Series one;
+    Series other;
+
+    plot.x.scale = Scale(0, 10);
+    plot.y.scale = Scale(0, 10);
+    one.points = {Point{1, 1}, Point{nan, nan}, Point{5, 5}};
+    other.points = {Point{nan, nan}, Point{5, 5}, Point{9, 2}};
+    plot.series = {one, other};
+
+    const Layout laid = plot.laid(font, Rect{Point{0, 0}, 300, 200});
+    const double left = laid.data.at.x;
+    const double right = laid.data.at.x + laid.data.wide;
+    const double top = laid.data.at.y;
+    const double bottom = laid.data.at.y + laid.data.high;
+
+    SAME(laid.at(Point{left, bottom}), (std::optional<Point>{Point{0, 10 * 0.0}}));
+    SAME(laid.at(Point{right, top}), (std::optional<Point>{Point{10, 10}}));
+    OUGHT(std::abs(laid.at(Point{(left + right) / 2, (top + bottom) / 2})->x - 5) < 1e-12);
+    SAME(laid.at(Point{left - 1, top}), std::optional<Point>{});
+    SAME(laid.at(Point{left, bottom + 1}), std::optional<Point>{});
+    SAME(laid.at(Point{nan, top}), std::optional<Point>{});
+
+    const Point five{laid.x.placed(5, left, right), laid.y.placed(5, bottom, top)};
+    const Point nine{laid.x.placed(9, left, right), laid.y.placed(2, bottom, top)};
+
+    SAME(laid.nearest(plot, five, 1), (std::optional<Nearest>{Nearest{0, 2, 0}}));
+    SAME(laid.nearest(plot, Point{nine.x + 3, nine.y + 4}, 10), (std::optional<Nearest>{Nearest{1, 2, 5}}));
+    SAME(laid.nearest(plot, Point{nine.x + 3, nine.y + 4}, 4.9), std::optional<Nearest>{});
+    SAME(laid.nearest(Plot{}, five, 100), std::optional<Nearest>{});
+}
+
+// A cursor over the data draws a faint line down it, a ring in its color around each point read
+// and a box of values beside the cursor, left of it near the right edge, wider for more digits;
+// samples along x are read at the cursor's x, every series, as `Readout::across` reads them;
+// `Readout::nearest` reads only the one nearest point of all; a series that turns back along x is
+// read at its point nearest the cursor. No line when not wanted; a cursor outside the data draws
+// nothing more.
+TRIAL("Plotting: a cursor over the data reads the series under it in a box beside it, as asked") {
+    const Font font = Font::builtin();
+    Plot plot;
+    Series red;
+    Series green;
+
+    plot.x.scale = Scale(0, 10);
+    plot.y.scale = Scale(0, 10);
+    plot.legend = Corner::none;
+    red.color = Color{1, 0, 0, 1};
+    red.line = false;
+    green.color = Color{0, 1, 0, 1};
+    green.line = false;
+
+    for (int step = 0; step <= 10; ++step) {
+        red.points.push_back(Point{static_cast<double>(step), 2});
+        green.points.push_back(Point{static_cast<double>(step), 6});
+    }
+
+    plot.series = {red, green};
+
+    const Rect area{Point{0, 0}, 400, 240};
+    const auto drawn = [&](const Plot& one) {
+        Raster raster{tal::media::Size{400, 240}};
+        Pen pen{raster};
+
+        (void)one.drawn(pen, font, area);
+
+        return raster.pixels();
+    };
+    const Layout laid = plot.laid(font, area);
+    const double left = laid.data.at.x;
+    const double right = laid.data.at.x + laid.data.wide;
+    const double top = laid.data.at.y;
+    const double bottom = laid.data.at.y + laid.data.high;
+    const auto pixel = [&](double x, double y) { return Point{laid.x.placed(x, left, right), laid.y.placed(y, bottom, top)}; };
+    const tal::media::Pixels plain = drawn(plot);
+    const int rows_from = static_cast<int>(top) + 2;
+    const int rows_to = static_cast<int>(bottom) - 2;
+
+    plot.cursor = Point{laid.x.placed(3, left, right) + 0.5, (top + bottom) / 2};
+
+    const tal::media::Pixels read = drawn(plot);
+    const int column = static_cast<int>(std::floor(plot.cursor->x));
+    const Point red_three = pixel(3, 2);
+    const Point green_three = pixel(3, 6);
+    const double ring = plot.letters * 0.35;
+
+    OUGHT(alpha(read, column, static_cast<int>(bottom) - 3) > 0.3 && alpha(plain, column, static_cast<int>(bottom) - 3) == 0);
+    OUGHT(tone(read, static_cast<int>(red_three.x + ring), static_cast<int>(red_three.y), 0) > 0.3);
+    OUGHT(tone(read, static_cast<int>(green_three.x + ring), static_cast<int>(green_three.y), 1) > 0.3);
+    OUGHT(inked_columns(read, column + 2, static_cast<int>(right) - 1, rows_from, rows_to) > inked_columns(plain, column + 2, static_cast<int>(right) - 1, rows_from, rows_to) + 20);
+
+    plot.readout = Readout::across;
+    OUGHT(drawn(plot).stills().front().rgba == read.stills().front().rgba);
+
+    plot.readout = Readout::nearest;
+    plot.cursor = Point{green_three.x + 0.5, green_three.y + 1};
+
+    const tal::media::Pixels nearest = drawn(plot);
+
+    OUGHT(tone(nearest, static_cast<int>(green_three.x + ring), static_cast<int>(green_three.y), 1) > 0.3);
+    SAME(tone(nearest, static_cast<int>(red_three.x + ring), static_cast<int>(red_three.y), 0), tone(plain, static_cast<int>(red_three.x + ring), static_cast<int>(red_three.y), 0));
+
+    plot.readout = Readout::automatic;
+    plot.cursor = Point{right - 4, (top + bottom) / 2};
+
+    const tal::media::Pixels edge = drawn(plot);
+
+    OUGHT(inked_columns(edge, static_cast<int>(left) + 1, static_cast<int>(right) - 10, rows_from, rows_to) > inked_columns(plain, static_cast<int>(left) + 1, static_cast<int>(right) - 10, rows_from, rows_to) + 20);
+
+    plot.cursor = Point{laid.x.placed(3, left, right) + 0.5, (top + bottom) / 2};
+    plot.readout_digits = 0;
+
+    const int narrow = inked_columns(drawn(plot), column + 2, static_cast<int>(right) - 1, rows_from, rows_to);
+
+    plot.readout_digits = 4;
+
+    const int wide = inked_columns(drawn(plot), column + 2, static_cast<int>(right) - 1, rows_from, rows_to);
+
+    OUGHT(wide > narrow + 10);
+
+    plot.cursor_line = false;
+    SAME(alpha(drawn(plot), column, static_cast<int>(bottom) - 3), 0.0);
+
+    Plot looped = plot;
+    Series back;
+
+    back.color = Color{0, 0, 1, 1};
+    back.line = false;
+    back.points = {Point{2, 8}, Point{8, 8}, Point{2, 4}};
+    looped.series = {back};
+    looped.cursor = Point{pixel(2, 4).x + 0.5, pixel(2, 4).y - 3};
+
+    const tal::media::Pixels turned = drawn(looped);
+
+    OUGHT(tone(turned, static_cast<int>(pixel(2, 4).x + ring), static_cast<int>(pixel(2, 4).y), 2) > 0.3);
+    SAME(tone(turned, static_cast<int>(pixel(2, 8).x + ring), static_cast<int>(pixel(2, 8).y), 2), 0.0);
+
+    plot.cursor = Point{left - 5, (top + bottom) / 2};
+    OUGHT(drawn(plot).stills().front().rgba == plain.stills().front().rgba);
 }

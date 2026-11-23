@@ -377,10 +377,12 @@ if(WIN32)
 endif()
 
 # The program that shows a simulation (E7e), among the demos: a double pendulum drawn in the
-# terminal, its bodies dragged with the mouse, beside plots of its energy, angles and phase (E8).
+# terminal, its bodies dragged with the mouse, beside plots of its energy, angles and phase (E8),
+# read with the mouse (E9), its settings out of demo/pendulum.json.
 if(TALCITE_DEMOS)
   add_executable(tal-pendulum demo/pendulum.cpp)
   target_link_libraries(tal-pendulum PRIVATE tal-ui)
+  tal_settings(tal-pendulum demo/pendulum.json pendulum_settings)
 endif()
 
 # tal::net of talcite.next: addresses and names, TCP as a stream, listeners and UDP, waited for by
