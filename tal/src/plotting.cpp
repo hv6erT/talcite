@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <string>
 #include <string_view>
@@ -188,6 +189,132 @@ Labels labelled(const Scale& scale, std::span<const double> ticks, const text::L
 
 namespace {
 
+// The most bins a histogram may have.
+constexpr std::size_t most_bins = std::size_t{1} << 20;
+
+// The value at the share `share` (0 to 1) of the sorted `values`, between the two nearest as
+// they lie (the seventh definition of Hyndman and Fan), their halves subtracted so that the
+// widest values do not overflow.
+double quantile(const std::vector<double>& values, double share) {
+    const double place = share * static_cast<double>(values.size() - 1);
+    const auto below = static_cast<std::size_t>(std::floor(place));
+    const std::size_t above = std::min(below + 1, values.size() - 1);
+    const double part = place - static_cast<double>(below);
+
+    return values[below] + (values[above] / 2 - values[below] / 2) * 2 * part;
+}
+
+}
+
+// The bins of the finite `values` (the rest left out) and how many fall in each, a value on an
+// edge counting in the bin above it, the greatest in the last. Their width as `how` asks, or else
+// by the rule of Freedman and Diaconis (twice the interquartile range over the cube root of the
+// count), by the rule of Sturges (the range over one more than the binary logarithm of the count)
+// where the quartiles meet, a tenth of the value (1, for zero) where all are one, raised to the
+// next 1, 2 or 5 times a power of ten (no finer than `finest`, so that the bins stay apart) and
+// widened, twice at least, while there would be more than `most_bins`; the first bin then starts
+// at a multiple of the width. A width asked for starts there too; a count
+// asked for divides the range evenly from its least value (around the value, where all are one).
+// Throws Trouble malformed for a width that is not a positive finite number or a count of none,
+// and Trouble full past `most_bins` bins asked for by the width. None without a finite value.
+Bins binned(std::span<const double> values, Binning how) {
+    if (how.width && !(std::isfinite(*how.width) && *how.width > 0)) throw Trouble{tal::Kind::malformed, "A bin width that is not a positive finite number."};
+
+    if (how.count && *how.count == 0) throw Trouble{tal::Kind::malformed, "A histogram of no bins."};
+
+    if (how.count && *how.count > most_bins) throw Trouble{tal::Kind::full, "A histogram of more than " + std::to_string(most_bins) + " bins."};
+
+    std::vector<double> kept;
+
+    for (const double one : values)
+        if (std::isfinite(one)) kept.push_back(one);
+
+    Bins made;
+
+    if (kept.empty()) return made;
+
+    std::sort(kept.begin(), kept.end());
+
+    const double least = kept.front();
+    const double most = kept.back();
+    const double one_value = least == 0 ? 1 : stepped(std::abs(least) / 10);
+    std::size_t count = 0;
+
+    if (how.count) {
+        count = *how.count;
+        made.width = most > least ? std::max((most / 2 - least / 2) / static_cast<double>(count) * 2, std::numeric_limits<double>::denorm_min()) : one_value;
+        made.low = most > least ? least : least - made.width * static_cast<double>(count) / 2;
+    } else {
+        double width = how.width.value_or(0);
+
+        if (!how.width) {
+            const double n = static_cast<double>(kept.size());
+
+            width = (quantile(kept, 0.75) / 2 - quantile(kept, 0.25) / 2) / std::cbrt(n) * 4;
+
+            if (!(width > 0)) width = (most / 2 - least / 2) / (std::ceil(std::log2(n)) + 1) * 2;
+
+            if (!(width > 0)) width = one_value;
+
+            width = std::max(std::isfinite(width) ? stepped(width) : 1e308, stepped(finest(least, most)));
+        }
+
+        for (;;) {
+            const double low = std::floor(least / width) * width;
+
+            made.width = width;
+            made.low = std::isfinite(low) ? low : least;
+
+            const double many = std::floor(most / width - made.low / width) + 1;
+
+            if (many <= static_cast<double>(most_bins)) {
+                count = static_cast<std::size_t>(many);
+
+                break;
+            }
+
+            if (how.width) throw Trouble{tal::Kind::full, "A histogram of more than " + std::to_string(most_bins) + " bins."};
+
+            width = std::max(after(width), width * 2);
+        }
+    }
+
+    made.counts.assign(count, 0);
+
+    for (const double one : kept) {
+        const double at = std::floor(one / made.width - made.low / made.width);
+
+        ++made.counts[static_cast<std::size_t>(std::clamp(at, 0.0, static_cast<double>(count - 1)))];
+    }
+
+    return made;
+}
+
+// The bars of `bins`, one at the middle of each, as wide as a bin so that they meet: how many fall
+// in it, their share of all, or that share over the width (a density, whose bars have an area of
+// one); shares of nothing are naught.
+Series histogram(const Bins& bins, Tally tally) {
+    Series made;
+    std::size_t all = 0;
+
+    for (const std::size_t one : bins.counts) all += one;
+
+    made.shape = Shape::bars;
+    made.bar = bins.width;
+
+    for (std::size_t at = 0; at < bins.counts.size(); ++at) {
+        const double many = static_cast<double>(bins.counts[at]);
+        const double share = all > 0 ? many / static_cast<double>(all) : 0;
+        const double value = tally == Tally::count ? many : tally == Tally::share ? share : share / bins.width;
+
+        made.points.push_back(Point{bins.low + (static_cast<double>(at) + 0.5) * bins.width, value});
+    }
+
+    return made;
+}
+
+namespace {
+
 // The finite values of `series` along x (`across`) or y, positive only for a logarithmic
 // `spacing`.
 std::vector<double> gathered(const std::vector<Series>& series, bool across, Spacing spacing) {
@@ -199,6 +326,79 @@ std::vector<double> gathered(const std::vector<Series>& series, bool across, Spa
 
             if (std::isfinite(value) && (spacing == Spacing::linear || value > 0)) made.push_back(value);
         }
+
+    return made;
+}
+
+// A bar of a series: the series and its point, its sides along x, its foot and its top along y.
+struct Block {
+    std::size_t series = 0;
+    std::size_t point = 0;
+    double left = 0;
+    double right = 0;
+    double foot = 0;
+    double top = 0;
+};
+
+// The bars of the series of `plot` shaped so, standing on `floor`: each as wide as its series
+// asks, or eight tenths of the least distance between neighbouring x of all bars (of 1, without
+// two); side by side, each a share of that width (`Grouping::side`), one on another at the same x
+// in the order of the series (`Grouping::stacked`, the first on the floor), or over one another
+// (`Grouping::over`). Points that are not numbers stand for no bar.
+std::vector<Block> blocked(const Plot& plot, double floor) {
+    std::vector<double> across;
+    std::size_t many = 0;
+
+    for (const Series& one : plot.series)
+        if (one.shape == Shape::bars) {
+            ++many;
+
+            for (const Point& point : one.points)
+                if (std::isfinite(point.x) && std::isfinite(point.y)) across.push_back(point.x);
+        }
+
+    std::sort(across.begin(), across.end());
+
+    double gap = std::numeric_limits<double>::infinity();
+
+    for (std::size_t at = 1; at < across.size(); ++at)
+        if (across[at] > across[at - 1]) gap = std::min(gap, across[at] / 2 - across[at - 1] / 2);
+
+    const double shared = std::isfinite(gap) ? gap * 1.6 : 0.8;
+    std::map<double, double> tops;
+    std::vector<Block> made;
+    std::size_t order = 0;
+
+    for (std::size_t index = 0; index < plot.series.size(); ++index) {
+        const Series& one = plot.series[index];
+
+        if (one.shape != Shape::bars) continue;
+
+        const double wide = one.bar.value_or(shared);
+        const bool side = plot.bars == Grouping::side;
+        const double part = side ? wide / static_cast<double>(many) : wide;
+        const double shift = side ? (static_cast<double>(order) - static_cast<double>(many - 1) / 2) * part : 0;
+
+        for (std::size_t point = 0; point < one.points.size(); ++point) {
+            const Point& at = one.points[point];
+
+            if (!std::isfinite(at.x) || !std::isfinite(at.y)) continue;
+
+            Block block{index, point, at.x + shift - part / 2, at.x + shift + part / 2, floor, at.y};
+
+            if (plot.bars == Grouping::stacked) {
+                double& reached = tops[at.x];
+
+                block.foot = reached == 0 ? floor : reached;
+                block.top = reached + at.y;
+                reached = block.top;
+            }
+
+            made.push_back(block);
+        }
+
+        ++order;
+    }
 
     return made;
 }
@@ -385,8 +585,19 @@ Laid laying(const Plot& plot, const Font& font, Rect area) {
     const text::Language language = plot.language.value_or(text::current());
     Laid made;
 
-    made.layout.x = plot.x.scale.value_or(Scale::fitted(gathered(plot.series, true, plot.x.spacing), plot.x.spacing));
-    made.layout.y = plot.y.scale.value_or(Scale::fitted(gathered(plot.series, false, plot.y.spacing), plot.y.spacing));
+    std::vector<double> x_values = gathered(plot.series, true, plot.x.spacing);
+    std::vector<double> y_values = gathered(plot.series, false, plot.y.spacing);
+
+    for (const Block& block : blocked(plot, plot.y.spacing == Spacing::linear ? 0 : std::numeric_limits<double>::quiet_NaN())) {
+        for (const double one : {block.left, block.right})
+            if (std::isfinite(one) && (plot.x.spacing == Spacing::linear || one > 0)) x_values.push_back(one);
+
+        for (const double one : {block.foot, block.top})
+            if (std::isfinite(one) && (plot.y.spacing == Spacing::linear || one > 0)) y_values.push_back(one);
+    }
+
+    made.layout.x = plot.x.scale.value_or(Scale::fitted(x_values, plot.x.spacing));
+    made.layout.y = plot.y.scale.value_or(Scale::fitted(y_values, plot.y.spacing));
 
     const Scale& xs = made.layout.x;
     const Scale& ys = made.layout.y;
@@ -589,8 +800,9 @@ std::optional<std::pair<std::size_t, double>> nearest_of(const Layout& layout, c
 // cursor, on the side where it fits. As `Plot::readout` asks: the point of each series nearest the
 // cursor's x with its value (for a series along x, or every series when `Readout::across`), the
 // point nearest the cursor of any other series with both its values, or only the one point of all
-// nearest the cursor (`Readout::nearest`). A series along x heads the box with the cursor's x. A
-// cursor outside the data reads nothing.
+// nearest the cursor (`Readout::nearest`); a series of bars, unless `Readout::nearest`, the bar
+// under the cursor's x with its stretch and its value. A series along x heads the box with the
+// cursor's x. A cursor outside the data reads nothing.
 void read(const Plot& plot, Pen& pen, const Font& font, const Laid& laid) {
     if (!plot.cursor) return;
 
@@ -629,10 +841,25 @@ void read(const Plot& plot, Pen& pen, const Font& font, const Laid& laid) {
     if (plot.readout == Readout::nearest) {
         if (const std::optional<Nearest> near = laid.layout.nearest(plot, *plot.cursor, std::numeric_limits<double>::infinity())) shown(near->series, near->point, true);
     } else {
+        const std::vector<Block> blocks = blocked(plot, laid.layout.y.spacing() == Spacing::linear ? 0 : laid.layout.y.low());
+
         for (std::size_t index = 0; index < plot.series.size(); ++index) {
             const Series& one = plot.series[index];
             const bool across = plot.readout == Readout::across || ordered(one);
             std::optional<std::size_t> found;
+
+            if (one.shape == Shape::bars) {
+                const auto under = std::find_if(blocks.begin(), blocks.end(), [&](const Block& block) {
+                    return block.series == index && std::min(block.left, block.right) <= value->x && value->x < std::max(block.left, block.right);
+                });
+
+                if (under == blocks.end()) continue;
+
+                rows.push_back(Row{(one.name.empty() ? std::string{} : one.name + "  ") + "[" + across_text(std::min(under->left, under->right)) + "; " + across_text(std::max(under->left, under->right)) + ")  " + up_text(one.points[under->point].y), colored(plot, index)});
+                rings.emplace_back(Point{at(laid.layout.x, (under->left + under->right) / 2, data, true), at(laid.layout.y, under->top, data, false)}, colored(plot, index));
+
+                continue;
+            }
 
             if (across) {
                 found = along(one, value->x);
@@ -928,12 +1155,14 @@ Layout Plot::laid(const Font& font, Rect area) const {
 }
 
 // The plot drawn with `pen` in `area`, in `font`: the paper, the grid, the series clipped to the
-// data (their lines thinned to the points they need within `thinning`, their lines and marks no
-// wider than twice the diagonal of the data, past which they only bury the plot, so that a stroke
-// of any width costs no more than that), the frame with its ticks and labels, the common powers,
-// the titles and the legend (its samples no wider than half a letter, their marks than a letter).
-// Lines of one pixel stand on the middles of pixels, so that they come out sharp. Returns the
-// layout.
+// data (the bars of each series first, as one shape so that bars meeting leave no seam between
+// them, half seen through when `Grouping::over`; then lines, steps as lines turning square at each
+// point, thinned to the points they need within `thinning`, and marks; lines and marks no wider
+// than twice the diagonal of the data, past which they only bury the plot, so that a stroke of any
+// width costs no more than that), the frame with its ticks and labels, the common powers, the
+// titles, the legend (its samples no wider than half a letter, their marks than a letter, bars as a
+// square) and the readout. Lines of one pixel stand on the middles of pixels, so that they come out
+// sharp. Returns the layout.
 Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
     Laid laid = laying(*this, font, area);
 
@@ -974,14 +1203,54 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
     inside.rectangle(data);
     pen.clip(inside);
 
+    const std::vector<Block> blocks = blocked(*this, laid.layout.y.spacing() == Spacing::linear ? 0 : laid.layout.y.low());
+
+    for (std::size_t index = 0; index < series.size(); ++index) {
+        Path bars_of;
+
+        for (const Block& block : blocks) {
+            if (block.series != index) continue;
+
+            const double x0 = at(laid.layout.x, block.left, data, true);
+            const double x1 = at(laid.layout.x, block.right, data, true);
+            const double y0 = at(laid.layout.y, block.foot, data, false);
+            const double y1 = at(laid.layout.y, block.top, data, false);
+
+            if (std::isfinite(x0) && std::isfinite(x1) && std::isfinite(y0) && std::isfinite(y1)) bars_of.rectangle(Rect{Point{std::min(x0, x1), std::min(y0, y1)}, std::abs(x1 - x0), std::abs(y1 - y0)});
+        }
+
+        Color color = colored(*this, index);
+
+        if (bars == Grouping::over) color.a *= 0.6F;
+
+        pen.fill(bars_of, color);
+    }
+
     for (std::size_t index = 0; index < series.size(); ++index) {
         const Series& one = series[index];
-        const Color color = one.color.value_or(theme.palette.empty() ? ink : theme.palette[index % theme.palette.size()]);
+        const Color color = colored(*this, index);
         std::vector<Point> placed;
 
         for (const Point& point : one.points) placed.push_back(Point{at(laid.layout.x, point.x, data, true), at(laid.layout.y, point.y, data, false)});
 
-        if (one.line) {
+        const std::vector<Point> points = placed;
+
+        if (one.shape == Shape::steps) {
+            std::vector<Point> stairs;
+
+            for (std::size_t at = 0; at < placed.size(); ++at) {
+                const bool here = std::isfinite(placed[at].x) && std::isfinite(placed[at].y);
+                const bool before = at > 0 && std::isfinite(placed[at - 1].x) && std::isfinite(placed[at - 1].y);
+
+                if (here && before) stairs.push_back(Point{placed[at].x, placed[at - 1].y});
+
+                stairs.push_back(placed[at]);
+            }
+
+            placed = std::move(stairs);
+        }
+
+        if (one.line && one.shape != Shape::bars) {
             Path path;
             std::vector<Point> run;
             const auto ended = [&] {
@@ -1010,7 +1279,7 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
             pen.stroke(path, color, style);
         }
 
-        for (const Point& point : placed)
+        for (const Point& point : points)
             if (std::isfinite(point.x) && std::isfinite(point.y)) marked(pen, one.mark, std::min(one.size, reach), point, color);
     }
 
@@ -1084,7 +1353,14 @@ Layout Plot::drawn(Pen& pen, const Font& font, Rect area) const {
         const Color color = one.color.value_or(theme.palette.empty() ? ink : theme.palette[number % theme.palette.size()]);
         const double middle = origin.y + gap + row * (static_cast<double>(index) + 0.5);
 
-        if (one.line) ruled(pen, Point{origin.x + gap, middle}, Point{origin.x + gap + sample, middle}, std::min(one.width, letters / 2), color);
+        if (one.shape == Shape::bars) {
+            Path swatch;
+
+            swatch.rectangle(Rect{Point{origin.x + gap + sample / 2 - letters * 0.4, middle - letters * 0.4}, letters * 0.8, letters * 0.8});
+            pen.fill(swatch, color);
+        } else if (one.line) {
+            ruled(pen, Point{origin.x + gap, middle}, Point{origin.x + gap + sample, middle}, std::min(one.width, letters / 2), color);
+        }
 
         marked(pen, one.mark, std::min(one.size, letters), Point{origin.x + gap + sample / 2, middle}, color);
         written(pen, font, one.name, letters, Point{origin.x + gap + sample + gap, middle}, Align::left, Baseline::middle, ink);

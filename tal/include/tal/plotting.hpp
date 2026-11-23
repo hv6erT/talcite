@@ -59,6 +59,8 @@ struct Labels {
 
 enum class Mark { none, circle, square, cross, triangle };
 
+enum class Shape { line, bars, steps };
+
 struct Series {
     std::string name;
     std::vector<drawing::Point> points;
@@ -67,7 +69,30 @@ struct Series {
     bool line = true;
     Mark mark = Mark::none;
     double size = 5;
+    Shape shape = Shape::line;
+    std::optional<double> bar;
 };
+
+enum class Grouping { side, stacked, over };
+
+struct Bins {
+    double low = 0;
+    double width = 1;
+    std::vector<std::size_t> counts;
+
+    friend bool operator==(const Bins&, const Bins&) = default;
+};
+
+struct Binning {
+    std::optional<std::size_t> count;
+    std::optional<double> width;
+};
+
+[[nodiscard]] Bins binned(std::span<const double> values, Binning how = {});
+
+enum class Tally { count, share, density };
+
+[[nodiscard]] Series histogram(const Bins& bins, Tally tally = Tally::count);
 
 struct Axis {
     std::string title;
@@ -129,6 +154,7 @@ public:
     Readout readout = Readout::automatic;
     bool cursor_line = true;
     int readout_digits = 1;
+    Grouping bars = Grouping::side;
 
     [[nodiscard]] Layout laid(const drawing::Font& font, drawing::Rect area) const;
 

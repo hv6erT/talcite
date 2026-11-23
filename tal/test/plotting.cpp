@@ -35,14 +35,19 @@ using tal::drawing::Pen;
 using tal::drawing::Point;
 using tal::drawing::Raster;
 using tal::drawing::Rect;
+using tal::plotting::Bins;
+using tal::plotting::Binning;
 using tal::plotting::Corner;
+using tal::plotting::Grouping;
 using tal::plotting::Layout;
 using tal::plotting::Nearest;
 using tal::plotting::Plot;
 using tal::plotting::Readout;
 using tal::plotting::Scale;
 using tal::plotting::Series;
+using tal::plotting::Shape;
 using tal::plotting::Spacing;
+using tal::plotting::Tally;
 using tal::plotting::Trace;
 
 // The kind of the trouble `work` throws, none when it throws nothing.
@@ -811,4 +816,266 @@ TRIAL("Plotting: a cursor over the data reads the series under it in a box besid
 
     plot.cursor = Point{left - 5, (top + bottom) / 2};
     OUGHT(drawn(plot).stills().front().rgba == plain.stills().front().rgba);
+}
+
+// Bins by the rule of Freedman and Diaconis raised to a round width, from a multiple of it, the
+// greatest value in the last, values that are not finite left out; by Sturges where the quartiles
+// meet, a tenth of the value where all are one, no finer than the least numbers allow, and widened
+// while there would be too many; a width or a count asked for, a count around a value where all are
+// one. Widths that are not positive finite numbers and counts of none are malformed, too many bins
+// asked for full. The bars of a histogram meet, its shares sum to one and its density covers an
+// area of one.
+TRIAL("Plotting: values binned by Freedman and Diaconis at round widths, by a width or a count asked for; histograms as counts, shares and densities") {
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    std::vector<double> hundred;
+
+    for (int one = 1; one <= 100; ++one) hundred.push_back(one);
+
+    SAME(tal::plotting::binned(hundred), (Bins{0, 50, {49, 50, 1}}));
+
+    hundred.push_back(nan);
+    hundred.push_back(std::numeric_limits<double>::infinity());
+    SAME(tal::plotting::binned(hundred), (Bins{0, 50, {49, 50, 1}}));
+    SAME(tal::plotting::binned(std::vector<double>{3, 3, 3}), (Bins{3, 0.5, {3}}));
+    SAME(tal::plotting::binned(std::vector<double>{0}), (Bins{0, 1, {1}}));
+    SAME(tal::plotting::binned(std::vector<double>{0, 4}), (Bins{0, 5, {2}}));
+    SAME(tal::plotting::binned(std::vector<double>{0, 0, 0, 0, 0, 0, 0, 10}), (Bins{0, 5, {7, 0, 1}}));
+    SAME(tal::plotting::binned(std::vector<double>{}), Bins{});
+    SAME(tal::plotting::binned(std::vector<double>{0.1, 0.3, 0.6}, Binning{.width = 0.25}), (Bins{0, 0.25, {1, 1, 1}}));
+    SAME(tal::plotting::binned(std::vector<double>{0, 10}, Binning{.count = 4}), (Bins{0, 2.5, {1, 0, 0, 1}}));
+    SAME(tal::plotting::binned(std::vector<double>{5, 5}, Binning{.count = 3}), (Bins{4.25, 0.5, {0, 2, 0}}));
+
+    std::vector<double> outlying;
+
+    for (int one = 0; one < 1000; ++one) outlying.push_back(one);
+
+    outlying.push_back(1e12);
+
+    const Bins widened = tal::plotting::binned(outlying);
+    std::size_t all = 0;
+
+    for (const std::size_t one : widened.counts) all += one;
+
+    OUGHT(widened.counts.size() <= (std::size_t{1} << 20) && widened.counts.size() > 1000);
+    SAME(all, std::size_t{1001});
+
+    const double least = std::numeric_limits<double>::denorm_min();
+
+    for (const std::vector<double>& tiny : {std::vector<double>{least, 3 * least, 7 * least}, std::vector<double>{0, least}, std::vector<double>{least, 2 * least, 1e-300}}) {
+        const Bins kept = tal::plotting::binned(tiny);
+        std::size_t counted = 0;
+
+        for (const std::size_t one : kept.counts) counted += one;
+
+        SAME(counted, tiny.size());
+        OUGHT(kept.width > 0 && kept.counts.size() <= (std::size_t{1} << 20));
+        OUGHT(tal::plotting::binned(tiny, Binning{.count = 5}).width > 0);
+    }
+
+    const Bins widest = tal::plotting::binned(std::vector<double>{-1.7e308, 0, 1.7e308});
+
+    all = 0;
+
+    for (const std::size_t one : widest.counts) all += one;
+
+    SAME(all, std::size_t{3});
+
+    for (const double width : {0.0, -1.0, nan, std::numeric_limits<double>::infinity()})
+        SAME(trouble_of([&] { (void)tal::plotting::binned(std::vector<double>{1, 2}, Binning{.width = width}); }), std::optional<Kind>{Kind::malformed});
+
+    SAME(trouble_of([] { (void)tal::plotting::binned(std::vector<double>{1, 2}, Binning{.count = 0}); }), std::optional<Kind>{Kind::malformed});
+    SAME(trouble_of([] { (void)tal::plotting::binned(std::vector<double>{1, 2}, Binning{.count = (std::size_t{1} << 20) + 1}); }), std::optional<Kind>{Kind::full});
+    SAME(trouble_of([] { (void)tal::plotting::binned(std::vector<double>{0, 1}, Binning{.width = 1e-9}); }), std::optional<Kind>{Kind::full});
+
+    const Bins three{0, 0.5, {1, 2, 1}};
+    const Series counted = tal::plotting::histogram(three);
+    const Series shared = tal::plotting::histogram(three, Tally::share);
+    const Series dense = tal::plotting::histogram(three, Tally::density);
+
+    SAME(counted.shape, Shape::bars);
+    SAME(counted.bar, std::optional<double>{0.5});
+    SAME(counted.points, (std::vector<Point>{Point{0.25, 1}, Point{0.75, 2}, Point{1.25, 1}}));
+    SAME(shared.points, (std::vector<Point>{Point{0.25, 0.25}, Point{0.75, 0.5}, Point{1.25, 0.25}}));
+
+    double area = 0;
+
+    for (const Point& one : dense.points) area += one.y * 0.5;
+
+    SAME(area, 1.0);
+    SAME(tal::plotting::histogram(Bins{0, 1, {0, 0}}, Tally::density).points, (std::vector<Point>{Point{0.5, 0}, Point{1.5, 0}}));
+}
+
+// Bars stand on zero (on the low end of a logarithmic scale) up to their values, as wide as asked;
+// several series side by side, one on another (each above the last at the same x) or over one
+// another, half seen through; steps turn square at each point; bars that meet leave no seam; bars
+// of no width asked for take eight tenths of the distance between them, and no line joins them;
+// the fitted scales take in the feet and both sides of the bars; the legend shows bars as a
+// square; the readout reads the bar under the cursor, nothing between bars.
+TRIAL("Plotting: bars on their feet side by side, stacked or over one another; steps; scales around the bars; the bar under the cursor read") {
+    const Font font = Font::builtin();
+    const Rect area{Point{0, 0}, 400, 300};
+    Plot plot;
+    Series one;
+    Series two;
+
+    plot.x.scale = Scale(0, 10);
+    plot.y.scale = Scale(0, 10);
+    plot.legend = Corner::none;
+    one.shape = Shape::bars;
+    one.bar = 2;
+    one.color = Color{1, 0, 0, 1};
+    one.points = {Point{5, 4}};
+    two.shape = Shape::bars;
+    two.bar = 2;
+    two.color = Color{0, 1, 0, 1};
+    two.points = {Point{5, 3}};
+
+    const auto drawn = [&](const Plot& made) {
+        Raster raster{tal::media::Size{400, 300}};
+        Pen pen{raster};
+
+        (void)made.drawn(pen, font, area);
+
+        return raster.pixels();
+    };
+    const Layout laid = plot.laid(font, area);
+    const auto pixel = [&](double x, double y) {
+        return std::pair{static_cast<int>(laid.x.placed(x, laid.data.at.x, laid.data.at.x + laid.data.wide)), static_cast<int>(laid.y.placed(y, laid.data.at.y + laid.data.high, laid.data.at.y))};
+    };
+    const auto tone_at = [&](const tal::media::Pixels& pixels, double x, double y, int channel) {
+        const auto [px, py] = pixel(x, y);
+
+        return tone(pixels, px, py, channel);
+    };
+    const auto alpha_at = [&](const tal::media::Pixels& pixels, double x, double y) {
+        const auto [px, py] = pixel(x, y);
+
+        return alpha(pixels, px, py);
+    };
+
+    plot.series = {one};
+
+    const tal::media::Pixels alone = drawn(plot);
+
+    SAME(alpha_at(alone, 5, 2), 1.0);
+    SAME(alpha_at(alone, 4.5, 3.5), 1.0);
+    SAME(alpha_at(alone, 5, 5), 0.0);
+    SAME(alpha_at(alone, 3.5, 2), 0.0);
+    SAME(alpha_at(alone, 6.5, 2), 0.0);
+
+    plot.series = {one, two};
+
+    const tal::media::Pixels side = drawn(plot);
+
+    SAME(tone_at(side, 4.5, 1, 0), 1.0);
+    SAME(tone_at(side, 5.5, 1, 1), 1.0);
+    SAME(alpha_at(side, 5.5, 3.5), 0.0);
+
+    plot.bars = Grouping::stacked;
+
+    const tal::media::Pixels stacked = drawn(plot);
+
+    SAME(tone_at(stacked, 5, 2, 0), 1.0);
+    SAME(tone_at(stacked, 5, 6, 1), 1.0);
+    SAME(alpha_at(stacked, 5, 7.5), 0.0);
+
+    plot.bars = Grouping::over;
+
+    const tal::media::Pixels over = drawn(plot);
+
+    OUGHT(tone_at(over, 5, 2, 0) > 0.2 && tone_at(over, 5, 2, 1) > 0.2);
+    OUGHT(alpha_at(over, 5, 3.5) > 0.5 && alpha_at(over, 5, 3.5) < 0.7);
+
+    Plot logarithmic = plot;
+
+    logarithmic.bars = Grouping::side;
+    logarithmic.y.scale = Scale(1, 1000, Spacing::logarithmic);
+    logarithmic.series = {one};
+    logarithmic.series.front().points = {Point{5, 100}};
+
+    const Layout log_laid = logarithmic.laid(font, area);
+    Raster log_raster{tal::media::Size{400, 300}};
+    Pen log_pen{log_raster};
+
+    (void)logarithmic.drawn(log_pen, font, area);
+    SAME(alpha(log_raster.pixels(), static_cast<int>(log_laid.x.placed(5, log_laid.data.at.x, log_laid.data.at.x + log_laid.data.wide)), static_cast<int>(log_laid.data.at.y + log_laid.data.high) - 3), 1.0);
+
+    Plot stairs = plot;
+    Series step;
+
+    step.shape = Shape::steps;
+    step.width = 2;
+    step.points = {Point{0, 1}, Point{5, 6}, Point{10, 1}};
+    stairs.series = {step};
+
+    const tal::media::Pixels stepped = drawn(stairs);
+
+    OUGHT(alpha_at(stepped, 2.5, 1) > 0.5);
+    OUGHT(alpha_at(stepped, 7.5, 6) > 0.5);
+    SAME(alpha_at(stepped, 2.5, 3.5), 0.0);
+
+    Plot seams;
+    Series meeting;
+
+    seams.x.scale = Scale(0, 3.3);
+    seams.y.scale = Scale(0, 1);
+    seams.legend = Corner::none;
+    meeting.shape = Shape::bars;
+    meeting.bar = 1;
+    meeting.points = {Point{0.5, 1}, Point{1.5, 1}, Point{2.5, 1}};
+    seams.series = {meeting};
+
+    const Layout seams_laid = seams.laid(font, area);
+    Raster seams_raster{tal::media::Size{400, 300}};
+    Pen seams_pen{seams_raster};
+
+    (void)seams.drawn(seams_pen, font, area);
+
+    const int edge = static_cast<int>(seams_laid.x.placed(1, seams_laid.data.at.x, seams_laid.data.at.x + seams_laid.data.wide));
+
+    OUGHT(alpha(seams_raster.pixels(), edge, static_cast<int>(seams_laid.data.at.y + seams_laid.data.high / 2)) > 0.99);
+
+    Plot fitted;
+    Series rising;
+
+    rising.shape = Shape::bars;
+    rising.points = {Point{1, 1}, Point{2, 2}, Point{3, 3}};
+    fitted.series = {rising};
+
+    const Layout fitted_laid = fitted.laid(font, area);
+
+    OUGHT(fitted_laid.y.low() <= 0 && fitted_laid.x.low() <= 0.6 && fitted_laid.x.high() >= 3.4);
+
+    Plot spaced = plot;
+    Series pair;
+
+    spaced.bars = Grouping::side;
+    pair.shape = Shape::bars;
+    pair.name = "pair";
+    pair.points = {Point{4, 5}, Point{6, 5}};
+    spaced.series = {pair};
+    spaced.legend = Corner::upper_left;
+
+    const tal::media::Pixels apart = drawn(spaced);
+
+    SAME(alpha_at(apart, 4.75, 2), 1.0);
+    SAME(alpha_at(apart, 5, 2), 0.0);
+    SAME(alpha_at(apart, 5.75, 2), 1.0);
+    SAME(alpha_at(apart, 5, 5), 0.0);
+    OUGHT(tone(apart, static_cast<int>(laid.data.at.x + 21.6), static_cast<int>(laid.data.at.y + 18 + 3.5), 0) > 0.5);
+
+    plot.bars = Grouping::side;
+    plot.series = {one};
+    plot.cursor = Point{laid.x.placed(5.5, laid.data.at.x, laid.data.at.x + laid.data.wide), laid.data.at.y + 10};
+
+    const int narrow = inked_columns(drawn(plot), static_cast<int>(laid.x.placed(6.5, laid.data.at.x, laid.data.at.x + laid.data.wide)), static_cast<int>(laid.data.at.x + laid.data.wide) - 2, static_cast<int>(laid.data.at.y) + 2, static_cast<int>(laid.data.at.y + laid.data.high) - 2);
+
+    plot.cursor = Point{laid.x.placed(8, laid.data.at.x, laid.data.at.x + laid.data.wide), laid.data.at.y + 10};
+    plot.cursor_line = false;
+
+    const tal::media::Pixels between = drawn(plot);
+
+    plot.cursor.reset();
+    OUGHT(between.stills().front().rgba == drawn(plot).stills().front().rgba);
+    OUGHT(narrow > 40);
 }

@@ -48,7 +48,9 @@
 // both or none, f goes round them), how long the traces keep their samples (seconds) and the step
 // of the wheel (in per cent) are settings, read from talcite/tal-pendulum.json in the user's folder
 // of settings (in the working folder where there is none, or the file after --settings); a mode
-// changed with f is written back when the program ends.
+// changed with f is written back when the program ends. The key h turns the phase portrait into the
+// histogram of the second angle over the time shown (E10), the bin of the angle now marked, and
+// back.
 namespace {
 
 using tal::drawing::Color;
@@ -247,6 +249,7 @@ struct View {
     std::optional<double> pressed;
     bool moved = false;
     bool stopped = false;
+    bool spread = false;
     std::array<tal::plotting::Layout, 3> laid;
 };
 
@@ -272,7 +275,8 @@ void sampled(const Pendulum& state, Traces& traces) {
 
 // The three plots of `traces` drawn with `pen` in `areas`, their letters of `letters`, over the
 // time `view` holds or the last seconds it shows, the plot under the mouse with its cursor; the
-// layouts and the time shown kept in `view`.
+// third the phase portrait, or the histogram of the second angle (its density, the bin of the
+// angle now marked) when `view` spreads it; the layouts and the time shown kept in `view`.
 void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const Traces& traces, double letters, View& view) {
     using tal::plotting::Plot;
     using tal::plotting::Scale;
@@ -320,6 +324,44 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     turns.series.push_back(std::move(two));
     pointing(turns, 1);
     view.laid[1] = turns.drawn(pen, font, areas.plots[1]);
+
+    if (view.spread) {
+        std::vector<double> angles_seen;
+
+        for (const Point& one : traces.second.points())
+            if (!time || (one.x >= time->low() && one.x <= time->high())) angles_seen.push_back(around(one.y));
+
+        const tal::plotting::Bins bins = tal::plotting::binned(angles_seen);
+        Plot spread;
+        Series counted = tal::plotting::histogram(bins, tal::plotting::Tally::density);
+        Series here;
+
+        spread.title = "Angle of the second rod";
+        spread.x.title = "θ₂ [rad]";
+        spread.y.title = "density [1/rad]";
+        spread.x.scale = angles;
+        spread.legend = tal::plotting::Corner::none;
+        spread.letters = letters;
+        spread.bars = tal::plotting::Grouping::over;
+        counted.color = Color{0.34F, 0.71F, 0.91F, 1};
+
+        if (!angles_seen.empty() && !bins.counts.empty()) {
+            const double last = angles_seen.back();
+            const auto bin = static_cast<std::size_t>(std::clamp(std::floor(last / bins.width - bins.low / bins.width), 0.0, static_cast<double>(bins.counts.size() - 1)));
+
+            here.points = {counted.points[bin]};
+        }
+
+        here.shape = tal::plotting::Shape::bars;
+        here.bar = bins.width;
+        here.color = Color{0.95F, 0.55F, 0.2F, 1};
+        spread.series.push_back(std::move(counted));
+        spread.series.push_back(std::move(here));
+        pointing(spread, 2);
+        view.laid[2] = spread.drawn(pen, font, areas.plots[2]);
+
+        return;
+    }
 
     Plot phase;
     Series portrait;
@@ -612,6 +654,8 @@ int main(int count, char** given) {
         }
 
         if (key == tal::Key{tal::Code::escape}) hold(false);
+
+        if (key == tal::Key{U'h'}) view.spread = !view.spread;
 
         drawing.redraw();
     });

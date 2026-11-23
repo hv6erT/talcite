@@ -16,12 +16,16 @@
 // One input of libFuzzer as scales, data and a plot: the ends of a scale and its kind, how many
 // ticks are asked for, the values a scale is fitted to, the series of a plot with their marks, the
 // size of its letters and its rectangle, a cursor over it and how it reads (E9), drawn on a raster
-// of 64 by 48 pixels, the samples of a trace, and scales placed and read back, zoomed and shifted.
-// Numbers are small (a byte) or whole (eight bytes, any double, NaN and the infinities among them).
-// Troubles may come; nothing may crash, hang or touch memory out of bounds. Ticks are no more than
-// asked (two at least) and lie within their scale; labels are as many as ticks; the layout keeps
-// the data within its rectangle; a trace's span ends at its last sample. The input is read in a
-// fixed order, so that it means the same to every compiler.
+// of 64 by 48 pixels, the samples of a trace, scales placed and read back, zoomed and shifted, and
+// values binned into histograms, series as bars or steps grouped every way (E10); the bars of more
+// than 4096 bins are neither made nor plotted, since the plots of an input would otherwise hold
+// millions of points and cost the time of their drawing, not of a fault. Numbers are small (a byte)
+// or whole (eight bytes, any double, NaN and the infinities among them). Troubles may come; nothing
+// may crash, hang or touch memory out of bounds. Ticks are no more than asked (two at least) and
+// lie within their scale; labels are as many as ticks; the layout keeps the data within its
+// rectangle; a trace's span ends at its last sample; the bins of values hold each finite one once,
+// and a histogram has a bar for each bin. The input is read in a fixed order, so that it means the
+// same to every compiler.
 namespace {
 
 using namespace tal::drawing;
@@ -108,7 +112,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     for (int operations = 0; reading.left() && operations < 64; ++operations) {
         try {
-            switch (reading.byte() % 12) {
+            switch (reading.byte() % 14) {
             case 0: {
                 const std::optional<Scale> one = scale(reading);
 
@@ -203,6 +207,45 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
                 plot.readout = static_cast<Readout>(reading.byte() % 3);
                 plot.cursor_line = reading.byte() % 2 == 0;
                 plot.readout_digits = static_cast<int>(reading.byte()) - 128;
+                break;
+            case 12: {
+                tal::plotting::Binning how;
+                const std::uint8_t which = reading.byte();
+
+                if (which & 1) how.count = reading.byte();
+
+                if (which & 2) how.width = reading.number();
+
+                const tal::plotting::Bins bins = tal::plotting::binned(values, how);
+                std::size_t all = 0;
+                std::size_t finite = 0;
+
+                for (const std::size_t one : bins.counts) all += one;
+
+                for (const double one : values) finite += std::isfinite(one) ? 1 : 0;
+
+                if (all != finite) std::terminate();
+
+                const auto tally = static_cast<tal::plotting::Tally>(reading.byte() % 3);
+
+                if (bins.counts.size() > 4096) break;
+
+                Series counted = tal::plotting::histogram(bins, tally);
+
+                if (counted.points.size() != bins.counts.size()) std::terminate();
+
+                plot.series.push_back(std::move(counted));
+                break;
+            }
+            case 13:
+                if (!plot.series.empty()) {
+                    Series& last = plot.series.back();
+
+                    last.shape = static_cast<tal::plotting::Shape>(reading.byte() % 3);
+                    last.bar = reading.byte() % 2 == 0 ? std::optional<double>{} : std::optional<double>{reading.number()};
+                }
+
+                plot.bars = static_cast<tal::plotting::Grouping>(reading.byte() % 3);
                 break;
             default: values.clear(); break;
             }
