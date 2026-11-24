@@ -126,4 +126,28 @@ private:
     Row* answers_ = nullptr;
 };
 
+class Field;
+class Table;
+
+class Palette : public Window {
+public:
+    explicit Palette(std::vector<std::shared_ptr<Action>> actions, std::string title = {});
+
+protected:
+    [[nodiscard]] Size measure(Limits room) const override;
+
+private:
+    class Rows;
+
+    void sifted();
+
+    void chosen(std::size_t row);
+
+    std::vector<std::shared_ptr<Action>> actions_;
+    std::shared_ptr<Rows> rows_;
+    Field* field_ = nullptr;
+    Table* table_ = nullptr;
+    Hooks heard_;
+};
+
 }

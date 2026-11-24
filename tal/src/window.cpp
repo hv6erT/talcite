@@ -1,13 +1,19 @@
 #include "tal/window.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "tal/controls.hpp"
 #include "tal/document.hpp"
 #include "tal/key.hpp"
+#include "tal/model.hpp"
 #include "tal/text.hpp"
+#include "tal/views.hpp"
 
 #include "lettering.hpp"
 #include "tree.hpp"
@@ -410,6 +416,244 @@ void Form::answer(std::shared_ptr<Action> one) {
     (void)answers_->children().add<Button>(one);
 
     bind(std::move(one));
+}
+
+namespace {
+
+// How a text answers a query typed in a palette: its letters matched in order (the byte ranges of
+// the text they take) and how well, more for letters at the start of a word and for letters right
+// after the one matched before.
+struct Answer {
+    std::vector<Mark> marks;
+    int score = 0;
+};
+
+// The query's letters found in `text` in order, case aside, each after the one before: right after
+// it when the letter stands there, else at the first start of a word where it stands (so that "kd"
+// takes the K and the D of "Kopiuj do"), else at the first place where it stands. Spaces in the
+// query count for nothing. None when a letter is not found.
+std::optional<Answer> answered(std::string_view query, std::string_view text) {
+    struct Letter {
+        char32_t folded = 0;
+        std::size_t from = 0;
+        std::size_t upto = 0;
+        bool starts = false;
+    };
+
+    std::vector<Letter> letters;
+    bool after_space = true;
+
+    for (std::size_t at = 0; at < text.size();) {
+        const std::size_t from = at;
+        const std::optional<char32_t> one = text::decoded(text, at);
+
+        if (!one) {
+            after_space = false;
+
+            continue;
+        }
+
+        const bool space = *one == U' ' || *one == U'-' || *one == U'_' || *one == U'/' || *one == U'.';
+
+        letters.push_back(Letter{text::folded(*one), from, at, after_space && !space});
+        after_space = space;
+    }
+
+    Answer made;
+    std::size_t next = 0;
+    std::optional<std::size_t> last;
+
+    for (std::size_t at = 0; at < query.size();) {
+        const std::optional<char32_t> one = text::decoded(query, at);
+
+        if (!one || *one == U' ') continue;
+
+        const char32_t wanted = text::folded(*one);
+        std::optional<std::size_t> found;
+
+        for (std::size_t where = next; where < letters.size(); ++where)
+            if (letters[where].folded == wanted) {
+                if (!found) found = where;
+
+                if (letters[where].starts && (!last || where != *last + 1)) {
+                    found = where;
+
+                    break;
+                }
+
+                if (last && where == *last + 1) break;
+            }
+
+        if (!found) return std::nullopt;
+
+        made.score += letters[*found].starts ? 2 : 0;
+        made.score += last && *found == *last + 1 ? 1 : 0;
+
+        if (!made.marks.empty() && made.marks.back().upto == letters[*found].from) {
+            made.marks.back().upto = letters[*found].upto;
+        } else {
+            made.marks.push_back(Mark{letters[*found].from, letters[*found].upto, "key", {}});
+        }
+
+        last = found;
+        next = *found + 1;
+    }
+
+    return made;
+}
+
+}
+
+// The rows of a palette: the actions that answer the query, best first, each with its text, the
+// letters matched in the part "key", and its shortcut.
+class Palette::Rows : public Model {
+public:
+    // The actions answering, each with its marks, in order.
+    void reset(std::vector<std::pair<std::shared_ptr<Action>, std::vector<Mark>>> made) {
+        shown_ = std::move(made);
+        told(Changes{Changes::Kind::reset});
+    }
+
+    // The action of the row `row`.
+    [[nodiscard]] const std::shared_ptr<Action>& action(std::size_t row) const { return shown_[row].first; }
+
+    // How many actions answer.
+    [[nodiscard]] std::size_t rows() const override { return shown_.size(); }
+
+    // The text with its marks in the first column, the shortcut in the second.
+    [[nodiscard]] Entry entry(std::size_t row, std::size_t column) const override {
+        const Action& one = *shown_[row].first;
+
+        if (column == 0) return Entry{one.text(), {}, shown_[row].second, Elide::end, false};
+
+        return Entry{one.key() ? to_string(*one.key()) : std::string{}, {}, {}, Elide::none, false};
+    }
+
+private:
+    std::vector<std::pair<std::shared_ptr<Action>, std::vector<Mark>>> shown_;
+};
+
+// A palette titled `title`, in the class "palette": a field over a table of the enabled actions
+// among `actions` that answer what the field holds, their letters in order (spaces aside), case
+// aside, best first: more letters at the start of a word, more letters together, then in the order
+// given. The arrows and the page keys move in the table while the field keeps the focus; Enter, or
+// a double click, closes the palette and runs the current action. An action that changes or turns
+// on or off sifts them again. Esc closes the palette without running anything.
+Palette::Palette(std::vector<std::shared_ptr<Action>> actions, std::string named)
+    : Window(std::move(named), Modal::yes), actions_(std::move(actions)), rows_(std::make_shared<Rows>()) {
+    add_class("palette");
+
+    std::erase(actions_, nullptr);
+
+    int keys = 0;
+
+    for (const std::shared_ptr<Action>& one : actions_)
+        if (one->key()) keys = std::max(keys, text::width(to_string(*one->key())));
+
+    Column& column = children().add<Column>();
+
+    field_ = &column.children().add<Field>();
+    table_ = &column.children().add<Table>(rows_, std::vector<Heading>{Heading{{}, Share{1, 10}, Edge::start}, Heading{{}, Share{0, keys}, Edge::end}});
+    table_->heading = false;
+    table_->share(Share{1, 0});
+
+    heard_.add(field_->on<Changed>([this](Changed& what) {
+        if (what.of(field_->text)) sifted();
+    }));
+
+    heard_.add(table_->on<Picked>([this](Picked& what) {
+        what.take();
+        chosen(what.row);
+    }));
+
+    heard_.add(on<KeyEvent>([this](KeyEvent& what) {
+        const Code code = what.key.code();
+        const std::size_t many = rows_->rows();
+
+        if (what.key.mods() != Mods{}) return;
+
+        if (code == Code::enter) {
+            what.take();
+
+            if (many != 0) chosen(std::min(*table_->current, many - 1));
+
+            return;
+        }
+
+        if (code != Code::up && code != Code::down && code != Code::pageup && code != Code::pagedown) return;
+
+        what.take();
+
+        if (many == 0) return;
+
+        const std::size_t page = std::max<std::size_t>(table_->window(), 1);
+        const std::size_t here = std::min(*table_->current, many - 1);
+
+        switch (code) {
+            case Code::up: table_->current = here == 0 ? 0 : here - 1; break;
+            case Code::down: table_->current = std::min(here + 1, many - 1); break;
+            case Code::pageup: table_->current = here > page ? here - page : 0; break;
+            default: table_->current = std::min(here + page, many - 1); break;
+        }
+    }));
+
+    for (const std::shared_ptr<Action>& one : actions_) heard_.add(one->on<Altered>([this](Altered&) { sifted(); }));
+
+    sifted();
+    field_->focus();
+}
+
+// As wide as the longest text with the widest shortcut beside it (30 columns at least), and as high
+// as the field over up to 12 rows of actions, all the actions given counted, so that the window
+// keeps its size while they are sifted; no larger than the room.
+Size Palette::measure(Limits room) const {
+    int texts = 0;
+    int keys = 0;
+
+    for (const std::shared_ptr<Action>& one : actions_) {
+        texts = std::max(texts, text::width(one->text()));
+
+        if (one->key()) keys = std::max(keys, text::width(to_string(*one->key())));
+    }
+
+    const int wide = std::max(texts + 2 + keys, 30);
+    const int high = 1 + static_cast<int>(std::min<std::size_t>(std::max<std::size_t>(actions_.size(), 1), 12));
+
+    return Size{std::clamp(wide, room.least.wide, std::max(room.most.wide, room.least.wide)), std::clamp(high, room.least.high, std::max(room.most.high, room.least.high))};
+}
+
+// The rows again for what the field holds, the first of them current.
+void Palette::sifted() {
+    std::vector<std::pair<Answer, std::size_t>> found;
+
+    for (std::size_t at = 0; at < actions_.size(); ++at) {
+        const Action& one = *actions_[at];
+
+        if (!one.enabled() || one.text().empty()) continue;
+
+        if (std::optional<Answer> answer = answered(*field_->text, one.text())) found.emplace_back(std::move(*answer), at);
+    }
+
+    std::stable_sort(found.begin(), found.end(), [](const auto& one, const auto& two) { return one.first.score > two.first.score; });
+
+    std::vector<std::pair<std::shared_ptr<Action>, std::vector<Mark>>> made;
+
+    for (auto& [answer, at] : found) made.emplace_back(actions_[at], std::move(answer.marks));
+
+    rows_->reset(std::move(made));
+    table_->current = 0;
+    table_->top(0);
+}
+
+// Closes the palette and runs the action of the row `row`. The palette may go with its closing, so
+// the action is held apart first.
+void Palette::chosen(std::size_t row) {
+    if (row >= rows_->rows()) return;
+
+    const std::shared_ptr<Action> one = rows_->action(row);
+
+    close();
+    one->run();
 }
 
 }

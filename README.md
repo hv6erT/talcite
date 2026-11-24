@@ -58,11 +58,12 @@ Each part is a CMake target of its own; a program links the ones it uses.
 `tal-ui`
 - `App` shows a `Document` in the terminal: it probes what the terminal can do (colors, the mouse,
   the alternate screen, sixel and kitty graphics) and reads input in every form terminals send it.
-- The document is a tree of nodes (`Node`), laid out by `Row`, `Column`, `Grid` and `Align`, styled
-  by classes with parameters (no cascade), told of events through `on<E>` and `Hook`.
+- The document is a tree of nodes (`Node`), laid out by `Row`, `Column`, `Grid`, `Align` and
+  `Split` (its room shared by parts, the borders dragged with the mouse), styled by classes with
+  parameters (no cascade), told of events through `on<E>` and `Hook`.
 - Widgets: labels, buttons, ticks, choices, selects, gauges, fields with history, lists, tables,
-  trees, scrolling, windows with their layers, messages and forms, menus with a menu bar, a key bar
-  and tabs, a text editor, a diff, images, the pages of documents (`Leaves`), web pages
+  trees, scrolling, windows with their layers, messages, forms and a palette of actions found by
+  their letters, menus with a menu bar, a key bar and tabs (also in the edge of a frame), a text editor, a diff, images, the pages of documents (`Leaves`), web pages
   (`Webview`), a terminal emulator, and `Drawing` with `Simulation` for pictures that move; a
   drawing records a frame of what it shows (`Drawing::recorded`), for SVG or a larger PNG.
 

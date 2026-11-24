@@ -814,3 +814,171 @@ TRIAL("Window: a shadow comes and goes with its class and moves with the window"
 }
 
 }
+
+namespace {
+
+// The row of the screen of `scene` holding `text` first, or -1.
+int row_of(Scene& scene, const std::string& text, int high) {
+    for (int y = 0; y < high; ++y)
+        if (scene.row(y).find(text) != std::string::npos) return y;
+
+    return -1;
+}
+
+}
+
+// A palette lists the enabled actions with their shortcuts; what is typed keeps those whose text
+// has its letters in order, case aside (Polish letters too), best first: letters at the starts of
+// words and letters together count. The arrows move among them while the field keeps the focus;
+// Enter or a double click closes the palette and runs the current one, Esc closes it and runs
+// nothing. An action turned on while the palette is open shows up.
+TRIAL("Palette: actions sifted by letters in order, run by Enter or a double click") {
+    Scene scene{{.screen = {50, 16}}};
+    Document document{scene.time()};
+    Layers& layers = document.children().add<Layers>();
+    std::vector<std::string> ran;
+    std::vector<std::shared_ptr<Action>> actions;
+    Hooks heard;
+
+    const auto made = [&](std::string text, std::optional<Key> key = std::nullopt) {
+        auto one = std::make_shared<Action>(text, std::nullopt, key);
+
+        heard.add(one->on<Run>([&ran, text](Run&) { ran.push_back(text); }));
+        actions.push_back(one);
+
+        return one;
+    };
+
+    (void)made("Kopiuj do…", Key{U'c', Mods{.alt = true}});
+    (void)made("Przenieś do…", Key{U'm', Mods{.alt = true}});
+    (void)made("Nowa karta", Key{U't', Mods{.ctrl = true}});
+    (void)made("Kopiuj", Key{U'c', Mods{.ctrl = true}});
+    const std::shared_ptr<Action> closing = made("Zamknij kartę", Key{U'w', Mods{.ctrl = true}});
+    (void)made("Kolumny");
+    actions.push_back(nullptr);
+
+    closing->enable(false);
+    scene.show(document);
+
+    const auto opened = [&] {
+        (void)layers.open(std::make_shared<tal::Palette>(actions, "Polecenia"));
+        scene.wait(0ms);
+    };
+
+    opened();
+
+    const int copy = row_of(scene, "Kopiuj do…", 16);
+
+    OUGHT(copy > 0);
+    OUGHT(scene.row(copy).find("Alt+C") != std::string::npos);
+    OUGHT(row_of(scene, "Przenieś do…", 16) == copy + 1);
+    OUGHT(row_of(scene, "Kolumny", 16) == copy + 4);
+    OUGHT(row_of(scene, "Zamknij", 16) < 0);
+    OUGHT(row_of(scene, "Polecenia", 16) >= 0);
+
+    scene.type("kd");
+    scene.wait(0ms);
+
+    SAME(row_of(scene, "Kopiuj do…", 16), copy);
+    OUGHT(row_of(scene, "Przenieś", 16) < 0);
+    OUGHT(row_of(scene, "Kolumny", 16) < 0);
+
+    scene.press(Key{Code::enter});
+    scene.wait(0ms);
+
+    SAME(ran, (std::vector<std::string>{"Kopiuj do…"}));
+    OUGHT(layers.top() == nullptr);
+
+    opened();
+    scene.type("ko");
+    scene.wait(0ms);
+
+    SAME(row_of(scene, "Kopiuj do…", 16), copy);
+    SAME(row_of(scene, "Kopiuj ", 16), copy);
+    SAME(row_of(scene, "Kolumny", 16), copy + 2);
+    OUGHT(row_of(scene, "Nowa karta", 16) < 0);
+
+    scene.press(Key{Code::down});
+    scene.press(Key{Code::down});
+    scene.press(Key{Code::down});
+    scene.press(Key{Code::up});
+    scene.press(Key{Code::enter});
+    scene.wait(0ms);
+
+    SAME(ran, (std::vector<std::string>{"Kopiuj do…", "Kopiuj"}));
+
+    opened();
+    scene.type("ŚD");
+    scene.wait(0ms);
+
+    SAME(row_of(scene, "Przenieś do…", 16), copy);
+    OUGHT(row_of(scene, "Kopiuj", 16) < 0);
+
+    scene.press(Key{Code::escape});
+    scene.wait(0ms);
+
+    SAME(ran.size(), std::size_t{2});
+    OUGHT(layers.top() == nullptr);
+
+    opened();
+    scene.type("zk");
+    scene.wait(0ms);
+
+    OUGHT(row_of(scene, "Zamknij", 16) < 0);
+
+    closing->enable(true);
+    scene.wait(0ms);
+
+    SAME(row_of(scene, "Zamknij kartę", 16), copy);
+
+    scene.press(Key{Code::backspace});
+    scene.press(Key{Code::backspace});
+    scene.type("xq");
+    scene.press(Key{Code::enter});
+    scene.wait(0ms);
+
+    SAME(ran.size(), std::size_t{2});
+    OUGHT(layers.top() != nullptr);
+
+    scene.press(Key{Code::backspace});
+    scene.press(Key{Code::backspace});
+    scene.wait(0ms);
+    scene.twice({10, row_of(scene, "Nowa karta", 16)});
+    scene.wait(0ms);
+
+    SAME(ran.back(), std::string{"Nowa karta"});
+    OUGHT(layers.top() == nullptr);
+}
+
+// Among actions whose letters all match, a letter right after the one before counts for one, a
+// letter at the start of a word for two (a letter right after the one before is taken there even
+// when it stands at the start of a word later); equal ones keep the order given.
+TRIAL("Palette: letters together and at the starts of words come first") {
+    Scene scene{{.screen = {50, 16}}};
+    Document document{scene.time()};
+    Layers& layers = document.children().add<Layers>();
+    std::vector<std::shared_ptr<Action>> actions;
+
+    for (const char* text : {"Abacus", "Ab x bc", "Bkx", "Kolumny", "Kxo", "Kopiuj"}) actions.push_back(std::make_shared<Action>(text));
+
+    scene.show(document);
+    (void)layers.open(std::make_shared<tal::Palette>(actions, "Polecenia"));
+    scene.wait(0ms);
+    scene.type("ab");
+    scene.wait(0ms);
+
+    OUGHT(row_of(scene, "Abacus", 16) >= 0 && row_of(scene, "Abacus", 16) < row_of(scene, "Ab x bc", 16));
+
+    scene.press(Key{Code::backspace});
+    scene.press(Key{Code::backspace});
+    scene.type("k");
+    scene.wait(0ms);
+
+    OUGHT(row_of(scene, "Kolumny", 16) >= 0 && row_of(scene, "Kolumny", 16) < row_of(scene, "Bkx", 16));
+
+    scene.type("o");
+    scene.wait(0ms);
+
+    OUGHT(row_of(scene, "Kopiuj", 16) >= 0 && row_of(scene, "Kopiuj", 16) < row_of(scene, "Kxo", 16));
+    OUGHT(row_of(scene, "Bkx", 16) < 0);
+}
