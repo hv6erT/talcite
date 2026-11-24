@@ -1077,3 +1077,184 @@ TRIAL("Tabs: crowded names show the current one between arrows") {
 }
 
 }
+
+// Pages put in before others, taken away and moved: the page shown stays shown, and taking it away
+// shows the next one (the one before, for the last), the focus that was on it moving to the page
+// shown. Names change; a page or place that does not stand throws std::out_of_range.
+TRIAL("Tabs: pages put in, taken away and moved, the shown one staying shown") {
+    Scene scene{{.screen = {40, 6}}};
+    Document document{scene.time()};
+    Tabs& tabs = document.children().add<Tabs>();
+
+    (void)tabs.add("One");
+    tal::Button& first = tabs.add("Two").children().add<tal::Button>(std::make_shared<Action>("go"));
+    (void)tabs.add("Three");
+    tal::Button& other = tabs.page(2).children().add<tal::Button>(std::make_shared<Action>("on"));
+
+    tabs.current = 1;
+    scene.show(document);
+    first.focus();
+    scene.wait(0ms);
+
+    (void)tabs.insert(0, "Zero");
+
+    SAME(*tabs.current, std::size_t{2});
+    SAME(tabs.title(2), std::string{"Two"});
+    SAME(tabs.count(), std::size_t{4});
+
+    (void)tabs.insert(4, "Four");
+
+    SAME(*tabs.current, std::size_t{2});
+    OUGHT(throws<std::out_of_range>([&tabs] { (void)tabs.insert(6, "Six"); }));
+
+    tabs.remove(0);
+
+    SAME(*tabs.current, std::size_t{1});
+    SAME(tabs.title(1), std::string{"Two"});
+
+    tabs.remove(1);
+    scene.wait(0ms);
+
+    SAME(*tabs.current, std::size_t{1});
+    SAME(tabs.title(1), std::string{"Three"});
+    OUGHT(other.focused());
+
+    tabs.current = 2;
+    tabs.remove(2);
+
+    SAME(*tabs.current, std::size_t{1});
+    SAME(tabs.count(), std::size_t{2});
+
+    tabs.move(1, 0);
+
+    SAME(*tabs.current, std::size_t{0});
+    SAME(tabs.title(0), std::string{"Three"});
+
+    tabs.move(1, 0);
+
+    SAME(*tabs.current, std::size_t{1});
+
+    tabs.title(0, "Uno");
+    scene.wait(0ms);
+
+    SAME(tabs.title(0), std::string{"Uno"});
+    OUGHT(scene.row(0).find("Uno") != std::string::npos);
+    OUGHT(&tabs.page(1) == other.parent());
+
+    OUGHT(throws<std::out_of_range>([&tabs] { tabs.remove(2); }));
+    OUGHT(throws<std::out_of_range>([&tabs] { tabs.move(0, 2); }));
+    OUGHT(throws<std::out_of_range>([&tabs] { tabs.move(2, 0); }));
+    OUGHT(throws<std::out_of_range>([&tabs] { tabs.title(2, "x"); }));
+    OUGHT(throws<std::out_of_range>([&tabs] { (void)tabs.title(2); }));
+    OUGHT(throws<std::out_of_range>([&tabs] { (void)tabs.page(2); }));
+
+    tabs.remove(0);
+    tabs.remove(0);
+
+    SAME(tabs.count(), std::size_t{0});
+    SAME(*tabs.current, std::size_t{0});
+}
+
+// Framed with a border, the names stand in its top edge after the heading, a cell of the edge
+// between them, and the page right under the edge; a click shows a page, a middle click tells
+// `Closing` and closes the page unless a hook takes it. Crowded, the shown name stands between
+// arrows after the heading, and a click on an arrow steps. Framed without a border, the names take
+// the first row, the page the rows under it.
+TRIAL("Tabs: framed, the names in the top edge after the heading") {
+    Scene scene{{.screen = {30, 5}}};
+    Document document{scene.time()};
+    Tabs& tabs = document.children().add<Tabs>();
+
+    document.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "tabs", "style": {"border": "thin"}}], "glyphs": {}})"));
+    tabs.framed = true;
+    tabs.heading = "1";
+    (void)tabs.add("Filmy").children().add<Label>("x");
+    (void)tabs.add("Pobrane");
+    scene.show(document);
+
+    SAME(scene.row(0), std::string{"┌1─ Filmy ─ Pobrane ─────────┐"});
+    OUGHT(begins(scene.row(1), "│x "));
+
+    scene.click({12, 0});
+
+    SAME(*tabs.current, std::size_t{1});
+
+    std::vector<std::size_t> asked;
+    bool keep = true;
+    const tal::Hook closing = tabs.on<tal::Closing>([&](tal::Closing& what) {
+        asked.push_back(what.which);
+
+        if (keep) what.take();
+    });
+
+    scene.wait(1s);
+    scene.click({4, 0}, tal::MouseButton::middle);
+
+    SAME(asked, (std::vector<std::size_t>{0}));
+    SAME(tabs.count(), std::size_t{2});
+
+    keep = false;
+    scene.wait(1s);
+    scene.click({4, 0}, tal::MouseButton::middle);
+    scene.wait(0ms);
+
+    SAME(asked, (std::vector<std::size_t>{0, 0}));
+    SAME(tabs.count(), std::size_t{1});
+    SAME(scene.row(0), std::string{"┌1─ Pobrane ─────────────────┐"});
+
+    Scene narrow{{.screen = {16, 4}}};
+    Document small{narrow.time()};
+    Tabs& crowd = small.children().add<Tabs>();
+
+    small.sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "tabs", "style": {"border": "thin"}}], "glyphs": {}})"));
+    crowd.framed = true;
+    crowd.heading = "1";
+    (void)crowd.add("Filmy");
+    (void)crowd.add("Pobrane");
+    narrow.show(small);
+
+    SAME(narrow.row(0), std::string{"┌1─◀ Filmy ───▶┐"});
+
+    Scene fits{{.screen = {21, 4}}};
+    Document roomy{fits.time()};
+    Tabs& full = roomy.children().add<Tabs>();
+    Scene short_by_one{{.screen = {20, 4}}};
+    Document tight{short_by_one.time()};
+    Tabs& cut = tight.children().add<Tabs>();
+
+    for (Document* one : {&roomy, &tight}) one->sheet(tal::StyleSheet::parsed(R"({"rules": [{"select": "tabs", "style": {"border": "thin"}}], "glyphs": {}})"));
+
+    for (Tabs* one : {&full, &cut}) {
+        one->framed = true;
+        one->heading = "1";
+        (void)one->add("Filmy");
+        (void)one->add("Pobrane");
+    }
+
+    fits.show(roomy);
+    short_by_one.show(tight);
+
+    SAME(fits.row(0), std::string{"┌1─ Filmy ─ Pobrane ┐"});
+    OUGHT(begins(short_by_one.row(0), "┌1─◀"));
+
+    narrow.click({14, 0});
+
+    SAME(*crowd.current, std::size_t{1});
+
+    narrow.wait(1s);
+    narrow.click({3, 0});
+
+    SAME(*crowd.current, std::size_t{0});
+
+    Scene bare{{.screen = {20, 3}}};
+    Document plain{bare.time()};
+    Tabs& open = plain.children().add<Tabs>();
+
+    open.framed = true;
+    (void)open.add("A").children().add<Label>("y");
+    (void)open.add("B");
+    bare.show(plain);
+
+    OUGHT(begins(bare.row(0), " A   B "));
+    OUGHT(begins(bare.row(1), "y"));
+}

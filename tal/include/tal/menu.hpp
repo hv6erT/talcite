@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "tal/action.hpp"
@@ -112,7 +113,23 @@ public:
 
     Column& add(std::string title, std::optional<char32_t> letter = {});
 
+    Column& insert(std::size_t at, std::string title, std::optional<char32_t> letter = {});
+
+    void remove(std::size_t which);
+
+    void move(std::size_t from, std::size_t to);
+
+    void title(std::size_t which, std::string said);
+
+    [[nodiscard]] const std::string& title(std::size_t which) const;
+
+    [[nodiscard]] Column& page(std::size_t which) const;
+
+    [[nodiscard]] std::size_t count() const { return pages_.size(); }
+
     Property<std::size_t> current{*this, Effect::layout, 0};
+    Property<bool> framed{*this, Effect::layout, false};
+    Property<std::string> heading{*this, Effect::layout, {}};
 
 protected:
     [[nodiscard]] Size measure(Limits room) const override;
@@ -121,12 +138,24 @@ protected:
 
     void paint(Canvas& onto) const override;
 
+    void outline(Canvas& box) const override;
+
 private:
     class Name;
 
     [[nodiscard]] std::size_t shown() const;
 
     [[nodiscard]] bool crowded(int wide) const;
+
+    [[nodiscard]] int named() const;
+
+    [[nodiscard]] bool edged() const;
+
+    [[nodiscard]] int lead() const;
+
+    [[nodiscard]] std::optional<std::pair<int, int>> arrows() const;
+
+    void lighted();
 
     void switched();
 
@@ -136,6 +165,12 @@ private:
     std::vector<Column*> pages_;
     bool moving_ = false;
     Hooks hooks_;
+};
+
+struct Closing : Event {
+    explicit Closing(std::size_t at) : which(at) {}
+
+    std::size_t which = 0;
 };
 
 }

@@ -1,6 +1,8 @@
 #include "tal/menu.hpp"
 
 #include <algorithm>
+#include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -742,13 +744,20 @@ void KeyBar::arrange(Area inside) {
 }
 
 // The name of a page, in the class "tab": the text between two spaces, its letter in the look of
-// the part "key", with the state `current` while its page is shown. A click shows its page.
+// the part "key", with the state `current` while its page is shown. A click shows its page; a click
+// of the middle button asks to close it (`Closing`).
 class Tabs::Name : public Node {
 public:
     Name(std::string text, std::optional<char32_t> letter);
 
     // Marks the name as the shown page's, or not.
     void lit(bool on) { state(State::current, on); }
+
+    // Gives the name the text `text`.
+    void retitle(std::string text) {
+        said = std::move(text);
+        relayout();
+    }
 
     // The columns it wants: the text and a space on each side.
     [[nodiscard]] int wanted() const { return text::width(said, rendering()) + 2; }
@@ -771,15 +780,29 @@ Tabs::Name::Name(std::string text, std::optional<char32_t> letter) : said(std::m
 
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
         auto* tabs = dynamic_cast<Tabs*>(parent());
+        const bool closing = what.press == Press::click && what.button == MouseButton::middle;
 
-        if (!clicking(what) || tabs == nullptr) return;
+        if ((!clicking(what) && !closing) || tabs == nullptr) return;
 
         const auto at = std::find(tabs->names_.begin(), tabs->names_.end(), this);
 
         if (at == tabs->names_.end()) return;
 
         what.take();
-        tabs->current = static_cast<std::size_t>(at - tabs->names_.begin());
+
+        const auto which = static_cast<std::size_t>(at - tabs->names_.begin());
+
+        if (!closing) {
+            tabs->current = which;
+
+            return;
+        }
+
+        Closing asked{which};
+
+        tabs->notified(asked);
+
+        if (!asked.taken() && which < tabs->pages_.size()) tabs->remove(which);
     }));
 }
 
@@ -795,7 +818,11 @@ void Tabs::Name::paint(Canvas& onto) const { (void)spelled(onto, {1, 0}, said, m
 
 // Pages without any, in the class "tabs". Ctrl+PgUp and Ctrl+PgDn show the page before and after,
 // round the ends, and Alt with a name's letter its page; these are default actions, so a node on
-// the page may take the key first. A click on an arrow of crowded names steps too.
+// the page may take the key first. A click on an arrow of crowded names steps too. Unframed, the
+// names stand in the middle of the first row over a line; `framed` with a border, they stand in
+// the top edge of the border after `heading`, the pages right under the edge (without a border, in
+// the first row, the pages under it, without a line). A middle click on a name tells `Closing`,
+// and closes the page unless a hook takes it.
 Tabs::Tabs() {
     classes({"tabs"});
 
@@ -838,6 +865,18 @@ Tabs::Tabs() {
     hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
         if (!clicking(what) || &what.target() != this) return;
 
+        if (*framed) {
+            const std::optional<std::pair<int, int>> ends = arrows();
+            const int row = edged() ? 0 : boxed(style()).top;
+
+            if (!ends || what.at.y != row || (what.at.x != ends->first && what.at.x != ends->second)) return;
+
+            what.take();
+            turned(what.at.x == ends->first ? -1 : 1);
+
+            return;
+        }
+
         const Sides in = boxed(style());
         const int wide = area().size.wide - in.left - in.right;
         const int x = what.at.x - in.left;
@@ -850,26 +889,120 @@ Tabs::Tabs() {
 }
 
 // Adds a page with the name `title` and `letter` at the end, and gives it, empty, to be filled.
-Column& Tabs::add(std::string title, std::optional<char32_t> letter) {
+Column& Tabs::add(std::string title, std::optional<char32_t> letter) { return insert(pages_.size(), std::move(title), letter); }
+
+// Puts a page with the name `title` and `letter` before the page `at` (at the end for the count of
+// pages), and gives it, empty, to be filled. The page shown stays shown. A place past the end
+// throws std::out_of_range.
+Column& Tabs::insert(std::size_t at, std::string title, std::optional<char32_t> letter) {
+    if (at > pages_.size()) throw std::out_of_range{"tal::Tabs::insert: the place lies past the pages"};
+
+    const bool after = !pages_.empty() && at <= shown();
     Name& name = children().add<Name>(std::move(title), letter);
     Column& page = children().add<Column>();
 
-    names_.push_back(&name);
-    pages_.push_back(&page);
+    names_.insert(names_.begin() + static_cast<std::ptrdiff_t>(at), &name);
+    pages_.insert(pages_.begin() + static_cast<std::ptrdiff_t>(at), &page);
 
-    for (std::size_t at = 0; at < names_.size(); ++at) names_[at]->lit(at == shown());
+    if (after) {
+        current = shown() + 1;
+    } else {
+        lighted();
+    }
 
     return page;
 }
 
-// The row of names, the line under them, and the largest page, so that the size stays when the
-// page changes.
-Size Tabs::measure(Limits room) const {
-    int names = 0;
-    Size most{0, 0};
-    const Limits inner{{0, 0}, {room.most.wide, std::max(room.most.high - 2, 0)}};
+// Takes away the page `which` with its name. The page shown stays shown; when it is the one taken
+// away, the next one is shown (the one before, for the last). A page that does not stand throws
+// std::out_of_range.
+void Tabs::remove(std::size_t which) {
+    if (which >= pages_.size()) throw std::out_of_range{"tal::Tabs::remove: no such page"};
 
-    for (const Name* one : names_) names += one->wanted();
+    const std::size_t was = shown();
+    Name* name = names_[which];
+    Column* page = pages_[which];
+    const Document* in = document();
+    const Node* focus = in != nullptr ? in->focused() : nullptr;
+    const bool held = focus != nullptr && tree::under(*page, *focus);
+
+    names_.erase(names_.begin() + static_cast<std::ptrdiff_t>(which));
+    pages_.erase(pages_.begin() + static_cast<std::ptrdiff_t>(which));
+
+    const std::shared_ptr<Node> gone = children().remove(*page);
+
+    (void)children().remove(*name);
+
+    const std::size_t now = pages_.empty() ? 0 : which < was ? was - 1 : std::min(was, pages_.size() - 1);
+
+    if (*current != now) {
+        current = now;
+    } else {
+        switched();
+    }
+
+    if (held && !pages_.empty()) moving_ = true;
+
+    relayout();
+}
+
+// Moves the page `from` with its name so that it stands at `to` among the pages. The page shown
+// stays shown. A page or a place that does not stand throws std::out_of_range.
+void Tabs::move(std::size_t from, std::size_t to) {
+    if (from >= pages_.size() || to >= pages_.size()) throw std::out_of_range{"tal::Tabs::move: no such page"};
+
+    if (from == to) return;
+
+    Column* const shown_page = pages_[shown()];
+    Name* const name = names_[from];
+    Column* const page = pages_[from];
+
+    names_.erase(names_.begin() + static_cast<std::ptrdiff_t>(from));
+    pages_.erase(pages_.begin() + static_cast<std::ptrdiff_t>(from));
+    names_.insert(names_.begin() + static_cast<std::ptrdiff_t>(to), name);
+    pages_.insert(pages_.begin() + static_cast<std::ptrdiff_t>(to), page);
+
+    const auto now = static_cast<std::size_t>(std::find(pages_.begin(), pages_.end(), shown_page) - pages_.begin());
+
+    if (*current != now) {
+        current = now;
+    } else {
+        lighted();
+    }
+
+    relayout();
+}
+
+// Gives the page `which` the name `said`. A page that does not stand throws std::out_of_range.
+void Tabs::title(std::size_t which, std::string said) {
+    if (which >= pages_.size()) throw std::out_of_range{"tal::Tabs::title: no such page"};
+
+    names_[which]->retitle(std::move(said));
+    relayout();
+}
+
+// The name of the page `which`. A page that does not stand throws std::out_of_range.
+const std::string& Tabs::title(std::size_t which) const {
+    if (which >= pages_.size()) throw std::out_of_range{"tal::Tabs::title: no such page"};
+
+    return names_[which]->said;
+}
+
+// The page `which`. A page that does not stand throws std::out_of_range.
+Column& Tabs::page(std::size_t which) const {
+    if (which >= pages_.size()) throw std::out_of_range{"tal::Tabs::page: no such page"};
+
+    return *pages_[which];
+}
+
+// The row of names, the line under them, and the largest page, so that the size stays when the
+// page changes. Framed with a border, the names lie in the edge, which the box already counts.
+Size Tabs::measure(Limits room) const {
+    const bool edge = edged();
+    const int above = edge ? 0 : *framed ? 1 : 2;
+    const int names = lead() + named();
+    Size most{0, 0};
+    const Limits inner{{0, 0}, {room.most.wide, std::max(room.most.high - above, 0)}};
 
     for (Column* one : pages_) {
         const Size wants = one->measured(inner);
@@ -877,49 +1010,70 @@ Size Tabs::measure(Limits room) const {
         most = Size{std::max(most.wide, wants.wide), std::max(most.high, wants.high)};
     }
 
-    return Size{std::max(names, most.wide), most.high + 2};
+    return Size{std::max(names, most.wide), most.high + above};
 }
 
 // The names in the middle of the first row (crowded, only the shown one, between the arrows), the
-// shown page under the line; the other names and pages stand without room, so that they take
-// neither the focus nor the mouse.
+// shown page under the line; framed, the names one after another from the start after `heading`,
+// a cell of the edge between them. The other names and pages stand without room, so that they
+// take neither the focus nor the mouse.
 void Tabs::arrange(Area inside) {
     const std::size_t at = shown();
-    const int wide = inside.size.wide;
-    const bool crowd = crowded(wide);
-    const int high = std::min(inside.size.high, 1);
+    const bool edge = edged();
+    const bool frame = *framed;
+    const int start = edge ? 1 : inside.at.x;
+    const int wide = edge ? area().size.wide - 2 : inside.size.wide;
+    const int row = edge ? 0 : inside.at.y;
+    const int room = wide - lead();
+    const bool crowd = crowded(room);
     const Area none{inside.at, {0, 0}};
-    int total = 0;
-
-    for (const Name* one : names_) total += one->wanted();
-
-    int x = inside.at.x + (wide - total) / 2;
+    const int total = named();
+    int x = frame ? start + lead() : inside.at.x + (wide - total) / 2;
 
     for (std::size_t index = 0; index < names_.size(); ++index) {
         Name& name = *names_[index];
 
         if (!crowd) {
-            name.placed(Area{{x, inside.at.y}, {name.wanted(), high}});
-            x += name.wanted();
+            name.placed(Area{{x, row}, {name.wanted(), 1}});
+            x += name.wanted() + (frame ? 1 : 0);
         } else if (index == at) {
-            const int room = std::min(name.wanted(), std::max(wide - 2, 0));
+            const int fits = std::min(name.wanted(), std::max(room - 2, 0));
+            const int from = frame ? start + lead() + 1 : inside.at.x + (wide - fits) / 2;
 
-            name.placed(Area{{inside.at.x + (wide - room) / 2, inside.at.y}, {room, high}});
+            name.placed(Area{{from, row}, {fits, 1}});
         } else {
             name.placed(none);
         }
     }
 
-    const Area page{{inside.at.x, inside.at.y + 2}, {wide, std::max(inside.size.high - 2, 0)}};
+    const int below = edge ? 0 : frame ? 1 : 2;
+    const Area page{{inside.at.x, inside.at.y + below}, {inside.size.wide, std::max(inside.size.high - below, 0)}};
 
     for (std::size_t index = 0; index < pages_.size(); ++index) pages_[index]->placed(index == at ? page : Area{page.at, {0, 0}});
 }
 
-// The thin line under the names, thick under the shown one, and the arrows `tab.left` and
-// `tab.right` at the ends of crowded names.
+// Unframed, the thin line under the names, thick under the shown one, and the arrows `tab.left`
+// and `tab.right` at the ends of crowded names. Framed without a border, `heading` in the part
+// "heading" at the start of the first row, and the arrows; with one, these go in the edge
+// (`outline`).
 void Tabs::paint(Canvas& onto) const {
     const int wide = onto.size().wide;
     const Look plain = look();
+
+    if (*framed) {
+        if (edged()) return;
+
+        const Sides in = boxed(style());
+
+        if (!heading->empty()) (void)onto.put({0, 0}, *heading, look("heading"));
+
+        if (const std::optional<std::pair<int, int>> ends = arrows()) {
+            (void)onto.put({ends->first - in.left, 0}, glyph("tab.left"), plain);
+            (void)onto.put({ends->second - in.left, 0}, glyph("tab.right"), plain);
+        }
+
+        return;
+    }
 
     if (onto.size().high >= 2) {
         const std::string_view thin = glyph("line.thin.across");
@@ -941,23 +1095,66 @@ void Tabs::paint(Canvas& onto) const {
     (void)onto.put({wide - 1, 0}, glyph("tab.right"), plain);
 }
 
+// Framed with a border, `heading` in the part "heading" in the top edge after the corner, and the
+// arrows of crowded names.
+void Tabs::outline(Canvas& box) const {
+    if (!edged()) return;
+
+    if (!heading->empty()) (void)box.put({1, 0}, *heading, look("heading"));
+
+    if (const std::optional<std::pair<int, int>> ends = arrows()) {
+        (void)box.put({ends->first, 0}, glyph("tab.left"), look());
+        (void)box.put({ends->second, 0}, glyph("tab.right"), look());
+    }
+}
+
+// Framed, the columns of the arrows at the ends of the room for crowded names, counted from the
+// corner of the tabs: the first column after `heading` and the last before the edge's corner (or
+// the border, without an edge). None while the names fit, or the room is less than two columns.
+std::optional<std::pair<int, int>> Tabs::arrows() const {
+    const Sides in = boxed(style());
+    const bool edge = edged();
+    const int start = (edge ? 1 : in.left) + lead();
+    const int room = (edge ? area().size.wide - 2 : area().size.wide - in.left - in.right) - lead();
+
+    if (!crowded(room) || room < 2) return std::nullopt;
+
+    return std::pair{start, start + room - 1};
+}
+
 // The page shown: `current`, or the last one when it lies past it.
 std::size_t Tabs::shown() const { return pages_.empty() ? 0 : std::min(*current, pages_.size() - 1); }
 
-// Whether the names do not fit in `wide` columns side by side.
-bool Tabs::crowded(int wide) const {
+// Whether the names do not fit in `wide` columns side by side (`named`).
+bool Tabs::crowded(int wide) const { return named() > wide; }
+
+// The columns the names take side by side: each its text and a space on either side, and framed, a
+// cell of the edge between two of them.
+int Tabs::named() const {
     int total = 0;
 
     for (const Name* one : names_) total += one->wanted();
 
-    return total > wide;
+    return total + (*framed && !names_.empty() ? static_cast<int>(names_.size()) - 1 : 0);
+}
+
+// Whether the names stand in the top edge of a border: framed, with a border.
+bool Tabs::edged() const { return *framed && style().border != Border::none; }
+
+// The columns before the first name: `heading` and a cell after it, framed with a heading; none
+// otherwise.
+int Tabs::lead() const { return *framed && !heading->empty() ? text::width(*heading, rendering()) + 1 : 0; }
+
+// The names show which page is current.
+void Tabs::lighted() {
+    for (std::size_t at = 0; at < names_.size(); ++at) names_[at]->lit(at == shown());
 }
 
 // The page changed: the names show which one is current, and a focus on a page now hidden moves to
 // the first node of the shown page that takes it, once it is laid out. A shown page with nothing to
 // take the focus leaves it where it was.
 void Tabs::switched() {
-    for (std::size_t at = 0; at < names_.size(); ++at) names_[at]->lit(at == shown());
+    lighted();
 
     const Document* in = document();
     const Node* focus = in != nullptr ? in->focused() : nullptr;
