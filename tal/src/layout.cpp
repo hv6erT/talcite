@@ -1,8 +1,10 @@
 #include "tal/layout.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 
 #include "dividing.hpp"
 
@@ -327,6 +329,311 @@ void Align::arrange(Area inside) {
 
         one.placed(Area{at, sized(length, across(inside.size, axis_), axis_)});
     }
+}
+
+// A split of the room along `along` among its children, in the class "split": each child gets a
+// part of the room in proportion to its part (`part`, the same for all until set), none less than
+// `least` cells while the room holds that much, with `gap` cells between them, where the split
+// draws a line. A border between two children is dragged with the left button from its gap or the
+// cell on either side of it, where nothing under the pointer takes the press; while it is dragged
+// the split has the state `drag`. Every move of a border tells `Resized`.
+Split::Split(Axis along, int gap) : axis(*this, Effect::layout, along), gap_(std::max(gap, 0)) {
+    classes({"split"});
+
+    hooks_.add(otherwise<MouseEvent>([this](MouseEvent& what) {
+        if (what.press == Press::down && dragging_) {
+            dragging_.reset();
+            state(State::drag, false);
+        }
+
+        if (what.press == Press::up) {
+            if (!dragging_) return;
+
+            what.take();
+            dragging_.reset();
+            state(State::drag, false);
+
+            return;
+        }
+
+        Spot here = what.at;
+
+        for (const Node* at = &what.target(); at != nullptr && at != this; at = at->parent()) here = Spot{here.x + at->area().at.x, here.y + at->area().at.y};
+
+        const int at = along_of(here);
+
+        if (dragging_) {
+            if (what.press != Press::move) return;
+
+            what.take();
+            moved(*dragging_, at - grip_ - border_spot(*dragging_));
+
+            return;
+        }
+
+        if (what.press != Press::down || what.button != MouseButton::left) return;
+
+        const std::optional<std::size_t> border = border_at(at);
+
+        if (!border) return;
+
+        what.take();
+        dragging_ = border;
+        grip_ = at - border_spot(*border);
+        state(State::drag, true);
+        capture();
+    }));
+}
+
+// Sets the part of `child` to `much`: the children share the room in proportion to their parts. A
+// node that is not a child throws std::logic_error; a part that is not a positive number throws
+// std::invalid_argument.
+void Split::part(Node& child, double much) {
+    if (child.parent() != this) throw std::logic_error{"tal::Split::part: the node is not a child of the split"};
+
+    if (!std::isfinite(much) || much <= 0) throw std::invalid_argument{"tal::Split::part: a part is a positive number"};
+
+    std::erase_if(parts_, [&child](const Part& one) {
+        const std::shared_ptr<Node> held = one.node.lock();
+
+        return held == nullptr || held.get() == &child;
+    });
+
+    parts_.push_back(Part{child.weak_from_this(), much});
+
+    relayout();
+}
+
+// The part of `child`: as set, or, for a child without one, the mean of the parts set (one when
+// none is). A node that is not a child throws std::logic_error.
+double Split::part(const Node& child) const {
+    if (child.parent() != this) throw std::logic_error{"tal::Split::part: the node is not a child of the split"};
+
+    std::size_t which = 0;
+
+    for (const Node& one : children()) {
+        if (&one == &child) break;
+
+        ++which;
+    }
+
+    return parts()[which];
+}
+
+// Moves the border after the child `border` by `by` cells (forward along the axis when positive):
+// the child before it grows by as much as the one after it shrinks, neither below `least`. From
+// then on every child's part is the length it has, so the room is shared as it now stands. A
+// border that does not stand (past the last child, or before the split is first arranged) and a
+// move that changes nothing do nothing; any other tells `Resized`.
+void Split::moved(std::size_t border, int by) {
+    if (border + 1 >= lengths_.size() || by == 0) return;
+
+    const int fewest = std::max(*least, 0);
+    const int first = lengths_[border];
+    const int both = first + lengths_[border + 1];
+
+    if (both < 2 * fewest) return;
+
+    const int now = std::clamp(first + by, fewest, both - fewest);
+
+    if (now == first) return;
+
+    lengths_[border] = now;
+    lengths_[border + 1] = both - now;
+
+    std::vector<Part> made;
+    std::size_t which = 0;
+
+    for (Node& one : children()) {
+        if (which < lengths_.size()) made.push_back(Part{one.weak_from_this(), static_cast<double>(std::max(lengths_[which], 1))});
+
+        ++which;
+    }
+
+    parts_ = std::move(made);
+
+    relayout();
+
+    Resized told{border};
+
+    notified(told);
+}
+
+// How many borders stand between the children: one fewer than there are children.
+std::size_t Split::borders() const {
+    const std::size_t count = children().size();
+
+    return count == 0 ? 0 : count - 1;
+}
+
+// Along the axis, every child's `least` with the gaps between them; across it, the largest child.
+Size Split::measure(Limits room) const {
+    const std::size_t count = children().size();
+    int thickness = 0;
+
+    for (Node& one : children()) thickness = std::max(thickness, across(one.measured(Limits{{0, 0}, room.most}), *axis));
+
+    const int length = static_cast<int>(count) * std::max(*least, 0) + gaps(count, gap_);
+
+    return sized(std::max(length, along(room.least, *axis)), std::max(thickness, across(room.least, *axis)), *axis);
+}
+
+// The children one after another along the axis with the gaps between them, over the full extent
+// across it. The room left after the gaps is shared in proportion to the parts; a child whose share
+// falls below `least` gets `least` and the rest is shared again among the others; the cells the
+// rounding leaves over go one each to the children with the largest remainders, the first of equal
+// ones first. Where the room is less than `least` for each child, it is shared evenly.
+void Split::arrange(Area inside) {
+    inside_ = inside;
+
+    std::vector<Node*> nodes;
+
+    for (Node& one : children()) nodes.push_back(&one);
+
+    const std::size_t count = nodes.size();
+    const int room = std::max(along(inside.size, *axis) - gaps(count, gap_), 0);
+    const int fewest = std::max(*least, 0);
+    const bool enough = room >= static_cast<int>(count) * fewest;
+    std::vector<double> weights = enough ? parts() : std::vector<double>(count, 1.0);
+    std::vector<int> made(count, 0);
+    std::vector<bool> fixed(count, false);
+    std::vector<double> ideal(count, 0);
+
+    while (count != 0) {
+        int rest = room;
+        double sum = 0;
+
+        for (std::size_t one = 0; one < count; ++one) {
+            if (fixed[one]) {
+                rest -= fewest;
+            } else {
+                sum += weights[one];
+            }
+        }
+
+        bool again = false;
+
+        for (std::size_t one = 0; one < count; ++one) {
+            if (fixed[one]) continue;
+
+            ideal[one] = sum > 0 ? static_cast<double>(rest) * weights[one] / sum : 0;
+
+            if (enough && ideal[one] < fewest) {
+                fixed[one] = true;
+                again = true;
+            }
+        }
+
+        if (!again) break;
+    }
+
+    int left = room;
+
+    for (std::size_t one = 0; one < count; ++one) {
+        made[one] = fixed[one] ? fewest : static_cast<int>(std::floor(ideal[one]));
+        left -= made[one];
+    }
+
+    std::vector<std::size_t> order;
+
+    for (std::size_t one = 0; one < count; ++one)
+        if (!fixed[one]) order.push_back(one);
+
+    std::stable_sort(order.begin(), order.end(), [&](std::size_t one, std::size_t two) { return ideal[one] - std::floor(ideal[one]) > ideal[two] - std::floor(ideal[two]); });
+
+    for (std::size_t one = 0; left > 0 && !order.empty(); one = (one + 1) % order.size()) {
+        ++made[order[one]];
+        --left;
+    }
+
+    lengths_ = made;
+
+    const int thick = across(inside.size, *axis);
+    int at = 0;
+
+    for (std::size_t one = 0; one < count; ++one) {
+        const Spot start = *axis == Axis::horizontal ? Spot{inside.at.x + at, inside.at.y} : Spot{inside.at.x, inside.at.y + at};
+
+        nodes[one]->placed(Area{start, sized(made[one], thick, *axis)});
+        at += made[one] + gap_;
+    }
+}
+
+// The line of the sheet's thin glyphs down each gap (across it for a split down the screen).
+void Split::paint(Canvas& onto) const {
+    if (gap_ == 0) return;
+
+    const std::string_view line = glyph(*axis == Axis::horizontal ? "line.thin.upright" : "line.thin.across");
+    const Look plain = look();
+    const int thick = across(inside_.size, *axis);
+
+    for (std::size_t border = 0; border + 1 < lengths_.size(); ++border) {
+        const int from = border_spot(border);
+
+        for (int step = 0; step < gap_; ++step)
+            for (int side = 0; side < thick; ++side) {
+                const Spot cell = *axis == Axis::horizontal ? Spot{from + step, inside_.at.y + side} : Spot{inside_.at.x + side, from + step};
+
+                (void)onto.put(cell, line, plain);
+            }
+    }
+}
+
+// Every child's part in order: as set, or the mean of those set (one when none is).
+std::vector<double> Split::parts() const {
+    std::vector<double> made;
+    std::vector<bool> known;
+    double sum = 0;
+    std::size_t set = 0;
+
+    for (const Node& one : children()) {
+        const auto found = std::find_if(parts_.begin(), parts_.end(), [&one](const Part& held) {
+            const std::shared_ptr<Node> node = held.node.lock();
+
+            return node != nullptr && node.get() == &one;
+        });
+
+        made.push_back(found == parts_.end() ? 0 : found->much);
+        known.push_back(found != parts_.end());
+
+        if (found != parts_.end()) {
+            sum += found->much;
+            ++set;
+        }
+    }
+
+    const double usual = set == 0 ? 1.0 : sum / static_cast<double>(set);
+
+    for (std::size_t one = 0; one < made.size(); ++one)
+        if (!known[one]) made[one] = usual;
+
+    return made;
+}
+
+// Where along the axis the border after the child `border` stands: the first cell past that child,
+// counted from the split's own corner like the spots of its children.
+int Split::border_spot(std::size_t border) const {
+    int at = along_of(inside_.at);
+
+    for (std::size_t one = 0; one <= border && one < lengths_.size(); ++one) at += lengths_[one] + (one < border ? gap_ : 0);
+
+    return at;
+}
+
+// The coordinate of `one` along the axis.
+int Split::along_of(Spot one) const { return *axis == Axis::horizontal ? one.x : one.y; }
+
+// The border whose gap, or the last cell of the child before the gap, holds the cell `at` along the
+// axis; none for any other cell. The first cell of the child after the gap is that child's: it is
+// where a frame's top edge, which may hold names to click, lies in a split down the screen.
+std::optional<std::size_t> Split::border_at(int at) const {
+    for (std::size_t border = 0; border + 1 < lengths_.size(); ++border) {
+        const int from = border_spot(border);
+
+        if (at >= from - 1 && at < from + gap_) return border;
+    }
+
+    return std::nullopt;
 }
 
 }
