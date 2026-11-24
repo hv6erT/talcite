@@ -251,35 +251,65 @@ private:
     // between them, and none for a half that lies beyond the view (the box of its ends and of where
     // the tangents at them meet, which holds the part and its chord, misses the view once the
     // matrix has carried them to pixels; for a half turn they meet beyond the numbers' reach, and
-    // the part is halved again). Throws Trouble malformed where the matrix carries an end past the
-    // range of numbers, as it would the stroke's points.
+    // the part is halved again), and none within a part whose ends are turns a step of the numbers
+    // apart. The halves wait on a list of their own, not on the stack: a part may be halved over a
+    // thousand times (an arc of a huge radius, or through a matrix that flattens the plane, which
+    // keeps every part in view), deeper than a thread's stack goes under the sanitizers. Throws
+    // Trouble malformed where the matrix carries an end past the range of numbers, as it would the
+    // stroke's points.
     void halved(Point center, Point from, double first, double last, std::vector<Point>& into) const {
-        const double angle = std::abs(last - first);
+        // A part still to come: an arc from `first` to `last`, or the point at `first` between two
+        // halves (`point`); the last on the list comes first.
+        struct Part {
+            double first = 0;
+            double last = 0;
+            bool point = false;
+        };
 
-        if (std::ceil(angle / step_) <= reach) {
-            evened(center, from, first, last, into);
+        std::vector<Part> waiting{Part{first, last, false}};
 
-            return;
+        while (!waiting.empty()) {
+            const Part part = waiting.back();
+
+            waiting.pop_back();
+
+            if (part.point) {
+                into.push_back(turned(center, from, part.first));
+
+                continue;
+            }
+
+            const double angle = std::abs(part.last - part.first);
+
+            if (std::ceil(angle / step_) <= reach) {
+                evened(center, from, part.first, part.last, into);
+
+                continue;
+            }
+
+            const Point start = matrix_.applied(turned(center, from, part.first));
+            const Point end = matrix_.applied(turned(center, from, part.last));
+            const Point apex = matrix_.applied(plus(center, times(minus(turned(center, from, (part.first + part.last) / 2), center), 1 / std::cos(angle / 2))));
+
+            if (!std::isfinite(start.x) || !std::isfinite(start.y) || !std::isfinite(end.x) || !std::isfinite(end.y)) throw Trouble{Kind::malformed, "A round part of a stroke carried past the range of numbers."};
+
+            const double x0 = std::min({start.x, end.x, apex.x});
+            const double x1 = std::max({start.x, end.x, apex.x});
+            const double y0 = std::min({start.y, end.y, apex.y});
+            const double y1 = std::max({start.y, end.y, apex.y});
+
+            if (x1 < view_->x0 || x0 > view_->x1 || y1 < view_->y0 || y0 > view_->y1) continue;
+
+            const double middle = (part.first + part.last) / 2;
+
+            // Turns a step of the numbers apart have none between them: the part goes as its chord
+            // (a matrix that flattens the plane keeps every part in view down to there).
+            if (middle == part.first || middle == part.last) continue;
+
+            waiting.push_back(Part{middle, part.last, false});
+            waiting.push_back(Part{middle, middle, true});
+            waiting.push_back(Part{part.first, middle, false});
         }
-
-        const Point start = matrix_.applied(turned(center, from, first));
-        const Point end = matrix_.applied(turned(center, from, last));
-        const Point apex = matrix_.applied(plus(center, times(minus(turned(center, from, (first + last) / 2), center), 1 / std::cos(angle / 2))));
-
-        if (!std::isfinite(start.x) || !std::isfinite(start.y) || !std::isfinite(end.x) || !std::isfinite(end.y)) throw Trouble{Kind::malformed, "A round part of a stroke carried past the range of numbers."};
-
-        const double x0 = std::min({start.x, end.x, apex.x});
-        const double x1 = std::max({start.x, end.x, apex.x});
-        const double y0 = std::min({start.y, end.y, apex.y});
-        const double y1 = std::max({start.y, end.y, apex.y});
-
-        if (x1 < view_->x0 || x0 > view_->x1 || y1 < view_->y0 || y0 > view_->y1) return;
-
-        const double middle = (first + last) / 2;
-
-        halved(center, from, first, middle, into);
-        into.push_back(turned(center, from, middle));
-        halved(center, from, middle, last, into);
     }
 
     // `polygon` kept as a closed line, turned so that it winds as every other piece does (the

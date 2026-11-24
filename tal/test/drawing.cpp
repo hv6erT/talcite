@@ -1357,7 +1357,8 @@ TRIAL("Drawing: a curve or an arc of any length passing through the view costs t
 // widths from a thousand to four quadrillion pixels, reaching the view from each side, and through
 // matrices that turn and scale either way; and the outline keeps only the steps of the arcs the
 // view shows, a few hundred points where the whole arcs would take millions. A round part the
-// matrix carries past the range of numbers is malformed.
+// matrix carries past the range of numbers is malformed; one through a matrix that flattens the
+// plane ends, drawing nothing.
 TRIAL("Drawing: round caps and joins far wider than the view cover as the true shape and cost the arcs seen") {
     using tal::drawing::flattening::Bounds;
     using tal::drawing::flattening::Line;
@@ -1469,6 +1470,27 @@ TRIAL("Drawing: round caps and joins far wider than the view cover as the true s
     vast.width = 2e160;
     vast.cap = Cap::round;
     SAME(trouble_of([&] { (void)stroked(64, 48, segment(Point{0, 0}, Point{1, 0}), vast, Matrix::turned(0.3).then(Matrix::scaled(1e150, 1e150))); }), std::optional<Kind>{Kind::malformed});
+
+    // A matrix that flattens the plane onto a line through the view keeps every part of a vast
+    // round join in view down to turns a step of the numbers apart, where halving ends; what it
+    // draws has no area.
+    Path bent;
+    Stroke wide;
+
+    bent.move(Point{0, 0});
+    bent.line(Point{1, 0});
+    bent.line(Point{1, 1});
+    wide.width = 4e142;
+    wide.cap = Cap::round;
+    wide.join = Join::round;
+
+    const tal::media::Pixels flat = stroked(64, 48, bent, wide, Matrix{-48, -48, -48, -48, 24, 16});
+    double thickest = 0;
+
+    for (int y = 0; y < 48; ++y)
+        for (int x = 0; x < 64; ++x) thickest = std::max(thickest, alpha(flat, x, y));
+
+    OUGHT(thickest < 0.01);
 }
 
 TRIAL("Drawing: matrices compose in order; an odd dash list from an offset past its first round, a negative length drawn whole; images held at their edges, clips within clips; red as green; a stroke flattened in the pen's own scale") {
