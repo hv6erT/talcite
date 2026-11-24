@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -2314,7 +2315,8 @@ TRIAL("PNG and JPEG: damage refused, a file cut short gives what came before") {
 
 // Our deflate is taken back whole by our inflate, whatever it packs: nothing, a byte, a hundred
 // thousand zeros (a few hundred bytes packed), noise longer than the window, a pattern repeating at
-// the farthest distance there is; and our PNG, of rows filtered each its own way, reads back whole.
+// the farthest distance there is; and our PNG, of rows filtered each its own way, reads back whole,
+// rows made for each of the five filters taking that filter.
 TRIAL("Deflate and the PNG encoder: what they write comes back whole") {
     const auto back = [](const Bytes& given) {
         const Bytes packed = tal::deflating::deflated(given);
@@ -2354,6 +2356,94 @@ TRIAL("Deflate and the PNG encoder: what they write comes back whole") {
     OUGHT(made.rgba == rgba);
     OUGHT(made.size == size);
     OUGHT(Bytes(encoded.begin() + 12, encoded.begin() + 29) == lump("4948445200000025000000170806000000"));
+
+    // Rows each made for one filter: none (zeros, then a row of noise), Paeth (each byte the one of
+    // the bytes before it that Paeth's guess picks, from a first pixel of other noise), up (that
+    // row again), average (each byte the mean of the one before it and the one above), sub (a ramp
+    // up, and one down, whose differences count small only taken as signed).
+    constexpr std::size_t wide = 9 * 4;
+    std::vector<std::vector<std::uint8_t>> lines(7, std::vector<std::uint8_t>(wide, 0));
+
+    for (std::size_t at = 0; at < wide; ++at) lines[1][at] = std::to_integer<std::uint8_t>(noise[at]);
+
+    for (std::size_t at = 0; at < wide; ++at) {
+        if (at < 4) {
+            lines[2][at] = std::to_integer<std::uint8_t>(noise[wide + at]);
+
+            continue;
+        }
+
+        const int left = lines[2][at - 4];
+        const int up = lines[1][at];
+        const int corner = lines[1][at - 4];
+        const int guess = left + up - corner;
+        const int to_left = std::abs(guess - left);
+        const int to_up = std::abs(guess - up);
+        const int to_corner = std::abs(guess - corner);
+
+        lines[2][at] = static_cast<std::uint8_t>(to_left <= to_up && to_left <= to_corner ? left : to_up <= to_corner ? up : corner);
+    }
+
+    lines[3] = lines[2];
+
+    for (std::size_t at = 0; at < wide; ++at) lines[4][at] = static_cast<std::uint8_t>(((at >= 4 ? lines[4][at - 4] : 0) + lines[3][at]) / 2);
+
+    for (std::size_t at = 0; at < wide; ++at) lines[5][at] = static_cast<std::uint8_t>(at * 7);
+
+    for (std::size_t at = 0; at < wide; ++at) lines[6][at] = static_cast<std::uint8_t>(250 - at * 3);
+
+    Bytes kinds;
+
+    for (const std::vector<std::uint8_t>& line : lines)
+        for (const std::uint8_t one : line) kinds.push_back(std::byte{one});
+
+    const Bytes kinds_encoded = tal::media::pnging::encoded(kinds, Size{9, 7});
+    const std::size_t length = (std::to_integer<std::size_t>(kinds_encoded[33]) << 24) | (std::to_integer<std::size_t>(kinds_encoded[34]) << 16) | (std::to_integer<std::size_t>(kinds_encoded[35]) << 8) | std::to_integer<std::size_t>(kinds_encoded[36]);
+    tal::inflating::Inflater inflater{tal::inflating::Wrapping::zlib};
+    const Bytes rows = inflater.fed(std::span<const std::byte>{kinds_encoded}.subspan(41, length));
+    std::vector<int> filters;
+
+    for (std::size_t at = 0; at < rows.size(); at += 1 + wide) filters.push_back(std::to_integer<int>(rows[at]));
+
+    SAME(filters, (std::vector<int>{0, 0, 4, 2, 3, 1, 1}));
+    OUGHT(png_of(kinds_encoded).rgba == kinds);
+}
+
+// The encoder as the library gives it: the still asked for of an image of two, and a single clear
+// pixel, come back whole through the decoder of PNG; the first still unless another is asked.
+// Other formats have no encoder (unsupported); an image without pixels, or a still it does not
+// have, is malformed.
+TRIAL("Pixels: encoded as PNG, the still asked for, decoded back whole; other formats unsupported") {
+    using tal::media::Format;
+
+    const Size size{5, 3};
+    const Bytes first = painted(size, [](std::uint32_t x, std::uint32_t y) {
+        return std::array<std::uint8_t, 4>{static_cast<std::uint8_t>(x * 40), static_cast<std::uint8_t>(y * 80), 7, 255};
+    });
+    const Bytes second = painted(size, [](std::uint32_t x, std::uint32_t y) {
+        return std::array<std::uint8_t, 4>{200, static_cast<std::uint8_t>(x * y * 10), static_cast<std::uint8_t>(x + y), static_cast<std::uint8_t>(x * 50)};
+    });
+    const Pixels image{size, {Still{first, {}}, Still{second, {}}}};
+    const Frame chosen = png_of(tal::media::encoded(image, Format::png, 1));
+    const auto kind = [](const std::function<void()>& work) -> std::optional<tal::Kind> {
+        try {
+            work();
+        } catch (const tal::Trouble& why) {
+            return why.kind();
+        }
+
+        return std::nullopt;
+    };
+
+    OUGHT(chosen.rgba == second);
+    OUGHT(chosen.size == size);
+    OUGHT(png_of(tal::media::encoded(image)).rgba == first);
+    OUGHT(png_of(tal::media::encoded(Pixels{Size{1, 1}, {Still{Bytes(4), {}}}})).rgba == Bytes(4));
+
+    for (const Format other : {Format::none, Format::gif, Format::jpeg, Format::bmp}) SAME(kind([&] { (void)tal::media::encoded(image, other); }), std::optional<tal::Kind>{tal::Kind::unsupported});
+
+    SAME(kind([] { (void)tal::media::encoded(Pixels{}); }), std::optional<tal::Kind>{tal::Kind::malformed});
+    SAME(kind([&] { (void)tal::media::encoded(image, Format::png, 2); }), std::optional<tal::Kind>{tal::Kind::malformed});
 }
 
 // The eight orientations of EXIF on an image of three by two whose pixels are numbered: each turns
@@ -2581,10 +2671,10 @@ TRIAL("Previews: a format tal does not know, through the adapter that takes it")
 
 // Thumbnails kept, through files in memory. With no folder of caches, or with no SHA-256 (a build
 // without `TAL_OWN_SUMS` where the system gives none), the preview comes and nothing is kept. With
-// one, the thumbnail is kept as a PNG of the user's alone, under a name of 64 hexadecimal digits in
-// a folder for its side, and the next time it comes from there: a stored one changed by hand is
-// what comes, read by our decoder of PNG even when the decoder set takes no PNG. A file changed
-// (another size) gets a thumbnail of its own.
+// one, the thumbnail is kept as a PNG of the user's alone (which reads back as the thumbnail),
+// under a name of 64 hexadecimal digits in a folder for its side, and the next time it comes from
+// there: a stored one changed by hand is what comes, read by our decoder of PNG even when the
+// decoder set takes no PNG. A file changed (another size) gets a thumbnail of its own.
 TRIAL("Thumbnails: kept in the folder of caches, the user's alone, taken from there, new for a changed file") {
     const auto files = std::make_shared<tal::fs::Memory>();
     const tal::Port<tal::fs::Files> port{std::shared_ptr<tal::fs::Files>{files}};
@@ -2633,8 +2723,9 @@ TRIAL("Thumbnails: kept in the folder of caches, the user's alone, taken from th
     SAME(kept.front().rights, std::optional<std::uint16_t>{0600});
     SAME(tal::wait(loop, files->look(store)).rights, std::optional<std::uint16_t>{0700});
     SAME(tal::wait(loop, files->look(tal::Path{"/home/.cache/tal"})).rights, std::optional<std::uint16_t>{0700});
+    OUGHT(png_of(tal::wait(loop, files->read(kept.front().where))).rgba == first.stills().front().rgba);
 
-    const Bytes green = tal::media::pnging::encoded(painted(Size{6, 8}, [](std::uint32_t, std::uint32_t) { return std::array<std::uint8_t, 4>{0, 200, 0, 255}; }), Size{6, 8});
+    const Bytes green = tal::media::encoded(Pixels{Size{6, 8}, {Still{painted(Size{6, 8}, [](std::uint32_t, std::uint32_t) { return std::array<std::uint8_t, 4>{0, 200, 0, 255}; }), {}}}});
 
     tal::wait(loop, files->write(kept.front().where, green));
 

@@ -108,6 +108,8 @@ void decoded(std::span<const std::byte> given, const Taking& each, Optional<Deco
 
 [[nodiscard]] Task<Pixels> decoded(Bytes given, Size want = {}, Optional<Decoding> decoding = Optional<Decoding>{defaults().get<Decoding>()}, std::size_t most = 0);
 
+[[nodiscard]] Bytes encoded(const Pixels& image, Format format = Format::png, std::size_t still = 0);
+
 [[nodiscard]] Task<Pixels> previewed(Path where, Size most, Port<fs::Files> files = {});
 
 [[nodiscard]] Task<Pixels> thumbnailed(Path where, std::uint32_t side, Port<fs::Files> files = {});

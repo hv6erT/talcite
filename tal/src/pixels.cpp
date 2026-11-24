@@ -213,6 +213,17 @@ Pixels::Pixels(Size size, std::vector<Still> stills) : size_(size), stills_(std:
 // Whether there is anything to show: a size and at least one frame.
 bool Pixels::held() const { return size_.width > 0 && size_.height > 0 && !stills_.empty(); }
 
+// The still `still` of `image` as the bytes of a file of `format`: as a PNG of RGBA of eight bits,
+// not interlaced (see `pnging::encoded`). Throws Trouble malformed for a still the image does not
+// have (an image without pixels has none), and Trouble unsupported for a format other than PNG.
+Bytes encoded(const Pixels& image, Format format, std::size_t still) {
+    if (still >= image.stills().size()) throw Trouble{Kind::malformed, "A still the image does not have."};
+
+    if (format != Format::png) throw Trouble{Kind::unsupported, "No encoder of " + named(format) + "."};
+
+    return pnging::encoded(image.stills()[still].rgba, image.size());
+}
+
 // Every frame resampled to `to` (see `resampled`).
 Pixels Pixels::scaled(Size to) const {
     if (!held() || to.width == 0 || to.height == 0) return {};

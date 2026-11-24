@@ -9,8 +9,6 @@
 #include "tal/crypto.hpp"
 #include "tal/trouble.hpp"
 
-#include "pnging.hpp"
-
 // Thumbnails kept for every program on tal, in the folder of caches: <cache>/tal/thumbnails, a
 // folder for each side asked, a PNG of ours in it for each file, named by the SHA-256 of what
 // makes the file what it is (its canonical path, its size, its time of change to the nanosecond,
@@ -97,7 +95,7 @@ Task<Pixels> thumbnailed(Path where, std::uint32_t side, Port<fs::Files> files) 
     if (kept && made.held()) {
         try {
             co_await made_private(*files, store->parent(), kept->parent());
-            co_await files->write(*kept, pnging::encoded(made.stills().front().rgba, made.size()), fs::Writing{.rights = file_rights});
+            co_await files->write(*kept, encoded(made), fs::Writing{.rights = file_rights});
         } catch (const Trouble&) {
         }
     }
