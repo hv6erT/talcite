@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -204,9 +205,46 @@ private:
     std::vector<std::uint16_t> samples_;
 };
 
+class Pen;
+
+class Recording {
+public:
+    explicit Recording(media::Size size, Blending blending = Blending::linear);
+
+    ~Recording();
+
+    Recording(Recording&& other) noexcept;
+    Recording& operator=(Recording&& other) noexcept;
+    Recording(const Recording&) = delete;
+    Recording& operator=(const Recording&) = delete;
+
+    [[nodiscard]] media::Size size() const { return size_; }
+
+    [[nodiscard]] Blending blending() const { return blending_; }
+
+    [[nodiscard]] std::size_t steps() const;
+
+    void played(Pen& onto) const;
+
+private:
+    friend class Pen;
+    friend std::string svg(const Recording& recording);
+
+    struct Step;
+    struct Steps;
+
+    media::Size size_;
+    Blending blending_;
+    std::unique_ptr<Steps> steps_;
+};
+
+[[nodiscard]] std::string svg(const Recording& recording);
+
 class Pen {
 public:
     explicit Pen(Raster& onto);
+
+    explicit Pen(Recording& onto);
 
     Pen(const Pen&) = delete;
     Pen& operator=(const Pen&) = delete;
@@ -248,7 +286,10 @@ private:
 
     void painted(const Lines& lines, Rule rule, const Paint& paint);
 
-    Raster& onto_;
+    void recorded(Recording::Step step);
+
+    Raster* onto_ = nullptr;
+    Recording* recording_ = nullptr;
     std::vector<State> saved_;
     std::unique_ptr<State> state_;
     std::unique_ptr<Work> work_;

@@ -21,6 +21,7 @@
 #include "flattening.hpp"
 #include "lighting.hpp"
 #include "rasterizing.hpp"
+#include "recording.hpp"
 #include "stroking.hpp"
 
 // The raster and the pen (E7a). A raster keeps its pixels premultiplied by their alpha, 16 bits a
@@ -437,13 +438,24 @@ media::Pixels Raster::pixels() const {
 }
 
 // A pen on `onto`: no matrix, no clip, fully opaque, images smoothed.
-Pen::Pen(Raster& onto) : onto_(onto), state_(std::make_unique<State>()), work_(std::make_unique<Work>()) {}
+Pen::Pen(Raster& onto) : onto_(&onto), state_(std::make_unique<State>()), work_(std::make_unique<Work>()) {}
+
+// A pen recording into `onto` what it is asked to draw, each step with the matrix, the opacity and
+// the smoothing it is drawn with, its clips and the saving and restoring around them, for
+// `Recording::played` and `svg`; otherwise as a pen on a raster of the recording's size, with the
+// same checks (what a raster would refuse only at its pixels, as a matrix carrying a path beyond
+// the numbers, is refused when the recording is played or written).
+Pen::Pen(Recording& onto) : recording_(&onto), state_(std::make_unique<State>()), work_(std::make_unique<Work>()) {}
 
 // Lets go of the state kept.
 Pen::~Pen() = default;
 
 // The state kept, for `restore`.
-void Pen::save() { saved_.push_back(*state_); }
+void Pen::save() {
+    saved_.push_back(*state_);
+
+    if (recording_ != nullptr) recording_->steps_->all.push_back(Recording::Step{.kind = Recording::Step::Kind::save});
+}
 
 // The state last kept brought back. Throws Trouble other when nothing is kept.
 void Pen::restore() {
@@ -451,6 +463,8 @@ void Pen::restore() {
 
     *state_ = std::move(saved_.back());
     saved_.pop_back();
+
+    if (recording_ != nullptr) recording_->steps_->all.push_back(Recording::Step{.kind = Recording::Step::Kind::restore});
 }
 
 // `more` applied before the matrix so far, as Canvas's transform: what is drawn next is mapped by
@@ -458,6 +472,14 @@ void Pen::restore() {
 void Pen::transform(const Matrix& more) {
     finite({more.a, more.b, more.c, more.d, more.e, more.f});
     state_->matrix = more.then(state_->matrix);
+}
+
+// `step` kept in the recording, drawn with the matrix, the opacity and the smoothing of now.
+void Pen::recorded(Recording::Step step) {
+    step.matrix = state_->matrix;
+    step.opacity = state_->opacity;
+    step.smooth = state_->smooth;
+    recording_->steps_->all.push_back(std::move(step));
 }
 
 // The matrix replaced by `whole`.
@@ -618,7 +640,13 @@ void laid(std::vector<std::uint16_t>& samples, std::size_t wide, const rasterizi
 void Pen::fill(const Path& path, const Paint& paint, Rule rule) {
     if (const Color* color = std::get_if<Color>(&paint)) finite(*color);
 
-    const Box open = opened(onto_, state_->clip.get());
+    if (recording_ != nullptr) {
+        recorded(Recording::Step{.kind = Recording::Step::Kind::fill, .path = path, .rule = rule, .paint = paint});
+
+        return;
+    }
+
+    const Box open = opened(*onto_, state_->clip.get());
     const Lines lines{flattening::flattened(path, state_->matrix, tolerance, viewed(open))};
 
     finite(lines.all);
@@ -636,8 +664,14 @@ void Pen::stroke(const Path& path, const Paint& paint, const Stroke& style) {
 
     if (style.width == 0 || !(stretch > 0)) return;
 
+    if (recording_ != nullptr) {
+        recorded(Recording::Step{.kind = Recording::Step::Kind::stroke, .path = path, .paint = paint, .style = style});
+
+        return;
+    }
+
     const double near = tolerance / stretch;
-    const Box open = opened(onto_, state_->clip.get());
+    const Box open = opened(*onto_, state_->clip.get());
     const std::optional<flattening::Bounds> view = reached(state_->matrix, viewed(open), style);
     Lines outline{stroking::outlined(flattening::flattened(path, Matrix{}, near, view, turning(style, near), dashes(style, near)), style, near, view, viewed(open), state_->matrix)};
 
@@ -650,7 +684,13 @@ void Pen::stroke(const Path& path, const Paint& paint, const Stroke& style) {
 
 // The clip narrowed to `path` by `rule`: from now on (until a restore) only its coverage is drawn.
 void Pen::clip(const Path& path, Rule rule) {
-    const Box open = opened(onto_, state_->clip.get());
+    if (recording_ != nullptr) {
+        recorded(Recording::Step{.kind = Recording::Step::Kind::clip, .path = path, .rule = rule});
+
+        return;
+    }
+
+    const Box open = opened(*onto_, state_->clip.get());
     const std::vector<flattening::Line> lines = flattening::flattened(path, state_->matrix, tolerance, viewed(open));
 
     finite(lines);
@@ -703,6 +743,12 @@ void Pen::draw(const media::Pixels& image, Rect from, Rect into, std::size_t sti
 
     if (still >= image.stills().size()) throw Trouble{Kind::other, "A still the image does not have."};
 
+    if (recording_ != nullptr) {
+        recorded(Recording::Step{.kind = Recording::Step::Kind::draw, .image = std::make_shared<const media::Pixels>(image), .from = from, .into = into, .still = still});
+
+        return;
+    }
+
     const auto normalized = [](Rect& one) {
         if (one.wide < 0) {
             one.at.x += one.wide;
@@ -745,7 +791,7 @@ void Pen::draw(const media::Pixels& image, Rect from, Rect into, std::size_t sti
 
     box.rectangle(cut);
 
-    const Box open = opened(onto_, state_->clip.get());
+    const Box open = opened(*onto_, state_->clip.get());
     const std::vector<flattening::Line> lines = flattening::flattened(box, state_->matrix, tolerance, viewed(open));
 
     finite(lines);
@@ -758,9 +804,9 @@ void Pen::draw(const media::Pixels& image, Rect from, Rect into, std::size_t sti
     coverage.reset(reach);
     coverage.covered(lines, Rule::nonzero);
 
-    const Textured texture{textured(image, still, onto_.blending_, x0, y0, x1, y1), x1 - x0, y1 - y0, back->then(toward), Edge::clamp, Edge::clamp, state_->smooth};
+    const Textured texture{textured(image, still, onto_->blending_, x0, y0, x1, y1), x1 - x0, y1 - y0, back->then(toward), Edge::clamp, Edge::clamp, state_->smooth};
 
-    laid(onto_.samples_, onto_.size_.width, coverage, state_->clip.get(), state_->opacity, texture);
+    laid(onto_->samples_, onto_->size_.width, coverage, state_->clip.get(), state_->opacity, texture);
 }
 
 // Whether the point `one` of the raster lies inside `path` (as the matrix maps it) by `rule`; a
@@ -798,7 +844,7 @@ bool Pen::on(const Path& path, Point one, const Stroke& style) const {
 
 // `lines` (in the raster's pixels) covered by `rule` and painted with `paint`.
 void Pen::painted(const Lines& lines, Rule rule, const Paint& paint) {
-    const Box open = opened(onto_, state_->clip.get());
+    const Box open = opened(*onto_, state_->clip.get());
     const Box reach = rasterizing::bounded(lines.all, open);
 
     if (reach.empty()) return;
@@ -814,16 +860,16 @@ void Pen::painted(const Lines& lines, Rule rule, const Paint& paint) {
 
     const Mask* clip = state_->clip.get();
     const float opacity = state_->opacity;
-    const Blending blending = onto_.blending_;
+    const Blending blending = onto_->blending_;
 
     if (const Color* color = std::get_if<Color>(&paint)) {
-        laid(onto_.samples_, onto_.size_.width, coverage, clip, opacity, Plain{sampled(*color, blending)});
+        laid(onto_->samples_, onto_->size_.width, coverage, clip, opacity, Plain{sampled(*color, blending)});
     } else if (const Gradient* gradient = std::get_if<Gradient>(&paint)) {
         Graded graded{gradient->shape(), gradient->first(), gradient->second(), gradient->inner(), gradient->outer(), *back, {}};
 
         for (const auto& [at, stop] : gradient->stops()) graded.stops.emplace_back(at, sampled(stop, blending));
 
-        laid(onto_.samples_, onto_.size_.width, coverage, clip, opacity, graded);
+        laid(onto_->samples_, onto_->size_.width, coverage, clip, opacity, graded);
     } else {
         const Pattern& pattern = std::get<Pattern>(paint);
         const media::Pixels& image = pattern.image();
@@ -838,7 +884,7 @@ void Pen::painted(const Lines& lines, Rule rule, const Paint& paint) {
         const int high = static_cast<int>(image.size().height);
         const Textured texture{textured(image, pattern.still(), blending, 0, 0, wide, high), wide, high, back->then(*unplaced), pattern.across() ? Edge::repeat : Edge::none, pattern.down() ? Edge::repeat : Edge::none, state_->smooth};
 
-        laid(onto_.samples_, onto_.size_.width, coverage, clip, opacity, texture);
+        laid(onto_->samples_, onto_->size_.width, coverage, clip, opacity, texture);
     }
 }
 

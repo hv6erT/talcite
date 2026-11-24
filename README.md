@@ -46,7 +46,9 @@ Each part is a CMake target of its own; a program links the ones it uses.
   `Browser` (see `tal/RENDERING.md`); PDFium, WebKitGTK and WebView2 only on the programmer's word.
 - Drawing as on a canvas (`tal::drawing`): paths, strokes, gradients, patterns, clips and images on
   a raster through a `Pen`, rasterized by our own code, and text from TrueType fonts, DejaVu Sans
-  built in.
+  built in. The same pen draws into a `Recording`, which plays again on any pen at any scale and
+  writes itself as SVG (`svg`), its curves and text kept as curves; images, rasters among them,
+  encode as PNG (`media::encoded`).
 
 `tal-plotting`
 - Plots drawn with a pen: scales straight and logarithmic with their ticks and labels, series as
@@ -61,7 +63,8 @@ Each part is a CMake target of its own; a program links the ones it uses.
 - Widgets: labels, buttons, ticks, choices, selects, gauges, fields with history, lists, tables,
   trees, scrolling, windows with their layers, messages and forms, menus with a menu bar, a key bar
   and tabs, a text editor, a diff, images, the pages of documents (`Leaves`), web pages
-  (`Webview`), a terminal emulator, and `Drawing` with `Simulation` for pictures that move.
+  (`Webview`), a terminal emulator, and `Drawing` with `Simulation` for pictures that move; a
+  drawing records a frame of what it shows (`Drawing::recorded`), for SVG or a larger PNG.
 
 `tal-testing`, `tal-scene`
 - The runner of the trials, with a watch that writes the stacks of a hung run, and a document
@@ -135,7 +138,8 @@ under AddressSanitizer and UBSan.
 `tal-pendulum` is a double pendulum drawn in the terminal beside plots of its energy, its angles
 and its phase. A body can be dragged with the mouse; space pauses, `s` steps, `+` and `-` change
 the pace, the mouse reads the plots and a click holds them (`f` chooses what it holds), `h` shows
-the histogram of the second angle, `m` the map of the potential energy, `q` quits.
+the histogram of the second angle, `m` the map of the potential energy, `p` keeps the drawing as
+SVG and as PNG twice as large in the folder of pictures, `q` quits.
 
 `tal-hello` is the smallest program:
 

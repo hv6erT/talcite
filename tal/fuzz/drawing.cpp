@@ -4,20 +4,24 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <string>
 #include <vector>
 
 #include "tal/drawing.hpp"
 #include "tal/pixels.hpp"
 #include "tal/trouble.hpp"
+#include "tal/xml.hpp"
 
-// One input of libFuzzer as a program of drawing on a raster of 48 by 32 pixels: each byte picks
-// an operation (a piece of the path, a fill, a stroke, a clip, a save or restore, a matrix, an
-// opacity, an image), and the bytes after it give its numbers, either small (a byte, as a pixel
-// and a half of it) or whole (eight bytes, any double, NaN, infinities and the largest among them).
-// Troubles may come (malformed, full, other); nothing may crash, hang, read or write out of
-// bounds, or leak. Paint of no alpha must leave the raster as it was. The input is read in a
-// fixed order (never two reads among the arguments of one call, whose order C++ leaves open), so
-// that an input means the same program to every compiler.
+// One input of libFuzzer as a program of drawing on a raster of 48 by 32 pixels: each byte picks an
+// operation (a piece of the path, a fill, a stroke, a clip, a save or restore, a matrix, an
+// opacity, an image), and the bytes after it give its numbers, either small (a byte, as a pixel and
+// a half of it) or whole (eight bytes, any double, NaN, infinities and the largest among them).
+// Troubles may come (malformed, full, other); nothing may crash, hang, read or write out of bounds,
+// or leak. Paint of no alpha must leave the raster as it was. With its second byte odd the program
+// draws into a recording instead (E13), which is then played on the raster and written as SVG:
+// troubles may come there too, but the SVG must read as XML. The input is read in a fixed order
+// (never two reads among the arguments of one call, whose order C++ leaves open), so that an input
+// means the same program to every compiler.
 namespace {
 
 using namespace tal::drawing;
@@ -136,7 +140,11 @@ Stroke style(Reading& reading) {
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
     Reading reading{data, size};
     Raster raster{tal::media::Size{48, 32}, reading.byte() % 2 == 0 ? Blending::linear : Blending::srgb};
-    Pen pen{raster};
+    Recording recording{tal::media::Size{48, 32}, raster.blending()};
+    const bool recorded = reading.byte() % 2 == 1;
+    Pen direct{raster};
+    Pen kept{recording};
+    Pen& pen = recorded ? kept : direct;
     Path path;
 
     for (int operations = 0; reading.left() && operations < 64; ++operations) {
@@ -223,6 +231,26 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
             default: path = Path{}; break;
             }
         } catch (const tal::Trouble&) {
+        }
+    }
+
+    if (recorded) {
+        try {
+            recording.played(direct);
+        } catch (const tal::Trouble&) {
+        }
+
+        std::string text;
+
+        try {
+            text = svg(recording);
+        } catch (const tal::Trouble&) {
+        }
+
+        try {
+            if (!text.empty()) (void)tal::xml::parsed(text);
+        } catch (const tal::Trouble&) {
+            std::terminate();
         }
     }
 

@@ -264,6 +264,19 @@ void Drawing::paint(Canvas& onto) const {
     }
 }
 
+// One frame of the painter recorded at `size` (the drawing's own, without one), at the time of the
+// last frame drawn, so that it shows what the screen shows: for SVG, or to be played on a raster of
+// any scale. Throws Trouble other for no size (none given and the drawing not laid out yet), as a
+// recording does, and whatever the painter throws.
+drawing::Recording Drawing::recorded(std::optional<media::Size> size) const {
+    drawing::Recording made{size.value_or(size_), blending_};
+    drawing::Pen pen{made};
+
+    painter_(pen, made.size(), shown_);
+
+    return made;
+}
+
 // A frame made now, unless one is being coded: then it is owed and made when that one is done.
 void Drawing::drawn() {
     if (document() == nullptr || size_.width == 0 || size_.height == 0) return;
@@ -284,7 +297,8 @@ void Drawing::drawn() {
         drawing::Raster raster{size_, blending_};
         drawing::Pen pen{raster};
 
-        painter_(pen, size_, now - *started_);
+        shown_ = now - *started_;
+        painter_(pen, size_, shown_);
         frame = raster.pixels();
     } catch (const Trouble& why) {
         trouble_ = why;

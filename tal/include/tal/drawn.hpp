@@ -34,6 +34,8 @@ public:
 
     [[nodiscard]] media::Size pixels() const { return size_; }
 
+    [[nodiscard]] drawing::Recording recorded(std::optional<media::Size> size = std::nullopt) const;
+
     [[nodiscard]] Graphics graphics() const { return fine_; }
 
     [[nodiscard]] std::optional<drawing::Point> pointed(const MouseEvent& event) const;
@@ -85,6 +87,7 @@ private:
     media::Pixels coarse_;
     std::vector<Band> bands_;
     std::optional<std::chrono::steady_clock::time_point> started_;
+    std::chrono::nanoseconds shown_{0};
     std::optional<Trouble> trouble_;
     std::uint64_t orders_ = 0;
     std::uint64_t frames_ = 0;

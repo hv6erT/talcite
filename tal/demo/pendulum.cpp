@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <deque>
 #include <filesystem>
 #include <limits>
@@ -52,7 +53,9 @@
 // histogram of the second angle over the time shown (E10), the bin of the angle now marked, and
 // back; the key m turns it into the map of the potential energy over both angles (E11), its
 // contours, the path of the angles over the time shown and where they are now, and in orange the
-// contour of the whole energy now: the pendulum cannot leave the region it bounds.
+// contour of the whole energy now: the pendulum cannot leave the region it bounds. The key p keeps
+// the drawing as it stands (E13) in the user's folder of pictures (the working folder without one):
+// as SVG, its lines and text as curves, and as PNG twice as large, both named by the time.
 namespace {
 
 using tal::drawing::Color;
@@ -462,6 +465,48 @@ void plotted(Pen& pen, const tal::drawing::Font& font, const Areas& areas, const
     view.laid[2] = phase.drawn(pen, font, areas.plots[2]);
 }
 
+// The local time now as a part of a file's name: year, month, day, hours, minutes and seconds.
+std::string stamped() {
+    const std::time_t now = std::time(nullptr);
+    std::tm fields{};
+
+#ifdef _WIN32
+    (void)localtime_s(&fields, &now);
+#else
+    (void)localtime_r(&now, &fields);
+#endif
+
+    char made[32];
+
+    (void)std::strftime(made, sizeof made, "%Y-%m-%d-%H%M%S", &fields);
+
+    return made;
+}
+
+// The SVG `vector` and the PNG `pixels` of a picture written as `name` .svg and .png in the folder
+// of pictures, or in `fallback` without one; `told` says where, or why not, and `shown` is drawn
+// again to show it.
+tal::Task<void> pictured(std::string vector, tal::Bytes pixels, std::string name, tal::Path fallback, std::string& told, tal::Drawing& shown) {
+    try {
+        std::optional<tal::Path> folder;
+
+        try {
+            folder = co_await tal::fs::known(tal::fs::Known::pictures);
+        } catch (const tal::Trouble&) {
+        }
+
+        const tal::Path where = folder.value_or(fallback);
+
+        co_await tal::fs::write(where / (name + ".svg"), tal::Bytes(reinterpret_cast<const std::byte*>(vector.data()), reinterpret_cast<const std::byte*>(vector.data()) + vector.size()));
+        co_await tal::fs::write(where / (name + ".png"), std::move(pixels));
+        told = "saved " + (where / name).text() + ".svg and .png";
+    } catch (const tal::Trouble& why) {
+        told = std::string{"not saved: "} + why.what();
+    }
+
+    shown.redraw();
+}
+
 // Whether `point` lies within `area`.
 bool inside(const Rect& area, Point point) { return point.x >= area.at.x && point.x < area.at.x + area.wide && point.y >= area.at.y && point.y < area.at.y + area.high; }
 
@@ -522,6 +567,11 @@ int main(int count, char** given) {
     std::optional<std::chrono::nanoseconds> last;
     std::optional<int> held;
     const tal::drawing::Font font = tal::drawing::Font::builtin();
+    // What the last picture kept tells (where it went, or why not), and the work of keeping it; the
+    // working folder holds pictures when the user has no folder of them.
+    std::string told;
+    tal::Scope saving{app.loop()};
+    const tal::Path working = absolute("tal-pendulum.json").parent();
     tal::Drawing& drawing = document.children().add<tal::Drawing>([&](Pen& pen, tal::media::Size size, std::chrono::nanoseconds since) {
         if (last) pendulum.advance(since - *last);
 
@@ -573,9 +623,10 @@ int main(int count, char** given) {
 
         pen.restore();
 
-        char said[160];
+        char said[512];
 
-        std::snprintf(said, sizeof said, "E = %.6f J   t = %.2f s   pace %.2g%s%s   click holds %s", energy(state), pendulum.time(), pendulum.pace(), pendulum.running() ? "" : "   paused", view.held ? "   plots held" : "", worded(freeze).c_str());
+        std::snprintf(said, sizeof said, "E = %.6f J   t = %.2f s   pace %.2g%s%s   click holds %s%s%s", energy(state), pendulum.time(), pendulum.pace(), pendulum.running() ? "" : "   paused", view.held ? "   plots held" : "", worded(freeze).c_str(),
+                      told.empty() ? "" : "   ", told.c_str());
 
         const double letters = std::max(10.0, std::min(areas.swing.high / 24, areas.swing.wide * 0.95 / std::max(1.0, font.measured(said, 1).wide)));
 
@@ -725,6 +776,23 @@ int main(int count, char** given) {
         if (key == tal::Key{U'h'}) view.third = view.third == Third::spread ? Third::phase : Third::spread;
 
         if (key == tal::Key{U'm'}) view.third = view.third == Third::map ? Third::phase : Third::map;
+
+        // The drawing as it stands, recorded once: written as SVG, and played on a raster twice as
+        // large for the PNG.
+        if (key == tal::Key{U'p'}) {
+            try {
+                const tal::drawing::Recording shot = drawing.recorded();
+                tal::drawing::Raster twice{tal::media::Size{shot.size().width * 2, shot.size().height * 2}};
+                tal::drawing::Pen pen{twice};
+
+                pen.place(Matrix::scaled(2, 2));
+                shot.played(pen);
+                told = "saving";
+                saving.run(pictured(tal::drawing::svg(shot), tal::media::encoded(twice.pixels()), "tal-pendulum-" + stamped(), working, told, drawing));
+            } catch (const tal::Trouble& why) {
+                told = std::string{"not saved: "} + why.what();
+            }
+        }
 
         drawing.redraw();
     });

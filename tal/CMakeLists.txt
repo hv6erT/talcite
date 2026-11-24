@@ -189,7 +189,7 @@ endfunction()
 # (tal::drawing): paths, strokes, paints and clips rasterized into pixels by our own rasterizer,
 # and text from fonts read by our own reader of TrueType; DejaVu Sans built in (fonts/, its own
 # object, linked only into programs that use it).
-add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp src/paths.cpp src/flattening.cpp src/stroking.cpp src/rasterizing.cpp src/raster.cpp src/fonts.cpp src/dejavu.cpp)
+add_library(tal-media STATIC src/pixels.cpp src/gif.cpp src/png.cpp src/jpeg.cpp src/preview.cpp src/thumbnail.cpp src/meta.cpp src/walk.cpp src/id3.cpp src/ape.cpp src/mpeg.cpp src/flac.cpp src/ogg.cpp src/wavpack.cpp src/mp4.cpp src/matroska.cpp src/avi.cpp src/pdfsyntax.cpp src/pdf.cpp src/docs.cpp src/charsets.cpp src/htmltext.cpp src/pdftext.cpp src/rendering.cpp src/exif.cpp src/xmp.cpp src/iptc.cpp src/photo.cpp src/photonames.cpp src/exifwrite.cpp src/paths.cpp src/flattening.cpp src/stroking.cpp src/rasterizing.cpp src/raster.cpp src/recording.cpp src/fonts.cpp src/dejavu.cpp)
 target_link_libraries(tal-media PUBLIC tal-core)
 tal_embedded(tal-media fonts_of fonts/DejaVuSans.ttf)
 
